@@ -1,0 +1,1417 @@
+<template>
+  <div class="chat-view">
+    <ConversationList
+      v-if="view === 'history'"
+      :sessions="historySessions"
+      :active-id="activeSession?.id"
+      :loading="historyLoading"
+      :error="historyError"
+      :resizable="false"
+      :show-new-button="false"
+      @new-conversation="startNewConversation"
+      @select="openConversation"
+      @delete="deleteConversation"
+    />
+
+    <div
+      v-else
+      class="chat-pane"
+      :class="{ 'is-empty-chat': segments.length === 0 && !isRunning }"
+    >
+      <header class="chat-header">
+        <h1 class="chat-header-title">{{ headerTitle }}</h1>
+      </header>
+
+      <div class="chat-pane-body">
+        <el-alert
+          v-if="preflightBlocker"
+          class="preflight-alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="preflightBlocker"
+        >
+          <router-link :to="{ path: '/console', query: { page: 'settings' } }">前往设置</router-link>
+        </el-alert>
+
+        <!-- 空态 hero -->
+        <div v-if="segments.length === 0 && !isRunning" class="chat-hero">
+          <h2 class="hero-title">描述地图或剧情目标</h2>
+          <p class="hero-sub">输入目标后生成执行计划。</p>
+        </div>
+
+        <!-- 转录 -->
+        <ChatLog
+          v-else
+          :session-key="activeSession?.id"
+          :segments="segments"
+          :running="isRunning"
+          :live-markdown-segment-id="liveMarkdownSegmentId"
+          :docked-ask-id="activeAsk?.askId"
+          :bottom-inset="bottomSlotHeight"
+          @approve="handleApprove"
+          @revise="handleRevise"
+          @reject="handleReject"
+          @clarify="handleClarify"
+          @multi-choice="handleMultiChoice"
+          @action="handleAskAction"
+          @event-placement-open="handleEventPlacementOpen"
+          @event-placement-orchestrate="handleEventPlacementOrchestrate"
+          @event-placement-refresh="handleEventPlacementRefresh"
+          @event-placement-send="handleEventPlacementSend"
+          @production-board-confirm="handleProductionBoardConfirm"
+          @map-selection-existing="handleMapSelectionExisting"
+          @map-selection-adjust="handleMapSelectionAdjust"
+          @reveal-artifacts="handleRevealArtifacts"
+        />
+      </div>
+
+      <div
+        ref="bottomSlotRef"
+        class="chat-bottom-slot"
+        :class="{
+          'has-ask': !!activeAsk,
+          'is-empty': segments.length === 0 && !isRunning && !activeAsk,
+        }"
+      >
+        <!-- 当前待回答的 ASK：取代底部输入框，避免同一时刻出现两个输入入口 -->
+        <div v-if="activeAsk" class="ask-dock">
+          <AskCard
+            :ask="activeAsk"
+            @approve="handleApprove"
+            @revise="handleRevise"
+            @reject="handleReject"
+            @clarify="handleClarify"
+            @multi-choice="handleMultiChoice"
+            @action="handleAskAction"
+            @event-placement-open="handleEventPlacementOpen"
+            @event-placement-orchestrate="handleEventPlacementOrchestrate"
+            @event-placement-refresh="handleEventPlacementRefresh"
+            @event-placement-send="handleEventPlacementSend"
+            @production-board-confirm="handleProductionBoardConfirm"
+            @map-selection-existing="handleMapSelectionExisting"
+            @map-selection-adjust="handleMapSelectionAdjust"
+          />
+        </div>
+
+        <ChatComposer
+          v-else
+          v-model="inputMsg"
+          :is-running="isRunning"
+          :available-providers="availableProviders"
+          v-model:selected-provider="selectedProvider"
+          v-model:selected-model="selectedModel"
+          v-model:thinking-level="thinkingLevel"
+          v-model:plan-mode="planMode"
+          @send="sendMessage"
+          @stop="handleStop"
+          @select-profile="onSelectProfile"
+        />
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useSession } from '../composables/useSession'
+import type { Session } from '../composables/useSession'
+import {
+  useSessionStream,
+  registerTranscriptPersister,
+  registerEventReviewPreviewListener,
+  collectEventPreviewItemsFromSegments,
+  type EventPreviewItem,
+} from '../composables/useSessionStream'
+import { DEFAULT_AGENT_EXECUTION_ENGINE } from '@contract/types'
+import { extractChatLogSegments, loadPersistedSegmentsFromChain, shouldPersistChatLog } from '@contract/session-transcript'
+import { useEventPlacementAskStore, type PlacementListEvent } from '../stores/eventPlacementAsk'
+import { useTaskBoardStore } from '../stores/taskBoard'
+import { useSessionPlanStore } from '../stores/sessionPlan'
+import { useSubagentStore } from '../stores/subagents'
+import { allPlacementEventsPlaced, isPlacedStatus, isPlacementEventDone } from '../utils/placementStatus'
+import { asksSharePlacementContracts, resolvePlacementSubmitAsk } from '../utils/placementAsk'
+import { resolvePlacementQueueDecision } from '../utils/placementQueueAskDecision'
+import {
+  resolveAskContextMapId,
+  resolveEventMapIdWithAsk,
+  resolveRegistryContractMapId,
+} from '../utils/placementMapId'
+import type { Ask, AskResult } from '../utils/askParser'
+import { eventRegistry, sessions as sessionsApi } from '../api/client'
+import {
+  activeConversationRootId,
+  groupSessionsIntoConversations,
+  titleForSession,
+  type Conversation,
+} from '../utils/conversationGroups'
+import { useSettingsStore } from '../stores/settings'
+import { useProjectStore } from '../stores/project'
+import { useWorkspaceStore } from '../stores/workspace'
+import {
+  loadEngineChatSelection,
+  resetStoredThinkingLevel,
+  resolveChatModelSelection,
+  toChatProviderOptions,
+} from '../utils/chatProviderOptions'
+import { profileIdFromBinding } from '../utils/profile-id'
+import { canSubmitChatMessage, isSendDebounced } from '../utils/chatSendGuard'
+import type { SessionRuntimeEvent } from '../api/client'
+import ChatComposer from '../components/ChatComposer.vue'
+import ChatLog from '../components/ChatLog.vue'
+import AskCard from '../components/AskCard.vue'
+import ConversationList from '../components/ConversationList.vue'
+import { useWorkbenchUiStore } from '../stores/workbenchUi'
+
+const props = withDefaults(defineProps<{
+  view?: 'chat' | 'history'
+}>(), {
+  view: 'chat',
+})
+
+const emit = defineEmits<{
+  'conversation-selected': []
+  'conversation-created': []
+}>()
+
+const settingsStore = useSettingsStore()
+const workbenchUi = useWorkbenchUiStore()
+const projectStore = useProjectStore()
+const workspaceStore = useWorkspaceStore()
+
+const {
+  activeSession,
+  isRunning,
+  createSession,
+  stopSession,
+  updateStatus,
+  refreshActiveSession,
+  newConversation
+} = useSession()
+
+const {
+  segments,
+  currentStatus,
+  isStreaming,
+  liveMarkdownSegmentId,
+  summaryRevision,
+  attachToSession,
+  detachFromSession,
+  resetState,
+  appendUserSegment,
+  restoreSegments,
+  replaySessionEvents,
+  updateAskResult,
+  patchAsk,
+  getAsk,
+} = useSessionStream()
+
+const router = useRouter()
+const route = useRoute()
+const eventPlacementAsk = useEventPlacementAskStore()
+const taskBoard = useTaskBoardStore()
+const sessionPlan = useSessionPlanStore()
+const subagents = useSubagentStore()
+
+const TERMINAL = ['pass', 'blocked', 'failed', 'error', 'stopped', 'interrupted', 'timeout']
+
+// Agent / 思考档与模型选择写入 workspace（SQLite）。
+const savedComposerPrefs = workspaceStore.settings.composer || {}
+
+const inputMsg = ref('')
+const sendInFlight = ref(false)
+let lastSendAtMs = 0
+
+const composerBusy = computed(() => isRunning.value || sendInFlight.value)
+const bottomSlotRef = ref<HTMLElement | null>(null)
+const bottomSlotHeight = ref(172)
+let bottomSlotObserver: ResizeObserver | null = null
+
+function measureBottomSlot(): void {
+  const element = bottomSlotRef.value
+  if (!element) return
+  bottomSlotHeight.value = Math.max(120, Math.ceil(element.getBoundingClientRect().height))
+}
+
+function observeBottomSlot(element: HTMLElement | null): void {
+  bottomSlotObserver?.disconnect()
+  if (element) bottomSlotObserver?.observe(element)
+  measureBottomSlot()
+}
+
+// 当前待回答的 ASK：转录里最后一个尚未提交的 ASK 段，停靠在输入框上方。
+// 已提交的历史 ASK 仍留在转录中作为记录。
+const activeAsk = computed<Ask | null>(() => {
+  const list = segments.value
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const seg = list[i]
+    if (seg.type === 'ask' && seg.ask && !seg.ask.result?.submittedAt && !seg.ask.result?.failedAt && !seg.ask.result?.canceledAt) {
+      return seg.ask
+    }
+  }
+  return null
+})
+watch(activeAsk, (ask) => {
+  if (!ask) return
+  workbenchUi.setAgentPanelOpen(true)
+  if (eventPlacementAsk.isReviewMode && !eventPlacementAsk.reviewAskId) {
+    eventPlacementAsk.bindReviewAsk(ask.askId)
+  }
+})
+
+watch(
+  () => sessionPlan.planFor(activeSession.value?.id)?.mode,
+  (mode) => {
+    if (mode === 'approval_requested' || mode === 'planning') workbenchUi.openSidePanel('plan')
+  },
+)
+
+const activePlanFilePath = computed(() => {
+  const sessionId = activeSession.value?.id
+  if (!sessionId) return ''
+  const rootId = activeConversationRootId(historySessions.value, sessionId)
+  const stored = sessionPlan.planFor(sessionId)?.filePath?.trim()
+    || (rootId ? sessionPlan.planFor(rootId)?.filePath?.trim() : '')
+  if (stored) return stored
+  const anchorId = rootId || sessionId
+  return `.opencode/plans/conversations/${anchorId}.md`
+})
+
+watch(
+  bottomSlotRef,
+  (element) => observeBottomSlot(element),
+  { flush: 'post' },
+)
+
+watch(
+  [activeAsk, inputMsg, isRunning],
+  () => { void nextTick(measureBottomSlot) },
+  { flush: 'post' },
+)
+
+const selectedProvider = ref('')
+const selectedModel = ref('')
+const thinkingLevel = ref(savedComposerPrefs.thinkingLevel || 'default')
+const planMode = ref(false)
+const historySessions = ref<Session[]>([])
+const historyLoading = ref(false)
+const historyError = ref('')
+const preflightBlocker = ref<string | null>(null)
+const availableProviders = ref<Array<{ id: string; label: string; models: Array<{ id: string; label: string }> }>>([])
+
+const headerTitle = computed(() => titleForSession(historySessions.value, activeSession.value?.id))
+
+watch(currentStatus, (newStatus) => {
+  // 空状态由 resetState 触发（新建对话/加载历史），不覆盖显式设置的会话状态。
+  if (!newStatus) return
+  updateStatus(newStatus)
+  // 每轮终态：把累积转录持久化到链尾会话，并刷新历史列表。
+  if (TERMINAL.includes(newStatus) && activeSession.value) {
+    persistTranscript()
+    void refreshPlacementQueueFromRegistry()
+    void taskBoard.loadFromBackend(activeSession.value.id)
+    void sessionPlan.loadFromBackend(activeSession.value.id)
+    void subagents.loadFromBackend(activeSession.value.id)
+  }
+})
+
+// summary 在终态之后到达；再次保存可把 artifact 和结果摘要一起落盘。
+watch(summaryRevision, () => {
+  if (activeSession.value) persistTranscript()
+})
+
+// 顶部选择变化即落盘，下次进对话恢复。
+watch(() => settingsStore.agentExecution.engine, async () => {
+  await settingsStore.loadAgentExecution()
+  await loadProviders()
+  await runPreflightCheck()
+})
+
+watch([selectedProvider, selectedModel, thinkingLevel], () => {
+  void runPreflightCheck()
+  const engine = settingsStore.agentExecution.engine || DEFAULT_AGENT_EXECUTION_ENGINE
+  const selection = selectedProvider.value && selectedModel.value
+    ? {
+        providerId: selectedProvider.value,
+        modelId: selectedModel.value,
+      }
+    : undefined
+  void workspaceStore.patchComposer({
+    thinkingLevel: thinkingLevel.value,
+    engine,
+    selection,
+  })
+})
+
+watch(
+  () => route.name,
+  (name) => {
+    if (name !== 'chat') return
+    void resumeChatView()
+  },
+)
+
+const LIVE_SESSION_STATUSES = ['created', 'preparing', 'starting', 'running']
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+let loadHistoryGeneration = 0
+
+async function persistTranscript(): Promise<void> {
+  if (!activeSession.value) return
+  if (!shouldPersistChatLog(segments.value.length)) return
+  try {
+    await sessionsApi.saveChatLog(activeSession.value.id, {
+      segments: JSON.parse(JSON.stringify(segments.value))
+    })
+  } catch (error) {
+    console.error('Failed to save chat log:', error)
+  }
+  await loadHistory()
+}
+
+function schedulePersistTranscript(): void {
+  if (persistTimer) clearTimeout(persistTimer)
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    void persistTranscript()
+  }, 250)
+}
+
+async function flushPersistTranscript(): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer)
+    persistTimer = null
+  }
+  await persistTranscript()
+}
+
+function buildPlanModePrefix(): string {
+  if (!planMode.value) return ''
+  const planPath = activePlanFilePath.value.trim()
+  const planTarget = planPath
+    ? `Session plan file: ${planPath}`
+    : 'AGENT_RPG_SESSION_PLAN_PATH 指定的文件（本对话首轮创建后确定路径）'
+  return [
+    '[opencode 计划模式已开启]',
+    `使用 plan agent 规划：把计划写入 ${planTarget}（仅当前对话，可用 write/edit 工具）。禁止读取或修改其他对话的 plan 文件，禁止写到 logs/tmp 或工程根 PLAN.md。需要澄清时调用 AskUserQuestion；计划写好后调用 plan_exit 提交审批。审批完成前不要做写操作。`,
+    'AskUserQuestion 只用于澄清选择题，输入必须是 questions 数组，每题 2-4 个 options。',
+    'plan_exit 的审批由桌面 ASK 卡片承载；不要用纯文本替代。',
+    '对纯查询/只读类小问题（如"列出现状"）可以直接回答，不强求 plan-approval。',
+    ''
+  ].join('\n')
+}
+
+async function sendMessage() {
+  const trimmed = inputMsg.value.trim()
+  if (!canSubmitChatMessage(trimmed, composerBusy.value)) return
+  const nowMs = Date.now()
+  if (isSendDebounced(lastSendAtMs, nowMs)) return
+  lastSendAtMs = nowMs
+
+  const intent = trimmed
+  const planModePrefix = buildPlanModePrefix()
+
+  try {
+    await runIntent(`${planModePrefix}${intent}`, intent)
+    inputMsg.value = ''
+  } catch (error) {
+    console.error('Failed to create session:', error)
+  }
+}
+
+// 跑一轮：链尾会话作为 continuationOf 串接同一对话（优先复用 opencode 会话；必要时保留转录）。
+// 首轮 continuationOf 为空（fresh），续接轮保留既有转录并追加。
+function buildChatSessionModelPayload(): {
+  profileId: string
+  providerId?: string
+  modelId?: string
+} {
+  if (selectedProvider.value && selectedModel.value) {
+    return {
+      profileId: profileIdFromBinding(selectedProvider.value, selectedModel.value),
+      providerId: selectedProvider.value,
+      modelId: selectedModel.value,
+    }
+  }
+  return { profileId: selectedProvider.value || 'default' }
+}
+
+function hasSelectedAvailableModel(): boolean {
+  const provider = availableProviders.value.find((p) => p.id === selectedProvider.value)
+  return Boolean(provider?.models.some((m) => m.id === selectedModel.value))
+}
+
+async function runPreflightCheck(): Promise<boolean> {
+  if (!hasSelectedAvailableModel()) {
+    preflightBlocker.value = null
+    return false
+  }
+
+  const executionEngine = settingsStore.agentExecution.engine || DEFAULT_AGENT_EXECUTION_ENGINE
+  const modelPayload = buildChatSessionModelPayload()
+  try {
+    const preview = await sessionsApi.preview({
+      ...modelPayload,
+      executionEngine,
+      intent: '预检',
+      project: projectStore.currentProject,
+    }) as { status?: string; blocker?: string | null }
+    if (preview.status === 'blocked' && preview.blocker) {
+      preflightBlocker.value = preview.blocker
+      return false
+    }
+    preflightBlocker.value = null
+    return true
+  } catch (error) {
+    preflightBlocker.value = (error as Error).message || '预检失败'
+    return false
+  }
+}
+
+async function runIntent(
+  intent: string,
+  displayText: string,
+  options: { userMetadata?: Record<string, unknown> } = {},
+): Promise<void> {
+  if (composerBusy.value) return
+  sendInFlight.value = true
+  try {
+    const modelPayload = buildChatSessionModelPayload()
+
+    const parentId = activeSession.value?.id
+    if (parentId) await flushPersistTranscript()
+    const continuationOf = parentId
+    const fresh = !continuationOf
+
+    const executionEngine = settingsStore.agentExecution.engine || DEFAULT_AGENT_EXECUTION_ENGINE
+
+    const ok = await runPreflightCheck()
+    if (!ok) return
+
+    const session = await createSession({
+      ...modelPayload,
+      executionEngine,
+      project: projectStore.currentProject,
+      intent,
+      displayText,
+      continuationOf,
+      thinkingLevel: thinkingLevel.value,
+      timeoutMs: 1800000
+    })
+    await attachToSession(session.id, { fresh })
+    // 在重置之后、实时事件到达之前推入用户气泡，保证它排在本轮 agent 输出前面。
+    appendUserSegment(displayText, options.userMetadata)
+  } finally {
+    sendInFlight.value = false
+  }
+}
+
+// Submit an ASK result. MCP-driven asks resolve the blocked tool in the
+// running session; text-block asks (turn already finished) continue via a
+// new session carrying a formatted intent.
+async function submitAsk(askId: string, result: AskResult, continuation: { intent: string; displayText: string }): Promise<void> {
+  const ask = getAsk(askId)
+  if (!ask || ask.result?.submittedAt) return
+  const prior = { ...(ask.result || {}) }
+  delete prior.canceledAt
+  delete prior.cancellationStatus
+  const finalResult: AskResult = { ...prior, ...result, submittedAt: new Date().toISOString() }
+  try {
+    if (ask.fromMcp && activeSession.value) {
+      const response = await sessionsApi.submitAskResult(activeSession.value.id, askId, finalResult) as {
+        ok?: boolean
+        reason?: string
+      }
+      if (response && response.ok === false) {
+        throw new Error(response.reason || 'ASK 未在等待中')
+      }
+    } else {
+      await runIntent(continuation.intent, continuation.displayText, { userMetadata: { sourceAskId: askId } })
+    }
+    const submittedAsk = getAsk(askId) || ask
+    if (result.placed && submittedAsk?.type === 'event-placement-list') {
+      for (const segment of segments.value) {
+        const related = segment.ask
+        if (segment.type !== 'ask' || !related) continue
+        if (related.type !== 'event-placement-list') continue
+        if (!asksSharePlacementContracts(submittedAsk, related)) continue
+        updateAskResult(related.askId, finalResult)
+      }
+    } else {
+      updateAskResult(askId, finalResult)
+    }
+    await flushPersistTranscript()
+  } catch (error) {
+    console.error('Failed to submit ASK result:', error)
+    const message = (error as Error).message || '请重试'
+    if (ask.fromMcp) {
+      updateAskResult(askId, {
+        ...prior,
+        ...result,
+        failedAt: new Date().toISOString(),
+        error: message,
+      })
+      await flushPersistTranscript()
+    }
+    ElMessage.error(`提交失败：${message}`)
+  }
+}
+
+function buildReviewEvents(events: EventPreviewItem[]): PlacementListEvent[] {
+  return events.map((event) => ({
+    contractId: event.contractId,
+    eventName: event.eventName || event.contractId,
+    sceneId: event.sceneId,
+    targetMapId: event.targetMapId ?? null,
+    placementHint: event.placementHint,
+    summary: event.summary,
+    trigger: event.trigger,
+    status: 'reviewing',
+  }))
+}
+
+function handleRegisteredEventPreview(events: EventPreviewItem[]): void {
+  if (!events.length) return
+  eventPlacementAsk.startReviewSession(buildReviewEvents(events), {
+    sessionId: activeSession.value?.id || 'live',
+    project: projectStore.currentProject,
+  })
+  if (activeAsk.value && !eventPlacementAsk.reviewAskId) {
+    eventPlacementAsk.bindReviewAsk(activeAsk.value.askId)
+  }
+  workbenchUi.openSidePanel('placement')
+}
+
+function hydrateReviewPreviewFromTranscript(saved?: Array<{ type?: string; metadata?: Record<string, unknown> }>): void {
+  const source = saved?.length ? saved : segments.value
+  const previews = collectEventPreviewItemsFromSegments(source as never)
+  if (!previews.length) return
+  if (eventPlacementAsk.isReviewMode && eventPlacementAsk.reviewingCount > 0) return
+  handleRegisteredEventPreview(previews)
+}
+
+async function rejectPendingEventReviewForAsk(askId: string): Promise<void> {
+  if (!eventPlacementAsk.isReviewMode || eventPlacementAsk.reviewAskId !== askId) return
+  const reviewing = eventPlacementAsk.sessionEvents.filter((event) => event.status === 'reviewing')
+  if (!reviewing.length) return
+  for (const event of reviewing) {
+    const result = await eventRegistry.reject(
+      projectStore.currentProject,
+      event.contractId,
+      { reason: '用户在事件预览决策中选择取消' },
+    )
+    if (result.status !== 'ok') {
+      throw new Error(`事件 ${event.eventName || event.contractId} 取消失败`)
+    }
+    await eventPlacementAsk.markReviewEventRejected(event.contractId, projectStore.currentProject)
+  }
+}
+
+async function approvePendingEventReviewForAsk(askId: string): Promise<void> {
+  if (!eventPlacementAsk.isReviewMode || eventPlacementAsk.reviewAskId !== askId) return
+  const reviewing = eventPlacementAsk.sessionEvents.filter((event) => event.status === 'reviewing')
+  if (!reviewing.length) return
+  for (const event of reviewing) {
+    const result = await eventRegistry.approve(projectStore.currentProject, event.contractId)
+    if (result.status !== 'ok') {
+      throw new Error(`事件 ${event.eventName || event.contractId} 批准失败`)
+    }
+  }
+  eventPlacementAsk.markReviewApproved()
+  await eventPlacementAsk.refreshFromRegistry(projectStore.currentProject)
+  workbenchUi.openSidePanel('placement')
+}
+
+async function handleApprove(askId: string) {
+  const ask = getAsk(askId)
+  if (!ask) return
+  try {
+    await approvePendingEventReviewForAsk(askId)
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '事件批准失败')
+    return
+  }
+  await submitAsk(askId, { decision: 'approve' }, {
+    intent: formatApproveIntent(ask),
+    displayText: '批准计划'
+  })
+}
+
+async function handleRevise(askId: string, feedback: string) {
+  const ask = getAsk(askId)
+  if (!ask) return
+  await submitAsk(askId, { decision: 'revise', feedback }, {
+    intent: formatFeedbackIntent(ask, 'revise', feedback),
+    displayText: `要求修改计划：${feedback}`
+  })
+}
+
+async function handleReject(askId: string, feedback: string) {
+  const ask = getAsk(askId)
+  if (!ask) return
+  await submitAsk(askId, { decision: 'reject', feedback }, {
+    intent: formatFeedbackIntent(ask, 'reject', feedback),
+    displayText: '拒绝计划'
+  })
+}
+
+async function handleClarify(
+  askId: string,
+  payload: { answer: string; selected?: string[]; other?: string }
+) {
+  const ask = getAsk(askId)
+  if (!ask) return
+  const result: AskResult = { answer: payload.answer }
+  if (payload.selected?.length) {
+    result.selected = payload.selected
+    result.other = payload.other || ''
+  }
+  await submitAsk(askId, result, {
+    intent: formatClarifyIntent(ask, payload),
+    displayText: `回答澄清：${payload.answer}`
+  })
+}
+
+async function handleMultiChoice(askId: string, answers: Record<string, { selected: string[]; other: string }>) {
+  const ask = getAsk(askId)
+  if (!ask) return
+  const placementDecision = resolvePlacementQueueDecision(ask, answers)
+  if (placementDecision === 'apply') {
+    try {
+      await approvePendingEventReviewForAsk(askId)
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : '事件批准失败')
+      return
+    }
+  } else if (placementDecision === 'cancel') {
+    try {
+      await rejectPendingEventReviewForAsk(askId)
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : '事件取消失败')
+      return
+    }
+  }
+  await submitAsk(askId, { answers }, {
+    intent: formatMultiChoiceIntent(ask, answers),
+    displayText: '澄清已提交'
+  })
+}
+
+function handleAskAction(askId: string) {
+  const ask = getAsk(askId)
+  if (!ask) return
+  ElMessage.warning(`「${ask.type}」类 ASK 暂不支持。`)
+}
+
+function findPlacementEvent(ask: Ask, contractId: string): Record<string, unknown> | null {
+  const events = (ask.events || []) as Array<Record<string, unknown>>
+  return events.find((e) => e.contractId === contractId || e.id === contractId) || null
+}
+
+function buildPlacementListFromAsk(ask: Ask) {
+  const askContext = { title: ask.title, prompt: ask.prompt }
+  return ((ask.events || []) as Array<Record<string, unknown>>).map((row) => ({
+    contractId: String(row.contractId || row.id),
+    eventName: String(row.eventName || row.contractId || row.id),
+    sceneId: row.sceneId ? String(row.sceneId) : undefined,
+    targetMapId: resolveEventMapIdWithAsk(row, askContext),
+    placementHint: row.placementHint ? String(row.placementHint) : undefined,
+    summary: row.summary ? String(row.summary) : undefined,
+    trigger: row.trigger ? String(row.trigger) : undefined,
+    status: row.status ? String(row.status) : undefined,
+    placedEventId: row.placedEventId == null ? null : Number(row.placedEventId) || null,
+    x: Number.isInteger(row.x) ? (row.x as number) : null,
+    y: Number.isInteger(row.y) ? (row.y as number) : null,
+  }))
+}
+
+const latestPlacementAsk = computed(() => {
+  for (let index = segments.value.length - 1; index >= 0; index -= 1) {
+    const ask = segments.value[index]?.ask
+    if (ask?.type === 'event-placement-list') return ask
+  }
+  return null
+})
+
+watch(
+  latestPlacementAsk,
+  (ask) => {
+    if (!ask?.events?.length) return
+    eventPlacementAsk.syncEventsFromAsk(buildPlacementListFromAsk(ask), {
+      askId: ask.askId,
+      sessionId: activeSession.value?.id || 'recovery',
+      project: projectStore.currentProject,
+    })
+  },
+  { deep: true, immediate: true },
+)
+
+async function refreshPlacementQueueFromRegistry(): Promise<void> {
+  try {
+    await eventPlacementAsk.refreshFromRegistry(projectStore.currentProject)
+  } catch (error) {
+    console.error('[event-placement] automatic registry refresh failed', error)
+    ElMessage.error(`事件放置列表刷新失败：${(error as Error).message}`)
+  }
+}
+
+function resolvePlacementEditorTarget(
+  listEvents: ReturnType<typeof buildPlacementListFromAsk>,
+  options: { contractId?: string } = {},
+) {
+  const pending = listEvents.filter((e) => !isPlacedStatus(e.status))
+  const contractId = options.contractId
+    || pending[0]?.contractId
+    || listEvents[0]?.contractId
+    || null
+  return { contractId }
+}
+
+async function openPlacementEditor(
+  askId: string,
+  options: { mapId?: number; contractId?: string } = {},
+) {
+  const ask = getAsk(askId)
+  if (!ask) {
+    console.warn('[event-placement] ASK not found in transcript', { askId })
+    ElMessage.warning('找不到该事件放置 ASK，请刷新对话后重试。')
+    return
+  }
+  if (ask.type !== 'event-placement-list') {
+    console.warn('[event-placement] wrong ask type', { askId, type: ask.type })
+    ElMessage.warning(`当前卡片类型「${ask.type}」不支持地图编排。`)
+    return
+  }
+  const chatSessionId = activeSession.value?.id
+  if (!chatSessionId) {
+    console.warn('[event-placement] no active chat session', { askId })
+    ElMessage.warning('无活动会话')
+    return
+  }
+  const listEvents = buildPlacementListFromAsk(ask)
+  const { contractId } = resolvePlacementEditorTarget(listEvents, options)
+  if (!contractId) {
+    ElMessage.warning('事件列表为空，无法进入地图编排。')
+    return
+  }
+  try {
+    eventPlacementAsk.startPlacementSession(askId, listEvents, {
+      sessionId: chatSessionId,
+      contractId,
+    })
+    const query: Record<string, string> = {}
+    if (Number.isInteger(options.mapId) && Number(options.mapId) > 0) {
+      query.mapId = String(options.mapId)
+    }
+    void router.push({ path: '/workbench', query })
+  } catch (error) {
+    console.error('[event-placement] open editor failed', error)
+    ElMessage.error(`进入地图编排失败：${(error as Error).message}`)
+  }
+}
+
+async function enrichPlacementMapIdsFromRegistry(askId: string): Promise<void> {
+  const ask = getAsk(askId)
+  if (!ask || ask.type !== 'event-placement-list') return
+  const askContext = { title: ask.title, prompt: ask.prompt }
+  const events = (ask.events || []) as Array<Record<string, unknown>>
+  if (events.every((event) => resolveEventMapIdWithAsk(event, askContext) != null)) return
+  try {
+    const payload = await eventRegistry.contracts(projectStore.currentProject, { operation: 'add-map-event' }) as {
+      contracts?: Array<Record<string, unknown>>
+    }
+    const byId = new Map((payload.contracts || []).map((item) => [String(item.id), item]))
+    if (!byId.size) return
+    const askLevelMapId = resolveAskContextMapId(ask)
+    patchAsk(askId, (current) => ({
+      ...current,
+      events: ((current.events || []) as Array<Record<string, unknown>>).map((event) => {
+        if (resolveEventMapIdWithAsk(event, askContext) != null) return event
+        const reg = byId.get(String(event.contractId || event.id))
+        const regMapId = resolveRegistryContractMapId(reg)
+        const targetMapId = regMapId ?? askLevelMapId
+        if (targetMapId == null) return event
+        return {
+          ...event,
+          targetMapId,
+          mapId: event.mapId ?? reg?.mapId ?? null,
+        }
+      }),
+    }))
+  } catch (error) {
+    console.warn('[event-placement] registry enrich failed', error)
+  }
+}
+
+function handleEventPlacementOrchestrate(askId: string) {
+  void enrichPlacementMapIdsFromRegistry(askId).then(() => {
+    void openPlacementEditor(askId)
+  })
+}
+
+function handleEventPlacementOpen(askId: string, contractId: string) {
+  const ask = getAsk(askId)
+  if (!ask || ask.type !== 'event-placement-list') return
+  const event = findPlacementEvent(ask, contractId)
+  if (!event) return
+  void openPlacementEditor(askId, {
+    contractId: String(event.contractId || event.id),
+  })
+}
+
+async function handleEventPlacementRefresh(askId: string) {
+  const ask = getAsk(askId)
+  if (!ask || ask.type !== 'event-placement-list') return
+  try {
+    const payload = await eventRegistry.contracts(projectStore.currentProject, { operation: 'add-map-event' }) as {
+      contracts?: Array<Record<string, unknown>>
+    }
+    const byId = new Map((payload.contracts || []).map((item) => [String(item.id), item]))
+    if (!byId.size) {
+      ElMessage.info('注册表未接通')
+      return
+    }
+    patchAsk(askId, (current) => ({
+      ...current,
+      events: ((current.events || []) as Array<Record<string, unknown>>).map((event) => {
+        const contractId = String(event.contractId || event.id)
+        const reg = byId.get(contractId)
+        if (!reg) return event
+        const regMapId = resolveRegistryContractMapId(reg)
+        return {
+          ...event,
+          status: String(reg.status || event.status || 'draft'),
+          targetMapId: regMapId ?? resolveEventMapIdWithAsk(event, ask) ?? event.targetMapId,
+          mapId: event.mapId ?? reg.mapId ?? null,
+          placedEventId: reg.eventId ?? event.placedEventId,
+          x: Number.isInteger(reg.x) ? reg.x : event.x,
+          y: Number.isInteger(reg.y) ? reg.y : event.y,
+        }
+      }),
+    }))
+    await eventPlacementAsk.refreshFromRegistry(projectStore.currentProject)
+    ElMessage.success('已从 event-registry 刷新放置状态')
+  } catch (error) {
+    ElMessage.error(`刷新失败：${(error as Error).message}`)
+  }
+}
+
+function formatPlacementResultIntent(ask: Ask): string {
+  const events = (ask.events || []) as Array<Record<string, unknown>>
+  const result = {
+    type: 'event-placement-result',
+    askId: ask.askId,
+    placedEvents: events.map((event) => ({
+      contractId: event.contractId,
+      eventName: event.eventName,
+      mapId: event.targetMapId,
+      eventId: event.placedEventId ?? null,
+      x: Number.isInteger(event.x) ? event.x : null,
+      y: Number.isInteger(event.y) ? event.y : null,
+      status: event.status,
+    })),
+    modifications: ask.modifications || [],
+  }
+  return [
+    '这是 agent-console 的人工事件放置结果。请基于这个结果继续上一步；不要重新要求用户选择坐标，也不要把未放置事件当成已写入正式地图。',
+    JSON.stringify(result, null, 2),
+  ].join('\n\n')
+}
+
+async function handleEventPlacementSend(askId: string) {
+  const visible = getAsk(askId)
+  if (!visible || visible.type !== 'event-placement-list') return
+  const { askId: submitAskId, ask } = resolvePlacementSubmitAsk(visible, segments.value)
+  const ready = allPlacementEventsPlaced(ask.events as Array<{ status?: string; placedEventId?: number | null; x?: number | null; y?: number | null }>)
+    || allPlacementEventsPlaced(visible.events as Array<{ status?: string; placedEventId?: number | null; x?: number | null; y?: number | null }>)
+  const events = ask.events || visible.events || []
+  const missingContractIds = (events as Array<Record<string, unknown>>)
+    .filter((event) => !isPlacementEventDone({
+      status: String(event.status || ''),
+      placedEventId: event.placedEventId as number | null | undefined,
+      x: event.x as number | null | undefined,
+      y: event.y as number | null | undefined,
+    }))
+    .map((event) => String(event.contractId || event.id || ''))
+    .filter(Boolean)
+  await submitAsk(submitAskId, { placed: ready, partial: !ready, events, missingContractIds }, {
+    intent: [
+      formatPlacementResultIntent({ ...ask, events }),
+      ready
+        ? '全部必需事件已放置。请立即执行完整块检查，并按验收要求继续验证。'
+        : '当前只完成了部分放置。请先保存并检查当前进度，然后发 clarify ASK 让用户选择：继续放置缺失项、暂停保留进度、取消本轮。再次请求放置时只展示缺失或有问题的事件。',
+    ].join('\n\n'),
+    displayText: ready ? '事件已放置，继续编排' : '已报告部分放置结果',
+  })
+}
+
+async function handleProductionBoardConfirm(askId: string) {
+  const ask = getAsk(askId)
+  if (!ask) return
+  await submitAsk(askId, { decision: 'confirmed' }, {
+    intent: `用户在 Agent console 中确认了制作清单 askId=${askId}。请按清单绑定地图、放置事件，并开始执行。`,
+    displayText: '确认制作清单'
+  })
+}
+
+async function handleMapSelectionExisting(askId: string, mapId: number) {
+  const ask = getAsk(askId)
+  if (!ask) return
+  await submitAsk(askId, { decision: 'use-existing', selectedMapId: mapId }, {
+    intent: `用户选择使用现有地图 #${mapId}，askId=${askId}。请使用这个准确地图编号继续。`,
+    displayText: `使用现有地图 #${mapId}`,
+  })
+}
+
+async function handleMapSelectionAdjust(askId: string) {
+  const ask = getAsk(askId)
+  if (!ask) return
+  await submitAsk(askId, { decision: 'adjust-story' }, {
+    intent: `用户选择调整剧情以适配现有地图，askId=${askId}。请先调整场景需求，地图问题解决前不要编写对应事件。`,
+    displayText: '调整剧情',
+  })
+}
+
+function formatApproveIntent(ask: Ask): string {
+  return [
+    `用户在 Agent console 中批准了 askId=${ask.askId} 的计划。请按计划继续执行。`,
+    '不要再重新发起 plan-approval ASK，除非又出现新的、未在原计划中说明的重大改动。',
+    '原计划标题：' + (ask.title || ''),
+    ask.planMarkdown ? '原计划：\n```markdown\n' + ask.planMarkdown + '\n```' : ''
+  ].filter(Boolean).join('\n')
+}
+
+function formatFeedbackIntent(ask: Ask, decision: 'revise' | 'reject', feedback: string): string {
+  if (decision === 'revise') {
+    return [
+      `用户在 Agent console 中要求修改计划 askId=${ask.askId}。`,
+      '请根据下方反馈调整计划，并重新输出 plan-approval ASK 等待批准；不要直接执行写操作。',
+      '用户反馈：',
+      feedback,
+      '',
+      '原计划：',
+      '```markdown',
+      ask.planMarkdown || '',
+      '```'
+    ].join('\n')
+  }
+  return [
+    `用户在 Agent console 中拒绝了计划 askId=${ask.askId}。`,
+    '请停止该方向的工作，回到对话澄清当前需求，不要再继续执行原计划。',
+    '用户拒绝理由：',
+    feedback
+  ].join('\n')
+}
+
+function formatClarifyIntent(
+  ask: Ask,
+  payload: { answer: string; selected?: string[]; other?: string }
+): string {
+  const lines = [
+    `用户在 Agent console 中回答了 clarify ASK askId=${ask.askId}。`,
+    ask.fieldName ? `字段：${ask.fieldName}` : '',
+  ]
+  if (payload.selected?.length && ask.options?.length) {
+    const labels = payload.selected.map((selectedId) => {
+      if (selectedId === '__other__') {
+        return payload.other ? `其他：${payload.other}` : '其他'
+      }
+      const opt = ask.options?.find((o) => o.id === selectedId)
+      return opt ? (opt.label || opt.title || selectedId) : selectedId
+    }).filter(Boolean)
+    lines.push('用户选择：' + (labels.join('、') || payload.answer))
+    if (payload.other && !payload.selected.includes('__other__')) {
+      lines.push(`补充说明：${payload.other}`)
+    }
+  } else {
+    lines.push('用户回答：', payload.answer)
+  }
+  lines.push('', '请基于这个回答继续上一轮工作。')
+  return lines.filter(Boolean).join('\n')
+}
+
+function formatMultiChoiceIntent(ask: Ask, answers: Record<string, { selected: string[]; other: string }>): string {
+  const lines = [
+    `用户在 Agent console 中回答了 multi-choice-clarify askId=${ask.askId}。`,
+    '请基于以下回答继续上一轮工作，不要再就同一组问题再发 clarify / multi-choice-clarify。',
+    '',
+    '标题：' + (ask.title || ''),
+    ''
+  ]
+  for (const [idx, q] of (ask.questions || []).entries()) {
+    const ans = answers[q.id] || { selected: [], other: '' }
+    const labels = (ans.selected || []).map((sid) => {
+      if (sid === '__other__') return ans.other ? `其他：${ans.other}` : '其他（未填写）'
+      const opt = (q.options || []).find((o) => o.id === sid)
+      return opt ? (opt.label || opt.title || sid) : sid
+    }).filter(Boolean)
+    lines.push(`Q${idx + 1}: ${q.header || q.id}`)
+    if (q.question) lines.push(`  题面：${q.question}`)
+    if (labels.length) lines.push(`  选项：${labels.join('、')}`)
+    if (ans.other && !ans.selected.includes('__other__')) lines.push(`  自由补充：${ans.other}`)
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+async function handleStop() {
+  await stopSession()
+}
+
+async function handleRevealArtifacts(sessionId: string) {
+  if (!sessionId) return
+  try {
+    await sessionsApi.revealArtifacts(sessionId)
+  } catch (error) {
+    ElMessage.error((error as Error).message || '无法打开会话产物')
+  }
+}
+
+// 显式新建对话：断流、清空，回到空态 hero。
+async function startNewConversation() {
+  const previousSessionId = activeSession.value?.id
+  if (activeSession.value) await persistTranscript()
+  detachFromSession()
+  newConversation()
+  resetState()
+  if (previousSessionId) {
+    taskBoard.clear(previousSessionId)
+    sessionPlan.clear(previousSessionId)
+    subagents.clear(previousSessionId)
+  }
+  selectAvailableModel()
+  emit('conversation-created')
+}
+
+async function deleteConversation(conv: Conversation) {
+  try {
+    await ElMessageBox.confirm(
+      '确定要删除此对话吗？相关会话数据将被永久删除，无法恢复。',
+      '删除对话',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+
+  const convList = groupSessionsIntoConversations(historySessions.value)
+  const deletedIndex = convList.findIndex((item) => item.rootId === conv.rootId)
+  const fallbackLeafId = deletedIndex >= 0
+    ? (convList[deletedIndex + 1]?.leafId ?? convList[deletedIndex - 1]?.leafId ?? null)
+    : null
+
+  const activeRootId = activeConversationRootId(historySessions.value, activeSession.value?.id)
+  const isActiveDeleted = activeRootId === conv.rootId
+
+  if (isActiveDeleted) {
+    detachFromSession()
+    newConversation()
+    resetState()
+  }
+
+  try {
+    for (const sessionId of conv.sessionIds) {
+      await sessionsApi.delete(sessionId)
+    }
+    await loadHistory()
+    if (isActiveDeleted) {
+      if (fallbackLeafId) {
+        await selectConversation(fallbackLeafId)
+      }
+    }
+    ElMessage.success('对话已删除')
+  } catch (error) {
+    console.error('Failed to delete conversation:', error)
+    ElMessage.error(error instanceof Error ? error.message : '删除对话失败')
+    await loadHistory()
+  }
+}
+
+// 选择历史对话：用链尾会话作为活动会话（后续发言续接同链）。
+// 已结束的对话从持久化转录还原；运行中的对话续看实时流。
+async function selectConversation(leafId: string) {
+  if (activeSession.value) await persistTranscript()
+  detachFromSession()
+  try {
+    const detail = await sessionsApi.get(leafId) as Session & {
+      chatLog?: unknown
+      lastSequence?: number
+      events?: SessionRuntimeEvent[]
+    }
+    activeSession.value = detail
+    updateStatus(detail.status)
+    void taskBoard.loadFromBackend(leafId)
+    void sessionPlan.loadFromBackend(leafId)
+    void subagents.loadFromBackend(leafId)
+    const isLive = ['created', 'preparing', 'starting', 'running'].includes(detail.status)
+    let saved = extractChatLogSegments(detail.chatLog)
+    try {
+      const chain = await sessionsApi.history(leafId) as Array<{ chatLog?: unknown }>
+      saved = loadPersistedSegmentsFromChain(chain) ?? saved
+    } catch {
+      // history 不可用时仅用 leaf chatLog。
+    }
+    if (saved?.length) {
+      restoreSegments(saved as never)
+      hydrateReviewPreviewFromTranscript(saved as never)
+    } else {
+      resetState()
+      const events = detail.events
+      if (events?.length) {
+        replaySessionEvents(events)
+      }
+    }
+    if (isLive) {
+      await attachToSession(leafId, {
+        fresh: false,
+        fromSequence: Number(detail.lastSequence) || 0
+      })
+    }
+    return true
+  } catch (error) {
+    console.error('Failed to load conversation:', error)
+    ElMessage.error('加载对话失败')
+    return false
+  }
+}
+
+async function openConversation(leafId: string) {
+  if (await selectConversation(leafId)) {
+    emit('conversation-selected')
+  }
+}
+
+function syncThinkingLevelForModel(providerId: string, modelId: string) {
+  if (!providerId || !modelId) return
+  const normalized = resetStoredThinkingLevel(providerId, modelId, thinkingLevel.value)
+  if (normalized !== thinkingLevel.value) {
+    thinkingLevel.value = normalized
+  }
+}
+
+function selectAvailableModel() {
+  const engine = settingsStore.agentExecution.engine || DEFAULT_AGENT_EXECUTION_ENGINE
+  const binding = settingsStore.bindingForEngine(engine)
+  const resolved = resolveChatModelSelection(availableProviders.value, {
+    persisted: loadEngineChatSelection(engine),
+    binding,
+  })
+  selectedProvider.value = resolved?.providerId || ''
+  selectedModel.value = resolved?.modelId || ''
+  if (resolved?.providerId && resolved?.modelId) {
+    syncThinkingLevelForModel(resolved.providerId, resolved.modelId)
+  }
+}
+
+async function loadProviders(options: { preserveCurrentSelection?: boolean } = {}) {
+  try {
+    await settingsStore.loadAgentExecution()
+    const engine = settingsStore.agentExecution.engine || DEFAULT_AGENT_EXECUTION_ENGINE
+    const result = await settingsStore.listCompatibleProviders(engine)
+    availableProviders.value = toChatProviderOptions(result.providers || [])
+
+    if (
+      options.preserveCurrentSelection
+      && selectedProvider.value
+      && selectedModel.value
+    ) {
+      return
+    }
+
+    selectAvailableModel()
+  } catch (error) {
+    console.error('Failed to load providers:', error)
+  }
+}
+
+function onSelectProfile({ providerId, modelId }: { providerId: string; modelId: string }) {
+  selectedProvider.value = providerId
+  selectedModel.value = modelId
+  syncThinkingLevelForModel(providerId, modelId)
+}
+
+async function loadHistory() {
+  const generation = ++loadHistoryGeneration
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const result = await sessionsApi.list()
+    historySessions.value = (result as { sessions?: Session[] }).sessions || (result as unknown as Session[]) || []
+  } catch (error) {
+    console.error('Failed to load history:', error)
+    const message = error instanceof Error ? error.message : '未知错误'
+    historyError.value = `加载会话历史失败：${message}`
+  } finally {
+    if (generation === loadHistoryGeneration) {
+      historyLoading.value = false
+    }
+  }
+}
+
+defineExpose({
+  startNewConversation,
+  loadHistory,
+})
+
+/** 从地图/设置等页回到 Chat：对齐后端会话态、模型列表与历史侧栏。 */
+async function resumeChatView(): Promise<void> {
+  // 流在切走时可能已写入终态，但 ChatView 的 watch 已卸载，先用内存里的 currentStatus 对齐。
+  if (currentStatus.value) {
+    updateStatus(currentStatus.value)
+  }
+  await refreshActiveSession()
+  if (currentStatus.value) {
+    updateStatus(currentStatus.value)
+  }
+
+  const sessionId = activeSession.value?.id
+  if (sessionId) {
+    void taskBoard.loadFromBackend(sessionId)
+    void sessionPlan.loadFromBackend(sessionId)
+    void subagents.loadFromBackend(sessionId)
+  }
+  if (
+    sessionId
+    && LIVE_SESSION_STATUSES.includes(activeSession.value?.status || '')
+    && !isStreaming.value
+  ) {
+    try {
+      const detail = await sessionsApi.get(sessionId) as Session & { lastSequence?: number }
+      await attachToSession(sessionId, {
+        fresh: false,
+        fromSequence: Number(detail.lastSequence) || 0,
+      })
+    } catch (error) {
+      console.error('Failed to re-attach session stream:', error)
+    }
+  }
+
+  await settingsStore.loadAgentExecution()
+  await loadProviders({ preserveCurrentSelection: Boolean(activeSession.value) })
+  await runPreflightCheck()
+  await loadHistory()
+}
+
+onMounted(() => {
+  registerTranscriptPersister(schedulePersistTranscript)
+  registerEventReviewPreviewListener((events) => handleRegisteredEventPreview(events))
+  if (typeof ResizeObserver !== 'undefined') {
+    bottomSlotObserver = new ResizeObserver(measureBottomSlot)
+  }
+  observeBottomSlot(bottomSlotRef.value)
+  void nextTick(measureBottomSlot)
+  void resumeChatView()
+})
+
+onUnmounted(() => {
+  bottomSlotObserver?.disconnect()
+  bottomSlotObserver = null
+  registerTranscriptPersister(null)
+  registerEventReviewPreviewListener(null)
+})
+</script>
+
+<style scoped>
+.chat-view {
+  height: 100%;
+  display: flex;
+}
+
+.chat-pane {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chat-header-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.preflight-alert {
+  flex: 0 0 auto;
+  width: min(var(--app-content-max), calc(100% - var(--space-8)));
+  margin: var(--space-3) auto 0;
+}
+
+.chat-bottom-slot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  padding: 14px var(--space-8) var(--space-6);
+  pointer-events: none;
+}
+
+.chat-bottom-slot::before {
+  content: '';
+  position: absolute;
+  top: 14px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+  background: var(--app-bg);
+  pointer-events: none;
+}
+
+.chat-bottom-slot.is-empty {
+  position: absolute;
+  right: 0;
+  left: 0;
+  top: 60%;
+  bottom: auto;
+  transform: translateY(-50%);
+  background: transparent;
+}
+
+.chat-bottom-slot.is-empty::before {
+  display: none;
+}
+
+.chat-bottom-slot :deep(.chat-composer-wrap) {
+  position: relative;
+  z-index: 1;
+  padding: 0;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.ask-dock {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  pointer-events: auto;
+}
+
+.ask-dock :deep(.ask-card) {
+  width: min(var(--app-composer-max), calc(100% - var(--space-4)));
+  max-height: min(58vh, 560px);
+  overflow-y: auto;
+  border-radius: 20px;
+  box-shadow: var(--app-shadow-composer);
+}
+
+@media (max-width: 720px) {
+  .chat-bottom-slot {
+    padding: 12px var(--space-4) var(--space-4);
+  }
+
+  .chat-bottom-slot::before {
+    width: 100%;
+  }
+
+  .ask-dock :deep(.ask-card) {
+    width: 100%;
+    max-height: min(62vh, 520px);
+  }
+}
+</style>

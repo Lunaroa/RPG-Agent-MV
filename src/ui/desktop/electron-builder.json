@@ -1,0 +1,120 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "dev.agent-rpg-mv.desktop",
+  "productName": "RPG Agent MV",
+  "asar": false,
+  "electronDist": "node_modules/electron/dist",
+  "npmRebuild": false,
+  "directories": {
+    "app": "../../..",
+    "output": "../../../runtime/out/release/electron"
+  },
+  "extraMetadata": {
+    "main": "src/ui/desktop/dist-electron/main.js",
+    "type": "module"
+  },
+  "extraResources": [
+    {
+      "from": "../../../runtime/out/opencode/windows-x64/opencode.exe",
+      "to": "opencode/opencode.exe"
+    },
+    {
+      "from": "../../../runtime/out/opencode/windows-x64/rg.exe",
+      "to": "opencode/rg.exe"
+    },
+    {
+      "from": "../../../third_party/opencode/LICENSE",
+      "to": "opencode/LICENSE"
+    },
+    {
+      "from": "../../../third_party/opencode/RPG_AGENT_VENDOR.json",
+      "to": "opencode/RPG_AGENT_VENDOR.json"
+    },
+    {
+      "from": "../../../node_modules/@opencode-ai",
+      "to": "app/node_modules/@opencode-ai"
+    },
+    {
+      "from": "../../../node_modules/cross-spawn",
+      "to": "app/node_modules/cross-spawn"
+    },
+    {
+      "from": "../../../node_modules/path-key",
+      "to": "app/node_modules/path-key"
+    },
+    {
+      "from": "../../../node_modules/shebang-command",
+      "to": "app/node_modules/shebang-command"
+    },
+    {
+      "from": "../../../node_modules/shebang-regex",
+      "to": "app/node_modules/shebang-regex"
+    },
+    {
+      "from": "../../../node_modules/which",
+      "to": "app/node_modules/which"
+    },
+    {
+      "from": "../../../node_modules/isexe",
+      "to": "app/node_modules/isexe"
+    },
+    {
+      "from": "../../../src/backend/node_modules",
+      "to": "app/src/backend/node_modules"
+    }
+  ],
+  "files": [
+    "package.json",
+    "README.md",
+    "docs/**/*",
+    "config/**/*",
+    "config/opencode/**/*",
+    "data/.gitkeep",
+    "src/backend/package.json",
+    "src/backend/src/**/*",
+    "src/contract/**/*",
+    "src/py/**/*",
+    "src/ui/desktop/build/icon.ico",
+    "src/ui/desktop/build/icon.png",
+    "src/ui/desktop/dist/**/*",
+    "src/ui/desktop/dist-electron/**/*",
+    "!**/*.test.ts",
+    "!**/*.test.js",
+    "!**/*.tsbuildinfo",
+    "!**/node_modules/**/*",
+    "!runtime/**/*",
+    "!projects/**/*",
+    "!data/assets/**/*",
+    "!data/rmmv.db*",
+    "!data/**/*.db",
+    "!data/**/*.sqlite*",
+    "!**/save/**/*",
+    "!**/.git/**/*",
+    "!**/.env",
+    "!**/.env.*"
+  ],
+  "win": {
+    "icon": "src/ui/desktop/build/icon.ico",
+    "target": [
+      {
+        "target": "dir",
+        "arch": [
+          "x64"
+        ]
+      },
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "RPG Agent MV"
+  }
+}

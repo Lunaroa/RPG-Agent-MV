@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "profiles": {
+    "opencode-default": {
+      "runtime": "opencode",
+      "provider": "opencode",
+      "protocol": "anthropic",
+      "model": "sonnet",
+      "label": "opencode 默认",
+      "tools": [
+        "read",
+        "bash",
+        "edit",
+        "write",
+        "grep",
+        "glob",
+        "skill"
+      ],
+      "mapsToRuntimeEnv": {}
+    }
+  }
+}

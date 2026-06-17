@@ -1,0 +1,120 @@
+/* Paper Studio: 暖白纸面 + 陶土橙。组件只引用 --app-* 变量。 */
+:root {
+  --app-bg-page: #f3f1ec;
+  --app-bg: #fbfaf7;
+  --app-bg-sunken: #e9e6df;
+  --app-bg-soft: #f5f3ee;
+  --app-bg-elevated: #ffffff;
+
+  --app-border: #e7e3da;
+  --app-border-strong: #d8d3c8;
+
+  --app-ink: #2c2a26;
+  --app-ink-soft: #6d675c;
+  --app-ink-muted: #a39d90;
+
+  --app-accent: #c2643f;
+  --app-accent-hover: #ad5635;
+  --app-accent-soft: #f8ede6;
+  --app-accent-ink: #ffffff;
+  --app-user-bubble: #f1ede5;
+
+  --app-ok: #2e7d4f;
+  --app-ok-soft: #e9f4ec;
+  --app-warn: #b07a26;
+  --app-warn-soft: #f9f1e2;
+  --app-danger: #b03a2e;
+  --app-danger-soft: #fbe9e6;
+
+  --app-tone-text: #7c5cb0;
+  --app-tone-text-strong: #6a4c9c;
+  --app-tone-text-soft: #f0ebf7;
+  --app-tone-control: #4a7fa5;
+  --app-tone-control-strong: #b03a2e;
+  --app-tone-flow: #9c6a2c;
+  --app-tone-data: #4e7a5a;
+  --app-tone-stage: #4a7fa5;
+  --app-tone-move: #2f8a86;
+
+  --app-radius-sm: 6px;
+  --app-radius-md: 10px;
+  --app-radius-lg: 14px;
+  --app-radius-pill: 999px;
+
+  --app-shadow-1: 0 1px 3px rgba(60, 50, 30, .06);
+  --app-shadow-2: 0 6px 20px rgba(60, 50, 30, .08);
+  --app-shadow-3: 0 12px 32px rgba(60, 50, 30, .10);
+  --app-shadow-overlay: 0 24px 64px rgba(60, 50, 30, .16);
+  --app-shadow-composer: 0 2px 10px rgba(60, 50, 30, .05);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13.5px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+
+  --app-font-sans: "Inter Variable", "Inter", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --app-font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, Menlo, monospace;
+
+  --app-ease: cubic-bezier(.16, 1, .3, 1);
+  --app-dur: 150ms;
+  --app-ring: 0 0 0 3px rgba(194, 100, 63, .18);
+
+  --app-content-max: 800px;
+  --app-composer-max: 800px;
+  --app-titlebar-height: 38px;
+  --app-rail-width: 58px;
+  --app-history-width: 280px;
+  --app-page-head-height: 56px;
+  --app-subbar-height: 46px;
+}
+
+/* 暗色主题暂不纳入本次视觉验收，保留变量以避免现有设置失效。 */
+html.theme-dark {
+  color-scheme: dark;
+  --app-bg-page: #131110;
+  --app-bg: #1c1916;
+  --app-bg-sunken: #262119;
+  --app-bg-soft: #171411;
+  --app-bg-elevated: #262119;
+  --app-border: #2f2922;
+  --app-border-strong: #3b342b;
+  --app-ink: #ece7de;
+  --app-ink-soft: #a59d8f;
+  --app-ink-muted: #6e675c;
+  --app-accent: #d98a63;
+  --app-accent-hover: #e29d7a;
+  --app-accent-soft: rgba(217, 138, 99, .16);
+  --app-accent-ink: #1a120c;
+  --app-user-bubble: #26221a;
+  --app-ok: #58b888;
+  --app-ok-soft: rgba(88, 184, 136, .14);
+  --app-warn: #d9a456;
+  --app-warn-soft: rgba(217, 164, 86, .14);
+  --app-danger: #e0786a;
+  --app-danger-soft: rgba(224, 120, 106, .14);
+  --app-tone-text: #a78fd4;
+  --app-tone-text-strong: #bba6e0;
+  --app-tone-text-soft: rgba(167, 143, 212, .14);
+  --app-tone-control: #6fa9cf;
+  --app-tone-control-strong: #e0786a;
+  --app-tone-flow: #d2a45e;
+  --app-tone-data: #6fb287;
+  --app-tone-stage: #6fa9cf;
+  --app-tone-move: #5fb3aa;
+  --app-shadow-1: 0 1px 2px rgba(0, 0, 0, .40);
+  --app-shadow-2: 0 6px 16px rgba(0, 0, 0, .45);
+  --app-shadow-3: 0 14px 32px rgba(0, 0, 0, .50);
+  --app-shadow-overlay: 0 20px 56px rgba(0, 0, 0, .55);
+  --app-shadow-composer: 0 4px 20px rgba(0, 0, 0, .45);
+  --app-ring: 0 0 0 3px rgba(217, 138, 99, .28);
+}

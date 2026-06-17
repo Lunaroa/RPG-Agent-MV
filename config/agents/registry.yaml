@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "runtimeRoot": "runtime",
+  "defaultEnvFile": "./runtime/secrets/.env",
+  "providerProfilesFile": "config/api-profiles/profiles.yaml",
+  "agents": [
+    {
+      "id": "default",
+      "path": "config/agents/default/agent.yaml",
+      "defaultProfile": "opencode-default",
+      "escalationProfiles": []
+    }
+  ],
+  "workflow": {
+    "coordination": {
+      "mode": "single-agent",
+      "director": "default",
+      "bootstrap": [],
+      "workers": [],
+      "rule": "当前为单执行者模式，所有任务（剧情、事件、编辑、测试、插件、审计）均由默认执行者完成，不委派其他 agent。地图选图/新事件放置/导入仍为人工步骤。"
+    },
+    "defaultOrder": [
+      "default"
+    ],
+    "repairRoutes": {
+      "orchestration": "default",
+      "state": "default",
+      "event": "default",
+      "plugin": "default",
+      "visual": "default",
+      "graph-quality": "default",
+      "ambiguous": "default"
+    }
+  }
+}

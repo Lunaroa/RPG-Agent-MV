@@ -1,0 +1,164 @@
+{
+  "version": 5,
+  "tools": [
+    {
+      "id": "read",
+      "kind": "builtin",
+      "layer": "core",
+      "title": "Read",
+      "description": "读取工作区文件",
+      "readOnly": true,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "edit",
+      "kind": "builtin",
+      "layer": "core",
+      "title": "Edit",
+      "description": "编辑已有文件",
+      "readOnly": false,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "write",
+      "kind": "builtin",
+      "layer": "core",
+      "title": "Write",
+      "description": "写入新文件或覆盖文件",
+      "readOnly": false,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "bash",
+      "kind": "builtin",
+      "layer": "core",
+      "title": "Bash",
+      "description": "执行工程维护命令与版本控制命令",
+      "readOnly": false,
+      "riskLevel": "high",
+      "defaultAllow": true
+    },
+    {
+      "id": "grep",
+      "kind": "builtin",
+      "layer": "core",
+      "title": "Grep",
+      "description": "按模式搜索文件内容",
+      "readOnly": true,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "glob",
+      "kind": "builtin",
+      "layer": "core",
+      "title": "Glob",
+      "description": "按 glob 查找文件",
+      "readOnly": true,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "skill",
+      "kind": "builtin",
+      "layer": "core",
+      "title": "Skill",
+      "description": "加载 config/opencode/skills 中的 OpenCode skill",
+      "readOnly": true,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "question",
+      "kind": "builtin",
+      "layer": "plan",
+      "title": "Question",
+      "description": "通过 opencode question 工具向用户提问",
+      "readOnly": true,
+      "riskLevel": "high",
+      "defaultAllow": true
+    },
+    {
+      "id": "task",
+      "kind": "builtin",
+      "layer": "subagent",
+      "title": "Subagent",
+      "description": "启动 opencode 原生 subagent，不属于 TASK/todo-list",
+      "readOnly": false,
+      "riskLevel": "high",
+      "defaultAllow": true
+    },
+    {
+      "id": "todoread",
+      "kind": "builtin",
+      "layer": "task",
+      "title": "Todo Read",
+      "description": "读取 opencode 会话待办",
+      "readOnly": true,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "todowrite",
+      "kind": "builtin",
+      "layer": "task",
+      "title": "Todo Write",
+      "description": "维护 opencode 会话待办",
+      "readOnly": false,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "webfetch",
+      "kind": "builtin",
+      "layer": "network",
+      "title": "Web Fetch",
+      "description": "读取公开 URL 内容",
+      "readOnly": true,
+      "riskLevel": "high",
+      "defaultAllow": false
+    },
+    {
+      "id": "rmmv_RmmvReadContext",
+      "kind": "mcp",
+      "layer": "rmmv",
+      "title": "RMMV 读取上下文",
+      "description": "读取事件上下文、地图索引、素材清点、插件清点、状态槽位和数据库目录",
+      "readOnly": true,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "rmmv_RmmvMap",
+      "kind": "mcp",
+      "layer": "rmmv",
+      "title": "RMMV 地图编辑",
+      "description": "通过 MCP 调用地图创建、属性更新、复制、删除、绘制和 staging 操作",
+      "readOnly": false,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "rmmv_RmmvEvent",
+      "kind": "mcp",
+      "layer": "rmmv",
+      "title": "RMMV 事件编辑",
+      "description": "事件注册与待放置工作流（register → 预览审批 → 桌面端拖放）；已有事件的补丁、反馈与 editor.update/move（禁止用于新事件落点）",
+      "readOnly": false,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    }
+  ],
+  "mcpServers": [
+    {
+      "id": "rmmv",
+      "title": "RPG Maker MV",
+      "description": "会话内读取和编辑当前 RMMV 工程",
+      "managedBy": "session-runtime",
+      "userToggleable": false
+    }
+  ]
+}

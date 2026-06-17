@@ -1,0 +1,13 @@
+/* 设计系统入口：在 element-plus/dist/index.css 之后由 main.ts 导入。
+ * 顺序：先 token，再 Element Plus 变量覆盖，最后 base 基线。
+ * 字体（Inter / JetBrains Mono）由 main.ts 通过 @fontsource-variable 本地打包，
+ * 不再走联网 Google Fonts CDN。
+ */
+@import "./tokens.css";
+@import "./element-overrides.css";
+@import "./base.css";
+@import "./editor-dialog.css";
+@import "./model-picker.css";
+@import "./chat.css";
+@import "./workbench.css";
+@import "./console.css";

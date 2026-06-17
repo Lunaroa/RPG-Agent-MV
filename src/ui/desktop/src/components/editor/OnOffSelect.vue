@@ -1,0 +1,1 @@
+<template><label>{{ label }}<select :value="value" @change="$emit('change',Number(($event.target as HTMLSelectElement).value))"><option :value="0">ON</option><option :value="1">OFF</option></select></label></template><script setup lang="ts">defineProps<{label:string;value:number}>();defineEmits<{change:[value:number]}>();</script>

@@ -1,0 +1,17 @@
+{
+  "name": "agent-rpg-mv-config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workspace config layer: agents, provider presets, and npm deps.",
+  "main": "package.json",
+  "scripts": {
+    "test": "npm --prefix ../src/backend test"
+  },
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  }
+}

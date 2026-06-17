@@ -1,0 +1,76 @@
+# Dependencies
+node_modules/
+# Vendored third-party internals (opencode node_modules, etc.) — not redistributed as source.
+third_party/*/node_modules/
+
+# Build output
+/dist/
+/dist-ssr/
+coverage/
+src/backend/dist/
+src/ui/desktop/dist/
+src/ui/desktop/dist-electron/
+
+# Build and tool caches
+*.tsbuildinfo
+.cache/
+.vite/
+.turbo/
+
+# Runtime state
+runtime/*
+!runtime/README.md
+!runtime/.gitkeep
+src/backend/runtime/
+
+# Local databases and generated asset indexes
+data/rmmv.db*
+data/*.db*
+data/*.sqlite*
+data/assets/*
+!data/.gitkeep
+
+# Environment, credentials, and local config
+.env
+.env.*
+/.opencode/
+secrets/
+*.local
+
+# Logs and diagnostics
+*.log
+src/backend/stderr.txt
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# RPG Maker MV projects are local only; keep one directory notice.
+projects/*
+!projects/
+!projects/README.md
+
+# Third-party fork internals
+third_party/*/.git/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Local backups and saves
+*.rpgsave
+*.bak
+*.backup*

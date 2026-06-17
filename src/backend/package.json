@@ -1,0 +1,35 @@
+{
+  "name": "rmmv-agent-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "RPG Maker MV agent workflow backend — MCP and core logic.",
+  "main": "package.json",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --experimental-transform-types --test",
+    "cli": "node --experimental-strip-types src/cli.ts",
+    "agent-console": "node --experimental-strip-types src/cli.ts agent-console",
+    "playtest:plan": "node --experimental-strip-types src/cli.ts playtest-plan",
+    "playtest:run": "node --experimental-strip-types src/cli.ts playtest-plan --apply",
+    "playtest:probe": "node --experimental-strip-types src/cli.ts playtest-plan --apply --probe",
+    "deploy:source": "node --experimental-strip-types src/cli.ts deploy-source",
+    "release:check": "node --experimental-strip-types src/cli.ts release-check",
+    "release:source": "node --experimental-strip-types src/cli.ts release-source --apply",
+    "dev:import-provider-seeds": "node --experimental-strip-types src/cli.ts dev-import-provider-seeds",
+    "workspace:prune-legacy": "node --experimental-strip-types src/cli.ts workspace-prune-legacy"
+  },
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.7.0"
+  }
+}

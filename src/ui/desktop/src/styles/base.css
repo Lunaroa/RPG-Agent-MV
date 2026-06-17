@@ -1,0 +1,55 @@
+/* 全局 reset + Paper Studio 基线。 */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--app-font-sans);
+  font-size: var(--text-md);
+  line-height: 1.5;
+  color: var(--app-ink);
+  background: var(--app-bg-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+button {
+  outline: none;
+}
+
+/* 细滚动条（浅色，hover 加深） */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--app-border-strong);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--app-radius-pill);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--app-ink-muted);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

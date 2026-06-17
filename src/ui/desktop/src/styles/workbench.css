@@ -1,0 +1,80 @@
+.workbench-button {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg);
+  color: var(--app-ink-soft);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--app-dur), border-color var(--app-dur), color var(--app-dur);
+}
+
+.workbench-button:hover {
+  border-color: var(--app-border-strong);
+  background: var(--app-bg-sunken);
+  color: var(--app-ink);
+}
+
+.workbench-button:focus-visible {
+  outline: none;
+  box-shadow: var(--app-ring);
+}
+
+.workbench-button.primary {
+  border-color: var(--app-accent);
+  background: var(--app-accent);
+  color: var(--app-accent-ink);
+}
+
+.console-subpage {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.console-split {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  gap: 22px;
+  padding: 14px 40px 34px;
+  background: var(--console-page, var(--app-bg-page));
+}
+
+.console-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--console-paper, var(--app-bg));
+  border: 1px solid var(--console-border, var(--app-border));
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+.console-panel-title {
+  height: 38px;
+  flex: 0 0 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--console-border, var(--app-border));
+  background: var(--console-paper, var(--app-bg));
+  color: var(--console-text-soft, var(--app-ink));
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.console-panel-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}

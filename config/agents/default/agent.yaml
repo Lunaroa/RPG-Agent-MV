@@ -1,0 +1,61 @@
+{
+  "id": "default",
+  "role": "single_operator",
+  "description": "默认制作执行者。按需读上下文、走受控 RMMV MCP 工具写入、输出运行证据和轻量检测结果。旧 event-writing / event-editing skill 已废弃。",
+  "runtime": {
+    "defaultProfile": "opencode-default",
+    "reason": "opencode：instructions、rules 与 skills 由 RPG-Agent-MV/config/opencode 加载。"
+  },
+  "workspace": {
+    "root": "config/agents/default/workspace",
+    "scratch": ".opencode/logs/tmp",
+    "outputs": [
+      "out/{task_id}/default",
+      "runtime/traces/{session_id}/default"
+    ]
+  },
+  "tools": {
+    "_note": "RMMV 业务能力只通过 opencode 的 rmmv MCP 暴露；ASK、计划和 todo 使用 opencode 原生能力。",
+    "allow": [
+      "read",
+      "edit",
+      "write",
+      "bash",
+      "grep",
+      "glob",
+      "skill",
+      "question",
+      "task",
+      "todoread",
+      "todowrite",
+      "rmmv_RmmvReadContext",
+      "rmmv_RmmvMap",
+      "rmmv_RmmvEvent"
+    ],
+    "deny": [
+      "read_secret_files",
+      "Bash:git reset --hard",
+      "Bash:git checkout --",
+      "Bash:git clean",
+      "Bash:Remove-Item -Recurse",
+      "Bash:rm -rf"
+    ]
+  },
+  "permissions": {
+    "sourceProject": "write",
+    "writesRmmvData": true,
+    "requiresHumanApprovalForSourceWrite": false
+  },
+  "handoff": {
+    "acceptsFrom": [
+      "orchestrator",
+      "human"
+    ],
+    "produces": [
+      "task_plan",
+      "worktree_changes",
+      "event_changes_in_worktree",
+      "blocked_report"
+    ]
+  }
+}

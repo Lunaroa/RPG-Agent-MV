@@ -1,0 +1,241 @@
+/* Element Plus 主题覆盖 —— Paper Studio
+ * 把 Element Plus 的 --el-* 变量映射到 tokens.css 的 --app-* 设计 token。
+ * 必须在 element-plus/dist/index.css 之后加载（见 main.ts），否则覆盖不生效。
+ * 强调色色阶（light-3..9 / dark-2）按 Element Plus 的 mix(白, 主色, N0%) 预算好。
+ * 陶土橙主色由 tokens.css 提供。
+ */
+:root {
+  /* ===== 强调色 + 色阶（陶土橙） ===== */
+  --el-color-primary: var(--app-accent);
+  --el-color-primary-light-3: #d4937a;
+  --el-color-primary-light-5: #e0b29f;
+  --el-color-primary-light-7: #edd1c5;
+  --el-color-primary-light-8: #f3e0d9;
+  --el-color-primary-light-9: #f9f0ec;
+  --el-color-primary-dark-2: #9b5032;
+
+  /* ===== 语义色 ===== */
+  --el-color-success: var(--app-ok);
+  --el-color-warning: var(--app-warn);
+  --el-color-danger: var(--app-danger);
+  --el-color-error: var(--app-danger);
+
+  /* ===== 字体 ===== */
+  --el-font-family: var(--app-font-sans);
+
+  /* ===== 圆角 ===== */
+  --el-border-radius-base: var(--app-radius-md);
+  --el-border-radius-small: var(--app-radius-sm);
+  --el-border-radius-round: var(--app-radius-pill);
+
+  /* ===== 表面 ===== */
+  --el-bg-color: var(--app-bg);
+  --el-bg-color-page: var(--app-bg-page);
+  --el-bg-color-overlay: var(--app-bg);
+
+  /* ===== 文字 ===== */
+  --el-text-color-primary: var(--app-ink);
+  --el-text-color-regular: var(--app-ink-soft);
+  --el-text-color-secondary: var(--app-ink-soft);
+  --el-text-color-placeholder: var(--app-ink-muted);
+  --el-text-color-disabled: var(--app-ink-muted);
+
+  /* ===== 边框 ===== */
+  --el-border-color: var(--app-border-strong);
+  --el-border-color-light: var(--app-border);
+  --el-border-color-lighter: var(--app-border);
+  --el-border-color-extra-light: var(--app-border);
+  --el-border-color-hover: var(--app-border-strong);
+
+  /* ===== 填充 ===== */
+  --el-fill-color: var(--app-bg-sunken);
+  --el-fill-color-light: var(--app-bg-soft);
+  --el-fill-color-lighter: var(--app-bg-soft);
+  --el-fill-color-blank: var(--app-bg);
+
+  /* ===== 阴影 ===== */
+  --el-box-shadow: var(--app-shadow-2);
+  --el-box-shadow-light: var(--app-shadow-1);
+  --el-box-shadow-lighter: var(--app-shadow-1);
+  --el-box-shadow-dark: var(--app-shadow-3);
+}
+
+/* ===== 组件级精修（全局，非 scoped） ===== */
+
+/* 按钮：克制层级，主按钮 iris，次按钮低边框 */
+.el-button {
+  font-weight: 500;
+  transition: background-color var(--app-dur) var(--app-ease),
+    border-color var(--app-dur) var(--app-ease),
+    color var(--app-dur) var(--app-ease),
+    box-shadow var(--app-dur) var(--app-ease);
+}
+.el-button:not(.is-text):not(.is-link) {
+  box-shadow: none;
+}
+.el-button--primary {
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+  color: var(--app-accent-ink);
+}
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background: var(--app-accent-hover);
+  border-color: var(--app-accent-hover);
+}
+.el-button--warning:not(.is-text):not(.is-link),
+.el-button--success:not(.is-text):not(.is-link) {
+  background: var(--app-bg);
+  border-color: var(--app-border-strong);
+  color: var(--app-ink);
+}
+.el-button.is-text,
+.el-button.is-link {
+  color: var(--app-ink-soft);
+}
+.el-button.is-text:hover,
+.el-button.is-link:hover {
+  color: var(--app-ink);
+  background: var(--app-accent-soft);
+}
+
+/* Tabs：紧凑、active 用强调色 */
+.el-tabs__item {
+  font-weight: 500;
+}
+.el-tabs__nav-wrap::after {
+  background-color: var(--app-border);
+}
+
+/* 卡片 / 对话框：低阴影，无生硬边框 */
+.el-card {
+  border: none;
+  border-radius: var(--app-radius-lg);
+  box-shadow: var(--app-shadow-2);
+  transition: transform var(--app-dur) var(--app-ease), box-shadow var(--app-dur) var(--app-ease);
+}
+.el-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--app-shadow-3);
+}
+.el-dialog {
+  border-radius: var(--app-radius-lg);
+  box-shadow: var(--app-shadow-overlay);
+}
+.el-overlay-dialog .el-dialog__header {
+  margin-right: 0;
+  font-weight: 600;
+}
+
+/* 树：节点 hover / 选中底用 accent-soft */
+.el-tree {
+  background: transparent;
+  --el-tree-node-hover-bg-color: var(--app-bg-sunken);
+}
+.el-tree-node__content {
+  height: 32px;
+  border-radius: 8px;
+}
+.el-tree-node.is-current > .el-tree-node__content {
+  background: var(--app-accent-soft);
+  color: var(--app-ink);
+  font-weight: 600;
+}
+
+/* 输入 / 选择：焦点环 */
+.el-input__wrapper.is-focus,
+.el-select .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--app-accent) inset, var(--app-ring) !important;
+}
+
+/* 标签 */
+.el-tag {
+  border-radius: var(--app-radius-sm);
+  font-weight: 500;
+}
+.el-alert {
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-soft);
+  color: var(--app-ink-soft);
+}
+.el-alert .el-alert__title {
+  color: var(--app-ink-soft);
+  font-weight: 500;
+}
+.el-empty__description {
+  margin-top: 8px;
+}
+.el-empty__description p {
+  color: var(--app-ink-muted);
+  font-size: var(--text-sm);
+}
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  box-shadow: 0 0 0 1px var(--app-border) inset;
+}
+
+/* 菜单（侧栏）：透明底，由 App.vue 控制具体外观 */
+.el-menu {
+  background: transparent;
+  border-right: none;
+}
+
+/* 隐藏侧边栏等布局元素的默认外边框 */
+.el-aside, .el-header {
+  border-right: none;
+  border-bottom: none;
+}
+
+/* MessageBox 须高于自定义模态（见 constants/layerZIndex.ts messageBox: 3200） */
+.el-overlay.is-message-box {
+  z-index: 3200 !important;
+}
+
+/* ============================================================
+ * 暗色主题覆盖（iris 暗色色阶 + 两处硬编码兜底）
+ * ============================================================ */
+html.theme-dark {
+  --el-color-primary-light-3: #a8704f;
+  --el-color-primary-light-5: #7d573f;
+  --el-color-primary-light-7: #523e2f;
+  --el-color-primary-light-8: #3d3127;
+  --el-color-primary-light-9: #28241f;
+  --el-color-primary-dark-2: #e1a181;
+}
+
+/* chat.css 里两处硬编码浅色值的暗色兜底（用更高特异性覆盖） */
+html.theme-dark .composer-send-btn {
+  background: var(--app-bg-sunken);
+}
+html.theme-dark .composer-textarea::placeholder {
+  color: var(--app-ink-muted);
+}
+
+.el-dialog,
+.el-drawer {
+  border: none;
+  border-radius: var(--app-radius-lg);
+  box-shadow: var(--app-shadow-overlay);
+}
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: var(--app-ring) !important;
+}
+.el-tag {
+  border: none;
+  font-weight: 600;
+}
+.el-table {
+  --el-table-border-color: var(--app-border);
+  --el-table-row-hover-bg-color: var(--app-bg-soft);
+}
+.el-table td.el-table__cell {
+  border-bottom: 1px solid var(--app-bg-soft);
+}
+.el-popper.is-light {
+  background: var(--app-bg-elevated);
+  border-color: var(--app-border);
+  box-shadow: var(--app-shadow-2);
+}

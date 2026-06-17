@@ -1,0 +1,44 @@
+/* 控制台列表区：标题行 + 搜索框 */
+
+.console-list-header {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--console-border, var(--app-border));
+  flex-shrink: 0;
+}
+
+.console-list-header > strong,
+.console-list-header > span:first-child {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--console-text-soft, var(--app-ink-soft));
+  white-space: nowrap;
+}
+
+.console-search-input {
+  min-width: 0;
+  flex: 1;
+  height: 30px;
+  border: 1px solid var(--console-border-strong, var(--app-border-strong));
+  border-radius: 9px;
+  background: var(--console-paper-soft, var(--app-bg-soft));
+  padding: 0 11px;
+  color: var(--console-text, var(--app-ink));
+  font: inherit;
+  font-size: 11px;
+  outline: none;
+  transition: border-color var(--app-dur) var(--app-ease);
+}
+
+.console-search-input:focus {
+  border-color: var(--app-accent);
+  box-shadow: var(--app-ring);
+}
+
+.console-search-input:focus-visible {
+  outline: none;
+  box-shadow: var(--app-ring);
+}

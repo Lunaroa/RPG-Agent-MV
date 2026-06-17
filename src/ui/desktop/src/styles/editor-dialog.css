@@ -1,0 +1,217 @@
+/* Event editor dialog shell.
+ * Keep the authoring workflow dense and desktop-like while reusing the app theme.
+ */
+.editor-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(44, 42, 38, .42);
+  animation: editor-overlay-in var(--app-dur) var(--app-ease);
+}
+
+.editor-modal-shell {
+  max-width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg);
+  box-shadow: var(--app-shadow-overlay);
+  display: flex;
+  flex-direction: column;
+  animation: editor-dialog-in var(--app-dur) var(--app-ease);
+}
+
+.editor-modal-header,
+.editor-modal-footer {
+  min-height: 38px;
+  padding: 6px 10px 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-bg-soft);
+}
+
+.editor-modal-header {
+  justify-content: space-between;
+}
+
+.editor-modal-footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--app-border);
+  border-bottom: 0;
+}
+
+.editor-modal-title {
+  margin: 0;
+  color: var(--app-ink);
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.editor-modal-close {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-ink-soft);
+  cursor: pointer;
+  font-family: var(--app-font-sans);
+  font-size: 18px;
+  line-height: 20px;
+}
+
+.editor-modal-close:hover {
+  border-color: var(--app-border);
+  background: var(--app-bg-sunken);
+  color: var(--app-ink);
+}
+
+.editor-modal-close:active {
+  background: var(--app-border);
+}
+
+.editor-btn {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg);
+  color: var(--app-ink);
+  cursor: pointer;
+  font-family: var(--app-font-sans);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.editor-btn:hover:not(:disabled) {
+  border-color: var(--app-ink-muted);
+  background: var(--app-accent-soft);
+}
+
+.editor-btn:active:not(:disabled) {
+  background: var(--app-bg-sunken);
+}
+
+.editor-btn:disabled {
+  color: var(--app-ink-muted);
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.editor-btn.primary {
+  border-color: var(--app-accent);
+  background: var(--app-accent);
+  color: var(--app-accent-ink);
+  font-weight: 600;
+}
+
+.editor-btn.primary:hover:not(:disabled) {
+  border-color: var(--app-accent-hover);
+  background: var(--app-accent-hover);
+}
+
+.editor-btn.danger:not(:disabled) {
+  border-color: color-mix(in srgb, var(--app-danger), transparent 62%);
+  color: var(--app-danger);
+}
+
+.editor-dialog-status {
+  margin-right: auto;
+  color: var(--app-ink-muted);
+  font-size: var(--text-sm);
+}
+
+.editor-tab-strip {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-bg-soft);
+}
+
+.editor-tab-strip > button {
+  min-width: 42px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: var(--app-radius-sm) var(--app-radius-sm) 0 0;
+  background: transparent;
+  color: var(--app-ink-soft);
+  cursor: pointer;
+  font-family: var(--app-font-sans);
+  font-size: var(--text-sm);
+}
+
+.editor-tab-strip > button:hover:not(:disabled) {
+  background: var(--app-bg-sunken);
+  color: var(--app-ink);
+}
+
+.editor-tab-strip > button.active {
+  border-color: var(--app-border-strong);
+  background: var(--app-bg);
+  color: var(--app-accent);
+  font-weight: 600;
+}
+
+.editor-tab-strip > button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.editor-modal-shell button,
+.editor-modal-shell input,
+.editor-modal-shell select,
+.editor-modal-shell textarea {
+  transition: background-color var(--app-dur) var(--app-ease),
+    border-color var(--app-dur) var(--app-ease),
+    box-shadow var(--app-dur) var(--app-ease),
+    color var(--app-dur) var(--app-ease);
+}
+
+.editor-modal-shell button:focus-visible,
+.editor-modal-shell input:focus-visible,
+.editor-modal-shell select:focus-visible,
+.editor-modal-shell textarea:focus-visible {
+  outline: 0;
+  box-shadow: var(--app-ring);
+}
+
+@keyframes editor-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes editor-dialog-in {
+  from { opacity: 0; transform: translateY(4px) scale(.992); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-modal-overlay,
+  .editor-modal-shell {
+    animation: none;
+  }
+
+  .editor-modal-shell button,
+  .editor-modal-shell input,
+  .editor-modal-shell select,
+  .editor-modal-shell textarea {
+    transition: none;
+  }
+}
+
+@media (max-width: 720px), (max-height: 620px) {
+  .editor-modal-overlay {
+    padding: 12px;
+  }
+}

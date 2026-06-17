@@ -1,0 +1,1225 @@
+// IPC 处理器：提供 Electron IPC 接口
+import { BrowserWindow, dialog, ipcMain, net, protocol, screen, shell } from 'electron';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { cleanupMapIpcHandlers, registerMapIpcHandlers } from './map-ipc-bindings.js';
+import { toIpcPayload } from './ipc-serialize.js';
+import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
+import { DEFAULT_AGENT_EXECUTION_ENGINE, type WorkspaceSettings, type WorkspaceWindowState } from '../../../contract/types.ts';
+import {
+  DEFAULT_WINDOW_HEIGHT,
+  DEFAULT_WINDOW_WIDTH,
+  isLikelyMaximizedWindowBounds,
+  isValidWindowBounds,
+  mergeWorkspaceSettings,
+  normalizeWorkspaceSettings,
+} from '../src/utils/workspaceSettings.ts';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// 后端核心模块（运行时动态加载）
+let llm: any;
+let ConsoleSettingsDao: any;
+let StagingManifestDao: any;
+let MapSelectionDao: any;
+let scanProject: any;
+let resolveDataDir: any;
+let applyPatchToProject: any;
+let readJson: any;
+let writeJson: any;
+let writeMapJson: any;
+let exists: any;
+let desktop: any;
+let agentSessionRuntime: any;
+let assetProtocolRegistered = false;
+let backendCoreUrl: URL | null = null;
+
+export function getWorkspaceSettings(): WorkspaceSettings {
+  if (!ConsoleSettingsDao) return normalizeWorkspaceSettings({});
+  return normalizeWorkspaceSettings(ConsoleSettingsDao.get('workspace') || {});
+}
+
+export function patchWorkspaceSettings(patch: WorkspaceSettings): WorkspaceSettings {
+  const merged = mergeWorkspaceSettings(getWorkspaceSettings(), patch);
+  ConsoleSettingsDao.set('workspace', merged);
+  return merged;
+}
+
+function normalizeAgentExecutionSettings(raw: Record<string, unknown>): Record<string, unknown> {
+  const bindings = (raw.bindings || {}) as Record<string, { providerId?: string; modelId?: string } | undefined>;
+  const binding = bindings[DEFAULT_AGENT_EXECUTION_ENGINE];
+  return {
+    ...raw,
+    engine: DEFAULT_AGENT_EXECUTION_ENGINE,
+    bindings: binding?.providerId && binding?.modelId
+      ? { [DEFAULT_AGENT_EXECUTION_ENGINE]: binding }
+      : {},
+  };
+}
+
+export function saveWorkspaceWindowState(win: BrowserWindow): void {
+  if (!ConsoleSettingsDao || win.isDestroyed()) return;
+  const bounds = win.isMaximized() ? win.getNormalBounds() : win.getBounds();
+  patchWorkspaceSettings({
+    window: {
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      maximized: win.isMaximized(),
+      firstRunDone: true,
+    },
+  });
+}
+
+function hasProjectStaging(status: unknown): boolean {
+  if (!status || typeof status !== 'object') return false;
+  const value = status as { staged?: unknown; files?: unknown; maps?: unknown };
+  return Boolean(value.staged)
+    || (Array.isArray(value.files) && value.files.length > 0)
+    || (Array.isArray(value.maps) && value.maps.length > 0);
+}
+
+function stagingErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function confirmProjectStagingBeforeClose(workflowRoot: string, win: BrowserWindow): Promise<boolean> {
+  if (!desktop || win.isDestroyed()) return true;
+  const lastProjectPath = String(getWorkspaceSettings().lastProjectPath || '').trim();
+  if (!lastProjectPath) return true;
+
+  let projectPath = '';
+  let stagingStatus: unknown;
+  try {
+    projectPath = desktop.project.resolveProjectPath(workflowRoot, lastProjectPath);
+    stagingStatus = desktop.staging.getProjectStagingStatus(workflowRoot, projectPath);
+  } catch (error) {
+    await dialog.showMessageBox(win, {
+      type: 'error',
+      title: '检查暂存失败',
+      message: '检查暂存失败',
+      detail: stagingErrorMessage(error),
+    });
+    return false;
+  }
+
+  if (!hasProjectStaging(stagingStatus)) return true;
+
+  const result = await dialog.showMessageBox(win, {
+    type: 'question',
+    title: '是否保存修改',
+    message: '是否保存修改',
+    buttons: ['是', '否', '取消'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    detail: '当前项目存在暂存修改。选择“是”保存到工程；选择“否”放弃暂存；选择“取消”回到当前界面。',
+  });
+
+  if (result.response === 2) return false;
+
+  try {
+    if (result.response === 0) {
+      await desktop.staging.applyProjectStaging(workflowRoot, projectPath);
+    } else if (result.response === 1) {
+      desktop.staging.discardProjectStaging(workflowRoot, projectPath);
+    }
+  } catch (error) {
+    await dialog.showMessageBox(win, {
+      type: 'error',
+      title: result.response === 0 ? '保存修改失败' : '放弃修改失败',
+      message: result.response === 0 ? '保存修改失败' : '放弃修改失败',
+      detail: stagingErrorMessage(error),
+    });
+    return false;
+  }
+
+  return true;
+}
+
+function providerSummaryForIpc(provider: Record<string, unknown>): Record<string, unknown> {
+  const id = typeof provider.id === 'string' ? provider.id : '';
+  const label = typeof provider.label === 'string' ? provider.label.trim() : '';
+  const displayName = typeof provider.displayName === 'string' ? provider.displayName.trim() : '';
+  return {
+    ...provider,
+    displayName: displayName || label || id,
+  };
+}
+
+function getWorkAreaForWindowState(windowState: WorkspaceWindowState) {
+  if (isValidWindowBounds(windowState)) {
+    return screen.getDisplayMatching({
+      x: windowState.x!,
+      y: windowState.y!,
+      width: windowState.width!,
+      height: windowState.height!,
+    }).workArea;
+  }
+  return screen.getPrimaryDisplay().workArea;
+}
+
+export function readWorkspaceWindowOptions(): {
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+  shouldMaximize: boolean;
+} {
+  const windowState = getWorkspaceSettings().window || {};
+  const workArea = getWorkAreaForWindowState(windowState);
+  const shouldUseStoredBounds = isValidWindowBounds(windowState)
+    && !isLikelyMaximizedWindowBounds(windowState, workArea);
+  const width = shouldUseStoredBounds ? windowState.width! : DEFAULT_WINDOW_WIDTH;
+  const height = shouldUseStoredBounds ? windowState.height! : DEFAULT_WINDOW_HEIGHT;
+  const options: {
+    width: number;
+    height: number;
+    x?: number;
+    y?: number;
+    shouldMaximize: boolean;
+  } = { width, height, shouldMaximize: true };
+  if (shouldUseStoredBounds) {
+    options.x = windowState.x;
+    options.y = windowState.y;
+  }
+  return options;
+}
+
+// 动态加载后端模块
+async function loadBackendModules() {
+  // __dirname 在构建后是 RPG-Agent-MV/ui/desktop/dist-electron
+  // backend 在 RPG-Agent-MV/src/backend，从 dist-electron 上溯 ../../../backend
+  const corePath = path.resolve(__dirname, '../../../backend/src/core');
+  
+  console.log('[ipc] Loading backend modules from:', corePath);
+  
+  // 将路径转换为 file:// URL（Windows 需要，确保以 / 结尾）
+  const coreUrl = new URL(`file:///${corePath.replace(/\\/g, '/')}/`);
+  backendCoreUrl = coreUrl;
+  
+  console.log('[ipc] Core URL:', coreUrl.href);
+  
+  // 使用 dynamic import 加载模块
+  const llmUrl = new URL('llm/index.ts', coreUrl).href;
+  console.log('[ipc] Loading llm from:', llmUrl);
+  const llmModule = await import(llmUrl);
+  // llm/index.ts 导出的是命名导出，不是默认导出
+  llm = llmModule;
+  
+  const consoleSettingsDaoModule = await import(new URL('db/dao/console-settings-dao.ts', coreUrl).href);
+  ConsoleSettingsDao = consoleSettingsDaoModule.ConsoleSettingsDao;
+  
+  const stagingManifestDaoModule = await import(new URL('db/dao/staging-manifest-dao.ts', coreUrl).href);
+  StagingManifestDao = stagingManifestDaoModule.StagingManifestDao;
+  
+  const mapSelectionDaoModule = await import(new URL('db/dao/map-selection-dao.ts', coreUrl).href);
+  MapSelectionDao = mapSelectionDaoModule.MapSelectionDao;
+  
+  const projectScannerModule = await import(new URL('rmmv/project-scanner.ts', coreUrl).href);
+  scanProject = projectScannerModule.scanProject;
+  resolveDataDir = projectScannerModule.resolveDataDir;
+  
+  const patcherModule = await import(new URL('rmmv/patcher.ts', coreUrl).href);
+  applyPatchToProject = patcherModule.applyPatchToProject;
+
+  const jsonModule = await import(new URL('rmmv/json.ts', coreUrl).href);
+  readJson = jsonModule.readJson;
+  writeJson = jsonModule.writeJson;
+  writeMapJson = jsonModule.writeMapJson;
+  exists = jsonModule.exists;
+
+  const bootstrapModule = await import(new URL('db/bootstrap.ts', coreUrl).href);
+  await bootstrapModule.bootstrapDatabase(workflowRoot);
+  await llm.ensureProviderSeedsInitialized(workflowRoot);
+  await llm.refreshProviderSeedCatalogFields(workflowRoot);
+
+  desktop = {
+    project: await import(new URL('desktop/project-service.ts', coreUrl).href),
+    maps: await import(new URL('desktop/map-service.ts', coreUrl).href),
+    events: await import(new URL('desktop/event-service.ts', coreUrl).href),
+    eventRegistry: await import(new URL('workflow/event/event-registry.ts', coreUrl).href),
+    eventScript: await import(new URL('desktop/event-script-service.ts', coreUrl).href),
+    staging: await import(new URL('desktop/staging-service.ts', coreUrl).href),
+    library: await import(new URL('desktop/library-service.ts', coreUrl).href),
+    assets: await import(new URL('desktop/asset-service.ts', coreUrl).href),
+    catalog: await import(new URL('desktop/editor-catalog-service.ts', coreUrl).href),
+    scanner: {
+      scanProject: (await import(new URL('rmmv/project-scanner.ts', coreUrl).href)).scanProject,
+      buildAssetInventory: (await import(new URL('rmmv/asset-inventory.ts', coreUrl).href)).buildAssetInventory,
+    },
+    assetLibrary: await import(new URL('desktop/asset-library-service.ts', coreUrl).href),
+    assetManagement: await import(new URL('desktop/asset-management-service.ts', coreUrl).href),
+    projectManagement: await import(new URL('desktop/project-management-service.ts', coreUrl).href),
+    commonEvents: await import(new URL('desktop/common-event-service.ts', coreUrl).href),
+    pluginManagement: await import(new URL('desktop/plugin-management-service.ts', coreUrl).href),
+    storyPages: await import(new URL('desktop/story-page-sync-service.ts', coreUrl).href),
+    outline: await import(new URL('desktop/outline-service.ts', coreUrl).href),
+    placementQueue: await import(new URL('desktop/placement-queue-service.ts', coreUrl).href),
+  };
+  const sessionRuntimeModule = await import(new URL('desktop/agent-session-runtime.ts', coreUrl).href);
+  agentSessionRuntime = new sessionRuntimeModule.AgentSessionRuntime(workflowRoot);
+  await agentSessionRuntime.initialize();
+}
+
+// 类型定义
+interface MapInfo {
+  id: number;
+  name: string;
+  parentId: number;
+  order: number;
+  fileName: string;
+  exists: boolean;
+  width: number;
+  height: number;
+  tilesetId: number;
+  eventCount: number;
+}
+
+interface MapTree {
+  maps: MapInfo[];
+  tilesets: { id: number; name: string }[];
+}
+
+interface MapPayload {
+  mapId: number;
+  mapInfo: MapInfo | undefined;
+  map: Record<string, unknown> | null;
+  tilesets: { id: number; name: string }[];
+}
+
+interface StagingStatus {
+  hasStaging: boolean;
+  maps: { mapId: number; hasChanges: boolean }[];
+}
+
+let workflowRoot: string = '';
+
+/**
+ * 获取地图树
+ */
+async function getMapsTree(projectPath: string): Promise<MapTree> {
+  const scanResult = scanProject(projectPath);
+  const tilesets = (scanResult.database.Tilesets?.named || []) as { id: number; name: string }[];
+
+  return {
+    maps: scanResult.maps,
+    tilesets
+  };
+}
+
+/**
+ * 获取地图图块集
+ */
+async function getMapsTilesets(projectPath: string): Promise<{ id: number; name: string }[]> {
+  const scanResult = scanProject(projectPath);
+  return (scanResult.database.Tilesets?.named || []) as { id: number; name: string }[];
+}
+
+/**
+ * 构建地图负载
+ */
+async function buildMapPayload(projectPath: string, mapId: number): Promise<MapPayload> {
+  const scanResult = scanProject(projectPath);
+  const mapInfo = scanResult.maps.find(m => m.id === mapId);
+  const tilesets = (scanResult.database.Tilesets?.named || []) as { id: number; name: string }[];
+
+  let map: Record<string, unknown> | null = null;
+  if (mapInfo && mapInfo.exists) {
+    const dataDir = resolveDataDir(projectPath);
+    const mapFile = path.join(dataDir, mapInfo.fileName);
+    if (exists(mapFile)) {
+      map = readJson(mapFile) as Record<string, unknown>;
+    }
+  }
+
+  return {
+    mapId,
+    mapInfo,
+    map,
+    tilesets
+  };
+}
+
+/**
+ * 创建地图
+ */
+async function createMap(projectPath: string, properties: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const spec = {
+    engine: 'rpg-maker-mv',
+    operations: [{
+      op: 'add-map',
+      ...properties
+    }]
+  };
+
+  const report = applyPatchToProject(projectPath, spec as Parameters<typeof applyPatchToProject>[1]);
+  return { success: true, report };
+}
+
+/**
+ * 更新地图属性
+ */
+async function updateMapProperties(projectPath: string, mapId: number, properties: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const dataDir = resolveDataDir(projectPath);
+  const scanResult = scanProject(projectPath);
+  const mapInfo = scanResult.maps.find(m => m.id === mapId);
+
+  if (!mapInfo || !mapInfo.exists) {
+    throw new Error(`Map ${mapId} not found`);
+  }
+
+  const mapFile = path.join(dataDir, mapInfo.fileName);
+  const map = readJson(mapFile) as Record<string, unknown>;
+
+  // 更新属性
+  for (const [key, value] of Object.entries(properties)) {
+    if (key !== 'data' && key !== 'events') {
+      (map as Record<string, unknown>)[key] = value;
+    }
+  }
+
+  writeMapJson(mapFile, map);
+  return { success: true, mapId, properties };
+}
+
+/**
+ * 重新设置父地图
+ */
+async function reparentMap(projectPath: string, mapId: number, parentId: number): Promise<Record<string, unknown>> {
+  const dataDir = resolveDataDir(projectPath);
+  const mapInfosFile = path.join(dataDir, 'MapInfos.json');
+  const mapInfos = readJson(mapInfosFile) as { id: number; parentId?: number }[];
+
+  const mapInfo = mapInfos.find(m => m && m.id === mapId);
+  if (!mapInfo) {
+    throw new Error(`Map ${mapId} not found in MapInfos.json`);
+  }
+
+  mapInfo.parentId = parentId;
+  writeJson(mapInfosFile, mapInfos);
+
+  return { success: true, mapId, parentId };
+}
+
+/**
+ * 复制地图
+ */
+async function duplicateMap(projectPath: string, mapId: number, parentId: number): Promise<Record<string, unknown>> {
+  const dataDir = resolveDataDir(projectPath);
+  const scanResult = scanProject(projectPath);
+  const mapInfo = scanResult.maps.find(m => m.id === mapId);
+
+  if (!mapInfo || !mapInfo.exists) {
+    throw new Error(`Map ${mapId} not found`);
+  }
+
+  // 找到下一个可用的 ID
+  const maxId = scanResult.maps.reduce((max, m) => Math.max(max, m.id), 0);
+  const newId = maxId + 1;
+
+  const mapFile = path.join(dataDir, mapInfo.fileName);
+  const map = readJson(mapFile) as Record<string, unknown>;
+  const newFileName = `Map${String(newId).padStart(3, '0')}.json`;
+  const newMapFile = path.join(dataDir, newFileName);
+
+  // 写入新地图
+  writeMapJson(newMapFile, map);
+
+  // 更新 MapInfos.json
+  const mapInfosFile = path.join(dataDir, 'MapInfos.json');
+  const mapInfos = readJson(mapInfosFile) as Record<string, unknown>[];
+  const newMapInfo = {
+    id: newId,
+    name: `${mapInfo.name} (Copy)`,
+    parentId,
+    order: (mapInfos.length || 0) + 1,
+    expanded: false,
+    scrollX: 0,
+    scrollY: 0
+  };
+  mapInfos[newId] = newMapInfo;
+  writeJson(mapInfosFile, mapInfos);
+
+  return { success: true, mapId: newId, sourceMapId: mapId };
+}
+
+/**
+ * 删除地图
+ */
+async function removeMap(projectPath: string, mapId: number): Promise<Record<string, unknown>> {
+  const dataDir = resolveDataDir(projectPath);
+  const scanResult = scanProject(projectPath);
+  const mapInfo = scanResult.maps.find(m => m.id === mapId);
+
+  if (!mapInfo) {
+    throw new Error(`Map ${mapId} not found`);
+  }
+
+  // 删除地图文件
+  const mapFile = path.join(dataDir, mapInfo.fileName);
+  if (exists(mapFile)) {
+    fs.unlinkSync(mapFile);
+  }
+
+  // 更新 MapInfos.json
+  const mapInfosFile = path.join(dataDir, 'MapInfos.json');
+  const mapInfos = readJson(mapInfosFile) as Record<string, unknown>[];
+  if (mapInfos[mapId]) {
+    mapInfos[mapId] = null;
+    writeJson(mapInfosFile, mapInfos);
+  }
+
+  return { success: true, mapId };
+}
+
+/**
+ * 更新地图图块
+ */
+async function postMapTiles(projectPath: string, mapId: number, edits: unknown[]): Promise<Record<string, unknown>> {
+  const spec = {
+    engine: 'rpg-maker-mv',
+    operations: [{
+      op: 'set-map-tiles',
+      mapId,
+      edits
+    }]
+  };
+
+  const report = applyPatchToProject(projectPath, spec as Parameters<typeof applyPatchToProject>[1]);
+  return { success: true, report };
+}
+
+/**
+ * 测试地图
+ */
+async function playtestMap(projectPath: string, mapId: number, startX?: number, startY?: number): Promise<Record<string, unknown>> {
+  // 这个功能需要启动游戏引擎，暂时返回成功
+  return {
+    success: true,
+    message: 'Playtest functionality requires game engine integration',
+    mapId,
+    startX: startX || 0,
+    startY: startY || 0
+  };
+}
+
+/**
+ * 创建事件
+ */
+async function createEvent(projectPath: string, mapId: number, event: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const spec = {
+    engine: 'rpg-maker-mv',
+    operations: [{
+      op: 'add-map-event',
+      mapId,
+      ...event
+    }]
+  };
+
+  const report = applyPatchToProject(projectPath, spec as Parameters<typeof applyPatchToProject>[1]);
+  return { success: true, report };
+}
+
+/**
+ * 更新事件
+ */
+async function updateEvent(projectPath: string, mapId: number, eventId: number, event: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const dataDir = resolveDataDir(projectPath);
+  const scanResult = scanProject(projectPath);
+  const mapInfo = scanResult.maps.find(m => m.id === mapId);
+
+  if (!mapInfo || !mapInfo.exists) {
+    throw new Error(`Map ${mapId} not found`);
+  }
+
+  const mapFile = path.join(dataDir, mapInfo.fileName);
+  const map = readJson(mapFile) as { events: Record<number, Record<string, unknown>> };
+
+  if (!map.events || !map.events[eventId]) {
+    throw new Error(`Event ${eventId} not found on map ${mapId}`);
+  }
+
+  // 更新事件属性
+  for (const [key, value] of Object.entries(event)) {
+    map.events[eventId][key] = value;
+  }
+
+  writeMapJson(mapFile, map);
+  return { success: true, mapId, eventId };
+}
+
+/**
+ * 删除事件
+ */
+async function removeEvent(projectPath: string, mapId: number, eventId: number): Promise<Record<string, unknown>> {
+  const dataDir = resolveDataDir(projectPath);
+  const scanResult = scanProject(projectPath);
+  const mapInfo = scanResult.maps.find(m => m.id === mapId);
+
+  if (!mapInfo || !mapInfo.exists) {
+    throw new Error(`Map ${mapId} not found`);
+  }
+
+  const mapFile = path.join(dataDir, mapInfo.fileName);
+  const map = readJson(mapFile) as { events: Record<number, Record<string, unknown>> };
+
+  if (!map.events || !map.events[eventId]) {
+    throw new Error(`Event ${eventId} not found on map ${mapId}`);
+  }
+
+  // 删除事件
+  delete map.events[eventId];
+  writeMapJson(mapFile, map);
+
+  return { success: true, mapId, eventId };
+}
+
+/**
+ * 复制事件
+ */
+async function duplicateEvent(projectPath: string, mapId: number, eventId: number): Promise<Record<string, unknown>> {
+  const dataDir = resolveDataDir(projectPath);
+  const scanResult = scanProject(projectPath);
+  const mapInfo = scanResult.maps.find(m => m.id === mapId);
+
+  if (!mapInfo || !mapInfo.exists) {
+    throw new Error(`Map ${mapId} not found`);
+  }
+
+  const mapFile = path.join(dataDir, mapInfo.fileName);
+  const map = readJson(mapFile) as { events: Record<number, Record<string, unknown>> };
+
+  if (!map.events || !map.events[eventId]) {
+    throw new Error(`Event ${eventId} not found on map ${mapId}`);
+  }
+
+  // 找到下一个可用的事件 ID
+  const eventIds = Object.keys(map.events).map(Number).filter(id => id > 0);
+  const newEventId = eventIds.length > 0 ? Math.max(...eventIds) + 1 : 1;
+
+  // 复制事件
+  const sourceEvent = map.events[eventId];
+  const newEvent = {
+    ...sourceEvent,
+    id: newEventId,
+    name: `${sourceEvent.name || 'Event'} (Copy)`
+  };
+
+  map.events[newEventId] = newEvent;
+  writeMapJson(mapFile, map);
+
+  return { success: true, mapId, eventId: newEventId, sourceEventId: eventId };
+}
+
+/**
+ * 获取项目暂存状态
+ */
+function getProjectStagingStatus(root: string, projectPath: string): StagingStatus {
+  try {
+    const projectId = path.relative(root, projectPath) || 'default';
+    const manifests = StagingManifestDao.listByProject(projectId);
+
+    return {
+      hasStaging: manifests.length > 0,
+      maps: manifests.map(m => ({
+        mapId: (m.manifest.mapId as number) || 0,
+        hasChanges: true
+      }))
+    };
+  } catch (error) {
+    return { hasStaging: false, maps: [] };
+  }
+}
+
+/**
+ * 获取地图暂存状态
+ */
+function getStagingStatus(root: string, projectPath: string, mapId: number): { hasChanges: boolean } {
+  try {
+    const projectId = path.relative(root, projectPath) || 'default';
+    const manifests = StagingManifestDao.listByProject(projectId);
+    const hasChanges = manifests.some(m => (m.manifest.mapId as number) === mapId);
+
+    return { hasChanges };
+  } catch (error) {
+    return { hasChanges: false };
+  }
+}
+
+/**
+ * 应用项目暂存
+ */
+async function applyProjectStaging(root: string, projectPath: string): Promise<Record<string, unknown>> {
+  try {
+    const projectId = path.relative(root, projectPath) || 'default';
+    StagingManifestDao.deleteByProject(projectId);
+    return { success: true, message: 'Staging applied' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * 应用地图暂存
+ */
+async function applyStagedMap(root: string, projectPath: string, mapId: number): Promise<Record<string, unknown>> {
+  try {
+    const projectId = path.relative(root, projectPath) || 'default';
+    const manifests = StagingManifestDao.listByProject(projectId);
+    const mapManifests = manifests.filter(m => (m.manifest.mapId as number) === mapId);
+
+    for (const manifest of mapManifests) {
+      StagingManifestDao.delete(manifest.id);
+    }
+
+    return { success: true, mapId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * 丢弃项目暂存
+ */
+function discardProjectStaging(root: string, projectPath: string): Record<string, unknown> {
+  try {
+    const projectId = path.relative(root, projectPath) || 'default';
+    StagingManifestDao.deleteByProject(projectId);
+    return { success: true, message: 'Staging discarded' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * 丢弃地图暂存
+ */
+async function discardStagedMap(root: string, projectPath: string, mapId: number): Promise<Record<string, unknown>> {
+  try {
+    const projectId = path.relative(root, projectPath) || 'default';
+    const manifests = StagingManifestDao.listByProject(projectId);
+    const mapManifests = manifests.filter(m => (m.manifest.mapId as number) === mapId);
+
+    for (const manifest of mapManifests) {
+      StagingManifestDao.delete(manifest.id);
+    }
+
+    return { success: true, mapId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * 列出地图库
+ */
+async function listMapLibrary(root: string): Promise<Record<string, unknown>> {
+  try {
+    const selections = MapSelectionDao.listByProject('library');
+    const entries = selections.map(s => s.selection);
+    return {
+      totalEntries: entries.length,
+      entries
+    };
+  } catch (error) {
+    return {
+      totalEntries: 0,
+      entries: []
+    };
+  }
+}
+
+/**
+ * 获取地图库选择
+ */
+async function getMapLibrarySelection(root: string): Promise<Record<string, unknown> | null> {
+  try {
+    const selection = MapSelectionDao.getLatest('library');
+    return selection ? selection.selection : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * 写入地图库选择
+ */
+async function writeMapLibrarySelection(root: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  try {
+    MapSelectionDao.create('library', body);
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * 获取地图库截图 URL
+ */
+function getMapLibraryScreenshotUrl(root: string, assetId: string): string {
+  // 返回截图路径
+  return path.join(root, 'runtime', 'screenshots', `${assetId}.png`);
+}
+
+/**
+ * 初始化 IPC 处理器
+ */
+export async function initializeIpcHandlers(root: string): Promise<void> {
+  workflowRoot = root;
+  
+  // 加载后端模块
+  await loadBackendModules();
+  registerAssetProtocol();
+  
+  registerSessionIpcHandlers(ipcMain, agentSessionRuntime, {
+    revealArtifacts: async (sessionId: string) => {
+      const session = agentSessionRuntime.get(sessionId) as { outDir?: unknown } | null;
+      if (!session || typeof session.outDir !== 'string' || !session.outDir.trim()) {
+        throw new Error('session artifacts not found');
+      }
+      const error = await shell.openPath(session.outDir);
+      if (error) throw new Error(error);
+      return { success: true };
+    },
+  });
+
+  registerMapIpcHandlers(ipcMain, workflowRoot, desktop, {
+    selectProjectDirectory: async (event: Electron.IpcMainInvokeEvent) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+      const result = await dialog.showOpenDialog(parent, {
+        title: '选择 RPG Maker MV 项目目录',
+        properties: ['openDirectory'],
+      });
+      if (result.canceled) return null;
+      return result.filePaths[0] || null;
+    },
+  });
+
+  ipcMain.handle('window:minimize', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+    return { ok: true };
+  });
+  ipcMain.handle('window:toggleMaximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return { ok: false, maximized: false };
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return { ok: true, maximized: win.isMaximized() };
+  });
+  ipcMain.handle('window:close', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+    return { ok: true };
+  });
+  ipcMain.handle('window:isMaximized', (event) => {
+    return { maximized: Boolean(BrowserWindow.fromWebContents(event.sender)?.isMaximized()) };
+  });
+  ipcMain.handle('window:openExternalUrl', async (_event, url: string) => {
+    const target = new URL(String(url || ''));
+    if (!['https:', 'http:'].includes(target.protocol)) {
+      throw new Error(`Unsupported URL protocol: ${target.protocol}`);
+    }
+    await shell.openExternal(target.toString());
+    return { ok: true };
+  });
+
+  ipcMain.handle('workspace:get', () => {
+    return toIpcPayload(getWorkspaceSettings());
+  });
+
+  ipcMain.handle('workspace:put', (_event, body: Record<string, unknown>) => {
+    const plain = normalizeWorkspaceSettings(toIpcPayload(body));
+    ConsoleSettingsDao.set('workspace', plain);
+    return toIpcPayload(plain);
+  });
+
+  ipcMain.handle('workspace:patch', (_event, body: Record<string, unknown>) => {
+    return toIpcPayload(patchWorkspaceSettings(toIpcPayload(body) as WorkspaceSettings));
+  });
+
+  // Settings — all returns pass through toIpcPayload (structured-clone safe plain JSON)
+  ipcMain.handle('settings:listProviders', async () => {
+    const providers = await llm.providerRegistry.listProviders(workflowRoot);
+    return toIpcPayload({
+      providers: providers.map((provider: Record<string, unknown>) => providerSummaryForIpc(provider)),
+    });
+  });
+
+  ipcMain.handle('settings:getProvider', async (_event, id: string) => {
+    const provider = await llm.providerRegistry.getProvider(workflowRoot, id);
+    if (!provider) throw new Error('provider not found');
+    return toIpcPayload(providerSummaryForIpc(provider as Record<string, unknown>));
+  });
+
+  ipcMain.handle('settings:upsertProvider', async (_event, id: string, body: Record<string, unknown>) => {
+    const patch = toIpcPayload(body) as Record<string, unknown>;
+    const updated = await llm.providerRegistry.upsertProvider(workflowRoot, id, patch);
+    return toIpcPayload({ provider: providerSummaryForIpc(updated as Record<string, unknown>) });
+  });
+
+  ipcMain.handle('settings:deleteProvider', async (_event, id: string) => {
+    const removed = await llm.providerRegistry.removeProvider(workflowRoot, id);
+    return toIpcPayload({ removed });
+  });
+
+  ipcMain.handle('settings:testProvider', async (_event, id: string, overrides?: Record<string, unknown>) => {
+    try {
+      const opts = overrides && typeof overrides === 'object' ? overrides : {};
+      const apiKey = typeof opts.apiKey === 'string' ? opts.apiKey : undefined;
+      const baseUrl = typeof opts.baseUrl === 'string' ? opts.baseUrl : undefined;
+      const model = typeof opts.model === 'string' ? opts.model : undefined;
+      return toIpcPayload(await llm.testProvider(workflowRoot, id, { apiKey, baseUrl, model }));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return toIpcPayload({ ok: false, error: message });
+    }
+  });
+
+  ipcMain.handle('settings:fetchModels', async (_event, id: string, overrides?: Record<string, unknown>) => {
+    try {
+      const opts = overrides && typeof overrides === 'object' ? overrides : {};
+      const apiKey = typeof opts.apiKey === 'string' ? opts.apiKey : undefined;
+      const baseUrl = typeof opts.baseUrl === 'string' ? opts.baseUrl : undefined;
+      const persist = Boolean(opts.persist);
+      const result = await llm.listModelsForProvider(workflowRoot, id, { apiKey, baseUrl });
+      if (persist && result.ok && result.models?.length) {
+        await llm.providerRegistry.upsertProvider(workflowRoot, id, {
+          models: result.models.map((m) => ({ id: m.id, label: m.label || m.id })),
+        });
+      }
+      return toIpcPayload(result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return toIpcPayload({ ok: false, error: message });
+    }
+  });
+
+  ipcMain.handle('settings:fetchThinkingVariants', async (_event, providerId: string, modelId: string) => {
+    try {
+      return toIpcPayload(await llm.listThinkingVariants(workflowRoot, providerId, modelId));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return toIpcPayload({ ok: false, variants: [{ id: 'default', label: '默认' }], error: message });
+    }
+  });
+
+  ipcMain.handle('settings:getUi', () => {
+    return toIpcPayload(ConsoleSettingsDao.get('ui') || {});
+  });
+
+  ipcMain.handle('settings:putUi', (_event, body: Record<string, unknown>) => {
+    const plain = toIpcPayload(body) as Record<string, unknown>;
+    ConsoleSettingsDao.set('ui', plain);
+    return toIpcPayload(plain);
+  });
+
+  ipcMain.handle('settings:getPermissions', () => {
+    return toIpcPayload(ConsoleSettingsDao.get('permissions') || {});
+  });
+
+  ipcMain.handle('settings:putPermissions', (_event, body: Record<string, unknown>) => {
+    const plain = toIpcPayload(body) as Record<string, unknown>;
+    ConsoleSettingsDao.set('permissions', plain);
+    return toIpcPayload(plain);
+  });
+
+  ipcMain.handle('settings:getAgentExecution', () => {
+    const stored = toIpcPayload(ConsoleSettingsDao.get('agentExecution') || {}) as Record<string, unknown>;
+    return toIpcPayload(normalizeAgentExecutionSettings(stored));
+  });
+
+  ipcMain.handle('settings:putAgentExecution', async (_event, body: Record<string, unknown>) => {
+    const plain = normalizeAgentExecutionSettings(toIpcPayload(body) as Record<string, unknown>);
+    ConsoleSettingsDao.set('agentExecution', plain);
+    const { activateBinding, defaultEngine } = await import(
+      new URL('llm/invocation/index.ts', backendCoreUrl!).href,
+    );
+    const engine = defaultEngine();
+    plain.engine = engine;
+    const bindings = (plain.bindings || {}) as Record<string, { providerId?: string; modelId?: string }>;
+    const { resolveBindingStorageKey } = await import(
+      new URL('workflow/agent/runtime-adapters/index.ts', backendCoreUrl!).href,
+    );
+    const bindingKey = resolveBindingStorageKey(engine);
+    const binding = bindings[bindingKey];
+    if (binding?.providerId && binding?.modelId) {
+      const activated = await activateBinding(
+        workflowRoot,
+        engine,
+        binding.providerId,
+        binding.modelId,
+        plain,
+      );
+      return toIpcPayload({
+        ...plain,
+        bindings: activated.bindings,
+        lastSyncedAt: activated.lastSyncedAt,
+        activation: {
+          ok: activated.ok,
+          profileId: activated.profileId,
+          blocker: activated.blocker,
+          materialized: activated.materialized,
+        },
+      });
+    }
+    return toIpcPayload(plain);
+  });
+
+  ipcMain.handle('settings:getModelRoles', () => {
+    const stored = toIpcPayload(ConsoleSettingsDao.get('modelRoles') || {}) as Record<string, unknown>;
+    return toIpcPayload(stored);
+  });
+
+  ipcMain.handle('settings:putModelRoles', (_event, body: Record<string, unknown>) => {
+    const plain = toIpcPayload(body) as Record<string, unknown>;
+    ConsoleSettingsDao.set('modelRoles', plain);
+    return toIpcPayload(plain);
+  });
+
+  // ---- Agent runtime memory toggles (local runtime state) ----
+  const AGENT_RUNTIME_MEMORY_KEYS = ['autoMemoryEnabled', 'autoDreamEnabled', 'poorMode'] as const;
+
+  function agentRuntimeSettingsPath(): string | null {
+    if (!workflowRoot) return null;
+    return path.join(workflowRoot, 'runtime', 'agent-runtime-settings.json');
+  }
+
+  function readAgentRuntimeSettingsJson(): Record<string, unknown> {
+    const filePath = agentRuntimeSettingsPath();
+    if (!filePath) return {};
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+
+  function writeAgentRuntimeSettingsJson(patch: Record<string, unknown>): void {
+    const filePath = agentRuntimeSettingsPath();
+    if (!filePath) return;
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const existing = readAgentRuntimeSettingsJson();
+    const merged = { ...existing, ...patch };
+    fs.writeFileSync(filePath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+  }
+
+  ipcMain.handle('settings:getMemorySettings', () => {
+    const agentRuntimeSettings = readAgentRuntimeSettingsJson();
+    const result: Record<string, unknown> = {};
+    for (const key of AGENT_RUNTIME_MEMORY_KEYS) {
+      if (key in agentRuntimeSettings) result[key] = agentRuntimeSettings[key];
+    }
+    return toIpcPayload(result);
+  });
+
+  ipcMain.handle('settings:putMemorySettings', (_event, body: Record<string, unknown>) => {
+    const plain = toIpcPayload(body) as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
+    for (const key of AGENT_RUNTIME_MEMORY_KEYS) {
+      if (key in plain) patch[key] = plain[key];
+    }
+    writeAgentRuntimeSettingsJson(patch);
+    // 回读确认
+    const agentRuntimeSettings = readAgentRuntimeSettingsJson();
+    const result: Record<string, unknown> = {};
+    for (const key of AGENT_RUNTIME_MEMORY_KEYS) {
+      if (key in agentRuntimeSettings) result[key] = agentRuntimeSettings[key];
+    }
+    return toIpcPayload(result);
+  });
+
+  ipcMain.handle('settings:activateInvocation', async (_event, payload: Record<string, unknown> = {}) => {
+    const { activateBinding, defaultEngine } = await import(
+      new URL('llm/invocation/index.ts', backendCoreUrl!).href,
+    );
+    const request = toIpcPayload(payload) as Record<string, unknown>;
+    const stored = normalizeAgentExecutionSettings(
+      toIpcPayload(ConsoleSettingsDao.get('agentExecution') || {}) as Record<string, unknown>,
+    );
+    const engine = defaultEngine();
+    const providerId = String(request.providerId || '');
+    const modelId = String(request.modelId || '');
+    if (!providerId || !modelId) {
+      throw new Error('providerId and modelId are required');
+    }
+    const activated = await activateBinding(
+      workflowRoot,
+      engine,
+      providerId,
+      modelId,
+      { ...stored, engine },
+    );
+    return toIpcPayload(activated);
+  });
+
+  ipcMain.handle('settings:listCompatibleProviders', async (_event, engine?: string) => {
+    const { listCompatibleProviders, defaultEngine } = await import(
+      new URL('llm/invocation/index.ts', backendCoreUrl!).href,
+    );
+    const resolved = defaultEngine();
+    const providers = await listCompatibleProviders(resolved, workflowRoot);
+    return toIpcPayload({ engine: resolved, providers });
+  });
+
+  ipcMain.handle('settings:getAgentCapabilities', async () => {
+    const { getAgentCapabilitiesSnapshot } = await import(
+      new URL('workflow/agent/agent-capabilities.ts', backendCoreUrl!).href,
+    );
+    const agentExecution = ConsoleSettingsDao.get('agentExecution') || { engine: DEFAULT_AGENT_EXECUTION_ENGINE };
+    const engine = (agentExecution as { engine?: string }).engine || DEFAULT_AGENT_EXECUTION_ENGINE;
+    const snapshot = getAgentCapabilitiesSnapshot(workflowRoot, {
+      engine,
+    });
+    return toIpcPayload(snapshot);
+  });
+
+  ipcMain.handle('settings:putAgentToolAllow', async (_event, body: Record<string, unknown>) => {
+    const plain = toIpcPayload(body) as { toolId: string; allowed: boolean };
+    const { updateAgentToolAllow } = await import(
+      new URL('workflow/agent/agent-capabilities.ts', backendCoreUrl!).href,
+    );
+    const agentExecution = ConsoleSettingsDao.get('agentExecution') || { engine: DEFAULT_AGENT_EXECUTION_ENGINE };
+    const engine = (agentExecution as { engine?: string }).engine || DEFAULT_AGENT_EXECUTION_ENGINE;
+    const snapshot = updateAgentToolAllow(
+      workflowRoot,
+      plain.toolId,
+      Boolean(plain.allowed),
+    );
+    return toIpcPayload({ ...snapshot, engine });
+  });
+
+  ipcMain.handle('settings:putMcpServerEnabled', async (_event, body: Record<string, unknown>) => {
+    const plain = toIpcPayload(body) as { serverId: string; enabled: boolean };
+    const { updateMcpServerEnabled } = await import(
+      new URL('workflow/agent/agent-capabilities.ts', backendCoreUrl!).href,
+    );
+    const snapshot = updateMcpServerEnabled(workflowRoot, plain.serverId, Boolean(plain.enabled));
+    return toIpcPayload(snapshot);
+  });
+
+  ipcMain.handle('settings:putAgentSkillEnabled', async (_event, body: Record<string, unknown>) => {
+    const plain = toIpcPayload(body) as { skillPath: string; enabled: boolean };
+    const { updateAgentSkillEnabled } = await import(
+      new URL('workflow/agent/agent-capabilities.ts', backendCoreUrl!).href,
+    );
+    const snapshot = updateAgentSkillEnabled(
+      workflowRoot,
+      plain.skillPath,
+      Boolean(plain.enabled),
+    );
+    return toIpcPayload(snapshot);
+  });
+
+  ipcMain.handle('settings:createSkill', async (_event, body: Record<string, unknown>) => {
+    const plain = toIpcPayload(body) as { skill?: string; description?: string };
+    const { createNativeSkill } = await import(
+      new URL('desktop/native-skill-service.ts', backendCoreUrl!).href,
+    );
+    return toIpcPayload(createNativeSkill(
+      workflowRoot,
+      String(plain.skill || ''),
+      String(plain.description || ''),
+    ));
+  });
+
+  ipcMain.handle('settings:openCapabilityPath', async (_event, filePath: string) => {
+    const target = path.resolve(String(filePath || ''));
+    if (!fs.existsSync(target)) throw new Error(`File not found: ${target}`);
+    await shell.openPath(target);
+    return { ok: true };
+  });
+
+  ipcMain.handle('settings:syncProviderSeeds', async () => {
+    const { syncProviderSeeds } = await import(
+      new URL('llm/provider-seeds.ts', backendCoreUrl!).href,
+    );
+    const result = await syncProviderSeeds(workflowRoot);
+    return toIpcPayload(result);
+  });
+
+  ipcMain.handle('settings:probeAgentExecution', async (_event, body: Record<string, unknown> = {}) => {
+    if (!backendCoreUrl) {
+      throw new Error('Backend modules not loaded');
+    }
+    const { probeAgentExecution, defaultEngine } = await import(
+      new URL('workflow/agent/runtime-adapters/index.ts', backendCoreUrl).href,
+    );
+    const partial = toIpcPayload(body) as Record<string, unknown>;
+    const stored = toIpcPayload(ConsoleSettingsDao.get('agentExecution') || {}) as Record<string, unknown>;
+    const engine = defaultEngine();
+    const settings = { ...stored, ...partial, engine };
+    return toIpcPayload(probeAgentExecution(engine, settings, workflowRoot));
+  });
+
+
+  console.log('[ipc] IPC handlers initialized');
+}
+
+function registerAssetProtocol(): void {
+  if (assetProtocolRegistered) return;
+  protocol.handle('rmmv-asset', (request) => {
+    try {
+      return net.fetch(pathToFileURL(desktop.assets.resolveAssetRequest(workflowRoot, request.url)).toString());
+    } catch {
+      return new Response('not found', { status: 404 });
+    }
+  });
+  assetProtocolRegistered = true;
+}
+
+/**
+ * 清理 IPC 处理器
+ */
+export function cleanupIpcHandlers(): void {
+  cleanupSessionIpcHandlers(ipcMain);
+  cleanupMapIpcHandlers(ipcMain);
+  ipcMain.removeHandler('window:minimize');
+  ipcMain.removeHandler('window:toggleMaximize');
+  ipcMain.removeHandler('window:close');
+  ipcMain.removeHandler('window:isMaximized');
+  ipcMain.removeHandler('window:openExternalUrl');
+  ipcMain.removeHandler('workspace:get');
+  ipcMain.removeHandler('workspace:put');
+  ipcMain.removeHandler('workspace:patch');
+  ipcMain.removeHandler('settings:listProviders');
+  ipcMain.removeHandler('settings:getProvider');
+  ipcMain.removeHandler('settings:upsertProvider');
+  ipcMain.removeHandler('settings:deleteProvider');
+  ipcMain.removeHandler('settings:testProvider');
+  ipcMain.removeHandler('settings:fetchModels');
+  ipcMain.removeHandler('settings:fetchThinkingVariants');
+  ipcMain.removeHandler('settings:getUi');
+  ipcMain.removeHandler('settings:putUi');
+  ipcMain.removeHandler('settings:getPermissions');
+  ipcMain.removeHandler('settings:putPermissions');
+  ipcMain.removeHandler('settings:getAgentExecution');
+  ipcMain.removeHandler('settings:putAgentExecution');
+  ipcMain.removeHandler('settings:getModelRoles');
+  ipcMain.removeHandler('settings:putModelRoles');
+  ipcMain.removeHandler('settings:activateInvocation');
+  ipcMain.removeHandler('settings:listCompatibleProviders');
+  ipcMain.removeHandler('settings:syncProviderSeeds');
+  ipcMain.removeHandler('settings:probeAgentExecution');
+  ipcMain.removeHandler('settings:getAgentCapabilities');
+  ipcMain.removeHandler('settings:putAgentToolAllow');
+  ipcMain.removeHandler('settings:putMcpServerEnabled');
+  ipcMain.removeHandler('settings:putAgentSkillEnabled');
+  ipcMain.removeHandler('settings:createSkill');
+  ipcMain.removeHandler('settings:openCapabilityPath');
+  if (assetProtocolRegistered) {
+    protocol.unhandle('rmmv-asset');
+    assetProtocolRegistered = false;
+  }
+  agentSessionRuntime?.close().catch((error: Error) => console.warn('[ipc] Agent runtime close failed:', error.message));
+  agentSessionRuntime = null;
+  console.log('[ipc] IPC handlers cleaned up');
+}

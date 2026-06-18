@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-view">
+  <div class="settings-view" :data-ui-id="`settings-view-${activeName}`">
     <div class="settings-body">
       <div v-if="store.loading" class="settings-loading-bar">正在读取设置…</div>
       <div v-if="store.lastError" class="settings-error-bar">
@@ -9,7 +9,15 @@
       <div class="console-split settings-split">
         <aside class="console-panel settings-nav">
           <div class="console-panel-scroll">
-            <button v-for="tab in tabList" :key="tab.name" type="button" class="folder" :class="{ active: activeName === tab.name }" @click="activeName = tab.name">{{ tab.label }}</button>
+            <button
+              v-for="tab in tabList"
+              :key="tab.name"
+              type="button"
+              class="folder"
+              :data-ui-id="`settings-tab-${tab.name}`"
+              :class="{ active: activeName === tab.name }"
+              @click="activeName = tab.name"
+            >{{ tab.label }}</button>
           </div>
         </aside>
 
@@ -20,7 +28,7 @@
             <section v-if="activeName === 'model-engine'" class="settings-tab-content">
               <h3>模型</h3>
               <div class="provider-actions">
-                <button class="workbench-button" @click="onManageProviders">管理供应商</button>
+                <button class="workbench-button" data-ui-id="settings-manage-providers" @click="onManageProviders">管理供应商</button>
               </div>
 
               <div v-if="importPresetsMessage" class="alert" :class="importPresetsError ? 'alert-error' : 'alert-success'">
@@ -44,13 +52,13 @@
                 <div>
                   <strong>尚无 API 供应商</strong>
                   <p class="opencode-alert-body">先同步内置供应商，填写 API Key 后设为默认；换模型在聊天框旁操作。</p>
-                  <button class="workbench-button primary" :disabled="importPresetsLoading" @click="onSyncProviderSeeds">{{ importPresetsLoading ? '同步中…' : '同步供应商' }}</button>
+                  <button class="workbench-button primary" data-ui-id="settings-sync-providers-empty" :disabled="importPresetsLoading" @click="onSyncProviderSeeds">{{ importPresetsLoading ? '同步中…' : '同步供应商' }}</button>
                 </div>
               </div>
 
               <div class="provider-list-header">
                 <h4 class="provider-list-title">API</h4>
-                <button class="workbench-button primary add-api-btn" title="添加 API" @click="openAddProviderDialog">+ 添加</button>
+                <button class="workbench-button primary add-api-btn" data-ui-id="settings-add-api" title="添加 API" @click="openAddProviderDialog">+ 添加</button>
               </div>
 
               <div v-if="displayedProviders.length" class="provider-card-list">
@@ -129,7 +137,7 @@
                             <button class="workbench-link" :disabled="visibilitySavingProviderId === p.id" @click="onHideAllModels(p)">全部隐藏</button>
                           </div>
                         </div>
-                        <input v-model="modelVisibilitySearch" class="settings-input model-visibility-search" placeholder="搜索模型" />
+                        <input v-model="modelVisibilitySearch" data-ui-id="settings-model-visibility-search" class="settings-input model-visibility-search" placeholder="搜索模型" />
                         <div v-if="filteredVisibilityModels(p).length" class="model-visibility-list">
                           <label v-for="model in filteredVisibilityModels(p)" :key="model.id" class="model-visibility-row">
                             <span class="model-visibility-copy">
@@ -149,7 +157,7 @@
                 </article>
               </div>
               <div v-else-if="!showOpencodeProviderEmptyAlert" class="configured-empty">
-                <div class="empty-state"><p>尚未配置 API，点击下方按钮添加</p><button class="workbench-button primary" @click="openAddProviderDialog">+ 添加 API</button></div>
+                <div class="empty-state"><p>尚未配置 API，点击下方按钮添加</p><button class="workbench-button primary" data-ui-id="settings-add-api-empty" @click="openAddProviderDialog">+ 添加 API</button></div>
               </div>
 
               <Teleport to="body">
@@ -157,7 +165,7 @@
                   <div class="settings-dialog">
                     <div class="dialog-header"><h4>添加 API</h4><button class="dialog-close-btn" @click="closeAddDialog">&times;</button></div>
                     <div class="dialog-body">
-                      <input v-model="addProviderSearch" class="settings-input" placeholder="搜索名称、ID 或 Base URL…" />
+                      <input v-model="addProviderSearch" data-ui-id="settings-add-provider-search" class="settings-input" placeholder="搜索名称、ID 或 Base URL…" />
                       <div v-if="filteredAvailableToAdd.length" class="add-provider-list">
                         <button v-for="p in filteredAvailableToAdd" :key="p.id" type="button" class="add-provider-item" @click="onPickProviderToAdd(p)">
                           <span class="add-provider-name">{{ providerDisplayName(p) }}</span>
@@ -168,8 +176,8 @@
                       <div v-else class="empty-state">{{ availableToAddProviders.length ? '无匹配结果' : '暂无可添加的供应商，请先同步供应商' }}</div>
                     </div>
                     <div class="dialog-footer">
-                      <button class="workbench-button" :disabled="importPresetsLoading" @click="onImportFromAddDialog">{{ importPresetsLoading ? '同步中…' : '同步供应商' }}</button>
-                      <button class="workbench-button" @click="onCustomProviderFromAddDialog">自定义供应商</button>
+                      <button class="workbench-button" data-ui-id="settings-add-dialog-sync-providers" :disabled="importPresetsLoading" @click="onImportFromAddDialog">{{ importPresetsLoading ? '同步中…' : '同步供应商' }}</button>
+                      <button class="workbench-button" data-ui-id="settings-add-dialog-custom-provider" @click="onCustomProviderFromAddDialog">自定义供应商</button>
                     </div>
                   </div>
                 </div>
@@ -242,7 +250,7 @@
 
               <div class="model-engine-footer">
                 <div class="footer-actions">
-                  <button class="workbench-button primary" :disabled="store.loading" @click="onSaveModelEngine">{{ store.loading ? '保存中…' : '保存并同步' }}</button>
+                  <button class="workbench-button primary" data-ui-id="settings-save-model-engine" :disabled="store.loading" @click="onSaveModelEngine">{{ store.loading ? '保存中…' : '保存并同步' }}</button>
                 </div>
                 <div v-if="syncStatus" class="alert alert-info"><span class="alert-icon">i</span> {{ syncStatus }}</div>
               </div>
@@ -253,8 +261,8 @@
               <h3>API</h3>
               <p class="desc">管理本地保存的模型供应商。</p>
               <div class="provider-actions">
-                <button class="workbench-button primary" @click="onAddProviderClick">+ 添加供应商</button>
-                <button class="workbench-button" :disabled="importPresetsLoading" @click="onSyncProviderSeeds">{{ importPresetsLoading ? '同步中…' : '同步供应商' }}</button>
+                <button class="workbench-button primary" data-ui-id="settings-provider-add" @click="onAddProviderClick">+ 添加供应商</button>
+                <button class="workbench-button" data-ui-id="settings-provider-sync" :disabled="importPresetsLoading" @click="onSyncProviderSeeds">{{ importPresetsLoading ? '同步中…' : '同步供应商' }}</button>
               </div>
               <div v-if="store.providers.length" class="table-wrap">
                 <table class="settings-table">
@@ -275,10 +283,10 @@
             <section v-if="activeName === 'ui'" class="settings-tab-content">
               <h3>界面</h3>
               <div class="settings-form">
-                <div class="form-group"><label class="form-label">主题</label><select v-model="uiForm.theme" class="settings-select" style="width:240px"><option value="auto">跟随系统</option><option value="rpgmv">RPGMV 经典</option><option value="saas">浅色极简</option></select></div>
-                <div class="form-group"><label class="form-label">聊天字号</label><div class="number-input"><button class="workbench-button num-btn" @click="uiForm.fontSize = Math.max(11, uiForm.fontSize - 1)">-</button><input type="number" v-model.number="uiForm.fontSize" min="11" max="22" class="settings-input num-input-field" /><button class="workbench-button num-btn" @click="uiForm.fontSize = Math.min(22, uiForm.fontSize + 1)">+</button></div></div>
-                <div class="form-group"><label class="form-label">聊天面板宽度</label><div class="number-input"><button class="workbench-button num-btn" @click="uiForm.chatWidth = Math.max(320, uiForm.chatWidth - 10)">-</button><input type="number" v-model.number="uiForm.chatWidth" min="320" max="960" step="10" class="settings-input num-input-field" /><button class="workbench-button num-btn" @click="uiForm.chatWidth = Math.min(960, uiForm.chatWidth + 10)">+</button></div></div>
-                <div class="form-group"><button class="workbench-button primary" :disabled="store.loading" @click="onSaveUi">{{ store.loading ? '保存中…' : '保存界面设置' }}</button></div>
+                <div class="form-group"><label class="form-label">主题</label><select v-model="uiForm.theme" data-ui-id="settings-ui-theme" class="settings-select" style="width:240px"><option value="auto">跟随系统</option><option value="rpgmv">RPGMV 经典</option><option value="saas">浅色极简</option></select></div>
+                <div class="form-group"><label class="form-label">聊天字号</label><div class="number-input"><button class="workbench-button num-btn" data-ui-id="settings-ui-font-size-dec" @click="uiForm.fontSize = Math.max(11, uiForm.fontSize - 1)">-</button><input type="number" v-model.number="uiForm.fontSize" data-ui-id="settings-ui-font-size" min="11" max="22" class="settings-input num-input-field" /><button class="workbench-button num-btn" data-ui-id="settings-ui-font-size-inc" @click="uiForm.fontSize = Math.min(22, uiForm.fontSize + 1)">+</button></div></div>
+                <div class="form-group"><label class="form-label">聊天面板宽度</label><div class="number-input"><button class="workbench-button num-btn" data-ui-id="settings-ui-chat-width-dec" @click="uiForm.chatWidth = Math.max(320, uiForm.chatWidth - 10)">-</button><input type="number" v-model.number="uiForm.chatWidth" data-ui-id="settings-ui-chat-width" min="320" max="960" step="10" class="settings-input num-input-field" /><button class="workbench-button num-btn" data-ui-id="settings-ui-chat-width-inc" @click="uiForm.chatWidth = Math.min(960, uiForm.chatWidth + 10)">+</button></div></div>
+                <div class="form-group"><button class="workbench-button primary" data-ui-id="settings-ui-save" :disabled="store.loading" @click="onSaveUi">{{ store.loading ? '保存中…' : '保存界面设置' }}</button></div>
               </div>
             </section>
 

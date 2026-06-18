@@ -38,16 +38,16 @@ async function openDocs() {
   }
 }
 
-const menus: { key: string; label: string; items: { label: string; shortcut?: string; action: MenuAction }[] }[] = [
+const menus: { key: string; label: string; items: { key: string; label: string; shortcut?: string; action: MenuAction }[] }[] = [
   { key: 'file', label: '文件', items: [
-    { label: '保存', shortcut: 'Ctrl+S', action: () => emitEditorCommand('save') },
+    { key: 'save', label: '保存', shortcut: 'Ctrl+S', action: () => emitEditorCommand('save') },
   ]},
   { key: 'edit', label: '编辑', items: [
-    { label: '撤销', shortcut: 'Ctrl+Z', action: () => emitEditorCommand('undo') },
-    { label: '重做', shortcut: 'Ctrl+Shift+Z', action: () => emitEditorCommand('redo') },
+    { key: 'undo', label: '撤销', shortcut: 'Ctrl+Z', action: () => emitEditorCommand('undo') },
+    { key: 'redo', label: '重做', shortcut: 'Ctrl+Shift+Z', action: () => emitEditorCommand('redo') },
   ]},
   { key: 'help', label: '帮助', items: [
-    { label: '文档', action: openDocs },
+    { key: 'docs', label: '文档', action: openDocs },
   ]},
 ];
 
@@ -137,6 +137,7 @@ onUnmounted(() => {
     <button
       type="button"
       class="topbar-btn rail-toggle"
+      data-ui-id="topbar-rail-toggle"
       :title="ui.appRailOpen ? '收起导航' : '展开导航'"
       :aria-label="ui.appRailOpen ? '收起导航' : '展开导航'"
       @click="ui.toggleAppRail"
@@ -149,6 +150,7 @@ onUnmounted(() => {
       v-for="menu in menus"
       :key="menu.key"
       class="menu-item"
+      :data-ui-id="`topbar-menu-${menu.key}`"
       :class="{ open: openMenu === menu.key }"
       @click.stop="toggleMenu(menu.key)"
     >
@@ -156,8 +158,9 @@ onUnmounted(() => {
       <div v-if="openMenu === menu.key" class="dropdown">
         <div
           v-for="item in menu.items"
-          :key="item.label"
+          :key="item.key"
           class="dd-item"
+          :data-ui-id="`topbar-menu-${menu.key}-${item.key}`"
           @click.stop="onMenuAction(item.action)"
         >
           <span>{{ item.label }}</span>
@@ -172,6 +175,7 @@ onUnmounted(() => {
     <button
       type="button"
       class="sidebar-toggle"
+      data-ui-id="topbar-agent-panel-toggle"
       :aria-pressed="ui.agentPanelOpen"
       title="切换辅助侧栏 (Ctrl+L)"
       @click="ui.toggleAgentPanel"
@@ -180,15 +184,15 @@ onUnmounted(() => {
     </button>
 
     <div class="window-controls" aria-label="窗口控制">
-      <button type="button" class="window-btn" title="最小化" aria-label="最小化" @click="minimizeWindow"><Minus :size="15" :stroke-width="1.5" /></button>
-      <button type="button" class="window-btn" :title="maximized ? '还原' : '最大化'" :aria-label="maximized ? '还原' : '最大化'" @click="toggleMaximizeWindow">
+      <button type="button" class="window-btn" data-ui-id="window-minimize" title="最小化" aria-label="最小化" @click="minimizeWindow"><Minus :size="15" :stroke-width="1.5" /></button>
+      <button type="button" class="window-btn" data-ui-id="window-maximize-toggle" :title="maximized ? '还原' : '最大化'" :aria-label="maximized ? '还原' : '最大化'" @click="toggleMaximizeWindow">
         <svg v-if="maximized" class="window-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="8" y="4" width="12" height="12" rx="1.5" />
           <path d="M16 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1h3" />
         </svg>
         <Square v-else :size="15" :stroke-width="1.5" />
       </button>
-      <button type="button" class="window-btn close" title="关闭" aria-label="关闭" @click="closeWindow"><XIcon :size="15" :stroke-width="1.5" /></button>
+      <button type="button" class="window-btn close" data-ui-id="window-close" title="关闭" aria-label="关闭" @click="closeWindow"><XIcon :size="15" :stroke-width="1.5" /></button>
     </div>
   </header>
 </template>

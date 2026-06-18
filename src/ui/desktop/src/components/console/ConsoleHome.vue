@@ -34,7 +34,7 @@ const cards = [
 </script>
 
 <template>
-  <section class="console-home">
+  <section class="console-home" data-ui-id="console-home">
     <header>
       <div class="hero-copy">
         <h1>控制台</h1>
@@ -61,7 +61,14 @@ const cards = [
     </div>
 
     <div class="card-grid" :class="{ 'has-five': cards.length === 5 }">
-      <button v-for="card in cards" :key="card.page" type="button" class="home-card" @click="emit('navigate', card.page)">
+      <button
+        v-for="card in cards"
+        :key="card.page"
+        type="button"
+        class="home-card"
+        :data-ui-id="`console-card-${card.page}`"
+        @click="emit('navigate', card.page)"
+      >
         <span class="card-top">
           <span class="card-icon" :class="card.tone"><component :is="card.icon" /></span>
           <span class="card-arrow">→</span>

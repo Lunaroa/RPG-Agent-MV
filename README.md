@@ -116,10 +116,10 @@ cd RPG-Agent-MV
 npm run install:deps
 ```
 
-如果要在源码模式下直接使用本地 Agent，或在当前机器构建安装包，再显式准备一次运行工具：
+如果要在源码模式下直接使用本地 Agent，或在当前机器构建安装包，再显式构建一次运行工具：
 
 ```powershell
-npm run prepare:agent-runtime:download
+npm run build:opencode-runtime
 ```
 
 ### 启动桌面端

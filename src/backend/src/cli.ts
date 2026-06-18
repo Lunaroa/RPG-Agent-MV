@@ -244,12 +244,13 @@ const commandRunners: Record<string, (rest: string[]) => unknown> = {
 
 function buildUiControlCommand(args: ParsedArgs): Record<string, unknown> {
   const type = String(args.command || "capture-current");
-  if (!["capture-current", "navigate", "open-event-editor", "state"].includes(type)) {
-    throw new Error("--command must be capture-current, navigate, open-event-editor, or state");
+  if (!["capture-current", "navigate", "open-event-editor", "state", "click", "input", "key", "read", "wait"].includes(type)) {
+    throw new Error("--command must be capture-current, navigate, open-event-editor, state, click, input, key, read, or wait");
   }
   const command: Record<string, unknown> = {
     type,
     label: args.label,
+    capture: args.capture,
     waitMs: args.waitMs,
     timeoutMs: args.timeoutMs,
   };
@@ -263,7 +264,31 @@ function buildUiControlCommand(args: ParsedArgs): Record<string, unknown> {
     command.mapId = args.mapId;
     command.eventId = args.eventId;
   }
+  if (["click", "input", "read", "wait"].includes(type)) {
+    addUiControlElementTarget(command, args, type);
+  }
+  if (type === "input") {
+    if (args.text === undefined) throw new Error("--text is required for ui-control --command input");
+    command.text = args.text;
+  }
+  if (type === "key") {
+    if (args.selector || args.testId) addUiControlElementTarget(command, args, type);
+    if (!args.key) throw new Error("--key is required for ui-control --command key");
+    command.key = args.key;
+    if (args.modifiers) command.modifiers = args.modifiers;
+  }
+  if (type === "wait") {
+    if (args.condition) command.condition = args.condition;
+    if (args.expect !== undefined) command.expect = args.expect;
+  }
   return Object.fromEntries(Object.entries(command).filter(([, value]) => value !== undefined));
+}
+
+function addUiControlElementTarget(command: Record<string, unknown>, args: ParsedArgs, type: string): void {
+  if (args.selector && args.testId) throw new Error("Use either --selector or --test-id, not both");
+  if (!args.selector && !args.testId) throw new Error(`--selector or --test-id is required for ui-control --command ${type}`);
+  if (args.selector) command.selector = args.selector;
+  if (args.testId) command.testId = args.testId;
 }
 
 async function sendUiControlCommand(workflowRoot: string, command: Record<string, unknown>): Promise<Record<string, unknown>> {

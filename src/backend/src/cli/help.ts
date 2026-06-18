@@ -25,6 +25,11 @@ Dev tools:
   npm --prefix src/backend run cli -- ui-control --command navigate --target console-settings [--format json]
   npm --prefix src/backend run cli -- ui-control --command open-event-editor --map-id 1 --event-id 3 [--format json]
   npm --prefix src/backend run cli -- ui-control --command state [--format json]
+  npm --prefix src/backend run cli -- ui-control --command read --test-id chat-input [--format json]
+  npm --prefix src/backend run cli -- ui-control --command wait --test-id chat-input [--condition visible] [--format json]
+  npm --prefix src/backend run cli -- ui-control --command input --test-id chat-input --text "测试消息" [--format json]
+  npm --prefix src/backend run cli -- ui-control --command key --test-id chat-input --key Enter [--format json]
+  npm --prefix src/backend run cli -- ui-control --command click --test-id chat-send [--format json]
   npm --prefix src/backend run cli -- workspace-prune-legacy [--dry-run]
 `);
 }

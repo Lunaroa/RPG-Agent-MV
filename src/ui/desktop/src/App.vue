@@ -10,8 +10,10 @@ import { useWorkbenchUiStore } from './stores/workbenchUi'
 import { useWorkspaceStore } from './stores/workspace'
 import { applyUiTheme } from './utils/applyUiTheme'
 import {
+  collectUiControlPageState,
   getEditorUiControlState,
   openEditorEventFromUiControl,
+  runDomUiControlCommand,
   type UiControlCommand,
   type UiControlEnvelope,
 } from './utils/uiControl'
@@ -33,8 +35,21 @@ const consolePage = computed(() => {
 
 async function settleUiControlView() {
   await nextTick()
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  await animationFrameOrDelay()
+  await animationFrameOrDelay()
+}
+
+function animationFrameOrDelay() {
+  return new Promise<void>((resolve) => {
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      resolve()
+    }
+    requestAnimationFrame(finish)
+    window.setTimeout(finish, 80)
+  })
 }
 
 function uiControlState(extra: Record<string, unknown> = {}) {
@@ -52,6 +67,7 @@ function uiControlState(extra: Record<string, unknown> = {}) {
     appRailOpen: workbenchUi.appRailOpen,
     agentPanelOpen: workbenchUi.agentPanelOpen,
     editor: getEditorUiControlState(),
+    dom: collectUiControlPageState(),
     ...extra,
   }
 }
@@ -97,6 +113,11 @@ async function handleUiControlCommand(command: UiControlCommand) {
     return uiControlState({ editor })
   }
   if (command.type === 'capture-current') return uiControlState()
+  if (['click', 'input', 'key', 'read', 'wait'].includes(command.type)) {
+    const action = await runDomUiControlCommand(command)
+    await settleUiControlView()
+    return uiControlState({ action })
+  }
   throw new Error(`不支持的 UI 控制命令：${command.type}`)
 }
 
@@ -143,11 +164,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-layout">
+  <div class="app-layout" data-ui-id="app-root">
     <TopBar />
     <div class="workspace-shell">
       <AppRail v-if="workbenchUi.appRailOpen" />
-      <main class="main-content">
+      <main class="main-content" data-ui-id="app-main">
         <div v-if="booting" class="app-state-card">正在读取项目…</div>
         <div v-else-if="bootError" class="app-state-card error">{{ bootError }}</div>
         <router-view v-else />

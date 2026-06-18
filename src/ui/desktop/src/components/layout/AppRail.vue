@@ -6,8 +6,8 @@ import { Grid, Monitor, Setting } from '@element-plus/icons-vue'
 const route = useRoute()
 
 const items = [
-  { path: '/workbench', label: '编辑器', icon: Grid },
-  { path: '/console', label: '控制台', icon: Monitor },
+  { path: '/workbench', label: '编辑器', icon: Grid, uiId: 'nav-workbench' },
+  { path: '/console', label: '控制台', icon: Monitor, uiId: 'nav-console' },
 ]
 
 const activePath = computed(() => route.path === '/console' ? '/console' : '/workbench')
@@ -21,6 +21,7 @@ const activePath = computed(() => route.path === '/console' ? '/console' : '/wor
         :key="item.path"
         :to="item.path"
         class="app-rail-item"
+        :data-ui-id="item.uiId"
         :class="{ active: activePath === item.path }"
         :title="item.label"
         :aria-label="item.label"
@@ -33,6 +34,7 @@ const activePath = computed(() => route.path === '/console' ? '/console' : '/wor
     <router-link
       :to="{ path: '/console', query: { page: 'settings' } }"
       class="app-rail-item app-rail-settings"
+      data-ui-id="nav-settings"
       title="设置"
       aria-label="设置"
     >

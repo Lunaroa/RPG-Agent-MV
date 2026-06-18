@@ -1,23 +1,23 @@
 <template>
   <teleport to="body">
-    <div v-if="visible" class="ev-modal-overlay editor-modal-overlay" :data-editor-dialog-layer="LAYER_Z.eventEditor" @mousedown.self="requestClose">
-      <section ref="modalRef" class="ev-modal editor-modal-shell" role="dialog" aria-modal="true" aria-labelledby="event-editor-title">
+    <div v-if="visible" class="ev-modal-overlay editor-modal-overlay" data-ui-id="event-editor-overlay" :data-editor-dialog-layer="LAYER_Z.eventEditor" @mousedown.self="requestClose">
+      <section ref="modalRef" class="ev-modal editor-modal-shell" data-ui-id="event-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="event-editor-title">
         <header class="ev-title-bar editor-modal-header">
           <h3 id="event-editor-title" class="editor-modal-title">{{ draft?.id ? `ID:${String(draft.id).padStart(3, '0')} - 事件编辑器` : '新建事件' }}</h3>
-          <button type="button" class="editor-modal-close" aria-label="关闭事件编辑器" title="关闭" @click="requestClose">×</button>
+          <button type="button" class="editor-modal-close" data-ui-id="event-editor-close" aria-label="关闭事件编辑器" title="关闭" @click="requestClose">×</button>
         </header>
         <template v-if="draft">
           <div class="ev-meta-bar">
-            <label class="ev-inline-field name"><span>名称</span><input v-model="draft.name" :disabled="shellLocked" @input="markDirty" /></label>
-            <label class="ev-inline-field note"><span>备注</span><input v-model="draft.note" :disabled="shellLocked" @input="markDirty" /></label>
-            <label class="ev-inline-field coord"><span>X</span><input v-model.number="draft.x" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
-            <label class="ev-inline-field coord"><span>Y</span><input v-model.number="draft.y" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
+            <label class="ev-inline-field name"><span>名称</span><input v-model="draft.name" data-ui-id="event-editor-name" :disabled="shellLocked" @input="markDirty" /></label>
+            <label class="ev-inline-field note"><span>备注</span><input v-model="draft.note" data-ui-id="event-editor-note" :disabled="shellLocked" @input="markDirty" /></label>
+            <label class="ev-inline-field coord"><span>X</span><input v-model.number="draft.x" data-ui-id="event-editor-x" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
+            <label class="ev-inline-field coord"><span>Y</span><input v-model.number="draft.y" data-ui-id="event-editor-y" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
             <div class="ev-toolbar-group page-tools" aria-label="事件页操作">
-              <button type="button" class="ev-tool-btn" @click="addPage">新页</button>
-              <button type="button" class="ev-tool-btn" @click="copyPage">复制页</button>
-              <button type="button" class="ev-tool-btn" :disabled="!pageClipboard" @click="pastePage">粘贴页</button>
-              <button type="button" class="ev-tool-btn" :disabled="currentPageLocked" @click="clearPage">清空页</button>
-              <button type="button" class="ev-tool-btn danger" :disabled="currentPageLocked || draft.pages.length <= 1" @click="deletePage">删页</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-add" @click="addPage">新页</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-copy" @click="copyPage">复制页</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-paste" :disabled="!pageClipboard" @click="pastePage">粘贴页</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-clear" :disabled="currentPageLocked" @click="clearPage">清空页</button>
+              <button type="button" class="ev-tool-btn danger" data-ui-id="event-editor-page-delete" :disabled="currentPageLocked || draft.pages.length <= 1" @click="deletePage">删页</button>
             </div>
           </div>
           <div v-if="shellLocked || currentPageLocked" class="ev-lock-banner">
@@ -97,9 +97,9 @@
           <footer class="ev-footer">
             <span class="ev-save-status">{{ dirty ? '有未保存修改' : '已保存到暂存' }}</span>
             <div class="ev-footer-actions">
-              <button type="button" class="ev-tool-btn" @click="requestClose">取消</button>
-              <button type="button" class="ev-tool-btn" :disabled="!dirty || saving" @click="$emit('save', false)">{{ saving ? '保存中…' : '应用' }}</button>
-              <button type="button" class="ev-tool-btn primary" :disabled="!dirty || saving" @click="$emit('save', true)">{{ saving ? '保存中…' : '确定' }}</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-cancel" @click="requestClose">取消</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-apply" :disabled="!dirty || saving" @click="$emit('save', false)">{{ saving ? '保存中…' : '应用' }}</button>
+              <button type="button" class="ev-tool-btn primary" data-ui-id="event-editor-ok" :disabled="!dirty || saving" @click="$emit('save', true)">{{ saving ? '保存中…' : '确定' }}</button>
             </div>
           </footer>
         </template>

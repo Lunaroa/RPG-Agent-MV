@@ -1,7 +1,8 @@
 <template>
-  <div class="chat-view">
+  <div class="chat-view" data-ui-id="chat-view">
     <ConversationList
       v-if="view === 'history'"
+      data-ui-id="chat-history"
       :sessions="historySessions"
       :active-id="activeSession?.id"
       :loading="historyLoading"
@@ -16,6 +17,7 @@
     <div
       v-else
       class="chat-pane"
+      data-ui-id="chat-pane"
       :class="{ 'is-empty-chat': segments.length === 0 && !isRunning }"
     >
       <header class="chat-header">

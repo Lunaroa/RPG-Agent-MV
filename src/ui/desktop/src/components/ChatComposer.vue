@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-composer-wrap">
+  <div class="chat-composer-wrap" data-ui-id="chat-composer">
     <div
       class="chat-composer"
       :class="{ 'is-focused': focused, 'has-text': !!modelValue.trim() }"
@@ -7,6 +7,7 @@
       <textarea
         ref="textareaRef"
         class="composer-textarea"
+        data-ui-id="chat-input"
         :value="modelValue"
         rows="1"
         placeholder="描述目标或要求后续变更…"
@@ -20,7 +21,7 @@
         <div class="composer-footer-left">
           <el-popover placement="top-start" :width="300" trigger="click">
             <template #reference>
-              <button type="button" class="composer-icon-btn" title="更多" aria-label="更多">
+              <button type="button" class="composer-icon-btn" data-ui-id="chat-more" title="更多" aria-label="更多">
                 <span class="composer-plus">+</span>
               </button>
             </template>
@@ -58,6 +59,7 @@
           <button
             type="button"
             class="composer-send-btn"
+            data-ui-id="chat-send"
             :class="{ 'is-stop': isRunning }"
             :disabled="!isRunning && !modelValue.trim()"
             :title="isRunning ? '停止' : '发送（Enter）'"

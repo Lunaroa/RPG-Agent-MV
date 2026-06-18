@@ -136,7 +136,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="console-view">
+  <div class="console-view" :data-ui-id="`console-view-${currentPage}`">
     <ConsoleHome
       v-if="currentPage === 'home'"
       :asset-count="assetCount"
@@ -147,9 +147,9 @@ onMounted(async () => {
       :project-stats-error="projectStatsError"
       @navigate="go"
     />
-    <section v-else class="console-page">
+    <section v-else class="console-page" :data-ui-id="`console-page-${currentPage}`">
       <nav class="console-breadcrumb" aria-label="控制台路径">
-        <button type="button" class="back-button" @click="go('home')"><ArrowLeft /><span>控制台</span></button>
+        <button type="button" class="back-button" data-ui-id="console-back-home" @click="go('home')"><ArrowLeft /><span>控制台</span></button>
         <span>/</span>
         <strong>{{ titles[currentPage] }}</strong>
       </nav>

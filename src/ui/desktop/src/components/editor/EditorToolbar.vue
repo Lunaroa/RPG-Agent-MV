@@ -1,13 +1,13 @@
 <template>
-  <header class="editor-toolbar">
-    <button v-for="entry in tools" :key="entry.id" type="button" class="tool-button" :class="{ active: tool === entry.id }" :disabled="mode !== 'map' || busy" :title="entry.label" @click="$emit('update:tool', entry.id)">
+  <header class="editor-toolbar" data-ui-id="editor-toolbar">
+    <button v-for="entry in tools" :key="entry.id" type="button" class="tool-button" :data-ui-id="`editor-tool-${entry.id}`" :class="{ active: tool === entry.id }" :disabled="mode !== 'map' || busy" :title="entry.label" @click="$emit('update:tool', entry.id)">
       <component :is="entry.icon" />
     </button>
     <span class="toolbar-separator" />
     <div class="paint-mode-group" aria-label="地图绘制层">
-      <button type="button" :class="{ active: paintMode === 'tile' }" :disabled="mode !== 'map' || busy" title="图块层" @click="$emit('update:paintMode', 'tile')"><Brush />图块</button>
-      <button type="button" :class="{ active: paintMode === 'shadow' }" :disabled="mode !== 'map' || busy" title="阴影层" @click="$emit('update:paintMode', 'shadow')"><Sunny />阴影</button>
-      <button type="button" :class="{ active: paintMode === 'region' }" :disabled="mode !== 'map' || busy" title="区域 ID 层" @click="$emit('update:paintMode', 'region')"><Grid />区域</button>
+      <button type="button" data-ui-id="editor-paint-tile" :class="{ active: paintMode === 'tile' }" :disabled="mode !== 'map' || busy" title="图块层" @click="$emit('update:paintMode', 'tile')"><Brush />图块</button>
+      <button type="button" data-ui-id="editor-paint-shadow" :class="{ active: paintMode === 'shadow' }" :disabled="mode !== 'map' || busy" title="阴影层" @click="$emit('update:paintMode', 'shadow')"><Sunny />阴影</button>
+      <button type="button" data-ui-id="editor-paint-region" :class="{ active: paintMode === 'region' }" :disabled="mode !== 'map' || busy" title="区域 ID 层" @click="$emit('update:paintMode', 'region')"><Grid />区域</button>
     </div>
     <div v-if="paintMode === 'shadow'" class="shadow-picker" title="阴影四象限">
       <button
@@ -23,6 +23,7 @@
     <input
       v-if="paintMode === 'region'"
       class="paint-value"
+      data-ui-id="editor-region-id"
       type="number"
       min="0"
       max="255"
@@ -32,21 +33,21 @@
       @input="$emit('update:regionId', normalizeNumber(($event.target as HTMLInputElement).value, 0, 255))"
     />
     <div class="overlay-group" aria-label="地图叠层">
-      <button type="button" :class="{ active: showRegions }" :disabled="mode !== 'map' || busy" title="显示区域 ID 叠层" @click="$emit('update:showRegions', !showRegions)"><Grid />区域</button>
-      <button type="button" :class="{ active: showTileFlags }" :disabled="mode !== 'map' || busy || !tileFlagsAvailable" :title="tileFlagsAvailable ? '显示通行与地形标记' : '当前 tileset 没有 flags 数据'" @click="$emit('update:showTileFlags', !showTileFlags)"><Grid />标记</button>
+      <button type="button" data-ui-id="editor-overlay-regions" :class="{ active: showRegions }" :disabled="mode !== 'map' || busy" title="显示区域 ID 叠层" @click="$emit('update:showRegions', !showRegions)"><Grid />区域</button>
+      <button type="button" data-ui-id="editor-overlay-tile-flags" :class="{ active: showTileFlags }" :disabled="mode !== 'map' || busy || !tileFlagsAvailable" :title="tileFlagsAvailable ? '显示通行与地形标记' : '当前 tileset 没有 flags 数据'" @click="$emit('update:showTileFlags', !showTileFlags)"><Grid />标记</button>
     </div>
     <span class="toolbar-separator" />
-    <button type="button" class="tool-button" :disabled="mode !== 'map' || busy || !undoLen" title="撤销" @click="$emit('undo')"><RefreshLeft /></button>
-    <button type="button" class="tool-button" :disabled="mode !== 'map' || busy || !redoLen" title="重做" @click="$emit('redo')"><RefreshRight /></button>
+    <button type="button" class="tool-button" data-ui-id="editor-undo" :disabled="mode !== 'map' || busy || !undoLen" title="撤销" @click="$emit('undo')"><RefreshLeft /></button>
+    <button type="button" class="tool-button" data-ui-id="editor-redo" :disabled="mode !== 'map' || busy || !redoLen" title="重做" @click="$emit('redo')"><RefreshRight /></button>
     <span class="toolbar-separator" />
     <div class="mode-group">
-      <button type="button" :class="{ active: mode === 'map' }" @click="$emit('update:mode', 'map')"><span class="mode-dot map" />地图</button>
-      <button type="button" :class="{ active: mode === 'event' }" @click="$emit('update:mode', 'event')"><span class="mode-dot event" />事件</button>
+      <button type="button" data-ui-id="editor-mode-map" :class="{ active: mode === 'map' }" @click="$emit('update:mode', 'map')"><span class="mode-dot map" />地图</button>
+      <button type="button" data-ui-id="editor-mode-event" :class="{ active: mode === 'event' }" @click="$emit('update:mode', 'event')"><span class="mode-dot event" />事件</button>
     </div>
     <template v-if="stagingDirty">
       <span class="toolbar-separator" />
-      <button type="button" class="workbench-button primary" :disabled="busy" @click="$emit('apply')">应用暂存</button>
-      <button type="button" class="workbench-button" :disabled="busy" @click="$emit('discard')">丢弃</button>
+      <button type="button" class="workbench-button primary" data-ui-id="editor-staging-apply" :disabled="busy" @click="$emit('apply')">应用暂存</button>
+      <button type="button" class="workbench-button" data-ui-id="editor-staging-discard" :disabled="busy" @click="$emit('discard')">丢弃</button>
     </template>
   </header>
 </template>

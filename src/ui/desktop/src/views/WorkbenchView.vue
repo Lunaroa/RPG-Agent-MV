@@ -25,15 +25,15 @@ watch(
 </script>
 
 <template>
-  <div class="workbench-view">
-    <div v-if="!projectStore.currentProject" class="project-empty-state">
+  <div class="workbench-view" data-ui-id="workbench-view">
+    <div v-if="!projectStore.currentProject" class="project-empty-state" data-ui-id="workbench-project-empty">
       <strong>还没有接入 RPG Maker MV 项目</strong>
       <span>先到控制台添加项目目录，编辑器和 Agent 写入能力才会启用。</span>
-      <router-link class="project-empty-action" :to="{ path: '/console', query: { page: 'home' } }">去添加项目</router-link>
+      <router-link class="project-empty-action" data-ui-id="workbench-open-project-console" :to="{ path: '/console', query: { page: 'home' } }">去添加项目</router-link>
       <small v-if="projectStore.loadError">{{ projectStore.loadError }}</small>
     </div>
     <template v-else>
-      <main class="workbench-main">
+      <main class="workbench-main" data-ui-id="workbench-main">
         <EditorView />
       </main>
       <AgentPanel />

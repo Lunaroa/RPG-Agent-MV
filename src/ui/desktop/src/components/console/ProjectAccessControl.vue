@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="project-access" :class="{ compact: props.compact }">
+  <div class="project-access" data-ui-id="project-access" :class="{ compact: props.compact }">
     <div class="project-access-main">
       <label v-if="props.showLabel" for="project-access-select">项目</label>
       <div v-if="projectStore.projects.length" ref="pickerRef" class="project-picker">
@@ -153,6 +153,7 @@ onBeforeUnmount(() => {
           id="project-access-select"
           type="button"
           class="project-trigger"
+          data-ui-id="project-access-select"
           :class="{ open: dropdownOpen, empty: !projectStore.currentProject }"
           :disabled="busy"
           aria-label="当前项目"
@@ -170,6 +171,7 @@ onBeforeUnmount(() => {
             :key="project.path"
             type="button"
             class="project-option"
+            :data-ui-id="`project-access-option-${project.path}`"
             :class="{ active: project.path === projectStore.currentProject }"
             role="option"
             :aria-selected="project.path === projectStore.currentProject"
@@ -188,11 +190,11 @@ onBeforeUnmount(() => {
           @pointerdown.stop
           @click.stop
         >
-          <button type="button" :disabled="busy" @click="onRemoveContextProject">清除这个项目</button>
+          <button type="button" data-ui-id="project-access-remove" :disabled="busy" @click="onRemoveContextProject">清除这个项目</button>
         </div>
       </div>
       <strong v-else>未接入项目</strong>
-      <button type="button" class="icon-button" :disabled="busy" title="选择项目目录" @click="onBrowse">
+      <button type="button" class="icon-button" data-ui-id="project-access-browse" :disabled="busy" title="选择项目目录" @click="onBrowse">
         <FolderOpened />
         <span>选择目录</span>
       </button>

@@ -60,6 +60,13 @@ export interface ParsedArgs {
   browser?: string;
   nwjs?: string;
   target?: string;
+  selector?: string;
+  testId?: string;
+  text?: string;
+  key?: string;
+  condition?: string;
+  expect?: string;
+  modifiers?: string;
   failureKind?: string;
   purpose?: string;
   "initial-switch"?: string;
@@ -120,6 +127,7 @@ export interface ParsedArgs {
   allowMapStructural?: boolean;
   agentMode?: boolean;
   wait?: boolean;
+  capture?: boolean;
 }
 
 export function parseArgs(args: string[]): ParsedArgs {
@@ -404,6 +412,27 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--target") {
       parsed.target = requireValue(args, index, arg);
       index += 1;
+    } else if (arg === "--selector") {
+      parsed.selector = requireValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--test-id") {
+      parsed.testId = requireValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--text") {
+      parsed.text = requireValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--key") {
+      parsed.key = requireValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--condition") {
+      parsed.condition = requireValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--expect") {
+      parsed.expect = requireValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--modifiers") {
+      parsed.modifiers = requireValue(args, index, arg);
+      index += 1;
     } else if (arg === "--failure-kind") {
       parsed.failureKind = requireValue(args, index, arg);
       index += 1;
@@ -448,6 +477,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       parsed.agentMode = true;
     } else if (arg === "--wait") {
       parsed.wait = true;
+    } else if (arg === "--capture") {
+      parsed.capture = true;
+    } else if (arg === "--no-capture") {
+      parsed.capture = false;
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }

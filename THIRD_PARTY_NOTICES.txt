@@ -1,9 +1,9 @@
-RPG Agent MV Third Party Notices
+RPG-Agent-MV Third Party Notices
 Version: 0.1.1
 Last updated: 2026-06-19
 
-This file summarizes third-party components distributed with RPG Agent MV
-source releases or Windows installer builds. RPG Agent MV's own code is
+This file summarizes third-party components distributed with RPG-Agent-MV
+source releases or Windows installer builds. RPG-Agent-MV's own code is
 licensed under Apache-2.0; see LICENSE in the project root. Third-party
 components remain under their own licenses.
 
@@ -16,7 +16,7 @@ Bundled Runtime Components
 --------------------------
 
 opencode
-- Use in RPG Agent MV: bundled agent runtime executable and SDK integration.
+- Use in RPG-Agent-MV: bundled agent runtime executable and SDK integration.
 - Source: https://github.com/anomalyco/opencode.git
 - Version: 1.17.7
 - Source tag: v1.17.7
@@ -28,14 +28,14 @@ opencode
 - Vendor metadata: third_party/opencode/RPG_AGENT_VENDOR.json
 
 ripgrep
-- Use in RPG Agent MV: bundled file search executable used by the agent runtime.
+- Use in RPG-Agent-MV: bundled file search executable used by the agent runtime.
 - Source: https://github.com/BurntSushi/ripgrep
 - Version: 15.1.0
 - Packaged artifact: rg.exe from the official Windows x86_64 release archive.
 - License: MIT OR Unlicense
 
 Electron
-- Use in RPG Agent MV: desktop application runtime.
+- Use in RPG-Agent-MV: desktop application runtime.
 - Package: electron
 - Version: 42.3.0
 - Source: https://github.com/electron/electron

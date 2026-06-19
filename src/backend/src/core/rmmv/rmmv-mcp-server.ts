@@ -252,7 +252,7 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
     name: "RmmvEvent",
     description:
       "Event contract registry, command patching, feedback, and editor operations on already-placed map events only. "
-      + "New map events: registry.register (full implementation) → user previews in sidebar → agent calls AskUserQuestion with question「应用到待放置队列？」and options「应用」「调整」「取消」 (do not ask meta permission to follow this workflow) → user selects 应用 → user drags on RPG-Agent-MV-MV desktop map canvas (createPlacementEvent). "
+      + "New map events: registry.register (full implementation) → user previews in sidebar → agent calls AskUserQuestion with question「应用到待放置队列？」and options「应用」「调整」「取消」 (do not ask meta permission to follow this workflow) → user selects 应用 → user drags on RPG-Agent-MV desktop map canvas (createPlacementEvent). "
       + "Never use editor.update or editor.move to set x/y for new events; never tell the user to place events in external RPG Maker MV editor.",
     inputSchema: {
       action: z.enum([

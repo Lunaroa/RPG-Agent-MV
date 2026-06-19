@@ -4,7 +4,7 @@
 
 RPG Agent MV 将自然语言目标转换为 RPG Maker MV 项目里的事件、脚本和批量修改任务。它适合个人作者在已有工程上推进剧情、整理事件、改脚本和处理插件相关问题。
 
-![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.1.1-blue.svg)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22.5.0-339933.svg)
 ![Electron](https://img.shields.io/badge/built%20with-Electron-47848F.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
@@ -145,7 +145,7 @@ RPG-Agent-MV/
 │  ├─ contract/         # 前后端共享类型与协议
 │  ├─ py/               # Python 辅助能力
 │  └─ ui/desktop/       # Electron 桌面应用
-├─ third_party/         # 可选本地第三方后端放置区，不随源码发布
+├─ third_party/         # 第三方源码和运行时来源记录，安装包只带必要运行文件
 └─ package.json
 ```
 
@@ -162,12 +162,14 @@ RPG-Agent-MV/
 
 ## 社区
 
-欢迎开发者和对 RPG Maker MV 制作感兴趣的创作者入群交流、反馈问题或一起参与开发。
+欢迎Agent开发者和对 RPG Maker MV 制作感兴趣的创作者入群交流、反馈问题或一起参与开发。
 
 - QQ 群：943573784
 
 ## License
 
 Apache-2.0
+
+项目自有代码、后端和桌面端包装代码均采用 Apache-2.0。安装包随附 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)，用于说明随产品分发的第三方组件、运行时和依赖许可。
 
 RPG-Agent-MV is an independent third-party tool designed to work with RPG Maker MV projects.

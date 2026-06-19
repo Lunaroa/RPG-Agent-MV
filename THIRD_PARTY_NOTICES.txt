@@ -1,0 +1,96 @@
+RPG Agent MV Third Party Notices
+Version: 0.1.1
+Last updated: 2026-06-19
+
+This file summarizes third-party components distributed with RPG Agent MV
+source releases or Windows installer builds. RPG Agent MV's own code is
+licensed under Apache-2.0; see LICENSE in the project root. Third-party
+components remain under their own licenses.
+
+This notice is informational and does not modify any third-party license.
+Package-specific license files and metadata are preserved where those
+packages are distributed as installed dependencies.
+
+
+Bundled Runtime Components
+--------------------------
+
+opencode
+- Use in RPG Agent MV: bundled agent runtime executable and SDK integration.
+- Source: https://github.com/anomalyco/opencode.git
+- Version: 1.17.7
+- Source tag: v1.17.7
+- Source commit: 4ed4f749e644ffb5b279fb30b7b915e743d80142
+- License: MIT
+- Copyright notice: Copyright (c) 2025 opencode
+- Local notice source: third_party/opencode/LICENSE
+- Packaged notice location: resources/opencode/LICENSE
+- Vendor metadata: third_party/opencode/RPG_AGENT_VENDOR.json
+
+ripgrep
+- Use in RPG Agent MV: bundled file search executable used by the agent runtime.
+- Source: https://github.com/BurntSushi/ripgrep
+- Version: 15.1.0
+- Packaged artifact: rg.exe from the official Windows x86_64 release archive.
+- License: MIT OR Unlicense
+
+Electron
+- Use in RPG Agent MV: desktop application runtime.
+- Package: electron
+- Version: 42.3.0
+- Source: https://github.com/electron/electron
+- License: MIT
+
+
+Packaged JavaScript Dependencies
+--------------------------------
+
+Root runtime dependencies:
+- @opencode-ai/sdk 1.17.7, MIT
+- opencode-ai 1.17.7, MIT
+- cross-spawn 7.0.6, MIT
+- path-key 3.1.1, MIT
+- shebang-command 2.0.0, MIT
+- shebang-regex 3.0.0, MIT
+- which 2.0.2, ISC
+- isexe 2.0.0, ISC
+
+Backend runtime dependencies:
+- @modelcontextprotocol/sdk 1.29.0, MIT
+- zod 4.4.3, MIT
+
+The backend dependency tree also includes transitive npm packages recorded in
+src/backend/package-lock.json. The licenses recorded there are permissive npm
+package licenses, including MIT, ISC, BSD-2-Clause, BSD-3-Clause, and
+Apache-2.0.
+
+Desktop runtime dependencies bundled into the renderer and main-process build:
+- @element-plus/icons-vue 2.3.2, MIT
+- @fontsource-variable/inter 5.2.8, OFL-1.1
+- @fontsource-variable/jetbrains-mono 5.2.8, OFL-1.1
+- @lucide/vue 1.18.0, ISC
+- element-plus 2.14.0, MIT
+- pinia 3.0.4, MIT
+- vue 3.5.35, MIT
+- vue-router 5.0.7, MIT
+
+The desktop dependency tree also includes transitive npm packages recorded in
+src/ui/desktop/package-lock.json. That lockfile records package licenses
+including MIT, ISC, Apache-2.0, BSD-2-Clause, BSD-3-Clause, OFL-1.1, MPL-2.0,
+0BSD, BlueOak-1.0.0, Python-2.0, WTFPL, WTFPL OR ISC, WTFPL OR MIT, and
+MIT OR CC0-1.0. Build tooling is not a user-facing runtime, except for
+Electron itself, which is listed above because the packaged desktop application
+includes the Electron runtime.
+
+
+Source And Metadata References
+------------------------------
+
+- Project license: LICENSE
+- Product package metadata: package.json
+- Backend package metadata: src/backend/package.json
+- Root dependency lockfile: package-lock.json
+- Backend dependency lockfile: src/backend/package-lock.json
+- Desktop dependency lockfile: src/ui/desktop/package-lock.json
+- opencode vendor metadata: third_party/opencode/RPG_AGENT_VENDOR.json
+- opencode MIT license: third_party/opencode/LICENSE

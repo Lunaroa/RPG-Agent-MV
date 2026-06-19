@@ -19,7 +19,7 @@
     "dev:import-provider-seeds": "node --experimental-strip-types src/cli.ts dev-import-provider-seeds",
     "workspace:prune-legacy": "node --experimental-strip-types src/cli.ts workspace-prune-legacy"
   },
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=22.5.0"
   },

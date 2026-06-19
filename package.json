@@ -1,6 +1,6 @@
 {
   "name": "agent-rpg-mv",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "RPG Maker MV indexing and patching tools for agent workflows.",
   "author": "Agent RPG MV contributors",

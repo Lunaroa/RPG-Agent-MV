@@ -1,5 +1,5 @@
 export function printHelp() {
-  console.log(`RPG-Agent-MV-MV maintenance command line tools
+  console.log(`RPG-Agent-MV maintenance command line tools
 
 Usage:
   npm --prefix src/backend run cli -- <command> [options]

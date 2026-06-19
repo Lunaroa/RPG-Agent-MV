@@ -1,9 +1,9 @@
 {
-  "name": "agent-rpg-mv",
+  "name": "rpg-agent-mv",
   "version": "0.1.1",
   "private": true,
   "description": "RPG Maker MV indexing and patching tools for agent workflows.",
-  "author": "Agent RPG MV contributors",
+  "author": "RPG-Agent-MV contributors",
   "scripts": {
     "install:deps": "npm install --ignore-scripts && npm --prefix src/backend install && npm --prefix src/ui/desktop install",
     "check:local": "npm run install:deps && npm run build:opencode-runtime && npm test && node -e \"const cp=require('node:child_process'); const path=require('node:path'); const bin=path.join('runtime','out','opencode','windows-x64','opencode.exe'); cp.execFileSync(bin, ['--version'], {stdio:'inherit'});\"",

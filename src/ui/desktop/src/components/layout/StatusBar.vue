@@ -6,7 +6,7 @@ const ui = useWorkbenchUiStore();
 
 <template>
   <footer class="statusbar">
-    <span class="sb-item sb-map"><span class="sb-dot" />{{ ui.sbMapLabel || 'RPG-Agent-MV-MV' }}</span>
+    <span class="sb-item sb-map"><span class="sb-dot" />{{ ui.sbMapLabel || 'RPG-Agent-MV' }}</span>
     <span v-if="ui.sbMode" class="sb-item sb-mode" :class="ui.sbMode">
       {{ ui.sbMode === 'map' ? '地图模式' : '事件模式' }}
     </span>

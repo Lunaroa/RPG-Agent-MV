@@ -209,7 +209,7 @@ function runDeploySource(rest: string[]): number {
 async function runAgentConsole(): Promise<void> {
   console.log("Agent console 已迁移至 Electron 应用程序，请通过桌面应用启动。");
   console.log("启动方式：cd src/ui/desktop && npm run dev");
-  console.log("详细文档请参阅 RPG-Agent-MV-MV 根目录 README.md 与 docs/README.md");
+  console.log("详细文档请参阅 RPG-Agent-MV 根目录 README.md 与 docs/README.md");
 }
 
 async function runUiControl(rest: string[]): Promise<number> {

@@ -76,7 +76,7 @@ export function resolveWorkflowRoot(fromDir?: string): string {
     if (parent === current) break;
     current = parent;
   }
-  throw new Error(`Cannot resolve RPG-Agent-MV-MV product root from ${start}`);
+  throw new Error(`Cannot resolve RPG-Agent-MV product root from ${start}`);
 }
 
 export function resolveFromWorkflowRoot(workflowRoot: string, rel: string): string {

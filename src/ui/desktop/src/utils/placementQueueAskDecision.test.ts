@@ -39,4 +39,11 @@ describe('placementQueueAskDecision', () => {
       'cancel',
     )
   })
+
+  test('classifies freeform placement feedback as revise', () => {
+    assert.equal(
+      resolvePlacementQueueDecision(ask, { '应用到待放置队列？': { selected: ['__other__'], other: '第二个事件台词太现代' } }),
+      'revise',
+    )
+  })
 })

@@ -6,6 +6,7 @@ import { eventRegistry } from '../../api/client'
 import { useEventPlacementAskStore, type PlacementListEvent } from '../../stores/eventPlacementAsk'
 import { useProjectStore } from '../../stores/project'
 import { isPlacedStatus } from '../../utils/placementStatus'
+import type { PlacementReviewDecision } from '../../utils/placementReviewResult'
 import type { EventScriptModel } from '../../utils/eventScript'
 
 interface ScriptState {
@@ -18,7 +19,9 @@ interface ScriptState {
 const placementAsk = useEventPlacementAskStore()
 const projectStore = useProjectStore()
 const scriptStates = reactive<Record<string, ScriptState>>({})
-const reviewNote = ref('')
+/** 侧栏编辑态：正在为哪个事件编辑调整批注（contractId）。空串=未在编辑。 */
+const editingContractId = ref('')
+const editingText = ref('')
 const reviewBusy = ref(false)
 
 const events = computed(() => (
@@ -35,6 +38,13 @@ const selectedEvent = computed(() => {
 })
 const selectedContractId = computed(() => selectedEvent.value?.contractId || '')
 const selectedIsReviewing = computed(() => selectedEvent.value?.status === 'reviewing')
+/** 选中事件已暂存的决策（编辑台态）。 */
+const selectedDecision = computed<PlacementReviewDecision | undefined>(() => (
+  selectedContractId.value ? placementAsk.decisionFor(selectedContractId.value) : undefined
+))
+const selectedIsEditing = computed(() => (
+  Boolean(selectedContractId.value) && editingContractId.value === selectedContractId.value
+))
 
 function isPlaced(event: PlacementListEvent): boolean {
   return isPlacedStatus(event.status)
@@ -95,44 +105,73 @@ async function refresh(): Promise<void> {
   }
 }
 
+// 确认：立即写后端注册表并移入放置队列。
+// 拒绝/调整：只暂存到本地，提交统一走 ASK 卡片。
 async function approveSelectedReview(): Promise<void> {
+  if (reviewBusy.value) return
   const event = selectedEvent.value
-  if (!event || event.status !== 'reviewing' || reviewBusy.value) return
+  if (!event || event.status !== 'reviewing') return
   reviewBusy.value = true
   try {
-    const note = reviewNote.value.trim()
-    const result = await eventRegistry.approve(
-      projectStore.currentProject,
-      event.contractId,
-      note ? { note } : {},
-    )
-    if (result.status !== 'ok') throw new Error(`批准失败：${event.eventName || event.contractId}`)
+    const result = await eventRegistry.approve(projectStore.currentProject, event.contractId)
+    if (result.status !== 'ok') {
+      throw new Error('批准失败')
+    }
+    placementAsk.setPendingDecision(event.contractId, 'approve')
     await placementAsk.markReviewEventApproved(event.contractId, projectStore.currentProject)
-    reviewNote.value = ''
-    ElMessage.success('已加入待放置')
+    cancelEditing()
+    ElMessage.success('已确认，进入放置队列')
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '批准事件失败')
+    ElMessage.error(error instanceof Error ? error.message : '确认失败，请重试')
   } finally {
     reviewBusy.value = false
   }
 }
 
-async function rejectSelectedReview(): Promise<void> {
+function rejectSelectedReview(): void {
   const event = selectedEvent.value
-  if (!event || event.status !== 'reviewing' || reviewBusy.value) return
-  reviewBusy.value = true
-  try {
-    const reason = reviewNote.value.trim() || '用户在待确认面板拒绝'
-    const result = await eventRegistry.reject(projectStore.currentProject, event.contractId, { reason })
-    if (result.status !== 'ok') throw new Error(`拒绝失败：${event.eventName || event.contractId}`)
-    await placementAsk.markReviewEventRejected(event.contractId, projectStore.currentProject)
-    reviewNote.value = ''
-    ElMessage.success('已拒绝')
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '拒绝事件失败')
-  } finally {
-    reviewBusy.value = false
-  }
+  if (!event || event.status !== 'reviewing') return
+  placementAsk.setPendingDecision(event.contractId, 'reject')
+  cancelEditing()
+  ElMessage.success('已记录：拒绝')
+}
+
+function beginAdjustSelectedReview(): void {
+  const event = selectedEvent.value
+  if (!event || event.status !== 'reviewing') return
+  editingContractId.value = event.contractId
+  // 已存过批注则预填，支持重新编辑
+  editingText.value = placementAsk.feedbackFor(event.contractId)
+}
+
+function cancelEditing(): void {
+  editingContractId.value = ''
+  editingText.value = ''
+}
+
+// 保存调整批注：只写本地暂存，覆盖旧的批注（可反复修改）。
+function saveSelectedAdjustment(): void {
+  const event = selectedEvent.value
+  if (!event || event.status !== 'reviewing') return
+  placementAsk.setPendingDecision(event.contractId, 'revise', editingText.value)
+  cancelEditing()
+  ElMessage.success('已保存批注')
+}
+
+// 撤销已暂存的决策，回到未决策态。
+function clearSelectedDecision(): void {
+  const contractId = selectedContractId.value
+  if (!contractId) return
+  placementAsk.setPendingDecision(contractId, null)
+  cancelEditing()
+}
+
+function decisionBadge(event: PlacementListEvent): string {
+  const decision = placementAsk.decisionFor(event.contractId)
+  if (decision === 'approve') return '✓ 确认'
+  if (decision === 'reject') return '✗ 拒绝'
+  if (decision === 'revise') return '✎ 调整'
+  return ''
 }
 
 async function loadEventScript(contractId: string): Promise<void> {
@@ -164,7 +203,7 @@ watch(
 watch(
   selectedContractId,
   (contractId) => {
-    reviewNote.value = ''
+    cancelEditing()
     if (contractId) void loadEventScript(contractId)
   },
   { immediate: true },
@@ -198,6 +237,7 @@ onMounted(() => {
         >
           <strong>{{ event.eventName || event.contractId }}</strong>
           <small v-if="cardSubtitle(event)">{{ cardSubtitle(event) }}</small>
+          <span v-if="decisionBadge(event)" class="pp-decision-badge">{{ decisionBadge(event) }}</span>
         </button>
       </div>
 
@@ -212,20 +252,14 @@ onMounted(() => {
           <span>{{ statusLabel(selectedEvent) }}</span>
         </div>
         <p v-if="isReviewMode" class="pp-review-note">
-          先看事件内容；确认后才进入待放置队列。
+          确认后进入待放置队列；拒绝后不再放置；调整会交回 Agent。
         </p>
         <div v-if="isReviewMode && selectedIsReviewing" class="pp-review-actions">
-          <textarea
-            v-model="reviewNote"
-            class="pp-review-input"
-            rows="3"
-            placeholder="审批备注（可选）"
-            :disabled="reviewBusy"
-          />
-          <div class="pp-review-buttons">
+          <div v-if="!selectedDecision" class="pp-review-buttons">
             <button
               type="button"
               class="pp-action pp-action-primary"
+              data-ui-id="placement-review-approve"
               :disabled="reviewBusy"
               @click="approveSelectedReview"
             >
@@ -234,10 +268,60 @@ onMounted(() => {
             <button
               type="button"
               class="pp-action pp-action-danger"
+              data-ui-id="placement-review-reject"
               :disabled="reviewBusy"
               @click="rejectSelectedReview"
             >
               拒绝
+            </button>
+            <button
+              type="button"
+              class="pp-action pp-action-warning"
+              data-ui-id="placement-review-adjust"
+              :disabled="reviewBusy"
+              @click="beginAdjustSelectedReview"
+            >
+              调整
+            </button>
+          </div>
+          <div v-if="selectedIsEditing" class="pp-adjust-box">
+            <textarea
+              v-model="editingText"
+              class="pp-review-input"
+              rows="3"
+              placeholder="告诉 Agent 这个事件哪里要改（可选）"
+              data-ui-id="placement-review-adjust-input"
+              :disabled="reviewBusy"
+            />
+            <div class="pp-adjust-buttons">
+              <button
+                type="button"
+                class="pp-action"
+                data-ui-id="placement-review-adjust-cancel"
+                :disabled="reviewBusy"
+                @click="cancelEditing"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                class="pp-action pp-action-primary"
+                data-ui-id="placement-review-adjust-submit"
+                :disabled="reviewBusy"
+                @click="saveSelectedAdjustment"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+          <div v-else-if="selectedDecision" class="pp-decision-info">
+            <span class="pp-decision-label">{{ decisionBadge(selectedEvent) }}</span>
+            <button
+              type="button"
+              class="pp-action"
+              @click="clearSelectedDecision"
+            >
+              撤销
             </button>
           </div>
         </div>
@@ -473,6 +557,15 @@ onMounted(() => {
   margin-bottom: 10px;
 }
 
+.pp-adjust-box {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-elevated);
+}
+
 .pp-review-input {
   width: 100%;
   min-height: 64px;
@@ -495,6 +588,13 @@ onMounted(() => {
 
 .pp-review-buttons {
   display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pp-adjust-buttons {
+  display: flex;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -530,6 +630,39 @@ onMounted(() => {
 
 .pp-action-danger:hover:not(:disabled) {
   background: var(--app-danger-soft);
+}
+
+.pp-action-warning {
+  color: var(--app-warn);
+  border-color: color-mix(in srgb, var(--app-warn) 34%, var(--app-border));
+}
+
+.pp-action-warning:hover:not(:disabled) {
+  background: var(--app-warn-soft);
+}
+
+.pp-decision-badge {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 5px;
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-sunken);
+  color: var(--app-ink-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.pp-decision-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pp-decision-label {
+  color: var(--app-ink-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .pp-facts {

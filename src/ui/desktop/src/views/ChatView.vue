@@ -137,6 +137,14 @@ import { allPlacementEventsPlaced, isPlacedStatus, isPlacementEventDone } from '
 import { asksSharePlacementContracts, resolvePlacementSubmitAsk } from '../utils/placementAsk'
 import { resolvePlacementQueueDecision } from '../utils/placementQueueAskDecision'
 import {
+  buildPlacementReviewAnswers,
+  formatPlacementReviewContinuationIntent,
+  placementReviewDecision,
+  summarizePlacementReviewActions,
+  type PlacementReviewAction,
+  type PlacementReviewDecision,
+} from '../utils/placementReviewResult'
+import {
   resolveAskContextMapId,
   resolveEventMapIdWithAsk,
   resolveRegistryContractMapId,
@@ -513,16 +521,22 @@ async function runIntent(
 // Submit an ASK result. MCP-driven asks resolve the blocked tool in the
 // running session; text-block asks (turn already finished) continue via a
 // new session carrying a formatted intent.
-async function submitAsk(askId: string, result: AskResult, continuation: { intent: string; displayText: string }): Promise<void> {
+async function submitAsk(askId: string, result: AskResult, continuation: { intent: string; displayText: string }): Promise<boolean> {
   const ask = getAsk(askId)
-  if (!ask || ask.result?.submittedAt) return
+  if (!ask || ask.result?.submittedAt) return false
   const prior = { ...(ask.result || {}) }
   delete prior.canceledAt
   delete prior.cancellationStatus
   const finalResult: AskResult = { ...prior, ...result, submittedAt: new Date().toISOString() }
   try {
     if (ask.fromMcp && activeSession.value) {
-      const response = await sessionsApi.submitAskResult(activeSession.value.id, askId, finalResult) as {
+      // placement-review 的 actions / answers 等字段可能嵌套引用 Vue reactive
+      // proxy（来自 store ref），浅合并后仍指向 proxy。Electron IPC 用
+      // structuredClone 传输，reactive proxy 不可克隆会抛
+      // "An object could not be cloned"。这里用 JSON 深拷贝脱壳成纯对象，
+      // 给所有 ASK 提交兜底。AskResult 只含 JSON 可表达数据，JSON 拷贝安全。
+      const ipcResult = JSON.parse(JSON.stringify(finalResult)) as AskResult
+      const response = await sessionsApi.submitAskResult(activeSession.value.id, askId, ipcResult) as {
         ok?: boolean
         reason?: string
       }
@@ -545,6 +559,7 @@ async function submitAsk(askId: string, result: AskResult, continuation: { inten
       updateAskResult(askId, finalResult)
     }
     await flushPersistTranscript()
+    return true
   } catch (error) {
     console.error('Failed to submit ASK result:', error)
     const message = (error as Error).message || '请重试'
@@ -558,6 +573,7 @@ async function submitAsk(askId: string, result: AskResult, continuation: { inten
       await flushPersistTranscript()
     }
     ElMessage.error(`提交失败：${message}`)
+    return false
   }
 }
 
@@ -594,43 +610,65 @@ function hydrateReviewPreviewFromTranscript(saved?: Array<{ type?: string; metad
   handleRegisteredEventPreview(previews)
 }
 
-async function rejectPendingEventReviewForAsk(askId: string): Promise<void> {
-  if (!eventPlacementAsk.isReviewMode || eventPlacementAsk.reviewAskId !== askId) return
-  const reviewing = eventPlacementAsk.sessionEvents.filter((event) => event.status === 'reviewing')
-  if (!reviewing.length) return
-  for (const event of reviewing) {
-    const result = await eventRegistry.reject(
-      projectStore.currentProject,
-      event.contractId,
-      { reason: '用户在事件预览决策中选择取消' },
-    )
-    if (result.status !== 'ok') {
-      throw new Error(`事件 ${event.eventName || event.contractId} 取消失败`)
-    }
-    await eventPlacementAsk.markReviewEventRejected(event.contractId, projectStore.currentProject)
+function makePlacementReviewAction(
+  askId: string,
+  event: PlacementListEvent,
+  decision: PlacementReviewDecision,
+  feedback = '',
+): PlacementReviewAction {
+  return {
+    askId,
+    contractId: event.contractId,
+    eventName: event.eventName || event.contractId,
+    decision,
+    feedback: feedback.trim() || undefined,
+    targetMapId: event.targetMapId ?? null,
+    summary: event.summary,
+    decidedAt: new Date().toISOString(),
   }
 }
 
-async function approvePendingEventReviewForAsk(askId: string): Promise<void> {
-  if (!eventPlacementAsk.isReviewMode || eventPlacementAsk.reviewAskId !== askId) return
+async function settlePendingEventReviewForAsk(
+  askId: string,
+  decision: PlacementReviewDecision,
+  feedback = '',
+): Promise<PlacementReviewAction[]> {
+  if (!eventPlacementAsk.isReviewMode || eventPlacementAsk.reviewAskId !== askId) return []
   const reviewing = eventPlacementAsk.sessionEvents.filter((event) => event.status === 'reviewing')
-  if (!reviewing.length) return
+  if (!reviewing.length) return eventPlacementAsk.reviewActionsForAsk(askId)
+  const actions: PlacementReviewAction[] = []
   for (const event of reviewing) {
-    const result = await eventRegistry.approve(projectStore.currentProject, event.contractId)
-    if (result.status !== 'ok') {
-      throw new Error(`事件 ${event.eventName || event.contractId} 批准失败`)
+    if (decision === 'approve') {
+      const result = await eventRegistry.approve(projectStore.currentProject, event.contractId)
+      if (result.status !== 'ok') {
+        throw new Error(`事件 ${event.eventName || event.contractId} 批准失败`)
+      }
+      const action = makePlacementReviewAction(askId, event, 'approve')
+      eventPlacementAsk.recordReviewAction(action)
+      actions.push(action)
+      await eventPlacementAsk.markReviewEventApproved(event.contractId, projectStore.currentProject)
+      continue
     }
+    const reason = decision === 'revise'
+      ? (feedback.trim() ? `用户要求调整：${feedback.trim()}` : '用户要求调整这个待放置事件')
+      : '用户在事件预览决策中选择取消'
+    const result = await eventRegistry.reject(projectStore.currentProject, event.contractId, { reason })
+    if (result.status !== 'ok') {
+      throw new Error(`事件 ${event.eventName || event.contractId} ${decision === 'revise' ? '调整' : '取消'}失败`)
+    }
+    const action = makePlacementReviewAction(askId, event, decision, decision === 'revise' ? feedback : '')
+    eventPlacementAsk.recordReviewAction(action)
+    actions.push(action)
+    await eventPlacementAsk.markReviewEventRejected(event.contractId, projectStore.currentProject)
   }
-  eventPlacementAsk.markReviewApproved()
-  await eventPlacementAsk.refreshFromRegistry(projectStore.currentProject)
-  workbenchUi.openSidePanel('placement')
+  return eventPlacementAsk.reviewActionsForAsk(askId)
 }
 
 async function handleApprove(askId: string) {
   const ask = getAsk(askId)
   if (!ask) return
   try {
-    await approvePendingEventReviewForAsk(askId)
+    await settlePendingEventReviewForAsk(askId, 'approve')
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '事件批准失败')
     return
@@ -676,27 +714,155 @@ async function handleClarify(
   })
 }
 
+function answerForQuestion(
+  answers: Record<string, { selected: string[]; other: string }>,
+  question: { id?: string; question?: string; header?: string },
+) {
+  return (question.id ? answers[question.id] : undefined)
+    || (question.question ? answers[question.question] : undefined)
+    || (question.header ? answers[question.header] : undefined)
+    || null
+}
+
+function normalizeMultiChoiceAnswers(
+  ask: Ask,
+  answers: Record<string, { selected: string[]; other: string }>,
+): Record<string, { selected: string[]; other: string }> {
+  const normalized = { ...answers }
+  for (const question of ask.questions || []) {
+    const answer = answerForQuestion(normalized, question)
+    if (!answer) continue
+    if (question.id) normalized[question.id] = answer
+    if (question.question) normalized[question.question] = answer
+    if (question.header) normalized[question.header] = answer
+  }
+  return normalized
+}
+
+function placementReviewFeedbackFromAnswers(
+  ask: Ask,
+  answers: Record<string, { selected: string[]; other: string }>,
+): string {
+  for (const question of ask.questions || []) {
+    const text = `${question.header || ''} ${question.question || ''} ${question.id || ''}`
+    if (!/应用到待放置队列|待放置队列|待放置事件/.test(text)) continue
+    return answerForQuestion(answers, question)?.other?.trim() || ''
+  }
+  return ''
+}
+
+async function submitPlacementReviewResult(
+  askId: string,
+  actions: PlacementReviewAction[],
+  options: {
+    answers?: Record<string, { selected: string[]; other: string }>
+    overallFeedback?: string
+  } = {},
+): Promise<boolean> {
+  const ask = getAsk(askId)
+  if (!ask || !actions.length) return false
+  const overallFeedback = options.overallFeedback?.trim() || ''
+  const answers = {
+    ...(options.answers ? normalizeMultiChoiceAnswers(ask, options.answers) : {}),
+    ...buildPlacementReviewAnswers(ask, actions, overallFeedback),
+  }
+  const summary = summarizePlacementReviewActions(actions)
+  return submitAsk(askId, {
+    decision: placementReviewDecision(actions),
+    answers,
+    placementReview: {
+      actions,
+      overallFeedback: overallFeedback || null,
+      completedAt: new Date().toISOString(),
+    },
+  }, {
+    intent: formatPlacementReviewContinuationIntent(ask, actions, overallFeedback),
+    displayText: `已处理待放置事件：${summary}`,
+  })
+}
+
 async function handleMultiChoice(askId: string, answers: Record<string, { selected: string[]; other: string }>) {
   const ask = getAsk(askId)
   if (!ask) return
-  const placementDecision = resolvePlacementQueueDecision(ask, answers)
-  if (placementDecision === 'apply') {
+  const normalizedAnswers = normalizeMultiChoiceAnswers(ask, answers)
+  const placementDecision = resolvePlacementQueueDecision(ask, normalizedAnswers)
+  if (placementDecision) {
+    if (placementReviewSubmittingAskIds.has(askId)) return
+    placementReviewSubmittingAskIds.add(askId)
+    const cardDecision: PlacementReviewDecision = placementDecision === 'apply'
+      ? 'approve'
+      : placementDecision === 'cancel'
+        ? 'reject'
+        : 'revise'
+    const overallFeedback = placementReviewFeedbackFromAnswers(ask, normalizedAnswers)
     try {
-      await approvePendingEventReviewForAsk(askId)
+      const storedActions = eventPlacementAsk.reviewActionsForAsk(askId)
+      const reviewing = eventPlacementAsk.sessionEvents.filter((event) => event.status === 'reviewing')
+      const hasSideApprovedEvents = eventPlacementAsk.sessionEvents.some((event) => (
+        event.status !== 'reviewing' && eventPlacementAsk.decisionFor(event.contractId) === 'approve'
+      ))
+      if (eventPlacementAsk.reviewAskId !== askId && !storedActions.length && !hasSideApprovedEvents) return
+      if (!reviewing.length && !storedActions.length && !hasSideApprovedEvents) return
+      // 从已暂存的侧栏操作开始（如逐条确认的 approve），追加卡片处理的操作。
+      // 提交时带上完整 actions，让 Agent 看到全部决策画面。
+      const actions: PlacementReviewAction[] = [...storedActions]
+      const actionContractIds = new Set(actions.map((action) => action.contractId))
+      for (const event of eventPlacementAsk.sessionEvents) {
+        if (actionContractIds.has(event.contractId)) continue
+        if (event.status === 'reviewing') continue
+        if (eventPlacementAsk.decisionFor(event.contractId) !== 'approve') continue
+        const action = makePlacementReviewAction(askId, event, 'approve')
+        eventPlacementAsk.recordReviewAction(action)
+        actions.push(action)
+        actionContractIds.add(event.contractId)
+      }
+      for (const event of reviewing) {
+        const storedDecision = eventPlacementAsk.decisionFor(event.contractId)
+        const decision = storedDecision || cardDecision
+        const feedback = decision === 'revise'
+          ? (eventPlacementAsk.feedbackFor(event.contractId) || overallFeedback)
+          : ''
+        if (decision === 'approve') {
+          const result = await eventRegistry.approve(projectStore.currentProject, event.contractId)
+          if (result.status !== 'ok') {
+            throw new Error(`事件 ${event.eventName || event.contractId} 批准失败`)
+          }
+        } else {
+          const reason = decision === 'revise'
+            ? (feedback.trim() ? `用户要求调整：${feedback.trim()}` : '用户要求调整这个待放置事件')
+            : '用户在事件预览决策中选择取消'
+          const result = await eventRegistry.reject(projectStore.currentProject, event.contractId, { reason })
+          if (result.status !== 'ok') {
+            throw new Error(`事件 ${event.eventName || event.contractId} ${decision === 'revise' ? '调整' : '取消'}失败`)
+          }
+        }
+        const action = makePlacementReviewAction(askId, event, decision, feedback)
+        eventPlacementAsk.recordReviewAction(action)
+        actions.push(action)
+        await (decision === 'approve'
+          ? eventPlacementAsk.markReviewEventApproved(event.contractId, projectStore.currentProject)
+          : eventPlacementAsk.markReviewEventRejected(event.contractId, projectStore.currentProject))
+      }
+      if (actions.length) {
+        const ok = await submitPlacementReviewResult(askId, actions, {
+          answers: normalizedAnswers,
+          overallFeedback,
+        })
+        if (ok) {
+          eventPlacementAsk.clearPendingDecisions()
+          eventPlacementAsk.clearCompletedReviewBatch(askId)
+        }
+      }
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : '事件批准失败')
+      ElMessage.error(error instanceof Error ? error.message : '事件处理失败')
       return
+    } finally {
+      placementReviewSubmittingAskIds.delete(askId)
     }
-  } else if (placementDecision === 'cancel') {
-    try {
-      await rejectPendingEventReviewForAsk(askId)
-    } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : '事件取消失败')
-      return
-    }
+    return
   }
-  await submitAsk(askId, { answers }, {
-    intent: formatMultiChoiceIntent(ask, answers),
+  await submitAsk(askId, { answers: normalizedAnswers }, {
+    intent: formatMultiChoiceIntent(ask, normalizedAnswers),
     displayText: '澄清已提交'
   })
 }
@@ -736,6 +902,8 @@ const latestPlacementAsk = computed(() => {
   }
   return null
 })
+
+const placementReviewSubmittingAskIds = new Set<string>()
 
 watch(
   latestPlacementAsk,

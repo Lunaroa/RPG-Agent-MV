@@ -40,6 +40,7 @@ export function resolvePlacementQueueDecision(
     }
     const otherDecision = classifyPlacementLabel(String(answer.other || '').trim())
     if (otherDecision) return otherDecision
+    if (String(answer.other || '').trim()) return 'revise'
   }
   return null
 }

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import { eventRegistry, placementQueue as placementQueueApi } from '../api/client';
 import { useProjectStore } from './project';
 import { isPlacedStatus } from '../utils/placementStatus';
+import type { PlacementReviewAction, PlacementReviewBatch, PlacementReviewDecision } from '../utils/placementReviewResult';
 
 export interface StartPlacementSessionOptions {
   sessionId: string;
@@ -71,6 +72,12 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
   const boundProject = ref(projectStore.currentProject);
   const sessionMode = ref<EventPlacementMode>('placement');
   const reviewAskId = ref<string | null>(null);
+  const reviewActions = ref<PlacementReviewAction[]>([]);
+  const completedReviewBatch = ref<PlacementReviewBatch | null>(null);
+  /** 侧栏逐条暂存的决策（编辑台态）：contractId -> 决策。不写后端，不回复 Agent。 */
+  const pendingDecisions = ref<Record<string, PlacementReviewDecision>>({});
+  /** 侧栏逐条暂存的调整批注：contractId -> 文本。仅 revise 决策使用。 */
+  const pendingFeedback = ref<Record<string, string>>({});
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   const sessionEvents = computed(() => activeSession.value?.events ?? []);
@@ -117,6 +124,16 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
   const pendingCount = computed(() =>
     isReviewMode.value ? reviewingCount.value : placeablePendingCount.value,
   );
+
+  /** 本批已暂存决策的 reviewing 事件数（侧栏编辑台用）。 */
+  const decidedCount = computed(() => {
+    let count = 0;
+    for (const event of reviewingEvents.value) {
+      if (pendingDecisions.value[event.contractId]) count += 1;
+    }
+    return count;
+  });
+  const undecidedReviewingCount = computed(() => reviewingCount.value - decidedCount.value);
 
   function schedulePersist() {
     if (persistTimer) clearTimeout(persistTimer);
@@ -213,13 +230,22 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
   ) {
     if (!events.length) return;
     bindProject(options.project || projectStore.currentProject);
+    const nextAskId = options.askId || activeSession.value?.askId || `event-review-${Date.now()}`;
+    const nextSessionId = options.sessionId;
+    const currentAskId = reviewAskId.value || activeSession.value?.askId || '';
+    if (activeSession.value?.sessionId !== nextSessionId || currentAskId !== nextAskId) {
+      reviewActions.value = [];
+      completedReviewBatch.value = null;
+      pendingDecisions.value = {};
+      pendingFeedback.value = {};
+    }
     const reviewEvents = events
       .filter(isVisibleQueueEvent)
       .map((event) => ({ ...event, status: event.status || 'reviewing' }));
     if (!reviewEvents.length) return;
     const session: EventPlacementSession = {
-      askId: options.askId || activeSession.value?.askId || `event-review-${Date.now()}`,
-      sessionId: options.sessionId,
+      askId: nextAskId,
+      sessionId: nextSessionId,
       events: reviewEvents,
     };
     if (activeSession.value && isReviewMode.value && activeSession.value.sessionId === options.sessionId) {
@@ -413,18 +439,87 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
     placingContractId.value = null;
     sessionMode.value = 'placement';
     reviewAskId.value = null;
+    reviewActions.value = [];
+    completedReviewBatch.value = null;
+    pendingDecisions.value = {};
+    pendingFeedback.value = {};
     schedulePersist();
   }
 
   function bindReviewAsk(askId: string) {
     if (!isReviewMode.value || !activeSession.value) return;
+    const previousAskId = reviewAskId.value || activeSession.value.askId;
     reviewAskId.value = askId;
     activeSession.value = { ...activeSession.value, askId };
+    if (previousAskId !== askId) {
+      reviewActions.value = reviewActions.value.map((action) => (
+        action.askId === previousAskId ? { ...action, askId } : action
+      ));
+      if (completedReviewBatch.value?.askId === previousAskId) {
+        completedReviewBatch.value = {
+          ...completedReviewBatch.value,
+          askId,
+          actions: completedReviewBatch.value.actions.map((action) => (
+            action.askId === previousAskId ? { ...action, askId } : action
+          )),
+        };
+      }
+    }
   }
 
-  async function refreshPlacementQueueWithoutReplacingReview(project: string = projectStore.currentProject) {
-    bindProject(project);
-    await placementQueueApi.get(project);
+  function recordReviewAction(action: PlacementReviewAction) {
+    if (!action.askId || !action.contractId) return;
+    const next = reviewActions.value.filter((item) => (
+      !(item.askId === action.askId && item.contractId === action.contractId)
+    ));
+    next.push(action);
+    reviewActions.value = next;
+  }
+
+  function reviewActionsForAsk(askId: string): PlacementReviewAction[] {
+    return reviewActions.value.filter((action) => action.askId === askId);
+  }
+
+  function clearCompletedReviewBatch(askId?: string) {
+    if (!askId || completedReviewBatch.value?.askId === askId) completedReviewBatch.value = null;
+  }
+
+  // 侧栏编辑台：逐条暂存决策，只改本地态，不写后端、不回复 Agent。
+  // 再次调用即覆盖（可重新编辑）；传 null 决策则撤销该事件回到未决策。
+  function setPendingDecision(
+    contractId: string,
+    decision: PlacementReviewDecision | null,
+    feedback = '',
+  ) {
+    if (!contractId) return;
+    const nextDecisions = { ...pendingDecisions.value };
+    const nextFeedback = { ...pendingFeedback.value };
+    if (!decision) {
+      delete nextDecisions[contractId];
+      delete nextFeedback[contractId];
+    } else {
+      nextDecisions[contractId] = decision;
+      if (decision === 'revise') {
+        nextFeedback[contractId] = feedback;
+      } else {
+        delete nextFeedback[contractId];
+      }
+    }
+    pendingDecisions.value = nextDecisions;
+    pendingFeedback.value = nextFeedback;
+  }
+
+  function decisionFor(contractId: string): PlacementReviewDecision | undefined {
+    return pendingDecisions.value[contractId];
+  }
+
+  function feedbackFor(contractId: string): string {
+    return pendingFeedback.value[contractId] || '';
+  }
+
+  function clearPendingDecisions() {
+    pendingDecisions.value = {};
+    pendingFeedback.value = {};
   }
 
   async function settleReviewEvent(
@@ -433,18 +528,20 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
     project: string = projectStore.currentProject,
   ) {
     if (!activeSession.value) return;
+    const currentSession = activeSession.value;
     const events = status === 'draft'
-      ? activeSession.value.events.map((event) => (
+      ? currentSession.events.map((event) => (
         event.contractId === contractId ? { ...event, status: 'draft' } : event
       ))
-      : activeSession.value.events.filter((event) => event.contractId !== contractId);
-    activeSession.value = { ...activeSession.value, events };
+      : currentSession.events.filter((event) => event.contractId !== contractId);
+    activeSession.value = { ...currentSession, events };
     if (placingContractId.value === contractId) placingContractId.value = null;
 
     const nextReview = events.find(isReviewQueueEvent);
     if (nextReview) {
       selectedContractId.value = nextReview.contractId;
-      await refreshPlacementQueueWithoutReplacingReview(project);
+      bindProject(project);
+      await placementQueueApi.get(project);
       return;
     }
 
@@ -486,6 +583,12 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
     pendingCount,
     reviewingCount,
     placeablePendingCount,
+    reviewActions,
+    completedReviewBatch,
+    pendingDecisions,
+    pendingFeedback,
+    decidedCount,
+    undecidedReviewingCount,
     selectedContractId,
     boundProject,
     sessionMode,
@@ -507,6 +610,13 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
     restoreEvent,
     clearFocus,
     bindReviewAsk,
+    recordReviewAction,
+    reviewActionsForAsk,
+    clearCompletedReviewBatch,
+    setPendingDecision,
+    decisionFor,
+    feedbackFor,
+    clearPendingDecisions,
     markReviewEventApproved,
     markReviewEventRejected,
     markReviewApproved,

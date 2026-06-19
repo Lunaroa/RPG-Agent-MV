@@ -161,6 +161,39 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
     }
   }
 
+  function mergePlacementQueueEvents(
+    baseEvents: PlacementListEvent[],
+    nextEvents: PlacementListEvent[],
+  ): PlacementListEvent[] {
+    const byContract = new Map<string, PlacementListEvent>();
+    for (const event of baseEvents) {
+      if (event.contractId && isVisibleQueueEvent(event)) byContract.set(event.contractId, { ...event });
+    }
+    for (const event of nextEvents) {
+      if (!event.contractId || !isVisibleQueueEvent(event)) continue;
+      const existing = byContract.get(event.contractId);
+      byContract.set(event.contractId, existing ? { ...existing, ...event } : { ...event });
+    }
+    return [...byContract.values()];
+  }
+
+  async function saveReviewPlaceableEvents(
+    events: PlacementListEvent[],
+    project: string = projectStore.currentProject,
+  ): Promise<EventPlacementSession | null> {
+    const placeable = events.filter(isPlaceableQueueEvent);
+    if (!placeable.some((event) => !isPlacedStatus(event.status))) return null;
+    const restored = await placementQueueApi.get(project) as EventPlacementSession | null;
+    const mergedEvents = mergePlacementQueueEvents(restored?.events || [], placeable)
+      .filter(isPlaceableQueueEvent);
+    if (!mergedEvents.some((event) => !isPlacedStatus(event.status))) return restored;
+    return await placementQueueApi.save({
+      askId: restored?.askId || activeSession.value?.askId || `review-placement-${Date.now()}`,
+      sessionId: restored?.sessionId || activeSession.value?.sessionId || 'review',
+      events: mergedEvents,
+    }, project) as EventPlacementSession | null;
+  }
+
   function bindProject(project: string = projectStore.currentProject) {
     boundProject.value = project;
   }
@@ -243,10 +276,11 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
       .filter(isVisibleQueueEvent)
       .map((event) => ({ ...event, status: event.status || 'reviewing' }));
     if (!reviewEvents.length) return;
+    const carryPlaceableEvents = (activeSession.value?.events || []).filter(isPlaceableQueueEvent);
     const session: EventPlacementSession = {
       askId: nextAskId,
       sessionId: nextSessionId,
-      events: reviewEvents,
+      events: mergePlacementQueueEvents(carryPlaceableEvents, reviewEvents),
     };
     if (activeSession.value && isReviewMode.value && activeSession.value.sessionId === options.sessionId) {
       const incoming = new Map(reviewEvents.map((event) => [event.contractId, event]));
@@ -258,7 +292,10 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
       }
       session.events = merged;
     }
-    openSession(session, selectedContractId.value || reviewEvents[0]?.contractId, 'review');
+    const nextSelected = reviewEvents.some((event) => event.contractId === selectedContractId.value)
+      ? selectedContractId.value || undefined
+      : reviewEvents[0]?.contractId;
+    openSession(session, nextSelected, 'review');
   }
 
   async function restoreSession(project: string = projectStore.currentProject) {
@@ -376,6 +413,15 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
       ));
     for (const event of events) {
       if (!merged.some((current) => current.contractId === event.contractId)) {
+        merged.push({ ...event });
+      }
+    }
+    // 保留 session 中已确认(draft)或已放置的事件——Agent 重新发送事件列表时
+    // 可能不再包含这些已处理的事件，但它们仍在注册表中，不能丢弃。
+    for (const event of activeSession.value.events) {
+      const s = event.status || ''
+      if (s !== 'reviewing' && s !== 'rejected' && s !== 'abandoned'
+        && !merged.some((current) => current.contractId === event.contractId)) {
         merged.push({ ...event });
       }
     }
@@ -540,14 +586,25 @@ export const useEventPlacementAskStore = defineStore('eventPlacementAsk', () => 
     const nextReview = events.find(isReviewQueueEvent);
     if (nextReview) {
       selectedContractId.value = nextReview.contractId;
-      bindProject(project);
-      await placementQueueApi.get(project);
+      await saveReviewPlaceableEvents(events, project);
       return;
     }
 
     sessionMode.value = 'placement';
     reviewAskId.value = null;
     const session = await placementQueueApi.get(project) as EventPlacementSession | null;
+    const localPlaceableEvents = events.filter(isPlaceableQueueEvent);
+    const mergedEvents = mergePlacementQueueEvents(session?.events || [], localPlaceableEvents)
+      .filter(isPlaceableQueueEvent);
+    if (mergedEvents.length) {
+      applyRefreshedSession({
+        askId: session?.askId || currentSession.askId,
+        sessionId: session?.sessionId || currentSession.sessionId,
+        events: mergedEvents,
+      });
+      schedulePersist();
+      return;
+    }
     applyRefreshedSession(session);
   }
 

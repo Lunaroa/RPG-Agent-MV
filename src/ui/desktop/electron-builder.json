@@ -65,6 +65,8 @@
   ],
   "files": [
     "package.json",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.txt",
     "README.md",
     "docs/**/*",
     "config/**/*",

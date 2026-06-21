@@ -8,6 +8,8 @@ import {
   type TaskItem,
   type TaskStatus,
 } from './taskBoardProjection.ts'
+import { taskBoardText } from './taskBoardLocalization.ts'
+import { useSettingsStore } from './settings.ts'
 export type { TaskItem, TaskStatus } from './taskBoardProjection.ts'
 
 /**
@@ -78,7 +80,7 @@ export const useTaskBoardStore = defineStore('taskBoard', () => {
       console.error('[taskBoard] load tasks failed', error)
       errorBySession.value = {
         ...errorBySession.value,
-        [sessionId]: error instanceof Error ? error.message : '加载任务失败',
+        [sessionId]: error instanceof Error ? error.message : text('loadFailed'),
       }
     } finally {
       loadingBySession.value = { ...loadingBySession.value, [sessionId]: false }
@@ -145,3 +147,4 @@ export const useTaskBoardStore = defineStore('taskBoard', () => {
     errorFor,
   }
 })
+  const text = (key: Parameters<typeof taskBoardText>[1]) => taskBoardText(useSettingsStore().ui.language, key)

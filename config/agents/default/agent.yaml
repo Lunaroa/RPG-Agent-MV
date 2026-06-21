@@ -15,7 +15,6 @@
     ]
   },
   "tools": {
-    "_note": "RMMV 业务能力只通过 opencode 的 rmmv MCP 暴露；ASK、计划和 todo 使用 opencode 原生能力。",
     "allow": [
       "read",
       "edit",

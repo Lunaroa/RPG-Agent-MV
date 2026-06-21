@@ -3,21 +3,27 @@ import { computed, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../utils/markdown'
 import { useSessionPlanStore } from '../../stores/sessionPlan'
+import { useI18n } from '../../i18n'
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error'
 
 const props = defineProps<{ sessionId: string | null | undefined }>()
 
 const planStore = useSessionPlanStore()
+const { language, t } = useI18n()
 const plan = computed(() => planStore.planFor(props.sessionId))
 const loading = computed(() => planStore.loadingFor(props.sessionId))
 const error = computed(() => planStore.errorFor(props.sessionId))
+const displayError = computed(() => error.value ? formatUserFacingErrorMessage(error.value, 'general', language.value) : '')
+const displayPlanError = computed(() => plan.value?.error ? formatUserFacingErrorMessage(plan.value.error, 'general', language.value) : '')
+const displayFeedback = computed(() => plan.value?.feedback ? formatUserFacingErrorMessage(plan.value.feedback, 'general', language.value) : '')
 
 const statusText = computed(() => {
   const mode = plan.value?.mode || 'idle'
-  if (mode === 'planning') return '计划中'
-  if (mode === 'approval_requested') return '等待审批'
-  if (mode === 'approved') return '已批准'
-  if (mode === 'rejected') return '需修改'
-  if (mode === 'error') return '异常'
+  if (mode === 'planning') return t('plan.status.planning')
+  if (mode === 'approval_requested') return t('plan.status.approvalRequested')
+  if (mode === 'approved') return t('plan.status.approved')
+  if (mode === 'rejected') return t('plan.status.rejected')
+  if (mode === 'error') return t('plan.status.error')
   return ''
 })
 
@@ -39,17 +45,17 @@ watch(
   <div class="plan-panel">
     <div class="pp-toolbar">
       <span class="pp-state" :class="{ error: plan?.mode === 'error' || !!error }">
-        {{ loading ? '读取中…' : error || statusText }}
+        {{ loading ? t('plan.loading') : displayError || statusText }}
       </span>
-      <button type="button" class="pp-refresh" title="刷新" :disabled="!sessionId || loading" @click="refresh">
+      <button type="button" class="pp-refresh" :title="t('plan.refresh')" :disabled="!sessionId || loading" @click="refresh">
         <el-icon><Refresh /></el-icon>
       </button>
     </div>
 
     <div v-if="plan?.planMarkdown" class="pp-markdown markdown-body" v-html="renderMarkdown(plan.planMarkdown)" />
-    <p v-else class="pp-empty">暂无计划。Agent 在计划模式下写入当前对话的计划文件后会显示在这里。</p>
-    <p v-if="plan?.feedback" class="pp-feedback">反馈：{{ plan.feedback }}</p>
-    <p v-if="plan?.error" class="pp-error">{{ plan.error }}</p>
+    <p v-else class="pp-empty">{{ t('plan.empty') }}</p>
+    <p v-if="displayFeedback" class="pp-feedback">{{ t('plan.feedback', { feedback: displayFeedback }) }}</p>
+    <p v-if="displayPlanError" class="pp-error">{{ displayPlanError }}</p>
   </div>
 </template>
 

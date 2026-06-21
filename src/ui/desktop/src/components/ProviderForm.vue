@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     v-model="visible"
-    :title="isEdit ? 'Edit Provider' : 'Add Provider'"
+    :title="isEdit ? t('provider.editTitle') : t('provider.addTitle')"
     width="600px"
     @close="handleClose"
   >
@@ -12,7 +12,7 @@
       label-position="top"
       class="provider-form"
     >
-      <el-form-item label="Provider ID" prop="id">
+      <el-form-item :label="t('provider.id')" prop="id">
         <el-input
           v-model="form.id"
           :disabled="isEdit"
@@ -20,7 +20,7 @@
         />
       </el-form-item>
 
-      <el-form-item label="Display Name" prop="displayName">
+      <el-form-item :label="t('provider.displayName')" prop="displayName">
         <el-input
           v-model="form.displayName"
           placeholder="e.g., DeepSeek (Official)"
@@ -39,21 +39,21 @@
           v-model="form.credentialValue"
           type="password"
           show-password
-          :placeholder="isEdit && provider?.credentialPresent ? '(已存) 留空保留原值' : '粘贴新的 API key'"
+          :placeholder="isEdit && provider?.credentialPresent ? t('provider.credentialSavedKeep') : t('provider.credentialNew')"
         />
         <div class="form-hint">
-          {{ isEdit && provider?.credentialPresent ? '留空表示保留原值；填入新值会更新凭证' : '填入后保存会写入安全存储' }}
+          {{ isEdit && provider?.credentialPresent ? t('provider.credentialSavedHint') : t('provider.credentialNewHint') }}
         </div>
       </el-form-item>
 
-      <el-form-item label="Default Model" prop="defaultModel">
+      <el-form-item :label="t('provider.defaultModel')" prop="defaultModel">
         <el-input
           v-model="form.defaultModel"
           placeholder="deepseek-chat"
         />
       </el-form-item>
 
-      <el-form-item label="Models (每行一个)" prop="modelsText">
+      <el-form-item :label="t('provider.modelsLabel')" prop="modelsText">
         <div class="models-header">
           <span>Model IDs</span>
           <el-button
@@ -63,7 +63,7 @@
             :disabled="!isEdit || !provider?.credentialPresent"
             @click="handleFetchModels"
           >
-            从 API 拉取最新
+            {{ t('provider.fetchFromApi') }}
           </el-button>
         </div>
         <el-input
@@ -77,13 +77,13 @@
         </div>
       </el-form-item>
 
-      <el-form-item label="opencode 凭证变量">
+      <el-form-item :label="t('provider.credentialVar')">
         <el-input
           v-model="form.agentRuntimeEnvVar"
           placeholder="ANTHROPIC_API_KEY"
         />
         <div class="form-hint">
-          启动本地执行器时，将密钥注入到这个环境变量
+          {{ t('provider.credentialVarHint') }}
         </div>
       </el-form-item>
     </el-form>
@@ -96,20 +96,20 @@
             type="danger"
             @click="handleDelete"
           >
-            Delete
+            {{ t('provider.delete') }}
           </el-button>
           <el-button
             v-if="isEdit"
             :loading="testing"
             @click="handleTest"
           >
-            Test Connection
+            {{ t('provider.testConnection') }}
           </el-button>
         </div>
         <div class="footer-right">
-          <el-button @click="handleClose">Cancel</el-button>
+          <el-button @click="handleClose">{{ t('provider.cancel') }}</el-button>
           <el-button type="primary" :loading="saving" @click="handleSave">
-            {{ isEdit ? 'Save' : 'Create' }}
+            {{ isEdit ? t('provider.save') : t('provider.create') }}
           </el-button>
         </div>
       </div>
@@ -126,6 +126,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { settings } from '../api/client'
 import type { ProviderSummary } from '../api/client'
+import { useI18n } from '../i18n'
 
 interface Props {
   modelValue: boolean
@@ -141,6 +142,8 @@ const emit = defineEmits<{
   saved: []
   deleted: []
 }>()
+
+const { t } = useI18n()
 
 const visible = computed({
   get: () => props.modelValue,
@@ -166,19 +169,19 @@ const form = reactive({
   agentRuntimeEnvVar: 'ANTHROPIC_API_KEY'
 })
 
-const rules: FormRules = {
+const rules = computed<FormRules>(() => ({
   id: [
-    { required: true, message: 'Please enter provider ID', trigger: 'blur' },
-    { pattern: /^[a-z0-9-]+$/, message: 'Only lowercase letters, numbers, and hyphens', trigger: 'blur' }
+    { required: true, message: t('provider.idRequired'), trigger: 'blur' },
+    { pattern: /^[a-z0-9-]+$/, message: t('provider.idPattern'), trigger: 'blur' }
   ],
   displayName: [
-    { required: true, message: 'Please enter display name', trigger: 'blur' }
+    { required: true, message: t('provider.nameRequired'), trigger: 'blur' }
   ],
   baseUrl: [
-    { required: true, message: 'Please enter base URL', trigger: 'blur' },
-    { type: 'url', message: 'Please enter a valid URL', trigger: 'blur' }
+    { required: true, message: t('provider.urlRequired'), trigger: 'blur' },
+    { type: 'url', message: t('provider.urlInvalid'), trigger: 'blur' }
   ]
-}
+}))
 
 watch(() => props.provider, (provider) => {
   if (provider) {
@@ -254,16 +257,16 @@ async function handleSave() {
       
       if (isEdit.value) {
         await settings.updateProvider(form.id, payload)
-        ElMessage.success('Provider updated successfully')
+        ElMessage.success(t('provider.updated'))
       } else {
         await settings.createProvider(form.id, payload)
-        ElMessage.success('Provider created successfully')
+        ElMessage.success(t('provider.created'))
       }
-      
+
       emit('saved')
       visible.value = false
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : 'Failed to save provider')
+      ElMessage.error(error instanceof Error ? error.message : t('provider.saveFailed'))
     } finally {
       saving.value = false
     }
@@ -275,18 +278,18 @@ async function handleDelete() {
   
   try {
     await ElMessageBox.confirm(
-      `Are you sure you want to delete provider "${props.provider.id}"?`,
-      'Confirm Delete',
+      t('provider.deleteConfirm', { id: props.provider.id }),
+      t('provider.deleteConfirmTitle'),
       { type: 'warning' }
     )
-    
+
     await settings.deleteProvider(props.provider.id)
-    ElMessage.success('Provider deleted successfully')
+    ElMessage.success(t('provider.deleted'))
     emit('deleted')
     visible.value = false
   } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error(error instanceof Error ? error.message : 'Failed to delete provider')
+      ElMessage.error(error instanceof Error ? error.message : t('provider.deleteFailed'))
     }
   }
 }
@@ -307,13 +310,13 @@ async function handleTest() {
     } else {
       testResult.value = {
         ok: false,
-        message: `Failed: ${result.error || 'Unknown error'}`
+        message: t('provider.testFailed', { error: result.error || t('provider.testUnknownError') })
       }
     }
   } catch (error) {
     testResult.value = {
       ok: false,
-      message: `Request failed: ${error instanceof Error ? error.message : String(error)}`
+      message: t('provider.requestFailed', { error: error instanceof Error ? error.message : String(error) })
     }
   } finally {
     testing.value = false
@@ -346,18 +349,18 @@ async function handleFetchModels() {
       
       fetchModelsResult.value = {
         ok: true,
-        message: `Fetched ${result.models.length} models, added ${newModels.length} new`
+        message: t('provider.modelsFetched', { total: result.models.length, added: newModels.length })
       }
     } else {
       fetchModelsResult.value = {
         ok: false,
-        message: result.error || 'No models returned'
+        message: result.error || t('provider.noModelsReturned')
       }
     }
   } catch (error) {
     fetchModelsResult.value = {
       ok: false,
-      message: `Request failed: ${error instanceof Error ? error.message : String(error)}`
+      message: t('provider.requestFailed', { error: error instanceof Error ? error.message : String(error) })
     }
   } finally {
     fetchingModels.value = false

@@ -1,6 +1,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from 'vue';
 import type { TileEdit } from '../api/client';
 import type { EditorMode, EditorStatusKind, MapPaintMode, MapTool, PaletteTab, TileTab } from '../components/editor/editorTypes';
+import type { ProductLanguage } from '@contract/types';
 import { EDITOR_DEFAULT_ZOOM } from './useEditorWorkspaceState';
 import {
   AUTOTILE_KINDS,
@@ -24,6 +25,7 @@ import {
   tileIdToPaletteCell,
   tileTabAvailable,
 } from '../utils/mvTilePalette';
+import { normalizeProductLanguage, translate, type MessageKey } from '../i18n/messages.ts'
 
 type TileChange = TileEdit & { before?: number; after?: number };
 type BrushCell = { dx: number; dy: number; tileId?: number; autotileKind?: number };
@@ -59,6 +61,7 @@ interface CanvasEditorOptions {
   openEvent: (eventId: number) => void;
   newEvent: (x: number, y: number) => void;
   setStatus: (text: string, kind: EditorStatusKind) => void;
+  language?: Ref<ProductLanguage>;
   getCharacterImage?: (name: string) => HTMLImageElement | null;
   placementActive?: Ref<boolean>;
   placementDirection?: Ref<number>;
@@ -80,7 +83,9 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   const cursorText = ref('x -, y -');
   const tilesetReady = ref(false);
   const tileTab = ref<TileTab>('A');
-  const brushInfo = ref('未选择笔刷');
+  const productLanguage = computed(() => normalizeProductLanguage(options.language?.value));
+  const t = (key: MessageKey, params: Record<string, string | number> = {}) => translate(key, productLanguage.value, params)
+  const brushInfo = ref(t('mapcanvas.brush.none'));
   const brushSet = ref(false);
   const undoLen = ref(0);
   const redoLen = ref(0);
@@ -132,11 +137,12 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     options.placementActive,
     options.placementDirection,
     options.placementFlash,
+    productLanguage,
   ], () => {
     renderMap();
     renderOverlay();
   });
-  watch([options.paintMode, options.regionId, options.shadowBits], updateBrushInfo);
+  watch([options.paintMode, options.regionId, options.shadowBits, productLanguage], updateBrushInfo);
 
   onMounted(() => {
     window.addEventListener('keydown', onWindowKeyDown);
@@ -469,7 +475,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       return;
     }
     if (!toolReady()) {
-      options.setStatus('先在调色板选择笔刷', 'error');
+      options.setStatus(t('mapcanvas.status.selectBrushFirst'), 'error');
       return;
     }
     painting = true;
@@ -648,11 +654,11 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   }
   async function commitEdits(edits: TileEdit[]) {
     if (options.mode.value !== 'map') {
-      options.setStatus('事件模式不会修改地图图块', 'error');
+      options.setStatus(t('mapcanvas.status.eventModeNoTiles'), 'error');
       return;
     }
     options.busy.value = true;
-    options.setStatus('暂存绘制…', 'busy');
+    options.setStatus(t('mapcanvas.status.stagingPaint'), 'busy');
     try {
       const report = await options.postTiles(edits);
       if (report.changes?.length) {
@@ -662,9 +668,9 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
         syncStackLengths();
       }
       await options.reloadMap();
-      options.setStatus(`已暂存 ${report.changedCells} 格`, 'saved');
+      options.setStatus(t('mapcanvas.status.stagedCells', { count: report.changedCells }), 'saved');
     } catch (error) {
-      options.setStatus(`暂存失败：${(error as Error).message}`, 'error');
+      options.setStatus(t('mapcanvas.status.stageFailed', { message: (error as Error).message }), 'error');
       await options.reloadMap();
     } finally { options.busy.value = false; }
   }
@@ -677,15 +683,16 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     const changes = source.pop()!;
     syncStackLengths();
     options.busy.value = true;
-    options.setStatus(kind === 'undo' ? '撤销…' : '重做…', 'busy');
+    options.setStatus(kind === 'undo' ? t('mapcanvas.status.undoing') : t('mapcanvas.status.redoing'), 'busy');
     try {
       await options.postTiles(changes.map((change) => changeToEdit(change, kind === 'undo' ? change.before ?? 0 : change.after ?? 0)));
       (kind === 'undo' ? redoStack : undoStack).push(changes);
       syncStackLengths();
       await options.reloadMap();
-      options.setStatus(kind === 'undo' ? '已撤销' : '已重做', 'saved');
+      options.setStatus(kind === 'undo' ? t('mapcanvas.status.undone') : t('mapcanvas.status.redone'), 'saved');
     } catch (error) {
-      options.setStatus(`${kind === 'undo' ? '撤销' : '重做'}失败：${(error as Error).message}`, 'error');
+      const message = (error as Error).message;
+      options.setStatus(kind === 'undo' ? t('mapcanvas.status.undoFailed', { message }) : t('mapcanvas.status.redoFailed', { message }), 'error');
     } finally { options.busy.value = false; }
   }
 
@@ -722,19 +729,23 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   function inMap(x: number, y: number) { return Boolean(map) && x >= 0 && y >= 0 && x < map!.width && y < map!.height; }
   function updateBrushInfo() {
     if (options.paintMode.value === 'shadow') {
-      brushInfo.value = `阴影 ${clampInt(options.shadowBits.value, 0, 15)}`;
+      const value = clampInt(options.shadowBits.value, 0, 15);
+      brushInfo.value = t('mapcanvas.brush.shadow', { value });
       brushSet.value = true;
     } else if (options.paintMode.value === 'region') {
-      brushInfo.value = `区域 ${clampInt(options.regionId.value, 0, 255)}`;
+      const value = clampInt(options.regionId.value, 0, 255);
+      brushInfo.value = t('mapcanvas.brush.region', { value });
       brushSet.value = true;
     } else if (!brush) {
-      brushInfo.value = '未选择笔刷';
+      brushInfo.value = t('mapcanvas.brush.none');
       brushSet.value = false;
     } else if (brush.type === 'tileRect') {
-      brushInfo.value = `笔刷 ${brush.width}×${brush.height}`;
+      brushInfo.value = t('mapcanvas.brush.rect', { width: brush.width, height: brush.height });
       brushSet.value = true;
     } else {
-      brushInfo.value = brush.type === 'autotile' ? `自动图块 #${brush.autotileKind}` : `图块 #${brush.tileId}`;
+      brushInfo.value = brush.type === 'autotile'
+        ? t('mapcanvas.brush.autotile', { kind: brush.autotileKind })
+        : t('mapcanvas.brush.tile', { id: brush.tileId });
       brushSet.value = true;
     }
   }

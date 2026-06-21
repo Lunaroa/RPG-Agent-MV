@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
+import en from 'element-plus/es/locale/lang/en'
 import AppRail from './components/layout/AppRail.vue'
 import TopBar from './components/layout/TopBar.vue'
 import StatusBar from './components/layout/StatusBar.vue'
@@ -9,6 +11,7 @@ import { useSettingsStore } from './stores/settings'
 import { useWorkbenchUiStore } from './stores/workbenchUi'
 import { useWorkspaceStore } from './stores/workspace'
 import { applyUiTheme } from './utils/applyUiTheme'
+import { useI18n, pickByLocale } from './i18n'
 import {
   collectUiControlPageState,
   getEditorUiControlState,
@@ -17,11 +20,11 @@ import {
   type UiControlCommand,
   type UiControlEnvelope,
 } from './utils/uiControl'
-
 const projectStore = useProjectStore()
 const settingsStore = useSettingsStore()
 const workspaceStore = useWorkspaceStore()
 const workbenchUi = useWorkbenchUiStore()
+const { language, t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const booting = ref(true)
@@ -32,6 +35,9 @@ const consolePage = computed(() => {
   if (route.path !== '/console') return null
   return String(route.query.page || 'home')
 })
+
+const elementLocale = computed(() => pickByLocale(language.value, { 'zh-CN': zhCn, 'en-US': en }))
+
 
 async function settleUiControlView() {
   await nextTick()
@@ -62,6 +68,7 @@ function uiControlState(extra: Record<string, unknown> = {}) {
     page: route.path === '/console' ? 'console' : route.path === '/workbench' ? 'workbench' : 'other',
     consolePage: consolePage.value,
     project: projectStore.currentProject || '',
+    language: language.value,
     booting: booting.value,
     bootError: bootError.value,
     appRailOpen: workbenchUi.appRailOpen,
@@ -83,7 +90,7 @@ async function navigateUiControlTarget(target: string) {
     'console-settings': { path: '/console', query: { page: 'settings' } },
   }
   const next = routes[target]
-  if (!next) throw new Error(`不支持的 UI 导航目标：${target}`)
+  if (!next) throw new Error(t('app.uiControl.unsupportedNavigationTarget', { target }))
   await router.push(next)
   await router.isReady()
   await settleUiControlView()
@@ -91,34 +98,34 @@ async function navigateUiControlTarget(target: string) {
 }
 
 async function handleUiControlCommand(command: UiControlCommand) {
-  if (booting.value) throw new Error('应用仍在启动，暂时不能执行 UI 控制命令。')
-  if (bootError.value) throw new Error(`应用启动失败：${bootError.value}`)
+  if (booting.value) throw new Error(t('app.uiControl.bootInProgress'))
+  if (bootError.value) throw new Error(t('app.uiControl.bootFailed', { message: bootError.value }))
   if (command.type === 'state') return uiControlState()
   if (command.type === 'navigate') {
-    if (!command.target) throw new Error('缺少导航目标。')
+    if (!command.target) throw new Error(t('app.uiControl.navigationTargetMissing'))
     return navigateUiControlTarget(command.target)
   }
   if (command.type === 'open-event-editor') {
-    if (!projectStore.currentProject) throw new Error('当前没有接入 RPG Maker MV 项目。')
-    if (!Number.isInteger(command.mapId) || Number(command.mapId) < 1) throw new Error('缺少有效地图 ID。')
-    if (!Number.isInteger(command.eventId) || Number(command.eventId) < 1) throw new Error('缺少有效事件 ID。')
+    if (!projectStore.currentProject) throw new Error(t('app.uiControl.noProject'))
+    if (!Number.isInteger(command.mapId) || Number(command.mapId) < 1) throw new Error(t('app.uiControl.invalidMapId'))
+    if (!Number.isInteger(command.eventId) || Number(command.eventId) < 1) throw new Error(t('app.uiControl.invalidEventId'))
     await router.push({
       path: '/workbench',
       query: { mapId: String(command.mapId), eventId: String(command.eventId) },
     })
     await router.isReady()
     await settleUiControlView()
-    const editor = await openEditorEventFromUiControl(Number(command.mapId), Number(command.eventId))
+    const editor = await openEditorEventFromUiControl(Number(command.mapId), Number(command.eventId), language.value)
     await settleUiControlView()
     return uiControlState({ editor })
   }
   if (command.type === 'capture-current') return uiControlState()
   if (['click', 'input', 'key', 'read', 'wait'].includes(command.type)) {
-    const action = await runDomUiControlCommand(command)
+    const action = await runDomUiControlCommand(command, language.value)
     await settleUiControlView()
     return uiControlState({ action })
   }
-  throw new Error(`不支持的 UI 控制命令：${command.type}`)
+  throw new Error(t('app.uiControl.unsupportedCommand', { type: command.type }))
 }
 
 function handleUiControlEnvelope(raw: unknown) {
@@ -127,7 +134,7 @@ function handleUiControlEnvelope(raw: unknown) {
   const command = envelope.command
   if (!id) return
   if (!command) {
-    window.api.uiControl.sendResult({ id, ok: false, error: '缺少 UI 控制命令。' })
+    window.api.uiControl.sendResult({ id, ok: false, error: t('app.uiControl.commandMissing') })
     return
   }
   void handleUiControlCommand(command)
@@ -151,7 +158,7 @@ onMounted(async () => {
     workspaceStore.bindWorkbenchLayoutPersistence()
     await projectStore.load()
   } catch (error) {
-    bootError.value = error instanceof Error ? error.message : '应用启动失败'
+    bootError.value = error instanceof Error ? error.message : t('app.startupFailed')
   } finally {
     booting.value = false
   }
@@ -164,18 +171,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-layout" data-ui-id="app-root">
-    <TopBar />
-    <div class="workspace-shell">
-      <AppRail v-if="workbenchUi.appRailOpen" />
-      <main class="main-content" data-ui-id="app-main">
-        <div v-if="booting" class="app-state-card">正在读取项目…</div>
-        <div v-else-if="bootError" class="app-state-card error">{{ bootError }}</div>
-        <router-view v-else />
-      </main>
+  <ElConfigProvider :locale="elementLocale">
+    <div class="app-layout" data-ui-id="app-root">
+      <TopBar />
+      <div class="workspace-shell">
+        <AppRail v-if="workbenchUi.appRailOpen" />
+        <main class="main-content" data-ui-id="app-main">
+          <div v-if="booting" class="app-state-card">{{ t('app.loadingProject') }}</div>
+          <div v-else-if="bootError" class="app-state-card error">{{ bootError }}</div>
+          <router-view v-else />
+        </main>
+      </div>
+      <StatusBar />
     </div>
-    <StatusBar />
-  </div>
+  </ElConfigProvider>
 </template>
 
 <style scoped>

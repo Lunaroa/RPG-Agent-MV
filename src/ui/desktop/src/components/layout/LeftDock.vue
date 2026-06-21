@@ -2,15 +2,15 @@
   <aside ref="workbenchRef" class="editor-workbench" :class="{ resizing }">
     <section class="workbench-pane palette-pane" :class="{ collapsed: !tilesOpen }" :style="palettePaneStyle">
       <header class="pane-header clickable" @click="toggleTiles">
-        <strong>图块</strong>
+        <strong>{{ t('editor.left.tiles') }}</strong>
         <span v-if="brushInfo" class="tile-chip">{{ brushInfo }}</span>
         <span class="pane-chevron">{{ tilesOpen ? '▾' : '▸' }}</span>
       </header>
       <div v-show="tilesOpen" class="palette-scroll">
         <canvas ref="paletteRef" class="palette-canvas" @mousedown="$emit('palette-mousedown', $event)" @mousemove="$emit('palette-mousemove', $event)" @mouseup="$emit('palette-mouseup')" @mouseleave="$emit('palette-mouseup')" />
-        <div v-if="!tilesetReady" class="pane-empty">图块贴图未加载，请重新导入地图或检查本地资产库。</div>
+        <div v-if="!tilesetReady" class="pane-empty">{{ t('editor.left.tilesetMissing') }}</div>
       </div>
-      <nav v-show="tilesOpen" class="tile-tabs" aria-label="图块页签">
+      <nav v-show="tilesOpen" class="tile-tabs" :aria-label="t('editor.left.tileTabs')">
         <button v-for="entry in tileTabs" :key="entry.tab" :class="{ active: entry.tab === tileTab }" :disabled="!entry.available || mode === 'event' || paintMode !== 'tile'" @click="$emit('select-tile-tab', entry.tab)">{{ entry.label }}</button>
       </nav>
     </section>
@@ -19,14 +19,14 @@
       class="pane-resizer"
       role="separator"
       aria-orientation="horizontal"
-      title="调整图块面板高度"
+      :title="t('editor.left.resizeTiles')"
       @dblclick="resetPaletteHeight"
       @mousedown.prevent="startResize"
     />
 
     <section class="workbench-pane tree-pane">
       <header class="pane-header">
-        <strong>地图树</strong>
+        <strong>{{ t('editor.left.mapTree') }}</strong>
       </header>
       <div class="map-tree">
         <el-tree
@@ -44,11 +44,11 @@
           <template #default="{ node, data }">
             <span class="tree-node">
               <span class="node-label">{{ node.label }}</span>
-              <span v-if="stagedMapIds.has(data.id)" class="node-staged" title="存在暂存改动">暂存</span>
+              <span v-if="stagedMapIds.has(data.id)" class="node-staged" :title="t('editor.left.stagedTitle')">{{ t('editor.left.staged') }}</span>
             </span>
           </template>
         </el-tree>
-        <div v-if="!mapTree.length" class="pane-empty">没有地图。</div>
+        <div v-if="!mapTree.length" class="pane-empty">{{ t('editor.left.noMaps') }}</div>
       </div>
     </section>
   </aside>
@@ -59,6 +59,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import type { EditorMode, MapPaintMode, PaletteTab, TileTab, TreeNode } from '../editor/editorTypes';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
+import { useI18n } from '../../i18n';
 import {
   clampPaletteHeight,
   computeMaxPaletteHeight,
@@ -83,6 +84,7 @@ defineProps<{
 
 const workbenchUi = useWorkbenchUiStore();
 const workspaceStore = useWorkspaceStore();
+const { t } = useI18n();
 const emit = defineEmits<{
   'palette-ready': [canvas: HTMLCanvasElement];
   'palette-mousedown': [event: MouseEvent];

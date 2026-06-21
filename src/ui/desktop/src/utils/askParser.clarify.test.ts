@@ -149,4 +149,17 @@ describe('clarify ASK with options', () => {
     }))
     assert.equal(ask?.options, undefined)
   })
+
+  test('uses English fallbacks when product language is English', () => {
+    const ask = parseAgentAsk(JSON.stringify({
+      type: 'multi-choice-clarify',
+      questions: [{
+        options: [{}, {}],
+      }],
+    }), { language: 'en-US' })
+    assert.equal(ask?.title, 'More Information Needed')
+    assert.equal(ask?.prompt, 'Answer the questions')
+    assert.equal(ask?.questions?.[0].header, 'Question 1')
+    assert.deepEqual(ask?.questions?.[0].options.map((option) => option.label), ['Option 1', 'Option 2'])
+  })
 })

@@ -27,21 +27,24 @@ import { computed, ref } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { summarizeExecutionGroup, visibleExecutionGroupSegments, type ExecutionGroup } from '../utils/chatTurns'
 import TurnSegment from './TurnSegment.vue'
+import { useI18n } from '../i18n'
 
 const props = defineProps<{
   group: ExecutionGroup
   liveSegmentId?: string | null
 }>()
 
+const { language, t } = useI18n()
 const expanded = ref(false)
-const summary = computed(() => summarizeExecutionGroup(props.group))
+const summary = computed(() => summarizeExecutionGroup(props.group, language.value))
 const visibleSegments = computed(() => visibleExecutionGroupSegments(props.group))
 const stateLabel = computed(() => {
-  if (summary.value.state === 'failed') return '执行失败'
-  if (summary.value.state === 'blocked') return '执行受阻'
-  if (summary.value.state === 'stopped') return '已停止'
+  if (summary.value.state === 'failed') return t('execution.state.failed')
+  if (summary.value.state === 'blocked') return t('execution.state.blocked')
+  if (summary.value.state === 'stopped') return t('execution.state.stopped')
   return ''
 })
+
 </script>
 
 <style scoped>

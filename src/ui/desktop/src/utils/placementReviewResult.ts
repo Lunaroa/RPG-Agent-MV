@@ -1,4 +1,7 @@
 import type { Ask, AskQuestion } from './askParser.ts'
+import type { ProductLanguage } from '@contract/types'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
+import { translate, type MessageKey } from '../i18n/messages.ts'
 
 export type PlacementReviewDecision = 'approve' | 'reject' | 'revise'
 
@@ -20,7 +23,7 @@ export interface PlacementReviewBatch {
   completedAt: string
 }
 
-const PLACEMENT_REVIEW_TEXT = /应用到待放置队列|待放置队列|待放置事件/
+const PLACEMENT_REVIEW_TEXT = /应用到待放置队列|待放置队列|待放置事件|pending placement queue|pending placement event|placement queue/i
 
 function placementQuestionText(question: AskQuestion): string {
   return `${question.header || ''} ${question.question || ''} ${question.id || ''}`.trim()
@@ -30,10 +33,14 @@ function isPlacementReviewQuestion(question: AskQuestion): boolean {
   return PLACEMENT_REVIEW_TEXT.test(placementQuestionText(question))
 }
 
-function decisionLabel(decision: PlacementReviewDecision): string {
-  if (decision === 'approve') return '确认'
-  if (decision === 'reject') return '拒绝'
-  return '调整'
+function decisionLabel(decision: PlacementReviewDecision, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  const normalized = normalizeProductLanguage(language)
+  const keyMap: Record<PlacementReviewDecision, MessageKey> = {
+    approve: 'placement.review.decision.approve',
+    reject: 'placement.review.decision.reject',
+    revise: 'placement.review.decision.revise',
+  }
+  return translate(keyMap[decision], normalized)
 }
 
 export function placementReviewDecision(actions: PlacementReviewAction[]): string {
@@ -48,34 +55,43 @@ export function placementReviewDecision(actions: PlacementReviewAction[]): strin
   return 'mixed'
 }
 
-export function summarizePlacementReviewActions(actions: PlacementReviewAction[]): string {
+export function summarizePlacementReviewActions(actions: PlacementReviewAction[], language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  const lang = normalizeProductLanguage(language)
   const approved = actions.filter((action) => action.decision === 'approve').length
   const rejected = actions.filter((action) => action.decision === 'reject').length
   const revised = actions.filter((action) => action.decision === 'revise').length
-  return [
-    approved ? `确认 ${approved}` : '',
-    rejected ? `拒绝 ${rejected}` : '',
-    revised ? `调整 ${revised}` : '',
-  ].filter(Boolean).join('，') || '没有事件变更'
+  const parts: string[] = []
+  if (approved) parts.push(translate('placement.review.summary.approved', lang, { count: String(approved) }))
+  if (rejected) parts.push(translate('placement.review.summary.rejected', lang, { count: String(rejected) }))
+  if (revised) parts.push(translate('placement.review.summary.revised', lang, { count: String(revised) }))
+  const separator = translate('ask.separator.list', lang)
+  return parts.join(separator) || translate('placement.review.summary.empty', lang)
 }
 
 export function formatPlacementReviewAnswer(
   actions: PlacementReviewAction[],
   overallFeedback = '',
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
 ): string {
+  const lang = normalizeProductLanguage(language)
+  const summary = summarizePlacementReviewActions(actions, language)
   const lines = [
-    `本轮待放置事件已逐条处理：${summarizePlacementReviewActions(actions)}。`,
+    translate('placement.review.intro', lang, { summary }),
   ]
   const feedback = overallFeedback.trim()
-  if (feedback) lines.push(`总体调整意见：${feedback}`)
+  if (feedback) lines.push(translate('placement.review.feedbackPrefix', lang, { feedback }))
   for (const action of actions) {
     const details = [
-      `${decisionLabel(action.decision)}：${action.eventName || action.contractId}`,
+      translate('placement.review.detailLabelPrefix', lang, {
+        decision: decisionLabel(action.decision, language),
+        name: action.eventName || action.contractId,
+      }),
       `contractId=${action.contractId}`,
-      action.targetMapId ? `建议地图=Map${String(action.targetMapId).padStart(3, '0')}` : '',
-      action.feedback ? `意见=${action.feedback}` : '',
+      action.targetMapId ? translate('placement.review.suggestedMapField', lang, { mapId: String(action.targetMapId).padStart(3, '0') }) : '',
+      action.feedback ? translate('placement.review.feedbackField', lang, { feedback: action.feedback }) : '',
     ].filter(Boolean)
-    lines.push(`- ${details.join('；')}`)
+    const separator = translate('ui.separator.semicolon', lang)
+    lines.push(`- ${details.join(separator)}`)
   }
   return lines.join('\n')
 }
@@ -84,11 +100,13 @@ export function buildPlacementReviewAnswers(
   ask: Pick<Ask, 'questions'>,
   actions: PlacementReviewAction[],
   overallFeedback = '',
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
 ): Record<string, { selected: string[]; other: string }> {
+  const normalized = normalizeProductLanguage(language)
   const questions = ask.questions || []
   const targets = questions.filter(isPlacementReviewQuestion)
   const selectedQuestions = targets.length ? targets : questions.slice(0, 1)
-  const answer = formatPlacementReviewAnswer(actions, overallFeedback)
+  const answer = formatPlacementReviewAnswer(actions, overallFeedback, normalized)
   const result: Record<string, { selected: string[]; other: string }> = {}
   for (const question of selectedQuestions) {
     const value = { selected: ['__other__'], other: answer }
@@ -103,7 +121,9 @@ export function formatPlacementReviewContinuationIntent(
   ask: Pick<Ask, 'askId'>,
   actions: PlacementReviewAction[],
   overallFeedback = '',
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
 ): string {
+  const lang = normalizeProductLanguage(language)
   const result = {
     type: 'event-placement-review-result',
     askId: ask.askId,
@@ -120,7 +140,7 @@ export function formatPlacementReviewContinuationIntent(
     })),
   }
   return [
-    '这是 agent-console 的人工待放置事件审阅结果。请只基于用户已确认、已拒绝、要求调整的事件继续；已确认事件已经进入待放置队列，要求调整的事件需要重新生成或修改。',
+    translate('placement.review.continuationIntro', lang),
     JSON.stringify(result, null, 2),
   ].join('\n\n')
 }

@@ -1,12 +1,13 @@
-// IPC 处理器：提供 Electron IPC 接口
 import { BrowserWindow, dialog, ipcMain, net, protocol, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { cleanupMapIpcHandlers, registerMapIpcHandlers } from './map-ipc-bindings.js';
+import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
 import { DEFAULT_AGENT_EXECUTION_ENGINE, type WorkspaceSettings, type WorkspaceWindowState } from '../../../contract/types.ts';
+import { normalizeProductLanguage, type ProductLanguage } from '../../../contract/i18n.ts';
 import {
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
@@ -19,7 +20,6 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 后端核心模块（运行时动态加载）
 let llm: any;
 let ConsoleSettingsDao: any;
 let StagingManifestDao: any;
@@ -35,6 +35,7 @@ let desktop: any;
 let agentSessionRuntime: any;
 let assetProtocolRegistered = false;
 let backendCoreUrl: URL | null = null;
+let backendWithProductLanguage: (<T>(language: ProductLanguage, fn: () => T) => T) | null = null;
 
 export function getWorkspaceSettings(): WorkspaceSettings {
   if (!ConsoleSettingsDao) return normalizeWorkspaceSettings({});
@@ -45,6 +46,18 @@ export function patchWorkspaceSettings(patch: WorkspaceSettings): WorkspaceSetti
   const merged = mergeWorkspaceSettings(getWorkspaceSettings(), patch);
   ConsoleSettingsDao.set('workspace', merged);
   return merged;
+}
+
+export function currentProductLanguage(): ProductLanguage {
+  const raw = ConsoleSettingsDao?.get('ui') as { language?: unknown } | undefined;
+  return normalizeProductLanguage(raw?.language);
+}
+
+function withBackendProductLanguage<T>(language: ProductLanguage, fn: () => T): T {
+  if (!backendWithProductLanguage) {
+    throw new Error('Backend product language context is not initialized');
+  }
+  return backendWithProductLanguage(language, fn);
 }
 
 function normalizeAgentExecutionSettings(raw: Record<string, unknown>): Record<string, unknown> {
@@ -97,10 +110,11 @@ export async function confirmProjectStagingBeforeClose(workflowRoot: string, win
     projectPath = desktop.project.resolveProjectPath(workflowRoot, lastProjectPath);
     stagingStatus = desktop.staging.getProjectStagingStatus(workflowRoot, projectPath);
   } catch (error) {
+    const language = currentProductLanguage();
     await dialog.showMessageBox(win, {
       type: 'error',
-      title: '检查暂存失败',
-      message: '检查暂存失败',
+      title: electronText(language, 'staging.checkFailed'),
+      message: electronText(language, 'staging.checkFailed'),
       detail: stagingErrorMessage(error),
     });
     return false;
@@ -108,15 +122,16 @@ export async function confirmProjectStagingBeforeClose(workflowRoot: string, win
 
   if (!hasProjectStaging(stagingStatus)) return true;
 
+  const language = currentProductLanguage();
   const result = await dialog.showMessageBox(win, {
     type: 'question',
-    title: '是否保存修改',
-    message: '是否保存修改',
-    buttons: ['是', '否', '取消'],
+    title: electronText(language, 'staging.savePrompt'),
+    message: electronText(language, 'staging.savePrompt'),
+    buttons: stagingCloseButtons(language),
     defaultId: 0,
     cancelId: 2,
     noLink: true,
-    detail: '当前项目存在暂存修改。选择“是”保存到工程；选择“否”放弃暂存；选择“取消”回到当前界面。',
+    detail: electronText(language, 'staging.closeDetail'),
   });
 
   if (result.response === 2) return false;
@@ -128,10 +143,11 @@ export async function confirmProjectStagingBeforeClose(workflowRoot: string, win
       desktop.staging.discardProjectStaging(workflowRoot, projectPath);
     }
   } catch (error) {
+    const failureKey = result.response === 0 ? 'staging.saveFailed' : 'staging.discardFailed';
     await dialog.showMessageBox(win, {
       type: 'error',
-      title: result.response === 0 ? '保存修改失败' : '放弃修改失败',
-      message: result.response === 0 ? '保存修改失败' : '放弃修改失败',
+      title: electronText(currentProductLanguage(), failureKey),
+      message: electronText(currentProductLanguage(), failureKey),
       detail: stagingErrorMessage(error),
     });
     return false;
@@ -202,6 +218,9 @@ async function loadBackendModules() {
   backendCoreUrl = coreUrl;
   
   console.log('[ipc] Core URL:', coreUrl.href);
+
+  const requestLanguageModule = await import(new URL('i18n/request-language.ts', coreUrl).href);
+  backendWithProductLanguage = requestLanguageModule.withProductLanguage;
   
   // 使用 dynamic import 加载模块
   const llmUrl = new URL('llm/index.ts', coreUrl).href;
@@ -770,13 +789,9 @@ function getMapLibraryScreenshotUrl(root: string, assetId: string): string {
   return path.join(root, 'runtime', 'screenshots', `${assetId}.png`);
 }
 
-/**
- * 初始化 IPC 处理器
- */
 export async function initializeIpcHandlers(root: string): Promise<void> {
   workflowRoot = root;
   
-  // 加载后端模块
   await loadBackendModules();
   registerAssetProtocol();
   
@@ -793,10 +808,12 @@ export async function initializeIpcHandlers(root: string): Promise<void> {
   });
 
   registerMapIpcHandlers(ipcMain, workflowRoot, desktop, {
+    productLanguage: currentProductLanguage,
+    withProductLanguage: withBackendProductLanguage,
     selectProjectDirectory: async (event: Electron.IpcMainInvokeEvent) => {
       const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
       const result = await dialog.showOpenDialog(parent, {
-        title: '选择 RPG Maker MV 项目目录',
+        title: electronText(currentProductLanguage(), 'projects.selectDirectoryTitle'),
         properties: ['openDirectory'],
       });
       if (result.canceled) return null;
@@ -907,7 +924,7 @@ export async function initializeIpcHandlers(root: string): Promise<void> {
       return toIpcPayload(await llm.listThinkingVariants(workflowRoot, providerId, modelId));
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      return toIpcPayload({ ok: false, variants: [{ id: 'default', label: '默认' }], error: message });
+      return toIpcPayload({ ok: false, variants: [{ id: 'default', label: electronText(currentProductLanguage(), 'settings.defaultVariant') }], error: message });
     }
   });
 
@@ -1124,11 +1141,11 @@ export async function initializeIpcHandlers(root: string): Promise<void> {
     const { createNativeSkill } = await import(
       new URL('desktop/native-skill-service.ts', backendCoreUrl!).href,
     );
-    return toIpcPayload(createNativeSkill(
+    return withBackendProductLanguage(currentProductLanguage(), () => toIpcPayload(createNativeSkill(
       workflowRoot,
       String(plain.skill || ''),
       String(plain.description || ''),
-    ));
+    )));
   });
 
   ipcMain.handle('settings:openCapabilityPath', async (_event, filePath: string) => {
@@ -1221,5 +1238,6 @@ export function cleanupIpcHandlers(): void {
   }
   agentSessionRuntime?.close().catch((error: Error) => console.warn('[ipc] Agent runtime close failed:', error.message));
   agentSessionRuntime = null;
+  backendWithProductLanguage = null;
   console.log('[ipc] IPC handlers cleaned up');
 }

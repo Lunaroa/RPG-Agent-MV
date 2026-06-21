@@ -1,3 +1,7 @@
+import type { ProductLanguage } from '@contract/types';
+import { DEFAULT_PRODUCT_LANGUAGE } from '../../../../contract/i18n.ts';
+import { translate } from '../i18n/messages.ts'
+
 const IPC_REMOTE_PREFIX = /^Error invoking remote method '[^']+':\s*/i;
 const WRAPPED_ERROR_PREFIX = /^Error:\s*/i;
 
@@ -8,18 +12,26 @@ export interface UserFacingError {
   detail?: string;
 }
 
-export function formatUserFacingError(errorValue: unknown, context: 'version' | 'general' = 'general'): UserFacingError {
-  const raw = errorValue instanceof Error ? errorValue.message : String(errorValue || '操作失败');
-  const stripped = unwrapIpcError(raw);
-  const mapped = mapKnownError(stripped, context);
-  return sanitizeDeveloperTerms(mapped);
+export function formatUserFacingError(
+  errorValue: unknown,
+  context: 'version' | 'general' = 'general',
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
+): UserFacingError {
+  const raw = errorValue instanceof Error ? errorValue.message : String(errorValue || translate('error.operationFailed', language));
+  const stripped = unwrapIpcError(raw, language);
+  const mapped = mapKnownError(stripped, context, language);
+  return sanitizeDeveloperTerms(mapped, language);
 }
 
-export function formatUserFacingErrorMessage(errorValue: unknown, context: 'version' | 'general' = 'general'): string {
-  return formatUserFacingError(errorValue, context).message;
+export function formatUserFacingErrorMessage(
+  errorValue: unknown,
+  context: 'version' | 'general' = 'general',
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
+): string {
+  return formatUserFacingError(errorValue, context, language).message;
 }
 
-function unwrapIpcError(message: string): string {
+function unwrapIpcError(message: string, language: ProductLanguage): string {
   let next = message.trim();
   if (IPC_REMOTE_PREFIX.test(next)) {
     next = next.replace(IPC_REMOTE_PREFIX, '').trim();
@@ -27,42 +39,23 @@ function unwrapIpcError(message: string): string {
   while (WRAPPED_ERROR_PREFIX.test(next)) {
     next = next.replace(WRAPPED_ERROR_PREFIX, '').trim();
   }
-  return next || '操作失败';
+  return next || translate('error.operationFailed', language);
 }
 
-function mapKnownError(message: string, context: 'version' | 'general'): UserFacingError {
-  if (/缺少 Git 依赖|未找到 git 命令|spawn(?:Sync)? git ENOENT|ENOENT/i.test(message)) {
-    return { message: '需要安装 Git 才能使用版本管理' };
-  }
-  if (/Git 执行失败/i.test(message)) {
-    const detail = message.replace(/^Git 执行失败：?/i, '').trim();
-    return {
-      message: context === 'version' ? '保存版本失败，请重试' : '操作失败，请重试',
-      detail: detail || message,
-    };
-  }
-  if (/超时.*版本管理未启用/i.test(message)) {
-    return { message: '保存版本超时，请稍后重试' };
-  }
-  if (/Git 仓库根目录不是当前项目/i.test(message)) {
-    return { message: '当前目录不是有效的版本管理位置' };
-  }
-  if (/项目目录不存在/i.test(message)) {
-    return { message: '项目目录不存在，请重新选择项目' };
-  }
+function mapKnownError(message: string, _context: 'version' | 'general', language: ProductLanguage): UserFacingError {
   if (/\[CONTROLLED_EDITING_DISABLED\]/i.test(message)) {
-    return { message: '请先启用版本管理' };
+    return { message: translate('error.enableVersionFirst', language) };
   }
   return { message };
 }
 
-function sanitizeDeveloperTerms(result: UserFacingError): UserFacingError {
+function sanitizeDeveloperTerms(result: UserFacingError, language: ProductLanguage): UserFacingError {
   const combined = `${result.message} ${result.detail || ''}`;
   if (!DEVELOPER_TERMS.test(combined)) {
     return result;
   }
   return {
-    message: result.message.includes('失败') ? result.message : '操作失败，请重试',
+    message: result.message.includes('失败') || result.message.includes('failed') ? result.message : translate('error.operationFailedRetry', language),
     detail: result.detail || combined,
   };
 }

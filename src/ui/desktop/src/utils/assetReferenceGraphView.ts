@@ -3,6 +3,9 @@ import type {
   ProjectAssetReferenceGraph,
   ProjectAssetReferenceGraphAsset,
 } from '../api/client';
+import type { ProductLanguage } from '@contract/types';
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts';
+import { translate, type MessageKey } from '../i18n/messages.ts';
 
 export type ReplacementMap = Record<string, string>;
 
@@ -158,16 +161,18 @@ export function classifyReferenceSource(reference: ProjectAssetReference): Asset
   return 'other';
 }
 
-export function referenceSourceLabel(reference: ProjectAssetReference): string {
-  const labels: Record<AssetReferenceSourceKind, string> = {
-    database: '数据库',
-    map: '地图',
-    commonEvent: '公共事件',
-    plugin: '插件',
-    config: '配置',
-    audio: '音频',
-    image: '图像',
-    other: '其它',
-  };
-  return labels[classifyReferenceSource(reference)];
+const SOURCE_LABEL_KEYS: Record<AssetReferenceSourceKind, MessageKey> = {
+  database: 'assetref.source.database',
+  map: 'assetref.source.map',
+  commonEvent: 'assetref.source.commonEvent',
+  plugin: 'assetref.source.plugin',
+  config: 'assetref.source.config',
+  audio: 'assetref.source.audio',
+  image: 'assetref.source.image',
+  other: 'assetref.source.other',
+}
+
+export function referenceSourceLabel(reference: ProjectAssetReference, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  language = normalizeProductLanguage(language)
+  return translate(SOURCE_LABEL_KEYS[classifyReferenceSource(reference)], language)
 }

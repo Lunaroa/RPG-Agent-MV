@@ -9,6 +9,8 @@ import {
 } from '../../utils/consoleRunGroups';
 import ConsoleRunDetail from './ConsoleRunDetail.vue';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
+import { useI18n, type MessageKey } from '../../i18n';
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 
 type SessionRow = RunLogSessionLike;
 
@@ -22,24 +24,26 @@ const detail = ref<SessionDetail | null>(null);
 const detailLoading = ref(false);
 const detailError = ref('');
 const listScroll = ref<HTMLElement | null>(null);
+const { language, t } = useI18n();
 let savedScrollTop = 0;
 let detailRequestId = 0;
 
-const statusMeta: Record<string, { label: string; tone: string }> = {
-  pass: { label: '通过', tone: 'ok' },
-  completed: { label: '通过', tone: 'ok' },
-  blocked: { label: '被拦截', tone: 'error' },
-  failed: { label: '失败', tone: 'error' },
-  error: { label: '失败', tone: 'error' },
-  interrupted: { label: '中断', tone: 'warn' },
-  stopped: { label: '已停止', tone: 'warn' },
-  running: { label: '进行中', tone: 'running' },
-  preparing: { label: '准备中', tone: 'running' },
-  starting: { label: '启动中', tone: 'running' },
+const statusMeta: Record<string, { labelKey: MessageKey; tone: string }> = {
+  pass: { labelKey: 'console.logs.status.pass', tone: 'ok' },
+  completed: { labelKey: 'console.logs.status.pass', tone: 'ok' },
+  blocked: { labelKey: 'console.logs.status.blocked', tone: 'error' },
+  failed: { labelKey: 'console.logs.status.failed', tone: 'error' },
+  error: { labelKey: 'console.logs.status.failed', tone: 'error' },
+  interrupted: { labelKey: 'console.logs.status.interrupted', tone: 'warn' },
+  stopped: { labelKey: 'console.logs.status.stopped', tone: 'warn' },
+  running: { labelKey: 'console.logs.status.running', tone: 'running' },
+  preparing: { labelKey: 'console.logs.status.preparing', tone: 'running' },
+  starting: { labelKey: 'console.logs.status.starting', tone: 'running' },
 };
 
 function meta(value = '') {
-  return statusMeta[value] || { label: value || '未知', tone: 'muted' };
+  const item = statusMeta[value];
+  return item ? { label: t(item.labelKey), tone: item.tone } : { label: value || t('console.logs.status.unknown'), tone: 'muted' };
 }
 
 function dayKey(date: Date): string {
@@ -47,15 +51,15 @@ function dayKey(date: Date): string {
 }
 
 function dayLabel(date: Date): string {
-  if (Number.isNaN(date.getTime())) return '日期未知';
-  const label = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' }).format(date);
-  return dayKey(date) === dayKey(new Date()) ? `今天 · ${label}` : label;
+  if (Number.isNaN(date.getTime())) return t('console.logs.dateUnknown');
+  const label = new Intl.DateTimeFormat(language.value, { month: 'long', day: 'numeric', weekday: 'short' }).format(date);
+  return dayKey(date) === dayKey(new Date()) ? `${t('console.logs.today')} · ${label}` : label;
 }
 
 function timeLabel(date: Date): string {
   return Number.isNaN(date.getTime())
     ? '--:--'
-    : new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+    : new Intl.DateTimeFormat(language.value, { hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
 }
 
 function conversationDate(conversation: RunLogConversation): Date {
@@ -89,7 +93,7 @@ function mergeDetails(conversation: RunLogConversation, details: SessionDetail[]
   };
 }
 
-const conversations = computed(() => groupSessionsIntoRunLogs(props.sessions));
+const conversations = computed(() => groupSessionsIntoRunLogs(props.sessions, language.value));
 const projects = computed(() => [...new Set(conversations.value.map((item) => item.project).filter(Boolean))] as string[]);
 const projectChoices = computed(() => {
   const choices = [...projects.value];
@@ -135,7 +139,7 @@ async function openDetail(conversation: RunLogConversation) {
     const details = await Promise.all(conversation.sessionIds.map((id) => sessionsApi.get(id) as Promise<SessionDetail>));
     if (requestId === detailRequestId) detail.value = mergeDetails(conversation, details.filter(Boolean));
   } catch (error) {
-    if (requestId === detailRequestId) detailError.value = (error as Error).message;
+    if (requestId === detailRequestId) detailError.value = formatErrorText(error);
   } finally {
     if (requestId === detailRequestId) detailLoading.value = false;
   }
@@ -150,6 +154,9 @@ async function closeDetail() {
   if (listScroll.value) listScroll.value.scrollTop = savedScrollTop;
 }
 
+function formatErrorText(errorValue: unknown): string {
+  return formatUserFacingErrorMessage(errorValue, 'general', language.value);
+}
 </script>
 
 <template>
@@ -164,21 +171,21 @@ async function closeDetail() {
 
     <div v-show="!showingDetail" ref="listScroll" class="logs-list">
       <div class="log-toolbar">
-        <ConsoleSearchInput v-model="query" placeholder="搜索标题、会话 ID 或项目" />
+        <ConsoleSearchInput v-model="query" :placeholder="t('console.logs.searchPlaceholder')" />
         <select v-model="status">
-          <option value="">全部状态</option>
+          <option value="">{{ t('console.logs.allStatuses') }}</option>
           <option v-for="item in statuses" :key="item" :value="item">{{ meta(item).label }}</option>
         </select>
         <select v-model="project">
-          <option value="">全部项目</option>
+          <option value="">{{ t('console.logs.allProjects') }}</option>
           <option v-for="item in projectChoices" :key="item" :value="item">{{ item }}</option>
         </select>
-        <input v-model="dateFrom" type="date" title="开始日期">
-        <input v-model="dateTo" type="date" title="结束日期">
+        <input v-model="dateFrom" type="date" :title="t('console.logs.dateFrom')">
+        <input v-model="dateTo" type="date" :title="t('console.logs.dateTo')">
       </div>
 
-      <div v-if="error" class="empty error">{{ error }}</div>
-      <div v-else-if="loading" class="empty">正在读取运行记录…</div>
+      <div v-if="error" class="empty error">{{ formatErrorText(error) }}</div>
+      <div v-else-if="loading" class="empty">{{ t('console.logs.loading') }}</div>
       <div v-else-if="groups.length" class="log-groups">
         <section v-for="group in groups" :key="dayKey(group.date)" class="log-group">
           <header>{{ dayLabel(group.date) }}</header>
@@ -195,13 +202,13 @@ async function closeDetail() {
             <strong>{{ conversation.title }}</strong>
             <span class="log-project">
               <code>{{ conversation.project }}</code>
-              <small v-if="conversation.turnCount > 1">{{ conversation.turnCount }} 轮</small>
+              <small v-if="conversation.turnCount > 1">{{ t('console.logs.turns', { count: conversation.turnCount }) }}</small>
             </span>
-            <em>查看过程 ›</em>
+            <em>{{ t('console.logs.viewProcess') }}</em>
           </button>
         </section>
       </div>
-      <div v-else class="empty">没有匹配的运行记录</div>
+      <div v-else class="empty">{{ t('console.logs.noMatches') }}</div>
     </div>
   </div>
 </template>

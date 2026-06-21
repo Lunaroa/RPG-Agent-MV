@@ -2,8 +2,10 @@ import { reactive, watch, type Ref } from 'vue';
 import { eventRegistry, type EditorProjectCatalog } from '../api/client';
 import { useProjectStore } from '../stores/project';
 import type { PlacementListEvent } from '../stores/eventPlacementAsk';
+import { useI18n } from '../i18n';
 import { extractContractPageImage } from '../utils/placementContractImage';
 import { characterSpriteStyle } from '../utils/spritePreviewStyle';
+import { translate } from '../i18n/messages.ts'
 
 export interface PlacementEventVisual {
   loading: boolean;
@@ -41,6 +43,7 @@ export function usePlacementEventVisuals(
   catalog: Ref<EditorProjectCatalog | null>,
 ) {
   const projectStore = useProjectStore();
+  const { language } = useI18n();
   const visuals = reactive<Record<string, PlacementEventVisual>>({});
 
   async function loadVisual(contractId: string): Promise<void> {
@@ -57,7 +60,7 @@ export function usePlacementEventVisuals(
         visuals[contractId] = {
           ...emptyVisual(),
           loaded: true,
-          error: '未找到事件契约图像信息',
+          error: translate('placement.visuals.contractImageNotFound', language.value),
         };
         return;
       }
@@ -81,10 +84,11 @@ export function usePlacementEventVisuals(
       visuals[contractId] = {
         ...emptyVisual(),
         loaded: true,
-        error: error instanceof Error ? error.message : '读取事件图像失败',
+        error: error instanceof Error ? error.message : translate('placement.visuals.loadImageFailed', language.value),
       };
     }
   }
+
 
   watch(
     () => events.value.map((event) => event.contractId).join('\n'),

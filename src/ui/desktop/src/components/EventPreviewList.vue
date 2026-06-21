@@ -7,7 +7,7 @@
       @click="expanded = !expanded"
     >
       <el-icon class="event-preview-chevron" :class="{ open: expanded }"><ArrowRight /></el-icon>
-      <span class="event-preview-summary">我写了 {{ events.length }} 个事件，你看看</span>
+      <span class="event-preview-summary">{{ summaryText }}</span>
     </button>
 
     <div v-show="expanded" class="event-preview-body">
@@ -24,7 +24,7 @@
         </button>
 
         <div v-show="isOpen(event.contractId)" class="epv-script">
-          <p v-if="scriptStates[event.contractId]?.loading" class="epv-hint">读取中…</p>
+          <p v-if="scriptStates[event.contractId]?.loading" class="epv-hint">{{ t('eventPreview.loading') }}</p>
           <p
             v-else-if="scriptStates[event.contractId]?.error"
             class="epv-hint epv-empty"
@@ -61,18 +61,24 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { eventRegistry } from '../api/client'
 import type { EventScriptModel } from '../utils/eventScript'
 import type { EventPreviewItem } from '../composables/useSessionStream'
+import { useI18n } from '../i18n'
+import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 
-defineProps<{
+const props = defineProps<{
   events: EventPreviewItem[]
 }>()
 
 const expanded = ref(true)
 const openIds = reactive<Record<string, boolean>>({})
+const { language, t } = useI18n()
+const summaryText = computed(() =>
+  t('eventPreview.summary', { count: props.events.length }),
+)
 
 // 放置前剧本预览：按 contractId 懒加载，展开时才取（与编译同源的后端渲染）。
 interface ScriptState {
@@ -104,15 +110,16 @@ async function loadEventScript(contractId: string): Promise<void> {
     if (res.status === 'ok' && res.script) {
       scriptStates[contractId].model = res.script
     } else {
-      scriptStates[contractId].error = '这个事件还没有登记正文，暂时没有剧本可看。等 agent 把完整事件写入注册表后这里就会显示。'
+      scriptStates[contractId].error = t('eventPreview.noScript')
     }
   } catch (error) {
-    scriptStates[contractId].error = error instanceof Error ? error.message : '读取剧本失败'
+    scriptStates[contractId].error = formatUserFacingErrorMessage(error, 'general', language.value)
   } finally {
     scriptStates[contractId].loading = false
     scriptStates[contractId].loaded = true
   }
 }
+
 </script>
 
 <style scoped>

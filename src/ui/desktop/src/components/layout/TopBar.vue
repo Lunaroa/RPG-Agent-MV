@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { Expand, Fold } from '@element-plus/icons-vue';
 import { PanelRightClose, PanelRightOpen, Minus, Square, X as XIcon } from '@lucide/vue';
+import { resolveUserDocsEntry } from '@contract/docs-path';
 import { settings } from '../../api/client';
+import { useI18n } from '../../i18n';
+import { normalizeProductLanguage } from '../../i18n/messages';
+import { useSettingsStore } from '../../stores/settings';
 import { useProjectStore } from '../../stores/project';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
@@ -12,7 +16,9 @@ import { useWorkspaceStore } from '../../stores/workspace';
 const ui = useWorkbenchUiStore();
 const workspace = useWorkspaceStore();
 const projectStore = useProjectStore();
+const settingsStore = useSettingsStore();
 const router = useRouter();
+const { t } = useI18n();
 
 /* ---------- Menu dropdowns ---------- */
 const openMenu = ref<string | null>(null);
@@ -23,7 +29,7 @@ type MenuAction = () => void | Promise<void>;
 
 function emitEditorCommand(command: EditorCommand) {
   if (router.currentRoute.value.path !== '/workbench' || !projectStore.currentProject) {
-    ElMessage.info('当前页面没有编辑器操作');
+    ElMessage.info(t('topbar.editorUnavailable'));
     return;
   }
   window.dispatchEvent(new CustomEvent('agent-rpg:editor-command', { detail: { command } }));
@@ -32,24 +38,26 @@ function emitEditorCommand(command: EditorCommand) {
 async function openDocs() {
   try {
     const snapshot = await settings.getAgentCapabilities();
-    await settings.openCapabilityPath(`${snapshot.workflowRoot}/docs`);
+    const language = normalizeProductLanguage(settingsStore.ui.language);
+    const docsEntry = resolveUserDocsEntry(snapshot.workflowRoot, language);
+    await settings.openCapabilityPath(docsEntry);
   } catch (error) {
-    ElMessage.error(`打开文档失败：${(error as Error).message}`);
+    ElMessage.error(t('topbar.openDocsFailed', { message: (error as Error).message }));
   }
 }
 
-const menus: { key: string; label: string; items: { key: string; label: string; shortcut?: string; action: MenuAction }[] }[] = [
-  { key: 'file', label: '文件', items: [
-    { key: 'save', label: '保存', shortcut: 'Ctrl+S', action: () => emitEditorCommand('save') },
+const menus = computed<{ key: string; label: string; items: { key: string; label: string; shortcut?: string; action: MenuAction }[] }[]>(() => [
+  { key: 'file', label: t('topbar.menu.file'), items: [
+    { key: 'save', label: t('topbar.menu.save'), shortcut: 'Ctrl+S', action: () => emitEditorCommand('save') },
   ]},
-  { key: 'edit', label: '编辑', items: [
-    { key: 'undo', label: '撤销', shortcut: 'Ctrl+Z', action: () => emitEditorCommand('undo') },
-    { key: 'redo', label: '重做', shortcut: 'Ctrl+Shift+Z', action: () => emitEditorCommand('redo') },
+  { key: 'edit', label: t('topbar.menu.edit'), items: [
+    { key: 'undo', label: t('topbar.menu.undo'), shortcut: 'Ctrl+Z', action: () => emitEditorCommand('undo') },
+    { key: 'redo', label: t('topbar.menu.redo'), shortcut: 'Ctrl+Shift+Z', action: () => emitEditorCommand('redo') },
   ]},
-  { key: 'help', label: '帮助', items: [
-    { key: 'docs', label: '文档', action: openDocs },
+  { key: 'help', label: t('topbar.menu.help'), items: [
+    { key: 'docs', label: t('topbar.menu.docs'), action: openDocs },
   ]},
-];
+]);
 
 function toggleMenu(key: string) {
   openMenu.value = openMenu.value === key ? null : key;
@@ -138,8 +146,8 @@ onUnmounted(() => {
       type="button"
       class="topbar-btn rail-toggle"
       data-ui-id="topbar-rail-toggle"
-      :title="ui.appRailOpen ? '收起导航' : '展开导航'"
-      :aria-label="ui.appRailOpen ? '收起导航' : '展开导航'"
+      :title="ui.appRailOpen ? t('topbar.collapseNavigation') : t('topbar.expandNavigation')"
+      :aria-label="ui.appRailOpen ? t('topbar.collapseNavigation') : t('topbar.expandNavigation')"
       @click="ui.toggleAppRail"
     >
       <component :is="ui.appRailOpen ? Fold : Expand" />
@@ -177,22 +185,22 @@ onUnmounted(() => {
       class="sidebar-toggle"
       data-ui-id="topbar-agent-panel-toggle"
       :aria-pressed="ui.agentPanelOpen"
-      title="切换辅助侧栏 (Ctrl+L)"
+      :title="t('topbar.toggleAuxSidebar')"
       @click="ui.toggleAgentPanel"
     >
       <component :is="ui.agentPanelOpen ? PanelRightOpen : PanelRightClose" :size="15" :stroke-width="1.5" />
     </button>
 
-    <div class="window-controls" aria-label="窗口控制">
-      <button type="button" class="window-btn" data-ui-id="window-minimize" title="最小化" aria-label="最小化" @click="minimizeWindow"><Minus :size="15" :stroke-width="1.5" /></button>
-      <button type="button" class="window-btn" data-ui-id="window-maximize-toggle" :title="maximized ? '还原' : '最大化'" :aria-label="maximized ? '还原' : '最大化'" @click="toggleMaximizeWindow">
+    <div class="window-controls" :aria-label="t('topbar.windowControls')">
+      <button type="button" class="window-btn" data-ui-id="window-minimize" :title="t('topbar.minimize')" :aria-label="t('topbar.minimize')" @click="minimizeWindow"><Minus :size="15" :stroke-width="1.5" /></button>
+      <button type="button" class="window-btn" data-ui-id="window-maximize-toggle" :title="maximized ? t('topbar.restore') : t('topbar.maximize')" :aria-label="maximized ? t('topbar.restore') : t('topbar.maximize')" @click="toggleMaximizeWindow">
         <svg v-if="maximized" class="window-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="8" y="4" width="12" height="12" rx="1.5" />
           <path d="M16 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1h3" />
         </svg>
         <Square v-else :size="15" :stroke-width="1.5" />
       </button>
-      <button type="button" class="window-btn close" data-ui-id="window-close" title="关闭" aria-label="关闭" @click="closeWindow"><XIcon :size="15" :stroke-width="1.5" /></button>
+      <button type="button" class="window-btn close" data-ui-id="window-close" :title="t('topbar.close')" :aria-label="t('topbar.close')" @click="closeWindow"><XIcon :size="15" :stroke-width="1.5" /></button>
     </div>
   </header>
 </template>

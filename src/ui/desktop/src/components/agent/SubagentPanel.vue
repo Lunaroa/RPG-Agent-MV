@@ -3,16 +3,22 @@ import { computed, watch } from 'vue'
 import { Close, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useSubagentStore } from '../../stores/subagents'
-import { subagentTimelineSegments } from '../../utils/subagentTimeline.ts'
+import { localizeSubagentActivityTitle, subagentTimelineSegments } from '../../utils/subagentTimeline.ts'
 import TurnSegment from '../TurnSegment.vue'
 import type { SessionSubagentActivity, SessionSubagentItem, SessionSubagentStatus } from '@contract/types'
+import { useI18n } from '../../i18n'
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error'
 
 const props = defineProps<{ sessionId: string | null | undefined }>()
 
 const subagents = useSubagentStore()
+const { language, t } = useI18n()
 const items = computed(() => subagents.itemsFor(props.sessionId))
 const loading = computed(() => subagents.loadingFor(props.sessionId))
-const error = computed(() => subagents.errorFor(props.sessionId))
+const error = computed(() => {
+  const value = subagents.errorFor(props.sessionId)
+  return value ? formatUserFacingErrorMessage(value, 'general', language.value) : ''
+})
 
 function refresh(): void {
   if (!props.sessionId) return
@@ -28,13 +34,13 @@ watch(
 )
 
 function statusText(status: SessionSubagentStatus): string {
-  if (status === 'running') return '运行中'
-  if (status === 'completed') return '完成'
-  if (status === 'failed') return '失败'
-  if (status === 'stopped') return '已停止'
-  if (status === 'timeout') return '超时'
-  if (status === 'not_ready') return '未就绪'
-  return '未知'
+  if (status === 'running') return t('subagent.status.running')
+  if (status === 'completed') return t('subagent.status.completed')
+  if (status === 'failed') return t('subagent.status.failed')
+  if (status === 'stopped') return t('subagent.status.stopped')
+  if (status === 'timeout') return t('subagent.status.timeout')
+  if (status === 'not_ready') return t('subagent.status.notReady')
+  return t('subagent.status.unknown')
 }
 
 function canStop(item: SessionSubagentItem): boolean {
@@ -48,15 +54,15 @@ function latestActivity(item: SessionSubagentItem): SessionSubagentActivity | nu
 
 function recentAction(item: SessionSubagentItem): string {
   const latest = latestActivity(item)
-  if (latest?.title) return latest.title
-  if (item.error) return item.error
-  if (item.output) return '已有输出'
-  if (item.outputFile) return '已有输出文件'
-  return item.updatedAt ? '状态已更新' : ''
+  if (latest?.title) return localizeSubagentActivityTitle(latest.title, language.value)
+  if (item.error) return formatUserFacingErrorMessage(item.error, 'general', language.value)
+  if (item.output) return t('subagent.output')
+  if (item.outputFile) return t('subagent.outputFile')
+  return item.updatedAt ? t('subagent.updated') : ''
 }
 
 function hasDetails(item: SessionSubagentItem): boolean {
-  return subagentTimelineSegments(item).length > 0
+  return subagentTimelineSegments(item, language.value).length > 0
 }
 
 async function stop(item: SessionSubagentItem): Promise<void> {
@@ -64,12 +70,12 @@ async function stop(item: SessionSubagentItem): Promise<void> {
   try {
     const result = await subagents.stop(props.sessionId, item)
     if (!result.ok) {
-      ElMessage.error(result.reason || '停止 subagent 失败')
+      ElMessage.error(result.reason ? formatUserFacingErrorMessage(result.reason, 'general', language.value) : t('subagent.stopFailed'))
       return
     }
-    ElMessage.success('已请求停止 subagent')
+    ElMessage.success(t('subagent.stopRequested'))
   } catch (err) {
-    ElMessage.error(err instanceof Error ? err.message : '停止 subagent 失败')
+    ElMessage.error(formatUserFacingErrorMessage(err, 'general', language.value))
   }
 }
 </script>
@@ -78,9 +84,9 @@ async function stop(item: SessionSubagentItem): Promise<void> {
   <div class="subagent-panel">
     <div class="sp-toolbar">
       <span class="sp-state" :class="{ error: !!error }">
-        {{ loading ? '读取中…' : error || (items.length ? `${items.length} 个 subagent` : '') }}
+        {{ loading ? t('subagent.loading') : error || (items.length ? t('subagent.count', { count: items.length }) : '') }}
       </span>
-      <button type="button" class="sp-icon-button" title="刷新" :disabled="!sessionId || loading" @click="refresh">
+      <button type="button" class="sp-icon-button" :title="t('subagent.refresh')" :disabled="!sessionId || loading" @click="refresh">
         <el-icon><Refresh /></el-icon>
       </button>
     </div>
@@ -100,7 +106,7 @@ async function stop(item: SessionSubagentItem): Promise<void> {
             v-if="canStop(item)"
             type="button"
             class="sp-stop"
-            title="停止"
+            :title="t('subagent.stop')"
             :disabled="!!item.stopRequestId"
             @click.stop.prevent="stop(item)"
           >
@@ -110,16 +116,16 @@ async function stop(item: SessionSubagentItem): Promise<void> {
 
         <div v-if="hasDetails(item)" class="sp-details">
           <TurnSegment
-            v-for="segment in subagentTimelineSegments(item)"
+            v-for="segment in subagentTimelineSegments(item, language)"
             :key="segment.id"
             :segment="segment"
           />
         </div>
-        <p v-else class="sp-empty-detail">暂无明细</p>
+        <p v-else class="sp-empty-detail">{{ t('subagent.emptyDetail') }}</p>
       </details>
     </div>
 
-    <p v-else class="sp-empty">暂无 subagent。Agent 调用 opencode subagent 工具后会显示在这里。</p>
+    <p v-else class="sp-empty">{{ t('subagent.empty') }}</p>
   </div>
 </template>
 

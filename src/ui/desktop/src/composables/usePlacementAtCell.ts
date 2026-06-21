@@ -2,18 +2,22 @@ import { ElMessage } from 'element-plus';
 import { eventRegistry, events as eventsApi } from '../api/client';
 import { useProjectStore } from '../stores/project';
 import type { EventPlacementFocus } from '../stores/eventPlacementAsk';
+import type { ProductLanguage } from '@contract/types';
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts';
 import {
   buildPlacementContractNote,
   hasAbstractContractPages,
   normalizeContractPagesFromImpl,
 } from '../utils/placementEventDraft';
 import { toPlacementError } from '../utils/placementErrors';
+import { translate } from '../i18n/messages.ts'
 
 export interface PlaceContractOptions {
   focus: EventPlacementFocus;
   mapId: number;
   cell: { x: number; y: number };
   applyContractPages: boolean;
+  language?: ProductLanguage;
 }
 
 export async function placeContractAtCell(options: PlaceContractOptions): Promise<{
@@ -22,8 +26,9 @@ export async function placeContractAtCell(options: PlaceContractOptions): Promis
   shellOnly?: boolean;
 } | null> {
   const projectStore = useProjectStore();
+  const language = normalizeProductLanguage(options.language ?? DEFAULT_PRODUCT_LANGUAGE);
   const project = projectStore.currentProject;
-  if (!project) throw new Error('请先选择 RPG Maker MV 项目，再放置事件。');
+  if (!project) throw new Error(translate('placement.atCell.selectProjectFirst', language));
   const { focus, mapId, cell, applyContractPages } = options;
 
   let contractPayload: {
@@ -58,7 +63,7 @@ export async function placeContractAtCell(options: PlaceContractOptions): Promis
         };
       }
     } catch {
-      ElMessage.warning('无法读取 event-registry，将尝试复用地图里已写好的事件。');
+      ElMessage.warning(translate('placement.atCell.registryUnavailable', language));
     }
   }
 
@@ -77,18 +82,19 @@ export async function placeContractAtCell(options: PlaceContractOptions): Promis
       pages,
     }, project);
     const eventId = Number(report.eventId);
-    if (!eventId) throw new Error('创建事件后未返回 eventId');
+    if (!eventId) throw new Error(translate('placement.atCell.noEventId', language));
     return {
       eventId,
       usedContractPatch: Boolean(report.usedContractPatch || (report as { reusedExisting?: boolean }).reusedExisting),
       shellOnly: Boolean((report as { shellOnly?: boolean }).shellOnly),
     };
   } catch (error) {
-    throw toPlacementError(error, { contractId: focus.contractId, eventName: name });
+    throw toPlacementError(error, { contractId: focus.contractId, eventName: name }, language);
   }
 }
 
-export function placementCellHint(cell: { x: number; y: number } | null): string {
-  if (!cell) return '请先将鼠标移到地图格子上';
-  return `将在 (${cell.x}, ${cell.y}) 创建事件`;
+export function placementCellHint(cell: { x: number; y: number } | null, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  language = normalizeProductLanguage(language)
+  if (!cell) return translate('placement.atCell.hoverFirst', language);
+  return translate('placement.atCell.createAt', language, { x: cell.x, y: cell.y });
 }

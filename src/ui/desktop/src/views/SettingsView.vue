@@ -1,7 +1,7 @@
 <template>
   <div class="settings-view" :data-ui-id="`settings-view-${activeName}`">
     <div class="settings-body">
-      <div v-if="store.loading" class="settings-loading-bar">正在读取设置…</div>
+      <div v-if="store.loading" class="settings-loading-bar">{{ t('settings.loading') }}</div>
       <div v-if="store.lastError" class="settings-error-bar">
         <span class="alert-icon">!</span> {{ store.lastError }}
       </div>
@@ -17,7 +17,7 @@
               :data-ui-id="`settings-tab-${tab.name}`"
               :class="{ active: activeName === tab.name }"
               @click="activeName = tab.name"
-            >{{ tab.label }}</button>
+            >{{ t(tab.labelKey) }}</button>
           </div>
         </aside>
 
@@ -26,9 +26,9 @@
 
             <!-- TAB: model-engine -->
             <section v-if="activeName === 'model-engine'" class="settings-tab-content">
-              <h3>模型</h3>
+              <h3>{{ t('settings.model.title') }}</h3>
               <div class="provider-actions">
-                <button class="workbench-button" data-ui-id="settings-manage-providers" @click="onManageProviders">管理供应商</button>
+                <button class="workbench-button" data-ui-id="settings-manage-providers" @click="onManageProviders">{{ t('settings.model.manageProviders') }}</button>
               </div>
 
               <div v-if="importPresetsMessage" class="alert" :class="importPresetsError ? 'alert-error' : 'alert-success'">
@@ -38,11 +38,11 @@
               </div>
 
               <div class="engine-status-bar" role="status">
-                <div class="current-model-title">当前使用</div>
-                <div class="status-row"><span class="status-label">Provider</span><span class="status-value">{{ activeProviderLabel }}</span></div>
-                <div class="status-row"><span class="status-label">模型</span><span class="status-value mono">{{ activeModelLabel }}</span></div>
-                <div class="status-row"><span class="status-label">Key</span><span class="status-value" :class="activeKeyOk ? 'status-ok' : 'status-warn'">{{ activeKeyOk ? '已配置' : '未配置' }}</span></div>
-                <div class="status-row status-row--full"><span class="status-label">同步</span><span class="status-value">{{ lastSyncLabel }}</span></div>
+                <div class="current-model-title">{{ t('settings.model.current') }}</div>
+                <div class="status-row"><span class="status-label">{{ t('settings.model.provider') }}</span><span class="status-value">{{ activeProviderLabel }}</span></div>
+                <div class="status-row"><span class="status-label">{{ t('settings.model.model') }}</span><span class="status-value mono">{{ activeModelLabel }}</span></div>
+                <div class="status-row"><span class="status-label">{{ t('settings.model.key') }}</span><span class="status-value" :class="activeKeyOk ? 'status-ok' : 'status-warn'">{{ activeKeyOk ? t('settings.model.keyConfigured') : t('settings.model.keyMissing') }}</span></div>
+                <div class="status-row status-row--full"><span class="status-label">{{ t('settings.model.sync') }}</span><span class="status-value">{{ lastSyncLabel }}</span></div>
               </div>
 
               <div v-if="invalidBindingWarning" class="alert alert-warn"><span class="alert-icon">!</span> {{ invalidBindingWarning }}</div>
@@ -50,15 +50,15 @@
               <div v-if="showOpencodeProviderEmptyAlert" class="alert alert-warn opencode-provider-alert">
                 <span class="alert-icon">!</span>
                 <div>
-                  <strong>尚无 API 供应商</strong>
-                  <p class="opencode-alert-body">先同步内置供应商，填写 API Key 后设为默认；换模型在聊天框旁操作。</p>
-                  <button class="workbench-button primary" data-ui-id="settings-sync-providers-empty" :disabled="importPresetsLoading" @click="onSyncProviderSeeds">{{ importPresetsLoading ? '同步中…' : '同步供应商' }}</button>
+                  <strong>{{ t('settings.model.noApiProvidersTitle') }}</strong>
+                  <p class="opencode-alert-body">{{ t('settings.model.noApiProvidersBody') }}</p>
+                  <button class="workbench-button primary" data-ui-id="settings-sync-providers-empty" :disabled="importPresetsLoading" @click="onSyncProviderSeeds">{{ importPresetsLoading ? t('settings.model.syncingProviders') : t('settings.model.syncProviders') }}</button>
                 </div>
               </div>
 
               <div class="provider-list-header">
                 <h4 class="provider-list-title">API</h4>
-                <button class="workbench-button primary add-api-btn" data-ui-id="settings-add-api" title="添加 API" @click="openAddProviderDialog">+ 添加</button>
+                <button class="workbench-button primary add-api-btn" data-ui-id="settings-add-api" :title="t('settings.model.addApiTitle')" @click="openAddProviderDialog">{{ t('settings.model.add') }}</button>
               </div>
 
               <div v-if="displayedProviders.length" class="provider-card-list">
@@ -69,18 +69,18 @@
                       <span class="provider-card-id mono">{{ p.id }}</span>
                     </div>
                     <div class="provider-card-badges">
-                      <span v-if="!p.credentialPresent" class="pill pill-warn pill-sm">待配置 Key</span>
-                      <span v-if="isProviderActive(p.id)" class="pill pill-primary pill-sm">默认</span>
+                      <span v-if="!p.credentialPresent" class="pill pill-warn pill-sm">{{ t('settings.model.pendingKey') }}</span>
+                      <span v-if="isProviderActive(p.id)" class="pill pill-primary pill-sm">{{ t('settings.model.defaultBadge') }}</span>
                     </div>
                   </header>
                   <div class="provider-card-meta">
-                    <div class="meta-row"><span class="meta-label">模型</span><span class="meta-value mono">{{ cardModelLabel(p) }}</span></div>
+                    <div class="meta-row"><span class="meta-label">{{ t('settings.model.model') }}</span><span class="meta-value mono">{{ cardModelLabel(p) }}</span></div>
                   </div>
                   <footer class="provider-card-footer" @click.stop>
-                    <button class="workbench-button primary" :disabled="activatingProviderId === p.id" @click="onActivateProvider(p)">{{ activatingProviderId === p.id ? '设置中…' : '设为默认' }}</button>
-                    <button class="workbench-button" :disabled="testingProviderId === p.id" @click="onTestProviderCard(p)">{{ testingProviderId === p.id ? '测试中…' : '测试' }}</button>
-                    <button class="workbench-link" @click="toggleProviderExpand(p.id)">{{ expandedProviderId === p.id ? '收起' : '编辑' }}</button>
-                    <button class="workbench-link danger" :disabled="deletingProviderId === p.id" @click="onDeleteProviderCard(p)">{{ deletingProviderId === p.id ? '删除中…' : '删除' }}</button>
+                    <button class="workbench-button primary" :disabled="activatingProviderId === p.id" @click="onActivateProvider(p)">{{ activatingProviderId === p.id ? t('settings.model.setting') : t('settings.model.setDefault') }}</button>
+                    <button class="workbench-button" :disabled="testingProviderId === p.id" @click="onTestProviderCard(p)">{{ testingProviderId === p.id ? t('settings.model.testing') : t('settings.model.test') }}</button>
+                    <button class="workbench-link" @click="toggleProviderExpand(p.id)">{{ expandedProviderId === p.id ? t('settings.model.collapse') : t('settings.model.edit') }}</button>
+                    <button class="workbench-link danger" :disabled="deletingProviderId === p.id" @click="onDeleteProviderCard(p)">{{ deletingProviderId === p.id ? t('settings.model.deleting') : t('settings.model.delete') }}</button>
                   </footer>
                   <div v-if="expandedProviderId === p.id" class="provider-card-body" @click.stop>
                     <div class="provider-inline-form">
@@ -105,10 +105,10 @@
                           @blur="onInlineProviderConfigBlur"
                           @keydown.enter.prevent="onInlineProviderConfigBlur"
                         />
-                        <div class="form-hint">可选；填入后点击其他地方会自动保存</div>
+                        <div class="form-hint">{{ t('settings.model.baseUrlHint') }}</div>
                       </div>
                       <div class="form-group">
-                        <label class="form-label">默认模型</label>
+                        <label class="form-label">{{ t('settings.model.defaultModel') }}</label>
                         <div class="model-field-row">
                           <ModelPicker
                             variant="field"
@@ -117,27 +117,27 @@
                             :single-provider-id="p.id"
                             :selected-provider="bindingProviderId"
                             :selected-model="bindingModelId"
-                            placeholder="选择默认模型"
-                            empty-configured-hint="请先拉取模型"
+                            :placeholder="t('settings.model.selectDefaultModel')"
+                            :empty-configured-hint="t('settings.model.fetchModelsFirst')"
                             @select="onBindingModelSelect"
                           />
-                          <button class="workbench-button" :disabled="fetchingModelsId === p.id || !canFetchModelsForCard(p)" @click="onFetchModelsForProvider(p)">{{ fetchingModelsId === p.id ? '拉取中…' : '拉取模型' }}</button>
+                          <button class="workbench-button" :disabled="fetchingModelsId === p.id || !canFetchModelsForCard(p)" @click="onFetchModelsForProvider(p)">{{ fetchingModelsId === p.id ? t('settings.model.fetchingModels') : t('settings.model.fetchModels') }}</button>
                         </div>
                         <div v-if="fetchModelsMessage && expandedProviderId === p.id" class="form-hint" :class="fetchModelsOk ? 'fetch-ok' : 'fetch-err'">{{ fetchModelsMessage }}</div>
-                        <div class="form-hint">填写 API Key 后可拉取模型；设为默认后聊天页会自动使用。</div>
+                        <div class="form-hint">{{ t('settings.model.fetchModelsHint') }}</div>
                       </div>
                       <div class="form-group model-visibility">
                         <div class="model-visibility-header">
                           <div>
-                            <label class="form-label">模型显示</label>
-                            <div class="form-hint">{{ visibleModelCount(p) }} / {{ p.models?.length || 0 }} 个模型可选</div>
+                            <label class="form-label">{{ t('settings.model.modelVisibility') }}</label>
+                            <div class="form-hint">{{ t('settings.model.modelsVisible', { visible: visibleModelCount(p), total: p.models?.length || 0 }) }}</div>
                           </div>
                           <div class="model-visibility-actions">
-                            <button class="workbench-link" :disabled="visibilitySavingProviderId === p.id" @click="onShowAllModels(p)">全部显示</button>
-                            <button class="workbench-link" :disabled="visibilitySavingProviderId === p.id" @click="onHideAllModels(p)">全部隐藏</button>
+                            <button class="workbench-link" :disabled="visibilitySavingProviderId === p.id" @click="onShowAllModels(p)">{{ t('settings.model.showAll') }}</button>
+                            <button class="workbench-link" :disabled="visibilitySavingProviderId === p.id" @click="onHideAllModels(p)">{{ t('settings.model.hideAll') }}</button>
                           </div>
                         </div>
-                        <input v-model="modelVisibilitySearch" data-ui-id="settings-model-visibility-search" class="settings-input model-visibility-search" placeholder="搜索模型" />
+                        <input v-model="modelVisibilitySearch" data-ui-id="settings-model-visibility-search" class="settings-input model-visibility-search" :placeholder="t('settings.model.searchModels')" />
                         <div v-if="filteredVisibilityModels(p).length" class="model-visibility-list">
                           <label v-for="model in filteredVisibilityModels(p)" :key="model.id" class="model-visibility-row">
                             <span class="model-visibility-copy">
@@ -150,22 +150,22 @@
                             </span>
                           </label>
                         </div>
-                        <div v-else class="model-visibility-empty">{{ p.models?.length ? '无匹配模型' : '尚未拉取模型' }}</div>
+                        <div v-else class="model-visibility-empty">{{ p.models?.length ? t('settings.model.noModelMatches') : t('settings.model.noModelsFetched') }}</div>
                       </div>
                     </div>
                   </div>
                 </article>
               </div>
               <div v-else-if="!showOpencodeProviderEmptyAlert" class="configured-empty">
-                <div class="empty-state"><p>尚未配置 API，点击下方按钮添加</p><button class="workbench-button primary" data-ui-id="settings-add-api-empty" @click="openAddProviderDialog">+ 添加 API</button></div>
+                <div class="empty-state"><p>{{ t('settings.model.noApiConfigured') }}</p><button class="workbench-button primary" data-ui-id="settings-add-api-empty" @click="openAddProviderDialog">{{ t('settings.model.addApiTitle') }}</button></div>
               </div>
 
               <Teleport to="body">
                 <div v-if="showAddProviderDialog" class="settings-overlay" @click.self="closeAddDialog">
                   <div class="settings-dialog">
-                    <div class="dialog-header"><h4>添加 API</h4><button class="dialog-close-btn" @click="closeAddDialog">&times;</button></div>
+                    <div class="dialog-header"><h4>{{ t('settings.model.addApiTitle') }}</h4><button class="dialog-close-btn" @click="closeAddDialog">&times;</button></div>
                     <div class="dialog-body">
-                      <input v-model="addProviderSearch" data-ui-id="settings-add-provider-search" class="settings-input" placeholder="搜索名称、ID 或 Base URL…" />
+                      <input v-model="addProviderSearch" data-ui-id="settings-add-provider-search" class="settings-input" :placeholder="t('settings.model.searchProviders')" />
                       <div v-if="filteredAvailableToAdd.length" class="add-provider-list">
                         <button v-for="p in filteredAvailableToAdd" :key="p.id" type="button" class="add-provider-item" @click="onPickProviderToAdd(p)">
                           <span class="add-provider-name">{{ providerDisplayName(p) }}</span>
@@ -173,76 +173,76 @@
                           <span v-if="p.baseUrl" class="add-provider-url" :title="p.baseUrl">{{ p.baseUrl }}</span>
                         </button>
                       </div>
-                      <div v-else class="empty-state">{{ availableToAddProviders.length ? '无匹配结果' : '暂无可添加的供应商，请先同步供应商' }}</div>
+                      <div v-else class="empty-state">{{ availableToAddProviders.length ? t('settings.model.noProviderMatches') : t('settings.model.noProvidersToAdd') }}</div>
                     </div>
                     <div class="dialog-footer">
-                      <button class="workbench-button" data-ui-id="settings-add-dialog-sync-providers" :disabled="importPresetsLoading" @click="onImportFromAddDialog">{{ importPresetsLoading ? '同步中…' : '同步供应商' }}</button>
-                      <button class="workbench-button" data-ui-id="settings-add-dialog-custom-provider" @click="onCustomProviderFromAddDialog">自定义供应商</button>
+                      <button class="workbench-button" data-ui-id="settings-add-dialog-sync-providers" :disabled="importPresetsLoading" @click="onImportFromAddDialog">{{ importPresetsLoading ? t('settings.model.syncingProviders') : t('settings.model.syncProviders') }}</button>
+                      <button class="workbench-button" data-ui-id="settings-add-dialog-custom-provider" @click="onCustomProviderFromAddDialog">{{ t('settings.model.customProvider') }}</button>
                     </div>
                   </div>
                 </div>
               </Teleport>
 
               <details class="settings-collapse model-roles-collapse">
-                <summary class="collapse-summary">辅助模型</summary>
+                <summary class="collapse-summary">{{ t('settings.model.helperModels') }}</summary>
                 <div class="collapse-body">
-                  <p class="form-hint">权限分类、标题生成和记忆选择会用到额外的小模型；如果你的 API 不提供默认模型，可以在这里指定替代模型。留空则使用默认配置。保存后下次会话生效。</p>
+                  <p class="form-hint">{{ t('settings.model.helperModelsHint') }}</p>
                   <div class="provider-inline-form">
                     <div class="form-group">
-                      <label class="form-label">轻量模型</label>
+                      <label class="form-label">{{ t('settings.model.lightModel') }}</label>
                       <ModelPicker
                         variant="field"
                         allow-empty
-                        empty-label="留空使用默认配置"
+                        :empty-label="t('settings.model.emptyDefaultConfig')"
                         :providers="settingsModelPickerOptions"
                         :selected-provider="modelRoleLightProviderId"
                         :selected-model="modelRoleLightModelId"
-                        empty-configured-hint="请先在上方配置 API 并拉取模型"
+                        :empty-configured-hint="t('settings.model.configureAndFetchFirst')"
                         @select="onModelRoleLightSelect"
                         @clear="onModelRoleLightClear"
                       />
-                      <div v-if="isModelRoleHidden(modelRoleLightModelId, modelRoleLightProviderId)" class="form-hint fetch-err">当前模型已隐藏；现有绑定保留，但不会再出现在可选列表中。</div>
-                      <div class="form-hint">用于权限分类、标题生成等辅助任务。</div>
+                      <div v-if="isModelRoleHidden(modelRoleLightModelId, modelRoleLightProviderId)" class="form-hint fetch-err">{{ t('settings.model.hiddenModelWarning') }}</div>
+                      <div class="form-hint">{{ t('settings.model.lightModelHint') }}</div>
                     </div>
                     <div class="form-group">
-                      <label class="form-label">选择器模型（记忆选择）</label>
+                      <label class="form-label">{{ t('settings.model.selectorModel') }}</label>
                       <ModelPicker
                         variant="field"
                         allow-empty
-                        empty-label="留空使用默认配置"
+                        :empty-label="t('settings.model.emptyDefaultConfig')"
                         :providers="settingsModelPickerOptions"
                         :selected-provider="modelRoleSelectorProviderId"
                         :selected-model="modelRoleSelectorModelId"
-                        empty-configured-hint="请先在上方配置 API 并拉取模型"
+                        :empty-configured-hint="t('settings.model.configureAndFetchFirst')"
                         @select="onModelRoleSelectorSelect"
                         @clear="onModelRoleSelectorClear"
                       />
-                      <div v-if="isModelRoleHidden(modelRoleSelectorModelId, modelRoleSelectorProviderId)" class="form-hint fetch-err">当前模型已隐藏；现有绑定保留，但不会再出现在可选列表中。</div>
-                      <div class="form-hint">用于记忆文件相关性选择。</div>
+                      <div v-if="isModelRoleHidden(modelRoleSelectorModelId, modelRoleSelectorProviderId)" class="form-hint fetch-err">{{ t('settings.model.hiddenModelWarning') }}</div>
+                      <div class="form-hint">{{ t('settings.model.selectorModelHint') }}</div>
                     </div>
                   </div>
                 </div>
               </details>
 
               <details class="settings-collapse memory-settings-collapse" open>
-                <summary class="collapse-summary">Agent 记忆系统</summary>
+                <summary class="collapse-summary">{{ t('settings.model.memorySystem') }}</summary>
                 <div class="collapse-body">
-                  <p class="form-hint">控制 Agent 记忆模块的行为。记忆系统会在每轮对话后自动提取关键信息，并在后续会话中注入上下文，提升 Agent 的连续性。保存后下次会话生效。</p>
+                  <p class="form-hint">{{ t('settings.model.memorySystemHint') }}</p>
                   <div class="memory-toggle-form">
                     <label class="toggle-row">
                       <input type="checkbox" v-model="memoryAutoEnabled" />
-                      <span class="toggle-label">后台记忆提取</span>
-                      <span class="form-hint">每轮对话结束后，自动用轻量模型提取关键信息写入记忆文件。</span>
+                      <span class="toggle-label">{{ t('settings.model.memoryExtract') }}</span>
+                      <span class="form-hint">{{ t('settings.model.memoryExtractHint') }}</span>
                     </label>
                     <label class="toggle-row">
                       <input type="checkbox" v-model="memoryDreamEnabled" />
-                      <span class="toggle-label">自动记忆整合</span>
-                      <span class="form-hint">定期将碎片记忆合并为结构化摘要，减少上下文膨胀。</span>
+                      <span class="toggle-label">{{ t('settings.model.memoryDream') }}</span>
+                      <span class="form-hint">{{ t('settings.model.memoryDreamHint') }}</span>
                     </label>
                     <label class="toggle-row">
                       <input type="checkbox" v-model="memoryPoorMode" />
-                      <span class="toggle-label">节省模式</span>
-                      <span class="form-hint">使用更轻量的模型执行记忆操作（提取、整合），降低 API 成本。</span>
+                      <span class="toggle-label">{{ t('settings.model.costSaving') }}</span>
+                      <span class="form-hint">{{ t('settings.model.costSavingHint') }}</span>
                     </label>
                   </div>
                 </div>
@@ -250,7 +250,7 @@
 
               <div class="model-engine-footer">
                 <div class="footer-actions">
-                  <button class="workbench-button primary" data-ui-id="settings-save-model-engine" :disabled="store.loading" @click="onSaveModelEngine">{{ store.loading ? '保存中…' : '保存并同步' }}</button>
+                  <button class="workbench-button primary" data-ui-id="settings-save-model-engine" :disabled="store.loading" @click="onSaveModelEngine">{{ store.loading ? t('settings.ui.saving') : t('settings.model.saveAndSync') }}</button>
                 </div>
                 <div v-if="syncStatus" class="alert alert-info"><span class="alert-icon">i</span> {{ syncStatus }}</div>
               </div>
@@ -259,34 +259,40 @@
             <!-- TAB: providers -->
             <section v-if="activeName === 'providers'" class="settings-tab-content">
               <h3>API</h3>
-              <p class="desc">管理本地保存的模型供应商。</p>
+              <p class="desc">{{ t('settings.model.providersDescription') }}</p>
               <div class="provider-actions">
-                <button class="workbench-button primary" data-ui-id="settings-provider-add" @click="onAddProviderClick">+ 添加供应商</button>
-                <button class="workbench-button" data-ui-id="settings-provider-sync" :disabled="importPresetsLoading" @click="onSyncProviderSeeds">{{ importPresetsLoading ? '同步中…' : '同步供应商' }}</button>
+                <button class="workbench-button primary" data-ui-id="settings-provider-add" @click="onAddProviderClick">{{ t('settings.model.addProvider') }}</button>
+                <button class="workbench-button" data-ui-id="settings-provider-sync" :disabled="importPresetsLoading" @click="onSyncProviderSeeds">{{ importPresetsLoading ? t('settings.model.syncingProviders') : t('settings.model.syncProviders') }}</button>
               </div>
               <div v-if="store.providers.length" class="table-wrap">
                 <table class="settings-table">
-                  <thead><tr><th>ID</th><th>名称</th><th>Base URL</th><th>默认模型</th><th>状态</th><th>操作</th></tr></thead>
+                  <thead><tr><th>ID</th><th>{{ t('settings.model.tableName') }}</th><th>Base URL</th><th>{{ t('settings.model.tableDefaultModel') }}</th><th>{{ t('settings.model.tableStatus') }}</th><th>{{ t('settings.model.tableActions') }}</th></tr></thead>
                   <tbody>
                     <tr v-for="row in store.providers" :key="row.id">
                       <td class="mono">{{ row.id }}</td><td>{{ providerDisplayName(row) }}</td><td class="mono td-ellipsis" :title="row.baseUrl">{{ row.baseUrl }}</td><td class="mono">{{ row.defaultModel }}</td>
-                      <td><span class="pill pill-sm" :class="row.credentialPresent ? 'pill-ok' : 'pill-warn'">{{ row.credentialPresent ? '已配置' : '无 Key' }}</span></td>
-                      <td class="td-actions"><button class="workbench-link" @click="onEditProvider(row)">编辑</button><button class="workbench-link" @click="onTestProvider(row)">测试</button></td>
+                      <td><span class="pill pill-sm" :class="row.credentialPresent ? 'pill-ok' : 'pill-warn'">{{ row.credentialPresent ? t('settings.model.keyConfigured') : t('settings.model.noKey') }}</span></td>
+                      <td class="td-actions"><button class="workbench-link" @click="onEditProvider(row)">{{ t('settings.model.edit') }}</button><button class="workbench-link" @click="onTestProvider(row)">{{ t('settings.model.test') }}</button></td>
                     </tr>
                   </tbody>
                 </table>
               </div>
-              <div v-else class="empty-state">尚未配置供应商</div>
+              <div v-else class="empty-state">{{ t('settings.model.noProviders') }}</div>
             </section>
 
             <!-- TAB: ui -->
             <section v-if="activeName === 'ui'" class="settings-tab-content">
-              <h3>界面</h3>
+              <h3>{{ t('settings.ui.title') }}</h3>
               <div class="settings-form">
-                <div class="form-group"><label class="form-label">主题</label><select v-model="uiForm.theme" data-ui-id="settings-ui-theme" class="settings-select" style="width:240px"><option value="auto">跟随系统</option><option value="rpgmv">RPGMV 经典</option><option value="saas">浅色极简</option></select></div>
-                <div class="form-group"><label class="form-label">聊天字号</label><div class="number-input"><button class="workbench-button num-btn" data-ui-id="settings-ui-font-size-dec" @click="uiForm.fontSize = Math.max(11, uiForm.fontSize - 1)">-</button><input type="number" v-model.number="uiForm.fontSize" data-ui-id="settings-ui-font-size" min="11" max="22" class="settings-input num-input-field" /><button class="workbench-button num-btn" data-ui-id="settings-ui-font-size-inc" @click="uiForm.fontSize = Math.min(22, uiForm.fontSize + 1)">+</button></div></div>
-                <div class="form-group"><label class="form-label">聊天面板宽度</label><div class="number-input"><button class="workbench-button num-btn" data-ui-id="settings-ui-chat-width-dec" @click="uiForm.chatWidth = Math.max(320, uiForm.chatWidth - 10)">-</button><input type="number" v-model.number="uiForm.chatWidth" data-ui-id="settings-ui-chat-width" min="320" max="960" step="10" class="settings-input num-input-field" /><button class="workbench-button num-btn" data-ui-id="settings-ui-chat-width-inc" @click="uiForm.chatWidth = Math.min(960, uiForm.chatWidth + 10)">+</button></div></div>
-                <div class="form-group"><button class="workbench-button primary" data-ui-id="settings-ui-save" :disabled="store.loading" @click="onSaveUi">{{ store.loading ? '保存中…' : '保存界面设置' }}</button></div>
+                <div class="form-group">
+                  <label class="form-label">{{ t('settings.ui.language') }}</label>
+                  <select v-model="uiForm.language" data-ui-id="settings-ui-language" class="settings-select" style="width:240px">
+                    <option v-for="option in PRODUCT_LANGUAGE_OPTIONS" :key="option.value" :value="option.value">{{ t(option.labelKey) }}</option>
+                  </select>
+                </div>
+                <div class="form-group"><label class="form-label">{{ t('settings.ui.theme') }}</label><select v-model="uiForm.theme" data-ui-id="settings-ui-theme" class="settings-select" style="width:240px"><option value="auto">{{ t('settings.ui.theme.auto') }}</option><option value="rpgmv">{{ t('settings.ui.theme.rpgmv') }}</option><option value="saas">{{ t('settings.ui.theme.saas') }}</option></select></div>
+                <div class="form-group"><label class="form-label">{{ t('settings.ui.chatFontSize') }}</label><div class="number-input"><button class="workbench-button num-btn" data-ui-id="settings-ui-font-size-dec" @click="uiForm.fontSize = Math.max(11, uiForm.fontSize - 1)">-</button><input type="number" v-model.number="uiForm.fontSize" data-ui-id="settings-ui-font-size" min="11" max="22" class="settings-input num-input-field" /><button class="workbench-button num-btn" data-ui-id="settings-ui-font-size-inc" @click="uiForm.fontSize = Math.min(22, uiForm.fontSize + 1)">+</button></div></div>
+                <div class="form-group"><label class="form-label">{{ t('settings.ui.chatWidth') }}</label><div class="number-input"><button class="workbench-button num-btn" data-ui-id="settings-ui-chat-width-dec" @click="uiForm.chatWidth = Math.max(320, uiForm.chatWidth - 10)">-</button><input type="number" v-model.number="uiForm.chatWidth" data-ui-id="settings-ui-chat-width" min="320" max="960" step="10" class="settings-input num-input-field" /><button class="workbench-button num-btn" data-ui-id="settings-ui-chat-width-inc" @click="uiForm.chatWidth = Math.min(960, uiForm.chatWidth + 10)">+</button></div></div>
+                <div class="form-group"><button class="workbench-button primary" data-ui-id="settings-ui-save" :disabled="store.loading" @click="onSaveUi">{{ store.loading ? t('settings.ui.saving') : t('settings.ui.save') }}</button></div>
               </div>
             </section>
 
@@ -298,14 +304,14 @@
 
             <!-- TAB: permissions (hidden until PERMISSIONS_SETTINGS_TAB_ENABLED) -->
             <section v-if="PERMISSIONS_SETTINGS_TAB_ENABLED && activeName === 'permissions'" class="settings-tab-content">
-              <h3>权限与决策</h3>
-              <p class="desc">控制 Agent 什么时候暂停并等待人工决策。</p>
+              <h3>{{ t('settings.permissions.title') }}</h3>
+              <p class="desc">{{ t('settings.permissions.description') }}</p>
               <div class="settings-form">
-                <label class="checkbox-label"><input type="checkbox" v-model="permForm.askOnWrite" /> 写文件或代码前暂停</label>
-                <label class="checkbox-label"><input type="checkbox" v-model="permForm.askOnBash" /> 执行命令前暂停</label>
-                <label class="checkbox-label"><input type="checkbox" v-model="permForm.askOnNetwork" /> 联网前暂停</label>
-                <div class="form-group"><label class="form-label">连续自动允许上限</label><div class="number-input"><button class="workbench-button num-btn" @click="permForm.autoApproveLimit = Math.max(0, permForm.autoApproveLimit - 1)">-</button><input type="number" v-model.number="permForm.autoApproveLimit" min="0" max="100" class="settings-input num-input-field" /><button class="workbench-button num-btn" @click="permForm.autoApproveLimit = Math.min(100, permForm.autoApproveLimit + 1)">+</button></div></div>
-                <div class="form-group"><button class="workbench-button primary" :disabled="store.loading" @click="onSavePermissions">{{ store.loading ? '保存中…' : '保存权限设置' }}</button></div>
+                <label class="checkbox-label"><input type="checkbox" v-model="permForm.askOnWrite" /> {{ t('settings.permissions.askOnWrite') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="permForm.askOnBash" /> {{ t('settings.permissions.askOnBash') }}</label>
+                <label class="checkbox-label"><input type="checkbox" v-model="permForm.askOnNetwork" /> {{ t('settings.permissions.askOnNetwork') }}</label>
+                <div class="form-group"><label class="form-label">{{ t('settings.permissions.autoApproveLimit') }}</label><div class="number-input"><button class="workbench-button num-btn" @click="permForm.autoApproveLimit = Math.max(0, permForm.autoApproveLimit - 1)">-</button><input type="number" v-model.number="permForm.autoApproveLimit" min="0" max="100" class="settings-input num-input-field" /><button class="workbench-button num-btn" @click="permForm.autoApproveLimit = Math.min(100, permForm.autoApproveLimit + 1)">+</button></div></div>
+                <div class="form-group"><button class="workbench-button primary" :disabled="store.loading" @click="onSavePermissions">{{ store.loading ? t('settings.permissions.saving') : t('settings.permissions.save') }}</button></div>
               </div>
             </section>
 
@@ -335,6 +341,7 @@ import ModelPicker from '../components/model-picker/ModelPicker.vue'
 import SettingsToolsMcpTab from '../components/settings/SettingsToolsMcpTab.vue'
 import SettingsRulesSkillsTab from '../components/settings/SettingsRulesSkillsTab.vue'
 import { DEFAULT_AGENT_EXECUTION_ENGINE } from '@contract/types'
+import { PRODUCT_LANGUAGE_OPTIONS, normalizeProductLanguage, useI18n, type MessageKey } from '../i18n'
 import { configuredCompatibleProviders, buildConfiguredModelPickerOptions } from '../utils/chatProviderOptions'
 import {
   hiddenProviderModelCount,
@@ -367,6 +374,7 @@ const PERMISSIONS_SETTINGS_TAB_ENABLED = false
 
 const store = useSettingsStore()
 const route = useRoute()
+const { t } = useI18n()
 const activeName = ref('model-engine')
 const SETTINGS_TABS = new Set([
   'model-engine',
@@ -376,13 +384,16 @@ const SETTINGS_TABS = new Set([
   'tools-mcp',
   'rules-skills',
 ])
-const tabList = [
-  { name: 'model-engine', label: '模型' },
-  { name: 'providers', label: 'API' },
-  { name: 'ui', label: '界面' },
-  { name: 'tools-mcp', label: '工具与 MCP' },
-  { name: 'rules-skills', label: '规则与技能' },
-  ...(PERMISSIONS_SETTINGS_TAB_ENABLED ? [{ name: 'permissions' as const, label: '权限' }] : []),
+const permissionTabs: Array<{ name: string; labelKey: MessageKey }> = PERMISSIONS_SETTINGS_TAB_ENABLED
+  ? [{ name: 'permissions', labelKey: 'settings.tabs.permissions' }]
+  : []
+const tabList: Array<{ name: string; labelKey: MessageKey }> = [
+  { name: 'model-engine', labelKey: 'settings.tabs.model' },
+  { name: 'providers', labelKey: 'settings.tabs.providers' },
+  { name: 'ui', labelKey: 'settings.tabs.ui' },
+  { name: 'tools-mcp', labelKey: 'settings.tabs.toolsMcp' },
+  { name: 'rules-skills', labelKey: 'settings.tabs.rulesSkills' },
+  ...permissionTabs,
 ]
 
 const compatibleProviders = ref<ProviderSummary[]>([])
@@ -424,7 +435,7 @@ const invalidBindingWarning = computed(() => {
   const compatible = compatibleProviders.value.some((p) => p.id === binding.providerId)
   if (compatible) return null
   const label = binding.providerId
-  return `绑定「${label}」不可用，请在下方重选并设为默认。`
+  return t('settings.model.invalidBinding', { label })
 })
 
 const displayedProviders = computed(() => {
@@ -453,7 +464,7 @@ const showOpencodeProviderEmptyAlert = computed(
   () => isOpencodeEngine(agentExecForm.engine) && compatibleProviders.value.length === 0,
 )
 
-const uiForm = reactive({ theme: 'auto', fontSize: 14, chatWidth: 480 })
+const uiForm = reactive({ theme: 'auto', fontSize: 14, chatWidth: 480, language: normalizeProductLanguage(undefined) })
 const permForm = reactive({ askOnWrite: false, askOnBash: false, askOnNetwork: false, autoApproveLimit: 10 })
 const agentExecForm = reactive<AgentExecutionSettings>({ engine: DEFAULT_AGENT_EXECUTION_ENGINE, bindings: {} })
 
@@ -466,8 +477,17 @@ function normalizeModelIdForProvider(provider: ProviderSummary | null | undefine
 }
 function friendlyConnectionError(message: string | undefined): string {
   const text = String(message || '').trim()
-  if (!text) return '未知错误'
+  if (!text) return t('settings.model.unknownError')
   return text
+}
+
+function formatProviderSeedSyncMessage(imported: number, clearedCount: number, skipped: number, errorCount: number): string {
+  let message = t('settings.model.syncSeedSummary', { imported })
+  if (clearedCount) message += t('settings.model.syncSeedCleared', { count: clearedCount })
+  if (skipped) message += t('settings.model.syncSeedSkipped', { count: skipped })
+  message += t('settings.model.syncSeedAction')
+  if (errorCount) message += t('settings.model.syncSeedErrors', { count: errorCount })
+  return message
 }
 
 const bindingModelOptions = computed(() => {
@@ -492,8 +512,8 @@ const bindingProviderPickerOptions = computed(() => {
   }]
 })
 const selectedBindingProvider = computed(() => compatibleProviders.value.find((p) => p.id === bindingProviderId.value) || null)
-const inlineApiKeyPlaceholder = computed(() => selectedBindingProvider.value?.credentialPresent ? '（已配置）留空保留原值' : '粘贴 API Key')
-const inlineApiKeyHint = computed(() => selectedBindingProvider.value?.credentialPresent ? '留空保留原密钥；填入新值后点击其他地方会自动保存' : '填入后点击其他地方会自动保存到本地安全存储')
+const inlineApiKeyPlaceholder = computed(() => selectedBindingProvider.value?.credentialPresent ? t('settings.model.apiKeyConfiguredPlaceholder') : t('settings.model.apiKeyPlaceholder'))
+const inlineApiKeyHint = computed(() => selectedBindingProvider.value?.credentialPresent ? t('settings.model.apiKeyKeepHint') : t('settings.model.apiKeySaveHint'))
 
 function providerDisplayName(provider: Pick<ProviderSummary, 'id' | 'displayName'> | null | undefined): string {
   if (!provider) return ''
@@ -508,18 +528,18 @@ const activeProviderLabel = computed(() => {
   const binding = currentEngineBinding.value
   if (p) return providerDisplayName(p)
   if (binding?.providerId) return binding.providerId
-  return '未选择'
+  return t('settings.model.notSelected')
 })
 const activeModelLabel = computed(() => {
   const binding = currentEngineBinding.value
   if (!binding?.modelId) return '—'
   const provider = compatibleProviders.value.find((p) => p.id === binding.providerId)
   return isConfiguredProviderModelHidden(provider, binding.modelId)
-    ? `${binding.modelId}（已隐藏）`
+    ? t('modelPicker.hiddenSuffix', { model: binding.modelId })
     : binding.modelId
 })
 const activeKeyOk = computed(() => Boolean(activeStatusProvider.value?.credentialPresent))
-const lastSyncLabel = computed(() => { const at = store.agentExecution.lastSyncedAt; return at ? at : '尚未同步' })
+const lastSyncLabel = computed(() => { const at = store.agentExecution.lastSyncedAt; return at ? at : t('settings.model.notSynced') })
 
 const currentEngineBinding = computed(() => {
   const engine = agentExecForm.engine || DEFAULT_AGENT_EXECUTION_ENGINE
@@ -534,7 +554,7 @@ const activeStatusProvider = computed(() => {
   return store.providers.find((p) => p.id === binding.providerId) || null
 })
 
-function applyUi() { uiForm.theme = (store.ui.theme as string) ?? 'auto'; uiForm.fontSize = (store.ui.fontSize as number) ?? 14; uiForm.chatWidth = (store.ui.chatWidth as number) ?? 480 }
+function applyUi() { uiForm.theme = (store.ui.theme as string) ?? 'auto'; uiForm.fontSize = (store.ui.fontSize as number) ?? 14; uiForm.chatWidth = (store.ui.chatWidth as number) ?? 480; uiForm.language = normalizeProductLanguage(store.ui.language) }
 function applyPermissions() { permForm.askOnWrite = Boolean(store.permissions.askOnWrite); permForm.askOnBash = Boolean(store.permissions.askOnBash); permForm.askOnNetwork = Boolean(store.permissions.askOnNetwork); permForm.autoApproveLimit = (store.permissions.autoApproveLimit as number) ?? 10 }
 function activeInlineProviderId(): string { return expandedProviderId.value || bindingProviderId.value }
 function syncInlineFormFromProvider(provider?: ProviderSummary | null) {
@@ -611,10 +631,10 @@ async function onInlineProviderConfigBlur(event?: Event) {
     await settingsApi.updateProvider(providerId, patch)
     await store.loadProviders()
     await loadCompatibleProviders()
-    syncStatus.value = 'API 配置已自动保存'
-    toast('success', 'API 配置已自动保存')
+    syncStatus.value = t('settings.model.apiAutoSaved')
+    toast('success', t('settings.model.apiAutoSaved'))
   } catch (err) {
-    toast('error', err instanceof Error ? err.message : 'API 配置自动保存失败')
+    toast('error', err instanceof Error ? err.message : t('settings.model.apiAutoSaveFailed'))
   } finally {
     inlineAutoSavingProviderId.value = ''
   }
@@ -622,7 +642,7 @@ async function onInlineProviderConfigBlur(event?: Event) {
 function canFetchModelsForCard(provider: ProviderSummary): boolean { const key = inlineCredentialValue.value.trim(); return Boolean(key || provider.credentialPresent) }
 async function onFetchModelsForProvider(provider: ProviderSummary, options: { silent?: boolean; autoAfterSave?: boolean } = {}) {
   const apiKey = inlineCredentialValue.value.trim()
-  if (!apiKey && !provider.credentialPresent) { if (!options.silent) toast('warn', '请先填写 API Key'); return }
+  if (!apiKey && !provider.credentialPresent) { if (!options.silent) toast('warn', t('settings.model.enterApiKey')); return }
   fetchingModelsId.value = provider.id; fetchModelsMessage.value = null
   try {
     if (apiKey) {
@@ -634,7 +654,7 @@ async function onFetchModelsForProvider(provider: ProviderSummary, options: { si
     const result = await store.fetchModels(provider.id, { apiKey: apiKey || undefined, baseUrl, persist: true })
     if (result.ok && result.models?.length) {
       fetchModelsOk.value = true
-      fetchModelsMessage.value = `已拉取 ${result.models.length} 个模型并更新列表`
+      fetchModelsMessage.value = t('settings.model.fetchModelsSuccess', { count: result.models.length })
       if (!options.silent) toast('success', fetchModelsMessage.value)
       const baseUrl2 = resolveInlineBaseUrl(provider, activeInlineProviderId(), inlineBaseUrl.value)
       const fetchedModels = normalizeModelOptions(provider, result.models, baseUrl2, provider.id)
@@ -643,8 +663,8 @@ async function onFetchModelsForProvider(provider: ProviderSummary, options: { si
       await store.loadProviders(); await loadCompatibleProviders()
       const refreshed = compatibleProviders.value.find((p) => p.id === provider.id); syncBindingModelIdFromProvider(refreshed)
       if (refreshed && bindingModelId.value) { const normalized = normalizeModelIdForProvider(refreshed, bindingModelId.value); const models = normalizeModelOptions(refreshed, refreshed.models || [], inlineBaseUrlForProvider(refreshed), refreshed.id); if (!models.some((m) => m.id === normalized)) bindingModelId.value = normalizeModelIdForProvider(refreshed, refreshed.defaultModel || models[0]?.id || ''); else bindingModelId.value = normalized } else if (!bindingModelId.value) bindingModelId.value = resolveBindingModelId(refreshed)
-    } else { fetchModelsOk.value = false; fetchModelsMessage.value = result.error || '未返回模型列表'; if (!options.silent) toast('warn', fetchModelsMessage.value) }
-  } catch (err) { fetchModelsOk.value = false; fetchModelsMessage.value = err instanceof Error ? err.message : '拉取模型失败'; if (!options.silent) toast('error', fetchModelsMessage.value) } finally { fetchingModelsId.value = '' }
+    } else { fetchModelsOk.value = false; fetchModelsMessage.value = result.error || t('settings.model.noModelsReturned'); if (!options.silent) toast('warn', fetchModelsMessage.value) }
+  } catch (err) { fetchModelsOk.value = false; fetchModelsMessage.value = err instanceof Error ? err.message : t('settings.model.fetchModelsFailed'); if (!options.silent) toast('error', fetchModelsMessage.value) } finally { fetchingModelsId.value = '' }
 }
 function isProviderActive(providerId: string) { const engine = agentExecForm.engine || DEFAULT_AGENT_EXECUTION_ENGINE; const binding = agentExecForm.bindings?.[engine]; if (binding?.providerId !== providerId) return false; return compatibleProviders.value.some((p) => p.id === providerId) }
 function modelEntryForProvider(provider: ProviderSummary, modelId: string): { id: string; label: string } | undefined {
@@ -718,7 +738,7 @@ async function saveProviderVisibility(provider: ProviderSummary, hiddenModelIds:
     await loadCompatibleProviders()
   } catch (err) {
     replaceProviderVisibility(provider.id, previous)
-    toast('error', err instanceof Error ? err.message : '保存模型显示设置失败')
+    toast('error', err instanceof Error ? err.message : t('settings.model.saveVisibilityFailed'))
   } finally {
     visibilitySavingProviderId.value = ''
   }
@@ -739,7 +759,7 @@ function cardModelLabel(provider: ProviderSummary) {
   if (!modelId) modelId = provider.defaultModel || provider.models?.[0]?.id || ''
   if (!modelId) return '—'
   const label = formatModelDisplayLabel(modelId, modelEntryForProvider(provider, modelId))
-  return isConfiguredProviderModelHidden(provider, modelId) ? `${label}（已隐藏）` : label
+  return isConfiguredProviderModelHidden(provider, modelId) ? t('modelPicker.hiddenSuffix', { model: label }) : label
 }
 function selectProviderForEdit(provider: ProviderSummary) { bindingProviderId.value = provider.id; syncInlineFormFromProvider(provider); onBindingProviderChange() }
 function toggleProviderExpand(providerId: string) { if (expandedProviderId.value === providerId) { expandedProviderId.value = ''; modelVisibilitySearch.value = ''; return } expandedProviderId.value = providerId; modelVisibilitySearch.value = ''; const provider = compatibleProviders.value.find((p) => p.id === providerId); if (provider) selectProviderForEdit(provider) }
@@ -748,7 +768,7 @@ function applyAgentExecution() {
   agentExecForm.engine = DEFAULT_AGENT_EXECUTION_ENGINE; agentExecForm.bindings = { ...(store.agentExecution.bindings || {}) }
   const binding = store.bindingForEngine(agentExecForm.engine); bindingProviderId.value = binding?.providerId || ''; bindingModelId.value = binding?.modelId || ''; expandedProviderId.value = ''; syncInlineFormFromProvider()
   const boundProvider = compatibleProviders.value.find((p) => p.id === bindingProviderId.value); syncBindingModelIdFromProvider(boundProvider)
-  syncStatus.value = store.agentExecution.lastSyncedAt ? `上次同步：${store.agentExecution.lastSyncedAt}` : null
+  syncStatus.value = store.agentExecution.lastSyncedAt ? t('settings.model.lastSync', { time: store.agentExecution.lastSyncedAt }) : null
 }
 function applyModelRoles() {
   modelRoleLightModelId.value = store.modelRoles.lightModel?.modelId || ''
@@ -764,7 +784,7 @@ function applyMemorySettings() {
 function openAddProviderDialog() { showAddProviderDialog.value = true }
 function closeAddDialog() { showAddProviderDialog.value = false; addProviderSearch.value = '' }
 function onPickProviderToAdd(provider: ProviderSummary) { showAddProviderDialog.value = false; addProviderSearch.value = ''; expandedProviderId.value = provider.id; selectProviderForEdit(provider) }
-async function onImportFromAddDialog() { await onSyncProviderSeeds(); if (availableToAddProviders.value.length) toast('info', '同步完成，请从列表中选择供应商并填写 API Key') }
+async function onImportFromAddDialog() { await onSyncProviderSeeds(); if (availableToAddProviders.value.length) toast('info', t('settings.model.syncCompleteChooseProvider')) }
 function onCustomProviderFromAddDialog() { showAddProviderDialog.value = false; onAddProviderClick() }
 async function loadCompatibleProviders() {
   const engine = agentExecForm.engine || DEFAULT_AGENT_EXECUTION_ENGINE
@@ -774,7 +794,7 @@ async function loadCompatibleProviders() {
     if (bindingProviderId.value && !compatibleProviders.value.some((p) => p.id === bindingProviderId.value)) { bindingProviderId.value = configured[0]?.id || ''; bindingModelId.value = ''; if (expandedProviderId.value && !compatibleProviders.value.some((p) => p.id === expandedProviderId.value)) expandedProviderId.value = '' }
     if (bindingProviderId.value) { const provider = compatibleProviders.value.find((p) => p.id === bindingProviderId.value); syncBindingModelIdFromProvider(provider) }
     syncInlineFormFromProvider()
-  } catch (err) { toast('error', err instanceof Error ? err.message : '加载兼容 Provider 失败') }
+  } catch (err) { toast('error', err instanceof Error ? err.message : t('settings.model.loadCompatibleFailed')) }
 }
 function onBindingProviderChange() {
   const provider = selectedBindingProvider.value; syncBindingModelIdFromProvider(provider); const models = bindingModelOptions.value; const current = normalizeModelIdForProvider(provider, bindingModelId.value)
@@ -784,13 +804,13 @@ function onBindingProviderChange() {
 }
 async function onActivateProvider(provider: ProviderSummary) {
   selectProviderForEdit(provider); expandedProviderId.value = provider.id; const resolvedModelId = resolveBindingModelId()
-  if (!resolvedModelId) { toast('warn', '请填写默认模型'); return }
+  if (!resolvedModelId) { toast('warn', t('settings.model.defaultModelRequired')); return }
   bindingModelId.value = resolvedModelId; activatingProviderId.value = provider.id
   try {
     await upsertInlineProviderConfig({ fetchModelsAfter: true }); const engine = agentExecForm.engine || DEFAULT_AGENT_EXECUTION_ENGINE; const bindingEngine = resolveBindingStorageKeyUi(engine); const result = await store.activateInvocation(provider.id, resolvedModelId, engine)
     agentExecForm.bindings = { ...(agentExecForm.bindings || {}), [bindingEngine]: { providerId: provider.id, modelId: resolvedModelId } }; if (result.bindings) agentExecForm.bindings = { ...result.bindings }
-    applyAgentExecution(); if (result.blocker) toast('warn', `已绑定，但同步受阻：${result.blocker}`); else toast('success', '已设为默认并同步到运行配置')
-  } catch (err) { toast('error', err instanceof Error ? err.message : '设为默认失败') } finally { activatingProviderId.value = '' }
+    applyAgentExecution(); if (result.blocker) toast('warn', t('settings.model.boundSyncBlocked', { blocker: result.blocker })); else toast('success', t('settings.model.activatedSynced'))
+  } catch (err) { toast('error', err instanceof Error ? err.message : t('settings.model.activateFailed')) } finally { activatingProviderId.value = '' }
 }
 function buildBindingsPatch() { const engine = agentExecForm.engine || DEFAULT_AGENT_EXECUTION_ENGINE; const bindingEngine = resolveBindingStorageKeyUi(engine); const modelId = resolveBindingModelId(); if (!bindingProviderId.value || !modelId) return agentExecForm.bindings; return { ...(agentExecForm.bindings || {}), [bindingEngine]: { providerId: bindingProviderId.value, modelId } } }
 
@@ -808,14 +828,14 @@ async function onSaveUi() {
   try {
     await store.saveUi({ ...uiForm })
     applyUiTheme(store.ui)
-    toast('success', '界面设置已保存')
+    toast('success', t('settings.ui.saved'))
   } catch (err) {
-    toast('error', err instanceof Error ? err.message : '保存界面设置失败')
+    toast('error', err instanceof Error ? err.message : t('settings.ui.saveFailed'))
   }
 }
 async function onSaveModelEngine() {
-  if (!bindingProviderId.value) { toast('warn', '请选择 Provider'); return }
-  const resolvedModelId = resolveBindingModelId(); if (!resolvedModelId) { toast('warn', '请填写默认模型'); return }
+  if (!bindingProviderId.value) { toast('warn', t('settings.model.noProviderSelected')); return }
+  const resolvedModelId = resolveBindingModelId(); if (!resolvedModelId) { toast('warn', t('settings.model.defaultModelRequired')); return }
   bindingModelId.value = resolvedModelId
   try {
     await upsertInlineProviderConfig({ fetchModelsAfter: true }); const payload: AgentExecutionSettings = { ...agentExecForm, bindings: buildBindingsPatch() }; await store.saveAgentExecution(payload); applyAgentExecution()
@@ -829,16 +849,16 @@ async function onSaveModelEngine() {
       : undefined
     await store.saveModelRoles({ lightModel: lightBinding, selectorModel: selectorBinding })
     await store.saveMemorySettings({ autoMemoryEnabled: memoryAutoEnabled.value, autoDreamEnabled: memoryDreamEnabled.value, poorMode: memoryPoorMode.value })
-    syncStatus.value = store.agentExecution.lastSyncedAt ? `上次同步：${store.agentExecution.lastSyncedAt}` : '已保存'; toast('success', '模型设置已保存并同步。')
-  } catch (err) { toast('error', err instanceof Error ? err.message : '保存失败') }
+    syncStatus.value = store.agentExecution.lastSyncedAt ? t('settings.model.lastSync', { time: store.agentExecution.lastSyncedAt }) : t('settings.model.savedShort'); toast('success', t('settings.model.saved'))
+  } catch (err) { toast('error', err instanceof Error ? err.message : t('settings.model.saveFailed')) }
 }
 async function onSavePermissions() { try { await store.savePermissions({ ...permForm }); toast('success', 'Permissions saved.') } catch (err) { toast('error', err instanceof Error ? err.message : 'Failed to save permissions.') } }
 function onManageProviders() { activeName.value = 'providers' }
 async function onSyncProviderSeeds() {
   importPresetsLoading.value = true; importPresetsMessage.value = null; importPresetsError.value = false
   try {
-    const result = await store.syncProviderSeeds(); const imported = result.imported?.length || 0; const skipped = result.skipped?.length || 0; importPresetsMessage.value = `已从本地供应商库同步 ${imported} 个供应商${result.clearedCount ? `，清理 ${result.clearedCount} 个旧的 Claude 供应商` : ''}${skipped ? `，跳过 ${skipped} 个重复项` : ''}。请为需要的供应商填写 API Key 后设为默认。`; if (result.errors?.length) importPresetsMessage.value += ` ${result.errors.length} 项失败。`; if (imported > 0) toast('success', `已同步 ${imported} 个供应商`); else toast('warn', '暂无可同步的供应商'); await loadCompatibleProviders(); applyAgentExecution()
-  } catch (err) { importPresetsError.value = true; importPresetsMessage.value = err instanceof Error ? err.message : '同步失败'; toast('error', importPresetsMessage.value) } finally { importPresetsLoading.value = false }
+    const result = await store.syncProviderSeeds(); const imported = result.imported?.length || 0; const skipped = result.skipped?.length || 0; importPresetsMessage.value = formatProviderSeedSyncMessage(imported, result.clearedCount || 0, skipped, result.errors?.length || 0); if (imported > 0) toast('success', t('settings.model.syncProviderSuccess', { count: imported })); else toast('warn', t('settings.model.noProvidersSynced')); await loadCompatibleProviders(); applyAgentExecution()
+  } catch (err) { importPresetsError.value = true; importPresetsMessage.value = err instanceof Error ? err.message : t('settings.model.syncFailed'); toast('error', importPresetsMessage.value) } finally { importPresetsLoading.value = false }
 }
 function onAddProviderClick() { selectedProvider.value = null; showProviderForm.value = true }
 function onEditProvider(provider: ProviderSummary) { selectedProvider.value = provider; showProviderForm.value = true }
@@ -850,14 +870,14 @@ function testOverridesForCard(provider: ProviderSummary): { apiKey?: string; bas
 }
 async function onTestProviderCard(provider: ProviderSummary) {
   if (expandedProviderId.value !== provider.id) { expandedProviderId.value = provider.id; selectProviderForEdit(provider) }
-  if (!provider.credentialPresent && !inlineCredentialValue.value.trim()) { toast('warn', '请先填写 API Key 或保存已有凭证'); return }
+  if (!provider.credentialPresent && !inlineCredentialValue.value.trim()) { toast('warn', t('settings.model.enterApiKey')); return }
   testingProviderId.value = provider.id
-  try { const result = await store.testProvider(provider.id, testOverridesForCard(provider)); if (result.ok) toast('success', `连接成功：${result.latencyMs ?? '—'}ms${result.model ? ` · ${result.model}` : ''}`); else toast('error', `连接失败：${friendlyConnectionError(result.error)}`) } catch (err) { toast('error', err instanceof Error ? err.message : '测试连接失败') } finally { testingProviderId.value = '' }
+  try { const result = await store.testProvider(provider.id, testOverridesForCard(provider)); if (result.ok) toast('success', t('settings.model.testSuccess', { latency: result.latencyMs ?? '—', model: result.model ? ` · ${result.model}` : '' })); else toast('error', t('settings.model.testFailed', { message: friendlyConnectionError(result.error) })) } catch (err) { toast('error', err instanceof Error ? err.message : t('settings.model.testConnectionFailed')) } finally { testingProviderId.value = '' }
 }
 async function onDeleteProviderCard(provider: ProviderSummary) {
-  const confirmed = confirm(`确定删除供应商「${providerDisplayName(provider)}」？此操作会移除本地配置与凭证，不可恢复。`); if (!confirmed) return
+  const confirmed = confirm(t('settings.model.deleteConfirm', { provider: providerDisplayName(provider) })); if (!confirmed) return
   deletingProviderId.value = provider.id
-  try { await store.deleteProvider(provider.id); const engine = agentExecForm.engine || DEFAULT_AGENT_EXECUTION_ENGINE; const binding = agentExecForm.bindings?.[engine]; if (binding?.providerId === provider.id) { const nextBindings = { ...(agentExecForm.bindings || {}) }; delete nextBindings[engine]; await store.saveAgentExecution({ ...agentExecForm, bindings: nextBindings }) } if (expandedProviderId.value === provider.id) { expandedProviderId.value = ''; inlineCredentialValue.value = ''; inlineBaseUrl.value = '' } await loadCompatibleProviders(); applyAgentExecution(); toast('success', '已删除供应商') } catch (err) { toast('error', err instanceof Error ? err.message : '删除失败') } finally { deletingProviderId.value = '' }
+  try { await store.deleteProvider(provider.id); const engine = agentExecForm.engine || DEFAULT_AGENT_EXECUTION_ENGINE; const binding = agentExecForm.bindings?.[engine]; if (binding?.providerId === provider.id) { const nextBindings = { ...(agentExecForm.bindings || {}) }; delete nextBindings[engine]; await store.saveAgentExecution({ ...agentExecForm, bindings: nextBindings }) } if (expandedProviderId.value === provider.id) { expandedProviderId.value = ''; inlineCredentialValue.value = ''; inlineBaseUrl.value = '' } await loadCompatibleProviders(); applyAgentExecution(); toast('success', t('settings.model.deleted')) } catch (err) { toast('error', err instanceof Error ? err.message : t('settings.model.deleteFailed')) } finally { deletingProviderId.value = '' }
 }
 async function onTestProvider(provider: ProviderSummary) { await onTestProviderCard(provider) }
 async function onProviderSaved() { await store.loadProviders(); await loadCompatibleProviders(); if (selectedProvider.value?.id) { expandedProviderId.value = selectedProvider.value.id; selectProviderForEdit(compatibleProviders.value.find((p) => p.id === selectedProvider.value?.id) || selectedProvider.value) } }

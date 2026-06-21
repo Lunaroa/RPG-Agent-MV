@@ -33,16 +33,16 @@
           show-icon
           :title="preflightBlocker"
         >
-          <router-link :to="{ path: '/console', query: { page: 'settings' } }">前往设置</router-link>
+          <router-link :to="{ path: '/console', query: { page: 'settings' } }">{{ t('chat.preflight.openSettings') }}</router-link>
         </el-alert>
 
-        <!-- 空态 hero -->
+        <!-- Empty state hero -->
         <div v-if="segments.length === 0 && !isRunning" class="chat-hero">
-          <h2 class="hero-title">描述地图或剧情目标</h2>
-          <p class="hero-sub">输入目标后生成执行计划。</p>
+          <h2 class="hero-title">{{ t('chat.hero.title') }}</h2>
+          <p class="hero-sub">{{ t('chat.hero.subtitle') }}</p>
         </div>
 
-        <!-- 转录 -->
+        <!-- Transcript -->
         <ChatLog
           v-else
           :session-key="activeSession?.id"
@@ -76,7 +76,7 @@
           'is-empty': segments.length === 0 && !isRunning && !activeAsk,
         }"
       >
-        <!-- 当前待回答的 ASK：取代底部输入框，避免同一时刻出现两个输入入口 -->
+        <!-- Active ASK replaces the composer so there is only one input entry. -->
         <div v-if="activeAsk" class="ask-dock">
           <AskCard
             :ask="activeAsk"
@@ -168,12 +168,27 @@ import {
 } from '../utils/chatProviderOptions'
 import { profileIdFromBinding } from '../utils/profile-id'
 import { canSubmitChatMessage, isSendDebounced } from '../utils/chatSendGuard'
+import {
+  approveIntent,
+  buildPlanModePrefix,
+  clarifyIntent,
+  feedbackIntent,
+  formatPlacementResultIntent,
+  mapSelectionAdjustStoryPrompt,
+  mapSelectionUseExistingPrompt,
+  multiChoiceIntent,
+  placementAllPlacedFollowUp,
+  placementPartialFollowUp,
+  productionBoardConfirmedPrompt,
+} from '../utils/agentIntent'
 import type { SessionRuntimeEvent } from '../api/client'
 import ChatComposer from '../components/ChatComposer.vue'
 import ChatLog from '../components/ChatLog.vue'
 import AskCard from '../components/AskCard.vue'
 import ConversationList from '../components/ConversationList.vue'
 import { useWorkbenchUiStore } from '../stores/workbenchUi'
+import { normalizeProductLanguage, useI18n } from '../i18n'
+import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 
 const props = withDefaults(defineProps<{
   view?: 'chat' | 'history'
@@ -213,6 +228,7 @@ const {
   appendUserSegment,
   restoreSegments,
   replaySessionEvents,
+  setProductLanguage,
   updateAskResult,
   patchAsk,
   getAsk,
@@ -224,8 +240,20 @@ const eventPlacementAsk = useEventPlacementAskStore()
 const taskBoard = useTaskBoardStore()
 const sessionPlan = useSessionPlanStore()
 const subagents = useSubagentStore()
+const { t } = useI18n()
 
 const TERMINAL = ['pass', 'blocked', 'failed', 'error', 'stopped', 'interrupted', 'timeout']
+const currentProductLanguage = computed(() => normalizeProductLanguage(settingsStore.ui.language))
+
+watch(currentProductLanguage, (language) => {
+  setProductLanguage(language)
+}, { immediate: true })
+
+
+function formatErrorText(errorValue: unknown, fallback?: string): string {
+  const resolvedFallback = fallback || t('chat.op.failed')
+  return formatUserFacingErrorMessage(errorValue || resolvedFallback, 'general', currentProductLanguage.value)
+}
 
 // Agent / 思考档与模型选择写入 workspace（SQLite）。
 const savedComposerPrefs = workspaceStore.settings.composer || {}
@@ -311,7 +339,7 @@ const historyError = ref('')
 const preflightBlocker = ref<string | null>(null)
 const availableProviders = ref<Array<{ id: string; label: string; models: Array<{ id: string; label: string }> }>>([])
 
-const headerTitle = computed(() => titleForSession(historySessions.value, activeSession.value?.id))
+const headerTitle = computed(() => titleForSession(historySessions.value, activeSession.value?.id, currentProductLanguage.value))
 
 watch(currentStatus, (newStatus) => {
   // 空状态由 resetState 触发（新建对话/加载历史），不覆盖显式设置的会话状态。
@@ -397,20 +425,9 @@ async function flushPersistTranscript(): Promise<void> {
   await persistTranscript()
 }
 
-function buildPlanModePrefix(): string {
+function buildPlanModePrefixForSend(): string {
   if (!planMode.value) return ''
-  const planPath = activePlanFilePath.value.trim()
-  const planTarget = planPath
-    ? `Session plan file: ${planPath}`
-    : 'AGENT_RPG_SESSION_PLAN_PATH 指定的文件（本对话首轮创建后确定路径）'
-  return [
-    '[opencode 计划模式已开启]',
-    `使用 plan agent 规划：把计划写入 ${planTarget}（仅当前对话，可用 write/edit 工具）。禁止读取或修改其他对话的 plan 文件，禁止写到 logs/tmp 或工程根 PLAN.md。需要澄清时调用 AskUserQuestion；计划写好后调用 plan_exit 提交审批。审批完成前不要做写操作。`,
-    'AskUserQuestion 只用于澄清选择题，输入必须是 questions 数组，每题 2-4 个 options。',
-    'plan_exit 的审批由桌面 ASK 卡片承载；不要用纯文本替代。',
-    '对纯查询/只读类小问题（如"列出现状"）可以直接回答，不强求 plan-approval。',
-    ''
-  ].join('\n')
+  return buildPlanModePrefix(activePlanFilePath.value.trim())
 }
 
 async function sendMessage() {
@@ -421,7 +438,7 @@ async function sendMessage() {
   lastSendAtMs = nowMs
 
   const intent = trimmed
-  const planModePrefix = buildPlanModePrefix()
+  const planModePrefix = buildPlanModePrefixForSend()
 
   try {
     await runIntent(`${planModePrefix}${intent}`, intent)
@@ -465,17 +482,18 @@ async function runPreflightCheck(): Promise<boolean> {
     const preview = await sessionsApi.preview({
       ...modelPayload,
       executionEngine,
-      intent: '预检',
+      productLanguage: currentProductLanguage.value,
+      intent: t('chat.preflight.title'),
       project: projectStore.currentProject,
     }) as { status?: string; blocker?: string | null }
     if (preview.status === 'blocked' && preview.blocker) {
-      preflightBlocker.value = preview.blocker
+      preflightBlocker.value = formatErrorText(preview.blocker)
       return false
     }
     preflightBlocker.value = null
     return true
   } catch (error) {
-    preflightBlocker.value = (error as Error).message || '预检失败'
+    preflightBlocker.value = formatErrorText(error, t('chat.preflight.failed'))
     return false
   }
 }
@@ -503,6 +521,7 @@ async function runIntent(
     const session = await createSession({
       ...modelPayload,
       executionEngine,
+      productLanguage: currentProductLanguage.value,
       project: projectStore.currentProject,
       intent,
       displayText,
@@ -541,7 +560,7 @@ async function submitAsk(askId: string, result: AskResult, continuation: { inten
         reason?: string
       }
       if (response && response.ok === false) {
-        throw new Error(response.reason || 'ASK 未在等待中')
+        throw new Error(response.reason || t('chat.ask.notWaiting'))
       }
     } else {
       await runIntent(continuation.intent, continuation.displayText, { userMetadata: { sourceAskId: askId } })
@@ -562,7 +581,7 @@ async function submitAsk(askId: string, result: AskResult, continuation: { inten
     return true
   } catch (error) {
     console.error('Failed to submit ASK result:', error)
-    const message = (error as Error).message || '请重试'
+    const message = formatErrorText(error, t('chat.ask.retry'))
     if (ask.fromMcp) {
       updateAskResult(askId, {
         ...prior,
@@ -572,7 +591,7 @@ async function submitAsk(askId: string, result: AskResult, continuation: { inten
       })
       await flushPersistTranscript()
     }
-    ElMessage.error(`提交失败：${message}`)
+    ElMessage.error(t('chat.ask.submitFailed', { message }))
     return false
   }
 }
@@ -641,7 +660,7 @@ async function settlePendingEventReviewForAsk(
     if (decision === 'approve') {
       const result = await eventRegistry.approve(projectStore.currentProject, event.contractId)
       if (result.status !== 'ok') {
-        throw new Error(`事件 ${event.eventName || event.contractId} 批准失败`)
+        throw new Error(t('chat.event.approveFailed', { name: event.eventName || event.contractId }))
       }
       const action = makePlacementReviewAction(askId, event, 'approve')
       eventPlacementAsk.recordReviewAction(action)
@@ -650,11 +669,17 @@ async function settlePendingEventReviewForAsk(
       continue
     }
     const reason = decision === 'revise'
-      ? (feedback.trim() ? `用户要求调整：${feedback.trim()}` : '用户要求调整这个待放置事件')
-      : '用户在事件预览决策中选择取消'
+      ? (feedback.trim()
+          ? t('chat.event.userRevised', { feedback: feedback.trim() })
+          : t('chat.event.userRevisedGeneric'))
+      : t('chat.event.userCanceled')
     const result = await eventRegistry.reject(projectStore.currentProject, event.contractId, { reason })
     if (result.status !== 'ok') {
-      throw new Error(`事件 ${event.eventName || event.contractId} ${decision === 'revise' ? '调整' : '取消'}失败`)
+      throw new Error(
+        decision === 'revise'
+          ? t('chat.event.reviseFailed', { name: event.eventName || event.contractId })
+          : t('chat.event.cancelFailed', { name: event.eventName || event.contractId }),
+      )
     }
     const action = makePlacementReviewAction(askId, event, decision, decision === 'revise' ? feedback : '')
     eventPlacementAsk.recordReviewAction(action)
@@ -670,12 +695,12 @@ async function handleApprove(askId: string) {
   try {
     await settlePendingEventReviewForAsk(askId, 'approve')
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '事件批准失败')
+    ElMessage.error(formatErrorText(error, t('chat.event.approveFailedGeneric')))
     return
   }
   await submitAsk(askId, { decision: 'approve' }, {
-    intent: formatApproveIntent(ask),
-    displayText: '批准计划'
+    intent: approveIntent(ask),
+    displayText: t('chat.plan.approved')
   })
 }
 
@@ -683,8 +708,8 @@ async function handleRevise(askId: string, feedback: string) {
   const ask = getAsk(askId)
   if (!ask) return
   await submitAsk(askId, { decision: 'revise', feedback }, {
-    intent: formatFeedbackIntent(ask, 'revise', feedback),
-    displayText: `要求修改计划：${feedback}`
+    intent: feedbackIntent(ask, 'revise', feedback),
+    displayText: t('chat.plan.revised', { feedback })
   })
 }
 
@@ -692,8 +717,8 @@ async function handleReject(askId: string, feedback: string) {
   const ask = getAsk(askId)
   if (!ask) return
   await submitAsk(askId, { decision: 'reject', feedback }, {
-    intent: formatFeedbackIntent(ask, 'reject', feedback),
-    displayText: '拒绝计划'
+    intent: feedbackIntent(ask, 'reject', feedback),
+    displayText: t('chat.plan.rejected')
   })
 }
 
@@ -709,8 +734,8 @@ async function handleClarify(
     result.other = payload.other || ''
   }
   await submitAsk(askId, result, {
-    intent: formatClarifyIntent(ask, payload),
-    displayText: `回答澄清：${payload.answer}`
+    intent: clarifyIntent(ask, payload),
+    displayText: t('chat.ask.answered', { answer: payload.answer })
   })
 }
 
@@ -745,7 +770,7 @@ function placementReviewFeedbackFromAnswers(
 ): string {
   for (const question of ask.questions || []) {
     const text = `${question.header || ''} ${question.question || ''} ${question.id || ''}`
-    if (!/应用到待放置队列|待放置队列|待放置事件/.test(text)) continue
+    if (!/应用到待放置队列|待放置队列|待放置事件|pending placement queue|pending placement event|placement queue/i.test(text)) continue
     return answerForQuestion(answers, question)?.other?.trim() || ''
   }
   return ''
@@ -764,9 +789,9 @@ async function submitPlacementReviewResult(
   const overallFeedback = options.overallFeedback?.trim() || ''
   const answers = {
     ...(options.answers ? normalizeMultiChoiceAnswers(ask, options.answers) : {}),
-    ...buildPlacementReviewAnswers(ask, actions, overallFeedback),
+    ...buildPlacementReviewAnswers(ask, actions, overallFeedback, currentProductLanguage.value),
   }
-  const summary = summarizePlacementReviewActions(actions)
+  const summary = summarizePlacementReviewActions(actions, currentProductLanguage.value)
   return submitAsk(askId, {
     decision: placementReviewDecision(actions),
     answers,
@@ -776,8 +801,8 @@ async function submitPlacementReviewResult(
       completedAt: new Date().toISOString(),
     },
   }, {
-    intent: formatPlacementReviewContinuationIntent(ask, actions, overallFeedback),
-    displayText: `已处理待放置事件：${summary}`,
+    intent: formatPlacementReviewContinuationIntent(ask, actions, overallFeedback, currentProductLanguage.value),
+    displayText: t('chat.event.placementProcessed', { summary }),
   })
 }
 
@@ -825,15 +850,21 @@ async function handleMultiChoice(askId: string, answers: Record<string, { select
         if (decision === 'approve') {
           const result = await eventRegistry.approve(projectStore.currentProject, event.contractId)
           if (result.status !== 'ok') {
-            throw new Error(`事件 ${event.eventName || event.contractId} 批准失败`)
+            throw new Error(t('chat.event.approveFailed', { name: event.eventName || event.contractId }))
           }
         } else {
           const reason = decision === 'revise'
-            ? (feedback.trim() ? `用户要求调整：${feedback.trim()}` : '用户要求调整这个待放置事件')
-            : '用户在事件预览决策中选择取消'
+            ? (feedback.trim()
+                ? t('chat.event.userRevised', { feedback: feedback.trim() })
+                : t('chat.event.userRevisedGeneric'))
+            : t('chat.event.userCanceled')
           const result = await eventRegistry.reject(projectStore.currentProject, event.contractId, { reason })
           if (result.status !== 'ok') {
-            throw new Error(`事件 ${event.eventName || event.contractId} ${decision === 'revise' ? '调整' : '取消'}失败`)
+            throw new Error(
+              decision === 'revise'
+                ? t('chat.event.reviseFailed', { name: event.eventName || event.contractId })
+                : t('chat.event.cancelFailed', { name: event.eventName || event.contractId }),
+            )
           }
         }
         const action = makePlacementReviewAction(askId, event, decision, feedback)
@@ -854,7 +885,7 @@ async function handleMultiChoice(askId: string, answers: Record<string, { select
         }
       }
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : '事件处理失败')
+      ElMessage.error(formatErrorText(error, t('chat.event.processFailed')))
       return
     } finally {
       placementReviewSubmittingAskIds.delete(askId)
@@ -862,15 +893,15 @@ async function handleMultiChoice(askId: string, answers: Record<string, { select
     return
   }
   await submitAsk(askId, { answers: normalizedAnswers }, {
-    intent: formatMultiChoiceIntent(ask, normalizedAnswers),
-    displayText: '澄清已提交'
+    intent: multiChoiceIntent(ask, normalizedAnswers),
+    displayText: t('chat.ask.clarificationSubmitted')
   })
 }
 
 function handleAskAction(askId: string) {
   const ask = getAsk(askId)
   if (!ask) return
-  ElMessage.warning(`「${ask.type}」类 ASK 暂不支持。`)
+  ElMessage.warning(t('chat.ask.unsupported', { type: ask.type }))
 }
 
 function findPlacementEvent(ask: Ask, contractId: string): Record<string, unknown> | null {
@@ -923,7 +954,8 @@ async function refreshPlacementQueueFromRegistry(): Promise<void> {
     await eventPlacementAsk.refreshFromRegistry(projectStore.currentProject)
   } catch (error) {
     console.error('[event-placement] automatic registry refresh failed', error)
-    ElMessage.error(`事件放置列表刷新失败：${(error as Error).message}`)
+    const message = formatErrorText(error, t('chat.refresh.failed'))
+    ElMessage.error(t('chat.refresh.placementFailed', { message }))
   }
 }
 
@@ -946,24 +978,24 @@ async function openPlacementEditor(
   const ask = getAsk(askId)
   if (!ask) {
     console.warn('[event-placement] ASK not found in transcript', { askId })
-    ElMessage.warning('找不到该事件放置 ASK，请刷新对话后重试。')
+    ElMessage.warning(t('chat.placement.askNotFound'))
     return
   }
   if (ask.type !== 'event-placement-list') {
     console.warn('[event-placement] wrong ask type', { askId, type: ask.type })
-    ElMessage.warning(`当前卡片类型「${ask.type}」不支持地图编排。`)
+    ElMessage.warning(t('chat.placement.unsupportedType', { type: ask.type }))
     return
   }
   const chatSessionId = activeSession.value?.id
   if (!chatSessionId) {
     console.warn('[event-placement] no active chat session', { askId })
-    ElMessage.warning('无活动会话')
+    ElMessage.warning(t('chat.placement.noSession'))
     return
   }
   const listEvents = buildPlacementListFromAsk(ask)
   const { contractId } = resolvePlacementEditorTarget(listEvents, options)
   if (!contractId) {
-    ElMessage.warning('事件列表为空，无法进入地图编排。')
+    ElMessage.warning(t('chat.placement.emptyList'))
     return
   }
   try {
@@ -978,7 +1010,8 @@ async function openPlacementEditor(
     void router.push({ path: '/workbench', query })
   } catch (error) {
     console.error('[event-placement] open editor failed', error)
-    ElMessage.error(`进入地图编排失败：${(error as Error).message}`)
+    const message = formatErrorText(error, t('chat.placement.openFailed'))
+    ElMessage.error(t('chat.placement.enterFailed', { message }))
   }
 }
 
@@ -1040,7 +1073,7 @@ async function handleEventPlacementRefresh(askId: string) {
     }
     const byId = new Map((payload.contracts || []).map((item) => [String(item.id), item]))
     if (!byId.size) {
-      ElMessage.info('注册表未接通')
+      ElMessage.info(t('chat.registry.disconnected'))
       return
     }
     patchAsk(askId, (current) => ({
@@ -1062,32 +1095,11 @@ async function handleEventPlacementRefresh(askId: string) {
       }),
     }))
     await eventPlacementAsk.refreshFromRegistry(projectStore.currentProject)
-    ElMessage.success('已从 event-registry 刷新放置状态')
+    ElMessage.success(t('chat.placement.refreshed'))
   } catch (error) {
-    ElMessage.error(`刷新失败：${(error as Error).message}`)
+    const message = formatErrorText(error, t('chat.refresh.failed'))
+    ElMessage.error(t('chat.placement.refreshFailedMsg', { message }))
   }
-}
-
-function formatPlacementResultIntent(ask: Ask): string {
-  const events = (ask.events || []) as Array<Record<string, unknown>>
-  const result = {
-    type: 'event-placement-result',
-    askId: ask.askId,
-    placedEvents: events.map((event) => ({
-      contractId: event.contractId,
-      eventName: event.eventName,
-      mapId: event.targetMapId,
-      eventId: event.placedEventId ?? null,
-      x: Number.isInteger(event.x) ? event.x : null,
-      y: Number.isInteger(event.y) ? event.y : null,
-      status: event.status,
-    })),
-    modifications: ask.modifications || [],
-  }
-  return [
-    '这是 agent-console 的人工事件放置结果。请基于这个结果继续上一步；不要重新要求用户选择坐标，也不要把未放置事件当成已写入正式地图。',
-    JSON.stringify(result, null, 2),
-  ].join('\n\n')
 }
 
 async function handleEventPlacementSend(askId: string) {
@@ -1110,10 +1122,12 @@ async function handleEventPlacementSend(askId: string) {
     intent: [
       formatPlacementResultIntent({ ...ask, events }),
       ready
-        ? '全部必需事件已放置。请立即执行完整块检查，并按验收要求继续验证。'
-        : '当前只完成了部分放置。请先保存并检查当前进度，然后发 clarify ASK 让用户选择：继续放置缺失项、暂停保留进度、取消本轮。再次请求放置时只展示缺失或有问题的事件。',
+        ? placementAllPlacedFollowUp()
+        : placementPartialFollowUp(),
     ].join('\n\n'),
-    displayText: ready ? '事件已放置，继续编排' : '已报告部分放置结果',
+    displayText: ready
+      ? t('chat.placement.eventsPlacedContinue')
+      : t('chat.placement.reportedPartial'),
   })
 }
 
@@ -1121,8 +1135,8 @@ async function handleProductionBoardConfirm(askId: string) {
   const ask = getAsk(askId)
   if (!ask) return
   await submitAsk(askId, { decision: 'confirmed' }, {
-    intent: `用户在 Agent console 中确认了制作清单 askId=${askId}。请按清单绑定地图、放置事件，并开始执行。`,
-    displayText: '确认制作清单'
+    intent: productionBoardConfirmedPrompt(askId),
+    displayText: t('chat.board.confirmed')
   })
 }
 
@@ -1130,8 +1144,8 @@ async function handleMapSelectionExisting(askId: string, mapId: number) {
   const ask = getAsk(askId)
   if (!ask) return
   await submitAsk(askId, { decision: 'use-existing', selectedMapId: mapId }, {
-    intent: `用户选择使用现有地图 #${mapId}，askId=${askId}。请使用这个准确地图编号继续。`,
-    displayText: `使用现有地图 #${mapId}`,
+    intent: mapSelectionUseExistingPrompt(askId, mapId),
+    displayText: t('chat.placement.useMap', { mapId }),
   })
 }
 
@@ -1139,91 +1153,9 @@ async function handleMapSelectionAdjust(askId: string) {
   const ask = getAsk(askId)
   if (!ask) return
   await submitAsk(askId, { decision: 'adjust-story' }, {
-    intent: `用户选择调整剧情以适配现有地图，askId=${askId}。请先调整场景需求，地图问题解决前不要编写对应事件。`,
-    displayText: '调整剧情',
+    intent: mapSelectionAdjustStoryPrompt(askId),
+    displayText: t('chat.placement.adjustStory'),
   })
-}
-
-function formatApproveIntent(ask: Ask): string {
-  return [
-    `用户在 Agent console 中批准了 askId=${ask.askId} 的计划。请按计划继续执行。`,
-    '不要再重新发起 plan-approval ASK，除非又出现新的、未在原计划中说明的重大改动。',
-    '原计划标题：' + (ask.title || ''),
-    ask.planMarkdown ? '原计划：\n```markdown\n' + ask.planMarkdown + '\n```' : ''
-  ].filter(Boolean).join('\n')
-}
-
-function formatFeedbackIntent(ask: Ask, decision: 'revise' | 'reject', feedback: string): string {
-  if (decision === 'revise') {
-    return [
-      `用户在 Agent console 中要求修改计划 askId=${ask.askId}。`,
-      '请根据下方反馈调整计划，并重新输出 plan-approval ASK 等待批准；不要直接执行写操作。',
-      '用户反馈：',
-      feedback,
-      '',
-      '原计划：',
-      '```markdown',
-      ask.planMarkdown || '',
-      '```'
-    ].join('\n')
-  }
-  return [
-    `用户在 Agent console 中拒绝了计划 askId=${ask.askId}。`,
-    '请停止该方向的工作，回到对话澄清当前需求，不要再继续执行原计划。',
-    '用户拒绝理由：',
-    feedback
-  ].join('\n')
-}
-
-function formatClarifyIntent(
-  ask: Ask,
-  payload: { answer: string; selected?: string[]; other?: string }
-): string {
-  const lines = [
-    `用户在 Agent console 中回答了 clarify ASK askId=${ask.askId}。`,
-    ask.fieldName ? `字段：${ask.fieldName}` : '',
-  ]
-  if (payload.selected?.length && ask.options?.length) {
-    const labels = payload.selected.map((selectedId) => {
-      if (selectedId === '__other__') {
-        return payload.other ? `其他：${payload.other}` : '其他'
-      }
-      const opt = ask.options?.find((o) => o.id === selectedId)
-      return opt ? (opt.label || opt.title || selectedId) : selectedId
-    }).filter(Boolean)
-    lines.push('用户选择：' + (labels.join('、') || payload.answer))
-    if (payload.other && !payload.selected.includes('__other__')) {
-      lines.push(`补充说明：${payload.other}`)
-    }
-  } else {
-    lines.push('用户回答：', payload.answer)
-  }
-  lines.push('', '请基于这个回答继续上一轮工作。')
-  return lines.filter(Boolean).join('\n')
-}
-
-function formatMultiChoiceIntent(ask: Ask, answers: Record<string, { selected: string[]; other: string }>): string {
-  const lines = [
-    `用户在 Agent console 中回答了 multi-choice-clarify askId=${ask.askId}。`,
-    '请基于以下回答继续上一轮工作，不要再就同一组问题再发 clarify / multi-choice-clarify。',
-    '',
-    '标题：' + (ask.title || ''),
-    ''
-  ]
-  for (const [idx, q] of (ask.questions || []).entries()) {
-    const ans = answers[q.id] || { selected: [], other: '' }
-    const labels = (ans.selected || []).map((sid) => {
-      if (sid === '__other__') return ans.other ? `其他：${ans.other}` : '其他（未填写）'
-      const opt = (q.options || []).find((o) => o.id === sid)
-      return opt ? (opt.label || opt.title || sid) : sid
-    }).filter(Boolean)
-    lines.push(`Q${idx + 1}: ${q.header || q.id}`)
-    if (q.question) lines.push(`  题面：${q.question}`)
-    if (labels.length) lines.push(`  选项：${labels.join('、')}`)
-    if (ans.other && !ans.selected.includes('__other__')) lines.push(`  自由补充：${ans.other}`)
-    lines.push('')
-  }
-  return lines.join('\n')
 }
 
 async function handleStop() {
@@ -1235,7 +1167,7 @@ async function handleRevealArtifacts(sessionId: string) {
   try {
     await sessionsApi.revealArtifacts(sessionId)
   } catch (error) {
-    ElMessage.error((error as Error).message || '无法打开会话产物')
+    ElMessage.error(formatErrorText(error, t('chat.artifacts.openFailed')))
   }
 }
 
@@ -1258,15 +1190,15 @@ async function startNewConversation() {
 async function deleteConversation(conv: Conversation) {
   try {
     await ElMessageBox.confirm(
-      '确定要删除此对话吗？相关会话数据将被永久删除，无法恢复。',
-      '删除对话',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+      t('chat.delete.confirmBody'),
+      t('chat.delete.confirmTitle'),
+      { type: 'warning', confirmButtonText: t('chat.delete.confirm'), cancelButtonText: t('chat.delete.cancel') },
     )
   } catch {
     return
   }
 
-  const convList = groupSessionsIntoConversations(historySessions.value)
+  const convList = groupSessionsIntoConversations(historySessions.value, currentProductLanguage.value)
   const deletedIndex = convList.findIndex((item) => item.rootId === conv.rootId)
   const fallbackLeafId = deletedIndex >= 0
     ? (convList[deletedIndex + 1]?.leafId ?? convList[deletedIndex - 1]?.leafId ?? null)
@@ -1291,10 +1223,10 @@ async function deleteConversation(conv: Conversation) {
         await selectConversation(fallbackLeafId)
       }
     }
-    ElMessage.success('对话已删除')
+    ElMessage.success(t('chat.delete.success'))
   } catch (error) {
     console.error('Failed to delete conversation:', error)
-    ElMessage.error(error instanceof Error ? error.message : '删除对话失败')
+    ElMessage.error(formatErrorText(error, t('chat.delete.failed')))
     await loadHistory()
   }
 }
@@ -1342,7 +1274,7 @@ async function selectConversation(leafId: string) {
     return true
   } catch (error) {
     console.error('Failed to load conversation:', error)
-    ElMessage.error('加载对话失败')
+    ElMessage.error(t('chat.loadFailed'))
     return false
   }
 }
@@ -1411,8 +1343,8 @@ async function loadHistory() {
     historySessions.value = (result as { sessions?: Session[] }).sessions || (result as unknown as Session[]) || []
   } catch (error) {
     console.error('Failed to load history:', error)
-    const message = error instanceof Error ? error.message : '未知错误'
-    historyError.value = `加载会话历史失败：${message}`
+    const message = formatErrorText(error)
+    historyError.value = t('chat.historyLoadFailed', { message })
   } finally {
     if (generation === loadHistoryGeneration) {
       historyLoading.value = false

@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { FolderOpened } from '@element-plus/icons-vue';
 import { useProjectStore, type ProjectInfo } from '../../stores/project';
+import { useI18n } from '../../i18n';
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 
 const props = withDefaults(defineProps<{
   compact?: boolean;
@@ -13,6 +15,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ changed: [] }>();
 const projectStore = useProjectStore();
+const { language, t } = useI18n();
 const pickerRef = ref<HTMLElement | null>(null);
 const dropdownOpen = ref(false);
 const localError = ref('');
@@ -32,21 +35,23 @@ const busy = computed(() =>
   projectStore.loading || projectStore.switching || projectStore.registering || projectStore.removing,
 );
 const statusText = computed(() => {
-  if (projectStore.removing) return '正在清除项目…';
-  if (projectStore.registering) return '正在添加项目…';
-  if (projectStore.switching) return '正在切换项目…';
-  if (projectStore.loading) return '正在刷新项目…';
+  if (projectStore.removing) return t('projectAccess.removing');
+  if (projectStore.registering) return t('projectAccess.registering');
+  if (projectStore.switching) return t('projectAccess.switching');
+  if (projectStore.loading) return t('projectAccess.loading');
   return '';
 });
 const errorText = computed(() =>
-  localError.value
-  || projectStore.removeError
-  || projectStore.registerError
-  || projectStore.switchError
-  || projectStore.loadError
-  || '',
+  formatProjectError(
+    localError.value
+    || projectStore.removeError
+    || projectStore.registerError
+    || projectStore.switchError
+    || projectStore.loadError
+    || '',
+  ),
 );
-const selectedProjectLabel = computed(() => projectStore.currentProjectInfo?.name || '选择项目');
+const selectedProjectLabel = computed(() => projectStore.currentProjectInfo?.name || t('projectAccess.selectProject'));
 const contextMenuStyle = computed(() => ({
   left: `${projectContext.value.x}px`,
   top: `${projectContext.value.y}px`,
@@ -61,7 +66,7 @@ async function onSwitch(projectPath: string) {
     await projectStore.switchProject(projectPath);
     emit('changed');
   } catch (error) {
-    localError.value = error instanceof Error ? error.message : '项目切换失败';
+    localError.value = formatProjectError(error instanceof Error ? error.message : t('projectAccess.switchFailed'));
   }
 }
 
@@ -95,7 +100,7 @@ async function onRemoveContextProject() {
     await projectStore.removeProject(project.path);
     emit('changed');
   } catch (error) {
-    localError.value = error instanceof Error ? error.message : '项目清除失败';
+    localError.value = formatProjectError(error instanceof Error ? error.message : t('projectAccess.removeFailed'));
   }
 }
 
@@ -129,8 +134,13 @@ async function onBrowse() {
     const changed = await projectStore.browseAndAddProject();
     if (changed) emit('changed');
   } catch (error) {
-    localError.value = error instanceof Error ? error.message : '项目添加失败';
+    localError.value = formatProjectError(error instanceof Error ? error.message : t('projectAccess.addFailed'));
   }
+}
+
+function formatProjectError(value: unknown): string {
+  if (!value) return '';
+  return formatUserFacingErrorMessage(value, 'general', language.value);
 }
 
 onMounted(() => {
@@ -147,7 +157,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="project-access" data-ui-id="project-access" :class="{ compact: props.compact }">
     <div class="project-access-main">
-      <label v-if="props.showLabel" for="project-access-select">项目</label>
+      <label v-if="props.showLabel" for="project-access-select">{{ t('projectAccess.projectLabel') }}</label>
       <div v-if="projectStore.projects.length" ref="pickerRef" class="project-picker">
         <button
           id="project-access-select"
@@ -156,7 +166,7 @@ onBeforeUnmount(() => {
           data-ui-id="project-access-select"
           :class="{ open: dropdownOpen, empty: !projectStore.currentProject }"
           :disabled="busy"
-          aria-label="当前项目"
+          :aria-label="t('projectAccess.currentProject')"
           aria-haspopup="listbox"
           :aria-expanded="dropdownOpen"
           @click="toggleDropdown"
@@ -190,13 +200,13 @@ onBeforeUnmount(() => {
           @pointerdown.stop
           @click.stop
         >
-          <button type="button" data-ui-id="project-access-remove" :disabled="busy" @click="onRemoveContextProject">清除这个项目</button>
+          <button type="button" data-ui-id="project-access-remove" :disabled="busy" @click="onRemoveContextProject">{{ t('projectAccess.removeProject') }}</button>
         </div>
       </div>
-      <strong v-else>未接入项目</strong>
-      <button type="button" class="icon-button" data-ui-id="project-access-browse" :disabled="busy" title="选择项目目录" @click="onBrowse">
+      <strong v-else>{{ t('projectAccess.noProject') }}</strong>
+      <button type="button" class="icon-button" data-ui-id="project-access-browse" :disabled="busy" :title="t('projectAccess.chooseDirectory')" @click="onBrowse">
         <FolderOpened />
-        <span>选择目录</span>
+        <span>{{ t('projectAccess.chooseDirectoryShort') }}</span>
       </button>
     </div>
 

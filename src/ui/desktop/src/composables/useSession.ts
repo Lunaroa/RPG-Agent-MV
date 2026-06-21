@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import { sessions } from '../api/client.ts'
-import type { SessionSummary } from '@contract/types'
+import type { ProductLanguage, SessionSummary } from '@contract/types'
 
 export type Session = SessionSummary
 
@@ -42,6 +42,7 @@ export function useSession() {
     mapId?: number
     intent: string
     displayText?: string
+    productLanguage?: ProductLanguage
     continuationOf?: string
     thinkingLevel?: string
     timeoutMs?: number

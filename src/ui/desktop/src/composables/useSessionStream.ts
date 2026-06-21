@@ -9,7 +9,7 @@ import {
 } from '../utils/askParser.ts'
 import type { Ask, AskResult } from '../utils/askParser.ts'
 
-import type { SessionRuntimeEvent } from '@contract/types'
+import type { ProductLanguage, SessionRuntimeEvent } from '@contract/types'
 import { applyStreamSessionStatus } from './useSession.ts'
 import { upsertToolCallSegment } from './session-stream-tool.ts'
 import {
@@ -31,6 +31,7 @@ import {
   isAskUserQuestionBridgeFailure,
 } from './session-stream-agent-runtime-ask.ts'
 import { stripNativeTaskBlocks } from '../../../../contract/native-task-blocks.ts'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage, translate } from '../i18n/messages.ts'
 
 export type { EventPreviewItem } from '../utils/eventPreviewFromRegister.ts'
 export type EventReviewPreviewListener = (
@@ -77,6 +78,7 @@ let textEmittedSinceReason = false
 let nonReasoningSinceReason = false
 // 与 textEmittedSinceReason 对称：reasoning/tool 在文本之后插入时，下一段文本应另起新段，
 // 否则 text→tool→text 的第二段文本会并入前一段、错位到靠前位置（如最终答案被埋）。
+
 let nonTextSinceText = false
 const askSegments = new Map<string, ChatSegment>()
 // callId -> tool 段，用于把 tool_result 合并回对应的 tool_call 行。
@@ -86,6 +88,7 @@ const askBridgeFailureCallIds = new Set<string>()
 let pendingEventPreview: EventPreviewItem[] = []
 const eventPreviewByCallId = new Map<string, EventPreviewItem>()
 let eventReviewPreviewListener: EventReviewPreviewListener | null = null
+let productLanguage: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE
 
 let transcriptPersister: (() => void | Promise<void>) | null = null
 
@@ -139,6 +142,10 @@ function markLiveMarkdownSegment(segmentId: string): void {
 }
 
 export function useSessionStream() {
+  function setProductLanguage(value: unknown): void {
+    productLanguage = normalizeProductLanguage(value)
+  }
+
   function createSegment(type: ChatSegment['type'], content: string, metadata?: Record<string, unknown>): ChatSegment {
     return {
       id: `seg_${++segmentCounter}`,
@@ -271,7 +278,7 @@ export function useSessionStream() {
     appendSegment(createSegment('meta', '', {
       type: 'ask_bridge_failed',
       callId: event.call_id,
-      text: 'AskUserQuestion 未进入桌面 ASK 等待流。请确认 opencode question 事件已被会话流接收；本次不会生成可回答 ASK 卡片。',
+      text: translate('stream.askBridgeFailed', productLanguage),
       output: event.output,
     }))
   }
@@ -316,7 +323,8 @@ export function useSessionStream() {
       result += raw.slice(cursor, match.index)
       const ask = parseAgentAsk(match[1], {
         createAskId: () => `ask-${Date.now()}-${++askSequence}`,
-        getPrevious: (askId) => askSegments.get(askId)?.ask
+        getPrevious: (askId) => askSegments.get(askId)?.ask,
+        language: productLanguage,
       })
       if (ask) upsertAsk(ask)
       cursor = pattern.lastIndex
@@ -427,7 +435,8 @@ export function useSessionStream() {
           return
         }
         const ask = parseAskFromToolCall(event.tool, event.call_id, event.input, {
-          getPrevious: (askId) => askSegments.get(askId)?.ask
+          getPrevious: (askId) => askSegments.get(askId)?.ask,
+          language: productLanguage,
         })
         if (ask) {
           upsertAsk(ask)
@@ -493,7 +502,10 @@ export function useSessionStream() {
     if (event.type === 'opencode_permission_request' || event.type === 'opencode_question_request') {
       markReasoningInterrupted()
       finalizeLiveMarkdownSegment()
-      const ask = askFromOpencodeRequest(event as { request?: unknown; request_id?: unknown }) as Ask | null
+      const ask = askFromOpencodeRequest(
+        event as { request?: unknown; request_id?: unknown },
+        productLanguage,
+      ) as Ask | null
       if (ask) upsertAsk(ask)
       return
     }
@@ -782,6 +794,7 @@ export function useSessionStream() {
     appendUserSegment,
     restoreSegments,
     replaySessionEvents,
+    setProductLanguage,
     updateAskResult,
     patchAsk,
     syncPlacementEventPatch,

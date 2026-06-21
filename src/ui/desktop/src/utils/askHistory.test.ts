@@ -29,13 +29,13 @@ describe('buildAskHistoryPairs', () => {
       type: 'clarify',
       title: '确认',
       prompt: '要继续吗？',
-    }), [])
+    }, 'zh-CN'), [])
   })
 
   test('renders clarify as one question and answer', () => {
     assert.deepEqual(buildAskHistoryPairs(submittedAsk({
       result: { answer: '继续' },
-    })), [{ question: '要继续吗？', answer: '继续' }])
+    }), 'zh-CN'),[{ question: '要继续吗？', answer: '继续' }])
   })
 
   test('splits multi-choice answers in original order', () => {
@@ -51,7 +51,7 @@ describe('buildAskHistoryPairs', () => {
           report: { selected: ['count'], other: '' },
         },
       },
-    }))
+    }), 'zh-CN')
     assert.deepEqual(pairs, [
       { question: '稿件怎么处理？', answer: '全部废稿' },
       { question: '报告做到什么程度？', answer: '只报总行数' },
@@ -62,22 +62,45 @@ describe('buildAskHistoryPairs', () => {
     assert.equal(buildAskHistoryPairs(submittedAsk({
       type: 'plan-approval',
       result: { decision: 'revise', feedback: '缩小范围' },
-    }))[0].answer, '要求修改计划：缩小范围')
+    }), 'zh-CN')[0].answer, '要求修改计划：缩小范围')
 
     assert.equal(buildAskHistoryPairs(submittedAsk({
       type: 'map-selection',
       result: { decision: 'use-existing', selectedMapId: 3 },
-    }))[0].answer, '使用现有地图 #3')
+    }), 'zh-CN')[0].answer, '使用现有地图 #3')
 
     assert.match(buildAskHistoryPairs(submittedAsk({
       type: 'event-placement-list',
       events: [{ contractId: 'intro', eventName: '开场', targetMapId: 1, status: 'placed', placedEventId: 2, x: 4, y: 5 }],
       result: { placed: true },
-    }))[0].answer, /开场：已放置到 Map1 \(4, 5\)/)
+    }), 'zh-CN')[0].answer, /开场：已放置到 Map1 \(4, 5\)/)
 
     assert.equal(buildAskHistoryPairs(submittedAsk({
       type: 'production-board',
       result: { decision: 'confirmed' },
-    }))[0].answer, '确认制作清单')
+    }), 'zh-CN')[0].answer, '确认制作清单')
+  })
+
+  test('renders action asks in English mode', () => {
+    assert.equal(buildAskHistoryPairs(submittedAsk({
+      type: 'plan-approval',
+      result: { decision: 'revise', feedback: 'reduce scope' },
+    }), 'en-US')[0].answer, 'Requested plan changes: reduce scope')
+
+    assert.equal(buildAskHistoryPairs(submittedAsk({
+      type: 'map-selection',
+      result: { decision: 'use-existing', selectedMapId: 3 },
+    }), 'en-US')[0].answer, 'Use existing map #3')
+
+    assert.match(buildAskHistoryPairs(submittedAsk({
+      type: 'event-placement-list',
+      events: [{ contractId: 'intro', eventName: 'Intro', targetMapId: 1, status: 'placed', placedEventId: 2, x: 4, y: 5 }],
+      result: { placed: true },
+    }), 'en-US')[0].answer, /Intro: placed on Map1 \(4, 5\)/)
+
+    assert.equal(buildAskHistoryPairs(submittedAsk({
+      type: 'production-board',
+      result: { decision: 'confirmed' },
+    }), 'en-US')[0].answer, 'Confirmed production board')
   })
 })

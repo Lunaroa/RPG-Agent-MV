@@ -1,45 +1,11 @@
 <script setup lang="ts">
+import { useI18n } from '../../i18n';
+import { databaseFieldLabel } from '../../utils/rmmvDatabaseLocalization';
+
 defineOptions({ name: 'StructuredFieldsEditor' });
 const props = withDefaults(defineProps<{ modelValue: unknown; label?: string; depth?: number }>(), { label: '', depth: 0 });
 const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>();
-
-const LABELS: Record<string, string> = {
-  id: '编号',
-  name: '名称',
-  note: '备注',
-  description: '说明',
-  list: '执行内容',
-  trigger: '触发方式',
-  switchId: '条件开关',
-  switches: '开关',
-  variables: '变量',
-  traits: '特性',
-  effects: '使用效果',
-  params: '能力值',
-  equips: '装备',
-  damage: '伤害',
-  formula: '公式',
-  scope: '作用范围',
-  occasion: '可用场景',
-  iconIndex: '图标编号',
-  price: '价格',
-  classId: '职业',
-  initialLevel: '初始等级',
-  maxLevel: '最高等级',
-  characterName: '行走图',
-  characterIndex: '行走图索引',
-  faceName: '脸图',
-  faceIndex: '脸图索引',
-  battlerName: '战斗图',
-  nickname: '昵称',
-  profile: '简介',
-  code: '类型',
-  dataId: '对象编号',
-  value: '数值',
-  value1: '数值 1',
-  value2: '数值 2',
-  parameters: '参数',
-};
+const { language, t } = useI18n();
 
 function updateChild(key: string | number, value: unknown) {
   if (Array.isArray(props.modelValue)) {
@@ -50,12 +16,12 @@ function updateChild(key: string | number, value: unknown) {
 }
 function primitive(value: unknown): boolean { return value == null || ['string', 'number', 'boolean'].includes(typeof value); }
 function displayLabel(label: string): string {
-  if (/^\d+$/.test(label)) return `第 ${Number(label) + 1} 项`;
-  return LABELS[label] || label || '字段';
+  if (/^\d+$/.test(label)) return t('sf.itemN', { n: Number(label) + 1 });
+  return label ? databaseFieldLabel(label, language.value) : t('sf.field');
 }
 function containerLabel(): string {
   const label = displayLabel(props.label);
-  if (Array.isArray(props.modelValue)) return `${label} · ${props.modelValue.length} 项`;
+  if (Array.isArray(props.modelValue)) return t('sf.labelItems', { label: String(label), count: props.modelValue.length });
   return label;
 }
 function updatePrimitive(value: unknown, raw: string | boolean) {

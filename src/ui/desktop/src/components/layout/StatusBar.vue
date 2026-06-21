@@ -1,20 +1,22 @@
 <script setup lang="ts">
+import { useI18n } from '../../i18n';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 
 const ui = useWorkbenchUiStore();
+const { t } = useI18n();
 </script>
 
 <template>
   <footer class="statusbar">
     <span class="sb-item sb-map"><span class="sb-dot" />{{ ui.sbMapLabel || 'RPG-Agent-MV' }}</span>
     <span v-if="ui.sbMode" class="sb-item sb-mode" :class="ui.sbMode">
-      {{ ui.sbMode === 'map' ? '地图模式' : '事件模式' }}
+      {{ ui.sbMode === 'map' ? t('status.mode.map') : t('status.mode.event') }}
     </span>
     <span v-if="ui.sbCursor" class="sb-item">{{ ui.sbCursor }}</span>
     <span class="sb-fill" />
     <span class="sb-item">{{ ui.sbZoom }}%</span>
     <span class="sb-item" :class="{ 'sb-warn': ui.sbStagingDirty }">
-      {{ ui.sbStagingDirty ? '存在暂存改动' : '无暂存改动' }}
+      {{ ui.sbStagingDirty ? t('status.staging.dirty') : t('status.staging.clean') }}
     </span>
     <span v-if="ui.sbPlacementActive && ui.sbPlacementHint" class="sb-item sb-placement">
       {{ ui.sbPlacementHint }}

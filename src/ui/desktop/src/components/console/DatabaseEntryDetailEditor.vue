@@ -10,6 +10,7 @@ import type {
   RmmvDatabaseFieldKind,
   RmmvDatabaseFieldSchema,
 } from '@contract/types';
+import { useI18n } from '../../i18n';
 import {
   animationFramesSummary,
   appendAnimationFrame,
@@ -22,7 +23,6 @@ import {
   MV_TROOP_PAGE_SPANS,
   appendStringListItem,
   isMvStringListField,
-  MV_TERMS_MESSAGE_LABELS,
   normalizeAnimationFrames,
   normalizeAnimationTimings,
   normalizeClassParamCurves,
@@ -48,6 +48,38 @@ import { mvFaceSourceRect } from '../../utils/rmmvFace';
 import MvCommandListEditor from './MvCommandListEditor.vue';
 import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
 import ImageAssetPickerDialog from '../editor/ImageAssetPickerDialog.vue';
+import {
+  ANIMATION_POSITION_OPTIONS,
+  DAMAGE_TYPE_OPTIONS,
+  DROP_KIND_OPTIONS,
+  EFFECT_CODES,
+  FLAG_BITS,
+  HIT_TYPE_OPTIONS,
+  ITEM_TYPE_OPTIONS,
+  MENU_COMMAND_LABELS,
+  OCCASION_OPTIONS,
+  PARAM_OPTIONS,
+  RMMV_BATTLE_SPAN_LABEL,
+  RMMV_NONE_LABEL,
+  SCOPE_OPTIONS,
+  SOUND_LABELS,
+  SPARAM_OPTIONS,
+  STATE_AUTO_REMOVE_OPTIONS,
+  STATE_MOTION_OPTIONS,
+  STATE_RESTRICTION_OPTIONS,
+  TERM_LABELS,
+  TILESET_MODE_OPTIONS,
+  TILESET_NAME_LABELS,
+  TONE_LABELS,
+  TRAIT_CODES,
+  TRIGGER_OPTIONS,
+  XPARAM_OPTIONS,
+  databaseFieldLabel,
+  databaseGroupLabel,
+  databaseTermMessageLabel,
+  localizeDatabaseLabel,
+  localizeDatabaseOptions,
+} from '../../utils/rmmvDatabaseLocalization';
 
 type DbRecord = Record<string, unknown>;
 type DbArrayRecord = Record<string, unknown>[];
@@ -70,326 +102,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>();
-
-const GROUP_LABELS: Record<string, string> = {
-  Actors: '角色',
-  Classes: '职业',
-  Skills: '技能',
-  Items: '物品',
-  Weapons: '武器',
-  Armors: '防具',
-  Enemies: '敌人',
-  Troops: '敌群',
-  States: '状态',
-  Animations: '动画',
-  Tilesets: '图块组',
-  CommonEvents: '公共事件',
-  System: '系统',
-  Types: '类型',
-  Terms: '用语',
-};
-
-const FIELD_LABELS: Record<string, string> = {
-  id: '编号',
-  name: '名称',
-  gameTitle: '游戏标题',
-  versionId: '版本 ID',
-  editMapId: '编辑地图',
-  classId: '职业',
-  initialLevel: '初始等级',
-  maxLevel: '最高等级',
-  nickname: '昵称',
-  profile: '简介',
-  description: '说明',
-  note: '备注',
-  characterName: '行走图',
-  characterIndex: '行走图索引',
-  faceName: '脸图',
-  faceIndex: '脸图索引',
-  battlerName: '战斗图',
-  battlerHue: '战斗图色相',
-  iconIndex: '图标编号',
-  price: '价格',
-  animationId: '动画',
-  stypeId: '技能类型',
-  itypeId: '物品类型',
-  wtypeId: '武器类型',
-  atypeId: '防具类型',
-  etypeId: '装备类型',
-  mpCost: 'MP 消耗',
-  tpCost: 'TP 消耗',
-  tpGain: '获得 TP',
-  scope: '作用范围',
-  occasion: '可用场景',
-  speed: '速度修正',
-  successRate: '成功率',
-  repeats: '连续次数',
-  hitType: '命中类型',
-  requiredWtypeId1: '必要武器 1',
-  requiredWtypeId2: '必要武器 2',
-  consumable: '消耗品',
-  exp: '经验值',
-  gold: '金币',
-  restriction: '行动限制',
-  priority: '优先级',
-  motion: '动作',
-  overlay: '叠加显示',
-  autoRemovalTiming: '自动解除',
-  minTurns: '最少回合',
-  maxTurns: '最多回合',
-  removeAtBattleEnd: '战斗结束解除',
-  removeByRestriction: '行动限制解除',
-  removeByDamage: '受伤解除',
-  chanceByDamage: '受伤解除概率',
-  removeByWalking: '步行解除',
-  stepsToRemove: '解除步数',
-  message1: '提示 1',
-  message2: '提示 2',
-  message3: '提示 3',
-  message4: '提示 4',
-  animation1Name: '动画图像 1',
-  animation1Hue: '图像 1 色相',
-  animation2Name: '动画图像 2',
-  animation2Hue: '图像 2 色相',
-  position: '显示位置',
-  mode: '模式',
-  trigger: '触发方式',
-  switchId: '条件开关',
-  testTroopId: '测试敌群',
-  startMapId: '起始地图',
-  startX: '起始 X',
-  startY: '起始 Y',
-  title1Name: '标题图 1',
-  title2Name: '标题图 2',
-  battleback1Name: '战斗背景 1',
-  battleback2Name: '战斗背景 2',
-  currencyUnit: '货币单位',
-  locale: '语言',
-  optDisplayTp: '显示 TP',
-  optDrawTitle: '绘制标题',
-  optExtraExp: '替补获得经验',
-  optFloorDeath: '地形伤害死亡',
-  optFollowers: '显示队列成员',
-  optSideView: '侧视战斗',
-  optSlipDeath: '中毒死亡',
-  optTransparent: '透明开始',
-  switches: '开关',
-  variables: '变量',
-  elements: '属性',
-  skillTypes: '技能类型',
-  weaponTypes: '武器类型',
-  armorTypes: '防具类型',
-  equipTypes: '装备类型',
-  partyMembers: '初始队伍',
-  testBattlers: '测试战斗成员',
-  boat: '小船',
-  ship: '大船',
-  airship: '飞空艇',
-  titleBgm: '标题 BGM',
-  battleBgm: '战斗 BGM',
-  victoryMe: '胜利 ME',
-  defeatMe: '战败 ME',
-  gameoverMe: '游戏结束 ME',
-  sounds: '系统音效',
-  terms: '用语',
-  menuCommands: '菜单命令',
-  windowTone: '窗口色调',
-  damage: '伤害',
-  effects: '使用效果',
-  traits: '特性',
-  params: '能力值',
-  equips: '初始装备',
-  expParams: '经验曲线',
-  learnings: '习得技能',
-  actions: '行动模式',
-  dropItems: '掉落物',
-  members: '敌群成员',
-  pages: '战斗事件页',
-  frames: '动画帧',
-  timings: '动画时机',
-  tilesetNames: '图块图片',
-  flags: '图块标志',
-  list: '执行内容',
-  basic: '基础用语',
-  commands: '命令用语',
-  messages: '消息用语',
-};
-
-const PARAM_OPTIONS = [
-  '最大 HP', '最大 MP', '攻击力', '防御力', '魔法力', '魔法防御', '敏捷', '幸运',
-].map((label, value) => ({ value, label }));
-
-const XPARAM_OPTIONS = [
-  '命中率', '闪避率', '会心率', '会心闪避', '魔法闪避', '魔法反射', '反击率', 'HP 再生', 'MP 再生', 'TP 再生',
-].map((label, value) => ({ value, label }));
-
-const SPARAM_OPTIONS = [
-  '被攻击率', '防御效果率', '恢复效果率', '药理知识', 'MP 消耗率', 'TP 充能率', '物理伤害率', '魔法伤害率', '地形伤害率', '经验获得率',
-].map((label, value) => ({ value, label }));
-
-const TRAIT_CODES: SelectOption[] = [
-  { value: 11, label: '属性有效度' },
-  { value: 12, label: '弱化有效度' },
-  { value: 13, label: '状态有效度' },
-  { value: 14, label: '状态免疫' },
-  { value: 21, label: '普通能力值' },
-  { value: 22, label: '追加能力值' },
-  { value: 23, label: '特殊能力值' },
-  { value: 31, label: '攻击属性' },
-  { value: 32, label: '攻击状态' },
-  { value: 33, label: '攻击速度补正' },
-  { value: 34, label: '攻击次数追加' },
-  { value: 41, label: '添加技能类型' },
-  { value: 42, label: '封印技能类型' },
-  { value: 43, label: '添加技能' },
-  { value: 44, label: '封印技能' },
-  { value: 51, label: '装备武器类型' },
-  { value: 52, label: '装备防具类型' },
-  { value: 53, label: '固定装备' },
-  { value: 54, label: '封印装备' },
-  { value: 55, label: '装备槽类型' },
-  { value: 61, label: '追加行动次数' },
-  { value: 62, label: '特殊标志' },
-  { value: 63, label: '消失效果' },
-  { value: 64, label: '队伍能力' },
-];
-
-const EFFECT_CODES: SelectOption[] = [
-  { value: 11, label: '恢复 HP' },
-  { value: 12, label: '恢复 MP' },
-  { value: 13, label: '获得 TP' },
-  { value: 21, label: '附加状态' },
-  { value: 22, label: '解除状态' },
-  { value: 31, label: '强化能力值' },
-  { value: 32, label: '弱化能力值' },
-  { value: 33, label: '解除强化' },
-  { value: 34, label: '解除弱化' },
-  { value: 41, label: '特殊效果' },
-  { value: 42, label: '成长' },
-  { value: 43, label: '习得技能' },
-  { value: 44, label: '公共事件' },
-];
-
-const ITEM_TYPE_OPTIONS: SelectOption[] = [
-  { value: 1, label: '普通物品' },
-  { value: 2, label: '关键物品' },
-  { value: 3, label: '隐藏物品 A' },
-  { value: 4, label: '隐藏物品 B' },
-];
-
-const DROP_KIND_OPTIONS: SelectOption[] = [
-  { value: 0, label: '无' },
-  { value: 1, label: '物品' },
-  { value: 2, label: '武器' },
-  { value: 3, label: '防具' },
-];
-
-const FLAG_BITS: SelectOption[] = [
-  { value: 0x01, label: '下阻塞' },
-  { value: 0x02, label: '左阻塞' },
-  { value: 0x04, label: '右阻塞' },
-  { value: 0x08, label: '上阻塞' },
-  { value: 0x10, label: '星标' },
-  { value: 0x20, label: '梯子' },
-  { value: 0x40, label: '草丛' },
-  { value: 0x80, label: '柜台' },
-  { value: 0x100, label: '伤害地形' },
-];
-
-const DAMAGE_TYPE_OPTIONS: SelectOption[] = [
-  { value: 0, label: '无' },
-  { value: 1, label: 'HP 伤害' },
-  { value: 2, label: 'MP 伤害' },
-  { value: 3, label: 'HP 恢复' },
-  { value: 4, label: 'MP 恢复' },
-  { value: 5, label: 'HP 吸收' },
-  { value: 6, label: 'MP 吸收' },
-];
-
-const SCOPE_OPTIONS: SelectOption[] = [
-  { value: 0, label: '无' },
-  { value: 1, label: '敌单体' },
-  { value: 2, label: '敌全体' },
-  { value: 3, label: '敌随机 1 次' },
-  { value: 4, label: '敌随机 2 次' },
-  { value: 5, label: '敌随机 3 次' },
-  { value: 6, label: '敌随机 4 次' },
-  { value: 7, label: '我方单体' },
-  { value: 8, label: '我方全体' },
-  { value: 9, label: '我方单体（战斗不能）' },
-  { value: 10, label: '我方全体（战斗不能）' },
-  { value: 11, label: '使用者' },
-];
-
-const OCCASION_OPTIONS: SelectOption[] = [
-  { value: 0, label: '总是' },
-  { value: 1, label: '仅战斗' },
-  { value: 2, label: '仅菜单' },
-  { value: 3, label: '不可使用' },
-];
-
-const HIT_TYPE_OPTIONS: SelectOption[] = [
-  { value: 0, label: '必中' },
-  { value: 1, label: '物理攻击' },
-  { value: 2, label: '魔法攻击' },
-];
-
-const TRIGGER_OPTIONS: SelectOption[] = [
-  { value: 0, label: '无' },
-  { value: 1, label: '自动执行' },
-  { value: 2, label: '并行处理' },
-];
-
-const STATE_RESTRICTION_OPTIONS: SelectOption[] = [
-  { value: 0, label: '无' },
-  { value: 1, label: '攻击敌人' },
-  { value: 2, label: '攻击任意目标' },
-  { value: 3, label: '攻击同伴' },
-  { value: 4, label: '不能行动' },
-];
-
-const STATE_AUTO_REMOVE_OPTIONS: SelectOption[] = [
-  { value: 0, label: '无' },
-  { value: 1, label: '行动结束' },
-  { value: 2, label: '回合结束' },
-];
-
-const STATE_MOTION_OPTIONS: SelectOption[] = [
-  { value: 0, label: '普通' },
-  { value: 1, label: '异常' },
-  { value: 2, label: '睡眠' },
-  { value: 3, label: '死亡' },
-];
-
-const ANIMATION_POSITION_OPTIONS: SelectOption[] = [
-  { value: 0, label: '头部' },
-  { value: 1, label: '中央' },
-  { value: 2, label: '脚下' },
-  { value: 3, label: '画面' },
-];
-
-const TILESET_MODE_OPTIONS: SelectOption[] = [
-  { value: 0, label: 'VX Ace 兼容' },
-  { value: 1, label: 'MV 标准' },
-];
-
-const TILESET_NAME_LABELS = ['A1', 'A2', 'A3', 'A4', 'A5', 'B', 'C', 'D', 'E'];
-const MENU_COMMAND_LABELS = ['物品', '技能', '装备', '状态', '整队', '保存'];
-const TONE_LABELS = ['红', '绿', '蓝', '灰'];
-const SOUND_LABELS = [
-  '光标', '确定', '取消', '蜂鸣', '装备', '保存', '读取', '战斗开始',
-  '逃跑', '敌人攻击', '敌人受伤', '敌人消失', 'Boss 消失 1', 'Boss 消失 2',
-  '角色受伤', '角色倒下', '恢复', '未命中', '闪避', '魔法闪避',
-  '魔法反射', '商店', '使用物品', '使用技能',
-];
-const TERM_LABELS: Record<string, string[]> = {
-  basic: ['等级', '等级缩写', 'HP', 'HP 缩写', 'MP', 'MP 缩写', 'TP', 'TP 缩写', '经验值', '经验值缩写'],
-  params: ['最大 HP', '最大 MP', '攻击', '防御', '魔法攻击', '魔法防御', '敏捷', '幸运', '命中', '回避'],
-  commands: [
-    '战斗', '逃跑', '攻击', '防御', '物品', '技能', '装备', '状态', '整队', '保存', '游戏结束', '选项',
-    '武器', '防具', '贵重物品', '装备', '最强装备', '全部卸下', '新的游戏', '继续', '标题画面', '取消', '购买', '卖出',
-  ],
-};
+const { language, t } = useI18n();
 
 const jsonErrors = reactive<Record<string, string>>({});
 const selectedFlagTileId = ref(0);
@@ -408,10 +121,22 @@ const record = computed<DbRecord>(() => (
     : {}
 ));
 
-const groupLabel = computed(() => GROUP_LABELS[String(props.group || '')] || String(props.group || '数据库'));
+const groupLabel = computed(() => {
+  const key = String(props.group || '');
+  return key ? databaseGroupLabel(key, language.value) : String(props.group || t('db.title'));
+});
 const schemaFields = computed(() => props.schema?.coreFields || []);
 const references = computed(() => props.schema?.references || []);
 const schemaDriven = computed(() => schemaFields.value.length > 0);
+const localizedParamOptions = computed(() => localizedOptions(PARAM_OPTIONS));
+const localizedTraitCodes = computed(() => localizedOptions(TRAIT_CODES));
+const localizedEffectCodes = computed(() => localizedOptions(EFFECT_CODES));
+const localizedMenuCommandLabels = computed(() => MENU_COMMAND_LABELS.map(localizedLabel));
+const localizedToneLabels = computed(() => TONE_LABELS.map(localizedLabel));
+const localizedSoundLabels = computed(() => SOUND_LABELS.map(localizedLabel));
+const localizedTermLabels = computed<Record<string, string[]>>(() => Object.fromEntries(
+  Object.entries(TERM_LABELS).map(([key, labels]) => [key, labels.map(localizedLabel)]),
+));
 const isActorImageEditor = computed(() => props.group === 'Actors' && schemaDriven.value);
 const isEnemyEditor = computed(() => props.group === 'Enemies' || props.schema?.fileName === 'Enemies.json');
 const visibleSchemaFields = computed(() => (
@@ -446,7 +171,20 @@ watch(enemyBattlerSignature, () => {
 }, { immediate: true });
 
 function fieldLabel(field: RmmvDatabaseFieldSchema): string {
-  return FIELD_LABELS[field.path] || field.path;
+  return databaseFieldLabel(field.path, language.value);
+}
+
+function sectionLabel(section: string): string {
+  return databaseFieldLabel(section, language.value);
+}
+
+
+function localizedLabel(label: string): string {
+  return localizeDatabaseLabel(label, language.value);
+}
+
+function localizedOptions(options: ReadonlyArray<SelectOption>): SelectOption[] {
+  return localizeDatabaseOptions(options, language.value);
 }
 
 function fieldKind(field: RmmvDatabaseFieldSchema): RmmvDatabaseFieldKind {
@@ -544,9 +282,9 @@ function updateJson(field: RmmvDatabaseFieldSchema, raw: string): void {
   try {
     const parsed = JSON.parse(raw);
     const kind = fieldKind(field);
-    if (kind === 'array' && !Array.isArray(parsed)) throw new Error('必须是 JSON 数组');
+    if (kind === 'array' && !Array.isArray(parsed)) throw new Error(t('db.mustBeJsonArray'));
     if (kind === 'object' && (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))) {
-      throw new Error('必须是 JSON 对象');
+      throw new Error(t('db.mustBeJsonObject'));
     }
     jsonErrors[field.path] = '';
     writePath(field.path, parsed);
@@ -608,7 +346,7 @@ function stringListValue(path: string): string[] {
 }
 
 function stringListRowLabel(path: string, index: number): string {
-  if (stringListReserveZero(path) && index === 0) return '0000 保留位';
+  if (stringListReserveZero(path) && index === 0) return t('db.reservedSlot');
   return `#${String(index).padStart(4, '0')}`;
 }
 
@@ -632,7 +370,7 @@ function termsMessageEntries(path: string): { key: string; label: string; value:
   const messages = objectValue(path);
   return sortedTermsMessageKeys(messages).map((key) => ({
     key,
-    label: MV_TERMS_MESSAGE_LABELS[key] || key,
+    label: databaseTermMessageLabel(key, language.value),
     value: String(messages[key] ?? ''),
   }));
 }
@@ -662,39 +400,40 @@ function asOptions(entries: NamedCatalogEntry[], emptyLabel?: string): SelectOpt
     value: entry.id,
     label: `${String(entry.id).padStart(4, '0')} ${entry.name}`,
   }));
-  return emptyLabel ? [{ value: 0, label: emptyLabel }, ...result] : result;
+  return emptyLabel ? [{ value: 0, label: localizedLabel(emptyLabel) }, ...result] : result;
 }
 
 function fixedOptions(options: SelectOption[], emptyLabel?: string): SelectOption[] {
-  return emptyLabel ? [{ value: 0, label: emptyLabel }, ...options] : options;
+  const localized = localizedOptions(options);
+  return emptyLabel ? [{ value: 0, label: localizedLabel(emptyLabel) }, ...localized] : localized;
 }
 
 function primitiveOptions(field: RmmvDatabaseFieldSchema): SelectOption[] {
   switch (field.path) {
     case 'classId': return asOptions(catalogEntries('classes'));
-    case 'animationId': return asOptions(catalogEntries('animations'), '无');
+    case 'animationId': return asOptions(catalogEntries('animations'), RMMV_NONE_LABEL);
     case 'stypeId': return asOptions(catalogEntries('skillTypes'));
-    case 'itypeId': return ITEM_TYPE_OPTIONS;
+    case 'itypeId': return localizedOptions(ITEM_TYPE_OPTIONS);
     case 'wtypeId':
     case 'requiredWtypeId1':
     case 'requiredWtypeId2':
-      return asOptions(catalogEntries('weaponTypes'), '无');
+      return asOptions(catalogEntries('weaponTypes'), RMMV_NONE_LABEL);
     case 'atypeId': return asOptions(catalogEntries('armorTypes'));
     case 'etypeId': return asOptions(catalogEntries('equipTypes'));
-    case 'switchId': return asOptions(catalogEntries('switches'), '无');
-    case 'testTroopId': return asOptions(catalogEntries('troops'), '无');
+    case 'switchId': return asOptions(catalogEntries('switches'), RMMV_NONE_LABEL);
+    case 'testTroopId': return asOptions(catalogEntries('troops'), RMMV_NONE_LABEL);
     case 'startMapId':
     case 'editMapId':
-      return asOptions(catalogEntries('maps'), '无');
-    case 'scope': return SCOPE_OPTIONS;
-    case 'occasion': return OCCASION_OPTIONS;
-    case 'hitType': return HIT_TYPE_OPTIONS;
-    case 'trigger': return TRIGGER_OPTIONS;
-    case 'restriction': return STATE_RESTRICTION_OPTIONS;
-    case 'autoRemovalTiming': return STATE_AUTO_REMOVE_OPTIONS;
-    case 'motion': return STATE_MOTION_OPTIONS;
-    case 'position': return ANIMATION_POSITION_OPTIONS;
-    case 'mode': return TILESET_MODE_OPTIONS;
+      return asOptions(catalogEntries('maps'), RMMV_NONE_LABEL);
+    case 'scope': return localizedOptions(SCOPE_OPTIONS);
+    case 'occasion': return localizedOptions(OCCASION_OPTIONS);
+    case 'hitType': return localizedOptions(HIT_TYPE_OPTIONS);
+    case 'trigger': return localizedOptions(TRIGGER_OPTIONS);
+    case 'restriction': return localizedOptions(STATE_RESTRICTION_OPTIONS);
+    case 'autoRemovalTiming': return localizedOptions(STATE_AUTO_REMOVE_OPTIONS);
+    case 'motion': return localizedOptions(STATE_MOTION_OPTIONS);
+    case 'position': return localizedOptions(ANIMATION_POSITION_OPTIONS);
+    case 'mode': return localizedOptions(TILESET_MODE_OPTIONS);
     default:
       return [];
   }
@@ -714,11 +453,11 @@ function traitTargetOptions(code: number): SelectOption[] {
     case 32:
       return asOptions(catalogEntries('states'));
     case 21:
-      return PARAM_OPTIONS;
+      return localizedParamOptions.value;
     case 22:
-      return XPARAM_OPTIONS;
+      return localizedOptions(XPARAM_OPTIONS);
     case 23:
-      return SPARAM_OPTIONS;
+      return localizedOptions(SPARAM_OPTIONS);
     case 41:
     case 42:
       return asOptions(catalogEntries('skillTypes'));
@@ -747,7 +486,7 @@ function effectTargetOptions(code: number): SelectOption[] {
     case 33:
     case 34:
     case 42:
-      return PARAM_OPTIONS;
+      return localizedParamOptions.value;
     case 43:
       return asOptions(catalogEntries('skills'));
     case 44:
@@ -759,13 +498,13 @@ function effectTargetOptions(code: number): SelectOption[] {
 
 function equipmentOptions(slotIndex: number): SelectOption[] {
   return slotIndex === 0
-    ? asOptions(catalogEntries('weapons'), '无')
-    : asOptions(catalogEntries('armors'), '无');
+    ? asOptions(catalogEntries('weapons'), RMMV_NONE_LABEL)
+    : asOptions(catalogEntries('armors'), RMMV_NONE_LABEL);
 }
 
 function equipmentSlotLabel(slotIndex: number): string {
   const equipType = catalogEntries('equipTypes').find((entry) => entry.id === slotIndex + 1);
-  return equipType ? `${slotIndex + 1}. ${equipType.name}` : `装备槽 ${slotIndex + 1}`;
+  return equipType ? `${slotIndex + 1}. ${equipType.name}` : t('db.slotN', { n: slotIndex + 1 });
 }
 
 function dropTargetOptions(kind: number): SelectOption[] {
@@ -781,7 +520,7 @@ function updateDamage(key: string, value: unknown): void {
 
 function damageElementOptions(): SelectOption[] {
   return fixedOptions([
-    { value: -1, label: '普通攻击属性' },
+    { value: -1, label: t('db.normalAttack') },
     ...asOptions(catalogEntries('elements')),
   ]);
 }
@@ -812,7 +551,7 @@ function toggleFlagBit(path: string, bit: number, checked: boolean): void {
 function flagSummary(path: string): string {
   const flags = flagsValue(path);
   const nonZero = flags.filter((value) => value !== 0).length;
-  return `${flags.length} 个 tile flag，${nonZero} 个非零`;
+  return t('db.tileFlagSummary', { total: flags.length, nonZero });
 }
 
 function commandCount(value: unknown): number {
@@ -820,13 +559,18 @@ function commandCount(value: unknown): number {
 }
 
 function troopPageSummary(page: DbRecord, index: number): string {
-  const active = troopPageConditionSummary(page.conditions);
-  const span = MV_TROOP_PAGE_SPANS.find((entry) => entry.value === numberValue(page, 'span'))?.label || '战斗';
-  return `第 ${index + 1} 页 · ${span} · ${commandCount(page.list)} 条指令 · 条件 ${active.length ? active.join(' / ') : '无'}`;
+  const active = localizedTroopPageConditionSummary(page.conditions);
+  const span = localizedLabel(MV_TROOP_PAGE_SPANS.find((entry) => entry.value === numberValue(page, 'span'))?.label || RMMV_BATTLE_SPAN_LABEL);
+  const conditions = active.length ? active.join(' / ') : t('commonEvent.none');
+  return t('db.pageSummary', { index: index + 1, span, commands: commandCount(page.list), conditions });
+}
+
+function localizedTroopPageConditionSummary(value: unknown): string[] {
+  return troopPageConditionSummary(value, language.value);
 }
 
 function framesSummary(path: string): string {
-  return animationFramesSummary(readPath(path));
+  return animationFramesSummary(readPath(path), language.value);
 }
 
 function invalidArrayItemCount(path: string): number {
@@ -862,7 +606,7 @@ function updateNestedRecord(path: string, childKey: string, key: string, value: 
 function audioAssetOptions(kind: 'bgm' | 'bgs' | 'me' | 'se'): Array<{ value: string; label: string }> {
   const assets = props.catalog?.assets[kind] || [];
   return [
-    { value: '', label: '(无)' },
+    { value: '', label: t('imgPicker.none') },
     ...assets.map((asset) => ({ value: asset.name, label: asset.name })),
   ];
 }
@@ -882,7 +626,7 @@ function imageAssets(kind: ImageAssetKind): ProjectAssetEntry[] {
 }
 
 function imageValueLabel(name: string): string {
-  return name || '(无)';
+  return name || t('imgPicker.none');
 }
 
 function openImagePicker(options: { asset: ImageAssetKind; mode?: ImagePickerMode; title: string; name: string; index?: number }, commit: (selection: ImageSelection) => void): void {
@@ -896,7 +640,7 @@ function commitImageSelection(selection: ImageSelection): void {
 }
 
 function openActorFacePicker(): void {
-  openImagePicker({ asset: 'faces', mode: 'face', title: '选择脸图', name: stringValue('faceName'), index: numberPathValue('faceIndex') }, (selection) => {
+  openImagePicker({ asset: 'faces', mode: 'face', title: t('db.chooseFace'), name: stringValue('faceName'), index: numberPathValue('faceIndex') }, (selection) => {
     writePaths([
       { path: 'faceName', value: selection.name },
       { path: 'faceIndex', value: selection.name ? selection.index : 0 },
@@ -905,7 +649,7 @@ function openActorFacePicker(): void {
 }
 
 function openActorCharacterPicker(): void {
-  openImagePicker({ asset: 'characters', mode: 'character', title: '选择行走图', name: stringValue('characterName'), index: numberPathValue('characterIndex') }, (selection) => {
+  openImagePicker({ asset: 'characters', mode: 'character', title: t('db.chooseCharacter'), name: stringValue('characterName'), index: numberPathValue('characterIndex') }, (selection) => {
     writePaths([
       { path: 'characterName', value: selection.name },
       { path: 'characterIndex', value: selection.name ? selection.index : 0 },
@@ -914,11 +658,11 @@ function openActorCharacterPicker(): void {
 }
 
 function openActorBattlerPicker(): void {
-  openSimpleImagePicker('battlerName', 'svActors', '选择 SV 战斗图');
+  openSimpleImagePicker('battlerName', 'svActors', t('db.chooseSvBattler'));
 }
 
 function openEnemyBattlerPicker(path: string): void {
-  openSimpleImagePicker(path, 'enemies', '选择敌人战斗图');
+  openSimpleImagePicker(path, 'enemies', t('db.chooseEnemyBattler'));
 }
 
 function openSimpleImagePicker(path: string, asset: ImageAssetKind, title: string): void {
@@ -938,7 +682,7 @@ function openRecordCharacterPicker(path: string): void {
   openImagePicker({
     asset: 'characters',
     mode: 'character',
-    title: `选择${fieldLabel({ path, kind: 'object' })}图像`,
+    title: t('db.chooseImage', { label: fieldLabel({ path, kind: 'object' }) }),
     name: String(current.characterName || ''),
     index: numberValue(current, 'characterIndex'),
   }, (selection) => {
@@ -1114,11 +858,11 @@ function addTroopPage(): void {
 
 function troopEnemyIndexOptions(): SelectOption[] {
   const members = arrayRecords('members');
-  if (!members.length) return [{ value: 0, label: '#1 敌人槽' }];
+  if (!members.length) return [{ value: 0, label: t('db.enemySlot1') }];
   return members.map((member, index) => {
     const enemyId = numberValue(member, 'enemyId');
     const enemy = catalogEntries('enemies').find((entry) => entry.id === enemyId);
-    return { value: index, label: `#${index + 1} ${enemy?.name || `敌人 ${enemyId}`}` };
+    return { value: index, label: `#${index + 1} ${enemy?.name || t('db.enemyN', { id: enemyId })}` };
   });
 }
 
@@ -1187,30 +931,30 @@ function updateSound(index: number, key: string, value: unknown): void {
   <div class="db-editor">
     <section v-if="schemaDriven" class="editor-section">
       <div class="section-title">
-        <strong>{{ groupLabel }}字段</strong>
-        <span>{{ schema?.fileName }} · {{ schema?.isArrayTable ? '数组表' : '文档表' }}</span>
+        <strong>{{ t('db.groupFields', { group: groupLabel }) }}</strong>
+        <span>{{ schema?.fileName }} · {{ schema?.isArrayTable ? t('db.arrayTable') : t('db.documentTable') }}</span>
       </div>
       <section v-if="isActorImageEditor" class="actor-image-editor">
         <div class="complex-title">
-          <span>图像</span>
+          <span>{{ t('db.images') }}</span>
         </div>
         <div class="actor-image-grid">
           <article class="actor-image-card">
-            <span>脸图</span>
+            <span>{{ t('db.faceGraphic') }}</span>
             <button type="button" class="image-picker-card" @click="openActorFacePicker">
               <canvas ref="facePreviewCanvas" width="96" height="96" />
               <small>{{ imageValueLabel(stringValue('faceName')) }}</small>
             </button>
           </article>
           <article class="actor-image-card">
-            <span>行走图</span>
+            <span>{{ t('db.characterSprite') }}</span>
             <button type="button" class="image-picker-card" @click="openActorCharacterPicker">
               <canvas ref="characterPreviewCanvas" width="96" height="96" />
               <small>{{ imageValueLabel(stringValue('characterName')) }}</small>
             </button>
           </article>
           <article class="actor-image-card">
-            <span>SV 战斗图</span>
+            <span>{{ t('db.svBattlerGraphic') }}</span>
             <button type="button" class="image-picker-card" @click="openActorBattlerPicker">
               <canvas ref="battlerPreviewCanvas" width="128" height="96" />
               <small>{{ imageValueLabel(stringValue('battlerName')) }}</small>
@@ -1223,10 +967,10 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-if="isStringListField(field)" class="field full complex-editor string-list-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addStringListItem(field.path)">添加</button>
+              <button type="button" @click="addStringListItem(field.path)">{{ t('cmdList.add') }}</button>
             </div>
-            <small v-if="stringListReserveZero(field.path)">RPG Maker MV 的 0 号槽为空保留位，界面禁止编辑和删除。</small>
-            <div v-if="!stringListValue(field.path).length" class="empty-note">暂无条目。</div>
+            <small v-if="stringListReserveZero(field.path)">{{ t('db.slot0Reserved') }}</small>
+            <div v-if="!stringListValue(field.path).length" class="empty-note">{{ t('db.noEntries') }}</div>
             <div v-for="(entry, index) in stringListValue(field.path)" :key="`${field.path}-${index}`" class="complex-row string-list-row">
               <label>
                 <span>{{ stringListRowLabel(field.path, index) }}</span>
@@ -1242,7 +986,7 @@ function updateSound(index: number, key: string, value: unknown): void {
                 :disabled="stringListReserveZero(field.path) && index === 0"
                 @click="removeStringListItemAt(field.path, index)"
               >
-                删除
+                {{ t('cmdList.delete') }}
               </button>
             </div>
           </section>
@@ -1250,9 +994,9 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="isTermsMessagesField(field)" class="field full complex-editor terms-message-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <small>{{ termsMessageEntries(field.path).length }} 条消息模板</small>
+              <small>{{ t('db.messageTemplateCount', { count: termsMessageEntries(field.path).length }) }}</small>
             </div>
-            <div v-if="!termsMessageEntries(field.path).length" class="empty-note">暂无消息模板。</div>
+            <div v-if="!termsMessageEntries(field.path).length" class="empty-note">{{ t('db.noMessageTemplates') }}</div>
             <div v-for="message in termsMessageEntries(field.path)" :key="message.key" class="complex-row terms-message-row">
               <label>
                 <span>{{ message.label }} <small>{{ message.key }}</small></span>
@@ -1260,7 +1004,7 @@ function updateSound(index: number, key: string, value: unknown): void {
               </label>
             </div>
             <details class="advanced-json">
-              <summary>高级 JSON（新增或删除非标准 message key 时使用）</summary>
+              <summary>{{ t('db.advancedJson') }}</summary>
               <textarea :value="jsonText(field)" rows="7" spellcheck="false" @input="updateJson(field, ($event.target as HTMLTextAreaElement).value)" />
               <em v-if="jsonErrors[field.path]">{{ jsonErrors[field.path] }}</em>
             </details>
@@ -1277,18 +1021,18 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'traits'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { code: 21, dataId: 0, value: 1 })">添加</button>
+              <button type="button" @click="addArrayObject(field.path, { code: 21, dataId: 0, value: 1 })">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">暂无特性。</div>
+            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noTraits') }}</div>
             <div v-for="(trait, index) in arrayRecords(field.path)" :key="`trait-${index}`" class="complex-row trait-row">
               <label>
-                <span>类型</span>
+                <span>{{ t('eventEditorDialog.type') }}</span>
                 <select :value="numberValue(trait, 'code', 21)" @change="updateArrayObject(field.path, index, 'code', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in TRAIT_CODES" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  <option v-for="option in localizedTraitCodes" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label>
-                <span>对象</span>
+                <span>{{ t('db.target') }}</span>
                 <select
                   v-if="traitTargetOptions(numberValue(trait, 'code', 21)).length"
                   :value="numberValue(trait, 'dataId')"
@@ -1304,28 +1048,28 @@ function updateSound(index: number, key: string, value: unknown): void {
                 />
               </label>
               <label>
-                <span>值</span>
+                <span>{{ t('db.value') }}</span>
                 <input type="number" step="0.01" :value="numberValue(trait, 'value', 1)" @input="updateArrayObject(field.path, index, 'value', Number(($event.target as HTMLInputElement).value))" />
               </label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除</button>
+              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
           </section>
 
           <section v-else-if="field.path === 'effects'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { code: 11, dataId: 0, value1: 0, value2: 0 })">添加</button>
+              <button type="button" @click="addArrayObject(field.path, { code: 11, dataId: 0, value1: 0, value2: 0 })">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">暂无使用效果。</div>
+            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noEffects') }}</div>
             <div v-for="(effect, index) in arrayRecords(field.path)" :key="`effect-${index}`" class="complex-row effect-row">
               <label>
-                <span>类型</span>
+                <span>{{ t('eventEditorDialog.type') }}</span>
                 <select :value="numberValue(effect, 'code', 11)" @change="updateArrayObject(field.path, index, 'code', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in EFFECT_CODES" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  <option v-for="option in localizedEffectCodes" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label>
-                <span>对象</span>
+                <span>{{ t('db.target') }}</span>
                 <select
                   v-if="effectTargetOptions(numberValue(effect, 'code', 11)).length"
                   :value="numberValue(effect, 'dataId')"
@@ -1341,23 +1085,23 @@ function updateSound(index: number, key: string, value: unknown): void {
                 />
               </label>
               <label>
-                <span>值 1</span>
+                <span>{{ t('db.value1') }}</span>
                 <input type="number" step="0.01" :value="numberValue(effect, 'value1')" @input="updateArrayObject(field.path, index, 'value1', Number(($event.target as HTMLInputElement).value))" />
               </label>
               <label>
-                <span>值 2</span>
+                <span>{{ t('db.value2') }}</span>
                 <input type="number" step="0.01" :value="numberValue(effect, 'value2')" @input="updateArrayObject(field.path, index, 'value2', Number(($event.target as HTMLInputElement).value))" />
               </label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除</button>
+              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
           </section>
 
           <section v-else-if="field.path === 'equips'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="replaceArray(field.path, [...arrayValue(field.path), 0])">添加槽位</button>
+              <button type="button" @click="replaceArray(field.path, [...arrayValue(field.path), 0])">{{ t('db.addSlot') }}</button>
             </div>
-            <div v-if="!arrayValue(field.path).length" class="empty-note">暂无初始装备槽。</div>
+            <div v-if="!arrayValue(field.path).length" class="empty-note">{{ t('db.noEquipSlots') }}</div>
             <div v-for="(_equip, index) in arrayValue(field.path)" :key="`equip-${index}`" class="complex-row compact-row">
               <label>
                 <span>{{ equipmentSlotLabel(index) }}</span>
@@ -1365,68 +1109,68 @@ function updateSound(index: number, key: string, value: unknown): void {
                   <option v-for="option in equipmentOptions(index)" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除</button>
+              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
-            <small>槽位名称来自当前项目 System.equipTypes；第 1 槽按武器，其余槽按防具选择。</small>
+            <small>{{ t('db.equipSlotNote') }}</small>
           </section>
 
           <section v-else-if="field.path === 'learnings'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { level: 1, skillId: catalogEntries('skills')[0]?.id || 1, note: '' })">添加</button>
+              <button type="button" @click="addArrayObject(field.path, { level: 1, skillId: catalogEntries('skills')[0]?.id || 1, note: '' })">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">暂无习得技能。</div>
+            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noLearnedSkills') }}</div>
             <div v-for="(learning, index) in arrayRecords(field.path)" :key="`learning-${index}`" class="complex-row learning-row">
               <label>
-                <span>等级</span>
+                <span>{{ t('db.level') }}</span>
                 <input type="number" :value="numberValue(learning, 'level', 1)" @input="updateArrayObject(field.path, index, 'level', Number(($event.target as HTMLInputElement).value))" />
               </label>
               <label>
-                <span>技能</span>
+                <span>{{ t('db.skill') }}</span>
                 <select :value="numberValue(learning, 'skillId')" @change="updateArrayObject(field.path, index, 'skillId', Number(($event.target as HTMLSelectElement).value))">
                   <option v-for="option in asOptions(catalogEntries('skills'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除</button>
+              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
           </section>
 
           <section v-else-if="field.path === 'actions'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { skillId: catalogEntries('skills')[0]?.id || 1, conditionType: 0, conditionParam1: 0, conditionParam2: 0, rating: 5 })">添加</button>
+              <button type="button" @click="addArrayObject(field.path, { skillId: catalogEntries('skills')[0]?.id || 1, conditionType: 0, conditionParam1: 0, conditionParam2: 0, rating: 5 })">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">暂无行动模式。</div>
+            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noActions') }}</div>
             <div v-for="(action, index) in arrayRecords(field.path)" :key="`action-${index}`" class="complex-row action-row">
               <label>
-                <span>技能</span>
+                <span>{{ t('db.skill') }}</span>
                 <select :value="numberValue(action, 'skillId')" @change="updateArrayObject(field.path, index, 'skillId', Number(($event.target as HTMLSelectElement).value))">
                   <option v-for="option in asOptions(catalogEntries('skills'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label><span>条件类型</span><input type="number" :value="numberValue(action, 'conditionType')" @input="updateArrayObject(field.path, index, 'conditionType', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>条件 1</span><input type="number" :value="numberValue(action, 'conditionParam1')" @input="updateArrayObject(field.path, index, 'conditionParam1', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>条件 2</span><input type="number" :value="numberValue(action, 'conditionParam2')" @input="updateArrayObject(field.path, index, 'conditionParam2', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>优先级</span><input type="number" :value="numberValue(action, 'rating', 5)" @input="updateArrayObject(field.path, index, 'rating', Number(($event.target as HTMLInputElement).value))" /></label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除</button>
+              <label><span>{{ t('db.conditionType') }}</span><input type="number" :value="numberValue(action, 'conditionType')" @input="updateArrayObject(field.path, index, 'conditionType', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('db.condition1') }}</span><input type="number" :value="numberValue(action, 'conditionParam1')" @input="updateArrayObject(field.path, index, 'conditionParam1', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('db.condition2') }}</span><input type="number" :value="numberValue(action, 'conditionParam2')" @input="updateArrayObject(field.path, index, 'conditionParam2', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('eventEditorDialog.priority') }}</span><input type="number" :value="numberValue(action, 'rating', 5)" @input="updateArrayObject(field.path, index, 'rating', Number(($event.target as HTMLInputElement).value))" /></label>
+              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
           </section>
 
           <section v-else-if="field.path === 'dropItems'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { kind: 1, dataId: catalogEntries('items')[0]?.id || 1, denominator: 1 })">添加</button>
+              <button type="button" @click="addArrayObject(field.path, { kind: 1, dataId: catalogEntries('items')[0]?.id || 1, denominator: 1 })">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">暂无掉落物。</div>
+            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noDrops') }}</div>
             <div v-for="(drop, index) in arrayRecords(field.path)" :key="`drop-${index}`" class="complex-row drop-row">
               <label>
-                <span>类型</span>
+                <span>{{ t('eventEditorDialog.type') }}</span>
                 <select :value="numberValue(drop, 'kind')" @change="updateArrayObject(field.path, index, 'kind', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in DROP_KIND_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  <option v-for="option in localizedOptions(DROP_KIND_OPTIONS)" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label>
-                <span>对象</span>
+                <span>{{ t('db.target') }}</span>
                 <select
                   v-if="dropTargetOptions(numberValue(drop, 'kind')).length"
                   :value="numberValue(drop, 'dataId')"
@@ -1436,66 +1180,66 @@ function updateSound(index: number, key: string, value: unknown): void {
                 </select>
                 <input v-else type="number" :value="numberValue(drop, 'dataId')" @input="updateArrayObject(field.path, index, 'dataId', Number(($event.target as HTMLInputElement).value))" />
               </label>
-              <label><span>分母</span><input type="number" :value="numberValue(drop, 'denominator', 1)" @input="updateArrayObject(field.path, index, 'denominator', Number(($event.target as HTMLInputElement).value))" /></label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除</button>
+              <label><span>{{ t('db.denominator') }}</span><input type="number" :value="numberValue(drop, 'denominator', 1)" @input="updateArrayObject(field.path, index, 'denominator', Number(($event.target as HTMLInputElement).value))" /></label>
+              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
           </section>
 
           <section v-else-if="field.path === 'members'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { enemyId: catalogEntries('enemies')[0]?.id || 1, x: 0, y: 0, hidden: false })">添加</button>
+              <button type="button" @click="addArrayObject(field.path, { enemyId: catalogEntries('enemies')[0]?.id || 1, x: 0, y: 0, hidden: false })">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">暂无敌群成员。</div>
+            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noTroopMembers') }}</div>
             <div v-for="(member, index) in arrayRecords(field.path)" :key="`member-${index}`" class="complex-row member-row">
               <label>
-                <span>敌人</span>
+                <span>{{ t('db.enemy') }}</span>
                 <select :value="numberValue(member, 'enemyId')" @change="updateArrayObject(field.path, index, 'enemyId', Number(($event.target as HTMLSelectElement).value))">
                   <option v-for="option in asOptions(catalogEntries('enemies'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label><span>X</span><input type="number" :value="numberValue(member, 'x')" @input="updateArrayObject(field.path, index, 'x', Number(($event.target as HTMLInputElement).value))" /></label>
               <label><span>Y</span><input type="number" :value="numberValue(member, 'y')" @input="updateArrayObject(field.path, index, 'y', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label class="inline-check"><input type="checkbox" :checked="boolValue(member, 'hidden')" @change="updateArrayObject(field.path, index, 'hidden', ($event.target as HTMLInputElement).checked)" /> 隐藏</label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除</button>
+              <label class="inline-check"><input type="checkbox" :checked="boolValue(member, 'hidden')" @change="updateArrayObject(field.path, index, 'hidden', ($event.target as HTMLInputElement).checked)" /> {{ t('db.hidden') }}</label>
+              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
           </section>
 
           <section v-else-if="field.path === 'damage'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <small>伤害公式仍保留文本表达，属性来自当前项目 System.elements。</small>
+              <small>{{ t('db.damageFormulaNote') }}</small>
             </div>
             <div class="complex-row damage-row">
               <label>
-                <span>类型</span>
+                <span>{{ t('eventEditorDialog.type') }}</span>
                 <select :value="Number(objectValue(field.path).type || 0)" @change="updateDamage('type', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in DAMAGE_TYPE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  <option v-for="option in localizedOptions(DAMAGE_TYPE_OPTIONS)" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label>
-                <span>属性</span>
+                <span>{{ t('db.element') }}</span>
                 <select :value="Number(objectValue(field.path).elementId ?? -1)" @change="updateDamage('elementId', Number(($event.target as HTMLSelectElement).value))">
                   <option v-for="option in damageElementOptions()" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label class="wide"><span>公式</span><input :value="String(objectValue(field.path).formula || '')" @input="updateDamage('formula', ($event.target as HTMLInputElement).value)" /></label>
-              <label><span>方差</span><input type="number" :value="Number(objectValue(field.path).variance || 0)" @input="updateDamage('variance', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label class="inline-check"><input type="checkbox" :checked="Boolean(objectValue(field.path).critical)" @change="updateDamage('critical', ($event.target as HTMLInputElement).checked)" /> 会心</label>
+              <label class="wide"><span>{{ t('db.formula') }}</span><input :value="String(objectValue(field.path).formula || '')" @input="updateDamage('formula', ($event.target as HTMLInputElement).value)" /></label>
+              <label><span>{{ t('db.variance') }}</span><input type="number" :value="Number(objectValue(field.path).variance || 0)" @input="updateDamage('variance', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label class="inline-check"><input type="checkbox" :checked="Boolean(objectValue(field.path).critical)" @change="updateDamage('critical', ($event.target as HTMLInputElement).checked)" /> {{ t('db.critical') }}</label>
             </div>
           </section>
 
           <section v-else-if="field.path === 'params' && group === 'Classes'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <small>按 MV 八项能力曲线编辑 Lv1-Lv99。</small>
+              <small>{{ t('db.paramCurveNote') }}</small>
             </div>
             <div class="class-param-table">
               <div class="class-param-row class-param-head">
-                <span>能力</span>
+                <span>{{ t('db.parameter') }}</span>
                 <b v-for="level in MV_CLASS_PARAM_LEVELS" :key="level">Lv{{ level }}</b>
               </div>
-              <div v-for="(param, paramIndex) in PARAM_OPTIONS" :key="param.value" class="class-param-row">
+              <div v-for="(param, paramIndex) in localizedParamOptions" :key="param.value" class="class-param-row">
                 <span>{{ param.label }}</span>
                 <input
                   v-for="level in MV_CLASS_PARAM_LEVELS"
@@ -1511,7 +1255,7 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'params'" class="field full complex-editor">
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <div class="complex-row param-row">
-              <label v-for="param in PARAM_OPTIONS" :key="param.value">
+              <label v-for="param in localizedParamOptions" :key="param.value">
                 <span>{{ param.label }}</span>
                 <input type="number" :value="Number(arrayValue(field.path)[param.value] || 0)" @input="updateArrayNumber(field.path, param.value, Number(($event.target as HTMLInputElement).value))" />
               </label>
@@ -1521,11 +1265,11 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'expParams' || field.path === 'windowTone'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="appendArrayValue(field.path, 0)">添加</button>
+              <button type="button" @click="appendArrayValue(field.path, 0)">{{ t('cmdList.add') }}</button>
             </div>
             <div class="complex-row param-row">
               <label v-for="(_item, index) in arrayValue(field.path)" :key="`${field.path}-${index}`">
-                <span>{{ field.path === 'windowTone' ? (TONE_LABELS[index] || `色调 ${index + 1}`) : `参数 ${index + 1}` }}</span>
+                <span>{{ field.path === 'windowTone' ? (localizedToneLabels[index] || t('db.toneN', { n: index + 1 })) : t('db.paramN', { n: index + 1 }) }}</span>
                 <input type="number" :value="Number(arrayValue(field.path)[index] || 0)" @input="updateArrayNumber(field.path, index, Number(($event.target as HTMLInputElement).value))" />
               </label>
             </div>
@@ -1534,42 +1278,42 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'partyMembers'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="appendArrayValue(field.path, catalogEntries('actors')[0]?.id || 1)">添加</button>
+              <button type="button" @click="appendArrayValue(field.path, catalogEntries('actors')[0]?.id || 1)">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayValue(field.path).length" class="empty-note">暂无初始队伍成员。</div>
+            <div v-if="!arrayValue(field.path).length" class="empty-note">{{ t('db.noPartyMembers') }}</div>
             <div v-for="(_member, index) in arrayValue(field.path)" :key="`party-${index}`" class="complex-row compact-row">
               <label>
-                <span>队员 {{ index + 1 }}</span>
+                <span>{{ t('db.memberN', { n: index + 1 }) }}</span>
                 <select :value="Number(arrayValue(field.path)[index] || 0)" @change="updateArrayNumber(field.path, index, Number(($event.target as HTMLSelectElement).value))">
                   <option v-for="option in asOptions(catalogEntries('actors'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除</button>
+              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
           </section>
 
           <section v-else-if="field.path === 'testBattlers'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { actorId: catalogEntries('actors')[0]?.id || 1, level: 1, equips: [0, 0, 0, 0, 0] })">添加</button>
+              <button type="button" @click="addArrayObject(field.path, { actorId: catalogEntries('actors')[0]?.id || 1, level: 1, equips: [0, 0, 0, 0, 0] })">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">暂无测试战斗成员。</div>
+            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noTestBattlers') }}</div>
             <div v-for="(battler, index) in arrayRecords(field.path)" :key="`test-battler-${index}`" class="complex-row learning-row">
               <label>
-                <span>角色</span>
+                <span>{{ t('mapPreview.actor') }}</span>
                 <select :value="numberValue(battler, 'actorId')" @change="updateArrayObject(field.path, index, 'actorId', Number(($event.target as HTMLSelectElement).value))">
                   <option v-for="option in asOptions(catalogEntries('actors'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label><span>等级</span><input type="number" :value="numberValue(battler, 'level', 1)" @input="updateArrayObject(field.path, index, 'level', Number(($event.target as HTMLInputElement).value))" /></label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除</button>
+              <label><span>{{ t('db.level') }}</span><input type="number" :value="numberValue(battler, 'level', 1)" @input="updateArrayObject(field.path, index, 'level', Number(($event.target as HTMLInputElement).value))" /></label>
+              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
           </section>
 
           <section v-else-if="field.path === 'menuCommands'" class="field full complex-editor">
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <div class="check-grid">
-              <label v-for="(label, index) in MENU_COMMAND_LABELS" :key="label" class="inline-check">
+              <label v-for="(label, index) in localizedMenuCommandLabels" :key="label" class="inline-check">
                 <input type="checkbox" :checked="Boolean(arrayValue(field.path)[index])" @change="updateArrayNumber(field.path, index, ($event.target as HTMLInputElement).checked ? 1 : 0)" />
                 {{ label }}
               </label>
@@ -1581,7 +1325,7 @@ function updateSound(index: number, key: string, value: unknown): void {
             <div class="complex-row param-row">
               <label v-for="(label, index) in TILESET_NAME_LABELS" :key="label">
                 <span>{{ label }}</span>
-                <button type="button" class="image-picker-inline" @click="openArrayImagePicker(field.path, index, 'tilesets', `选择图块图片 ${label}`)">
+                <button type="button" class="image-picker-inline" @click="openArrayImagePicker(field.path, index, 'tilesets', t('db.chooseTilesetImage', { label }))">
                   {{ imageValueLabel(textValue(field.path, index)) }}
                 </button>
               </label>
@@ -1592,14 +1336,14 @@ function updateSound(index: number, key: string, value: unknown): void {
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <div class="complex-row audio-row">
               <label>
-                <span>文件</span>
+                <span>{{ t('plugins.file') }}</span>
                 <select :value="String(objectValue(field.path).name || '')" @change="updateRecord(field.path, 'name', ($event.target as HTMLSelectElement).value)">
                   <option v-for="option in audioAssetOptions(audioKindForPath(field.path))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label><span>音量</span><input type="number" :value="numberValue(objectValue(field.path), 'volume', 90)" @input="updateRecord(field.path, 'volume', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>音调</span><input type="number" :value="numberValue(objectValue(field.path), 'pitch', 100)" @input="updateRecord(field.path, 'pitch', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>声像</span><input type="number" :value="numberValue(objectValue(field.path), 'pan')" @input="updateRecord(field.path, 'pan', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.volume') }}</span><input type="number" :value="numberValue(objectValue(field.path), 'volume', 90)" @input="updateRecord(field.path, 'volume', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pitch') }}</span><input type="number" :value="numberValue(objectValue(field.path), 'pitch', 100)" @input="updateRecord(field.path, 'pitch', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pan') }}</span><input type="number" :value="numberValue(objectValue(field.path), 'pan')" @input="updateRecord(field.path, 'pan', Number(($event.target as HTMLInputElement).value))" /></label>
             </div>
           </section>
 
@@ -1607,15 +1351,15 @@ function updateSound(index: number, key: string, value: unknown): void {
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <div class="complex-row vehicle-row">
               <label>
-                <span>行走图</span>
+                <span>{{ t('db.characterSprite') }}</span>
                 <button type="button" class="image-picker-inline" @click="openRecordCharacterPicker(field.path)">
                   {{ imageValueLabel(String(objectValue(field.path).characterName || '')) }}
                 </button>
               </label>
               <label>
-                <span>地图</span>
+                <span>{{ t('db.map') }}</span>
                 <select :value="numberValue(objectValue(field.path), 'startMapId')" @change="updateRecord(field.path, 'startMapId', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in asOptions(catalogEntries('maps'), '无')" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  <option v-for="option in asOptions(catalogEntries('maps'), RMMV_NONE_LABEL)" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label><span>X</span><input type="number" :value="numberValue(objectValue(field.path), 'startX')" @input="updateRecord(field.path, 'startX', Number(($event.target as HTMLInputElement).value))" /></label>
@@ -1631,33 +1375,33 @@ function updateSound(index: number, key: string, value: unknown): void {
 
           <section v-else-if="field.path === 'sounds'" class="field full complex-editor">
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">暂无系统音效。</div>
+            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noSystemSounds') }}</div>
             <div v-for="(sound, index) in arrayRecords(field.path)" :key="`sound-${index}`" class="complex-row sound-row">
               <label>
-                <span>{{ SOUND_LABELS[index] || `SE ${index + 1}` }}</span>
+                <span>{{ localizedSoundLabels[index] || `SE ${index + 1}` }}</span>
                 <select :value="String(sound.name || '')" @change="updateSound(index, 'name', ($event.target as HTMLSelectElement).value)">
                   <option v-for="option in audioAssetOptions('se')" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label><span>音量</span><input type="number" :value="numberValue(sound, 'volume', 90)" @input="updateSound(index, 'volume', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>音调</span><input type="number" :value="numberValue(sound, 'pitch', 100)" @input="updateSound(index, 'pitch', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>声像</span><input type="number" :value="numberValue(sound, 'pan')" @input="updateSound(index, 'pan', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.volume') }}</span><input type="number" :value="numberValue(sound, 'volume', 90)" @input="updateSound(index, 'volume', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pitch') }}</span><input type="number" :value="numberValue(sound, 'pitch', 100)" @input="updateSound(index, 'pitch', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pan') }}</span><input type="number" :value="numberValue(sound, 'pan')" @input="updateSound(index, 'pan', Number(($event.target as HTMLInputElement).value))" /></label>
             </div>
           </section>
 
           <section v-else-if="field.path === 'terms'" class="field full complex-editor">
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <div v-for="section in ['basic', 'params', 'commands']" :key="section" class="terms-section">
-              <strong>{{ FIELD_LABELS[section] || section }}</strong>
+              <strong>{{ sectionLabel(section) }}</strong>
               <div class="complex-row param-row">
                 <label v-for="(_item, index) in (Array.isArray(objectValue(field.path)[section]) ? objectValue(field.path)[section] as unknown[] : [])" :key="`${section}-${index}`">
-                  <span>{{ TERM_LABELS[section]?.[index] || `第 ${index + 1} 项` }}</span>
+                  <span>{{ localizedTermLabels[section]?.[index] || t('sf.itemN', { n: index + 1 }) }}</span>
                   <input :value="String(_item || '')" @input="updateTermsArray(section, index, ($event.target as HTMLInputElement).value)" />
                 </label>
               </div>
             </div>
             <div class="terms-section">
-              <strong>消息</strong>
+              <strong>{{ t('db.messages') }}</strong>
               <div class="complex-row param-row">
                 <label v-for="(message, key) in objectValue('terms').messages as Record<string, unknown>" :key="String(key)">
                   <span>{{ String(key) }}</span>
@@ -1688,7 +1432,7 @@ function updateSound(index: number, key: string, value: unknown): void {
                 <input type="number" min="0" :value="selectedFlagTileId" @input="selectedFlagTileId = Math.max(0, Number(($event.target as HTMLInputElement).value || 0))" />
               </label>
               <label>
-                <span>Flag 值</span>
+                <span>{{ t('db.flagValue') }}</span>
                 <input type="number" :value="currentFlag(field.path)" @input="updateCurrentFlag(field.path, ($event.target as HTMLInputElement).value)" />
               </label>
               <div class="flag-bits">
@@ -1698,7 +1442,7 @@ function updateSound(index: number, key: string, value: unknown): void {
                     :checked="Boolean(currentFlag(field.path) & bit.value)"
                     @change="toggleFlagBit(field.path, bit.value, ($event.target as HTMLInputElement).checked)"
                   />
-                  {{ bit.label }}
+                  {{ localizedLabel(bit.label) }}
                 </label>
               </div>
             </div>
@@ -1709,7 +1453,7 @@ function updateSound(index: number, key: string, value: unknown): void {
             <button
               type="button"
               class="image-picker-inline"
-              @click="openSimpleImagePicker(field.path, systemImageAssetForPath(field.path)!, `选择${fieldLabel(field)}`)"
+              @click="openSimpleImagePicker(field.path, systemImageAssetForPath(field.path)!, t('db.chooseField', { label: fieldLabel(field) }))"
             >
               {{ imageValueLabel(String(primitiveValue(field))) }}
             </button>
@@ -1717,7 +1461,7 @@ function updateSound(index: number, key: string, value: unknown): void {
 
           <label v-else-if="field.path === 'animation1Name' || field.path === 'animation2Name'" class="field">
             <span>{{ fieldLabel(field) }}</span>
-            <button type="button" class="image-picker-inline" @click="openSimpleImagePicker(field.path, 'animations', `选择${fieldLabel(field)}`)">
+            <button type="button" class="image-picker-inline" @click="openSimpleImagePicker(field.path, 'animations', t('db.chooseField', { label: fieldLabel(field) }))">
               {{ imageValueLabel(String(primitiveValue(field))) }}
             </button>
           </label>
@@ -1725,38 +1469,38 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'pages'" class="field full complex-editor troop-pages-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <small>{{ arrayValue(field.path).length }} 页 · {{ invalidArrayItemCount(field.path) }} 个结构异常项</small>
-              <button type="button" @click="addTroopPage">添加页</button>
+              <small>{{ t('db.pagesMalformed', { pages: arrayValue(field.path).length, malformed: invalidArrayItemCount(field.path) }) }}</small>
+              <button type="button" @click="addTroopPage">{{ t('db.addPage') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">暂无战斗事件页。</div>
+            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noBattleEventPages') }}</div>
             <article v-for="(page, index) in arrayRecords(field.path)" :key="`troop-page-${index}`" class="troop-page-card">
               <div class="summary-row">{{ troopPageSummary(page, index) }}</div>
               <div class="complex-row troop-page-row">
                 <label>
                   <span>Span</span>
                   <select :value="numberValue(page, 'span')" @change="updateTroopPageSpan(index, Number(($event.target as HTMLSelectElement).value))">
-                    <option v-for="option in MV_TROOP_PAGE_SPANS" :key="option.value" :value="option.value">{{ option.label }}</option>
+                    <option v-for="option in localizedOptions(MV_TROOP_PAGE_SPANS)" :key="option.value" :value="option.value">{{ option.label }}</option>
                   </select>
                 </label>
                 <label class="inline-check">
                   <input type="checkbox" :checked="troopPageConditions(page).turnEnding" @change="updateTroopPageCondition(index, 'turnEnding', ($event.target as HTMLInputElement).checked)" />
-                  回合结束
+                  {{ t('db.turnEnd') }}
                 </label>
-                <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">删除页</button>
+                <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('db.deletePage') }}</button>
               </div>
               <div class="complex-row troop-condition-row">
                 <label class="inline-check">
                   <input type="checkbox" :checked="troopPageConditions(page).turnValid" @change="updateTroopPageCondition(index, 'turnValid', ($event.target as HTMLInputElement).checked)" />
-                  回合
+                  {{ t('db.turn') }}
                 </label>
                 <label><span>A</span><input type="number" :value="troopPageConditions(page).turnA" @input="updateTroopPageCondition(index, 'turnA', Number(($event.target as HTMLInputElement).value))" /></label>
                 <label><span>B</span><input type="number" :value="troopPageConditions(page).turnB" @input="updateTroopPageCondition(index, 'turnB', Number(($event.target as HTMLInputElement).value))" /></label>
                 <label class="inline-check">
                   <input type="checkbox" :checked="troopPageConditions(page).enemyValid" @change="updateTroopPageCondition(index, 'enemyValid', ($event.target as HTMLInputElement).checked)" />
-                  敌人 HP
+                  {{ t('db.enemyHp') }}
                 </label>
                 <label>
-                  <span>敌人</span>
+                  <span>{{ t('db.enemy') }}</span>
                   <select :value="troopPageConditions(page).enemyIndex" @change="updateTroopPageCondition(index, 'enemyIndex', Number(($event.target as HTMLSelectElement).value))">
                     <option v-for="option in troopEnemyIndexOptions()" :key="option.value" :value="option.value">{{ option.label }}</option>
                   </select>
@@ -1764,10 +1508,10 @@ function updateSound(index: number, key: string, value: unknown): void {
                 <label><span>HP %</span><input type="number" min="0" max="100" :value="troopPageConditions(page).enemyHp" @input="updateTroopPageCondition(index, 'enemyHp', Number(($event.target as HTMLInputElement).value))" /></label>
                 <label class="inline-check">
                   <input type="checkbox" :checked="troopPageConditions(page).actorValid" @change="updateTroopPageCondition(index, 'actorValid', ($event.target as HTMLInputElement).checked)" />
-                  角色 HP
+                  {{ t('db.actorHp') }}
                 </label>
                 <label>
-                  <span>角色</span>
+                  <span>{{ t('mapPreview.actor') }}</span>
                   <select :value="troopPageConditions(page).actorId" @change="updateTroopPageCondition(index, 'actorId', Number(($event.target as HTMLSelectElement).value))">
                     <option v-for="option in asOptions(catalogEntries('actors'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                   </select>
@@ -1775,22 +1519,22 @@ function updateSound(index: number, key: string, value: unknown): void {
                 <label><span>HP %</span><input type="number" min="0" max="100" :value="troopPageConditions(page).actorHp" @input="updateTroopPageCondition(index, 'actorHp', Number(($event.target as HTMLInputElement).value))" /></label>
                 <label class="inline-check">
                   <input type="checkbox" :checked="troopPageConditions(page).switchValid" @change="updateTroopPageCondition(index, 'switchValid', ($event.target as HTMLInputElement).checked)" />
-                  开关
+                  {{ t('mapPreview.switch') }}
                 </label>
                 <label>
-                  <span>开关</span>
+                  <span>{{ t('mapPreview.switch') }}</span>
                   <select :value="troopPageConditions(page).switchId" @change="updateTroopPageCondition(index, 'switchId', Number(($event.target as HTMLSelectElement).value))">
                     <option v-for="option in asOptions(catalogEntries('switches'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                   </select>
                 </label>
               </div>
               <div class="troop-command-list">
-                <strong>执行内容</strong>
+                <strong>{{ t('commonEvent.contents') }}</strong>
                 <MvCommandListEditor
                   :model-value="page.list"
                   :catalog="catalog"
                   :load-image="loadImage"
-                  empty-text="暂无战斗事件指令。点击“添加”创建执行内容。"
+                  :empty-text="t('db.emptyBattleCommands')"
                   @update:model-value="updateTroopPageCommands(index, $event)"
                 />
               </div>
@@ -1800,10 +1544,10 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'frames'" class="field full complex-editor readonly-summary">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <small>{{ framesSummary(field.path) }} · {{ invalidArrayItemCount(field.path) }} 个结构异常项</small>
-              <button type="button" @click="addAnimationFrame(field.path)">添加帧</button>
+              <small>{{ t('db.framesMalformed', { summary: framesSummary(field.path), malformed: invalidArrayItemCount(field.path) }) }}</small>
+              <button type="button" @click="addAnimationFrame(field.path)">{{ t('db.addFrame') }}</button>
             </div>
-            <div v-if="!animationFrames(field.path).length" class="empty-note">暂无动画帧。</div>
+            <div v-if="!animationFrames(field.path).length" class="empty-note">{{ t('db.noAnimFrames') }}</div>
             <div v-else class="animation-frame-editor">
               <div class="animation-frame-list">
                 <button
@@ -1817,27 +1561,27 @@ function updateSound(index: number, key: string, value: unknown): void {
                 </button>
               </div>
               <div class="complex-title">
-                <span>第 {{ selectedAnimationFrameIndex + 1 }} 帧 cell</span>
-                <button type="button" @click="addAnimationFrameCell(field.path)">添加 cell</button>
+                <span>{{ t('db.frameCells', { n: selectedAnimationFrameIndex + 1 }) }}</span>
+                <button type="button" @click="addAnimationFrameCell(field.path)">{{ t('db.addCell') }}</button>
               </div>
-              <div v-if="!selectedAnimationFrame(field.path).length" class="empty-note">当前帧没有 cell。</div>
+              <div v-if="!selectedAnimationFrame(field.path).length" class="empty-note">{{ t('db.noCells') }}</div>
               <div v-for="(cell, cellIndex) in selectedAnimationFrame(field.path)" :key="`cell-${cellIndex}`" class="complex-row animation-cell-row">
                 <label v-for="(cellField, fieldIndex) in MV_ANIMATION_CELL_FIELDS" :key="cellField.key">
-                  <span>{{ cellField.label }}</span>
+                  <span>{{ localizedLabel(cellField.label) }}</span>
                   <select
                     v-if="cellField.key === 'blendMode'"
                     :value="cell[fieldIndex]"
                     @change="updateAnimationFrameCell(field.path, cellIndex, fieldIndex, Number(($event.target as HTMLSelectElement).value))"
                   >
-                    <option v-for="option in MV_ANIMATION_BLEND_MODES" :key="option.value" :value="option.value">{{ option.label }}</option>
+                    <option v-for="option in localizedOptions(MV_ANIMATION_BLEND_MODES)" :key="option.value" :value="option.value">{{ option.label }}</option>
                   </select>
                   <select
                     v-else-if="cellField.key === 'mirror'"
                     :value="cell[fieldIndex]"
                     @change="updateAnimationFrameCell(field.path, cellIndex, fieldIndex, Number(($event.target as HTMLSelectElement).value))"
                   >
-                    <option :value="0">否</option>
-                    <option :value="1">是</option>
+                    <option :value="0">{{ t('db.no') }}</option>
+                    <option :value="1">{{ t('db.yes') }}</option>
                   </select>
                   <input
                     v-else
@@ -1846,7 +1590,7 @@ function updateSound(index: number, key: string, value: unknown): void {
                     @input="updateAnimationFrameCell(field.path, cellIndex, fieldIndex, Number(($event.target as HTMLInputElement).value))"
                   />
                 </label>
-                <button type="button" class="danger" @click="deleteAnimationFrameCell(field.path, cellIndex)">删除</button>
+                <button type="button" class="danger" @click="deleteAnimationFrameCell(field.path, cellIndex)">{{ t('cmdList.delete') }}</button>
               </div>
             </div>
           </section>
@@ -1854,33 +1598,33 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'timings'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <small>{{ animationTimings(field.path).length }} 条 timing</small>
-              <button type="button" @click="addAnimationTiming(field.path)">添加 timing</button>
+              <small>{{ t('db.timingCount', { count: animationTimings(field.path).length }) }}</small>
+              <button type="button" @click="addAnimationTiming(field.path)">{{ t('db.addTiming') }}</button>
             </div>
-            <div v-if="!animationTimings(field.path).length" class="empty-note">暂无动画时机。</div>
+            <div v-if="!animationTimings(field.path).length" class="empty-note">{{ t('db.noTimings') }}</div>
             <div v-for="(timing, index) in animationTimings(field.path)" :key="`timing-${index}`" class="complex-row timing-row">
-              <label><span>帧</span><input type="number" :value="timing.frame" @input="updateAnimationTiming(field.path, index, 'frame', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('db.frame') }}</span><input type="number" :value="timing.frame" @input="updateAnimationTiming(field.path, index, 'frame', Number(($event.target as HTMLInputElement).value))" /></label>
               <label>
                 <span>SE</span>
                 <select :value="timing.se.name" @change="updateAnimationTimingSe(field.path, index, 'name', ($event.target as HTMLSelectElement).value)">
                   <option v-for="option in audioAssetOptions('se')" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label><span>音量</span><input type="number" :value="timing.se.volume" @input="updateAnimationTimingSe(field.path, index, 'volume', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>音调</span><input type="number" :value="timing.se.pitch" @input="updateAnimationTimingSe(field.path, index, 'pitch', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>声像</span><input type="number" :value="timing.se.pan" @input="updateAnimationTimingSe(field.path, index, 'pan', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.volume') }}</span><input type="number" :value="timing.se.volume" @input="updateAnimationTimingSe(field.path, index, 'volume', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pitch') }}</span><input type="number" :value="timing.se.pitch" @input="updateAnimationTimingSe(field.path, index, 'pitch', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pan') }}</span><input type="number" :value="timing.se.pan" @input="updateAnimationTimingSe(field.path, index, 'pan', Number(($event.target as HTMLInputElement).value))" /></label>
               <label>
                 <span>Flash</span>
                 <select :value="timing.flashScope" @change="updateAnimationTiming(field.path, index, 'flashScope', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in MV_ANIMATION_FLASH_SCOPES" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  <option v-for="option in localizedOptions(MV_ANIMATION_FLASH_SCOPES)" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label v-for="(label, colorIndex) in ['R','G','B','A']" :key="`flash-${index}-${label}`">
                 <span>{{ label }}</span>
                 <input type="number" min="0" max="255" :value="timing.flashColor[colorIndex]" @input="updateAnimationTimingFlash(field.path, index, colorIndex, Number(($event.target as HTMLInputElement).value))" />
               </label>
-              <label><span>持续</span><input type="number" :value="timing.flashDuration" @input="updateAnimationTiming(field.path, index, 'flashDuration', Number(($event.target as HTMLInputElement).value))" /></label>
-              <button type="button" class="danger" @click="removeAnimationTiming(field.path, index)">删除</button>
+              <label><span>{{ t('db.duration') }}</span><input type="number" :value="timing.flashDuration" @input="updateAnimationTiming(field.path, index, 'flashDuration', Number(($event.target as HTMLInputElement).value))" /></label>
+              <button type="button" class="danger" @click="removeAnimationTiming(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
             </section>
 
@@ -1933,12 +1677,12 @@ function updateSound(index: number, key: string, value: unknown): void {
 
     <section v-if="references.length" class="editor-section">
       <div class="section-title">
-        <strong>引用关系</strong>
-        <span>{{ references.length }} 项</span>
+        <strong>{{ t('db.references') }}</strong>
+        <span>{{ t('db.referenceCount', { count: references.length }) }}</span>
       </div>
       <div class="reference-list">
         <div v-for="ref in references" :key="`${ref.path}:${ref.target}`" class="reference-row">
-          <span>{{ FIELD_LABELS[ref.path] || ref.path }}</span>
+          <span>{{ sectionLabel(ref.path) }}</span>
           <b>{{ ref.target }}</b>
           <small v-if="ref.note">{{ ref.note }}</small>
         </div>
@@ -1946,8 +1690,8 @@ function updateSound(index: number, key: string, value: unknown): void {
     </section>
 
     <section v-if="!schemaDriven" class="editor-section">
-      <div class="section-title"><strong>{{ groupLabel }}字段</strong></div>
-      <StructuredFieldsEditor :model-value="modelValue" label="字段" @update:model-value="$emit('update:modelValue', $event)" />
+      <div class="section-title"><strong>{{ t('db.groupFields', { group: groupLabel }) }}</strong></div>
+      <StructuredFieldsEditor :model-value="modelValue" :label="t('sf.field')" @update:model-value="$emit('update:modelValue', $event)" />
     </section>
     <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="safeLoadImage" @commit="commitImageSelection" />
   </div>

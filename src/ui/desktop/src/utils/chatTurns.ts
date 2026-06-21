@@ -1,4 +1,7 @@
 import type { ChatSegment } from '../composables/useSessionStream'
+import type { ProductLanguage } from '@contract/types'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
+import { translate, type MessageKey } from '../i18n/messages.ts'
 
 export interface ChatTurn {
   id: string
@@ -98,7 +101,8 @@ function hasPassBeforeFinalizeError(group: ExecutionGroup): boolean {
   return false
 }
 
-export function summarizeExecutionGroup(group: ExecutionGroup): ExecutionGroupSummary {
+export function summarizeExecutionGroup(group: ExecutionGroup, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): ExecutionGroupSummary {
+  language = normalizeProductLanguage(language)
   const summarySegment = [...group.segments].reverse().find((segment) => isMetaType(segment, 'summary'))
   const passedDespiteTransientError = summarySegment?.metadata?.status === 'pass'
     || hasPassBeforeFinalizeError(group)
@@ -145,12 +149,11 @@ export function summarizeExecutionGroup(group: ExecutionGroup): ExecutionGroupSu
   }
 
   const state = hasFailure ? 'failed' : hasBlocked ? 'blocked' : hasStopped ? 'stopped' : isRunning ? 'running' : 'complete'
-  const prefix = state === 'running' ? '正在' : '已'
   const counts: string[] = []
-  if (createdFiles.size) counts.push(`${prefix}创建 ${createdFiles.size} 个文件`)
-  if (editedFiles.size) counts.push(`${prefix}编辑 ${editedFiles.size} 个文件`)
-  if (commands) counts.push(`${prefix}运行 ${commands} 条命令`)
-  if (!counts.length) counts.push(`${prefix}运行 0 条命令`)
+  if (createdFiles.size) counts.push(actionCountLabel(language, state, 'create', createdFiles.size))
+  if (editedFiles.size) counts.push(actionCountLabel(language, state, 'edit', editedFiles.size))
+  if (commands) counts.push(actionCountLabel(language, state, 'run', commands))
+  if (!counts.length) counts.push(actionCountLabel(language, state, 'run', 0))
 
   return {
     state,
@@ -159,6 +162,26 @@ export function summarizeExecutionGroup(group: ExecutionGroup): ExecutionGroupSu
     commands,
     text: counts.join(' '),
   }
+}
+
+const ACTION_KEY_MAP: Record<'create' | 'edit' | 'run', { active: 'creating' | 'editing' | 'running'; done: 'created' | 'edited' | 'ran' }> = {
+  create: { active: 'creating', done: 'created' },
+  edit: { active: 'editing', done: 'edited' },
+  run: { active: 'running', done: 'ran' },
+}
+
+function actionCountLabel(
+  language: ProductLanguage,
+  state: ExecutionGroupSummary['state'],
+  kind: 'create' | 'edit' | 'run',
+  count: number,
+): string {
+  const active = state === 'running'
+  const action = ACTION_KEY_MAP[kind]
+  const tense = active ? action.active : action.done
+  const number = count === 1 ? 'one' : 'other'
+  const key = `chatturns.${tense}.${number}` as MessageKey
+  return translate(key, language, { count: String(count) })
 }
 
 export function visibleExecutionGroupSegments(group: ExecutionGroup): ChatSegment[] {

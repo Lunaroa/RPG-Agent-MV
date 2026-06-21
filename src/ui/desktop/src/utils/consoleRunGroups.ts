@@ -1,3 +1,7 @@
+import type { ProductLanguage } from '@contract/types'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
+import { translate } from '../i18n/messages.ts'
+
 export interface RunLogSessionLike {
   id: string
   status?: string
@@ -37,8 +41,8 @@ function sessionTime(session: RunLogSessionLike): string {
   return session.updatedAt || session.createdAt || ''
 }
 
-function titleFor(root: RunLogSessionLike | undefined, leaf: RunLogSessionLike): string {
-  return truncateTitle(root?.displayText || root?.title || root?.intent || leaf.displayText || leaf.title || leaf.intent || '未命名会话')
+function titleFor(root: RunLogSessionLike | undefined, leaf: RunLogSessionLike, language: ProductLanguage): string {
+  return truncateTitle(root?.displayText || root?.title || root?.intent || leaf.displayText || leaf.title || leaf.intent || translate('run.group.untitledSession', language))
 }
 
 function rootOf(session: RunLogSessionLike, byId: Map<string, RunLogSessionLike>): RunLogSessionLike {
@@ -67,7 +71,8 @@ function newest(sessions: RunLogSessionLike[]): RunLogSessionLike {
   return [...sessions].sort((a, b) => sessionTime(b).localeCompare(sessionTime(a)))[0]
 }
 
-export function groupSessionsIntoRunLogs(sessions: RunLogSessionLike[]): RunLogConversation[] {
+export function groupSessionsIntoRunLogs(sessions: RunLogSessionLike[], language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): RunLogConversation[] {
+  language = normalizeProductLanguage(language)
   const byId = new Map<string, RunLogSessionLike>()
   for (const session of sessions) byId.set(session.id, session)
 
@@ -106,7 +111,7 @@ export function groupSessionsIntoRunLogs(sessions: RunLogSessionLike[]): RunLogC
     conversations.push({
       rootId,
       leafId: leaf.id,
-      title: titleFor(root, leaf),
+      title: titleFor(root, leaf, language),
       time: sessionTime(leaf),
       status: leaf.status || 'unknown',
       project: root?.project || leaf.project || '',

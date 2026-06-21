@@ -2,6 +2,9 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { projects as projectsApi, type ProjectRegistrationResult, type ProjectRemovalResult } from '../api/client';
 import { resolveStoredProjectPath, type ProjectInfoLike } from '../utils/workspaceSettings';
+import { normalizeProductLanguage } from '../i18n/messages';
+import { projectStoreText } from './projectStoreLocalization';
+import { useSettingsStore } from './settings';
 import { useWorkspaceStore } from './workspace';
 
 export interface ProjectInfo {
@@ -27,6 +30,8 @@ export const useProjectStore = defineStore('project', () => {
   const removeError = ref<string | null>(null);
   const hasProjects = computed(() => projects.value.length > 0);
   const currentProjectInfo = computed(() => projects.value.find((item) => item.path === currentProject.value) || null);
+  const text = (key: Parameters<typeof projectStoreText>[1], params?: Record<string, string | number>) =>
+    projectStoreText(useSettingsStore().ui.language, key, params);
 
   async function load(options: { force?: boolean } = {}) {
     if (loaded.value && !options.force) return;
@@ -38,7 +43,7 @@ export const useProjectStore = defineStore('project', () => {
       applyProjectList(list);
       loaded.value = true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : '项目列表加载失败';
+      const message = error instanceof Error ? error.message : text('loadFailed');
       loadError.value = message;
       currentProject.value = '';
       projects.value = [];
@@ -53,7 +58,7 @@ export const useProjectStore = defineStore('project', () => {
     switchError.value = null;
     removeError.value = null;
     if (!projects.value.some((project) => project.path === projectPath)) {
-      switchError.value = `未知项目：${projectPath}`;
+      switchError.value = text('unknownProject', { project: projectPath });
       throw new Error(switchError.value);
     }
     if (projectPath === previous) return;
@@ -63,7 +68,7 @@ export const useProjectStore = defineStore('project', () => {
       await useWorkspaceStore().setLastProject(projectPath);
     } catch (error) {
       currentProject.value = previous;
-      switchError.value = error instanceof Error ? error.message : '项目选择保存失败';
+      switchError.value = error instanceof Error ? error.message : text('saveSelectionFailed');
       throw error;
     } finally {
       switching.value = false;
@@ -82,7 +87,7 @@ export const useProjectStore = defineStore('project', () => {
       await workspace.clearLastProject();
     } catch (error) {
       currentProject.value = previous;
-      switchError.value = error instanceof Error ? error.message : '项目选择清空失败';
+      switchError.value = error instanceof Error ? error.message : text('clearSelectionFailed');
       throw error;
     } finally {
       switching.value = false;
@@ -97,7 +102,7 @@ export const useProjectStore = defineStore('project', () => {
       applyProjectList(await projectsApi.refresh());
       loaded.value = true;
     } catch (error) {
-      loadError.value = error instanceof Error ? error.message : '项目列表刷新失败';
+      loadError.value = error instanceof Error ? error.message : text('refreshFailed');
     } finally {
       loading.value = false;
     }
@@ -106,7 +111,7 @@ export const useProjectStore = defineStore('project', () => {
   async function addProject(projectPath: string): Promise<void> {
     const normalizedPath = projectPath.trim();
     if (!normalizedPath) {
-      registerError.value = '请输入 RPG Maker MV 项目目录';
+      registerError.value = text('projectPathRequired');
       throw new Error(registerError.value);
     }
     removeError.value = null;
@@ -121,7 +126,7 @@ export const useProjectStore = defineStore('project', () => {
   async function removeProject(projectPath: string): Promise<void> {
     const normalizedPath = projectPath.trim();
     if (!normalizedPath) {
-      removeError.value = '请选择要清除的项目';
+      removeError.value = text('removeTargetRequired');
       throw new Error(removeError.value);
     }
 
@@ -145,7 +150,7 @@ export const useProjectStore = defineStore('project', () => {
         await workspace.clearLastProject();
       }
     } catch (error) {
-      removeError.value = error instanceof Error ? error.message : '项目清除失败';
+      removeError.value = error instanceof Error ? error.message : text('removeFailed');
       throw error;
     } finally {
       removing.value = false;
@@ -166,7 +171,7 @@ export const useProjectStore = defineStore('project', () => {
     const workspace = useWorkspaceStore();
     const preferredProject = currentProject.value || workspace.settings.lastProjectPath;
     currentProject.value = preferredProject
-      ? resolveStoredProjectPath(preferredProject, normalized as ProjectInfoLike[])
+      ? resolveStoredProjectPath(preferredProject, normalized as ProjectInfoLike[], normalizeProductLanguage(useSettingsStore().ui.language))
       : '';
   }
 
@@ -206,7 +211,7 @@ export const useProjectStore = defineStore('project', () => {
       }
       return result;
     } catch (error) {
-      registerError.value = error instanceof Error ? error.message : '项目添加失败';
+      registerError.value = error instanceof Error ? error.message : text('addFailed');
       throw error;
     } finally {
       registering.value = false;

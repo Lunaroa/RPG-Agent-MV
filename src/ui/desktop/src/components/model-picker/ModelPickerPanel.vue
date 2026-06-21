@@ -5,7 +5,7 @@
         v-model="searchQuery"
         type="search"
         class="model-picker-search-input"
-        placeholder="搜索模型"
+        :placeholder="t('modelPicker.search')"
         autocomplete="off"
       />
     </div>
@@ -18,7 +18,7 @@
         :class="{ 'is-selected': !selectedModelId }"
         @click="onClear"
       >
-        <span class="model-picker-row-label">{{ emptyLabel }}</span>
+        <span class="model-picker-row-label">{{ resolvedEmptyLabel }}</span>
         <el-icon v-if="!selectedModelId" class="model-picker-check">
           <Check />
         </el-icon>
@@ -56,16 +56,16 @@
       </template>
       <div v-else-if="!allowEmpty || selectedModelId" class="model-picker-empty">
         <template v-if="!providers.length">
-          <span>{{ emptyConfiguredHint }}</span>
+          <span>{{ resolvedEmptyConfiguredHint }}</span>
           <router-link
             v-if="showSettingsLink"
             class="model-picker-settings-link"
             :to="{ path: '/console', query: { page: 'settings' } }"
           >
-            前往设置
+            {{ t('modelPicker.openSettings') }}
           </router-link>
         </template>
-        <template v-else>无匹配模型</template>
+        <template v-else>{{ t('modelPicker.noMatches') }}</template>
       </div>
     </div>
   </div>
@@ -75,6 +75,7 @@
 import { computed, ref } from 'vue'
 import { Check } from '@element-plus/icons-vue'
 import type { ModelPickerProvider } from './types'
+import { useI18n } from '../../i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -89,8 +90,8 @@ const props = withDefaults(
   }>(),
   {
     allowEmpty: false,
-    emptyLabel: '留空使用默认',
-    emptyConfiguredHint: '当前没有可配置的模型',
+    emptyLabel: '',
+    emptyConfiguredHint: '',
     showGroupTitles: true,
     showSettingsLink: false,
   },
@@ -102,6 +103,9 @@ const emit = defineEmits<{
 }>()
 
 const searchQuery = ref('')
+const { t } = useI18n()
+const resolvedEmptyLabel = computed(() => props.emptyLabel || t('modelPicker.emptyDefault'))
+const resolvedEmptyConfiguredHint = computed(() => props.emptyConfiguredHint || t('modelPicker.emptyConfigured'))
 
 const filteredGroups = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()

@@ -76,6 +76,11 @@ describe('buildAssetLibraryFolders', () => {
       ['Alpha', 'Beta'],
     );
   });
+
+  it('labels the all folder in English', () => {
+    const folders = buildAssetLibraryFolders([fileEntry()], 'en-US');
+    assert.equal(folders[0]?.label, 'All');
+  });
 });
 
 describe('filterAssetByFolder', () => {
@@ -105,5 +110,9 @@ describe('countAssetFolders', () => {
 describe('assetFolderLabel', () => {
   it('uses map packageLabel when present', () => {
     assert.equal(assetFolderLabel(mapEntry()), 'Pack A');
+  });
+
+  it('uses English source labels for known packages', () => {
+    assert.equal(assetFolderLabel(fileEntry({ sourceSlug: 'sample-main' }), 'en-US'), 'Sample Project');
   });
 });

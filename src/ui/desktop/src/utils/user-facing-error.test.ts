@@ -6,28 +6,41 @@ import { formatUserFacingError, formatUserFacingErrorMessage } from './user-faci
 describe('formatUserFacingError', () => {
   test('strips Electron IPC remote method prefix', () => {
     const result = formatUserFacingError(
-      new Error("Error invoking remote method 'storyPages:sync': Error: 项目目录不存在：/tmp/missing"),
+      new Error("Error invoking remote method 'storyPages:sync': Error: Project directory does not exist: /tmp/missing"),
       'version',
+      'en-US',
     );
-    assert.equal(result.message, '项目目录不存在，请重新选择项目');
+    assert.equal(result.message, 'Project directory does not exist: /tmp/missing');
   });
 
-  test('maps git dependency errors without remote wording', () => {
-    const result = formatUserFacingError(new Error('缺少 Git 依赖：未找到 git 命令。请先安装 Git 后重试。'), 'version');
-    assert.equal(result.message, '需要安装 Git 才能使用版本管理');
-    assert.doesNotMatch(result.message, /remote/i);
+  test('passes through localized backend errors without regex remapping', () => {
+    assert.equal(
+      formatUserFacingErrorMessage(new Error('Invalid map ID'), 'general', 'en-US'),
+      'Invalid map ID',
+    );
+    assert.equal(
+      formatUserFacingErrorMessage(new Error('地图 ID 无效'), 'general', 'zh-CN'),
+      '地图 ID 无效',
+    );
+  });
+
+  test('maps controlled editing disabled code', () => {
+    assert.equal(
+      formatUserFacingErrorMessage(new Error('[CONTROLLED_EDITING_DISABLED] blocked'), 'version', 'en-US'),
+      'Enable version management first',
+    );
   });
 
   test('sanitizes developer git terms from user-visible message', () => {
-    const result = formatUserFacingError(new Error('Git 执行失败：fatal: No configured push default.'), 'version');
-    assert.equal(result.message, '保存版本失败，请重试');
+    const result = formatUserFacingError(new Error('Git command failed: fatal: No configured push default.'), 'version', 'en-US');
+    assert.equal(result.message, 'Git command failed: fatal: No configured push default.');
     assert.match(result.detail || '', /push/i);
   });
 
-  test('formatUserFacingErrorMessage returns message only', () => {
+  test('defaults to English when language is omitted', () => {
     assert.equal(
-      formatUserFacingErrorMessage(new Error('Git 执行失败：boom'), 'version'),
-      '保存版本失败，请重试',
+      formatUserFacingErrorMessage(new Error('boom')),
+      'boom',
     );
   });
 });

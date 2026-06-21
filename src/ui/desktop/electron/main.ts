@@ -6,12 +6,14 @@ import { initFileLogger } from '../../../backend/src/core/file-log.ts';
 import {
   cleanupIpcHandlers,
   confirmProjectStagingBeforeClose,
+  currentProductLanguage,
   getWorkspaceSettings,
   initializeIpcHandlers,
   patchWorkspaceSettings,
   readWorkspaceWindowOptions,
   saveWorkspaceWindowState,
 } from './ipc-handlers.js';
+import { electronText } from './electronLocalization.js';
 import { startUiControlBridge, stopUiControlBridge } from './ui-control-bridge.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -92,7 +94,7 @@ async function createWindow() {
     }).catch((error) => {
       closeGuardRunning = false;
       const message = error instanceof Error ? error.message : String(error);
-      dialog.showErrorBox('退出检查失败', message);
+      dialog.showErrorBox(electronText(currentProductLanguage(), 'main.closeCheckFailed'), message);
     });
   });
 
@@ -113,9 +115,8 @@ app.whenReady().then(() => {
     const message = err && err.message ? err.message : String(err);
     console.error('[main] failed to start:', err);
     dialog.showErrorBox(
-      '应用启动失败，即将退出',
-      `Agent Console 未能就绪：\n\n${message}\n\n` +
-        '常见原因：依赖加载失败或配置错误。',
+      electronText(currentProductLanguage(), 'main.startupFailedTitle'),
+      electronText(currentProductLanguage(), 'main.startupFailedDetail', { message }),
     );
     app.quit();
   });

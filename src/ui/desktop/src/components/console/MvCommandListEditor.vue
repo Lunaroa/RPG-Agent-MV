@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { EditorProjectCatalog } from '../../api/client';
+import { useI18n } from '../../i18n';
 import {
   clone,
   commandBlockSpanIndices,
@@ -30,10 +31,11 @@ const props = withDefaults(defineProps<{
   emptyText?: string;
 }>(), {
   mapId: null,
-  emptyText: '暂无指令。点击“添加”创建执行内容。',
+  emptyText: '',
 });
 
 const emit = defineEmits<{ 'update:modelValue': [value: MvCommand[]] }>();
+const { language, t } = useI18n();
 
 const commandDialog = ref<InstanceType<typeof EventCommandDialog> | null>(null);
 const selectedSpans = ref<number[]>([]);
@@ -53,6 +55,7 @@ const spanViews = computed<SpanView[]>(() => spans.value.map((span) => displaySp
 const canMoveUp = computed(() => selectedIndices.value.length === 1 && selectedIndices.value[0] > 0);
 const canMoveDown = computed(() => selectedIndices.value.length === 1 && selectedIndices.value[0] < spans.value.length - 1);
 const imageLoader = computed(() => props.loadImage || missingImageLoader);
+const resolvedEmptyText = computed(() => props.emptyText || t('cmdList.emptyHint'));
 
 function missingImageLoader(): Promise<HTMLImageElement | null> {
   return Promise.resolve(null);
@@ -72,13 +75,13 @@ function normalizeCommandList(value: unknown): MvCommand[] {
 }
 
 function displaySpan(span: MvCommandSpan): SpanView {
-  const head = commandDisplay(span.commands[0], systemData.value);
+  const head = commandDisplay(span.commands[0], systemData.value, language.value);
   return {
     key: span.index,
     tone: commandTone(span.commands[0].code),
     indent: head.indent,
     head: head.label,
-    lines: span.commands.slice(1).map((command) => commandDisplay(command, systemData.value).label),
+    lines: span.commands.slice(1).map((command) => commandDisplay(command, systemData.value, language.value).label),
   };
 }
 
@@ -188,17 +191,17 @@ function commitCommand(payload: { commands: MvCommand[]; editSpan: number | null
 <template>
   <section class="mv-command-editor">
     <div class="command-toolbar">
-      <span>{{ spans.length }} 条指令</span>
+      <span>{{ t('cmdList.commandCount', { count: spans.length }) }}</span>
       <div>
-        <button type="button" @click="openCommandPicker">添加</button>
-        <button type="button" :disabled="selectedIndices.length !== 1" @click="openSelectedCommand">编辑</button>
-        <button type="button" :disabled="!canMoveUp" @click="moveSelectedCommand(-1)">上移</button>
-        <button type="button" :disabled="!canMoveDown" @click="moveSelectedCommand(1)">下移</button>
-        <button type="button" :disabled="!selectedIndices.length" class="danger" @click="deleteSelectedCommands">删除</button>
+        <button type="button" @click="openCommandPicker">{{ t('cmdList.add') }}</button>
+        <button type="button" :disabled="selectedIndices.length !== 1" @click="openSelectedCommand">{{ t('cmdList.edit') }}</button>
+        <button type="button" :disabled="!canMoveUp" @click="moveSelectedCommand(-1)">{{ t('cmdList.moveUp') }}</button>
+        <button type="button" :disabled="!canMoveDown" @click="moveSelectedCommand(1)">{{ t('cmdList.moveDown') }}</button>
+        <button type="button" :disabled="!selectedIndices.length" class="danger" @click="deleteSelectedCommands">{{ t('cmdList.delete') }}</button>
       </div>
     </div>
     <div class="command-list" @click.self="clearSelection" @dblclick.self="openCommandPicker">
-      <div v-if="!spans.length" class="command-empty">{{ emptyText }}</div>
+      <div v-if="!spans.length" class="command-empty">{{ resolvedEmptyText }}</div>
       <button
         v-for="(view, index) in spanViews"
         :key="view.key"

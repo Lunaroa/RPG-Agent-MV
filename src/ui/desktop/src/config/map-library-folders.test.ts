@@ -49,6 +49,20 @@ describe('buildLibraryFolders', () => {
       ['Alpha Pack', 'Beta Pack'],
     );
   });
+
+  it('uses the requested language for sorting', () => {
+    const folders = buildLibraryFolders(
+      [
+        entry({ packageId: 'zh', packageLabel: '中文包' }),
+        entry({ assetId: 'test-b', packageId: 'en', packageLabel: 'Alpha Pack' }),
+      ],
+      'en-US',
+    );
+    assert.deepEqual(
+      folders.slice(1).map((f) => f.label),
+      ['Alpha Pack', '中文包'],
+    );
+  });
 });
 
 describe('filterByFolder', () => {

@@ -2,19 +2,21 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { Grid, Monitor, Setting } from '@element-plus/icons-vue'
+import { useI18n } from '../../i18n'
 
 const route = useRoute()
+const { t } = useI18n()
 
-const items = [
-  { path: '/workbench', label: '编辑器', icon: Grid, uiId: 'nav-workbench' },
-  { path: '/console', label: '控制台', icon: Monitor, uiId: 'nav-console' },
-]
+const items = computed(() => [
+  { path: '/workbench', label: t('app.nav.editor'), icon: Grid, uiId: 'nav-workbench' },
+  { path: '/console', label: t('app.nav.console'), icon: Monitor, uiId: 'nav-console' },
+])
 
 const activePath = computed(() => route.path === '/console' ? '/console' : '/workbench')
 </script>
 
 <template>
-  <aside class="app-rail" aria-label="全局导航">
+  <aside class="app-rail" :aria-label="t('app.nav.aria')">
     <nav class="app-rail-primary">
       <router-link
         v-for="item in items"
@@ -35,11 +37,11 @@ const activePath = computed(() => route.path === '/console' ? '/console' : '/wor
       :to="{ path: '/console', query: { page: 'settings' } }"
       class="app-rail-item app-rail-settings"
       data-ui-id="nav-settings"
-      title="设置"
-      aria-label="设置"
+      :title="t('app.nav.settings')"
+      :aria-label="t('app.nav.settings')"
     >
       <Setting />
-      <span>设置</span>
+      <span>{{ t('app.nav.settings') }}</span>
     </router-link>
   </aside>
 </template>

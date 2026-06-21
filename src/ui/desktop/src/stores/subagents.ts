@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { sessions as sessionsApi } from '../api/client.ts'
+import { normalizeProductLanguage } from '../i18n/messages';
+import { useSettingsStore } from './settings';
 import type {
   SessionRuntimeEvent,
   SessionSubagentActivity,
@@ -9,6 +11,12 @@ import type {
   SessionSubagentStatus,
 } from '@contract/types'
 import { nativeTaskResultText } from '../../../../contract/native-task-blocks.ts'
+import {
+  subagentStoreLabels,
+  subagentNotificationTitle,
+  subagentResultTitle,
+  subagentToolTitle,
+} from '../utils/subagentStoreLocalization'
 
 interface ToolCallRecord {
   tool: string
@@ -80,6 +88,9 @@ function usefulSubagentOutput(value: string): string {
 }
 
 export const useSubagentStore = defineStore('subagents', () => {
+  const settingsStore = useSettingsStore()
+  const label = () => subagentStoreLabels(normalizeProductLanguage(settingsStore.ui.language))
+  const lang = () => normalizeProductLanguage(settingsStore.ui.language)
   const snapshotsBySession = ref<Record<string, SessionSubagentSnapshot>>({})
   const loadingBySession = ref<Record<string, boolean>>({})
   const errorBySession = ref<Record<string, string>>({})
@@ -170,7 +181,7 @@ export const useSubagentStore = defineStore('subagents', () => {
           updatedAt: at,
           activity: appendActivity(sessionId, id, {
             kind: 'started',
-            title: '启动子任务',
+            title: label().started,
             detail: asString(input.prompt) || asString(input.description) || null,
             status: 'running',
             at,
@@ -187,7 +198,7 @@ export const useSubagentStore = defineStore('subagents', () => {
           updatedAt: at,
           activity: appendActivity(sessionId, taskId, {
             kind: 'progress',
-            title: '读取子任务输出',
+            title: label().readOutput,
             status: 'running',
             at,
           }),
@@ -203,7 +214,7 @@ export const useSubagentStore = defineStore('subagents', () => {
           updatedAt: at,
           activity: appendActivity(sessionId, taskId, {
             kind: 'stop_requested',
-            title: '请求停止子任务',
+            title: label().stopRequested,
             status: 'running',
             at,
           }),
@@ -237,12 +248,12 @@ export const useSubagentStore = defineStore('subagents', () => {
           output: status === 'running' ? '' : stripUsageTrailer(text),
           outputFile: asString(parsed?.outputFile) || matchValue(text, /\boutput_file:\s*(.+)$/im) || null,
           sessionUrl: asString(parsed?.sessionUrl) || matchValue(text, /\bsession_url:\s*(\S+)/i) || null,
-          error: event.success === false ? text || 'subagent 失败' : null,
+          error: event.success === false ? text || label().failed : null,
           callId,
           updatedAt: at,
           activity: appendActivity(sessionId, nextId, {
             kind: event.success === false ? 'failed' : status === 'running' ? 'progress' : 'output',
-            title: status === 'running' ? '子任务已派发' : event.success === false ? '子任务失败' : '子任务完成',
+            title: subagentResultTitle(status, event.success === false, lang()),
             detail: status === 'running' ? null : stripUsageTrailer(text) || null,
             status,
             outputFile: asString(parsed?.outputFile) || matchValue(text, /\boutput_file:\s*(.+)$/im) || null,
@@ -266,7 +277,7 @@ export const useSubagentStore = defineStore('subagents', () => {
           updatedAt: at,
           activity: appendActivity(sessionId, taskId, {
             kind: extractTag(text, 'error') ? 'failed' : 'output',
-            title: extractTag(text, 'error') ? '输出读取失败' : '读取到子任务输出',
+            title: extractTag(text, 'error') ? label().outputReadFailed : label().outputRead,
             detail: extractTag(text, 'output') || extractTag(text, 'error') || null,
             status: mapTaskStatus(extractTag(text, 'status'), retrievalStatus),
             at,
@@ -282,12 +293,12 @@ export const useSubagentStore = defineStore('subagents', () => {
           status: event.success === false ? 'failed' : 'stopped',
           taskType: asString(parsed?.task_type) || null,
           output: asString(parsed?.message) || text,
-          error: event.success === false ? text || '停止失败' : null,
+          error: event.success === false ? text || label().stopFailed : null,
           callId,
           updatedAt: at,
           activity: appendActivity(sessionId, taskId, {
             kind: event.success === false ? 'failed' : 'stopped',
-            title: event.success === false ? '停止失败' : '已停止',
+            title: event.success === false ? label().stopFailed : label().stopped,
             detail: asString(parsed?.message) || (event.success === false ? text : null),
             status: event.success === false ? 'failed' : 'stopped',
             at,
@@ -329,14 +340,14 @@ export const useSubagentStore = defineStore('subagents', () => {
         activity: appendActivity(sessionId, id, {
           kind: logType ? 'output' : event.type === 'subagent_task_started' ? 'started' : 'progress',
           title: logType === 'reasoning'
-            ? '子任务推理'
+            ? label().reasoning
             : logType === 'text'
-              ? '子任务输出'
+              ? label().output
               : event.type === 'subagent_task_started'
-            ? '启动子任务'
+            ? label().started
             : asString(event.lastToolName)
-              ? `正在使用 ${asString(event.lastToolName)}`
-              : '子任务运行中',
+              ? subagentToolTitle(asString(event.lastToolName), lang())
+              : label().running,
           detail: asString(event.detail) || asString(event.prompt) || asString(event.description) || null,
           status: activityStatus,
           tool: asString(event.lastToolName) || null,
@@ -370,17 +381,13 @@ export const useSubagentStore = defineStore('subagents', () => {
         output: output || existing?.output || null,
         outputFile: asString(event.outputFile) || existing?.outputFile || null,
         error: status === 'failed' || status === 'timeout'
-          ? asString(event.error) || output || 'subagent 失败'
+          ? asString(event.error) || output || label().failed
           : null,
         callId: callId || existing?.callId || null,
         updatedAt: at,
         activity: appendActivity(sessionId, id, {
           kind: status === 'failed' || status === 'timeout' ? 'failed' : 'notification',
-          title: status === 'completed'
-            ? '子任务完成'
-            : status === 'failed' || status === 'timeout'
-              ? '子任务失败'
-              : '子任务状态更新',
+          title: subagentNotificationTitle(status, lang()),
           detail: output || asString(event.error) || null,
           status,
           outputFile: asString(event.outputFile) || null,
@@ -400,7 +407,7 @@ export const useSubagentStore = defineStore('subagents', () => {
         updatedAt: at,
         activity: appendActivity(sessionId, taskId, {
           kind: 'stop_requested',
-          title: '请求停止子任务',
+          title: label().stopRequested,
           status: 'running',
           at,
         }),
@@ -417,11 +424,11 @@ export const useSubagentStore = defineStore('subagents', () => {
         upsert(sessionId, {
           ...item,
           status: response.subtype === 'error' ? 'failed' : 'stopped',
-          error: response.subtype === 'error' ? asString(response.error) || '停止失败' : null,
+          error: response.subtype === 'error' ? asString(response.error) || label().stopFailed : null,
           updatedAt: at,
           activity: appendActivity(sessionId, item.id, {
             kind: response.subtype === 'error' ? 'failed' : 'stopped',
-            title: response.subtype === 'error' ? '停止失败' : '已停止',
+            title: response.subtype === 'error' ? label().stopFailed : label().stopped,
             detail: response.subtype === 'error' ? asString(response.error) || null : null,
             status: response.subtype === 'error' ? 'failed' : 'stopped',
             at,
@@ -440,7 +447,7 @@ export const useSubagentStore = defineStore('subagents', () => {
     } catch (error) {
       errorBySession.value = {
         ...errorBySession.value,
-        [sessionId]: error instanceof Error ? error.message : '加载 subagent 失败',
+        [sessionId]: error instanceof Error ? error.message : label().loadFailed,
       }
     } finally {
       loadingBySession.value = { ...loadingBySession.value, [sessionId]: false }

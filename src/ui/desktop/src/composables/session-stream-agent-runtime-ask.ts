@@ -1,3 +1,7 @@
+import type { ProductLanguage } from '@contract/types'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
+import { translate } from '../i18n/messages.ts'
+
 export type OpencodeAsk = {
   type: 'plan-approval' | 'multi-choice-clarify'
   askId: string
@@ -26,10 +30,12 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+
 export function askFromOpencodeRequest(event: {
   request?: unknown
   request_id?: unknown
-}): OpencodeAsk | null {
+}, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): OpencodeAsk | null {
+  language = normalizeProductLanguage(language)
   const request = asRecord(event.request)
   if (request.subtype !== 'can_use_tool') return null
   const toolName = asString(request.tool_name)
@@ -41,8 +47,8 @@ export function askFromOpencodeRequest(event: {
     return {
       type: 'plan-approval',
       askId: `agent-runtime-plan:${requestId}`,
-      title: '计划待批准',
-      prompt: asString(request.description) || '审阅 opencode 计划',
+      title: translate('agent.ask.planPendingApproval', language),
+      prompt: asString(request.description) || translate('agent.ask.reviewPlan', language),
       planMarkdown: asString(input.plan),
       affectedFiles: asString(input.planFilePath) ? [asString(input.planFilePath)] : [],
       fromMcp: true,
@@ -54,7 +60,8 @@ export function askFromOpencodeRequest(event: {
   if (toolName === 'AskUserQuestion') {
     const rawQuestions = Array.isArray(input.questions) ? input.questions.map(asRecord) : []
     const questions = rawQuestions.map((question, index) => {
-      const questionText = asString(question.question) || `问题 ${index + 1}`
+      const fallbackQuestion = translate('agent.ask.questionN', language, { index: index + 1 })
+      const questionText = asString(question.question) || fallbackQuestion
       const options = (Array.isArray(question.options) ? question.options.map(asRecord) : [])
         .map((option) => {
           const label = asString(option.label)
@@ -67,7 +74,7 @@ export function askFromOpencodeRequest(event: {
         .filter((option) => option.label)
       return {
         id: questionText,
-        header: asString(question.header) || `问题 ${index + 1}`,
+        header: asString(question.header) || fallbackQuestion,
         question: questionText,
         multiSelect: question.multiSelect === true,
         allowOther: true,
@@ -78,8 +85,8 @@ export function askFromOpencodeRequest(event: {
     return {
       type: 'multi-choice-clarify',
       askId: `agent-runtime-ask:${requestId}`,
-      title: '等待输入',
-      prompt: asString(request.description) || '回答 opencode 的澄清问题',
+      title: translate('agent.ask.waitingForInput', language),
+      prompt: asString(request.description) || translate('agent.ask.answerClarification', language),
       questions,
       fromMcp: true,
       createdAt: new Date().toISOString(),

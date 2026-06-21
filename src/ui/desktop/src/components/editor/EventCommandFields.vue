@@ -13,14 +13,14 @@
         <option v-for="entry in databaseOptions(field)" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4, '0') }} {{ entry.name }}</option>
       </select>
       <button v-else-if="isImageAssetField(field)" type="button" class="asset-picker-button" @click="openImageField(field)">
-        {{ displayValue(field) || '(无)' }}
+        {{ displayValue(field) || t('imgPicker.none') }}
       </button>
       <select v-else-if="field.kind === 'asset'" :value="displayValue(field)" @change="setField(field, inputValue($event))">
-        <option value="">(无)</option>
+        <option value="">{{ t('imgPicker.none') }}</option>
         <option v-for="asset in assetOptions(field)" :key="asset.fileName" :value="asset.name">{{ asset.name }}</option>
       </select>
     </label>
-    <p v-if="!visibleFields.length" class="no-fields">该指令不需要额外参数。</p>
+    <p v-if="!visibleFields.length" class="no-fields">{{ t('cmdFields.noParams') }}</p>
     <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="loadImage" @commit="commitImageField" />
   </div>
 </template>
@@ -28,14 +28,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type { EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry } from '../../api/client';
+import { useI18n } from '../../i18n';
 import { commandDefinition, type CommandAssetKey, type CommandField, type CommandFieldVisibility } from '../../composables/eventCommandCatalog';
+import { localizeCommandField } from '../../utils/eventCommandLocalization';
 import type { MvCommand } from '../../composables/useEventEditor';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 
 const props = defineProps<{ command: MvCommand; catalog: EditorProjectCatalog | null; loadImage: (url: string) => Promise<HTMLImageElement | null> }>();
 const emit = defineEmits<{ change: [] }>();
+const { language, t } = useI18n();
 const definition = computed(() => commandDefinition(props.command.code));
-const visibleFields = computed(() => (definition.value?.fields || []).filter((field) => isFieldVisible(field) && !isPairedImageIndexField(field)));
+const visibleFields = computed(() => (definition.value?.fields || [])
+  .filter((field) => isFieldVisible(field) && !isPairedImageIndexField(field))
+  .map((field) => localizeCommandField(field, language.value)));
 const imagePicker = ref<InstanceType<typeof ImageAssetPickerDialog> | null>(null);
 const pendingImageField = ref<CommandField | null>(null);
 const imageAssetKinds = new Set<CommandAssetKey>([
@@ -104,7 +109,7 @@ function openImageField(field: CommandField): void {
   imagePicker.value?.open({
     asset: field.asset,
     mode: imagePickerMode(field),
-    title: `选择${field.label}`,
+    title: t('cmdFields.chooseField', { field: String(field.label) }),
     name: String(fieldValue(field) || ''),
     index: indexPath ? Number(fieldValue({ label: '', path: indexPath, kind: 'number' })) : 0,
   });

@@ -1,4 +1,7 @@
 import { resolveAskContextMapId, resolveEventMapIdWithAsk } from './placementMapId.ts'
+import type { ProductLanguage } from '@contract/types'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
+import { translate } from '../i18n/messages.ts'
 
 /** Treat only real booleans / 0|1 / "true"|"false" as flags; avoid Boolean("false") === true. */
 export function parseOptionalBoolean(value: unknown): boolean {
@@ -96,6 +99,7 @@ export interface Ask {
 interface ParseOptions {
   createAskId?: () => string
   getPrevious?: (askId: string) => Ask | null | undefined
+  language?: ProductLanguage
 }
 
 export function filterPostAskFallbackText(text: string): string {
@@ -160,6 +164,7 @@ function parseAgentAskJson(rawText: string): any {
 
 export function parseAgentAsk(rawText: string, options: ParseOptions = {}): Ask | null {
   try {
+    const language = normalizeProductLanguage(options.language ?? DEFAULT_PRODUCT_LANGUAGE)
     const raw = parseAgentAskJson(rawText)
     if (!raw || !raw.type) return null
     const askId = String(raw.askId || (options.createAskId && options.createAskId()) || `ask-${Date.now()}`)
@@ -171,7 +176,7 @@ export function parseAgentAsk(rawText: string, options: ParseOptions = {}): Ask 
       ask = {
         type: 'map-selection',
         askId,
-        title: String(raw.title || '选择地图'),
+        title: String(raw.title || translate('ask.parser.mapSelectionTitle', language)),
         prompt: String(raw.prompt || ''),
         min,
         max,
@@ -193,8 +198,8 @@ export function parseAgentAsk(rawText: string, options: ParseOptions = {}): Ask 
       const previousEvents = new Map((((previous && previous.events) || []) as any[])
         .map((event: any) => [event.contractId || event.id, event]))
       const askContext = {
-        title: String(raw.title || previous?.title || '放置新增事件'),
-        prompt: String(raw.prompt || previous?.prompt || '在地图上放置事件'),
+        title: String(raw.title || previous?.title || translate('ask.parser.placeEventTitle', language)),
+        prompt: String(raw.prompt || previous?.prompt || translate('ask.parser.placeEventPrompt', language)),
       }
       const askLevelMapId = resolveAskContextMapId(askContext)
       ask = {
@@ -242,8 +247,8 @@ export function parseAgentAsk(rawText: string, options: ParseOptions = {}): Ask 
       ask = {
         type: 'plan-approval',
         askId,
-        title: String(raw.title || '计划等待批准'),
-        prompt: String(raw.prompt || '审阅计划'),
+        title: String(raw.title || translate('ask.parser.planApprovalTitle', language)),
+        prompt: String(raw.prompt || translate('ask.parser.planApprovalPrompt', language)),
         planMarkdown,
         risks: Array.isArray(raw.risks) ? raw.risks.map((item: any) => String(item)).filter(Boolean) : [],
         affectedFiles: Array.isArray(raw.affectedFiles) ? raw.affectedFiles.map((item: any) => String(item)).filter(Boolean) : [],
@@ -254,20 +259,20 @@ export function parseAgentAsk(rawText: string, options: ParseOptions = {}): Ask 
       const rawOptions = Array.isArray(raw.options) ? raw.options : []
       const options = uniqueOptionIds(rawOptions.slice(0, 6).map((o: any, oi: number) => ({
         id: String(o.id || `o${oi + 1}`),
-        label: String(o.label || o.title || `选项 ${oi + 1}`),
+        label: String(o.label || o.title || translate('ask.parser.optionN', language, { n: oi + 1 })),
         description: String(o.description || o.summary || ''),
         recommended: parseOptionalBoolean(o.recommended) === true
       })).filter((o: any) => o.label))
       ask = {
         type: 'clarify',
         askId,
-        title: String(raw.title || '请补充信息'),
-        prompt: String(raw.prompt || raw.question || '补充信息'),
+        title: String(raw.title || translate('ask.parser.clarifyTitle', language)),
+        prompt: String(raw.prompt || raw.question || translate('ask.parser.clarifyPrompt', language)),
         fieldName: String(raw.fieldName || raw.field || ''),
         placeholder: String(raw.placeholder || ''),
         options: options.length >= 2 ? options : undefined,
         multiSelect: parseOptionalBoolean(raw.multiSelect),
-        allowOther: raw.allowOther == null ? true : parseOptionalBoolean(raw.allowOther),
+        allowOther: raw.allowOther == null ? false : parseOptionalBoolean(raw.allowOther),
         createdAt: new Date().toISOString(),
         result: previous ? previous.result : null
       }
@@ -277,13 +282,13 @@ export function parseAgentAsk(rawText: string, options: ParseOptions = {}): Ask 
         const rawOptions = Array.isArray(q.options) ? q.options : []
         const opts = uniqueOptionIds(rawOptions.slice(0, 4).map((o: any, oi: number) => ({
           id: String(o.id || `o${oi + 1}`),
-          label: String(o.label || o.title || `选项 ${oi + 1}`),
+          label: String(o.label || o.title || translate('ask.parser.optionN', language, { n: oi + 1 })),
           description: String(o.description || o.summary || ''),
           recommended: parseOptionalBoolean(o.recommended) === true
         })).filter((o: any) => o.label))
         return {
           id: String(q.id || `q${qi + 1}`),
-          header: String(q.header || q.title || `问题 ${qi + 1}`),
+          header: String(q.header || q.title || translate('ask.parser.questionN', language, { n: qi + 1 })),
           question: String(q.question || q.prompt || ''),
           multiSelect: parseOptionalBoolean(q.multiSelect),
           allowOther: q.allowOther == null ? true : parseOptionalBoolean(q.allowOther),
@@ -294,8 +299,8 @@ export function parseAgentAsk(rawText: string, options: ParseOptions = {}): Ask 
       ask = {
         type: 'multi-choice-clarify',
         askId,
-        title: String(raw.title || '需要补充信息'),
-        prompt: String(raw.prompt || '回答问题'),
+        title: String(raw.title || translate('ask.parser.multiClarifyTitle', language)),
+        prompt: String(raw.prompt || translate('ask.parser.multiClarifyPrompt', language)),
         questions,
         createdAt: new Date().toISOString(),
         result: previous ? previous.result : null
@@ -308,8 +313,8 @@ export function parseAgentAsk(rawText: string, options: ParseOptions = {}): Ask 
       ask = {
         type: 'production-board',
         askId,
-        title: String(raw.title || '制作清单'),
-        prompt: String(raw.prompt || '绑定地图并放置事件'),
+        title: String(raw.title || translate('ask.parser.productionBoardTitle', language)),
+        prompt: String(raw.prompt || translate('ask.parser.productionBoardPrompt', language)),
         sceneSlots: (Array.isArray(raw.sceneSlots) ? raw.sceneSlots : []).map((scene: any, index: number) => {
           const sceneId = String(scene.sceneId || scene.id || `scene-${index + 1}`)
           const prior: any = previousScenes.get(sceneId) || {}
@@ -319,7 +324,7 @@ export function parseAgentAsk(rawText: string, options: ParseOptions = {}): Ask 
           return {
             id: sceneId,
             sceneId,
-            name: String(scene.name || scene.title || prior.name || `场景 ${index + 1}`),
+            name: String(scene.name || scene.title || prior.name || translate('ask.parser.sceneN', language, { n: index + 1 })),
             summary: String(scene.summary || prior.summary || ''),
             mapRequirement: String(scene.mapRequirement || scene.requirement || prior.mapRequirement || ''),
             visualHint: String(scene.visualHint || scene.visual || prior.visualHint || ''),

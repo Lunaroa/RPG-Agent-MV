@@ -37,8 +37,8 @@
           :selected-provider-id="selectedProvider"
           :selected-model-id="selectedModel"
           :allow-empty="allowEmpty"
-          :empty-label="emptyLabel"
-          :empty-configured-hint="emptyConfiguredHint"
+          :empty-label="resolvedEmptyLabel"
+          :empty-configured-hint="resolvedEmptyConfiguredHint"
           :show-group-titles="showGroupTitles"
           :show-settings-link="showSettingsLink"
           @select="onSelect"
@@ -55,6 +55,7 @@ import ModelPickerPanel from './ModelPickerPanel.vue'
 import ModelPickerReasoning from './ModelPickerReasoning.vue'
 import { useThinkingVariants } from '../../composables/useThinkingVariants'
 import type { ModelPickerProvider, ModelPickerVariant } from './types'
+import { useI18n } from '../../i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -76,12 +77,12 @@ const props = withDefaults(
     variant: 'field',
     placement: 'bottom-start',
     allowEmpty: false,
-    emptyLabel: '留空使用默认',
-    emptyConfiguredHint: '当前没有可配置的模型',
+    emptyLabel: '',
+    emptyConfiguredHint: '',
     showReasoning: false,
     thinkingLevel: 'default',
     singleProviderId: '',
-    placeholder: '选择模型',
+    placeholder: '',
     showSettingsLink: false,
   },
 )
@@ -94,6 +95,7 @@ const emit = defineEmits<{
 
 const visible = ref(false)
 const panelRef = ref<InstanceType<typeof ModelPickerPanel> | null>(null)
+const { language, t } = useI18n()
 
 const {
   variants,
@@ -106,6 +108,7 @@ const {
   toRef(props, 'selectedModel'),
   toRef(props, 'thinkingLevel'),
   (value) => emit('update:thinkingLevel', value),
+  language,
 )
 
 const resolvedProviders = computed(() => {
@@ -134,7 +137,7 @@ const modelName = computed(() => {
     const model = provider.models.find((m) => m.id === props.selectedModel)
     if (model) return model.label || model.id
   }
-  if (props.selectedModel) return `${props.selectedModel}（已隐藏）`
+  if (props.selectedModel) return t('modelPicker.hiddenSuffix', { model: props.selectedModel })
   return ''
 })
 
@@ -142,7 +145,9 @@ const isPlaceholder = computed(() => !props.selectedModel)
 
 const displayLabel = computed(() => {
   if (!props.selectedModel) {
-    return props.allowEmpty ? props.emptyLabel : props.placeholder
+    return props.allowEmpty
+      ? (props.emptyLabel || t('modelPicker.emptyDefault'))
+      : (props.placeholder || t('modelPicker.placeholder'))
   }
   const name = modelName.value || props.selectedModel
   if (
@@ -155,6 +160,9 @@ const displayLabel = computed(() => {
   }
   return name
 })
+
+const resolvedEmptyLabel = computed(() => props.emptyLabel || t('modelPicker.emptyDefault'))
+const resolvedEmptyConfiguredHint = computed(() => props.emptyConfiguredHint || t('modelPicker.emptyConfigured'))
 
 function onThinkingLevelChange(value: string) {
   emit('update:thinkingLevel', value)

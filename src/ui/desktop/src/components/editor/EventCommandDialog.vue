@@ -4,11 +4,11 @@
       <section class="cmd-dialog editor-modal-shell" role="dialog" aria-modal="true" aria-labelledby="command-dialog-title">
         <header class="editor-modal-header">
           <strong id="command-dialog-title" class="editor-modal-title">{{ dialogTitle }}</strong>
-          <button type="button" class="editor-modal-close" aria-label="关闭指令编辑器" title="关闭" @click="close">×</button>
+          <button type="button" class="editor-modal-close" :aria-label="t('eventcmd.closeEditor')" :title="t('eventcmd.close')" @click="close">×</button>
         </header>
 
         <template v-if="pickerOpen">
-          <nav class="command-page-tabs editor-tab-strip" aria-label="事件指令页签">
+          <nav class="command-page-tabs editor-tab-strip" :aria-label="t('eventcmd.pages')">
             <button v-for="page in 3" :key="page" type="button" :class="{ active: pickerPage === page }" @click="pickerPage = page">{{ page }}</button>
           </nav>
           <div class="picker">
@@ -23,7 +23,7 @@
 
         <div v-else-if="draft" class="editor-body">
           <div class="editor-heading">
-            <strong>{{ commandDefinition(draft.code)?.label || `未知指令 ${draft.code}` }}</strong>
+            <strong>{{ commandTitle }}</strong>
           </div>
 
           <div class="fields">
@@ -31,56 +31,56 @@
               <div class="text-cmd-layout">
                 <div class="text-cmd-face">
                   <canvas ref="facePreviewRef" class="face-preview" width="144" height="144" @click="openTextFacePicker" />
-                  <button type="button" class="editor-btn" @click="openTextFacePicker">选择...</button>
+                  <button type="button" class="editor-btn" @click="openTextFacePicker">{{ t('eventcmd.choose') }}</button>
                 </div>
-                <label class="text-cmd-text">文本<textarea v-model="multiText" rows="5" /></label>
+                <label class="text-cmd-text">{{ t('eventcmd.text') }}<textarea v-model="multiText" rows="5" /></label>
               </div>
               <div class="text-cmd-options">
-                <label>背景<select :value="numberParam(2)" @change="setParam(2, numberValue($event))"><option :value="0">窗口</option><option :value="1">暗淡</option><option :value="2">透明</option></select></label>
-                <label>位置<select :value="numberParam(3,2)" @change="setParam(3, numberValue($event))"><option :value="0">顶部</option><option :value="1">中部</option><option :value="2">底部</option></select></label>
+                <label>{{ t('eventcmd.background') }}<select :value="numberParam(2)" @change="setParam(2, numberValue($event))"><option :value="0">{{ t('eventcmd.bgWindow') }}</option><option :value="1">{{ t('eventcmd.bgDim') }}</option><option :value="2">{{ t('eventcmd.bgTransparent') }}</option></select></label>
+                <label>{{ t('eventcmd.position') }}<select :value="numberParam(3,2)" @change="setParam(3, numberValue($event))"><option :value="0">{{ t('eventcmd.posTop') }}</option><option :value="1">{{ t('eventcmd.posMiddle') }}</option><option :value="2">{{ t('eventcmd.posBottom') }}</option></select></label>
               </div>
             </template>
             <template v-else-if="draft.code === 102">
-              <label class="full">选项（每行一个）<textarea :value="choicesText" rows="6" @input="setChoices" /></label>
-              <p class="form-note">新增时会自动建立对应分支；编辑已有选项时保留现有分支内容。</p>
+              <label class="full">{{ t('eventcmd.choices') }}<textarea :value="choicesText" rows="6" @input="setChoices" /></label>
+              <p class="form-note">{{ t('eventcmd.choicesNote') }}</p>
             </template>
             <template v-else-if="draft.code === 105">
-              <label>速度<input :value="numberParam(0,2)" type="number" min="1" @input="setParam(0, numberValue($event))" /></label>
-              <label class="check"><input :checked="boolParam(1)" type="checkbox" @change="setParam(1, checkedValue($event))" />禁止快进</label>
-              <label class="full">文本<textarea v-model="multiText" rows="7" /></label>
+              <label>{{ t('eventcmd.speed') }}<input :value="numberParam(0,2)" type="number" min="1" @input="setParam(0, numberValue($event))" /></label>
+              <label class="check"><input :checked="boolParam(1)" type="checkbox" @change="setParam(1, checkedValue($event))" />{{ t('eventcmd.disableFastForward') }}</label>
+              <label class="full">{{ t('eventcmd.text') }}<textarea v-model="multiText" rows="7" /></label>
             </template>
-            <label v-else-if="draft.code === 108" class="full">注释<textarea v-model="multiText" rows="7" /></label>
+            <label v-else-if="draft.code === 108" class="full">{{ t('eventcmd.comment') }}<textarea v-model="multiText" rows="7" /></label>
             <template v-else-if="draft.code === 205">
-              <label>目标<input :value="numberParam(0)" type="number" @input="setParam(0,numberValue($event))" /></label>
-              <div class="route-field"><span>{{ routeSummary }}</span><button type="button" class="editor-btn" @click="routeDialog?.open(routeParam)">编辑路线...</button></div>
+              <label>{{ t('eventcmd.target') }}<input :value="numberParam(0)" type="number" @input="setParam(0,numberValue($event))" /></label>
+              <div class="route-field"><span>{{ routeSummary }}</span><button type="button" class="editor-btn" @click="routeDialog?.open(routeParam)">{{ t('eventcmd.editRoute') }}</button></div>
             </template>
-            <label v-else-if="draft.code === 355" class="full">脚本<textarea v-model="multiText" rows="11" spellcheck="false" /></label>
+            <label v-else-if="draft.code === 355" class="full">{{ t('eventcmd.script') }}<textarea v-model="multiText" rows="11" spellcheck="false" /></label>
             <template v-else-if="draft.code === 356">
               <div class="plugin-command-editor">
                 <label>
-                  已启用插件
+                  {{ t('eventcmd.enabledPlugins') }}
                   <select :value="pluginCommandPlugin" @change="selectPluginForCommand">
-                    <option value="">全部插件</option>
+                    <option value="">{{ t('eventcmd.allPlugins') }}</option>
                     <option v-for="plugin in enabledPluginEntries" :key="plugin.name" :value="plugin.name">{{ plugin.name }}</option>
                   </select>
                 </label>
                 <label>
-                  源码命令提示
+                  {{ t('eventcmd.sourceHints') }}
                   <select :value="matchedPluginCommandHintKey" @change="applyPluginCommandHint">
-                    <option value="">选择已识别命令</option>
+                    <option value="">{{ t('eventcmd.selectHint') }}</option>
                     <option v-for="hint in visiblePluginCommandHints" :key="pluginCommandHintKey(hint)" :value="pluginCommandHintKey(hint)">
                       {{ hint.command }} · {{ hint.pluginName }}
                     </option>
                   </select>
                 </label>
                 <label class="full">
-                  插件命令
+                  {{ t('eventcmd.pluginCommand') }}
                   <textarea :value="stringParam(0)" rows="5" spellcheck="false" @input="setParam(0,inputValue($event))" />
                 </label>
                 <p class="form-note">{{ pluginCommandPreview }}</p>
                 <div v-if="pluginCommandError" class="plugin-command-warning">{{ pluginCommandError }}</div>
                 <div v-else-if="!visiblePluginCommandHints.length" class="plugin-command-warning">
-                  当前范围没有从 MV `pluginCommand(command, args)` 源码中识别到命令分支；仍可手写原始命令。
+                  {{ t('eventcmd.unsupported') }}
                 </div>
                 <div v-else class="plugin-command-hints">
                   <button
@@ -97,14 +97,14 @@
             </template>
             <EventCommandFields v-else-if="commandDefinition(draft.code)" :command="draft" :catalog="catalog" :load-image="loadImage" @change="touchCommand" />
             <p v-else class="form-note unsupported-command">
-              这个指令还没有图形化编辑器。可以先保留原内容；需要修改时应补对应的中文控件，而不是直接编辑数据结构。
+              {{ t('eventcmd.unsupportedEditor') }}
             </p>
           </div>
         </div>
 
         <footer v-if="!pickerOpen" class="editor-modal-footer">
-          <button type="button" class="editor-btn" @click="close">取消</button>
-          <button type="button" class="editor-btn primary" @click="commit">确定</button>
+          <button type="button" class="editor-btn" @click="close">{{ t('eventcmd.cancel') }}</button>
+          <button type="button" class="editor-btn primary" @click="commit">{{ t('eventcmd.ok') }}</button>
         </footer>
       </section>
     </div>
@@ -116,19 +116,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { LAYER_Z } from '../../constants/layerZIndex';
+import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import { plugins as pluginApi, type EditorProjectCatalog, type ManagedPluginEntry, type PluginCommandHint } from '../../api/client';
 import { useProjectStore } from '../../stores/project';
 import { COMMAND_PAGES, applyCommandIndent, commandDefinition, commandTemplate, normalizeEventCommandParameters } from '../../composables/eventCommandCatalog';
 import { clone, defaultMoveRoute, type MvCommand, type MvMoveRoute } from '../../composables/useEventEditor';
+import { localizeCommandGroups, localizeCommandLabel } from '../../utils/eventCommandLocalization';
 import { mvFaceSourceRect } from '../../utils/rmmvFace';
 import EventCommandFields from './EventCommandFields.vue';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
-
 const props = defineProps<{ mapId:number|null; catalog:EditorProjectCatalog|null; loadImage:(url:string)=>Promise<HTMLImageElement|null> }>();
 const emit = defineEmits<{ commit:[payload:{commands:MvCommand[];editSpan:number|null;insertSpan:number|null}] }>();
 const projectStore = useProjectStore();
+const { language, t } = useI18n();
 const commandDialogZ = String(LAYER_Z.commandDialog);
 const visible=ref(false),pickerOpen=ref(false),pickerPage=ref(1),draft=ref<MvCommand|null>(null),draftSpan=ref<MvCommand[]>([]),editSpan=ref<number|null>(null),insertSpan=ref<number|null>(null),insertIndent=ref(0),multiText=ref('');
 const imagePicker=ref<InstanceType<typeof ImageAssetPickerDialog>>(),routeDialog=ref<InstanceType<typeof MoveRouteDialog>>(),facePreviewRef=ref<HTMLCanvasElement>();
@@ -136,11 +138,16 @@ const pluginCommandPlugins = ref<ManagedPluginEntry[]>([]);
 const pluginCommandPlugin = ref('');
 const pluginCommandError = ref('');
 const pluginCommandLoading = ref(false);
-const currentCategories=computed(()=>COMMAND_PAGES[pickerPage.value-1]||[]);
-const dialogTitle=computed(()=>pickerOpen.value?'事件指令':editSpan.value!=null?'编辑指令':'新建指令');
+const currentCategories=computed(()=>localizeCommandGroups(COMMAND_PAGES[pickerPage.value-1]||[], language.value));
+const dialogTitle=computed(()=>pickerOpen.value?t('eventcmd.title'):editSpan.value!=null?t('eventcmd.editTitle'):t('eventcmd.newTitle'));
+const commandTitle=computed(()=>{
+  if (!draft.value) return '';
+  const definition = commandDefinition(draft.value.code);
+  return definition ? localizeCommandLabel(definition, language.value) : t('eventcmd.unknownCommand', { code: draft.value.code });
+});
 const choicesText=computed(()=>((draft.value?.parameters[0] as string[])||[]).join('\n'));
 const routeParam=computed<MvMoveRoute>(()=>(draft.value?.parameters[1] as MvMoveRoute)||defaultMoveRoute());
-const routeSummary=computed(()=>`${routeParam.value.list.filter((item)=>item.code!==0).length} 个步骤`);
+const routeSummary=computed(()=>t('eventcmd.routeSteps', { count: routeParam.value.list.filter((item)=>item.code!==0).length }));
 const enabledPluginEntries=computed(()=>pluginCommandPlugins.value.filter((plugin)=>plugin.status&&plugin.fileExists&&plugin.name));
 const visiblePluginCommandHints=computed(()=>enabledPluginEntries.value
   .filter((plugin)=>!pluginCommandPlugin.value||plugin.name===pluginCommandPlugin.value)
@@ -152,15 +159,15 @@ const matchedPluginCommandHints=computed(()=>enabledPluginEntries.value
   .filter((hint)=>hint.command.toLowerCase()===currentPluginCommandToken.value.toLowerCase()));
 const matchedPluginCommandHintKey=computed(()=>matchedPluginCommandHints.value[0]?pluginCommandHintKey(matchedPluginCommandHints.value[0]):'');
 const pluginCommandPreview=computed(()=>{
-  if (pluginCommandLoading.value) return '正在读取插件命令提示...';
+  if (pluginCommandLoading.value) return t('eventcmd.pluginLoading');
   const token = currentPluginCommandToken.value;
-  if (!token) return 'MV 插件命令会写入 code 356 的单行文本；请选择提示或手写命令。';
+  if (!token) return t('eventcmd.pluginHint');
   if (matchedPluginCommandHints.value.length) {
-    return `已匹配源码命令 ${token}：${matchedPluginCommandHints.value.map((hint)=>hint.pluginName).join(' / ')}`;
+    return t('eventcmd.pluginMatched', { token, plugins: matchedPluginCommandHints.value.map((hint)=>hint.pluginName).join(' / ') });
   }
   const enabled = enabledPluginEntries.value.find((plugin)=>plugin.name.toLowerCase()===token.toLowerCase());
-  if (enabled) return `起手词匹配已启用插件 ${enabled.name}，但源码里没有识别到明确 command 分支。`;
-  return `未匹配已启用插件或已识别命令：${token}`;
+  if (enabled) return t('eventcmd.pluginNoBranch', { name: enabled.name });
+  return t('eventcmd.pluginNoMatch', { token });
 });
 
 function onKeyDown(event: KeyboardEvent) {
@@ -199,7 +206,7 @@ function numberParam(index:number,fallback=0){return Number(draft.value?.paramet
 function stringParam(index:number,fallback=''){return String(draft.value?.parameters[index]??fallback);}
 function boolParam(index:number,fallback=false){return Boolean(draft.value?.parameters[index]??fallback);}
 function setChoices(event:Event){setParam(0,inputValue(event).split('\n').map((value)=>value.trim()).filter(Boolean));}
-function openTextFacePicker(){imagePicker.value?.open({asset:'faces',mode:'face',title:'选择脸图',name:stringParam(0),index:numberParam(1)});}
+function openTextFacePicker(){imagePicker.value?.open({asset:'faces',mode:'face',title:t('eventcmd.chooseFace'),name:stringParam(0),index:numberParam(1)});}
 function setTextFace(selection:{name:string;index:number}){setParam(0,selection.name);setParam(1,selection.name?selection.index:0);void nextTick(paintFacePreview);}
 async function paintFacePreview(){const el=facePreviewRef.value;if(!el)return;const w=el.width,h=el.height,ctx=el.getContext('2d')!;ctx.clearRect(0,0,w,h);ctx.imageSmoothingEnabled=false;const faceName=stringParam(0);if(!faceName){ctx.fillStyle='#e0ddd6';ctx.fillRect(0,0,w,h);return;}const asset=props.catalog?.assets.faces.find(e=>e.name===faceName);if(!asset){ctx.fillStyle='#e0ddd6';ctx.fillRect(0,0,w,h);return;}const img=await props.loadImage(asset.url);if(!img){ctx.fillStyle='#e0ddd6';ctx.fillRect(0,0,w,h);return;}const source=mvFaceSourceRect(numberParam(1));ctx.drawImage(img,source.sx,source.sy,source.sw,source.sh,0,0,w,h);}
 function setRoute(route:MvMoveRoute){setParam(1,route);}
@@ -215,7 +222,7 @@ async function loadPluginCommandMetadata(){
     pluginCommandPlugins.value = config.plugins;
     syncPluginCommandSelection();
   } catch (error) {
-    pluginCommandError.value=`插件命令提示读取失败：${(error as Error).message}`;
+    pluginCommandError.value=t('eventcmd.pluginError', { error: (error as Error).message });
     pluginCommandPlugins.value=[];
   } finally {
     pluginCommandLoading.value=false;

@@ -19,6 +19,16 @@ describe('translateKnownIssue', () => {
   it('passes through unknown issues', () => {
     assert.equal(translateKnownIssue('Custom warning'), 'Custom warning');
   });
+
+  it('keeps source English issues in English mode', () => {
+    assert.equal(
+      translateKnownIssue(
+        'Auto-imported from a local RPG Maker MV installation; EULA/license has not been reviewed for redistribution.',
+        'en-US',
+      ),
+      'Auto-imported from a local RPG Maker MV installation; EULA/license has not been reviewed for redistribution.',
+    );
+  });
 });
 
 describe('translateKnownIssues', () => {
@@ -29,5 +39,12 @@ describe('translateKnownIssues', () => {
     ]);
     assert.match(out[0], /离线预览/);
     assert.equal(out[1], 'unknown');
+  });
+
+  it('maps every issue in English mode without Chinese translation', () => {
+    const out = translateKnownIssues([
+      'Offline render does not show events, player, plugins, weather, screen tint, animations, or runtime effects.',
+    ], 'en-US');
+    assert.match(out[0], /Offline render/);
   });
 });

@@ -4,12 +4,12 @@
       <section class="sub-dialog image-asset-dialog editor-modal-shell" role="dialog" aria-modal="true" aria-labelledby="image-asset-picker-title">
         <header class="editor-modal-header">
           <strong id="image-asset-picker-title" class="editor-modal-title">{{ title }}</strong>
-          <button type="button" class="editor-modal-close" aria-label="关闭图像选择" title="关闭" @click="close">×</button>
+          <button type="button" class="editor-modal-close" :aria-label="t('imgPicker.closeTitle')" :title="t('eventcmd.close')" @click="close">×</button>
         </header>
         <div class="picker-grid">
           <aside>
-            <input v-model="search" placeholder="搜索图像" />
-            <button type="button" :class="{ active: !name }" @click="selectAsset('')">(无)</button>
+            <input v-model="search" :placeholder="t('imgPicker.searchPlaceholder')" />
+            <button type="button" :class="{ active: !name }" @click="selectAsset('')">{{ t('imgPicker.none') }}</button>
             <button
               v-for="asset in filteredAssets"
               :key="asset.fileName"
@@ -29,8 +29,8 @@
         </div>
         <footer class="editor-modal-footer">
           <span class="editor-dialog-status">{{ summary }}</span>
-          <button type="button" class="editor-btn" @click="close">取消</button>
-          <button type="button" class="editor-btn primary" @click="commit">确定</button>
+          <button type="button" class="editor-btn" @click="close">{{ t('eventcmd.cancel') }}</button>
+          <button type="button" class="editor-btn primary" @click="commit">{{ t('eventcmd.ok') }}</button>
         </footer>
       </section>
     </div>
@@ -40,6 +40,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { LAYER_Z } from '../../constants/layerZIndex';
+import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import type { EditorProjectCatalog, ProjectAssetEntry } from '../../api/client';
 import { MV_FACE_COLUMNS, MV_FACE_HEIGHT, MV_FACE_ROWS, MV_FACE_WIDTH, mvFaceIndexFromCanvasPoint, normalizeMvFaceIndex } from '../../utils/rmmvFace';
@@ -63,9 +64,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{ commit: [selection: { asset: ImageAssetKind; mode: ImagePickerMode; name: string; index: number }] }>();
 
+const { t } = useI18n();
 const subDialogZ = String(LAYER_Z.subDialog);
 const visible = ref(false);
-const title = ref('选择图像');
+const title = ref(t('imgPicker.chooseImage'));
 const assetKind = ref<ImageAssetKind>('pictures');
 const mode = ref<ImagePickerMode>('plain');
 const name = ref('');
@@ -82,7 +84,7 @@ const filteredAssets = computed(() => {
   return query ? assets.value.filter((asset) => asset.name.toLowerCase().includes(query)) : assets.value;
 });
 const summary = computed(() => {
-  if (!name.value) return '(无)';
+  if (!name.value) return t('imgPicker.none');
   if (mode.value === 'plain') return name.value;
   return `${name.value} #${index.value}`;
 });
@@ -99,7 +101,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 function open(options: OpenOptions) {
   assetKind.value = options.asset;
   mode.value = options.mode || 'plain';
-  title.value = options.title || '选择图像';
+  title.value = options.title || t('imgPicker.chooseImage');
   name.value = options.name || '';
   index.value = mode.value === 'face' ? normalizeMvFaceIndex(options.index) : normalizeCharacterIndex(options.index);
   search.value = '';
@@ -227,6 +229,7 @@ function commit() {
   emit('commit', { asset: assetKind.value, mode: mode.value, name: name.value, index: index.value });
   close();
 }
+
 
 defineExpose({ open });
 </script>

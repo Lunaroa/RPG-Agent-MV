@@ -10,7 +10,7 @@
         data-ui-id="chat-input"
         :value="modelValue"
         rows="1"
-        placeholder="描述目标或要求后续变更…"
+        :placeholder="t('composer.placeholder')"
         @input="onInput"
         @focus="focused = true"
         @blur="focused = false"
@@ -21,14 +21,14 @@
         <div class="composer-footer-left">
           <el-popover placement="top-start" :width="300" trigger="click">
             <template #reference>
-              <button type="button" class="composer-icon-btn" data-ui-id="chat-more" title="更多" aria-label="更多">
+              <button type="button" class="composer-icon-btn" data-ui-id="chat-more" :title="t('composer.more')" :aria-label="t('composer.more')">
                 <span class="composer-plus">+</span>
               </button>
             </template>
             <div class="composer-popover">
               <div class="composer-popover-settings">
                 <div class="composer-panel-field composer-panel-switch">
-                  <label for="composer-plan-mode">计划模式</label>
+                  <label for="composer-plan-mode">{{ t('composer.planMode') }}</label>
                   <el-switch
                     id="composer-plan-mode"
                     :model-value="planMode"
@@ -51,7 +51,7 @@
             :selected-provider="selectedProvider"
             :selected-model="selectedModel"
             :thinking-level="thinkingLevel"
-            empty-configured-hint="当前没有可显示的模型"
+            :empty-configured-hint="t('composer.noModels')"
             @select="onSelectProfile"
             @update:thinking-level="emit('update:thinkingLevel', $event)"
           />
@@ -62,8 +62,8 @@
             data-ui-id="chat-send"
             :class="{ 'is-stop': isRunning }"
             :disabled="!isRunning && !modelValue.trim()"
-            :title="isRunning ? '停止' : '发送（Enter）'"
-            :aria-label="isRunning ? '停止' : '发送'"
+            :title="isRunning ? t('composer.stop') : t('composer.sendEnter')"
+            :aria-label="isRunning ? t('composer.stop') : t('composer.send')"
             @click="onSendClick"
           >
             <el-icon v-if="isRunning"><VideoPause /></el-icon>
@@ -79,6 +79,7 @@
 import { nextTick, ref, watch } from 'vue'
 import { Top, VideoPause } from '@element-plus/icons-vue'
 import ModelPicker from './model-picker/ModelPicker.vue'
+import { useI18n } from '../i18n'
 
 const props = defineProps<{
   modelValue: string
@@ -103,6 +104,7 @@ const emit = defineEmits<{
 
 const focused = ref(false)
 const textareaRef = ref<HTMLTextAreaElement>()
+const { t } = useI18n()
 
 function onSelectProfile(payload: { providerId: string; modelId: string }) {
   emit('select-profile', payload)

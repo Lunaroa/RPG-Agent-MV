@@ -55,10 +55,10 @@
           >
             <span class="turn-artifact-icon"><el-icon><FolderOpened /></el-icon></span>
             <span class="turn-artifact-copy">
-              <strong>会话产物</strong>
-              <small>查看本轮生成的报告与运行证据</small>
+              <strong>{{ t('chat.artifacts.title') }}</strong>
+              <small>{{ t('chat.artifacts.subtitle') }}</small>
             </span>
-            <span class="turn-artifact-action">在文件夹中显示</span>
+            <span class="turn-artifact-action">{{ t('chat.artifacts.action') }}</span>
           </button>
         </div>
       </article>
@@ -76,7 +76,7 @@
       class="chat-new-messages"
       @click="jumpToLatest"
     >
-      有新消息
+      {{ t('chat.newMessages') }}
     </button>
   </div>
 </template>
@@ -92,6 +92,7 @@ import TurnSegment from './TurnSegment.vue'
 import ExecutionGroup from './ExecutionGroup.vue'
 import AskCard from './AskCard.vue'
 import AskHistory from './AskHistory.vue'
+import { useI18n } from '../i18n'
 
 const props = defineProps<{
   segments: ChatSegment[]
@@ -120,6 +121,7 @@ const emit = defineEmits<{
 }>()
 
 const chatLogRef = ref<HTMLElement>()
+const { t } = useI18n()
 const {
   segments: presentationSegments,
   pipelineActive,

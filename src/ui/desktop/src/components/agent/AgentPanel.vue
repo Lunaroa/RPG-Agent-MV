@@ -14,6 +14,7 @@ import {
   maxAgentPanelWidth,
   parseAgentPanelWidth,
 } from '../../utils/agentPanelWidth'
+import { useI18n } from '../../i18n'
 
 type ChatViewApi = {
   startNewConversation: () => Promise<void>
@@ -25,6 +26,7 @@ const workspaceStore = useWorkspaceStore()
 const { activeSession } = useSession()
 const taskBoard = useTaskBoardStore()
 const placementAsk = useEventPlacementAskStore()
+const { t } = useI18n()
 const taskPendingCount = computed(() =>
   taskBoard.tasksFor(activeSession.value?.id).filter((task) => task.status !== 'completed').length,
 )
@@ -159,29 +161,29 @@ onBeforeUnmount(() => {
     :class="{ collapsed: !ui.agentPanelOpen, 'is-resizing': resizing }"
     :style="panelStyle"
     data-ui-id="agent-panel"
-    aria-label="聊天"
+    :aria-label="t('agentPanel.chat')"
   >
     <div v-show="ui.agentPanelOpen" class="agent-panel-inner" data-ui-id="agent-panel-inner">
       <div
         class="agent-panel-resizer"
         data-ui-id="agent-panel-resizer"
         role="separator"
-        aria-label="调整聊天侧栏宽度"
+        :aria-label="t('agentPanel.resize')"
         aria-orientation="vertical"
         :aria-valuemin="AGENT_PANEL_MIN_WIDTH"
         :aria-valuemax="maxAgentPanelWidth(availableWidth())"
         :aria-valuenow="panelWidth"
         tabindex="0"
-        title="拖动调整宽度，双击恢复默认"
+        :title="t('agentPanel.resizeTitle')"
         @pointerdown="beginResize"
         @dblclick="resetWidth"
         @keydown="handleResizeKeydown"
       />
       <header class="agent-panel-head">
-        <h3><ChatDotRound /><span>聊天</span></h3>
+        <h3><ChatDotRound /><span>{{ t('agentPanel.chat') }}</span></h3>
         <div class="head-actions">
           <el-dropdown trigger="click" placement="bottom-end" @command="onPanelCommand">
-            <button type="button" class="head-btn panel-menu-btn" data-ui-id="agent-panel-menu" title="面板（TASK / PLAN / 待放置事件 / subagent）">
+            <button type="button" class="head-btn panel-menu-btn" data-ui-id="agent-panel-menu" :title="t('agentPanel.panelMenu')">
               <Operation />
               <span v-if="panelBadgeCount > 0" class="head-badge">{{ panelBadgeCount }}</span>
             </button>
@@ -189,31 +191,31 @@ onBeforeUnmount(() => {
               <el-dropdown-menu>
                 <el-dropdown-item command="task" :class="{ 'is-active': ui.sidePanel === 'task' }">
                   <span class="panel-menu-row">
-                    <span>TASK</span>
+                    <span>{{ t('sidePanel.task') }}</span>
                     <span v-if="taskPendingCount > 0" class="panel-menu-count">{{ taskPendingCount }}</span>
                   </span>
                 </el-dropdown-item>
-                <el-dropdown-item command="plan" :class="{ 'is-active': ui.sidePanel === 'plan' }">PLAN</el-dropdown-item>
+                <el-dropdown-item command="plan" :class="{ 'is-active': ui.sidePanel === 'plan' }">{{ t('sidePanel.plan') }}</el-dropdown-item>
                 <el-dropdown-item command="placement" :class="{ 'is-active': ui.sidePanel === 'placement' }">
                   <span class="panel-menu-row">
-                    <span>待放置事件</span>
+                    <span>{{ t('sidePanel.placement') }}</span>
                     <span v-if="placementPendingCount > 0" class="panel-menu-count">{{ placementPendingCount }}</span>
                   </span>
                 </el-dropdown-item>
-                <el-dropdown-item command="subagent" :class="{ 'is-active': ui.sidePanel === 'subagent' }">subagent</el-dropdown-item>
+                <el-dropdown-item command="subagent" :class="{ 'is-active': ui.sidePanel === 'subagent' }">{{ t('sidePanel.subagent') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
-          <button v-if="view === 'history'" type="button" class="head-btn" data-ui-id="agent-panel-back-chat" title="返回聊天" @click="showChat">
+          <button v-if="view === 'history'" type="button" class="head-btn" data-ui-id="agent-panel-back-chat" :title="t('agentPanel.backChat')" @click="showChat">
             <ArrowLeft />
           </button>
-          <button v-else type="button" class="head-btn" data-ui-id="agent-panel-history" title="会话历史" @click="openHistory">
+          <button v-else type="button" class="head-btn" data-ui-id="agent-panel-history" :title="t('agentPanel.history')" @click="openHistory">
             <Clock />
           </button>
-          <button type="button" class="head-btn" data-ui-id="agent-panel-new-chat" title="新建会话" @click="startNewConversation">
+          <button type="button" class="head-btn" data-ui-id="agent-panel-new-chat" :title="t('agentPanel.newChat')" @click="startNewConversation">
             <Plus />
           </button>
-          <button type="button" class="head-btn" data-ui-id="agent-panel-close" title="关闭" @click="ui.setAgentPanelOpen(false)">
+          <button type="button" class="head-btn" data-ui-id="agent-panel-close" :title="t('sidePanel.close')" @click="ui.setAgentPanelOpen(false)">
             <Close />
           </button>
         </div>

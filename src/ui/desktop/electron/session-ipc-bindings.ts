@@ -138,6 +138,7 @@ function withoutInternalSystemPrompt(payload: Record<string, unknown>): Record<s
     'files',
     'thinkingLevel',
     'timeoutMs',
+    'productLanguage',
   ];
   const safe: Record<string, unknown> = {};
   for (const key of allowed) {

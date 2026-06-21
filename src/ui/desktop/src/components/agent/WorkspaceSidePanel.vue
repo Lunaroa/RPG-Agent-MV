@@ -7,27 +7,32 @@ import PlanPanel from './PlanPanel.vue'
 import PlacementPanel from './PlacementPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import TaskBoardPanel from './TaskBoardPanel.vue'
+import { useI18n, type MessageKey } from '../../i18n'
 
 const ui = useWorkbenchUiStore()
 const { activeSession } = useSession()
+const { t } = useI18n()
 
 type Tab = Exclude<SidePanelKind, null>
-const TABS: Array<{ key: Tab; label: string }> = [
-  { key: 'task', label: 'TASK' },
-  { key: 'plan', label: 'PLAN' },
-  { key: 'placement', label: '待放置事件' },
-  { key: 'subagent', label: 'subagent' },
+const TABS: Array<{ key: Tab; labelKey: MessageKey }> = [
+  { key: 'task', labelKey: 'sidePanel.task' },
+  { key: 'plan', labelKey: 'sidePanel.plan' },
+  { key: 'placement', labelKey: 'sidePanel.placement' },
+  { key: 'subagent', labelKey: 'sidePanel.subagent' },
 ]
 
 const active = computed<Tab>(() => (ui.sidePanel ?? 'task') as Tab)
-const activeLabel = computed(() => TABS.find((tab) => tab.key === active.value)?.label ?? '')
+const activeLabel = computed(() => {
+  const key = TABS.find((tab) => tab.key === active.value)?.labelKey
+  return key ? t(key) : ''
+})
 </script>
 
 <template>
-  <aside v-if="ui.sidePanel" class="ws-side-panel" aria-label="工作面板">
+  <aside v-if="ui.sidePanel" class="ws-side-panel" :aria-label="t('sidePanel.aria')">
     <header class="wsp-head">
       <h3 class="wsp-title">{{ activeLabel }}</h3>
-      <button type="button" class="wsp-close" title="关闭" @click="ui.closeSidePanel()">
+      <button type="button" class="wsp-close" :title="t('sidePanel.close')" @click="ui.closeSidePanel()">
         <el-icon><Close /></el-icon>
       </button>
     </header>

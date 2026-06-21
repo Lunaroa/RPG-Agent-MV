@@ -1,4 +1,7 @@
 import type { MvMap } from '../composables/useMapRenderer';
+import type { ProductLanguage } from '@contract/types';
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts';
+import { translate } from '../i18n/messages.ts';
 
 export interface PlacementCellValidity {
   valid: boolean;
@@ -38,19 +41,28 @@ export function validatePlacementCell(
   _flags: number[] | null | undefined,
   x: number,
   y: number,
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
 ): PlacementCellValidity {
-  if (!map) return { valid: false, reason: '未加载地图' };
+  language = normalizeProductLanguage(language);
+  if (!map) return { valid: false, reason: translate('placement.cell.mapNotLoaded', language) };
   if (x < 0 || y < 0 || x >= map.width || y >= map.height) {
-    return { valid: false, reason: '超出地图范围' };
+    return { valid: false, reason: translate('placement.cell.outsideBounds', language) };
   }
   if (map.events?.some((event) => event && event.x === x && event.y === y)) {
-    return { valid: false, reason: '该格已有事件' };
+    return { valid: false, reason: translate('placement.cell.hasEvent', language) };
   }
   return { valid: true };
 }
 
-export function placementValidityHint(validity: PlacementCellValidity, cell: { x: number; y: number } | null): string {
-  if (!cell) return '将鼠标移到目标格子上';
-  if (validity.valid) return `左键在 (${cell.x}, ${cell.y}) 放置 · Ctrl+滚轮旋转朝向 · 滚轮平移画布 · 右键菜单`;
-  return validity.reason || '无法在此格放置';
+export function placementValidityHint(
+  validity: PlacementCellValidity,
+  cell: { x: number; y: number } | null,
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
+): string {
+  language = normalizeProductLanguage(language);
+  if (!cell) return translate('placement.cell.moveCursorHint', language);
+  if (validity.valid) {
+    return translate('placement.cell.placeHint', language, { x: cell.x, y: cell.y });
+  }
+  return validity.reason || translate('placement.cell.cannotPlace', language);
 }

@@ -17,4 +17,10 @@ describe('buildMapPickerOptions', () => {
     assert.match(options[1]?.label ?? '', /MAP 1 · World/);
     assert.match(options[2]?.label ?? '', /Town/);
   });
+
+  test('uses English root label in English mode', () => {
+    const options = buildMapPickerOptions([], 'en-US');
+
+    assert.deepEqual(options[0], { id: 0, label: 'Root' });
+  });
 });

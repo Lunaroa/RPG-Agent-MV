@@ -9,10 +9,14 @@ import {
   type PluginParameterSchemaField,
   type PluginValidationIssue,
 } from '../../api/client';
+import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
+import { translatePluginDiagnosticMessage, translatePluginDiagnosticMessages } from '../../utils/pluginDiagnosticsI18n';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
 
 const projectStore = useProjectStore();
+const { language, t } = useI18n();
 const config = ref<PluginConfigurationResult | null>(null);
 const selectedName = ref('');
 const search = ref('');
@@ -26,7 +30,10 @@ const parameterForm = ref<Record<string, unknown>>({});
 
 const plugins = computed(() => config.value?.plugins || []);
 const pluginFiles = computed(() => config.value?.pluginFiles || []);
-const issues = computed(() => config.value?.validation.issues || []);
+const issues = computed(() => (config.value?.validation.issues || []).map((issue) => ({
+  ...issue,
+  message: translatePluginDiagnosticMessage(issue.message, language.value),
+})));
 const blockers = computed(() => issues.value.filter((issue) => issue.severity === 'error'));
 const warnings = computed(() => issues.value.filter((issue) => issue.severity === 'warn'));
 const enabledCount = computed(() => plugins.value.filter((plugin) => plugin.status).length);
@@ -49,11 +56,11 @@ const selectedPlugin = computed(() =>
 
 const schemaFields = computed(() => selectedPlugin.value?.parameterSchema?.fields || []);
 const hasSchemaFields = computed(() => schemaFields.value.length > 0);
-const schemaWarnings = computed(() => selectedPlugin.value?.parameterSchemaWarnings || []);
+const schemaWarnings = computed(() => translatePluginDiagnosticMessages(selectedPlugin.value?.parameterSchemaWarnings || [], language.value));
 const validationStatusLabel = computed(() => {
-  if (blockers.value.length) return '有阻断';
-  if (warnings.value.length || schemaWarnings.value.length) return '有警告';
-  return '插件可用';
+  if (blockers.value.length) return t('plugins.blocked');
+  if (warnings.value.length || schemaWarnings.value.length) return t('plugins.warnings');
+  return t('plugins.available');
 });
 const technicalIssueCount = computed(() => issues.value.length + schemaWarnings.value.length);
 const parametersDirty = computed(() => {
@@ -104,7 +111,7 @@ async function loadPlugins() {
     applyConfig(await pluginApi.read(projectStore.currentProject));
   } catch (loadError) {
     config.value = null;
-    error.value = (loadError as Error).message;
+    error.value = formatUserFacingErrorMessage(loadError, 'general', language.value);
   } finally {
     loading.value = false;
   }
@@ -119,7 +126,7 @@ async function runAction(key: string, action: () => Promise<PluginConfigurationR
     applyConfig(await action());
     actionMessage.value = message;
   } catch (actionError) {
-    error.value = (actionError as Error).message;
+    error.value = formatUserFacingErrorMessage(actionError, 'general', language.value);
   } finally {
     busyKey.value = '';
   }
@@ -142,7 +149,7 @@ async function togglePlugin(plugin: ManagedPluginEntry) {
   await runAction(
     `toggle:${plugin.name}`,
     () => pluginApi.setEnabled(plugin.name, nextEnabled, projectStore.currentProject),
-    nextEnabled ? `已启用 ${plugin.name}` : `已禁用 ${plugin.name}`,
+    nextEnabled ? t('plugins.enabledPlugin', { name: plugin.name }) : t('plugins.disabledPlugin', { name: plugin.name }),
   );
 }
 
@@ -155,7 +162,7 @@ async function movePlugin(plugin: ManagedPluginEntry, delta: -1 | 1) {
   await runAction(
     `move:${plugin.name}:${delta}`,
     () => pluginApi.reorder(names, projectStore.currentProject),
-    `已调整 ${plugin.name} 的加载顺序`,
+    t('plugins.adjustedOrder', { name: plugin.name }),
   );
 }
 
@@ -168,7 +175,7 @@ async function saveParameters() {
   await runAction(
     `params:${plugin.name}`,
     () => pluginApi.updateParameters(plugin.name, parsed, projectStore.currentProject),
-    `已保存 ${plugin.name} 的参数`,
+    t('plugins.savedParams', { name: plugin.name }),
   );
 }
 
@@ -203,11 +210,13 @@ function parseParameterJson(reportErrors: boolean): Record<string, unknown> | nu
   try {
     parsed = JSON.parse(parametersText.value || '{}');
   } catch (parseError) {
-    if (reportErrors) parametersError.value = `JSON 解析失败：${(parseError as Error).message}`;
+    if (reportErrors) parametersError.value = t('plugins.jsonParseFailed', { message: (parseError as Error).message });
     return null;
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    if (reportErrors) parametersError.value = hasSchemaFields.value ? '未识别参数必须是 JSON 对象' : 'parameters 必须是 JSON 对象';
+    if (reportErrors) parametersError.value = hasSchemaFields.value
+      ? t('plugins.unknownParamsMustBeObject')
+      : t('plugins.paramsMustBeObject');
     return null;
   }
   return parsed as Record<string, unknown>;
@@ -399,7 +408,7 @@ function fieldMeta(field: PluginParameterSchemaField) {
 }
 
 function formatSize(file: ManagedPluginFile) {
-  if (file.size === null) return '未知';
+  if (file.size === null) return t('plugins.unknown');
   if (file.size < 1024) return `${file.size} B`;
   if (file.size < 1024 * 1024) return `${(file.size / 1024).toFixed(1)} KB`;
   return `${(file.size / 1024 / 1024).toFixed(1)} MB`;
@@ -408,26 +417,38 @@ function formatSize(file: ManagedPluginFile) {
 function issueClass(issue: PluginValidationIssue) {
   return issue.severity === 'error' ? 'error' : 'warn';
 }
+
+function pluginDescription(plugin: ManagedPluginEntry): string {
+  return plugin.description || plugin.fileRelativePath || t('plugins.noDescription');
+}
+
+function pluginFileStatus(file: ManagedPluginFile): string {
+  if (file.deleted) return t('plugins.pendingDelete');
+  if (file.staged) return t('plugins.staged');
+  if (file.exists) return formatSize(file);
+  return t('plugins.missing');
+}
+
 </script>
 
 <template>
   <div class="console-subpage plugins-pane">
-    <div v-if="!projectStore.currentProject" class="state">请先添加并选择 RPG Maker MV 项目。</div>
-    <div v-else-if="loading" class="state">正在读取插件配置…</div>
+    <div v-if="!projectStore.currentProject" class="state">{{ t('plugins.selectProjectFirst') }}</div>
+    <div v-else-if="loading" class="state">{{ t('plugins.loadingConfig') }}</div>
     <div v-else class="plugins-layout">
       <aside class="plugin-list-panel">
         <div class="panel-title">
-          <span>插件配置</span>
-          <button type="button" title="刷新" :disabled="Boolean(busyKey)" @click="loadPlugins">
+          <span>{{ t('plugins.configTitle') }}</span>
+          <button type="button" :title="t('plugins.refresh')" :disabled="Boolean(busyKey)" @click="loadPlugins">
             <Refresh />
           </button>
         </div>
         <div class="summary">
-          <div><strong>{{ plugins.length }}</strong><span>配置项</span></div>
-          <div><strong>{{ enabledCount }}</strong><span>已启用</span></div>
-          <div :class="{ bad: missingFileCount }"><strong>{{ missingFileCount }}</strong><span>缺文件</span></div>
+          <div><strong>{{ plugins.length }}</strong><span>{{ t('plugins.entries') }}</span></div>
+          <div><strong>{{ enabledCount }}</strong><span>{{ t('plugins.enabled') }}</span></div>
+          <div :class="{ bad: missingFileCount }"><strong>{{ missingFileCount }}</strong><span>{{ t('plugins.missingFile') }}</span></div>
         </div>
-        <ConsoleSearchInput v-model="search" placeholder="搜索插件" />
+        <ConsoleSearchInput v-model="search" :placeholder="t('plugins.searchPlaceholder')" />
         <div v-if="error" class="status error">{{ error }}</div>
         <div v-if="actionMessage" class="status success">{{ actionMessage }}</div>
         <div class="plugin-list">
@@ -441,42 +462,42 @@ function issueClass(issue: PluginValidationIssue) {
           >
             <span class="plugin-main">
               <strong>{{ plugin.name || `#${plugin.index + 1}` }}</strong>
-              <small>{{ plugin.description || plugin.fileRelativePath || '无描述' }}</small>
+              <small>{{ pluginDescription(plugin) }}</small>
             </span>
             <span class="plugin-badges">
               <b :class="plugin.status ? 'on' : 'off'">{{ plugin.status ? 'ON' : 'OFF' }}</b>
               <b :class="plugin.fileExists ? 'ok' : 'missing'">{{ plugin.fileExists ? 'JS' : 'MISS' }}</b>
             </span>
           </button>
-          <div v-if="!filteredPlugins.length" class="empty">{{ plugins.length ? '没有匹配插件' : 'plugins.js 没有配置项' }}</div>
+          <div v-if="!filteredPlugins.length" class="empty">{{ plugins.length ? t('plugins.noMatch') : t('plugins.noEntries') }}</div>
         </div>
       </aside>
 
       <main class="plugin-detail-panel">
         <div class="panel-title">
-          <span>{{ selectedPlugin?.name || '插件详情' }}</span>
+          <span>{{ selectedPlugin?.name || t('plugins.details') }}</span>
           <span v-if="config" class="path-chip">{{ config.relativePath }}</span>
         </div>
-        <div v-if="!config" class="state error">插件配置读取失败。</div>
+        <div v-if="!config" class="state error">{{ t('plugins.configLoadFailed') }}</div>
         <template v-else>
           <section class="validation-strip" :class="{ blocked: blockers.length, clean: !technicalIssueCount }">
             <strong>{{ validationStatusLabel }}</strong>
           </section>
 
           <details v-if="technicalIssueCount" class="technical-details">
-            <summary>查看技术详情（{{ technicalIssueCount }} 条）</summary>
+            <summary>{{ t('plugins.showTechnicalDetails', { count: technicalIssueCount }) }}</summary>
             <div class="technical-detail-body">
               <div v-if="issues.length" class="technical-detail-section">
-                <strong>配置诊断</strong>
+                <strong>{{ t('plugins.configDiag') }}</strong>
                 <div class="issue-list">
                   <div v-for="issue in issues" :key="`${issue.code}:${issue.index ?? ''}:${issue.pluginName ?? ''}`" class="issue" :class="issueClass(issue)">
-                    <strong>{{ issue.severity === 'error' ? '阻断' : '警告' }}</strong>
+                    <strong>{{ issue.severity === 'error' ? t('plugins.blocker') : t('plugins.warning') }}</strong>
                     <span>{{ issue.message }}</span>
                   </div>
                 </div>
               </div>
               <div v-if="schemaWarnings.length" class="technical-detail-section">
-                <strong>当前插件参数解析</strong>
+                <strong>{{ t('plugins.paramParsing') }}</strong>
                 <div class="schema-warnings">
                   <div v-for="warning in schemaWarnings" :key="warning">{{ warning }}</div>
                 </div>
@@ -487,22 +508,22 @@ function issueClass(issue: PluginValidationIssue) {
           <section v-if="selectedPlugin" class="detail-card">
             <div class="plugin-toolbar">
               <button type="button" :disabled="Boolean(busyKey) || !selectedPlugin.name" @click="togglePlugin(selectedPlugin)">
-                {{ selectedPlugin.status ? '禁用' : '启用' }}
+                {{ selectedPlugin.status ? t('plugins.disable') : t('plugins.enable') }}
               </button>
-              <button type="button" title="上移" :disabled="!canMove(selectedPlugin, -1)" @click="movePlugin(selectedPlugin, -1)">
+              <button type="button" :title="t('plugins.moveUp')" :disabled="!canMove(selectedPlugin, -1)" @click="movePlugin(selectedPlugin, -1)">
                 <ArrowUp />
               </button>
-              <button type="button" title="下移" :disabled="!canMove(selectedPlugin, 1)" @click="movePlugin(selectedPlugin, 1)">
+              <button type="button" :title="t('plugins.moveDown')" :disabled="!canMove(selectedPlugin, 1)" @click="movePlugin(selectedPlugin, 1)">
                 <ArrowDown />
               </button>
             </div>
 
             <dl class="facts">
-              <dt>名称</dt><dd>{{ selectedPlugin.name || '未命名' }}</dd>
-              <dt>顺序</dt><dd>#{{ selectedPlugin.index + 1 }}</dd>
-              <dt>状态</dt><dd>{{ selectedPlugin.status ? '启用' : '禁用' }}</dd>
-              <dt>文件</dt><dd :class="{ danger: !selectedPlugin.fileExists }">{{ selectedPlugin.fileExists ? selectedPlugin.fileRelativePath : `${selectedPlugin.fileName || '插件文件'} 缺失` }}</dd>
-              <dt>参数</dt><dd>{{ selectedPlugin.parameterCount }} 项</dd>
+              <dt>{{ t('plugins.name') }}</dt><dd>{{ selectedPlugin.name || t('plugins.unnamed') }}</dd>
+              <dt>{{ t('plugins.order') }}</dt><dd>#{{ selectedPlugin.index + 1 }}</dd>
+              <dt>{{ t('plugins.status') }}</dt><dd>{{ selectedPlugin.status ? t('plugins.statusEnabled') : t('plugins.statusDisabled') }}</dd>
+              <dt>{{ t('plugins.file') }}</dt><dd :class="{ danger: !selectedPlugin.fileExists }">{{ selectedPlugin.fileExists ? selectedPlugin.fileRelativePath : t('plugins.fileMissing', { fileName: selectedPlugin.fileName || t('plugins.pluginFileFallback') }) }}</dd>
+              <dt>{{ t('plugins.parameters') }}</dt><dd>{{ t('plugins.paramCount', { count: selectedPlugin.parameterCount }) }}</dd>
             </dl>
 
             <div v-if="schemaFields.length" class="schema-params">
@@ -596,7 +617,7 @@ function issueClass(issue: PluginValidationIssue) {
                   <div v-for="(_, index) in arrayItems(field)" :key="`${field.key}:${index}`" class="array-row">
                     <div class="array-row-head">
                       <strong>#{{ index + 1 }}</strong>
-                      <button type="button" @click="removeArrayItem(field, index)">删除</button>
+                      <button type="button" @click="removeArrayItem(field, index)">{{ t('cmdList.delete') }}</button>
                     </div>
                     <div v-if="field.item?.kind === 'struct'" class="struct-editor">
                       <label v-for="child in field.item.fields || []" :key="child.key" class="nested-field">
@@ -683,8 +704,8 @@ function issueClass(issue: PluginValidationIssue) {
                       />
                     </template>
                   </div>
-                  <button type="button" class="array-add" @click="addArrayItem(field)">添加条目</button>
-                  <small v-if="!arrayItems(field).length">数组为空</small>
+                  <button type="button" class="array-add" @click="addArrayItem(field)">{{ t('plugins.addItem') }}</button>
+                  <small v-if="!arrayItems(field).length">{{ t('plugins.arrayEmpty') }}</small>
                 </div>
                 <small v-if="field.description || fieldMeta(field)">
                   {{ [field.description, fieldMeta(field)].filter(Boolean).join(' · ') }}
@@ -693,35 +714,35 @@ function issueClass(issue: PluginValidationIssue) {
             </div>
 
             <label class="params-editor">
-              <span><EditPen /> {{ schemaFields.length ? '未识别参数 JSON' : 'parameters JSON' }}</span>
+              <span><EditPen /> {{ schemaFields.length ? t('plugins.unknownParamsJson') : 'parameters JSON' }}</span>
               <textarea v-model="parametersText" spellcheck="false" @keydown.ctrl.enter.prevent="saveParameters" />
             </label>
             <div v-if="parametersError" class="status error">{{ parametersError }}</div>
             <button type="button" class="primary" :disabled="Boolean(busyKey) || !parametersDirty" @click="saveParameters">
-              {{ busyKey === `params:${selectedPlugin.name}` ? '保存中…' : '保存参数' }}
+              {{ busyKey === `params:${selectedPlugin.name}` ? t('ui.saving') : t('plugins.saveParams') }}
             </button>
           </section>
-          <div v-else class="empty">选择一个插件编辑配置</div>
+          <div v-else class="empty">{{ t('plugins.selectToEdit') }}</div>
         </template>
       </main>
 
       <aside class="plugin-files-panel">
-        <div class="panel-title">插件文件</div>
+        <div class="panel-title">{{ t('plugins.pluginFiles') }}</div>
         <div class="file-list">
           <div v-for="file in pluginFiles" :key="file.relativePath" class="file-row" :class="{ staged: file.staged, deleted: file.deleted }">
             <strong>{{ file.fileName }}</strong>
             <small>{{ file.relativePath }}</small>
             <span>
-              {{ file.deleted ? '待删除' : file.staged ? '暂存' : file.exists ? formatSize(file) : '缺失' }}
+              {{ pluginFileStatus(file) }}
             </span>
           </div>
-          <div v-if="!pluginFiles.length" class="empty">没有发现插件 JS 文件</div>
+          <div v-if="!pluginFiles.length" class="empty">{{ t('plugins.noJsFiles') }}</div>
         </div>
         <div v-if="orphanFiles.length" class="orphan-block">
-          <strong>未配置文件</strong>
+          <strong>{{ t('plugins.unconfiguredFiles') }}</strong>
           <span v-for="file in orphanFiles" :key="file.relativePath">{{ file.fileName }}</span>
         </div>
-        <div class="file-note">本页暂不暴露本地文件安装和删除；没有安全文件选择入口前，不给用户假按钮。</div>
+        <div class="file-note">{{ t('plugins.noFilePicker') }}</div>
       </aside>
     </div>
   </div>

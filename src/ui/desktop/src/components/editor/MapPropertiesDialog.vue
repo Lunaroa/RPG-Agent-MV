@@ -1,13 +1,13 @@
 <template>
-  <el-dialog :model-value="visible" :title="mode === 'create' ? '新建地图' : '地图属性'" width="760px" :close-on-click-modal="false" @close="$emit('close')">
+  <el-dialog :model-value="visible" :title="mode === 'create' ? t('editor.mapProperties.createTitle') : t('editor.mapProperties.editTitle')" width="760px" :close-on-click-modal="false" @close="$emit('close')">
     <el-form label-position="top" size="small">
       <div class="property-grid">
-        <el-form-item label="名称"><el-input v-model="form.name" autofocus /></el-form-item>
-        <el-form-item label="显示名称"><el-input v-model="form.displayName" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.name')"><el-input v-model="form.name" autofocus /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.displayName')"><el-input v-model="form.displayName" /></el-form-item>
       </div>
       <div class="property-grid">
-        <el-form-item label="宽度"><el-input-number v-model="form.width" :min="1" :max="256" controls-position="right" /></el-form-item>
-        <el-form-item label="高度"><el-input-number v-model="form.height" :min="1" :max="256" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.width')"><el-input-number v-model="form.width" :min="1" :max="256" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.height')"><el-input-number v-model="form.height" :min="1" :max="256" controls-position="right" /></el-form-item>
       </div>
       <div class="property-grid">
         <el-form-item label="Tileset">
@@ -15,75 +15,75 @@
             <el-option v-for="tileset in tilesets" :key="tileset.id" :label="`${tileset.id} · ${tileset.name}`" :value="tileset.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="卷动类型">
+        <el-form-item :label="t('editor.mapProperties.scrollType')">
           <el-select v-model="form.scrollType" style="width: 100%">
-            <el-option label="无循环" :value="0" />
-            <el-option label="纵向循环" :value="1" />
-            <el-option label="横向循环" :value="2" />
-            <el-option label="横向和纵向循环" :value="3" />
+            <el-option :label="t('editor.mapProperties.scroll.none')" :value="0" />
+            <el-option :label="t('editor.mapProperties.scroll.vertical')" :value="1" />
+            <el-option :label="t('editor.mapProperties.scroll.horizontal')" :value="2" />
+            <el-option :label="t('editor.mapProperties.scroll.both')" :value="3" />
           </el-select>
         </el-form-item>
       </div>
-      <el-form-item v-if="mode === 'create'" label="父地图">
+      <el-form-item v-if="mode === 'create'" :label="t('editor.mapProperties.parentMap')">
         <el-input :model-value="parentLabel" disabled />
       </el-form-item>
 
       <div class="check-row">
-        <el-checkbox v-model="form.disableDashing">禁止奔跑</el-checkbox>
-        <el-checkbox v-model="form.specifyBattleback">指定战斗背景</el-checkbox>
+        <el-checkbox v-model="form.disableDashing">{{ t('editor.mapProperties.disableDashing') }}</el-checkbox>
+        <el-checkbox v-model="form.specifyBattleback">{{ t('editor.mapProperties.specifyBattleback') }}</el-checkbox>
       </div>
       <div class="property-grid">
-        <el-form-item label="战斗背景 1">
-          <button type="button" class="asset-picker-button" @click="openImagePicker('battleback1Name', 'battlebacks1', '选择战斗背景 1')">{{ imageLabel(form.battleback1Name) }}</button>
+        <el-form-item :label="t('editor.mapProperties.battleback1')">
+          <button type="button" class="asset-picker-button" @click="openImagePicker('battleback1Name', 'battlebacks1', t('editor.mapProperties.pickBattleback1'))">{{ imageLabel(form.battleback1Name) }}</button>
         </el-form-item>
-        <el-form-item label="战斗背景 2">
-          <button type="button" class="asset-picker-button" @click="openImagePicker('battleback2Name', 'battlebacks2', '选择战斗背景 2')">{{ imageLabel(form.battleback2Name) }}</button>
+        <el-form-item :label="t('editor.mapProperties.battleback2')">
+          <button type="button" class="asset-picker-button" @click="openImagePicker('battleback2Name', 'battlebacks2', t('editor.mapProperties.pickBattleback2'))">{{ imageLabel(form.battleback2Name) }}</button>
         </el-form-item>
       </div>
 
       <div class="section-title">BGM / BGS</div>
       <div class="check-row">
-        <el-checkbox v-model="form.autoplayBgm">自动播放 BGM</el-checkbox>
-        <el-checkbox v-model="form.autoplayBgs">自动播放 BGS</el-checkbox>
+        <el-checkbox v-model="form.autoplayBgm">{{ t('editor.mapProperties.autoplayBgm') }}</el-checkbox>
+        <el-checkbox v-model="form.autoplayBgs">{{ t('editor.mapProperties.autoplayBgs') }}</el-checkbox>
       </div>
       <div class="audio-grid">
         <el-form-item label="BGM"><el-input v-model="form.bgm.name" /></el-form-item>
-        <el-form-item label="音量"><el-input-number v-model="form.bgm.volume" :min="0" :max="100" controls-position="right" /></el-form-item>
-        <el-form-item label="音调"><el-input-number v-model="form.bgm.pitch" :min="50" :max="150" controls-position="right" /></el-form-item>
-        <el-form-item label="声像"><el-input-number v-model="form.bgm.pan" :min="-100" :max="100" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.volume')"><el-input-number v-model="form.bgm.volume" :min="0" :max="100" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.pitch')"><el-input-number v-model="form.bgm.pitch" :min="50" :max="150" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.pan')"><el-input-number v-model="form.bgm.pan" :min="-100" :max="100" controls-position="right" /></el-form-item>
         <el-form-item label="BGS"><el-input v-model="form.bgs.name" /></el-form-item>
-        <el-form-item label="音量"><el-input-number v-model="form.bgs.volume" :min="0" :max="100" controls-position="right" /></el-form-item>
-        <el-form-item label="音调"><el-input-number v-model="form.bgs.pitch" :min="50" :max="150" controls-position="right" /></el-form-item>
-        <el-form-item label="声像"><el-input-number v-model="form.bgs.pan" :min="-100" :max="100" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.volume')"><el-input-number v-model="form.bgs.volume" :min="0" :max="100" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.pitch')"><el-input-number v-model="form.bgs.pitch" :min="50" :max="150" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.pan')"><el-input-number v-model="form.bgs.pan" :min="-100" :max="100" controls-position="right" /></el-form-item>
       </div>
 
-      <div class="section-title">远景</div>
+      <div class="section-title">{{ t('editor.mapProperties.parallax') }}</div>
       <div class="property-grid">
-        <el-form-item label="远景图">
-          <button type="button" class="asset-picker-button" @click="openImagePicker('parallaxName', 'parallaxes', '选择远景图')">{{ imageLabel(form.parallaxName) }}</button>
+        <el-form-item :label="t('editor.mapProperties.parallaxImage')">
+          <button type="button" class="asset-picker-button" @click="openImagePicker('parallaxName', 'parallaxes', t('editor.mapProperties.pickParallax'))">{{ imageLabel(form.parallaxName) }}</button>
         </el-form-item>
-        <el-form-item label="显示在编辑器中"><el-checkbox v-model="form.parallaxShow" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.showInEditor')"><el-checkbox v-model="form.parallaxShow" /></el-form-item>
       </div>
       <div class="property-grid">
-        <el-form-item label="横向滚动"><el-input-number v-model="form.parallaxSx" :min="-32" :max="32" controls-position="right" /></el-form-item>
-        <el-form-item label="纵向滚动"><el-input-number v-model="form.parallaxSy" :min="-32" :max="32" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.horizontalScroll')"><el-input-number v-model="form.parallaxSx" :min="-32" :max="32" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.verticalScroll')"><el-input-number v-model="form.parallaxSy" :min="-32" :max="32" controls-position="right" /></el-form-item>
       </div>
       <div class="check-row">
-        <el-checkbox v-model="form.parallaxLoopX">横向循环</el-checkbox>
-        <el-checkbox v-model="form.parallaxLoopY">纵向循环</el-checkbox>
+        <el-checkbox v-model="form.parallaxLoopX">{{ t('editor.mapProperties.horizontalLoop') }}</el-checkbox>
+        <el-checkbox v-model="form.parallaxLoopY">{{ t('editor.mapProperties.verticalLoop') }}</el-checkbox>
       </div>
 
       <div class="property-grid">
-        <el-form-item label="遭遇步数"><el-input-number v-model="form.encounterStep" :min="1" :max="999" controls-position="right" /></el-form-item>
-        <el-form-item label="备注"><el-input v-model="form.note" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.encounterStep')"><el-input-number v-model="form.encounterStep" :min="1" :max="999" controls-position="right" /></el-form-item>
+        <el-form-item :label="t('editor.mapProperties.note')"><el-input v-model="form.note" /></el-form-item>
       </div>
-      <el-form-item label="遭遇列表 JSON">
+      <el-form-item :label="t('editor.mapProperties.encounterListJson')">
         <el-input v-model="form.encounterListText" type="textarea" :rows="4" spellcheck="false" />
       </el-form-item>
     </el-form>
     <template #footer>
-      <el-button size="small" @click="$emit('close')">取消</el-button>
-      <el-button size="small" type="primary" :loading="busy" @click="$emit('save')">{{ mode === 'create' ? '创建地图' : '保存属性' }}</el-button>
+      <el-button size="small" @click="$emit('close')">{{ t('editor.mapProperties.cancel') }}</el-button>
+      <el-button size="small" type="primary" :loading="busy" @click="$emit('save')">{{ mode === 'create' ? t('editor.mapProperties.createAction') : t('editor.mapProperties.saveAction') }}</el-button>
     </template>
   </el-dialog>
   <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="safeLoadImage" @commit="commitImageSelection" />
@@ -94,6 +94,7 @@ import { ref } from 'vue';
 import type { EditorProjectCatalog, TilesetSummary } from '../../api/client';
 import type { MapPropertiesForm } from './editorTypes';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
+import { useI18n } from '../../i18n';
 
 type ImageAssetKind = keyof EditorProjectCatalog['assets'];
 type ImageField = 'battleback1Name' | 'battleback2Name' | 'parallaxName';
@@ -111,10 +112,11 @@ const props = defineProps<{
 defineEmits<{ close: []; save: [] }>();
 
 const imagePicker = ref<InstanceType<typeof ImageAssetPickerDialog> | null>(null);
+const { t } = useI18n();
 let pendingImageField: ImageField | null = null;
 
 function imageLabel(value: string): string {
-  return value || '(无)';
+  return value || t('editor.mapProperties.none');
 }
 
 function openImagePicker(field: ImageField, asset: ImageAssetKind, title: string): void {

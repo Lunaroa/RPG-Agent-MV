@@ -1,175 +1,179 @@
 # RPG-Agent-MV
 
-面向个人 RPG Maker MV 制作者的本地 AI制作助手。
+English | [简体中文](README.zh-CN.md)
 
-RPG-Agent-MV 将自然语言目标转换为 RPG Maker MV 项目里的事件、脚本和批量修改任务。它适合个人作者在已有工程上推进剧情、整理事件、改脚本和处理插件相关问题。
+A local AI production assistant for individual RPG Maker MV creators.
+
+RPG-Agent-MV turns natural-language production goals into RPG Maker MV event work, script edits, and controlled batch changes inside an existing project. It is designed for solo creators who already have a real RMMV project and want help moving story, event, script, and plugin work forward without losing reviewability.
 
 ![Version](https://img.shields.io/badge/version-0.1.1-blue.svg)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22.5.0-339933.svg)
 ![Electron](https://img.shields.io/badge/built%20with-Electron-47848F.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
-[用户手册](docs/README.md) | [快速开始](#快速开始) | [源码运行](#源码运行) | [项目边界](#项目边界)
+[User Guide](docs/en/README.md) | [Quick Start](#quick-start) | [Run From Source](#run-from-source) | [Project Boundaries](#project-boundaries)
 
-## 它能做什么
+## What It Does
 
-### 自然语言生成事件
+### Generate Event Drafts From Natural Language
 
-直接描述你想要的 NPC、剧情段、任务提示、机关或演出效果，Agent 会读取当前项目内容，生成符合 RPG Maker MV 结构的事件内容。
+Describe an NPC, a story beat, a quest hint, a signpost, a trigger, or a small scene. The Agent reads the current project context and prepares RMMV-compatible event content.
 
-适合这类需求：
+Good first tasks include:
 
-- 写一个村民 NPC 的对话和后续分支。
-- 做一个任务开始、推进、完成的事件。
-- 准备一个宝箱、传送点、提示牌或剧情触发点。
-- 根据已有地图和素材生成一段可放进项目里的事件。
+- A villager NPC with dialogue and a follow-up branch.
+- A quest start, quest update, or quest completion event.
+- A chest, transfer point, signpost, or story trigger.
+- A new event draft based on maps and assets that already exist in the project.
 
-### 批量修改旧事件
+New events are not placed automatically at guessed coordinates. The Agent prepares or registers the event, then the user reviews it and places it on the RPG-Agent-MV desktop map canvas.
 
-当项目里已经有很多地图和事件时，可以用自然语言描述要统一修改的内容，由 Agent 读取项目事实并批量处理。
+### Batch-Edit Existing Events
 
-适合这类需求：
+When a project already has many maps and events, describe the change in natural language and let the Agent read project facts before applying controlled edits.
 
-- 把一批 NPC 的台词风格改得更一致。
-- 给多个事件补同一种开关、变量或条件。
-- 批量调整提示牌、商店、传送点或任务事件。
-- 查找旧事件里不合理的逻辑并统一整理。
+Typical uses:
 
-### 写脚本和改插件相关逻辑
+- Make a group of NPC greetings more consistent.
+- Add similar switch, variable, or condition logic to multiple events.
+- Clean up signposts, shops, transfer points, or quest events.
+- Find old event logic that looks inconsistent and organize it.
 
-RPG Maker MV 项目经常需要改 JavaScript、看插件参数或补一点项目逻辑。RPG-Agent-MV 可以读取现有脚本和插件配置，再按需求写入或调整代码。
+### Assist With Scripts and Plugin-Related Logic
 
-适合这类需求：
+RPG Maker MV projects often need JavaScript edits, plugin parameter checks, or small utility scripts. RPG-Agent-MV can inspect the project state and help write or adjust code.
 
-- 写一个小脚本解决项目里的重复操作。
-- 修改已有插件调用方式。
-- 查找某个菜单、战斗、道具或事件行为来自哪里。
-- 根据项目现状给出脚本修改建议。
+Typical uses:
 
-### 理解当前项目
+- Write a small script command for repeated project logic.
+- Adjust an existing plugin call.
+- Find where a menu, battle, item, or event behavior comes from.
+- Suggest a script edit based on the current project state.
 
-Agent 会围绕你选择的 RPG Maker MV 工程工作，读取地图、事件、素材、数据库和插件状态，而不是只凭空写一段文本。
+### Understand The Current Project
 
-这让它更适合个人项目里的日常制作：输入“把这个镇子的 NPC 都改得更像边境小镇居民”后，系统会先读取项目已有内容，再推进具体修改。
+RPG-Agent-MV works around the selected RPG Maker MV project. It reads maps, events, assets, database entries, plugins, switches, variables, and other project context instead of generating isolated text.
 
-## 项目边界
+This makes it better suited to daily production work in an existing game project, such as: "make the NPCs in this town sound more like frontier-town residents."
 
-RPG-Agent-MV 不是完整游戏生成器，也不是 RPG Maker MV 的替代品。
+## Project Boundaries
 
-它当前不承诺：
+RPG-Agent-MV is not a full game generator and it does not replace the RPG Maker MV editor.
 
-- 从零生成完整游戏。
-- 自动生成地图、美术、音频或缺失素材。
-- 自动理解所有第三方插件的完整语义。
-- 替代你对剧情、角色、演出和最终效果的判断。
+It does not currently promise to:
 
-它更适合处理个人制作里的重复工作：把制作目标落进项目，减少重复点事件、翻旧脚本和手动批量修改的时间。
+- Generate a complete game from scratch.
+- Automatically generate maps, art, audio, or missing assets.
+- Fully understand every third-party plugin's semantics.
+- Decide exact coordinates for new events without user placement.
+- Replace the creator's judgment about story, characters, staging, or final quality.
 
-## 界面预览
+It is meant to reduce repetitive production work: placing production goals into a real project, reviewing the result, and keeping changes visible and reversible.
 
-| 项目界面 | 控制台界面 |
-|----------|------------|
-| ![项目界面](docs/assets/preview/project-workspace.png) | ![控制台界面](docs/assets/preview/console-workspace.png) |
+## Preview
 
-## 快速开始
+| Home | Console |
+|---|---|
+| ![Home](docs/assets/preview/home-workspace.png) | ![Console](docs/assets/preview/console-workspace.png) |
 
-1. 准备一个可以正常打开的 RPG Maker MV 项目。
-2. 启动 RPG-Agent-MV 桌面应用。
-3. 在设置中配置模型供应商和 API Key。
-4. 选择你的 RMMV 项目。
-5. 用自然语言描述你要生成的事件、要批量修改的旧事件，或要写的脚本。
-6. 查看生成结果，并选择调整、补充或应用到项目。
+## Quick Start
 
-示例请求：
+1. Prepare a real RPG Maker MV project that opens correctly in RPG Maker MV.
+2. Start the RPG-Agent-MV desktop app.
+3. Configure a model provider and API key in Settings.
+4. Select your RMMV project.
+5. Describe the event, batch edit, or script task in natural language.
+6. Review the generated result before applying or keeping it.
+
+Example requests:
 
 ```text
-为 Map003 准备一个老人 NPC 事件。
-第一次对话时，老人提醒主角去北边森林找失踪的猎人。
-任务接受后打开一个开关，后续对话改为催促玩家尽快出发。
+Prepare a placeable old-man NPC event for Map003.
+On the first conversation, he tells the player to look for the missing hunter in the northern forest.
+After the quest is accepted, turn on a switch; later dialogue should urge the player to leave soon.
 ```
 
 ```text
-把所有村民的普通问候台词改得更像边境小镇居民。
-保留原本的任务提示和商店功能，不要改剧情关键 NPC。
+Rewrite ordinary villager greeting lines so they sound more like frontier-town residents.
+Keep existing quest hints and shop behavior. Do not change key story NPCs.
 ```
 
 ```text
-写一个脚本命令：
-根据变量 12 的值，给玩家发放对应数量的治疗药水，并在没有物品时显示提示。
+Write a script command:
+based on variable 12, give the player that many healing potions, and show a message if there are none.
 ```
 
-## 源码运行
+## Run From Source
 
-### 环境要求
+### Requirements
 
 - Windows
-- Node.js 22.5 或更高版本
+- Node.js 22.5 or later
 - npm
-- 一个真实的 RPG Maker MV 项目
+- A real RPG Maker MV project
 
-### 安装依赖
+### Install Dependencies
 
-先进入 `RPG-Agent-MV` 根目录，再执行：
+From the `RPG-Agent-MV` root:
 
 ```powershell
 cd RPG-Agent-MV
 npm run install:deps
 ```
 
-如果要在源码模式下直接使用本地 Agent，或在当前机器构建安装包，再显式构建一次运行工具：
+If you want to use the local Agent directly from source, or build an installer on the current machine, explicitly build the runtime tool once:
 
 ```powershell
 npm run build:opencode-runtime
 ```
 
-### 启动桌面端
+### Start The Desktop App
 
-依赖装完后，再从根目录执行：
+After dependencies are installed, run:
 
 ```powershell
 npm --prefix src/ui/desktop run dev
 ```
 
-
-## 仓库结构
+## Repository Layout
 
 ```text
 RPG-Agent-MV/
-├─ config/              # Agent、供应商和运行配置
-├─ data/                # 应用持久数据
-├─ docs/                # 用户手册
-├─ projects/            # 本地 RMMV 项目投放区，只保留 README
-├─ runtime/             # 会话、日志、trace、临时输出和本地密钥
+├─ config/              # Agent, provider, and runtime configuration
+├─ data/                # Persistent application data
+├─ docs/                # User documentation
+├─ projects/            # Local RMMV project drop zone; only README is tracked
+├─ runtime/             # Sessions, logs, traces, temporary output, and local secrets
 ├─ src/
-│  ├─ backend/          # 项目识别、索引、Agent 编排和检查
-│  ├─ contract/         # 前后端共享类型与协议
-│  ├─ py/               # Python 辅助能力
-│  └─ ui/desktop/       # Electron 桌面应用
-├─ third_party/         # 第三方源码和运行时来源记录，安装包只带必要运行文件
+│  ├─ backend/          # Project detection, indexing, Agent orchestration, and checks
+│  ├─ contract/         # Shared frontend/backend types and protocols
+│  ├─ py/               # Python helper capabilities
+│  └─ ui/desktop/       # Electron desktop app
+├─ third_party/         # Third-party source and runtime provenance
 └─ package.json
 ```
 
-## 文档
+## Documentation
 
-| 文档 | 内容 |
-|------|------|
-| [用户手册](docs/README.md) | 完整使用说明 |
-| [安装与启动](docs/1-getting-started/1.2-installation.md) | 运行前提、启动流程和基础自检 |
-| [快速上手](docs/1-getting-started/1.4-quickstart.md) | 第一次事件生成任务 |
-| [项目接入](docs/2-projects/2.1-project.md) | 选择和管理 RMMV 项目 |
-| [模型与运行检测](docs/5-faq/5.3-model-check.md) | 排查模型不可用和运行失败 |
+| Document | Contents |
+|---|---|
+| [English User Guide](docs/en/README.md) | English first-use guide and setup troubleshooting |
+| [中文用户手册](docs/README.md) | Full Chinese user guide |
+| [Installation](docs/en/getting-started/installation.md) | Requirements, startup flow, and first checks |
+| [First Task](docs/en/getting-started/quickstart.md) | A safe first event-generation workflow |
+| [Project Setup](docs/en/projects/project.md) | Selecting and managing an RMMV project |
+| [Model and Runtime Checks](docs/en/faq/model-check.md) | Troubleshooting model and runtime failures |
 
+## Community
 
-## 社区
+The current community channel is Chinese-language:
 
-欢迎Agent开发者和对 RPG Maker MV 制作感兴趣的创作者入群交流、反馈问题或一起参与开发。
-
-- QQ 群：943573784
+- QQ group: 943573784
 
 ## License
 
 Apache-2.0
 
-项目自有代码、后端和桌面端包装代码均采用 Apache-2.0。安装包随附 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)，用于说明随产品分发的第三方组件、运行时和依赖许可。
+Project-owned code, backend code, and desktop wrapper code are licensed under Apache-2.0. Distributed builds include [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), which documents third-party components, runtimes, and dependencies shipped with the product.
 
 RPG-Agent-MV is an independent third-party tool designed to work with RPG Maker MV projects.

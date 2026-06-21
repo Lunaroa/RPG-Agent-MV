@@ -19,7 +19,7 @@ interface ListModelsResult {
   error?: string;
 }
 
-const DEFAULT_VARIANTS: ThinkingVariant[] = [{ id: "default", label: "默认" }];
+const DEFAULT_VARIANTS: ThinkingVariant[] = [{ id: "default", label: "Default" }];
 
 async function fetchProviderModels(workflowRoot: string, providerId: string): Promise<ListModelsResult> {
   const doc = await providerRegistry.loadDocument(workflowRoot);
@@ -27,8 +27,8 @@ async function fetchProviderModels(workflowRoot: string, providerId: string): Pr
   if (!provider) throw new Error(`provider not found: ${providerId}`);
   const baseUrl = provider.baseUrl;
   const apiKey = normalizeApiKey(provider.credentialValue || "");
-  if (!apiKey) return { ok: false, error: "没有可用的凭证 (credentialValue 未配置)" };
-  if (!baseUrl) return { ok: false, error: "provider 未配置 baseUrl" };
+  if (!apiKey) return { ok: false, error: "No usable credential is configured (credentialValue is missing)" };
+  if (!baseUrl) return { ok: false, error: "provider baseUrl is not configured" };
 
   const client = resolveListModelsClient(provider);
   const modelsUrl = typeof provider.modelsUrl === "string" ? provider.modelsUrl : undefined;
@@ -41,7 +41,7 @@ async function fetchProviderModels(workflowRoot: string, providerId: string): Pr
     listModels?: (opts: { baseUrl: string; apiKey: string }) => Promise<ListModelsResult>;
   };
   if (typeof clientWithListModels.listModels !== "function") {
-    return { ok: false, error: `${provider.protocol || "openai-compatible"} 协议尚未实现 listModels` };
+    return { ok: false, error: `${provider.protocol || "openai-compatible"} protocol has not implemented listModels` };
   }
   try {
     return await clientWithListModels.listModels({ baseUrl, apiKey });
@@ -61,7 +61,7 @@ async function listThinkingVariants(
   modelId: string
 ): Promise<ThinkingVariantsResult> {
   if (!providerId || !modelId) {
-    return { ok: false, variants: [...DEFAULT_VARIANTS], error: "providerId 与 modelId 不能为空" };
+    return { ok: false, variants: [...DEFAULT_VARIANTS], error: "providerId and modelId are required" };
   }
 
   try {

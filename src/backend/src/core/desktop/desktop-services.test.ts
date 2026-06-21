@@ -16,6 +16,7 @@ import { buildEditorProjectCatalog } from './editor-catalog-service.ts';
 import { createEvent, createPlacementEvent, duplicateEvent, removeEvent, updateEvent } from './event-service.ts';
 import { getMapLibrarySelection, listMapLibrary, validateMapLibraryPackage, writeMapLibrarySelection } from './library-service.ts';
 import { clearLocalAssetsCache } from './local-assets-service.ts';
+import { withTestLanguage } from '../i18n/with-test-language.ts';
 import {
   buildMapIndex,
   buildMapPayload,
@@ -146,7 +147,7 @@ describe('desktop map services', { concurrency: false }, () => {
     writeJson(path.join(dataDir, 'Map001.json'), { width: 2, height: 2, tilesetId: 1, data: Array(24).fill(0), events: [null] });
 
     assert.throws(
-      () => buildMapPayload(fixture.root, project, 1),
+      () => withTestLanguage(() => buildMapPayload(fixture.root, project, 1)),
       /Missing_A1\.png/,
     );
   });
@@ -347,7 +348,7 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal(appliedSystem.startX, 1);
     assert.equal(appliedSystem.startY, 1);
     assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
-    assert.throws(() => setStartPositionDraft(fixture.root, fixture.project, 1, 2, 0), /x=2\)/);
+    assert.throws(() => withTestLanguage(() => setStartPositionDraft(fixture.root, fixture.project, 1, 2, 0)), /x=2\)/);
   });
 
   test('sets boat, ship and airship positions through project staging', () => {
@@ -379,7 +380,7 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.deepEqual(pickPosition(appliedSystem.ship), { startMapId: 1, startX: 0, startY: 1 });
     assert.deepEqual(pickPosition(appliedSystem.airship), { startMapId: 1, startX: 1, startY: 1 });
     assert.equal(appliedSystem.boat.characterName, 'Vehicle');
-    assert.throws(() => setSystemPositionDraft(fixture.root, fixture.project, 'boat', 1, 2, 0), /x=2\)/);
+    assert.throws(() => withTestLanguage(() => setSystemPositionDraft(fixture.root, fixture.project, 'boat', 1, 2, 0)), /x=2\)/);
   });
 
   test('blocks per-map actions when a draft also changes shared files', () => {
@@ -480,7 +481,7 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal(kept.events[1].name, 'Library NPC');
   });
 
-  test('lists library screenshots, persists selection projection and imports into project staging', () => {
+  test('lists library screenshots, persists selection projection and imports into project staging', () => withTestLanguage(() => {
     const library = listMapLibrary(fixture.root);
     assert.equal(library.entries.length, 1);
     assert.match(library.entries[0].screenshotUrl, /^rmmv-asset:\/\/library\//);
@@ -511,7 +512,7 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'data', 'Map002.json')), true);
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'img', 'tilesets', namespacedTileFile)), true);
     assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
-  });
+  }));
 
   test('discard removes a newly imported map draft without touching source', () => {
     const imported = importMapDraftFromLibrary(fixture.root, fixture.project, 'demo-map', { parentId: 0 });
@@ -598,7 +599,7 @@ describe('desktop map services', { concurrency: false }, () => {
       }],
     });
     assert.throws(
-      () => importMapDraftFromLibrary(local.root, local.project, 'bad-map', { parentId: 0 }),
+      () => withTestLanguage(() => importMapDraftFromLibrary(local.root, local.project, 'bad-map', { parentId: 0 })),
       /bad-map/,
     );
     assert.equal(fs.existsSync(path.join(local.project, 'www', 'data', 'Map002.json')), false);
@@ -824,7 +825,7 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal(events.some((ev) => String(ev?.note || '').includes('AIWF:')), false);
   });
 
-  test('placement compiles EV_GreeterIntro-style change-items with operation add', () => {
+  test('placement compiles EV_GreeterIntro-style change-items with operation add', () => withTestLanguage(() => {
     EventContractDao.create('test.town.greeter.intro', 'Project', {
       engine: 'rpg-maker-mv',
       kind: 'EventContract',
@@ -872,7 +873,7 @@ describe('desktop map services', { concurrency: false }, () => {
     const list = created?.pages?.[0]?.list || [];
     assert.ok(list.some((c) => c.code === 126 && Array.isArray(c.parameters) && c.parameters[1] === 0));
     assert.ok(list.some((c) => c.code === 121));
-  });
+  }));
 
   test('uses the workflow-local database path', () => {
     assert.equal(getConfiguredDatabasePath(), path.join(fixture.root, 'data', 'test-rmmv.db'));

@@ -10,12 +10,14 @@ import {
   stripNativeTaskBlocks,
   type NormalizeState,
 } from "./runtime.ts";
+import type { ProductLanguage } from "../../../../../../contract/types.ts";
 
-function state(promptText = "Project: C:/game\n\nTask:\n仅回复：hello"): NormalizeState {
+function state(promptText = "Project: C:/game\n\nTask:\n仅回复：hello", productLanguage?: ProductLanguage): NormalizeState {
   return {
     emittedToolCalls: new Set<string>(),
     ignoredTextParts: new Set<string>(),
     promptText,
+    productLanguage,
   };
 }
 
@@ -467,6 +469,59 @@ test("opencode question waits for complete input before emitting ASK", () => {
     "先预览",
     "取消",
   ]);
+});
+
+test("opencode question fallback labels follow English product language", () => {
+  const current = state(undefined, "en-US");
+  current.rootSessionId = "ses_parent";
+
+  const events = normalizeOpencodeEvent({
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "part-question",
+        callID: "call-question",
+        sessionID: "ses_parent",
+        type: "tool",
+        tool: "question",
+        state: {
+          status: "running",
+          input: {
+            question: "Choose the next step.",
+            options: [
+              { value: "approve", description: "Continue." },
+              { description: "Ask for changes." },
+            ],
+          },
+        },
+      },
+    },
+  }, current);
+
+  const ask = events.find((event) => event.type === "opencode_question_request") as any;
+  assert.ok(ask);
+  assert.equal(ask.request.description, "Choose the next step.");
+  assert.equal(ask.request.input.questions[0].header, "Question 1");
+  assert.deepEqual(ask.request.input.questions[0].options, [
+    { label: "approve", description: "Continue." },
+    { label: "Option 2", description: "Ask for changes." },
+  ]);
+});
+
+test("opencode permission fallback title follows English product language", () => {
+  const events = normalizeOpencodeEvent({
+    type: "permission.updated",
+    properties: {
+      id: "perm-1",
+      metadata: {},
+    },
+  }, state(undefined, "en-US"));
+
+  const event = events[0];
+  assert.equal(event?.type, "opencode_permission_request");
+  const request = event?.request as { description?: unknown; input?: { plan?: unknown } } | undefined;
+  assert.equal(request?.description, "Permission Required");
+  assert.equal(request?.input?.plan, "Permission Required");
 });
 
 test("tool call input is emitted after opencode fills arguments", () => {

@@ -6,6 +6,7 @@ import { applyPatchToProject } from '../rmmv/patcher.ts';
 import { createMapEvent, updateMapEvent } from '../workflow/map/map-event-edit.ts';
 import { loadRegistry, updateContractPlacement } from '../workflow/event/event-registry.ts';
 import { eventContentFingerprint } from '../workflow/event/event-fingerprint.ts';
+import { eventPlacementRegistryMissing } from './eventPlacementServiceLocalization.ts';
 import { ensureStagedMap, markStagedMapUpdated } from './staging-service.ts';
 
 export interface CreatePlacementEventPayload {
@@ -13,11 +14,11 @@ export interface CreatePlacementEventPayload {
   x: number;
   y: number;
   note?: string;
-  /** 场景/契约 id；用于定位注册表中的事件实现。 */
+  /** Scene or contract ID used to locate the registry implementation. */
   contractId?: string;
-  /** 可选 sceneId；仅保留语义输入，不再写入 RMMV note 标记。 */
+  /** Optional sceneId kept as semantic input; new writes do not persist RMMV note markers. */
   sceneId?: string;
-  /** MV 格式 pages，或带 commands[] 的契约页（走 patcher 编译） */
+  /** MV-format pages or abstract contract pages with commands[] compiled through the patcher. */
   pages?: Array<Record<string, unknown>>;
 }
 
@@ -27,7 +28,7 @@ function hasAbstractPages(pages?: Array<Record<string, unknown>>): boolean {
   return Boolean(first && typeof first === 'object' && Array.isArray((first as { commands?: unknown }).commands));
 }
 
-/** 将契约 implementation（pages 或顶层 commands[]）规范为 patcher 可编译的抽象页。 */
+/** Normalizes a contract implementation into abstract pages the patcher can compile. */
 export function normalizeContractImplementation(
   impl: Record<string, unknown> | null | undefined,
   defaultTrigger?: string,
@@ -44,7 +45,7 @@ export function normalizeContractImplementation(
   return null;
 }
 
-/** 从 contractId 解析场景 id；不再从 RMMV note 读取或写入 AIWF 标记。 */
+/** Resolves the scene ID from contractId; AIWF markers are no longer read from or written to RMMV note. */
 function extractSceneId(payload: CreatePlacementEventPayload): string | null {
   const fromContract = String(payload.contractId || '').trim();
   return fromContract || null;
@@ -59,7 +60,7 @@ function storyNoteTokens(contractId: string, sceneId?: string | null): string[] 
 
 interface MapEventLite { id: number; note?: string }
 
-/** 兼容旧数据：在地图里找过去带 AIWF note 的满指令事件。新写入不再生成这些标记。 */
+/** Legacy compatibility: find older full-command events that still carry AIWF note markers. */
 function findStoryEvent(
   mapFile: string,
   contractId: string,
@@ -84,7 +85,7 @@ function stripInternalAiMarkers(note: string): string {
     .join('\n');
 }
 
-/** 放置新建事件时只保留用户/契约显式 note，不再自动追加 AIWF 标记。 */
+/** Keeps only explicit user/contract note text for newly placed events. */
 export function buildPlacementNote(_contractId: string, extraNote?: string): string {
   const lines: string[] = [];
   for (const line of String(extraNote || '').split(/\r?\n/)) {
@@ -95,7 +96,7 @@ export function buildPlacementNote(_contractId: string, extraNote?: string): str
   return lines.join('\n');
 }
 
-/** 读回地图里某事件并取内容指纹（用于记录放置基线）。 */
+/** Reads a map event and computes the content fingerprint used as the placement baseline. */
 function fingerprintMapEvent(mapFile: string, eventId: number): string | undefined {
   try {
     const map = readJson(mapFile) as { events?: Array<Record<string, unknown> | null> };
@@ -106,7 +107,7 @@ function fingerprintMapEvent(mapFile: string, eventId: number): string | undefin
   }
 }
 
-/** 放置前把契约抽象页里的 commands 归一成编译器规范形态（含 change-items.operation 别名）。 */
+/** Canonicalizes abstract page commands before placement compilation. */
 export function normalizeAbstractPages(pages: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
   return pages.map((page) => {
     if (!page || typeof page !== 'object' || !Array.isArray((page as { commands?: unknown }).commands)) return page;
@@ -175,7 +176,7 @@ export function createPlacementEvent(
   const contractId = String(payload.contractId || '').trim() || extractSceneId(payload) || '';
   const sceneId = String(payload.sceneId || '').trim() || null;
 
-  // 兼容路径：放置过去带 AIWF note 的满指令事件，并清除旧内部标记。
+  // Legacy path: place older full-command events with AIWF note markers and strip internal markers.
   if (contractId) {
     const existing = findStoryEvent(staged.mapFile, contractId, sceneId);
     if (existing) {
@@ -197,7 +198,7 @@ export function createPlacementEvent(
     }
   }
 
-  // 次路径：payload 或注册表契约自带 commands[] / 抽象 pages → 编译落地。
+  // Main path: compile payload or registry abstract pages into the placed event.
   let pages: Array<Record<string, unknown>> | null = hasAbstractPages(payload.pages)
     ? (payload.pages as Array<Record<string, unknown>>)
     : null;
@@ -213,7 +214,7 @@ export function createPlacementEvent(
     return report;
   }
 
-  // 兜底路径：契约尚无 implementation，放置一个空壳事件（与编辑器"新建事件"行为一致）。
+  // Shell path: when a contract has no implementation yet, place an empty editor-style event.
   const note = contractId
     ? buildPlacementNote(contractId, payload.note)
     : stripInternalAiMarkers(String(payload.note || ''));
@@ -225,7 +226,7 @@ export function createPlacementEvent(
   const eventId = report.eventId;
   if (contractId && Number.isInteger(eventId)) {
     const contentHash = fingerprintMapEvent(staged.mapFile, eventId);
-    // 空壳放置：契约可能尚未进 JSON 注册表，跳过注册表回写（agent 补写 implementation 后 register 时会补上）。
+    // Shell placements may not exist in the JSON registry yet; skip write-back until register fills implementation.
     tryMarkPlacementInRegistry(workflowRoot, project, contractId, mapId, eventId, payload.x, payload.y, contentHash);
   }
   return {
@@ -238,7 +239,7 @@ export function createPlacementEvent(
   };
 }
 
-/** 静默版：契约不在 JSON 注册表时直接跳过，不报错。用于空壳放置。 */
+/** Silent variant used by shell placement when a contract is not in the JSON registry yet. */
 function tryMarkPlacementInRegistry(
   workflowRoot: string,
   project: string,
@@ -253,7 +254,7 @@ function tryMarkPlacementInRegistry(
   const result = updateContractPlacement(project, contractId, {
     mapId, eventId, x, y, contentHash,
   }, { runtimeRoot: path.join(workflowRoot, 'runtime') });
-  if (result.status === 'not-found') return; // 尚未注册，跳过
+  if (result.status === 'not-found') return;
 }
 
 function markPlacementInRegistry(
@@ -275,9 +276,6 @@ function markPlacementInRegistry(
     contentHash,
   }, { runtimeRoot: path.join(workflowRoot, 'runtime') });
   if (result.status === 'not-found') {
-    throw new Error(
-      `契约「${contractId}」未在 event-registry 中找到，无法回写放置状态。`
-      + `请确认 contractId 与 mcp__rmmv__RmmvEvent action=registry.register 登记的一致。`,
-    );
+    throw new Error(eventPlacementRegistryMissing(contractId));
   }
 }

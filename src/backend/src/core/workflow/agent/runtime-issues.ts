@@ -1,12 +1,16 @@
 import path from "path";
 
+import type { ProductLanguage } from "../../../../../contract/types.ts";
+import { normalizeProductLanguage } from "../../../../../contract/i18n.ts";
+import { backendText } from "../../i18n/messages.ts";
+
 /** Runtime stderr / plain-line messages when external_directory is denied. */
 export const RUNTIME_PERMISSION_DENIAL_RE =
   /permission requested:\s*external_directory|auto-rejecting/i;
 
 /** Short hint injected once per run for the model (not a user-facing blocker). */
 export const PERMISSION_DENIAL_MODEL_HINT =
-  "目录权限：请勿 Read/List 用户主目录、全局配置或产品根之外的未授权路径；工具说明从 `AGENT_RPG_ROOT/AGENT_GUIDE.md` 开始读。";
+  "Directory permission rule: do not Read/List the user home folder, global config, or unauthorized paths outside the product root. Start tool instructions from `AGENT_RPG_ROOT/AGENT_GUIDE.md`.";
 
 export function containsRuntimePermissionDenial(text: string): boolean {
   return RUNTIME_PERMISSION_DENIAL_RE.test(text || "");
@@ -52,11 +56,13 @@ export function assessAgentRuntimeOutcome(options: {
   renderedStdout: string;
   stderr: string;
   rawStdout?: string;
+  productLanguage?: ProductLanguage | null;
 }): RuntimeOutcomeAssessment {
   const log = `${options.renderedStdout || ""}\n${options.stderr || ""}\n${options.rawStdout || ""}`;
   const hadPermissionDenial = containsRuntimePermissionDenial(log);
   const hadAssistantText = hasMeaningfulAssistantText(options.renderedStdout || "");
   const exitOk = options.exitCode === 0 && !options.timedOut && !options.stopped;
+  const language = normalizeProductLanguage(options.productLanguage);
 
   if (!hadPermissionDenial) {
     return {
@@ -68,15 +74,19 @@ export function assessAgentRuntimeOutcome(options: {
     };
   }
 
-  const userMessage = buildPermissionFailureUserMessage();
+  const userMessage = buildPermissionFailureUserMessage(language);
   if (!exitOk) {
     return {
       hadPermissionDenial: true,
       hadAssistantText,
       status: "blocked",
       blocker: options.stopped
-        ? "Agent backend was stopped by the console user."
-        : `运行时拒绝了访问工作区外的目录。${userMessage}`,
+        ? backendText('runtime.stoppedByConsole', language)
+        : backendText(
+            'runtime.permissionDenialBlocked',
+            language,
+            { userMessage: userMessage || '' },
+          ),
       userMessage,
     };
   }
@@ -86,7 +96,11 @@ export function assessAgentRuntimeOutcome(options: {
       hadPermissionDenial: true,
       hadAssistantText: false,
       status: "blocked",
-      blocker: `运行时因目录权限被拒提前结束，未生成回复。${userMessage}`,
+      blocker: backendText(
+        'runtime.permissionDenialNoReply',
+        language,
+        { userMessage: userMessage || '' },
+      ),
       userMessage,
     };
   }
@@ -100,13 +114,8 @@ export function assessAgentRuntimeOutcome(options: {
   };
 }
 
-export function buildPermissionFailureUserMessage(): string {
-  return [
-    "部分文件工具因 **external_directory** 权限被拒（常见于在游戏工程 cwd 下尝试 Read 用户主目录、全局 Agent 配置目录或仓库外的路径）。",
-    "Agent 应只读：**游戏工程**与 **`RPG-Agent-MV/`**。工具说明从 `RPG-Agent-MV/AGENT_GUIDE.md` 开始，不要读用户主目录、全局配置或产品根之外的未授权路径。",
-    "请**结束当前会话并新建一轮**；若仍失败，确认 opencode 的目录权限包含 RPG-Agent-MV 产品根与当前游戏工程。",
-    "剧情事件可在 **地图编辑页** 手动放置；若 agent 已注册 EventContract，应通过当前地图编辑流程继续。",
-  ].join("\n");
+export function buildPermissionFailureUserMessage(language?: ProductLanguage | null): string {
+  return backendText('runtime.permissionFailureUserMessage', language);
 }
 
 function hasMeaningfulAssistantText(renderedStdout: string): boolean {
@@ -123,6 +132,7 @@ export function assessDispatchBackendOutput(dispatch: {
   blocker?: string | null;
   execution?: { exitCode?: number | null; timedOut?: boolean };
   backendOutput?: { stdout?: string; stderr?: string; rawStdout?: string };
+  productLanguage?: ProductLanguage | null;
 }): RuntimeOutcomeAssessment | null {
   if (!dispatch?.backendOutput) return null;
   const timedOut = Boolean(dispatch.execution?.timedOut);
@@ -135,5 +145,6 @@ export function assessDispatchBackendOutput(dispatch: {
     renderedStdout: dispatch.backendOutput.stdout || "",
     stderr: dispatch.backendOutput.stderr || "",
     rawStdout: dispatch.backendOutput.rawStdout,
+    productLanguage: dispatch.productLanguage,
   });
 }

@@ -14,6 +14,7 @@ import {
   importAssetLibraryEntry,
   validateAssetLibraryImport,
 } from './asset-library-service.ts';
+import { withTestLanguage } from '../i18n/with-test-language.ts';
 import { getProjectFileForRead } from './staging-service.ts';
 
 describe('static asset library', { concurrency: false }, () => {
@@ -54,15 +55,15 @@ describe('static asset library', { concurrency: false }, () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('always lists every asset category even when count is zero', () => {
+  test('always lists every asset category even when count is zero', () => withTestLanguage(() => {
     const catalog = buildAssetLibraryCatalog(root);
     assert.equal(catalog.categories.length, 7);
     const characters = catalog.categories.find((category) => category.id === 'characters');
     assert.equal(characters?.count, 0);
     assert.equal(characters?.label, '角色与脸图');
-  });
+  }));
 
-  test('lists only static entries and resolves library source URLs inside data/assets', () => {
+  test('lists only static entries and resolves library source URLs inside data/assets', () => withTestLanguage(() => {
     const catalog = buildAssetLibraryCatalog(root);
     assert.equal(catalog.entries.some((entry) => entry.name === 'Portrait'), true);
     assert.equal(catalog.entries.some((entry) => entry.name === 'ProjectOnly'), false);
@@ -72,9 +73,9 @@ describe('static asset library', { concurrency: false }, () => {
     assert.match(file.url, /^rmmv-asset:\/\/library\/source\//);
     assert.equal(resolveAssetRequest(root, file.url), path.join(root, 'data', 'assets', 'sources', 'pack', 'img', 'pictures', 'Portrait.png'));
     assert.throws(() => resolveAssetRequest(root, 'rmmv-asset://shared/pack/img/pictures/Portrait.png'));
-  });
+  }));
 
-  test('imports static files and skills through staging without mutating library sources', () => {
+  test('imports static files and skills through staging without mutating library sources', () => withTestLanguage(() => {
     const catalog = buildAssetLibraryCatalog(root);
     const file = catalog.entries.find((entry) => entry.kind === 'file');
     const skill = catalog.entries.find((entry) => entry.kind === 'skill');
@@ -94,9 +95,9 @@ describe('static asset library', { concurrency: false }, () => {
     assert.ok(stagedSkills);
     assert.equal((readJson(stagedSkills) as any[])[1].name, 'Fire');
     assert.equal((readJson(path.join(project, 'www', 'data', 'Skills.json')) as any[])[1], undefined);
-  });
+  }));
 
-  test('imports static files and skills into flat data projects without adding www prefix', () => {
+  test('imports static files and skills into flat data projects without adding www prefix', () => withTestLanguage(() => {
     const flatProject = path.join(root, 'projects', 'FlatProject');
     fs.mkdirSync(path.join(flatProject, 'data'), { recursive: true });
     fs.mkdirSync(path.join(flatProject, 'img', 'pictures'), { recursive: true });
@@ -128,17 +129,17 @@ describe('static asset library', { concurrency: false }, () => {
     assert.equal(skillResult.importedId, 1);
     assert.equal((readJson(getProjectFileForRead(root, flatProject, 'data/Skills.json')!) as any[])[1].name, 'Fire');
     assert.equal((readJson(path.join(flatProject, 'data', 'Skills.json')) as any[])[1], undefined);
-  });
+  }));
 
-  test('rejects skill import when a declared dependency is incompatible', () => {
+  test('rejects skill import when a declared dependency is incompatible', () => withTestLanguage(() => {
     writeJson(path.join(project, 'www', 'data', 'Animations.json'), [null, { id: 1, name: 'Wrong' }]);
     const validation = validateAssetLibraryImport(root, project, skillEntry().assetId);
     assert.equal(validation.ok, false);
     assert.match(validation.issues.join('\n'), /动画不兼容/);
     assert.throws(() => importAssetLibraryEntry(root, project, skillEntry().assetId), /导入校验失败/);
-  });
+  }));
 
-  test('rejects malformed static skill packages with undeclared references', () => {
+  test('rejects malformed static skill packages with undeclared references', () => withTestLanguage(() => {
     const malformed = skillEntry();
     malformed.dependencies.animations = [];
     writeJson(path.join(root, 'data', 'assets', 'skill-library', 'index.json'), {
@@ -146,7 +147,7 @@ describe('static asset library', { concurrency: false }, () => {
       entries: [malformed],
     });
     assert.throws(() => buildAssetLibraryCatalog(root), /未声明动画/);
-  });
+  }));
 });
 
 function skillEntry(): AssetLibrarySkillEntry {

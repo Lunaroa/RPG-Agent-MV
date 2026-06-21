@@ -72,7 +72,7 @@ describe('runtime-adapters', () => {
     try {
       const result = probeAgentExecution('opencode', null, root);
       assert.equal(result.ok, false);
-      assert.match(result.error || '', /opencode 运行文件缺失/);
+      assert.match(result.error || '', /opencode runtime file is missing/);
       assert.match(result.error || '', /build:opencode-runtime/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

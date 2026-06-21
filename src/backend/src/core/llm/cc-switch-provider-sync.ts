@@ -128,8 +128,8 @@ export function resolveCcSwitchRoot(explicitRoot?: string): string {
   }
 
   throw new Error(
-    `未找到 cc-switch 供应商预设源码（${PRESET_RELATIVE_PATH}）。` +
-      "请克隆 cc-switch 仓库或设置环境变量 CC_SWITCH_ROOT 指向其根目录，然后重新运行 dev-import-provider-seeds。",
+    `Could not find cc-switch provider preset source (${PRESET_RELATIVE_PATH}). ` +
+      "Clone the cc-switch repository or set CC_SWITCH_ROOT to its root, then rerun dev-import-provider-seeds.",
   );
 }
 
@@ -138,8 +138,8 @@ function assertCcSwitchPresetSource(root: string): string {
   const presetPath = path.join(resolved, PRESET_RELATIVE_PATH);
   if (!fs.existsSync(presetPath)) {
     throw new Error(
-      `CC_SWITCH_ROOT 无效：未找到供应商预设文件 ${presetPath}。` +
-        "请指向 cc-switch 仓库根目录（含 src/config/opencodeProviderPresets.ts）。",
+      `CC_SWITCH_ROOT is invalid: provider preset file was not found at ${presetPath}. ` +
+        "Point it to the cc-switch repository root that contains src/config/opencodeProviderPresets.ts.",
     );
   }
   return resolved;
@@ -152,7 +152,7 @@ export async function loadCcSwitchOpencodePresets(ccSwitchRoot: string): Promise
   };
   const presets = mod.opencodeProviderPresets;
   if (!Array.isArray(presets)) {
-    throw new Error(`cc-switch 预设导出无效（非数组）：${presetPath}`);
+    throw new Error(`cc-switch preset export is invalid (not an array): ${presetPath}`);
   }
   return presets as CcSwitchOpencodePreset[];
 }

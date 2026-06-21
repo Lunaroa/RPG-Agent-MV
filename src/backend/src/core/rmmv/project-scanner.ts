@@ -2,7 +2,10 @@ import path from "path";
 import { exists, readJson } from "./json.ts";
 import { summarizePage } from "./event-summary.ts";
 import { listRmmvDatabaseSchemas } from "./database-schema.ts";
+import { projectScannerPreviewLabels } from "./projectScannerLocalization.ts";
 import { resolveRmmvDataDir } from "./rmmv-layout.ts";
+
+const PROJECT_SCANNER_PREVIEW_LABELS = projectScannerPreviewLabels();
 
 interface NameIndex {
   switches: string[];
@@ -464,23 +467,23 @@ function summarizeDatabasePreview(group: string, entry: unknown, tables: Map<str
   if (!record) return undefined;
   switch (group) {
     case "Actors":
-      return namedAssetPreview("face", "faces", stringValue(record.faceName), numberValue(record.faceIndex), "脸图")
-        || namedAssetPreview("character", "characters", stringValue(record.characterName), numberValue(record.characterIndex), "行走图")
-        || namedAssetPreview("svActor", "svActors", stringValue(record.battlerName), undefined, "SV 角色");
+      return namedAssetPreview("face", "faces", stringValue(record.faceName), numberValue(record.faceIndex), PROJECT_SCANNER_PREVIEW_LABELS.face)
+        || namedAssetPreview("character", "characters", stringValue(record.characterName), numberValue(record.characterIndex), PROJECT_SCANNER_PREVIEW_LABELS.character)
+        || namedAssetPreview("svActor", "svActors", stringValue(record.battlerName), undefined, PROJECT_SCANNER_PREVIEW_LABELS.svActor);
     case "Enemies":
-      return namedAssetPreview("image", "enemies", stringValue(record.battlerName), undefined, "敌人战斗图");
+      return namedAssetPreview("image", "enemies", stringValue(record.battlerName), undefined, PROJECT_SCANNER_PREVIEW_LABELS.enemyBattler);
     case "Troops":
       return troopPreview(record, tables);
     case "Animations":
-      return namedAssetPreview("image", "animations", stringValue(record.animation1Name), undefined, "动画图像")
-        || namedAssetPreview("image", "animations", stringValue(record.animation2Name), undefined, "动画图像");
+      return namedAssetPreview("image", "animations", stringValue(record.animation1Name), undefined, PROJECT_SCANNER_PREVIEW_LABELS.animationImage)
+        || namedAssetPreview("image", "animations", stringValue(record.animation2Name), undefined, PROJECT_SCANNER_PREVIEW_LABELS.animationImage);
     case "Tilesets":
       return firstTilesetPreview(record);
     case "System":
-      return namedAssetPreview("image", "titles1", stringValue(record.title1Name), undefined, "标题 1")
-        || namedAssetPreview("image", "titles2", stringValue(record.title2Name), undefined, "标题 2")
-        || namedAssetPreview("image", "battlebacks1", stringValue(record.battleback1Name), undefined, "战斗背景 1")
-        || namedAssetPreview("image", "battlebacks2", stringValue(record.battleback2Name), undefined, "战斗背景 2");
+      return namedAssetPreview("image", "titles1", stringValue(record.title1Name), undefined, PROJECT_SCANNER_PREVIEW_LABELS.title1)
+        || namedAssetPreview("image", "titles2", stringValue(record.title2Name), undefined, PROJECT_SCANNER_PREVIEW_LABELS.title2)
+        || namedAssetPreview("image", "battlebacks1", stringValue(record.battleback1Name), undefined, PROJECT_SCANNER_PREVIEW_LABELS.battleback1)
+        || namedAssetPreview("image", "battlebacks2", stringValue(record.battleback2Name), undefined, PROJECT_SCANNER_PREVIEW_LABELS.battleback2);
     default:
       return iconPreview(record);
   }
@@ -511,7 +514,7 @@ function troopPreview(record: Record<string, unknown>, tables: Map<string, unkno
     if (enemyId === undefined || enemyId <= 0) continue;
     const enemy = enemies.find((item) => numberValue(asRecord(item)?.id) === enemyId);
     const battlerName = stringValue(asRecord(enemy)?.battlerName);
-    if (battlerName) return namedAssetPreview("image", "enemies", battlerName, undefined, "敌群成员");
+    if (battlerName) return namedAssetPreview("image", "enemies", battlerName, undefined, PROJECT_SCANNER_PREVIEW_LABELS.troopMember);
   }
   return undefined;
 }
@@ -519,7 +522,7 @@ function troopPreview(record: Record<string, unknown>, tables: Map<string, unkno
 function firstTilesetPreview(record: Record<string, unknown>): DatabaseEntryPreview | undefined {
   const names = Array.isArray(record.tilesetNames) ? record.tilesetNames : [];
   const firstName = names.find((name) => typeof name === "string" && name.trim());
-  return namedAssetPreview("image", "tilesets", String(firstName || ""), undefined, "图块图片");
+  return namedAssetPreview("image", "tilesets", String(firstName || ""), undefined, PROJECT_SCANNER_PREVIEW_LABELS.tilesetImage);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

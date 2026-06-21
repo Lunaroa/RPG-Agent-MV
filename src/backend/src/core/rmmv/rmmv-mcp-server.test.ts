@@ -145,6 +145,38 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
   }
 });
 
+test("RMMV MCP stdio exposes localised map errors when mapId is invalid", async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rmmv-mcp-server-"));
+  const project = createProjectFixture(workflowRoot);
+  const client = new Client({ name: "rmmv-mcp-test", version: "1.0.0" });
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  env.AGENT_RPG_ROOT = workflowRoot;
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["--experimental-strip-types", path.join(import.meta.dirname, "rmmv-mcp-server.ts")],
+    env,
+    stderr: "pipe",
+  });
+
+  try {
+    await client.connect(transport);
+    const mapNotFound = await client.callTool({
+      name: "RmmvReadContext",
+      arguments: { action: "mapData", project, mapId: 999 },
+    });
+
+    assert.equal(mapNotFound.isError, true);
+    const message = mapNotFound.content?.[0]?.text || "";
+    assert.match(message, /Map not found: 999/);
+    assert.doesNotMatch(message, /outside an IPC request scope/);
+  } finally {
+    await client.close();
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
 function parseToolJson(result: unknown): any {
   const value = result as { isError?: boolean; content?: Array<{ type?: string; text?: string }> };
   if (value.isError) throw new Error(value.content?.[0]?.text || "MCP tool call failed.");

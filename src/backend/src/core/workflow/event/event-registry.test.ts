@@ -7,6 +7,7 @@ import { closeDatabase, configureDatabase, getDatabase } from "../../db/pool.ts"
 import { migrate } from "../../db/migrate.ts";
 
 import { EventContractDao } from "../../db/dao/event-contract-dao.ts";
+import { withProductLanguage } from "../../i18n/request-language.ts";
 import {
   normalizeContractEnvelope,
   validateContractFile,
@@ -580,7 +581,7 @@ test("adoptOrphan registers a legacy map event with rid, fingerprint and markers
     pages: [{ list: [{ code: 101, indent: 0, parameters: ["", 0, 0, 2] }, { code: 401, indent: 0, parameters: ["legacy"] }, { code: 0, indent: 0, parameters: [] }] }],
   };
   writeMap(project, [null, ev]);
-  const res = adoptOrphan(project, { mapId: 1, eventId: 1, id: "legacy.old.sign" }, opts);
+  const res = withProductLanguage("zh-CN", () => adoptOrphan(project, { mapId: 1, eventId: 1, id: "legacy.old.sign" }, opts));
   assert.equal(res.status, "ok");
   assert.ok(Number.isInteger(res.rid));
   const shown = await showContract(project, "legacy.old.sign", opts);

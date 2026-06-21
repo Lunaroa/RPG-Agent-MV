@@ -19,7 +19,7 @@ export type ProfileConfigLike = {
 };
 
 const OPENCODE_MAPPING_HINT =
-  "请在设置中为 opencode 绑定供应商和模型。";
+  "Bind a provider and model for opencode in Settings.";
 
 export function sanitizeProfileModelId(value: string): string {
   return String(value).replace(/[^A-Za-z0-9._-]/g, "-");
@@ -152,7 +152,7 @@ function resolveProfileId(
       profileId: resolvedProfileId,
       profile: null,
       executionEngine: engine,
-      blocker: `Profile ${resolvedProfileId} 的运行时 (${profile.runtime}) 与所选执行引擎 (${engine}) 不匹配。请更换模型或在设置中切换引擎。`,
+      blocker: `Profile ${resolvedProfileId} runtime (${profile.runtime}) does not match the selected execution engine (${engine}). Change the model or switch the execution engine in Settings.`,
     };
   }
 
@@ -162,7 +162,7 @@ function resolveProfileId(
       profileId: resolvedProfileId,
       profile: null,
       executionEngine: engine,
-      blocker: `Profile ${resolvedProfileId} 的运行时 ${profile.runtime || "(none)"} 不支持引擎 ${engine}。`,
+      blocker: `Profile ${resolvedProfileId} runtime ${profile.runtime || "(none)"} does not support engine ${engine}.`,
     };
   }
 
@@ -240,7 +240,7 @@ export function resolveProfileForEngine(input: {
     executionEngine: engine,
     blocker: requestedId
       ? `Profile not found for agent ${input.agent?.id || "(unknown)"}: ${requestedId}`
-      : `Agent ${input.agent?.id || "(unknown)"} 没有可用的 ${engine} profile。${OPENCODE_MAPPING_HINT}`,
+      : `Agent ${input.agent?.id || "(unknown)"} has no available ${engine} profile. ${OPENCODE_MAPPING_HINT}`,
   };
 }
 

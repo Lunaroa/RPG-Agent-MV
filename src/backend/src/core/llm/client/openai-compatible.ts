@@ -37,12 +37,12 @@ interface ModelItem {
 }
 
 const VARIANT_LABELS: Record<string, string> = {
-  default: "默认",
-  minimal: "低",
-  low: "低",
-  medium: "中",
-  high: "高",
-  max: "超高"
+  default: "Default",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  max: "Max"
 };
 
 const DEFAULT_THINKING_VARIANTS: ThinkingVariant[] = [...DEFAULT_ONLY_VARIANTS];
@@ -285,7 +285,7 @@ function normalizeMetadataVariants(metadata?: Record<string, unknown> | null): T
   const fromMetadata = extractVariantsFromMetadata(metadata);
   if (fromMetadata.length === 0) return null;
   if (!fromMetadata.some((item) => item.id === "default")) {
-    return dedupeVariants([{ id: "default", label: "默认" }, ...fromMetadata]);
+    return dedupeVariants([{ id: "default", label: "Default" }, ...fromMetadata]);
   }
   return fromMetadata;
 }

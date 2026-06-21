@@ -7,6 +7,22 @@ import {
 } from '../rmmv/event-command-registry.ts';
 import { readJson } from '../rmmv/json.ts';
 import { dataRelativePath as layoutDataRelativePath, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
+import {
+  commandContinuationWithoutHead,
+  commandIndentJump,
+  commandListMustBeArray,
+  commandListMustTerminate,
+  commonEventAlreadyExists,
+  commonEventInvalidData,
+  commonEventInvalidId,
+  commonEventInvalidTrigger,
+  commonEventMissing,
+  commonEventNoTriggerSwitchMustBeZero,
+  commonEventReferenced,
+  commonEventSwitchOutOfRange,
+  commonEventSwitchRequired,
+  commonEventsJsonMustBeArray,
+} from './commonEventServiceLocalization.ts';
 import { getProjectFileForRead, writeStagedProjectJson } from './staging-service.ts';
 
 interface RmmvCommonEvent {
@@ -91,7 +107,7 @@ export function getCommonEvent(
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
   const list = readCommonEvents(workflowRoot, project);
   const value = list[id];
-  if (!isCommonEventRecord(value)) throw new Error(`公共事件不存在：${id}`);
+  if (!isCommonEventRecord(value)) throw new Error(commonEventMissing(id));
   return { kind: 'commonEvent', id, relativePath, value: clone(value) };
 }
 
@@ -103,7 +119,7 @@ export function createCommonEvent(
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
   const commonEvents = readCommonEvents(workflowRoot, project);
   const id = request.id === undefined ? nextCommonEventId(commonEvents) : validId(request.id);
-  if (isCommonEventRecord(commonEvents[id])) throw new Error(`公共事件 ${id} 已存在`);
+  if (isCommonEventRecord(commonEvents[id])) throw new Error(commonEventAlreadyExists(id));
   ensureArrayIndex(commonEvents, id);
   commonEvents[id] = normalizeCommonEvent(workflowRoot, project, {
     id,
@@ -124,9 +140,9 @@ export function updateCommonEvent(
   const id = validId(request.id);
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
   const commonEvents = readCommonEvents(workflowRoot, project);
-  if (!isCommonEventRecord(commonEvents[id])) throw new Error(`公共事件不存在：${id}`);
+  if (!isCommonEventRecord(commonEvents[id])) throw new Error(commonEventMissing(id));
   if (!request.value || typeof request.value !== 'object' || Array.isArray(request.value)) {
-    throw new Error('公共事件数据无效');
+    throw new Error(commonEventInvalidData());
   }
   commonEvents[id] = normalizeCommonEvent(workflowRoot, project, { ...(request.value as Record<string, unknown>), id });
   const staging = writeStagedProjectJson(workflowRoot, project, relativePath, commonEvents);
@@ -181,7 +197,7 @@ export function duplicateCommonEvent(
   const source = getCommonEvent(workflowRoot, project, request).value as RmmvCommonEvent;
   const commonEvents = readCommonEvents(workflowRoot, project);
   const targetId = request.targetId === undefined ? nextCommonEventId(commonEvents) : validId(request.targetId);
-  if (isCommonEventRecord(commonEvents[targetId])) throw new Error(`公共事件 ${targetId} 已存在`);
+  if (isCommonEventRecord(commonEvents[targetId])) throw new Error(commonEventAlreadyExists(targetId));
   ensureArrayIndex(commonEvents, targetId);
   commonEvents[targetId] = normalizeCommonEvent(workflowRoot, project, {
     ...clone(source),
@@ -201,11 +217,11 @@ export function deleteCommonEvent(
   const id = validId(request.id);
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
   const commonEvents = readCommonEvents(workflowRoot, project);
-  if (!isCommonEventRecord(commonEvents[id])) throw new Error(`公共事件不存在：${id}`);
+  if (!isCommonEventRecord(commonEvents[id])) throw new Error(commonEventMissing(id));
   const references = findCommonEventUsages(workflowRoot, project, id);
   if (references.length && request.force !== true) {
     const detail = references.slice(0, 5).map((ref) => ref.source).join('; ');
-    throw new Error(`公共事件 ${id} 仍被引用，拒绝删除：${detail}`);
+    throw new Error(commonEventReferenced(id, detail));
   }
   commonEvents[id] = null;
   const staging = writeStagedProjectJson(workflowRoot, project, relativePath, commonEvents);
@@ -320,26 +336,26 @@ function normalizeCommandList(value: unknown): RawEventCommand[] {
 }
 
 function validateTrigger(value: number): number {
-  if (![0, 1, 2].includes(value)) throw new Error('公共事件触发类型必须是 0/1/2');
+  if (![0, 1, 2].includes(value)) throw new Error(commonEventInvalidTrigger());
   return value;
 }
 
 function validateTriggerSwitch(workflowRoot: string, project: string, trigger: number, switchId: number): number {
   if (trigger === 0) {
-    if (switchId !== 0) throw new Error('公共事件触发为无时 switchId 必须为 0');
+    if (switchId !== 0) throw new Error(commonEventNoTriggerSwitchMustBeZero());
     return 0;
   }
-  if (!Number.isInteger(switchId) || switchId <= 0) throw new Error('自动/并行公共事件必须设置有效开关');
+  if (!Number.isInteger(switchId) || switchId <= 0) throw new Error(commonEventSwitchRequired());
   const system = readProjectJson(workflowRoot, project, dataRelativePath(project, SYSTEM_FILE), {}) as { switches?: unknown[] };
   const switches = Array.isArray(system.switches) ? system.switches : [];
   if (switchId >= switches.length) {
-    throw new Error(`公共事件条件开关 ${switchId} 超出 System.switches 范围`);
+    throw new Error(commonEventSwitchOutOfRange(switchId));
   }
   return switchId;
 }
 
 function validateCommandStream(list: unknown[], label: string): void {
-  if (!Array.isArray(list)) throw new Error(`${label} 必须是事件指令数组`);
+  if (!Array.isArray(list)) throw new Error(commandListMustBeArray(label));
   let previousIndent = 0;
   const openHeads: { code: number; indent: number; atIndex: number }[] = [];
   for (let index = 0; index < list.length; index += 1) {
@@ -347,12 +363,12 @@ function validateCommandStream(list: unknown[], label: string): void {
     validateEventCommandBasic(command, `${label}[${index}]`);
     const current = command as RawEventCommand;
     if (current.indent > previousIndent + 1) {
-      throw new Error(`${label}[${index}] 缩进跳级`);
+      throw new Error(commandIndentJump(label, index));
     }
     if (EVENT_COMMAND_CONTINUATION_CODES.has(current.code)) {
       const matchedHead = openHeads.some((head) => head.indent === current.indent);
       if (!matchedHead && current.indent !== 0 && openHeads.length === 0) {
-        throw new Error(`${label}[${index}] 结构续行 ${current.code} 没有对应块头`);
+        throw new Error(commandContinuationWithoutHead(label, index, current.code));
       }
     }
     if (EVENT_COMMAND_BLOCK_HEAD_CODES.has(current.code)) {
@@ -365,7 +381,7 @@ function validateCommandStream(list: unknown[], label: string): void {
     previousIndent = current.indent;
   }
   const last = list[list.length - 1] as RawEventCommand;
-  if (last.code !== 0 || last.indent !== 0) throw new Error(`${label} 必须以 indent 0 的 code 0 结束`);
+  if (last.code !== 0 || last.indent !== 0) throw new Error(commandListMustTerminate(label));
 }
 
 function scanCommandList(list: unknown[], commonEventId: number, onMatch: (commandIndex: number) => void): void {
@@ -380,7 +396,7 @@ function scanCommandList(list: unknown[], commonEventId: number, onMatch: (comma
 
 function readCommonEvents(workflowRoot: string, project: string): unknown[] {
   const value = readProjectJson(workflowRoot, project, dataRelativePath(project, COMMON_EVENT_FILE), []);
-  if (!Array.isArray(value)) throw new Error('CommonEvents.json 必须是数组');
+  if (!Array.isArray(value)) throw new Error(commonEventsJsonMustBeArray());
   return clone(value);
 }
 
@@ -426,7 +442,7 @@ function isRawCommand(value: unknown): value is RawEventCommand {
 
 function validId(value: number): number {
   const id = Number(value);
-  if (!Number.isInteger(id) || id <= 0) throw new Error('公共事件 ID 无效');
+  if (!Number.isInteger(id) || id <= 0) throw new Error(commonEventInvalidId());
   return id;
 }
 

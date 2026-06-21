@@ -10,6 +10,7 @@ import { createDefaultRmmvDatabaseEntry } from '../rmmv/database-schema.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
 import { deleteAsset, getAssetDetail, renameAsset } from './asset-management-service.ts';
 import { createProjectManagedEntry, getProjectManagedEntry, updateProjectManagedEntry } from './project-management-service.ts';
+import { withTestLanguage } from '../i18n/with-test-language.ts';
 import { discardProjectStaging, getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
 
 describe('console management services', { concurrency: false }, () => {
@@ -52,7 +53,7 @@ describe('console management services', { concurrency: false }, () => {
     assert.equal((readJson(stagedActors) as any[])[1].characterName, 'Lead');
     assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].characterName, 'Hero');
     assert.equal(getProjectStagingStatus(root, project).staged, true);
-    assert.throws(() => deleteAsset(root, project, { ...target, relativePath: 'www/img/characters/Lead.png' }), /引用/);
+    assert.throws(() => withTestLanguage(() => deleteAsset(root, project, { ...target, relativePath: 'www/img/characters/Lead.png' })), /引用/);
     discardProjectStaging(root, project);
     assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'characters', 'Hero.png')), true);
     assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].characterName, 'Hero');
@@ -67,9 +68,9 @@ describe('console management services', { concurrency: false }, () => {
     assert.equal((readJson(getProjectFileForRead(root, project, 'www/data/System.json')!) as any).switches[1], 'Gate');
     assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].name, 'Hero');
     assert.equal((readJson(path.join(project, 'www', 'data', 'System.json')) as any).switches[1], 'Door');
-    assert.throws(() => updateProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1, value: { id: 2, name: 'Wrong' } }), /ID/);
-    assert.throws(() => getProjectManagedEntry(root, project, { kind: 'database', group: 'Bogus', id: 1 }), /Unknown RMMV database group/);
-    assert.throws(() => getProjectManagedEntry(root, project, { kind: 'database', group: 'System', id: 1 }), /固定文档条目/);
+    assert.throws(() => withTestLanguage(() => updateProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1, value: { id: 2, name: 'Wrong' } })), /ID/);
+    assert.throws(() => withTestLanguage(() => getProjectManagedEntry(root, project, { kind: 'database', group: 'Bogus', id: 1 })), /Unknown RMMV database group/);
+    assert.throws(() => withTestLanguage(() => getProjectManagedEntry(root, project, { kind: 'database', group: 'System', id: 1 })), /固定文档条目/);
     const system = getProjectManagedEntry(root, project, { kind: 'database', group: 'System', id: 0 });
     assert.equal((system.value as any).gameTitle, 'Console Test');
     assert.equal(system.schema?.isArrayTable, false);
@@ -113,6 +114,6 @@ describe('console management services', { concurrency: false }, () => {
     assert.equal((created.value as any).maxLevel, 99);
     assert.equal((readJson(getProjectFileForRead(root, project, 'www/data/Actors.json')!) as any[])[2].id, 2);
     assert.equal((readJson(actorsPath) as any[])[2], null);
-    assert.throws(() => createProjectManagedEntry(root, project, { kind: 'database', group: 'System' }), /不能新增/);
+    assert.throws(() => withTestLanguage(() => createProjectManagedEntry(root, project, { kind: 'database', group: 'System' })), /不能新增/);
   });
 });

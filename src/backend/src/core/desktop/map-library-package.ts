@@ -1,7 +1,8 @@
 import path from 'node:path';
-import { PACKAGE_LABEL_TRANSLATIONS } from './package-label-translations.ts';
+import type { ProductLanguage } from '../../../../contract/i18n.ts';
+import { packageLabelTranslations, packageLabelUngrouped } from './packageLabelLocalization.ts';
 
-/** 地图库条目所属资源包（源工程文件夹），用于 UI 侧栏分组。 */
+/** Resource package that owns a map library entry, used for UI sidebar grouping. */
 export interface MapLibraryPackage {
   packageId: string;
   packageLabel: string;
@@ -20,13 +21,13 @@ export function resolveMapLibraryPackage(entry: Record<string, unknown>): MapLib
   return { packageId, packageLabel };
 }
 
-export function resolvePackageLabel(entry: Record<string, unknown>): string {
-  const raw = resolvePackageLabelRaw(entry);
-  const translated = PACKAGE_LABEL_TRANSLATIONS.get(raw);
+export function resolvePackageLabel(entry: Record<string, unknown>, language?: ProductLanguage | null): string {
+  const raw = resolvePackageLabelRaw(entry, language);
+  const translated = packageLabelTranslations(language).get(raw);
   return typeof translated === 'string' ? translated : raw;
 }
 
-function resolvePackageLabelRaw(entry: Record<string, unknown>): string {
+function resolvePackageLabelRaw(entry: Record<string, unknown>, language?: ProductLanguage | null): string {
   const batch = entry.importBatch as Record<string, unknown> | undefined;
   const source = entry.source as Record<string, unknown> | undefined;
   const projectPath =
@@ -53,7 +54,7 @@ function resolvePackageLabelRaw(entry: Record<string, unknown>): string {
   }
   const slug = batch?.sourceSlug;
   if (slug) return String(slug);
-  return String(entry.assetId || '未分组');
+  return String(entry.assetId || packageLabelUngrouped(language));
 }
 
 function extractPackageIdFromLocalPath(localPath: string): string | null {

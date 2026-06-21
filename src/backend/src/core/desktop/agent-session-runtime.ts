@@ -28,13 +28,16 @@ import { resolveExecutionEngineForProduct } from "../../../../contract/opencode-
 import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
 import { ensureAgentOutputDirs } from "../workflow/agent/agent-output-dirs.ts";
 import { replyOpencodePermission, replyOpencodeQuestion } from "../workflow/agent/opencode/runtime.ts";
-import type { SessionPlanSnapshot, SessionSubagentSnapshot } from "../../../../contract/types.ts";
+import type { ProductLanguage, SessionPlanSnapshot, SessionSubagentSnapshot } from "../../../../contract/types.ts";
+import { normalizeProductLanguage } from "../../../../contract/i18n.ts";
+import { backendText } from "../i18n/messages.ts";
 import {
   AGENT_RUNTIME_PLAN_ASK_PREFIX,
   AGENT_RUNTIME_QUESTION_ASK_PREFIX,
   deriveSessionPlan,
   deriveSessionSubagents,
 } from "./session-derived-state.ts";
+import { DEFAULT_PRODUCT_LANGUAGE } from "../../../../contract/i18n.ts";
 import {
   ensurePlanDirectory,
   hydrateSessionPlanFromFile,
@@ -82,6 +85,7 @@ export interface AgentSession {
   outDir: string;
   intent: string;
   displayText: string;
+  productLanguage: ProductLanguage;
   project: string;
   parentSessionId: string | null;
   planFilePath: string | null;
@@ -105,6 +109,7 @@ export interface SessionCreateInput {
   executionEngine?: AgentExecutionEngine;
   intent?: string;
   displayText?: string;
+  productLanguage?: ProductLanguage;
   project?: string;
   continuationOf?: string;
   mapId?: number;
@@ -252,6 +257,7 @@ export class AgentSessionRuntime {
       outDir: path.join(this.workflowRoot, "runtime", "sessions", sessionId, "agent-console"),
       intent: input.intent || "",
       displayText: input.displayText || (input.intent || "").split("\n")[0].slice(0, 200),
+      productLanguage: normalizeProductLanguage(input.productLanguage),
       project: input.project || "projects/Project",
       parentSessionId: input.continuationOf || null,
       planFilePath,
@@ -289,6 +295,7 @@ export class AgentSessionRuntime {
       executionEngine,
       agentExecutionSettings: await this.getAgentExecutionSettingsForDispatch(),
       intent: input.intent || "",
+      productLanguage: normalizeProductLanguage(input.productLanguage),
       project: input.project || "projects/Project",
       mapId: input.mapId ? String(input.mapId) : undefined,
       files: input.files || [],
@@ -418,7 +425,7 @@ export class AgentSessionRuntime {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error("session not found");
     const allocatedPath = this.resolveConversationPlanPath(session);
-    const derived = deriveSessionPlan(sessionId, session.events);
+    const derived = deriveSessionPlan(sessionId, session.events, session.productLanguage);
     const snapshot = {
       ...derived,
       filePath: allocatedPath,
@@ -429,7 +436,7 @@ export class AgentSessionRuntime {
   listSubagents(sessionId: string): SessionSubagentSnapshot {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error("session not found");
-    return deriveSessionSubagents(sessionId, session.events);
+    return deriveSessionSubagents(sessionId, session.events, session.productLanguage);
   }
 
   stopSubagent(sessionId: string, taskId: string): { ok: boolean; reason?: string; requestId?: string; taskId?: string } {
@@ -482,7 +489,7 @@ export class AgentSessionRuntime {
 
     const request = asRecord(requestEvent.request);
     const response = askType === "plan-approval"
-      ? buildPlanApprovalResponse(asRecord(request.input), result)
+      ? buildPlanApprovalResponse(asRecord(request.input), result, session.productLanguage)
       : buildQuestionResponse(asRecord(request.input), result);
 
     const behavior = asString(response.behavior);
@@ -550,7 +557,11 @@ export class AgentSessionRuntime {
     let preparationTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
       if (session.status !== "preparing") return;
       const seconds = Math.round(DEFAULT_PREPARATION_TIMEOUT_MS / 1000);
-      const message = `工程准备超时（${seconds}s）。请确认模型配置和 Agent 执行环境可用，或点击停止后重试。`;
+      const message = backendText(
+        'session.preparationTimeout',
+        session.productLanguage,
+        { seconds },
+      );
       controller.abort();
       void this.fail(session, new Error(message));
     }, DEFAULT_PREPARATION_TIMEOUT_MS);
@@ -577,6 +588,7 @@ export class AgentSessionRuntime {
       executionEngine,
       agentExecutionSettings: await this.getAgentExecutionSettingsForDispatch(),
       intent: session.intent,
+      productLanguage: session.productLanguage,
       project: session.project,
       mapId: input.mapId ? String(input.mapId) : undefined,
       taskId: input.taskId,
@@ -765,21 +777,25 @@ export class AgentSessionRuntime {
     if (session.status !== "pass" && session.status !== "blocked") return;
     let pendingForeground: ReturnType<typeof deriveSessionSubagents>["items"] = [];
     try {
-      pendingForeground = deriveSessionSubagents(session.id, session.events)
+      pendingForeground = deriveSessionSubagents(session.id, session.events, session.productLanguage)
         .items
         .filter((item): item is NonNullable<typeof item> => item != null)
         .filter((item) => PENDING_SUBAGENT_STATUSES.has(item.status) && item.background !== true);
     } catch {
       if (session.status === "pass") return;
-      throw new Error("子 Agent 状态解析失败");
+      throw new Error(backendText('session.subagentParseFailed', session.productLanguage));
     }
     if (!pendingForeground.length) return;
 
     session.status = "blocked";
-    if (session.blocker?.includes("子 Agent 未完成")) return;
+    if (session.blocker?.includes("子 Agent 未完成") || session.blocker?.includes("foreground subagent")) return;
     const message = pendingForeground.length === 1
-      ? "还有 1 个前台子 Agent 未完成，主会话不能正常收尾。请等待其返回结果或停止它后再继续。"
-      : `还有 ${pendingForeground.length} 个前台子 Agent 未完成，主会话不能正常收尾。请等待其返回结果或停止它们后再继续。`;
+      ? backendText('session.subagentIncompleteSingle', session.productLanguage)
+      : backendText(
+        'session.subagentIncompleteMultiple',
+        session.productLanguage,
+        { count: pendingForeground.length },
+      );
     session.blocker = session.blocker ? `${session.blocker}；${message}` : message;
   }
 
@@ -839,6 +855,7 @@ export class AgentSessionRuntime {
       status: session.status,
       profileId: session.profileId,
       project: session.project,
+      productLanguage: session.productLanguage,
       intent: session.intent.slice(0, 240),
       displayText: session.displayText,
       parentSessionId: session.parentSessionId,
@@ -890,6 +907,7 @@ export class AgentSessionRuntime {
   private restoreSession(meta: Record<string, any>, outDir: string): AgentSession {
     const previousStatus = String(meta.status || "interrupted");
     const status = TERMINAL.has(previousStatus) ? previousStatus : "interrupted";
+    const productLanguage = normalizeProductLanguage(meta.productLanguage);
     const events = this.loadPersistedEvents(outDir);
     const seq = events.reduce((max, event) => Math.max(max, finiteNumber(event.sequence)), 0);
     return {
@@ -902,6 +920,7 @@ export class AgentSessionRuntime {
       outDir,
       intent: String(meta.intent || ""),
       displayText: String(meta.displayText || meta.intent || "Interrupted session"),
+      productLanguage,
       project: String(meta.project || "projects/Project"),
       parentSessionId: meta.parentSessionId || null,
       planFilePath: typeof meta.planFilePath === "string"
@@ -910,7 +929,9 @@ export class AgentSessionRuntime {
           ? null
           : buildConversationPlanRelativePath(String(meta.id)),
       opencodeSessionId: meta.opencodeSessionId || null,
-      blocker: status === "interrupted" ? "应用重启前会话未正常结束。" : (meta.blocker || null),
+      blocker: status === "interrupted"
+        ? backendText('session.interrupted', productLanguage)
+        : (meta.blocker || null),
       dispatch: null,
       events,
       seq,
@@ -1098,7 +1119,9 @@ function isOpencodeAskRequestEvent(event: AgentRuntimeEvent, requestId: string):
 function buildPlanApprovalResponse(
   input: Record<string, unknown>,
   result: unknown,
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
 ): Record<string, unknown> {
+  language = normalizeProductLanguage(language)
   const data = asRecord(result);
   const decision = asString(data.decision);
   if (decision === "approve" || decision === "confirmed") {
@@ -1108,7 +1131,9 @@ function buildPlanApprovalResponse(
       decisionClassification: "user_temporary",
     };
   }
-  const feedback = asString(data.feedback) || (decision === "reject" ? "用户拒绝了该计划。" : "用户要求修改该计划。");
+  const feedback = asString(data.feedback) || (decision === "reject"
+    ? backendText('session.planRejected', language)
+    : backendText('session.planModifyRequested', language));
   return {
     behavior: "deny",
     message: feedback,
@@ -1116,6 +1141,7 @@ function buildPlanApprovalResponse(
     decisionClassification: "user_reject",
   };
 }
+
 
 function buildQuestionResponse(
   input: Record<string, unknown>,

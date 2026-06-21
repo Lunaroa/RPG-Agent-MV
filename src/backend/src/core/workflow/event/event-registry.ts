@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { EventContractDao } from "../../db/dao/event-contract-dao.ts";
 import { eventContentFingerprint } from "./event-fingerprint.ts";
+import { adoptedOrphanPurpose, eventRegistryDefaultDialogue } from "./eventRegistryLocalization.ts";
 import { updateMapEvent } from "../map/map-event-edit.ts";
 import { KNOWN_COMMAND_KINDS, COMMAND_KIND_ALIASES, normalizeCommands } from "../../rmmv/event-page-compiler.ts";
 import { validateEventCommandBasic } from "../../rmmv/event-command-registry.ts";
@@ -411,7 +412,7 @@ function scaffoldContract(options: {
     },
     implementation: {
       commands: [
-        { kind: "text", text: options.text || "（在此填写对话）" },
+        { kind: "text", text: options.text || eventRegistryDefaultDialogue() },
       ],
     },
   };
@@ -1427,7 +1428,7 @@ function adoptOrphan(
   const y = isInt(placed.y) ? (placed.y as number) : 0;
   const purpose = opts.purpose && opts.purpose.trim().length >= 10
     ? opts.purpose.trim()
-    : `收编自 Map${opts.mapId} 既有事件 ${opts.eventId}（${eventName}）的遗留事件，纳入注册表统一管理与对账。`;
+    : adoptedOrphanPurpose(opts.mapId, opts.eventId, eventName);
 
   const contract: EventContract = {
     engine: "rpg-maker-mv",

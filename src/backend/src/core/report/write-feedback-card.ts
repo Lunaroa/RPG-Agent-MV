@@ -1,15 +1,24 @@
-// 反馈审阅卡片：每次 event-feedback record 后生成/刷新一张可读 md，
-// 把「事件内容 + AI 那次的思考/工具调用 + 你的全部打分」拼到一处，落在
-// `.opencode/logs/skills/feedback/<contractId>.md`，翻文件夹即可审阅（无需在 DB 与会话事件之间来回跳）。
-//
-// 数据各归其位、视图统一：打分仍在 SQLite（可聚合统计），会话事件仍留 `runtime/sessions/`，
-// 本卡片只是把两者 join 后渲染成人读视图；每次 record 重生该事件的卡片（改分自动更新）。
+// Feedback review card renderer. Each event-feedback record refreshes a readable
+// markdown card that joins the event contract, the relevant AI session trace,
+// and all user verdicts in one file.
 import fs from "node:fs";
 import path from "node:path";
 
 import { stripNativeTaskBlocks } from "../../../../contract/native-task-blocks.ts";
 import { EventContractDao } from "../db/dao/event-contract-dao.ts";
 import { EventFeedbackDao, type EventFeedback } from "../db/dao/event-feedback-dao.ts";
+import {
+  feedbackCardCommandKinds,
+  feedbackCardEventsSource,
+  feedbackCardListSeparator,
+  feedbackCardPurpose,
+  feedbackCardScoreRow,
+  feedbackCardSections,
+  feedbackCardSessionEventsMissing,
+  feedbackCardSummary,
+  feedbackCardTitle,
+  feedbackVerdictLabel,
+} from "./feedbackCardLocalization.ts";
 
 interface SessionDigest {
   sessionId: string;
@@ -19,14 +28,8 @@ interface SessionDigest {
   assistantText: string[];
 }
 
-const VERDICT_LABEL: Record<string, string> = {
-  accept: "✅ 接受",
-  revise: "✏️ 调整",
-  reject: "❌ 拒绝",
-};
-
 function verdictLabel(verdict: string): string {
-  return VERDICT_LABEL[verdict] ?? verdict;
+  return feedbackVerdictLabel(verdict);
 }
 
 function findSessionEvents(workflowRoot: string, sessionId: string): string | null {
@@ -111,62 +114,67 @@ function renderCard(
 ): string {
   const latest = feedbacks[feedbacks.length - 1];
   const lines: string[] = [];
+  const sections = feedbackCardSections();
+  const listSeparator = feedbackCardListSeparator();
 
-  lines.push(`# 反馈卡片：${contractId}`);
+  lines.push(feedbackCardTitle(contractId));
   lines.push("");
-  lines.push(
-    `> 当前评价：**${latest ? verdictLabel(latest.verdict) : "—"}** ｜ 共 ${feedbacks.length} 条反馈 ｜ 生成于 ${new Date().toISOString()}`,
-  );
+  lines.push(feedbackCardSummary(latest ? verdictLabel(latest.verdict) : "—", feedbacks.length, new Date().toISOString()));
   lines.push("");
 
-  lines.push("## 你的打分");
+  lines.push(sections.scores);
   lines.push("");
-  lines.push("| # | 评价 | 标签 | 原因 | 时间 | 会话 |");
-  lines.push("|---|------|------|------|------|------|");
+  lines.push(sections.scoreTableHead);
+  lines.push(sections.scoreTableRule);
   for (const f of feedbacks) {
-    lines.push(
-      `| ${f.rid} | ${verdictLabel(f.verdict)} | ${f.tags.join("、") || "—"} | ${escapeCell(f.note ?? "—")} | ${f.created_at} | ${f.session_id ?? "—"} |`,
-    );
+    lines.push(feedbackCardScoreRow({
+      id: f.rid,
+      verdict: verdictLabel(f.verdict),
+      tags: f.tags.join(listSeparator) || "—",
+      note: escapeCell(f.note ?? "—"),
+      createdAt: f.created_at,
+      sessionId: f.session_id ?? "—",
+    }));
   }
   lines.push("");
 
-  lines.push("## 事件内容（EventContract）");
+  lines.push(sections.eventContract);
   lines.push("");
   if (contract) {
     const purpose = typeof contract.purpose === "string" ? contract.purpose : "";
     if (purpose) {
-      lines.push(`**目的**：${purpose}`);
+      lines.push(feedbackCardPurpose(purpose));
       lines.push("");
     }
     const kinds = extractCommandKinds(contract);
     if (kinds.length) {
-      lines.push(`**命令序列**（${kinds.length}）：${kinds.join(" → ")}`);
+      lines.push(feedbackCardCommandKinds(kinds.length, kinds.join(" → ")));
       lines.push("");
     }
-    lines.push("<details><summary>完整契约 JSON</summary>");
+    lines.push(sections.fullContractSummary);
     lines.push("");
     lines.push("```json");
     lines.push(JSON.stringify(contract, null, 2));
     lines.push("```");
     lines.push("</details>");
   } else {
-    lines.push("_（契约已不在注册表，可能被删除或改名）_");
+    lines.push(sections.missingContract);
   }
   lines.push("");
 
-  lines.push("## AI 生成过程");
+  lines.push(sections.aiProcess);
   lines.push("");
   if (!digest) {
-    lines.push("_（最近一条反馈未带 --session；record 时带上会话 id 可拼出 AI 当时的思考与工具调用）_");
+    lines.push(sections.missingSession);
   } else if (!digest.eventsPath) {
-    lines.push(`_（会话 \`${digest.sessionId}\` 的事件记录未找到，可能已被运行时清理）_`);
+    lines.push(feedbackCardSessionEventsMissing(digest.sessionId));
   } else {
-    lines.push(`> 来源：\`${eventsRel ?? digest.eventsPath}\`（opencode 会话事件）`);
+    lines.push(feedbackCardEventsSource(eventsRel ?? digest.eventsPath));
     lines.push("");
     if (digest.thinking.length) {
-      lines.push("### 思考");
+      lines.push(sections.thinking);
       lines.push("");
-      lines.push("<details><summary>展开思考链</summary>");
+      lines.push(sections.thinkingSummary);
       lines.push("");
       for (const t of digest.thinking) {
         lines.push(t);
@@ -176,7 +184,7 @@ function renderCard(
       lines.push("");
     }
     if (digest.toolCalls.length) {
-      lines.push("### 工具调用");
+      lines.push(sections.toolCalls);
       lines.push("");
       for (const tc of digest.toolCalls) {
         lines.push(`- \`${tc.name}\`${tc.brief ? ` ${tc.brief}` : ""}`);
@@ -184,7 +192,7 @@ function renderCard(
       lines.push("");
     }
     if (digest.assistantText.length) {
-      lines.push("### AI 对外说明");
+      lines.push(sections.assistantText);
       lines.push("");
       for (const t of digest.assistantText) {
         lines.push(t);
@@ -197,8 +205,8 @@ function renderCard(
 }
 
 /**
- * 生成/刷新某事件的反馈审阅卡片，返回卡片文件绝对路径。
- * 对话摘要取「最近一条带 session 的反馈」对应的原生会话。
+ * Generate or refresh the feedback review card for one event contract.
+ * The session digest uses the latest feedback row that has a session id.
  */
 export function writeFeedbackCard(opts: {
   workflowRoot: string;

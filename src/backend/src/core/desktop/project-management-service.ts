@@ -9,6 +9,21 @@ import {
 import { readJson } from '../rmmv/json.ts';
 import { dataRelativePath, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import { getCommonEvent, updateCommonEvent } from './common-event-service.ts';
+import {
+  projectManagedCreateDatabaseOnly,
+  projectManagedDatabaseKindInvalid,
+  projectManagedEntryIdImmutable,
+  projectManagedEntryIdInvalid,
+  projectManagedEntryInvalid,
+  projectManagedEntryInvalidWithIssues,
+  projectManagedEntryMissing,
+  projectManagedFileMissing,
+  projectManagedFixedDocumentCannotCreate,
+  projectManagedFixedDocumentIdRequired,
+  projectManagedGroupInvalid,
+  projectManagedGroupMustBeArray,
+  projectManagedListInvalid,
+} from './projectManagementServiceLocalization.ts';
 import { getProjectFileForRead, writeStagedProjectJson } from './staging-service.ts';
 
 export function getProjectManagedEntry(
@@ -23,15 +38,15 @@ export function getProjectManagedEntry(
   if (request.kind === 'switch' || request.kind === 'variable') {
     const key = request.kind === 'switch' ? 'switches' : 'variables';
     const list = (data as Record<string, unknown>)[key];
-    if (!Array.isArray(list)) throw new Error(`${key} 数据无效`);
+    if (!Array.isArray(list)) throw new Error(projectManagedListInvalid(key));
     return { ...request, id, relativePath, value: { id, name: String(list[id] || '') } };
   }
   const schema = schemaForManagedEntry(request);
   if (!schema.isArrayTable) {
-    if (Number(request.id) !== 0) throw new Error(`${schema.group} 是固定文档条目，ID 必须为 0`);
+    if (Number(request.id) !== 0) throw new Error(projectManagedFixedDocumentIdRequired(schema.group));
     return { ...request, id: 0, relativePath, value: readDocumentEntry(schema, data), schema: schemaPayload(schema) };
   }
-  if (!Array.isArray(data) || !data[id]) throw new Error('项目条目不存在');
+  if (!Array.isArray(data) || !data[id]) throw new Error(projectManagedEntryMissing());
   return { ...request, id, relativePath, value: data[id], schema: schemaPayload(schema) };
 }
 
@@ -47,16 +62,16 @@ export function updateProjectManagedEntry(
     const key = request.kind === 'switch' ? 'switches' : 'variables';
     const name = String((request.value as Record<string, unknown>)?.name || '');
     const list = (data as Record<string, unknown>)[key];
-    if (!Array.isArray(list)) throw new Error(`${key} 数据无效`);
+    if (!Array.isArray(list)) throw new Error(projectManagedListInvalid(key));
     list[current.id] = name;
   } else {
-    if (!request.value || typeof request.value !== 'object' || Array.isArray(request.value)) throw new Error('条目数据无效');
+    if (!request.value || typeof request.value !== 'object' || Array.isArray(request.value)) throw new Error(projectManagedEntryInvalid());
     const schema = schemaForManagedEntry(request);
     const next = structuredClone(request.value as Record<string, unknown>);
-    if (schema.isArrayTable && Number(next.id) !== current.id) throw new Error('条目 ID 不允许修改');
+    if (schema.isArrayTable && Number(next.id) !== current.id) throw new Error(projectManagedEntryIdImmutable());
     const validation = schema.validate(next);
     if (!validation.ok) {
-      throw new Error(`条目数据无效：${validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')}`);
+      throw new Error(projectManagedEntryInvalidWithIssues(validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')));
     }
     if (schema.isArrayTable) {
       (data as unknown[])[current.id] = next;
@@ -73,12 +88,12 @@ export function createProjectManagedEntry(
   project: string,
   request: { kind: ProjectManagedEntry['kind']; group?: string; value?: unknown },
 ): ProjectManagedEntry {
-  if (request.kind !== 'database') throw new Error('只能新增数据库条目');
+  if (request.kind !== 'database') throw new Error(projectManagedCreateDatabaseOnly());
   const schema = schemaForManagedEntry(request);
-  if (!schema.isArrayTable) throw new Error(`${schema.group} 是固定文档条目，不能新增`);
+  if (!schema.isArrayTable) throw new Error(projectManagedFixedDocumentCannotCreate(schema.group));
   const relativePath = relativePathFor(project, request);
   const data = readData(workflowRoot, project, relativePath);
-  if (!Array.isArray(data)) throw new Error(`${schema.group} 数据不是数组表`);
+  if (!Array.isArray(data)) throw new Error(projectManagedGroupMustBeArray(schema.group));
   const id = nextFreeId(data);
   const base = createDefaultRmmvDatabaseEntry(schema.group, id);
   const next = request.value && typeof request.value === 'object' && !Array.isArray(request.value)
@@ -86,7 +101,7 @@ export function createProjectManagedEntry(
     : base;
   const validation = schema.validate(next);
   if (!validation.ok) {
-    throw new Error(`条目数据无效：${validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')}`);
+    throw new Error(projectManagedEntryInvalidWithIssues(validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')));
   }
   data[id] = next;
   writeStagedProjectJson(workflowRoot, project, relativePath, data);
@@ -102,24 +117,24 @@ function relativePathFor(project: string, request: { kind: ProjectManagedEntry['
 
 function schemaForManagedEntry(request: { kind: ProjectManagedEntry['kind']; group?: string }) {
   if (request.kind === 'commonEvent') return getRmmvDatabaseSchema('CommonEvents');
-  if (request.kind !== 'database') throw new Error('数据库类型无效');
+  if (request.kind !== 'database') throw new Error(projectManagedDatabaseKindInvalid());
   return getRmmvDatabaseSchema(String(request.group || ''));
 }
 
 function readData(workflowRoot: string, project: string, relativePath: string): unknown {
   const file = getProjectFileForRead(workflowRoot, project, relativePath);
-  if (!file) throw new Error(`项目文件不存在：${path.basename(relativePath)}`);
+  if (!file) throw new Error(projectManagedFileMissing(path.basename(relativePath)));
   return readJson(file);
 }
 
 function validId(value: number): number {
   const id = Number(value);
-  if (!Number.isInteger(id) || id < 0) throw new Error('条目 ID 无效');
+  if (!Number.isInteger(id) || id < 0) throw new Error(projectManagedEntryIdInvalid());
   return id;
 }
 
 function readDocumentEntry(schema: RmmvDatabaseTableSchema, data: unknown): Record<string, unknown> {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(`${schema.group} 数据无效`);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(projectManagedGroupInvalid(schema.group));
   const record = data as Record<string, unknown>;
   if (schema.group === 'Types') return pick(record, ['elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes']);
   if (schema.group === 'Terms') {
@@ -130,7 +145,7 @@ function readDocumentEntry(schema: RmmvDatabaseTableSchema, data: unknown): Reco
 }
 
 function writeDocumentEntry(schema: RmmvDatabaseTableSchema, data: unknown, value: Record<string, unknown>): void {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(`${schema.group} 数据无效`);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(projectManagedGroupInvalid(schema.group));
   const record = data as Record<string, unknown>;
   if (schema.group === 'Types') {
     for (const key of ['elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes']) record[key] = structuredClone(value[key]);

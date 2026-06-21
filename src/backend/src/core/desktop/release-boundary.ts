@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { allStaleTerminalMenuTextMarkers } from "./releaseBoundaryLocalization.ts";
 
 export interface ReleaseManifest {
   files: string[];
@@ -643,7 +644,9 @@ function inspectElectronArtifactContentMarkers(check: ReleaseArtifactCheck, arti
     }
   }
 
-  const staleFrontendEvidence = findPackagedFrontendAssetText(artifactRoot, "显示终端");
+  const staleFrontendEvidence = allStaleTerminalMenuTextMarkers().flatMap((needle) =>
+    findPackagedFrontendAssetText(artifactRoot, needle),
+  );
   if (staleFrontendEvidence.length > 0) {
     addArtifactIssue(check, "blocker", "electron-packaged-web-stale", "Electron packaged frontend still contains removed terminal menu text.", staleFrontendEvidence);
   }

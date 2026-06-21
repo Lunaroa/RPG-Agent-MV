@@ -66,13 +66,13 @@ async function testProvider(workflowRoot: string, providerId: string, overrides?
   const model = rawModel ? String(rawModel).trim() : null;
 
   if (!apiKey) {
-    return { ok: false, error: "没有可用的凭证 (credentialValue 未配置)" };
+    return { ok: false, error: "No usable credential is configured (credentialValue is missing)" };
   }
   if (!model) {
-    return { ok: false, error: "provider 未配置任何 model id" };
+    return { ok: false, error: "provider has no model id configured" };
   }
   if (!baseUrl) {
-    return { ok: false, error: "provider 未配置 baseUrl" };
+    return { ok: false, error: "provider baseUrl is not configured" };
   }
 
   const client = resolveTestClient(provider, { baseUrl, providerId, model });
@@ -86,8 +86,8 @@ async function listModelsForProvider(workflowRoot: string, providerId: string, o
   const opts = overrides || {} as ListModelsOverrides;
   const baseUrl = opts.baseUrl || provider.baseUrl;
   const apiKey = normalizeApiKey(opts.apiKey || provider.credentialValue || "");
-  if (!apiKey) return { ok: false, error: "没有可用的凭证 (credentialValue 未配置)" };
-  if (!baseUrl) return { ok: false, error: "provider 未配置 baseUrl" };
+  if (!apiKey) return { ok: false, error: "No usable credential is configured (credentialValue is missing)" };
+  if (!baseUrl) return { ok: false, error: "provider baseUrl is not configured" };
 
   const client = resolveListModelsClient(provider);
   const clientWithListModels = client as unknown as { listModels?: (opts: { baseUrl: string; apiKey: string }) => Promise<ListModelsResult> };
@@ -101,7 +101,7 @@ async function listModelsForProvider(workflowRoot: string, providerId: string, o
       const listBaseUrl = resolveListModelsBaseUrl(provider, opts);
       result = await clientWithListModels.listModels({ baseUrl: listBaseUrl, apiKey });
     } else {
-      return { ok: false, error: `${provider.protocol || "openai-compatible"} 协议尚未实现 listModels` };
+      return { ok: false, error: `${provider.protocol || "openai-compatible"} protocol has not implemented listModels` };
     }
 
     if (!result.ok) {
@@ -109,7 +109,7 @@ async function listModelsForProvider(workflowRoot: string, providerId: string, o
     }
 
     if (!result.models?.length) {
-      return { ok: false, error: result.error || "远端未返回任何模型", status: result.status ?? null };
+      return { ok: false, error: result.error || "Remote endpoint did not return any models", status: result.status ?? null };
     }
 
     return {

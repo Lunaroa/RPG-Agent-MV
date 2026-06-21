@@ -1,3 +1,4 @@
+import type { ProductLanguage } from "../../../../contract/i18n.ts";
 import type {
   SessionPlanSnapshot,
   SessionSubagentActivity,
@@ -11,6 +12,13 @@ import {
   planContentFromWriteInput,
   planPathFromToolInput,
 } from "./session-plan-file.ts";
+import {
+  sessionPlanLabels,
+  sessionSubagentLabels,
+  sessionSubagentNotificationTitle,
+  sessionSubagentResultTitle,
+  sessionSubagentToolTitle,
+} from "./sessionDerivedStateLocalization.ts";
 
 export const AGENT_RUNTIME_PLAN_ASK_PREFIX = "agent-runtime-plan:";
 export const AGENT_RUNTIME_QUESTION_ASK_PREFIX = "agent-runtime-ask:";
@@ -35,12 +43,14 @@ export function questionAskIdForRequest(requestId: string): string {
 export function deriveSessionPlan(
   sessionId: string,
   events: SessionRuntimeEvent[],
+  language?: ProductLanguage | null,
 ): SessionPlanSnapshot {
+  const planLabels = sessionPlanLabels(language);
   const calls = new Map<string, ToolCallRecord>();
   const snapshot: SessionPlanSnapshot = {
     sessionId,
     mode: "idle",
-    title: "计划",
+    title: planLabels.idleTitle,
     planMarkdown: "",
     askId: null,
     requestId: null,
@@ -60,16 +70,16 @@ export function deriveSessionPlan(
       if (callId && tool) calls.set(callId, { tool, input });
       if (tool === "EnterPlanMode" || tool === "plan_enter") {
         snapshot.mode = "planning";
-        snapshot.title = "计划模式";
+        snapshot.title = planLabels.planningTitle;
         snapshot.updatedAt = at;
       } else if (tool === "ExitPlanMode" || tool === "plan_exit") {
         const plan = asString(input.plan);
         if (plan) snapshot.planMarkdown = plan;
         snapshot.mode = "approval_requested";
-        snapshot.title = "计划待批准";
+        snapshot.title = planLabels.approvalRequestedTitle;
         snapshot.updatedAt = at;
       } else if (isPlanFileTool(tool)) {
-        applyPlanFileToolCall(snapshot, tool, input, at);
+        applyPlanFileToolCall(snapshot, tool, input, at, planLabels);
       }
       continue;
     }
@@ -80,7 +90,7 @@ export function deriveSessionPlan(
       const toolName = asString(request.tool_name);
       if (toolName === "EnterPlanMode") {
         snapshot.mode = "planning";
-        snapshot.title = "计划模式";
+        snapshot.title = planLabels.planningTitle;
         snapshot.updatedAt = at;
         continue;
       }
@@ -88,7 +98,7 @@ export function deriveSessionPlan(
       const requestId = asString(event.request_id);
       const input = asRecord(request.input);
       snapshot.mode = "approval_requested";
-      snapshot.title = "计划待批准";
+      snapshot.title = planLabels.approvalRequestedTitle;
       snapshot.planMarkdown = asString(input.plan) || snapshot.planMarkdown;
       snapshot.filePath = asString(input.planFilePath) || snapshot.filePath || null;
       snapshot.requestId = requestId || snapshot.requestId || null;
@@ -107,7 +117,7 @@ export function deriveSessionPlan(
         const behavior = asString(payload.behavior);
         if (response.subtype === "error") {
           snapshot.mode = "error";
-          snapshot.error = asString(response.error) || "计划审批响应失败";
+          snapshot.error = asString(response.error) || planLabels.responseFailed;
         } else if (behavior === "allow") {
           snapshot.mode = "approved";
           snapshot.feedback = null;
@@ -127,14 +137,14 @@ export function deriveSessionPlan(
       if (!call) continue;
       if (call.tool === "EnterPlanMode" || call.tool === "plan_enter") {
         snapshot.mode = event.success === false ? "error" : "planning";
-        snapshot.error = event.success === false ? outputText(event.output) || "进入计划模式失败" : null;
+        snapshot.error = event.success === false ? outputText(event.output) || planLabels.enterFailed : null;
         snapshot.updatedAt = at;
       } else if (isPlanFileTool(call.tool)) {
-        const planPath = planPathFromToolInput(call.input);
+        const planPath = planPathFromToolInput(toolCallInput(call));
         if (planPath) {
           snapshot.filePath = planPath;
           snapshot.mode = snapshot.mode === "idle" ? "planning" : snapshot.mode;
-          snapshot.title = snapshot.mode === "planning" ? "计划模式" : snapshot.title;
+          snapshot.title = snapshot.mode === "planning" ? planLabels.planningTitle : snapshot.title;
           snapshot.updatedAt = at;
         }
       } else if (call.tool === "ExitPlanMode" || call.tool === "plan_exit") {
@@ -146,7 +156,7 @@ export function deriveSessionPlan(
         snapshot.askId = snapshot.requestId ? planAskIdForRequest(snapshot.requestId) : snapshot.askId || null;
         if (event.success === false) {
           snapshot.mode = "error";
-          snapshot.error = outputText(event.output) || "退出计划模式失败";
+          snapshot.error = outputText(event.output) || planLabels.exitFailed;
         } else if (parsed?.awaitingLeaderApproval === true) {
           snapshot.mode = "approval_requested";
         } else {
@@ -164,7 +174,9 @@ export function deriveSessionPlan(
 export function deriveSessionSubagents(
   sessionId: string,
   events: SessionRuntimeEvent[],
+  language?: ProductLanguage | null,
 ): SessionSubagentSnapshot {
+  const subagentLabels = sessionSubagentLabels(language);
   const calls = new Map<string, ToolCallRecord>();
   const callToItemId = new Map<string, string>();
   const items = new Map<string, SessionSubagentItem>();
@@ -231,7 +243,7 @@ export function deriveSessionSubagents(
         const id = `pending:${callId}`;
         callToItemId.set(callId, id);
         upsert(id, {
-          description: asString(input.description) || "子任务",
+          description: asString(input.description) || subagentLabels.fallbackDescription,
           prompt: asString(input.prompt),
           status: "running",
           background: input.background === true,
@@ -239,7 +251,7 @@ export function deriveSessionSubagents(
           updatedAt: at,
           activity: appendActivity(id, {
             kind: "started",
-            title: "启动子任务",
+            title: subagentLabels.started,
             detail: asString(input.prompt) || asString(input.description) || null,
             status: "running",
             at,
@@ -253,7 +265,7 @@ export function deriveSessionSubagents(
           updatedAt: at,
           activity: appendActivity(taskId, {
             kind: "progress",
-            title: "读取子任务输出",
+            title: subagentLabels.readOutput,
             status: "running",
             at,
           }),
@@ -266,7 +278,7 @@ export function deriveSessionSubagents(
           updatedAt: at,
           activity: appendActivity(taskId, {
             kind: "stop_requested",
-            title: "请求停止子任务",
+            title: subagentLabels.stopRequested,
             status: "running",
             at,
           }),
@@ -282,12 +294,12 @@ export function deriveSessionSubagents(
 
       if (call.tool === "Agent") {
         const currentId = callToItemId.get(callId) || `pending:${callId}`;
-        const parsed = parseAgentOutput(event.output, event.success !== false);
+        const parsed = parseAgentOutput(event.output, event.success !== false, language);
         const nextId = rename(currentId, parsed.id || currentId);
         callToItemId.set(callId, nextId);
         const callInput = toolCallInput(call);
         upsert(nextId, {
-          description: parsed.description || asString(callInput.description) || "子任务",
+          description: parsed.description || asString(callInput.description) || subagentLabels.fallbackDescription,
           prompt: parsed.prompt || asString(callInput.prompt),
           status: parsed.status,
           background: parsed.background || callInput.background === true,
@@ -299,7 +311,7 @@ export function deriveSessionSubagents(
           updatedAt: at,
           activity: appendActivity(nextId, {
             kind: parsed.status === "failed" ? "failed" : parsed.status === "running" ? "progress" : "output",
-            title: parsed.status === "running" ? "子任务已派发" : parsed.status === "failed" ? "子任务失败" : "子任务完成",
+            title: sessionSubagentResultTitle(parsed.status, language),
             detail: parsed.output || parsed.error || null,
             status: parsed.status,
             outputFile: parsed.outputFile,
@@ -320,7 +332,7 @@ export function deriveSessionSubagents(
           updatedAt: at,
           activity: appendActivity(taskId, {
             kind: parsed.status === "failed" ? "failed" : "output",
-            title: parsed.status === "failed" ? "输出读取失败" : "读取到子任务输出",
+            title: parsed.status === "failed" ? subagentLabels.outputReadFailed : subagentLabels.outputRead,
             detail: parsed.output || parsed.error || null,
             status: parsed.status,
             at,
@@ -339,7 +351,7 @@ export function deriveSessionSubagents(
           updatedAt: at,
           activity: appendActivity(taskId, {
             kind: event.success === false ? "failed" : "stopped",
-            title: event.success === false ? "停止失败" : "已停止",
+            title: event.success === false ? subagentLabels.stopFailed : subagentLabels.stopped,
             detail: parsed.message || (event.success === false ? outputText(event.output) : null),
             status: event.success === false ? "failed" : "stopped",
             at,
@@ -373,14 +385,14 @@ export function deriveSessionSubagents(
         activity: appendActivity(nextId || taskId, {
           kind: logType ? "output" : event.type === "subagent_task_started" ? "started" : "progress",
           title: logType === "reasoning"
-            ? "子任务推理"
+            ? subagentLabels.reasoning
             : logType === "text"
-              ? "子任务输出"
+              ? subagentLabels.output
               : event.type === "subagent_task_started"
-            ? "启动子任务"
+            ? subagentLabels.started
             : asString(event.lastToolName)
-              ? `正在使用 ${asString(event.lastToolName)}`
-              : "子任务运行中",
+              ? sessionSubagentToolTitle(asString(event.lastToolName), language)
+              : subagentLabels.running,
           detail: asString(event.detail) || asString(event.prompt) || asString(event.description) || null,
           status: activityStatus,
           tool: asString(event.lastToolName) || null,
@@ -405,17 +417,13 @@ export function deriveSessionSubagents(
         output: output || null,
         outputFile: asString(event.outputFile) || null,
         error: status === "failed" || status === "timeout"
-          ? asString(event.error) || output || "子任务失败"
+          ? asString(event.error) || output || subagentLabels.failed
           : undefined,
         callId: callId || undefined,
         updatedAt: at,
         activity: appendActivity(nextId || taskId, {
           kind: status === "failed" || status === "timeout" ? "failed" : "notification",
-          title: status === "completed"
-            ? "子任务完成"
-            : status === "failed" || status === "timeout"
-              ? "子任务失败"
-              : "子任务状态更新",
+          title: sessionSubagentNotificationTitle(status, language),
           detail: output || asString(event.error) || null,
           status,
           outputFile: asString(event.outputFile) || null,
@@ -434,7 +442,7 @@ export function deriveSessionSubagents(
           updatedAt: at,
           activity: appendActivity(taskId, {
             kind: "stop_requested",
-            title: "请求停止子任务",
+            title: subagentLabels.stopRequested,
             status: "running",
             at,
           }),
@@ -451,11 +459,11 @@ export function deriveSessionSubagents(
         if (item.stopRequestId !== requestId) continue;
         upsert(item.id, {
           status: response.subtype === "error" ? "failed" : "stopped",
-          error: response.subtype === "error" ? asString(response.error) || "停止子任务失败" : null,
+          error: response.subtype === "error" ? asString(response.error) || subagentLabels.stopSubagentFailed : null,
           updatedAt: at,
           activity: appendActivity(item.id, {
             kind: response.subtype === "error" ? "failed" : "stopped",
-            title: response.subtype === "error" ? "停止失败" : "已停止",
+            title: response.subtype === "error" ? subagentLabels.stopFailed : subagentLabels.stopped,
             detail: response.subtype === "error" ? asString(response.error) || null : null,
             status: response.subtype === "error" ? "failed" : "stopped",
             at,
@@ -472,7 +480,11 @@ export function deriveSessionSubagents(
   };
 }
 
-function parseAgentOutput(output: unknown, success: boolean): {
+function parseAgentOutput(
+  output: unknown,
+  success: boolean,
+  language?: ProductLanguage | null,
+): {
   id: string | null;
   status: SessionSubagentStatus;
   background: boolean;
@@ -502,7 +514,7 @@ function parseAgentOutput(output: unknown, success: boolean): {
     prompt: asString(parsed?.prompt),
     output: status === "running" ? "" : usefulSubagentOutput(stripUsageTrailer(text)),
     outputFile: asString(parsed?.outputFile) || matchValue(text, /\boutput_file:\s*(.+)$/im),
-    error: success ? null : text || "子任务失败",
+    error: success ? null : text || sessionSubagentLabels(language).failed,
     sessionUrl: asString(parsed?.sessionUrl) || matchValue(text, /\bsession_url:\s*(\S+)/i),
   };
 }
@@ -642,12 +654,13 @@ function applyPlanFileToolCall(
   tool: string,
   input: Record<string, unknown>,
   at: string | null,
+  planLabels: ReturnType<typeof sessionPlanLabels>,
 ): void {
   const planPath = planPathFromToolInput(input);
   if (!planPath) return;
   snapshot.filePath = planPath;
   snapshot.mode = "planning";
-  snapshot.title = "计划模式";
+  snapshot.title = planLabels.planningTitle;
   snapshot.updatedAt = at;
   if (tool.trim().toLowerCase() === "write") {
     const content = planContentFromWriteInput(input);

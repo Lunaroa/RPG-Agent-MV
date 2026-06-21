@@ -9,9 +9,12 @@ import {
   type OpencodeClient as OpencodeV2Client,
 } from "@opencode-ai/sdk/v2";
 
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from "../../../../../../contract/i18n.ts";
 import { stripNativeTaskBlocks } from "../../../../../../contract/native-task-blocks.ts";
+import type { ProductLanguage } from "../../../../../../contract/types.ts";
 import { resolveOpencodeCli, resolveOpencodeConfigDir, resolveOpencodeRipgrep } from "../../../workspace-paths.ts";
 import { ensureOpencodeRuntimeAssets } from "./runtime-assets.ts";
+import { backendText } from "../../../i18n/messages.ts";
 
 export { stripNativeTaskBlocks } from "../../../../../../contract/native-task-blocks.ts";
 
@@ -41,6 +44,7 @@ export interface OpencodeRunInput {
   env: Record<string, string>;
   config: Record<string, unknown>;
   timeoutMs: number;
+  productLanguage?: ProductLanguage | null;
   signal?: AbortSignal;
 }
 
@@ -72,6 +76,7 @@ export interface NormalizeState {
   ignoredTextParts: Set<string>;
   promptText: string;
   rootSessionId?: string | null;
+  productLanguage?: ProductLanguage | null;
   emittedSubagentStarts?: Set<string>;
   emittedSubagentToolCalls?: Set<string>;
   emittedSubagentToolResults?: Set<string>;
@@ -228,14 +233,14 @@ async function ensureServer(input: OpencodeRunInput): Promise<StartedServer> {
 
   const executable = resolveOpencodeCli(input.workflowRoot);
   if (!fs.existsSync(executable)) {
-    throw new Error(`opencode 运行文件缺失：${executable}`);
+    throw new Error(`opencode runtime file is missing: ${executable}`);
   }
   // Packaged installs must ship ripgrep so file search works fully offline.
   // Fail fast instead of letting the opencode runtime silently download it.
   if (process.env.AGENT_RPG_RESOURCES_PATH?.trim()) {
     const ripgrep = resolveOpencodeRipgrep(input.workflowRoot);
     if (!fs.existsSync(ripgrep)) {
-      throw new Error(`预置 ripgrep 缺失：${ripgrep}。安装包未正确打包 rg，请重新构建发布包（npm run build:opencode-runtime 会生成它）。`);
+      throw new Error(`Bundled ripgrep is missing: ${ripgrep}. The package did not include rg correctly; rebuild the release package with npm run build:opencode-runtime.`);
     }
   }
   ensureOpencodeIsolationDirs(input.workflowRoot);
@@ -267,7 +272,7 @@ function waitForServerUrl(proc: ChildProcess): Promise<string> {
       if (settled) return;
       settled = true;
       stopProcess(proc);
-      reject(new Error(`等待 opencode server 启动超时。\n${output.trim()}`));
+      reject(new Error(`Timed out waiting for opencode server to start.\n${output.trim()}`));
     }, SERVER_START_TIMEOUT_MS);
     const finish = (err: Error | null, url?: string) => {
       if (settled) return;
@@ -287,7 +292,7 @@ function waitForServerUrl(proc: ChildProcess): Promise<string> {
     proc.stderr?.on("data", onChunk);
     proc.once("error", (error) => finish(error));
     proc.once("exit", (code) => {
-      finish(new Error(`opencode server 启动失败，退出码 ${code}。\n${output.trim()}`));
+      finish(new Error(`opencode server failed to start with exit code ${code}.\n${output.trim()}`));
     });
   });
 }
@@ -686,7 +691,7 @@ export function normalizeOpencodeEvent(
       });
     }
   } else if (type === "permission.updated") {
-    out.push(buildPermissionRequest(properties, at));
+    out.push(buildPermissionRequest(properties, at, state.productLanguage));
   } else if (type === "permission.replied") {
     out.push({
       type: "opencode_permission_response",
@@ -744,7 +749,7 @@ function maybePushQuestionRequest(
   at: string,
   out: RuntimeEvent[],
 ): void {
-  const request = buildQuestionRequest(requestId, stateRecord, at);
+  const request = buildQuestionRequest(requestId, stateRecord, at, state.productLanguage);
   if (!request) return;
   const requestKey = stableStringify(asRecord(request.request));
   const emitted = ensureQuestionRequests(state);
@@ -753,8 +758,9 @@ function maybePushQuestionRequest(
   out.push(request);
 }
 
-function normalizeQuestionOption(option: Record<string, unknown>, index: number): { label: string; description: string } | null {
-  const label = asString(option.label) || asString(option.value) || `选项 ${index + 1}`;
+function normalizeQuestionOption(option: Record<string, unknown>, index: number, language?: ProductLanguage | null): { label: string; description: string } | null {
+  const resolvedLanguage = normalizeProductLanguage(language);
+  const label = asString(option.label) || asString(option.value) || backendText('runtime.optionFallback', resolvedLanguage, { index: index + 1 });
   if (!label) return null;
   return {
     label,
@@ -762,33 +768,34 @@ function normalizeQuestionOption(option: Record<string, unknown>, index: number)
   };
 }
 
-function normalizeQuestion(input: Record<string, unknown>, index: number): NormalizedQuestion | null {
+function normalizeQuestion(input: Record<string, unknown>, index: number, language?: ProductLanguage | null): NormalizedQuestion | null {
+  const resolvedLanguage = normalizeProductLanguage(language);
   const question = asString(input.question) || asString(input.prompt);
   if (!question) return null;
   const options = Array.isArray(input.options)
     ? input.options
       .map(asRecord)
-      .map(normalizeQuestionOption)
+      .map((option, optionIndex) => normalizeQuestionOption(option, optionIndex, resolvedLanguage))
       .filter((option): option is { label: string; description: string } => Boolean(option))
     : [];
   if (options.length < 2) return null;
   return {
-    header: asString(input.header) || asString(input.title) || `问题 ${index + 1}`,
+    header: asString(input.header) || asString(input.title) || backendText('runtime.questionFallback', resolvedLanguage, { index: index + 1 }),
     question,
     multiSelect: input.multiple === true || input.multiSelect === true,
     options,
   };
 }
 
-function normalizeQuestionsInput(input: Record<string, unknown>): NormalizedQuestion[] {
+function normalizeQuestionsInput(input: Record<string, unknown>, language?: ProductLanguage | null): NormalizedQuestion[] {
   const questions = Array.isArray(input.questions)
     ? input.questions
       .map(asRecord)
-      .map(normalizeQuestion)
+      .map((question, index) => normalizeQuestion(question, index, language))
       .filter((question): question is NormalizedQuestion => Boolean(question))
     : [];
   if (questions.length) return questions;
-  const single = normalizeQuestion(input, 0);
+  const single = normalizeQuestion(input, 0, language);
   return single ? [single] : [];
 }
 
@@ -796,29 +803,32 @@ function buildQuestionRequest(
   requestId: string,
   stateRecord: Record<string, unknown>,
   at: string,
+  language: ProductLanguage | null | undefined = DEFAULT_PRODUCT_LANGUAGE,
 ): RuntimeEvent | null {
-  const questions = normalizeQuestionsInput(asRecord(stateRecord.input));
+  const resolvedLanguage = normalizeProductLanguage(language);
+  const questions = normalizeQuestionsInput(asRecord(stateRecord.input), resolvedLanguage);
   if (questions.length === 0) return null;
-  const description = questions[0]?.question || "等待用户输入";
+  const description = questions[0]?.question || backendText('runtime.waitingForInput', resolvedLanguage);
   return {
     type: "opencode_question_request",
     request_id: requestId,
-    request: {
-      subtype: "can_use_tool",
-      tool_name: "AskUserQuestion",
-      description,
-      input: {
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "AskUserQuestion",
+        description,
+        input: {
         questions,
       },
-    },
-    at,
-  };
+      },
+      at,
+    };
 }
 
-function buildPermissionRequest(permission: Record<string, unknown>, at: string): RuntimeEvent {
+function buildPermissionRequest(permission: Record<string, unknown>, at: string, language?: ProductLanguage | null): RuntimeEvent {
+  const resolvedLanguage = normalizeProductLanguage(language);
   const requestId = asString(permission.id);
   const type = asString(permission.type);
-  const title = asString(permission.title) || type || "权限确认";
+  const title = asString(permission.title) || type || backendText('runtime.permissionRequired', resolvedLanguage);
   const metadata = asRecord(permission.metadata);
   const planFilePath = asString(metadata.planFilePath) || asString(metadata.planPath) || asString(metadata.path) || null;
   const toolName = type === "plan_exit"
@@ -908,11 +918,13 @@ export async function runOpencodeSession(
   let done = false;
   let sawAssistantContent = false;
   let sawToolActivity = false;
+  const productLanguage = normalizeProductLanguage(input.productLanguage);
   const state: NormalizeState = {
     emittedToolCalls: new Set<string>(),
     ignoredTextParts: new Set<string>(),
     promptText: input.prompt,
     rootSessionId: opencodeSessionId,
+    productLanguage,
   };
 
   const finish = (status: OpencodeRunResult["status"], reason?: string | null) => {
@@ -923,7 +935,12 @@ export async function runOpencodeSession(
   };
 
   const timeout = setTimeout(() => {
-    const reason = `opencode 本轮运行超过 ${Math.round(input.timeoutMs / 1000)} 秒，已自动停止。`;
+    const seconds = Math.round(input.timeoutMs / 1000);
+    const reason = backendText(
+      'runtime.timeout',
+      productLanguage,
+      { seconds },
+    );
     stderr += `${reason}\n`;
     onEvent({ type: "stderr", text: `${reason}\n`, at: now() });
     onEvent({ type: "status", status: "timeout", blocker: reason, at: now() });
@@ -1022,7 +1039,10 @@ export async function runOpencodeSession(
   const finishedAt = now();
   if (shouldBlockEmptyOpencodePass({ status: finalStatus, sawAssistantContent, sawToolActivity, inputTokens, outputTokens })) {
     const reason = [
-      "opencode 本轮结束但模型没有产生有效输出：没有文本、没有工具调用，token usage 为 0。",
+      backendText(
+        'runtime.emptyOutput',
+        productLanguage,
+      ),
       `provider=${input.providerId}`,
       `model=${input.modelId}`,
       opencodeSessionId ? `opencodeSessionId=${opencodeSessionId}` : "",
@@ -1050,6 +1070,7 @@ export async function runOpencodeSession(
     executable: server.executable,
   };
 }
+
 
 export async function replyOpencodePermission(
   sessionId: string,

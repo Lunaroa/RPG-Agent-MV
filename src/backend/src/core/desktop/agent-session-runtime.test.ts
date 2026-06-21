@@ -96,9 +96,30 @@ describe("AgentSessionRuntime", () => {
 
     const current = harness.runtime.get(sessionId);
     assert.equal(current?.status, "blocked");
-    assert.match(String(current?.blocker || ""), /前台子 Agent 未完成/);
+    assert.match(String(current?.blocker || ""), /foreground subagent still running/i);
     assert.equal(received.some((event) => event.type === "status" && event.status === "blocked"), true);
     assert.equal(received.some((event) => event.type === "summary" && event.status === "blocked"), true);
+  });
+
+  test("blocks final pass with English foreground subagent blocker in English mode", async () => {
+    const harness = await createHarness();
+    const session = await harness.runtime.create({ intent: "spawn worker", project: "projects/Project", productLanguage: "en-US" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    harness.emit({
+      type: "tool_call",
+      call_id: "call-agent",
+      tool: "Agent",
+      input: { description: "search code", prompt: "search plugins" },
+      at: "2026-06-01T00:00:02.000Z",
+    });
+    harness.finish({ status: "pass" });
+    await harness.flush();
+
+    const current = harness.runtime.get(sessionId);
+    assert.equal(current?.status, "blocked");
+    assert.match(String(current?.blocker || ""), /foreground subagent still running/);
   });
 
   test("allows final pass after native subagent completion notification", async () => {
@@ -358,6 +379,30 @@ describe("AgentSessionRuntime", () => {
     assert.equal(plan.mode, "approved");
   });
 
+  test("opencode plan ASK default rejection message follows English product language", async () => {
+    const harness = await createHarness();
+    const session = await harness.runtime.create({ intent: "plan work", productLanguage: "en-US" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    harness.emit({
+      type: "opencode_permission_request",
+      request_id: "req-plan",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "ExitPlanMode",
+        input: { plan: "1. Inspect\n2. Edit" },
+      },
+      at: "2026-06-01T00:00:02.000Z",
+    });
+
+    await harness.runtime.submitAskResult(sessionId, "agent-runtime-plan:req-plan", { decision: "reject" });
+
+    const opencodeEvent = (harness.runtime.get(sessionId)?.events as AgentRuntimeEvent[])
+      .find((event) => event.type === "opencode_permission_response" && event.request_id === "req-plan") as any;
+    assert.equal(opencodeEvent.response.response.message, "The user rejected this plan.");
+  });
+
   test("allocates isolated plan path per conversation and reuses it on continuation", async () => {
     let lastBuildOptions: Record<string, unknown> | undefined;
     const harness = await createHarness(undefined, async (options) => {
@@ -496,7 +541,28 @@ describe("AgentSessionRuntime", () => {
 
     const restored = harness.runtime.get("session-idle");
     assert.equal(restored?.status, "interrupted");
-    assert.match(String(restored?.blocker), /未正常结束/);
+    assert.match(String(restored?.blocker), /did not finish cleanly before the app restarted/i);
+  });
+
+  test("restores interrupted session blocker in English mode", async () => {
+    const root = makeRoot();
+    const outDir = path.join(root, "runtime", "sessions", "session-idle-en", "agent-console");
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, "session-meta.json"), JSON.stringify({
+      id: "session-idle-en",
+      status: "idle",
+      displayText: "Idle session",
+      createdAt: "2026-05-31T00:00:00.000Z",
+      updatedAt: "2026-05-31T00:00:00.000Z",
+      profileId: "default",
+      project: "projects/Project",
+      productLanguage: "en-US",
+    }));
+    const harness = await createHarness(root);
+
+    const restored = harness.runtime.get("session-idle-en");
+    assert.equal(restored?.status, "interrupted");
+    assert.equal(restored?.blocker, "The session did not finish cleanly before the app restarted.");
   });
 
   test("restores persisted runtime events after restart", async () => {

@@ -189,7 +189,7 @@ export async function activateBinding(
     };
   }
 
-  throw new Error(`不支持的执行引擎: ${engine}`);
+  throw new Error(`Unsupported execution engine: ${engine}`);
 }
 
 export async function activateForSession(

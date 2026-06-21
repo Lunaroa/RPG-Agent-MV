@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { withProductLanguage } from '../i18n/request-language.ts';
 import { createNativeSkill } from './native-skill-service.ts';
 
 function tmpRoot(): string {
@@ -13,7 +14,9 @@ function tmpRoot(): string {
 test('creates a native skill from settings input', () => {
   const root = tmpRoot();
   try {
-    const result = createNativeSkill(root, 'event-pacing', '控制事件节奏和停顿');
+    const result = withProductLanguage('zh-CN', () =>
+      createNativeSkill(root, 'event-pacing', '控制事件节奏和停顿'),
+    );
     const skillFile = path.join(root, '.opencode', 'skills', 'event-pacing', 'SKILL.md');
 
     assert.equal(result.skill, 'event-pacing');
@@ -32,11 +35,13 @@ test('creates a native skill from settings input', () => {
 test('rejects invalid or duplicate native skill creation', () => {
   const root = tmpRoot();
   try {
-    assert.throws(() => createNativeSkill(root, 'BadName', '说明'), /Skill name/);
-    assert.throws(() => createNativeSkill(root, 'event-pacing', ''), /Skill description is required/);
+    withProductLanguage('zh-CN', () => {
+      assert.throws(() => createNativeSkill(root, 'BadName', '说明'), /Skill name/);
+      assert.throws(() => createNativeSkill(root, 'event-pacing', ''), /Skill description is required/);
 
-    createNativeSkill(root, 'event-pacing', '控制事件节奏和停顿');
-    assert.throws(() => createNativeSkill(root, 'event-pacing', '重复'), /already exists/);
+      createNativeSkill(root, 'event-pacing', '控制事件节奏和停顿');
+      assert.throws(() => createNativeSkill(root, 'event-pacing', '重复'), /already exists/);
+    });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -1,3 +1,6 @@
+import { backendText } from "../i18n/messages.ts";
+import { AGENT_PROMPT_LANGUAGE } from "../i18n/agent-prompt-locale.ts";
+
 export const CONVERSATION_PLAN_DIR = ".opencode/plans/conversations";
 
 export interface ConversationPlanSessionRef {
@@ -70,7 +73,7 @@ export function buildSessionPlanPathPromptLines(planFilePath: string): string[] 
   const normalized = String(planFilePath || "").trim();
   if (!normalized) return [];
   return [
-    `Session plan file: ${normalized}`,
-    "Write or edit plans only at Session plan file / AGENT_RPG_SESSION_PLAN_PATH. Do not use AGENT_RPG_TMP_DIR, logs/tmp, or project-root PLAN.md for plans.",
+    backendText('prompt.sessionPlan.pathLine', AGENT_PROMPT_LANGUAGE, { path: normalized }),
+    backendText('prompt.sessionPlan.scopeLine', AGENT_PROMPT_LANGUAGE),
   ];
 }

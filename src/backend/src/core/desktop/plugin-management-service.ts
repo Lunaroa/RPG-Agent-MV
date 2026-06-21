@@ -147,12 +147,12 @@ export function reorderPlugins(
   assertUniqueConfiguredNames(parsed.entries);
   const requested = pluginNames.map(normalizeConfiguredPluginName);
   const current = parsed.entries.map((entry) => normalizeConfiguredPluginName(entry.name));
-  if (requested.length !== current.length) throw new Error('插件排序必须包含当前全部插件');
+  if (requested.length !== current.length) throw new Error('Plugin ordering must include every currently configured plugin');
   const currentSet = new Set(current);
   const requestedSet = new Set(requested);
-  if (requestedSet.size !== requested.length) throw new Error('插件排序包含重复名称');
+  if (requestedSet.size !== requested.length) throw new Error('Plugin ordering contains duplicate names');
   for (const name of currentSet) {
-    if (!requestedSet.has(name)) throw new Error(`插件排序缺少：${name}`);
+    if (!requestedSet.has(name)) throw new Error(`Plugin ordering is missing: ${name}`);
   }
   const byName = new Map(parsed.entries.map((entry) => [normalizeConfiguredPluginName(entry.name), entry]));
   writePluginsJs(workflowRoot, project, parsed.relativePath, requested.map((name) => byName.get(name)!));
@@ -165,7 +165,7 @@ export function updatePluginParameters(
   pluginName: string,
   parameters: Record<string, unknown>,
 ): PluginConfigurationResult {
-  if (!isPlainObject(parameters)) throw new Error('插件参数必须是对象');
+  if (!isPlainObject(parameters)) throw new Error('Plugin parameters must be an object');
   return updatePluginEntry(workflowRoot, project, pluginName, (entry) => {
     entry.parameters = structuredClone(parameters);
   });
@@ -182,12 +182,12 @@ export function installPluginFile(
   } = {},
 ): { name: string; relativePath: string; staging: unknown; configuration?: PluginConfigurationResult } {
   const source = path.resolve(sourceFile);
-  if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error('插件源文件不存在');
-  if (path.extname(source).toLowerCase() !== '.js') throw new Error('只允许安装 .js 插件文件');
+  if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error('Plugin source file does not exist');
+  if (path.extname(source).toLowerCase() !== '.js') throw new Error('Only .js plugin files can be installed');
   const name = normalizePluginFileStem(options.name || path.basename(source, '.js'));
   const relativePath = `${pluginDirRelativePath(project)}/${name}.js`;
   if (getProjectFileForRead(workflowRoot, project, relativePath) && !options.overwrite) {
-    throw new Error(`插件文件已存在：${name}.js`);
+    throw new Error(`Plugin file already exists: ${name}.js`);
   }
 
   writeStagedProjectBuffer(workflowRoot, project, relativePath, fs.readFileSync(source));
@@ -218,10 +218,10 @@ export function deletePluginFile(
   const parsed = readPlugins(workflowRoot, project);
   const configured = parsed.entries.filter((entry) => entry.name === name);
   if (configured.some((entry) => entry.status) && !options.force && !options.removeConfigurationEntry) {
-    throw new Error(`插件仍在启用，禁止删除文件：${name}`);
+    throw new Error(`Plugin is still enabled and cannot be deleted: ${name}`);
   }
   const relativePath = pluginFileCandidates(project, name).find((candidate) => getProjectFileForRead(workflowRoot, project, candidate));
-  if (!relativePath) throw new Error(`插件文件不存在：${name}.js`);
+  if (!relativePath) throw new Error(`Plugin file does not exist: ${name}.js`);
   deleteStagedProjectFile(workflowRoot, project, relativePath);
 
   let configuration: PluginConfigurationResult | undefined;
@@ -246,7 +246,7 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
     issues.push({
       severity: 'error',
       code: 'plugins-js-missing',
-      message: '缺少插件配置 js/plugins.js',
+      message: 'Missing plugin configuration js/plugins.js',
       relativePath: parsed.relativePath,
     });
   }
@@ -254,7 +254,7 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
     issues.push({
       severity: 'error',
       code: 'plugins-js-parse-error',
-      message: `plugins.js 无法解析：${parsed.parseError}`,
+      message: `plugins.js could not be parsed: ${parsed.parseError}`,
       relativePath: parsed.relativePath,
     });
   }
@@ -266,7 +266,7 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
       issues.push({
         severity: 'error',
         code: 'plugin-name-missing',
-        message: `第 ${index + 1} 个插件缺少名称`,
+        message: `Plugin #${index + 1} is missing a name`,
         index,
       });
       return;
@@ -275,7 +275,7 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
       issues.push({
         severity: 'error',
         code: 'plugin-name-duplicate',
-        message: `插件重复配置：${name}`,
+        message: `Duplicate plugin configuration: ${name}`,
         pluginName: name,
         index,
       });
@@ -285,7 +285,7 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
       issues.push({
         severity: 'error',
         code: 'plugin-parameters-invalid',
-        message: `插件 ${name} 的 parameters 必须是对象`,
+        message: `Plugin ${name} parameters must be an object`,
         pluginName: name,
         index,
       });
@@ -295,7 +295,7 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
       issues.push({
         severity: entry.status ? 'error' : 'warn',
         code: 'plugin-file-missing',
-        message: `插件文件缺失：${name}.js`,
+        message: `Plugin file is missing: ${name}.js`,
         pluginName: name,
         index,
         relativePath: `${pluginDirRelativePath(project)}/${name}.js`,
@@ -326,8 +326,8 @@ function updatePluginEntry(
   const parsed = requireReadablePlugins(workflowRoot, project);
   const name = normalizeConfiguredPluginName(pluginName);
   const matches = parsed.entries.filter((entry) => entry.name === name);
-  if (!matches.length) throw new Error(`插件不存在：${name}`);
-  if (matches.length > 1) throw new Error(`插件重复配置，不能安全修改：${name}`);
+  if (!matches.length) throw new Error(`Plugin does not exist: ${name}`);
+  if (matches.length > 1) throw new Error(`Duplicate plugin configuration cannot be modified safely: ${name}`);
   update(matches[0]);
   writePluginsJs(workflowRoot, project, parsed.relativePath, parsed.entries);
   return readPluginConfiguration(workflowRoot, project);
@@ -377,8 +377,8 @@ function readPlugins(workflowRoot: string, project: string): ParsedPlugins {
 
 function requireReadablePlugins(workflowRoot: string, project: string): ParsedPlugins {
   const parsed = readPlugins(workflowRoot, project);
-  if (!parsed.exists) throw new Error(`项目文件不存在：${parsed.relativePath}`);
-  if (parsed.parseError) throw new Error(`plugins.js 无法解析：${parsed.parseError}`);
+  if (!parsed.exists) throw new Error(`Project file does not exist: ${parsed.relativePath}`);
+  if (parsed.parseError) throw new Error(`plugins.js could not be parsed: ${parsed.parseError}`);
   return parsed;
 }
 
@@ -408,9 +408,9 @@ function normalizeParsedEntry(value: unknown): PluginConfigEntry {
 }
 
 function normalizeWritableEntry(value: Partial<PluginConfigEntry>, index: number): PluginConfigEntry {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`插件配置无效：${index + 1}`);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Invalid plugin configuration: ${index + 1}`);
   const name = normalizeConfiguredPluginName(String(value.name || ''));
-  if (!isPlainObject(value.parameters)) throw new Error(`插件 ${name} 的 parameters 必须是对象`);
+  if (!isPlainObject(value.parameters)) throw new Error(`Plugin ${name} parameters must be an object`);
   return {
     name,
     status: Boolean(value.status),
@@ -530,9 +530,9 @@ function normalizeConfiguredPluginName(value: string): string {
 
 function normalizePluginFileStem(value: string): string {
   const name = String(value || '').trim().replace(/\.js$/i, '');
-  if (!name || name === '.' || name === '..') throw new Error('插件名称无效');
+  if (!name || name === '.' || name === '..') throw new Error('Invalid plugin name');
   if (/[<>:"/\\|?*\u0000-\u001f]/.test(name) || name.split(/[\\/]/).some((part) => part === '..')) {
-    throw new Error('插件名称无效');
+    throw new Error('Invalid plugin name');
   }
   return name;
 }
@@ -541,7 +541,7 @@ function assertUniqueConfiguredNames(entries: PluginConfigEntry[]): void {
   const seen = new Set<string>();
   for (const entry of entries) {
     const name = normalizeConfiguredPluginName(entry.name);
-    if (seen.has(name)) throw new Error(`插件重复配置，不能安全排序：${name}`);
+    if (seen.has(name)) throw new Error(`Duplicate plugin configuration cannot be sorted safely: ${name}`);
     seen.add(name);
   }
 }
@@ -586,11 +586,11 @@ function parsePluginParameterSchema(
   fileRelativePath: string,
 ): PluginMetadataParseResult {
   const absolutePath = getProjectFileForRead(workflowRoot, project, fileRelativePath);
-  if (!absolutePath) return { warnings: [`插件 ${pluginName} 的文件不存在，无法读取参数元数据`] };
+  if (!absolutePath) return { warnings: [`Plugin ${pluginName} file does not exist, so parameter metadata cannot be read`] };
   const raw = fs.readFileSync(absolutePath, 'utf8');
   const header = extractPlugindescHeader(raw);
   if (!header) {
-    return { warnings: [`插件 ${pluginName} 缺少可解析的参数注释（未检测到 @plugindesc）`] };
+    return { warnings: [`Plugin ${pluginName} does not have a parseable parameter header (@plugindesc was not found)`] };
   }
   const preWarnings: string[] = [];
   const structBlocks = extractStructDefinitionBlocks(raw, preWarnings);
@@ -603,13 +603,13 @@ function parsePluginParameterSchema(
       if (cached?.status === 'done') return cached.fields || [];
       if (cached?.status === 'missing') return null;
       if (cached?.status === 'parsing') {
-        structWarnings.push(`struct ${name} 存在循环引用，已拒绝解析`);
+        structWarnings.push(`struct ${name} has a circular reference and was rejected`);
         return null;
       }
       const block = structBlocks.get(normalized);
       if (!block) {
         structCache.set(normalized, { status: 'missing' });
-        structWarnings.push(`缺少 struct ${name} 的 /*~struct~${name}: */ 定义`);
+        structWarnings.push(`Missing /*~struct~${name}: */ definition for struct ${name}`);
         return null;
       }
       structCache.set(normalized, { status: 'parsing' });
@@ -627,7 +627,7 @@ function parsePluginParameterSchema(
       .map(([name, entry]) => [name, entry.fields || []]),
   );
   if (!parseResult.fields.length) {
-    return { warnings: warnings.length ? warnings : [`插件 ${pluginName} 的参数注释中未解析到任何参数`] };
+    return { warnings: warnings.length ? warnings : [`No parameters were parsed from plugin ${pluginName} parameter comments`] };
   }
   return {
     schema: { source: 'rmmv-plugin-header', fields: parseResult.fields, structs, warnings },
@@ -662,7 +662,7 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
       optionWaitingForValue = false;
       const rawKey = rest.trim();
       if (!rawKey) {
-        warnings.push('发现 @param 但缺少参数名');
+        warnings.push('Found @param without a parameter name');
         continue;
       }
       current = {
@@ -676,7 +676,7 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
 
     if (!current) {
       if (isGlobalPluginMetadataTag(tag)) continue;
-      warnings.push(`在 @${tag} 之前未识别对应参数`);
+      warnings.push(`No parameter was active before @${tag}`);
       continue;
     }
 
@@ -702,9 +702,9 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
       current.rawType = rest || undefined;
       const mapped = mapParameterType(rest, context);
       if (!mapped) {
-        current.unsupportedReason = `参数 ${current.key} 的 @type "${rest || '(空)'}" 不受支持`;
+        current.unsupportedReason = `Parameter ${current.key} @type "${rest || '(empty)'}" is not supported`;
       } else if ('unsupportedReason' in mapped) {
-        current.unsupportedReason = `参数 ${current.key} 的 @type "${rest || '(空)'}" 不受支持：${mapped.unsupportedReason}`;
+        current.unsupportedReason = `Parameter ${current.key} @type "${rest || '(empty)'}" is not supported: ${mapped.unsupportedReason}`;
       } else {
         current.kind = mapped.kind;
         current.structName = mapped.structName;
@@ -722,14 +722,14 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
     if (tag === 'min') {
       const min = Number(rest);
       if (Number.isFinite(min)) setNumericBound(current, 'min', min);
-      else warnings.push(`参数 ${current.key} 的 @min 非法：${rest}`);
+      else warnings.push(`Parameter ${current.key} has an invalid @min: ${rest}`);
       continue;
     }
 
     if (tag === 'max') {
       const max = Number(rest);
       if (Number.isFinite(max)) setNumericBound(current, 'max', max);
-      else warnings.push(`参数 ${current.key} 的 @max 非法：${rest}`);
+      else warnings.push(`Parameter ${current.key} has an invalid @max: ${rest}`);
       continue;
     }
 
@@ -746,7 +746,7 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
     if (tag === 'value') {
       const target = optionTarget(current);
       if (!target.options || target.options.length === 0) {
-        warnings.push(`参数 ${current.key} 的 @value 没有可匹配的 @option`);
+        warnings.push(`Parameter ${current.key} has @value without a matching @option`);
         continue;
       }
       const value = parseOptionValue(rest, target.kind);
@@ -788,11 +788,11 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
       continue;
     }
 
-    warnings.push(`参数 ${current.key} 的 @${tag} 暂不支持`);
+    warnings.push(`Parameter ${current.key} @${tag} is not supported yet`);
   }
   flushCurrentParameter(fields, current, warnings);
   if (!fields.length) {
-    return { fields: [], warnings: ['未解析到 @param 定义'] };
+    return { fields: [], warnings: ['No @param definitions were parsed'] };
   }
   return { fields, warnings };
 }
@@ -804,7 +804,7 @@ function flushCurrentParameter(
 ): null {
   if (!current) return null;
   if (!current.key || !current.label) {
-    warnings.push(`忽略无效参数字段: ${JSON.stringify(current)}`);
+    warnings.push(`Ignored invalid parameter field: ${JSON.stringify(current)}`);
     return null;
   }
   if (current.unsupportedReason) {
@@ -814,35 +814,35 @@ function flushCurrentParameter(
   if (current.kind === 'number') {
     validateNumberDefault(current, current.key, warnings);
     if (typeof current.min === 'number' && typeof current.max === 'number' && current.min > current.max) {
-      warnings.push(`参数 ${current.key} 的 @min 大于 @max`);
+      warnings.push(`Parameter ${current.key} @min is greater than @max`);
     }
   }
   if (current.kind === 'array' && current.item?.kind === 'number') {
     validateNumberDefault(current.item, `${current.key}[]`, warnings);
     if (typeof current.item.min === 'number' && typeof current.item.max === 'number' && current.item.min > current.item.max) {
-      warnings.push(`参数 ${current.key} 的 @min 大于 @max`);
+      warnings.push(`Parameter ${current.key} @min is greater than @max`);
     }
   }
   if (current.kind === 'struct') {
     if (!current.fields?.length) {
-      warnings.push(`参数 ${current.key} 的 struct ${current.structName || ''} 缺少可编辑字段`);
+      warnings.push(`Parameter ${current.key} struct ${current.structName || ''} has no editable fields`);
       return null;
     }
     if (typeof current.defaultValue !== 'undefined' && current.defaultValue !== '' && !parseJsonObjectLiteral(String(current.defaultValue))) {
-      warnings.push(`参数 ${current.key} 的 @default 不可解析为 struct 对象`);
+      warnings.push(`Parameter ${current.key} @default could not be parsed as a struct object`);
     }
   }
   if (current.kind === 'array') {
     if (!current.item) {
-      warnings.push(`参数 ${current.key} 的数组元素类型缺失`);
+      warnings.push(`Parameter ${current.key} array item type is missing`);
       return null;
     }
     if (current.item.kind === 'struct' && !current.item.fields?.length) {
-      warnings.push(`参数 ${current.key} 的数组 struct ${current.item.structName || ''} 缺少可编辑字段`);
+      warnings.push(`Parameter ${current.key} array struct ${current.item.structName || ''} has no editable fields`);
       return null;
     }
     if (typeof current.defaultValue !== 'undefined' && current.defaultValue !== '' && !parseJsonArrayLiteral(String(current.defaultValue))) {
-      warnings.push(`参数 ${current.key} 的 @default 不可解析为数组`);
+      warnings.push(`Parameter ${current.key} @default could not be parsed as an array`);
     }
   }
   if (current.kind === 'boolean') {
@@ -853,15 +853,15 @@ function flushCurrentParameter(
       ];
     }
     if (typeof current.defaultValue !== 'undefined' && current.defaultValue !== '' && parseBooleanLiteral(String(current.defaultValue)) == null) {
-      warnings.push(`参数 ${current.key} 的 @default 不可解析为布尔值`);
+      warnings.push(`Parameter ${current.key} @default could not be parsed as a boolean`);
     }
   }
   if (current.kind === 'select' && (!current.options || current.options.length === 0)) {
-    warnings.push(`参数 ${current.key} 声明为 select 但缺少 @option`);
+    warnings.push(`Parameter ${current.key} is declared as select but has no @option`);
     return null;
   }
   if (current.kind === 'array' && current.item?.kind === 'select' && (!current.item.options || current.item.options.length === 0)) {
-    warnings.push(`参数 ${current.key} 声明为 select 数组但缺少 @option`);
+    warnings.push(`Parameter ${current.key} is declared as a select array but has no @option`);
     return null;
   }
   const { unsupportedReason, onLabel, offLabel, ...field } = current;
@@ -882,11 +882,11 @@ function extractStructDefinitionBlocks(raw: string, warnings: string[]): Map<str
     const match = block.match(/^\/\*~struct~([^:\r\n]+)\s*:/i);
     const rawName = match?.[1]?.trim();
     if (!rawName) {
-      warnings.push('发现 struct 注释块但缺少 struct 名称');
+      warnings.push('Found a struct comment block without a struct name');
       continue;
     }
     const name = normalizeStructName(rawName);
-    if (structs.has(name)) warnings.push(`struct ${rawName} 重复定义，后一个定义会覆盖前一个`);
+    if (structs.has(name)) warnings.push(`struct ${rawName} is defined more than once; the later definition overrides the earlier one`);
     structs.set(name, block);
   }
   return structs;
@@ -934,7 +934,7 @@ function mapParameterType(raw: string, context?: SchemaParseContext): ParameterT
   if (arrayMatch) {
     const itemType = mapArrayItemType(arrayMatch[1].trim(), context);
     if (!itemType || 'unsupportedReason' in itemType) {
-      return { unsupportedReason: itemType && 'unsupportedReason' in itemType ? itemType.unsupportedReason : '数组元素类型不受支持' };
+      return { unsupportedReason: itemType && 'unsupportedReason' in itemType ? itemType.unsupportedReason : 'Array item type is not supported' };
     }
     return {
       kind: 'array',
@@ -953,7 +953,7 @@ function mapParameterType(raw: string, context?: SchemaParseContext): ParameterT
   if (structMatch) {
     const structName = structMatch[1].trim();
     const fields = context?.resolveStruct(structName);
-    if (!fields?.length) return { unsupportedReason: `struct ${structName} 未定义或没有字段` };
+    if (!fields?.length) return { unsupportedReason: `struct ${structName} is undefined or has no fields` };
     return { kind: 'struct', rawType: value, structName, fields };
   }
 
@@ -968,10 +968,10 @@ function mapArrayItemType(
   if (structMatch) {
     const structName = structMatch[1].trim();
     const fields = context?.resolveStruct(structName);
-    if (!fields?.length) return { unsupportedReason: `struct ${structName} 未定义或没有字段` };
+    if (!fields?.length) return { unsupportedReason: `struct ${structName} is undefined or has no fields` };
     return { kind: 'struct', rawType: raw, structName, fields };
   }
-  if (/\[\]$/.test(raw)) return { unsupportedReason: '嵌套数组暂不支持' };
+  if (/\[\]$/.test(raw)) return { unsupportedReason: 'Nested arrays are not supported yet' };
   return mapScalarParameterKind(raw);
 }
 
@@ -1009,7 +1009,7 @@ function setNumericBound(field: WorkingPluginParameterSchemaField, key: 'min' | 
 
 function validateNumberDefault(field: Pick<PluginParameterSchemaField, 'defaultValue'>, label: string, warnings: string[]): void {
   if (typeof field.defaultValue !== 'undefined' && field.defaultValue !== '' && !Number.isFinite(Number(field.defaultValue))) {
-    warnings.push(`参数 ${label} 的 @default 不可解析为数字`);
+    warnings.push(`Parameter ${label} @default could not be parsed as a number`);
   }
 }
 

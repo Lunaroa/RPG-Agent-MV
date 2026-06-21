@@ -26,6 +26,22 @@ import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import { initializeProjectGitBaseline } from './project-service.ts';
 import { getMapFileForRead } from './staging-service.ts';
 import {
+  storyBaselineEventDeleted,
+  storyBaselineEventShellModified,
+  storyBaselinePageDeleted,
+  storyBaselinePageModified,
+  storyInvalidRmmvProject,
+  storyMapEventMissing,
+  storyPageAnchorMissing,
+  storyPageIdentityUnrecognized,
+  storyPageJsonLocationMissing,
+  storyPageMissing,
+  storyPageNodeLocationMissing,
+  storyRegisteredEventMissing,
+  storyRegisteredPageMissing,
+  storyVersionManagementEnabled,
+} from './storyPageSyncLocalization.ts';
+import {
   clonePage,
   createStoryPageUid,
   ensureStoryPageUid,
@@ -111,7 +127,7 @@ export async function initializeOriginalStoryProjectWithGitBaseline(
   return {
     ...result,
     git,
-    message: `${git.message}，版本管理已启用`,
+    message: storyVersionManagementEnabled(git.message),
   };
 }
 
@@ -170,8 +186,8 @@ export function syncStoryProject(
         code: isBaseline ? 'baseline-event-deleted' : 'event-missing',
         severity: 'error',
         message: isBaseline
-          ? `历史受保护事件已被删除：MAP ${anchor.mapId} 事件 ${anchor.eventId}`
-          : `已登记事件在 JSON 中不存在：MAP ${anchor.mapId} 事件 ${anchor.eventId}`,
+          ? storyBaselineEventDeleted(anchor.mapId, anchor.eventId)
+          : storyRegisteredEventMissing(anchor.mapId, anchor.eventId),
         mapId: anchor.mapId,
         eventId: anchor.eventId,
       });
@@ -186,7 +202,7 @@ export function syncStoryProject(
         scopeId: page.pageNodeId,
         code: page.origin === 'baseline' ? 'baseline-page-deleted' : 'page-missing',
         severity: 'error',
-        message: page.origin === 'baseline' ? '历史受保护页面已被删除。' : '已登记页面在 JSON 中不存在。',
+        message: page.origin === 'baseline' ? storyBaselinePageDeleted() : storyRegisteredPageMissing(),
         pageNodeId: page.pageNodeId,
       });
     }
@@ -262,14 +278,14 @@ export function changeStoryPageOrigin(
   const resolved = path.resolve(project);
   const projectId = projectName(resolved);
   const page = StoryPageDao.get(projectId, pageNodeId);
-  if (!page) throw new Error(`页面不存在：${pageNodeId}`);
+  if (!page) throw new Error(storyPageMissing(pageNodeId));
   const anchor = StoryAnchorDao.get(projectId, page.anchorId);
-  if (!anchor?.eventId) throw new Error('页面缺少事件锚点');
+  if (!anchor?.eventId) throw new Error(storyPageAnchorMissing());
   try {
     withMapFileRollback(resolved, anchor.mapId, () => {
       const { file, document, event } = loadEvent(resolved, anchor.mapId, anchor.eventId!);
       const index = locatePageIndex(event, page);
-      if (index < 0) throw new Error('无法在 JSON 中定位该页面');
+      if (index < 0) throw new Error(storyPageJsonLocationMissing());
       const current = clonePage(event.pages![index]);
       let pageUid: string | undefined;
       if (origin === 'baseline') {
@@ -303,8 +319,8 @@ export function changeStoryPageOrigin(
 
 export function applyAgentPagePatch(
   project: string,
-  // 接收完整 agent patch 信封：实际 spec 带 engine/kind 等外层字段，
-  // 本函数只消费 operations，但类型须容纳信封字段，否则调用方传真实 spec 会被 excess-property 拒。
+  // Accept the full agent patch envelope. Real specs include outer fields such as
+  // engine/kind, while this function only consumes operations.
   spec: { engine?: string; kind?: string; operations?: Array<Record<string, unknown>> },
   actor: Omit<StorySyncActor, 'actorType'> = {},
 ): unknown {
@@ -322,7 +338,7 @@ export function applyAgentPagePatch(
     const requestedPage = requestedPageNodeId ? StoryPageDao.get(projectId, requestedPageNodeId) : null;
     const requestedAnchor = requestedPage ? StoryAnchorDao.get(projectId, requestedPage.anchorId) : null;
     if (requestedPageNodeId && (!requestedPage || !requestedAnchor?.eventId || requestedPage.orderHint === undefined)) {
-      throw new Error(`无法通过稳定页面 ID 定位页面：${requestedPageNodeId}`);
+      throw new Error(storyPageNodeLocationMissing(requestedPageNodeId));
     }
     if (requestedPage && requestedAnchor?.eventId) {
       operation.mapId = requestedAnchor.mapId;
@@ -339,7 +355,7 @@ export function applyAgentPagePatch(
     const page = anchor
       ? StoryPageDao.listByAnchor(projectId, anchor.anchorId).find((item) => item.orderHint === pageIndex)
       : null;
-    if (!page) throw new Error(`无法识别 MAP ${mapId} 事件 ${eventId} 第 ${pageIndex + 1} 页的身份`);
+    if (!page) throw new Error(storyPageIdentityUnrecognized(mapId, eventId, pageIndex + 1));
     mapIds.add(mapId);
     eventRefs.add(`${mapId}:${eventId}`);
   }
@@ -404,7 +420,7 @@ function syncEvent(
       scopeId: anchor.anchorId,
       code: 'baseline-event-shell-modified',
       severity: 'error',
-      message: `历史受保护事件公共部分被修改：MAP ${mapId} 事件 ${eventId}`,
+      message: storyBaselineEventShellModified(mapId, eventId),
       mapId,
       eventId,
     });
@@ -480,7 +496,7 @@ function syncEvent(
           scopeId: stored.pageNodeId,
           code: 'baseline-page-modified',
           severity: 'error',
-          message: `历史受保护页面被修改：MAP ${mapId} 事件 ${eventId} 第 ${index + 1} 页`,
+          message: storyBaselinePageModified(mapId, eventId, index + 1),
           mapId,
           eventId,
           pageNodeId: stored.pageNodeId,
@@ -541,7 +557,7 @@ function readMapRecords(project: string): MapRecord[] {
 function assertProjectRoot(project: string): void {
   const dataDir = resolveDataDir(project);
   if (!fs.existsSync(path.join(dataDir, 'MapInfos.json'))) {
-    throw new Error(`不是有效的 RPG Maker MV 工程：${project}`);
+    throw new Error(storyInvalidRmmvProject(project));
   }
 }
 
@@ -567,7 +583,7 @@ function loadEvent(project: string, mapId: number, eventId: number, options: Sto
   const file = options.mapFile || path.join(resolveDataDir(project), `Map${String(mapId).padStart(3, '0')}.json`);
   const document = readJson(file) as MapDocument;
   const event = (document.events || []).find((item) => item?.id === eventId);
-  if (!event) throw new Error(`MAP ${mapId} 中不存在事件 ${eventId}`);
+  if (!event) throw new Error(storyMapEventMissing(mapId, eventId));
   if (!Array.isArray(event.pages)) event.pages = [];
   return { file, document, event };
 }

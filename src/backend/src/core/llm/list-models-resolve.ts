@@ -224,8 +224,8 @@ async function fetchModelsAtUrl(
 export async function listModelsWithCandidates(params: ListModelsParams): Promise<ListModelsResult> {
   const { baseUrl, apiKey, modelsUrl, timeoutMs } = params;
   const normalizedKey = normalizeApiKey(apiKey);
-  if (!baseUrl) return { ok: false, error: "provider 未配置 baseUrl" };
-  if (!normalizedKey) return { ok: false, error: "没有可用的凭证 (credentialValue 未配置)" };
+  if (!baseUrl) return { ok: false, error: "provider baseUrl is not configured" };
+  if (!normalizedKey) return { ok: false, error: "No usable credential is configured (credentialValue is missing)" };
 
   const candidates = buildModelsUrlCandidates(baseUrl, modelsUrl);
   if (candidates.length === 0) {

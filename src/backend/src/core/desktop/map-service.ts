@@ -19,6 +19,30 @@ import { getMapLibraryEntry, mapLibraryIndexPath } from './library-service.ts';
 import { resolveMapLibraryFilePath } from './map-library-paths.ts';
 import { resolveMapLibraryPackage } from './map-library-package.ts';
 import { resolveLibraryAssetPath } from './map-library-asset-resolver.ts';
+import {
+  mapCriticalTilesetImageMissing,
+  mapHasChildMaps,
+  mapIdInvalid,
+  mapImportFailed,
+  mapInfoNotFound,
+  mapInvalidSourceTilesetId,
+  mapLibraryEntryNotFound,
+  mapLibraryFileNotFound,
+  mapNoAvailableId,
+  mapNotFound,
+  mapOptionalTilesetImageMissing,
+  mapPackageTransferIdsRemapped,
+  mapParallaxImageMissing,
+  mapPositionTargetInvalid,
+  mapProjectTilesetImageMissing,
+  mapSizeInvalid,
+  mapSourceTilesetMissing,
+  mapStartCoordinateInvalid,
+  mapStartCoordinateOutOfBounds,
+  mapSystemJsonMissing,
+  mapTilesetPreimportFailed,
+  mapUnsafeProjectPath,
+} from './mapServiceLocalization.ts';
 import { resolveLocalSourcePath } from './local-assets-service.ts';
 import { prepareRmmvPlaytestPlan } from './runtime-deploy-service.ts';
 
@@ -75,7 +99,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
   const tilesetsFile = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'))
     || path.join(dataDir, 'Tilesets.json');
   const mapFile = getMapFileForRead(workflowRoot, project, mapId);
-  if (!fs.existsSync(mapFile)) throw new Error(`Map not found: ${mapId}`);
+  if (!fs.existsSync(mapFile)) throw new Error(mapNotFound(mapId));
   const infos = fs.existsSync(mapInfosFile) ? readJson(mapInfosFile) as any[] : [];
   const map = readJson(mapFile) as any;
   const tilesets = fs.existsSync(tilesetsFile) ? readJson(tilesetsFile) as any[] : [];
@@ -131,7 +155,7 @@ export function createMapDraft(workflowRoot: string, project: string, properties
 export function updateMapPropertiesDraft(workflowRoot: string, project: string, mapId: number, properties: Record<string, unknown>) {
   const context = readProjectData(workflowRoot, project);
   const mapFile = getMapFileForRead(workflowRoot, project, mapId);
-  if (!fs.existsSync(mapFile)) throw new Error(`Map not found: ${mapId}`);
+  if (!fs.existsSync(mapFile)) throw new Error(mapNotFound(mapId));
   const original = readJson(mapFile) as any;
   const currentInfo = context.mapInfos[mapId] || { id: mapId, name: `Map${String(mapId).padStart(3, '0')}`, parentId: 0 };
   const normalized = normalizeMapProperties(properties, context.tilesets, { ...original, name: currentInfo.name, parentId: currentInfo.parentId });
@@ -146,7 +170,7 @@ export function updateMapPropertiesDraft(workflowRoot: string, project: string, 
 export function reparentMapDraft(workflowRoot: string, project: string, mapId: number, parentId: number) {
   const context = readProjectData(workflowRoot, project);
   const info = context.mapInfos[mapId];
-  if (!info) throw new Error(`MapInfo not found: ${mapId}`);
+  if (!info) throw new Error(mapInfoNotFound(mapId));
   const next = { ...info, parentId, order: nextMapOrder(context.mapInfos, parentId) };
   writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), upsertMapInfo(context.mapInfos, next));
   return { mapId, info: next, staging: getProjectStagingStatus(workflowRoot, project) };
@@ -156,7 +180,7 @@ export function duplicateMapDraft(workflowRoot: string, project: string, sourceM
   const context = readProjectData(workflowRoot, project);
   const sourceInfo = context.mapInfos[sourceMapId];
   const sourceFile = getMapFileForRead(workflowRoot, project, sourceMapId);
-  if (!sourceInfo || !fs.existsSync(sourceFile)) throw new Error(`Map not found: ${sourceMapId}`);
+  if (!sourceInfo || !fs.existsSync(sourceFile)) throw new Error(mapNotFound(sourceMapId));
   const mapId = nextMapId(context.mapInfos);
   const map = readJson(sourceFile) as any;
   const info = createMapInfo(mapId, { ...map, name: `${sourceInfo.name || `Map${sourceMapId}`} Copy`, parentId }, context.mapInfos);
@@ -167,8 +191,8 @@ export function duplicateMapDraft(workflowRoot: string, project: string, sourceM
 
 export function deleteMapDraft(workflowRoot: string, project: string, mapId: number) {
   const context = readProjectData(workflowRoot, project);
-  if (!context.mapInfos[mapId]) throw new Error(`MapInfo not found: ${mapId}`);
-  if (context.mapInfos.filter(Boolean).some((info: any) => info.parentId === mapId)) throw new Error('Cannot delete a map that still has child maps.');
+  if (!context.mapInfos[mapId]) throw new Error(mapInfoNotFound(mapId));
+  if (context.mapInfos.filter(Boolean).some((info: any) => info.parentId === mapId)) throw new Error(mapHasChildMaps());
   const infos = context.mapInfos.slice();
   infos[mapId] = null;
   writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), infos);
@@ -197,7 +221,7 @@ export function setSystemPositionDraft(
   const positionTarget = validPositionTarget(target);
   const startMapId = validMapId(mapId);
   const mapFile = getMapFileForRead(workflowRoot, project, startMapId);
-  if (!fs.existsSync(mapFile)) throw new Error(`Map not found: ${startMapId}`);
+  if (!fs.existsSync(mapFile)) throw new Error(mapNotFound(startMapId));
   const map = readJson(mapFile) as { width?: unknown; height?: unknown };
   const width = Number(map.width);
   const height = Number(map.height);
@@ -205,7 +229,7 @@ export function setSystemPositionDraft(
   const startY = validCoordinate(y, height, 'y');
   const systemRelativePath = projectDataRelativePath(project, 'System.json');
   const systemFile = getProjectFileForRead(workflowRoot, project, systemRelativePath);
-  if (!systemFile) throw new Error('项目缺少 System.json');
+  if (!systemFile) throw new Error(mapSystemJsonMissing());
   const system = readJson(systemFile) as Record<string, unknown>;
   const next = positionTarget === 'player'
     ? { ...system, startMapId, startX, startY }
@@ -255,7 +279,7 @@ export function importMapDraftFromLibrary(workflowRoot: string, project: string,
   };
 }
 
-/** 资源包批量导入：还原源 MapInfos 父子关系，并去重 tileset 写入。 */
+/** Batch-imports a map package while preserving source MapInfos hierarchy and deduplicating tilesets. */
 export function importMapPackageFromLibrary(
   workflowRoot: string,
   project: string,
@@ -273,7 +297,7 @@ export function importMapPackageFromLibrary(
     try {
       items.push({ assetId, entry: getMapLibraryEntry(workflowRoot, assetId) });
     } catch (error) {
-      failed.push({ assetId, message: (error as Error).message || '未找到地图条目' });
+      failed.push({ assetId, message: (error as Error).message || mapLibraryEntryNotFound() });
     }
   }
 
@@ -309,7 +333,7 @@ export function importMapPackageFromLibrary(
       try {
         ensureImportedTileset(workflowRoot, project, context, entry, sourceMap, warnings, dependencyHost);
       } catch (error) {
-        warnings.push(`图块集预导入失败（tileset ${sourceMap.tilesetId}）：${(error as Error).message}`);
+        warnings.push(mapTilesetPreimportFailed(sourceMap.tilesetId, (error as Error).message));
       }
     }
     writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'), context.tilesets);
@@ -361,7 +385,7 @@ export function importMapPackageFromLibrary(
       );
       mapIds.push(imported.mapId);
     } catch (error) {
-      failed.push({ assetId, message: (error as Error).message || '导入失败' });
+      failed.push({ assetId, message: (error as Error).message || mapImportFailed() });
     }
   }
 
@@ -373,7 +397,7 @@ export function importMapPackageFromLibrary(
     for (const mapId of mapIds) {
       if (remapTransferMapIdsInStagedMap(workflowRoot, project, mapId, idMap)) remapped = true;
     }
-    if (remapped) warnings.push('已重映射包内传送指令的目标地图 id');
+    if (remapped) warnings.push(mapPackageTransferIdsRemapped());
   }
 
   return {
@@ -407,8 +431,8 @@ function importMapDraftEntry(
     dependencyHost,
   );
   const mapId = assignedMapId ?? nextMapId(context.mapInfos);
-  // tilesetId 以 ensureImportedTileset 在当前工程里解析出的编号为准；前端可能传来源素材的
-  // 旧编号，必须覆盖，否则地图会指向工程里另一套图块集导致渲染花屏。
+  // The active tilesetId must be the ID resolved inside this project. The UI can
+  // pass the source asset's old ID, which would point at an unrelated tileset here.
   const normalized = normalizeMapProperties({ ...properties, tilesetId }, context.tilesets, {
     ...sourceMap,
     name: String(properties.name ?? entry.title ?? `Imported ${mapId}`),
@@ -559,25 +583,25 @@ function createMapInfo(id: number, properties: Record<string, any>, infos: any[]
   return { id, expanded: true, name: properties.name, order: nextMapOrder(infos, properties.parentId), parentId: properties.parentId || 0, scrollX: 0, scrollY: 0 };
 }
 function upsertMapInfo(infos: any[], info: any) { const next = infos.slice(); next[info.id] = info; return next; }
-function nextMapId(infos: any[]) { for (let id = 1; id < 10000; id += 1) if (!infos[id]) return id; throw new Error('No available Map ID.'); }
+function nextMapId(infos: any[]) { for (let id = 1; id < 10000; id += 1) if (!infos[id]) return id; throw new Error(mapNoAvailableId()); }
 function nextMapOrder(infos: any[], parentId: number) { return Math.max(0, ...infos.filter(Boolean).filter((info) => Number(info.parentId || 0) === Number(parentId || 0)).map((info) => Number(info.order) || 0)) + 1; }
 function firstTilesetId(tilesets: any[]) { return tilesets.find(Boolean)?.id || 1; }
 function audioObject(name: unknown): RmmvAudioSettings { return { name: String(name || ''), volume: 90, pitch: 100, pan: 0 }; }
 function clampInt(value: unknown, min: number, max: number, fallback: number) { const number = Number(value); return Number.isFinite(number) ? Math.max(min, Math.min(max, Math.round(number))) : fallback; }
 function validPositionTarget(value: unknown): RmmvSystemPositionTarget {
   if (value === 'player' || value === 'boat' || value === 'ship' || value === 'airship') return value;
-  throw new Error('位置目标无效');
+  throw new Error(mapPositionTargetInvalid());
 }
 function validMapId(value: unknown): number {
   const id = Number(value);
-  if (!Number.isInteger(id) || id <= 0) throw new Error('地图 ID 无效');
+  if (!Number.isInteger(id) || id <= 0) throw new Error(mapIdInvalid());
   return id;
 }
 function validCoordinate(value: unknown, limit: number, label: 'x' | 'y'): number {
   const number = Number(value);
-  if (!Number.isInteger(number) || number < 0) throw new Error(`初始位置 ${label} 坐标无效`);
-  if (!Number.isInteger(limit) || limit <= 0) throw new Error('地图尺寸无效');
-  if (number >= limit) throw new Error(`初始位置 (${label}=${number}) 超出地图边界`);
+  if (!Number.isInteger(number) || number < 0) throw new Error(mapStartCoordinateInvalid(label));
+  if (!Number.isInteger(limit) || limit <= 0) throw new Error(mapSizeInvalid());
+  if (number >= limit) throw new Error(mapStartCoordinateOutOfBounds(label, number));
   return number;
 }
 function systemPosition(system: Record<string, unknown>, target: RmmvSystemPositionTarget): RmmvSystemPosition {
@@ -604,7 +628,7 @@ function projectDataRelativePath(project: string, fileName: string): string {
 function projectTilesetImageUrl(workflowRoot: string, project: string, name: string): string {
   const relative = projectTilesetImageRelativePath(workflowRoot, project, name);
   if (!relative) {
-    throw new Error(`缺少 tileset 图片: ${name}.png（当前地图图块集引用了该文件，请检查项目 img/tilesets 目录）`);
+    throw new Error(mapProjectTilesetImageMissing(name));
   }
   return projectAssetUrl(project, relative);
 }
@@ -630,7 +654,7 @@ function projectTilesetImageWritePath(project: string, name: string): string {
 
 function projectRelativePath(project: string, filePath: string): string {
   const relative = path.relative(path.resolve(project), path.resolve(filePath)).replace(/\\/g, '/');
-  if (!relative || relative.split('/').includes('..') || path.isAbsolute(relative)) throw new Error(`Unsafe project path: ${filePath}`);
+  if (!relative || relative.split('/').includes('..') || path.isAbsolute(relative)) throw new Error(mapUnsafeProjectPath(filePath));
   return relative;
 }
 
@@ -711,7 +735,7 @@ function remapTransferMapIdsInMapData(map: any, idMap: Map<number, number>): any
 function firstLibraryMapFile(workflowRoot: string, entry: Record<string, any>): string {
   const value = Array.isArray(entry.mapFiles) ? entry.mapFiles[0] : null;
   const file = value ? resolveMapLibraryFilePath(workflowRoot, String(value)) : '';
-  if (!file || !isInside(path.dirname(mapLibraryIndexPath(workflowRoot)), file) || !fs.existsSync(file)) throw new Error(`library map file not found for ${entry.assetId}`);
+  if (!file || !isInside(path.dirname(mapLibraryIndexPath(workflowRoot)), file) || !fs.existsSync(file)) throw new Error(mapLibraryFileNotFound(entry.assetId));
   return file;
 }
 
@@ -722,7 +746,7 @@ function sourceTilesetKey(entry: Record<string, any>, sourceTilesetId: number, w
     String(batch?.sourceProject || source?.originalProjectPath || '');
   const slug = packageSlugFromEntry(entry);
   if (projectPath) return `${projectPath}::tileset:${sourceTilesetId}`;
-  // 回退路径也用作 registry key，保持一致性
+  // Use the fallback path as the registry key as well to keep deduplication stable.
   const fallback = sourceProjectPath(entry, workflowRoot);
   return fallback
     ? `${fallback}::tileset:${sourceTilesetId}`
@@ -846,7 +870,7 @@ function ensureImportedTileset(
 ): number {
   const sourceTilesetId = Number(sourceMap.tilesetId);
   if (!Number.isFinite(sourceTilesetId) || sourceTilesetId <= 0) {
-    throw new Error(`无效的源图块集 id（${entry.assetId}）`);
+    throw new Error(mapInvalidSourceTilesetId(entry.assetId));
   }
 
   const registryKey = sourceTilesetKey(entry, sourceTilesetId, workflowRoot);
@@ -855,9 +879,7 @@ function ensureImportedTileset(
 
   const source = readSourceTileset(entry, sourceMap, workflowRoot);
   if (!source) {
-    throw new Error(
-      `找不到来源图块集（${entry.assetId}，源 tilesetId=${sourceTilesetId}）。请确认样例工程可访问：${sourceProjectPath(entry, workflowRoot) || '未记录 sourceProject'}`,
-    );
+    throw new Error(mapSourceTilesetMissing(entry.assetId, sourceTilesetId, sourceProjectPath(entry, workflowRoot)));
   }
 
   const packageSlug = packageSlugFromEntry(entry);
@@ -918,9 +940,9 @@ function copyTilesetImages(
     if (source) {
       writeStagedProjectBuffer(workflowRoot, project, relative, fs.readFileSync(source));
     } else if (CRITICAL_TILESET_SLOTS.includes(index)) {
-      throw new Error(`缺少 tileset 图片: ${originalName}.png（A1-A4 槽位必需，请检查 RPG-Agent-MV/data/assets 本地资产库）`);
+      throw new Error(mapCriticalTilesetImageMissing(originalName));
     } else {
-      warnings.push(`缺少 tileset 图片: ${originalName}.png（请检查 RPG-Agent-MV/data/assets 本地资产库）`);
+      warnings.push(mapOptionalTilesetImageMissing(originalName));
     }
   }
 }
@@ -939,5 +961,5 @@ function copyParallaxIfAvailable(workflowRoot: string, project: string, entry: R
   if (getProjectFileForRead(workflowRoot, project, relative)) return;
   const source = resolveLibraryAssetPath(entry, 'parallaxes', map.parallaxName, workflowRoot);
   if (source) writeStagedProjectBuffer(workflowRoot, project, relative, fs.readFileSync(source));
-  else warnings.push(`缺少远景图片: ${map.parallaxName}.png（请检查 RPG-Agent-MV/data/assets 本地资产库）`);
+  else warnings.push(mapParallaxImageMissing(map.parallaxName));
 }

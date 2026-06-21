@@ -8,6 +8,7 @@ import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
 import { deleteAsset, getAssetDetail, importLocalAssetFile, replaceMissingAssetReference } from './asset-management-service.ts';
+import { withTestLanguage } from '../i18n/with-test-language.ts';
 import {
   buildAssetReferenceGraph,
   checkAssetDeleteSafety,
@@ -56,7 +57,7 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assertUnused(graph.unusedAssets, 'plugins', 'UnusedPlugin');
   });
 
-  test('exposes missing references, unused assets and mutation safety checks', () => {
+  test('exposes missing references, unused assets and mutation safety checks', () => withTestLanguage(() => {
     const missing = findMissingAssetReferences(root, project);
     const unused = findUnusedProjectAssets(root, project);
     assertMissing(missing, 'se', 'MissingBell');
@@ -82,7 +83,7 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.equal(renameHero.ok, true);
     assert.equal(renameHero.nextRelativePath, 'www/img/characters/Lead.png');
     assert.ok(renameHero.references.some((reference) => reference.file === 'www/data/Actors.json'));
-  });
+  }));
 
   test('feeds asset-management detail and delete guard from the graph', () => {
     const detail = getAssetDetail(root, project, {
@@ -93,11 +94,11 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.ok(detail.references.some((reference) => reference.file === 'www/data/Actors.json'));
     assert.ok(detail.references.some((reference) => reference.file === 'www/data/Map001.json'));
 
-    assert.throws(() => deleteAsset(root, project, {
+    assert.throws(() => withTestLanguage(() => deleteAsset(root, project, {
       scope: 'project',
       category: 'characters',
       relativePath: 'www/img/characters/Hero.png',
-    }), /引用/);
+    })), /引用/);
   });
 
   test('deleteAsset stages safe unused asset deletion without touching source file', () => {
@@ -162,10 +163,10 @@ describe('asset reference graph service', { concurrency: false }, () => {
     fs.mkdirSync(path.dirname(localFile), { recursive: true });
     fs.writeFileSync(localFile, 'not an image');
 
-    assert.throws(() => importLocalAssetFile(root, project, {
+    assert.throws(() => withTestLanguage(() => importLocalAssetFile(root, project, {
       category: 'pictures',
       sourceFile: localFile,
-    }), /不支持/);
+    })), /不支持/);
   });
 
   test('importLocalAssetFile blocks existing targets unless overwrite is explicit', () => {
@@ -175,11 +176,11 @@ describe('asset reference graph service', { concurrency: false }, () => {
     const sourceTarget = path.join(project, 'www', 'img', 'characters', 'Hero.png');
     assert.equal(fs.readFileSync(sourceTarget, 'utf8'), 'hero');
 
-    assert.throws(() => importLocalAssetFile(root, project, {
+    assert.throws(() => withTestLanguage(() => importLocalAssetFile(root, project, {
       category: 'characters',
       sourceFile: localFile,
       targetName: 'Hero',
-    }), /覆盖导入/);
+    })), /覆盖导入/);
 
     const result = importLocalAssetFile(root, project, {
       category: 'characters',
@@ -201,20 +202,20 @@ describe('asset reference graph service', { concurrency: false }, () => {
     fs.mkdirSync(path.dirname(localFile), { recursive: true });
     fs.writeFileSync(localFile, 'unsafe');
 
-    assert.throws(() => importLocalAssetFile(root, project, {
+    assert.throws(() => withTestLanguage(() => importLocalAssetFile(root, project, {
       category: 'pictures',
       sourceFile: 'Unsafe.png',
-    }), /绝对路径/);
-    assert.throws(() => importLocalAssetFile(root, project, {
+    })), /绝对路径/);
+    assert.throws(() => withTestLanguage(() => importLocalAssetFile(root, project, {
       category: 'pictures',
       sourceFile: localFile,
       targetName: '../Unsafe',
-    }), /资产名称无效/);
-    assert.throws(() => importLocalAssetFile(root, project, {
+    })), /资产名称无效/);
+    assert.throws(() => withTestLanguage(() => importLocalAssetFile(root, project, {
       category: 'pictures',
       sourceFile: localFile,
       overwrite: 'yes' as never,
-    }), /overwrite/);
+    })), /overwrite/);
   });
 
   test('replaceMissingAssetReference writes to staging and keeps source file unchanged', () => {

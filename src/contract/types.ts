@@ -1,3 +1,6 @@
+import type { ProductLanguage } from './i18n.ts';
+export type { ProductLanguage } from './i18n.ts';
+
 // renderer ↔ 后端 的端点单一事实来源（形状侧）。
 //
 // 这里集中声明后端响应/请求的 TS 类型，由 ui/desktop/src/api/client.ts 经别名
@@ -556,6 +559,7 @@ export interface UiSettings {
   theme?: string;
   fontSize?: number;
   chatWidth?: number;
+  language?: ProductLanguage;
   [key: string]: unknown;
 }
 
@@ -729,6 +733,7 @@ export interface SessionSummary {
   status: SessionStatus | string;
   profileId: string;
   project: string;
+  productLanguage?: ProductLanguage;
   intent: string;
   displayText: string;
   parentSessionId?: string | null;

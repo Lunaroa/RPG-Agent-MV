@@ -2,98 +2,98 @@
   <teleport to="body">
     <div v-if="visible" class="sub-overlay editor-modal-overlay" :data-editor-dialog-layer="LAYER_Z.subDialog" @mousedown.self="close">
       <section class="sub-dialog route-dialog editor-modal-shell" role="dialog" aria-modal="true" aria-labelledby="move-route-title">
-        <header class="editor-modal-header"><strong id="move-route-title" class="editor-modal-title">移动路线</strong><button type="button" class="editor-modal-close" aria-label="关闭移动路线编辑器" title="关闭" @click="close">×</button></header>
+        <header class="editor-modal-header"><strong id="move-route-title" class="editor-modal-title">{{ t('moveRoute.title') }}</strong><button type="button" class="editor-modal-close" :aria-label="t('moveRoute.closeTitle')" :title="t('eventcmd.close')" @click="close">×</button></header>
         <div class="route-body">
           <aside>
-            <label>新增操作
+            <label>{{ t('moveRoute.newOperation') }}
               <select v-model.number="newCode">
-                <option v-for="[code, label] in MOVE_ROUTE_OPERATIONS" :key="code" :value="code">{{ label }}</option>
+                <option v-for="[code, label] in localizedMoveRouteOperations" :key="code" :value="code">{{ label }}</option>
               </select>
             </label>
-            <el-button size="small" type="primary" @click="addStep">添加</el-button>
-            <p>选择路线步骤后，在右侧修改需要的参数。未知步骤会保留原值。</p>
+            <el-button size="small" type="primary" @click="addStep">{{ t('cmdList.add') }}</el-button>
+            <p>{{ t('moveRoute.stepHint') }}</p>
           </aside>
           <main>
             <div class="route-list">
-              <button v-for="(step, index) in steps" :key="index" :class="{ active: selected === index }" @click="selected = index">{{ moveRouteCommandLabel(step) }}</button>
+              <button v-for="(step, index) in steps" :key="index" :class="{ active: selected === index }" @click="selected = index">{{ localizedMoveRouteCommandLabel(step) }}</button>
             </div>
             <div class="route-actions">
-              <el-button size="small" :disabled="selected == null || selected <= 0" @click="move(-1)">上移</el-button>
-              <el-button size="small" :disabled="selected == null || selected >= steps.length - 1" @click="move(1)">下移</el-button>
-              <el-button size="small" type="danger" :disabled="selected == null" @click="remove">删除</el-button>
+              <el-button size="small" :disabled="selected == null || selected <= 0" @click="move(-1)">{{ t('cmdList.moveUp') }}</el-button>
+              <el-button size="small" :disabled="selected == null || selected >= steps.length - 1" @click="move(1)">{{ t('cmdList.moveDown') }}</el-button>
+              <el-button size="small" type="danger" :disabled="selected == null" @click="remove">{{ t('cmdList.delete') }}</el-button>
             </div>
             <div class="route-params">
               <template v-if="selectedStep">
                 <template v-if="selectedStep.code === 14">
-                  <label>横向距离
+                  <label>{{ t('moveRoute.hDistance') }}
                     <input type="number" :value="numberParam(0, 0)" @input="setParam(0, numberValue($event))" />
                   </label>
-                  <label>纵向距离
+                  <label>{{ t('moveRoute.vDistance') }}
                     <input type="number" :value="numberParam(1, 0)" @input="setParam(1, numberValue($event))" />
                   </label>
                 </template>
-                <label v-else-if="selectedStep.code === 15">等待帧数
+                <label v-else-if="selectedStep.code === 15">{{ t('moveRoute.waitFrames') }}
                   <input type="number" min="1" :value="numberParam(0, 1)" @input="setParam(0, numberValue($event))" />
                 </label>
-                <label v-else-if="[27, 28].includes(selectedStep.code)">开关编号
+                <label v-else-if="[27, 28].includes(selectedStep.code)">{{ t('moveRoute.switchId') }}
                   <input type="number" min="1" :value="numberParam(0, 1)" @input="setParam(0, numberValue($event))" />
                 </label>
-                <label v-else-if="selectedStep.code === 29">速度
+                <label v-else-if="selectedStep.code === 29">{{ t('moveRoute.speed') }}
                   <select :value="numberParam(0, 4)" @change="setParam(0, numberValue($event))">
-                    <option v-for="[value, label] in MOVE_SPEEDS" :key="value" :value="Number(value)">{{ label }}</option>
+                    <option v-for="[value, label] in localizedMoveSpeeds" :key="value" :value="Number(value)">{{ label }}</option>
                   </select>
                 </label>
-                <label v-else-if="selectedStep.code === 30">频率
+                <label v-else-if="selectedStep.code === 30">{{ t('moveRoute.frequency') }}
                   <select :value="numberParam(0, 3)" @change="setParam(0, numberValue($event))">
-                    <option v-for="[value, label] in MOVE_FREQS" :key="value" :value="Number(value)">{{ label }}</option>
+                    <option v-for="[value, label] in localizedMoveFreqs" :key="value" :value="Number(value)">{{ label }}</option>
                   </select>
                 </label>
                 <template v-else-if="selectedStep.code === 41">
-                  <label>行走图文件
+                  <label>{{ t('moveRoute.charFile') }}
                     <input :value="stringParam(0)" @input="setParam(0, inputValue($event))" />
                   </label>
-                  <label>图片索引
+                  <label>{{ t('moveRoute.imageIndex') }}
                     <input type="number" min="0" :value="numberParam(1, 0)" @input="setParam(1, numberValue($event))" />
                   </label>
                 </template>
-                <label v-else-if="selectedStep.code === 42">不透明度
+                <label v-else-if="selectedStep.code === 42">{{ t('moveRoute.opacity') }}
                   <input type="number" min="0" max="255" :value="numberParam(0, 255)" @input="setParam(0, numberValue($event))" />
                 </label>
-                <label v-else-if="selectedStep.code === 43">合成方式
+                <label v-else-if="selectedStep.code === 43">{{ t('moveRoute.blendMode') }}
                   <select :value="numberParam(0, 0)" @change="setParam(0, numberValue($event))">
                     <option v-for="[value, label] in BLEND_OPTIONS" :key="value" :value="value">{{ label }}</option>
                   </select>
                 </label>
                 <template v-else-if="selectedStep.code === 44">
-                  <label>音效名
+                  <label>{{ t('moveRoute.seName') }}
                     <input :value="seParam().name || ''" @input="setSeParam('name', inputValue($event))" />
                   </label>
-                  <label>音量
+                  <label>{{ t('moveRoute.volume') }}
                     <input type="number" min="0" max="100" :value="seParam().volume ?? 90" @input="setSeParam('volume', numberValue($event))" />
                   </label>
-                  <label>音调
+                  <label>{{ t('moveRoute.pitch') }}
                     <input type="number" min="50" max="150" :value="seParam().pitch ?? 100" @input="setSeParam('pitch', numberValue($event))" />
                   </label>
-                  <label>声像
+                  <label>{{ t('moveRoute.pan') }}
                     <input type="number" min="-100" max="100" :value="seParam().pan ?? 0" @input="setSeParam('pan', numberValue($event))" />
                   </label>
                 </template>
-                <label v-else-if="selectedStep.code === 45">脚本
+                <label v-else-if="selectedStep.code === 45">{{ t('moveRoute.script') }}
                   <textarea :value="stringParam(0)" rows="4" @input="setParam(0, inputValue($event))" />
                 </label>
-                <p v-else-if="!selectedStep.parameters?.length">当前操作不需要参数。</p>
-                <p v-else>这个路线步骤的参数暂未图形化，已保留原值。</p>
+                <p v-else-if="!selectedStep.parameters?.length">{{ t('moveRoute.noParams') }}</p>
+                <p v-else>{{ t('moveRoute.unsupportedParams') }}</p>
               </template>
-              <p v-else>先选择一个路线步骤。</p>
+              <p v-else>{{ t('moveRoute.selectFirst') }}</p>
             </div>
             <div class="route-options">
-              <label><input v-model="draft.repeat" type="checkbox" /> 重复执行</label>
-              <label><input v-model="draft.skippable" type="checkbox" /> 无法移动时跳过</label>
-              <label><input v-model="draft.wait" type="checkbox" /> 等待结束</label>
+              <label><input v-model="draft.repeat" type="checkbox" /> {{ t('moveRoute.repeat') }}</label>
+              <label><input v-model="draft.skippable" type="checkbox" /> {{ t('moveRoute.skipIfCannot') }}</label>
+              <label><input v-model="draft.wait" type="checkbox" /> {{ t('moveRoute.waitForCompletion') }}</label>
             </div>
           </main>
         </div>
-        <footer class="editor-modal-footer"><button type="button" class="editor-btn" @click="close">取消</button><button type="button" class="editor-btn primary" @click="commit">确定</button></footer>
+        <footer class="editor-modal-footer"><button type="button" class="editor-btn" @click="close">{{ t('eventcmd.cancel') }}</button><button type="button" class="editor-btn primary" @click="commit">{{ t('eventcmd.ok') }}</button></footer>
       </section>
     </div>
   </teleport>
@@ -102,10 +102,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { LAYER_Z } from '../../constants/layerZIndex';
+import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
-import { MOVE_FREQS, MOVE_ROUTE_OPERATIONS, MOVE_SPEEDS, clone, defaultMoveRoute, moveRouteCommandLabel, type MvMoveRoute } from '../../composables/useEventEditor';
-
+import { clone, defaultMoveRoute, moveRouteCommandLabel, type MvMoveRoute } from '../../composables/useEventEditor';
+import { eventEditorText } from '../../utils/eventEditorLocalization';
 const emit = defineEmits<{ commit: [route: MvMoveRoute] }>();
+const { language, t } = useI18n();
 const subDialogZ = String(LAYER_Z.subDialog);
 const visible = ref(false);
 const draft = ref<MvMoveRoute>(defaultMoveRoute());
@@ -113,7 +115,10 @@ const selected = ref<number | null>(null);
 const newCode = ref(1);
 const steps = computed(() => draft.value.list.filter((step) => step.code !== 0));
 const selectedStep = computed(() => selected.value == null ? null : steps.value[selected.value] || null);
-const BLEND_OPTIONS: [number, string][] = [[0, '普通'], [1, '加算'], [2, '正片叠底'], [3, '滤色']];
+const BLEND_OPTIONS = computed(() => eventEditorText(language.value).blendModes);
+const localizedMoveSpeeds = computed(() => eventEditorText(language.value).moveSpeeds);
+const localizedMoveFreqs = computed(() => eventEditorText(language.value).moveFrequencies);
+const localizedMoveRouteOperations = computed(() => eventEditorText(language.value).moveRouteOperations);
 
 function onKeyDown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
@@ -174,6 +179,9 @@ function numberValue(event: Event) {
 function commit() {
   emit('commit', { ...clone(draft.value), list: [...clone(draft.value.list), { code: 0, parameters: [] }] });
   close();
+}
+function localizedMoveRouteCommandLabel(step: MvMoveRoute['list'][number]): string {
+  return moveRouteCommandLabel(step, language.value);
 }
 
 defineExpose({ open });

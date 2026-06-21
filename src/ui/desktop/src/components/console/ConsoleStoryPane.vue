@@ -27,6 +27,16 @@ import CommonEventDetailEditor from './CommonEventDetailEditor.vue';
 import DatabaseEntryDetailEditor from './DatabaseEntryDetailEditor.vue';
 import MapEventCommandPreview from './MapEventCommandPreview.vue';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
+import { useI18n } from '../../i18n';
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
+import {
+  IMAGE_BUCKET_LABELS,
+  MANAGED_KIND_LABELS,
+  NEW_COMMON_EVENT_NAME,
+  STORY_CATEGORY_LABELS,
+  type StoryCategoryId,
+} from '../../utils/consoleStoryLocalization';
+import { databaseGroupLabel } from '../../utils/rmmvDatabaseLocalization';
 
 type PmDetail =
   | { kind: 'managed'; entry: ProjectManagedEntry }
@@ -51,6 +61,12 @@ type DatabaseGridItem = {
 
 const projectStore = useProjectStore();
 const router = useRouter();
+const { language, t } = useI18n();
+
+
+function formatErrorText(errorValue: unknown): string {
+  return formatUserFacingErrorMessage(errorValue, 'general', language.value);
+}
 
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -92,7 +108,7 @@ const {
   resetCatalog,
   bindEventDialogRef,
 } = usePmEventEditor(() => projectStore.currentProject, () => loadData());
-const selected = ref('总览');
+const selected = ref<StoryCategoryId>('overview');
 const searchQuery = ref('');
 const selectedDbGroup = ref('Actors');
 const selectedAudioBucket = ref('bgm');
@@ -116,6 +132,7 @@ const DB_PREVIEW_GROUPS = new Set([
   'Actors', 'Skills', 'Items', 'Weapons', 'Armors', 'Enemies', 'Troops', 'States',
   'Animations', 'Tilesets', 'System',
 ]);
+
 const selectedMapId = ref<number | null>(null);
 const selectedEventId = ref<number | null>(null);
 const pmDetail = ref<PmDetail | null>(null);
@@ -132,7 +149,7 @@ let eventPreviewRequest = 0;
 watch(() => projectStore.currentProject, () => {
   selectedMapId.value = null;
   selectedEventId.value = null;
-  selected.value = '总览';
+  selected.value = 'overview';
   closeDetail();
   closeEventEditor();
   resetCatalog();
@@ -146,9 +163,9 @@ onMounted(() => {
 watch(selected, (name) => {
   searchQuery.value = '';
   resetGroupVisibleLimits();
-  if (name === '数据库') syncSelectedDbGroup();
-  if (name === '音频') syncSelectedAudioBucket();
-  if (name === '图片') syncSelectedImageBucket();
+  if (name === 'database') syncSelectedDbGroup();
+  if (name === 'audio') syncSelectedAudioBucket();
+  if (name === 'images') syncSelectedImageBucket();
 });
 
 watch(searchQuery, () => {
@@ -156,7 +173,7 @@ watch(searchQuery, () => {
 });
 
 watch([selected, () => projectStore.currentProject], ([name]) => {
-  if ((name === '图片' || name === '数据库') && projectStore.currentProject) void ensureCatalog();
+  if ((name === 'images' || name === 'database') && projectStore.currentProject) void ensureCatalog();
 });
 
 watch([selectedMapId, selectedEventId, () => projectStore.currentProject, overview], ([mapId, eventId]) => {
@@ -193,14 +210,14 @@ const dbTotal = computed(() => {
 const totalEvents = computed(() => maps.value.reduce((sum, m) => sum + m.eventCount, 0));
 
 const categories = computed(() => [
-  { name: '总览', count: maps.value.length + switches.value.length + variables.value.length + commonEvents.value.length + audioTotal.value + imageTotal.value + dbTotal.value },
-  { name: '地图与事件', count: maps.value.length },
-  { name: '开关', count: switches.value.filter(s => s.name).length },
-  { name: '变量', count: variables.value.filter(v => v.name).length },
-  { name: '公共事件', count: commonEvents.value.filter(e => e.name).length },
-  { name: '音频', count: audioTotal.value },
-  { name: '图片', count: imageTotal.value },
-  { name: '数据库', count: dbTotal.value },
+  { id: 'overview' as const, count: maps.value.length + switches.value.length + variables.value.length + commonEvents.value.length + audioTotal.value + imageTotal.value + dbTotal.value },
+  { id: 'maps' as const, count: maps.value.length },
+  { id: 'switches' as const, count: switches.value.filter(s => s.name).length },
+  { id: 'variables' as const, count: variables.value.filter(v => v.name).length },
+  { id: 'commonEvents' as const, count: commonEvents.value.filter(e => e.name).length },
+  { id: 'audio' as const, count: audioTotal.value },
+  { id: 'images' as const, count: imageTotal.value },
+  { id: 'database' as const, count: dbTotal.value },
 ]);
 
 const selectedMap = computed(() => {
@@ -226,21 +243,21 @@ function matchesQuery(...parts: Array<string | number | null | undefined>): bool
 
 const pmSearchPlaceholder = computed(() => {
   switch (selected.value) {
-    case '地图与事件':
-      return '搜索地图、事件文本或 ID';
-    case '开关':
-    case '变量':
-      return '搜索名称或 ID';
-    case '公共事件':
-      return '搜索公共事件名称、文本或 ID';
-    case '音频':
-      return '搜索音频名称';
-    case '图片':
-      return '搜索图片名称';
-    case '数据库':
-      return '搜索数据库条目';
+    case 'maps':
+      return t('story.searchMaps');
+    case 'switches':
+    case 'variables':
+      return t('story.searchNameOrId');
+    case 'commonEvents':
+      return t('story.searchCommonEvent');
+    case 'audio':
+      return t('story.searchAudio');
+    case 'images':
+      return t('story.searchImage');
+    case 'database':
+      return t('story.searchDatabase');
     default:
-      return '搜索';
+      return t('story.search');
   }
 });
 
@@ -447,10 +464,10 @@ const remainingImageNames = computed(() =>
 );
 
 const pmListHeaderTitle = computed(() => {
-  if (selected.value === '数据库') return `数据库 · ${dbLabel(selectedDbGroup.value)}`;
-  if (selected.value === '音频') return `音频 · ${selectedAudioBucket.value.toUpperCase()}`;
-  if (selected.value === '图片') return `图片 · ${imageBucketLabel(selectedImageBucket.value)}`;
-  return selected.value;
+  if (selected.value === 'database') return `${categoryLabel('database')} · ${dbLabel(selectedDbGroup.value)}`;
+  if (selected.value === 'audio') return `${categoryLabel('audio')} · ${selectedAudioBucket.value.toUpperCase()}`;
+  if (selected.value === 'images') return `${categoryLabel('images')} · ${imageBucketLabel(selectedImageBucket.value)}`;
+  return categoryLabel(selected.value);
 });
 
 const GROUP_PAGE_SIZE = 60;
@@ -491,43 +508,42 @@ function showMoreGroupItems(tab: PmGroupTab, groupKey: string, total: number): v
   };
 }
 
-const dbLabels: Record<string, string> = {
-  Actors: '角色', Classes: '职业', Skills: '技能', Items: '物品',
-  Weapons: '武器', Armors: '防具', Enemies: '敌人', Troops: '敌群',
-  States: '状态', Animations: '动画', Tilesets: '图块组', CommonEvents: '公共事件',
-  System: '系统', Types: '类型', Terms: '用语',
-};
-
-const imageBucketLabels: Record<string, string> = {
-  animations: '动画',
-  battlebacks1: '战斗背景 1',
-  battlebacks2: '战斗背景 2',
-  characters: '行走图',
-  enemies: '敌人',
-  faces: '脸图',
-  parallaxes: '远景',
-  pictures: '图片',
-  sv_actors: 'SV 角色',
-  sv_enemies: 'SV 敌人',
-  system: '系统',
-  tilesets: '图块',
-  titles1: '标题 1',
-  titles2: '标题 2',
-};
-
-const managedKindLabels: Record<ProjectManagedEntry['kind'], string> = {
-  switch: '开关',
-  variable: '变量',
-  commonEvent: '公共事件',
-  database: '数据库',
-};
+function categoryLabel(id: StoryCategoryId): string {
+  return STORY_CATEGORY_LABELS[id]?.[language.value] ?? id;
+}
 
 function dbLabel(key: string): string {
-  return dbLabels[key] || key;
+  return databaseGroupLabel(key, language.value);
 }
 
 function imageBucketLabel(key: string): string {
-  return imageBucketLabels[key] || key;
+  return IMAGE_BUCKET_LABELS[key]?.[language.value] ?? key;
+}
+
+function managedKindLabel(kind: ProjectManagedEntry['kind']): string {
+  return MANAGED_KIND_LABELS[kind][language.value];
+}
+
+function itemCountLabel(count: number): string {
+  return t('story.itemCount', { count });
+}
+
+function mapEventSummary(mapCount: number, eventCount: number): string {
+  return t('story.mapEventCount', { maps: mapCount, events: eventCount });
+}
+
+function unnamedLabel(): string {
+  return t('story.unnamed');
+}
+
+function showMoreLabel(count: number): string {
+  return t('story.showMore', { count });
+}
+
+function previewOnlyNote(kind: 'audio' | 'image'): string {
+  return kind === 'audio'
+    ? t('story.audioPreviewNote')
+    : t('story.imagePreviewNote');
 }
 
 function isCommonEventsGroup(group?: string): boolean {
@@ -602,16 +618,16 @@ function selectImageBucket(key: string): void {
   resetGroupVisibleLimits();
 }
 
-function selectCategory(name: string) {
-  if (selected.value !== name) {
+function selectCategory(id: StoryCategoryId) {
+  if (selected.value !== id) {
     closeDetail();
     selectedEventId.value = null;
   }
-  selected.value = name;
-  if (name !== '地图与事件') selectedMapId.value = null;
-  if (name === '数据库') syncSelectedDbGroup();
-  if (name === '音频') syncSelectedAudioBucket();
-  if (name === '图片') syncSelectedImageBucket();
+  selected.value = id;
+  if (id !== 'maps') selectedMapId.value = null;
+  if (id === 'database') syncSelectedDbGroup();
+  if (id === 'audio') syncSelectedAudioBucket();
+  if (id === 'images') syncSelectedImageBucket();
 }
 
 function selectMap(mapId: number) {
@@ -644,7 +660,7 @@ async function loadEventPreview(mapId: number, eventId: number) {
     const payload = await mapsApi.get(mapId, projectStore.currentProject);
     if (requestId !== eventPreviewRequest) return;
     const event = findEditorMapEvent(payload.map.events, eventId);
-    if (!event) throw new Error('事件不存在');
+    if (!event) throw new Error(t('story.eventNotExists'));
     eventPreviewEvent.value = event;
     eventPreviewSystemData.value = payload.system || null;
   } catch (loadError) {
@@ -704,13 +720,13 @@ async function createDatabaseEntry(group: string) {
 
 async function createSelectedDatabaseEntry() {
   if (isCommonEventsGroup(selectedDbGroup.value)) {
-    await createCommonEvent('数据库');
+    await createCommonEvent('database');
     return;
   }
   await createDatabaseEntry(selectedDbGroup.value);
 }
 
-async function createCommonEvent(targetCategory = '公共事件') {
+async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents') {
   selectedEventId.value = null;
   detailBusy.value = true;
   detailError.value = '';
@@ -719,7 +735,7 @@ async function createCommonEvent(targetCategory = '公共事件') {
   try {
     await ensureCatalog();
     const result = await commonEventsApi.create({
-      name: '新建公共事件',
+      name: NEW_COMMON_EVENT_NAME,
       trigger: 0,
       switchId: 0,
       list: [{ code: 0, indent: 0, parameters: [] }],
@@ -749,7 +765,7 @@ async function duplicateCurrentCommonEvent() {
     await ensureCatalog();
     pmDetail.value = { kind: 'managed', entry: result.entry };
     detailDraft.value = cloneDraft(result.entry.value);
-    selected.value = '公共事件';
+    selected.value = 'commonEvents';
     showUnnamed.value = true;
     await loadData();
   } catch (duplicateError) {
@@ -762,7 +778,7 @@ async function duplicateCurrentCommonEvent() {
 async function deleteCurrentCommonEvent() {
   if (selectedCommonEventId.value == null) return;
   const id = selectedCommonEventId.value;
-  if (!window.confirm(`删除公共事件 #${String(id).padStart(4, '0')}？`)) return;
+  if (!window.confirm(t('story.deleteCommonEventConfirm', { id: String(id).padStart(4, '0') }))) return;
   detailBusy.value = true;
   detailError.value = '';
   try {
@@ -1019,7 +1035,7 @@ function detailTitle(): string {
   if (!pmDetail.value) return '';
   if (pmDetail.value.kind === 'managed') {
     const entry = pmDetail.value.entry;
-    return `${entry.kind === 'database' ? dbLabel(String(entry.group || '')) : managedKindLabels[entry.kind]} · #${entry.id}`;
+    return `${entry.kind === 'database' ? dbLabel(String(entry.group || '')) : managedKindLabel(entry.kind)} · #${entry.id}`;
   }
   if (pmDetail.value.kind === 'image') return `${imageBucketLabel(pmDetail.value.category)} · ${pmDetail.value.name}`;
   return `${pmDetail.value.category.toUpperCase()} · ${pmDetail.value.name}`;
@@ -1028,46 +1044,46 @@ function detailTitle(): string {
 
 <template>
   <div class="console-subpage">
-    <div v-if="!projectStore.currentProject" class="state">请先在控制台添加 RPG Maker MV 项目。</div>
-    <div v-else-if="error" class="state error">{{ error }}</div>
-    <div v-else-if="loading" class="state">正在加载项目概览…</div>
+    <div v-if="!projectStore.currentProject" class="state">{{ t('story.addProjectFirst') }}</div>
+    <div v-else-if="error" class="state error">{{ formatErrorText(error) }}</div>
+    <div v-else-if="loading" class="state">{{ t('story.loadingOverview') }}</div>
     <div v-else class="console-split pm-split">
       <!-- Sidebar -->
       <aside class="console-panel pm-categories">
-        <div class="console-panel-title">项目管理</div>
+        <div class="console-panel-title">{{ t('story.projectMgmt') }}</div>
         <div class="pm-sidebar">
           <button
             v-for="cat in categories"
-            :key="cat.name"
+            :key="cat.id"
             type="button"
             class="folder"
-            :class="{ active: selected === cat.name }"
-            @click="selectCategory(cat.name)"
+            :class="{ active: selected === cat.id }"
+            @click="selectCategory(cat.id)"
           >
             <!-- Map icon -->
-            <svg v-if="cat.name === '地图与事件'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+            <svg v-if="cat.id === 'maps'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
             <!-- Switch icon -->
-            <svg v-else-if="cat.name === '开关'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M8 7h8M8 12h8m-8 5h8M5 7h.01M5 12h.01M5 17h.01" /></svg>
+            <svg v-else-if="cat.id === 'switches'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M8 7h8M8 12h8m-8 5h8M5 7h.01M5 12h.01M5 17h.01" /></svg>
             <!-- Variable icon -->
-            <svg v-else-if="cat.name === '变量'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+            <svg v-else-if="cat.id === 'variables'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
             <!-- Common event icon -->
-            <svg v-else-if="cat.name === '公共事件'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+            <svg v-else-if="cat.id === 'commonEvents'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
             <!-- Audio icon -->
-            <svg v-else-if="cat.name === '音频'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+            <svg v-else-if="cat.id === 'audio'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
             <!-- Image icon -->
-            <svg v-else-if="cat.name === '图片'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 5h16v14H4z" /><path d="M8 13l2.2-2.2a1 1 0 011.4 0L17 16" /><path d="M14 10h.01" /></svg>
+            <svg v-else-if="cat.id === 'images'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 5h16v14H4z" /><path d="M8 13l2.2-2.2a1 1 0 011.4 0L17 16" /><path d="M14 10h.01" /></svg>
             <!-- Database icon -->
-            <svg v-else-if="cat.name === '数据库'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
+            <svg v-else-if="cat.id === 'database'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
             <!-- Grid icon (overview) -->
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" /></svg>
-            <span>{{ cat.name }}</span>
+            <span>{{ categoryLabel(cat.id) }}</span>
             <b>{{ cat.count }}</b>
           </button>
         </div>
-        <div v-if="selected === '数据库'" class="pm-sub-pane">
+        <div v-if="selected === 'database'" class="pm-sub-pane">
           <button type="button" class="pm-sub-pane-toggle" @click="pmSubPaneExpanded = !pmSubPaneExpanded">
             <el-icon :class="{ collapsed: !pmSubPaneExpanded }"><ArrowRight /></el-icon>
-            <span>数据类型</span>
+            <span>{{ t('story.dataType') }}</span>
             <b>{{ activeDbGroup.named.length }}</b>
           </button>
           <div v-show="pmSubPaneExpanded" class="pm-sub-list">
@@ -1084,10 +1100,10 @@ function detailTitle(): string {
             </button>
           </div>
         </div>
-        <div v-else-if="selected === '音频'" class="pm-sub-pane">
+        <div v-else-if="selected === 'audio'" class="pm-sub-pane">
           <button type="button" class="pm-sub-pane-toggle" @click="pmSubPaneExpanded = !pmSubPaneExpanded">
             <el-icon :class="{ collapsed: !pmSubPaneExpanded }"><ArrowRight /></el-icon>
-            <span>音频类型</span>
+            <span>{{ t('story.audioType') }}</span>
             <b>{{ activeAudioBucket.names.length }}</b>
           </button>
           <div v-show="pmSubPaneExpanded" class="pm-sub-list">
@@ -1104,10 +1120,10 @@ function detailTitle(): string {
             </button>
           </div>
         </div>
-        <div v-else-if="selected === '图片'" class="pm-sub-pane">
+        <div v-else-if="selected === 'images'" class="pm-sub-pane">
           <button type="button" class="pm-sub-pane-toggle" @click="pmSubPaneExpanded = !pmSubPaneExpanded">
             <el-icon :class="{ collapsed: !pmSubPaneExpanded }"><ArrowRight /></el-icon>
-            <span>图片类型</span>
+            <span>{{ t('story.imageType') }}</span>
             <b>{{ activeImageBucket.names.length }}</b>
           </button>
           <div v-show="pmSubPaneExpanded" class="pm-sub-list">
@@ -1128,76 +1144,76 @@ function detailTitle(): string {
 
       <!-- Main content -->
       <main class="console-panel">
-        <div v-if="selected === '总览'" class="console-panel-title"><span>{{ selected }}</span></div>
+        <div v-if="selected === 'overview'" class="console-panel-title"><span>{{ categoryLabel(selected) }}</span></div>
         <div v-else class="console-list-header">
           <span>{{ pmListHeaderTitle }}</span>
           <ConsoleSearchInput v-model="searchQuery" :placeholder="pmSearchPlaceholder" />
         </div>
         <div class="console-panel-scroll pm-content">
 
-          <!-- ========== 总览 ========== -->
-          <template v-if="selected === '总览'">
+          <!-- ========== Overview ========== -->
+          <template v-if="selected === 'overview'">
             <div class="overview-grid">
-              <button type="button" class="asset-card clickable" @click="selectCategory('地图与事件')">
+              <button type="button" class="asset-card clickable" @click="selectCategory('maps')">
                 <span class="asset-thumb">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
                 </span>
-                <span><strong>地图与事件</strong><small>{{ maps.length }} 张地图 · {{ totalEvents }} 个事件</small></span>
-                <em>地图总览</em>
+                <span><strong>{{ categoryLabel('maps') }}</strong><small>{{ mapEventSummary(maps.length, totalEvents) }}</small></span>
+                <em>{{ t('story.mapOverview') }}</em>
               </button>
 
-              <button type="button" class="asset-card clickable" @click="selectCategory('开关')">
+              <button type="button" class="asset-card clickable" @click="selectCategory('switches')">
                 <span class="asset-thumb">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7h8M8 12h8m-8 5h8M5 7h.01M5 12h.01M5 17h.01" /></svg>
                 </span>
-                <span><strong>开关</strong><small>{{ switches.filter(s => s.name).length }} 项</small></span>
-                <em>命名开关</em>
+                <span><strong>{{ categoryLabel('switches') }}</strong><small>{{ itemCountLabel(switches.filter(s => s.name).length) }}</small></span>
+                <em>{{ t('story.namedSwitches') }}</em>
               </button>
 
-              <button type="button" class="asset-card clickable" @click="selectCategory('变量')">
+              <button type="button" class="asset-card clickable" @click="selectCategory('variables')">
                 <span class="asset-thumb">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
                 </span>
-                <span><strong>变量</strong><small>{{ variables.filter(v => v.name).length }} 项</small></span>
-                <em>命名变量</em>
+                <span><strong>{{ categoryLabel('variables') }}</strong><small>{{ itemCountLabel(variables.filter(v => v.name).length) }}</small></span>
+                <em>{{ t('story.namedVariables') }}</em>
               </button>
 
-              <button type="button" class="asset-card clickable" @click="selectCategory('公共事件')">
+              <button type="button" class="asset-card clickable" @click="selectCategory('commonEvents')">
                 <span class="asset-thumb">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                 </span>
-                <span><strong>公共事件</strong><small>{{ commonEvents.filter(e => e.name).length }} 项</small></span>
-                <em>命名公共事件</em>
+                <span><strong>{{ categoryLabel('commonEvents') }}</strong><small>{{ itemCountLabel(commonEvents.filter(e => e.name).length) }}</small></span>
+                <em>{{ t('story.namedCommonEvents') }}</em>
               </button>
 
-              <button type="button" class="asset-card clickable" @click="selectCategory('音频')">
+              <button type="button" class="asset-card clickable" @click="selectCategory('audio')">
                 <span class="asset-thumb">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                 </span>
-                <span><strong>音频</strong><small>{{ audioTotal }} 项</small></span>
+                <span><strong>{{ categoryLabel('audio') }}</strong><small>{{ itemCountLabel(audioTotal) }}</small></span>
                 <em>BGM / BGS / ME / SE</em>
               </button>
 
-              <button type="button" class="asset-card clickable" @click="selectCategory('图片')">
+              <button type="button" class="asset-card clickable" @click="selectCategory('images')">
                 <span class="asset-thumb">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z" /><path d="M8 13l2.2-2.2a1 1 0 011.4 0L17 16" /><path d="M14 10h.01" /></svg>
                 </span>
-                <span><strong>图片</strong><small>{{ imageTotal }} 项</small></span>
-                <em>img/* 素材</em>
+                <span><strong>{{ categoryLabel('images') }}</strong><small>{{ itemCountLabel(imageTotal) }}</small></span>
+                <em>{{ t('story.imgAssets') }}</em>
               </button>
 
-              <button type="button" class="asset-card clickable" @click="selectCategory('数据库')">
+              <button type="button" class="asset-card clickable" @click="selectCategory('database')">
                 <span class="asset-thumb">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
                 </span>
-                <span><strong>数据库</strong><small>{{ dbTotal }} 项 · {{ dbSummary() }}</small></span>
-                <em>数据索引</em>
+                <span><strong>{{ categoryLabel('database') }}</strong><small>{{ itemCountLabel(dbTotal) }} · {{ dbSummary() }}</small></span>
+                <em>{{ t('story.dataIndex') }}</em>
               </button>
             </div>
           </template>
 
-          <!-- ========== 地图与事件 ========== -->
-          <template v-else-if="selected === '地图与事件'">
+          <!-- ========== Maps and events ========== -->
+          <template v-else-if="selected === 'maps'">
             <div class="map-split">
               <div class="map-list">
                 <button
@@ -1211,24 +1227,24 @@ function detailTitle(): string {
                   <span class="map-name">{{ m.name }}</span>
                   <span class="badge">{{ m.eventCount }}</span>
                 </button>
-                <div v-if="!filteredMaps.length" class="empty-hint">{{ maps.length ? '无匹配地图' : '无地图数据' }}</div>
+                <div v-if="!filteredMaps.length" class="empty-hint">{{ maps.length ? t('story.noMatchMaps') : t('story.noMapData') }}</div>
               </div>
               <div class="event-detail">
                 <div v-if="selectedMapId" class="map-toolbar">
-                  <button type="button" class="link-button" @click="openMapInEditor(selectedMapId)">在地图编辑器打开</button>
+                  <button type="button" class="link-button" @click="openMapInEditor(selectedMapId)">{{ t('story.openInMapEditor') }}</button>
                   <button
                     v-if="eventDialogOpen && editorMapId === selectedMapId && eventDraft?.id"
                     type="button"
                     class="link-button"
                     @click="openMapInEditor(selectedMapId, eventDraft!.id)"
-                  >查看位置</button>
+                  >{{ t('story.viewLocation') }}</button>
                 </div>
                 <template v-if="selectedMapId && filteredMapEvents.length">
                   <div class="event-row event-header">
                     <span class="ev-id">ID</span>
-                    <span class="ev-name">名称</span>
-                    <span class="ev-pos">坐标</span>
-                    <span class="ev-pages">页数</span>
+                    <span class="ev-name">{{ t('commonEvent.name') }}</span>
+                    <span class="ev-pos">{{ t('story.position') }}</span>
+                    <span class="ev-pages">{{ t('story.pages') }}</span>
                   </div>
                   <button
                     v-for="e in filteredMapEvents"
@@ -1240,53 +1256,53 @@ function detailTitle(): string {
                     @dblclick.prevent="openMapEvent(selectedMapId!, e.id)"
                   >
                     <span class="ev-id">{{ String(e.id).padStart(3, '0') }}</span>
-                    <span class="ev-name">{{ e.name || '(未命名)' }}</span>
+                    <span class="ev-name">{{ e.name || unnamedLabel() }}</span>
                     <span class="ev-pos">({{ e.x }}, {{ e.y }})</span>
                     <span class="ev-pages">{{ e.pageCount }}</span>
                   </button>
                 </template>
-                <div v-else-if="selectedMapId" class="empty-hint">{{ selectedMapEvents.length ? '无匹配事件' : '该地图无事件' }}</div>
-                <div v-else class="empty-hint">选择左侧地图查看事件详情</div>
+                <div v-else-if="selectedMapId" class="empty-hint">{{ selectedMapEvents.length ? t('story.noMatchEvents') : t('story.noEventsOnMap') }}</div>
+                <div v-else class="empty-hint">{{ t('story.selectMapHint') }}</div>
               </div>
             </div>
           </template>
 
-          <!-- ========== 开关 ========== -->
-          <template v-else-if="selected === '开关'">
+          <!-- ========== Switches ========== -->
+          <template v-else-if="selected === 'switches'">
             <div class="list-toolbar">
-              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> 显示未命名项</label>
+              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
             </div>
             <div class="id-list">
               <button v-for="s in filteredSwitches" :key="s.id" type="button" class="id-row" @click="openManaged('switch', s.id)">
                 <span class="row-id">{{ String(s.id).padStart(4, '0') }}</span>
-                <span class="row-name">{{ s.name || '(未命名)' }}</span>
+                <span class="row-name">{{ s.name || unnamedLabel() }}</span>
               </button>
-              <div v-if="!filteredSwitches.length" class="empty-hint">无匹配项</div>
+              <div v-if="!filteredSwitches.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
             </div>
           </template>
 
-          <!-- ========== 变量 ========== -->
-          <template v-else-if="selected === '变量'">
+          <!-- ========== Variables ========== -->
+          <template v-else-if="selected === 'variables'">
             <div class="list-toolbar">
-              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> 显示未命名项</label>
+              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
             </div>
             <div class="id-list">
               <button v-for="v in filteredVariables" :key="v.id" type="button" class="id-row" @click="openManaged('variable', v.id)">
                 <span class="row-id">{{ String(v.id).padStart(4, '0') }}</span>
-                <span class="row-name">{{ v.name || '(未命名)' }}</span>
+                <span class="row-name">{{ v.name || unnamedLabel() }}</span>
               </button>
-              <div v-if="!filteredVariables.length" class="empty-hint">无匹配项</div>
+              <div v-if="!filteredVariables.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
             </div>
           </template>
 
-          <!-- ========== 公共事件 ========== -->
-          <template v-else-if="selected === '公共事件'">
+          <!-- ========== Common events ========== -->
+          <template v-else-if="selected === 'commonEvents'">
             <div class="list-toolbar">
-              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> 显示未命名项</label>
+              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
               <div class="toolbar-actions">
-                <button type="button" @click="createCommonEvent()">新建</button>
-                <button type="button" :disabled="selectedCommonEventId == null" @click="duplicateCurrentCommonEvent">复制</button>
-                <button type="button" class="danger" :disabled="selectedCommonEventId == null" @click="deleteCurrentCommonEvent">删除</button>
+                <button type="button" @click="createCommonEvent()">{{ t('story.new') }}</button>
+                <button type="button" :disabled="selectedCommonEventId == null" @click="duplicateCurrentCommonEvent">{{ t('story.duplicate') }}</button>
+                <button type="button" class="danger" :disabled="selectedCommonEventId == null" @click="deleteCurrentCommonEvent">{{ t('cmdList.delete') }}</button>
               </div>
             </div>
             <div class="id-list">
@@ -1299,14 +1315,14 @@ function detailTitle(): string {
                 @contextmenu.prevent="openManaged('commonEvent', ce.id)"
               >
                 <span class="row-id">{{ String(ce.id).padStart(4, '0') }}</span>
-                <span class="row-name">{{ ce.name || '(未命名)' }}</span>
+                <span class="row-name">{{ ce.name || unnamedLabel() }}</span>
               </button>
-              <div v-if="!filteredCommonEvents.length" class="empty-hint">无匹配项</div>
+              <div v-if="!filteredCommonEvents.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
             </div>
           </template>
 
-          <!-- ========== 音频 ========== -->
-          <template v-else-if="selected === '音频'">
+          <!-- ========== Audio ========== -->
+          <template v-else-if="selected === 'audio'">
             <div class="id-list">
               <button
                 v-for="n in visibleAudioNames"
@@ -1323,16 +1339,16 @@ function detailTitle(): string {
                 class="load-more"
                 @click="showMoreGroupItems('audio', selectedAudioBucket, activeAudioBucket.names.length)"
               >
-                再显示 {{ remainingAudioNames }} 项
+                {{ showMoreLabel(remainingAudioNames) }}
               </button>
               <div v-if="!visibleAudioNames.length" class="empty-hint">
-                {{ assets?.audio?.[selectedAudioBucket] ? '无匹配音频' : '无音频数据' }}
+                {{ assets?.audio?.[selectedAudioBucket] ? t('story.noMatchAudio') : t('story.noAudioData') }}
               </div>
             </div>
           </template>
 
-          <!-- ========== 图片 ========== -->
-          <template v-else-if="selected === '图片'">
+          <!-- ========== Images ========== -->
+          <template v-else-if="selected === 'images'">
             <div class="image-grid">
               <button
                 v-for="item in visibleImageGridItems"
@@ -1344,11 +1360,11 @@ function detailTitle(): string {
               >
                 <span class="image-grid-thumb">
                   <img v-if="item.url" :src="item.url" :alt="item.name" />
-                  <span v-else class="image-grid-missing">无预览</span>
+                  <span v-else class="image-grid-missing">{{ t('story.noPreview') }}</span>
                 </span>
                 <span class="image-grid-meta">
                   <strong>{{ item.name }}</strong>
-                  <small>{{ item.fileName || '文件缺失' }}</small>
+                  <small>{{ item.fileName || t('story.fileMissing') }}</small>
                 </span>
               </button>
               <button
@@ -1357,18 +1373,18 @@ function detailTitle(): string {
                 class="load-more image-grid-more"
                 @click="showMoreGroupItems('image', selectedImageBucket, activeImageBucket.names.length)"
               >
-                再显示 {{ remainingImageNames }} 项
+                {{ showMoreLabel(remainingImageNames) }}
               </button>
               <div v-if="!visibleImageNames.length" class="empty-hint">
-                {{ assets?.images?.[selectedImageBucket] ? '无匹配图片' : '无图片数据' }}
+                {{ assets?.images?.[selectedImageBucket] ? t('story.noMatchImages') : t('story.noImageData') }}
               </div>
             </div>
           </template>
 
-          <!-- ========== 数据库 ========== -->
-          <template v-else-if="selected === '数据库'">
+          <!-- ========== Database ========== -->
+          <template v-else-if="selected === 'database'">
             <div class="list-toolbar database-toolbar">
-              <span>{{ dbLabel(selectedDbGroup) }} · {{ activeDbGroup.named.length }} 项</span>
+              <span>{{ dbLabel(selectedDbGroup) }} · {{ itemCountLabel(activeDbGroup.named.length) }}</span>
               <button
                 v-if="canCreateSelectedDbGroup"
                 type="button"
@@ -1376,7 +1392,7 @@ function detailTitle(): string {
                 :disabled="detailBusy"
                 @click="createSelectedDatabaseEntry"
               >
-                新增
+                {{ t('story.addNew') }}
               </button>
             </div>
             <div v-if="activeDbUsesGrid" class="image-grid database-grid">
@@ -1396,7 +1412,7 @@ function detailTitle(): string {
                     :style="dbPreviewSpriteStyle(entry.preview, entry.url)"
                   />
                   <img v-else-if="entry.url" :src="entry.url" :alt="entry.name" />
-                  <span v-else class="image-grid-missing">无预览</span>
+                  <span v-else class="image-grid-missing">{{ t('story.noPreview') }}</span>
                 </span>
                 <span class="image-grid-meta">
                   <strong>{{ entry.name }}</strong>
@@ -1409,10 +1425,10 @@ function detailTitle(): string {
                 class="load-more image-grid-more"
                 @click="showMoreGroupItems('database', selectedDbGroup, activeDbGroup.named.length)"
               >
-                再显示 {{ remainingDbEntries }} 项
+                {{ showMoreLabel(remainingDbEntries) }}
               </button>
               <div v-if="!visibleDbEntries.length" class="empty-hint">
-                {{ database[selectedDbGroup] ? '无匹配条目' : '无数据库数据' }}
+                {{ database[selectedDbGroup] ? t('story.noMatchEntries') : t('story.noDatabaseData') }}
               </div>
             </div>
             <div v-else class="id-list">
@@ -1432,10 +1448,10 @@ function detailTitle(): string {
                 class="load-more"
                 @click="showMoreGroupItems('database', selectedDbGroup, activeDbGroup.named.length)"
               >
-                再显示 {{ remainingDbEntries }} 项
+                {{ showMoreLabel(remainingDbEntries) }}
               </button>
               <div v-if="!visibleDbEntries.length" class="empty-hint">
-                {{ database[selectedDbGroup] ? '无匹配条目' : '无数据库数据' }}
+                {{ database[selectedDbGroup] ? t('story.noMatchEntries') : t('story.noDatabaseData') }}
               </div>
             </div>
           </template>
@@ -1443,37 +1459,37 @@ function detailTitle(): string {
         </div>
       </main>
 
-      <aside class="console-panel pm-detail" aria-label="项目条目详情">
+      <aside class="console-panel pm-detail" :aria-label="t('story.entryDetails')">
           <header>
             <div>
-              <strong>项目条目详情</strong>
+              <strong>{{ t('story.entryDetails') }}</strong>
               <span v-if="pmDetail">{{ detailTitle() }}</span>
-              <span v-else-if="selectedEvent">事件 · #{{ selectedEvent.id }}</span>
-              <span v-else-if="selectedMap">地图 · #{{ selectedMap.id }}</span>
-              <span v-else>选择条目后在这里修改</span>
+              <span v-else-if="selectedEvent">{{ t('story.event') }} · #{{ selectedEvent.id }}</span>
+              <span v-else-if="selectedMap">{{ t('story.map') }} · #{{ selectedMap.id }}</span>
+              <span v-else>{{ t('story.selectEntryHint') }}</span>
             </div>
             <button v-if="pmDetail || detailError || selectedEvent" type="button" @click="clearDetailPanel">×</button>
           </header>
-          <div v-if="detailBusy && !pmDetail" class="empty-hint">正在读取完整条目…</div>
+          <div v-if="detailBusy && !pmDetail" class="empty-hint">{{ t('story.loadingEntry') }}</div>
           <div v-else-if="pmDetail?.kind === 'audio'" class="pm-detail-body audio-detail">
             <dl class="audio-facts">
-              <dt>类型</dt><dd>{{ pmDetail.category.toUpperCase() }}</dd>
-              <dt>文件名</dt><dd>{{ pmDetail.fileName || '—' }}</dd>
-              <dt>路径</dt><dd>{{ pmDetail.relativePath || '—' }}</dd>
+              <dt>{{ t('eventEditorDialog.type') }}</dt><dd>{{ pmDetail.category.toUpperCase() }}</dd>
+              <dt>{{ t('story.fileName') }}</dt><dd>{{ pmDetail.fileName || '—' }}</dd>
+              <dt>{{ t('story.path') }}</dt><dd>{{ pmDetail.relativePath || '—' }}</dd>
             </dl>
             <audio v-if="pmDetail.url" :src="pmDetail.url" controls />
-            <div v-else class="empty-hint">工程内找不到该音频文件</div>
+            <div v-else class="empty-hint">{{ t('story.audioNotFound') }}</div>
           </div>
           <div v-else-if="pmDetail?.kind === 'image'" class="pm-detail-body image-detail">
             <dl class="audio-facts">
-              <dt>类型</dt><dd>{{ imageBucketLabel(pmDetail.category) }}</dd>
-              <dt>文件名</dt><dd>{{ pmDetail.fileName || '—' }}</dd>
-              <dt>路径</dt><dd>{{ pmDetail.relativePath || '—' }}</dd>
+              <dt>{{ t('eventEditorDialog.type') }}</dt><dd>{{ imageBucketLabel(pmDetail.category) }}</dd>
+              <dt>{{ t('story.fileName') }}</dt><dd>{{ pmDetail.fileName || '—' }}</dd>
+              <dt>{{ t('story.path') }}</dt><dd>{{ pmDetail.relativePath || '—' }}</dd>
             </dl>
             <div v-if="pmDetail.url" class="image-preview-frame">
               <img :src="pmDetail.url" :alt="pmDetail.name" />
             </div>
-            <div v-else class="empty-hint">工程内找不到该图片文件</div>
+            <div v-else class="empty-hint">{{ t('story.imageNotFound') }}</div>
           </div>
           <div v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'commonEvent'" class="pm-detail-body">
             <CommonEventDetailEditor v-model="detailDraft" :catalog="editorCatalog" :load-image="loadImage" />
@@ -1482,51 +1498,51 @@ function detailTitle(): string {
             <DatabaseEntryDetailEditor v-model="detailDraft" :group="pmDetail.entry.group" :catalog="editorCatalog" :schema="pmDetail.entry.schema" :load-image="loadImage" />
           </div>
           <div v-else-if="pmDetail && detailEditable" class="pm-detail-body">
-            <StructuredFieldsEditor v-model="detailDraft" label="条目字段" />
+            <StructuredFieldsEditor v-model="detailDraft" :label="t('story.entryFields')" />
           </div>
           <div v-else-if="selectedEvent && selectedMapId" class="pm-detail-body event-inspector">
             <dl class="detail-facts">
-              <dt>事件 ID</dt><dd>{{ String(selectedEvent.id).padStart(3, '0') }}</dd>
-              <dt>名称</dt><dd>{{ selectedEvent.name || '(未命名)' }}</dd>
-              <dt>地图</dt><dd>{{ selectedMap?.name || `Map${selectedMapId}` }}</dd>
-              <dt>坐标</dt><dd>({{ selectedEvent.x }}, {{ selectedEvent.y }})</dd>
-              <dt>页数</dt><dd>{{ selectedEvent.pageCount }}</dd>
+              <dt>{{ t('story.eventId') }}</dt><dd>{{ String(selectedEvent.id).padStart(3, '0') }}</dd>
+              <dt>{{ t('commonEvent.name') }}</dt><dd>{{ selectedEvent.name || unnamedLabel() }}</dd>
+              <dt>{{ t('story.map') }}</dt><dd>{{ selectedMap?.name || `Map${selectedMapId}` }}</dd>
+              <dt>{{ t('story.position') }}</dt><dd>({{ selectedEvent.x }}, {{ selectedEvent.y }})</dd>
+              <dt>{{ t('story.pages') }}</dt><dd>{{ selectedEvent.pageCount }}</dd>
             </dl>
-            <div v-if="eventPreviewBusy" class="event-preview-state">正在读取执行内容…</div>
-            <div v-else-if="eventPreviewError" class="detail-error event-preview-error">执行内容读取失败：{{ eventPreviewError }}</div>
+            <div v-if="eventPreviewBusy" class="event-preview-state">{{ t('story.loadingEventContents') }}</div>
+            <div v-else-if="eventPreviewError" class="detail-error event-preview-error">{{ t('story.eventContentsLoadFailed') }}{{ formatErrorText(eventPreviewError) }}</div>
             <MapEventCommandPreview
               v-else-if="eventPreviewEvent"
               :event="eventPreviewEvent"
               :system-data="eventPreviewSystemData"
             />
-            <div v-else class="event-preview-state">暂无执行内容。</div>
+            <div v-else class="event-preview-state">{{ t('story.noEventContents') }}</div>
             <div class="detail-actions">
-              <button type="button" class="secondary-button" @click="openMapEvent(selectedMapId, selectedEvent.id)">打开事件编辑器</button>
-              <button type="button" class="secondary-button" @click="openMapInEditor(selectedMapId, selectedEvent.id)">查看地图位置</button>
+              <button type="button" class="secondary-button" @click="openMapEvent(selectedMapId, selectedEvent.id)">{{ t('story.openEventEditor') }}</button>
+              <button type="button" class="secondary-button" @click="openMapInEditor(selectedMapId, selectedEvent.id)">{{ t('story.viewMapLocation') }}</button>
             </div>
           </div>
-          <div v-else-if="selected === '地图与事件' && selectedMap" class="pm-detail-body event-inspector">
+          <div v-else-if="selected === 'maps' && selectedMap" class="pm-detail-body event-inspector">
             <dl class="detail-facts">
-              <dt>地图 ID</dt><dd>{{ String(selectedMap.id).padStart(3, '0') }}</dd>
-              <dt>名称</dt><dd>{{ selectedMap.name }}</dd>
-              <dt>事件数</dt><dd>{{ selectedMap.eventCount }}</dd>
+              <dt>{{ t('story.mapId') }}</dt><dd>{{ String(selectedMap.id).padStart(3, '0') }}</dd>
+              <dt>{{ t('commonEvent.name') }}</dt><dd>{{ selectedMap.name }}</dd>
+              <dt>{{ t('story.eventCount') }}</dt><dd>{{ selectedMap.eventCount }}</dd>
             </dl>
             <div class="detail-actions">
-              <button type="button" class="secondary-button" @click="openMapInEditor(selectedMap.id)">打开地图编辑器</button>
+              <button type="button" class="secondary-button" @click="openMapInEditor(selectedMap.id)">{{ t('story.openMapEditor') }}</button>
             </div>
-            <p class="detail-note">选择中间事件列表中的条目，可在这里查看事件详情。</p>
+            <p class="detail-note">{{ t('story.selectMiddleHint') }}</p>
           </div>
-          <div v-else-if="detailError && !pmDetail" class="detail-error">{{ detailError }}</div>
-          <div v-else class="detail-empty">从中间列表选择地图、事件、开关、变量、公共事件、数据库、音频或图片。</div>
-          <div v-if="detailError && pmDetail" class="detail-error">{{ detailError }}</div>
+          <div v-else-if="detailError && !pmDetail" class="detail-error">{{ formatErrorText(detailError) }}</div>
+          <div v-else class="detail-empty">{{ t('story.selectFromMiddle') }}</div>
+          <div v-if="detailError && pmDetail" class="detail-error">{{ formatErrorText(detailError) }}</div>
           <footer v-if="pmDetail">
             <template v-if="pmDetail.kind === 'audio' || pmDetail.kind === 'image'">
-              <span>仅预览工程内{{ pmDetail.kind === 'audio' ? '音频' : '图片' }}，不会修改文件。</span>
+              <span>{{ previewOnlyNote(pmDetail.kind) }}</span>
             </template>
             <template v-else>
-              <span>保存后进入项目暂存，可统一应用或丢弃。</span>
+              <span>{{ t('story.saveStagingNote') }}</span>
               <button type="button" :disabled="detailBusy" @click="saveDetail">
-                {{ detailBusy ? '保存中…' : '保存修改' }}
+                {{ detailBusy ? t('ui.saving') : t('story.saveChanges') }}
               </button>
             </template>
           </footer>

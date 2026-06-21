@@ -1,5 +1,8 @@
-import type { SessionSubagentActivity, SessionSubagentItem } from '@contract/types'
+import type { ProductLanguage, SessionSubagentActivity, SessionSubagentItem } from '@contract/types'
 import type { ChatSegment } from '../composables/useSessionStream.ts'
+import { pickByLocale, translate } from '../i18n/messages.ts'
+import { SUBAGENT_ACTIVITY_TITLE_TRANSLATIONS, SUBAGENT_USING_TOOL_TITLE_RE } from './subagentTimelineLocalization.ts'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
 
 function timestampFor(value: string | null | undefined, fallback: number): number {
   const timestamp = value ? Date.parse(value) : NaN
@@ -33,6 +36,7 @@ function metaSegment(
   status: string,
   at: string | null | undefined,
   index: number,
+  language: ProductLanguage,
 ): ChatSegment {
   return {
     id,
@@ -41,7 +45,7 @@ function metaSegment(
     timestamp: timestampFor(at, index),
     metadata: {
       type: 'preparation',
-      stage: title,
+      stage: localizeSubagentActivityTitle(title, language),
       status,
     },
   }
@@ -53,13 +57,15 @@ function statusSegment(
   blocker: string | null | undefined,
   at: string | null | undefined,
   index: number,
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
 ): ChatSegment {
+  language = normalizeProductLanguage(language)
   return {
     id,
     type: 'status',
     content: '',
     timestamp: timestampFor(at, index),
-    metadata: blocker ? { status, blocker } : { status },
+    metadata: blocker ? { status, blocker: localizeSubagentActivityTitle(blocker, language) } : { status },
   }
 }
 
@@ -94,13 +100,15 @@ function activitySegment(
   index: number,
   finalOutput?: string | null,
   itemStatus?: string | null,
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
 ): ChatSegment {
+  language = normalizeProductLanguage(language)
   if (entry.tool) return toolSegment(entry, index, itemStatus)
 
   const status = statusForActivity(entry, itemStatus)
   const id = `subagent-activity-${entry.id}`
   if (status === 'failed' || status === 'stopped') {
-    return statusSegment(id, status, entry.detail, entry.at, index)
+    return statusSegment(id, status, entry.detail, entry.at, index, language)
   }
   if ((entry.kind === 'output' || entry.kind === 'notification') && entry.detail && entry.detail !== finalOutput) {
     return {
@@ -110,10 +118,11 @@ function activitySegment(
       timestamp: timestampFor(entry.at, index),
     }
   }
-  return metaSegment(id, entry.title, status, entry.at, index)
+  return metaSegment(id, entry.title, status, entry.at, index, language)
 }
 
-export function subagentTimelineSegments(item: SessionSubagentItem): ChatSegment[] {
+export function subagentTimelineSegments(item: SessionSubagentItem, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): ChatSegment[] {
+  language = normalizeProductLanguage(language)
   const segments: ChatSegment[] = []
   let index = 0
 
@@ -121,13 +130,13 @@ export function subagentTimelineSegments(item: SessionSubagentItem): ChatSegment
     segments.push({
       id: `subagent-${item.id}-prompt`,
       type: 'reasoning',
-      content: `原始请求\n\n${item.prompt}`,
+      content: `${translate('subagent.timeline.originalRequest', language)}\n\n${item.prompt}`,
       timestamp: timestampFor(item.updatedAt, ++index),
     })
   }
 
   for (const entry of item.activity || []) {
-    segments.push(activitySegment(entry, ++index, item.output, item.status))
+    segments.push(activitySegment(entry, ++index, item.output, item.status, language))
   }
 
   if (item.output) {
@@ -142,11 +151,11 @@ export function subagentTimelineSegments(item: SessionSubagentItem): ChatSegment
       id: `subagent-${item.id}-output-file`,
       type: 'text',
       content: [
-        '子任务已完成，但没有收到正文输出。',
+        translate('subagent.timeline.noTextOutput', language),
         '',
-        `输出文件：\`${item.outputFile}\``,
+        `${translate('subagent.timeline.outputFileLabel', language)}: \`${item.outputFile}\``,
         '',
-        '如果这里仍为空，说明运行后端没有把子任务结果写入该文件。',
+        translate('subagent.timeline.emptyOutputHint', language),
       ].join('\n'),
       timestamp: timestampFor(item.updatedAt, ++index),
     })
@@ -159,8 +168,21 @@ export function subagentTimelineSegments(item: SessionSubagentItem): ChatSegment
       item.error,
       item.updatedAt,
       ++index,
+      language,
     ))
   }
 
   return segments
+}
+
+export function localizeSubagentActivityTitle(title: string, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  language = normalizeProductLanguage(language)
+  return pickByLocale(language, {
+    'zh-CN': () => title,
+    'en-US': () => {
+      const tool = title.match(SUBAGENT_USING_TOOL_TITLE_RE)
+      if (tool) return `Using ${tool[1]}`
+      return SUBAGENT_ACTIVITY_TITLE_TRANSLATIONS[title] || title
+    },
+  })()
 }

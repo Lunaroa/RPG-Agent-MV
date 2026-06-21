@@ -1,4 +1,7 @@
 import { nativeTaskResultText, stripNativeTaskBlocks } from '../../../../contract/native-task-blocks.ts'
+import type { ProductLanguage } from '@contract/types'
+import { translate, type MessageKey } from '../i18n/messages.ts'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
 
 export type RunTimelineKind =
   | 'user'
@@ -55,6 +58,7 @@ const TRANSIENT_STATUSES = new Set(['preparing', 'starting', 'running']);
 const SUCCESS_STATUSES = new Set(['pass', 'completed', 'success', 'done']);
 const COMMON_TEXT_KEYS = ['message', 'error', 'summary', 'result', 'text', 'reason', 'status', 'path', 'file', 'name'];
 
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -98,28 +102,30 @@ function outcomeFrom(value: unknown, success?: unknown): RunTimelineOutcome {
   return 'neutral';
 }
 
-function humanSummary(value: unknown): string {
+function humanSummary(value: unknown, language: ProductLanguage): string {
   const direct = outputDisplayText(value);
   if (direct) return clip(direct, 900);
-  if (Array.isArray(value)) return value.length ? `返回 ${value.length} 项结果` : '未返回结果';
+  if (Array.isArray(value)) return value.length
+    ? translate('run.timeline.returnedNResults', language, { count: value.length })
+    : translate('run.timeline.noResult', language);
   const data = record(value);
   for (const key of COMMON_TEXT_KEYS) {
     const candidate = outputDisplayText(data[key]);
     if (candidate) return clip(candidate, 900);
   }
-  return Object.keys(data).length ? '已返回结构化结果' : '';
+  return Object.keys(data).length ? translate('run.timeline.structuredResult', language) : '';
 }
 
 function isKnownRuntimeWarningText(value: unknown): boolean {
   return /\[ripgrep\]\s+fallback:\s+builtin rg unavailable on win32, using system rg/i.test(displayText(value));
 }
 
-function cleanError(value: unknown): string {
-  const summary = (outputDisplayText(value) || humanSummary(value))
+function cleanError(value: unknown, language: ProductLanguage): string {
+  const summary = (outputDisplayText(value) || humanSummary(value, language))
     .replace(/<\/?tool_use_error>/gi, '')
     .replace(/<\/?error>/gi, '')
     .trim();
-  return summary || '运行过程中出现错误';
+  return summary || translate('run.timeline.errorDuringRun', language);
 }
 
 function formatToolParameters(value: unknown): string {
@@ -132,11 +138,13 @@ function formatToolParameters(value: unknown): string {
   }
 }
 
-function toolOutputSummary(value: unknown, outcome: RunTimelineOutcome): string {
+function toolOutputSummary(value: unknown, outcome: RunTimelineOutcome, language: ProductLanguage): string {
   const data = record(value);
   for (const key of ['error', 'message', 'summary', 'status', 'result']) {
     const candidate = data[key];
-    if (typeof candidate === 'number' || typeof candidate === 'boolean') return `${key}：${String(candidate)}`;
+    if (typeof candidate === 'number' || typeof candidate === 'boolean') {
+      return `${key}${translate('run.timeline.keyValueSeparator', language)}${String(candidate)}`;
+    }
     const candidateText = outputDisplayText(candidate);
     if (candidateText && !/^[{[]/.test(candidateText)) return clip(candidateText.split(/\r?\n/)[0] || candidateText, 280);
   }
@@ -155,26 +163,31 @@ function toolOutputSummary(value: unknown, outcome: RunTimelineOutcome): string 
     if (usefulLine) return clip(usefulLine, 280);
   }
 
-  if (outcome === 'failure') return '工具执行失败';
-  if (outcome === 'success') return '工具执行成功';
-  return '工具调用已结束';
+  if (outcome === 'failure') return translate('run.timeline.toolFailed', language);
+  if (outcome === 'success') return translate('run.timeline.toolSucceeded', language);
+  return translate('run.timeline.toolFinished', language);
 }
 
-function statusLabel(status: unknown): string {
-  const labels: Record<string, string> = {
-    preparing: '正在准备运行',
-    starting: '正在启动 Agent',
-    running: 'Agent 正在执行',
-    pass: '运行通过',
-    completed: '运行完成',
-    blocked: '运行被拦截',
-    failed: '运行失败',
-    error: '运行出错',
-    stopped: '运行已停止',
-    interrupted: '运行已中断',
-    timeout: '运行超时',
-  };
-  return labels[String(status || '')] || `状态变更：${String(status || '未知')}`;
+const STATUS_LABEL_KEYS: Record<string, MessageKey> = {
+  preparing: 'run.timeline.status.preparing',
+  starting: 'run.timeline.status.starting',
+  running: 'run.timeline.status.running',
+  pass: 'run.timeline.status.pass',
+  completed: 'run.timeline.status.completed',
+  blocked: 'run.timeline.status.blocked',
+  failed: 'run.timeline.status.failed',
+  error: 'run.timeline.status.error',
+  stopped: 'run.timeline.status.stopped',
+  interrupted: 'run.timeline.status.interrupted',
+  timeout: 'run.timeline.status.timeout',
+};
+
+function statusLabel(status: unknown, language: ProductLanguage): string {
+  const value = String(status || '');
+  const key = STATUS_LABEL_KEYS[value];
+  if (key) return translate(key, language);
+  const statusText = String(status || translate('run.timeline.unknownStatus', language));
+  return translate('run.timeline.statusChanged', language, { status: statusText });
 }
 
 function makeItem(
@@ -207,7 +220,7 @@ function segmentsFrom(chatLog: unknown): TimelineSegment[] {
   return Array.isArray(segments) ? segments as TimelineSegment[] : [];
 }
 
-function eventItems(events: TimelineEvent[]): RunTimelineItem[] {
+function eventItems(events: TimelineEvent[], language: ProductLanguage): RunTimelineItem[] {
   const items: RunTimelineItem[] = [];
   const textStreams = new Map<string, RunTimelineItem>();
   const tools = new Map<string, RunTimelineItem>();
@@ -228,7 +241,7 @@ function eventItems(events: TimelineEvent[]): RunTimelineItem[] {
       if (existing) {
         existing.body = clip(`${existing.body}${body}`);
       } else if (body) {
-        const item = makeItem(id, kind, kind === 'assistant' ? 'Agent 回复' : '分析过程', body, at, order, {
+        const item = makeItem(id, kind, kind === 'assistant' ? translate('run.timeline.agentResponse', language) : translate('run.timeline.reasoning', language), body, at, order, {
           lowValue: kind === 'internal',
         });
         textStreams.set(key, item);
@@ -238,7 +251,7 @@ function eventItems(events: TimelineEvent[]): RunTimelineItem[] {
     }
 
     if (type === 'tool_call') {
-      const tool = String(event.tool || '未命名工具');
+      const tool = String(event.tool || translate('run.timeline.unnamedTool', language));
       const callId = String(event.call_id || id);
       if (/askuser|ask_(clarify|multi_choice|plan|map|event|production)/i.test(tool)) {
         skippedToolCalls.add(callId);
@@ -256,19 +269,19 @@ function eventItems(events: TimelineEvent[]): RunTimelineItem[] {
     if (type === 'tool_result') {
       const callId = String(event.call_id || '');
       if (skippedToolCalls.has(callId)) return;
-      const tool = String(event.tool || '未命名工具');
+      const tool = String(event.tool || translate('run.timeline.unnamedTool', language));
       const outcome = outcomeFrom('', event.success);
-      const result = toolOutputSummary(event.output, outcome);
+      const result = toolOutputSummary(event.output, outcome, language);
       const existing = tools.get(callId);
       if (existing) {
         existing.outcome = outcome;
         existing.body = outcome === 'failure' ? '' : result;
-        existing.error = outcome === 'failure' ? cleanError(event.output) : undefined;
+        existing.error = outcome === 'failure' ? cleanError(event.output, language) : undefined;
       } else {
         items.push(makeItem(id, 'tool', tool, outcome === 'failure' ? '' : result, at, order, {
           tool,
           outcome,
-          error: outcome === 'failure' ? cleanError(event.output) : undefined,
+          error: outcome === 'failure' ? cleanError(event.output, language) : undefined,
         }));
       }
       return;
@@ -276,22 +289,22 @@ function eventItems(events: TimelineEvent[]): RunTimelineItem[] {
 
     if (type === 'stderr') {
       if (isKnownRuntimeWarningText(event.text)) {
-        items.push(makeItem(id, 'status', '运行告警', cleanError(event.text), at, order, {
+        items.push(makeItem(id, 'status', translate('run.timeline.runWarning', language), cleanError(event.text, language), at, order, {
           outcome: 'neutral',
           lowValue: true,
         }));
         return;
       }
-      items.push(makeItem(id, 'error', '运行错误', '', at, order, {
+      items.push(makeItem(id, 'error', translate('run.timeline.runErrorTitle', language), '', at, order, {
         outcome: 'failure',
-        error: cleanError(event.text),
+        error: cleanError(event.text, language),
       }));
       return;
     }
 
     if (type === 'status') {
       const outcome = outcomeFrom(event.status);
-      items.push(makeItem(id, 'status', statusLabel(event.status), humanSummary(event.blocker), at, order, {
+      items.push(makeItem(id, 'status', statusLabel(event.status, language), humanSummary(event.blocker, language), at, order, {
         outcome,
         lowValue: TRANSIENT_STATUSES.has(String(event.status || '')),
       }));
@@ -299,33 +312,33 @@ function eventItems(events: TimelineEvent[]): RunTimelineItem[] {
     }
 
     if (type === 'artifact') {
-      items.push(makeItem(id, 'artifact', '运行产物已生成', '产物已写入当前会话目录', at, order, { outcome: 'success' }));
+      items.push(makeItem(id, 'artifact', translate('run.timeline.artifactGenerated', language), translate('run.timeline.artifactWritten', language), at, order, { outcome: 'success' }));
       return;
     }
 
     if (type === 'command') {
-      items.push(makeItem(id, 'internal', '启动执行命令', text(event.command) || '已启动执行环境', at, order, { lowValue: true }));
+      items.push(makeItem(id, 'internal', translate('run.timeline.startCommand', language), text(event.command) || translate('run.timeline.envStarted', language), at, order, { lowValue: true }));
       return;
     }
 
     if (type === 'preparation') {
       const stage = text(event.stage);
-      items.push(makeItem(id, 'internal', '准备运行环境', stage ? `阶段：${stage}` : '正在读取工程与运行配置', at, order, { lowValue: true }));
+      items.push(makeItem(id, 'internal', translate('run.timeline.prepareEnv', language), stage ? translate('run.timeline.stage', language, { stage }) : translate('run.timeline.readingConfig', language), at, order, { lowValue: true }));
       return;
     }
 
     if (['usage', 'usage_summary', 'summary', 'opencode_session'].includes(type)) {
-      items.push(makeItem(id, 'internal', '运行内部信息', humanSummary(event), at, order, { lowValue: true }));
+      items.push(makeItem(id, 'internal', translate('run.timeline.internalInfo', language), humanSummary(event, language), at, order, { lowValue: true }));
       return;
     }
 
-    items.push(makeItem(id, 'status', `运行事件：${type}`, humanSummary(event) || '记录了一项运行事件', at, order));
+    items.push(makeItem(id, 'status', translate('run.timeline.runEvent', language, { type }), humanSummary(event, language) || translate('run.timeline.recordedEvent', language), at, order));
   });
 
   return items;
 }
 
-function segmentItems(segments: TimelineSegment[], includeRuntimeSegments: boolean): RunTimelineItem[] {
+function segmentItems(segments: TimelineSegment[], includeRuntimeSegments: boolean, language: ProductLanguage): RunTimelineItem[] {
   const items: RunTimelineItem[] = [];
   segments.forEach((segment, index) => {
     const type = String(segment.type || 'unknown');
@@ -336,47 +349,47 @@ function segmentItems(segments: TimelineSegment[], includeRuntimeSegments: boole
     const content = type === 'text' ? displayText(segment.content) : text(segment.content);
 
     if (type === 'user') {
-      items.push(makeItem(id, 'user', '用户请求', content || '用户提交了一条请求', at, index));
+      items.push(makeItem(id, 'user', translate('run.timeline.userRequest', language), content || translate('run.timeline.userSubmitted', language), at, index));
       return;
     }
     if (type === 'ask') {
       const prompt = text(ask.prompt);
-      const result = humanSummary(ask.result);
-      items.push(makeItem(id, 'decision', text(ask.title) || '等待用户确认', [prompt, result && `用户选择：${result}`].filter(Boolean).join('\n'), at, index));
+      const result = humanSummary(ask.result, language);
+      items.push(makeItem(id, 'decision', text(ask.title) || translate('run.timeline.waitingConfirmation', language), [prompt, result && translate('run.timeline.userChoice', language, { result })].filter(Boolean).join('\n'), at, index));
       return;
     }
     if (!includeRuntimeSegments) return;
 
     if (type === 'text') {
       if (!content) return;
-      items.push(makeItem(id, 'assistant', 'Agent 回复', content, at, index));
+      items.push(makeItem(id, 'assistant', translate('run.timeline.agentResponse', language), content, at, index));
       return;
     }
     if (type === 'reasoning') {
-      items.push(makeItem(id, 'internal', '分析过程', content, at, index, { lowValue: true }));
+      items.push(makeItem(id, 'internal', translate('run.timeline.reasoning', language), content, at, index, { lowValue: true }));
       return;
     }
     if (type === 'tool') {
-      const tool = String(metadata.tool || '未命名工具');
+      const tool = String(metadata.tool || translate('run.timeline.unnamedTool', language));
       const outcome = outcomeFrom(metadata.status, metadata.success);
       items.push(makeItem(
         id,
         'tool',
         tool,
-        outcome === 'failure' ? '' : toolOutputSummary(metadata.output, outcome),
+        outcome === 'failure' ? '' : toolOutputSummary(metadata.output, outcome, language),
         at,
         index,
         {
           tool,
           outcome,
           parameters: formatToolParameters(metadata.input),
-          error: outcome === 'failure' ? cleanError(metadata.output) : undefined,
+          error: outcome === 'failure' ? cleanError(metadata.output, language) : undefined,
         },
       ));
       return;
     }
     if (type === 'status') {
-      items.push(makeItem(id, 'status', statusLabel(metadata.status), humanSummary(metadata.blocker), at, index, {
+      items.push(makeItem(id, 'status', statusLabel(metadata.status, language), humanSummary(metadata.blocker, language), at, index, {
         outcome: outcomeFrom(metadata.status),
         lowValue: TRANSIENT_STATUSES.has(String(metadata.status || '')),
       }));
@@ -384,51 +397,52 @@ function segmentItems(segments: TimelineSegment[], includeRuntimeSegments: boole
     }
     if (type === 'meta' && metadata.type === 'stderr') {
       if (isKnownRuntimeWarningText(metadata.text)) {
-        items.push(makeItem(id, 'status', '运行告警', cleanError(metadata.text), at, index, {
+        items.push(makeItem(id, 'status', translate('run.timeline.runWarning', language), cleanError(metadata.text, language), at, index, {
           outcome: 'neutral',
           lowValue: true,
         }));
         return;
       }
-      items.push(makeItem(id, 'error', '运行错误', '', at, index, {
+      items.push(makeItem(id, 'error', translate('run.timeline.runErrorTitle', language), '', at, index, {
         outcome: 'failure',
-        error: cleanError(metadata.text),
+        error: cleanError(metadata.text, language),
       }));
       return;
     }
     if (type === 'meta' && metadata.type === 'artifact') {
-      items.push(makeItem(id, 'artifact', '运行产物已生成', '产物已写入当前会话目录', at, index, { outcome: 'success' }));
+      items.push(makeItem(id, 'artifact', translate('run.timeline.artifactGenerated', language), translate('run.timeline.artifactWritten', language), at, index, { outcome: 'success' }));
       return;
     }
     if (type === 'meta' && metadata.type === 'command') {
-      items.push(makeItem(id, 'internal', '启动执行命令', text(metadata.command) || '已启动执行环境', at, index, { lowValue: true }));
+      items.push(makeItem(id, 'internal', translate('run.timeline.startCommand', language), text(metadata.command) || translate('run.timeline.envStarted', language), at, index, { lowValue: true }));
       return;
     }
     if (type === 'meta' && metadata.type === 'preparation') {
-      items.push(makeItem(id, 'internal', '准备运行环境', '正在读取工程与运行配置', at, index, { lowValue: true }));
+      items.push(makeItem(id, 'internal', translate('run.timeline.prepareEnv', language), translate('run.timeline.readingConfig', language), at, index, { lowValue: true }));
       return;
     }
     if (type === 'meta') {
-      items.push(makeItem(id, 'internal', '运行内部信息', humanSummary(metadata), at, index, { lowValue: true }));
+      items.push(makeItem(id, 'internal', translate('run.timeline.internalInfo', language), humanSummary(metadata, language), at, index, { lowValue: true }));
       return;
     }
-    items.push(makeItem(id, 'status', `运行事件：${type}`, content || '记录了一项运行事件', at, index));
+    items.push(makeItem(id, 'status', translate('run.timeline.runEvent', language, { type }), content || translate('run.timeline.recordedEvent', language), at, index));
   });
   return items;
 }
 
-export function buildRunTimeline(chatLog: unknown, rawEvents: unknown, blocker?: unknown): RunTimelineItem[] {
+export function buildRunTimeline(chatLog: unknown, rawEvents: unknown, blocker?: unknown, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): RunTimelineItem[] {
+  const normalizedLanguage = normalizeProductLanguage(language)
   const events = Array.isArray(rawEvents) ? rawEvents as TimelineEvent[] : [];
   const segments = segmentsFrom(chatLog);
   const items = [
-    ...eventItems(events),
-    ...segmentItems(segments, events.length === 0),
+    ...eventItems(events, normalizedLanguage),
+    ...segmentItems(segments, events.length === 0, normalizedLanguage),
   ];
-  const blockerText = cleanError(blocker);
+  const blockerText = cleanError(blocker, normalizedLanguage);
   if (text(blocker) && !items.some((item) => item.outcome === 'failure'
     && `${item.body}\n${item.error || ''}`.includes(text(blocker)))) {
     const last = items.reduce((max, item) => Math.max(max, item.at), 0);
-    items.push(makeItem('session-blocker', 'error', '会话阻塞', '', last + 1, Number.MAX_SAFE_INTEGER, {
+    items.push(makeItem('session-blocker', 'error', translate('run.timeline.sessionBlocked', normalizedLanguage), '', last + 1, Number.MAX_SAFE_INTEGER, {
       outcome: 'failure',
       error: blockerText,
     }));

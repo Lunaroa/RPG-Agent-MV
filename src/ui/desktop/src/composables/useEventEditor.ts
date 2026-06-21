@@ -1,11 +1,22 @@
-// 事件编辑纯函数 / 类型 / 常量。
-// 移植自 legacy frontend/src/app/event-editor/ 的
-// event-formatters.js、command-templates.js、event-state.js。
-// 零响应式——与 useMapRenderer.ts 同红线。
+// Pure event editor functions, types, and constants.
+// Ported from legacy frontend/src/app/event-editor event-formatters.js,
+// command-templates.js, and event-state.js. Keep this module non-reactive.
+import type { ProductLanguage } from '@contract/types';
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
 import { commandLabel as catalogCommandLabel } from './eventCommandCatalog.ts';
+import { translate } from '../i18n/messages.ts'
+import { localizeCommandCodeLabel } from '../utils/eventCommandLocalization.ts';
+import {
+  EVENT_CONDITION_EMPTY_LABEL,
+  EVENT_IMAGE_EMPTY_LABEL,
+  EVENT_EDITOR_TEXT_BY_LOCALE,
+  QUICK_EVENT_NAMES,
+  QUICK_EVENT_TEXT,
+  eventEditorText,
+} from '../utils/eventEditorLocalization.ts';
 export { COMMAND_DEFINITIONS, COMMAND_PAGES, STANDARD_COMMAND_CODES, applyCommandIndent, commandDefinition, commandLabel, commandTemplate, defaultCommandParams } from './eventCommandCatalog.ts';
 
-// ---- 类型 ----
+// ---- Types ----
 
 export interface MvCommand {
   code: number;
@@ -85,66 +96,35 @@ export function findEditorMapEvent(events: unknown[] | undefined, eventId: numbe
   return null;
 }
 
-// ---- 常量 ----
+// ---- Constants ----
 
-export const TRIGGERS: [string, string][] = [
-  ['0', '确定键'],
-  ['1', '玩家接触'],
-  ['2', '事件接触'],
-  ['3', '自动执行'],
-  ['4', '并行处理'],
-];
+const DEFAULT_EVENT_EDITOR_TEXT = eventEditorText(DEFAULT_PRODUCT_LANGUAGE);
 
-export const TRIGGER_LABELS: Record<number, string> = {
-  0: '确定键', 1: '玩家接触', 2: '事件接触', 3: '自动执行', 4: '并行处理',
-};
+export const TRIGGERS = DEFAULT_EVENT_EDITOR_TEXT.triggers;
 
-export const PRIORITIES: [string, string][] = [
-  ['0', '人物下方'], ['1', '与人物相同'], ['2', '人物上方'],
-];
+export const TRIGGER_LABELS = DEFAULT_EVENT_EDITOR_TEXT.triggerLabels;
 
-export const PRIORITY_LABELS: Record<number, string> = {
-  0: '人物下方', 1: '与人物相同', 2: '人物上方',
-};
+export const PRIORITIES = DEFAULT_EVENT_EDITOR_TEXT.priorities;
 
-export const MOVE_TYPES: [string, string][] = [
-  ['0', '固定'], ['1', '随机'], ['2', '接近'], ['3', '自定义'],
-];
+export const PRIORITY_LABELS = DEFAULT_EVENT_EDITOR_TEXT.priorityLabels;
 
-export const MOVE_SPEEDS: [string, string][] = [
-  ['1', '1：极慢'], ['2', '2：很慢'], ['3', '3：较慢'],
-  ['4', '4：普通'], ['5', '5：较快'], ['6', '6：很快'],
-];
+export const MOVE_TYPES = DEFAULT_EVENT_EDITOR_TEXT.moveTypes;
 
-export const MOVE_FREQS: [string, string][] = [
-  ['1', '1：最低'], ['2', '2：较低'], ['3', '3：普通'],
-  ['4', '4：较高'], ['5', '5：最高'],
-];
+export const MOVE_SPEEDS = DEFAULT_EVENT_EDITOR_TEXT.moveSpeeds;
+
+export const MOVE_FREQS = DEFAULT_EVENT_EDITOR_TEXT.moveFrequencies;
 
 export const SELF_SWITCH_CHANNELS = ['A', 'B', 'C', 'D'] as const;
 
-export const MOVE_ROUTE_OPERATIONS: [number, string][] = [
-  [1, '向下移动'], [2, '向左移动'], [3, '向右移动'], [4, '向上移动'],
-  [5, '左下移动'], [6, '右下移动'], [7, '左上移动'], [8, '右上移动'],
-  [9, '随机移动'], [10, '接近玩家'], [11, '远离玩家'], [12, '前进一步'], [13, '后退一步'],
-  [14, '跳跃'], [15, '等待'], [16, '面向下方'], [17, '面向左方'], [18, '面向右方'], [19, '面向上方'],
-  [20, '向右转 90°'], [21, '向左转 90°'], [22, '转身 180°'], [23, '随机转向 90°'],
-  [24, '随机转向'], [25, '面向玩家'], [26, '背对玩家'], [27, '打开开关'], [28, '关闭开关'],
-  [29, '更改速度'], [30, '更改频率'], [31, '开启步行动画'], [32, '关闭步行动画'],
-  [33, '开启踏步动画'], [34, '关闭踏步动画'], [35, '固定朝向'], [36, '解除固定朝向'],
-  [37, '开启穿透'], [38, '关闭穿透'], [39, '开启透明'], [40, '关闭透明'],
-  [41, '更改图像'], [42, '更改不透明度'], [43, '更改合成方式'], [44, '播放 SE'], [45, '脚本'],
-];
+export const MOVE_ROUTE_OPERATIONS = DEFAULT_EVENT_EDITOR_TEXT.moveRouteOperations;
 
-const MOVE_ROUTE_LABELS = Object.fromEntries(MOVE_ROUTE_OPERATIONS);
-
-// ---- 深拷贝 ----
+// ---- Clone ----
 
 export function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-// ---- 默认值工厂 ----
+// ---- Default factories ----
 
 export function defaultConditions(): MvEventConditions {
   return {
@@ -191,7 +171,7 @@ export function defaultEvent(id: number, x: number, y: number): MvEditorEvent {
   };
 }
 
-// ---- 命令列表工具 ----
+// ---- Command list utilities ----
 
 export function editableCommands(page: MvEventPage): MvCommand[] {
   const list = page && Array.isArray(page.list) ? page.list : [];
@@ -305,7 +285,7 @@ export function commandInsertIndent(list: MvCommand[], rawIndex: number): number
   return indent;
 }
 
-// ---- 命令显示（移植 event-formatters.js commandDisplay） ----
+// ---- Command display ----
 
 export interface CommandDisplayResult {
   label: string;
@@ -340,94 +320,98 @@ function namedSystemRange(system: SystemData | null, kind: 'switches' | 'variabl
   return `${namedSystemEntry(system, kind, first)}..${namedSystemEntry(system, kind, last)}`;
 }
 
-function conditionBranchDisplay(system: SystemData | null, params: unknown[]): string {
+function conditionBranchDisplay(system: SystemData | null, params: unknown[], language: ProductLanguage): string {
   const type = Number(params[0] || 0);
-  if (type === 0) return `${namedSystemEntry(system, 'switches', params[1])} 为 ${params[2] === 1 ? 'OFF' : 'ON'}`;
+  if (type === 0) return `${namedSystemEntry(system, 'switches', params[1])} ${translate('eventEditor.helper.is', language)} ${params[2] === 1 ? 'OFF' : 'ON'}`;
   if (type === 1) {
     const ops = ['=', '≥', '≤', '>', '<', '!='];
     const op = ops[Number(params[4] || 0)] || String(params[4]);
     return `${namedSystemEntry(system, 'variables', params[1])} ${op} ${params[2] === 1 ? namedSystemEntry(system, 'variables', params[3]) : params[3]}`;
   }
-  if (type === 2) return `独立开关 ${params[1]} 为 ${params[2] === 1 ? 'OFF' : 'ON'}`;
-  return `条件类型 ${type}: ${JSON.stringify(params)}`;
+  if (type === 2) return `${translate('eventEditor.helper.selfSwitch', language)} ${params[1]} ${translate('eventEditor.helper.is', language)} ${params[2] === 1 ? 'OFF' : 'ON'}`;
+  return translate('eventEditor.helper.conditionType', language, { type, detail: JSON.stringify(params) });
 }
 
-function eventTargetLabel(value: unknown): string {
+function eventTargetLabel(value: unknown, language: ProductLanguage): string {
   const target = Number(value);
-  if (target === -1) return '玩家';
-  if (target === 0) return '本事件';
+  if (target === -1) return translate('eventEditor.helper.player', language);
+  if (target === 0) return translate('eventEditor.helper.thisEvent', language);
   if (Number.isFinite(target) && target > 0) return `EV${String(target).padStart(3, '0')}`;
   return String(value || 0);
 }
 
-function balloonIconLabel(value: unknown): string {
-  const labels: Record<number, string> = {
-    1: '惊叹', 2: '问号', 3: '音符', 4: '爱心', 5: '愤怒',
-    6: '汗', 7: '纠结', 8: '沉默', 9: '灯泡', 10: 'Zzz',
-  };
-  return labels[Number(value)] || `图标${value || 0}`;
+function balloonIconLabel(value: unknown, language: ProductLanguage): string {
+  const labels = eventEditorText(language).balloonIconLabels;
+  return labels[Number(value)] || translate('eventEditor.helper.icon', language, { value: String(value || 0) });
 }
 
-function messageFaceLabel(params: unknown[]): string {
+function messageFaceLabel(params: unknown[], language: ProductLanguage): string {
   const face = String(params[0] || '');
-  return face ? `${face}(${params[1] || 0})` : '无';
+  return face ? `${face}(${params[1] || 0})` : translate('eventEditor.helper.none', language);
 }
 
-function messageBackgroundLabel(value: unknown): string {
-  return ['窗口', '暗淡', '透明'][Number(value) || 0] || `背景${value}`;
+function messageBackgroundLabel(value: unknown, language: ProductLanguage): string {
+  const labels = eventEditorText(language).messageBackgroundLabels;
+  return labels[Number(value) || 0] || translate('eventEditor.helper.background', language, { value: String(value) });
 }
 
-function messagePositionLabel(value: unknown): string {
+function messagePositionLabel(value: unknown, language: ProductLanguage): string {
   const pos = Number.isFinite(Number(value)) ? Number(value) : 2;
-  return ['顶部', '中部', '底部'][pos] || `位置${value}`;
+  const labels = eventEditorText(language).messagePositionLabels;
+  return labels[pos] || translate('eventEditor.helper.position', language, { value: String(value) });
 }
 
-export function commandDisplay(command: MvCommand, system?: SystemData | null): CommandDisplayResult {
+function standardCommandLabel(code: number, language: ProductLanguage): string {
+  return localizeCommandCodeLabel(code, language, catalogCommandLabel(code));
+}
+
+export function commandDisplay(command: MvCommand, system?: SystemData | null, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): CommandDisplayResult {
+  language = normalizeProductLanguage(language)
   const p = command.parameters || [];
   const indent = clampInt(command.indent, 0, 12);
   const line = (label: string, tone = 'normal'): CommandDisplayResult => ({ label: `◆${label}`, tone, indent });
 
-  if (command.code === 101) return line(`文本：${messageFaceLabel(p)}, ${messageBackgroundLabel(p[2])}, ${messagePositionLabel(p[3])}`, 'text');
-  if (command.code === 401) return { label: `：${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
-  if (command.code === 102) return line(`显示选择项：${(p[0] as string[] || []).join(' / ')}`, 'control');
-  if (command.code === 402) return line(`选择 ${p[1] || p[0] || ''} 时`, 'text');
-  if (command.code === 403) return line('取消时', 'text');
-  if (command.code === 404) return line('选择结束', 'control');
-  if (command.code === 108 || command.code === 408) return line(`注释：${p[0] || ''}`, 'normal');
-  if (command.code === 111) return line(`如果：${conditionBranchDisplay(system || null, p)}`, 'text');
-  if (command.code === 112) return line('循环', 'control');
-  if (command.code === 113) return line('中断循环', 'control');
-  if (command.code === 121) return line(`开关操作：${namedSystemRange(system || null, 'switches', p[0], p[1])} = ${p[2] === 1 ? 'OFF' : 'ON'}`, 'control');
-  if (command.code === 122) return line(`变量操作：${namedSystemRange(system || null, 'variables', p[0], p[1])}`, 'control');
-  if (command.code === 123) return line(`独立开关操作：${p[0]} = ${p[1] === 1 ? 'OFF' : 'ON'}`, 'control');
-  if (command.code === 201) return line(`场所移动：Map${p[1]} (${p[2]},${p[3]})`, 'control');
-  if (command.code === 205) return line('设置移动路线', 'control');
-  if (command.code === 212) return line(`显示动画：${eventTargetLabel(p[0])}, ${p[1] || 0}`, 'control');
-  if (command.code === 213) return line(`显示气泡图标：${eventTargetLabel(p[0])}, ${balloonIconLabel(p[1])}`, 'control');
-  if (command.code === 221) return line('淡出画面', 'control');
-  if (command.code === 222) return line('淡入画面', 'control');
-  if (command.code === 223) return line(`更改画面色调：${JSON.stringify(p[0] || [])}`, 'control');
-  if (command.code === 224) return line(`闪烁画面：${JSON.stringify(p[0] || [])}`, 'control');
-  if (command.code === 225) return line(`震动画面：强度 ${p[0] || 0}`, 'control');
-  if (command.code === 230) return line(`等待：${p[0] || 0}帧`, 'control');
-  if (command.code === 250) return line(`播放 SE：${(p[0] as { name?: string })?.name || ''}`, 'control');
-  if (command.code === 125) return line(`增减金币：${p[0] === 1 ? '-' : '+'}${p[2] || 0}`, 'control');
-  if (command.code === 314) return line('完全恢复', 'control');
-  if (command.code === 117) return line(`公共事件：${p[0] || 0}`, 'control');
-  if (command.code === 356) return line(`插件命令：${p[0] || ''}`, 'control');
-  if (command.code === 411) return line('除此以外', 'control');
-  if (command.code === 412) return line('分歧结束', 'control');
-  if (command.code === 413) return line('重复以上内容', 'control');
-  if (command.code === 505) return { label: `：${moveRouteCommandLabel(p[0])}`, tone: 'control', indent: Math.min(indent + 1, 12) };
-  if (command.code === 405 || command.code === 408 || command.code === 605 || command.code === 655) return { label: `：${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
-  const standardLabel = catalogCommandLabel(command.code);
-  if (!standardLabel.startsWith('Raw command ')) return line(`${standardLabel}${p.length ? `：${JSON.stringify(p)}` : ''}`, 'control');
+  if (command.code === 101) return line(translate('eventEditor.command.text', language, { face: messageFaceLabel(p, language), bg: messageBackgroundLabel(p[2], language), pos: messagePositionLabel(p[3], language) }), 'text');
+  if (command.code === 401) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
+  if (command.code === 102) return line(translate('eventEditor.command.showChoices', language, { choices: (p[0] as string[] || []).join(' / ') }), 'control');
+  if (command.code === 402) return line(translate('eventEditor.command.whenChoice', language, { val: String(p[1] || p[0] || '') }), 'text');
+  if (command.code === 403) return line(translate('eventEditor.command.whenCancel', language), 'text');
+  if (command.code === 404) return line(translate('eventEditor.command.endChoices', language), 'control');
+  if (command.code === 108 || command.code === 408) return line(translate('eventEditor.command.comment', language, { text: String(p[0] || '') }), 'normal');
+  if (command.code === 111) return line(translate('eventEditor.command.if', language, { cond: conditionBranchDisplay(system || null, p, language) }), 'text');
+  if (command.code === 112) return line(translate('eventEditor.command.loop', language), 'control');
+  if (command.code === 113) return line(translate('eventEditor.command.breakLoop', language), 'control');
+  if (command.code === 121) return line(translate('eventEditor.command.controlSwitches', language, { range: namedSystemRange(system || null, 'switches', p[0], p[1]), val: p[2] === 1 ? 'OFF' : 'ON' }), 'control');
+  if (command.code === 122) return line(translate('eventEditor.command.controlVariables', language, { range: namedSystemRange(system || null, 'variables', p[0], p[1]) }), 'control');
+  if (command.code === 123) return line(translate('eventEditor.command.controlSelfSwitch', language, { ch: String(p[0]), val: p[1] === 1 ? 'OFF' : 'ON' }), 'control');
+  if (command.code === 201) return line(translate('eventEditor.command.transferPlayer', language, { mapId: String(p[1]), x: String(p[2]), y: String(p[3]) }), 'control');
+  if (command.code === 205) return line(translate('eventEditor.command.setMovementRoute', language), 'control');
+  if (command.code === 212) return line(translate('eventEditor.command.showAnimation', language, { target: eventTargetLabel(p[0], language), id: String(p[1] || 0) }), 'control');
+  if (command.code === 213) return line(translate('eventEditor.command.showBalloonIcon', language, { target: eventTargetLabel(p[0], language), icon: balloonIconLabel(p[1], language) }), 'control');
+  if (command.code === 221) return line(translate('eventEditor.command.fadeoutScreen', language), 'control');
+  if (command.code === 222) return line(translate('eventEditor.command.fadeinScreen', language), 'control');
+  if (command.code === 223) return line(translate('eventEditor.command.tintScreen', language, { json: JSON.stringify(p[0] || []) }), 'control');
+  if (command.code === 224) return line(translate('eventEditor.command.flashScreen', language, { json: JSON.stringify(p[0] || []) }), 'control');
+  if (command.code === 225) return line(translate('eventEditor.command.shakeScreen', language, { power: String(p[0] || 0) }), 'control');
+  if (command.code === 230) return line(translate('eventEditor.command.wait', language, { frames: String(p[0] || 0) }), 'control');
+  if (command.code === 250) return line(translate('eventEditor.command.playSE', language, { name: (p[0] as { name?: string })?.name || '' }), 'control');
+  if (command.code === 125) return line(translate('eventEditor.command.changeGold', language, { sign: p[0] === 1 ? '-' : '+', amount: String(p[2] || 0) }), 'control');
+  if (command.code === 314) return line(translate('eventEditor.command.recoverAll', language), 'control');
+  if (command.code === 117) return line(translate('eventEditor.command.commonEvent', language, { id: String(p[0] || 0) }), 'control');
+  if (command.code === 356) return line(translate('eventEditor.command.pluginCommand', language, { cmd: String(p[0] || '') }), 'control');
+  if (command.code === 411) return line(translate('eventEditor.command.else', language), 'control');
+  if (command.code === 412) return line(translate('eventEditor.command.branchEnd', language), 'control');
+  if (command.code === 413) return line(translate('eventEditor.command.repeatAbove', language), 'control');
+  if (command.code === 505) return { label: `${translate('eventEditor.colon', language)}${moveRouteCommandLabel(p[0], language)}`, tone: 'control', indent: Math.min(indent + 1, 12) };
+  if (command.code === 405 || command.code === 408 || command.code === 605 || command.code === 655) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
+  const standardLabel = standardCommandLabel(command.code, language);
+  if (!standardLabel.startsWith('Raw command ')) return line(`${standardLabel}${p.length ? `${translate('eventEditor.colon', language)} ${JSON.stringify(p)}` : ''}`, 'control');
   return line(`Raw command ${command.code}: ${JSON.stringify(p)}`, 'raw');
 }
 
-// 命令语义配色分类（仅用于执行内容列表的命令头着色，按命令 code 归类）。
-// 刻意与 commandDisplay 的 tone 解耦：commandDisplay 的 tone 被预览组件依赖，
-// 此处细分只服务事件编辑器，互不影响。
+// Semantic command color categories for event-editor command headers. Keep this
+// separate from commandDisplay tone because preview components depend on that
+// lower-granularity tone.
 const TONE_TEXT = new Set([101, 401, 102, 402, 403, 404, 405]);
 const TONE_FLOW = new Set([111, 112, 113, 115, 117, 119, 411, 412, 413]);
 const TONE_DATA = new Set([121, 122, 123, 124, 125, 126, 127, 128, 129, 133, 311, 312, 313, 314, 315, 316, 317]);
@@ -448,13 +432,15 @@ export function commandTone(code: number): string {
   return 'normal';
 }
 
-export function moveRouteCommandLabel(command: unknown): string {
-  if (!command || typeof command !== 'object') return '无效路线步骤';
+export function moveRouteCommandLabel(command: unknown, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  language = normalizeProductLanguage(language)
+  if (!command || typeof command !== 'object') return translate('eventEditor.moveRoute.invalidStep', language);
   const item = command as { code?: number; parameters?: unknown[] };
-  return `${MOVE_ROUTE_LABELS[Number(item.code)] || `Raw ${item.code || 0}`}${item.parameters?.length ? `：${JSON.stringify(item.parameters)}` : ''}`;
+  const labels = eventEditorText(language).moveRouteLabels;
+  return `${labels[Number(item.code)] || `Raw ${item.code || 0}`}${item.parameters?.length ? `${translate('eventEditor.colon', language)} ${JSON.stringify(item.parameters)}` : ''}`;
 }
 
-// ---- 快速创建事件模板 ----
+// ---- Quick event templates ----
 
 export type QuickEventType = 'transfer' | 'door' | 'treasure' | 'inn';
 
@@ -463,7 +449,7 @@ export function quickEventTemplate(type: QuickEventType, x: number, y: number): 
   ev.name = '';
 
   if (type === 'transfer') {
-    // 传送事件：Player Touch 触发，Transfer Player 命令
+    // Transfer event: Player Touch trigger plus Transfer Player command.
     const page = ev.pages[0];
     page.trigger = 1; // Player Touch
     page.priorityType = 1;
@@ -471,9 +457,9 @@ export function quickEventTemplate(type: QuickEventType, x: number, y: number): 
       { code: 201, indent: 0, parameters: [0, 1, 0, 0, 2, 0] }, // Transfer Player
       { code: 0, indent: 0, parameters: [] },
     ];
-    ev.name = '传送';
+    ev.name = QUICK_EVENT_NAMES.transfer;
   } else if (type === 'door') {
-    // 门事件：Player Touch 触发，带门角色图 + Transfer Player
+    // Door event: Player Touch trigger, door character sprite, and Transfer Player.
     const page = ev.pages[0];
     page.trigger = 1; // Player Touch
     page.priorityType = 1;
@@ -485,9 +471,9 @@ export function quickEventTemplate(type: QuickEventType, x: number, y: number): 
       { code: 201, indent: 0, parameters: [0, 1, 0, 0, 2, 0] }, // Transfer Player
       { code: 0, indent: 0, parameters: [] },
     ];
-    ev.name = '门';
+    ev.name = QUICK_EVENT_NAMES.door;
   } else if (type === 'treasure') {
-    // 宝箱事件：双页，第一页 ActionButton + 获得物品，第二页 Self Switch A + 打开图
+    // Treasure event: first page grants an item, second page shows opened chest.
     const page1 = ev.pages[0];
     page1.trigger = 0; // Action Button
     page1.priorityType = 1;
@@ -496,7 +482,7 @@ export function quickEventTemplate(type: QuickEventType, x: number, y: number): 
       { code: 250, indent: 0, parameters: [{ name: 'Chest1', volume: 90, pitch: 100, pan: 0 }] }, // SE
       { code: 205, indent: 0, parameters: [-1, { list: [{ code: 44, parameters: [{ name: 'Chest1', volume: 90, pitch: 100, pan: 0 }] }, { code: 0, parameters: [] }], repeat: false, skippable: false, wait: true }] }, // Open anim
       { code: 101, indent: 0, parameters: ['', 0, 0, 2] }, // Text header
-      { code: 401, indent: 0, parameters: ['获得了 \\I[1] 物品！'] }, // Text body
+      { code: 401, indent: 0, parameters: [QUICK_EVENT_TEXT.treasureItem] }, // Text body
       { code: 123, indent: 0, parameters: ['A', 0] }, // Self Switch A = ON
       { code: 0, indent: 0, parameters: [] },
     ];
@@ -508,35 +494,35 @@ export function quickEventTemplate(type: QuickEventType, x: number, y: number): 
     page2.priorityType = 1;
     page2.trigger = 0;
     ev.pages.push(page2);
-    ev.name = '宝箱';
+    ev.name = QUICK_EVENT_NAMES.treasure;
   } else if (type === 'inn') {
-    // 旅馆事件：ActionButton 触发，显示选择项 + 全回复
+    // Inn event: Action Button trigger, choices, and full recovery.
     const page = ev.pages[0];
     page.trigger = 0; // Action Button
     page.priorityType = 1;
     page.list = [
       { code: 101, indent: 0, parameters: ['', 0, 0, 2] },
-      { code: 401, indent: 0, parameters: ['欢迎光临旅馆。\\n需要休息吗？（50G）'] },
-      { code: 102, indent: 0, parameters: [['是', '否'], 1] }, // Show Choices
-      { code: 402, indent: 0, parameters: [0, '是'] }, // When "是"
+      { code: 401, indent: 0, parameters: [QUICK_EVENT_TEXT.innPrompt] },
+      { code: 102, indent: 0, parameters: [[QUICK_EVENT_TEXT.innYes, QUICK_EVENT_TEXT.innNo], 1] }, // Show Choices
+      { code: 402, indent: 0, parameters: [0, QUICK_EVENT_TEXT.innYes] },
       { code: 125, indent: 1, parameters: [1, 0, 50] }, // Change Gold -50
       { code: 314, indent: 1, parameters: [0] }, // Recover All
       { code: 250, indent: 1, parameters: [{ name: 'Recovery', volume: 90, pitch: 100, pan: 0 }] },
       { code: 101, indent: 1, parameters: ['', 0, 0, 2] },
-      { code: 401, indent: 1, parameters: ['祝你旅途愉快！'] },
+      { code: 401, indent: 1, parameters: [QUICK_EVENT_TEXT.innThanks] },
       { code: 0, indent: 1, parameters: [] },
-      { code: 402, indent: 0, parameters: [1, '否'] }, // When "否"
+      { code: 402, indent: 0, parameters: [1, QUICK_EVENT_TEXT.innNo] },
       { code: 0, indent: 1, parameters: [] },
       { code: 404, indent: 0, parameters: [] }, // End Choices
       { code: 0, indent: 0, parameters: [] },
     ];
-    ev.name = '旅馆';
+    ev.name = QUICK_EVENT_NAMES.inn;
   }
 
   return ev;
 }
 
-// ---- 条件摘要 ----
+// ---- Condition summary ----
 
 export function conditionSummary(conditions: MvEventConditions): string {
   const parts: string[] = [];
@@ -546,13 +532,13 @@ export function conditionSummary(conditions: MvEventConditions): string {
   if (conditions.selfSwitchValid) parts.push(`Self ${conditions.selfSwitchCh} ON`);
   if (conditions.actorValid) parts.push(`Actor ${conditions.actorId}`);
   if (conditions.itemValid) parts.push(`Item ${conditions.itemId}`);
-  return parts.length ? parts.join('；') : '无条件';
+  return parts.length ? parts.join('; ') : EVENT_CONDITION_EMPTY_LABEL;
 }
 
-// ---- 图像摘要 ----
+// ---- Image summary ----
 
 export function imageSummary(image: MvEventImage): string {
   if (image.tileId) return `Tile #${image.tileId}`;
   if (image.characterName) return `${image.characterName} idx${image.characterIndex || 0}`;
-  return '无图像';
+  return EVENT_IMAGE_EMPTY_LABEL;
 }

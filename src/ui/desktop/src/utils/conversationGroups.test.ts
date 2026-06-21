@@ -8,6 +8,7 @@ import { describe, test } from 'node:test'
 import {
   activeConversationRootId,
   groupSessionsIntoConversations,
+  titleForSession,
 } from './conversationGroups.ts'
 import type { Session } from '../composables/useSession.ts'
 
@@ -68,6 +69,13 @@ describe('groupSessionsIntoConversations', () => {
     assert.equal(conversations[0].rootId, 'project-a')
     assert.equal(conversations[0].project, 'projects/Alpha')
     assert.equal(conversations[1].project, 'projects/Beta')
+  })
+
+  test('uses English fallback titles in English mode', () => {
+    const conversations = groupSessionsIntoConversations([session('empty', { intent: '', displayText: '' })], 'en-US')
+
+    assert.equal(conversations[0].title, '(Untitled)')
+    assert.equal(titleForSession([], null, 'en-US'), 'New conversation')
   })
 })
 

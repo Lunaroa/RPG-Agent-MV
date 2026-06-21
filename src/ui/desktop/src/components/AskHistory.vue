@@ -13,7 +13,9 @@
 import { computed } from 'vue'
 import type { Ask } from '../utils/askParser'
 import { buildAskHistoryPairs } from '../utils/askHistory'
+import { useI18n } from '../i18n'
 
 const props = defineProps<{ ask: Ask }>()
-const pairs = computed(() => buildAskHistoryPairs(props.ask))
+const { language } = useI18n()
+const pairs = computed(() => buildAskHistoryPairs(props.ask, language.value))
 </script>

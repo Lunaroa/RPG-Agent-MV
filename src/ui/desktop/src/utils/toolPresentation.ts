@@ -1,3 +1,7 @@
+import type { ProductLanguage } from '@contract/types'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
+import { translate } from '../i18n/messages.ts'
+
 export type ToolPresentationKind = 'command' | 'subagent' | 'task' | 'plan' | 'tool'
 
 export interface ToolPresentationSummary {
@@ -15,14 +19,15 @@ const WRITE_TOOL_PATTERN = /(^|[._-])(write|edit|filewrite|file_write|apply_patc
 const GLOB_TOOL_PATTERN = /(^|[._-])(glob|globfilesearch|glob_file_search)([._-]|$)/i
 const GREP_TOOL_PATTERN = /(^|[._-])(grep|rg|ripgrep|search)([._-]|$)/i
 
-export function summarizeToolCall(tool: unknown, input: unknown): ToolPresentationSummary {
+export function summarizeToolCall(tool: unknown, input: unknown, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): ToolPresentationSummary {
+  language = normalizeProductLanguage(language)
   const rawTool = cleanToolName(String(tool || 'tool'))
   const normalized = rawTool.toLowerCase()
 
   if (isCommandTool(normalized)) {
     return {
       kind: 'command',
-      label: '运行命令',
+      label: translate('tool.action.runCommand', language),
       target: truncate(findStringField(input, ['command', 'cmd', 'script', 'executable']) || pickTarget(input)),
     }
   }
@@ -30,7 +35,7 @@ export function summarizeToolCall(tool: unknown, input: unknown): ToolPresentati
   if (isTaskTool(rawTool, normalized)) {
     return {
       kind: 'task',
-      label: '更新待办',
+      label: translate('tool.action.updateTasks', language),
       target: truncate(findStringField(input, ['title', 'task', 'todo', 'description', 'content']) || ''),
     }
   }
@@ -38,7 +43,7 @@ export function summarizeToolCall(tool: unknown, input: unknown): ToolPresentati
   if (isSubagentTool(normalized)) {
     return {
       kind: 'subagent',
-      label: '启动 subagent',
+      label: translate('tool.action.startSubagent', language),
       target: truncate(findStringField(input, ['description', 'task', 'task_description', 'title', 'name']) || ''),
     }
   }
@@ -46,7 +51,7 @@ export function summarizeToolCall(tool: unknown, input: unknown): ToolPresentati
   if (isPlanTool(normalized)) {
     return {
       kind: 'plan',
-      label: '更新计划',
+      label: translate('tool.action.updatePlan', language),
       target: '',
     }
   }
@@ -54,7 +59,7 @@ export function summarizeToolCall(tool: unknown, input: unknown): ToolPresentati
   if (isReadTool(normalized)) {
     return {
       kind: 'tool',
-      label: '读取文件',
+      label: translate('tool.action.readFile', language),
       target: truncate(findStringField(input, ['path', 'file', 'filePath', 'file_path', 'filename']) || pickTarget(input)),
     }
   }
@@ -62,7 +67,7 @@ export function summarizeToolCall(tool: unknown, input: unknown): ToolPresentati
   if (isWriteTool(normalized)) {
     return {
       kind: 'tool',
-      label: '写入文件',
+      label: translate('tool.action.writeFile', language),
       target: truncate(findStringField(input, ['path', 'file', 'filePath', 'file_path', 'filename']) || pickTarget(input)),
     }
   }
@@ -70,7 +75,7 @@ export function summarizeToolCall(tool: unknown, input: unknown): ToolPresentati
   if (isGlobTool(normalized)) {
     return {
       kind: 'tool',
-      label: '查找文件',
+      label: translate('tool.action.findFiles', language),
       target: truncate(findStringField(input, ['pattern', 'glob_pattern', 'globPattern']) || pickTarget(input)),
     }
   }
@@ -78,7 +83,7 @@ export function summarizeToolCall(tool: unknown, input: unknown): ToolPresentati
   if (isGrepTool(normalized)) {
     return {
       kind: 'tool',
-      label: '搜索内容',
+      label: translate('tool.action.searchContent', language),
       target: truncate(findStringField(input, ['pattern', 'query', 'regex', 'search']) || pickTarget(input)),
     }
   }
@@ -86,8 +91,8 @@ export function summarizeToolCall(tool: unknown, input: unknown): ToolPresentati
   const fallbackTarget = truncate(pickTarget(input))
   return {
     kind: 'tool',
-    label: '调用工具',
-    target: fallbackTarget || rawTool || '未知工具',
+    label: translate('tool.action.callTool', language),
+    target: fallbackTarget || rawTool || translate('tool.action.unknownTool', language),
   }
 }
 

@@ -49,7 +49,7 @@ describe('buildRunTimeline', () => {
         { id: 'e1', type: 'meta', timestamp: 3, metadata: { type: 'stderr', text: 'stack\nError: missing file\nmore stack' } },
         { id: 'p1', type: 'meta', timestamp: 4, metadata: { type: 'preparation', stage: 'context' } },
       ],
-    }, []);
+    }, [], undefined, 'zh-CN');
 
     assert.equal(timeline[1].parameters, '{\n  "project": "Project"\n}');
     assert.equal(timeline[1].body, '工具执行成功');
@@ -63,7 +63,7 @@ describe('buildRunTimeline', () => {
       segments: [
         { id: 'w1', type: 'meta', timestamp: 1, metadata: { type: 'stderr', text: '[ripgrep] fallback: builtin rg unavailable on win32, using system rg\n' } },
       ],
-    }, []);
+    }, [], undefined, 'zh-CN');
 
     assert.equal(timeline[0].kind, 'status');
     assert.equal(timeline[0].title, '运行告警');
@@ -86,7 +86,7 @@ describe('buildRunTimeline', () => {
           },
         },
       ],
-    }, []);
+    }, [], undefined, 'zh-CN');
 
     assert.equal(timeline[0].parameters, '{\n  "action": "list"\n}');
     assert.equal(timeline[0].body, '工具执行成功');
@@ -134,7 +134,7 @@ describe('buildRunTimeline', () => {
           },
         },
       ],
-    }, []);
+    }, [], undefined, 'zh-CN');
 
     assert.equal(timeline[0].parameters, '{\n  "action": "stateSlots",\n  "switches": 50,\n  "variables": 50\n}');
     assert.equal(timeline[0].error, 'Unknown action: stateSlots');
@@ -143,10 +143,28 @@ describe('buildRunTimeline', () => {
   });
 
   test('adds a session blocker when no event already contains it', () => {
-    const timeline = buildRunTimeline(null, [], 'Agent backend exited unsuccessfully');
+    const timeline = buildRunTimeline(null, [], 'Agent backend exited unsuccessfully', 'zh-CN');
     assert.equal(timeline.length, 1);
     assert.equal(timeline[0].title, '会话阻塞');
     assert.equal(timeline[0].error, 'Agent backend exited unsuccessfully');
+  });
+
+  test('localizes generated runtime summaries in English mode', () => {
+    const timeline = buildRunTimeline({
+      segments: [
+        { id: 'u1', type: 'user', content: 'continue', timestamp: 1 },
+        { id: 't1', type: 'tool', timestamp: 2, metadata: { tool: '', input: {}, output: {}, success: true } },
+        { id: 'p1', type: 'meta', timestamp: 3, metadata: { type: 'preparation' } },
+      ],
+    }, [
+      { type: 'artifact', sequence: 4 },
+      { type: 'status', status: 'failed', sequence: 5 },
+    ], '', 'en-US');
+
+    assert.equal(timeline[0].title, 'User Request');
+    assert.equal(timeline[1].title, 'Run Artifact Generated');
+    assert.equal(timeline[1].body, 'Artifact was written to the current session directory');
+    assert.equal(timeline[2].title, 'Run failed');
   });
 });
 
@@ -157,7 +175,7 @@ describe('filterRunTimeline', () => {
       { type: 'tool_call', call_id: 'a', tool: 'maps.tree', input: {}, sequence: 2 },
       { type: 'tool_result', call_id: 'a', tool: 'maps.tree', success: false, output: { error: '地图不存在' }, sequence: 3 },
       { type: 'artifact', sequence: 4 },
-    ]);
+    ], undefined, 'zh-CN');
 
     assert.equal(filterRunTimeline(timeline, {}).length, 2);
     assert.deepEqual(
@@ -174,7 +192,7 @@ describe('filterRunTimeline', () => {
       { type: 'tool_call', call_id: 'b', tool: 'maps.get', input: {}, sequence: 3 },
       { type: 'tool_result', call_id: 'b', tool: 'maps.get', success: false, output: 'missing', sequence: 4 },
       { type: 'status', status: 'failed', sequence: 5 },
-    ]);
+    ], undefined, 'zh-CN');
 
     assert.deepEqual(
       filterRunTimeline(timeline, { tools: ['maps.tree', 'maps.get'] }).map((item) => item.tool),

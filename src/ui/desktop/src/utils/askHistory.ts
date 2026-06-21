@@ -1,12 +1,16 @@
 import type { Ask, AskOption, AskResult } from './askParser.ts'
 import { isPlacementEventDone } from './placementStatus.ts'
+import type { ProductLanguage } from '@contract/types'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
+import { translate } from '../i18n/messages.ts'
 
 export interface AskHistoryPair {
   question: string
   answer: string
 }
 
-export function buildAskHistoryPairs(ask: Ask): AskHistoryPair[] {
+export function buildAskHistoryPairs(ask: Ask, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): AskHistoryPair[] {
+  const normalizedLanguage = normalizeProductLanguage(language)
   if (!ask.result?.submittedAt) return []
   if (ask.type === 'multi-choice-clarify' && ask.questions?.length) {
     return ask.questions.map((question) => ({
@@ -14,89 +18,102 @@ export function buildAskHistoryPairs(ask: Ask): AskHistoryPair[] {
       answer: formatChoiceAnswer(
         ask.result?.answers?.[question.id],
         question.options,
+        normalizedLanguage,
       ),
     }))
   }
 
   return [{
-    question: askQuestion(ask),
-    answer: askAnswer(ask),
+    question: askQuestion(ask, normalizedLanguage),
+    answer: askAnswer(ask, normalizedLanguage),
   }]
 }
 
-function askQuestion(ask: Ask): string {
-  if (ask.type === 'clarify') return ask.prompt?.trim() || ask.title || '等待输入'
+function askQuestion(ask: Ask, language: ProductLanguage): string {
+  if (ask.type === 'clarify') return ask.prompt?.trim() || ask.title || translate('ask.history.waitingInput', language)
   const title = String(ask.title || '').trim()
   const prompt = String(ask.prompt || '').trim()
   if (title && prompt && title !== prompt) return `${title}\n${prompt}`
-  return title || prompt || '等待决策'
+  return title || prompt || translate('ask.history.waitingDecision', language)
 }
 
-function askAnswer(ask: Ask): string {
+function askAnswer(ask: Ask, language: ProductLanguage): string {
   const result = ask.result || {}
   if (ask.type === 'clarify') {
     return String(result.answer || '').trim()
-      || formatChoiceAnswer({ selected: result.selected || [], other: String(result.other || '') }, ask.options)
+      || formatChoiceAnswer({ selected: result.selected || [], other: String(result.other || '') }, ask.options, language)
   }
-  if (ask.type === 'plan-approval') return formatPlanResult(result)
-  if (ask.type === 'map-selection') return formatMapSelectionResult(result)
-  if (ask.type === 'event-placement-list') return formatPlacementResult(ask, result)
+  if (ask.type === 'plan-approval') return formatPlanResult(result, language)
+  if (ask.type === 'map-selection') return formatMapSelectionResult(result, language)
+  if (ask.type === 'event-placement-list') return formatPlacementResult(ask, result, language)
   if (ask.type === 'production-board') {
-    return result.confirmed || result.decision === 'confirmed' ? '确认制作清单' : '已处理制作清单'
+    return result.confirmed || result.decision === 'confirmed'
+      ? translate('ask.history.productionConfirmed', language)
+      : translate('ask.history.productionHandled', language)
   }
-  return formatFallbackResult(result)
+  return formatFallbackResult(result, language)
 }
 
 function formatChoiceAnswer(
   answer: { selected?: string[]; other?: string } | null | undefined,
   options: AskOption[] | undefined,
+  language: ProductLanguage,
 ): string {
   const selected = answer?.selected || []
   const labels = selected.map((id) => {
-    if (id === '__other__') return answer?.other ? String(answer.other) : '其他'
+    if (id === '__other__') return answer?.other ? String(answer.other) : translate('ask.history.other', language)
     const option = options?.find((item) => item.id === id)
     return String(option?.label || option?.title || id)
   })
   if (answer?.other && !selected.includes('__other__')) labels.push(String(answer.other))
-  return labels.filter(Boolean).join('、') || '已提交'
+  return labels.filter(Boolean).join(translate('ask.separator.list', language)) || translate('ask.history.submitted', language)
 }
 
-function formatPlanResult(result: AskResult): string {
-  if (result.decision === 'approve') return '批准并执行'
-  if (result.decision === 'revise') return result.feedback ? `要求修改计划：${result.feedback}` : '要求修改计划'
-  if (result.decision === 'reject') return result.feedback ? `拒绝计划：${result.feedback}` : '拒绝计划'
-  return formatFallbackResult(result)
+function formatPlanResult(result: AskResult, language: ProductLanguage): string {
+  if (result.decision === 'approve') return translate('ask.history.planApproved', language)
+  if (result.decision === 'revise') return result.feedback
+    ? translate('ask.history.planReviseWithFeedback', language, { feedback: result.feedback })
+    : translate('ask.history.planRevise', language)
+  if (result.decision === 'reject') return result.feedback
+    ? translate('ask.history.planRejectWithFeedback', language, { feedback: result.feedback })
+    : translate('ask.history.planReject', language)
+  return formatFallbackResult(result, language)
 }
 
-function formatMapSelectionResult(result: AskResult): string {
-  if (result.decision === 'added') return `使用新增地图 #${result.selectedMapId || result.importedMapId || ''}`.trim()
-  if (result.decision === 'use-existing') return `使用现有地图 #${result.selectedMapId || ''}`.trim()
-  if (result.decision === 'adjust-story' || result.decision === 'reject') return '调整剧情以适配现有地图'
-  if (result.decision === 'jump') return '前往地图制作'
-  return formatFallbackResult(result)
+function formatMapSelectionResult(result: AskResult, language: ProductLanguage): string {
+  if (result.decision === 'added') return translate('ask.history.useNewMap', language, { id: String(result.selectedMapId || result.importedMapId || '') }).trim()
+  if (result.decision === 'use-existing') return translate('ask.history.useExistingMap', language, { id: String(result.selectedMapId || '') }).trim()
+  if (result.decision === 'adjust-story' || result.decision === 'reject') return translate('ask.history.adjustStory', language)
+  if (result.decision === 'jump') return translate('ask.history.goToMapProduction', language)
+  return formatFallbackResult(result, language)
 }
 
-function formatPlacementResult(ask: Ask, result: AskResult): string {
+function formatPlacementResult(ask: Ask, result: AskResult, language: ProductLanguage): string {
   const events = (Array.isArray(result.events) ? result.events : ask.events || []) as Array<Record<string, unknown>>
   const lines = events.map((event) => {
-    const name = String(event.eventName || event.contractId || event.id || '事件')
+    const name = String(event.eventName || event.contractId || event.id || translate('ask.history.event', language))
     if (!isPlacementEventDone({
       status: String(event.status || ''),
       placedEventId: event.placedEventId as number | null | undefined,
       x: event.x as number | null | undefined,
       y: event.y as number | null | undefined,
-    })) return `${name}：未放置`
+    })) return translate('ask.history.eventNotPlaced', language, { name })
     const mapId = Number(event.targetMapId || event.mapId || 0)
     const coords = Number.isInteger(event.x) && Number.isInteger(event.y) ? ` (${event.x}, ${event.y})` : ''
-    return `${name}：已放置${mapId ? `到 Map${mapId}` : ''}${coords}`
+    const mapPart = mapId ? translate('ask.history.onMap', language, { mapId }) : ''
+    return translate('ask.history.eventPlaced', language, { name, mapPart, coords })
   })
-  const summary = result.placed ? '事件已全部放置' : result.partial ? '已报告部分放置结果' : '事件放置已处理'
+  const summary = result.placed
+    ? translate('ask.history.allPlaced', language)
+    : result.partial
+      ? translate('ask.history.partialPlaced', language)
+      : translate('ask.history.placementHandled', language)
   return lines.length ? `${summary}\n${lines.join('\n')}` : summary
 }
 
-function formatFallbackResult(result: AskResult): string {
+function formatFallbackResult(result: AskResult, language: ProductLanguage): string {
   if (result.answer) return String(result.answer)
   if (result.feedback) return String(result.feedback)
   if (result.decision) return String(result.decision)
-  return '已提交'
+  return translate('ask.history.submitted', language)
 }

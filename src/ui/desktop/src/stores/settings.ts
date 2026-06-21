@@ -17,6 +17,7 @@ import {
   type FetchModelsResult,
   type AgentCapabilitiesSnapshot,
 } from '../api/client';
+import { normalizeProductLanguage, translate } from '../i18n/messages';
 
 function normalizeAgentExecutionSettings(raw: AgentExecutionSettings | null | undefined): AgentExecutionSettings {
   const source = raw || { engine: DEFAULT_AGENT_EXECUTION_ENGINE };
@@ -220,7 +221,8 @@ export const useSettingsStore = defineStore('settings', () => {
     return sessions.preview({
       executionEngine: engine,
       profileId,
-      intent: '设置页派发预览',
+      intent: translate('settings.intent.previewDispatch', normalizeProductLanguage(ui.value.language)),
+      productLanguage: normalizeProductLanguage(ui.value.language),
       project: 'projects/Project',
     }) as Promise<Record<string, unknown>>;
   }

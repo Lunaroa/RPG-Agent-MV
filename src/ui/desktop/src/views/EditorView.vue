@@ -50,9 +50,9 @@
       <div class="center-col">
         <main class="editor-stage">
           <div v-if="selectedMapId == null" class="empty-state">
-            <el-empty description="当前工程还没有地图">
+            <el-empty :description="t('editor.view.noMapsDescription')">
               <div class="empty-actions">
-                <el-button type="primary" @click="openCreateProperties(0)">新建地图</el-button>
+                <el-button type="primary" @click="openCreateProperties(0)">{{ t('editor.view.createMap') }}</el-button>
               </div>
             </el-empty>
           </div>
@@ -79,11 +79,11 @@
             </div>
           </div>
             <div v-if="selectedMapId != null" class="canvas-zoom">
-              <button type="button" title="缩小" @click="zoomOut">−</button>
-              <button type="button" title="重置缩放" @click="resetZoom">{{ Math.round(zoom * 100) }}%</button>
-              <button type="button" title="放大" @click="zoomIn">+</button>
+              <button type="button" :title="t('editor.view.zoomOut')" @click="zoomOut">−</button>
+              <button type="button" :title="t('editor.view.resetZoom')" @click="resetZoom">{{ Math.round(zoom * 100) }}%</button>
+              <button type="button" :title="t('editor.view.zoomIn')" @click="zoomIn">+</button>
             </div>
-            <span v-if="selectedMapId != null" class="canvas-mode-chip">{{ mode === 'map' ? mapPaintModeLabel : '事件模式' }}</span>
+            <span v-if="selectedMapId != null" class="canvas-mode-chip">{{ mode === 'map' ? mapPaintModeLabel : t('editor.view.eventMode') }}</span>
         </main>
 
         <BottomPanel
@@ -128,15 +128,15 @@
     <teleport to="body">
       <div v-if="treeContext.visible" class="ctx-mask" @mousedown.self="closeTreeContext" @contextmenu.prevent="closeTreeContext">
         <ul class="ctx-menu" :style="{ left: `${treeContext.x}px`, top: `${treeContext.y}px` }">
-          <li @click="ctxEditProperties">编辑属性...</li>
-          <li @click="ctxNewMapUnder">在此图下新建...</li>
+          <li @click="ctxEditProperties">{{ t('editor.ctx.editProperties') }}</li>
+          <li @click="ctxNewMapUnder">{{ t('editor.ctx.newMapUnder') }}</li>
           <li class="ctx-sep" />
-          <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxApplyMap">应用该地图暂存</li>
-          <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxDiscardMap">丢弃该地图暂存</li>
+          <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxApplyMap">{{ t('editor.ctx.applyMapStaging') }}</li>
+          <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxDiscardMap">{{ t('editor.ctx.discardMapStaging') }}</li>
           <li class="ctx-sep" />
-          <li @click="ctxCopyMap">复制</li>
-          <li :class="{ disabled: mapClipboard == null }" @click="ctxPasteMap">粘贴</li>
-          <li class="ctx-danger" @click="ctxDeleteMap">删除</li>
+          <li @click="ctxCopyMap">{{ t('editor.ctx.copy') }}</li>
+          <li :class="{ disabled: mapClipboard == null }" @click="ctxPasteMap">{{ t('editor.ctx.paste') }}</li>
+          <li class="ctx-danger" @click="ctxDeleteMap">{{ t('editor.ctx.delete') }}</li>
         </ul>
       </div>
     </teleport>
@@ -144,28 +144,28 @@
     <teleport to="body">
       <div v-if="canvasContext.visible" class="ctx-mask" @mousedown.self="closeCanvasContext" @contextmenu.prevent="closeCanvasContext">
         <ul class="ctx-menu canvas-menu" :style="{ left: `${canvasContext.x}px`, top: `${canvasContext.y}px` }">
-          <li :class="{ disabled: canvasContext.eventId == null }" @click="ctxEditEvent">编辑...<span class="ctx-shortcut">Enter</span></li>
-          <li :class="{ disabled: canvasContext.eventId != null }" @click="ctxNewEvent">新建...</li>
+          <li :class="{ disabled: canvasContext.eventId == null }" @click="ctxEditEvent">{{ t('editor.ctx.edit') }}<span class="ctx-shortcut">Enter</span></li>
+          <li :class="{ disabled: canvasContext.eventId != null }" @click="ctxNewEvent">{{ t('editor.ctx.new') }}</li>
           <li class="ctx-sep" />
-          <li :class="{ disabled: canvasContext.eventId == null }" @click="ctxCutEvent">剪切<span class="ctx-shortcut">Ctrl+X</span></li>
-          <li :class="{ disabled: canvasContext.eventId == null }" @click="ctxCopyEvent">复制<span class="ctx-shortcut">Ctrl+C</span></li>
-          <li :class="{ disabled: !eventClipboard || canvasContext.eventId != null }" @click="ctxPasteEvent">粘贴<span class="ctx-shortcut">Ctrl+V</span></li>
-          <li :class="{ disabled: canvasContext.eventId == null }" class="ctx-danger" @click="ctxDeleteEvent">删除<span class="ctx-shortcut">Del</span></li>
+          <li :class="{ disabled: canvasContext.eventId == null }" @click="ctxCutEvent">{{ t('editor.ctx.cut') }}<span class="ctx-shortcut">Ctrl+X</span></li>
+          <li :class="{ disabled: canvasContext.eventId == null }" @click="ctxCopyEvent">{{ t('editor.ctx.copy') }}<span class="ctx-shortcut">Ctrl+C</span></li>
+          <li :class="{ disabled: !eventClipboard || canvasContext.eventId != null }" @click="ctxPasteEvent">{{ t('editor.ctx.paste') }}<span class="ctx-shortcut">Ctrl+V</span></li>
+          <li :class="{ disabled: canvasContext.eventId == null }" class="ctx-danger" @click="ctxDeleteEvent">{{ t('editor.ctx.delete') }}<span class="ctx-shortcut">Del</span></li>
           <li class="ctx-sep" />
           <li class="ctx-has-sub" :class="{ disabled: canvasContext.eventId != null }" @mouseenter="quickCreateHover = true" @mouseleave="quickCreateHover = false">
-            快速创建事件<span class="ctx-arrow">▶</span>
+            {{ t('editor.ctx.quickCreateEvent') }}<span class="ctx-arrow">▶</span>
             <ul v-show="quickCreateHover" class="ctx-submenu">
-              <li @click="quickCreate('transfer')">传送...</li>
-              <li @click="quickCreate('door')">门...</li>
-              <li @click="quickCreate('treasure')">宝箱</li>
-              <li @click="quickCreate('inn')">旅馆</li>
+              <li @click="quickCreate('transfer')">{{ t('editor.ctx.transfer') }}</li>
+              <li @click="quickCreate('door')">{{ t('editor.ctx.door') }}</li>
+              <li @click="quickCreate('treasure')">{{ t('editor.ctx.treasure') }}</li>
+              <li @click="quickCreate('inn')">{{ t('editor.ctx.inn') }}</li>
             </ul>
           </li>
           <li class="ctx-sep" />
-          <li @click="ctxSetSystemPosition('player')">设置玩家初始位置</li>
-          <li @click="ctxSetSystemPosition('boat')">设置小船位置</li>
-          <li @click="ctxSetSystemPosition('ship')">设置大船位置</li>
-          <li @click="ctxSetSystemPosition('airship')">设置飞艇位置</li>
+          <li @click="ctxSetSystemPosition('player')">{{ t('editor.ctx.setPlayerStart') }}</li>
+          <li @click="ctxSetSystemPosition('boat')">{{ t('editor.ctx.setBoat') }}</li>
+          <li @click="ctxSetSystemPosition('ship')">{{ t('editor.ctx.setShip') }}</li>
+          <li @click="ctxSetSystemPosition('airship')">{{ t('editor.ctx.setAirship') }}</li>
         </ul>
       </div>
     </teleport>
@@ -202,6 +202,7 @@ import { isPlacedStatus } from '../utils/placementStatus';
 import { canActivatePlacementOnMap } from '../utils/placementMapPolicy';
 import { placementValidityHint, validatePlacementCell } from '../utils/placementCellValidity';
 import { registerEditorUiControlHandler, type EditorUiControlState } from '../utils/uiControl';
+import { useI18n, type MessageKey } from '../i18n';
 
 interface ApiError extends Error { status?: number }
 type EditableMap = MvMap & Partial<RmmvMapProperties> & Record<string, unknown>;
@@ -211,6 +212,7 @@ const router = useRouter();
 const eventPlacementAsk = useEventPlacementAskStore();
 const workbenchUi = useWorkbenchUiStore();
 const projectStore = useProjectStore();
+const { language, t } = useI18n();
 
 // 聊天浮层盖住的是顶部工具栏（满宽不挤压）；地图区按浮层宽度右移让出可见空间。
 const editorBodyStyle = computed(() => {
@@ -285,7 +287,7 @@ const characterImages = new Map<string, HTMLImageElement | null>();
 const characterAssetUrls = new Map<string, string>();
 
 function getPlacementCellValidity(x: number, y: number) {
-  return validatePlacementCell(currentMap, tilesetFlags.value, x, y);
+  return validatePlacementCell(currentMap, tilesetFlags.value, x, y, language.value);
 }
 
 function getPlacementPreviewImage(): MvEventImage {
@@ -304,7 +306,7 @@ function rotatePlacementDirection(deltaY: number) {
   if (idx < 0) idx = 0;
   idx = (idx + (deltaY < 0 ? 1 : -1) + list.length) % list.length;
   placementDirection.value = list[idx];
-  setStatus(`朝向 ${placementDirection.value}`, 'busy');
+  setStatus(t('editor.status.direction', { direction: placementDirection.value }), 'busy');
 }
 
 const canvasEditor = useMapCanvasEditor({
@@ -329,8 +331,8 @@ const canvasEditor = useMapCanvasEditor({
   onPlacementClick: (cell) => { void runPlacementAt(cell); },
   onPlacementWheel: rotatePlacementDirection,
   postTiles: async (edits) => {
-    if (mode.value !== 'map') throw new Error('事件模式禁止修改地图图块');
-    if (selectedMapId.value == null) throw new Error('没有选中的地图');
+    if (mode.value !== 'map') throw new Error(t('editor.error.eventModeCannotEditTiles'));
+    if (selectedMapId.value == null) throw new Error(t('editor.error.noSelectedMap'));
     return mapsApi.postTiles(selectedMapId.value, edits, projectStore.currentProject);
   },
   reloadMap: reloadCurrentMap,
@@ -339,6 +341,7 @@ const canvasEditor = useMapCanvasEditor({
   openEvent: openEventEditor,
   newEvent: openNewEventAt,
   setStatus,
+  language,
   getCharacterImage: (name) => characterImages.get(name) || null,
 });
 const {
@@ -353,18 +356,18 @@ const {
 const placementStatusHint = computed(() => {
   const cell = getPlacementCell();
   const validity = cell && currentMap
-    ? validatePlacementCell(currentMap, tilesetFlags.value, cell.x, cell.y)
-    : { valid: false, reason: '将鼠标移到目标格子上' };
-  return placementValidityHint(validity, cell);
+    ? validatePlacementCell(currentMap, tilesetFlags.value, cell.x, cell.y, language.value)
+    : { valid: false };
+  return placementValidityHint(validity, cell, language.value);
 });
 
-const selectedMapLabel = computed(() => selectedMapId.value == null ? '未选择地图' : `MAP ${String(selectedMapId.value).padStart(3, '0')} · ${currentMapName.value || '未命名地图'}`);
-const propertiesParentLabel = computed(() => properties.parentId ? `MAP ${properties.parentId} · ${findTreeNode(properties.parentId)?.name || '未命名地图'}` : '根目录');
+const selectedMapLabel = computed(() => selectedMapId.value == null ? t('editor.status.noMapSelected') : `MAP ${String(selectedMapId.value).padStart(3, '0')} · ${currentMapName.value || t('editor.status.unnamedMap')}`);
+const propertiesParentLabel = computed(() => properties.parentId ? `MAP ${properties.parentId} · ${findTreeNode(properties.parentId)?.name || t('editor.status.unnamedMap')}` : t('editor.status.rootDirectory'));
 const tileFlagsAvailable = computed(() => tilesetFlags.value.some((flag) => Number.isInteger(flag)));
 const mapPaintModeLabel = computed(() => {
-  if (paintMode.value === 'shadow') return `阴影 ${shadowBits.value}`;
-  if (paintMode.value === 'region') return `区域 ${regionId.value}`;
-  return '图块模式';
+  if (paintMode.value === 'shadow') return t('editor.status.shadowMode', { value: shadowBits.value });
+  if (paintMode.value === 'region') return t('editor.status.regionMode', { value: regionId.value });
+  return t('editor.status.tileMode');
 });
 
 const zoomControls = { zoomIn, zoomOut, resetZoom };
@@ -464,7 +467,7 @@ async function loadTree() {
     if (editorCatalog.value) editorCatalog.value = { ...editorCatalog.value, maps: index.maps };
     tilesets.value = tilesetPayload.tilesets;
     await refreshStagingStatus();
-  } catch (error) { ElMessage.error(`加载地图树失败：${(error as Error).message}`); }
+  } catch (error) { ElMessage.error(t('editor.error.loadTreeFailed', { message: (error as Error).message })); }
 }
 function buildTree(flat: MapTreeNode[]) {
   const nodes = new Map<number, TreeNode>();
@@ -497,7 +500,7 @@ async function openPreferredMap(savedMapId?: number) {
     ...flattenTree(mapTree.value).map((node) => node.id),
   ])];
   for (const mapId of candidates) if (await loadMap(mapId, { quiet: true })) return true;
-  if (mapTree.value.length) ElMessage.error('工程中没有可加载的地图，请检查地图文件。');
+  if (mapTree.value.length) ElMessage.error(t('editor.error.noLoadableMaps'));
   return false;
 }
 
@@ -563,14 +566,14 @@ async function onPlacementReject(contractId: string) {
   eventPlacementAsk.removeEvent(contractId);
   let previousStatus: string | undefined;
   try {
-    const res = await eventRegistry.reject(projectStore.currentProject, contractId, { reason: '用户在放置编排中拒绝' });
+    const res = await eventRegistry.reject(projectStore.currentProject, contractId, { reason: t('editor.placement.rejectReason') });
     previousStatus = res?.previousStatus;
   } catch (error) {
     // 注册表里没有该契约（如未登记的临时事件）时照常本地移除，仅记录告警。
     console.warn('[placement] reject contract failed', error);
   }
   rejectUndoStack.value.push({ event: snapshot, index, previousStatus });
-  setStatus(`已拒绝「${name}」 · Ctrl+Z 撤回`, 'saved');
+  setStatus(t('editor.placement.rejectedUndo', { name }), 'saved');
 }
 
 async function undoLastReject() {
@@ -586,7 +589,7 @@ async function undoLastReject() {
   } catch (error) {
     console.warn('[placement] unreject contract failed', error);
   }
-  setStatus(`已撤回拒绝「${entry.event.eventName || entry.event.contractId}」`, 'saved');
+  setStatus(t('editor.placement.rejectUndone', { name: entry.event.eventName || entry.event.contractId }), 'saved');
 }
 
 async function runPlacementAt(cell: { x: number; y: number }) {
@@ -594,9 +597,9 @@ async function runPlacementAt(cell: { x: number; y: number }) {
   const selected = placementSelectedEvent.value;
   const mapId = selectedMapId.value;
   if (!focus || !selected || isPlacedStatus(selected.status) || mapId == null || !canActivatePlacementOnMap(mapId)) return;
-  const validity = validatePlacementCell(currentMap, tilesetFlags.value, cell.x, cell.y);
+  const validity = validatePlacementCell(currentMap, tilesetFlags.value, cell.x, cell.y, language.value);
   if (!validity.valid) {
-    ElMessage.warning(validity.reason || '无法在此格放置');
+    ElMessage.warning(validity.reason || t('editor.placement.cannotPlaceHere'));
     return;
   }
   busy.value = true;
@@ -606,6 +609,7 @@ async function runPlacementAt(cell: { x: number; y: number }) {
       mapId,
       cell,
       applyContractPages: true,
+      language: language.value,
     });
     if (!result) return;
     await reloadCurrentMap();
@@ -627,16 +631,12 @@ async function runPlacementAt(cell: { x: number; y: number }) {
       y: cell.y,
     });
     await refreshPlacementQueueFromRegistry();
-    const suffix = result.usedContractPatch ? '（已应用契约指令）' : result.shellOnly ? '（空壳，待 agent 补写指令）' : '（已预填骨架）';
-    ElMessage.success(`已放置 ${focus.eventName} @ (${cell.x}, ${cell.y})${suffix}`);
-    setStatus('放置完成，可继续选择其他事件', 'saved');
+    const suffix = result.usedContractPatch ? t('editor.placement.contractPatchSuffix') : result.shellOnly ? t('editor.placement.shellOnlySuffix') : t('editor.placement.skeletonSuffix');
+    ElMessage.success(t('editor.placement.placedSuccess', { name: focus.eventName, x: cell.x, y: cell.y, suffix }));
+    setStatus(t('editor.placement.doneStatus'), 'saved');
   } catch (error) {
     const message = (error as Error).message;
-    if (message.includes('请先选择 RPG Maker MV 项目')) {
-      ElMessage.warning(message);
-      return;
-    }
-    ElMessage.error(message.startsWith('无法放置') || message.startsWith('放置失败') ? message : `放置失败：${message}`);
+    ElMessage.error(t('editor.placement.failedPrefix', { message }));
   } finally {
     busy.value = false;
   }
@@ -647,7 +647,7 @@ async function refreshPlacementQueueFromRegistry() {
     await eventPlacementAsk.refreshFromRegistry(projectStore.currentProject);
   } catch (error) {
     console.error('[event-placement] registry refresh failed', error);
-    ElMessage.error(`事件放置列表刷新失败：${(error as Error).message}`);
+    ElMessage.error(t('editor.placement.refreshFailed', { message: (error as Error).message }));
   }
 }
 
@@ -658,7 +658,7 @@ function goBackToChatPlacement() {
 
 function stopPlacementMode() {
   eventPlacementAsk.stopPlacing();
-  setStatus('已取消放置', 'saved');
+  setStatus(t('editor.placement.canceled'), 'saved');
 }
 
 function flattenTree(nodes: TreeNode[]): TreeNode[] {
@@ -714,12 +714,12 @@ async function loadEditorCatalog() {
     characterAssetUrls.clear();
     for (const asset of catalog.assets.characters) characterAssetUrls.set(asset.name, asset.url);
   } catch (error) {
-    ElMessage.warning(`事件资源列表加载失败：${(error as Error).message}`);
+    ElMessage.warning(t('editor.assets.loadFailed', { message: (error as Error).message }));
   }
 }
 async function loadMap(mapId: number, options: { quiet?: boolean } = {}) {
   busy.value = true;
-  setStatus('加载地图…', 'busy');
+  setStatus(t('editor.map.loading'), 'busy');
   try {
     const payload = await mapsApi.get(mapId, projectStore.currentProject);
     const nextMap = payloadToMap(payload.map);
@@ -739,11 +739,11 @@ async function loadMap(mapId: number, options: { quiet?: boolean } = {}) {
     renderMap();
     await refreshStagingStatus();
     persistWorkspaceSelection();
-    setStatus('已加载', 'saved');
+    setStatus(t('editor.map.loaded'), 'saved');
     return true;
   } catch (error) {
-    setStatus(`加载失败：${(error as Error).message}`, 'error');
-    if (!options.quiet) ElMessage.error(`加载地图失败：${(error as Error).message}`);
+    setStatus(t('editor.map.loadFailedStatus', { message: (error as Error).message }), 'error');
+    if (!options.quiet) ElMessage.error(t('editor.map.loadFailed', { message: (error as Error).message }));
     return false;
   } finally { busy.value = false; }
 }
@@ -878,7 +878,7 @@ function mapPropertiesPayload(): Record<string, unknown> {
     if (!Array.isArray(parsed)) throw new Error('encounterList must be an array');
     encounterList = parsed as RmmvMapEncounter[];
   } catch (error) {
-    throw new Error(`遭遇列表 JSON 无效：${(error as Error).message}`);
+    throw new Error(t('editor.map.encounterListInvalid', { message: (error as Error).message }));
   }
   return {
     name: properties.name,
@@ -908,7 +908,7 @@ function mapPropertiesPayload(): Record<string, unknown> {
   };
 }
 function openCreateProperties(parentId: number) {
-  setPropertiesFromMap('新地图', { width: 17, height: 13, tilesetId: tilesets.value[0]?.id || 1, encounterStep: 30 }, parentId);
+  setPropertiesFromMap(t('editor.map.newMapName'), { width: 17, height: 13, tilesetId: tilesets.value[0]?.id || 1, encounterStep: 30 }, parentId);
   propertiesDialogMode.value = 'create';
   propertiesDialogOpen.value = true;
 }
@@ -929,15 +929,15 @@ async function saveProperties() {
       propertiesDialogOpen.value = false;
       await loadTree();
       if (result.mapId) await loadMap(result.mapId);
-      ElMessage.success('已新建地图（暂存）');
+      ElMessage.success(t('editor.map.createdStaged'));
     } else if (selectedMapId.value != null) {
       await mapsApi.updateProperties(selectedMapId.value, payload, projectStore.currentProject);
       propertiesDialogOpen.value = false;
       await loadTree();
       await loadMap(selectedMapId.value);
-      ElMessage.success('属性已保存（暂存）');
+      ElMessage.success(t('editor.map.propertiesSavedStaged'));
     }
-  } catch (error) { ElMessage.error(`保存属性失败：${(error as Error).message}`); }
+  } catch (error) { ElMessage.error(t('editor.map.savePropertiesFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
 
@@ -947,10 +947,10 @@ async function applyStaging() {
     await mapsApi.applyProjectStaging(projectStore.currentProject);
     if (selectedMapId.value != null) await reloadCurrentMap();
     await refreshStagingStatus();
-    ElMessage.success('暂存已应用到工程');
+    ElMessage.success(t('editor.staging.applied'));
   } catch (error) {
     const err = error as ApiError;
-    ElMessage.error(err.status === 409 ? '应用失败：暂存与工程文件存在冲突，请先处理冲突。' : `应用失败：${err.message}`);
+    ElMessage.error(err.status === 409 ? t('editor.staging.conflict') : t('editor.staging.applyFailed', { message: err.message }));
   } finally { busy.value = false; }
 }
 async function discardStaging() {
@@ -963,8 +963,8 @@ async function discardStaging() {
       await openPreferredMap();
     }
     await refreshStagingStatus();
-    ElMessage.success('暂存已丢弃');
-  } catch (error) { ElMessage.error(`丢弃失败：${(error as Error).message}`); }
+    ElMessage.success(t('editor.staging.discarded'));
+  } catch (error) { ElMessage.error(t('editor.staging.discardFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
 async function applyOneMap(mapId: number) {
@@ -973,12 +973,12 @@ async function applyOneMap(mapId: number) {
     await mapsApi.applyMapStaging(mapId, projectStore.currentProject);
     if (selectedMapId.value === mapId) await reloadCurrentMap();
     await loadTree();
-    ElMessage.success(`已应用 MAP ${mapId} 到工程`);
-  } catch (error) { ElMessage.error(`应用失败：${(error as Error).message}`); }
+    ElMessage.success(t('editor.staging.mapApplied', { mapId }));
+  } catch (error) { ElMessage.error(t('editor.staging.applyFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
 async function discardOneMap(mapId: number) {
-  try { await ElMessageBox.confirm(`确定丢弃 MAP ${mapId} 的暂存改动？`, '丢弃暂存', { type: 'warning' }); }
+  try { await ElMessageBox.confirm(t('editor.staging.confirmDiscardMap', { mapId }), t('editor.staging.discardTitle'), { type: 'warning' }); }
   catch { return; }
   busy.value = true;
   try {
@@ -989,8 +989,8 @@ async function discardOneMap(mapId: number) {
       await openPreferredMap();
     }
     await loadTree();
-    ElMessage.success(`已丢弃 MAP ${mapId} 暂存`);
-  } catch (error) { ElMessage.error(`丢弃失败：${(error as Error).message}`); }
+    ElMessage.success(t('editor.staging.mapDiscarded', { mapId }));
+  } catch (error) { ElMessage.error(t('editor.staging.discardFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
 
@@ -998,7 +998,7 @@ function onTreeContextMenu(event: MouseEvent, node: TreeNode) { event.preventDef
 function closeTreeContext() { treeContext.visible = false; }
 async function ctxEditProperties() { const id = treeContext.mapId; closeTreeContext(); await openEditProperties(id); }
 function ctxNewMapUnder() { const id = treeContext.mapId; closeTreeContext(); openCreateProperties(id); }
-function ctxCopyMap() { mapClipboard.value = treeContext.mapId; setStatus(`已复制 MAP ${treeContext.mapId}`, 'saved'); closeTreeContext(); }
+function ctxCopyMap() { mapClipboard.value = treeContext.mapId; setStatus(t('editor.map.copied', { mapId: treeContext.mapId }), 'saved'); closeTreeContext(); }
 async function ctxPasteMap() {
   if (mapClipboard.value == null) return;
   const parentId = treeContext.mapId;
@@ -1008,14 +1008,14 @@ async function ctxPasteMap() {
     const result = await mapsApi.duplicate(mapClipboard.value, parentId, projectStore.currentProject) as { mapId: number };
     await loadTree();
     if (result.mapId) await loadMap(result.mapId);
-    ElMessage.success(`已粘贴为 MAP ${result.mapId}（暂存）`);
-  } catch (error) { ElMessage.error(`粘贴失败：${(error as Error).message}`); }
+    ElMessage.success(t('editor.map.pastedStaged', { mapId: result.mapId }));
+  } catch (error) { ElMessage.error(t('editor.map.pasteFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
 async function ctxDeleteMap() {
   const mapId = treeContext.mapId;
   closeTreeContext();
-  try { await ElMessageBox.confirm(`删除 MAP ${mapId}？应用暂存后才会写入工程。`, '删除地图', { type: 'warning' }); }
+  try { await ElMessageBox.confirm(t('editor.map.confirmDelete', { mapId }), t('editor.map.deleteTitle'), { type: 'warning' }); }
   catch { return; }
   busy.value = true;
   try {
@@ -1025,8 +1025,8 @@ async function ctxDeleteMap() {
     }
     await loadTree();
     if (selectedMapId.value == null) await openPreferredMap();
-    ElMessage.success(`已删除 MAP ${mapId}（暂存）`);
-  } catch (error) { ElMessage.error(`删除失败：${(error as Error).message}`); }
+    ElMessage.success(t('editor.map.deletedStaged', { mapId }));
+  } catch (error) { ElMessage.error(t('editor.map.deleteFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
 async function ctxApplyMap() { const id = treeContext.mapId; closeTreeContext(); await applyOneMap(id); }
@@ -1045,11 +1045,11 @@ function ctxCopyEvent() { if (canvasContext.eventId != null) copyEvent(canvasCon
 async function ctxCutEvent() { if (canvasContext.eventId != null) await cutEvent(canvasContext.eventId); closeCanvasContext(); }
 async function ctxPasteEvent() { await pasteEvent(canvasContext.cellX, canvasContext.cellY); closeCanvasContext(); }
 async function ctxDeleteEvent() { if (canvasContext.eventId != null) await deleteEvent(canvasContext.eventId); closeCanvasContext(); }
-const systemPositionLabels: Record<RmmvSystemPositionTarget, string> = {
-  player: '玩家初始位置',
-  boat: '小船位置',
-  ship: '大船位置',
-  airship: '飞艇位置',
+const systemPositionLabelKeys: Record<RmmvSystemPositionTarget, MessageKey> = {
+  player: 'editor.systemPosition.player',
+  boat: 'editor.systemPosition.boat',
+  ship: 'editor.systemPosition.ship',
+  airship: 'editor.systemPosition.airship',
 };
 
 async function ctxSetSystemPosition(target: RmmvSystemPositionTarget) {
@@ -1062,10 +1062,12 @@ async function ctxSetSystemPosition(target: RmmvSystemPositionTarget) {
   try {
     await mapsApi.setSystemPosition(target, mapId, x, y, projectStore.currentProject);
     await refreshStagingStatus();
-    setStatus(`${systemPositionLabels[target]}已设为 MAP ${mapId} (${x}, ${y})`, 'saved');
-    ElMessage.success(`${systemPositionLabels[target]}已保存到暂存`);
+    const label = t(systemPositionLabelKeys[target]);
+    setStatus(t('editor.systemPosition.setStatus', { label, mapId, x, y }), 'saved');
+    ElMessage.success(t('editor.systemPosition.saved', { label }));
   } catch (error) {
-    ElMessage.error(`设置${systemPositionLabels[target]}失败：${(error as Error).message}`);
+    const label = t(systemPositionLabelKeys[target]);
+    ElMessage.error(t('editor.systemPosition.failed', { label, message: (error as Error).message }));
   } finally {
     busy.value = false;
   }
@@ -1091,10 +1093,10 @@ function getUiControlState(): EditorUiControlState {
 }
 
 async function openEventEditorByUiControl(mapId: number, eventId: number): Promise<EditorUiControlState> {
-  if (!projectStore.currentProject) throw new Error('当前没有接入 RPG Maker MV 项目。');
+  if (!projectStore.currentProject) throw new Error(t('editor.error.noProject'));
   if (selectedMapId.value !== mapId) {
     const loaded = await loadMap(mapId, { quiet: true });
-    if (!loaded) throw new Error(`地图不存在或无法加载：MAP ${mapId}`);
+    if (!loaded) throw new Error(t('editor.error.mapNotFound', { mapId }));
   }
   await openEventEditorStrict(eventId);
   return getUiControlState();
@@ -1104,13 +1106,13 @@ function selectEvent(eventId: number | null) { selectedEventId.value = eventId =
 function openNewEventAt(x: number, y: number) { eventOverview.value = null; eventDraft.value = defaultEvent(0, x, y); eventDialogOpen.value = true; }
 async function openEventEditorStrict(eventId: number) {
   const event = currentMap?.events?.find((item) => item?.id === eventId) as MvEditorEvent | undefined;
-  if (!event) throw new Error(`事件不存在：${eventId}`);
+  if (!event) throw new Error(t('editor.error.eventNotFound', { eventId }));
   if (selectedMapId.value != null) {
     try {
       eventOverview.value = await storyPages.inspectEvent(selectedMapId.value, eventId, projectStore.currentProject);
     } catch (error) {
       eventOverview.value = null;
-      throw new Error(`读取事件权限失败：${(error as Error).message}`);
+      throw new Error(t('editor.error.eventPermissionFailed', { message: (error as Error).message }));
     }
   }
   selectedEventId.value = eventId;
@@ -1136,15 +1138,15 @@ async function saveEvent(closeAfterSave = true) {
     await reloadCurrentMap();
     if (closeAfterSave) closeEventEditor();
     else eventDialogRef.value?.markSaved();
-    ElMessage.success(event.id ? '事件已保存' : '事件已创建');
-  } catch (error) { ElMessage.error(`保存失败：${(error as Error).message}`); }
+    ElMessage.success(event.id ? t('editor.event.saved') : t('editor.event.created'));
+  } catch (error) { ElMessage.error(t('editor.event.saveFailed', { message: (error as Error).message })); }
   finally { eventSaving.value = false; }
 }
 function copyEvent(eventId: number) {
   const event = currentMap?.events?.find((item) => item?.id === eventId);
   if (!event) return;
   eventClipboard.value = { eventId, data: clone(event as MvEditorEvent) };
-  setStatus(`已复制事件 ${eventId}`, 'saved');
+  setStatus(t('editor.event.copied', { eventId }), 'saved');
 }
 async function cutEvent(eventId: number) {
   if (selectedMapId.value == null) return;
@@ -1154,8 +1156,8 @@ async function cutEvent(eventId: number) {
     await eventsApi.remove(selectedMapId.value, eventId, projectStore.currentProject);
     await reloadCurrentMap();
     selectedEventId.value = null;
-    setStatus(`已剪切事件 ${eventId}`, 'saved');
-  } catch (error) { ElMessage.error(`剪切失败：${(error as Error).message}`); }
+    setStatus(t('editor.event.cut', { eventId }), 'saved');
+  } catch (error) { ElMessage.error(t('editor.event.cutFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
 async function pasteEvent(x?: number, y?: number) {
@@ -1165,21 +1167,21 @@ async function pasteEvent(x?: number, y?: number) {
   try {
     await eventsApi.create(selectedMapId.value, event as unknown as Record<string, unknown>, projectStore.currentProject);
     await reloadCurrentMap();
-    ElMessage.success('事件已粘贴');
-  } catch (error) { ElMessage.error(`粘贴失败：${(error as Error).message}`); }
+    ElMessage.success(t('editor.event.pasted'));
+  } catch (error) { ElMessage.error(t('editor.event.pasteFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
 async function deleteEvent(eventId: number) {
   if (selectedMapId.value == null) return;
-  try { await ElMessageBox.confirm('确定删除这个事件？', '删除事件', { type: 'warning' }); }
+  try { await ElMessageBox.confirm(t('editor.event.confirmDelete'), t('editor.event.deleteTitle'), { type: 'warning' }); }
   catch { return; }
   busy.value = true;
   try {
     await eventsApi.remove(selectedMapId.value, eventId, projectStore.currentProject);
     await reloadCurrentMap();
     selectedEventId.value = null;
-    ElMessage.success('事件已删除');
-  } catch (error) { ElMessage.error(`删除失败：${(error as Error).message}`); }
+    ElMessage.success(t('editor.event.deleted'));
+  } catch (error) { ElMessage.error(t('editor.event.deleteFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
 async function moveEvent(eventId: number, x: number, y: number) {
@@ -1188,10 +1190,10 @@ async function moveEvent(eventId: number, x: number, y: number) {
   try {
     await eventsApi.update(selectedMapId.value, eventId, { x, y }, projectStore.currentProject);
     await reloadCurrentMap();
-    setStatus(`事件 ${eventId} 已移动到 (${x}, ${y})`, 'saved');
+    setStatus(t('editor.event.moved', { eventId, x, y }), 'saved');
   } catch (error) {
     await reloadCurrentMap();
-    ElMessage.error(`移动事件失败：${(error as Error).message}`);
+    ElMessage.error(t('editor.event.moveFailed', { message: (error as Error).message }));
     throw error;
   } finally { busy.value = false; }
 }
@@ -1203,13 +1205,13 @@ function onEditorCommand(event: CustomEvent<{ command?: 'undo' | 'redo' | 'save'
   else if (command === 'save') void saveCurrentEditorWork();
 }
 async function runEditorUndo() {
-  if (mode.value !== 'map') return ElMessage.info('撤销当前只支持地图图块编辑');
-  if (!undoLen.value) return ElMessage.info('没有可撤销操作');
+  if (mode.value !== 'map') return ElMessage.info(t('editor.command.undoMapOnly'));
+  if (!undoLen.value) return ElMessage.info(t('editor.command.noUndo'));
   await undo();
 }
 async function runEditorRedo() {
-  if (mode.value !== 'map') return ElMessage.info('重做当前只支持地图图块编辑');
-  if (!redoLen.value) return ElMessage.info('没有可重做操作');
+  if (mode.value !== 'map') return ElMessage.info(t('editor.command.redoMapOnly'));
+  if (!redoLen.value) return ElMessage.info(t('editor.command.noRedo'));
   await redo();
 }
 async function saveCurrentEditorWork() {
@@ -1222,12 +1224,13 @@ async function saveCurrentEditorWork() {
     return;
   }
   if (selectedMapId.value == null) {
-    ElMessage.info('当前没有可保存的编辑内容');
+    ElMessage.info(t('editor.command.noEditorWork'));
     return;
   }
   await refreshStagingStatus();
-  setStatus(stagingDirty.value ? '当前编辑已保存到暂存' : '没有待保存编辑', stagingDirty.value ? 'saved' : '');
-  ElMessage.info(stagingDirty.value ? '当前编辑已保存到暂存' : '没有待保存编辑');
+  const message = stagingDirty.value ? t('editor.command.savedToStaging') : t('editor.command.noPendingSave');
+  setStatus(message, stagingDirty.value ? 'saved' : '');
+  ElMessage.info(message);
 }
 
 function onEditorKeyDown(event: KeyboardEvent) {

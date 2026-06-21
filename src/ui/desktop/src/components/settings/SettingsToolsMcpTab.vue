@@ -1,28 +1,28 @@
 <template>
   <div class="capabilities-tab">
-    <h3>工具与 MCP</h3>
-    <p class="desc">配置 opencode 新会话可用的工具；关闭的工具不会注入到 Agent 会话。</p>
+    <h3>{{ t('settings.toolsMcp.title') }}</h3>
+    <p class="desc">{{ t('settings.toolsMcp.description') }}</p>
 
     <div v-if="store.lastError" class="alert alert-error">
       <span class="alert-icon">!</span> {{ store.lastError }}
     </div>
 
     <div class="meta-bar">
-      <span v-if="engineLabel" class="pill pill-info">引擎: {{ engineLabel }}</span>
+      <span v-if="engineLabel" class="pill pill-info">{{ t('settings.toolsMcp.engine') }}: {{ engineLabel }}</span>
       <button class="workbench-button" :disabled="loading" @click="reload">
-        {{ loading ? '加载中…' : '刷新' }}
+        {{ loading ? t('settings.toolsMcp.loading') : t('settings.toolsMcp.refresh') }}
       </button>
     </div>
 
     <div class="alert alert-info">
       <span class="alert-icon">i</span>
-      修改工具策略后，已运行会话需新建会话才生效。
+      {{ t('settings.toolsMcp.policyHint') }}
     </div>
 
     <section class="cap-section">
       <div class="section-head">
-        <h4>工具能力</h4>
-        <span class="section-hint">开关只影响之后创建的新会话</span>
+        <h4>{{ t('settings.toolsMcp.capabilities') }}</h4>
+        <span class="section-hint">{{ t('settings.toolsMcp.toggleHint') }}</span>
       </div>
 
       <div v-for="group in toolGroups" :key="group.layer" class="tool-group">
@@ -31,7 +31,7 @@
           <div class="tool-main">
             <div class="tool-title">
               <span>{{ tool.title }}</span>
-              <span v-if="tool.readOnly" class="pill pill-sm pill-info">只读</span>
+              <span v-if="tool.readOnly" class="pill pill-sm pill-info">{{ t('settings.toolsMcp.readOnly') }}</span>
               <span
                 v-for="badge in toolRiskBadges(tool)"
                 :key="badge"
@@ -40,9 +40,9 @@
               >
                 {{ riskBadgeLabel(badge) }}
               </span>
-              <span v-if="!tool.available" class="pill pill-sm pill-muted">不可用</span>
-              <span v-else-if="tool.requiresNewSession" class="pill pill-sm pill-muted">下次会话</span>
-              <span v-if="tool.warning" class="pill pill-sm pill-warn">配置不一致</span>
+              <span v-if="!tool.available" class="pill pill-sm pill-muted">{{ t('settings.toolsMcp.unavailable') }}</span>
+              <span v-else-if="tool.requiresNewSession" class="pill pill-sm pill-muted">{{ t('settings.toolsMcp.nextSession') }}</span>
+              <span v-if="tool.warning" class="pill pill-sm pill-warn">{{ t('settings.toolsMcp.configMismatch') }}</span>
             </div>
             <div class="tool-desc">{{ tool.description }}</div>
             <div v-if="tool.disabledReason" class="tool-disabled">{{ tool.disabledReason }}</div>
@@ -52,7 +52,7 @@
           <label
             class="toggle"
             :class="{ 'is-loading': toggleLoading === tool.id, 'is-disabled': !tool.toggleable }"
-            :title="tool.toggleable ? '新会话生效' : (tool.disabledReason || '不能在这里切换')"
+            :title="tool.toggleable ? t('settings.toolsMcp.newSessionsOnly') : (tool.disabledReason || t('settings.toolsMcp.cannotToggle'))"
           >
             <input
               type="checkbox"
@@ -70,8 +70,8 @@
     <Teleport to="body">
       <div class="toast-stack">
         <TransitionGroup name="toast">
-          <div v-for="t in toasts" :key="t.id" class="toast-item" :class="'toast-' + t.type">
-            {{ t.message }}
+          <div v-for="toastItem in toasts" :key="toastItem.id" class="toast-item" :class="'toast-' + toastItem.type">
+            {{ toastItem.message }}
           </div>
         </TransitionGroup>
       </div>
@@ -82,6 +82,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { CapabilityToolEntry } from '../../api/client'
+import { useI18n } from '../../i18n'
 import { useSettingsStore } from '../../stores/settings'
 import { buildSettingsToolGroups } from '../../utils/settingsToolGroups'
 
@@ -90,6 +91,7 @@ const props = defineProps<{
 }>()
 
 const store = useSettingsStore()
+const { language, t } = useI18n()
 const loading = ref(false)
 const toggleLoading = ref<string | null>(null)
 
@@ -106,7 +108,7 @@ function toast(type: ToastType, message: string) {
 const snapshot = computed(() => store.agentCapabilities)
 const engineLabel = computed(() => props.engine || snapshot.value?.engine || null)
 
-const toolGroups = computed(() => buildSettingsToolGroups(snapshot.value?.builtinTools || []))
+const toolGroups = computed(() => buildSettingsToolGroups(snapshot.value?.builtinTools || [], language.value))
 const toolsById = computed(() => new Map((snapshot.value?.builtinTools || []).map((tool) => [tool.id, tool])))
 
 type RiskBadge = 'high' | 'experimental'
@@ -119,7 +121,7 @@ function toolRiskBadges(tool: CapabilityToolEntry): RiskBadge[] {
 }
 
 function riskBadgeLabel(badge: RiskBadge): string {
-  return badge === 'high' ? '高风险' : '实验'
+  return badge === 'high' ? t('settings.toolsMcp.risk.high') : t('settings.toolsMcp.risk.experimental')
 }
 
 function riskBadgeClass(badge: RiskBadge): string {
@@ -131,7 +133,7 @@ async function reload() {
   try {
     await store.loadAgentCapabilities()
   } catch {
-    toast('error', '加载 Agent 能力失败')
+    toast('error', t('settings.toolsMcp.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -141,15 +143,18 @@ async function onToggleTool(toolId: string, allowed: boolean) {
   const tool = toolsById.value.get(toolId)
   if (!tool?.toggleable) return
   if (allowed && tool.riskLevel !== 'normal') {
-    const ok = window.confirm(`${tool.title} 属于${tool.riskLevel === 'high' ? '高风险' : '实验'}工具，启用后只会影响新会话。确认启用？`)
+    const riskLabel = tool.riskLevel === 'high' ? t('settings.toolsMcp.riskLabel.high') : t('settings.toolsMcp.riskLabel.experimental')
+    const ok = window.confirm(t('settings.toolsMcp.enableConfirm', { title: tool.title, risk: riskLabel }))
     if (!ok) return
   }
   toggleLoading.value = toolId
   try {
     await store.saveAgentToolAllow(toolId, allowed)
-    toast('success', allowed ? `已启用 ${toolId}，新会话生效` : `已禁用 ${toolId}，新会话生效`)
+    toast('success', allowed
+      ? t('settings.toolsMcp.enabled', { toolId })
+      : t('settings.toolsMcp.disabled', { toolId }))
   } catch {
-    toast('error', `更新 ${toolId} 失败`)
+    toast('error', t('settings.toolsMcp.updateFailed', { toolId }))
   } finally {
     toggleLoading.value = null
   }

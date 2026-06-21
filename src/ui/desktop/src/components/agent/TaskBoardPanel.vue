@@ -2,14 +2,20 @@
 import { computed, watch } from 'vue'
 import { Check, Close, Refresh } from '@element-plus/icons-vue'
 import { useTaskBoardStore, type TaskItem } from '../../stores/taskBoard'
+import { useI18n } from '../../i18n'
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error'
 
 const props = defineProps<{ sessionId: string | null | undefined }>()
 
 const taskBoard = useTaskBoardStore()
+const { language, t } = useI18n()
 
 const tasks = computed<TaskItem[]>(() => taskBoard.tasksFor(props.sessionId))
 const loading = computed(() => taskBoard.loadingFor(props.sessionId))
-const error = computed(() => taskBoard.errorFor(props.sessionId))
+const error = computed(() => {
+  const value = taskBoard.errorFor(props.sessionId)
+  return value ? formatUserFacingErrorMessage(value, 'general', language.value) : ''
+})
 
 function refresh(): void {
   if (!props.sessionId) return
@@ -38,10 +44,10 @@ function remove(task: TaskItem): void {
 <template>
   <div class="task-board">
     <div class="tb-toolbar">
-      <span v-if="loading" class="tb-state">读取中…</span>
+      <span v-if="loading" class="tb-state">{{ t('taskBoard.loading') }}</span>
       <span v-else-if="error" class="tb-error">{{ error }}</span>
-      <span v-else class="tb-state">{{ tasks.length ? `${tasks.length} 项` : '' }}</span>
-      <button type="button" class="tb-refresh" title="刷新" :disabled="!sessionId || loading" @click="refresh">
+      <span v-else class="tb-state">{{ tasks.length ? t('taskBoard.count', { count: tasks.length }) : '' }}</span>
+      <button type="button" class="tb-refresh" :title="t('taskBoard.refresh')" :disabled="!sessionId || loading" @click="refresh">
         <el-icon><Refresh /></el-icon>
       </button>
     </div>
@@ -51,18 +57,18 @@ function remove(task: TaskItem): void {
           type="button"
           class="tb-check"
           :class="{ checked: task.status === 'completed', active: task.status === 'in_progress' }"
-          :title="task.status === 'completed' ? '标记为未完成' : '标记为完成'"
+          :title="task.status === 'completed' ? t('taskBoard.markIncomplete') : t('taskBoard.markComplete')"
           @click="toggle(task)"
         >
           <el-icon v-if="task.status === 'completed'"><Check /></el-icon>
         </button>
         <span class="tb-subject" :title="task.description || task.subject">{{ task.subject }}</span>
-        <button type="button" class="tb-remove" title="删除" @click="remove(task)">
+        <button type="button" class="tb-remove" :title="t('taskBoard.delete')" @click="remove(task)">
           <el-icon><Close /></el-icon>
         </button>
       </li>
     </ul>
-    <p v-else-if="!loading" class="tb-empty">暂无待办，Agent 拆分任务后会出现在这里。</p>
+    <p v-else-if="!loading" class="tb-empty">{{ t('taskBoard.empty') }}</p>
   </div>
 </template>
 

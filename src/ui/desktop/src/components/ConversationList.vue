@@ -7,17 +7,17 @@
     <div v-if="showNewButton" class="conv-head">
       <button type="button" class="conv-new-btn" @click="emit('new-conversation')">
         <el-icon><EditPen /></el-icon>
-        <span>新建对话</span>
+        <span>{{ t('conversation.new') }}</span>
       </button>
     </div>
 
     <div class="conv-scroll">
       <div v-if="loading" class="conv-hint">
         <el-icon class="is-loading"><Loading /></el-icon>
-        加载中…
+        {{ t('conversation.loading') }}
       </div>
       <div v-else-if="error" class="conv-hint is-error">{{ error }}</div>
-      <div v-else-if="groupedConversations.length === 0" class="conv-hint">暂无历史对话</div>
+      <div v-else-if="groupedConversations.length === 0" class="conv-hint">{{ t('conversation.empty') }}</div>
 
       <section v-for="group in groupedConversations" v-else :key="group.label" class="conv-group">
         <div class="conv-group-label">{{ group.label }}</div>
@@ -30,14 +30,14 @@
           @click="emit('select', conv.leafId)"
           @contextmenu.prevent="emit('delete', conv)"
         >
-          <span class="conv-title">{{ conv.title || '(无标题)' }}</span>
+          <span class="conv-title">{{ conv.title || t('conversation.untitled') }}</span>
           <span class="conv-time">{{ formatTime(conv.time) }}</span>
           <span
             class="conv-delete"
             role="button"
             tabindex="0"
-            title="删除对话"
-            aria-label="删除对话"
+            :title="t('conversation.delete')"
+            :aria-label="t('conversation.delete')"
             @click.stop="emit('delete', conv)"
             @keydown.enter.stop="emit('delete', conv)"
           >
@@ -51,13 +51,13 @@
       v-if="resizable"
       class="conv-resizer"
       role="separator"
-      aria-label="调整聊天历史栏宽度"
+      :aria-label="t('conversation.resize')"
       aria-orientation="vertical"
       :aria-valuemin="MIN_WIDTH"
       :aria-valuemax="MAX_WIDTH"
       :aria-valuenow="sidebarWidth"
       tabindex="0"
-      title="拖动调整宽度，双击恢复默认"
+      :title="t('conversation.resizeTitle')"
       @pointerdown="beginResize"
       @dblclick="resetWidth"
       @keydown="handleResizeKeydown"
@@ -82,6 +82,7 @@ import {
   parseChatHistoryWidth,
 } from '../utils/chatHistoryWidth'
 import { useWorkspaceStore } from '../stores/workspace'
+import { useI18n } from '../i18n'
 
 const props = defineProps<{
   sessions: Session[]
@@ -106,6 +107,7 @@ const MIN_WIDTH = CHAT_HISTORY_MIN_WIDTH
 const MAX_WIDTH = CHAT_HISTORY_MAX_WIDTH
 
 const workspaceStore = useWorkspaceStore()
+const { language, t } = useI18n()
 
 function loadSavedWidth(): number {
   const saved = workspaceStore.settings.layout?.chatHistoryWidth
@@ -119,7 +121,7 @@ let resizeStartWidth = DEFAULT_WIDTH
 let previousCursor = ''
 let previousUserSelect = ''
 
-const conversations = computed(() => groupSessionsIntoConversations(props.sessions))
+const conversations = computed(() => groupSessionsIntoConversations(props.sessions, language.value))
 const activeRootId = computed(() => activeConversationRootId(props.sessions, props.activeId))
 
 const groupedConversations = computed(() => {
@@ -132,8 +134,8 @@ const groupedConversations = computed(() => {
     else earlier.push(conversation)
   }
   const groups: Array<{ label: string; items: Conversation[] }> = []
-  if (today.length) groups.push({ label: '今天', items: today })
-  if (earlier.length) groups.push({ label: '更早', items: earlier })
+  if (today.length) groups.push({ label: t('conversation.group.today'), items: today })
+  if (earlier.length) groups.push({ label: t('conversation.group.earlier'), items: earlier })
   return groups
 })
 
@@ -142,9 +144,9 @@ function formatTime(ts: string): string {
   const date = new Date(ts)
   const now = new Date()
   if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleTimeString(language.value, { hour: '2-digit', minute: '2-digit' })
   }
-  return date.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
+  return date.toLocaleDateString(language.value, { month: 'numeric', day: 'numeric' })
 }
 
 function saveWidth(): void {

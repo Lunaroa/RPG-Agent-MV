@@ -1,5 +1,6 @@
-// IPC 客户端，封装与 backend 的所有通信。
-// 通过 Electron preload 暴露的 window.api 对象调用主进程 IPC。
+import { unsupportedAssetUrl } from './clientLocalization';
+import { normalizeProductLanguage } from '../i18n/messages';
+import { useSettingsStore } from '../stores/settings';
 
 declare global {
   interface Window {
@@ -809,10 +810,10 @@ export const system = {
   },
 };
 
-// tileset PNG 等静态资源由主进程签发受限 rmmv-asset URL。
 export async function resolveAssetUrl(relativeUrl: string): Promise<string> {
   if (relativeUrl.startsWith('http') || relativeUrl.startsWith('rmmv-asset://')) return relativeUrl;
-  throw new Error(`不支持的资源 URL：${relativeUrl}`);
+  const language = normalizeProductLanguage(useSettingsStore().ui.language);
+  throw new Error(unsupportedAssetUrl(relativeUrl, language));
 }
 
 /** Strip Vue proxies / non-cloneable values before ipcRenderer.invoke. */

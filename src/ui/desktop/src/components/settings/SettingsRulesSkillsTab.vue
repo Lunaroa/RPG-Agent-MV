@@ -1,7 +1,7 @@
 <template>
   <div class="capabilities-tab">
-    <h3>规则与技能</h3>
-    <p class="desc">运行策略、技能与 Agent 规则一览。</p>
+    <h3>{{ t('settings.rulesSkills.title') }}</h3>
+    <p class="desc">{{ t('settings.rulesSkills.description') }}</p>
 
     <div v-if="store.lastError" class="alert alert-error">
       <span class="alert-icon">!</span> {{ store.lastError }}
@@ -9,16 +9,15 @@
 
     <div class="meta-bar">
       <button class="workbench-button" :disabled="loading" @click="reload">
-        {{ loading ? '加载中…' : '刷新' }}
+        {{ loading ? t('settings.toolsMcp.loading') : t('settings.toolsMcp.refresh') }}
       </button>
     </div>
 
     <section class="cap-section">
       <div class="section-head">
-        <h4>运行策略</h4>
-        <span class="section-hint">工具白名单与禁止项（deny 只读）</span>
+        <h4>{{ t('settings.rulesSkills.runtimePolicy') }}</h4>
+        <span class="section-hint">{{ t('settings.rulesSkills.policyHint') }}</span>
       </div>
-      <div v-if="policyNote" class="policy-note">{{ policyNote }}</div>
       <div class="policy-stats">
         <span class="pill">allow: {{ policy?.allowCount ?? 0 }}</span>
         <span class="pill pill-danger">deny: {{ policy?.denyCount ?? 0 }}</span>
@@ -31,7 +30,7 @@
     <section class="cap-section">
       <div class="section-head">
         <h4>Skills</h4>
-        <span class="section-hint">opencode：来自 config/opencode/skills（原生加载，不可在此开关）</span>
+        <span class="section-hint">{{ t('settings.rulesSkills.opencodeSkills') }}</span>
       </div>
       <div v-for="skill in skills" :key="skill.path" class="skill-card">
         <div class="skill-main">
@@ -40,7 +39,7 @@
           <div class="skill-meta mono">{{ skill.path }}</div>
         </div>
         <div class="skill-actions">
-          <span v-if="skill.enabled" class="pill pill-ok pill-sm">原生</span>
+          <span v-if="skill.enabled" class="pill pill-ok pill-sm">{{ t('settings.rulesSkills.native') }}</span>
           <label v-else class="toggle" :class="{ 'is-loading': toggleLoading === skill.path }">
             <input
               type="checkbox"
@@ -50,28 +49,28 @@
             />
             <span class="toggle-track"><span class="toggle-thumb" /></span>
           </label>
-          <button class="workbench-link" @click="openPath(skill.absolutePath)">打开</button>
+          <button class="workbench-link" @click="openPath(skill.absolutePath)">{{ t('settings.rulesSkills.open') }}</button>
         </div>
       </div>
       <form class="new-skill-form" @submit.prevent="createSkill">
         <label>
-          <span>名称</span>
+          <span>{{ t('settings.rulesSkills.name') }}</span>
           <input v-model.trim="newSkillName" autocomplete="off" placeholder="event-pacing" />
         </label>
         <label class="description-field">
-          <span>描述</span>
-          <input v-model.trim="newSkillDescription" autocomplete="off" placeholder="说明这个 skill 什么时候应该被使用" />
+          <span>{{ t('settings.rulesSkills.skillDescription') }}</span>
+          <input v-model.trim="newSkillDescription" autocomplete="off" :placeholder="t('settings.rulesSkills.skillPlaceholder')" />
         </label>
         <button class="workbench-button" :disabled="creatingSkill || !newSkillName || !newSkillDescription">
-          {{ creatingSkill ? '创建中…' : '+ 新建 Skill' }}
+          {{ creatingSkill ? t('settings.rulesSkills.creating') : t('settings.rulesSkills.newSkill') }}
         </button>
       </form>
     </section>
 
     <section class="cap-section">
       <div class="section-head">
-        <h4>参考文档</h4>
-        <span class="section-hint">config/opencode/AGENTS.md（运行时同步到 .opencode）与 docs 手册；skills 在 config/opencode/skills</span>
+        <h4>{{ t('settings.rulesSkills.referenceDocs') }}</h4>
+        <span class="section-hint">{{ t('settings.rulesSkills.docsHint') }}</span>
       </div>
       <div v-for="group in ruleGroups" :key="group.category" class="rule-group">
         <div class="group-title">{{ group.category }}</div>
@@ -80,7 +79,7 @@
             <div class="rule-title">{{ rule.title }}</div>
             <div class="rule-meta mono">{{ rule.path }}</div>
           </div>
-          <button class="workbench-link" @click="openPath(rule.absolutePath)">打开</button>
+          <button class="workbench-link" @click="openPath(rule.absolutePath)">{{ t('settings.rulesSkills.open') }}</button>
         </div>
       </div>
     </section>
@@ -101,10 +100,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { settings } from '../../api/client'
+import { useI18n } from '../../i18n'
 import { useSettingsStore } from '../../stores/settings'
 import type { RuleSnapshot } from '../../api/client'
 
 const store = useSettingsStore()
+const { t } = useI18n()
 const loading = ref(false)
 const toggleLoading = ref<string | null>(null)
 const creatingSkill = ref(false)
@@ -123,7 +124,6 @@ function toast(type: ToastType, message: string) {
 
 const snapshot = computed(() => store.agentCapabilities)
 const policy = computed(() => snapshot.value?.agentPolicy)
-const policyNote = computed(() => policy.value?.note || null)
 const skills = computed(() => snapshot.value?.skills || [])
 
 const ruleGroups = computed(() => {
@@ -142,7 +142,7 @@ async function reload() {
   try {
     await store.loadAgentCapabilities()
   } catch {
-    toast('error', '加载规则与技能失败')
+    toast('error', t('settings.rulesSkills.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -152,9 +152,9 @@ async function onToggleSkill(skillPath: string, enabled: boolean) {
   toggleLoading.value = skillPath
   try {
     await store.saveAgentSkillEnabled(skillPath, enabled)
-    toast('success', enabled ? '已启用技能' : '已禁用技能')
+    toast('success', enabled ? t('settings.rulesSkills.skillEnabled') : t('settings.rulesSkills.skillDisabled'))
   } catch {
-    toast('error', '更新技能失败')
+    toast('error', t('settings.rulesSkills.updateFailed'))
   } finally {
     toggleLoading.value = null
   }
@@ -167,9 +167,9 @@ async function createSkill() {
     newSkillName.value = ''
     newSkillDescription.value = ''
     await store.loadAgentCapabilities()
-    toast('success', '已新建 Skill')
+    toast('success', t('settings.rulesSkills.skillCreated'))
   } catch (error) {
-    toast('error', `新建 Skill 失败：${(error as Error).message}`)
+    toast('error', t('settings.rulesSkills.createFailed', { message: (error as Error).message }))
   } finally {
     creatingSkill.value = false
   }
@@ -179,7 +179,7 @@ async function openPath(filePath: string) {
   try {
     await store.openCapabilityPath(filePath)
   } catch {
-    toast('error', '无法打开文件')
+    toast('error', t('settings.rulesSkills.openFailed'))
   }
 }
 
@@ -301,18 +301,6 @@ onMounted(() => {
   font-size: 12px;
   color: var(--app-ink-soft);
   margin-top: 4px;
-}
-
-/* Policy */
-.policy-note {
-  padding: 12px;
-  border-radius: var(--app-radius-sm);
-  background: var(--app-bg-sunken);
-  font-size: 13px;
-  margin-bottom: 12px;
-  white-space: pre-wrap;
-  color: var(--app-ink-soft);
-  line-height: 1.5;
 }
 
 .policy-stats {

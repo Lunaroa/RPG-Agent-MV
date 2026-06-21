@@ -8,6 +8,7 @@ import { useProjectStore } from '../../stores/project'
 import { isPlacedStatus } from '../../utils/placementStatus'
 import type { PlacementReviewDecision } from '../../utils/placementReviewResult'
 import type { EventScriptModel } from '../../utils/eventScript'
+import { useI18n } from '../../i18n'
 
 interface ScriptState {
   loading: boolean
@@ -18,6 +19,7 @@ interface ScriptState {
 
 const placementAsk = useEventPlacementAskStore()
 const projectStore = useProjectStore()
+const { t } = useI18n()
 const scriptStates = reactive<Record<string, ScriptState>>({})
 /** 侧栏编辑态：正在为哪个事件编辑调整批注（contractId）。空串=未在编辑。 */
 const editingContractId = ref('')
@@ -51,24 +53,24 @@ function isPlaced(event: PlacementListEvent): boolean {
 }
 
 function statusLabel(event: PlacementListEvent): string {
-  if (event.status === 'reviewing') return '待确认'
-  if (isPlaced(event)) return '已放置'
-  if (event.status === 'rejected') return '已拒绝'
-  if (event.status === 'abandoned') return '已弃用'
-  return '待放置'
+  if (event.status === 'reviewing') return t('placement.status.reviewing')
+  if (isPlaced(event)) return t('placement.status.placed')
+  if (event.status === 'rejected') return t('placement.status.rejected')
+  if (event.status === 'abandoned') return t('placement.status.abandoned')
+  return t('placement.status.pending')
 }
 
 const stateLabel = computed(() => {
   if (isReviewMode.value) {
-    return pendingCount.value ? `${pendingCount.value} 个待确认` : '暂无待确认'
+    return pendingCount.value ? t('placement.reviewCount', { count: pendingCount.value }) : t('placement.reviewEmpty')
   }
-  return pendingCount.value ? `${pendingCount.value} 个待放置` : '暂无待放置'
+  return pendingCount.value ? t('placement.placeCount', { count: pendingCount.value }) : t('placement.placeEmpty')
 })
 
 function mapLabel(mapId: number | null | undefined): string {
   return Number.isInteger(mapId) && mapId! > 0
     ? `Map${String(mapId).padStart(3, '0')}`
-    : '未指定地图'
+    : t('placement.unspecifiedMap')
 }
 
 function cardSubtitle(event: PlacementListEvent): string {
@@ -101,7 +103,7 @@ async function refresh(): Promise<void> {
     await placementAsk.refreshFromRegistry(projectStore.currentProject)
     ensureSelection()
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '刷新待放置事件失败')
+    ElMessage.error(error instanceof Error ? error.message : t('placement.refreshFailed'))
   }
 }
 
@@ -115,14 +117,14 @@ async function approveSelectedReview(): Promise<void> {
   try {
     const result = await eventRegistry.approve(projectStore.currentProject, event.contractId)
     if (result.status !== 'ok') {
-      throw new Error('批准失败')
+      throw new Error(t('placement.approveFailed'))
     }
     placementAsk.setPendingDecision(event.contractId, 'approve')
     await placementAsk.markReviewEventApproved(event.contractId, projectStore.currentProject)
     cancelEditing()
-    ElMessage.success('已确认，进入放置队列')
+    ElMessage.success(t('placement.approvedQueued'))
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '确认失败，请重试')
+    ElMessage.error(error instanceof Error ? error.message : t('placement.confirmFailed'))
   } finally {
     reviewBusy.value = false
   }
@@ -133,7 +135,7 @@ function rejectSelectedReview(): void {
   if (!event || event.status !== 'reviewing') return
   placementAsk.setPendingDecision(event.contractId, 'reject')
   cancelEditing()
-  ElMessage.success('已记录：拒绝')
+  ElMessage.success(t('placement.rejectRecorded'))
 }
 
 function beginAdjustSelectedReview(): void {
@@ -155,7 +157,7 @@ function saveSelectedAdjustment(): void {
   if (!event || event.status !== 'reviewing') return
   placementAsk.setPendingDecision(event.contractId, 'revise', editingText.value)
   cancelEditing()
-  ElMessage.success('已保存批注')
+  ElMessage.success(t('placement.noteSaved'))
 }
 
 // 撤销已暂存的决策，回到未决策态。
@@ -168,9 +170,9 @@ function clearSelectedDecision(): void {
 
 function decisionBadge(event: PlacementListEvent): string {
   const decision = placementAsk.decisionFor(event.contractId)
-  if (decision === 'approve') return '✓ 确认'
-  if (decision === 'reject') return '✗ 拒绝'
-  if (decision === 'revise') return '✎ 调整'
+  if (decision === 'approve') return t('placement.decisionApprove')
+  if (decision === 'reject') return t('placement.decisionReject')
+  if (decision === 'revise') return t('placement.decisionRevise')
   return ''
 }
 
@@ -184,10 +186,10 @@ async function loadEventScript(contractId: string): Promise<void> {
     if (res.status === 'ok' && res.script) {
       scriptStates[contractId].model = res.script
     } else {
-      scriptStates[contractId].error = '这个事件还没有登记正文。'
+      scriptStates[contractId].error = t('placement.noScript')
     }
   } catch (error) {
-    scriptStates[contractId].error = error instanceof Error ? error.message : '读取事件内容失败'
+    scriptStates[contractId].error = error instanceof Error ? error.message : t('placement.scriptFailed')
   } finally {
     scriptStates[contractId].loading = false
     scriptStates[contractId].loaded = true
@@ -218,12 +220,12 @@ onMounted(() => {
   <div class="placement-panel">
     <div class="pp-toolbar">
       <span class="pp-state">{{ stateLabel }}</span>
-      <button type="button" class="pp-icon-button" title="刷新" @click="refresh">
+      <button type="button" class="pp-icon-button" :title="t('placement.refresh')" @click="refresh">
         <el-icon><Refresh /></el-icon>
       </button>
     </div>
 
-    <p v-if="!events.length" class="pp-empty">Agent 给出事件后会显示在这里。</p>
+    <p v-if="!events.length" class="pp-empty">{{ t('placement.empty') }}</p>
 
     <template v-else>
       <div class="pp-gallery">
@@ -252,7 +254,7 @@ onMounted(() => {
           <span>{{ statusLabel(selectedEvent) }}</span>
         </div>
         <p v-if="isReviewMode" class="pp-review-note">
-          确认后进入待放置队列；拒绝后不再放置；调整会交回 Agent。
+          {{ t('placement.reviewNote') }}
         </p>
         <div v-if="isReviewMode && selectedIsReviewing" class="pp-review-actions">
           <div v-if="!selectedDecision" class="pp-review-buttons">
@@ -263,7 +265,7 @@ onMounted(() => {
               :disabled="reviewBusy"
               @click="approveSelectedReview"
             >
-              确认
+              {{ t('placement.approve') }}
             </button>
             <button
               type="button"
@@ -272,7 +274,7 @@ onMounted(() => {
               :disabled="reviewBusy"
               @click="rejectSelectedReview"
             >
-              拒绝
+              {{ t('placement.reject') }}
             </button>
             <button
               type="button"
@@ -281,7 +283,7 @@ onMounted(() => {
               :disabled="reviewBusy"
               @click="beginAdjustSelectedReview"
             >
-              调整
+              {{ t('placement.revise') }}
             </button>
           </div>
           <div v-if="selectedIsEditing" class="pp-adjust-box">
@@ -289,7 +291,7 @@ onMounted(() => {
               v-model="editingText"
               class="pp-review-input"
               rows="3"
-              placeholder="告诉 Agent 这个事件哪里要改（可选）"
+              :placeholder="t('placement.revisePlaceholder')"
               data-ui-id="placement-review-adjust-input"
               :disabled="reviewBusy"
             />
@@ -301,7 +303,7 @@ onMounted(() => {
                 :disabled="reviewBusy"
                 @click="cancelEditing"
               >
-                取消
+                {{ t('placement.cancel') }}
               </button>
               <button
                 type="button"
@@ -310,7 +312,7 @@ onMounted(() => {
                 :disabled="reviewBusy"
                 @click="saveSelectedAdjustment"
               >
-                保存
+                {{ t('placement.save') }}
               </button>
             </div>
           </div>
@@ -321,14 +323,14 @@ onMounted(() => {
               class="pp-action"
               @click="clearSelectedDecision"
             >
-              撤销
+              {{ t('placement.undo') }}
             </button>
           </div>
         </div>
 
         <dl class="pp-facts">
           <div>
-            <dt>{{ isPlaced(selectedEvent) ? '地图' : '建议地图' }}</dt>
+            <dt>{{ isPlaced(selectedEvent) ? t('placement.map') : t('placement.suggestedMap') }}</dt>
             <dd>
               {{ mapLabel(selectedEvent.targetMapId) }}
               <template v-if="isPlaced(selectedEvent) && selectedEvent.x != null && selectedEvent.y != null">
@@ -337,25 +339,25 @@ onMounted(() => {
             </dd>
           </div>
           <div v-if="selectedEvent.trigger">
-            <dt>触发</dt>
+            <dt>{{ t('placement.trigger') }}</dt>
             <dd>{{ selectedEvent.trigger }}</dd>
           </div>
           <div v-if="selectedEvent.sceneId">
-            <dt>场景</dt>
+            <dt>{{ t('placement.scene') }}</dt>
             <dd>{{ selectedEvent.sceneId }}</dd>
           </div>
           <div v-if="selectedEvent.summary">
-            <dt>概要</dt>
+            <dt>{{ t('placement.summary') }}</dt>
             <dd>{{ selectedEvent.summary }}</dd>
           </div>
           <div v-if="selectedEvent.placementHint">
-            <dt>放置提示</dt>
+            <dt>{{ t('placement.hint') }}</dt>
             <dd>{{ selectedEvent.placementHint }}</dd>
           </div>
         </dl>
 
         <div class="pp-script">
-          <p v-if="scriptStates[selectedContractId]?.loading" class="pp-hint">读取中...</p>
+          <p v-if="scriptStates[selectedContractId]?.loading" class="pp-hint">{{ t('placement.loading') }}</p>
           <p v-else-if="scriptStates[selectedContractId]?.error" class="pp-hint">{{ scriptStates[selectedContractId]?.error }}</p>
           <template v-else-if="scriptStates[selectedContractId]?.model">
             <div

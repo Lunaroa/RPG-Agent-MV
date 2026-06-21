@@ -1,15 +1,20 @@
-/** 静态素材来源 slug / 包名 → 侧栏显示名（未命中则 humanize）。 */
-const SOURCE_LABELS = new Map<string, string>([
-  ['sample-main', '主工程示例'],
-  ['dlc-amusement-park-tile-75aef5d5', '游乐园素材包'],
-  ['pack', '示例素材包'],
-]);
+import type { ProductLanguage } from '@contract/types';
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts';
+import { translate, type MessageKey } from '../i18n/messages.ts';
 
-export function formatSourceLabel(sourceId: string): string {
+/** 静态素材来源 slug / 包名 → 侧栏显示名 key（未命中则 humanize）。 */
+const SOURCE_LABEL_KEYS: Record<string, MessageKey> = {
+  'sample-main': 'assetsource.sampleMain',
+  'dlc-amusement-park-tile-75aef5d5': 'assetsource.amusementPark',
+  'pack': 'assetsource.samplePack',
+};
+
+export function formatSourceLabel(sourceId: string, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  language = normalizeProductLanguage(language)
   const id = String(sourceId || '').trim();
-  if (!id || id === 'ungrouped') return '未分组';
-  const mapped = SOURCE_LABELS.get(id);
-  if (mapped) return mapped;
+  if (!id || id === 'ungrouped') return translate('assetsource.ungrouped', language);
+  const key = SOURCE_LABEL_KEYS[id];
+  if (key) return translate(key, language);
   return id
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());

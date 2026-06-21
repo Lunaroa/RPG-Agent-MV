@@ -8,6 +8,8 @@ import {
   type RunTimelineOutcome,
 } from '../../utils/consoleRunTimeline';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
+import { useI18n, type MessageKey } from '../../i18n';
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 
 const props = defineProps<{
   detail: SessionDetail | null;
@@ -23,28 +25,33 @@ const selectedKinds = ref<string[]>([]);
 const selectedTools = ref<string[]>([]);
 const selectedOutcomes = ref<string[]>([]);
 const showInternal = ref(false);
+const { language, t } = useI18n();
 
-const kindLabels: Record<RunTimelineKind, string> = {
-  user: '用户请求',
-  assistant: 'Agent 回复',
-  decision: '用户确认',
-  tool: '工具调用',
-  error: '错误',
-  artifact: '产物',
-  status: '状态',
-  internal: '内部过程',
+const kindLabels: Record<RunTimelineKind, MessageKey> = {
+  user: 'console.run.kind.user',
+  assistant: 'console.run.kind.assistant',
+  decision: 'console.run.kind.decision',
+  tool: 'console.run.kind.tool',
+  error: 'console.run.kind.error',
+  artifact: 'console.run.kind.artifact',
+  status: 'console.run.kind.status',
+  internal: 'console.run.kind.internal',
 };
-const outcomeLabels: Record<RunTimelineOutcome, string> = {
-  success: '成功',
-  failure: '失败',
-  neutral: '无结果状态',
+const outcomeLabels: Record<RunTimelineOutcome, MessageKey> = {
+  success: 'console.run.outcome.success',
+  failure: 'console.run.outcome.failure',
+  neutral: 'console.run.outcome.neutral',
 };
 
-const timeline = computed(() => buildRunTimeline(props.detail?.chatLog, props.detail?.events, props.detail?.blocker));
+const timeline = computed(() => buildRunTimeline(props.detail?.chatLog, props.detail?.events, props.detail?.blocker, language.value));
 const kinds = computed(() => [...new Set(timeline.value
   .filter((item) => showInternal.value || !item.lowValue)
   .map((item) => item.kind))]);
 const tools = computed(() => [...new Set(timeline.value.map((item) => item.tool).filter(Boolean))] as string[]);
+const outcomeOptions = computed(() => (Object.keys(outcomeLabels) as RunTimelineOutcome[]).map((value) => ({
+  value,
+  label: outcomeLabel(value),
+})));
 const visibleTimeline = computed(() => filterRunTimeline(timeline.value, {
   query: query.value,
   kinds: selectedKinds.value,
@@ -60,12 +67,24 @@ watch(showInternal, (visible) => {
 
 function formatTime(value: number): string {
   if (!Number.isFinite(value) || value < 1000) return '--:--:--';
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(language.value, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
   }).format(new Date(value));
+}
+
+function kindLabel(kind: RunTimelineKind): string {
+  return t(kindLabels[kind]);
+}
+
+function outcomeLabel(outcome: RunTimelineOutcome): string {
+  return t(outcomeLabels[outcome]);
+}
+
+function formatErrorText(errorValue: unknown): string {
+  return formatUserFacingErrorMessage(errorValue, 'general', language.value);
 }
 </script>
 
@@ -74,28 +93,28 @@ function formatTime(value: number): string {
     <div class="detail-nav">
       <button type="button" class="back-button" @click="emit('back')">
         <span aria-hidden="true">‹</span>
-        返回运行日志
+        {{ t('console.run.back') }}
       </button>
     </div>
 
-    <div v-if="loading && !detail" class="state">正在读取运行详情…</div>
-    <div v-else-if="error && !detail" class="state error">{{ error }}</div>
+    <div v-if="loading && !detail" class="state">{{ t('console.run.loading') }}</div>
+    <div v-else-if="error && !detail" class="state error">{{ formatErrorText(error) }}</div>
 
     <template v-else-if="detail">
       <div class="timeline-toolbar">
-        <ConsoleSearchInput v-model="query" placeholder="搜索当前运行" />
-        <el-select v-model="selectedKinds" multiple collapse-tags collapse-tags-tooltip clearable placeholder="全部内容">
-          <el-option v-for="item in kinds" :key="item" :label="kindLabels[item]" :value="item" />
+        <ConsoleSearchInput v-model="query" :placeholder="t('console.run.searchPlaceholder')" />
+        <el-select v-model="selectedKinds" multiple collapse-tags collapse-tags-tooltip clearable :placeholder="t('console.run.allContent')">
+          <el-option v-for="item in kinds" :key="item" :label="kindLabel(item)" :value="item" />
         </el-select>
-        <el-select v-model="selectedTools" multiple collapse-tags collapse-tags-tooltip clearable placeholder="全部工具">
+        <el-select v-model="selectedTools" multiple collapse-tags collapse-tags-tooltip clearable :placeholder="t('console.run.allTools')">
           <el-option v-for="item in tools" :key="item" :label="item" :value="item" />
         </el-select>
-        <el-select v-model="selectedOutcomes" multiple collapse-tags collapse-tags-tooltip clearable placeholder="全部结果">
-          <el-option v-for="(label, value) in outcomeLabels" :key="value" :label="label" :value="value" />
+        <el-select v-model="selectedOutcomes" multiple collapse-tags collapse-tags-tooltip clearable :placeholder="t('console.run.allResults')">
+          <el-option v-for="item in outcomeOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
         <label class="noise-toggle">
           <input v-model="showInternal" type="checkbox">
-          <span>显示内部过程</span>
+          <span>{{ t('console.run.showInternal') }}</span>
           <b v-if="hiddenCount">{{ hiddenCount }}</b>
         </label>
       </div>
@@ -112,23 +131,23 @@ function formatTime(value: number): string {
             <span class="timeline-dot" />
             <div class="timeline-card">
               <header>
-                <span>{{ kindLabels[item.kind] }}</span>
+                <span>{{ kindLabel(item.kind) }}</span>
                 <strong>{{ item.title }}</strong>
-                <em v-if="item.outcome !== 'neutral'">{{ outcomeLabels[item.outcome] }}</em>
+                <em v-if="item.outcome !== 'neutral'">{{ outcomeLabel(item.outcome) }}</em>
               </header>
               <p v-if="item.body">{{ item.body }}</p>
               <div v-if="item.parameters" class="tool-parameters">
-                <strong>调用参数</strong>
+                <strong>{{ t('console.run.parameters') }}</strong>
                 <pre>{{ item.parameters }}</pre>
               </div>
               <div v-if="item.error" class="tool-error">
-                <strong>失败原因</strong>
+                <strong>{{ t('console.run.errorReason') }}</strong>
                 <pre>{{ item.error }}</pre>
               </div>
             </div>
           </article>
         </div>
-        <div v-else class="state compact">没有匹配的运行内容</div>
+        <div v-else class="state compact">{{ t('console.run.noMatches') }}</div>
       </div>
     </template>
   </section>

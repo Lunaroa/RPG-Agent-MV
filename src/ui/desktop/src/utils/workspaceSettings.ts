@@ -8,6 +8,7 @@ import type {
 import { AGENT_PANEL_DEFAULT_WIDTH } from './agentPanelWidth'
 import { CHAT_HISTORY_DEFAULT_WIDTH } from './chatHistoryWidth'
 import { readEditorZoom } from '../composables/useEditorWorkspaceState'
+import { workspaceNoProjectsAvailable } from './workspaceSettingsLocalization'
 
 export const WORKSPACE_SETTINGS_DB_KEY = 'workspace'
 
@@ -344,9 +345,10 @@ export interface ProjectInfoLike {
 export function resolveStoredProjectPath(
   storedPath: string | undefined,
   projects: ProjectInfoLike[],
+  language?: import('@contract/types').ProductLanguage | null,
 ): string {
   if (!projects.length) {
-    throw new Error('未发现可用项目，请检查项目配置')
+    throw new Error(workspaceNoProjectsAvailable(language))
   }
   if (storedPath && projects.some((project) => project.path === storedPath)) {
     return storedPath

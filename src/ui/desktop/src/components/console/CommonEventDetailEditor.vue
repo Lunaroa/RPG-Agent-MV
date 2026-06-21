@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { EditorProjectCatalog } from '../../api/client';
+import { useI18n } from '../../i18n';
 import {
   clone,
   ensureTerminator,
@@ -23,6 +24,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>();
+const { t } = useI18n();
 
 const draft = computed<CommonEventDraft>(() => {
   const value = (props.modelValue && typeof props.modelValue === 'object' && !Array.isArray(props.modelValue))
@@ -64,24 +66,24 @@ function updateList(list: MvCommand[]) {
 <template>
   <div class="common-event-editor">
     <section class="editor-section">
-      <div class="section-title"><strong>基本设置</strong></div>
+      <div class="section-title"><strong>{{ t('commonEvent.basicSettings') }}</strong></div>
       <div class="settings-grid">
-        <label class="field compact"><span>编号</span><input :value="String(draft.id).padStart(4, '0')" disabled /></label>
-        <label class="field name"><span>名称</span><input :value="draft.name" @input="updateName(($event.target as HTMLInputElement).value)" /></label>
+        <label class="field compact"><span>{{ t('commonEvent.id') }}</span><input :value="String(draft.id).padStart(4, '0')" disabled /></label>
+        <label class="field name"><span>{{ t('commonEvent.name') }}</span><input :value="draft.name" @input="updateName(($event.target as HTMLInputElement).value)" /></label>
         <label class="field">
-          <span>触发方式</span>
+          <span>{{ t('commonEvent.trigger') }}</span>
           <select :value="draft.trigger" @change="updateTrigger(Number(($event.target as HTMLSelectElement).value))">
-            <option :value="0">无</option>
-            <option :value="1">自动执行</option>
-            <option :value="2">并行处理</option>
+            <option :value="0">{{ t('commonEvent.none') }}</option>
+            <option :value="1">{{ t('commonEvent.autorun') }}</option>
+            <option :value="2">{{ t('commonEvent.parallel') }}</option>
           </select>
         </label>
         <label class="field" :class="{ muted: draft.trigger === 0 }">
-          <span>条件开关</span>
+          <span>{{ t('commonEvent.conditionSwitch') }}</span>
           <select :value="draft.switchId" :disabled="draft.trigger === 0" @change="updateSwitch(Number(($event.target as HTMLSelectElement).value))">
-            <option :value="0">无</option>
+            <option :value="0">{{ t('commonEvent.none') }}</option>
             <option v-for="entry in catalog?.switches || []" :key="entry.id" :value="entry.id">
-              {{ String(entry.id).padStart(4, '0') }} {{ entry.name || '(未命名)' }}
+              {{ String(entry.id).padStart(4, '0') }} {{ entry.name || t('commonEvent.unnamed') }}
             </option>
           </select>
         </label>
@@ -89,12 +91,12 @@ function updateList(list: MvCommand[]) {
     </section>
 
     <section class="editor-section commands">
-      <div class="section-title"><strong>执行内容</strong></div>
+      <div class="section-title"><strong>{{ t('commonEvent.contents') }}</strong></div>
       <MvCommandListEditor
         :model-value="draft.list"
         :catalog="catalog"
         :load-image="loadImage"
-        empty-text="暂无指令。点击“添加”创建执行内容。"
+        :empty-text="t('commonEvent.emptyHint')"
         @update:model-value="updateList"
       />
     </section>

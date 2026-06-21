@@ -17,20 +17,20 @@
       </div>
       <p>{{ ask.prompt }}</p>
       <details v-if="(ask.planMarkdown || '').length > 80" class="ask-details plan-details">
-        <summary>查看计划详情</summary>
+        <summary>{{ t('ask.plan.viewDetails') }}</summary>
         <div class="plan-content markdown-body" v-html="renderMarkdown(ask.planMarkdown || '')" />
       </details>
       <div v-else class="plan-content markdown-body" v-html="renderMarkdown(ask.planMarkdown || '')" />
       <details v-if="ask.affectedFiles?.length || ask.risks?.length" class="ask-details">
-        <summary>影响与风险</summary>
+        <summary>{{ t('ask.plan.impactRisk') }}</summary>
         <div v-if="ask.affectedFiles?.length" class="plan-meta">
-          <dt>涉及文件</dt>
+          <dt>{{ t('ask.plan.affectedFiles') }}</dt>
           <dd>
             <code v-for="file in ask.affectedFiles" :key="file">{{ file }}</code>
           </dd>
         </div>
         <div v-if="ask.risks?.length" class="plan-meta">
-          <dt>风险</dt>
+          <dt>{{ t('ask.plan.risks') }}</dt>
           <dd>
             <ul>
               <li v-for="risk in ask.risks" :key="risk">{{ risk }}</li>
@@ -39,7 +39,7 @@
         </div>
       </details>
       <div v-if="!isLocked" class="plan-actions">
-        <el-button type="primary" @click="handleApprove">批准并执行</el-button>
+        <el-button type="primary" @click="handleApprove">{{ t('ask.plan.approve') }}</el-button>
         <el-button type="warning" @click="handleRevise">{{ reviseButtonLabel }}</el-button>
         <el-button type="danger" @click="handleReject">{{ rejectButtonLabel }}</el-button>
       </div>
@@ -56,7 +56,7 @@
     <!-- Clarify Card -->
     <template v-else-if="ask.type === 'clarify'">
       <strong class="ask-question">{{ clarifyQuestion }}</strong>
-      <p v-if="isCanceled" class="ask-canceled-note">本回合已结束，仍可在此提交回答。</p>
+      <p v-if="isCanceled" class="ask-canceled-note">{{ t('ask.canceled') }}</p>
       <div v-if="!isLocked && hasClarifyOptions" class="clarify-options">
         <el-radio-group
           v-if="!ask.multiSelect"
@@ -113,23 +113,23 @@
           v-if="clarifyAllowOther"
           v-model="clarifyOtherText"
           class="ask-adjust-input"
-          placeholder="否，请说明如何调整"
-          aria-label="否，请说明如何调整"
+          :placeholder="t('ask.otherPlaceholder')"
+          :aria-label="t('ask.otherPlaceholder')"
           size="large"
           @click.stop
         />
         <div v-if="needsClarifyConfirm" class="ask-footer">
           <el-button text class="ask-ignore-btn" @click="handleClarifyIgnore">
-            忽略 <kbd>Esc</kbd>
+            {{ t('ask.ignore') }} <kbd>Esc</kbd>
           </el-button>
-          <span class="ask-kbd-hint">回车提交 <kbd>↵</kbd></span>
+          <span class="ask-kbd-hint">{{ t('ask.enterToSubmit') }} <kbd>↵</kbd></span>
           <el-button
             type="primary"
             class="clarify-confirm-btn"
             :disabled="!canSubmitClarify"
             @click="handleClarifyOptionsSubmit"
           >
-            提交 <span class="ask-submit-icon">↵</span>
+            {{ t('ask.submit') }} <span class="ask-submit-icon">↵</span>
           </el-button>
         </div>
       </div>
@@ -138,14 +138,14 @@
           v-model="clarifyAnswer"
           type="textarea"
           :rows="3"
-          :placeholder="ask.placeholder || '在这里回答'"
+          :placeholder="ask.placeholder || t('ask.answerPlaceholder')"
         />
         <div class="ask-footer">
           <el-button text class="ask-ignore-btn" @click="handleClarifyIgnore">
-            忽略 <kbd>Esc</kbd>
+            {{ t('ask.ignore') }} <kbd>Esc</kbd>
           </el-button>
           <el-button type="primary" class="clarify-confirm-btn" @click="handleClarifySubmit">
-            提交 <span class="ask-submit-icon">↵</span>
+            {{ t('ask.submit') }} <span class="ask-submit-icon">↵</span>
           </el-button>
         </div>
       </div>
@@ -164,7 +164,7 @@
       <el-progress v-if="!isLocked" :percentage="progressPercentage" :show-text="false" />
       <div v-if="!isLocked" class="mcc-steps">
         <div v-for="(question, idx) in ask.questions" :key="question.id" v-show="idx === currentStep" class="mcc-step">
-          <h4>{{ question.header || `问题 ${idx + 1}` }}</h4>
+          <h4>{{ question.header || t('ask.questionFallback', { index: idx + 1 }) }}</h4>
           <p v-if="question.question">{{ question.question }}</p>
           <el-checkbox-group
             v-if="question.multiSelect"
@@ -217,8 +217,8 @@
             v-if="question.allowOther"
             v-model="otherAnswers[question.id]"
             class="ask-adjust-input"
-            placeholder="否，请说明如何调整"
-            aria-label="否，请说明如何调整"
+            :placeholder="t('ask.otherPlaceholder')"
+            :aria-label="t('ask.otherPlaceholder')"
             size="large"
             @click.stop
           />
@@ -232,18 +232,18 @@
       </div>
       <div v-if="!isLocked" class="mcc-footer">
         <el-button text class="ask-ignore-btn" @click="handleMultiChoiceIgnore">
-          忽略 <kbd>Esc</kbd>
+          {{ t('ask.ignore') }} <kbd>Esc</kbd>
         </el-button>
         <div class="mcc-step-actions">
-          <el-button :disabled="currentStep === 0" @click="currentStep--">上一题</el-button>
-          <el-button v-if="currentStep < totalSteps - 1" @click="currentStep++">下一题</el-button>
+          <el-button :disabled="currentStep === 0" @click="currentStep--">{{ t('ask.previousQuestion') }}</el-button>
+          <el-button v-if="currentStep < totalSteps - 1" @click="currentStep++">{{ t('ask.nextQuestion') }}</el-button>
           <el-button
             v-if="currentStep === totalSteps - 1"
             type="primary"
             class="clarify-confirm-btn"
             @click="handleMultiChoiceSubmit"
           >
-            提交 <span class="ask-submit-icon">↵</span>
+            {{ t('ask.submit') }} <span class="ask-submit-icon">↵</span>
           </el-button>
         </div>
       </div>
@@ -256,39 +256,39 @@
       </div>
       <p>{{ ask.prompt }}</p>
       <div v-if="pbScenes.length" class="pb-section">
-        <h4>场景绑定</h4>
+        <h4>{{ t('ask.production.scenes') }}</h4>
         <div v-for="scene in pbScenes" :key="scene.id" class="pb-scene">
           <div class="pb-scene-header">
             <strong>{{ scene.name }}</strong>
             <el-tag size="small" :type="scene.status === 'bound' ? 'success' : 'warning'">
-              {{ scene.status === 'bound' ? `已绑 #${scene.boundMapId}` : '未绑定' }}
+              {{ scene.status === 'bound' ? t('ask.production.bound', { mapId: scene.boundMapId }) : t('ask.production.unbound') }}
             </el-tag>
           </div>
           <p v-if="scene.summary" class="pb-summary">{{ scene.summary }}</p>
           <div class="pb-scene-meta">
-            <span v-if="scene.mapRequirement">需求: {{ scene.mapRequirement }}</span>
-            <span v-if="scene.visualHint">视觉: {{ scene.visualHint }}</span>
+            <span v-if="scene.mapRequirement">{{ t('ask.production.requirement', { value: scene.mapRequirement }) }}</span>
+            <span v-if="scene.visualHint">{{ t('ask.production.visual', { value: scene.visualHint }) }}</span>
           </div>
         </div>
       </div>
       <div v-if="pbEvents.length" class="pb-section">
-        <h4>事件放置</h4>
+        <h4>{{ t('ask.production.events') }}</h4>
         <div v-for="event in pbEvents" :key="event.id" class="pb-event">
           <div class="pb-event-header">
             <strong>{{ event.eventName || event.contractId }}</strong>
             <el-tag size="small" :type="event.status === 'placed' ? 'success' : 'info'">
-              {{ event.status === 'placed' ? '已放置' : '待放置' }}
+              {{ event.status === 'placed' ? t('ask.production.placed') : t('ask.production.pending') }}
             </el-tag>
           </div>
           <div class="pb-event-meta">
-            <span v-if="event.sceneId">场景: {{ event.sceneId }}</span>
-            <span v-if="event.targetMapId">地图 #{{ event.targetMapId }}</span>
+            <span v-if="event.sceneId">{{ t('ask.production.scene', { value: event.sceneId }) }}</span>
+            <span v-if="event.targetMapId">{{ t('ask.production.map', { mapId: event.targetMapId }) }}</span>
             <span v-if="event.x != null">({{ event.x }}, {{ event.y }})</span>
           </div>
         </div>
       </div>
       <div v-if="!isLocked" class="ask-actions">
-        <el-button type="primary" @click="handleProductionBoardConfirm">确认制作清单</el-button>
+        <el-button type="primary" @click="handleProductionBoardConfirm">{{ t('ask.production.confirm') }}</el-button>
       </div>
     </template>
 
@@ -301,15 +301,15 @@
       <p v-if="isLocked" class="map-selection-done">{{ mapSelectionResultText }}</p>
       <div v-if="!isLocked" class="clarify-options">
         <div v-if="mapCandidates.length" class="map-candidate-panel">
-          <strong>使用现有地图</strong>
-          <el-select v-model="selectedExistingMapId" placeholder="选择 Agent 推荐的地图">
+          <strong>{{ t('ask.map.existing') }}</strong>
+          <el-select v-model="selectedExistingMapId" :placeholder="t('ask.map.selectPlaceholder')">
             <el-option
               v-for="candidate in mapCandidates"
               :key="candidate.mapId"
-              :label="`${candidate.mapName}（地图 #${candidate.mapId}）`"
+              :label="t('ask.map.optionLabel', { name: candidate.mapName, mapId: candidate.mapId })"
               :value="candidate.mapId"
             >
-              <span>{{ candidate.mapName }}（地图 #{{ candidate.mapId }}）</span>
+              <span>{{ t('ask.map.optionLabel', { name: candidate.mapName, mapId: candidate.mapId }) }}</span>
               <small class="map-candidate-reason">{{ candidate.reason }}</small>
             </el-option>
           </el-select>
@@ -319,11 +319,11 @@
             :disabled="!selectedExistingMapId"
             @click="handleMapSelectionExisting"
           >
-            使用所选现有地图
+            {{ t('ask.map.useSelected') }}
           </el-button>
         </div>
         <div class="ask-actions">
-          <el-button @click="handleMapSelectionAdjust">调整剧情</el-button>
+          <el-button @click="handleMapSelectionAdjust">{{ t('ask.map.adjustStory') }}</el-button>
         </div>
       </div>
     </template>
@@ -335,7 +335,7 @@
       </div>
       <p>{{ ask.prompt }}</p>
       <div class="ask-actions">
-        <el-button type="primary" @click="handleDefaultAction">处理</el-button>
+        <el-button type="primary" @click="handleDefaultAction">{{ t('ask.defaultAction') }}</el-button>
       </div>
     </template>
   </div>
@@ -351,6 +351,7 @@ import {
   buildMultiSelectMccAnswer,
   buildSingleSelectMccAnswer,
 } from '../utils/askChoiceAnswer'
+import { useI18n } from '../i18n'
 
 const props = defineProps<{
   ask: Ask
@@ -385,6 +386,7 @@ const clarifyOtherText = ref('')
 const currentStep = ref(0)
 const selectedOptions = ref<Record<string, string | string[]>>({})
 const otherAnswers = ref<Record<string, string>>({})
+const { t } = useI18n()
 
 // clarify 单选默认高亮推荐项（无推荐则第一项），让回车可直接提交。
 function applyClarifyDefaults() {
@@ -462,7 +464,9 @@ const isCanceled = computed(() => Boolean(props.ask.result?.canceledAt && !props
 const failureMessage = computed(() => {
   const result = props.ask.result as Record<string, unknown> | null | undefined
   if (!result?.failedAt) return ''
-  return result.error ? `提交失败：${String(result.error)}` : '提交失败，请重新发起 ASK。'
+  return result.error
+    ? t('ask.submitFailed', { message: String(result.error) })
+    : t('ask.submitFailedDefault')
 })
 
 const hasClarifyOptions = computed(() => (props.ask.options?.length || 0) >= 2)
@@ -492,12 +496,12 @@ const clarifyResultDisplay = computed(() => {
 
 const mapSelectionResultText = computed(() => {
   const result = props.ask.result as Record<string, any> | null | undefined
-  if (!result) return '已提交'
-  if (result.decision === 'added') return '已新增地图，继续编排'
-  if (result.decision === 'use-existing') return `使用现有地图 #${result.selectedMapId}`
-  if (result.decision === 'adjust-story' || result.decision === 'reject') return '返回调整剧情'
-  if (result.decision === 'jump') return '已跳转至地图制作页'
-  return '已提交'
+  if (!result) return t('ask.map.submitted')
+  if (result.decision === 'added') return t('ask.map.added')
+  if (result.decision === 'use-existing') return t('ask.map.useExistingDone', { mapId: result.selectedMapId })
+  if (result.decision === 'adjust-story' || result.decision === 'reject') return t('ask.map.adjustDone')
+  if (result.decision === 'jump') return t('ask.map.jumpDone')
+  return t('ask.map.submitted')
 })
 
 const askCardClass = computed(() => {
@@ -505,19 +509,20 @@ const askCardClass = computed(() => {
 })
 
 const ASK_KICKER_LABELS: Record<string, string> = {
-  'clarify': '等待输入',
-  'multi-choice-clarify': '等待选择',
-  'plan-approval': '等待决策',
-  'production-board': '制作清单',
-  'map-selection': '选择地图',
+  'clarify': 'ask.kicker.waitInput',
+  'multi-choice-clarify': 'ask.kicker.waitChoice',
+  'plan-approval': 'ask.kicker.waitDecision',
+  'production-board': 'ask.kicker.productionBoard',
+  'map-selection': 'ask.kicker.mapSelection',
 }
 
 const askKicker = computed(() => {
   if (isLocked.value) {
-    if (props.ask.type === 'clarify' || props.ask.type === 'multi-choice-clarify') return '已回答'
-    return '已处理'
+    if (props.ask.type === 'clarify' || props.ask.type === 'multi-choice-clarify') return t('ask.kicker.answered')
+    return t('ask.kicker.handled')
   }
-  return ASK_KICKER_LABELS[props.ask.type] || '等待决策'
+  const key = ASK_KICKER_LABELS[props.ask.type] || 'ask.kicker.waitDecision'
+  return t(key as Parameters<typeof t>[0])
 })
 
 const showPlanFeedback = computed(() => {
@@ -525,15 +530,15 @@ const showPlanFeedback = computed(() => {
 })
 
 const planFeedbackPlaceholder = computed(() => (
-  feedbackMode.value === 'reject' ? '拒绝原因（必填）' : '修改方向（必填）'
+  feedbackMode.value === 'reject' ? t('ask.plan.rejectPlaceholder') : t('ask.plan.revisePlaceholder')
 ))
 
 const reviseButtonLabel = computed(() => (
-  feedbackMode.value === 'revise' ? '提交调整要求' : '要求调整'
+  feedbackMode.value === 'revise' ? t('ask.plan.submitRevision') : t('ask.plan.revise')
 ))
 
 const rejectButtonLabel = computed(() => (
-  feedbackMode.value === 'reject' ? '确认拒绝' : '拒绝'
+  feedbackMode.value === 'reject' ? t('ask.plan.confirmReject') : t('ask.plan.reject')
 ))
 
 const totalSteps = computed(() => {
@@ -555,7 +560,7 @@ function handleRevise() {
   }
   const text = feedback.value.trim()
   if (!text) {
-    ElMessage.warning('请填写修改方向')
+    ElMessage.warning(t('ask.plan.needRevision'))
     return
   }
   emit('revise', props.ask.askId, text)
@@ -568,7 +573,7 @@ function handleReject() {
   }
   const text = feedback.value.trim()
   if (!text) {
-    ElMessage.warning('请填写拒绝原因')
+    ElMessage.warning(t('ask.plan.needRejectReason'))
     return
   }
   emit('reject', props.ask.askId, text)
@@ -577,12 +582,13 @@ function handleReject() {
 function formatClarifySelectionLabels(selected: string[], otherText: string): string {
   const labels = selected.map((selectedId) => {
     if (selectedId === '__other__') {
-      return otherText ? `其他：${otherText}` : '其他'
+      const otherLabel = t('ask.otherLabel')
+      return otherText ? `${otherLabel}: ${otherText}` : otherLabel
     }
     const option = props.ask.options?.find((o) => o.id === selectedId)
     return option ? (option.label || option.title || selectedId) : selectedId
   }).filter(Boolean)
-  return labels.join('、')
+  return labels.join(t('ask.separator.list'))
 }
 
 function buildClarifyOptionsPayload(): { answer: string; selected: string[]; other: string } | null {
@@ -612,13 +618,13 @@ function handleClarifySubmit() {
 }
 
 function handleClarifyIgnore() {
-  emitClarifyPayload({ answer: '用户选择忽略此问题' })
+  emitClarifyPayload({ answer: t('ask.ignoredAnswer') })
 }
 
 function handleClarifyOptionsSubmit() {
   const payload = buildClarifyOptionsPayload()
   if (!payload) {
-    ElMessage.warning('请先选择一项，或填写如何调整')
+    ElMessage.warning(t('ask.needChoice'))
     return
   }
   emitClarifyPayload(payload)
@@ -717,17 +723,17 @@ function handleDefaultAction() {
 
 function getAnswerDisplay(question: AskQuestion): string {
   const answer = props.ask.result?.answers?.[question.id]
-  if (!answer) return '（未作答）'
+  if (!answer) return t('ask.unanswered')
   
   const labels = answer.selected.map(selectedId => {
     if (selectedId === '__other__') {
-      return answer.other ? `其他：${answer.other}` : '其他'
+      const otherLabel = t('ask.otherLabel')
+      return answer.other ? `${otherLabel}: ${answer.other}` : otherLabel
     }
     const option = question.options.find(o => o.id === selectedId)
     return option ? option.label : selectedId
   }).filter(Boolean)
-  
-  return labels.length ? labels.join('、') : '（未作答）'
+  return labels.length ? labels.join(t('ask.separator.list')) : t('ask.unanswered')
 }
 </script>
 

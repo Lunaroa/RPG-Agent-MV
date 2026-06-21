@@ -4,22 +4,27 @@ import {
   resolveThinkingVariantsForModel,
   type ThinkingVariant,
 } from '@contract/model-reasoning-registry'
+import type { ProductLanguage } from '@contract/types'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
+import { translate } from '../i18n/messages.ts'
 
 export type { ThinkingVariant }
 
-const DEFAULT_VARIANTS: ThinkingVariant[] = [{ id: 'default', label: '默认' }]
+const DEFAULT_VARIANTS: ThinkingVariant[] = [{ id: 'default', label: 'default' }]
 
 export function useThinkingVariants(
   selectedProvider: Ref<string>,
   selectedModel: Ref<string>,
   thinkingLevel: Ref<string>,
-  onThinkingLevelChange: (value: string) => void
+  onThinkingLevelChange: (value: string) => void,
+  productLanguage?: Ref<ProductLanguage>,
 ) {
-  const variants = ref<ThinkingVariant[]>([...DEFAULT_VARIANTS])
+  const rawVariants = ref<ThinkingVariant[]>([...DEFAULT_VARIANTS])
+  const variants = computed(() => rawVariants.value.map((variant) => localizeThinkingVariant(variant, productLanguage?.value)))
 
   const currentLabel = computed(() => {
     const match = variants.value.find((v) => v.id === thinkingLevel.value)
-    return match?.label || '默认'
+    return match?.label || localizeThinkingVariantLabel('default', 'default', productLanguage?.value)
   })
 
   const hasMultipleVariants = computed(() => variants.value.length > 1)
@@ -31,10 +36,10 @@ export function useThinkingVariants(
 
   function applyLocalVariants() {
     if (!selectedProvider.value || !selectedModel.value) {
-      variants.value = [...DEFAULT_VARIANTS]
+      rawVariants.value = [...DEFAULT_VARIANTS]
       return
     }
-    variants.value = resolveThinkingVariantsForModel(
+    rawVariants.value = resolveThinkingVariantsForModel(
       selectedProvider.value,
       selectedModel.value,
     )
@@ -64,4 +69,16 @@ export function useThinkingVariants(
     showThinkingLevel,
     loadVariants: applyLocalVariants,
   }
+}
+
+function localizeThinkingVariant(variant: ThinkingVariant, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): ThinkingVariant {
+  language = normalizeProductLanguage(language)
+  const label = localizeThinkingVariantLabel(variant.id, variant.label, language)
+  return label === variant.label ? variant : { ...variant, label }
+}
+
+function localizeThinkingVariantLabel(id: string, label: string, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  language = normalizeProductLanguage(language)
+  if (id === 'default') return translate('thinking.default', language)
+  return label
 }

@@ -20,22 +20,25 @@ import ConsoleSettingsPane from '../components/console/ConsoleSettingsPane.vue';
 import ConsoleStoryPane from '../components/console/ConsoleStoryPane.vue';
 import StoryProjectIdentityControl from '../components/console/StoryProjectIdentityControl.vue';
 import ProjectAccessControl from '../components/console/ProjectAccessControl.vue';
+import { useI18n, type MessageKey } from '../i18n';
+import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
 
 const route = useRoute();
 const router = useRouter();
 const projectStore = useProjectStore();
+const { language, t } = useI18n();
 const allowedPages: ConsolePage[] = ['home', 'assets', 'story', 'plugins', 'logs', 'settings'];
 const currentPage = computed<ConsolePage>(() => {
   const page = String(route.query.page || 'home') as ConsolePage;
   return allowedPages.includes(page) ? page : 'home';
 });
-const titles: Record<ConsolePage, string> = {
-  home: '控制台',
-  assets: '资产库',
-  story: '项目管理',
-  plugins: '插件管理',
-  logs: '运行日志',
-  settings: '设置',
+const titleKeys: Record<ConsolePage, MessageKey> = {
+  home: 'settings.console.home',
+  assets: 'settings.console.assets',
+  story: 'settings.console.story',
+  plugins: 'settings.console.plugins',
+  logs: 'settings.console.logs',
+  settings: 'settings.console.settings',
 };
 const catalog = ref<AssetLibraryCatalog | null>(null);
 const assetsLoading = ref(false);
@@ -66,7 +69,7 @@ function reloadProjectBoundData() {
 async function loadAssets() {
   assetsLoading.value = true; assetsError.value = null;
   try { catalog.value = await assetLibrary.catalog(); }
-  catch (error) { assetsError.value = (error as Error).message; }
+  catch (error) { assetsError.value = formatErrorText(error); }
   finally { assetsLoading.value = false; }
 }
 
@@ -75,7 +78,7 @@ async function loadLogs() {
   try {
     const result = await sessionsApi.list() as { sessions?: SessionSummary[] } | SessionSummary[];
     sessions.value = Array.isArray(result) ? result : (result.sessions || []);
-  } catch (error) { logsError.value = (error as Error).message; }
+  } catch (error) { logsError.value = formatErrorText(error); }
   finally { logsLoading.value = false; }
 }
 
@@ -86,8 +89,12 @@ async function loadProjectOverview() {
     projectOverview.value = await projectManagement.overview(projectStore.currentProject);
   } catch (error) {
     projectOverview.value = null;
-    projectStatsError.value = (error as Error).message;
+    projectStatsError.value = formatErrorText(error);
   }
+}
+
+function formatErrorText(errorValue: unknown): string {
+  return formatUserFacingErrorMessage(errorValue, 'general', language.value);
 }
 
 const assetCount = computed(() => {
@@ -148,13 +155,13 @@ onMounted(async () => {
       @navigate="go"
     />
     <section v-else class="console-page" :data-ui-id="`console-page-${currentPage}`">
-      <nav class="console-breadcrumb" aria-label="控制台路径">
-        <button type="button" class="back-button" data-ui-id="console-back-home" @click="go('home')"><ArrowLeft /><span>控制台</span></button>
+      <nav class="console-breadcrumb" :aria-label="t('settings.console.breadcrumb')">
+        <button type="button" class="back-button" data-ui-id="console-back-home" @click="go('home')"><ArrowLeft /><span>{{ t('settings.console.home') }}</span></button>
         <span>/</span>
-        <strong>{{ titles[currentPage] }}</strong>
+        <strong>{{ t(titleKeys[currentPage]) }}</strong>
       </nav>
       <header class="console-page-heading">
-        <h2>{{ titles[currentPage] }}</h2>
+        <h2>{{ t(titleKeys[currentPage]) }}</h2>
         <div class="project-control">
           <ProjectAccessControl compact @changed="reloadProjectBoundData" />
           <StoryProjectIdentityControl v-if="projectStore.currentProject" :project="projectStore.currentProject" />

@@ -22,6 +22,7 @@ import {
   type PackageImportResult,
 } from '../../api/client';
 import {
+  assetFolderLabel,
   buildAssetLibraryFolders,
   countAssetFolders,
   filterAssetByFolder,
@@ -32,8 +33,15 @@ import {
 } from '../../config/asset-library-folders';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { translateKnownIssues } from '../../config/known-issues-i18n';
+import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
 import { buildMapPickerOptions, type MapPickerOption } from '../../utils/map-tree-options';
+import {
+  consoleAssetsText,
+  importedMapIdSuffix,
+  translateAssetImportIssue,
+} from '../../utils/consoleAssetsPaneLocalization';
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
 
 interface FolderTreeNode {
@@ -49,6 +57,7 @@ interface PreviewSlice {
 
 const props = defineProps<{ catalog: AssetLibraryCatalog | null; loading: boolean; error: string | null }>();
 const projectStore = useProjectStore();
+const { language, t } = useI18n();
 const selectedCategory = ref<AssetLibraryCategoryId>('maps');
 const selectedFolderId = ref('all');
 const foldersPaneExpanded = ref(false);
@@ -97,11 +106,21 @@ const categoryIcons = {
 
 const gridCategories = new Set<AssetLibraryCategoryId>(['maps', 'tilesets', 'characters', 'images']);
 
+const ASSET_CATEGORY_LABEL_KEYS: Record<AssetLibraryCategoryId, Parameters<typeof t>[0]> = {
+  maps: 'assets.category.maps',
+  skills: 'assets.category.skills',
+  tilesets: 'assets.category.tilesets',
+  characters: 'assets.category.characters',
+  images: 'assets.category.images',
+  audio: 'assets.category.audio',
+  videos: 'assets.category.videos',
+};
+
 const categories = computed(() => props.catalog?.categories || []);
 const categoryEntries = computed(() =>
   (props.catalog?.entries || []).filter((entry) => entry.category === selectedCategory.value),
 );
-const categoryFolders = computed(() => buildAssetLibraryFolders(categoryEntries.value));
+const categoryFolders = computed(() => buildAssetLibraryFolders(categoryEntries.value, language.value));
 const folderCounts = computed(() => countAssetFolders(categoryEntries.value));
 const showFolderPane = computed(() => categoryFolders.value.length > 1);
 const folderTreeData = computed<FolderTreeNode[]>(() =>
@@ -118,20 +137,20 @@ const filteredEntries = computed(() => {
   return byFolder.filter((entry) => entryMatchesSearch(entry, query));
 });
 const searchPlaceholder = computed(() =>
-  selectedCategory.value === 'skills' ? '搜索名称或描述' : '搜索名称或来源',
+  selectedCategory.value === 'skills' ? t('assets.searchDesc') : t('assets.searchSource'),
 );
 const visibleEntries = computed(() => filteredEntries.value.slice(0, visibleLimit.value));
 const usesGrid = computed(() => gridCategories.has(selectedCategory.value));
 const listEmptyMessage = computed(() => {
-  if (!categoryEntries.value.length) return '该分类暂无静态素材';
-  if (!filteredEntries.value.length) return '该分类没有匹配的静态素材';
+  if (!categoryEntries.value.length) return t('assets.noAssets');
+  if (!filteredEntries.value.length) return t('assets.noMatchAssets');
   return '';
 });
 const selectedFile = computed(() => selectedEntry.value?.kind === 'file' ? selectedEntry.value : null);
 const selectedMap = computed(() => selectedEntry.value?.kind === 'map' ? selectedEntry.value.map : null);
 const selectedSkill = computed(() => selectedEntry.value?.kind === 'skill' ? selectedEntry.value : null);
 const translatedKnownIssues = computed(() =>
-  selectedMap.value ? translateKnownIssues(selectedMap.value.knownIssues) : [],
+  selectedMap.value ? translateKnownIssues(selectedMap.value.knownIssues, language.value) : [],
 );
 const isImage = computed(() => selectedFile.value?.category === 'tilesets' || selectedFile.value?.category === 'characters' || selectedFile.value?.category === 'images');
 const isAudio = computed(() => selectedFile.value?.category === 'audio');
@@ -141,18 +160,20 @@ const selectedPreviewSlices = computed<PreviewSlice[]>(() => {
   if (!file || file.category !== 'characters') return [];
   if (file.subtype === 'faces') {
     return Array.from({ length: 8 }, (_, index) => ({
-      label: `脸图 ${index + 1}`,
+      label: t('assets.faceN', { n: index + 1 }),
       className: `face-${index}`,
     }));
   }
   if (file.subtype === 'svActors') {
-    return ['待机', '咏唱', '防御', '受击', '突进', '胜利'].map((label, index) => ({
+    const labels = consoleAssetsText(language.value).svActorPreviewLabels;
+    return labels.map((label, index) => ({
       label,
       className: `sv-${index}`,
     }));
   }
   if (file.subtype === 'characters') {
-    return ['下', '左', '右', '上'].map((label, index) => ({
+    const labels = consoleAssetsText(language.value).characterDirectionLabels;
+    return labels.map((label, index) => ({
       label,
       className: `dir-${index}`,
     }));
@@ -163,6 +184,7 @@ const selectedPreviewSlices = computed<PreviewSlice[]>(() => {
 function syncFolderSelection(categoryId = selectedCategory.value) {
   selectedFolderId.value = loadStoredFolderId(categoryId, buildAssetLibraryFolders(
     (props.catalog?.entries || []).filter((entry) => entry.category === categoryId),
+    language.value,
   ));
   foldersPaneExpanded.value = loadFoldersPaneExpanded(categoryId);
   void nextTick(() => folderTreeRef.value?.setCurrentKey(selectedFolderId.value));
@@ -255,7 +277,7 @@ async function openFolderImportDialog() {
   const { folderId, folderLabel, count } = folderContext;
   closeFolderContext();
   if (!projectStore.currentProject) {
-    actionError.value = '请先打开项目后再批量导入地图';
+    actionError.value = t('assets.openProjectFirst');
     return;
   }
   Object.assign(importDialog, {
@@ -265,7 +287,7 @@ async function openFolderImportDialog() {
     count,
     includeEvents: false,
     parentMapId: 0,
-    parentMapOptions: [{ id: 0, label: '根目录' }],
+    parentMapOptions: [{ id: 0, label: t('assets.root') }],
     parentMapLoading: true,
     validation: null,
     busy: false,
@@ -277,10 +299,10 @@ async function openFolderImportDialog() {
       maps.tree(projectStore.currentProject),
       mapLibrary.validatePackage(assetIds),
     ]);
-    importDialog.parentMapOptions = buildMapPickerOptions(index.maps);
+    importDialog.parentMapOptions = buildMapPickerOptions(index.maps, language.value);
     importDialog.validation = validation;
   } catch (error) {
-    importDialog.error = (error as Error).message;
+    importDialog.error = formatErrorText(error);
   } finally {
     importDialog.parentMapLoading = false;
   }
@@ -292,9 +314,11 @@ function closeImportDialog() {
 }
 
 function formatPackageImportSummary(result: PackageImportResult, total: number): string {
-  const lines = [`已导入 ${result.mapIds.length} / ${total} 张地图到暂存区，需在编辑器应用暂存。`];
-  if (result.usedSourceHierarchy) lines.push('已尽量还原源工程的地图树层级。');
-  if (result.warnings.length) lines.push(`提示：${result.warnings.join('；')}`);
+  const lines = [t('assets.importSuccess', { imported: result.mapIds.length, total })];
+  if (result.usedSourceHierarchy) lines.push(t('assets.hierarchyRestored'));
+  if (result.warnings.length) {
+    lines.push(t('assets.warnings', { warnings: result.warnings.join(t('ui.separator.semicolon')) }));
+  }
   return lines.join('\n');
 }
 
@@ -306,12 +330,12 @@ function formatPackageImportFailures(result: PackageImportResult): string {
 async function runFolderImport() {
   if (importDialog.busy) return;
   if (!projectStore.currentProject) {
-    importDialog.error = '请先打开项目后再批量导入地图';
+    importDialog.error = t('assets.openProjectFirst');
     return;
   }
   const assetIds = collectFolderMapAssetIds(importDialog.folderId);
   if (!assetIds.length) {
-    importDialog.error = '该文件夹没有可导入的地图';
+    importDialog.error = t('assets.noImportableMaps');
     return;
   }
   importDialog.busy = true;
@@ -328,9 +352,9 @@ async function runFolderImport() {
     importDialog.visible = false;
     actionMessage.value = formatPackageImportSummary(result, assetIds.length);
     const failures = formatPackageImportFailures(result);
-    if (failures) actionError.value = `以下 ${result.failed.length} 张导入失败：\n${failures}`;
+    if (failures) actionError.value = t('assets.importFailed', { count: result.failed.length, details: failures });
   } catch (error) {
-    importDialog.error = (error as Error).message;
+    importDialog.error = formatErrorText(error);
   } finally {
     importDialog.busy = false;
   }
@@ -343,7 +367,7 @@ async function openEntry(entry: AssetLibraryEntry) {
   try {
     selectedEntry.value = await assetLibrary.detail(entry.assetId);
   } catch (error) {
-    actionError.value = (error as Error).message;
+    actionError.value = formatErrorText(error);
   } finally {
     detailLoading.value = false;
   }
@@ -352,7 +376,7 @@ async function openEntry(entry: AssetLibraryEntry) {
 async function importSelected() {
   if (!selectedEntry.value || actionBusy.value) return;
   if (!projectStore.currentProject) {
-    actionError.value = '请先打开项目后再导入素材';
+    actionError.value = t('assets.openProjectForAssets');
     return;
   }
   actionBusy.value = true;
@@ -361,26 +385,24 @@ async function importSelected() {
   try {
     const validation = await assetLibrary.validateImport(selectedEntry.value.assetId, projectStore.currentProject);
     if (!validation.ok) {
-      actionError.value = validation.issues.join('\n');
+      actionError.value = formatAssetImportIssues(validation.issues);
       return;
     }
     const result = await assetLibrary.import(selectedEntry.value.assetId, projectStore.currentProject);
     actionMessage.value = result.kind === 'skill'
-      ? `技能已导入暂存区，新 ID：${result.importedId}`
+      ? t('assets.skillImported', { id: Number(result.importedId ?? 0) })
       : result.kind === 'map'
-        ? `地图已导入暂存区${result.importedId ? `，新 ID：${result.importedId}` : ''}`
-        : '素材已导入暂存区';
+        ? t('assets.mapImported', { idSuffix: result.importedId ? importedMapIdSuffix(result.importedId, language.value) : '' })
+        : t('assets.assetImported');
   } catch (error) {
-    actionError.value = (error as Error).message;
+    actionError.value = formatErrorText(error);
   } finally {
     actionBusy.value = false;
   }
 }
 
 function entrySource(entry: AssetLibraryEntry): string {
-  if (entry.kind === 'map') return entry.map.packageLabel || entry.map.source.name;
-  if (entry.kind === 'skill') return entry.sourcePackage;
-  return entry.sourceSlug;
+  return assetFolderLabel(entry, language.value);
 }
 
 function entryMatchesSearch(entry: AssetLibraryEntry, query: string): boolean {
@@ -402,7 +424,7 @@ function entryMeta(entry: AssetLibraryEntry): string {
     const map = entry.map.map;
     return map?.width && map?.height ? `${map.width} × ${map.height}` : entry.map.engine;
   }
-  if (entry.kind === 'skill') return String(entry.skill.description || 'RPG Maker MV 技能');
+  if (entry.kind === 'skill') return String(entry.skill.description || t('assets.rmmvSkill'));
   return `${entry.subtype} · ${entry.format.toUpperCase()} · ${formatSize(entry.size)}`;
 }
 
@@ -420,8 +442,8 @@ function entryBadge(entry: AssetLibraryEntry): string {
     return map?.width && map?.height ? `${map.width}×${map.height}` : entry.map.engine;
   }
   if (entry.kind === 'file') {
-    if (entry.subtype === 'characters') return '4 向';
-    if (entry.subtype === 'faces') return '8 脸';
+    if (entry.subtype === 'characters') return t('assets.fourDir');
+    if (entry.subtype === 'faces') return t('assets.eightFaces');
     if (entry.subtype === 'svActors') return 'SV';
     return entry.subtype;
   }
@@ -456,37 +478,62 @@ function skillDamage(field: string): unknown {
 
 function dependencyRows(skill: AssetLibrarySkillEntry): string[] {
   const groups: Array<[string, Array<{ id: number; name: string }>]> = [
-    ['技能类型', skill.dependencies.skillTypes],
-    ['武器类型', skill.dependencies.weaponTypes],
-    ['元素', skill.dependencies.elements],
-    ['动画', skill.dependencies.animations],
-    ['状态', skill.dependencies.states],
-    ['公共事件', skill.dependencies.commonEvents],
+    [t('assets.skillType'), skill.dependencies.skillTypes],
+    [t('assets.weaponType'), skill.dependencies.weaponTypes],
+    [t('assets.element'), skill.dependencies.elements],
+    [t('assets.animation'), skill.dependencies.animations],
+    [t('assets.state'), skill.dependencies.states],
+    [t('assets.commonEvent'), skill.dependencies.commonEvents],
   ];
   const rows = groups.flatMap(([label, items]) => items.map((item) => `${label} #${item.id} · ${item.name}`));
-  rows.push(...skill.dependencies.plugins.map((item) => `插件 · ${item}`));
-  rows.push(...skill.dependencies.resources.map((item) => `资源 · ${item}`));
+  rows.push(...skill.dependencies.plugins.map((item) => `${t('assets.plugin')} · ${item}`));
+  rows.push(...skill.dependencies.resources.map((item) => `${t('assets.resource')} · ${item}`));
   return rows;
 }
 
 function skillEffects(): string[] {
   const effects = selectedSkill.value?.skill.effects;
-  if (!Array.isArray(effects) || !effects.length) return ['无附加效果'];
+  if (!Array.isArray(effects) || !effects.length) return [t('assets.noEffects')];
   return effects.map((effect, index) => {
-    if (!effect || typeof effect !== 'object') return `使用效果 ${index + 1}`;
+    if (!effect || typeof effect !== 'object') return t('assets.effectN', { n: index + 1 });
     const row = effect as Record<string, unknown>;
-    return `使用效果 ${index + 1} · 类型 ${row.code ?? 0} · 对象 ${row.dataId ?? 0} · 数值 ${row.value1 ?? row.value ?? 0}`;
+    return t('assets.effectDetail', { n: index + 1, code: Number(row.code ?? 0), dataId: Number(row.dataId ?? 0), value: Number(row.value1 ?? row.value ?? 0) });
   });
+}
+
+function categoryLabel(category: AssetLibraryCatalog['categories'][number]): string {
+  return t(ASSET_CATEGORY_LABEL_KEYS[category.id] || 'assets.category.maps') || category.label;
+}
+
+function selectedCategoryLabel(): string {
+  const category = categories.value.find((item) => item.id === selectedCategory.value);
+  return category ? categoryLabel(category) : '';
+}
+
+function mapTagsLabel(tags: readonly string[]): string {
+  return tags.length ? tags.join(t('assets.tagSeparator')) : t('commonEvent.none');
+}
+
+
+function formatErrorText(errorValue: unknown): string {
+  return formatUserFacingErrorMessage(errorValue, 'general', language.value);
+}
+
+function formatAssetImportIssues(issues: string[]): string {
+  if (language.value === 'en-US') {
+    return [t('assets.precheckFailed'), ...issues.map((issue) => translateAssetImportIssue(issue, language.value))].join('\n');
+  }
+  return issues.join('\n');
 }
 </script>
 
 <template>
   <div class="console-subpage">
-    <div v-if="error" class="state error">{{ error }}</div>
-    <div v-else-if="loading" class="state">正在读取静态资产库…</div>
+    <div v-if="error" class="state error">{{ formatErrorText(error) }}</div>
+    <div v-else-if="loading" class="state">{{ t('assets.loadingLibrary') }}</div>
     <div v-else class="library-layout">
       <aside class="library-categories">
-        <div class="console-panel-title">资产分类</div>
+        <div class="console-panel-title">{{ t('assets.categories') }}</div>
         <div class="category-list">
           <button
             v-for="category in categories"
@@ -497,14 +544,14 @@ function skillEffects(): string[] {
             @click="selectedCategory = category.id"
           >
             <component :is="categoryIcons[category.id]" />
-            <span>{{ category.label }}</span>
+            <span>{{ categoryLabel(category) }}</span>
             <b>{{ category.count }}</b>
           </button>
         </div>
         <div v-if="showFolderPane" class="folder-pane">
           <button type="button" class="folder-pane-toggle" @click="toggleFoldersPane">
             <el-icon :class="{ collapsed: !foldersPaneExpanded }"><ArrowRight /></el-icon>
-            <span>来源</span>
+            <span>{{ t('assets.source') }}</span>
             <b>{{ folderCounts.all ?? 0 }}</b>
           </button>
           <div v-show="foldersPaneExpanded" class="folder-tree-wrap">
@@ -534,12 +581,12 @@ function skillEffects(): string[] {
         <div class="console-list-header">
           <div class="list-heading">
             <strong>
-              {{ categories.find((category) => category.id === selectedCategory)?.label }}
+              {{ selectedCategoryLabel() }}
               <template v-if="selectedFolderId !== 'all'">
                 · {{ categoryFolders.find((folder) => folder.id === selectedFolderId)?.label }}
               </template>
             </strong>
-            <small>{{ filteredEntries.length }} 项</small>
+            <small>{{ t('story.itemCount', { count: filteredEntries.length }) }}</small>
           </div>
           <ConsoleSearchInput v-model="search" :placeholder="searchPlaceholder" />
         </div>
@@ -591,16 +638,16 @@ function skillEffects(): string[] {
             class="load-more"
             @click="visibleLimit += 250"
           >
-            再显示 {{ Math.min(250, filteredEntries.length - visibleEntries.length) }} 项
+            {{ t('story.showMore', { count: Math.min(250, filteredEntries.length - visibleEntries.length) }) }}
           </button>
           <div v-if="listEmptyMessage" class="empty">{{ listEmptyMessage }}</div>
         </div>
       </section>
 
       <aside class="library-detail">
-        <div class="console-panel-title">素材详情</div>
-        <div v-if="detailLoading" class="state">正在读取详情…</div>
-        <div v-else-if="!selectedEntry" class="empty">选择一个素材查看具体内容</div>
+        <div class="console-panel-title">{{ t('assets.details') }}</div>
+        <div v-if="detailLoading" class="state">{{ t('assets.loadingDetails') }}</div>
+        <div v-else-if="!selectedEntry" class="empty">{{ t('assets.selectHint') }}</div>
         <div v-else class="detail-scroll">
           <div class="detail-preview" :class="selectedEntry ? previewClass(selectedEntry) : {}">
             <img v-if="isImage && selectedFile" :src="selectedFile.url" :alt="selectedFile.name">
@@ -616,14 +663,14 @@ function skillEffects(): string[] {
           </div>
 
           <dl v-if="selectedFile" class="facts">
-            <dt>类型</dt><dd>{{ selectedFile.subtype }} · {{ selectedFile.format.toUpperCase() }}</dd>
-            <dt>文件</dt><dd>{{ selectedFile.fileName }}</dd>
-            <dt>大小</dt><dd>{{ formatSize(selectedFile.size) }}</dd>
-            <dt>来源</dt><dd>{{ selectedFile.sourceSlug }}</dd>
-            <dt>库内路径</dt><dd>{{ selectedFile.relativePath }}</dd>
+            <dt>{{ t('eventEditorDialog.type') }}</dt><dd>{{ selectedFile.subtype }} · {{ selectedFile.format.toUpperCase() }}</dd>
+            <dt>{{ t('plugins.file') }}</dt><dd>{{ selectedFile.fileName }}</dd>
+            <dt>{{ t('assets.size') }}</dt><dd>{{ formatSize(selectedFile.size) }}</dd>
+            <dt>{{ t('assets.source') }}</dt><dd>{{ selectedFile.sourceSlug }}</dd>
+            <dt>{{ t('assets.libraryPath') }}</dt><dd>{{ selectedFile.relativePath }}</dd>
           </dl>
           <div v-if="selectedPreviewSlices.length && selectedFile" class="slice-panel">
-            <strong>切分预览</strong>
+            <strong>{{ t('assets.slicePreview') }}</strong>
             <div class="slice-grid" :class="selectedFile.subtype">
               <span v-for="slice in selectedPreviewSlices" :key="slice.className" class="slice-cell">
                 <span class="slice-thumb" :class="slice.className">
@@ -636,42 +683,42 @@ function skillEffects(): string[] {
 
           <template v-else-if="selectedMap">
             <dl class="facts">
-              <dt>尺寸</dt><dd>{{ selectedMap.map?.width || '未知' }} × {{ selectedMap.map?.height || '未知' }}</dd>
-              <dt>图块集</dt><dd>{{ selectedMap.map?.tilesetName || `#${selectedMap.map?.tilesetId ?? '未知'}` }}</dd>
-              <dt>来源包</dt><dd>{{ selectedMap.packageLabel }}</dd>
-              <dt>标签</dt><dd>{{ selectedMap.tags.join('、') || '无' }}</dd>
-              <dt>依赖</dt><dd>{{ Object.values(selectedMap.dependencies).reduce<number>((sum, value) => sum + Number(value || 0), 0) }} 项</dd>
+              <dt>{{ t('assets.dimensions') }}</dt><dd>{{ selectedMap.map?.width || t('plugins.unknown') }} × {{ selectedMap.map?.height || t('plugins.unknown') }}</dd>
+              <dt>{{ t('assets.tileset') }}</dt><dd>{{ selectedMap.map?.tilesetName || `#${selectedMap.map?.tilesetId ?? t('plugins.unknown')}` }}</dd>
+              <dt>{{ t('assets.sourcePack') }}</dt><dd>{{ selectedMap.packageLabel }}</dd>
+              <dt>{{ t('assets.tags') }}</dt><dd>{{ mapTagsLabel(selectedMap.tags) }}</dd>
+              <dt>{{ t('assets.dependencies') }}</dt><dd>{{ t('assets.dependencyCount', { count: Object.values(selectedMap.dependencies).reduce<number>((sum, value) => sum + Number(value || 0), 0) }) }}</dd>
             </dl>
             <div v-if="translatedKnownIssues.length" class="detail-block warning">
-              <strong>已知问题</strong>
+              <strong>{{ t('assets.knownIssues') }}</strong>
               <span v-for="issue in translatedKnownIssues" :key="issue">{{ issue }}</span>
             </div>
           </template>
 
           <template v-else-if="selectedSkill">
-            <p class="skill-description">{{ String(skillValue('description') || '无描述') }}</p>
+            <p class="skill-description">{{ String(skillValue('description') || t('plugins.noDescription')) }}</p>
             <dl class="facts">
               <dt>MP / TP</dt><dd>{{ skillValue('mpCost') || 0 }} / {{ skillValue('tpCost') || 0 }}</dd>
-              <dt>作用范围</dt><dd>#{{ skillValue('scope') }}</dd>
-              <dt>伤害公式</dt><dd><code>{{ skillDamage('formula') || '无' }}</code></dd>
-              <dt>动画</dt><dd>#{{ skillValue('animationId') || 0 }}</dd>
-              <dt>成功率</dt><dd>{{ skillValue('successRate') }}%</dd>
-              <dt>备注</dt><dd>{{ skillValue('note') || '无' }}</dd>
+              <dt>{{ t('assets.scope') }}</dt><dd>#{{ skillValue('scope') }}</dd>
+              <dt>{{ t('assets.damageFormula') }}</dt><dd><code>{{ skillDamage('formula') || t('commonEvent.none') }}</code></dd>
+              <dt>{{ t('assets.animation') }}</dt><dd>#{{ skillValue('animationId') || 0 }}</dd>
+              <dt>{{ t('assets.successRate') }}</dt><dd>{{ skillValue('successRate') }}%</dd>
+              <dt>{{ t('eventEditorDialog.note') }}</dt><dd>{{ skillValue('note') || t('commonEvent.none') }}</dd>
             </dl>
             <div class="detail-block">
-              <strong>附加效果</strong>
+              <strong>{{ t('assets.additionalEffects') }}</strong>
               <span v-for="effect in skillEffects()" :key="effect">{{ effect }}</span>
             </div>
             <div class="detail-block">
-              <strong>导入依赖</strong>
+              <strong>{{ t('assets.importDeps') }}</strong>
               <span v-for="row in dependencyRows(selectedSkill)" :key="row">{{ row }}</span>
             </div>
           </template>
 
-          <div v-if="actionError" class="action-status error">{{ actionError }}</div>
+          <div v-if="actionError" class="action-status error">{{ formatErrorText(actionError) }}</div>
           <div v-if="actionMessage" class="action-status success">{{ actionMessage }}</div>
           <button type="button" class="import-button" :disabled="actionBusy" @click="importSelected">
-            {{ actionBusy ? '校验并导入中…' : '导入当前项目' }}
+            {{ actionBusy ? t('assets.validatingImport') : t('assets.importCurrent') }}
           </button>
         </div>
       </aside>
@@ -686,14 +733,14 @@ function skillEffects(): string[] {
         @contextmenu.prevent="closeFolderContext"
       >
         <ul class="ctx-menu" :style="{ left: `${folderContext.x}px`, top: `${folderContext.y}px` }">
-          <li @click="openFolderImportDialog">导入该文件夹全部地图（{{ folderContext.count }}）</li>
+          <li @click="openFolderImportDialog">{{ t('assets.importAllMaps', { count: folderContext.count }) }}</li>
         </ul>
       </div>
     </teleport>
 
     <el-dialog
       v-model="importDialog.visible"
-      title="批量导入地图"
+      :title="t('assets.bulkImportMaps')"
       width="440px"
       :close-on-click-modal="false"
       :show-close="!importDialog.busy"
@@ -701,13 +748,13 @@ function skillEffects(): string[] {
       @close="closeImportDialog"
     >
       <p class="import-dialog-lead">
-        来源：<strong>{{ importDialog.folderLabel }}</strong>（{{ importDialog.count }} 张地图）
+        {{ t('assets.sourceColon') }}<strong>{{ importDialog.folderLabel }}</strong>{{ t('assets.mapCount', { count: importDialog.count }) }}
       </p>
       <el-checkbox v-model="importDialog.includeEvents" :disabled="importDialog.busy">
-        保留源地图事件
+        {{ t('assets.keepSourceEvents') }}
       </el-checkbox>
       <div class="import-dialog-field">
-        <label>挂到父地图</label>
+        <label>{{ t('assets.attachParent') }}</label>
         <el-select
           v-model="importDialog.parentMapId"
           filterable
@@ -724,13 +771,13 @@ function skillEffects(): string[] {
         </el-select>
       </div>
       <div v-if="importDialog.validation && importDialog.validation.issues.length" class="import-dialog-warn">
-        预检发现 {{ importDialog.validation.issues.length }} 项问题，仍将尝试导入其余地图。
+        {{ t('assets.precheckIssues', { count: importDialog.validation.issues.length }) }}
       </div>
-      <div v-if="importDialog.error" class="import-dialog-error">{{ importDialog.error }}</div>
+      <div v-if="importDialog.error" class="import-dialog-error">{{ formatErrorText(importDialog.error) }}</div>
       <template #footer>
-        <el-button size="small" :disabled="importDialog.busy" @click="closeImportDialog">取消</el-button>
+        <el-button size="small" :disabled="importDialog.busy" @click="closeImportDialog">{{ t('eventcmd.cancel') }}</el-button>
         <el-button size="small" type="primary" :loading="importDialog.busy" @click="runFolderImport">
-          {{ importDialog.busy ? '导入中…' : '开始导入' }}
+          {{ importDialog.busy ? t('assets.importing') : t('assets.startImport') }}
         </el-button>
       </template>
     </el-dialog>

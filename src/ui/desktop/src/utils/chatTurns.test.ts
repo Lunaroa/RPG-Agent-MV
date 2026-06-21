@@ -404,6 +404,32 @@ describe('buildChatTurns', () => {
     })
   })
 
+  test('summarizes execution groups in English mode', () => {
+    const timeline = groupExecutionSegments([
+      segment('tool', 't1', '', {
+        tool: 'filesystem.create_file',
+        input: { path: 'src/new.ts' },
+        status: 'running',
+      }),
+      segment('tool', 't2', '', {
+        tool: 'search.query',
+        input: { query: 'chat' },
+        status: 'running',
+      }),
+    ])
+    const group = timeline[0]
+    assert.equal(group.type, 'execution-group')
+    if (group.type !== 'execution-group') return
+
+    assert.deepEqual(summarizeExecutionGroup(group, 'en-US'), {
+      state: 'running',
+      createdFiles: 1,
+      editedFiles: 0,
+      commands: 1,
+      text: 'Creating 1 file Running 1 command',
+    })
+  })
+
   test('falls back to zero commands for execution groups without recognized operations', () => {
     const timeline = groupExecutionSegments([
       segment('status', 's1', '', { status: 'done' }),

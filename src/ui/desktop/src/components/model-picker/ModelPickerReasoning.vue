@@ -1,9 +1,9 @@
 <template>
-  <aside class="model-picker-reasoning" aria-label="推理强度">
-    <div class="model-picker-reasoning-title">推理强度</div>
-    <div v-if="loading" class="model-picker-reasoning-empty">加载推理档位…</div>
+  <aside class="model-picker-reasoning" :aria-label="t('modelPicker.reasoning.title')">
+    <div class="model-picker-reasoning-title">{{ t('modelPicker.reasoning.title') }}</div>
+    <div v-if="loading" class="model-picker-reasoning-empty">{{ t('modelPicker.reasoning.loading') }}</div>
     <div v-else-if="!hasMultipleVariants" class="model-picker-reasoning-empty">
-      该模型不支持调节推理强度
+      {{ t('modelPicker.reasoning.unsupported') }}
     </div>
     <template v-else>
       <button
@@ -26,6 +26,7 @@
 <script setup lang="ts">
 import { Check } from '@element-plus/icons-vue'
 import type { ThinkingVariant } from '../../composables/useThinkingVariants'
+import { useI18n } from '../../i18n'
 
 defineProps<{
   variants: ThinkingVariant[]
@@ -37,4 +38,6 @@ defineProps<{
 const emit = defineEmits<{
   'update:thinkingLevel': [value: string]
 }>()
+
+const { t } = useI18n()
 </script>

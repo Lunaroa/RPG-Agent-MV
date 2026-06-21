@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { watch } from 'vue';
+import { computed, watch } from 'vue';
 import AgentPanel from '../components/agent/AgentPanel.vue';
 import WorkspaceSidePanel from '../components/agent/WorkspaceSidePanel.vue';
 import EditorView from './EditorView.vue';
 import { useEventPlacementAskStore } from '../stores/eventPlacementAsk';
 import { useProjectStore } from '../stores/project';
 import { useWorkbenchUiStore } from '../stores/workbenchUi';
+import { useI18n } from '../i18n';
+import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
 
 const projectStore = useProjectStore();
 const eventPlacementAsk = useEventPlacementAskStore();
 const ui = useWorkbenchUiStore();
+const { language, t } = useI18n();
 let lastPlacementPendingCount = 0;
+const loadErrorText = computed(() => (
+  projectStore.loadError ? formatUserFacingErrorMessage(projectStore.loadError, 'general', language.value) : ''
+));
 
 watch(
   () => eventPlacementAsk.pendingCount,
@@ -27,10 +33,10 @@ watch(
 <template>
   <div class="workbench-view" data-ui-id="workbench-view">
     <div v-if="!projectStore.currentProject" class="project-empty-state" data-ui-id="workbench-project-empty">
-      <strong>还没有接入 RPG Maker MV 项目</strong>
-      <span>先到控制台添加项目目录，编辑器和 Agent 写入能力才会启用。</span>
-      <router-link class="project-empty-action" data-ui-id="workbench-open-project-console" :to="{ path: '/console', query: { page: 'home' } }">去添加项目</router-link>
-      <small v-if="projectStore.loadError">{{ projectStore.loadError }}</small>
+      <strong>{{ t('workbench.empty.title') }}</strong>
+      <span>{{ t('workbench.empty.body') }}</span>
+      <router-link class="project-empty-action" data-ui-id="workbench-open-project-console" :to="{ path: '/console', query: { page: 'home' } }">{{ t('workbench.empty.action') }}</router-link>
+      <small v-if="loadErrorText">{{ loadErrorText }}</small>
     </div>
     <template v-else>
       <main class="workbench-main" data-ui-id="workbench-main">

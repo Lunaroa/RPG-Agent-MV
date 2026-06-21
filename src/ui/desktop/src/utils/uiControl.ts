@@ -1,3 +1,6 @@
+import type { ProductLanguage } from '@contract/types';
+import { translate } from '../i18n/messages.ts';
+
 export type UiControlCommandType =
   | 'capture-current'
   | 'navigate'
@@ -76,8 +79,10 @@ export function registerEditorUiControlHandler(handler: EditorUiControlHandler):
   };
 }
 
-export async function openEditorEventFromUiControl(mapId: number, eventId: number): Promise<EditorUiControlState> {
-  if (!editorHandler) throw new Error('编辑器尚未就绪，无法打开事件编辑界面。');
+export async function openEditorEventFromUiControl(mapId: number, eventId: number, language: ProductLanguage): Promise<EditorUiControlState> {
+  if (!editorHandler) {
+    throw new Error(translate('app.uiControl.error.editorNotReady', language));
+  }
   return editorHandler.openEventEditor(mapId, eventId);
 }
 
@@ -102,44 +107,44 @@ export function collectUiControlPageState(): Record<string, unknown> {
   };
 }
 
-export async function runDomUiControlCommand(command: UiControlCommand): Promise<Record<string, unknown>> {
-  if (command.type === 'click') return clickUiElement(command);
-  if (command.type === 'input') return inputUiElement(command);
-  if (command.type === 'key') return keyUiElement(command);
-  if (command.type === 'read') return readUiElement(command);
-  if (command.type === 'wait') return waitForUiElement(command);
-  throw new Error(`不支持的 DOM UI 控制命令：${command.type}`);
+export async function runDomUiControlCommand(command: UiControlCommand, language: ProductLanguage): Promise<Record<string, unknown>> {
+  if (command.type === 'click') return clickUiElement(command, language);
+  if (command.type === 'input') return inputUiElement(command, language);
+  if (command.type === 'key') return keyUiElement(command, language);
+  if (command.type === 'read') return readUiElement(command, language);
+  if (command.type === 'wait') return waitForUiElement(command, language);
+  throw new Error(translate('app.uiControl.error.unsupportedDomCommand', language, { type: command.type }));
 }
 
-function clickUiElement(command: UiControlCommand): Record<string, unknown> {
-  const element = requireTargetElement(command);
-  ensureActionableElement(element);
+function clickUiElement(command: UiControlCommand, language: ProductLanguage): Record<string, unknown> {
+  const element = requireTargetElement(command, language);
+  ensureActionableElement(element, language);
   scrollElementIntoView(element);
   focusElement(element);
   element.click();
   return { action: 'click', target: elementState(element) };
 }
 
-function inputUiElement(command: UiControlCommand): Record<string, unknown> {
-  const element = requireTargetElement(command);
-  ensureActionableElement(element);
+function inputUiElement(command: UiControlCommand, language: ProductLanguage): Record<string, unknown> {
+  const element = requireTargetElement(command, language);
+  ensureActionableElement(element, language);
   const text = command.text;
-  if (typeof text !== 'string') throw new Error('input 命令缺少 text。');
+  if (typeof text !== 'string') throw new Error(translate('app.uiControl.error.inputMissingText', language));
   scrollElementIntoView(element);
   focusElement(element);
-  setElementInputValue(element, text);
+  setElementInputValue(element, text, language);
   return { action: 'input', target: elementState(element) };
 }
 
-function keyUiElement(command: UiControlCommand): Record<string, unknown> {
+function keyUiElement(command: UiControlCommand, language: ProductLanguage): Record<string, unknown> {
   const element = command.selector || command.testId
-    ? requireTargetElement(command)
+    ? requireTargetElement(command, language)
     : activeHtmlElement() || document.body;
-  ensureKeyTarget(element);
+  ensureKeyTarget(element, language);
   scrollElementIntoView(element);
   focusElement(element);
 
-  const combo = normalizeKeyCombo(command);
+  const combo = normalizeKeyCombo(command, language);
   const keydown = new KeyboardEvent('keydown', {
     key: combo.key,
     bubbles: true,
@@ -163,22 +168,22 @@ function keyUiElement(command: UiControlCommand): Record<string, unknown> {
   return { action: 'key', key: combo.key, modifiers: combo.modifiers, target: elementState(element) };
 }
 
-function readUiElement(command: UiControlCommand): Record<string, unknown> {
-  const element = requireTargetElement(command);
+function readUiElement(command: UiControlCommand, language: ProductLanguage): Record<string, unknown> {
+  const element = requireTargetElement(command, language);
   return { action: 'read', target: elementState(element) };
 }
 
-async function waitForUiElement(command: UiControlCommand): Promise<Record<string, unknown>> {
+async function waitForUiElement(command: UiControlCommand, language: ProductLanguage): Promise<Record<string, unknown>> {
   const condition = command.condition || 'visible';
   const timeoutMs = clampNumber(command.timeoutMs, 15000, 1000, 60000);
   const started = performance.now();
 
   if ((condition === 'text' || condition === 'value') && typeof command.expect !== 'string') {
-    throw new Error(`wait ${condition} 命令缺少 expect。`);
+    throw new Error(translate('app.uiControl.error.waitConditionMissingExpect', language, { condition }));
   }
 
   while (performance.now() - started <= timeoutMs) {
-    const element = findTargetElement(command);
+    const element = findTargetElement(command, language);
     if (matchesWaitCondition(element, condition, command.expect)) {
       return {
         action: 'wait',
@@ -190,8 +195,12 @@ async function waitForUiElement(command: UiControlCommand): Promise<Record<strin
     await delay(80);
   }
 
-  const element = findTargetElement(command);
-  throw new Error(`等待 UI 控件超时：${targetDescription(command)} 未满足 ${condition}。当前状态：${JSON.stringify(elementState(element))}`);
+  const element = findTargetElement(command, language);
+  throw new Error(translate('app.uiControl.error.waitTimedOut', language, {
+    target: targetDescription(command, language),
+    condition,
+    state: JSON.stringify(elementState(element)),
+  }));
 }
 
 function matchesWaitCondition(element: Element | null, condition: UiControlWaitCondition, expect: string | undefined): boolean {
@@ -206,14 +215,16 @@ function matchesWaitCondition(element: Element | null, condition: UiControlWaitC
   return false;
 }
 
-function requireTargetElement(command: UiControlCommand): HTMLElement {
-  const element = findTargetElement(command);
-  if (!element) throw new Error(`找不到 UI 控件：${targetDescription(command)}。`);
-  if (!(element instanceof HTMLElement)) throw new Error(`目标控件不是可操作 HTML 元素：${targetDescription(command)}。`);
+function requireTargetElement(command: UiControlCommand, language: ProductLanguage): HTMLElement {
+  const element = findTargetElement(command, language);
+  if (!element) throw new Error(translate('app.uiControl.error.targetNotFound', language, { target: targetDescription(command, language) }));
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(translate('app.uiControl.error.targetNotActionableElement', language, { target: targetDescription(command, language) }));
+  }
   return element;
 }
 
-function findTargetElement(command: UiControlCommand): Element | null {
+function findTargetElement(command: UiControlCommand, language: ProductLanguage): Element | null {
   if (command.testId) {
     for (const element of Array.from(document.querySelectorAll('[data-ui-id]'))) {
       if (element.getAttribute('data-ui-id') === command.testId) return element;
@@ -221,26 +232,26 @@ function findTargetElement(command: UiControlCommand): Element | null {
     return null;
   }
   if (command.selector) return document.querySelector(command.selector);
-  throw new Error('命令缺少 testId 或 selector。');
+  throw new Error(translate('app.uiControl.error.missingTargetSelector', language));
 }
 
-function targetDescription(command: UiControlCommand): string {
+function targetDescription(command: UiControlCommand, language: ProductLanguage): string {
   if (command.testId) return `testId=${command.testId}`;
   if (command.selector) return `selector=${command.selector}`;
-  return '(未指定目标)';
+  return translate('app.uiControl.error.targetNotSpecified', language);
 }
 
-function ensureActionableElement(element: HTMLElement): void {
-  if (!isElementVisible(element)) throw new Error(`目标控件不可见：${describeElement(element)}。`);
-  if (isElementDisabled(element)) throw new Error(`目标控件已禁用：${describeElement(element)}。`);
+function ensureActionableElement(element: HTMLElement, language: ProductLanguage): void {
+  if (!isElementVisible(element)) throw new Error(translate('app.uiControl.error.targetNotVisible', language, { target: describeElement(element) }));
+  if (isElementDisabled(element)) throw new Error(translate('app.uiControl.error.targetDisabled', language, { target: describeElement(element) }));
 }
 
-function ensureKeyTarget(element: HTMLElement): void {
-  if (!isElementVisible(element)) throw new Error(`按键目标不可见：${describeElement(element)}。`);
-  if (isElementDisabled(element)) throw new Error(`按键目标已禁用：${describeElement(element)}。`);
+function ensureKeyTarget(element: HTMLElement, language: ProductLanguage): void {
+  if (!isElementVisible(element)) throw new Error(translate('app.uiControl.error.keyTargetNotVisible', language, { target: describeElement(element) }));
+  if (isElementDisabled(element)) throw new Error(translate('app.uiControl.error.keyTargetDisabled', language, { target: describeElement(element) }));
 }
 
-function setElementInputValue(element: HTMLElement, text: string): void {
+function setElementInputValue(element: HTMLElement, text: string, language: ProductLanguage): void {
   if (element instanceof HTMLTextAreaElement) {
     element.value = text;
     dispatchInputEvents(element);
@@ -248,7 +259,7 @@ function setElementInputValue(element: HTMLElement, text: string): void {
   }
   if (element instanceof HTMLInputElement) {
     if (['button', 'checkbox', 'file', 'image', 'radio', 'reset', 'submit'].includes(element.type)) {
-      throw new Error(`input 命令不能写入 ${element.type} 输入控件。`);
+      throw new Error(translate('app.uiControl.error.inputCannotWriteToType', language, { type: element.type }));
     }
     element.value = text;
     dispatchInputEvents(element);
@@ -256,7 +267,7 @@ function setElementInputValue(element: HTMLElement, text: string): void {
   }
   if (element instanceof HTMLSelectElement) {
     element.value = text;
-    if (element.value !== text) throw new Error(`下拉控件没有值：${text}。`);
+    if (element.value !== text) throw new Error(translate('app.uiControl.error.selectMissingValue', language, { value: text }));
     dispatchInputEvents(element);
     return;
   }
@@ -265,7 +276,7 @@ function setElementInputValue(element: HTMLElement, text: string): void {
     dispatchInputEvents(element);
     return;
   }
-  throw new Error(`目标控件不支持文本输入：${describeElement(element)}。`);
+  throw new Error(translate('app.uiControl.error.targetUnsupportedTextInput', language, { target: describeElement(element) }));
 }
 
 function dispatchInputEvents(element: HTMLElement): void {
@@ -273,7 +284,7 @@ function dispatchInputEvents(element: HTMLElement): void {
   element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
 }
 
-function normalizeKeyCombo(command: UiControlCommand): {
+function normalizeKeyCombo(command: UiControlCommand, language: ProductLanguage): {
   key: string;
   ctrlKey: boolean;
   shiftKey: boolean;
@@ -282,7 +293,7 @@ function normalizeKeyCombo(command: UiControlCommand): {
   modifiers: string[];
 } {
   const raw = String(command.key || '').trim();
-  if (!raw) throw new Error('key 命令缺少 key。');
+  if (!raw) throw new Error(translate('app.uiControl.error.keyCommandMissing', language));
 
   const rawParts = raw.split('+').map((part) => part.trim()).filter(Boolean);
   const keyPart = rawParts.length ? rawParts[rawParts.length - 1] : raw;

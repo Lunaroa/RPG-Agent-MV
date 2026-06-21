@@ -1,6 +1,9 @@
 import type { AssetLibraryCategoryId, AssetLibraryEntry } from '../api/client';
+import type { ProductLanguage } from '@contract/types';
 import { classifyMapFolder } from './map-library-folders.ts';
 import { formatSourceLabel } from './asset-library-source-labels.ts';
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts';
+import { translate } from '../i18n/messages.ts';
 
 export const ASSET_LIBRARY_FOLDER_STORAGE_PREFIX = 'console-assets.library-folder';
 export const ASSET_LIBRARY_FOLDERS_EXPANDED_PREFIX = 'console-assets.folders-expanded';
@@ -16,22 +19,26 @@ export function classifyAssetFolder(entry: AssetLibraryEntry): string {
   return entry.sourceSlug || 'ungrouped';
 }
 
-export function assetFolderLabel(entry: AssetLibraryEntry): string {
-  if (entry.kind === 'map') return entry.map.packageLabel || formatSourceLabel(entry.map.packageId);
-  if (entry.kind === 'skill') return formatSourceLabel(entry.sourcePackage);
-  return formatSourceLabel(entry.sourceSlug);
+export function assetFolderLabel(entry: AssetLibraryEntry, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  language = normalizeProductLanguage(language)
+  if (entry.kind === 'map') {
+    return entry.map.packageLabel || formatSourceLabel(entry.map.packageId, language);
+  }
+  if (entry.kind === 'skill') return formatSourceLabel(entry.sourcePackage, language);
+  return formatSourceLabel(entry.sourceSlug, language);
 }
 
-export function buildAssetLibraryFolders(entries: readonly AssetLibraryEntry[]): AssetLibraryFolderDef[] {
-  const all: AssetLibraryFolderDef = { id: 'all', label: '全部' };
+export function buildAssetLibraryFolders(entries: readonly AssetLibraryEntry[], language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): AssetLibraryFolderDef[] {
+  language = normalizeProductLanguage(language)
+  const all: AssetLibraryFolderDef = { id: 'all', label: translate('assetfolder.all', language) };
   const labels = new Map<string, string>();
   for (const entry of entries) {
     const id = classifyAssetFolder(entry);
-    const label = assetFolderLabel(entry);
+    const label = assetFolderLabel(entry, language);
     if (!labels.has(id)) labels.set(id, label);
   }
   const folders = [...labels.entries()]
-    .sort((a, b) => a[1].localeCompare(b[1], 'zh-CN'))
+    .sort((a, b) => a[1].localeCompare(b[1], language))
     .map(([id, label]) => ({ id, label }));
   return [all, ...folders];
 }

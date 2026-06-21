@@ -3,79 +3,79 @@
     <div v-if="visible" class="ev-modal-overlay editor-modal-overlay" data-ui-id="event-editor-overlay" :data-editor-dialog-layer="LAYER_Z.eventEditor" @mousedown.self="requestClose">
       <section ref="modalRef" class="ev-modal editor-modal-shell" data-ui-id="event-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="event-editor-title">
         <header class="ev-title-bar editor-modal-header">
-          <h3 id="event-editor-title" class="editor-modal-title">{{ draft?.id ? `ID:${String(draft.id).padStart(3, '0')} - 事件编辑器` : '新建事件' }}</h3>
-          <button type="button" class="editor-modal-close" data-ui-id="event-editor-close" aria-label="关闭事件编辑器" title="关闭" @click="requestClose">×</button>
+          <h3 id="event-editor-title" class="editor-modal-title">{{ eventEditorTitle }}</h3>
+          <button type="button" class="editor-modal-close" data-ui-id="event-editor-close" :aria-label="t('eventEditorDialog.closeTitle')" :title="t('eventcmd.close')" @click="requestClose">×</button>
         </header>
         <template v-if="draft">
           <div class="ev-meta-bar">
-            <label class="ev-inline-field name"><span>名称</span><input v-model="draft.name" data-ui-id="event-editor-name" :disabled="shellLocked" @input="markDirty" /></label>
-            <label class="ev-inline-field note"><span>备注</span><input v-model="draft.note" data-ui-id="event-editor-note" :disabled="shellLocked" @input="markDirty" /></label>
+            <label class="ev-inline-field name"><span>{{ t('commonEvent.name') }}</span><input v-model="draft.name" data-ui-id="event-editor-name" :disabled="shellLocked" @input="markDirty" /></label>
+            <label class="ev-inline-field note"><span>{{ t('eventEditorDialog.note') }}</span><input v-model="draft.note" data-ui-id="event-editor-note" :disabled="shellLocked" @input="markDirty" /></label>
             <label class="ev-inline-field coord"><span>X</span><input v-model.number="draft.x" data-ui-id="event-editor-x" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
             <label class="ev-inline-field coord"><span>Y</span><input v-model.number="draft.y" data-ui-id="event-editor-y" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
-            <div class="ev-toolbar-group page-tools" aria-label="事件页操作">
-              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-add" @click="addPage">新页</button>
-              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-copy" @click="copyPage">复制页</button>
-              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-paste" :disabled="!pageClipboard" @click="pastePage">粘贴页</button>
-              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-clear" :disabled="currentPageLocked" @click="clearPage">清空页</button>
-              <button type="button" class="ev-tool-btn danger" data-ui-id="event-editor-page-delete" :disabled="currentPageLocked || draft.pages.length <= 1" @click="deletePage">删页</button>
+            <div class="ev-toolbar-group page-tools" :aria-label="t('eventEditorDialog.pageActions')">
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-add" @click="addPage">{{ t('eventEditorDialog.newPage') }}</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-copy" @click="copyPage">{{ t('eventEditorDialog.copyPage') }}</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-paste" :disabled="!pageClipboard" @click="pastePage">{{ t('eventEditorDialog.pastePage') }}</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-clear" :disabled="currentPageLocked" @click="clearPage">{{ t('eventEditorDialog.clearPage') }}</button>
+              <button type="button" class="ev-tool-btn danger" data-ui-id="event-editor-page-delete" :disabled="currentPageLocked || draft.pages.length <= 1" @click="deletePage">{{ t('eventEditorDialog.deletePage') }}</button>
             </div>
           </div>
           <div v-if="shellLocked || currentPageLocked" class="ev-lock-banner">
-            {{ currentPageLocked ? '当前页是历史受保护页，只读。你仍可点击“新页”追加可编辑页面。' : '受保护事件的名称、备注和坐标只读。' }}
+            {{ currentPageLocked ? t('eventEditorDialog.protectedPage') : t('eventEditorDialog.protectedFields') }}
           </div>
-          <nav class="ev-page-tabs" aria-label="事件页">
+          <nav class="ev-page-tabs" :aria-label="t('eventEditorDialog.eventPages')">
             <button
               v-for="(_, index) in draft.pages"
               :key="index"
               type="button"
               :class="{ active: pageIndex === index }"
               @click="pageIndex = index"
-            >{{ index + 1 }}{{ pageIdentities[index]?.origin === 'baseline' ? ' · 锁' : '' }}</button>
+            >{{ index + 1 }}{{ pageIdentities[index]?.origin === 'baseline' ? t('eventEditorDialog.locked') : '' }}</button>
           </nav>
           <div v-if="currentPage" class="ev-main-grid">
             <aside class="ev-settings">
               <fieldset class="ev-group conditions-group" :disabled="currentPageLocked">
-                <legend>出现条件</legend>
-                <ConditionSelect v-model:valid="currentPage.conditions.switch1Valid" v-model:value="currentPage.conditions.switch1Id" label="开关" :options="catalog?.switches || []" @change="markDirty" />
-                <ConditionSelect v-model:valid="currentPage.conditions.switch2Valid" v-model:value="currentPage.conditions.switch2Id" label="开关" :options="catalog?.switches || []" @change="markDirty" />
-                <ConditionSelect v-model:valid="currentPage.conditions.variableValid" v-model:value="currentPage.conditions.variableId" label="变量" :options="catalog?.variables || []" @change="markDirty"><input :value="currentPage.conditions.variableValid ? currentPage.conditions.variableValue : ''" class="mini-input" type="number" :disabled="!currentPage.conditions.variableValid" @input="setVariableConditionValue" /></ConditionSelect>
-                <label class="ev-cond-row"><input v-model="currentPage.conditions.selfSwitchValid" type="checkbox" @change="markDirty" /><span>独立开关</span><select :value="currentPage.conditions.selfSwitchValid ? currentPage.conditions.selfSwitchCh : ''" :disabled="!currentPage.conditions.selfSwitchValid" @change="setSelfSwitchCondition"><option value="" disabled>...</option><option v-for="ch in SELF_SWITCH_CHANNELS" :key="ch">{{ ch }}</option></select></label>
-                <ConditionSelect v-model:valid="currentPage.conditions.actorValid" v-model:value="currentPage.conditions.actorId" label="角色" :options="catalog?.actors || []" @change="markDirty" />
-                <ConditionSelect v-model:valid="currentPage.conditions.itemValid" v-model:value="currentPage.conditions.itemId" label="物品" :options="catalog?.items || []" @change="markDirty" />
+                <legend>{{ t('eventEditorDialog.conditions') }}</legend>
+                <ConditionSelect v-model:valid="currentPage.conditions.switch1Valid" v-model:value="currentPage.conditions.switch1Id" :label="t('mapPreview.switch')" :options="catalog?.switches || []" @change="markDirty" />
+                <ConditionSelect v-model:valid="currentPage.conditions.switch2Valid" v-model:value="currentPage.conditions.switch2Id" :label="t('mapPreview.switch')" :options="catalog?.switches || []" @change="markDirty" />
+                <ConditionSelect v-model:valid="currentPage.conditions.variableValid" v-model:value="currentPage.conditions.variableId" :label="t('mapPreview.variable')" :options="catalog?.variables || []" @change="markDirty"><input :value="currentPage.conditions.variableValid ? currentPage.conditions.variableValue : ''" class="mini-input" type="number" :disabled="!currentPage.conditions.variableValid" @input="setVariableConditionValue" /></ConditionSelect>
+                <label class="ev-cond-row"><input v-model="currentPage.conditions.selfSwitchValid" type="checkbox" @change="markDirty" /><span>{{ t('mapPreview.selfSwitch') }}</span><select :value="currentPage.conditions.selfSwitchValid ? currentPage.conditions.selfSwitchCh : ''" :disabled="!currentPage.conditions.selfSwitchValid" @change="setSelfSwitchCondition"><option value="" disabled>...</option><option v-for="ch in SELF_SWITCH_CHANNELS" :key="ch">{{ ch }}</option></select></label>
+                <ConditionSelect v-model:valid="currentPage.conditions.actorValid" v-model:value="currentPage.conditions.actorId" :label="t('mapPreview.actor')" :options="catalog?.actors || []" @change="markDirty" />
+                <ConditionSelect v-model:valid="currentPage.conditions.itemValid" v-model:value="currentPage.conditions.itemId" :label="t('mapPreview.item')" :options="catalog?.items || []" @change="markDirty" />
               </fieldset>
               <fieldset class="ev-group image-group" :disabled="currentPageLocked">
-                <legend>图像</legend>
+                <legend>{{ t('eventEditorDialog.image') }}</legend>
                 <div class="image-preview"><canvas ref="previewCanvas" width="78" height="108" /></div>
-                <button type="button" class="ev-tool-btn block" @click="imagePicker?.open(currentPage.image)">图像...</button>
-                <span class="image-caption">{{ imageSummary(currentPage.image) }}</span>
+                <button type="button" class="ev-tool-btn block" @click="imagePicker?.open(currentPage.image)">{{ t('eventEditorDialog.imagePicker') }}</button>
+                <span class="image-caption">{{ localizedImageSummary(currentPage.image) }}</span>
               </fieldset>
               <fieldset class="ev-group move-group" :disabled="currentPageLocked">
-                <legend>自主移动</legend>
-                <label class="ev-select-row"><span>类型</span><select v-model.number="currentPage.moveType" @change="markDirty"><option v-for="[value, label] in MOVE_TYPES" :key="value" :value="Number(value)">{{ label }}</option></select></label>
-                <button type="button" class="ev-tool-btn block" :disabled="currentPage.moveType !== 3" @click="routeDialog?.open(currentPage.moveRoute)">路线...</button>
+                <legend>{{ t('eventEditorDialog.autonomousMovement') }}</legend>
+                <label class="ev-select-row"><span>{{ t('eventEditorDialog.type') }}</span><select v-model.number="currentPage.moveType" @change="markDirty"><option v-for="[value, label] in localizedMoveTypes" :key="value" :value="Number(value)">{{ label }}</option></select></label>
+                <button type="button" class="ev-tool-btn block" :disabled="currentPage.moveType !== 3" @click="routeDialog?.open(currentPage.moveRoute)">{{ t('eventEditorDialog.route') }}</button>
                 <div class="mini-grid">
-                  <label class="ev-select-row"><span>速度</span><select v-model.number="currentPage.moveSpeed" @change="markDirty"><option v-for="[value, label] in MOVE_SPEEDS" :key="value" :value="Number(value)">{{ label }}</option></select></label>
-                  <label class="ev-select-row"><span>频率</span><select v-model.number="currentPage.moveFrequency" @change="markDirty"><option v-for="[value, label] in MOVE_FREQS" :key="value" :value="Number(value)">{{ label }}</option></select></label>
+                  <label class="ev-select-row"><span>{{ t('moveRoute.speed') }}</span><select v-model.number="currentPage.moveSpeed" @change="markDirty"><option v-for="[value, label] in localizedMoveSpeeds" :key="value" :value="Number(value)">{{ label }}</option></select></label>
+                  <label class="ev-select-row"><span>{{ t('moveRoute.frequency') }}</span><select v-model.number="currentPage.moveFrequency" @change="markDirty"><option v-for="[value, label] in localizedMoveFreqs" :key="value" :value="Number(value)">{{ label }}</option></select></label>
                 </div>
               </fieldset>
               <fieldset class="ev-group options-group" :disabled="currentPageLocked">
-                <legend>选项</legend>
+                <legend>{{ t('eventEditorDialog.options') }}</legend>
                 <label v-for="[key, label] in pageOptions" :key="key" class="ev-check"><input v-model="currentPage[key]" type="checkbox" @change="markDirty" />{{ label }}</label>
               </fieldset>
               <fieldset class="ev-group priority-group" :disabled="currentPageLocked">
-                <legend>优先级</legend>
-                <select v-model.number="currentPage.priorityType" @change="markDirty"><option v-for="[value, label] in PRIORITIES" :key="value" :value="Number(value)">{{ label }}</option></select>
+                <legend>{{ t('eventEditorDialog.priority') }}</legend>
+                <select v-model.number="currentPage.priorityType" @change="markDirty"><option v-for="[value, label] in localizedPriorities" :key="value" :value="Number(value)">{{ label }}</option></select>
               </fieldset>
               <fieldset class="ev-group trigger-group" :disabled="currentPageLocked">
-                <legend>触发条件</legend>
-                <select v-model.number="currentPage.trigger" @change="markDirty"><option v-for="[value, label] in TRIGGERS" :key="value" :value="Number(value)">{{ label }}</option></select>
+                <legend>{{ t('commonEvent.trigger') }}</legend>
+                <select v-model.number="currentPage.trigger" @change="markDirty"><option v-for="[value, label] in localizedTriggers" :key="value" :value="Number(value)">{{ label }}</option></select>
               </fieldset>
             </aside>
             <section class="ev-commands" :class="{ locked: currentPageLocked }">
-              <strong class="ev-cmd-title">执行内容</strong>
+              <strong class="ev-cmd-title">{{ t('commonEvent.contents') }}</strong>
               <div class="command-list" @contextmenu.prevent="openCommandContext($event, null)">
                 <div v-if="!spans.length" class="command-empty">
-                  暂无指令。双击列表末尾的 ◆ 添加。
+                  {{ t('eventEditorDialog.emptyHint') }}
                 </div>
                 <button
                   v-for="(view, index) in spanViews"
@@ -95,26 +95,26 @@
             </section>
           </div>
           <footer class="ev-footer">
-            <span class="ev-save-status">{{ dirty ? '有未保存修改' : '已保存到暂存' }}</span>
+            <span class="ev-save-status">{{ dirty ? t('eventEditorDialog.unsavedChanges') : t('eventEditorDialog.savedToStaging') }}</span>
             <div class="ev-footer-actions">
-              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-cancel" @click="requestClose">取消</button>
-              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-apply" :disabled="!dirty || saving" @click="$emit('save', false)">{{ saving ? '保存中…' : '应用' }}</button>
-              <button type="button" class="ev-tool-btn primary" data-ui-id="event-editor-ok" :disabled="!dirty || saving" @click="$emit('save', true)">{{ saving ? '保存中…' : '确定' }}</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-cancel" @click="requestClose">{{ t('eventcmd.cancel') }}</button>
+              <button type="button" class="ev-tool-btn" data-ui-id="event-editor-apply" :disabled="!dirty || saving" @click="$emit('save', false)">{{ saving ? t('ui.saving') : t('eventEditorDialog.apply') }}</button>
+              <button type="button" class="ev-tool-btn primary" data-ui-id="event-editor-ok" :disabled="!dirty || saving" @click="$emit('save', true)">{{ saving ? t('ui.saving') : t('eventcmd.ok') }}</button>
             </div>
           </footer>
         </template>
       </section>
       <div v-if="cmdContext.visible" class="cmd-context-mask" @mousedown.self="closeCommandContext" @contextmenu.self.prevent="closeCommandContext">
-        <ul class="cmd-context-menu" :style="{ left: `${cmdContext.x}px`, top: `${cmdContext.y}px` }" role="menu" aria-label="指令操作">
-          <li><button type="button" @click="runCommandMenu(openCommandPicker)">新建...<span>Return</span></button></li>
-          <li><button type="button" :disabled="selectedIndices.length !== 1" @click="runCommandMenu(openSelectedCommand)">编辑...<span>Enter</span></button></li>
+        <ul class="cmd-context-menu" :style="{ left: `${cmdContext.x}px`, top: `${cmdContext.y}px` }" role="menu" :aria-label="t('eventEditorDialog.commandActions')">
+          <li><button type="button" @click="runCommandMenu(openCommandPicker)">{{ t('eventEditorDialog.newCmd') }}<span>Return</span></button></li>
+          <li><button type="button" :disabled="selectedIndices.length !== 1" @click="runCommandMenu(openSelectedCommand)">{{ t('eventEditorDialog.editCmd') }}<span>Enter</span></button></li>
           <li class="separator" />
-          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(cutSelectedCommands)">剪切<span>Ctrl+X</span></button></li>
-          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(() => copySelectedCommands())">复制<span>Ctrl+C</span></button></li>
-          <li><button type="button" :disabled="!commandClipboard" @click="runCommandMenu(pasteSelectedCommand)">粘贴<span>Ctrl+V</span></button></li>
-          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(deleteSelectedCommands)">删除<span>Del</span></button></li>
+          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(cutSelectedCommands)">{{ t('eventEditorDialog.cut') }}<span>Ctrl+X</span></button></li>
+          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(() => copySelectedCommands())">{{ t('eventEditorDialog.copy') }}<span>Ctrl+C</span></button></li>
+          <li><button type="button" :disabled="!commandClipboard" @click="runCommandMenu(pasteSelectedCommand)">{{ t('eventEditorDialog.paste') }}<span>Ctrl+V</span></button></li>
+          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(deleteSelectedCommands)">{{ t('cmdList.delete') }}<span>Del</span></button></li>
           <li class="separator" />
-          <li><button type="button" :disabled="!spans.length" @click="runCommandMenu(selectAllCommands)">全选<span>Ctrl+A</span></button></li>
+          <li><button type="button" :disabled="!spans.length" @click="runCommandMenu(selectAllCommands)">{{ t('eventEditorDialog.selectAll') }}<span>Ctrl+A</span></button></li>
         </ul>
       </div>
     </div>
@@ -128,6 +128,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { LAYER_Z } from '../../constants/layerZIndex';
+import { useI18n, pickByLocale } from '../../i18n';
 import { confirmAboveModal } from '../../utils/confirmAboveModal';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import type { EditorProjectCatalog, StoryEventOverview, StoryEventPageOverview } from '../../api/client';
@@ -135,25 +136,26 @@ import ConditionSelect from './EventConditionSelect.vue';
 import EventCommandDialog from './EventCommandDialog.vue';
 import EventImagePickerDialog from './EventImagePickerDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
-import { MOVE_FREQS, MOVE_SPEEDS, MOVE_TYPES, PRIORITIES, SELF_SWITCH_CHANNELS, TRIGGERS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, editableCommandSpans, ensureTerminator, imageSummary, type MvCommand, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
+import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, editableCommandSpans, ensureTerminator, imageSummary, type MvCommand, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
 import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer';
-
+import { eventEditorText } from '../../utils/eventEditorLocalization';
 const props = defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null }>();
 const emit = defineEmits<{ close: []; save: [closeAfterSave: boolean] }>();
+const { language, t } = useI18n();
 const eventEditorZ = String(LAYER_Z.eventEditor);
 const dirty = ref(false), closing = ref(false), pageIndex = ref(0), selectedSpans = ref<number[]>([]), selectionAnchor = ref<number | null>(null), pageClipboard = ref<MvEventPage | null>(null), commandClipboard = ref<MvCommand[] | null>(null);
 const pageIdentities = ref<Array<StoryEventPageOverview | undefined>>([]);
 const modalRef = ref<HTMLElement>(), previewCanvas = ref<HTMLCanvasElement>(), imagePicker = ref<InstanceType<typeof EventImagePickerDialog>>(), routeDialog = ref<InstanceType<typeof MoveRouteDialog>>(), commandDialog = ref<InstanceType<typeof EventCommandDialog>>();
 const currentPage = computed(() => props.draft?.pages[pageIndex.value] || null), spans = computed(() => currentPage.value ? editableCommandSpans(currentPage.value) : []);
-// 每个 span 预渲染成「命令头 + 续行（台词/移动步骤等）」结构：头行按语义着色，续行另起一行缩进显示。
+// Pre-render each span as a command head plus continuation lines.
 const spanViews = computed(() => spans.value.map((span) => {
-  const head = commandDisplay(span.commands[0], props.systemData);
+  const head = commandDisplay(span.commands[0], props.systemData, language.value);
   return {
     key: span.index,
     tone: commandTone(span.commands[0].code),
     indent: head.indent,
     head: head.label,
-    lines: span.commands.slice(1).map((cmd) => commandDisplay(cmd, props.systemData).label),
+    lines: span.commands.slice(1).map((cmd) => commandDisplay(cmd, props.systemData, language.value).label),
   };
 }));
 const currentPageLocked = computed(() => pageIdentities.value[pageIndex.value]?.origin === 'baseline');
@@ -161,7 +163,20 @@ const shellLocked = computed(() => Boolean(props.overview && !props.overview.she
 const selectedIndices = computed(() => selectedSpans.value.filter((index) => index >= 0 && index < spans.value.length).sort((a, b) => a - b));
 const selectedSpanSet = computed(() => new Set(selectedIndices.value));
 const cmdContext = reactive({ visible: false, x: 0, y: 0 });
-const pageOptions: [keyof MvEventPage, string][] = [['walkAnime','步行动画'], ['stepAnime','踏步动画'], ['directionFix','固定朝向'], ['through','穿透']];
+const eventEditorTitle = computed(() => props.draft?.id
+  ? t('eventEditorDialog.title', { id: String(props.draft.id).padStart(3, '0') })
+  : t('eventEditorDialog.newEvent'));
+const pageOptions = computed<[keyof MvEventPage, string][]>(() => [
+  ['walkAnime', t('eventEditorDialog.walkingAnim')],
+  ['stepAnime', t('eventEditorDialog.steppingAnim')],
+  ['directionFix', t('eventEditorDialog.directionFix')],
+  ['through', t('eventEditorDialog.through')],
+]);
+const localizedTriggers = computed(() => eventEditorText(language.value).triggers);
+const localizedPriorities = computed(() => eventEditorText(language.value).priorities);
+const localizedMoveTypes = computed(() => eventEditorText(language.value).moveTypes);
+const localizedMoveSpeeds = computed(() => eventEditorText(language.value).moveSpeeds);
+const localizedMoveFreqs = computed(() => eventEditorText(language.value).moveFrequencies);
 function setVariableConditionValue(event: Event) {
   if (!currentPage.value) return;
   currentPage.value.conditions.variableValue = Number((event.target as HTMLInputElement).value);
@@ -222,7 +237,10 @@ async function requestClose() {
   if (dirty.value) {
     closing.value = true;
     try {
-      await confirmAboveModal('存在未保存修改，确定关闭事件编辑器？', '放弃修改');
+      await confirmAboveModal(
+        t('eventEditorDialog.unsavedConfirm'),
+        t('eventEditorDialog.discardChanges'),
+      );
     } catch {
       return;
     } finally {
@@ -233,10 +251,10 @@ async function requestClose() {
 }
 function markSaved() { dirty.value = false; }
 function addPage() { if (!props.draft) return; props.draft.pages.push(defaultPage()); pageIdentities.value.push(undefined); pageIndex.value = props.draft.pages.length - 1; markDirty(); }
-function copyPage() { if (currentPage.value) { pageClipboard.value = clone(currentPage.value); ElMessage.success('已复制事件页'); } }
+function copyPage() { if (currentPage.value) { pageClipboard.value = clone(currentPage.value); ElMessage.success(t('eventEditorDialog.pageCopied')); } }
 function pastePage() { if (!props.draft || !pageClipboard.value) return; props.draft.pages.push(clone(pageClipboard.value)); pageIdentities.value.push(undefined); pageIndex.value = props.draft.pages.length - 1; markDirty(); }
-async function clearPage() { if (!currentPage.value || currentPageLocked.value) return; try { await confirmAboveModal('清空当前事件页？', '清空事件页'); } catch { return; } props.draft!.pages[pageIndex.value] = defaultPage(); markDirty(); }
-async function deletePage() { if (!props.draft || currentPageLocked.value || props.draft.pages.length <= 1) return; try { await confirmAboveModal('删除当前事件页？', '删除事件页'); } catch { return; } props.draft.pages.splice(pageIndex.value, 1); pageIdentities.value.splice(pageIndex.value, 1); pageIndex.value = Math.max(0, pageIndex.value - 1); markDirty(); }function openCommandPicker() { if (currentPageLocked.value) return; const selected = selectedIndices.value, next = selected.length ? selected[selected.length - 1] + 1 : spans.value.length; commandDialog.value?.openPicker(next, currentPage.value ? commandInsertIndent(currentPage.value.list, rawIndexForSpan(next)) : 0); }
+async function clearPage() { if (!currentPage.value || currentPageLocked.value) return; try { await confirmAboveModal(t('eventEditorDialog.clearPageConfirm'), t('eventEditorDialog.clearPageTitle')); } catch { return; } props.draft!.pages[pageIndex.value] = defaultPage(); markDirty(); }
+async function deletePage() { if (!props.draft || currentPageLocked.value || props.draft.pages.length <= 1) return; try { await confirmAboveModal(t('eventEditorDialog.deletePageConfirm'), t('eventEditorDialog.deletePageTitle')); } catch { return; } props.draft.pages.splice(pageIndex.value, 1); pageIdentities.value.splice(pageIndex.value, 1); pageIndex.value = Math.max(0, pageIndex.value - 1); markDirty(); }function openCommandPicker() { if (currentPageLocked.value) return; const selected = selectedIndices.value, next = selected.length ? selected[selected.length - 1] + 1 : spans.value.length; commandDialog.value?.openPicker(next, currentPage.value ? commandInsertIndent(currentPage.value.list, rawIndexForSpan(next)) : 0); }
 function openCommand(index: number) { if (currentPageLocked.value) return; const span = spans.value[index]; if (span) commandDialog.value?.openEditor(span.commands, index); }
 function openSelectedCommand() { if (selectedIndices.value.length === 1) openCommand(selectedIndices.value[0]); }
 function rawIndexForSpan(index: number) { return index >= spans.value.length ? Math.max(0, (currentPage.value?.list.length || 1) - 1) : spans.value[index]?.index || 0; }
@@ -269,13 +287,13 @@ function deleteSelectedCommands() {
 function copySelectedCommands(showMessage = true) {
   if (currentPageLocked.value || !selectedIndices.value.length) return;
   commandClipboard.value = clone(commandBlockSpanIndices(spans.value, selectedIndices.value).flatMap((index) => spans.value[index]?.commands || []));
-  if (showMessage) ElMessage.success('已复制指令');
+  if (showMessage) ElMessage.success(t('eventEditorDialog.commandsCopied'));
 }
 function cutSelectedCommands() {
   if (!selectedIndices.value.length) return;
   copySelectedCommands(false);
   deleteSelectedCommands();
-  ElMessage.success('已剪切指令');
+  ElMessage.success(t('eventEditorDialog.commandsCut'));
 }
 function pasteSelectedCommand() {
   if (!commandClipboard.value || !currentPage.value || currentPageLocked.value) return;
@@ -307,6 +325,16 @@ function isCommandShortcutTarget(target: EventTarget | null) {
 function setImage(image: MvEventImage) { if (currentPage.value && !currentPageLocked.value) { currentPage.value.image = image; markDirty(); } }
 function setPageRoute(route: MvMoveRoute) { if (currentPage.value && !currentPageLocked.value) { currentPage.value.moveRoute = route; markDirty(); } }
 async function paintPreview() { const canvas = previewCanvas.value, image = currentPage.value?.image; if (!canvas || !image) return; const context = canvas.getContext('2d')!; context.clearRect(0,0,canvas.width,canvas.height); if (image.tileId) return drawTile(context, props.tilesetImages, image.tileId, 14, 10); const asset = props.catalog?.assets.characters.find((item) => item.name === image.characterName); if (!asset) return; const bitmap = await props.loadImage(asset.url); const frame = bitmap && eventCharacterFrame(bitmap, image); if (!bitmap || !frame) return; const scale = Math.min(1, 64 / frame.sw, 88 / frame.sh); context.imageSmoothingEnabled = false; context.drawImage(bitmap, frame.sx, frame.sy, frame.sw, frame.sh, Math.round((canvas.width-frame.sw*scale)/2), Math.round((canvas.height-frame.sh*scale)/2), frame.sw*scale, frame.sh*scale); }
+function localizedImageSummary(image: MvEventImage): string {
+  return pickByLocale(language.value, {
+    'zh-CN': () => imageSummary(image),
+    'en-US': () => {
+      if (image.tileId) return `Tile #${image.tileId}`;
+      if (image.characterName) return `${image.characterName} idx${image.characterIndex || 0}`;
+      return 'No image';
+    },
+  })();
+}
 defineExpose({ markSaved });
 </script>
 

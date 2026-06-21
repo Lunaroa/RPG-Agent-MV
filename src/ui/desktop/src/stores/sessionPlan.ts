@@ -2,15 +2,21 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { sessions as sessionsApi } from '../api/client.ts'
 import type { SessionPlanSnapshot, SessionRuntimeEvent } from '@contract/types'
+import { sessionPlanText } from './sessionPlanLocalization.ts'
+import { useSettingsStore } from './settings.ts'
 
 const PLAN_ASK_PREFIX = 'agent-runtime-plan:'
 const PLAN_PATH_PATTERN = /(?:^|[/\\])\.opencode[/\\]plans[/\\](?:conversations[/\\][^/\\]+\.md|[^/\\]+\.md)$/i
+
+function text(key: Parameters<typeof sessionPlanText>[1]): string {
+  return sessionPlanText(useSettingsStore().ui.language, key)
+}
 
 function emptyPlan(sessionId: string): SessionPlanSnapshot {
   return {
     sessionId,
     mode: 'idle',
-    title: '计划',
+    title: text('plan'),
     planMarkdown: '',
     askId: null,
     requestId: null,
@@ -103,11 +109,11 @@ export const useSessionPlanStore = defineStore('sessionPlan', () => {
       const input = asRecord(event.input)
       if (callId && tool) rememberCall(sessionId, callId, tool)
       if (tool === 'EnterPlanMode' || tool === 'plan_enter') {
-        patchPlan(sessionId, { mode: 'planning', title: '计划模式', updatedAt: at, error: null })
+        patchPlan(sessionId, { mode: 'planning', title: text('planning'), updatedAt: at, error: null })
       } else if (tool === 'ExitPlanMode' || tool === 'plan_exit') {
         patchPlan(sessionId, {
           mode: 'approval_requested',
-          title: '计划待批准',
+          title: text('approvalRequested'),
           planMarkdown: asString(input.plan) || planFor(sessionId)?.planMarkdown || '',
           updatedAt: at,
           error: null,
@@ -118,7 +124,7 @@ export const useSessionPlanStore = defineStore('sessionPlan', () => {
           const content = tool.trim().toLowerCase() === 'write' ? planContentFromWriteInput(input) : ''
           patchPlan(sessionId, {
             mode: 'planning',
-            title: '计划模式',
+            title: text('planning'),
             filePath: planPath,
             planMarkdown: content || planFor(sessionId)?.planMarkdown || '',
             updatedAt: at,
@@ -134,14 +140,14 @@ export const useSessionPlanStore = defineStore('sessionPlan', () => {
       if (request.subtype !== 'can_use_tool') return
       const toolName = asString(request.tool_name)
       if (toolName === 'EnterPlanMode') {
-        patchPlan(sessionId, { mode: 'planning', title: '计划模式', updatedAt: at, error: null })
+        patchPlan(sessionId, { mode: 'planning', title: text('planning'), updatedAt: at, error: null })
         shouldReload = true
       } else if (toolName === 'ExitPlanMode') {
         const requestId = asString(event.request_id)
         const input = asRecord(request.input)
         patchPlan(sessionId, {
           mode: 'approval_requested',
-          title: '计划待批准',
+          title: text('approvalRequested'),
           planMarkdown: asString(input.plan) || planFor(sessionId)?.planMarkdown || '',
           requestId,
           askId: requestId ? `${PLAN_ASK_PREFIX}${requestId}` : null,
@@ -162,7 +168,7 @@ export const useSessionPlanStore = defineStore('sessionPlan', () => {
       const payload = asRecord(response.response)
       const behavior = asString(payload.behavior)
       if (response.subtype === 'error') {
-        patchPlan(sessionId, { mode: 'error', error: asString(response.error) || '计划审批响应失败', updatedAt: at })
+        patchPlan(sessionId, { mode: 'error', error: asString(response.error) || text('approvalResponseFailed'), updatedAt: at })
       } else if (behavior === 'allow') {
         patchPlan(sessionId, { mode: 'approved', feedback: null, error: null, updatedAt: at })
       } else if (behavior === 'deny') {
@@ -176,13 +182,13 @@ export const useSessionPlanStore = defineStore('sessionPlan', () => {
       if (tool === 'EnterPlanMode' || tool === 'plan_enter') {
         patchPlan(sessionId, {
           mode: event.success === false ? 'error' : 'planning',
-          error: event.success === false ? asString(event.output) || '进入计划模式失败' : null,
+          error: event.success === false ? asString(event.output) || text('enterFailed') : null,
           updatedAt: at,
         })
       } else if (tool === 'ExitPlanMode' || tool === 'plan_exit') {
         patchPlan(sessionId, {
           mode: event.success === false ? 'error' : 'approved',
-          error: event.success === false ? asString(event.output) || '退出计划模式失败' : null,
+          error: event.success === false ? asString(event.output) || text('exitFailed') : null,
           updatedAt: at,
         })
       }
@@ -204,7 +210,7 @@ export const useSessionPlanStore = defineStore('sessionPlan', () => {
     } catch (error) {
       errorBySession.value = {
         ...errorBySession.value,
-        [sessionId]: error instanceof Error ? error.message : '加载计划失败',
+        [sessionId]: error instanceof Error ? error.message : text('loadFailed'),
       }
     } finally {
       loadingBySession.value = { ...loadingBySession.value, [sessionId]: false }

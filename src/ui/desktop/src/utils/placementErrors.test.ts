@@ -28,4 +28,19 @@ describe('placementErrors', () => {
     assert.ok(wrapped instanceof Error);
     assert.match(wrapped.message, /MAP 1 中不存在事件 99/);
   });
+
+  test('formats placement failures in English mode', () => {
+    const missing = formatPlacementError(new Error('缺少完整实现'), {
+      contractId: 'inn.greeting',
+      eventName: 'Inn greeting',
+    }, 'en-US');
+    const wrapped = toPlacementError(new Error('MAP 1 is missing event 99'), {
+      contractId: 'missing.event',
+      eventName: 'Missing event',
+    }, 'en-US');
+
+    assert.match(missing, /Cannot place "Inn greeting"/);
+    assert.match(missing, /registry\.register/);
+    assert.equal(wrapped.message, 'Placement failed: MAP 1 is missing event 99');
+  });
 });

@@ -11,6 +11,7 @@ import { useEventPlacementAskStore } from '../../stores/eventPlacementAsk';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 
 import { isPlacedStatus } from '../../utils/placementStatus';
+import { useI18n } from '../../i18n';
 
 
 
@@ -43,6 +44,7 @@ const props = defineProps<{
 const placementAsk = useEventPlacementAskStore();
 
 const ui = useWorkbenchUiStore();
+const { t } = useI18n();
 
 
 
@@ -126,9 +128,9 @@ watch(
 
       >
 
-        事件放置
+        {{ t('editor.bottom.placement') }}
 
-        <span class="tab-badge" :class="{ empty: pendingCount === 0 }">{{ pendingCount }} 待放置</span>
+        <span class="tab-badge" :class="{ empty: pendingCount === 0 }">{{ t('editor.bottom.pendingCount', { count: pendingCount }) }}</span>
 
       </button>
 
@@ -144,7 +146,7 @@ watch(
 
         class="bp-collapse-btn"
 
-        :title="ui.bottomPanelOpen ? '折叠面板' : '展开面板'"
+        :title="ui.bottomPanelOpen ? t('editor.bottom.collapse') : t('editor.bottom.expand')"
 
         @click="ui.toggleBottomPanel()"
 
@@ -160,7 +162,7 @@ watch(
 
     <div v-if="ui.bottomPanelOpen" class="bp-body">
 
-      <p v-if="!hasActiveSession" class="bp-empty">没有待放置事件</p>
+      <p v-if="!hasActiveSession" class="bp-empty">{{ t('editor.bottom.empty') }}</p>
 
       <template v-else>
 
@@ -192,7 +194,7 @@ watch(
 
         <div class="bp-summary">
 
-          {{ placedCount }}/{{ events.length }} 已放置
+          {{ t('editor.bottom.placedSummary', { placed: placedCount, total: events.length }) }}
 
         </div>
 

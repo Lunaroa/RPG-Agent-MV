@@ -4,12 +4,12 @@
       <component :is="entry.icon" />
     </button>
     <span class="toolbar-separator" />
-    <div class="paint-mode-group" aria-label="地图绘制层">
-      <button type="button" data-ui-id="editor-paint-tile" :class="{ active: paintMode === 'tile' }" :disabled="mode !== 'map' || busy" title="图块层" @click="$emit('update:paintMode', 'tile')"><Brush />图块</button>
-      <button type="button" data-ui-id="editor-paint-shadow" :class="{ active: paintMode === 'shadow' }" :disabled="mode !== 'map' || busy" title="阴影层" @click="$emit('update:paintMode', 'shadow')"><Sunny />阴影</button>
-      <button type="button" data-ui-id="editor-paint-region" :class="{ active: paintMode === 'region' }" :disabled="mode !== 'map' || busy" title="区域 ID 层" @click="$emit('update:paintMode', 'region')"><Grid />区域</button>
+    <div class="paint-mode-group" :aria-label="t('editor.toolbar.paintLayers')">
+      <button type="button" data-ui-id="editor-paint-tile" :class="{ active: paintMode === 'tile' }" :disabled="mode !== 'map' || busy" :title="t('editor.toolbar.tileLayer')" @click="$emit('update:paintMode', 'tile')"><Brush />{{ t('editor.toolbar.tile') }}</button>
+      <button type="button" data-ui-id="editor-paint-shadow" :class="{ active: paintMode === 'shadow' }" :disabled="mode !== 'map' || busy" :title="t('editor.toolbar.shadowLayer')" @click="$emit('update:paintMode', 'shadow')"><Sunny />{{ t('editor.toolbar.shadow') }}</button>
+      <button type="button" data-ui-id="editor-paint-region" :class="{ active: paintMode === 'region' }" :disabled="mode !== 'map' || busy" :title="t('editor.toolbar.regionLayer')" @click="$emit('update:paintMode', 'region')"><Grid />{{ t('editor.toolbar.region') }}</button>
     </div>
-    <div v-if="paintMode === 'shadow'" class="shadow-picker" title="阴影四象限">
+    <div v-if="paintMode === 'shadow'" class="shadow-picker" :title="t('editor.toolbar.shadowQuadrants')">
       <button
         v-for="bit in shadowBitsList"
         :key="bit"
@@ -29,38 +29,44 @@
       max="255"
       :value="regionId"
       :disabled="mode !== 'map' || busy"
-      title="Region ID，0-255"
+      :title="t('editor.toolbar.regionId')"
       @input="$emit('update:regionId', normalizeNumber(($event.target as HTMLInputElement).value, 0, 255))"
     />
-    <div class="overlay-group" aria-label="地图叠层">
-      <button type="button" data-ui-id="editor-overlay-regions" :class="{ active: showRegions }" :disabled="mode !== 'map' || busy" title="显示区域 ID 叠层" @click="$emit('update:showRegions', !showRegions)"><Grid />区域</button>
-      <button type="button" data-ui-id="editor-overlay-tile-flags" :class="{ active: showTileFlags }" :disabled="mode !== 'map' || busy || !tileFlagsAvailable" :title="tileFlagsAvailable ? '显示通行与地形标记' : '当前 tileset 没有 flags 数据'" @click="$emit('update:showTileFlags', !showTileFlags)"><Grid />标记</button>
+    <div class="overlay-group" :aria-label="t('editor.toolbar.overlays')">
+      <button type="button" data-ui-id="editor-overlay-regions" :class="{ active: showRegions }" :disabled="mode !== 'map' || busy" :title="t('editor.toolbar.showRegions')" @click="$emit('update:showRegions', !showRegions)"><Grid />{{ t('editor.toolbar.region') }}</button>
+      <button type="button" data-ui-id="editor-overlay-tile-flags" :class="{ active: showTileFlags }" :disabled="mode !== 'map' || busy || !tileFlagsAvailable" :title="tileFlagsAvailable ? t('editor.toolbar.showFlags') : t('editor.toolbar.flagsMissing')" @click="$emit('update:showTileFlags', !showTileFlags)"><Grid />{{ t('editor.toolbar.flags') }}</button>
     </div>
     <span class="toolbar-separator" />
-    <button type="button" class="tool-button" data-ui-id="editor-undo" :disabled="mode !== 'map' || busy || !undoLen" title="撤销" @click="$emit('undo')"><RefreshLeft /></button>
-    <button type="button" class="tool-button" data-ui-id="editor-redo" :disabled="mode !== 'map' || busy || !redoLen" title="重做" @click="$emit('redo')"><RefreshRight /></button>
+    <button type="button" class="tool-button" data-ui-id="editor-undo" :disabled="mode !== 'map' || busy || !undoLen" :title="t('editor.toolbar.undo')" @click="$emit('undo')"><RefreshLeft /></button>
+    <button type="button" class="tool-button" data-ui-id="editor-redo" :disabled="mode !== 'map' || busy || !redoLen" :title="t('editor.toolbar.redo')" @click="$emit('redo')"><RefreshRight /></button>
     <span class="toolbar-separator" />
     <div class="mode-group">
-      <button type="button" data-ui-id="editor-mode-map" :class="{ active: mode === 'map' }" @click="$emit('update:mode', 'map')"><span class="mode-dot map" />地图</button>
-      <button type="button" data-ui-id="editor-mode-event" :class="{ active: mode === 'event' }" @click="$emit('update:mode', 'event')"><span class="mode-dot event" />事件</button>
+      <button type="button" data-ui-id="editor-mode-map" :class="{ active: mode === 'map' }" @click="$emit('update:mode', 'map')"><span class="mode-dot map" />{{ t('editor.toolbar.mapMode') }}</button>
+      <button type="button" data-ui-id="editor-mode-event" :class="{ active: mode === 'event' }" @click="$emit('update:mode', 'event')"><span class="mode-dot event" />{{ t('editor.toolbar.eventMode') }}</button>
     </div>
     <template v-if="stagingDirty">
       <span class="toolbar-separator" />
-      <button type="button" class="workbench-button primary" data-ui-id="editor-staging-apply" :disabled="busy" @click="$emit('apply')">应用暂存</button>
-      <button type="button" class="workbench-button" data-ui-id="editor-staging-discard" :disabled="busy" @click="$emit('discard')">丢弃</button>
+      <button type="button" class="workbench-button primary" data-ui-id="editor-staging-apply" :disabled="busy" @click="$emit('apply')">{{ t('editor.toolbar.applyStaging') }}</button>
+      <button type="button" class="workbench-button" data-ui-id="editor-staging-discard" :disabled="busy" @click="$emit('discard')">{{ t('editor.toolbar.discard') }}</button>
     </template>
   </header>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import { Brush, Crop, Delete, Grid, MagicStick, RefreshLeft, RefreshRight, Sunny } from '@element-plus/icons-vue';
 import type { EditorMode, MapPaintMode, MapTool } from './editorTypes';
+import { useI18n } from '../../i18n';
 defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;regionId:number;shadowBits:number;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean}>();
 defineEmits<{'update:mode':[EditorMode];'update:tool':[MapTool];'update:paintMode':[MapPaintMode];'update:regionId':[number];'update:shadowBits':[number];'update:showRegions':[boolean];'update:showTileFlags':[boolean];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[]}>();
-const tools:{id:MapTool;label:string;icon:typeof Brush}[]=[
-  {id:'pencil',label:'画笔',icon:Brush},{id:'rect',label:'矩形',icon:Crop},{id:'ellipse',label:'椭圆',icon:Crop},
-  {id:'fill',label:'填充',icon:MagicStick},{id:'eraser',label:'橡皮',icon:Delete},
-];
+const { t } = useI18n();
+const tools = computed<{ id: MapTool; label: string; icon: typeof Brush }[]>(() => [
+  { id: 'pencil', label: t('editor.toolbar.tool.pencil'), icon: Brush },
+  { id: 'rect', label: t('editor.toolbar.tool.rect'), icon: Crop },
+  { id: 'ellipse', label: t('editor.toolbar.tool.ellipse'), icon: Crop },
+  { id: 'fill', label: t('editor.toolbar.tool.fill'), icon: MagicStick },
+  { id: 'eraser', label: t('editor.toolbar.tool.eraser'), icon: Delete },
+]);
 const shadowBitsList = [1, 2, 4, 8] as const;
 function toggleShadowBit(current:number,bit:number){return Math.max(0,Math.min(15,Math.floor(current)^bit));}
 function normalizeNumber(value:string,min:number,max:number){const number=Number(value);if(!Number.isFinite(number))return min;return Math.max(min,Math.min(max,Math.floor(number)));}

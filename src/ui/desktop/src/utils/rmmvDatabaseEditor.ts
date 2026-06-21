@@ -1,3 +1,24 @@
+import {
+  MV_ANIMATION_CELL_FIELDS,
+  MV_CLASS_PARAM_COUNT,
+  MV_CLASS_PARAM_ROW_LENGTH,
+  MV_TERMS_MESSAGE_LABELS,
+  databaseSummaryText,
+} from './rmmvDatabaseLocalization';
+import type { ProductLanguage } from '@contract/types';
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts';
+
+export {
+  MV_ANIMATION_BLEND_MODES,
+  MV_ANIMATION_CELL_FIELDS,
+  MV_ANIMATION_FLASH_SCOPES,
+  MV_CLASS_PARAM_LEVELS,
+  MV_CLASS_PARAM_COUNT,
+  MV_CLASS_PARAM_ROW_LENGTH,
+  MV_TERMS_MESSAGE_LABELS,
+  MV_TROOP_PAGE_SPANS,
+} from './rmmvDatabaseLocalization';
+
 export const MV_ZERO_RESERVED_LIST_PATHS = new Set([
   'switches',
   'variables',
@@ -13,94 +34,6 @@ export const MV_TERMS_LIST_PATHS = new Set([
   'params',
   'commands',
 ]);
-
-export const MV_TERMS_MESSAGE_LABELS: Record<string, string> = {
-  actionFailure: '无效果',
-  actorDamage: '我方受伤',
-  actorDrain: '我方被吸收',
-  actorGain: '我方获得',
-  actorLoss: '我方失去',
-  actorNoDamage: '我方无伤',
-  actorNoHit: '我方未命中',
-  actorRecovery: '我方恢复',
-  alwaysDash: '始终奔跑',
-  bgmVolume: 'BGM 音量',
-  bgsVolume: 'BGS 音量',
-  buffAdd: '强化',
-  buffRemove: '强化解除',
-  commandRemember: '记忆指令',
-  counterAttack: '反击',
-  criticalToActor: '我方会心',
-  criticalToEnemy: '敌方会心',
-  debuffAdd: '弱化',
-  defeat: '战败',
-  enemyDamage: '敌方受伤',
-  enemyDrain: '敌方被吸收',
-  enemyGain: '敌方获得',
-  enemyLoss: '敌方失去',
-  enemyNoDamage: '敌方无伤',
-  enemyNoHit: '敌方未命中',
-  enemyRecovery: '敌方恢复',
-  escapeFailure: '逃跑失败',
-  escapeStart: '逃跑开始',
-  evasion: '物理闪避',
-  expNext: '下级经验',
-  expTotal: '当前经验',
-  file: '存档文件',
-  levelUp: '升级',
-  loadMessage: '读取提示',
-  magicEvasion: '魔法闪避',
-  magicReflection: '魔法反射',
-  meVolume: 'ME 音量',
-  obtainExp: '获得经验',
-  obtainGold: '获得金币',
-  obtainItem: '获得物品',
-  obtainSkill: '习得技能',
-  partyName: '队伍名',
-  possession: '持有数',
-  preemptive: '先制',
-  saveMessage: '保存提示',
-  seVolume: 'SE 音量',
-  substitute: '保护',
-  surprise: '偷袭',
-  useItem: '使用物品',
-  victory: '胜利',
-};
-
-export const MV_CLASS_PARAM_LEVELS = Array.from({ length: 99 }, (_entry, index) => index + 1);
-export const MV_CLASS_PARAM_COUNT = 8;
-export const MV_CLASS_PARAM_ROW_LENGTH = 100;
-
-export const MV_ANIMATION_CELL_FIELDS = [
-  { key: 'pattern', label: '图案' },
-  { key: 'x', label: 'X' },
-  { key: 'y', label: 'Y' },
-  { key: 'scale', label: '缩放' },
-  { key: 'rotation', label: '旋转' },
-  { key: 'mirror', label: '镜像' },
-  { key: 'opacity', label: '不透明度' },
-  { key: 'blendMode', label: '合成' },
-] as const;
-
-export const MV_TROOP_PAGE_SPANS = [
-  { value: 0, label: '战斗' },
-  { value: 1, label: '回合' },
-  { value: 2, label: '瞬间' },
-] as const;
-
-export const MV_ANIMATION_FLASH_SCOPES = [
-  { value: 0, label: '无' },
-  { value: 1, label: '目标' },
-  { value: 2, label: '画面' },
-  { value: 3, label: '隐藏目标' },
-] as const;
-
-export const MV_ANIMATION_BLEND_MODES = [
-  { value: 0, label: '普通' },
-  { value: 1, label: '加算' },
-  { value: 2, label: '正片叠底' },
-  { value: 3, label: '滤色' },
-] as const;
 
 export interface MvTroopPageConditions {
   turnEnding: boolean;
@@ -259,31 +192,37 @@ export function setTroopPageSpan(page: unknown, span: unknown): Record<string, u
   return { ...source, span: clampInteger(span, 0, 2, 0) };
 }
 
-export function troopPageConditionSummary(value: unknown): string[] {
+export function troopPageConditionSummary(value: unknown, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string[] {
+  language = normalizeProductLanguage(language);
   const conditions = normalizeTroopPageConditions(value);
+  const summary = databaseSummaryText(language);
   const result: string[] = [];
-  if (conditions.turnEnding) result.push('回合结束');
-  if (conditions.turnValid) result.push(`回合 ${conditions.turnA}+${conditions.turnB}X`);
-  if (conditions.enemyValid) result.push(`敌人 #${conditions.enemyIndex + 1} HP <= ${conditions.enemyHp}%`);
-  if (conditions.actorValid) result.push(`角色 #${conditions.actorId} HP <= ${conditions.actorHp}%`);
-  if (conditions.switchValid) result.push(`开关 #${conditions.switchId} ON`);
+  if (conditions.turnEnding) result.push(summary.turnEnding);
+  if (conditions.turnValid) result.push(`${summary.turn} ${conditions.turnA}+${conditions.turnB}X`);
+  if (conditions.enemyValid) result.push(`${summary.enemy} #${conditions.enemyIndex + 1} HP <= ${conditions.enemyHp}%`);
+  if (conditions.actorValid) result.push(`${summary.actor} #${conditions.actorId} HP <= ${conditions.actorHp}%`);
+  if (conditions.switchValid) result.push(`${summary.switch} #${conditions.switchId} ON`);
   return result;
 }
 
-export function summarizeMvCommand(command: unknown): string {
-  if (!command || typeof command !== 'object' || Array.isArray(command)) return '结构异常';
+export function summarizeMvCommand(command: unknown, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  language = normalizeProductLanguage(language);
+  const summary = databaseSummaryText(language);
+  if (!command || typeof command !== 'object' || Array.isArray(command)) return summary.malformedCommand;
   const record = command as Record<string, unknown>;
   const code = toInteger(record.code, 0);
   const indent = toInteger(record.indent, 0);
   const params = Array.isArray(record.parameters) ? record.parameters : [];
-  return `${'  '.repeat(Math.max(0, indent))}code ${code} · ${params.length} 参数`;
+  return `${'  '.repeat(Math.max(0, indent))}code ${code} · ${params.length} ${summary.parameterCount}`;
 }
 
-export function summarizeMvCommandList(value: unknown, limit = 8): string[] {
-  if (!Array.isArray(value)) return ['执行内容结构异常'];
-  if (!value.length) return ['空执行内容'];
-  return value.slice(0, limit).map(summarizeMvCommand)
-    .concat(value.length > limit ? [`还有 ${value.length - limit} 条未显示`] : []);
+export function summarizeMvCommandList(value: unknown, limit = 8, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string[] {
+  language = normalizeProductLanguage(language);
+  const summary = databaseSummaryText(language);
+  if (!Array.isArray(value)) return [summary.malformedCommandList];
+  if (!value.length) return [summary.emptyCommandList];
+  return value.slice(0, limit).map((command) => summarizeMvCommand(command, language))
+    .concat(value.length > limit ? [`${summary.remainingPrefix} ${value.length - limit} ${summary.remainingSuffix}`] : []);
 }
 
 export function normalizeAnimationFrameCell(value: unknown): number[] {
@@ -341,10 +280,12 @@ export function removeAnimationFrameCell(value: unknown, frameIndex: number, cel
   return frames;
 }
 
-export function animationFramesSummary(value: unknown): string {
+export function animationFramesSummary(value: unknown, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  language = normalizeProductLanguage(language);
   const frames = normalizeAnimationFrames(value);
+  const summary = databaseSummaryText(language);
   const maxCells = frames.reduce((max, frame) => Math.max(max, frame.length), 0);
-  return `${frames.length} 帧 · 单帧最多 ${maxCells} 个 cell`;
+  return `${frames.length} ${summary.frameCount} · ${summary.maxCellsPerFrame} ${maxCells} ${summary.cellCount}`;
 }
 
 export function normalizeAnimationTiming(value: unknown): MvAnimationTiming {

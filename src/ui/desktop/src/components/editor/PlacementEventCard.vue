@@ -6,6 +6,7 @@ import {
   formatSuggestedMapHint,
   isSuggestedMapMismatch,
 } from '../../utils/placementMapPolicy';
+import { useI18n } from '../../i18n';
 
 const props = defineProps<{
   event: PlacementListEvent;
@@ -21,6 +22,7 @@ const emit = defineEmits<{
 }>();
 
 const placed = computed(() => isPlacedStatus(props.event.status));
+const { language, t } = useI18n();
 
 const summary = computed(() => (
   props.event.summary?.trim()
@@ -30,16 +32,16 @@ const summary = computed(() => (
 
 const placedLabel = computed(() => {
   if (props.event.x != null && props.event.y != null) {
-    return `已放置 (${props.event.x}, ${props.event.y})`;
+    return t('editor.placementCard.placedAt', { x: props.event.x, y: props.event.y });
   }
-  return '已放置';
+  return t('editor.placementCard.placed');
 });
 
 const mapHint = computed(() => {
   if (placed.value || !isSuggestedMapMismatch(props.event.targetMapId, props.currentMapId)) {
     return '';
   }
-  return formatSuggestedMapHint(Number(props.event.targetMapId));
+  return formatSuggestedMapHint(Number(props.event.targetMapId), language.value);
 });
 </script>
 
@@ -68,12 +70,12 @@ const mapHint = computed(() => {
         :disabled="placing"
         @click.stop="emit('place', event.contractId)"
       >
-        {{ placing ? '…' : '放置' }}
+        {{ placing ? '…' : t('editor.placementCard.place') }}
       </button>
       <button
         type="button"
         class="placement-card-reject"
-        title="拒绝"
+        :title="t('editor.placementCard.reject')"
         @click.stop="emit('reject', event.contractId)"
       >
         ×

@@ -279,6 +279,27 @@ describe('opencode AskUserQuestion stream bridge', () => {
     )
   })
 
+  test('uses English fallback copy for opencode ASK when product language is English', () => {
+    const ask = askFromOpencodeRequest({
+      request_id: 'req-ask-en',
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: 'AskUserQuestion',
+        input: {
+          questions: [
+            {
+              options: [{ label: 'A' }, { label: 'B' }],
+            },
+          ],
+        },
+      },
+    }, 'en-US')
+
+    assert.equal(ask?.title, 'Waiting for input')
+    assert.equal(ask?.prompt, 'Answer opencode clarification questions')
+    assert.equal(ask?.questions?.[0]?.question, 'Question 1')
+  })
+
   test('classifies failed AskUserQuestion tool_result without treating it as ASK input', () => {
     assert.equal(askFromOpencodeRequest({
       request_id: 'toolu_ask',

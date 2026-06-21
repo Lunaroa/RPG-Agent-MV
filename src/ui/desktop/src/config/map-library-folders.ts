@@ -1,5 +1,7 @@
 // 地图库浏览文件夹：按源资源包/样例工程（packageId）分组，不再按 forest/cave 等标签归类。
 import type { MapLibraryEntry } from '../api/client';
+import type { ProductLanguage } from '@contract/types';
+import { DEFAULT_PRODUCT_LANGUAGE, translate } from '../i18n/messages.ts';
 
 export const LIBRARY_FOLDER_STORAGE_KEY = 'console-assets.map-library-folder';
 
@@ -13,8 +15,8 @@ export function classifyMapFolder(entry: MapLibraryEntry): string {
 }
 
 /** 根据当前条目列表生成侧栏文件夹（含「全部」）。 */
-export function buildLibraryFolders(entries: readonly MapLibraryEntry[]): LibraryFolderDef[] {
-  const all: LibraryFolderDef = { id: 'all', label: '全部' };
+export function buildLibraryFolders(entries: readonly MapLibraryEntry[], language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): LibraryFolderDef[] {
+  const all: LibraryFolderDef = { id: 'all', label: translate('mapfolder.all', language) };
   const labels = new Map<string, string>();
   for (const entry of entries) {
     const id = classifyMapFolder(entry);
@@ -22,7 +24,7 @@ export function buildLibraryFolders(entries: readonly MapLibraryEntry[]): Librar
     if (!labels.has(id)) labels.set(id, label);
   }
   const packages = [...labels.entries()]
-    .sort((a, b) => a[1].localeCompare(b[1], 'zh-CN'))
+    .sort((a, b) => a[1].localeCompare(b[1], language))
     .map(([id, label]) => ({ id, label }));
   return [all, ...packages];
 }

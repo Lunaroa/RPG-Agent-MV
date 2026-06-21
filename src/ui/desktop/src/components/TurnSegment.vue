@@ -1,16 +1,16 @@
 <template>
-  <!-- 用户消息气泡（右对齐） -->
+  <!-- User message bubble, right aligned. -->
   <div v-if="segment.type === 'user'" class="seg-user">
     <div class="user-bubble">{{ segment.content }}</div>
   </div>
 
-  <!-- Agent 文本：流式中用纯文本避免整段 markdown 重绘；结束后一次性渲染 markdown -->
+  <!-- Agent text: stream as plain text, then render markdown once the segment settles. -->
   <div v-else-if="segment.type === 'text'" class="seg-text">
     <div v-if="streamPlain" class="md markdown-body stream-plain">{{ segment.content }}</div>
     <div v-else class="md markdown-body" v-html="textHtml" />
   </div>
 
-  <!-- 推理始终直接展示，不参与执行记录折叠。 -->
+  <!-- Reasoning stays visible and is not folded into execution records. -->
   <div v-else-if="segment.type === 'reasoning'" class="seg-reasoning">
     <div
       class="reason-body md markdown-body"
@@ -21,7 +21,7 @@
     </div>
   </div>
 
-  <!-- 工具调用：单行中文摘要，可展开看输入 / 输出 -->
+  <!-- Tool calls show a one-line localized summary and can expand for input/output. -->
   <div v-else-if="segment.type === 'tool'" class="seg-tool">
     <button class="row-toggle" @click="expanded = !expanded">
       <el-icon class="chev" :class="{ open: expanded }"><ArrowRight /></el-icon>
@@ -36,17 +36,17 @@
     </button>
     <div v-show="expanded" class="tool-body">
       <div v-if="segment.metadata?.input !== undefined" class="tool-block">
-        <div class="tool-block-label">输入</div>
+        <div class="tool-block-label">{{ t('turn.tool.input') }}</div>
         <pre>{{ formatJson(segment.metadata?.input) }}</pre>
       </div>
       <div v-if="segment.metadata?.output !== undefined" class="tool-block">
-        <div class="tool-block-label">输出</div>
+        <div class="tool-block-label">{{ t('turn.tool.output') }}</div>
         <pre>{{ formatJson(segment.metadata?.output) }}</pre>
       </div>
     </div>
   </div>
 
-  <!-- 状态按发生顺序保留在转录中 -->
+  <!-- Status entries remain in transcript order. -->
   <div v-else-if="segment.type === 'status'" class="seg-status">
     <span class="status-dot" :class="statusType(segment.metadata?.status)" />
     <span class="status-label">{{ statusLabel(segment.metadata?.status) }}</span>
@@ -54,19 +54,19 @@
     <span v-if="segment.metadata?.blocker" class="status-blocker">· {{ formatBlocker(segment.metadata.blocker) }}</span>
   </div>
 
-  <!-- 事件预览块：agent 本轮写的事件，独立内嵌、可折叠、无边框 -->
+  <!-- Event preview block for events written in this turn. -->
   <EventPreviewList
     v-else-if="segment.type === 'meta' && segment.metadata?.type === 'event-preview-list'"
     :events="(segment.metadata?.events as EventPreviewItem[]) || []"
   />
 
-  <!-- meta：command / artifact / tokens 一行淡色 -->
+  <!-- Meta rows for command, artifacts, and token usage. -->
   <div v-else-if="segment.type === 'meta'" class="seg-meta">
-    <!-- 命令：默认折叠成单行，展开看完整命令（弱化底层噪音） -->
+    <!-- Commands are collapsed by default to reduce low-level noise. -->
     <div v-if="segment.metadata?.type === 'command'" class="cmd-collapsible">
       <button class="row-toggle" @click="expanded = !expanded">
         <el-icon class="chev" :class="{ open: expanded }"><ArrowRight /></el-icon>
-        <span class="meta-tag">运行命令<template v-if="commandPreview">：</template></span>
+        <span class="meta-tag">{{ t('turn.meta.command') }}<template v-if="commandPreview">{{ t('turn.meta.colon') }}</template></span>
         <span class="cmd-preview">{{ commandPreview }}</span>
       </button>
       <code v-show="expanded" class="command-block">{{ segment.metadata.command }}</code>
@@ -83,18 +83,18 @@
       </span>
     </template>
     <template v-else-if="segment.metadata?.type === 'preparation'">
-      <span class="meta-tag">准备</span>
+      <span class="meta-tag">{{ t('turn.meta.prep') }}</span>
       <span class="meta-text">
-        {{ segment.metadata.stage || '工作区' }}
+        {{ segment.metadata.stage || t('turn.meta.workspace') }}
         <template v-if="segment.metadata.status"> · {{ segment.metadata.status }}</template>
       </span>
     </template>
     <template v-else-if="segment.metadata?.type === 'permission_hint'">
-      <span class="meta-tag warn">权限跳过</span>
+      <span class="meta-tag warn">{{ t('turn.meta.permissionSkipped') }}</span>
       <span class="meta-text">{{ segment.metadata.text }}</span>
     </template>
     <template v-else-if="segment.metadata?.type === 'runtime_warning'">
-      <span class="meta-tag warn">告警</span>
+      <span class="meta-tag warn">{{ t('turn.meta.warning') }}</span>
       <span class="meta-text">{{ segment.metadata.text }}</span>
     </template>
     <template v-else-if="segment.metadata?.type === 'ask_bridge_failed'">
@@ -125,18 +125,21 @@
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { ArrowRight, Loading, Select, CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 import type { ChatSegment, EventPreviewItem } from '../composables/useSessionStream'
+import { useI18n } from '../i18n'
 import { renderMarkdown } from '../utils/markdown'
 import { summarizeToolCall } from '../utils/toolPresentation'
+import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 import EventPreviewList from './EventPreviewList.vue'
 
 const props = defineProps<{
   segment: ChatSegment
-  /** 该段正在流式接收（live）：仍渲染 markdown，但解析按帧节流；由 ChatLog 传入 */
+  /** Whether this live segment should render as plain text while streaming. */
   streamPlain?: boolean
 }>()
 
 const textHtml = ref('')
 const reasonHtml = ref('')
+const { language, t } = useI18n()
 
 function renderNow(): void {
   if (props.segment.type === 'text') {
@@ -146,7 +149,7 @@ function renderNow(): void {
   }
 }
 
-// 流式正文由模板直接绑定纯文本；仅终态与推理段做 markdown 解析。
+// Streaming text binds directly as plain text; settled text and reasoning render as markdown.
 let rafId: number | null = null
 function refreshMarkdown(): void {
   if (props.streamPlain && (props.segment.type === 'text' || props.segment.type === 'reasoning')) return
@@ -181,13 +184,13 @@ const toolStatusClass = computed(() =>
 )
 const totalTokens = computed(() => finiteNumber(props.segment.metadata?.inputTokens) + finiteNumber(props.segment.metadata?.outputTokens))
 
-// 命令折叠行的预览：截断的完整命令，展开才看全。
+// Preview for the collapsed command row; expand to see the full command.
 const commandPreview = computed(() => truncate(String(props.segment.metadata?.command || ''), 56))
 
-// 从工具名 + input 推导单行中文摘要，避免直接暴露底层工具名。
+// Derive a one-line localized summary from tool name and input.
 const toolSummary = computed(() => {
   const tool = String(props.segment.metadata?.tool || 'tool')
-  return summarizeToolCall(tool, props.segment.metadata?.input)
+  return summarizeToolCall(tool, props.segment.metadata?.input, language.value)
 })
 
 function truncate(s: string, n = 80): string {
@@ -205,7 +208,7 @@ function formatJson(value: unknown): string {
 }
 
 function formatBlocker(blocker: unknown): string {
-  if (typeof blocker === 'string') return blocker
+  if (typeof blocker === 'string') return formatUserFacingErrorMessage(blocker, 'general', language.value)
   try {
     return JSON.stringify(blocker)
   } catch {
@@ -230,26 +233,26 @@ function statusType(status: unknown): string {
 
 function statusLabel(status: unknown): string {
   const map: Record<string, string> = {
-    preparing: '准备中',
-    starting: '启动中',
-    running: '运行中',
-    pass: '完成',
-    blocked: '阻塞',
-    failed: '失败',
-    error: '错误',
-    stopped: '已停止',
-    interrupted: '已中断',
-    timeout: '超时',
+    preparing: t('turn.status.preparing'),
+    starting: t('turn.status.starting'),
+    running: t('turn.status.running'),
+    pass: t('turn.status.done'),
+    blocked: t('turn.status.blocked'),
+    failed: t('turn.status.failed'),
+    error: t('turn.status.error'),
+    stopped: t('turn.status.stopped'),
+    interrupted: t('turn.status.interrupted'),
+    timeout: t('turn.status.timeout'),
   }
   const key = String(status || '')
   return map[key] || key
 }
 
 function summaryTitle(status: unknown): string {
-  if (status === 'pass') return '完成'
-  if (status === 'stopped') return '已停止'
-  if (status === 'interrupted') return '已中断'
-  return '未完成'
+  if (status === 'pass') return t('turn.summary.done')
+  if (status === 'stopped') return t('turn.summary.stopped')
+  if (status === 'interrupted') return t('turn.summary.interrupted')
+  return t('turn.summary.incomplete')
 }
 
 function formatDuration(value: unknown): string {
@@ -264,6 +267,7 @@ function finiteNumber(value: unknown): number {
   const number = Number(value || 0)
   return Number.isFinite(number) ? number : 0
 }
+
 </script>
 
 <style scoped>

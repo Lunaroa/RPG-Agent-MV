@@ -69,4 +69,10 @@ describe('groupSessionsIntoRunLogs', () => {
     assert.match(logs[0].searchText, /只出现在续聊里的关键词/)
     assert.match(logs[0].searchText, /child/)
   })
+
+  test('uses English fallback title in English mode', () => {
+    const logs = groupSessionsIntoRunLogs([session('empty', { intent: '', displayText: '', title: '' })], 'en-US')
+
+    assert.equal(logs[0].title, 'Untitled session')
+  })
 })

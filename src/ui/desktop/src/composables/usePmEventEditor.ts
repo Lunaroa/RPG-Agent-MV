@@ -1,5 +1,6 @@
 import { ref, shallowRef } from 'vue';
 import { ElMessage } from 'element-plus';
+import { useI18n } from '../i18n';
 import EventEditorDialog from '../components/editor/EventEditorDialog.vue';
 import {
   events as eventsApi,
@@ -11,6 +12,7 @@ import {
   type StoryEventOverview,
 } from '../api/client';
 import { clone, findEditorMapEvent, type MvEditorEvent } from './useEventEditor';
+import { translate } from '../i18n/messages.ts'
 
 function loadBitmap(url: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
@@ -22,6 +24,7 @@ function loadBitmap(url: string): Promise<HTMLImageElement | null> {
 }
 
 export function usePmEventEditor(projectId: () => string, onSaved?: () => void | Promise<void>) {
+  const { language } = useI18n();
   const eventDialogOpen = ref(false);
   const eventDialogRef = ref<InstanceType<typeof EventEditorDialog> | null>(null);
   const eventDraft = ref<MvEditorEvent | null>(null);
@@ -44,7 +47,7 @@ export function usePmEventEditor(projectId: () => string, onSaved?: () => void |
           return catalog;
         })
         .catch((error) => {
-          ElMessage.warning(`事件资源列表加载失败：${(error as Error).message}`);
+          ElMessage.warning(translate('pmEditor.catalogLoadFailed', language.value, { error: (error as Error).message }));
           return null;
         });
     }
@@ -73,7 +76,7 @@ export function usePmEventEditor(projectId: () => string, onSaved?: () => void |
       ]);
       const event = findEditorMapEvent(payload.map.events, eventId);
       if (!event) {
-        ElMessage.error('事件不存在');
+        ElMessage.error(translate('pmEditor.eventNotFound', language.value));
         return;
       }
       systemData.value = payload.system || null;
@@ -86,7 +89,7 @@ export function usePmEventEditor(projectId: () => string, onSaved?: () => void |
       eventDraft.value = clone(event);
       eventDialogOpen.value = true;
     } catch (error) {
-      ElMessage.error(`打开事件失败：${(error as Error).message}`);
+      ElMessage.error(translate('pmEditor.openFailed', language.value, { error: (error as Error).message }));
     } finally {
       eventLoading.value = false;
     }
@@ -112,9 +115,9 @@ export function usePmEventEditor(projectId: () => string, onSaved?: () => void |
       await onSaved?.();
       if (closeAfterSave) closeEventEditor();
       else eventDialogRef.value?.markSaved();
-      ElMessage.success('事件已保存');
+      ElMessage.success(translate('pmEditor.saved', language.value));
     } catch (error) {
-      ElMessage.error(`保存失败：${(error as Error).message}`);
+      ElMessage.error(translate('pmEditor.saveFailed', language.value, { error: (error as Error).message }));
     } finally {
       eventSaving.value = false;
     }
@@ -128,6 +131,7 @@ export function usePmEventEditor(projectId: () => string, onSaved?: () => void |
   function bindEventDialogRef(el: unknown) {
     eventDialogRef.value = (el as InstanceType<typeof EventEditorDialog> | null) ?? null;
   }
+
 
   return {
     eventDialogOpen,

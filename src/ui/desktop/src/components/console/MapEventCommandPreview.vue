@@ -1,20 +1,20 @@
 <template>
-  <section class="event-command-preview" aria-label="执行内容">
+  <section class="event-command-preview" :aria-label="t('mapPreview.contents')">
     <div class="preview-title">
-      <strong>执行内容</strong>
-      <span>只读</span>
+      <strong>{{ t('mapPreview.contents') }}</strong>
+      <span>{{ t('mapPreview.readonly') }}</span>
     </div>
 
-    <div v-if="!pages.length" class="preview-empty">这个事件没有事件页。</div>
+    <div v-if="!pages.length" class="preview-empty">{{ t('mapPreview.noPages') }}</div>
     <article v-for="(page, pageIndex) in pages" v-else :key="pageIndex" class="preview-page">
       <header class="preview-page-head">
-        <strong>第 {{ pageIndex + 1 }} 页</strong>
+        <strong>{{ t('mapPreview.pageN', { n: pageIndex + 1 }) }}</strong>
         <span>{{ triggerLabel(page.trigger) }}</span>
         <span>{{ conditionLabel(page) }}</span>
       </header>
 
       <div class="preview-command-list">
-        <div v-if="!commandRows(page).length" class="preview-empty compact">暂无指令。</div>
+        <div v-if="!commandRows(page).length" class="preview-empty compact">{{ t('mapPreview.noCommands') }}</div>
         <div
           v-for="(row, rowIndex) in commandRows(page)"
           :key="`${pageIndex}-${rowIndex}`"
@@ -31,8 +31,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from '../../i18n';
 import {
-  TRIGGER_LABELS,
   commandDisplay,
   editableCommandSpans,
   type CommandDisplayResult,
@@ -40,6 +40,7 @@ import {
   type MvEditorEvent,
   type MvEventPage,
 } from '../../composables/useEventEditor';
+import { eventEditorText } from '../../utils/eventEditorLocalization';
 
 interface SystemData {
   switches?: string[];
@@ -51,6 +52,7 @@ const props = defineProps<{
   systemData: SystemData | null;
 }>();
 
+const { language, t } = useI18n();
 const pages = computed(() => Array.isArray(props.event.pages) ? props.event.pages : []);
 
 function commandRows(page: MvEventPage): CommandDisplayResult[] {
@@ -58,7 +60,7 @@ function commandRows(page: MvEventPage): CommandDisplayResult[] {
 }
 
 function displaySpan(span: MvCommandSpan): CommandDisplayResult {
-  const head = commandDisplay(span.commands[0], props.systemData);
+  const head = commandDisplay(span.commands[0], props.systemData, language.value);
   if (span.commands[0].code === 101) {
     return {
       ...head,
@@ -69,22 +71,23 @@ function displaySpan(span: MvCommandSpan): CommandDisplayResult {
 }
 
 function triggerLabel(value: number): string {
-  return TRIGGER_LABELS[Number(value)] || `触发 ${value}`;
+  const labels = eventEditorText(language.value).triggerLabels;
+  return labels[Number(value)] || t('mapPreview.triggerN', { value: String(value) });
 }
 
 function conditionLabel(page: MvEventPage): string {
   const conditions = page.conditions;
-  if (!conditions) return '无条件';
+  if (!conditions) return t('mapPreview.noConditions');
   const parts: string[] = [];
-  if (conditions.switch1Valid) parts.push(`开关 ${named(props.systemData?.switches, conditions.switch1Id)} ON`);
-  if (conditions.switch2Valid) parts.push(`开关 ${named(props.systemData?.switches, conditions.switch2Id)} ON`);
+  if (conditions.switch1Valid) parts.push(`${t('mapPreview.switch')} ${named(props.systemData?.switches, conditions.switch1Id)} ON`);
+  if (conditions.switch2Valid) parts.push(`${t('mapPreview.switch')} ${named(props.systemData?.switches, conditions.switch2Id)} ON`);
   if (conditions.variableValid) {
-    parts.push(`变量 ${named(props.systemData?.variables, conditions.variableId)} >= ${conditions.variableValue}`);
+    parts.push(`${t('mapPreview.variable')} ${named(props.systemData?.variables, conditions.variableId)} >= ${conditions.variableValue}`);
   }
-  if (conditions.selfSwitchValid) parts.push(`独立开关 ${conditions.selfSwitchCh} ON`);
-  if (conditions.itemValid) parts.push(`物品 ${String(conditions.itemId).padStart(4, '0')}`);
-  if (conditions.actorValid) parts.push(`角色 ${String(conditions.actorId).padStart(4, '0')}`);
-  return parts.length ? parts.join(' / ') : '无条件';
+  if (conditions.selfSwitchValid) parts.push(`${t('mapPreview.selfSwitch')} ${conditions.selfSwitchCh} ON`);
+  if (conditions.itemValid) parts.push(`${t('mapPreview.item')} ${String(conditions.itemId).padStart(4, '0')}`);
+  if (conditions.actorValid) parts.push(`${t('mapPreview.actor')} ${String(conditions.actorId).padStart(4, '0')}`);
+  return parts.length ? parts.join(' / ') : t('mapPreview.noConditions');
 }
 
 function named(list: string[] | undefined, id: number): string {

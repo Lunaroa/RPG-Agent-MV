@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { Check, Flag, RefreshCw, Save, X } from '@lucide/vue';
 import { projects, storyPages, system, type StoryProjectProfile } from '../../api/client';
+import { useI18n } from '../../i18n';
 import { formatUserFacingError } from '../../utils/user-facing-error';
 
 const props = defineProps<{
@@ -12,6 +13,7 @@ const emit = defineEmits<{
   changed: [profile: StoryProjectProfile | null];
 }>();
 
+const { language, t } = useI18n();
 const profile = ref<StoryProjectProfile | null>(null);
 const action = ref<'load' | 'enable' | 'git' | 'sync' | 'save' | null>(null);
 const error = ref('');
@@ -29,16 +31,16 @@ const GIT_DOWNLOAD_URL = 'https://git-scm.com/download/win';
 
 const isBusy = computed(() => action.value !== null);
 const isLoading = computed(() => action.value === 'load');
-const statusLabel = computed(() => profile.value ? '已启用' : '未启用');
+const statusLabel = computed(() => profile.value ? t('storyIdentity.enabled') : t('storyIdentity.disabled'));
 const statusTone = computed(() => profile.value ? 'enabled' : 'empty');
 const statusTitle = computed(() => {
-  if (!profile.value) return '当前项目尚未启用版本管理';
-  return '版本管理已启用';
+  if (!profile.value) return t('storyIdentity.notEnabled');
+  return t('storyIdentity.versioningEnabled');
 });
 const activePopover = computed(() => showEnableConfirm.value || showSaveConfirm.value);
 
 function applyUserFacingError(errorValue: unknown, context: 'version' | 'general' = 'version') {
-  const formatted = formatUserFacingError(errorValue, context);
+  const formatted = formatUserFacingError(errorValue, context, language.value);
   error.value = formatted.message;
   errorDetail.value = formatted.detail || '';
   return formatted;
@@ -81,7 +83,7 @@ async function enableProject() {
     const result = await storyPages.initializeOriginal(props.project);
     profile.value = result.profile;
     closeEnableConfirm();
-    success.value = '已启用';
+    success.value = t('storyIdentity.enabled');
     emit('changed', profile.value);
   } catch (initError) {
     applyUserFacingError(initError);
@@ -108,7 +110,7 @@ async function enableProjectWithGit() {
       error.value = '';
       showGitDependencyPrompt.value = true;
     } else {
-      error.value = `版本管理未启用：${formatted.message}`;
+      error.value = t('storyIdentity.notEnabledDetail', { message: formatted.message });
     }
     await reloadProfileAfterGitFailure();
   } finally {
@@ -133,7 +135,7 @@ async function saveProjectVersion() {
   } catch (saveError) {
     const formatted = applyUserFacingError(saveError, 'version');
     if (isGitDependencyMissing(formatted.message) || isGitDependencyMissing(formatted.detail || '')) {
-      error.value = '需要安装 Git 才能保存版本';
+      error.value = t('storyIdentity.gitRequired');
     } else {
       error.value = formatted.message;
     }
@@ -197,7 +199,7 @@ async function syncStoryProject() {
   try {
     const result = await storyPages.sync(props.project);
     profile.value = result.profile || profile.value;
-    success.value = '已同步';
+    success.value = t('storyIdentity.synced');
     emit('changed', profile.value);
   } catch (syncError) {
     applyUserFacingError(syncError);
@@ -211,14 +213,15 @@ watch(() => props.project, () => {
   closeSaveConfirm();
   void loadProfile();
 }, { immediate: true });
+
 </script>
 
 <template>
   <div class="story-identity" :class="[`tone-${statusTone}`, { open: activePopover }]">
     <span class="identity-status" :title="statusTitle">
       <Flag class="identity-icon" />
-      <b>{{ isLoading ? '读取中' : statusLabel }}</b>
-      <small v-if="profile">事件编辑</small>
+      <b>{{ isLoading ? t('storyIdentity.loading') : statusLabel }}</b>
+      <small v-if="profile">{{ t('storyIdentity.eventEdit') }}</small>
     </span>
 
     <template v-if="!isLoading && !profile">
@@ -230,7 +233,7 @@ watch(() => props.project, () => {
         @click="openEnableConfirm"
       >
         <Check class="identity-icon" />
-        <span>{{ action === 'git' ? '处理中' : '启用版本管理' }}</span>
+        <span>{{ action === 'git' ? t('storyIdentity.working') : t('storyIdentity.enableVersioning') }}</span>
       </button>
     </template>
 
@@ -243,14 +246,14 @@ watch(() => props.project, () => {
         @click="openSaveConfirm"
       >
         <Save class="identity-icon" />
-        <span>{{ action === 'save' ? '保存中' : '保存版本' }}</span>
+        <span>{{ action === 'save' ? t('storyIdentity.saving') : t('storyIdentity.saveVersion') }}</span>
       </button>
       <button
         type="button"
         class="identity-icon-button"
         :disabled="isBusy"
-        title="同步事件身份"
-        aria-label="同步事件身份"
+        :title="t('storyIdentity.syncIdentity')"
+        :aria-label="t('storyIdentity.syncIdentity')"
         @click="syncStoryProject"
       >
         <RefreshCw class="identity-icon" :class="{ spinning: action === 'sync' }" />
@@ -265,28 +268,28 @@ watch(() => props.project, () => {
       :title="errorDetail || error"
     >{{ error }}</span>
 
-    <section v-if="showEnableConfirm" class="identity-popover" aria-label="启用版本管理">
+    <section v-if="showEnableConfirm" class="identity-popover" :aria-label="t('storyIdentity.enableVersionMgmt')">
       <header>
-        <strong>{{ showGitDependencyPrompt ? '需要安装 Git' : '启用版本管理' }}</strong>
-        <button type="button" aria-label="关闭" @click="closeEnableConfirm">
+        <strong>{{ showGitDependencyPrompt ? t('storyIdentity.gitRequiredTitle') : t('storyIdentity.enableVersioning') }}</strong>
+        <button type="button" :aria-label="t('eventcmd.close')" @click="closeEnableConfirm">
           <X class="identity-icon" />
         </button>
       </header>
 
       <template v-if="showGitDependencyPrompt">
-        <p class="identity-note">保存版本需要本机安装 Git，但当前电脑没有找到 Git。</p>
-        <p class="identity-note">是否打开 Git 下载页？安装完成后重新启用即可。</p>
+        <p class="identity-note">{{ t('storyIdentity.gitNotFound') }}</p>
+        <p class="identity-note">{{ t('storyIdentity.gitDownloadPrompt') }}</p>
       </template>
       <template v-else>
-        <p class="identity-note">会先保存一份当前项目快照；失败则不启用。</p>
-        <p class="identity-note">也可以只启用事件编辑，但不会自动保存当前版本。</p>
+        <p class="identity-note">{{ t('storyIdentity.snapshotNote') }}</p>
+        <p class="identity-note">{{ t('storyIdentity.editOnlyNote') }}</p>
         <label>
-          版本说明
+          {{ t('storyIdentity.versionNote') }}
           <input
             v-model="enableVersionNote"
             type="text"
             maxlength="200"
-            placeholder="例如：项目初稿"
+            :placeholder="t('storyIdentity.versionNoteExample1')"
             :disabled="isBusy"
           >
         </label>
@@ -295,38 +298,38 @@ watch(() => props.project, () => {
 
       <footer v-if="showGitDependencyPrompt">
         <button type="button" class="identity-action" :disabled="isBusy" @click="closeEnableConfirm">
-          取消
+          {{ t('eventcmd.cancel') }}
         </button>
         <button type="button" class="identity-action primary" :disabled="isBusy" @click="openGitDownload">
-          下载 Git
+          {{ t('storyIdentity.downloadGit') }}
         </button>
       </footer>
       <footer v-else>
         <button type="button" class="identity-action" :disabled="isBusy" @click="enableProject">
-          {{ action === 'enable' ? '启用中' : '仅启用编辑' }}
+          {{ action === 'enable' ? t('storyIdentity.enabling') : t('storyIdentity.enableEditOnly') }}
         </button>
         <button type="button" class="identity-action primary" :disabled="isBusy" @click="enableProjectWithGit">
-          {{ action === 'git' ? '处理中' : '启用版本管理' }}
+          {{ action === 'git' ? t('storyIdentity.working') : t('storyIdentity.enableVersioning') }}
         </button>
       </footer>
     </section>
 
-    <section v-if="showSaveConfirm" class="identity-popover" aria-label="保存版本">
+    <section v-if="showSaveConfirm" class="identity-popover" :aria-label="t('storyIdentity.saveVersion')">
       <header>
-        <strong>保存版本</strong>
-        <button type="button" aria-label="关闭" @click="closeSaveConfirm">
+        <strong>{{ t('storyIdentity.saveVersion') }}</strong>
+        <button type="button" :aria-label="t('eventcmd.close')" @click="closeSaveConfirm">
           <X class="identity-icon" />
         </button>
       </header>
 
-      <p class="identity-note">把当前项目改动记入本地版本历史，不需要远程仓库。</p>
+      <p class="identity-note">{{ t('storyIdentity.saveVersionDesc') }}</p>
       <label>
-        版本说明
+        {{ t('storyIdentity.versionNote') }}
         <input
           v-model="saveVersionNote"
           type="text"
           maxlength="200"
-          placeholder="例如：第一章剧情定稿"
+          :placeholder="t('storyIdentity.versionNoteExample2')"
           :disabled="isBusy"
         >
       </label>
@@ -334,10 +337,10 @@ watch(() => props.project, () => {
 
       <footer>
         <button type="button" class="identity-action" :disabled="isBusy" @click="closeSaveConfirm">
-          取消
+          {{ t('eventcmd.cancel') }}
         </button>
         <button type="button" class="identity-action primary" :disabled="isBusy" @click="saveProjectVersion">
-          {{ action === 'save' ? '保存中' : '确认保存' }}
+          {{ action === 'save' ? t('storyIdentity.saving') : t('storyIdentity.confirmSave') }}
         </button>
       </footer>
     </section>

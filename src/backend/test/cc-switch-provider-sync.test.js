@@ -100,7 +100,7 @@ describe('readCcSwitchOpencodeProviderCandidates', () => {
 
   test('fails fast when cc-switch preset source is missing', () => {
   const missing = path.join(os.tmpdir(), 'rmmv-ccswitch-missing-root');
-  assert.throws(() => resolveCcSwitchRoot(missing), /未找到供应商预设文件/);
+  assert.throws(() => resolveCcSwitchRoot(missing), /provider preset file was not found/);
   });
 });
 

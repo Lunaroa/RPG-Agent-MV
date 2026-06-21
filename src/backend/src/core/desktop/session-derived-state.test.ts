@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import type { SessionRuntimeEvent } from "../../../../contract/types.ts";
-import {
-  deriveSessionPlan,
-  deriveSessionSubagents,
-  planAskIdForRequest,
-} from "./session-derived-state.ts";
+import { withProductLanguage } from '../i18n/request-language.ts';
+import { deriveSessionPlan, deriveSessionSubagents, planAskIdForRequest } from './session-derived-state.ts';
 
 describe("session derived state", () => {
+  const plan = (sessionId: string, events: SessionRuntimeEvent[]) =>
+    withProductLanguage('zh-CN', () => deriveSessionPlan(sessionId, events, 'zh-CN'));
+  const subagents = (sessionId: string, events: SessionRuntimeEvent[]) =>
+    withProductLanguage('zh-CN', () => deriveSessionSubagents(sessionId, events, 'zh-CN'));
+
   test("derives opencode plan approval state from request and response events", () => {
     const baseEvents: SessionRuntimeEvent[] = [
       {
@@ -43,14 +45,14 @@ describe("session derived state", () => {
       },
     ];
 
-    const awaiting = deriveSessionPlan("s1", baseEvents);
+    const awaiting = plan("s1", baseEvents);
     assert.equal(awaiting.mode, "approval_requested");
     assert.equal(awaiting.askId, planAskIdForRequest("req-plan"));
     assert.equal(awaiting.requestId, "req-plan");
     assert.equal(awaiting.filePath, "runtime/sessions/s1/plan.md");
     assert.match(awaiting.planMarkdown, /读取事实/);
 
-    const approved = deriveSessionPlan("s1", [
+    const approved = plan("s1", [
       ...baseEvents,
       {
         type: "opencode_permission_response",
@@ -68,7 +70,7 @@ describe("session derived state", () => {
     assert.equal(approved.mode, "approved");
     assert.equal(approved.error, null);
 
-    const rejected = deriveSessionPlan("s1", [
+    const rejected = plan("s1", [
       ...baseEvents,
       {
         type: "opencode_permission_response",
@@ -110,14 +112,14 @@ describe("session derived state", () => {
       },
     ];
 
-    const snapshot = deriveSessionPlan("s1", events);
+    const snapshot = plan("s1", events);
     assert.equal(snapshot.mode, "planning");
     assert.equal(snapshot.filePath, ".opencode/plans/1710000000000-task.md");
     assert.match(snapshot.planMarkdown, /读取 Map001/);
   });
 
   test("derives planning state from plan_enter tool", () => {
-    const snapshot = deriveSessionPlan("s1", [
+    const snapshot = plan("s1", [
       {
         type: "tool_call",
         sequence: 1,
@@ -212,7 +214,7 @@ describe("session derived state", () => {
       },
     ];
 
-    const snapshot = deriveSessionSubagents("s1", events);
+    const snapshot = subagents("s1", events);
     const task = snapshot.items.find((item) => item.id === "task-1");
     assert.equal(task?.description, "梳理地图事实");
     assert.equal(task?.background, true);
@@ -270,7 +272,7 @@ describe("session derived state", () => {
       },
     ];
 
-    const running = deriveSessionSubagents("s1", runningEvents).items.find((item) => item.id === "task-search");
+    const running = subagents("s1", runningEvents).items.find((item) => item.id === "task-search");
     assert.equal(running?.description, "测试子 Agent 代码搜索");
     assert.equal(running?.status, "running");
     assert.equal(running?.taskType, "agent");
@@ -284,7 +286,7 @@ describe("session derived state", () => {
     assert.equal(running?.activity?.at(-1)?.output, "41 matches");
     assert.equal(running?.activity?.at(-1)?.status, "completed");
 
-    const completed = deriveSessionSubagents("s1", [
+    const completed = subagents("s1", [
       ...runningEvents,
       {
         type: "subagent_task_notification",
@@ -304,7 +306,7 @@ describe("session derived state", () => {
     assert.equal(completed?.activity?.at(-1)?.title, "子任务完成");
     assert.equal(completed?.activity?.at(-1)?.outputFile, "runtime/out/task-search.txt");
 
-    const terminal = deriveSessionSubagents("s1", [
+    const terminal = subagents("s1", [
       {
         type: "subagent_task_started",
         sequence: 1,
@@ -358,7 +360,7 @@ describe("session derived state", () => {
   });
 
   test("handles Agent tool_result with completed placeholder output", () => {
-    const snapshot = deriveSessionSubagents("s1", [
+    const snapshot = subagents("s1", [
       {
         type: "tool_call",
         sequence: 1,
@@ -384,7 +386,7 @@ describe("session derived state", () => {
   });
 
   test("handles Agent tool_result with null output during subagent tracking", () => {
-    const snapshot = deriveSessionSubagents("s1", [
+    const snapshot = subagents("s1", [
       {
         type: "tool_call",
         sequence: 1,
@@ -409,7 +411,7 @@ describe("session derived state", () => {
   });
 
   test("handles duplicate Agent tool_call with empty then populated input", () => {
-    const snapshot = deriveSessionSubagents("s1", [
+    const snapshot = subagents("s1", [
       {
         type: "tool_call",
         sequence: 1,
@@ -467,7 +469,7 @@ describe("session derived state", () => {
   });
 
   test("queued opencode notification completes a launched subagent", () => {
-    const snapshot = deriveSessionSubagents("s1", [
+    const snapshot = subagents("s1", [
       {
         type: "tool_call",
         sequence: 1,

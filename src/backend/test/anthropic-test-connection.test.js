@@ -84,7 +84,7 @@ describe('anthropic testConnection', () => {
     }
   });
 
-  test('401 returns Chinese credential error', async () => {
+  test('401 returns credential error', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock.fn(async () => ({
       ok: false,
@@ -100,13 +100,13 @@ describe('anthropic testConnection', () => {
       });
       assert.equal(result.ok, false);
       assert.equal(result.status, 401);
-      assert.match(result.error, /密钥无效/);
+      assert.match(result.error, /API key is invalid or expired/);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('403 returns Chinese permission error', async () => {
+  test('403 returns permission error', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock.fn(async () => ({
       ok: false,
@@ -121,13 +121,13 @@ describe('anthropic testConnection', () => {
         model: 'deepseek-v4-flash',
       });
       assert.equal(result.ok, false);
-      assert.match(result.error, /无权访问/);
+      assert.match(result.error, /API access is forbidden/);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test('network failure returns Chinese unreachable message', async () => {
+  test('network failure returns unreachable message', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock.fn(async () => {
       throw new Error('fetch failed');
@@ -141,7 +141,7 @@ describe('anthropic testConnection', () => {
         timeoutMs: 5000,
       });
       assert.equal(result.ok, false);
-      assert.match(result.error, /无法连接服务器/);
+      assert.match(result.error, /Could not connect to server/);
     } finally {
       globalThis.fetch = originalFetch;
     }

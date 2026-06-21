@@ -114,10 +114,10 @@ export function resolveRuntimeReadinessBlocker(
   engine: AgentExecutionEngine,
   workflowRoot?: string | null,
 ): string | null {
-  if (engine !== "opencode") return `未知执行引擎: ${engine}`;
+  if (engine !== "opencode") return `Unknown execution engine: ${engine}`;
   if (!workflowRoot) return null;
   const cli = resolveOpencodeCli(workflowRoot);
-  return fs.existsSync(cli) ? null : `opencode 运行文件缺失：${cli}。请先运行 npm run build:opencode-runtime，从 third_party/opencode 源码构建运行时。`;
+  return fs.existsSync(cli) ? null : `opencode runtime file is missing: ${cli}. Run npm run build:opencode-runtime to build the runtime from third_party/opencode first.`;
 }
 
 export function usesOpencodeProviderBinding(engine: AgentExecutionEngine): boolean {
@@ -151,7 +151,7 @@ export function listExecutionEngineMeta(): Array<{
       id: "opencode",
       label: ENGINE_LABELS.opencode,
       available: true,
-      hint: "唯一执行后端：本地 opencode serve + 官方 SDK/SSE 事件流。",
+      hint: "Only execution backend: local opencode serve with the official SDK/SSE event stream.",
     },
   ];
 }
@@ -170,7 +170,7 @@ export function probeAgentExecution(
 ): ProbeAgentExecutionResult {
   void settings;
   if (engine !== "opencode") {
-    return { engine, ok: false, commandDisplay: null, error: `未知引擎: ${engine}` };
+    return { engine, ok: false, commandDisplay: null, error: `Unknown engine: ${engine}` };
   }
   const blocker = resolveRuntimeReadinessBlocker(engine, workflowRoot);
   if (blocker) {

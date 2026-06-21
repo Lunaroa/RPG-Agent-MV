@@ -20,7 +20,7 @@ describe("renderOpencodeUserPrompt plan path injection", () => {
       registry: { registryPath: "", agents: {}, profiles: {} } as never,
       agent: { id: "default" } as never,
       profileId: "default",
-      knowledgeContext: { status: "skipped", mode: "off" },
+      knowledgeContext: { status: "skipped", mode: "off" } as const,
       workflowRoot: "/tmp/workflow",
       opencodeSessionId: null,
       planFilePath: PLAN_PATH,
@@ -45,7 +45,7 @@ describe("renderOpencodeUserPrompt plan path injection", () => {
       registry: { registryPath: "", agents: {}, profiles: {} } as never,
       agent: { id: "default" } as never,
       profileId: "default",
-      knowledgeContext: { status: "skipped", mode: "off" },
+      knowledgeContext: { status: "skipped", mode: "off" } as const,
       workflowRoot: "/tmp/workflow",
       opencodeSessionId: "opencode-session-123",
       planFilePath: PLAN_PATH,
@@ -70,14 +70,72 @@ describe("renderOpencodeUserPrompt plan path injection", () => {
       registry: { registryPath: "", agents: {}, profiles: {} } as never,
       agent: { id: "default" } as never,
       profileId: "default",
-      knowledgeContext: { status: "skipped", mode: "off" },
+      knowledgeContext: { status: "skipped", mode: "off" } as const,
       workflowRoot: "/tmp/workflow",
       opencodeSessionId: null,
       planFilePath: PLAN_PATH,
     });
 
-    assert.match(prompt, /## 对话历史（本轮之前）/);
+    assert.match(prompt, /## Conversation History \(Before This Turn\)/);
     assert.match(prompt, /Session plan file: \.opencode\/plans\/conversations\/root-session\.md/);
     assert.doesNotMatch(prompt, /Project: projects\/Demo/);
+  });
+
+  test("produces identical prompt skeleton for zh-CN and en-US product language", () => {
+    const baseContext = {
+      task: {
+        intent: "Create an inn event, but keep character dialogue in Japanese.",
+        project: "projects/Demo",
+        mapId: "12",
+        failureKind: null,
+        taskId: null,
+        files: [],
+        conversationHistory: null,
+      },
+      registry: { registryPath: "", agents: {}, profiles: {} } as never,
+      agent: { id: "default" } as never,
+      profileId: "default",
+      knowledgeContext: { status: "skipped", mode: "off" } as const,
+      workflowRoot: "/tmp/workflow",
+      opencodeSessionId: null,
+      planFilePath: null,
+    };
+
+    const englishPrompt = renderOpencodeUserPrompt({
+      ...baseContext,
+      productLanguage: "en-US",
+    });
+    const chinesePrompt = renderOpencodeUserPrompt({
+      ...baseContext,
+      productLanguage: "zh-CN",
+    });
+
+    assert.equal(englishPrompt, chinesePrompt);
+    assert.doesNotMatch(englishPrompt, /Product language:/);
+  });
+
+  test("uses English conversation history heading regardless of product language", () => {
+    const prompt = renderOpencodeUserPrompt({
+      task: {
+        intent: "Continue the plan",
+        project: "projects/Demo",
+        mapId: null,
+        failureKind: null,
+        taskId: null,
+        files: [],
+        conversationHistory: "User: previous turn\nAssistant: acknowledged",
+      },
+      registry: { registryPath: "", agents: {}, profiles: {} } as never,
+      agent: { id: "default" } as never,
+      profileId: "default",
+      knowledgeContext: { status: "skipped", mode: "off" } as const,
+      workflowRoot: "/tmp/workflow",
+      opencodeSessionId: null,
+      planFilePath: null,
+      productLanguage: "en-US",
+    });
+
+    assert.match(prompt, /## Conversation History \(Before This Turn\)/);
+    assert.doesNotMatch(prompt, /## 对话历史/);
   });
 });

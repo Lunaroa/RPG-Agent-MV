@@ -38,10 +38,14 @@ import {
 } from "./runtime-issues.ts";
 import { buildAgentOutputEnv } from "./agent-output-dirs.ts";
 import { buildSessionPlanPathPromptLines } from "../../desktop/session-plan-path.ts";
+import { AGENT_PROMPT_LANGUAGE } from "../../i18n/agent-prompt-locale.ts";
 import {
   buildOpencodeRuntimeConfig,
 } from "./opencode/config.ts";
 import { runOpencodeSession } from "./opencode/runtime.ts";
+import type { ProductLanguage } from "../../../../../contract/types.ts";
+import { normalizeProductLanguage } from "../../../../../contract/i18n.ts";
+import { backendText } from "../../i18n/messages.ts";
 
 const DEFAULT_AGENT_TIMEOUT_MS: number = 30 * 60 * 1000;
 
@@ -62,6 +66,7 @@ interface DispatchOptions {
   project?: string;
   files?: string[];
   intent?: string;
+  productLanguage?: ProductLanguage;
   mapId?: string;
   taskId?: string;
   conversationHistory?: string;
@@ -214,6 +219,7 @@ interface DispatchResult {
   registryPath?: string;
   route?: unknown;
   task: Task;
+  productLanguage?: ProductLanguage | null;
   agent?: SummarizedAgent | null;
   executionEngine?: AgentExecutionEngine;
   profileId?: string | null;
@@ -262,6 +268,7 @@ interface DispatchProcessHandle {
 
 interface UserPromptContext {
   task: Task;
+  productLanguage?: ProductLanguage | null;
   registry: Registry;
   agent: AgentConfig;
   profileId: string | null;
@@ -295,6 +302,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
   const generatedAt: string = new Date().toISOString();
   const sessionId: string = options.sessionId || makeSessionId(generatedAt, agentId || "unrouted");
   const task = buildTask(options, workflowRoot);
+  const productLanguage = normalizeProductLanguage(options.productLanguage);
 
   if (!agent) {
     return {
@@ -331,7 +339,10 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     const providerId = sessionBinding?.providerId || null;
     const modelId = sessionBinding?.modelId || null;
     if (!providerId || !modelId) {
-      profileBlocker = "未选择 opencode 的供应商或模型。请在 设置 → 执行引擎 中绑定供应商与模型。";
+      profileBlocker = backendText(
+        'dispatch.noProviderOrModel',
+        productLanguage,
+      );
     } else {
       const document = await providerRegistry.loadDocument(workflowRoot);
       const providerRecord = document.providers[providerId] || null;
@@ -374,6 +385,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
   });
   const userPrompt = renderOpencodeUserPrompt({
     task,
+    productLanguage,
     registry,
     agent,
     profileId,
@@ -416,6 +428,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     registryPath: registry.registryPath,
     route,
     task,
+    productLanguage,
     agent: summarizeAgentForTrace(agent as unknown as Parameters<typeof summarizeAgentForTrace>[0]) as unknown as SummarizedAgent,
     executionEngine,
     profileId,
@@ -493,6 +506,7 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
         env: spawnEnv,
         config: opencodeConfig,
         timeoutMs: options.timeoutMs || dispatch.execution.timeoutMs || 600000,
+        productLanguage: dispatch.productLanguage,
         signal: options.signal,
       }, () => {});
       return recordAgentRunBestEffort({
@@ -551,18 +565,26 @@ async function resolveOpencodeConfig(dispatch: DispatchResult): Promise<Record<s
   const providerId = binding?.providerId || String(dispatch.profile?.provider || "").trim();
   const modelId = binding?.modelId || String(dispatch.profile?.model || "").trim();
   if (!providerId || !modelId) {
-    throw new Error("opencode 运行缺少供应商或模型绑定。");
+    throw new Error(backendText(
+      'dispatch.missingProviderOrModel',
+      normalizeProductLanguage(dispatch.productLanguage),
+    ));
   }
   const document = await providerRegistry.loadDocument(dispatch.workflowRoot);
   const provider = document.providers[providerId] || null;
   if (!provider) {
-    throw new Error(`未找到 opencode 供应商：${providerId}`);
+    throw new Error(backendText(
+      'dispatch.providerNotFound',
+      normalizeProductLanguage(dispatch.productLanguage),
+      { providerId },
+    ));
   }
   return buildOpencodeRuntimeConfig({
     workflowRoot: dispatch.workflowRoot,
     providerId,
     modelId,
     provider,
+    productLanguage: dispatch.productLanguage,
   });
 }
 
@@ -624,6 +646,7 @@ function startOpencodeDispatchProcess(
         env: spawnEnv,
         config: opencodeConfig,
         timeoutMs: options.timeoutMs || dispatch.execution!.timeoutMs || 600000,
+        productLanguage: dispatch.productLanguage,
         signal: controller.signal,
       }, onEvent);
       const finalStatus = result.status === "pass" ? "pass" : stopped ? "stopped" : "blocked";
@@ -888,18 +911,22 @@ export function renderOpencodeUserPrompt(context: OpencodeUserPromptContext): st
   const intent = context.task.intent || "Prepare a concise status report for this agent.";
   const lines: string[] = [];
   if (context.task.conversationHistory?.trim() && !context.opencodeSessionId?.trim()) {
-    lines.push("## 对话历史（本轮之前）");
+    lines.push(backendText('dispatch.conversationHistoryHeader', AGENT_PROMPT_LANGUAGE));
     lines.push(context.task.conversationHistory);
     lines.push("");
   }
   if (!isOpencodeContinuation(context)) {
-    if (context.task.project) lines.push(`Project: ${context.task.project}`);
-    if (context.task.mapId) lines.push(`Map id: ${context.task.mapId}`);
+    if (context.task.project) {
+      lines.push(`${backendText('prompt.projectLabel', AGENT_PROMPT_LANGUAGE)}: ${context.task.project}`);
+    }
+    if (context.task.mapId) {
+      lines.push(`${backendText('prompt.mapIdLabel', AGENT_PROMPT_LANGUAGE)}: ${context.task.mapId}`);
+    }
   }
   const planLines = buildSessionPlanPathPromptLines(String(context.planFilePath || ""));
   if (planLines.length > 0) lines.push(...planLines);
   if (lines.length > 0) lines.push("");
-  lines.push("Task:");
+  lines.push(`${backendText('prompt.taskLabel', AGENT_PROMPT_LANGUAGE)}:`);
   lines.push(intent);
   return lines.join("\n");
 }

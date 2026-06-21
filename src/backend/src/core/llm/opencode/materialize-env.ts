@@ -22,11 +22,11 @@ export function materializeOpencodeEnv(
     return {
       env,
       envKeys,
-      blocker: "未找到所选的 opencode 供应商，请在 设置 → 供应商 中检查配置。",
+      blocker: "Selected opencode provider was not found. Check Settings > Providers.",
     };
   }
 
-  const label = provider.label || "(未命名供应商)";
+  const label = provider.label || "(unnamed provider)";
   const baseUrl = String(provider.baseUrl || "").trim();
   const credential = String(provider.credentialValue || "").trim();
 
@@ -34,14 +34,14 @@ export function materializeOpencodeEnv(
     return {
       env,
       envKeys,
-      blocker: `供应商「${label}」缺少 API Key，请在 设置 → 供应商 中填写后再运行。`,
+      blocker: `Provider "${label}" is missing an API Key. Fill it in Settings > Providers before running.`,
     };
   }
   if (!baseUrl) {
     return {
       env,
       envKeys,
-      blocker: `供应商「${label}」缺少接口地址（Base URL）。`,
+      blocker: `Provider "${label}" is missing a Base URL.`,
     };
   }
 

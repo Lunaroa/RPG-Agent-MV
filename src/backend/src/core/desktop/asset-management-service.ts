@@ -17,6 +17,28 @@ import type {
 import { readJson } from '../rmmv/json.ts';
 import { projectAssetUrl } from './asset-service.ts';
 import {
+  assetManagementAssetMissing,
+  assetManagementCategoryMissing,
+  assetManagementImportParamsMissing,
+  assetManagementInvalidName,
+  assetManagementInvalidPath,
+  assetManagementMissingParams,
+  assetManagementNotMissingReference,
+  assetManagementOverwriteMustBeBoolean,
+  assetManagementOverwriteRequired,
+  assetManagementPathOutOfBounds,
+  assetManagementReplacementAssetMissing,
+  assetManagementReplacementSameAsMissing,
+  assetManagementReplacementUnsupported,
+  assetManagementSourceMissing,
+  assetManagementSourceMustBeAbsolute,
+  assetManagementSourceNotFile,
+  assetManagementSourceRequired,
+  assetManagementTargetNameExists,
+  unsupportedAssetCategory,
+  unsupportedAssetExtension,
+} from './assetManagementLocalization.ts';
+import {
   buildAssetReferenceGraph,
   checkAssetDeleteSafety,
   checkAssetRenameSafety,
@@ -46,7 +68,7 @@ interface AssetTarget {
 
 export function getAssetDetail(workflowRoot: string, project: string, target: AssetTarget): ManagedAssetDetail {
   const resolved = resolveAssetPath(workflowRoot, project, target);
-  if (!fs.existsSync(resolved.absolute)) throw new Error('资产不存在');
+  if (!fs.existsSync(resolved.absolute)) throw new Error(assetManagementAssetMissing());
   const fileName = path.basename(resolved.absolute);
   const name = path.basename(fileName, path.extname(fileName));
   return {
@@ -117,17 +139,17 @@ export function replaceMissingAssetReference(
   const category = requireAssetCategory(request.category);
   const missingName = request.missingName.trim();
   const replacementName = request.replacementName.trim();
-  if (!missingName || !replacementName) throw new Error('缺少参数');
-  if (replacementName === missingName) throw new Error('目标名称与缺失引用名称重复');
+  if (!missingName || !replacementName) throw new Error(assetManagementMissingParams());
+  if (replacementName === missingName) throw new Error(assetManagementReplacementSameAsMissing());
   const replacementAsset = graph.assets.find((asset) => asset.category === category && asset.name === replacementName);
-  if (!replacementAsset) throw new Error('目标资源不存在');
+  if (!replacementAsset) throw new Error(assetManagementReplacementAssetMissing());
   const missingReferences = graph.missingReferences.filter((reference) =>
     reference.category === category && reference.name === missingName);
-  if (!missingReferences.length) throw new Error('该引用不是缺失引用');
+  if (!missingReferences.length) throw new Error(assetManagementNotMissingReference());
   const references = mapReferences(missingReferences);
   const update = replaceProjectAssetReferences(workflowRoot, project, category, missingName, replacementName, references);
   if (update.updatedReferences === 0) {
-    throw new Error('当前缺失引用位置暂不支持自动替换');
+    throw new Error(assetManagementReplacementUnsupported());
   }
   return {
     category: request.category,
@@ -146,17 +168,17 @@ export function importLocalAssetFile(
   const input = normalizeImportLocalAssetRequest(request);
   const category = requireAssetCategory(input.category);
   const definition = RMMV_ASSET_CATEGORIES.find((item) => item.id === category);
-  if (!definition) throw new Error(`不支持的资产类型：${input.category}`);
+  if (!definition) throw new Error(unsupportedAssetCategory(input.category));
 
   const sourceFile = normalizeLocalSourceFile(input.sourceFile);
   const stat = fs.statSync(sourceFile);
-  if (!stat.isFile()) throw new Error('源文件不是普通文件');
+  if (!stat.isFile()) throw new Error(assetManagementSourceNotFile());
 
   const sourceFileName = path.basename(sourceFile);
   const sourceExtension = path.extname(sourceFileName);
   const sourceExtensionLower = sourceExtension.toLowerCase();
   if (!definition.extensions.includes(sourceExtensionLower)) {
-    throw new Error(`资产类型 ${category} 不支持 ${sourceExtension || '无扩展名'} 文件`);
+    throw new Error(unsupportedAssetExtension(category, sourceExtension));
   }
 
   const targetName = input.targetName === undefined || input.targetName.trim() === ''
@@ -169,7 +191,7 @@ export function importLocalAssetFile(
   const sourceTarget = path.join(path.resolve(project), ...targetRelative.split('/'));
   const targetExists = Boolean(stagedEntry) || Boolean(getProjectFileForRead(workflowRoot, project, targetRelative)) || fs.existsSync(sourceTarget);
   if (targetExists && input.overwrite !== true) {
-    throw new Error('目标资产已存在，覆盖导入需要显式开启 overwrite');
+    throw new Error(assetManagementOverwriteRequired());
   }
 
   writeStagedProjectBuffer(workflowRoot, project, targetRelative, fs.readFileSync(sourceFile));
@@ -188,7 +210,7 @@ export function renameAsset(
 ): ManagedAssetDetail {
   const nextName = normalizeAssetName(nextNameValue);
   const resolved = resolveAssetPath(workflowRoot, project, target);
-  if (!fs.existsSync(resolved.absolute)) throw new Error('资产不存在');
+  if (!fs.existsSync(resolved.absolute)) throw new Error(assetManagementAssetMissing());
   const ext = path.extname(resolved.absolute);
   const before = path.basename(resolved.absolute, ext);
   const safety = checkAssetRenameSafety(workflowRoot, project, { category: resolved.category, relativePath: resolved.relativePath, name: before }, nextName);
@@ -196,7 +218,7 @@ export function renameAsset(
   const nextFileName = `${nextName}${ext}`;
   const nextRelative = `${path.posix.dirname(resolved.relativePath)}/${nextFileName}`;
 
-  if (getProjectFileForRead(workflowRoot, project, nextRelative)) throw new Error('目标名称已存在');
+  if (getProjectFileForRead(workflowRoot, project, nextRelative)) throw new Error(assetManagementTargetNameExists());
   writeStagedProjectBuffer(workflowRoot, project, nextRelative, fs.readFileSync(resolved.absolute));
   deleteStagedProjectFile(workflowRoot, project, resolved.relativePath);
   replaceProjectAssetReferences(workflowRoot, project, resolved.category, before, nextName, safety.references);
@@ -205,7 +227,7 @@ export function renameAsset(
 
 export function deleteAsset(workflowRoot: string, project: string, target: AssetTarget): { deleted: true } {
   const resolved = resolveAssetPath(workflowRoot, project, target);
-  if (!fs.existsSync(resolved.absolute)) throw new Error('资产不存在');
+  if (!fs.existsSync(resolved.absolute)) throw new Error(assetManagementAssetMissing());
   const safety = checkAssetDeleteSafety(workflowRoot, project, {
     category: resolved.category,
     relativePath: resolved.relativePath,
@@ -224,7 +246,7 @@ function resolveAssetPath(workflowRoot: string, project: string, target: AssetTa
   assertInside(root, sourceAbsolute);
   const absolute = getProjectFileForRead(workflowRoot, project, relativePath) || sourceAbsolute;
   const stagingRoot = path.join(path.resolve(workflowRoot), 'runtime', 'agent-console-staging');
-  if (!isInside(root, absolute) && !isInside(stagingRoot, absolute)) throw new Error('资产路径越界');
+  if (!isInside(root, absolute) && !isInside(stagingRoot, absolute)) throw new Error(assetManagementPathOutOfBounds());
   return { absolute, relativePath, category };
 }
 
@@ -393,37 +415,37 @@ function parseJsonPath(jsonPath: string): Array<string | number> {
 
 function normalizeAssetName(value: string): string {
   const name = value.trim();
-  if (!name || /[<>:"/\\|?*\u0000-\u001f]/.test(name)) throw new Error('资产名称无效');
+  if (!name || /[<>:"/\\|?*\u0000-\u001f]/.test(name)) throw new Error(assetManagementInvalidName());
   return name;
 }
 
 function normalizeImportTargetName(value: string): string {
   const name = normalizeAssetName(value);
-  if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') throw new Error('资产名称无效');
+  if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') throw new Error(assetManagementInvalidName());
   return name;
 }
 
 function normalizeRelative(value: string): string {
   const normalized = value.replace(/\\/g, '/').replace(/^\/+/, '');
-  if (!normalized || normalized.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('资产路径无效');
+  if (!normalized || normalized.split('/').some(part => !part || part === '.' || part === '..')) throw new Error(assetManagementInvalidPath());
   return normalized;
 }
 
 function normalizeLocalSourceFile(value: string): string {
   const source = String(value || '').trim();
-  if (!source) throw new Error('缺少源文件');
-  if (!path.isAbsolute(source)) throw new Error('源文件必须是绝对路径');
+  if (!source) throw new Error(assetManagementSourceRequired());
+  if (!path.isAbsolute(source)) throw new Error(assetManagementSourceMustBeAbsolute());
   const absolute = path.resolve(source);
-  if (!fs.existsSync(absolute)) throw new Error('源文件不存在');
+  if (!fs.existsSync(absolute)) throw new Error(assetManagementSourceMissing());
   return absolute;
 }
 
 function normalizeImportLocalAssetRequest(request: ProjectAssetImportLocalFileInput): ProjectAssetImportLocalFileInput {
-  if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('缺少导入参数');
-  if (typeof request.category !== 'string' || !request.category.trim()) throw new Error('缺少资产类型');
-  if (typeof request.sourceFile !== 'string' || !request.sourceFile.trim()) throw new Error('缺少源文件');
-  if (request.targetName !== undefined && typeof request.targetName !== 'string') throw new Error('资产名称无效');
-  if (request.overwrite !== undefined && typeof request.overwrite !== 'boolean') throw new Error('overwrite 必须是布尔值');
+  if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error(assetManagementImportParamsMissing());
+  if (typeof request.category !== 'string' || !request.category.trim()) throw new Error(assetManagementCategoryMissing());
+  if (typeof request.sourceFile !== 'string' || !request.sourceFile.trim()) throw new Error(assetManagementSourceRequired());
+  if (request.targetName !== undefined && typeof request.targetName !== 'string') throw new Error(assetManagementInvalidName());
+  if (request.overwrite !== undefined && typeof request.overwrite !== 'boolean') throw new Error(assetManagementOverwriteMustBeBoolean());
   return {
     category: request.category,
     sourceFile: request.sourceFile,
@@ -439,5 +461,5 @@ function assertProjectRelativeTarget(project: string, relativePath: string): voi
 
 function assertInside(root: string, candidate: string): void {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('资产路径越界');
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(assetManagementPathOutOfBounds());
 }

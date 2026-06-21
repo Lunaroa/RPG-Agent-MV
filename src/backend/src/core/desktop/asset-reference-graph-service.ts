@@ -2,6 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { readJson } from '../rmmv/json.ts';
+import {
+  assetGraphAssetMissing,
+  assetGraphIconsetRenameForbidden,
+  assetGraphNameInvalid,
+  assetGraphNameMissing,
+  assetGraphReferencedBlocker,
+  assetGraphTargetNameOccupied,
+  assetGraphUnsupportedCategory,
+} from './assetReferenceGraphLocalization.ts';
 import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
 
 export type RmmvAssetCategory =
@@ -233,8 +242,8 @@ export function checkAssetDeleteSafety(workflowRoot: string, project: string, ta
   const asset = findGraphAsset(graph, target, category, name);
   const references = graph.references.filter((reference) => reference.category === category && reference.name === name);
   const blockers: string[] = [];
-  if (!asset) blockers.push('资产不存在');
-  if (references.length) blockers.push(`资产仍被 ${references.length} 处引用，禁止删除`);
+  if (!asset) blockers.push(assetGraphAssetMissing());
+  if (references.length) blockers.push(assetGraphReferencedBlocker(references.length));
   return {
     ok: blockers.length === 0,
     action: 'delete',
@@ -259,14 +268,14 @@ export function checkAssetRenameSafety(
   const blockers: string[] = [];
   let nextRelativePath: string | undefined;
   if (!asset) {
-    blockers.push('资产不存在');
+    blockers.push(assetGraphAssetMissing());
   } else {
     nextRelativePath = `${path.posix.dirname(asset.relativePath)}/${nextName}${path.extname(asset.fileName)}`;
     const occupied = graph.assets.some((item) => item.relativePath === nextRelativePath);
-    if (occupied) blockers.push('目标名称已存在');
+    if (occupied) blockers.push(assetGraphTargetNameOccupied());
   }
   if (category === 'system' && name === 'IconSet' && references.some((reference) => reference.path.endsWith('.iconIndex'))) {
-    blockers.push('IconSet 是 RMMV 图标索引的固定系统资源，不能安全重命名');
+    blockers.push(assetGraphIconsetRenameForbidden());
   }
   return {
     ok: blockers.length === 0,
@@ -676,7 +685,7 @@ function resolveProjectAssetLayout(workflowRoot: string, project: string): Proje
 
 function categoryRelativeDirectory(layout: ProjectAssetLayout, category: RmmvAssetCategory): string {
   const definition = CATEGORY_BY_ID.get(category);
-  if (!definition) throw new Error(`不支持的资产类型：${category}`);
+  if (!definition) throw new Error(assetGraphUnsupportedCategory(category));
   return layout.gameRootRelative ? `${layout.gameRootRelative}/${definition.directory}` : definition.directory;
 }
 
@@ -722,7 +731,7 @@ function normalizeAssetReferenceName(value: unknown): string {
 
 function normalizeAssetName(value: string): string {
   const name = String(value || '').trim();
-  if (!name || /[<>:"/\\|?*\u0000-\u001f]/.test(name)) throw new Error('资产名称无效');
+  if (!name || /[<>:"/\\|?*\u0000-\u001f]/.test(name)) throw new Error(assetGraphNameInvalid());
   return name;
 }
 
@@ -732,7 +741,7 @@ function targetAssetName(target: AssetGraphTarget): string {
     const fileName = path.posix.basename(target.relativePath.replace(/\\/g, '/'));
     return normalizeAssetName(path.posix.basename(fileName, path.posix.extname(fileName)));
   }
-  throw new Error('缺少资产名称');
+  throw new Error(assetGraphNameMissing());
 }
 
 function findGraphAsset(
@@ -747,7 +756,7 @@ function findGraphAsset(
 
 function requireCategory(category: string): RmmvAssetCategory {
   const normalized = normalizeAssetCategory(category);
-  if (!normalized) throw new Error(`不支持的资产类型：${category}`);
+  if (!normalized) throw new Error(assetGraphUnsupportedCategory(category));
   return normalized;
 }
 

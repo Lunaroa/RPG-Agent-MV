@@ -5,6 +5,14 @@ import { MapSelectionDao } from '../db/dao/map-selection-dao.ts';
 import { readJson } from '../rmmv/json.ts';
 import { resolveLocalSourcePath } from './local-assets-service.ts';
 import {
+  mapLibraryAssetNotFound,
+  mapLibraryEntryUnreadable,
+  mapLibraryJsonMissing,
+  mapLibrarySelectionDownstreamNote,
+  mapLibrarySourceProjectMissing,
+  mapVisualLibraryIndexNotFound,
+} from './libraryServiceLocalization.ts';
+import {
   mapLibraryIndexPath as resolveMapLibraryIndexPath,
   resolveMapLibraryFilePath,
 } from './map-library-paths.ts';
@@ -19,15 +27,15 @@ export function mapLibraryIndexPath(workflowRoot: string): string {
 
 export function getMapLibraryEntry(workflowRoot: string, assetIdValue: string): Record<string, any> {
   const indexPath = mapLibraryIndexPath(workflowRoot);
-  if (!fs.existsSync(indexPath)) throw new Error('map visual library index.json not found.');
+  if (!fs.existsSync(indexPath)) throw new Error(mapVisualLibraryIndexNotFound());
   const assetId = String(assetIdValue || '');
   const index = readJson(indexPath) as { entries?: Record<string, any>[] };
   const entries = index.entries || [];
   const entry = entries.find((item) => item?.assetId === assetId);
   if (entry) return entry;
 
-  // 兜底：assetId 格式为 <package>-map<NNN>-<hash>，hash 可能因 index 重建而变化。
-  // 去掉末尾 hash 段，按前缀匹配同一张地图。
+  // Fallback for asset IDs shaped as <package>-map<NNN>-<hash>. The trailing
+  // hash can change when the index is rebuilt, so match by stable prefix.
   const prefixMatch = assetId.match(/^(.+-map\d+-)/);
   if (prefixMatch) {
     const prefix = prefixMatch[1];
@@ -35,7 +43,7 @@ export function getMapLibraryEntry(workflowRoot: string, assetIdValue: string): 
     if (fallback) return fallback;
   }
 
-  throw new Error(`map asset not found: ${assetId}`);
+  throw new Error(mapLibraryAssetNotFound(assetId));
 }
 
 export function findMapLibraryScreenshot(workflowRoot: string, assetIdValue: string): string | null {
@@ -121,7 +129,7 @@ export function writeMapLibrarySelection(workflowRoot: string, body: Record<stri
     humanNote: String(body.note || '').trim(),
     candidates,
     requiredOutputs: Array.isArray(body.requiredOutputs) ? body.requiredOutputs.map(String).map((item: string) => item.trim()).filter(Boolean) : [],
-    downstream: '地图已由人在 agent console「地图制作」标签选定/导入。Agent 必须读取本文件的 source map、targetParent、importedMapId、role、humanGoal、candidates 和 requiredOutputs；不要重做视觉选图。',
+    downstream: mapLibrarySelectionDownstreamNote(),
   };
   MapSelectionDao.create(SELECTION_PROJECT_ID, record);
   return record;
@@ -138,7 +146,7 @@ export interface MapLibraryPackageValidation {
   sourceProjectPath: string | null;
 }
 
-/** 批量导入前检查库文件与本地资产路径是否可达。 */
+/** Checks whether package map files and local source assets are reachable before batch import. */
 export function validateMapLibraryPackage(workflowRoot: string, assetIds: string[]): MapLibraryPackageValidation {
   const issues: MapLibraryPackageValidation['issues'] = [];
   let resolvedProjectPath: string | null = null;
@@ -149,19 +157,19 @@ export function validateMapLibraryPackage(workflowRoot: string, assetIds: string
       const entry = getMapLibraryEntry(workflowRoot, assetId);
       const title = String(entry.title || assetId);
       if (!libraryEntryMapFileExists(workflowRoot, entry)) {
-        issues.push({ assetId, title, message: '库内地图 JSON 文件缺失' });
+        issues.push({ assetId, title, message: mapLibraryJsonMissing() });
       }
       const localPath = resolveLocalSourcePath(workflowRoot, entry);
       if (localPath && !resolvedProjectPath) resolvedProjectPath = localPath;
       if (localPath && fs.existsSync(localPath)) sourceProjectReachable = true;
       if (!localPath) {
-        issues.push({ assetId, title, message: '本地资产库中未找到该地图的源工程' });
+        issues.push({ assetId, title, message: mapLibrarySourceProjectMissing() });
       }
     } catch (error) {
       issues.push({
         assetId,
         title: assetId,
-        message: (error as Error).message || '无法读取库条目',
+        message: (error as Error).message || mapLibraryEntryUnreadable(),
       });
     }
   }

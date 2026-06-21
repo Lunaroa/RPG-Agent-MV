@@ -11,6 +11,7 @@ import {
   removeRegisteredProject,
   validateRmmvProjectDirectory,
 } from './project-service.ts';
+import { withTestLanguage } from '../i18n/with-test-language.ts';
 
 describe('desktop project service', () => {
   test('lists only strongly validated workspace projects', () => {
@@ -77,7 +78,7 @@ describe('desktop project service', () => {
       registerExternalProject(root, external);
 
       assert.throws(
-        () => removeRegisteredProject(root, path.join(path.dirname(external), 'missing-project')),
+        () => withTestLanguage(() => removeRegisteredProject(root, path.join(path.dirname(external), 'missing-project'))),
         /不在注册列表/,
       );
       assert.deepEqual(readRegistryProjectPaths(root), [path.resolve(external)]);
@@ -94,7 +95,7 @@ describe('desktop project service', () => {
       writeRmmvProject(path.join(root, 'projects', 'Sample'), 'data', 'Workspace Game');
 
       assert.throws(
-        () => removeRegisteredProject(root, 'projects/Sample'),
+        () => withTestLanguage(() => removeRegisteredProject(root, 'projects/Sample')),
         /来自 projects\/ 目录/,
       );
       const projects = listProjects(root);
@@ -113,7 +114,7 @@ describe('desktop project service', () => {
       fs.writeFileSync(path.join(root, 'data', 'System.json'), JSON.stringify({ switches: [], variables: [] }), 'utf8');
 
       assert.throws(
-        () => validateRmmvProjectDirectory(root),
+        () => withTestLanguage(() => validateRmmvProjectDirectory(root)),
         /MapInfos\.json/,
       );
     } finally {
@@ -130,7 +131,7 @@ describe('desktop project service', () => {
       fs.writeFileSync(path.join(dataDir, 'MapInfos.json'), JSON.stringify([null, { id: 1, name: 'Start' }]), 'utf8');
 
       assert.throws(
-        () => validateRmmvProjectDirectory(root),
+        () => withTestLanguage(() => validateRmmvProjectDirectory(root)),
         /Map001\.json/,
       );
     } finally {

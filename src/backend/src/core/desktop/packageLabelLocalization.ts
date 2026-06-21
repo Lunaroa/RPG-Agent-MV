@@ -1,9 +1,12 @@
+import type { ProductLanguage } from '../../../../contract/i18n.ts';
+import { pickByLocale } from '../../../../contract/i18n.ts';
+import { resolveLanguage } from '../i18n/request-language.ts';
+
 /**
- * 地图库侧栏文件夹名 → 中文翻译表。
- * key 为 resolvePackageLabel() 计算出的原始标签，value 为对应中文。
+ * Map library sidebar folder labels translated for zh-CN.
+ * Keys are raw labels from resolvePackageLabel(); values are Chinese display labels.
  */
-export const PACKAGE_LABEL_TRANSLATIONS: Map<string, string> = new Map([
-  // ── 完整标签（parent / base 两层） ──
+const PACKAGE_LABEL_TRANSLATIONS_ZH = new Map<string, string>([
   ['Amusement park! Tile set / sample project_jp', '游乐园素材包 / 示例项目'],
 
   ['Card Game Combat Deckbuilder Engine / CGC-162-BlankTemplate-MV', '卡牌战斗引擎 / 空白模板'],
@@ -104,3 +107,19 @@ export const PACKAGE_LABEL_TRANSLATIONS: Map<string, string> = new Map([
   ['samples / Gacha Sample', '示例合集 / 抽卡游戏示例'],
   ['samples / Slot Machine Sample', '示例合集 / 老虎机示例'],
 ]);
+
+const PACKAGE_LABEL_TRANSLATIONS_BY_LOCALE = {
+  'zh-CN': PACKAGE_LABEL_TRANSLATIONS_ZH,
+  'en-US': new Map<string, string>(),
+} as const satisfies Record<ProductLanguage, ReadonlyMap<string, string>>;
+
+export function packageLabelTranslations(language?: ProductLanguage | null): ReadonlyMap<string, string> {
+  return pickByLocale(resolveLanguage(language), PACKAGE_LABEL_TRANSLATIONS_BY_LOCALE);
+}
+
+export function packageLabelUngrouped(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '未分组',
+    'en-US': 'Ungrouped',
+  });
+}

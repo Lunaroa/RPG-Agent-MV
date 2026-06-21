@@ -1,4 +1,5 @@
 import { assertSkillName, SkillPublicationService } from './skill-publication-service.ts';
+import { nativeSkillUsagePrinciples } from './nativeSkillServiceLocalization.ts';
 
 export interface CreateNativeSkillResult {
   skill: string;
@@ -23,11 +24,7 @@ export function createNativeSkill(
     '',
     normalizedDescription,
     '',
-    '## 使用原则',
-    '',
-    '- 先读取当前项目事实，再给出判断。',
-    '- 缺少关键约束时直接 ASK，不要自行假设。',
-    '- 需要写入工程时遵守项目的受控写入、验证和回滚流程。',
+    ...nativeSkillUsagePrinciples(),
     '',
   ].join('\n');
   const result = new SkillPublicationService(workflowRoot).publish({

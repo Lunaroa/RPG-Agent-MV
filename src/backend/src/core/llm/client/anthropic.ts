@@ -44,22 +44,22 @@ export function buildAnthropicMessagesUrl(baseUrl: string): string {
 function formatHttpError(status: number, bodyText: string): string {
   const snippet = truncateBody(bodyText.trim());
   if (status === 401) {
-    return "API 密钥无效或已过期，请检查凭证配置";
+    return "API key is invalid or expired. Check credential settings.";
   }
   if (status === 403) {
-    return "无权访问该 API（403），请检查密钥权限或账户状态";
+    return "API access is forbidden (403). Check key permissions or account status.";
   }
   if (status === 404) {
-    return `接口未找到（404），请检查 baseUrl 是否正确${snippet ? `：${snippet}` : ""}`;
+    return `Endpoint was not found (404). Check whether baseUrl is correct${snippet ? `: ${snippet}` : ""}`;
   }
-  return `HTTP ${status}${snippet ? `：${snippet}` : ""}`;
+  return `HTTP ${status}${snippet ? `: ${snippet}` : ""}`;
 }
 
 function formatNetworkError(error: Error): string {
   if (error.name === "AbortError") {
-    return "连接超时，请检查网络或 baseUrl 是否可达";
+    return "Connection timed out. Check network access or whether baseUrl is reachable.";
   }
-  return `无法连接服务器：${error.message}`;
+  return `Could not connect to server: ${error.message}`;
 }
 
 /** 200 = success; 400 = reachable + key accepted but request rejected (still OK for connectivity test). */
@@ -92,13 +92,13 @@ async function chat(): Promise<never> {
 
 async function testConnection(params: TestConnectionParams): Promise<TestConnectionResult> {
   const { baseUrl, apiKey, model, timeoutMs } = params || {} as TestConnectionParams;
-  if (!baseUrl) return { ok: false, error: "provider 未配置 baseUrl" };
-  if (!apiKey) return { ok: false, error: "没有可用的凭证 (credentialValue 未配置)" };
-  if (!model) return { ok: false, error: "未配置 model id" };
+  if (!baseUrl) return { ok: false, error: "provider baseUrl is not configured" };
+  if (!apiKey) return { ok: false, error: "No usable credential is configured (credentialValue is missing)" };
+  if (!model) return { ok: false, error: "model id is not configured" };
 
   const url = buildAnthropicMessagesUrl(baseUrl);
   if (!url.includes("://")) {
-    return { ok: false, error: "baseUrl 格式无效" };
+    return { ok: false, error: "baseUrl format is invalid" };
   }
 
   const startedAt = Date.now();

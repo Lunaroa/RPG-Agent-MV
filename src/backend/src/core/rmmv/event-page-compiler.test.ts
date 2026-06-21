@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
+import { withProductLanguage } from "../i18n/request-language.ts";
 import { compileCommands, decompileCommands, normalizeCommands } from "./event-page-compiler.ts";
 
 interface Cmd {
@@ -41,21 +42,26 @@ test("change-items compiles to code 126", () => {
 });
 
 test("normalizeCommands rewrites change-items operation aliases (add/gain/0)", () => {
+  withProductLanguage("en-US", () => {
   for (const [operation, expectedOp] of [["add", 0], ["gain", 0], [0, 0], ["remove", 1], [1, 1]] as const) {
     const { commands } = normalizeCommands([{ kind: "change-items", itemId: 5, operation, value: 2 }]);
     const compiled = compileCommands(commands as never, null, "");
     const item = compiled.find((c) => c.code === 126)!;
     assert.deepStrictEqual(item.parameters, [5, expectedOp, 0, 2], `operation=${String(operation)}`);
   }
+  });
 });
 
 test("compileCommands normalizes give-item kind with add operation at placement time", () => {
+  withProductLanguage("en-US", () => {
   const compiled = compileCommands([{ kind: "give-item", itemId: 7, operation: "give", value: 1 }] as never, null, "");
   const item = compiled.find((c) => c.code === 126)!;
   assert.deepStrictEqual(item.parameters, [7, 0, 0, 1]);
+  });
 });
 
 test("normalizeCommands rewrites string/boolean/op-field operation variants", () => {
+  withProductLanguage("en-US", () => {
   for (const [operation, expectedOp] of [["0", 0], ["1", 1], [true, 0], [false, 1]] as const) {
     const { commands } = normalizeCommands([{ kind: "change-items", itemId: 2, operation, value: 1 }]);
     const compiled = compileCommands(commands as never, null, "");
@@ -64,9 +70,11 @@ test("normalizeCommands rewrites string/boolean/op-field operation variants", ()
   }
   const { commands: fromOp } = normalizeCommands([{ kind: "change-items", itemId: 4, op: "add", value: 3 }]);
   assert.strictEqual((fromOp[0] as Cmd).operation, "increase");
+  });
 });
 
 test("normalizeCommands rewrites DeepSeek-style variants into compilable canonical form", () => {
+  withProductLanguage("en-US", () => {
   // 模拟模型常见的产出变体形态（虚构占位内容）：face 字符串、独立 when 兄弟、set-self-switch、change-gold.amount。
   const raw = [
     { kind: "text", text: "What is this?", face: "FaceA" },
@@ -93,9 +101,11 @@ test("normalizeCommands rewrites DeepSeek-style variants into compilable canonic
   for (const code of [101, 230, 102, 250, 125, 123, 213]) {
     assert.ok(codes.includes(code), `expected RMMV code ${code} after normalize+compile`);
   }
+  });
 });
 
 test("normalizeCommands rewrites Mimo-style variants (face object / control-switches / play-se.sound / branch)", () => {
+  withProductLanguage("en-US", () => {
   const raw = [
     { kind: "text", text: "你好。", face: { characterName: "Hero", index: 2 } },
     { kind: "show-choices", choices: ["是", "否"] },
@@ -114,6 +124,7 @@ test("normalizeCommands rewrites Mimo-style variants (face object / control-swit
   const se = choice.choices[0]!.commands.find((c) => c.kind === "play-se") as Cmd;
   assert.strictEqual(se.name, "Decision1", "play-se.sound.name→play-se.name");
   assert.doesNotThrow(() => codesOf(commands as Cmd[]));
+  });
 });
 
 test("raw MV commands compile standard commands outside the high-level kind set", () => {

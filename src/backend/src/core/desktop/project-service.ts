@@ -5,6 +5,38 @@ import { promisify } from 'node:util';
 
 import type { ProjectGitBaselineResult, ProjectVersionSaveOptions } from '../../../../contract/types.ts';
 import { inspectRmmvProject, type RmmvLayoutKind, type RmmvProjectManifest } from '../rmmv/rmmv-layout.ts';
+import {
+  projectCheckGitDependency,
+  projectDataDirMissing,
+  projectDefaultVersionCommitMessage,
+  projectDirectoryMissing,
+  projectGitFailed,
+  projectGitMissing,
+  projectGitRootMismatch,
+  projectGitTimeout,
+  projectInvalidMapId,
+  projectJsonParseFailed,
+  projectMapInfosEmpty,
+  projectMapInfosMissing,
+  projectMapInfosNotArray,
+  projectMissingMapFile,
+  projectNotEditable,
+  projectNotRegistered,
+  projectNotRunnable,
+  projectRemoveTargetRequired,
+  projectSystemJsonMissing,
+  projectSystemMissingArrays,
+  projectSystemNotObject,
+  projectVersionEmpty,
+  projectVersionInvalidChars,
+  projectVersionMessageTooLong,
+  projectVersionNoChanges,
+  projectVersionNotInitialized,
+  projectVersionReadyNoChanges,
+  projectVersionSaved,
+  projectVersionSavedCurrent,
+  projectWorkspaceRemoveForbidden,
+} from './projectServiceLocalization.ts';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 15_000;
@@ -97,20 +129,20 @@ export function registerExternalProject(
 
 export function removeRegisteredProject(workflowRoot: string, projectPath: string): ProjectInfo[] {
   const target = typeof projectPath === 'string' ? projectPath.trim() : '';
-  if (!target) throw new Error('请选择要清除的项目');
+  if (!target) throw new Error(projectRemoveTargetRequired());
 
   const resolvedPath = resolveProjectPath(workflowRoot, target);
   const workspaceProject = listWorkspaceProjects(workflowRoot)
     .find((project) => samePath(resolveProjectPath(workflowRoot, project.path), resolvedPath));
   if (workspaceProject) {
-    throw new Error('这个项目来自 projects/ 目录，不能从项目列表清除。请移出 projects/ 目录后刷新。');
+    throw new Error(projectWorkspaceRemoveForbidden());
   }
 
   const registry = readProjectRegistry(workflowRoot);
   const projects = registry.projects || [];
   const nextProjects = projects.filter((item) => !samePath(item.path, resolvedPath));
   if (nextProjects.length === projects.length) {
-    throw new Error(`项目不在注册列表中，无法清除：${resolvedPath}`);
+    throw new Error(projectNotRegistered(resolvedPath));
   }
 
   writeProjectRegistry(workflowRoot, { ...registry, projects: nextProjects });
@@ -124,10 +156,10 @@ export function validateRmmvProjectDirectory(projectPath: string): ProjectValida
   try {
     manifest = inspectRmmvProject(projectRoot);
   } catch (error) {
-    throw new Error(`不是可用的 RPG Maker MV 项目：${projectRoot}。${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(projectNotRunnable(projectRoot, error instanceof Error ? error.message : String(error)));
   }
   if (!manifest.editable) {
-    throw new Error(`不是可编辑的 RPG Maker MV 项目：${projectRoot}。缺少：${manifest.missingRequired.join('，')}`);
+    throw new Error(projectNotEditable(projectRoot, manifest.missingRequired));
   }
   return validateDataDir(projectRoot, manifest);
 }
@@ -230,39 +262,39 @@ function sortProjects(a: ProjectInfo, b: ProjectInfo): number {
 function validateDataDir(projectRoot: string, manifest: RmmvProjectManifest): ProjectValidation {
   const dataDir = manifest.dataDir;
   if (!fs.existsSync(dataDir) || !fs.statSync(dataDir).isDirectory()) {
-    throw new Error(`缺少数据目录：${dataDir}`);
+    throw new Error(projectDataDirMissing(dataDir));
   }
 
   const systemPath = path.join(dataDir, 'System.json');
   const mapInfosPath = path.join(dataDir, 'MapInfos.json');
-  if (!fs.existsSync(systemPath)) throw new Error(`缺少 System.json：${systemPath}`);
-  if (!fs.existsSync(mapInfosPath)) throw new Error(`缺少 MapInfos.json：${mapInfosPath}`);
+  if (!fs.existsSync(systemPath)) throw new Error(projectSystemJsonMissing(systemPath));
+  if (!fs.existsSync(mapInfosPath)) throw new Error(projectMapInfosMissing(mapInfosPath));
 
   const system = readJsonFile(systemPath);
   if (!system || typeof system !== 'object' || Array.isArray(system)) {
-    throw new Error(`System.json 不是对象：${systemPath}`);
+    throw new Error(projectSystemNotObject(systemPath));
   }
   const systemRecord = system as Record<string, unknown>;
   if (!Array.isArray(systemRecord.switches) || !Array.isArray(systemRecord.variables)) {
-    throw new Error(`System.json 缺少 switches / variables 数组：${systemPath}`);
+    throw new Error(projectSystemMissingArrays(systemPath));
   }
 
   const mapInfos = readJsonFile(mapInfosPath);
   if (!Array.isArray(mapInfos)) {
-    throw new Error(`MapInfos.json 不是数组：${mapInfosPath}`);
+    throw new Error(projectMapInfosNotArray(mapInfosPath));
   }
   const entries = mapInfos.filter(Boolean) as Array<Record<string, unknown>>;
   if (!entries.length) {
-    throw new Error(`MapInfos.json 没有任何地图条目：${mapInfosPath}`);
+    throw new Error(projectMapInfosEmpty(mapInfosPath));
   }
   for (const entry of entries) {
     const mapId = Number(entry.id);
     if (!Number.isInteger(mapId) || mapId <= 0) {
-      throw new Error(`MapInfos.json 包含无效地图 ID：${mapInfosPath}`);
+      throw new Error(projectInvalidMapId(mapInfosPath));
     }
     const mapFile = path.join(dataDir, `Map${String(mapId).padStart(3, '0')}.json`);
     if (!fs.existsSync(mapFile)) {
-      throw new Error(`MapInfos.json 引用了不存在的地图文件：${mapFile}`);
+      throw new Error(projectMissingMapFile(mapFile));
     }
   }
 
@@ -333,7 +365,7 @@ function readJsonFile(filePath: string): unknown {
   try {
     return JSON.parse(raw);
   } catch (error) {
-    throw new Error(`JSON 解析失败：${filePath}：${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(projectJsonParseFailed(filePath, error instanceof Error ? error.message : String(error)));
   }
 }
 
@@ -341,7 +373,6 @@ function normalizeProjectName(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-const DEFAULT_VERSION_COMMIT_MESSAGE = '保存当前版本';
 const MAX_VERSION_COMMIT_MESSAGE_LENGTH = 200;
 
 export function initializeProjectGitBaseline(
@@ -379,7 +410,7 @@ async function initializeProjectGitBaselineAsync(
 
   const topLevel = (await runGit(projectPath, ['rev-parse', '--show-toplevel'])).stdout.trim();
   if (!samePath(topLevel, projectPath)) {
-    throw new Error(`Git 仓库根目录不是当前项目：${topLevel}`);
+    throw new Error(projectGitRootMismatch(topLevel));
   }
 
   const commitResult = await commitProjectChanges(projectPath, options);
@@ -388,15 +419,15 @@ async function initializeProjectGitBaselineAsync(
       ...commitResult,
       initialized,
       message: initialized
-        ? '已准备好版本管理，当前没有新的改动需要保存'
-        : '当前没有新的改动需要保存',
+        ? projectVersionReadyNoChanges()
+        : projectVersionNoChanges(),
     };
   }
 
   return {
     ...commitResult,
     initialized,
-    message: initialized ? '已保存当前版本' : '已保存',
+    message: initialized ? projectVersionSavedCurrent() : projectVersionSaved(),
   };
 }
 
@@ -408,12 +439,12 @@ async function saveProjectVersionAsync(
 
   const gitMarker = path.join(projectPath, '.git');
   if (!fs.existsSync(gitMarker)) {
-    throw new Error('版本管理尚未初始化，请先启用版本管理');
+    throw new Error(projectVersionNotInitialized());
   }
 
   const topLevel = (await runGit(projectPath, ['rev-parse', '--show-toplevel'])).stdout.trim();
   if (!samePath(topLevel, projectPath)) {
-    throw new Error(`Git 仓库根目录不是当前项目：${topLevel}`);
+    throw new Error(projectGitRootMismatch(topLevel));
   }
 
   const commitResult = await commitProjectChanges(projectPath, options);
@@ -421,14 +452,14 @@ async function saveProjectVersionAsync(
     return {
       ...commitResult,
       initialized: false,
-      message: '当前没有新的改动需要保存',
+      message: projectVersionNoChanges(),
     };
   }
 
   return {
     ...commitResult,
     initialized: false,
-    message: '已保存',
+    message: projectVersionSaved(),
   };
 }
 
@@ -443,7 +474,7 @@ async function commitProjectChanges(
       projectPath,
       initialized: false,
       committed: false,
-      message: '当前没有新的改动需要保存',
+      message: projectVersionNoChanges(),
     };
   }
 
@@ -458,33 +489,33 @@ async function commitProjectChanges(
     initialized: false,
     committed: true,
     commitHash,
-    message: '已保存',
+    message: projectVersionSaved(),
   };
 }
 
 function normalizeVersionCommitMessage(value: string | undefined): string {
   const trimmed = typeof value === 'string' ? value.trim() : '';
-  const message = trimmed || DEFAULT_VERSION_COMMIT_MESSAGE;
+  const message = trimmed || projectDefaultVersionCommitMessage();
   if (message.includes('\0')) {
-    throw new Error('版本说明包含无效字符');
+    throw new Error(projectVersionInvalidChars());
   }
   const singleLine = message.replace(/[\r\n]+/g, ' ').trim();
   if (!singleLine) {
-    throw new Error('版本说明不能为空');
+    throw new Error(projectVersionEmpty());
   }
   if (singleLine.length > MAX_VERSION_COMMIT_MESSAGE_LENGTH) {
-    throw new Error(`版本说明不能超过 ${MAX_VERSION_COMMIT_MESSAGE_LENGTH} 字`);
+    throw new Error(projectVersionMessageTooLong(MAX_VERSION_COMMIT_MESSAGE_LENGTH));
   }
   return singleLine;
 }
 
 async function assertGitAvailable(cwd: string): Promise<void> {
-  await runGit(cwd, ['--version'], '检测 Git 依赖');
+  await runGit(cwd, ['--version'], projectCheckGitDependency());
 }
 
 function assertProjectDirectory(projectPath: string): void {
   if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
-    throw new Error(`项目目录不存在：${projectPath}`);
+    throw new Error(projectDirectoryMissing(projectPath));
   }
 }
 
@@ -516,13 +547,13 @@ async function runGit(cwd: string, args: string[], label = `git ${args.join(' ')
       signal?: NodeJS.Signals;
     };
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new Error('缺少 Git 依赖：未找到 git 命令。请先安装 Git 后重试。');
+      throw new Error(projectGitMissing());
     }
     if (err.killed || err.signal === 'SIGTERM' || /timed out/i.test(err.message || '')) {
-      throw new Error(`${label} 超时：Git 在 ${Math.max(1, Math.round(timeoutMs / 1000))} 秒内没有响应，版本管理未启用。`);
+      throw new Error(projectGitTimeout(label, Math.max(1, Math.round(timeoutMs / 1000))));
     }
     const output = `${stringOutput(err.stderr)}${stringOutput(err.stdout)}`.trim();
-    throw new Error(output ? `Git 执行失败：${output}` : `Git 执行失败：${err.message || `git ${args.join(' ')}`}`);
+    throw new Error(projectGitFailed(output, err.message || `git ${args.join(' ')}`));
   }
 }
 

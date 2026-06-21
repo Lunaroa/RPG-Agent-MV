@@ -5,12 +5,15 @@ import path from 'node:path';
 import { StagingManifestDao } from '../db/dao/staging-manifest-dao.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
+import { stagingSharedFilesRequireProjectAction } from './stagingServiceLocalization.ts';
 
-// 暂存模型（v4，写入前草稿）：所有编辑先落到 runtime/agent-console-staging/<projectHash>/draft。
-//   - 读取：有草稿读草稿，否则读源工程。
-//   - 应用：把草稿写回源工程，再清掉草稿与清单。
-//   - 丢弃：只删除草稿与清单，不覆盖源工程。
-// 旧 v3 模型是“直写 + 快照”，与本模型不兼容，readManifest 会把 version<4 的清单视为空。
+// Staging model v4 stores every edit as a pre-write draft under
+// runtime/agent-console-staging/<projectHash>/draft.
+//   - Reads prefer drafts, then source project files.
+//   - Apply writes drafts back to the source project and clears draft metadata.
+//   - Discard deletes only drafts and metadata, never source project files.
+// Older v3 manifests used direct writes plus snapshots and are incompatible
+// with v4 draft semantics, so readManifest treats version < 4 as empty.
 
 interface FileEntry {
   relativePath: string;
@@ -268,7 +271,7 @@ export function discardProjectStaging(workflowRoot: string, project: string) {
 function assertMapOnlyOperation(manifest: Manifest, mapRelative: string): void {
   const shared = Object.keys(manifest.files).filter((relative) => relative !== mapRelative && !/^(?:www\/)?data\/Map\d{3}\.json$/.test(relative));
   if (shared.length) {
-    throw new Error('该暂存包含共享地图索引或资源文件，请使用项目级“应用”或“丢弃”。');
+    throw new Error(stagingSharedFilesRequireProjectAction());
   }
 }
 
@@ -283,7 +286,7 @@ function buildContext(workflowRoot: string, project: string): StagingContext {
 
 function readManifest(context: StagingContext): Manifest {
   const value = StagingManifestDao.getLatestByProject(context.projectHash)?.manifest as Manifest | undefined;
-  // 旧模型与 v4 草稿语义不兼容：忽略旧清单，避免把直写快照当作待应用草稿。
+  // Ignore legacy manifests so direct-write snapshots are never treated as v4 drafts.
   if (!value || (value.version ?? 0) < MANIFEST_VERSION) {
     return { version: MANIFEST_VERSION, project: context.project, projectHash: context.projectHash, maps: {}, files: {} };
   }
@@ -303,7 +306,8 @@ function writeManifest(context: StagingContext, manifest: Manifest): void {
   else StagingManifestDao.create(context.projectHash, normalized);
 }
 
-// 首次为某文件建立草稿：记录源文件基线，并把源文件拷到 runtime 草稿区。
+// Creates the first draft for a file, records source baseline metadata, and
+// copies the source file into the runtime draft area.
 function ensureDraft(context: StagingContext, manifest: Manifest, relative: string): FileEntry {
   const existing = manifest.files[relative];
   if (existing) return existing;

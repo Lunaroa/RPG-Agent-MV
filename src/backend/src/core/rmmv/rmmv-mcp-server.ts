@@ -28,9 +28,11 @@ import "../../suppress-warnings.ts";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { DEFAULT_PRODUCT_LANGUAGE } from "../../../../contract/i18n.ts";
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { initFileLogger, toolLogger } from "../file-log.ts";
 import { dispatchRmmvTool } from "./rmmv-tool-dispatch.ts";
+import { withProductLanguage } from "../i18n/request-language.ts";
 import type { RmmvHandlerInput } from "./rmmv-handler-types.ts";
 import { resolveWorkflowRootFromInput } from "./rmmv-handler-utils.ts";
 
@@ -252,7 +254,7 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
     name: "RmmvEvent",
     description:
       "Event contract registry, command patching, feedback, and editor operations on already-placed map events only. "
-      + "New map events: registry.register (full implementation) → user previews in sidebar → agent calls AskUserQuestion with question「应用到待放置队列？」and options「应用」「调整」「取消」 (do not ask meta permission to follow this workflow) → user selects 应用 → user drags on RPG-Agent-MV desktop map canvas (createPlacementEvent). "
+      + "New map events: registry.register with the full implementation, the user previews it in the sidebar, the agent asks whether to apply it to the placement queue with apply/adjust/cancel options, and after approval the user drags it onto the RPG-Agent-MV desktop map canvas through createPlacementEvent. "
       + "Never use editor.update or editor.move to set x/y for new events; never tell the user to place events in external RPG Maker MV editor.",
     inputSchema: {
       action: z.enum([
@@ -344,13 +346,13 @@ async function main(): Promise<void> {
       const tmpDirs: string[] = [];
       try {
         materializeInlineJsonFields(handlerInput, tmpDirs);
-        const result = await dispatchRmmvTool(command, handlerInput);
+        const result = await withProductLanguage(DEFAULT_PRODUCT_LANGUAGE, () => dispatchRmmvTool(command, handlerInput));
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result) }],
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        log.error(`工具执行失败 [${command}/${rawAction}]: ${message}`);
+        log.error(`Tool execution failed [${command}/${rawAction}]: ${message}`);
         return {
           content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: message }) }],
           isError: true,

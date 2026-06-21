@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
+import { withProductLanguage } from "../i18n/request-language.ts";
 import { renderEventScript, type EventScriptLine } from "./event-script.ts";
 
 function texts(lines: EventScriptLine[]): string[] {
@@ -7,6 +8,7 @@ function texts(lines: EventScriptLine[]): string[] {
 }
 
 test("renders dialogue with speaker from faceName", () => {
+  withProductLanguage("zh-CN", () => {
   const model = renderEventScript({
     id: "village.well.pray",
     rmmvTarget: { trigger: "action-button", eventName: "EV_well" },
@@ -20,9 +22,11 @@ test("renders dialogue with speaker from faceName", () => {
   assert.strictEqual(line.kind, "dialogue");
   assert.strictEqual(line.speaker, "Actor1");
   assert.strictEqual(line.text, "Looks like a sample prop.");
+  });
 });
 
 test("choice options nest their branch commands one indent deeper", () => {
+  withProductLanguage("zh-CN", () => {
   const model = renderEventScript({
     id: "c",
     rmmvTarget: { trigger: "action-button" },
@@ -46,9 +50,11 @@ test("choice options nest their branch commands one indent deeper", () => {
   const gold = lines.find((l) => l.kind === "effect")!;
   assert.strictEqual(gold.indent, 1, "branch command sits one indent deeper than its option");
   assert.strictEqual(gold.text, "金钱 −10");
+  });
 });
 
 test("AIWF marker comments are hidden; empty page falls back to a placeholder", () => {
+  withProductLanguage("zh-CN", () => {
   const model = renderEventScript({
     id: "marker",
     rmmvTarget: { trigger: "parallel" },
@@ -59,9 +65,11 @@ test("AIWF marker comments are hidden; empty page falls back to a placeholder", 
   assert.strictEqual(model.pages[0].lines.length, 1);
   assert.strictEqual(model.pages[0].lines[0].kind, "comment");
   assert.match(model.pages[0].lines[0].text, /无可见演出/);
+  });
 });
 
 test("normalizes model variants before rendering (show-text→text, gain→increase)", () => {
+  withProductLanguage("zh-CN", () => {
   const model = renderEventScript({
     id: "n",
     rmmvTarget: { trigger: "action-button" },
@@ -76,9 +84,11 @@ test("normalizes model variants before rendering (show-text→text, gain→incre
   assert.strictEqual(lines[0].kind, "dialogue");
   assert.strictEqual(lines[0].text, "拿去吧。");
   assert.strictEqual(lines[1].text, "金钱 +30");
+  });
 });
 
 test("multi-page contract reports per-page trigger and self-switch condition", () => {
+  withProductLanguage("zh-CN", () => {
   const model = renderEventScript({
     id: "two",
     rmmvTarget: { trigger: "parallel" },
@@ -94,4 +104,5 @@ test("multi-page contract reports per-page trigger and self-switch condition", (
   assert.strictEqual(model.pages[1].triggerLabel, "调查触发");
   assert.match(model.pages[1].conditionLabel || "", /自开关 A=开/);
   assert.strictEqual(texts(model.pages[1].lines)[0], "完成了。");
+  });
 });

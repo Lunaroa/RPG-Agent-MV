@@ -19,6 +19,7 @@ import {
   renameCommonEvent,
   updateCommonEvent,
 } from './common-event-service.ts';
+import { withTestLanguage } from '../i18n/with-test-language.ts';
 import { applyProjectStaging, getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
 
 describe('common event service', { concurrency: false }, () => {
@@ -146,7 +147,7 @@ describe('common event service', { concurrency: false }, () => {
     assert.ok(references.some((ref) => ref.kind === 'mapEventCommand'));
     assert.ok(references.some((ref) => ref.kind === 'databaseEffect'));
     assert.throws(
-      () => deleteCommonEvent(root, project, { id: 3 }),
+      () => withTestLanguage(() => deleteCommonEvent(root, project, { id: 3 })),
       /仍被引用/,
     );
   });
@@ -162,11 +163,11 @@ describe('common event service', { concurrency: false }, () => {
 
   test('validates autorun and parallel switch range', () => {
     assert.throws(
-      () => createCommonEvent(root, project, { name: 'Bad', trigger: 1, switchId: 99 }),
+      () => withTestLanguage(() => createCommonEvent(root, project, { name: 'Bad', trigger: 1, switchId: 99 })),
       /条件开关 99 超出/,
     );
     assert.throws(
-      () => changeCommonEventTrigger(root, project, { id: 1, trigger: 2, switchId: 0 }),
+      () => withTestLanguage(() => changeCommonEventTrigger(root, project, { id: 1, trigger: 2, switchId: 0 })),
       /必须设置有效开关/,
     );
   });

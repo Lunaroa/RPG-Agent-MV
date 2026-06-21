@@ -3,6 +3,14 @@ import path from "path";
 import { readJson } from "./json.ts";
 import { toolLogger } from "../file-log.ts";
 import {
+  AMOUNT_OPERATION_DECREASE_LOCAL_ALIASES,
+  AMOUNT_OPERATION_INCREASE_LOCAL_ALIASES,
+  rmmvInternalEncodingNote,
+  commandNormalizationSummary,
+  compileNormalizationSummary,
+  silentCorrection,
+} from "./eventPageCompilerLocalization.ts";
+import {
   validateEventCommandBasic,
   EVENT_COMMAND_BLOCK_PAIRINGS
 } from "./event-command-registry.ts";
@@ -146,7 +154,7 @@ export function normalizeCommands(commands: unknown): NormalizeResult {
   const out = normalizeCommandArray(commands, changed);
   const deduped = [...new Set(changed)];
   if (deduped.length) {
-    log.warn(`命令归一化修正了 ${deduped.length} 处：${deduped.join('; ')}`);
+    log.warn(commandNormalizationSummary(deduped.length, deduped.join('; ')));
   }
   return { commands: out, changed: deduped };
 }
@@ -246,10 +254,12 @@ function rename(obj: Record<string, unknown>, from: string, to: string, changed:
 
 /** 模型常把增减写成 add/gain/+ 或 RMMV 内部 0/1，归一到 increase/decrease。 */
 const AMOUNT_OPERATION_INCREASE = new Set([
-  "increase", "add", "gain", "give", "+", "plus", "inc", "up", "增加", "加",
+  "increase", "add", "gain", "give", "+", "plus", "inc", "up",
+  ...AMOUNT_OPERATION_INCREASE_LOCAL_ALIASES,
 ]);
 const AMOUNT_OPERATION_DECREASE = new Set([
-  "decrease", "remove", "lose", "take", "subtract", "sub", "-", "minus", "dec", "reduce", "down", "减少", "减",
+  "decrease", "remove", "lose", "take", "subtract", "sub", "-", "minus", "dec", "reduce", "down",
+  ...AMOUNT_OPERATION_DECREASE_LOCAL_ALIASES,
 ]);
 
 function normalizeAmountOperation(operation: unknown, changed?: string[], label?: string): string | undefined {
@@ -258,19 +268,19 @@ function normalizeAmountOperation(operation: unknown, changed?: string[], label?
   if (typeof operation === "boolean") {
     const result = operation ? "increase" : "decrease";
     const note = `${label || 'amount'}.operation(boolean:${operation})→${result}`;
-    log.warn(`静默修正: ${note}`);
+    log.warn(silentCorrection(note));
     if (changed && label) changed.push(note);
     return result;
   }
   if (typeof operation === "number") {
     if (operation === 0) {
-      const note = `${label || 'amount'}.operation(number:0)→increase (RMMV内部编码)`;
-      log.warn(`静默修正: ${note}`);
+      const note = `${label || 'amount'}.operation(number:0)→increase (${rmmvInternalEncodingNote()})`;
+      log.warn(silentCorrection(note));
       return "increase";
     }
     if (operation === 1) {
-      const note = `${label || 'amount'}.operation(number:1)→decrease (RMMV内部编码)`;
-      log.warn(`静默修正: ${note}`);
+      const note = `${label || 'amount'}.operation(number:1)→decrease (${rmmvInternalEncodingNote()})`;
+      log.warn(silentCorrection(note));
       return "decrease";
     }
     return undefined;
@@ -288,13 +298,13 @@ function normalizeAmountOperation(operation: unknown, changed?: string[], label?
   if (key === "increase" || key === "decrease") return key;
   if (AMOUNT_OPERATION_INCREASE.has(key) || AMOUNT_OPERATION_INCREASE.has(raw)) {
     const note = `${label || 'amount'}.operation("${raw}")→increase`;
-    log.warn(`静默修正: ${note}`);
+    log.warn(silentCorrection(note));
     if (changed && label) changed.push(note);
     return "increase";
   }
   if (AMOUNT_OPERATION_DECREASE.has(key) || AMOUNT_OPERATION_DECREASE.has(raw)) {
     const note = `${label || 'amount'}.operation("${raw}")→decrease`;
-    log.warn(`静默修正: ${note}`);
+    log.warn(silentCorrection(note));
     if (changed && label) changed.push(note);
     return "decrease";
   }
@@ -603,7 +613,7 @@ export function compileCommands(commands: CommandSpec[], system: unknown, dataDi
   if (!Array.isArray(commands)) throw new Error("page.commands must be an array");
   const { commands: normalized, changed } = normalizeCommands(commands);
   if (changed.length) {
-    log.warn(`[compile] 编译前归一化修正了 ${changed.length} 处命令`);
+    log.warn(compileNormalizationSummary(changed.length));
   }
   const list: CompiledCommand[] = [];
   for (const command of normalized) {

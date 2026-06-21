@@ -1,15 +1,15 @@
-// 项目初始化（onboarding）聚合状态：把 scan（地图/事件事实）、event-registry
-// reconcile（未注册事件 + 漂移）与项目事实只读
-// 检查汇总成一份低噪音报告，供 generalist 开工时判断要不要发 ASK 跟人商量。
+// Project onboarding aggregate status: merge scan facts, event-registry
+// reconcile output, and project facts into a low-noise report for the
+// generalist agent before it decides whether to ask the user.
 //
-// 本模块只读，不写工程、不写注册表、不建图。真正的收编/--apply/建图留给
-// agent 在 ASK 批准后调既有命令执行。
+// This module is read-only. It does not write the project, registry, or maps.
+// Real adoption, --apply, and map work remain explicit agent actions after ASK
+// approval.
 //
-// 设计上拆成两层：
-//   - aggregateOnboardingStatus(input)：纯函数，给定 scan/reconcile 事实
-//     算出报告，便于单测。
-//   - gatherOnboardingStatus(project, options)：跑 IO（scan + reconcile +
-//     语义层已移除，直接标记为跳过。
+// The design has two layers:
+//   - aggregateOnboardingStatus(input): pure function over scan/reconcile facts.
+//   - gatherOnboardingStatus(project, options): IO wrapper for scan/reconcile.
+//     The semantic layer has been removed and is reported as skipped.
 
 import { getStoryProjectProfile } from "../../desktop/story-page-sync-service.ts";
 import { scanProject } from "../../rmmv/project-scanner.ts";
@@ -25,8 +25,8 @@ export type ActionType =
   | "declare-story-project"
   | "await-placement";
 
-// 漂移里被当成"安全、可自动补"的两类（仅作计数提示；本命令不自动修，
-// 留给 generalist 在 ASK 批准后跑 reconcile --apply）。
+// Drift codes considered safe to auto-apply after user approval. This command
+// only counts them; the generalist must run reconcile --apply after ASK approval.
 const SAFE_DRIFT_CODES = new Set(["status-stale-draft"]);
 
 export interface OrphanEntry {
@@ -88,7 +88,7 @@ export interface OnboardingStatusReport {
   recommendedActions: RecommendedAction[];
 }
 
-// 纯函数输入：用最小结构解耦 scan/reconcile 的内部类型，方便单测构造 fixture。
+// Pure-function input kept minimal to decouple tests from scan/reconcile internals.
 export interface DriftLike {
   code: string;
   mapId?: number;
@@ -115,8 +115,9 @@ export interface OnboardingInput {
 }
 
 const MAPS_HEURISTIC_NOTE =
-  "地图层目前没有等价的注册/对账，以下为启发式推断（含未注册的 AIWF 孤儿事件，"
-  + "或没有任何已注册契约指向该地图），不是权威结论，需人工确认哪些是真正的新增地图。";
+  "The map layer does not have an equivalent registry/reconcile source yet. "
+  + "These results are heuristic: maps can be flagged because they contain unregistered AIWF orphan events "
+  + "or because no registered contract points to them. This is not authoritative; a human must confirm which maps are truly new.";
 
 function isInt(value: unknown): value is number {
   return Number.isInteger(value);
@@ -148,15 +149,16 @@ export function aggregateOnboardingStatus(input: OnboardingInput): OnboardingSta
     .map(([code, count]) => ({ code, count }))
     .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
 
-  // 疑似新增地图：有孤儿事件，或没有任何已注册契约指向（空注册表时会命中全部
-  // 有事件的地图——这正是"做 mod 但注册表未建"该被提醒的信号）。
+  // Suspected new maps: maps with orphan events, or maps that no registered
+  // contract points to. An empty registry intentionally flags every map that
+  // contains events because mod projects without registry setup need attention.
   const refSet = new Set(input.registryMapIds.filter(isInt));
   const suspectedNew: SuspectedMap[] = [];
   for (const map of input.maps) {
     if (map.eventCount <= 0) continue;
     const reasons: string[] = [];
-    if (orphanMapIds.has(map.id)) reasons.push("含未注册（孤儿）事件");
-    if (!refSet.has(map.id)) reasons.push("无任何已注册契约指向");
+    if (orphanMapIds.has(map.id)) reasons.push("contains unregistered orphan events");
+    if (!refSet.has(map.id)) reasons.push("no registered contract points to this map");
     if (reasons.length > 0) {
       suspectedNew.push({ mapId: map.id, name: map.name, eventCount: map.eventCount, reasons });
     }
@@ -172,8 +174,8 @@ export function aggregateOnboardingStatus(input: OnboardingInput): OnboardingSta
 
   let severity: Severity;
   if (input.rag.state === "unknown" || input.reconcileStatus === "no-data-dir") {
-    // 没法完整体检（语义后端起不来 / 找不到 data 目录）：标 blocked，让 agent
-    // 据实告诉用户"这部分没查成"，仍把已查到的问题一并报出。
+    // The audit could not complete, so mark the report blocked while still
+    // returning all facts that were collected.
     severity = "blocked";
   } else if (hasOrphans || hasOtherDrift || ragNeedsBuild || hasSuspectedMaps || storyProjectUninitialized) {
     severity = "needs-attention";
@@ -186,8 +188,8 @@ export function aggregateOnboardingStatus(input: OnboardingInput): OnboardingSta
   if (orphanTotal > 0) {
     recommendedActions.push({
       type: "adopt-orphans",
-      label: "收编未注册事件并同步注册表",
-      scope: `${orphanTotal} 个未注册事件（${orphanTagged.length} 带标记 / ${orphanUntracked.length} 无标记）`,
+      label: "Adopt unregistered events and sync the registry",
+      scope: `${orphanTotal} unregistered events (${orphanTagged.length} tagged / ${orphanUntracked.length} untracked)`,
       command: "event-registry adopt --project . --map <N> --event <N> --id <dotted.id>",
       count: orphanTotal,
     });
@@ -195,8 +197,8 @@ export function aggregateOnboardingStatus(input: OnboardingInput): OnboardingSta
   if (safeDriftCount > 0) {
     recommendedActions.push({
       type: "apply-safe-drift",
-      label: "自动跟上陈旧状态",
-      scope: `${safeDriftCount} 处安全漂移（draft→placed 状态）`,
+      label: "Apply safe stale-state drift",
+      scope: `${safeDriftCount} safe drift item(s) (draft to placed status)`,
       command: "event-registry reconcile --project . --apply",
       count: safeDriftCount,
     });
@@ -204,26 +206,26 @@ export function aggregateOnboardingStatus(input: OnboardingInput): OnboardingSta
   if (hasSuspectedMaps) {
     recommendedActions.push({
       type: "confirm-new-maps",
-      label: "确认新增地图",
-      scope: `${suspectedNew.length} 张疑似新增地图（启发式，需人工确认）`,
-      command: "人在 console「地图制作 / 地图编辑」绑定真实项目地图",
+      label: "Confirm new maps",
+      scope: `${suspectedNew.length} suspected new map(s) (heuristic; human confirmation required)`,
+      command: "Bind the real project map in Console > Map Production / Map Editor",
       count: suspectedNew.length,
     });
   }
   if (storyProjectUninitialized) {
     recommendedActions.push({
       type: "declare-story-project",
-      label: "启用受控事件编辑",
-      scope: "工程尚未启用事件编辑；放置时会询问是否启用，暂不启用也可先放置到暂存",
-      command: "在项目管理里启用事件编辑，并按需选择是否先创建 Git 保存点",
+      label: "Enable controlled event editing",
+      scope: "Event editing is not enabled yet. Placement can ask to enable it; keeping it disabled still allows staging first.",
+      command: "Enable event editing in project management and choose whether to create a Git save point first",
     });
   }
   if (awaitPlacementCount > 0) {
     recommendedActions.push({
       type: "await-placement",
-      label: "在地图编辑器放置事件",
-      scope: `${awaitPlacementCount} 个已注册 draft 契约尚无地图坐标`,
-      command: "打开地图编辑页，选择目标地图并放置对应 EventContract 事件",
+      label: "Place events in the map editor",
+      scope: `${awaitPlacementCount} registered draft contract(s) have no map coordinates`,
+      command: "Open the map editor, choose the target map, and place the corresponding EventContract event",
       count: awaitPlacementCount,
     });
   }
@@ -261,11 +263,12 @@ function pickOrphan(drift: DriftLike): OrphanEntry {
   };
 }
 
-// 解析 kb semantic-status 的单行 JSON 输出（{status, stale, ...}）。docker/python
-// 可能在 JSON 前混入告警，故取最后一个能解析成 JSON 的行。
+// Parse single-line JSON output from the removed semantic status probe. Older
+// docker/python invocations could add warnings before JSON, so keep the last
+// parseable JSON line behavior.
 export function parseRagState(stdout: string | null): { state: RagState; detail?: string } {
   if (!stdout || !stdout.trim()) {
-    return { state: "unknown", detail: "GraphRAG 已移除" };
+    return { state: "unknown", detail: "GraphRAG has been removed" };
   }
   const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith("{"));
   for (let i = lines.length - 1; i >= 0; i -= 1) {
@@ -278,14 +281,14 @@ export function parseRagState(stdout: string | null): { state: RagState; detail?
       if (stale || status === "stale") return { state: "stale", detail };
       return { state: "fresh", detail: status || undefined };
     } catch {
-      // 继续往前找可解析的行
+      // Keep scanning backward for a parseable line.
     }
   }
-  return { state: "unknown", detail: "GraphRAG 已移除" };
+  return { state: "unknown", detail: "GraphRAG has been removed" };
 }
 
 function probeRag(_projectId?: string): { state: RagState; detail?: string } {
-  return { state: 'fresh', detail: 'GraphRAG 已移除，跳过检查' };
+  return { state: 'fresh', detail: 'GraphRAG has been removed; check skipped' };
 }
 
 export interface GatherOptions {
@@ -335,115 +338,115 @@ export async function gatherOnboardingStatus(
 }
 
 const SEVERITY_LABEL: Record<Severity, string> = {
-  clean: "clean（已登记齐整）",
-  "needs-attention": "needs-attention（有未登记内容或 RAG 未建，建议先和用户商量）",
-  blocked: "blocked（部分检查未完成，见下）",
+  clean: "clean (registry is aligned)",
+  "needs-attention": "needs-attention (unregistered content or setup gaps; ask the user first)",
+  blocked: "blocked (some checks did not complete; see details below)",
 };
 
 export function renderOnboardingSummary(report: OnboardingStatusReport): string {
   const lines: string[] = [];
   lines.push(`Onboarding severity: ${SEVERITY_LABEL[report.severity]}`);
   lines.push(
-    `未注册事件: ${report.registry.orphanTagged.length} 带标记 / ${report.registry.orphanUntracked.length} 无标记`,
+    `Unregistered events: ${report.registry.orphanTagged.length} tagged / ${report.registry.orphanUntracked.length} untracked`,
   );
   const driftSummary = report.registry.drifts.length
     ? report.registry.drifts.map((d) => `${d.code}×${d.count}`).join(", ")
-    : "无";
-  lines.push(`注册表漂移: ${driftSummary}（安全可补 ${report.registry.safeDriftCount} 处；reconcile=${report.registry.reconcileStatus}）`);
-  lines.push(`疑似新增地图: ${report.maps.suspectedNew.length}/${report.maps.total}（启发式，需人工确认）`);
-  lines.push(`语义层: ${report.rag.state}${report.rag.detail ? `（${report.rag.detail}）` : ""}`);
+    : "none";
+  lines.push(`Registry drift: ${driftSummary} (${report.registry.safeDriftCount} safe to apply; reconcile=${report.registry.reconcileStatus})`);
+  lines.push(`Suspected new maps: ${report.maps.suspectedNew.length}/${report.maps.total} (heuristic; human confirmation required)`);
+  lines.push(`Semantic layer: ${report.rag.state}${report.rag.detail ? ` (${report.rag.detail})` : ""}`);
   lines.push(
-    `剧情项目: ${report.storyProject.initialized
-      ? "已启用"
-      : "未启用（需先启用事件编辑）"}`,
+    `Story project: ${report.storyProject.initialized
+      ? "enabled"
+      : "not enabled (event editing must be enabled first)"}`,
   );
   if (report.awaitPlacement.count > 0) {
-    lines.push(`待放置契约: ${report.awaitPlacement.count} 个 draft 尚无坐标`);
+    lines.push(`Awaiting placement: ${report.awaitPlacement.count} draft contract(s) have no coordinates`);
   }
   if (report.recommendedActions.length) {
-    lines.push("建议动作（供转 ASK 选项；任何写入前先发 plan-approval）:");
+    lines.push("Recommended actions (convert to ASK options; send plan-approval before any write):");
     for (const action of report.recommendedActions) {
       lines.push(`  - [${action.type}] ${action.label} —— ${action.scope}`);
     }
   } else {
-    lines.push("建议动作: 无");
+    lines.push("Recommended actions: none");
   }
   return lines.join("\n");
 }
 
 export function renderOnboardingMarkdown(report: OnboardingStatusReport): string {
   const lines: string[] = [];
-  lines.push("# 项目初始化（onboarding）状态");
+  lines.push("# Project Onboarding Status");
   lines.push("");
-  lines.push(`- 生成时间: ${report.generatedAt}`);
-  lines.push(`- 工程: ${report.project}`);
+  lines.push(`- Generated At: ${report.generatedAt}`);
+  lines.push(`- Project: ${report.project}`);
   if (report.projectId) lines.push(`- projectId: ${report.projectId}`);
   lines.push(`- severity: **${report.severity}**`);
   lines.push("");
 
-  lines.push("## 未注册事件");
+  lines.push("## Unregistered Events");
   lines.push("");
-  lines.push(`- 带标记孤儿（高信号）: ${report.registry.orphanTagged.length}`);
+  lines.push(`- Tagged orphans (high signal): ${report.registry.orphanTagged.length}`);
   for (const orphan of report.registry.orphanTagged) {
-    lines.push(`  - Map${pad(orphan.mapId)} 事件#${orphan.eventId ?? "?"} ${orphan.eventName || ""}${orphan.referencedId ? `（标记 ${orphan.referencedId}）` : ""}`);
+    lines.push(`  - Map${pad(orphan.mapId)} event #${orphan.eventId ?? "?"} ${orphan.eventName || ""}${orphan.referencedId ? ` (tag ${orphan.referencedId})` : ""}`);
   }
-  lines.push(`- 无标记孤儿（手工/遗留）: ${report.registry.orphanUntracked.length}`);
+  lines.push(`- Untracked orphans (manual/legacy): ${report.registry.orphanUntracked.length}`);
   for (const orphan of report.registry.orphanUntracked) {
-    lines.push(`  - Map${pad(orphan.mapId)} 事件#${orphan.eventId ?? "?"} ${orphan.eventName || ""}`);
+    lines.push(`  - Map${pad(orphan.mapId)} event #${orphan.eventId ?? "?"} ${orphan.eventName || ""}`);
   }
   lines.push("");
 
-  lines.push("## 注册表漂移");
+  lines.push("## Registry Drift");
   lines.push("");
-  lines.push(`- reconcile 状态: ${report.registry.reconcileStatus}`);
-  lines.push(`- 安全可自动补: ${report.registry.safeDriftCount} 处（reconcile --apply）`);
+  lines.push(`- Reconcile Status: ${report.registry.reconcileStatus}`);
+  lines.push(`- Safe to auto-apply: ${report.registry.safeDriftCount} item(s) (reconcile --apply)`);
   if (report.registry.drifts.length) {
     for (const drift of report.registry.drifts) {
       lines.push(`- ${drift.code}: ${drift.count}`);
     }
   } else {
-    lines.push("- 无其他漂移");
+    lines.push("- No other drift");
   }
   lines.push("");
 
-  lines.push("## 疑似新增地图");
+  lines.push("## Suspected New Maps");
   lines.push("");
   lines.push(`> ${report.maps.note}`);
   lines.push("");
-  lines.push(`- 命中 ${report.maps.suspectedNew.length} / 共 ${report.maps.total} 张地图`);
+  lines.push(`- Matched ${report.maps.suspectedNew.length} / ${report.maps.total} maps`);
   for (const map of report.maps.suspectedNew) {
-    lines.push(`  - Map${pad(map.mapId)} ${map.name}（${map.eventCount} 个事件）— ${map.reasons.join("，")}`);
+    lines.push(`  - Map${pad(map.mapId)} ${map.name} (${map.eventCount} events) - ${map.reasons.join(", ")}`);
   }
   lines.push("");
 
-  lines.push("## 项目上下文");
+  lines.push("## Project Context");
   lines.push("");
-  lines.push(`- 状态: ${report.rag.state}`);
-  if (report.rag.detail) lines.push(`- 说明: ${report.rag.detail}`);
+  lines.push(`- State: ${report.rag.state}`);
+  if (report.rag.detail) lines.push(`- Detail: ${report.rag.detail}`);
   lines.push("");
 
-  lines.push("## 剧情项目");
+  lines.push("## Story Project");
   lines.push("");
   if (report.storyProject.initialized) {
-    lines.push("- 已启用: **事件编辑**");
+    lines.push("- Enabled: **event editing**");
   } else {
-    lines.push("- **未启用** — 放置时会询问是否启用；暂不启用也可先放置到暂存，直接改已有事件需先启用");
+    lines.push("- **Not enabled** - placement can ask to enable it; keeping it disabled still allows staging first, but direct existing-event edits require it.");
   }
-  lines.push(`- 待放置 draft 契约: ${report.awaitPlacement.count}`);
+  lines.push(`- Draft contracts awaiting placement: ${report.awaitPlacement.count}`);
   lines.push("");
 
-  lines.push("## 建议动作");
+  lines.push("## Recommended Actions");
   lines.push("");
-  lines.push("> 一律先 ASK 再动：用户选定后，任何写操作执行前必须先发 plan-approval。");
+  lines.push("> Always ASK first. After the user chooses, send plan-approval before any write action.");
   lines.push("");
   if (report.recommendedActions.length) {
     for (const action of report.recommendedActions) {
       lines.push(`- **${action.label}** (\`${action.type}\`)`);
-      lines.push(`  - 影响范围: ${action.scope}`);
-      lines.push(`  - 对应命令: \`${action.command}\``);
+      lines.push(`  - Scope: ${action.scope}`);
+      lines.push(`  - Command: \`${action.command}\``);
     }
   } else {
-    lines.push("- 无（工程已登记齐整）");
+    lines.push("- None (the project registry is aligned)");
   }
   lines.push("");
   return lines.join("\n");

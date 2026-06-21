@@ -22,7 +22,10 @@ describe('map IPC bindings', () => {
     const calls = [];
     const desktop = createDesktopMock(calls);
 
-    registerMapIpcHandlers(ipc, 'C:/workflow', desktop);
+    registerMapIpcHandlers(ipc, 'C:/workflow', desktop, {
+      productLanguage: () => 'en-US',
+      withProductLanguage: (_language, fn) => fn(),
+    });
     assert.deepEqual([...handlers.keys()].sort(), [...MAP_IPC_CHANNELS].sort());
     assert.equal(MAP_IPC_CHANNELS.some((channel) => channel.startsWith('sharedAssets:')), false);
     assert.equal(MAP_IPC_CHANNELS.includes('assetLibrary:catalog'), true);

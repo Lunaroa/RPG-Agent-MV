@@ -1,6 +1,11 @@
 import { execSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  ripgrepDownloadFailed,
+  ripgrepEmptyArchive,
+  ripgrepExecutableMissing,
+} from "./buildOpencodeRuntimeLocalization.ts";
 
 const root = process.cwd();
 const opencodeRoot = join(root, "third_party", "opencode");
@@ -73,11 +78,11 @@ async function ensureRipgrep(): Promise<void> {
   console.log(`[build] downloading ripgrep ${RIPGREP_VERSION} from ${url}`);
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`下载 ripgrep 失败：${url} -> HTTP ${response.status}`);
+    throw new Error(ripgrepDownloadFailed(url, response.status, 'en-US'));
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength === 0) {
-    throw new Error(`下载 ripgrep 得到空文件：${url}`);
+    throw new Error(ripgrepEmptyArchive(url, 'en-US'));
   }
   writeFileSync(archive, bytes);
 
@@ -87,7 +92,7 @@ async function ensureRipgrep(): Promise<void> {
 
   const extracted = join(extractDir, dirName, "rg.exe");
   if (!existsSync(extracted)) {
-    throw new Error(`ripgrep 压缩包未包含可执行文件：${extracted}`);
+    throw new Error(ripgrepExecutableMissing(extracted, 'en-US'));
   }
   copyFileSync(extracted, ripgrepBinary);
   rmSync(archive, { force: true });

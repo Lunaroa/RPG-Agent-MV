@@ -7,6 +7,7 @@ import "./suppress-warnings.ts";
 
 import fs from "node:fs";
 import path from "node:path";
+import { normalizeProductLanguage, type ProductLanguage } from "../../contract/i18n.ts";
 import { parseArgs } from "./cli/args.ts";
 import { printHelp } from "./cli/help.ts";
 import { buildReleaseManifest, checkReleasePackages, createReleaseSourceTree } from "./core/desktop/release-boundary.ts";
@@ -18,6 +19,7 @@ import {
 } from "./core/desktop/runtime-deploy-service.ts";
 import { resolveProjectPath } from "./core/desktop/project-service.ts";
 import { pruneWorkspaceLegacyArtifacts } from "./core/desktop/workspace-legacy-cleanup.ts";
+import { backendText, type BackendMessageKey } from "./core/i18n/messages.ts";
 import { bootstrapDatabase } from "./core/db/bootstrap.ts";
 import { initFileLogger } from "./core/file-log.ts";
 import { writeOpencodeProviderSeedFile } from "./core/llm/cc-switch-provider-sync.ts";
@@ -207,9 +209,9 @@ function runDeploySource(rest: string[]): number {
 }
 
 async function runAgentConsole(): Promise<void> {
-  console.log("Agent console 已迁移至 Electron 应用程序，请通过桌面应用启动。");
-  console.log("启动方式：cd src/ui/desktop && npm run dev");
-  console.log("详细文档请参阅 RPG-Agent-MV 根目录 README.md 与 docs/README.md");
+  console.log(cliText("cli.agentConsole.moved"));
+  console.log(cliText("cli.agentConsole.startCommand"));
+  console.log(cliText("cli.agentConsole.readme"));
 }
 
 async function runUiControl(rest: string[]): Promise<number> {
@@ -318,6 +320,17 @@ function normalizeDeployTarget(value: unknown): DeployTarget {
   if (value === undefined || value === null || value === "" || value === "web") return "web";
   if (value === "windows") return "windows";
   throw new Error("--target must be web or windows");
+}
+
+function cliLanguage(): ProductLanguage {
+  const explicit = String(process.env.RMMV_PRODUCT_LANGUAGE || process.env.RPG_AGENT_MV_LANGUAGE || "").trim();
+  if (explicit) return normalizeProductLanguage(explicit);
+  const locale = String(process.env.LANG || process.env.LANGUAGE || process.env.LC_ALL || process.env.LC_MESSAGES || "").toLowerCase();
+  return locale.startsWith("en") ? "en-US" : "zh-CN";
+}
+
+function cliText(key: BackendMessageKey): string {
+  return backendText(key, cliLanguage());
 }
 
 async function main(argv: string[]): Promise<number> {

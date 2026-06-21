@@ -17,7 +17,7 @@ function normalizeForJsonPath(value: string): string {
 function shouldRefreshFile(source: string, target: string): boolean {
   if (!fs.existsSync(target)) return true;
   if (!fs.existsSync(source)) {
-    throw new Error(`缺少 opencode 规则源文件：${source}`);
+    throw new Error(`Missing opencode rules source file: ${source}`);
   }
   return fs.statSync(source).mtimeMs > fs.statSync(target).mtimeMs;
 }
@@ -25,11 +25,11 @@ function shouldRefreshFile(source: string, target: string): boolean {
 export function buildOpencodeStaticConfig(workflowRoot: string): Record<string, unknown> {
   const preferences = resolveOpencodePersonalPreferencesPath(workflowRoot);
   if (!fs.existsSync(preferences)) {
-    throw new Error(`缺少个人偏好文件：${preferences}`);
+    throw new Error(`Missing personal preferences file: ${preferences}`);
   }
   const skillsDir = resolveOpencodeSkillsSourceDir(workflowRoot);
   if (!fs.existsSync(skillsDir)) {
-    throw new Error(`缺少 opencode skills 目录：${skillsDir}`);
+    throw new Error(`Missing opencode skills directory: ${skillsDir}`);
   }
   return {
     $schema: "https://opencode.ai/config.json",
@@ -49,7 +49,7 @@ export function ensureOpencodeRuntimeAssets(workflowRoot: string): void {
   const agentsSource = resolveOpencodeAgentsMdSource(root);
   const agentsTarget = resolveOpencodeAgentsMdRuntime(root);
   if (!fs.existsSync(agentsSource)) {
-    throw new Error(`缺少 opencode 规则源文件：${agentsSource}`);
+    throw new Error(`Missing opencode rules source file: ${agentsSource}`);
   }
   if (shouldRefreshFile(agentsSource, agentsTarget)) {
     fs.copyFileSync(agentsSource, agentsTarget);
@@ -65,6 +65,6 @@ export function ensureOpencodeRuntimeAssets(workflowRoot: string): void {
 
   const productConfigDir = resolveOpencodeProductConfigDir(root);
   if (!fs.existsSync(productConfigDir)) {
-    throw new Error(`缺少 opencode 产品配置目录：${productConfigDir}`);
+    throw new Error(`Missing opencode product config directory: ${productConfigDir}`);
   }
 }

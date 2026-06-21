@@ -287,11 +287,11 @@ function normalizeRiskBadges(tool: ToolManifestEntry): ToolRiskBadge[] {
 
 function describeRequirement(req: ToolAvailabilityRequirement): string {
   if (req.description) return req.description;
-  if (req.type === "envTruthy") return `需要启用环境变量 ${req.name}`;
-  if (req.type === "envEquals") return `需要环境变量 ${req.name}=${req.value}`;
-  if (req.type === "platform") return `只支持 ${req.value} 平台`;
-  if (req.type === "nodeEnv") return `只在 NODE_ENV=${req.value} 时可用`;
-  if (req.type === "feature") return `需要 opencode 构建特性 ${req.name}`;
+  if (req.type === "envTruthy") return `Environment variable ${req.name} must be enabled`;
+  if (req.type === "envEquals") return `Environment variable ${req.name}=${req.value} is required`;
+  if (req.type === "platform") return `Only ${req.value} platform is supported`;
+  if (req.type === "nodeEnv") return `Only available when NODE_ENV=${req.value}`;
+  if (req.type === "feature") return `opencode build feature ${req.name} is required`;
   return req.description;
 }
 
@@ -329,8 +329,8 @@ function resolveDisabledReason(
   disabledReason: string | null,
 ): string | null {
   if (disabledReason) return disabledReason;
-  if (tool.userToggleable === false) return "此工具由 opencode 运行时管理，不能通过设置页启用";
-  if (!available) return "当前运行环境不满足工具启用条件";
+  if (tool.userToggleable === false) return "This tool is managed by the opencode runtime and cannot be enabled from Settings";
+  if (!available) return "The current runtime environment does not meet this tool's requirements";
   return null;
 }
 
@@ -433,10 +433,10 @@ export function getAgentCapabilitiesSnapshot(
         : (runtime?.defaultProfileConfig?.tools || []).includes(tool.id);
     let warning: string | null = null;
     if (tool.kind === "builtin" && allowed && !inAgentRuntimeProfile && usesAgentRuntimeBuiltinTools && available) {
-      warning = "已在运行策略 allow，但 opencode profile 未包含此基础工具";
+      warning = "Allowed by runtime policy, but the opencode profile does not include this builtin tool";
     }
     if (tool.kind === "builtin" && allowed && !available) {
-      warning = "已在运行策略 allow，但当前运行环境不满足启用条件";
+      warning = "Allowed by runtime policy, but the current runtime environment does not meet the enablement requirements";
     }
     return {
       id: tool.id,
@@ -562,7 +562,7 @@ export function updateAgentToolAllow(
   if (!tool) throw new Error(`Unknown tool id: ${toolId}`);
   const { available, disabledReason } = evaluateToolAvailability(tool, workflowRoot);
   if (!canToggleTool(tool, available)) {
-    const reason = resolveDisabledReason(tool, available, disabledReason) || "此工具不能通过设置页切换";
+    const reason = resolveDisabledReason(tool, available, disabledReason) || "This tool cannot be toggled from Settings";
     throw new Error(`${toolId} cannot be toggled: ${reason}`);
   }
   const configPath = getAgentConfigPath(workflowRoot);

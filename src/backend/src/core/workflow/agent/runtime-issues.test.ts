@@ -59,12 +59,28 @@ describe("runtime-issues", () => {
     assert.equal(outcome.status, "blocked");
     assert.equal(outcome.hadPermissionDenial, true);
     assert.equal(outcome.hadAssistantText, false);
-    assert.match(outcome.blocker || "", /目录权限/);
+    assert.match(outcome.blocker || "", /directory permission denial/i);
     assert.match(outcome.userMessage || "", /external_directory/);
-    assert.match(buildPermissionFailureUserMessage(), /地图编辑/);
+    assert.match(buildPermissionFailureUserMessage('zh-CN'), /地图编辑/);
+    assert.match(buildPermissionFailureUserMessage('en-US'), /Map Editor/i);
     assert.match(buildPermissionFailureUserMessage(), /RPG-Agent-MV/);
     assert.doesNotMatch(buildPermissionFailureUserMessage(), /rules\/\*\*/);
     assert.match(PERMISSION_DENIAL_MODEL_HINT, /AGENT_GUIDE/);
+  });
+
+  test("localizes permission denial blockers in English", () => {
+    const outcome = assessAgentRuntimeOutcome({
+      exitCode: 0,
+      stopped: false,
+      timedOut: false,
+      renderedStdout: "permission requested: external_directory (C:/x/); auto-rejecting\n",
+      stderr: "",
+      productLanguage: "en-US",
+    });
+    assert.equal(outcome.status, "blocked");
+    assert.match(outcome.blocker || "", /directory permission denial/);
+    assert.match(outcome.userMessage || "", /Some file tools were denied/);
+    assert.doesNotMatch(outcome.blocker || "", /目录权限/);
   });
 
   test("keeps pass when assistant produced text despite permission noise", () => {
@@ -109,6 +125,6 @@ describe("runtime-issues", () => {
     });
 
     assert.equal(outcome?.status, "blocked");
-    assert.match(outcome?.blocker || "", /目录权限/);
+    assert.match(outcome?.blocker || "", /directory permission denial/i);
   });
 });

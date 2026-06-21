@@ -1,6 +1,8 @@
 import path from "node:path";
 
 import type { ProviderRecord } from "../../../llm/provider-registry.ts";
+import type { ProductLanguage } from "../../../../../../contract/types.ts";
+import { backendText } from "../../../i18n/messages.ts";
 import {
   buildOpencodeToolPolicyFromAgentAllow,
   hasEnabledRmmvMcpTools,
@@ -16,6 +18,7 @@ export interface OpencodeRuntimeConfigInput {
   providerId: string;
   modelId: string;
   provider: ProviderRecord;
+  productLanguage?: ProductLanguage | null;
 }
 
 function normalizeProviderId(providerId: string): string {
@@ -104,10 +107,10 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
   const workflowRoot = path.resolve(input.workflowRoot);
   const providerId = normalizeProviderId(input.providerId);
   const modelId = normalizeModelId(input.modelId);
-  if (!providerId) throw new Error("缺少 opencode 供应商 ID。");
-  if (!modelId) throw new Error("缺少 opencode 模型 ID。");
+  if (!providerId) throw new Error(backendText('dispatch.missingProviderOrModel', input.productLanguage));
+  if (!modelId) throw new Error(backendText('dispatch.missingProviderOrModel', input.productLanguage));
   if (!String(input.provider.baseUrl || "").trim()) {
-    throw new Error(`供应商「${input.provider.label || providerId}」缺少接口地址（Base URL）。`);
+    throw new Error(backendText('dispatch.providerMissingBaseUrl', input.productLanguage));
   }
   const rmmvMcpEnabled = hasEnabledRmmvMcpTools(workflowRoot);
 

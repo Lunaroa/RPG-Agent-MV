@@ -286,7 +286,7 @@ export async function ensureProviderSeedsInitialized(workflowRoot: string): Prom
   }
 
   if (errors.length > 0) {
-    throw new Error(`初始化内置供应商失败：${errors.map((item) => `${item.providerId}: ${item.error}`).join("; ")}`);
+    throw new Error(`Failed to initialize built-in providers: ${errors.map((item) => `${item.providerId}: ${item.error}`).join("; ")}`);
   }
 
   return {

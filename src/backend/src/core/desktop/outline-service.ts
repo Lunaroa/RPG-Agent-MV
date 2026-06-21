@@ -3,12 +3,13 @@ import path from 'node:path';
 import type { StoryOutline } from '../../../../contract/types.ts';
 import { StoryOutlineDao } from '../db/dao/story-outline-dao.ts';
 import { toolLogger } from '../file-log.ts';
+import { outlineBodyAliasRead, outlineInputNotObject } from './outlineServiceLocalization.ts';
 
 const log = toolLogger('outline-service');
 
 /**
- * 创意大纲服务：大纲是可反复修改的 Markdown 文本。
- * 它只给人和 Agent 提供创作意图，不驱动生产进度。
+ * Creative outline service. The outline is editable Markdown that captures
+ * intent for humans and agents; it does not drive production state.
  */
 
 export function getStoryOutline(_workflowRoot: string, project: string): StoryOutline | null {
@@ -49,11 +50,11 @@ export function formatStoryOutlineSummary(project: string, outline: StoryOutline
 function normalizeOutline(projectId: string, input: Record<string, unknown>): StoryOutline {
   const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   if (!input || typeof input !== 'object') {
-    log.warn(`大纲输入不是对象(${typeof input})，静默降级为空对象`);
+    log.warn(outlineInputNotObject(typeof input));
   }
   const bodySource = raw.body !== undefined ? 'body' : raw.markdown !== undefined ? 'markdown' : raw.content !== undefined ? 'content' : null;
   if (bodySource && bodySource !== 'body') {
-    log.warn(`大纲 body 字段通过别名 "${bodySource}" 读取，Agent 应使用 "body" 字段`);
+    log.warn(outlineBodyAliasRead(bodySource));
   }
   const body = String(raw.body ?? raw.markdown ?? raw.content ?? '');
   const title = optionalString(raw.title) || extractMarkdownTitle(body) || undefined;

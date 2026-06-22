@@ -77,6 +77,7 @@ async function ensureRipgrep(): Promise<void> {
 
   console.log(`[build] downloading ripgrep ${RIPGREP_VERSION} from ${url}`);
   const response = await fetch(url);
+  // Build scripts always report in English (developer-facing, not user-facing).
   if (!response.ok) {
     throw new Error(ripgrepDownloadFailed(url, response.status, 'en-US'));
   }

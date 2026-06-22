@@ -324,7 +324,7 @@ function formatPackageImportSummary(result: PackageImportResult, total: number):
 
 function formatPackageImportFailures(result: PackageImportResult): string {
   if (!result.failed.length) return '';
-  return result.failed.map((item) => `${item.assetId}：${item.message}`).join('\n');
+  return result.failed.map((item) => `${item.assetId}: ${item.message}`).join('\n');
 }
 
 async function runFolderImport() {
@@ -520,10 +520,7 @@ function formatErrorText(errorValue: unknown): string {
 }
 
 function formatAssetImportIssues(issues: string[]): string {
-  if (language.value === 'en-US') {
-    return [t('assets.precheckFailed'), ...issues.map((issue) => translateAssetImportIssue(issue, language.value))].join('\n');
-  }
-  return issues.join('\n');
+  return [t('assets.precheckFailed'), ...issues.map((issue) => translateAssetImportIssue(issue, language.value))].join('\n');
 }
 </script>
 

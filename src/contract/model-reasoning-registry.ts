@@ -17,7 +17,7 @@ export interface ThinkingVariant {
 
 /** DeepSeek V4 official reasoning_effort. */
 export const DEEPSEEK_V4_EFFORT: ThinkingVariant[] = [
-  { id: "default", label: "默认" },
+  { id: "default", label: "default" },
   { id: "high", label: "high" },
   { id: "max", label: "max" },
 ];
@@ -30,12 +30,12 @@ export const MINIMAX_M3_THINKING: ThinkingVariant[] = [
 
 /** Claude-class effort (Anthropic Messages API output_config.effort). */
 export const ANTHROPIC_THINKING_BUDGET: ThinkingVariant[] = [
-  { id: "default", label: "默认" },
+  { id: "default", label: "default" },
   { id: "high", label: "high" },
   { id: "max", label: "max" },
 ];
 
-export const DEFAULT_ONLY_VARIANTS: ThinkingVariant[] = [{ id: "default", label: "默认" }];
+export const DEFAULT_ONLY_VARIANTS: ThinkingVariant[] = [{ id: "default", label: "default" }];
 
 /** @deprecated Use DEEPSEEK_V4_EFFORT or ANTHROPIC_THINKING_BUDGET */
 export const EFFORT_VARIANTS: ThinkingVariant[] = DEEPSEEK_V4_EFFORT;

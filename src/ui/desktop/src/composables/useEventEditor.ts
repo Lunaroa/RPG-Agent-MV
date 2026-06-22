@@ -2,13 +2,11 @@
 // Ported from legacy frontend/src/app/event-editor event-formatters.js,
 // command-templates.js, and event-state.js. Keep this module non-reactive.
 import type { ProductLanguage } from '@contract/types';
-import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts'
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage, pickByLocale } from '../i18n/messages.ts'
 import { commandLabel as catalogCommandLabel } from './eventCommandCatalog.ts';
 import { translate } from '../i18n/messages.ts'
 import { localizeCommandCodeLabel } from '../utils/eventCommandLocalization.ts';
 import {
-  EVENT_CONDITION_EMPTY_LABEL,
-  EVENT_IMAGE_EMPTY_LABEL,
   EVENT_EDITOR_TEXT_BY_LOCALE,
   QUICK_EVENT_NAMES,
   QUICK_EVENT_TEXT,
@@ -522,23 +520,11 @@ export function quickEventTemplate(type: QuickEventType, x: number, y: number): 
   return ev;
 }
 
-// ---- Condition summary ----
-
-export function conditionSummary(conditions: MvEventConditions): string {
-  const parts: string[] = [];
-  if (conditions.switch1Valid) parts.push(`SW ${conditions.switch1Id} ON`);
-  if (conditions.switch2Valid) parts.push(`SW ${conditions.switch2Id} ON`);
-  if (conditions.variableValid) parts.push(`Var ${conditions.variableId} ≥ ${conditions.variableValue}`);
-  if (conditions.selfSwitchValid) parts.push(`Self ${conditions.selfSwitchCh} ON`);
-  if (conditions.actorValid) parts.push(`Actor ${conditions.actorId}`);
-  if (conditions.itemValid) parts.push(`Item ${conditions.itemId}`);
-  return parts.length ? parts.join('; ') : EVENT_CONDITION_EMPTY_LABEL;
-}
-
 // ---- Image summary ----
 
-export function imageSummary(image: MvEventImage): string {
+export function imageSummary(image: MvEventImage, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
+  const emptyLabel = pickByLocale(language, { 'zh-CN': '无图像', 'en-US': 'No image' });
   if (image.tileId) return `Tile #${image.tileId}`;
   if (image.characterName) return `${image.characterName} idx${image.characterIndex || 0}`;
-  return EVENT_IMAGE_EMPTY_LABEL;
+  return emptyLabel;
 }

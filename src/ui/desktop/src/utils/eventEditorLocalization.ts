@@ -223,6 +223,3 @@ export const QUICK_EVENT_TEXT = {
   innNo: '否',
   innThanks: '祝你旅途愉快！',
 } as const;
-
-export const EVENT_CONDITION_EMPTY_LABEL = '无条件';
-export const EVENT_IMAGE_EMPTY_LABEL = '无图像';

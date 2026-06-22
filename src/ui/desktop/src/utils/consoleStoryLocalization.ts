@@ -1,3 +1,4 @@
+import { pickByLocale } from '../../../../contract/i18n.ts';
 import type { ProductLanguage } from '../../../../contract/i18n.ts';
 import type { ProjectManagedEntry } from '../api/client';
 
@@ -46,4 +47,9 @@ export const MANAGED_KIND_LABELS: Record<ProjectManagedEntry['kind'], Record<Pro
   database: { 'zh-CN': '数据库', 'en-US': 'Database' },
 };
 
-export const NEW_COMMON_EVENT_NAME = '新建公共事件';
+export function newCommonEventName(language: ProductLanguage): string {
+  return pickByLocale(language, {
+    'zh-CN': '新建公共事件',
+    'en-US': 'New Common Event',
+  });
+}

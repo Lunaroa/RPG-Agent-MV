@@ -326,14 +326,7 @@ function setImage(image: MvEventImage) { if (currentPage.value && !currentPageLo
 function setPageRoute(route: MvMoveRoute) { if (currentPage.value && !currentPageLocked.value) { currentPage.value.moveRoute = route; markDirty(); } }
 async function paintPreview() { const canvas = previewCanvas.value, image = currentPage.value?.image; if (!canvas || !image) return; const context = canvas.getContext('2d')!; context.clearRect(0,0,canvas.width,canvas.height); if (image.tileId) return drawTile(context, props.tilesetImages, image.tileId, 14, 10); const asset = props.catalog?.assets.characters.find((item) => item.name === image.characterName); if (!asset) return; const bitmap = await props.loadImage(asset.url); const frame = bitmap && eventCharacterFrame(bitmap, image); if (!bitmap || !frame) return; const scale = Math.min(1, 64 / frame.sw, 88 / frame.sh); context.imageSmoothingEnabled = false; context.drawImage(bitmap, frame.sx, frame.sy, frame.sw, frame.sh, Math.round((canvas.width-frame.sw*scale)/2), Math.round((canvas.height-frame.sh*scale)/2), frame.sw*scale, frame.sh*scale); }
 function localizedImageSummary(image: MvEventImage): string {
-  return pickByLocale(language.value, {
-    'zh-CN': () => imageSummary(image),
-    'en-US': () => {
-      if (image.tileId) return `Tile #${image.tileId}`;
-      if (image.characterName) return `${image.characterName} idx${image.characterIndex || 0}`;
-      return 'No image';
-    },
-  })();
+  return imageSummary(image, language.value);
 }
 defineExpose({ markSaved });
 </script>

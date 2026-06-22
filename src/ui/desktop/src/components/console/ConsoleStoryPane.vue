@@ -32,7 +32,7 @@ import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 import {
   IMAGE_BUCKET_LABELS,
   MANAGED_KIND_LABELS,
-  NEW_COMMON_EVENT_NAME,
+  newCommonEventName,
   STORY_CATEGORY_LABELS,
   type StoryCategoryId,
 } from '../../utils/consoleStoryLocalization';
@@ -735,7 +735,7 @@ async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents
   try {
     await ensureCatalog();
     const result = await commonEventsApi.create({
-      name: NEW_COMMON_EVENT_NAME,
+      name: newCommonEventName(language.value),
       trigger: 0,
       switchId: 0,
       list: [{ code: 0, indent: 0, parameters: [] }],

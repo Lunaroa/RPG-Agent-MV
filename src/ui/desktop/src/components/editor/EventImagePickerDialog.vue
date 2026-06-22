@@ -25,7 +25,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { LAYER_Z } from '../../constants/layerZIndex';
-import { useI18n, pickByLocale } from '../../i18n';
+import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import type { EditorProjectCatalog } from '../../api/client';
 import { clone, defaultImage, imageSummary, type MvEventImage } from '../../composables/useEventEditor';
@@ -42,14 +42,7 @@ const characterCanvas = ref<HTMLCanvasElement>();
 const tileCanvas = ref<HTMLCanvasElement>();
 const characterCache = new Map<string, HTMLImageElement | null>();
 const tileTab = ref('B');
-const summary = computed(() => pickByLocale(language.value, {
-  'zh-CN': () => imageSummary(draft.value),
-  'en-US': () => {
-    if (draft.value.tileId) return `Tile #${draft.value.tileId}`;
-    if (draft.value.characterName) return `${draft.value.characterName} idx${draft.value.characterIndex || 0}`;
-    return 'No image';
-  },
-})());
+const summary = computed(() => imageSummary(draft.value, language.value));
 const filteredCharacters = computed(() => (props.catalog?.assets.characters || []).filter((asset) => asset.name.toLowerCase().includes(search.value.toLowerCase())));
 const tileTabs = computed(() => [
   { label: 'A5', image: props.tilesetImages[4], base: TILE_ID_A5 },

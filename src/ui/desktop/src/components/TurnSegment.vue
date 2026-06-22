@@ -31,7 +31,7 @@
         <el-icon v-else-if="isFailed"><CircleCloseFilled /></el-icon>
         <el-icon v-else><Select /></el-icon>
       </span>
-      <span class="tool-verb">{{ toolSummary.label }}<template v-if="toolSummary.target">：</template></span>
+      <span class="tool-verb">{{ toolSummary.label }}<template v-if="toolSummary.target">{{ t('turn.meta.colon') }}</template></span>
       <span v-if="toolSummary.target" class="tool-target">{{ toolSummary.target }}</span>
     </button>
     <div v-show="expanded" class="tool-body">

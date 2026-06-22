@@ -214,7 +214,7 @@ export function renameAsset(
   const ext = path.extname(resolved.absolute);
   const before = path.basename(resolved.absolute, ext);
   const safety = checkAssetRenameSafety(workflowRoot, project, { category: resolved.category, relativePath: resolved.relativePath, name: before }, nextName);
-  if (!safety.ok) throw new Error(safety.blockers.join('；'));
+  if (!safety.ok) throw new Error(safety.blockers.join('; '));
   const nextFileName = `${nextName}${ext}`;
   const nextRelative = `${path.posix.dirname(resolved.relativePath)}/${nextFileName}`;
 
@@ -233,7 +233,7 @@ export function deleteAsset(workflowRoot: string, project: string, target: Asset
     relativePath: resolved.relativePath,
     name: path.basename(resolved.absolute, path.extname(resolved.absolute)),
   });
-  if (!safety.ok) throw new Error(safety.blockers.join('；'));
+  if (!safety.ok) throw new Error(safety.blockers.join('; '));
   deleteStagedProjectFile(workflowRoot, project, resolved.relativePath);
   return { deleted: true };
 }

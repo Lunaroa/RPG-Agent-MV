@@ -21,13 +21,14 @@ import path from 'node:path';
 
 // ── Constants ──────────────────────────────────────────────────────────
 
-const CHINESE_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/;
+const CHINESE_RE = /[\u4e00-\u9fff\u3400-\u4dbf\u3001-\u303F\uFF1A\uFF1B]/;
 
 /** Directories to scan (relative to project root RPG-Agent-MV/). */
 const SCAN_DIRS = [
   'src/ui/desktop/src',
   'src/ui/desktop/electron',
   'src/backend/src',
+  'src/contract',
 ] as const;
 
 /**
@@ -45,12 +46,13 @@ const ALLOWED_CHINESE_SOURCE_FILES = new Set([
   'src/backend/src/core/i18n/messages.ts',
   'src/backend/src/core/i18n/locales/en-US.ts',
   'src/backend/src/core/i18n/locales/zh-CN.ts',
+  'src/backend/src/core/rmmv/event-page-compiler.ts',
 ]);
 
 /** Additional directory-based localization boundaries that must stay Chinese-allowed. */
 const ALLOWED_CHINESE_SOURCE_DIR_PATTERNS: Array<{ pattern: RegExp }> = [
-  { pattern: /^src\/backend\/src\/core\/.+Localization\.ts$/ },
-  { pattern: /^src\/ui\/desktop\/src\/.+Localization\.ts$/ },
+  { pattern: /^src\/backend\/src\/core\/.+Localization\.ts$/i },
+  { pattern: /^src\/ui\/desktop\/src\/.+Localization\.ts$/i },
 ];
 
 function isAllowedChineseSource(relPath: string): boolean {
@@ -133,6 +135,8 @@ function isInsideBilingualCall(code: string): boolean {
   // translate() or t() with message key
   if (/\btranslate\s*\(\s*['"]/.test(code)) return true;
   if (/\bt\s*\(\s*['"][\w.]/.test(code)) return true;
+  // pickByLocale() with language and Record<ProductLanguage, ...> dictionary
+  if (/\bpickByLocale\s*\(/.test(code)) return true;
   return false;
 }
 

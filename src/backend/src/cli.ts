@@ -7,7 +7,7 @@ import "./suppress-warnings.ts";
 
 import fs from "node:fs";
 import path from "node:path";
-import { normalizeProductLanguage, type ProductLanguage } from "../../contract/i18n.ts";
+import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage, type ProductLanguage } from "../../contract/i18n.ts";
 import { parseArgs } from "./cli/args.ts";
 import { printHelp } from "./cli/help.ts";
 import { buildReleaseManifest, checkReleasePackages, createReleaseSourceTree } from "./core/desktop/release-boundary.ts";
@@ -326,7 +326,7 @@ function cliLanguage(): ProductLanguage {
   const explicit = String(process.env.RMMV_PRODUCT_LANGUAGE || process.env.RPG_AGENT_MV_LANGUAGE || "").trim();
   if (explicit) return normalizeProductLanguage(explicit);
   const locale = String(process.env.LANG || process.env.LANGUAGE || process.env.LC_ALL || process.env.LC_MESSAGES || "").toLowerCase();
-  return locale.startsWith("en") ? "en-US" : "zh-CN";
+  return locale.startsWith("en") ? "en-US" : DEFAULT_PRODUCT_LANGUAGE;
 }
 
 function cliText(key: BackendMessageKey): string {

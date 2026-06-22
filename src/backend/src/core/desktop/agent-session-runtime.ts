@@ -788,7 +788,13 @@ export class AgentSessionRuntime {
     if (!pendingForeground.length) return;
 
     session.status = "blocked";
-    if (session.blocker?.includes("子 Agent 未完成") || session.blocker?.includes("foreground subagent")) return;
+    const subagentBlockerZh = backendText('session.subagentIncompleteSingle', 'zh-CN');
+    const subagentBlockerEn = backendText('session.subagentIncompleteSingle', 'en-US');
+    if (
+      session.blocker?.includes(subagentBlockerZh) ||
+      session.blocker?.includes(subagentBlockerEn) ||
+      session.blocker?.includes("foreground subagent")
+    ) return;
     const message = pendingForeground.length === 1
       ? backendText('session.subagentIncompleteSingle', session.productLanguage)
       : backendText(
@@ -796,7 +802,7 @@ export class AgentSessionRuntime {
         session.productLanguage,
         { count: pendingForeground.length },
       );
-    session.blocker = session.blocker ? `${session.blocker}；${message}` : message;
+    session.blocker = session.blocker ? `${session.blocker}; ${message}` : message;
   }
 
   private fail(session: AgentSession, error: Error): void {

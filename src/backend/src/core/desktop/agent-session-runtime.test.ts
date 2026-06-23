@@ -5,13 +5,18 @@ import path from "node:path";
 import { afterEach, describe, test } from "node:test";
 
 import { AgentSessionRuntime, type AgentRuntimeEvent } from "./agent-session-runtime.ts";
+import { bootstrapDatabase } from "../db/bootstrap.ts";
+import { closeDatabase } from "../db/pool.ts";
+import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
 import { KnowledgeContextAbortedError } from "../workflow/agent/knowledge-context.ts";
+import { writeCurrentProgress } from "../memory/memory-store.ts";
 
 const roots: string[] = [];
 const runtimes: AgentSessionRuntime[] = [];
 
 afterEach(async () => {
   for (const runtime of runtimes.splice(0)) await runtime.close();
+  closeDatabase();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -758,6 +763,69 @@ describe("AgentSessionRuntime", () => {
     assert.match(history, /Assistant: 回复/);
   });
 
+  test("compressed continuation injects current progress for the parent session only", async () => {
+    let lastBuildOptions: Record<string, unknown> | undefined;
+    const harness = await createHarness(undefined, async (options) => {
+      lastBuildOptions = options;
+      return {
+        status: "pending",
+        generatedAt: "2026-06-01T00:00:00.000Z",
+        sessionId: options.sessionId,
+        workflowRoot: "",
+        task: {
+          intent: options.intent,
+          project: options.project,
+          mapId: null,
+          failureKind: null,
+          taskId: null,
+          files: [],
+          conversationHistory: options.conversationHistory ?? null,
+        },
+        profileId: "default",
+        execution: { timeoutMs: 1000, command: { command: "mock", args: [], display: "mock" } },
+      };
+    });
+    const parent = await harness.runtime.create({
+      intent: "first turn",
+      project: path.join((harness.runtime as unknown as { workflowRoot: string }).workflowRoot, "projects", "Project"),
+      executionEngine: "opencode",
+    });
+    await harness.flush();
+    const parentId = String(parent.id);
+    writeCurrentProgress((harness.runtime as unknown as { workflowRoot: string }).workflowRoot, "Project", {
+      sessionId: parentId,
+      status: "pass",
+      current: "Phase 4 storage is wired.",
+      next: "Inject progress after compression.",
+      blockers: "",
+    });
+    harness.runtime.saveChatLog(parentId, {
+      segments: [{ type: "user", content: "上一句" }, { type: "text", content: "回复" }],
+    });
+
+    await harness.runtime.create({
+      intent: "follow-up",
+      continuationOf: parentId,
+      project: path.join((harness.runtime as unknown as { workflowRoot: string }).workflowRoot, "projects", "Project"),
+      executionEngine: "opencode",
+      completeConversationHistory: true,
+    });
+    await harness.flush();
+
+    assert.match(String(lastBuildOptions?.conversationHistory || ""), /User: 上一句/);
+    assert.match(String(lastBuildOptions?.currentProgressPreamble || ""), /Phase 4 storage is wired/);
+    assert.match(String(lastBuildOptions?.currentProgressPreamble || ""), /Inject progress after compression/);
+
+    await harness.runtime.create({
+      intent: "ordinary follow-up",
+      continuationOf: parentId,
+      project: path.join((harness.runtime as unknown as { workflowRoot: string }).workflowRoot, "projects", "Project"),
+      executionEngine: "opencode",
+    });
+    await harness.flush();
+    assert.equal(lastBuildOptions?.currentProgressPreamble, undefined);
+  });
+
   test("opencode continuation injects conversationHistory without native session id", async () => {
     let lastBuildOptions: Record<string, unknown> | undefined;
     const harness = await createHarness(undefined, async (options) => {
@@ -885,12 +953,107 @@ describe("AgentSessionRuntime", () => {
     assert.equal(harness.startDispatchCalls, 0);
     assert.equal(received.filter((event) => event.type === "summary" && event.status === "stopped").length, 1);
   });
+
+  test("runs memory scribe after a successful completed opencode turn when enabled", async () => {
+    const root = makeRoot();
+    await bootstrapDatabase(root, { dbPath: path.join(root, "data", "test.db"), importLegacyJson: false });
+    ConsoleSettingsDao.set("memory", { enabled: true, autoExtractEnabled: true });
+    const scribeCalls: unknown[] = [];
+    const harness = await createHarness(root, undefined, {
+      runMemoryScribe: async (input: unknown) => {
+        scribeCalls.push(input);
+        return { ran: true, forkedSessionId: "forked-session" };
+      },
+    }, { emitOpencodeRunContext: true });
+    const session = await harness.runtime.create({ intent: "inspect project", project: "projects/Project" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    harness.emit({ type: "opencode_session", sessionID: "parent-opencode-session" });
+    harness.finish({ status: "pass" });
+    await harness.flush();
+
+    assert.equal(scribeCalls.length, 1);
+    assert.deepEqual(scribeCalls[0], {
+      workflowRoot: root,
+      cwd: path.join(root, "projects", "Project"),
+      opencodeSessionId: "parent-opencode-session",
+      sourceSessionId: sessionId,
+      status: "pass",
+      providerId: "provider-a",
+      modelId: "model-a",
+      env: { TEST_KEY: "secret" },
+      config: { model: "provider-a/model-a" },
+      timeoutMs: 1000,
+    });
+    assert.equal(harness.runtime.get(sessionId)?.status, "pass");
+  });
+
+  test("does not run memory scribe when disabled, blocked, stopped, missing native session, or missing context", async () => {
+    const root = makeRoot();
+    await bootstrapDatabase(root, { dbPath: path.join(root, "data", "test.db"), importLegacyJson: false });
+    const scribeCalls: unknown[] = [];
+    const deps = {
+      runMemoryScribe: async (input: unknown) => {
+        scribeCalls.push(input);
+        return { ran: true, forkedSessionId: "forked-session" };
+      },
+    };
+
+    ConsoleSettingsDao.set("memory", { enabled: true, autoExtractEnabled: false });
+    const autoOff = await createHarness(root, undefined, deps, { emitOpencodeRunContext: true });
+    const autoOffSession = await autoOff.runtime.create({ intent: "auto off", project: "projects/Project" });
+    await waitForSessionStatus(autoOff.runtime, String(autoOffSession.id), "running");
+    autoOff.emit({ type: "opencode_session", sessionID: "auto-off-native" });
+    autoOff.finish({ status: "pass" });
+    await autoOff.flush();
+
+    ConsoleSettingsDao.set("memory", { enabled: false, autoExtractEnabled: true });
+    const masterOff = await createHarness(root, undefined, deps, { emitOpencodeRunContext: true });
+    const masterOffSession = await masterOff.runtime.create({ intent: "master off", project: "projects/Project" });
+    await waitForSessionStatus(masterOff.runtime, String(masterOffSession.id), "running");
+    masterOff.emit({ type: "opencode_session", sessionID: "master-off-native" });
+    masterOff.finish({ status: "pass" });
+    await masterOff.flush();
+
+    ConsoleSettingsDao.set("memory", { enabled: true, autoExtractEnabled: true });
+    const blocked = await createHarness(root, undefined, deps, { emitOpencodeRunContext: true });
+    const blockedSession = await blocked.runtime.create({ intent: "blocked", project: "projects/Project" });
+    await waitForSessionStatus(blocked.runtime, String(blockedSession.id), "running");
+    blocked.emit({ type: "opencode_session", sessionID: "blocked-native" });
+    blocked.finish({ status: "blocked" });
+    await blocked.flush();
+
+    const missingNative = await createHarness(root, undefined, deps, { emitOpencodeRunContext: true });
+    const missingNativeSession = await missingNative.runtime.create({ intent: "missing native", project: "projects/Project" });
+    await waitForSessionStatus(missingNative.runtime, String(missingNativeSession.id), "running");
+    missingNative.finish({ status: "pass" });
+    await missingNative.flush();
+
+    const missingContext = await createHarness(root, undefined, deps);
+    const missingContextSession = await missingContext.runtime.create({ intent: "missing context", project: "projects/Project" });
+    await waitForSessionStatus(missingContext.runtime, String(missingContextSession.id), "running");
+    missingContext.emit({ type: "opencode_session", sessionID: "missing-context-native" });
+    missingContext.finish({ status: "pass" });
+    await missingContext.flush();
+
+    const stopped = await createHarness(root, undefined, deps, { emitOpencodeRunContext: true });
+    const stoppedSession = await stopped.runtime.create({ intent: "stopped", project: "projects/Project" });
+    await waitForSessionStatus(stopped.runtime, String(stoppedSession.id), "running");
+    stopped.emit({ type: "opencode_session", sessionID: "stopped-native" });
+    stopped.runtime.stop(String(stoppedSession.id));
+    stopped.finish({ status: "pass" });
+    await stopped.flush();
+
+    assert.equal(scribeCalls.length, 0);
+  });
 });
 
 async function createHarness(
   existingRoot?: string,
   buildDispatchImpl?: (options: Record<string, unknown>) => Promise<Record<string, unknown>>,
   extraDeps: Record<string, unknown> = {},
+  harnessOptions: { emitOpencodeRunContext?: boolean } = {},
 ) {
   const root = existingRoot || makeRoot();
   let emit: (event: AgentRuntimeEvent) => void = () => {};
@@ -924,6 +1087,17 @@ async function createHarness(
     buildDispatch: buildDispatchImpl || defaultBuildDispatch,
     startDispatch: (_dispatch: any, _options: any, onEvent: (event: AgentRuntimeEvent) => void) => {
       emit = onEvent;
+      if (harnessOptions.emitOpencodeRunContext && typeof _options.onOpencodeRunContext === "function") {
+        _options.onOpencodeRunContext({
+          workflowRoot: root,
+          cwd: path.join(root, "projects", "Project"),
+          providerId: "provider-a",
+          modelId: "model-a",
+          env: { TEST_KEY: "secret" },
+          config: { model: "provider-a/model-a" },
+          timeoutMs: 1000,
+        });
+      }
       emit({ type: "status", status: "running", at: "2026-06-01T00:00:01.000Z" });
       const promise = new Promise<Record<string, unknown>>((resolve) => {
         finishDispatch = (patch) => resolve({

@@ -128,7 +128,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { LAYER_Z } from '../../constants/layerZIndex';
-import { useI18n, pickByLocale } from '../../i18n';
+import { useI18n } from '../../i18n';
 import { confirmAboveModal } from '../../utils/confirmAboveModal';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import type { EditorProjectCatalog, StoryEventOverview, StoryEventPageOverview } from '../../api/client';

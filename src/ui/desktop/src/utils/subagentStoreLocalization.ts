@@ -2,7 +2,25 @@ import type { ProductLanguage } from '@contract/types';
 import type { SessionSubagentStatus } from '@contract/types';
 import { DEFAULT_PRODUCT_LANGUAGE, pickByLocale } from '../../../../contract/i18n.ts';
 
-const SUBAGENT_STORE_LABELS_BY_LOCALE = {
+interface SubagentStoreLabels {
+  started: string;
+  readOutput: string;
+  stopRequested: string;
+  failed: string;
+  dispatched: string;
+  completed: string;
+  outputReadFailed: string;
+  outputRead: string;
+  stopFailed: string;
+  stopped: string;
+  reasoning: string;
+  output: string;
+  running: string;
+  statusUpdate: string;
+  loadFailed: string;
+}
+
+const SUBAGENT_STORE_LABELS_BY_LOCALE: Record<ProductLanguage, SubagentStoreLabels> = {
   'zh-CN': {
     started: '启动子任务',
     readOutput: '读取子任务输出',
@@ -37,9 +55,9 @@ const SUBAGENT_STORE_LABELS_BY_LOCALE = {
     statusUpdate: 'Subtask status update',
     loadFailed: 'Failed to load subagents',
   },
-} as const;
+};
 
-export function subagentStoreLabels(language?: ProductLanguage | null) {
+export function subagentStoreLabels(language?: ProductLanguage | null): SubagentStoreLabels {
   return pickByLocale(language ?? DEFAULT_PRODUCT_LANGUAGE, SUBAGENT_STORE_LABELS_BY_LOCALE);
 }
 

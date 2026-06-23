@@ -7,7 +7,6 @@ import { commandLabel as catalogCommandLabel } from './eventCommandCatalog.ts';
 import { translate } from '../i18n/messages.ts'
 import { localizeCommandCodeLabel } from '../utils/eventCommandLocalization.ts';
 import {
-  EVENT_EDITOR_TEXT_BY_LOCALE,
   QUICK_EVENT_NAMES,
   QUICK_EVENT_TEXT,
   eventEditorText,

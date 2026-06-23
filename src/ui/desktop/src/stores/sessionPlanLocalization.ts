@@ -22,9 +22,11 @@ const messages = {
   },
 } as const satisfies Record<ProductLanguage, Record<string, string>>;
 
-export type SessionPlanMessageKey = keyof typeof messages[DEFAULT_PRODUCT_LANGUAGE];
+type SessionPlanMessages = (typeof messages)['en-US'];
+export type SessionPlanMessageKey = keyof SessionPlanMessages;
 
 export function sessionPlanText(language: ProductLanguage | null | undefined, key: SessionPlanMessageKey): string {
   const normalized = isProductLanguage(language) ? language : DEFAULT_PRODUCT_LANGUAGE;
-  return messages[normalized][key] || messages[DEFAULT_PRODUCT_LANGUAGE][key] || key;
+  const lookup = messages[normalized] as SessionPlanMessages;
+  return lookup[key] || (messages['en-US'] as SessionPlanMessages)[key] || key;
 }

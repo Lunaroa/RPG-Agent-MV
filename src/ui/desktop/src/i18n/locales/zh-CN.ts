@@ -252,7 +252,7 @@ const zhCN = {
     'settings.tabs.memory': '记忆',
     'settings.tabs.permissions': '权限',
     'settings.memory.title': 'Agent 长期记忆',
-    'settings.memory.description': '查看和管理内层 Agent 跨会话的项目记忆。记忆按项目分库，每个项目各自独立。',
+    'settings.memory.description': '查看和管理 Agent 跨会话的项目记忆。记忆按项目分库，每个项目各自独立。',
     'settings.memory.enabledLabel': '启用记忆',
     'settings.memory.enabledHint': '关闭后，Agent 开新会话时不再注入任何记忆，写记忆的工具也会被移除。',
     'settings.memory.autoExtractLabel': '自动提取记忆',

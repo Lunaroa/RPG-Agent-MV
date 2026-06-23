@@ -18,7 +18,11 @@ const messages = {
   },
 } as const satisfies Record<ProductLanguage, Record<string, string>>;
 
-export function mapPickText(language: ProductLanguage | null | undefined, key: keyof typeof messages[DEFAULT_PRODUCT_LANGUAGE]): string {
+type MapPickMessages = (typeof messages)['en-US'];
+export type MapPickMessageKey = keyof MapPickMessages;
+
+export function mapPickText(language: ProductLanguage | null | undefined, key: MapPickMessageKey): string {
   const normalized = isProductLanguage(language) ? language : DEFAULT_PRODUCT_LANGUAGE;
-  return messages[normalized][key] || messages[DEFAULT_PRODUCT_LANGUAGE][key] || key;
+  const lookup = messages[normalized] as MapPickMessages;
+  return lookup[key] || (messages['en-US'] as MapPickMessages)[key] || key;
 }

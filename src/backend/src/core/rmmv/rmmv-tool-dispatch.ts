@@ -14,6 +14,7 @@ import {
   runRmmvPluginInventory,
   runRmmvStateSlots,
 } from "./rmmv-handlers.ts";
+import { runRmmvMemory } from "./rmmv-memory-handler.ts";
 
 type RmmvDispatchHandler = (input: RmmvHandlerInput) => RmmvHandlerResult | Promise<RmmvHandlerResult>;
 
@@ -31,6 +32,7 @@ export const RMMV_TOOL_DISPATCH: Record<string, RmmvDispatchHandler> = {
   "state-slots": runRmmvStateSlots,
   "common-event-references": runRmmvCommonEventReferences,
   "event-feedback": runRmmvEventFeedback,
+  memory: runRmmvMemory,
 };
 
 export async function dispatchRmmvTool(command: string, input: RmmvHandlerInput): Promise<RmmvHandlerResult> {

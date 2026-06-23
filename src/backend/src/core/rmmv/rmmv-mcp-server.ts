@@ -97,6 +97,14 @@ const ACTION_TO_COMMAND: Record<string, string> = {
   "feedback.record": "event-feedback",
   "feedback.list": "event-feedback",
   "feedback.summary": "event-feedback",
+  "memory.list": "memory",
+  "memory.read": "memory",
+  "memory.write": "memory",
+  "memory.remove": "memory",
+  "memory.reindex": "memory",
+  "memory.read-profile": "memory",
+  "memory.write-profile": "memory",
+  "progress.write": "memory",
   "editor.update": "event-editor",
   "editor.move": "event-editor",
   "editor.remove": "event-editor",
@@ -128,6 +136,7 @@ const ACTION_TO_COMMAND: Record<string, string> = {
 /** Strip the domain prefix and convert to the handler action value. */
 function resolveSubAction(action: string): string {
   if (action === "patch.apply") return "apply-event-command-ops";
+  if (action === "progress.write") return action;
   const dot = action.lastIndexOf(".");
   const tail = dot >= 0 ? action.slice(dot + 1) : action;
   // CamelCase → kebab-case (e.g. dryRun → dry-run)
@@ -144,6 +153,7 @@ const COMMANDS_REQUIRING_ACTION = new Set([
   "map-editor",
   "map-events",
   "patch",
+  "memory",
 ]);
 
 // ── Tool specs ──────────────────────────────────────────────────────
@@ -297,6 +307,30 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
     },
     readOnly: false,
     destructive: true,
+  },
+  {
+    name: "RmmvMemory",
+    description:
+      "Durable, cross-session memory for THIS project. Record only soft knowledge (character voice, "
+      + "user taste, rejected approaches, staging conventions, cross-session decisions) — keep hard facts "
+      + "(events, outline, switches/variables) in their existing stores; a memory may point at a record but "
+      + "must not copy it. Writes are path-locked to the project memory directory.",
+    inputSchema: {
+      action: z.enum(["memory.list", "memory.read", "memory.write", "memory.remove", "memory.reindex", "memory.read-profile", "memory.write-profile", "progress.write"]),
+      project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
+      relPath: z.string().optional().describe("memory.read: file relative to the project memory dir (e.g. topics/foo.md, MEMORY.md, AGENTS.md)."),
+      name: z.string().optional().describe("memory.write: short human title for the memory."),
+      description: z.string().optional().describe("memory.write: one-line description used for recall."),
+      type: z.enum(["character", "preference", "decision", "convention"]).optional().describe("memory.write: topic category (default convention)."),
+      body: z.string().optional().describe("memory.write: markdown body of the durable note. memory.write-profile: the full shared author profile (USER.md) text to store (read-profile first, then merge, then write the whole thing back). progress.write: current progress summary."),
+      slug: z.string().optional().describe("memory.write/remove: explicit topic slug; defaults to a slug of the name."),
+      sessionId: z.string().optional().describe("progress.write: session id whose current progress is being updated."),
+      status: z.enum(["pass", "blocked", "stopped", "failed", "error", "interrupted", "timeout", "unknown"]).optional().describe("progress.write: terminal status for this conversation."),
+      current: z.string().optional().describe("progress.write: what this conversation accomplished or where it currently stands."),
+      next: z.string().optional().describe("progress.write: concrete next step for continuation."),
+      blockers: z.string().optional().describe("progress.write: blocker or missing input, if any."),
+    },
+    readOnly: false,
   },
   // Deprecated (simplified workflow 2026-06):
   // RmmvTest — playability/runtime checks unreliable in RMMV environment

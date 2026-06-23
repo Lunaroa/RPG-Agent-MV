@@ -990,68 +990,95 @@ export async function initializeIpcHandlers(root: string): Promise<void> {
     return toIpcPayload(plain);
   });
 
-  ipcMain.handle('settings:getModelRoles', () => {
-    const stored = toIpcPayload(ConsoleSettingsDao.get('modelRoles') || {}) as Record<string, unknown>;
-    return toIpcPayload(stored);
-  });
-
-  ipcMain.handle('settings:putModelRoles', (_event, body: Record<string, unknown>) => {
-    const plain = toIpcPayload(body) as Record<string, unknown>;
-    ConsoleSettingsDao.set('modelRoles', plain);
-    return toIpcPayload(plain);
-  });
-
-  // ---- Agent runtime memory toggles (local runtime state) ----
-  const AGENT_RUNTIME_MEMORY_KEYS = ['autoMemoryEnabled', 'autoDreamEnabled', 'poorMode'] as const;
-
-  function agentRuntimeSettingsPath(): string | null {
-    if (!workflowRoot) return null;
-    return path.join(workflowRoot, 'runtime', 'agent-runtime-settings.json');
+  // ---- Durable agent memory (Phase 1: read / clear / open folder) ----
+  const loadMemoryStore = () => import(new URL('memory/memory-store.ts', backendCoreUrl!).href);
+  async function resolveMemoryProjectId(raw: unknown): Promise<string> {
+    const { resolveActiveProjectId } = await import(new URL('memory/active-project.ts', backendCoreUrl!).href);
+    const id = resolveActiveProjectId({ projectId: typeof raw === 'string' ? raw : '' });
+    if (!id) throw new Error('A valid projectId is required');
+    return id;
   }
 
-  function readAgentRuntimeSettingsJson(): Record<string, unknown> {
-    const filePath = agentRuntimeSettingsPath();
-    if (!filePath) return {};
-    try {
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      return JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  }
-
-  function writeAgentRuntimeSettingsJson(patch: Record<string, unknown>): void {
-    const filePath = agentRuntimeSettingsPath();
-    if (!filePath) return;
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const existing = readAgentRuntimeSettingsJson();
-    const merged = { ...existing, ...patch };
-    fs.writeFileSync(filePath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
-  }
-
-  ipcMain.handle('settings:getMemorySettings', () => {
-    const agentRuntimeSettings = readAgentRuntimeSettingsJson();
-    const result: Record<string, unknown> = {};
-    for (const key of AGENT_RUNTIME_MEMORY_KEYS) {
-      if (key in agentRuntimeSettings) result[key] = agentRuntimeSettings[key];
-    }
-    return toIpcPayload(result);
+  ipcMain.handle('memory:listProject', async (_event, projectId: unknown) => {
+    const id = await resolveMemoryProjectId(projectId);
+    const store = await loadMemoryStore();
+    return toIpcPayload(store.listProjectMemory(workflowRoot, id));
   });
 
-  ipcMain.handle('settings:putMemorySettings', (_event, body: Record<string, unknown>) => {
-    const plain = toIpcPayload(body) as Record<string, unknown>;
+  ipcMain.handle('memory:getOverview', async (_event, projectId: unknown) => {
+    const id = await resolveMemoryProjectId(projectId);
+    const store = await loadMemoryStore();
+    const settings = await loadMemorySettings();
+    return toIpcPayload({ ...store.getProjectMemoryOverview(workflowRoot, id), settings: settings.readMemorySettings() });
+  });
+
+  ipcMain.handle('memory:listActivity', async (_event, payload: Record<string, unknown> = {}) => {
+    const plain = toIpcPayload(payload) as Record<string, unknown>;
+    const id = await resolveMemoryProjectId(plain.projectId);
+    const limit = typeof plain.limit === 'number' ? plain.limit : 50;
+    const store = await loadMemoryStore();
+    return toIpcPayload({ projectId: id, entries: store.readActivityLog(workflowRoot, id, limit) });
+  });
+
+  ipcMain.handle('memory:readFile', async (_event, payload: Record<string, unknown> = {}) => {
+    const plain = toIpcPayload(payload) as Record<string, unknown>;
+    const id = await resolveMemoryProjectId(plain.projectId);
+    const relPath = String(plain.relPath || '');
+    const store = await loadMemoryStore();
+    return toIpcPayload({ relPath, content: store.readMemoryFile(workflowRoot, id, relPath) });
+  });
+
+  ipcMain.handle('memory:clearProject', async (_event, projectId: unknown) => {
+    const id = await resolveMemoryProjectId(projectId);
+    const store = await loadMemoryStore();
+    return toIpcPayload({ cleared: store.clearProjectMemory(workflowRoot, id) });
+  });
+
+  ipcMain.handle('memory:reindexProject', async (_event, projectId: unknown) => {
+    const id = await resolveMemoryProjectId(projectId);
+    const store = await loadMemoryStore();
+    const index = store.reindexProjectMemory(workflowRoot, id);
+    return toIpcPayload({ projectId: id, index });
+  });
+
+  ipcMain.handle('memory:openFolder', async (_event, projectId: unknown) => {
+    const id = await resolveMemoryProjectId(projectId);
+    const paths = await import(new URL('workspace-paths.ts', backendCoreUrl!).href);
+    const dir = paths.resolveProjectMemoryDir(workflowRoot, id);
+    fs.mkdirSync(dir, { recursive: true });
+    const error = await shell.openPath(dir);
+    return toIpcPayload({ ok: !error, error: error || null, dir });
+  });
+
+  // ---- Shared author profile (USER.md) — cross-project, Phase 2a ----
+  ipcMain.handle('memory:readUserProfile', async () => {
+    const store = await loadMemoryStore();
+    return toIpcPayload({ content: store.readUserProfile(workflowRoot) });
+  });
+
+  ipcMain.handle('memory:writeUserProfile', async (_event, payload: Record<string, unknown> = {}) => {
+    const plain = toIpcPayload(payload) as Record<string, unknown>;
+    const store = await loadMemoryStore();
+    store.writeUserProfile(workflowRoot, String(plain.content ?? ''));
+    return toIpcPayload({ content: store.readUserProfile(workflowRoot) });
+  });
+
+  // ---- Memory settings: master switch + recall model (backend-owned, Phase 2a) ----
+  const loadMemorySettings = () => import(new URL('memory/memory-settings.ts', backendCoreUrl!).href);
+
+  ipcMain.handle('memory:getSettings', async () => {
+    const mod = await loadMemorySettings();
+    return toIpcPayload(mod.readMemorySettings());
+  });
+
+  ipcMain.handle('memory:setSettings', async (_event, payload: Record<string, unknown> = {}) => {
+    const plain = toIpcPayload(payload) as Record<string, unknown>;
     const patch: Record<string, unknown> = {};
-    for (const key of AGENT_RUNTIME_MEMORY_KEYS) {
-      if (key in plain) patch[key] = plain[key];
-    }
-    writeAgentRuntimeSettingsJson(patch);
-    // 回读确认
-    const agentRuntimeSettings = readAgentRuntimeSettingsJson();
-    const result: Record<string, unknown> = {};
-    for (const key of AGENT_RUNTIME_MEMORY_KEYS) {
-      if (key in agentRuntimeSettings) result[key] = agentRuntimeSettings[key];
-    }
-    return toIpcPayload(result);
+    if (typeof plain.enabled === 'boolean') patch.enabled = plain.enabled;
+    if ('recallModel' in plain) patch.recallModel = plain.recallModel ?? null;
+    if (typeof plain.autoExtractEnabled === 'boolean') patch.autoExtractEnabled = plain.autoExtractEnabled;
+    const mod = await loadMemorySettings();
+    return toIpcPayload(mod.writeMemorySettings(patch));
   });
 
   ipcMain.handle('settings:activateInvocation', async (_event, payload: Record<string, unknown> = {}) => {
@@ -1220,8 +1247,6 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('settings:putPermissions');
   ipcMain.removeHandler('settings:getAgentExecution');
   ipcMain.removeHandler('settings:putAgentExecution');
-  ipcMain.removeHandler('settings:getModelRoles');
-  ipcMain.removeHandler('settings:putModelRoles');
   ipcMain.removeHandler('settings:activateInvocation');
   ipcMain.removeHandler('settings:listCompatibleProviders');
   ipcMain.removeHandler('settings:syncProviderSeeds');

@@ -186,7 +186,10 @@ const PACKAGE_FORBIDDEN_RULES: readonly { test: (rel: string) => boolean; reason
     test: (rel) => hasPathSegment(rel, "runtime") && !rel.startsWith("resources/app/src/backend/node_modules/"),
     reason: "runtime state is local-only",
   },
-  { test: (rel) => hasPathSegment(rel, "projects"), reason: "RMMV projects are local-only" },
+  {
+    test: (rel) => rel === "resources/app/projects" || rel.startsWith("resources/app/projects/"),
+    reason: "RMMV projects are local-only",
+  },
   { test: (rel) => hasPathSegment(rel, "secrets"), reason: "local secrets are not releasable" },
   { test: (rel) => hasPathSegment(rel, "save"), reason: "RMMV save data is local-only" },
   { test: isRmmvProjectMarker, reason: "RMMV game project files are local-only" },

@@ -10,7 +10,11 @@ const messages = {
   },
 } as const satisfies Record<ProductLanguage, Record<string, string>>;
 
-export function taskBoardText(language: ProductLanguage | null | undefined, key: keyof typeof messages[DEFAULT_PRODUCT_LANGUAGE]): string {
+type TaskBoardMessages = (typeof messages)['en-US'];
+export type TaskBoardMessageKey = keyof TaskBoardMessages;
+
+export function taskBoardText(language: ProductLanguage | null | undefined, key: TaskBoardMessageKey): string {
   const normalized = isProductLanguage(language) ? language : DEFAULT_PRODUCT_LANGUAGE;
-  return messages[normalized][key] || messages[DEFAULT_PRODUCT_LANGUAGE][key] || key;
+  const lookup = messages[normalized] as TaskBoardMessages;
+  return lookup[key] || (messages['en-US'] as TaskBoardMessages)[key] || key;
 }

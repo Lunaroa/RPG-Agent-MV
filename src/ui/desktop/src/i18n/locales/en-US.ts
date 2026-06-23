@@ -252,7 +252,7 @@ const enUS = {
     'settings.tabs.memory': 'Memory',
     'settings.tabs.permissions': 'Permissions',
     'settings.memory.title': 'Agent long-term memory',
-    'settings.memory.description': "View and manage the inner agent's per-project memory across sessions. Memory is partitioned per project; each project is independent.",
+    'settings.memory.description': "View and manage the Agent's per-project memory across sessions. Memory is partitioned per project; each project is independent.",
     'settings.memory.enabledLabel': 'Enable memory',
     'settings.memory.enabledHint': 'When off, no memory is injected into fresh agent sessions and the memory write tool is removed.',
     'settings.memory.autoExtractLabel': 'Auto-extract memory',

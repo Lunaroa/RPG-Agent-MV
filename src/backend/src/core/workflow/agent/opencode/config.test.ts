@@ -38,7 +38,32 @@ test("opencode config returns dynamic fields including agent tool policy", () =>
   assert.equal(config.instructions, undefined);
   assert.equal(config.skills, undefined);
   assert.equal(config.permission, undefined);
-  assert.equal(config.agent, undefined);
+
+  const scribe = (config.agent as Record<string, Record<string, unknown>>)["memory-scribe"];
+  assert.ok(scribe);
+  const scribeTools = scribe.tools as Record<string, boolean>;
+  assert.equal(scribeTools.rmmv_RmmvMemory, true);
+  for (const [tool, enabled] of Object.entries(scribeTools)) {
+    if (tool === "rmmv_RmmvMemory") continue;
+    assert.equal(enabled, false, `${tool} must be disabled for memory-scribe`);
+  }
+});
+
+test("master memory switch OFF hard-removes the memory write tool, leaving others intact", () => {
+  const base = {
+    workflowRoot: WORKFLOW_ROOT,
+    providerId: "zhipu-glm",
+    modelId: "glm-4.5-air",
+    provider: provider("anthropic", "https://open.bigmodel.cn/api/anthropic"),
+  };
+  const on = buildOpencodeRuntimeConfig(base);
+  const off = buildOpencodeRuntimeConfig({ ...base, memoryEnabled: false });
+
+  // Default (switch ON) leaves the memory tool allowed; OFF forces it false.
+  assert.equal((on.tools as Record<string, boolean>).rmmv_RmmvMemory, true);
+  assert.equal((off.tools as Record<string, boolean>).rmmv_RmmvMemory, false);
+  // A non-memory tool is untouched by the switch.
+  assert.equal((off.tools as Record<string, boolean>).rmmv_RmmvReadContext, true);
 });
 
 test("anthropic-compatible providers use the anthropic AI SDK package", () => {

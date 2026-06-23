@@ -13,12 +13,46 @@ import {
 
 const RMMV_MCP_SERVER_PATH = "src/backend/src/core/rmmv/rmmv-mcp-server.ts";
 
+/** MCP tool id for the agent's durable-memory write tool (see config/capabilities/tool-manifest.json). */
+const RMMV_MEMORY_TOOL_ID = "rmmv_RmmvMemory";
+
+/**
+ * opencode agent name for the sandboxed background memory extractor (Phase 2c).
+ * Forked turns run under this agent so the scribe can ONLY touch durable memory.
+ */
+export const MEMORY_SCRIBE_AGENT = "memory-scribe";
+
+/**
+ * Build the sandboxed `memory-scribe` agent config: every tool hard-denied except the
+ * durable-memory write tool, plus permission denies as a second layer. The scribe forks
+ * the live conversation to distill memories — it must never read/edit/run anything in the
+ * real game project, so the sandbox is enforced here, not via prompt instructions.
+ */
+function buildMemoryScribeAgentConfig(toolKeys: string[]): Record<string, unknown> {
+  const tools: Record<string, boolean> = {};
+  for (const key of toolKeys) tools[key] = false;
+  tools[RMMV_MEMORY_TOOL_ID] = true;
+  return {
+    mode: "all",
+    description: "Sandboxed background extractor that distills durable memories from a forked conversation.",
+    tools,
+    permission: {
+      edit: "deny",
+      bash: "deny",
+      webfetch: "deny",
+      external_directory: "deny",
+    },
+  };
+}
+
 export interface OpencodeRuntimeConfigInput {
   workflowRoot: string;
   providerId: string;
   modelId: string;
   provider: ProviderRecord;
   productLanguage?: ProductLanguage | null;
+  /** Master memory switch. When false, the memory write tool is hard-removed from the policy. */
+  memoryEnabled?: boolean;
 }
 
 function normalizeProviderId(providerId: string): string {
@@ -113,13 +147,21 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
     throw new Error(backendText('dispatch.providerMissingBaseUrl', input.productLanguage));
   }
   const rmmvMcpEnabled = hasEnabledRmmvMcpTools(workflowRoot);
+  const tools = buildOpencodeToolPolicyFromAgentAllow(workflowRoot);
+  // Master memory switch OFF ⇒ hard-remove the memory write tool (true off, not just hidden text).
+  if (input.memoryEnabled === false) {
+    tools[RMMV_MEMORY_TOOL_ID] = false;
+  }
 
   return {
     model: `${providerId}/${modelId}`,
     provider: {
       [providerId]: buildProviderConfig(providerId, input.provider, modelId),
     },
-    tools: buildOpencodeToolPolicyFromAgentAllow(workflowRoot),
+    tools,
+    agent: {
+      [MEMORY_SCRIBE_AGENT]: buildMemoryScribeAgentConfig(Object.keys(tools)),
+    },
     mcp: {
       rmmv: buildOpencodeRmmvMcpConfig(workflowRoot, rmmvMcpEnabled),
     },

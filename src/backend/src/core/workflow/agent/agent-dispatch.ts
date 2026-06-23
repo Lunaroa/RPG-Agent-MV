@@ -7,7 +7,6 @@ import * as providerRegistry from "../../llm/provider-registry.ts";
 import { materializeOpencodeEnv } from "../../llm/opencode/materialize-env.ts";
 import { buildEphemeralOpencodeProfile } from "../../llm/opencode/build-profile.ts";
 import { resolveSessionBinding } from "../../llm/invocation/parse-profile-id.ts";
-import { ConsoleSettingsDao } from "../../db/dao/console-settings-dao.ts";
 import {
   getAgentConfig,
   loadAgentRegistry,
@@ -39,6 +38,8 @@ import {
 import { buildAgentOutputEnv } from "./agent-output-dirs.ts";
 import { buildSessionPlanPathPromptLines } from "../../desktop/session-plan-path.ts";
 import { AGENT_PROMPT_LANGUAGE } from "../../i18n/agent-prompt-locale.ts";
+import { resolveMemoryPreamble } from "../../memory/memory-inject.ts";
+import { readMemorySettings } from "../../memory/memory-settings.ts";
 import {
   buildOpencodeRuntimeConfig,
 } from "./opencode/config.ts";
@@ -83,6 +84,22 @@ interface DispatchOptions {
   askMcpGatewayPort?: number | null;
   /** Conversation-scoped plan file relative to the game project cwd. */
   planFilePath?: string;
+  /** Current progress for compressed continuation prompts only; not part of memory recall. */
+  currentProgressPreamble?: string;
+  /** Memory slugs already surfaced earlier in this conversation (multi-turn recall dedup). */
+  alreadySurfaced?: string[];
+  /** Internal-only: expose the exact opencode run context to the desktop session runtime. */
+  onOpencodeRunContext?: (context: OpencodeRunContext) => void;
+}
+
+export interface OpencodeRunContext {
+  workflowRoot: string;
+  cwd: string;
+  providerId: string;
+  modelId: string;
+  env: Record<string, string>;
+  config: Record<string, unknown>;
+  timeoutMs: number;
 }
 
 interface AgentRuntime {
@@ -233,6 +250,8 @@ interface DispatchResult {
   agentRunRecord?: AgentRunRecord;
   backendOutput?: BackendOutput;
   planFilePath?: string | null;
+  /** Memory slugs newly surfaced this dispatch (recall), for the caller's running surfaced set. */
+  surfacedMemorySlugs?: string[];
 }
 
 interface PathResult {
@@ -383,6 +402,24 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     taskId: options.preparationTaskId || sessionId,
     onProgress: options.onPreparationProgress
   });
+  // Multi-turn recall: memory resolves every turn. Fresh sessions get the full preamble
+  // (profile + index + bodies); continuations get only the newly-surfaced bodies, excluding
+  // topics already surfaced earlier in this conversation (passed in via options.alreadySurfaced).
+  const isFreshSession = !options.opencodeSessionId?.trim() && !task.conversationHistory?.trim();
+  const memory = await resolveMemoryPreamble({
+    workflowRoot,
+    projectPath: task.project,
+    taskIntent: task.intent || "",
+    mode: isFreshSession ? "full" : "incremental",
+    alreadySurfaced: options.alreadySurfaced || [],
+    // Preview/dry-run (execute === false) skips the recall side-query: its result would be
+    // discarded and the real execution turn recalls again. Anything but an explicit false
+    // (i.e. execute true/undefined) keeps the default recall behavior.
+    runRecall: options.execute !== false,
+    signal: options.signal,
+  });
+  const memoryPreamble = memory.preamble;
+  const surfacedMemorySlugs = memory.surfacedSlugs;
   const userPrompt = renderOpencodeUserPrompt({
     task,
     productLanguage,
@@ -393,6 +430,8 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     workflowRoot,
     opencodeSessionId: options.opencodeSessionId ?? null,
     planFilePath: options.planFilePath ?? null,
+    currentProgressPreamble: options.currentProgressPreamble ?? null,
+    memoryPreamble,
   });
   const runtimeCommand: RuntimeCommand | null = profile && knowledgeContext.status !== "blocked"
     ? buildRuntimeCommand(profile, executionEngine, {
@@ -446,6 +485,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     },
     blocker,
     planFilePath: options.planFilePath || null,
+    surfacedMemorySlugs,
     nextActions: options.execute
       ? []
       : ["This was prepared without execution. Start a desktop opencode session to execute it."]
@@ -486,7 +526,6 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
     ...process.env as Record<string, string>,
     ...envInfo.env,
     ...buildAgentScopeEnv(dispatch, agentCwd),
-    ...resolveModelRolesEnv(),
     ...buildTaskListEnv(dispatch),
     AIWF_AGENT_ID: (dispatch.agent && dispatch.agent.id) || process.env.AIWF_AGENT_ID || "",
     AIWF_SESSION_ID: dispatch.sessionId || process.env.AIWF_SESSION_ID || ""
@@ -495,17 +534,29 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
     const executable = resolveExecutable(command.command, spawnEnv);
     try {
       const opencodeConfig = await resolveOpencodeConfig(dispatch);
+      const providerId = dispatch.sessionBinding?.providerId || String(dispatch.profile.provider || "");
+      const modelId = dispatch.sessionBinding?.modelId || String(dispatch.profile.model || "");
+      const timeoutMs = options.timeoutMs || dispatch.execution.timeoutMs || 600000;
+      options.onOpencodeRunContext?.({
+        workflowRoot: dispatch.workflowRoot,
+        cwd: agentCwd,
+        providerId,
+        modelId,
+        env: { ...spawnEnv },
+        config: opencodeConfig,
+        timeoutMs,
+      });
       const result = await runOpencodeSession({
         workflowRoot: dispatch.workflowRoot,
         cwd: agentCwd,
         prompt: command.stdin || dispatch.prompt?.user || "",
         sessionId: dispatch.sessionId,
         opencodeSessionId: options.opencodeSessionId || null,
-        providerId: dispatch.sessionBinding?.providerId || String(dispatch.profile.provider || ""),
-        modelId: dispatch.sessionBinding?.modelId || String(dispatch.profile.model || ""),
+        providerId,
+        modelId,
         env: spawnEnv,
         config: opencodeConfig,
-        timeoutMs: options.timeoutMs || dispatch.execution.timeoutMs || 600000,
+        timeoutMs,
         productLanguage: dispatch.productLanguage,
         signal: options.signal,
       }, () => {});
@@ -585,6 +636,7 @@ async function resolveOpencodeConfig(dispatch: DispatchResult): Promise<Record<s
     modelId,
     provider,
     productLanguage: dispatch.productLanguage,
+    memoryEnabled: readMemorySettings().enabled,
   });
 }
 
@@ -627,7 +679,6 @@ function startOpencodeDispatchProcess(
       ...process.env as Record<string, string>,
       ...envInfo.env,
       ...buildAgentScopeEnv(dispatch, agentCwd),
-      ...resolveModelRolesEnv(),
       ...buildTaskListEnv(dispatch),
       AIWF_AGENT_ID: (dispatch.agent && dispatch.agent.id) || process.env.AIWF_AGENT_ID || "",
       AIWF_SESSION_ID: dispatch.sessionId || process.env.AIWF_SESSION_ID || "",
@@ -635,17 +686,29 @@ function startOpencodeDispatchProcess(
 
     try {
       const opencodeConfig = await resolveOpencodeConfig(dispatch);
+      const providerId = dispatch.sessionBinding?.providerId || String(dispatch.profile?.provider || "");
+      const modelId = dispatch.sessionBinding?.modelId || String(dispatch.profile?.model || "");
+      const timeoutMs = options.timeoutMs || dispatch.execution!.timeoutMs || 600000;
+      options.onOpencodeRunContext?.({
+        workflowRoot: dispatch.workflowRoot,
+        cwd: agentCwd,
+        providerId,
+        modelId,
+        env: { ...spawnEnv },
+        config: opencodeConfig,
+        timeoutMs,
+      });
       const result = await runOpencodeSession({
         workflowRoot: dispatch.workflowRoot,
         cwd: agentCwd,
         prompt: command.stdin || dispatch.prompt?.user || "",
         sessionId: dispatch.sessionId,
         opencodeSessionId: options.opencodeSessionId || null,
-        providerId: dispatch.sessionBinding?.providerId || String(dispatch.profile?.provider || ""),
-        modelId: dispatch.sessionBinding?.modelId || String(dispatch.profile?.model || ""),
+        providerId,
+        modelId,
         env: spawnEnv,
         config: opencodeConfig,
-        timeoutMs: options.timeoutMs || dispatch.execution!.timeoutMs || 600000,
+        timeoutMs,
         productLanguage: dispatch.productLanguage,
         signal: controller.signal,
       }, onEvent);
@@ -745,22 +808,6 @@ function resolveAgentCwd(dispatch: DispatchResult): string {
     // 项目路径不存在/不可读时回退。
   }
   return dispatch.workflowRoot;
-}
-
-// 从 SQLite 读取用户配置的 modelRoles，映射为执行器识别的环境变量。
-// lightModel → ANTHROPIC_SMALL_FAST_MODEL（轻量辅助任务）
-// selectorModel → ANTHROPIC_DEFAULT_SONNET_MODEL（记忆选择器）
-function resolveModelRolesEnv(): Record<string, string> {
-  try {
-    const raw = ConsoleSettingsDao.get('modelRoles') as { lightModel?: { modelId?: string }; selectorModel?: { modelId?: string } } | null;
-    if (!raw) return {};
-    const env: Record<string, string> = {};
-    if (raw.lightModel?.modelId) env.ANTHROPIC_SMALL_FAST_MODEL = raw.lightModel.modelId;
-    if (raw.selectorModel?.modelId) env.ANTHROPIC_DEFAULT_SONNET_MODEL = raw.selectorModel.modelId;
-    return env;
-  } catch {
-    return {};
-  }
 }
 
 // opencode 与 MCP server 需要定位 workflowRoot；cwd 改到游戏目录后，
@@ -899,6 +946,10 @@ async function buildRuntimeEnv(
 interface OpencodeUserPromptContext extends UserPromptContext {
   opencodeSessionId?: string | null;
   planFilePath?: string | null;
+  /** Current progress injected only after compression-style continuation. */
+  currentProgressPreamble?: string | null;
+  /** Pre-resolved durable-memory preamble (async + DB-backed); "" ⇒ nothing to inject. */
+  memoryPreamble?: string | null;
 }
 
 function isOpencodeContinuation(context: OpencodeUserPromptContext): boolean {
@@ -913,6 +964,20 @@ export function renderOpencodeUserPrompt(context: OpencodeUserPromptContext): st
   if (context.task.conversationHistory?.trim() && !context.opencodeSessionId?.trim()) {
     lines.push(backendText('dispatch.conversationHistoryHeader', AGENT_PROMPT_LANGUAGE));
     lines.push(context.task.conversationHistory);
+    lines.push("");
+  }
+  const currentProgress = (context.currentProgressPreamble || "").trim();
+  if (currentProgress) {
+    lines.push("## Current Progress");
+    lines.push(currentProgress);
+    lines.push("");
+  }
+  // Durable-memory preamble: full on a fresh session, incremental (newly-recalled bodies only)
+  // on continuations. Resolved upstream (async, DB-backed: master switch + recall) per mode and
+  // passed in; "" ⇒ inject nothing. Placed after conversation history, before the task labels.
+  const memoryPreamble = (context.memoryPreamble || "").trim();
+  if (memoryPreamble) {
+    lines.push(memoryPreamble);
     lines.push("");
   }
   if (!isOpencodeContinuation(context)) {

@@ -45,6 +45,8 @@ export interface OpencodeRunInput {
   config: Record<string, unknown>;
   timeoutMs: number;
   productLanguage?: ProductLanguage | null;
+  /** opencode agent to run the prompt under. Defaults to "build"; the memory scribe uses a sandboxed agent. */
+  agentName?: string;
   signal?: AbortSignal;
 }
 
@@ -1013,7 +1015,7 @@ export async function runOpencodeSession(
           providerID: input.providerId,
           modelID: input.modelId,
         },
-        agent: "build",
+        agent: input.agentName || "build",
         parts: [{ type: "text", text: input.prompt }],
       },
       signal: controller.signal,
@@ -1071,6 +1073,33 @@ export async function runOpencodeSession(
   };
 }
 
+
+/**
+ * Fork an existing opencode session into a fresh isolated session that inherits the full
+ * conversation history (Phase 2c memory scribe). Requires the server singleton to be live —
+ * extraction runs right after the parent turn finished, so the server is always up. Returns
+ * the new session id, or null if the server is gone or the fork fails (caller fails soft).
+ */
+export async function forkOpencodeSession(
+  opencodeSessionId: string,
+  directory: string,
+  messageID?: string,
+): Promise<string | null> {
+  if (!singleton || singleton.process.exitCode !== null) return null;
+  const result = await singleton.client.session.fork({
+    path: { id: opencodeSessionId },
+    query: { directory },
+    body: messageID ? { messageID } : {},
+  });
+  if (result.error || !result.data) return null;
+  return result.data.id || null;
+}
+
+/** Best-effort delete of a (forked) opencode session so scribe forks don't pile up in the db. */
+export async function deleteOpencodeSession(sessionId: string, directory: string): Promise<void> {
+  if (!singleton || singleton.process.exitCode !== null) return;
+  await singleton.client.session.delete({ path: { id: sessionId }, query: { directory } }).catch(() => {});
+}
 
 export async function replyOpencodePermission(
   sessionId: string,

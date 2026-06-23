@@ -14,7 +14,12 @@ import {
   buildAgentDispatch,
   startAgentDispatchProcess,
   writeAgentDispatchOutputs,
+  type OpencodeRunContext,
 } from "../workflow/agent/agent-dispatch.ts";
+import { resolveActiveProjectId } from "../memory/active-project.ts";
+import { readCurrentProgressEntry } from "../memory/memory-store.ts";
+import { readMemorySettings } from "../memory/memory-settings.ts";
+import { runMemoryScribe } from "../memory/memory-scribe.ts";
 import { KnowledgeContextAbortedError } from "../workflow/agent/knowledge-context.ts";
 import { loadAgentRegistry } from "../workflow/agent/agent-registry.ts";
 import {
@@ -100,6 +105,10 @@ export interface AgentSession {
   finishedAt: string | null;
   inputTokens: number;
   outputTokens: number;
+  /** Memory topic slugs surfaced so far in this conversation (multi-turn recall dedup). */
+  surfacedMemorySlugs: string[];
+  /** Internal-only opencode context used by the background memory scribe. Never persisted. */
+  opencodeRunContext: OpencodeRunContext | null;
 }
 
 export interface SessionCreateInput {
@@ -149,6 +158,7 @@ interface RuntimeDependencies {
   writeOutputs?: typeof writeAgentDispatchOutputs;
   activateForSession?: typeof activateForSession;
   loadRegistry?: typeof loadAgentRegistry;
+  runMemoryScribe?: typeof runMemoryScribe;
 }
 
 export class AgentSessionRuntime {
@@ -163,6 +173,7 @@ export class AgentSessionRuntime {
   private readonly writeOutputs: typeof writeAgentDispatchOutputs;
   private readonly activateForSession: typeof activateForSession;
   private readonly loadRegistry: typeof loadAgentRegistry;
+  private readonly runMemoryScribe: typeof runMemoryScribe;
 
   constructor(workflowRoot: string, deps: RuntimeDependencies = {}) {
     this.workflowRoot = workflowRoot;
@@ -172,6 +183,7 @@ export class AgentSessionRuntime {
     this.writeOutputs = deps.writeOutputs || writeAgentDispatchOutputs;
     this.activateForSession = deps.activateForSession || activateForSession;
     this.loadRegistry = deps.loadRegistry || loadAgentRegistry;
+    this.runMemoryScribe = deps.runMemoryScribe || runMemoryScribe;
   }
 
   async initialize(): Promise<void> {
@@ -272,6 +284,9 @@ export class AgentSessionRuntime {
       finishedAt: null,
       inputTokens: 0,
       outputTokens: 0,
+      // Inherit the parent turn's surfaced set (copied, not shared) so continuations dedup recall.
+      surfacedMemorySlugs: parent ? [...(parent.surfacedMemorySlugs || [])] : [],
+      opencodeRunContext: null,
     };
     this.sessions.set(session.id, session);
     ensurePlanDirectory(this.workflowRoot, session.project, planFilePath);
@@ -286,6 +301,12 @@ export class AgentSessionRuntime {
     const sessionBinding = this.resolveInputSessionBinding(input);
     await this.activateForSession(this.workflowRoot, executionEngine, sessionBinding);
     const parent = input.continuationOf ? this.sessions.get(input.continuationOf) : undefined;
+    const conversationHistory = this.resolveConversationHistory(
+      input.continuationOf,
+      executionEngine,
+      parent,
+      input.completeConversationHistory,
+    );
     const dispatch = await this.buildDispatch({
       workflowRoot: this.workflowRoot,
       agentId: DEFAULT_AGENT_ID,
@@ -302,12 +323,9 @@ export class AgentSessionRuntime {
       execute: false,
       thinkingLevel: input.thinkingLevel || undefined,
       opencodeSessionId: parent?.opencodeSessionId || undefined,
-      conversationHistory: this.resolveConversationHistory(
-        input.continuationOf,
-        executionEngine,
-        parent,
-        input.completeConversationHistory,
-      ),
+      alreadySurfaced: parent?.surfacedMemorySlugs || [],
+      conversationHistory,
+      currentProgressPreamble: this.resolveCurrentProgressPreamble(input, parent, conversationHistory),
       readOnlyTools: input.readOnlyTools,
     });
     const knowledgeContext = dispatch.knowledgeContext
@@ -578,6 +596,12 @@ export class AgentSessionRuntime {
     await this.refreshSecrets();
     if (controller.signal.aborted || session.status === "stopped") return;
 
+    const conversationHistory = this.resolveConversationHistory(
+      input.continuationOf,
+      executionEngine,
+      parent,
+      input.completeConversationHistory,
+    );
     const dispatch = await this.buildDispatch({
       workflowRoot: this.workflowRoot,
       sessionId: session.id,
@@ -597,12 +621,9 @@ export class AgentSessionRuntime {
       timeoutMs: input.timeoutMs,
       thinkingLevel: input.thinkingLevel || undefined,
       opencodeSessionId: parent?.opencodeSessionId || undefined,
-      conversationHistory: this.resolveConversationHistory(
-        input.continuationOf,
-        executionEngine,
-        parent,
-        input.completeConversationHistory,
-      ),
+      alreadySurfaced: session.surfacedMemorySlugs,
+      conversationHistory,
+      currentProgressPreamble: this.resolveCurrentProgressPreamble(input, parent, conversationHistory),
       readOnlyTools: input.readOnlyTools,
       planFilePath: session.planFilePath || undefined,
       knowledgeContextOutDir: path.join(session.outDir, "knowledge-context"),
@@ -618,6 +639,11 @@ export class AgentSessionRuntime {
     if (controller.signal.aborted || session.status === "stopped") return;
     session.preparationController = null;
     session.dispatch = dispatch;
+    // Fold this turn's newly-recalled slugs into the conversation's running surfaced set.
+    const newlySurfaced = Array.isArray(dispatch.surfacedMemorySlugs) ? dispatch.surfacedMemorySlugs : [];
+    if (newlySurfaced.length > 0) {
+      session.surfacedMemorySlugs = [...new Set([...session.surfacedMemorySlugs, ...newlySurfaced])];
+    }
     session.profileId = dispatch.profileId || input.profileId || "default";
     session.blocker = dispatch.blocker || null;
     session.updatedAt = new Date().toISOString();
@@ -647,6 +673,9 @@ export class AgentSessionRuntime {
       timeoutMs: input.timeoutMs,
       outDir: session.outDir,
       opencodeSessionId: parent?.opencodeSessionId || session.opencodeSessionId || undefined,
+      onOpencodeRunContext: (context) => {
+        session.opencodeRunContext = context;
+      },
     }, (event) => {
       this.handleDispatchEvent(session, event);
     });
@@ -732,6 +761,7 @@ export class AgentSessionRuntime {
       at: session.updatedAt,
     });
     if (!wasStopped) this.pushSummary(session);
+    this.maybeRunMemoryScribe(session, wasStopped);
     this.askGateway.destroySession(session.id).catch(() => {});
   }
 
@@ -767,6 +797,7 @@ export class AgentSessionRuntime {
         at: session.updatedAt,
       });
       this.pushSummary(session);
+      this.maybeRunMemoryScribe(session, false);
       this.askGateway.destroySession(session.id).catch(() => {});
       return;
     }
@@ -843,6 +874,38 @@ export class AgentSessionRuntime {
       outputTokens: session.outputTokens,
       outDir: session.outDir,
       at: session.updatedAt,
+    });
+  }
+
+  private maybeRunMemoryScribe(session: AgentSession, wasStopped: boolean): void {
+    const context = session.opencodeRunContext;
+    session.opencodeRunContext = null;
+    if (wasStopped || session.status !== "pass") return;
+    if (!session.opencodeSessionId?.trim() || !context) return;
+    if (!context.providerId?.trim() || !context.modelId?.trim()) return;
+
+    let settings: ReturnType<typeof readMemorySettings>;
+    try {
+      settings = readMemorySettings();
+    } catch (err) {
+      console.warn("[memory scribe] cannot read settings:", (err as Error).message);
+      return;
+    }
+    if (!settings.enabled || !settings.autoExtractEnabled) return;
+
+    this.runMemoryScribe({
+      workflowRoot: context.workflowRoot,
+      cwd: context.cwd,
+      opencodeSessionId: session.opencodeSessionId,
+      sourceSessionId: session.id,
+      status: session.status,
+      providerId: context.providerId,
+      modelId: context.modelId,
+      env: context.env,
+      config: context.config,
+      timeoutMs: context.timeoutMs,
+    }).catch((err: unknown) => {
+      console.warn("[memory scribe] background extraction failed:", (err as Error).message);
     });
   }
 
@@ -947,6 +1010,9 @@ export class AgentSessionRuntime {
       finishedAt: meta.finishedAt || null,
       inputTokens: 0,
       outputTokens: 0,
+      // Surfaced set is process-local (not persisted); a restored session restarts dedup empty.
+      surfacedMemorySlugs: [],
+      opencodeRunContext: null,
     };
   }
 
@@ -1017,6 +1083,32 @@ export class AgentSessionRuntime {
     return formatted || undefined;
   }
 
+  private resolveCurrentProgressPreamble(
+    input: SessionCreateInput,
+    parent: AgentSession | undefined,
+    conversationHistory: string | undefined,
+  ): string | undefined {
+    if (!input.completeConversationHistory || !conversationHistory?.trim() || !parent) return undefined;
+    const projectId = resolveActiveProjectId({ projectPath: parent.project || input.project || "" });
+    if (!projectId) return undefined;
+    try {
+      const progress = readCurrentProgressEntry(this.workflowRoot, projectId, parent.id);
+      if (!progress?.current.trim()) return undefined;
+      const lines = [
+        `Previous session: ${progress.sessionId}`,
+        `Status: ${progress.status}`,
+        `Updated: ${progress.updatedAt}`,
+        `Current: ${progress.current}`,
+      ];
+      if (progress.next.trim()) lines.push(`Next: ${progress.next}`);
+      if (progress.blockers.trim()) lines.push(`Blockers: ${progress.blockers}`);
+      return capPromptBlock(lines.join("\n"), 2_500);
+    } catch (err) {
+      console.warn("[memory progress] cannot read current progress:", (err as Error).message);
+      return undefined;
+    }
+  }
+
   private maybeClearNativeSessionAfterResumeFailure(
     session: AgentSession,
     finalDispatch: Record<string, any>,
@@ -1083,6 +1175,12 @@ export class AgentSessionRuntime {
 function finiteNumber(value: unknown): number {
   const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
+}
+
+function capPromptBlock(value: string, maxChars: number): string {
+  const text = String(value || "").trim();
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 24)).trimEnd()}\n[truncated]`;
 }
 
 function isTokenCountKey(key: string): boolean {

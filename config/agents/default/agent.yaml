@@ -29,7 +29,8 @@
       "todowrite",
       "rmmv_RmmvReadContext",
       "rmmv_RmmvMap",
-      "rmmv_RmmvEvent"
+      "rmmv_RmmvEvent",
+      "rmmv_RmmvMemory"
     ],
     "deny": [
       "read_secret_files",

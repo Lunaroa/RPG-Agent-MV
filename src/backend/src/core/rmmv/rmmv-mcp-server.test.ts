@@ -28,11 +28,16 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
     const listed = await client.listTools();
     const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
 
-    assert.deepEqual([...tools.keys()].sort(), ["RmmvEvent", "RmmvMap", "RmmvReadContext"]);
+    assert.deepEqual([...tools.keys()].sort(), ["RmmvEvent", "RmmvMap", "RmmvMemory", "RmmvReadContext"]);
+    assert.equal(tools.get("RmmvMemory")?.annotations?.readOnlyHint, false);
     assert.equal(tools.get("RmmvReadContext")?.annotations?.readOnlyHint, true);
     assert.equal(tools.get("RmmvMap")?.annotations?.readOnlyHint, false);
     assert.equal(tools.get("RmmvMap")?.annotations?.destructiveHint, true);
     assert.equal(tools.get("RmmvEvent")?.annotations?.readOnlyHint, false);
+    const memorySchema = JSON.stringify(tools.get("RmmvMemory")?.inputSchema || {});
+    assert.match(memorySchema, /memory\.read-profile/);
+    assert.match(memorySchema, /memory\.write-profile/);
+    assert.match(memorySchema, /progress\.write/);
     const eventSchema = JSON.stringify(tools.get("RmmvEvent")?.inputSchema || {});
     assert.match(eventSchema, /rmmvTarget/);
     assert.match(eventSchema, /implementation/);
@@ -56,6 +61,33 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
       arguments: { action: "pluginInventory", project },
     }));
     assert.equal(pluginInventory.data.summary.installedPlugins, 0);
+
+    // RmmvMemory: write a durable note, then read it back through the path-locked tool.
+    const memWrite = parseToolJson(await client.callTool({
+      name: "RmmvMemory",
+      arguments: { action: "memory.write", project, name: "Elder voice", description: "archaic diction", type: "character", body: "Speaks formally." },
+    }));
+    assert.match(memWrite.summary, /Saved memory "elder-voice"/);
+    const memRead = parseToolJson(await client.callTool({
+      name: "RmmvMemory",
+      arguments: { action: "memory.read", project, relPath: "topics/elder-voice.md" },
+    }));
+    assert.match(memRead.summary, /Speaks formally/);
+    const profileWrite = parseToolJson(await client.callTool({
+      name: "RmmvMemory",
+      arguments: { action: "memory.write-profile", project, body: "Prefers concise notes." },
+    }));
+    assert.match(profileWrite.summary, /Updated the shared author profile/);
+    const profileRead = parseToolJson(await client.callTool({
+      name: "RmmvMemory",
+      arguments: { action: "memory.read-profile", project },
+    }));
+    assert.match(profileRead.data.content, /Prefers concise notes/);
+    const progressWrite = parseToolJson(await client.callTool({
+      name: "RmmvMemory",
+      arguments: { action: "progress.write", project, sessionId: "runtime-session-1", status: "pass", current: "Finished memory write.", next: "Continue testing." },
+    }));
+    assert.match(progressWrite.summary, /Updated current progress/);
 
     const painted = parseToolJson(await client.callTool({
       name: "RmmvMap",

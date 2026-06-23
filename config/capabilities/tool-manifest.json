@@ -150,6 +150,16 @@
       "readOnly": false,
       "riskLevel": "normal",
       "defaultAllow": true
+    },
+    {
+      "id": "rmmv_RmmvMemory",
+      "kind": "mcp",
+      "layer": "rmmv",
+      "title": "RMMV 记忆",
+      "description": "跨会话的项目长期记忆：读取/写入/删除软知识笔记（路径锁定在项目记忆目录内）",
+      "readOnly": false,
+      "riskLevel": "normal",
+      "defaultAllow": true
     }
   ],
   "mcpServers": [

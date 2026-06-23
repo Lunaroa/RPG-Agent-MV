@@ -86,8 +86,75 @@ function extractSample(payload: unknown): string {
   }
 }
 
-async function chat(): Promise<never> {
-  throw new Error("anthropic protocol client not yet implemented");
+interface ChatParams {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  messages?: Array<{ role: string; content: string }>;
+  system?: string;
+  temperature?: number;
+  maxTokens?: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * Anthropic Messages API completion. Returns the raw payload (same contract as the
+ * openai-compatible client's `chat`). Throws on a non-2xx response with `.status` attached.
+ * Used by the memory recall side-query; opencode-backed agent runs do NOT go through here.
+ */
+async function chat(params: ChatParams): Promise<unknown> {
+  const { baseUrl, apiKey, model, messages, system, temperature, maxTokens, signal } = params || {} as ChatParams;
+  if (!baseUrl) throw new Error("baseUrl is required");
+  if (!apiKey) throw new Error("apiKey is required");
+  if (!model) throw new Error("model is required");
+  const url = buildAnthropicMessagesUrl(baseUrl);
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: maxTokens !== undefined ? maxTokens : 256,
+    messages: messages || [{ role: "user", content: "ping" }],
+  };
+  if (system) requestBody.system = system;
+  if (temperature !== undefined) requestBody.temperature = temperature;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      authorization: `Bearer ${apiKey}`,
+      "anthropic-version": ANTHROPIC_VERSION,
+    },
+    body: JSON.stringify(requestBody),
+    signal,
+  });
+  const text = await response.text();
+  let payload: unknown = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = {};
+  }
+  if (!response.ok) {
+    const err = new Error(formatHttpError(response.status, text)) as Error & { status?: number; payload?: unknown };
+    err.status = response.status;
+    err.payload = payload;
+    throw err;
+  }
+  return payload;
+}
+
+/** Extract assistant text from an Anthropic Messages API payload (joins text blocks). */
+function extractMessageText(payload: unknown): string {
+  const p = payload as Record<string, unknown>;
+  const content = p?.content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block && typeof block === "object") {
+      const b = block as Record<string, unknown>;
+      if (b.type === "text" && typeof b.text === "string") parts.push(b.text);
+    }
+  }
+  return parts.join("");
 }
 
 async function testConnection(params: TestConnectionParams): Promise<TestConnectionResult> {
@@ -162,5 +229,5 @@ async function testConnection(params: TestConnectionParams): Promise<TestConnect
   }
 }
 
-export type { TestConnectionParams, TestConnectionResult };
-export { chat, testConnection };
+export type { ChatParams, TestConnectionParams, TestConnectionResult };
+export { chat, extractMessageText, testConnection };

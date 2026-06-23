@@ -199,3 +199,31 @@ export function resolveOpencodeSkillsDir(workflowRoot: string): string {
   return path.join(resolveOpencodeConfigDir(workflowRoot), "skills");
 }
 
+/**
+ * Durable agent memory root, product-anchored under `.opencode/memory/main`.
+ *
+ * This lives in a `.opencode/` subdir opencode's native project discovery does
+ * NOT scan, and is never registered with opencode's instruction loader — the
+ * backend is the sole reader/injector. Unlike `.opencode/runtime/`, this tree is
+ * durable and must not be pruned. See the agent-memory design doc.
+ */
+export function resolveMemoryRoot(workflowRoot: string): string {
+  return path.join(resolveOpencodeConfigDir(workflowRoot), "memory", "main");
+}
+
+/** Shared user profile (用户画像), one per author, across all projects (used from Phase 2). */
+export function resolveMemoryUserProfilePath(workflowRoot: string): string {
+  return path.join(resolveMemoryRoot(workflowRoot), "USER.md");
+}
+
+/**
+ * Per-project long-term memory directory: `memory/main/<projectId>/`.
+ *
+ * `projectId` is the canonical project key (basename of the RMMV project root),
+ * the same id `event_contracts.project_id` uses, so memory partitions line up
+ * with the hard-fact SQLite stores.
+ */
+export function resolveProjectMemoryDir(workflowRoot: string, projectId: string): string {
+  return path.join(resolveMemoryRoot(workflowRoot), projectId);
+}
+

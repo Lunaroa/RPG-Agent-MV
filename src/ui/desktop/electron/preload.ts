@@ -199,10 +199,6 @@ contextBridge.exposeInMainWorld('api', {
     putPermissions: (body: unknown) => ipcRenderer.invoke('settings:putPermissions', body),
     getAgentExecution: () => ipcRenderer.invoke('settings:getAgentExecution'),
     putAgentExecution: (body: unknown) => ipcRenderer.invoke('settings:putAgentExecution', body),
-    getModelRoles: () => ipcRenderer.invoke('settings:getModelRoles'),
-    putModelRoles: (body: unknown) => ipcRenderer.invoke('settings:putModelRoles', body),
-    getMemorySettings: () => ipcRenderer.invoke('settings:getMemorySettings'),
-    putMemorySettings: (body: unknown) => ipcRenderer.invoke('settings:putMemorySettings', body),
     probeAgentExecution: (body?: unknown) => ipcRenderer.invoke('settings:probeAgentExecution', body),
     activateInvocation: (body: unknown) => ipcRenderer.invoke('settings:activateInvocation', body),
     listCompatibleProviders: (engine?: string) =>
@@ -218,6 +214,20 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('settings:putAgentSkillEnabled', body),
     createSkill: (payload: unknown) => ipcRenderer.invoke('settings:createSkill', payload),
     openCapabilityPath: (filePath: string) => ipcRenderer.invoke('settings:openCapabilityPath', filePath),
+  },
+
+  memory: {
+    listProject: (projectId: string) => ipcRenderer.invoke('memory:listProject', projectId),
+    getOverview: (projectId: string) => ipcRenderer.invoke('memory:getOverview', projectId),
+    listActivity: (projectId: string, limit?: number) => ipcRenderer.invoke('memory:listActivity', { projectId, limit }),
+    readFile: (projectId: string, relPath: string) => ipcRenderer.invoke('memory:readFile', { projectId, relPath }),
+    clearProject: (projectId: string) => ipcRenderer.invoke('memory:clearProject', projectId),
+    reindexProject: (projectId: string) => ipcRenderer.invoke('memory:reindexProject', projectId),
+    openFolder: (projectId: string) => ipcRenderer.invoke('memory:openFolder', projectId),
+    readUserProfile: () => ipcRenderer.invoke('memory:readUserProfile'),
+    writeUserProfile: (content: string) => ipcRenderer.invoke('memory:writeUserProfile', { content }),
+    getSettings: () => ipcRenderer.invoke('memory:getSettings'),
+    setSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('memory:setSettings', patch),
   },
 
   staging: {

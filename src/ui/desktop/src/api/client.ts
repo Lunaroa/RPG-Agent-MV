@@ -109,10 +109,6 @@ declare global {
         putPermissions(body: unknown): Promise<unknown>;
         getAgentExecution(): Promise<unknown>;
         putAgentExecution(body: unknown): Promise<unknown>;
-        getModelRoles(): Promise<unknown>;
-        putModelRoles(body: unknown): Promise<unknown>;
-        getMemorySettings(): Promise<unknown>;
-        putMemorySettings(body: unknown): Promise<unknown>;
         probeAgentExecution(body?: unknown): Promise<unknown>;
         activateInvocation(body: unknown): Promise<unknown>;
         listCompatibleProviders(engine?: string): Promise<unknown>;
@@ -123,6 +119,19 @@ declare global {
         putAgentSkillEnabled(body: { skillPath: string; enabled: boolean }): Promise<unknown>;
         openCapabilityPath(filePath: string): Promise<{ ok: boolean }>;
         createSkill(payload: unknown): Promise<unknown>;
+      };
+      memory: {
+        listProject(projectId: string): Promise<unknown>;
+        getOverview(projectId: string): Promise<unknown>;
+        listActivity(projectId: string, limit?: number): Promise<unknown>;
+        readFile(projectId: string, relPath: string): Promise<unknown>;
+        clearProject(projectId: string): Promise<unknown>;
+        reindexProject(projectId: string): Promise<unknown>;
+        openFolder(projectId: string): Promise<unknown>;
+        readUserProfile(): Promise<unknown>;
+        writeUserProfile(content: string): Promise<unknown>;
+        getSettings(): Promise<unknown>;
+        setSettings(patch: Record<string, unknown>): Promise<unknown>;
       };
       staging: {
         projectStatus(project?: string): Promise<unknown>;
@@ -207,7 +216,7 @@ import type {
   AssetLibraryCatalog, AssetLibraryCategoryId, AssetLibraryEntry, AssetLibraryImportResult,
   AssetLibraryImportValidation, AssetLibrarySkillEntry,
   ProviderSummary, UiSettings, PermissionSettings, AgentExecutionSettings, AgentExecutionEngineId,
-  EngineProviderBinding, ActivateInvocationResult, ProbeAgentExecutionResult, ModelRolesSettings, MemorySettings,
+  EngineProviderBinding, ActivateInvocationResult, ProbeAgentExecutionResult,
   WorkspaceSettings,
   TestResult, FetchModelsResult, ThinkingVariantsResult,
   MapLibraryMapMeta, MapLibraryEntry, MapLibraryIndex, MapSelection,
@@ -227,7 +236,7 @@ export type {
   AssetLibraryCatalog, AssetLibraryCategoryId, AssetLibraryEntry, AssetLibraryImportResult,
   AssetLibraryImportValidation, AssetLibrarySkillEntry,
   ProviderSummary, UiSettings, PermissionSettings, AgentExecutionSettings, AgentExecutionEngineId,
-  EngineProviderBinding, ActivateInvocationResult, ProbeAgentExecutionResult, ModelRolesSettings, MemorySettings,
+  EngineProviderBinding, ActivateInvocationResult, ProbeAgentExecutionResult,
   WorkspaceSettings,
   TestResult, FetchModelsResult, ThinkingVariantsResult,
   MapLibraryMapMeta, MapLibraryEntry, MapLibraryIndex, MapSelection,
@@ -870,18 +879,6 @@ export const settings = {
   putAgentExecution(body: AgentExecutionSettings) {
     return desktopApi().settings.putAgentExecution(toPlain(body)) as Promise<AgentExecutionSettings>;
   },
-  getModelRoles() {
-    return desktopApi().settings.getModelRoles() as Promise<ModelRolesSettings>;
-  },
-  putModelRoles(body: ModelRolesSettings) {
-    return desktopApi().settings.putModelRoles(toPlain(body)) as Promise<ModelRolesSettings>;
-  },
-  getMemorySettings() {
-    return desktopApi().settings.getMemorySettings() as Promise<MemorySettings>;
-  },
-  putMemorySettings(body: MemorySettings) {
-    return desktopApi().settings.putMemorySettings(toPlain(body)) as Promise<MemorySettings>;
-  },
   probeAgentExecution(body: AgentExecutionSettings = {}) {
     return desktopApi().settings.probeAgentExecution(toPlain(body)) as Promise<ProbeAgentExecutionResult>;
   },
@@ -928,6 +925,108 @@ export const settings = {
   },
   openCapabilityPath(filePath: string) {
     return desktopApi().settings.openCapabilityPath(filePath) as Promise<{ ok: boolean }>;
+  },
+};
+
+export interface MemoryFileInfo {
+  relPath: string;
+  name: string;
+  description: string;
+  type?: string;
+  role: 'work-manual' | 'index' | 'topic';
+  sizeBytes: number;
+  updatedAt: string | null;
+}
+
+export interface ProjectMemorySnapshot {
+  projectId: string;
+  dir: string;
+  exists: boolean;
+  files: MemoryFileInfo[];
+}
+
+export interface MemoryActivityEntry {
+  at: string;
+  projectId: string;
+  op: 'write' | 'remove' | 'reindex' | 'clear' | 'review' | 'progress';
+  target?: string;
+  detail?: string;
+}
+
+export interface MemoryProfileInfo {
+  exists: boolean;
+  sizeBytes: number;
+  updatedAt: string | null;
+}
+
+export interface MemoryOverviewStats {
+  totalFiles: number;
+  totalBytes: number;
+  topicCount: number;
+  manualPresent: boolean;
+  indexPresent: boolean;
+  lastUpdatedAt: string | null;
+}
+
+export interface MemoryTodaySummary {
+  reviews: number;
+  writes: number;
+  removes: number;
+  reindexes: number;
+}
+
+export interface ProjectMemoryOverview extends ProjectMemorySnapshot {
+  stats: MemoryOverviewStats;
+  today: MemoryTodaySummary;
+  recentActivity: MemoryActivityEntry[];
+  profile: MemoryProfileInfo;
+  settings: MemoryFeatureSettings;
+}
+
+export interface RecallModelRef {
+  providerId: string;
+  modelId: string;
+}
+
+export interface MemoryFeatureSettings {
+  enabled: boolean;
+  recallModel: RecallModelRef | null;
+  autoExtractEnabled: boolean;
+}
+
+export const memory = {
+  listProject(projectId: string) {
+    return desktopApi().memory.listProject(projectId) as Promise<ProjectMemorySnapshot>;
+  },
+  getOverview(projectId: string) {
+    return desktopApi().memory.getOverview(projectId) as Promise<ProjectMemoryOverview>;
+  },
+  listActivity(projectId: string, limit = 50) {
+    return desktopApi().memory.listActivity(projectId, limit) as Promise<{ projectId: string; entries: MemoryActivityEntry[] }>;
+  },
+  readFile(projectId: string, relPath: string) {
+    return desktopApi().memory.readFile(projectId, relPath) as Promise<{ relPath: string; content: string }>;
+  },
+  clearProject(projectId: string) {
+    return desktopApi().memory.clearProject(projectId) as Promise<{ cleared: boolean }>;
+  },
+  reindexProject(projectId: string) {
+    return desktopApi().memory.reindexProject(projectId) as Promise<{ projectId: string; index: string }>;
+  },
+  openFolder(projectId: string) {
+    return desktopApi().memory.openFolder(projectId) as Promise<{ ok: boolean; error: string | null; dir: string }>;
+  },
+  readUserProfile() {
+    return desktopApi().memory.readUserProfile() as Promise<{ content: string }>;
+  },
+  writeUserProfile(content: string) {
+    return desktopApi().memory.writeUserProfile(content) as Promise<{ content: string }>;
+  },
+  getSettings() {
+    return desktopApi().memory.getSettings() as Promise<MemoryFeatureSettings>;
+  },
+  setSettings(patch: Partial<MemoryFeatureSettings>) {
+    return desktopApi().memory.setSettings(patch as Record<string, unknown>) as Promise<MemoryFeatureSettings>;
   },
 };
 
@@ -1103,4 +1202,4 @@ export function openSessionEventStream(
   };
 }
 
-export const api = { bootstrap, projects, eventRegistry, sessions, settings, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, resolveAssetUrl, openSessionEventStream };
+export const api = { bootstrap, projects, eventRegistry, sessions, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, resolveAssetUrl, openSessionEventStream };

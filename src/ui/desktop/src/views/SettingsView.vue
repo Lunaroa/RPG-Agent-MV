@@ -183,71 +183,6 @@
                 </div>
               </Teleport>
 
-              <details class="settings-collapse model-roles-collapse">
-                <summary class="collapse-summary">{{ t('settings.model.helperModels') }}</summary>
-                <div class="collapse-body">
-                  <p class="form-hint">{{ t('settings.model.helperModelsHint') }}</p>
-                  <div class="provider-inline-form">
-                    <div class="form-group">
-                      <label class="form-label">{{ t('settings.model.lightModel') }}</label>
-                      <ModelPicker
-                        variant="field"
-                        allow-empty
-                        :empty-label="t('settings.model.emptyDefaultConfig')"
-                        :providers="settingsModelPickerOptions"
-                        :selected-provider="modelRoleLightProviderId"
-                        :selected-model="modelRoleLightModelId"
-                        :empty-configured-hint="t('settings.model.configureAndFetchFirst')"
-                        @select="onModelRoleLightSelect"
-                        @clear="onModelRoleLightClear"
-                      />
-                      <div v-if="isModelRoleHidden(modelRoleLightModelId, modelRoleLightProviderId)" class="form-hint fetch-err">{{ t('settings.model.hiddenModelWarning') }}</div>
-                      <div class="form-hint">{{ t('settings.model.lightModelHint') }}</div>
-                    </div>
-                    <div class="form-group">
-                      <label class="form-label">{{ t('settings.model.selectorModel') }}</label>
-                      <ModelPicker
-                        variant="field"
-                        allow-empty
-                        :empty-label="t('settings.model.emptyDefaultConfig')"
-                        :providers="settingsModelPickerOptions"
-                        :selected-provider="modelRoleSelectorProviderId"
-                        :selected-model="modelRoleSelectorModelId"
-                        :empty-configured-hint="t('settings.model.configureAndFetchFirst')"
-                        @select="onModelRoleSelectorSelect"
-                        @clear="onModelRoleSelectorClear"
-                      />
-                      <div v-if="isModelRoleHidden(modelRoleSelectorModelId, modelRoleSelectorProviderId)" class="form-hint fetch-err">{{ t('settings.model.hiddenModelWarning') }}</div>
-                      <div class="form-hint">{{ t('settings.model.selectorModelHint') }}</div>
-                    </div>
-                  </div>
-                </div>
-              </details>
-
-              <details class="settings-collapse memory-settings-collapse" open>
-                <summary class="collapse-summary">{{ t('settings.model.memorySystem') }}</summary>
-                <div class="collapse-body">
-                  <p class="form-hint">{{ t('settings.model.memorySystemHint') }}</p>
-                  <div class="memory-toggle-form">
-                    <label class="toggle-row">
-                      <input type="checkbox" v-model="memoryAutoEnabled" />
-                      <span class="toggle-label">{{ t('settings.model.memoryExtract') }}</span>
-                      <span class="form-hint">{{ t('settings.model.memoryExtractHint') }}</span>
-                    </label>
-                    <label class="toggle-row">
-                      <input type="checkbox" v-model="memoryDreamEnabled" />
-                      <span class="toggle-label">{{ t('settings.model.memoryDream') }}</span>
-                      <span class="form-hint">{{ t('settings.model.memoryDreamHint') }}</span>
-                    </label>
-                    <label class="toggle-row">
-                      <input type="checkbox" v-model="memoryPoorMode" />
-                      <span class="toggle-label">{{ t('settings.model.costSaving') }}</span>
-                      <span class="form-hint">{{ t('settings.model.costSavingHint') }}</span>
-                    </label>
-                  </div>
-                </div>
-              </details>
-
               <div class="model-engine-footer">
                 <div class="footer-actions">
                   <button class="workbench-button primary" data-ui-id="settings-save-model-engine" :disabled="store.loading" @click="onSaveModelEngine">{{ store.loading ? t('settings.ui.saving') : t('settings.model.saveAndSync') }}</button>
@@ -302,6 +237,202 @@
             <!-- TAB: rules-skills -->
             <section v-if="activeName === 'rules-skills'" class="settings-tab-content"><SettingsRulesSkillsTab /></section>
 
+            <!-- TAB: memory -->
+            <section v-if="activeName === 'memory'" class="settings-tab-content memory-tab">
+              <header class="memory-page-head">
+                <div>
+                  <h3>{{ t('settings.memory.title') }}</h3>
+                  <p class="desc">{{ t('settings.memory.description') }}</p>
+                </div>
+                <div class="memory-project-select">
+                  <label class="form-label">{{ t('settings.memory.project') }}</label>
+                  <select v-model="memoryProjectId" class="settings-select" :disabled="!memoryProjectOptions.length">
+                    <option v-for="opt in memoryProjectOptions" :key="opt.id" :value="opt.id">{{ opt.name }}</option>
+                  </select>
+                  <div v-if="!memoryProjectOptions.length" class="form-hint">{{ t('settings.memory.noProjects') }}</div>
+                </div>
+              </header>
+
+              <section class="memory-control-panel" :aria-label="t('settings.memory.modeSection')">
+                <label class="memory-toggle-row">
+                  <span class="memory-row-icon">M</span>
+                  <span class="memory-row-copy">
+                    <strong>{{ t('settings.memory.enabledLabel') }}</strong>
+                    <span>{{ t('settings.memory.enabledHint') }}</span>
+                  </span>
+                  <span class="toggle">
+                    <input type="checkbox" v-model="memoryEnabled" @change="onToggleMemoryEnabled" />
+                    <span class="toggle-track"><span class="toggle-thumb" /></span>
+                  </span>
+                </label>
+                <label class="memory-toggle-row" :class="{ 'is-disabled': !memoryEnabled }">
+                  <span class="memory-row-icon">A</span>
+                  <span class="memory-row-copy">
+                    <strong>{{ t('settings.memory.autoExtractLabel') }}</strong>
+                    <span>{{ t('settings.memory.autoExtractHint') }}</span>
+                  </span>
+                  <span class="toggle">
+                    <input type="checkbox" v-model="memoryAutoExtractEnabled" :disabled="!memoryEnabled" @change="onToggleMemoryAutoExtract" />
+                    <span class="toggle-track"><span class="toggle-thumb" /></span>
+                  </span>
+                </label>
+                <div class="memory-recall-row" :class="{ 'is-disabled': !memoryEnabled }">
+                  <span class="memory-row-icon">R</span>
+                  <div class="memory-recall-copy">
+                    <strong>{{ t('settings.memory.recallModel') }}</strong>
+                    <span>{{ t('settings.memory.recallModelHint') }}</span>
+                  </div>
+                  <ModelPicker
+                    variant="field"
+                    allow-empty
+                    class="memory-recall-picker"
+                    :empty-label="t('settings.memory.recallOff')"
+                    :providers="settingsModelPickerOptions"
+                    :selected-provider="recallProviderId"
+                    :selected-model="recallModelId"
+                    :empty-configured-hint="t('settings.model.configureAndFetchFirst')"
+                    @select="onRecallSelect"
+                    @clear="onRecallClear"
+                  />
+                </div>
+              </section>
+
+              <section class="memory-section-panel">
+                <div class="memory-section-head">
+                  <h4>{{ t('settings.memory.activityTitle') }}</h4>
+                  <span>{{ memoryTodayLine }}</span>
+                </div>
+                <div v-if="memoryLoading" class="form-hint">{{ t('settings.memory.loading') }}</div>
+                <div v-else-if="memoryOverview?.recentActivity.length" class="memory-activity-list">
+                  <button
+                    v-for="entry in memoryOverview.recentActivity"
+                    :key="`${entry.at}-${entry.op}-${entry.target || ''}`"
+                    type="button"
+                    class="memory-activity-item"
+                    @click="selectedMemoryActivity = entry"
+                  >
+                    <span class="memory-activity-kind">{{ memoryActivityLabel(entry.op) }}</span>
+                    <span class="memory-activity-copy">{{ memoryActivityText(entry) }}</span>
+                    <time>{{ formatMemoryRelative(entry.at) }}</time>
+                  </button>
+                </div>
+                <div v-else class="empty-state">{{ t('settings.memory.activityEmpty') }}</div>
+              </section>
+
+              <section class="memory-section-panel">
+                <div class="memory-section-head">
+                  <h4>{{ t('settings.memory.infoTitle') }}</h4>
+                  <button class="workbench-button" :disabled="!memoryProjectId" @click="onOpenMemoryFolder">
+                    <FolderOpen class="button-icon" />{{ t('settings.memory.openFolder') }}
+                  </button>
+                </div>
+                <div class="memory-info-list">
+                  <div class="memory-info-row">
+                    <span class="memory-row-icon">S</span>
+                    <span class="memory-row-copy">
+                      <strong>{{ t('settings.memory.storageTitle') }}</strong>
+                      <span class="mono">{{ memoryOverview?.dir || '—' }}</span>
+                    </span>
+                  </div>
+                  <div class="memory-info-row">
+                    <span class="memory-row-icon">U</span>
+                    <span class="memory-row-copy">
+                      <strong>{{ t('settings.memory.profileTitle') }}</strong>
+                      <span>{{ memoryProfileMeta }}</span>
+                    </span>
+                  </div>
+                  <div class="memory-profile-editor">
+                    <textarea v-model="memoryProfileText" class="memory-profile-textarea" :placeholder="t('settings.memory.profilePlaceholder')" rows="5"></textarea>
+                    <button class="workbench-button primary" :disabled="memoryProfileSaving || memoryProfileText === memoryProfileSaved" @click="onSaveUserProfile">
+                      <Save class="button-icon" />{{ memoryProfileSaving ? t('settings.memory.saving') : t('settings.memory.save') }}
+                    </button>
+                  </div>
+                  <div class="memory-info-row">
+                    <span class="memory-row-icon">W</span>
+                    <span class="memory-row-copy">
+                      <strong>{{ t('settings.memory.workManualTitle') }}</strong>
+                      <span>{{ memoryManualMeta }}</span>
+                    </span>
+                    <button class="workbench-link" :disabled="!memoryFileByRole('work-manual')" @click="onViewMemoryRole('work-manual')">{{ t('settings.memory.view') }}</button>
+                  </div>
+                  <div class="memory-info-row">
+                    <span class="memory-row-icon">L</span>
+                    <span class="memory-row-copy">
+                      <strong>{{ t('settings.memory.longTermTitle') }}</strong>
+                      <span>{{ memoryLongTermMeta }}</span>
+                    </span>
+                  </div>
+                  <div v-if="memoryOverview?.files.length" class="memory-file-list">
+                    <button v-for="f in memoryOverview.files" :key="f.relPath" type="button" class="memory-file-item" @click="onViewMemoryFile(f)">
+                      <span>
+                        <strong>{{ f.name }}</strong>
+                        <small class="mono">{{ f.relPath }}</small>
+                      </span>
+                      <span>{{ formatMemorySize(f.sizeBytes) }}</span>
+                    </button>
+                  </div>
+                  <div class="memory-info-row">
+                    <span class="memory-row-icon">I</span>
+                    <span class="memory-row-copy">
+                      <strong>{{ t('settings.memory.indexTitle') }}</strong>
+                      <span>{{ memoryIndexMeta }}</span>
+                    </span>
+                    <button class="workbench-button" :disabled="!memoryProjectId || memoryReindexing" @click="onReindexMemory">
+                      <RefreshCw class="button-icon" />{{ memoryReindexing ? t('settings.memory.reindexing') : t('settings.memory.reindex') }}
+                    </button>
+                  </div>
+                  <div class="memory-info-row">
+                    <span class="memory-row-icon">K</span>
+                    <span class="memory-row-copy">
+                      <strong>{{ t('settings.memory.skillTitle') }}</strong>
+                      <span>{{ t('settings.memory.skillPlaceholder') }}</span>
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              <section class="memory-section-panel memory-danger-panel">
+                <div class="memory-info-row">
+                  <span class="memory-row-icon">!</span>
+                  <span class="memory-row-copy">
+                    <strong>{{ t('settings.memory.dangerZone') }}</strong>
+                    <span>{{ t('settings.memory.clearHint') }}</span>
+                  </span>
+                  <button class="workbench-button danger" :disabled="!memoryProjectId || memoryClearing" @click="onClearMemory">
+                    <Trash2 class="button-icon" />{{ memoryClearing ? t('settings.memory.clearing') : t('settings.memory.clear') }}
+                  </button>
+                </div>
+              </section>
+
+              <div v-if="memoryViewFile" class="memory-view-card">
+                <div class="memory-view-head">
+                  <span class="mono">{{ memoryViewFile.relPath }}</span>
+                  <button class="alert-close" @click="memoryViewFile = null">&times;</button>
+                </div>
+                <pre class="memory-view-body">{{ memoryViewFile.content || t('settings.memory.emptyFile') }}</pre>
+              </div>
+
+              <Teleport to="body">
+                <div v-if="selectedMemoryActivity" class="settings-overlay" @click.self="selectedMemoryActivity = null">
+                  <div class="settings-dialog memory-activity-dialog">
+                    <div class="dialog-header">
+                      <h4>{{ t('settings.memory.activityDetailTitle') }}</h4>
+                      <button class="dialog-close-btn" @click="selectedMemoryActivity = null">&times;</button>
+                    </div>
+                    <div class="dialog-body">
+                      <div class="memory-detail-row"><span>{{ t('settings.memory.activityDetailType') }}</span><strong>{{ memoryActivityLabel(selectedMemoryActivity.op) }}</strong></div>
+                      <div class="memory-detail-row"><span>{{ t('settings.memory.activityDetailTime') }}</span><strong>{{ formatMemoryDate(selectedMemoryActivity.at) }}</strong></div>
+                      <div class="memory-detail-row"><span>{{ t('settings.memory.activityDetailTarget') }}</span><strong class="mono">{{ selectedMemoryActivity.target || '—' }}</strong></div>
+                      <p class="memory-detail-summary">{{ memoryActivityText(selectedMemoryActivity) }}</p>
+                    </div>
+                    <div class="dialog-footer">
+                      <button class="workbench-button" @click="selectedMemoryActivity = null">{{ t('settings.memory.close') }}</button>
+                    </div>
+                  </div>
+                </div>
+              </Teleport>
+            </section>
+
             <!-- TAB: permissions (hidden until PERMISSIONS_SETTINGS_TAB_ENABLED) -->
             <section v-if="PERMISSIONS_SETTINGS_TAB_ENABLED && activeName === 'permissions'" class="settings-tab-content">
               <h3>{{ t('settings.permissions.title') }}</h3>
@@ -332,10 +463,16 @@ import { useRoute } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import {
   settings as settingsApi,
+  memory as memoryApi,
   type AgentExecutionEngineId,
   type AgentExecutionSettings,
+  type MemoryActivityEntry,
+  type MemoryFileInfo,
+  type ProjectMemoryOverview,
   type ProviderSummary,
 } from '../api/client'
+import { useProjectStore } from '../stores/project'
+import { FolderOpen, RefreshCw, Save, Trash2 } from '@lucide/vue'
 import ProviderForm from '../components/ProviderForm.vue'
 import ModelPicker from '../components/model-picker/ModelPicker.vue'
 import SettingsToolsMcpTab from '../components/settings/SettingsToolsMcpTab.vue'
@@ -383,6 +520,7 @@ const SETTINGS_TABS = new Set([
   ...(PERMISSIONS_SETTINGS_TAB_ENABLED ? (['permissions'] as const) : []),
   'tools-mcp',
   'rules-skills',
+  'memory',
 ])
 const permissionTabs: Array<{ name: string; labelKey: MessageKey }> = PERMISSIONS_SETTINGS_TAB_ENABLED
   ? [{ name: 'permissions', labelKey: 'settings.tabs.permissions' }]
@@ -393,6 +531,7 @@ const tabList: Array<{ name: string; labelKey: MessageKey }> = [
   { name: 'ui', labelKey: 'settings.tabs.ui' },
   { name: 'tools-mcp', labelKey: 'settings.tabs.toolsMcp' },
   { name: 'rules-skills', labelKey: 'settings.tabs.rulesSkills' },
+  { name: 'memory', labelKey: 'settings.tabs.memory' },
   ...permissionTabs,
 ]
 
@@ -419,13 +558,237 @@ const testingProviderId = ref('')
 const deletingProviderId = ref('')
 const visibilitySavingProviderId = ref('')
 const modelVisibilitySearch = ref('')
-const modelRoleLightModelId = ref('')
-const modelRoleSelectorModelId = ref('')
-const modelRoleLightProviderId = ref('')
-const modelRoleSelectorProviderId = ref('')
-const memoryAutoEnabled = ref(false)
-const memoryDreamEnabled = ref(false)
-const memoryPoorMode = ref(false)
+
+// ---- Durable memory tab (Phase 1: project-scoped read / open / clear) ----
+const projectStore = useProjectStore()
+const memoryProjectId = ref('')
+const memoryOverview = ref<ProjectMemoryOverview | null>(null)
+const memoryLoading = ref(false)
+const memoryClearing = ref(false)
+const memoryReindexing = ref(false)
+const memoryViewFile = ref<{ relPath: string; content: string } | null>(null)
+const selectedMemoryActivity = ref<MemoryActivityEntry | null>(null)
+
+function basenameOf(p: string): string {
+  return String(p || '').split(/[\\/]/).filter(Boolean).pop() || ''
+}
+const memoryProjectOptions = computed(() =>
+  projectStore.projects.map((p) => ({ id: basenameOf(p.path), name: p.name || basenameOf(p.path) })),
+)
+function formatMemorySize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  return `${(bytes / 1024).toFixed(1)} KB`
+}
+function formatMemoryDate(iso: string | null): string {
+  if (!iso) return '—'
+  try { return new Date(iso).toLocaleString() } catch { return iso }
+}
+async function ensureMemoryProjects() {
+  try { await projectStore.load() } catch { /* surfaced by store */ }
+  if (!memoryProjectId.value) {
+    const current = basenameOf(projectStore.currentProject)
+    memoryProjectId.value = current || memoryProjectOptions.value[0]?.id || ''
+  }
+}
+async function loadMemoryOverview() {
+  if (!memoryProjectId.value) { memoryOverview.value = null; return }
+  memoryLoading.value = true
+  memoryViewFile.value = null
+  try {
+    const overview = await memoryApi.getOverview(memoryProjectId.value)
+    memoryOverview.value = overview
+    memoryEnabled.value = overview.settings.enabled
+    memoryAutoExtractEnabled.value = overview.settings.autoExtractEnabled
+    recallProviderId.value = overview.settings.recallModel?.providerId || ''
+    recallModelId.value = overview.settings.recallModel?.modelId || ''
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+    memoryOverview.value = null
+  } finally {
+    memoryLoading.value = false
+  }
+}
+async function onViewMemoryFile(file: MemoryFileInfo) {
+  try {
+    memoryViewFile.value = await memoryApi.readFile(memoryProjectId.value, file.relPath)
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+  }
+}
+async function onOpenMemoryFolder() {
+  try {
+    const result = await memoryApi.openFolder(memoryProjectId.value)
+    if (!result.ok) toast('error', result.error || t('settings.memory.openFolderFailed'))
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+  }
+}
+async function onClearMemory() {
+  if (!memoryProjectId.value) return
+  if (!window.confirm(t('settings.memory.clearConfirm', { project: memoryProjectId.value }))) return
+  memoryClearing.value = true
+  try {
+    await memoryApi.clearProject(memoryProjectId.value)
+    toast('success', t('settings.memory.cleared'))
+    await loadMemoryOverview()
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+  } finally {
+    memoryClearing.value = false
+  }
+}
+async function onReindexMemory() {
+  if (!memoryProjectId.value) return
+  memoryReindexing.value = true
+  try {
+    await memoryApi.reindexProject(memoryProjectId.value)
+    toast('success', t('settings.memory.reindexed'))
+    await loadMemoryOverview()
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+  } finally {
+    memoryReindexing.value = false
+  }
+}
+function memoryFileByRole(role: MemoryFileInfo['role']): MemoryFileInfo | null {
+  return memoryOverview.value?.files.find((file) => file.role === role) || null
+}
+function onViewMemoryRole(role: MemoryFileInfo['role']) {
+  const file = memoryFileByRole(role)
+  if (file) onViewMemoryFile(file)
+}
+function memoryActivityLabel(op: MemoryActivityEntry['op']): string {
+  return t(`settings.memory.activity.${op}` as MessageKey)
+}
+function memoryActivityText(entry: MemoryActivityEntry): string {
+  if (entry.op === 'review') return t('settings.memory.activity.reviewText')
+  if (entry.op === 'reindex') return t('settings.memory.activity.reindexText')
+  if (entry.op === 'remove') return t('settings.memory.activity.removeText', { target: entry.target || entry.detail || '—' })
+  if (entry.op === 'clear') return t('settings.memory.activity.clearText')
+  return t('settings.memory.activity.writeText', { detail: entry.detail || entry.target || '—' })
+}
+function formatMemoryRelative(iso: string): string {
+  const time = new Date(iso).getTime()
+  if (!Number.isFinite(time)) return formatMemoryDate(iso)
+  const diffMs = Date.now() - time
+  const minutes = Math.max(0, Math.floor(diffMs / 60000))
+  if (minutes < 1) return t('settings.memory.relativeNow')
+  if (minutes < 60) return t('settings.memory.relativeMinutes', { count: minutes })
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return t('settings.memory.relativeHours', { count: hours })
+  return t('settings.memory.relativeDays', { count: Math.floor(hours / 24) })
+}
+const memoryTodayLine = computed(() => {
+  const today = memoryOverview.value?.today || { reviews: 0, writes: 0, removes: 0, reindexes: 0 }
+  return t('settings.memory.todaySummary', {
+    reviews: today.reviews,
+    writes: today.writes,
+    removes: today.removes,
+    reindexes: today.reindexes,
+  })
+})
+const memoryProfileMeta = computed(() => {
+  const profile = memoryOverview.value?.profile
+  if (!profile?.exists) return t('settings.memory.profileEmptyMeta')
+  return t('settings.memory.profileMeta', { size: formatMemorySize(profile.sizeBytes), updated: formatMemoryDate(profile.updatedAt) })
+})
+const memoryManualMeta = computed(() => {
+  const file = memoryFileByRole('work-manual')
+  if (!file) return t('settings.memory.workManualEmpty')
+  return t('settings.memory.fileMeta', { size: formatMemorySize(file.sizeBytes), updated: formatMemoryDate(file.updatedAt) })
+})
+const memoryLongTermMeta = computed(() => {
+  const stats = memoryOverview.value?.stats
+  if (!stats || stats.topicCount === 0) return t('settings.memory.longTermEmpty')
+  return t('settings.memory.longTermMeta', { count: stats.topicCount, size: formatMemorySize(stats.totalBytes) })
+})
+const memoryIndexMeta = computed(() => {
+  const file = memoryFileByRole('index')
+  if (!file) return t('settings.memory.indexEmpty')
+  return t('settings.memory.fileMeta', { size: formatMemorySize(file.sizeBytes), updated: formatMemoryDate(file.updatedAt) })
+})
+watch(memoryProjectId, () => { loadMemoryOverview() })
+
+// ---- Memory tab: workspace-wide controls (Phase 2a: master switch / recall model / shared profile) ----
+const memoryEnabled = ref(true)
+const memoryAutoExtractEnabled = ref(false)
+const recallProviderId = ref('')
+const recallModelId = ref('')
+const memoryProfileText = ref('')
+const memoryProfileSaved = ref('')
+const memoryProfileSaving = ref(false)
+
+async function loadMemoryGlobals() {
+  try {
+    const settings = await memoryApi.getSettings()
+    memoryEnabled.value = settings.enabled
+    memoryAutoExtractEnabled.value = settings.autoExtractEnabled
+    recallProviderId.value = settings.recallModel?.providerId || ''
+    recallModelId.value = settings.recallModel?.modelId || ''
+    const profile = await memoryApi.readUserProfile()
+    memoryProfileText.value = profile.content || ''
+    memoryProfileSaved.value = memoryProfileText.value
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+  }
+}
+async function onToggleMemoryEnabled() {
+  try {
+    const next = await memoryApi.setSettings({ enabled: memoryEnabled.value })
+    memoryEnabled.value = next.enabled
+    if (memoryOverview.value) memoryOverview.value.settings = next
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+  }
+}
+async function onToggleMemoryAutoExtract() {
+  try {
+    const next = await memoryApi.setSettings({ autoExtractEnabled: memoryAutoExtractEnabled.value })
+    memoryAutoExtractEnabled.value = next.autoExtractEnabled
+    if (memoryOverview.value) memoryOverview.value.settings = next
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+  }
+}
+async function persistRecallModel(recallModel: { providerId: string; modelId: string } | null) {
+  try {
+    const next = await memoryApi.setSettings({ recallModel })
+    if (memoryOverview.value) memoryOverview.value.settings = next
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+  }
+}
+function onRecallSelect(payload: { providerId: string; modelId: string }) {
+  recallProviderId.value = payload.providerId
+  recallModelId.value = payload.modelId
+  persistRecallModel({ providerId: payload.providerId, modelId: payload.modelId })
+}
+function onRecallClear() {
+  recallProviderId.value = ''
+  recallModelId.value = ''
+  persistRecallModel(null)
+}
+async function onSaveUserProfile() {
+  memoryProfileSaving.value = true
+  try {
+    const result = await memoryApi.writeUserProfile(memoryProfileText.value)
+    memoryProfileText.value = result.content || ''
+    memoryProfileSaved.value = memoryProfileText.value
+    toast('success', t('settings.memory.profileSaved'))
+    await loadMemoryOverview()
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : String(err))
+  } finally {
+    memoryProfileSaving.value = false
+  }
+}
+
+watch(activeName, (name) => {
+  if (name === 'memory') {
+    ensureMemoryProjects().then(() => loadMemoryOverview())
+    loadMemoryGlobals()
+  }
+})
 
 const configuredProviders = computed(() => configuredCompatibleProviders(compatibleProviders.value))
 
@@ -680,32 +1043,6 @@ function onBindingModelSelect(payload: { providerId: string; modelId: string }) 
   bindingProviderId.value = payload.providerId
   bindingModelId.value = payload.modelId
 }
-function onModelRoleLightSelect(payload: { providerId: string; modelId: string }) {
-  modelRoleLightProviderId.value = payload.providerId
-  modelRoleLightModelId.value = payload.modelId
-}
-function onModelRoleLightClear() {
-  modelRoleLightProviderId.value = ''
-  modelRoleLightModelId.value = ''
-}
-function onModelRoleSelectorSelect(payload: { providerId: string; modelId: string }) {
-  modelRoleSelectorProviderId.value = payload.providerId
-  modelRoleSelectorModelId.value = payload.modelId
-}
-function onModelRoleSelectorClear() {
-  modelRoleSelectorProviderId.value = ''
-  modelRoleSelectorModelId.value = ''
-}
-function isModelRoleHidden(modelId: string, providerId: string): boolean {
-  const trimmed = modelId.trim()
-  if (!trimmed) return false
-  const currentProvider = compatibleProviders.value.find((provider) => provider.id === providerId)
-  if (currentProvider && modelEntryForProvider(currentProvider, trimmed)) {
-    return isConfiguredProviderModelHidden(currentProvider, trimmed)
-  }
-  const matches = compatibleProviders.value.filter((provider) => modelEntryForProvider(provider, trimmed))
-  return matches.length > 0 && matches.every((provider) => isConfiguredProviderModelHidden(provider, trimmed))
-}
 function isModelVisible(provider: ProviderSummary, modelId: string): boolean {
   return isRawModelVisible(provider, modelId)
 }
@@ -770,17 +1107,6 @@ function applyAgentExecution() {
   const boundProvider = compatibleProviders.value.find((p) => p.id === bindingProviderId.value); syncBindingModelIdFromProvider(boundProvider)
   syncStatus.value = store.agentExecution.lastSyncedAt ? t('settings.model.lastSync', { time: store.agentExecution.lastSyncedAt }) : null
 }
-function applyModelRoles() {
-  modelRoleLightModelId.value = store.modelRoles.lightModel?.modelId || ''
-  modelRoleSelectorModelId.value = store.modelRoles.selectorModel?.modelId || ''
-  modelRoleLightProviderId.value = store.modelRoles.lightModel?.providerId || ''
-  modelRoleSelectorProviderId.value = store.modelRoles.selectorModel?.providerId || ''
-}
-function applyMemorySettings() {
-  memoryAutoEnabled.value = store.memorySettings.autoMemoryEnabled ?? false
-  memoryDreamEnabled.value = store.memorySettings.autoDreamEnabled ?? false
-  memoryPoorMode.value = store.memorySettings.poorMode ?? false
-}
 function openAddProviderDialog() { showAddProviderDialog.value = true }
 function closeAddDialog() { showAddProviderDialog.value = false; addProviderSearch.value = '' }
 function onPickProviderToAdd(provider: ProviderSummary) { showAddProviderDialog.value = false; addProviderSearch.value = ''; expandedProviderId.value = provider.id; selectProviderForEdit(provider) }
@@ -816,13 +1142,16 @@ function buildBindingsPatch() { const engine = agentExecForm.engine || DEFAULT_A
 
 onMounted(async () => {
   const tab = typeof route.query.tab === 'string' ? route.query.tab : ''; if (SETTINGS_TABS.has(tab)) activeName.value = tab
-  await store.loadAll(); applyUi(); applyPermissions(); applyAgentExecution(); applyModelRoles(); applyMemorySettings(); await loadCompatibleProviders()
+  await store.loadAll(); applyUi(); applyPermissions(); applyAgentExecution(); await loadCompatibleProviders()
+  if (activeName.value === 'memory') {
+    await ensureMemoryProjects()
+    await loadMemoryOverview()
+    await loadMemoryGlobals()
+  }
 })
 watch(() => store.ui, applyUi, { deep: true })
 watch(() => store.permissions, applyPermissions, { deep: true })
 watch(() => store.agentExecution, applyAgentExecution, { deep: true })
-watch(() => store.modelRoles, applyModelRoles, { deep: true })
-watch(() => store.memorySettings, applyMemorySettings, { deep: true })
 
 async function onSaveUi() {
   try {
@@ -839,16 +1168,6 @@ async function onSaveModelEngine() {
   bindingModelId.value = resolvedModelId
   try {
     await upsertInlineProviderConfig({ fetchModelsAfter: true }); const payload: AgentExecutionSettings = { ...agentExecForm, bindings: buildBindingsPatch() }; await store.saveAgentExecution(payload); applyAgentExecution()
-    const lightModelId = modelRoleLightModelId.value.trim()
-    const selectorModelId = modelRoleSelectorModelId.value.trim()
-    const lightBinding = lightModelId
-      ? { providerId: modelRoleLightProviderId.value, modelId: lightModelId }
-      : undefined
-    const selectorBinding = selectorModelId
-      ? { providerId: modelRoleSelectorProviderId.value, modelId: selectorModelId }
-      : undefined
-    await store.saveModelRoles({ lightModel: lightBinding, selectorModel: selectorBinding })
-    await store.saveMemorySettings({ autoMemoryEnabled: memoryAutoEnabled.value, autoDreamEnabled: memoryDreamEnabled.value, poorMode: memoryPoorMode.value })
     syncStatus.value = store.agentExecution.lastSyncedAt ? t('settings.model.lastSync', { time: store.agentExecution.lastSyncedAt }) : t('settings.model.savedShort'); toast('success', t('settings.model.saved'))
   } catch (err) { toast('error', err instanceof Error ? err.message : t('settings.model.saveFailed')) }
 }
@@ -947,12 +1266,78 @@ async function onProviderDeleted() { await store.loadProviders() }
 .collapse-summary::before { content: '\25B6'; font-size: 9px; transition: transform 0.15s ease }
 details[open] > .collapse-summary::before { transform: rotate(90deg) }
 .collapse-body { padding: 12px 14px }
-.model-roles-collapse { margin-top: 16px; margin-bottom: 12px; border-top: 1px solid var(--app-border) }
-.memory-settings-collapse { margin-bottom: 12px; border-top: 1px solid var(--app-border) }
-.memory-toggle-form { display: flex; flex-direction: column; gap: 10px }
-.toggle-row { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; gap: 8px 10px; cursor: pointer }
-.toggle-row input[type="checkbox"] { margin-top: 2px }
-.toggle-label { font-size: 13px; font-weight: 500; color: var(--console-text,#3d3529); white-space: nowrap }
+.memory-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 16px }
+.memory-page-head .desc { margin-bottom: 0 }
+.memory-project-select { flex: 0 0 260px }
+.memory-project-select .settings-select { width: 100% }
+.memory-control-panel,
+.memory-section-panel { border: 1px solid var(--console-border,#e4dcce); border-radius: 12px; background: var(--console-paper,#fffdfa); margin-bottom: 16px }
+.memory-control-panel { overflow: hidden }
+.memory-toggle-row,
+.memory-recall-row,
+.memory-info-row { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 14px 18px }
+.memory-toggle-row + .memory-toggle-row,
+.memory-recall-row,
+.memory-info-row + .memory-info-row,
+.memory-profile-editor,
+.memory-file-list { border-top: 1px solid var(--app-border) }
+.memory-recall-row { display: grid; grid-template-columns: 38px minmax(180px, 1fr) minmax(260px, 420px) }
+.memory-row-icon { flex: 0 0 38px; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; background: var(--app-bg-soft); color: var(--app-ink-soft); font-size: 12px; font-weight: 700 }
+.memory-row-copy,
+.memory-recall-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px }
+.memory-row-copy strong,
+.memory-recall-copy strong { color: var(--app-ink); font-size: 14px; font-weight: 650 }
+.memory-row-copy span,
+.memory-recall-copy span { min-width: 0; overflow: hidden; color: var(--app-ink-soft); font-size: 12px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap }
+.memory-recall-picker { width: 100%; min-width: 0 }
+.memory-toggle-row { cursor: pointer }
+.memory-toggle-row.is-disabled,
+.memory-recall-row.is-disabled { opacity: 0.58 }
+.memory-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--app-border) }
+.memory-section-head h4 { margin: 0; color: var(--app-ink); font-size: 15px; font-weight: 650 }
+.memory-section-head > span { color: var(--app-ink-soft); font-size: 12px }
+.memory-activity-list,
+.memory-info-list { display: flex; flex-direction: column }
+.memory-activity-item,
+.memory-file-item { display: grid; align-items: center; width: 100%; min-width: 0; border: 0; border-bottom: 1px solid var(--app-border); background: transparent; color: var(--app-ink); font: inherit; text-align: left; cursor: pointer }
+.memory-activity-item { grid-template-columns: 96px minmax(0, 1fr) 84px; gap: 12px; min-height: 46px; padding: 0 18px }
+.memory-activity-item:last-child,
+.memory-file-item:last-child { border-bottom: 0 }
+.memory-activity-item:hover,
+.memory-file-item:hover { background: var(--app-bg-sunken) }
+.memory-activity-kind { color: var(--app-ink-soft); font-size: 12px; white-space: nowrap }
+.memory-activity-copy { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.memory-activity-item time { color: var(--app-ink-muted); font-size: 12px; text-align: right; white-space: nowrap }
+.memory-profile-editor { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; padding: 14px 18px }
+.memory-profile-textarea { width: 100%; box-sizing: border-box; min-height: 108px; resize: vertical; font-family: var(--app-font-mono); font-size: 12px; line-height: 1.5; padding: 10px 12px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-bg-soft); color: var(--app-ink) }
+.memory-file-list { padding: 6px 0 }
+.memory-file-item { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; min-height: 42px; padding: 7px 18px 7px 70px }
+.memory-file-item span:first-child { min-width: 0; display: flex; flex-direction: column; gap: 1px }
+.memory-file-item strong,
+.memory-file-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.memory-file-item small { color: var(--app-ink-muted); font-size: 11px }
+.memory-danger-panel { background: var(--app-danger-soft) }
+.memory-danger-panel .memory-row-icon { color: var(--app-danger); background: var(--app-bg) }
+.button-icon { width: 15px; height: 15px; margin-right: 6px; vertical-align: -2px }
+.memory-view-card { margin: 16px 0; overflow: hidden; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-bg) }
+.memory-view-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 12px }
+.memory-view-body { max-height: 360px; margin: 0; overflow: auto; padding: 14px; color: var(--app-ink); background: var(--app-bg-soft); font-family: var(--app-font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap }
+.memory-activity-dialog { width: 620px }
+.memory-detail-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; align-items: baseline; margin-bottom: 12px; font-size: 13px }
+.memory-detail-row span { color: var(--app-ink-soft) }
+.memory-detail-row strong { min-width: 0; overflow: hidden; color: var(--app-ink); text-overflow: ellipsis; white-space: nowrap }
+.memory-detail-summary { margin: 14px 0 0; color: var(--app-ink); line-height: 1.65 }
+
+@media (max-width: 760px) {
+  .memory-page-head,
+  .memory-recall-row,
+  .memory-profile-editor { display: flex; flex-direction: column; align-items: stretch }
+  .memory-project-select,
+  .memory-recall-picker { width: 100%; min-width: 0; flex-basis: auto }
+  .memory-activity-item { grid-template-columns: 80px minmax(0, 1fr); grid-template-rows: auto auto; padding: 8px 14px }
+  .memory-activity-item time { grid-column: 2; text-align: left }
+  .memory-file-item { padding-left: 18px }
+}
 
 /* Segmented button group (replaces el-radio-button) */
 .segmented-group { display: inline-flex; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); overflow: hidden }

@@ -582,30 +582,6 @@ export interface AgentExecutionSettings {
   lastSyncedAt?: string;
 }
 
-/**
- * 辅助模型配置。
- * 每个角色对应执行器的一组模型环境变量，启动时注入。
- * - lightModel  → ANTHROPIC_SMALL_FAST_MODEL（轻量快速模型，用于权限分类、会话搜索、标题生成等）
- * - selectorModel → ANTHROPIC_DEFAULT_SONNET_MODEL（选择器模型，用于记忆文件相关性选择）
- */
-export interface ModelRolesSettings {
-  lightModel?: EngineProviderBinding;
-  selectorModel?: EngineProviderBinding;
-}
-
-/**
- * Agent 记忆系统开关配置。
- * 直接读写执行器配置文件，控制记忆模块行为。
- * - autoMemoryEnabled  → 每轮结束后自动提取记忆
- * - autoDreamEnabled   → 定期自动整合碎片记忆
- * - poorMode           → 使用更轻量的模型执行记忆操作，降低成本
- */
-export interface MemorySettings {
-  autoMemoryEnabled?: boolean;
-  autoDreamEnabled?: boolean;
-  poorMode?: boolean;
-}
-
 export interface WorkspaceWindowState {
   x?: number;
   y?: number;

@@ -7,8 +7,6 @@ import {
   type AgentExecutionSettings,
   type ActivateInvocationResult,
   type EngineProviderBinding,
-  type ModelRolesSettings,
-  type MemorySettings,
   type PermissionSettings,
   type ProviderSummary,
   type ProbeAgentExecutionResult,
@@ -39,8 +37,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const permissions = ref<PermissionSettings>({});
   const agentExecution = ref<AgentExecutionSettings>({ engine: DEFAULT_AGENT_EXECUTION_ENGINE });
   const agentCapabilities = ref<AgentCapabilitiesSnapshot | null>(null);
-  const modelRoles = ref<ModelRolesSettings>({});
-  const memorySettings = ref<MemorySettings>({});
   const loading = ref(false);
   const lastError = ref<string | null>(null);
 
@@ -61,20 +57,16 @@ export const useSettingsStore = defineStore('settings', () => {
     loading.value = true;
     lastError.value = null;
     try {
-      const [providerPayload, uiPayload, permPayload, agentExecPayload, modelRolesPayload, memorySettingsPayload] = await Promise.all([
+      const [providerPayload, uiPayload, permPayload, agentExecPayload] = await Promise.all([
         settingsApi.listProviders(),
         settingsApi.getUi(),
         settingsApi.getPermissions(),
         settingsApi.getAgentExecution(),
-        settingsApi.getModelRoles(),
-        settingsApi.getMemorySettings(),
       ]);
       providers.value = providerPayload.providers || [];
       ui.value = uiPayload || {};
       permissions.value = permPayload || {};
       agentExecution.value = normalizeAgentExecutionSettings(agentExecPayload);
-      modelRoles.value = modelRolesPayload || {};
-      memorySettings.value = memorySettingsPayload || {};
     } catch (err) {
       lastError.value = err instanceof Error ? err.message : String(err);
     } finally {
@@ -163,42 +155,6 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       const saved = await settingsApi.putAgentExecution(normalizeAgentExecutionSettings(next));
       agentExecution.value = normalizeAgentExecutionSettings(saved || next);
-    } catch (err) {
-      lastError.value = err instanceof Error ? err.message : String(err);
-      throw err;
-    } finally {
-      loading.value = false;
-    }
-  }
-
-  async function loadModelRoles() {
-    modelRoles.value = await settingsApi.getModelRoles();
-  }
-
-  async function saveModelRoles(next: ModelRolesSettings) {
-    loading.value = true;
-    lastError.value = null;
-    try {
-      const saved = await settingsApi.putModelRoles(next);
-      modelRoles.value = saved || next;
-    } catch (err) {
-      lastError.value = err instanceof Error ? err.message : String(err);
-      throw err;
-    } finally {
-      loading.value = false;
-    }
-  }
-
-  async function loadMemorySettings() {
-    memorySettings.value = await settingsApi.getMemorySettings();
-  }
-
-  async function saveMemorySettings(next: MemorySettings) {
-    loading.value = true;
-    lastError.value = null;
-    try {
-      const saved = await settingsApi.putMemorySettings(next);
-      memorySettings.value = saved || next;
     } catch (err) {
       lastError.value = err instanceof Error ? err.message : String(err);
       throw err;
@@ -345,8 +301,6 @@ export const useSettingsStore = defineStore('settings', () => {
     permissions,
     agentExecution,
     agentCapabilities,
-    modelRoles,
-    memorySettings,
     loading,
     lastError,
     loadAll,
@@ -358,13 +312,9 @@ export const useSettingsStore = defineStore('settings', () => {
     openCapabilityPath,
     loadProviders,
     loadAgentExecution,
-    loadModelRoles,
-    loadMemorySettings,
     saveUi,
     savePermissions,
     saveAgentExecution,
-    saveModelRoles,
-    saveMemorySettings,
     probeAgentExecution,
     previewAgentDispatch,
     listCompatibleProviders,

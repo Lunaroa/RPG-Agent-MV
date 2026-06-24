@@ -6,7 +6,7 @@
   "description": "RPG Maker MV indexing and patching tools for agent workflows.",
   "author": "RPG-Agent-MV contributors",
   "scripts": {
-    "install:deps": "npm install --ignore-scripts && npm --prefix src/backend install && npm --prefix src/ui/desktop install",
+    "install:deps": "node scripts/with-electron-mirrors.mjs npm install --ignore-scripts && node scripts/with-electron-mirrors.mjs npm --prefix src/backend install && node scripts/with-electron-mirrors.mjs npm --prefix src/ui/desktop install",
     "check:local": "npm run install:deps && npm run build:opencode-runtime && npm test && node -e \"const cp=require('node:child_process'); const path=require('node:path'); const bin=path.join('runtime','out','opencode','windows-x64','opencode.exe'); cp.execFileSync(bin, ['--version'], {stdio:'inherit'});\"",
     "build:opencode-runtime": "node --experimental-strip-types src/backend/src/core/desktop/build-opencode-runtime.ts",
     "test": "npm --prefix src/backend test",
@@ -14,7 +14,7 @@
     "playtest:run": "npm --prefix src/backend run playtest:run --",
     "playtest:probe": "npm --prefix src/backend run playtest:probe --",
     "deploy:source": "npm --prefix src/backend run deploy:source --",
-    "release:electron": "npm run build:opencode-runtime && npm --prefix src/ui/desktop run package --",
+    "release:electron": "node scripts/with-electron-mirrors.mjs npm run build:opencode-runtime && node scripts/with-electron-mirrors.mjs npm --prefix src/ui/desktop run package --",
     "release:check": "npm --prefix src/backend run release:check --",
     "release:source": "npm --prefix src/backend run release:source --",
     "workspace:prune-legacy": "node --experimental-strip-types src/backend/src/cli.ts workspace-prune-legacy"

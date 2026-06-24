@@ -1,5 +1,5 @@
 RPG-Agent-MV Third Party Notices
-Version: 0.1.1
+Version: 0.2.0
 Last updated: 2026-06-19
 
 This file summarizes third-party components distributed with RPG-Agent-MV

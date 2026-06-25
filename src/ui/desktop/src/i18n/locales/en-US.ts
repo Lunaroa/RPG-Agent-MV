@@ -1754,6 +1754,7 @@ const enUS = {
     'story.eventCount': 'Events',
     'story.openMapEditor': 'Open Map Editor',
     'story.selectMiddleHint': 'Select an entry in the middle event list to view event details here.',
+    'story.selectDbSubFieldHint': 'Select a sub-category above to edit its fields on the right.',
     'story.selectFromMiddle': 'Select a map, event, switch, variable, common event, database entry, audio, or image from the middle list.',
     'story.saveStagingNote': 'Saved changes enter project staging and can be applied or discarded together.',
     'story.saveChanges': 'Save Changes',

@@ -19,6 +19,7 @@ import {
   type ProjectOverviewMapEvent,
 } from '../../api/client';
 import { cloneDraft } from '../../utils/clone-draft';
+import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { findEditorMapEvent, type MvEditorEvent } from '../../composables/useEventEditor';
 import { usePmEventEditor } from '../../composables/usePmEventEditor';
 import EventEditorDialog from '../editor/EventEditorDialog.vue';
@@ -36,7 +37,7 @@ import {
   STORY_CATEGORY_LABELS,
   type StoryCategoryId,
 } from '../../utils/consoleStoryLocalization';
-import { databaseGroupLabel } from '../../utils/rmmvDatabaseLocalization';
+import { databaseFieldLabel, databaseGroupLabel } from '../../utils/rmmvDatabaseLocalization';
 
 type PmDetail =
   | { kind: 'managed'; entry: ProjectManagedEntry }
@@ -60,8 +61,64 @@ type DatabaseGridItem = {
 };
 
 const projectStore = useProjectStore();
+const workbenchUi = useWorkbenchUiStore();
 const router = useRouter();
 const { language, t } = useI18n();
+
+const stagingDirty = ref(false);
+const stagingBusy = ref(false);
+
+function isProjectStagingDirty(status: unknown): boolean {
+  if (!status || typeof status !== 'object') return false;
+  return Boolean((status as { staged?: boolean }).staged);
+}
+
+async function refreshStagingStatus() {
+  if (!projectStore.currentProject) {
+    stagingDirty.value = false;
+    workbenchUi.sbStagingDirty = false;
+    return;
+  }
+  try {
+    const status = await mapsApi.projectStaging(projectStore.currentProject);
+    stagingDirty.value = isProjectStagingDirty(status);
+    workbenchUi.sbStagingDirty = stagingDirty.value;
+  } catch {
+    /* staging status does not block project management */
+  }
+}
+
+async function applyProjectStaging() {
+  if (!projectStore.currentProject || stagingBusy.value) return;
+  stagingBusy.value = true;
+  detailError.value = '';
+  try {
+    await mapsApi.applyProjectStaging(projectStore.currentProject);
+    await refreshStagingStatus();
+    await loadData();
+  } catch (applyError) {
+    detailError.value = (applyError as Error).message;
+  } finally {
+    stagingBusy.value = false;
+  }
+}
+
+async function discardProjectStaging() {
+  if (!projectStore.currentProject || stagingBusy.value) return;
+  stagingBusy.value = true;
+  detailError.value = '';
+  try {
+    await mapsApi.discardProjectStaging(projectStore.currentProject);
+    pmDetail.value = null;
+    detailDraft.value = null;
+    await refreshStagingStatus();
+    await loadData();
+  } catch (discardError) {
+    detailError.value = (discardError as Error).message;
+  } finally {
+    stagingBusy.value = false;
+  }
+}
 
 
 function formatErrorText(errorValue: unknown): string {
@@ -83,6 +140,7 @@ async function loadData() {
   error.value = null;
   try {
     overview.value = await projectManagement.overview(projectStore.currentProject);
+    await refreshStagingStatus();
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -111,10 +169,20 @@ const {
 const selected = ref<StoryCategoryId>('overview');
 const searchQuery = ref('');
 const selectedDbGroup = ref('Actors');
+const selectedDbSubField = ref('');
 const selectedAudioBucket = ref('bgm');
 const selectedImageBucket = ref('pictures');
 const pmSubPaneExpanded = ref(true);
 const showUnnamed = ref(false);
+
+const dbContextMenu = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  entryId: number;
+} | null>(null);
+
+let dbClipboard: { group: string; value: Record<string, unknown> } | null = null;
 
 const DB_GROUP_ORDER = [
   'Actors', 'Classes', 'Skills', 'Items', 'Weapons', 'Armors',
@@ -123,6 +191,8 @@ const DB_GROUP_ORDER = [
 ] as const;
 
 const DOCUMENT_DATABASE_GROUPS = new Set(['System', 'Types', 'Terms']);
+const TYPES_SUBFIELD_ORDER = ['elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes'] as const;
+const TERMS_SUBFIELD_ORDER = ['basic', 'params', 'commands', 'messages'] as const;
 const AUDIO_BUCKET_ORDER = ['bgm', 'bgs', 'me', 'se'] as const;
 const IMAGE_BUCKET_ORDER = [
   'animations', 'battlebacks1', 'battlebacks2', 'characters', 'enemies', 'faces', 'parallaxes',
@@ -153,7 +223,9 @@ watch(() => projectStore.currentProject, () => {
   closeDetail();
   closeEventEditor();
   resetCatalog();
+  stagingDirty.value = false;
   if (projectStore.currentProject) void loadData();
+  else workbenchUi.sbStagingDirty = false;
 });
 
 onMounted(() => {
@@ -332,21 +404,30 @@ const filteredImages = computed(() => {
 const filteredDatabase = computed(() => {
   const db = database.value;
   const query = normalizedSearchQuery();
-  if (!query) return db;
   const result: Record<string, ProjectOverviewDbGroup> = {};
   for (const [key, group] of Object.entries(db)) {
-    const named = group.named.filter((entry) => matchesQuery(entry.id, entry.name, entry.preview?.name, entry.preview?.label));
+    let named = showUnnamed.value ? group.named : group.named.filter((entry) => entry.name);
+    if (query) {
+      named = named.filter((entry) => matchesQuery(entry.id, entry.name, entry.preview?.name, entry.preview?.label));
+    }
     if (named.length) {
       result[key] = { ...group, named, count: named.length };
     }
   }
-  return result;
+  return query ? result : Object.fromEntries(
+    Object.entries(db).map(([key, group]) => {
+      const named = showUnnamed.value ? group.named : group.named.filter((entry) => entry.name);
+      return [key, { ...group, named, count: named.length }];
+    }),
+  );
 });
 
 const dbGroupOptions = computed(() =>
   DB_GROUP_ORDER.map((key) => {
     const group = database.value[key];
-    const count = group?.named.length ?? group?.count ?? 0;
+    const count = isDocumentSubFieldGroup(key)
+      ? dbSubFieldOrder(key).length
+      : (group?.named.length ?? group?.count ?? 0);
     return { key, label: dbLabel(key), count };
   }),
 );
@@ -436,7 +517,11 @@ const activeImageKey = computed(() => {
 
 const activeDbKey = computed(() => {
   if (pmDetail.value?.kind !== 'managed' || pmDetail.value.entry.kind !== 'database') return '';
-  return `${pmDetail.value.entry.group}:${pmDetail.value.entry.id}`;
+  const entry = pmDetail.value.entry;
+  if (isDocumentSubFieldGroup(String(entry.group)) && selectedDbSubField.value) {
+    return `${entry.group}:${entry.id}:${selectedDbSubField.value}`;
+  }
+  return `${entry.group}:${entry.id}`;
 });
 
 const hasMoreDbEntries = computed(() =>
@@ -554,6 +639,55 @@ function canCreateDatabaseGroup(key: string): boolean {
   return !DOCUMENT_DATABASE_GROUPS.has(key);
 }
 
+function isDocumentSubFieldGroup(group: string): boolean {
+  return group === 'Types' || group === 'Terms';
+}
+
+function dbSubFieldOrder(group: string): readonly string[] {
+  if (group === 'Types') return TYPES_SUBFIELD_ORDER;
+  if (group === 'Terms') return TERMS_SUBFIELD_ORDER;
+  return [];
+}
+
+function dbFieldLabel(path: string): string {
+  return databaseFieldLabel(path, language.value);
+}
+
+function dbSubFieldItemCount(path: string): string {
+  const draft = detailDraft.value;
+  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) return '—';
+  const value = (draft as Record<string, unknown>)[path];
+  if (path === 'messages' && value && typeof value === 'object' && !Array.isArray(value)) {
+    return String(Object.keys(value as Record<string, unknown>).length);
+  }
+  if (Array.isArray(value)) {
+    return String(value.filter((item) => item != null && item !== '').length);
+  }
+  return '—';
+}
+
+function isDocumentSubFieldDetailLoaded(): boolean {
+  return pmDetail.value?.kind === 'managed'
+    && pmDetail.value.entry.kind === 'database'
+    && pmDetail.value.entry.group === selectedDbGroup.value
+    && pmDetail.value.entry.id === 0;
+}
+
+async function openDocumentSubFieldGroup(group: string): Promise<void> {
+  const fields = dbSubFieldOrder(group);
+  if (!fields.length) return;
+  selectedDbSubField.value = fields[0];
+  await openManaged('database', 0, group);
+}
+
+function selectDbSubField(path: string): void {
+  if (selectedDbSubField.value === path && isDocumentSubFieldDetailLoaded()) return;
+  selectedDbSubField.value = path;
+  if (!isDocumentSubFieldDetailLoaded()) {
+    void openManaged('database', 0, selectedDbGroup.value);
+  }
+}
+
 const canCreateSelectedDbGroup = computed(() => canCreateDatabaseGroup(selectedDbGroup.value));
 
 function dbSummary(): string {
@@ -598,10 +732,17 @@ function syncSelectedImageBucket(): void {
 }
 
 function selectDbGroup(key: string): void {
-  if (selectedDbGroup.value === key) return;
+  const sameGroup = selectedDbGroup.value === key;
+  if (sameGroup && !isDocumentSubFieldGroup(key)) return;
   selectedDbGroup.value = key;
-  closeDetail();
   resetGroupVisibleLimits();
+  if (isDocumentSubFieldGroup(key)) {
+    if (!sameGroup) closeDetail();
+    void openDocumentSubFieldGroup(key);
+    return;
+  }
+  selectedDbSubField.value = '';
+  if (!sameGroup) closeDetail();
 }
 
 function selectAudioBucket(key: string): void {
@@ -698,6 +839,81 @@ async function openManaged(kind: ProjectManagedEntry['kind'], id: number, group?
   }
 }
 
+function openDbContextMenu(event: MouseEvent, entryId: number) {
+  event.preventDefault();
+  event.stopPropagation();
+  dbContextMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    entryId,
+  };
+}
+
+function closeDbContextMenu() {
+  dbContextMenu.value = null;
+}
+
+async function copyDbEntry(id: number) {
+  closeDbContextMenu();
+  try {
+    const entry = await projectManagement.getEntry(
+      { kind: 'database', group: selectedDbGroup.value, id },
+      projectStore.currentProject,
+    );
+    const { id: _stripId, ...rest } = entry.value as Record<string, unknown>;
+    dbClipboard = { group: selectedDbGroup.value, value: rest };
+  } catch (copyError) {
+    detailError.value = (copyError as Error).message;
+  }
+}
+
+async function pasteDbEntry(id: number) {
+  closeDbContextMenu();
+  if (!dbClipboard || dbClipboard.group !== selectedDbGroup.value) return;
+  detailBusy.value = true;
+  detailError.value = '';
+  try {
+    const merged = { ...dbClipboard.value, id };
+    const updated = await projectManagement.updateEntry({
+      kind: 'database',
+      group: selectedDbGroup.value,
+      id,
+      value: merged,
+    }, projectStore.currentProject);
+    pmDetail.value = { kind: 'managed', entry: updated };
+    detailDraft.value = cloneDraft(updated.value);
+    resetCatalog();
+    await loadData();
+    await refreshStagingStatus();
+  } catch (pasteError) {
+    detailError.value = (pasteError as Error).message;
+  } finally {
+    detailBusy.value = false;
+  }
+}
+
+async function clearDbEntry(id: number) {
+  closeDbContextMenu();
+  detailBusy.value = true;
+  detailError.value = '';
+  try {
+    const entry = await projectManagement.resetEntry(
+      { kind: 'database', group: selectedDbGroup.value, id },
+      projectStore.currentProject,
+    );
+    pmDetail.value = { kind: 'managed', entry };
+    detailDraft.value = cloneDraft(entry.value);
+    resetCatalog();
+    await loadData();
+    await refreshStagingStatus();
+  } catch (clearError) {
+    detailError.value = (clearError as Error).message;
+  } finally {
+    detailBusy.value = false;
+  }
+}
+
 async function createDatabaseEntry(group: string) {
   selectedEventId.value = null;
   detailBusy.value = true;
@@ -710,6 +926,7 @@ async function createDatabaseEntry(group: string) {
     await ensureCatalog();
     pmDetail.value = { kind: 'managed', entry };
     detailDraft.value = cloneDraft(entry.value);
+    showUnnamed.value = true;
     await loadData();
   } catch (createError) {
     detailError.value = (createError as Error).message;
@@ -1015,9 +1232,13 @@ async function saveDetail() {
         pmDetail.value = { kind: 'managed', entry: updated };
         detailDraft.value = cloneDraft(updated.value);
       }
-      if (entry.kind === 'database' || entry.kind === 'commonEvent') resetCatalog();
+      if (entry.kind === 'database' || entry.kind === 'commonEvent') {
+        resetCatalog();
+        await ensureCatalog();
+      }
     }
     await loadData();
+    await refreshStagingStatus();
   } catch (saveError) {
     detailError.value = (saveError as Error).message;
   } finally {
@@ -1035,6 +1256,9 @@ function detailTitle(): string {
   if (!pmDetail.value) return '';
   if (pmDetail.value.kind === 'managed') {
     const entry = pmDetail.value.entry;
+    if (entry.kind === 'database' && isDocumentSubFieldGroup(String(entry.group || '')) && selectedDbSubField.value) {
+      return `${dbLabel(String(entry.group || ''))} · ${dbFieldLabel(selectedDbSubField.value)}`;
+    }
     return `${entry.kind === 'database' ? dbLabel(String(entry.group || '')) : managedKindLabel(entry.kind)} · #${entry.id}`;
   }
   if (pmDetail.value.kind === 'image') return `${imageBucketLabel(pmDetail.value.category)} · ${pmDetail.value.name}`;
@@ -1084,7 +1308,7 @@ function detailTitle(): string {
           <button type="button" class="pm-sub-pane-toggle" @click="pmSubPaneExpanded = !pmSubPaneExpanded">
             <el-icon :class="{ collapsed: !pmSubPaneExpanded }"><ArrowRight /></el-icon>
             <span>{{ t('story.dataType') }}</span>
-            <b>{{ activeDbGroup.named.length }}</b>
+            <b>{{ isDocumentSubFieldGroup(selectedDbGroup) ? dbSubFieldOrder(selectedDbGroup).length : activeDbGroup.named.length }}</b>
           </button>
           <div v-show="pmSubPaneExpanded" class="pm-sub-list">
             <button
@@ -1384,18 +1608,35 @@ function detailTitle(): string {
           <!-- ========== Database ========== -->
           <template v-else-if="selected === 'database'">
             <div class="list-toolbar database-toolbar">
-              <span>{{ dbLabel(selectedDbGroup) }} · {{ itemCountLabel(activeDbGroup.named.length) }}</span>
-              <button
-                v-if="canCreateSelectedDbGroup"
-                type="button"
-                class="link-button"
-                :disabled="detailBusy"
-                @click="createSelectedDatabaseEntry"
-              >
-                {{ t('story.addNew') }}
-              </button>
+              <span>{{ dbLabel(selectedDbGroup) }} · {{ itemCountLabel(isDocumentSubFieldGroup(selectedDbGroup) ? dbSubFieldOrder(selectedDbGroup).length : activeDbGroup.named.length) }}</span>
+              <template v-if="!isDocumentSubFieldGroup(selectedDbGroup)">
+                <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
+                <button
+                  v-if="canCreateSelectedDbGroup"
+                  type="button"
+                  class="link-button"
+                  :disabled="detailBusy || stagingBusy"
+                  @click="createSelectedDatabaseEntry"
+                >
+                  {{ t('story.addNew') }}
+                </button>
+              </template>
             </div>
-            <div v-if="activeDbUsesGrid" class="image-grid database-grid">
+            <div v-if="isDocumentSubFieldGroup(selectedDbGroup)" class="id-list db-subfield-list">
+              <button
+                v-for="path in dbSubFieldOrder(selectedDbGroup)"
+                :key="path"
+                type="button"
+                class="id-row db-subfield-row"
+                :class="{ active: activeDbKey === `${selectedDbGroup}:0:${path}` }"
+                @click="selectDbSubField(path)"
+              >
+                <span class="row-name">{{ dbFieldLabel(path) }}</span>
+                <span class="row-meta">{{ dbSubFieldItemCount(path) }}</span>
+              </button>
+              <div v-if="!pmDetail && !detailBusy" class="empty-hint">{{ t('story.selectDbSubFieldHint') }}</div>
+            </div>
+            <div v-else-if="activeDbUsesGrid" class="image-grid database-grid">
               <button
                 v-for="entry in visibleDbGridItems"
                 :key="entry.id"
@@ -1403,6 +1644,7 @@ function detailTitle(): string {
                 class="image-grid-card database-grid-card"
                 :class="{ active: activeDbKey === `${selectedDbGroup}:${entry.id}`, missing: entry.missing || !entry.preview }"
                 @click="openManaged('database', entry.id, selectedDbGroup)"
+                @contextmenu.prevent="openDbContextMenu($event, entry.id)"
               >
                 <span class="image-grid-thumb database-grid-thumb">
                   <span
@@ -1415,7 +1657,7 @@ function detailTitle(): string {
                   <span v-else class="image-grid-missing">{{ t('story.noPreview') }}</span>
                 </span>
                 <span class="image-grid-meta">
-                  <strong>{{ entry.name }}</strong>
+                  <strong>{{ entry.name || unnamedLabel() }}</strong>
                   <small>{{ dbPreviewSubtitle(entry) }}</small>
                 </span>
               </button>
@@ -1438,9 +1680,10 @@ function detailTitle(): string {
                 type="button"
                 class="id-row"
                 @click="openManaged('database', entry.id, selectedDbGroup)"
+                @contextmenu.prevent="openDbContextMenu($event, entry.id)"
               >
                 <span class="row-id">{{ String(entry.id).padStart(4, '0') }}</span>
-                <span class="row-name">{{ entry.name }}</span>
+                <span class="row-name">{{ entry.name || unnamedLabel() }}</span>
               </button>
               <button
                 v-if="hasMoreDbEntries"
@@ -1495,7 +1738,14 @@ function detailTitle(): string {
             <CommonEventDetailEditor v-model="detailDraft" :catalog="editorCatalog" :load-image="loadImage" />
           </div>
           <div v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'database'" class="pm-detail-body">
-            <DatabaseEntryDetailEditor v-model="detailDraft" :group="pmDetail.entry.group" :catalog="editorCatalog" :schema="pmDetail.entry.schema" :load-image="loadImage" />
+            <DatabaseEntryDetailEditor
+              v-model="detailDraft"
+              :group="pmDetail.entry.group"
+              :catalog="editorCatalog"
+              :schema="pmDetail.entry.schema"
+              :focus-field="isDocumentSubFieldGroup(pmDetail.entry.group) ? selectedDbSubField : undefined"
+              :load-image="loadImage"
+            />
           </div>
           <div v-else-if="pmDetail && detailEditable" class="pm-detail-body">
             <StructuredFieldsEditor v-model="detailDraft" :label="t('story.entryFields')" />
@@ -1541,9 +1791,29 @@ function detailTitle(): string {
             </template>
             <template v-else>
               <span>{{ t('story.saveStagingNote') }}</span>
-              <button type="button" :disabled="detailBusy" @click="saveDetail">
-                {{ detailBusy ? t('ui.saving') : t('story.saveChanges') }}
-              </button>
+              <div class="pm-detail-footer-actions">
+                <button
+                  v-if="stagingDirty"
+                  type="button"
+                  class="secondary-button"
+                  :disabled="detailBusy || stagingBusy"
+                  @click="discardProjectStaging"
+                >
+                  {{ t('editor.toolbar.discard') }}
+                </button>
+                <button
+                  v-if="stagingDirty"
+                  type="button"
+                  class="secondary-button staging-apply-button"
+                  :disabled="detailBusy || stagingBusy"
+                  @click="applyProjectStaging"
+                >
+                  {{ t('editor.toolbar.applyStaging') }}
+                </button>
+                <button type="button" :disabled="detailBusy || stagingBusy" @click="saveDetail">
+                  {{ detailBusy ? t('ui.saving') : t('story.saveChanges') }}
+                </button>
+              </div>
             </template>
           </footer>
         </aside>
@@ -1563,13 +1833,35 @@ function detailTitle(): string {
       @close="closeEventEditor"
       @save="saveEvent"
     />
+
+    <teleport to="body">
+      <div
+        v-if="dbContextMenu?.visible"
+        class="ctx-mask"
+        @click="closeDbContextMenu"
+        @contextmenu.prevent="closeDbContextMenu"
+      >
+        <ul
+          class="ctx-menu"
+          :style="{ left: dbContextMenu.x + 'px', top: dbContextMenu.y + 'px' }"
+        >
+          <li @click="copyDbEntry(dbContextMenu.entryId)">{{ t('editor.ctx.copy') }}</li>
+          <li
+            :class="{ disabled: !dbClipboard || dbClipboard.group !== selectedDbGroup }"
+            @click="pasteDbEntry(dbContextMenu.entryId)"
+          >{{ t('editor.ctx.paste') }}</li>
+          <li class="ctx-sep"></li>
+          <li class="ctx-danger" @click="clearDbEntry(dbContextMenu.entryId)">{{ t('db.clearEntry') }}</li>
+        </ul>
+      </div>
+    </teleport>
   </div>
 </template>
 
 <style scoped>
 /* Layout */
 .pm-split {
-  grid-template-columns: 230px minmax(0, 1fr) 360px;
+  grid-template-columns: 230px minmax(0, 1fr) minmax(380px, 420px);
   padding: 14px 40px 34px;
   gap: 22px;
   overflow: hidden;
@@ -1694,8 +1986,6 @@ function detailTitle(): string {
   object-fit: contain;
   image-rendering: pixelated;
 }
-.pm-detail>footer .secondary-button { margin-left: auto; border: 1px solid var(--app-border); border-radius: var(--app-radius-md); background: var(--app-bg); color: var(--app-ink); padding: 8px 12px; cursor: pointer; }
-.pm-detail>footer .secondary-button + button { margin-left: 8px; }
 .asset-thumb {
   width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 42px;
   border-radius: 12px; background: #f7e7dc; color: var(--console-accent,#be5630);
@@ -1776,8 +2066,11 @@ function detailTitle(): string {
 }
 .id-row{width:100%;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
 .id-row:hover { background: #f1e9db; }
+.id-row.active { background: var(--console-accent-soft,#f6e3d7); color: var(--console-accent,#be5630); }
 .row-id { font-family: var(--app-font-mono); font-weight: 600; font-size: 10px; color: var(--console-accent,#be5630); min-width: 40px; }
 .row-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-meta { font-size: 10px; color: var(--console-muted,#8a7f72); min-width: 24px; text-align: right; }
+.db-subfield-row { justify-content: space-between; }
 .audio-row .row-name,
 .image-row .row-name { flex: 1; min-width: 0; }
 .image-grid {
@@ -1894,11 +2187,11 @@ function detailTitle(): string {
   background: var(--console-paper,#fffdfa);
 }
 .pm-detail>header {
-  height: 48px;
-  flex: 0 0 48px;
+  height: 40px;
+  flex: 0 0 40px;
   display: flex;
   align-items: center;
-  padding: 0 14px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--console-border,#e4dcce);
 }
 .pm-detail>header div {
@@ -1915,7 +2208,7 @@ function detailTitle(): string {
 .pm-detail>header span {
   overflow: hidden;
   color: var(--console-text-muted,#9a8e7e);
-  font-size: 10px;
+  font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1933,20 +2226,34 @@ function detailTitle(): string {
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: 14px;
+  padding: 8px;
 }
 .pm-detail>footer {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 8px 10px;
   border-top: 1px solid var(--console-border,#e4dcce);
   color: var(--console-text-muted,#9a8e7e);
   font-size: 10px;
 }
-.pm-detail>footer button {
+.pm-detail>footer>span {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.pm-detail-footer-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  gap: 8px;
   margin-left: auto;
+}
+.pm-detail-footer-actions button {
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 0;
   border: 0;
   border-radius: 9px;
   background: var(--console-accent,#be5630);
@@ -1955,7 +2262,18 @@ function detailTitle(): string {
   font: inherit;
   cursor: pointer;
 }
-.pm-detail>footer button:disabled { opacity: .6; cursor: wait; }
+.pm-detail-footer-actions button:disabled { opacity: .6; cursor: wait; }
+.pm-detail-footer-actions .secondary-button {
+  border: 1px solid var(--console-border-strong, #ddd3c2);
+  border-radius: 9px;
+  background: var(--console-paper, #fffdfa);
+  color: var(--console-text-soft, #5a5247);
+  padding: 8px 12px;
+}
+.pm-detail-footer-actions .staging-apply-button {
+  border-color: var(--console-accent, #be5630);
+  color: var(--console-accent, #be5630);
+}
 .detail-facts {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
@@ -2025,7 +2343,7 @@ function detailTitle(): string {
 
 @media (max-width: 1320px) {
   .pm-split {
-    grid-template-columns: 210px minmax(0, 1fr) 320px;
+    grid-template-columns: 210px minmax(0, 1fr) minmax(340px, 380px);
     padding-inline: 28px;
     gap: 16px;
   }
@@ -2036,4 +2354,13 @@ function detailTitle(): string {
 .state { display: grid; place-items: center; flex: 1; color: var(--app-ink-muted); }
 .state.error { color: var(--app-danger); }
 .empty-hint { color: var(--app-ink-muted); font-size: 12px; padding: 12px 0; text-align: center; }
+
+/* Context menu */
+.ctx-mask { position: fixed; inset: 0; z-index: 9999; }
+.ctx-menu { position: fixed; min-width: 184px; margin: 0; padding: 4px 0; border: 1px solid var(--app-border); border-radius: var(--app-radius-md); background: var(--el-bg-color-overlay); box-shadow: var(--app-shadow-overlay); color: var(--app-ink); font-size: 13px; list-style: none; }
+.ctx-menu li { padding: 6px 14px; cursor: pointer; white-space: nowrap; }
+.ctx-menu li:hover { background: var(--app-bg-sunken); }
+.ctx-menu li.disabled { color: var(--app-ink-muted); pointer-events: none; opacity: .58; }
+.ctx-menu li.ctx-danger { color: var(--el-color-danger); }
+.ctx-menu li.ctx-sep { height: 0; margin: 4px 0; padding: 0; border-top: 1px solid var(--app-border); }
 </style>

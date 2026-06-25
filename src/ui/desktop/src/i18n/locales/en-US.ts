@@ -1334,6 +1334,7 @@ const enUS = {
     'imgPicker.searchPlaceholder': 'Search images',
     'imgPicker.none': '(None)',
     'imgPicker.chooseImage': 'Choose Image',
+    'imgPicker.iconSetMissing': 'IconSet.png not found in project',
 
     // ── Batch 5: EventImagePickerDialog ──
     'eventImgPicker.title': 'Event Image',
@@ -1522,6 +1523,8 @@ const enUS = {
     'db.pageSummary': 'Page {{index}} · {{span}} · {{commands}} commands · Conditions {{conditions}}',
     'db.chooseFace': 'Choose Face Graphic',
     'db.chooseCharacter': 'Choose Character Sprite',
+    'db.chooseIcon': 'Choose Icon',
+    'db.clearEntry': 'Clear',
     'db.chooseSvBattler': 'Choose SV Battler Graphic',
     'db.chooseEnemyBattler': 'Choose Enemy Battler Graphic',
     'db.chooseImage': 'Choose {{label}} Image',
@@ -1537,6 +1540,8 @@ const enUS = {
     'db.slot0Reserved': 'Slot 0 is reserved by RPG Maker MV and cannot be edited or deleted here.',
     'db.noEntries': 'No entries.',
     'db.messageTemplateCount': '{{count}} message templates',
+    'db.messageTypeCol': 'Type',
+    'db.messageTextCol': 'Text',
     'db.noMessageTemplates': 'No message templates.',
     'db.advancedJson': 'Advanced JSON (for adding or deleting non-standard message keys)',
     'db.noTraits': 'No traits.',

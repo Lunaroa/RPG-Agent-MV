@@ -22,6 +22,12 @@
           </aside>
           <main>
             <canvas v-if="mode === 'face' || mode === 'character'" ref="canvas" @click="pickCell" />
+            <div v-else-if="mode === 'icon'" class="icon-grid-main">
+              <div v-if="!selectedAsset" class="icon-grid-empty">{{ t('imgPicker.iconSetMissing') }}</div>
+              <div v-else class="icon-grid-scroll">
+                <canvas ref="iconCanvas" @click="pickIconCell" />
+              </div>
+            </div>
             <div v-else class="plain-preview">
               <img v-if="selectedAsset" :src="selectedAsset.url" :alt="selectedAsset.name" />
             </div>
@@ -47,7 +53,7 @@ import { MV_FACE_COLUMNS, MV_FACE_HEIGHT, MV_FACE_ROWS, MV_FACE_WIDTH, mvFaceInd
 import { isBigCharacterName } from '../../composables/useMapRenderer';
 
 type ImageAssetKind = keyof EditorProjectCatalog['assets'];
-type ImagePickerMode = 'plain' | 'face' | 'character';
+type ImagePickerMode = 'plain' | 'face' | 'character' | 'icon';
 
 interface OpenOptions {
   asset: ImageAssetKind;
@@ -73,9 +79,28 @@ const mode = ref<ImagePickerMode>('plain');
 const name = ref('');
 const index = ref(0);
 const search = ref('');
+const ICON_CELL_PX = 48;
+
 const canvas = ref<HTMLCanvasElement>();
+const iconCanvas = ref<HTMLCanvasElement>();
 let bitmap: HTMLImageElement | null = null;
 const imageCache = new Map<string, HTMLImageElement | null>();
+
+function iconGridLayout(): { cols: number; rows: number; nativeCellW: number; nativeCellH: number } {
+  const w = bitmap?.naturalWidth || 512;
+  const h = bitmap?.naturalHeight || 512;
+  let cols: number;
+  if (w === h || Math.abs(w - 512) < 16) {
+    cols = 16;
+  } else {
+    const aspect = w / h;
+    cols = Math.max(2, Math.min(32, Math.round(16 * Math.sqrt(aspect))));
+  }
+  const nativeCellW = w / cols;
+  const nativeCellH = Math.round(nativeCellW);
+  const rows = Math.max(1, Math.ceil(h / nativeCellH));
+  return { cols, rows, nativeCellW, nativeCellH };
+}
 
 const assets = computed<ProjectAssetEntry[]>(() => props.catalog?.assets[assetKind.value] || []);
 const selectedAsset = computed(() => assets.value.find((asset) => asset.name === name.value) || null);
@@ -103,7 +128,11 @@ function open(options: OpenOptions) {
   mode.value = options.mode || 'plain';
   title.value = options.title || t('imgPicker.chooseImage');
   name.value = options.name || '';
-  index.value = mode.value === 'face' ? normalizeMvFaceIndex(options.index) : normalizeCharacterIndex(options.index);
+  index.value = mode.value === 'face'
+    ? normalizeMvFaceIndex(options.index)
+    : mode.value === 'icon'
+      ? Math.max(0, Math.floor(options.index ?? 0))
+      : normalizeCharacterIndex(options.index);
   search.value = '';
   visible.value = true;
   void nextTick(paint);
@@ -132,6 +161,7 @@ async function loadSelectedBitmap(): Promise<HTMLImageElement | null> {
 async function paint() {
   if (mode.value === 'plain') return;
   bitmap = await loadSelectedBitmap();
+  if (mode.value === 'icon') { paintIconSheet(); return; }
   if (mode.value === 'face') paintFaceSheet();
   else paintCharacterSheet();
 }
@@ -191,6 +221,43 @@ function paintCharacterSheet() {
   context.strokeRect(col * cellWidth + 1.5, row * cellHeight + 1.5, cellWidth - 3, cellHeight - 3);
 }
 
+function paintIconSheet() {
+  const { cols, rows, nativeCellW, nativeCellH } = iconGridLayout();
+  const canvasW = cols * ICON_CELL_PX;
+  const canvasH = rows * ICON_CELL_PX;
+  const el = iconCanvas.value;
+  if (!el) return;
+  el.width = canvasW;
+  el.height = canvasH;
+  const context = el.getContext('2d');
+  if (!context) return;
+  context.clearRect(0, 0, canvasW, canvasH);
+  context.fillStyle = '#aeb9c3';
+  context.fillRect(0, 0, canvasW, canvasH);
+  context.imageSmoothingEnabled = false;
+  if (bitmap) {
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        context.drawImage(
+          bitmap,
+          c * nativeCellW, r * nativeCellH, nativeCellW, nativeCellH,
+          c * ICON_CELL_PX, r * ICON_CELL_PX, ICON_CELL_PX, ICON_CELL_PX,
+        );
+      }
+    }
+  }
+  context.strokeStyle = 'rgba(255,255,255,.4)';
+  context.lineWidth = 1;
+  for (let x = 0; x <= cols; x += 1) drawLine(context, x * ICON_CELL_PX + 0.5, 0, x * ICON_CELL_PX + 0.5, canvasH);
+  for (let y = 0; y <= rows; y += 1) drawLine(context, 0, y * ICON_CELL_PX + 0.5, canvasW, y * ICON_CELL_PX + 0.5);
+  const selIdx = Math.max(0, Math.floor(index.value));
+  const selCol = selIdx % cols;
+  const selRow = Math.floor(selIdx / cols);
+  context.strokeStyle = '#fff';
+  context.lineWidth = 3;
+  context.strokeRect(selCol * ICON_CELL_PX + 1.5, selRow * ICON_CELL_PX + 1.5, ICON_CELL_PX - 3, ICON_CELL_PX - 3);
+}
+
 function drawLine(context: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) {
   context.beginPath();
   context.moveTo(x1, y1);
@@ -217,6 +284,18 @@ function pickCell(event: MouseEvent) {
   const row = Math.max(0, Math.min(1, Math.floor(y / (canvas.value.height / 2))));
   index.value = row * 4 + col;
   paintCharacterSheet();
+}
+
+function pickIconCell(event: MouseEvent) {
+  if (!iconCanvas.value) return;
+  const { cols, rows } = iconGridLayout();
+  const rect = iconCanvas.value.getBoundingClientRect();
+  const x = (event.clientX - rect.left) * iconCanvas.value.width / rect.width;
+  const y = (event.clientY - rect.top) * iconCanvas.value.height / rect.height;
+  const col = Math.max(0, Math.min(cols - 1, Math.floor(x / ICON_CELL_PX)));
+  const row = Math.max(0, Math.min(rows - 1, Math.floor(y / ICON_CELL_PX)));
+  index.value = row * cols + col;
+  paintIconSheet();
 }
 
 function normalizeCharacterIndex(value: unknown): number {
@@ -247,4 +326,8 @@ main { min-width: 0; overflow: auto; background: #aeb9c3; }
 canvas { display: block; image-rendering: pixelated; cursor: crosshair; }
 .plain-preview { min-height: 320px; display: grid; place-items: center; padding: 14px; }
 .plain-preview img { max-width: 100%; max-height: 560px; image-rendering: pixelated; }
+.icon-grid-main { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.icon-grid-scroll { flex: 1; overflow: auto; background: #aeb9c3; }
+.icon-grid-scroll canvas { display: block; image-rendering: pixelated; cursor: crosshair; }
+.icon-grid-empty { padding: 32px; text-align: center; color: var(--app-text-muted); }
 </style>

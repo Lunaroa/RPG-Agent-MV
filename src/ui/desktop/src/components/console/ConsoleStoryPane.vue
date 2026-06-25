@@ -868,6 +868,10 @@ async function copyDbEntry(id: number) {
   }
 }
 
+function canPasteDbEntry(): boolean {
+  return Boolean(dbClipboard && dbClipboard.group === selectedDbGroup.value);
+}
+
 async function pasteDbEntry(id: number) {
   closeDbContextMenu();
   if (!dbClipboard || dbClipboard.group !== selectedDbGroup.value) return;
@@ -1743,7 +1747,7 @@ function detailTitle(): string {
               :group="pmDetail.entry.group"
               :catalog="editorCatalog"
               :schema="pmDetail.entry.schema"
-              :focus-field="isDocumentSubFieldGroup(pmDetail.entry.group) ? selectedDbSubField : undefined"
+              :focus-field="pmDetail.entry.group && isDocumentSubFieldGroup(pmDetail.entry.group) ? selectedDbSubField : undefined"
               :load-image="loadImage"
             />
           </div>
@@ -1847,7 +1851,7 @@ function detailTitle(): string {
         >
           <li @click="copyDbEntry(dbContextMenu.entryId)">{{ t('editor.ctx.copy') }}</li>
           <li
-            :class="{ disabled: !dbClipboard || dbClipboard.group !== selectedDbGroup }"
+            :class="{ disabled: !canPasteDbEntry() }"
             @click="pasteDbEntry(dbContextMenu.entryId)"
           >{{ t('editor.ctx.paste') }}</li>
           <li class="ctx-sep"></li>

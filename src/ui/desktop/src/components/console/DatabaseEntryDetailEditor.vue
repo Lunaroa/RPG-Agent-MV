@@ -756,7 +756,7 @@ const iconPreviewStyle = computed(() => {
     backgroundImage: `url("${iconSetAsset.url.replace(/"/g, '\\"')}")`,
     backgroundSize: `${16 * cell}px auto`,
     backgroundPosition: `-${col * cell}px -${row * cell}px`,
-    imageRendering: 'pixelated',
+    imageRendering: 'pixelated' as const,
   };
 });
 

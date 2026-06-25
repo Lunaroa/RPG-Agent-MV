@@ -1754,6 +1754,7 @@ const zhCN = {
     'story.eventCount': '事件数',
     'story.openMapEditor': '打开地图编辑器',
     'story.selectMiddleHint': '选择中间事件列表中的条目，可在这里查看事件详情。',
+    'story.selectDbSubFieldHint': '选择上方子类条目，在右侧编辑对应字段。',
     'story.selectFromMiddle': '从中间列表选择地图、事件、开关、变量、公共事件、数据库、音频或图片。',
     'story.saveStagingNote': '保存后进入项目暂存，可统一应用或丢弃。',
     'story.saveChanges': '保存修改',

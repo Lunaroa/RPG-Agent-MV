@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "dev.rpg-agent-mv.desktop",
-  "productName": "RPG-Agent-MV",
+  "productName": "RPG Agent MV",
   "asar": false,
   "electronDist": "node_modules/electron/dist",
   "npmRebuild": false,
@@ -117,6 +117,6 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "RPG-Agent-MV"
+    "shortcutName": "RPG Agent MV"
   }
 }

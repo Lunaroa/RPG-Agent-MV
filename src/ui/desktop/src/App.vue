@@ -6,6 +6,7 @@ import en from 'element-plus/es/locale/lang/en'
 import AppRail from './components/layout/AppRail.vue'
 import TopBar from './components/layout/TopBar.vue'
 import StatusBar from './components/layout/StatusBar.vue'
+import LanguagePicker from './components/onboarding/LanguagePicker.vue'
 import OnboardingTour from './components/onboarding/OnboardingTour.vue'
 import { useProjectStore } from './stores/project'
 import { useSettingsStore } from './stores/settings'
@@ -13,6 +14,7 @@ import { useWorkbenchUiStore } from './stores/workbenchUi'
 import { useWorkspaceStore } from './stores/workspace'
 import { applyUiTheme } from './utils/applyUiTheme'
 import { useI18n, pickByLocale } from './i18n'
+import { needsLanguageSelection } from './utils/language-selection'
 import {
   collectUiControlPageState,
   getEditorUiControlState,
@@ -38,6 +40,20 @@ const consolePage = computed(() => {
 })
 
 const elementLocale = computed(() => pickByLocale(language.value, { 'zh-CN': zhCn, 'en-US': en }))
+
+const showLanguagePicker = computed(() =>
+  !booting.value && !bootError.value && needsLanguageSelection(settingsStore.ui),
+)
+
+const START_TOUR_EVENT = 'agent-rpg:onboarding-tour:start'
+
+function onLanguageChosen() {
+  void nextTick(() => {
+    window.setTimeout(() => {
+      window.dispatchEvent(new Event(START_TOUR_EVENT))
+    }, 120)
+  })
+}
 
 
 async function settleUiControlView() {
@@ -184,7 +200,8 @@ onUnmounted(() => {
         </main>
       </div>
       <StatusBar />
-      <OnboardingTour v-if="!booting && !bootError" />
+      <LanguagePicker v-if="showLanguagePicker" @chosen="onLanguageChosen" />
+      <OnboardingTour v-if="!booting && !bootError && !showLanguagePicker" />
     </div>
   </ElConfigProvider>
 </template>

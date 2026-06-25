@@ -2,7 +2,7 @@
 
 [Back to User Guide](../README.md)
 
-RPG-Agent-MV keeps generated changes reviewable before they are written back to the game project.
+RPG Agent MV keeps generated changes reviewable before they are written back to the game project.
 
 Staged changes represent draft edits produced by the desktop app or the Agent. Review them before applying. If the change is wrong, discard it instead of editing the staged files by hand.
 

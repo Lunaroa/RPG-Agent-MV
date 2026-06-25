@@ -196,7 +196,7 @@ test("electron package proof accepts a real unpacked Electron directory package"
   assert.equal(result.status, "proven");
   assert.equal(result.root, packageRoot);
   assert.deepEqual(result.forbidden, []);
-  assert.equal(result.files.includes("RPG-Agent-MV.exe"), true);
+  assert.equal(result.files.includes("RPG Agent MV.exe"), true);
   assert.equal(result.files.includes("resources/app/package.json"), true);
   assert.equal(result.files.includes("resources/app/src/ui/desktop/dist/index.html"), true);
   assert.equal(result.files.includes("resources/app/src/backend/src/cli.ts"), true);
@@ -316,7 +316,7 @@ test("electron package proof accepts a configured installer artifact while keepi
   assert.equal(result.issues.some((issue) => issue.code === "electron-installer-artifact-missing"), false);
   assert.equal(result.evidence.some((entry) => entry.includes("Electron dir target is configured")), true);
   assert.equal(result.evidence.some((entry) => entry.includes("Electron installer target configured: nsis")), true);
-  assert.equal(result.evidence.some((entry) => entry.includes("RPG-Agent-MV Setup 0.1.0.exe")), true);
+  assert.equal(result.evidence.some((entry) => entry.includes("RPG Agent MV Setup 0.1.0.exe")), true);
 });
 
 test("electron package proof blocks a configured installer target with no installer artifact", () => {
@@ -431,7 +431,7 @@ function writeElectronBuilderMetadata(root: string, options: {
   fs.mkdirSync(desktop, { recursive: true });
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify(options.appPackage || {
     name: "rpg-agent-mv",
-    author: "RPG-Agent-MV contributors",
+    author: "RPG Agent MV contributors",
   }), "utf8");
   fs.writeFileSync(path.join(desktop, "package.json"), JSON.stringify({
     scripts: {
@@ -486,7 +486,7 @@ function createElectronPackageArtifact(root: string): string {
   ]) {
     fs.mkdirSync(path.join(appNodeModulesRoot, dependency), { recursive: true });
   }
-  fs.writeFileSync(path.join(packageRoot, "RPG-Agent-MV.exe"), "exe", "utf8");
+  fs.writeFileSync(path.join(packageRoot, "RPG Agent MV.exe"), "exe", "utf8");
   fs.writeFileSync(path.join(appRoot, "package.json"), JSON.stringify({
     name: "rpg-agent-mv",
     type: "module",
@@ -537,7 +537,7 @@ function createElectronPackageArtifact(root: string): string {
 function createElectronInstallerArtifact(root: string): void {
   const output = path.join(root, "runtime", "out", "release", "electron");
   fs.mkdirSync(output, { recursive: true });
-  fs.writeFileSync(path.join(output, "RPG-Agent-MV Setup 0.1.0.exe"), "installer", "utf8");
+  fs.writeFileSync(path.join(output, "RPG Agent MV Setup 0.1.0.exe"), "installer", "utf8");
 }
 
 function writePackageJson(nodeModulesRoot: string, dependency: string, version: string): void {

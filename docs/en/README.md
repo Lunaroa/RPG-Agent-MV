@@ -1,12 +1,12 @@
-# RPG-Agent-MV User Guide
+# RPG Agent MV User Guide
 
 [简体中文](../README.md) | English
 
-RPG-Agent-MV is a local AI production tool for RPG Maker MV creators. It helps generate event drafts, batch-edit existing events, and assist with script, plugin, and project-state work through natural-language requests.
+RPG Agent MV is a local AI production tool for RPG Maker MV creators. It helps generate event drafts, batch-edit existing events, and assist with script, plugin, and project-state work through natural-language requests.
 
 This guide covers first use, project management, Agent workflows, extension points, and common troubleshooting paths.
 
-The current version is not a full replacement for the RPG Maker MV editor. In this guide, "editor", "database", and "asset library" refer to the controlled capabilities already exposed by RPG-Agent-MV. Complex graphical parameter editing, full database editing, full map editing, and third-party plugin semantics still require human confirmation.
+The current version is not a full replacement for the RPG Maker MV editor. In this guide, "editor", "database", and "asset library" refer to the controlled capabilities already exposed by RPG Agent MV. Complex graphical parameter editing, full database editing, full map editing, and third-party plugin semantics still require human confirmation.
 
 ## Contents
 
@@ -67,4 +67,4 @@ The current version is not a full replacement for the RPG Maker MV editor. In th
 
 - Documentation version: v0.2-en
 - Last updated: 2026-06-21
-- Applies to: current RPG-Agent-MV version
+- Applies to: current RPG Agent MV version

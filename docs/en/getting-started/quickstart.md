@@ -36,7 +36,7 @@ Do not decide coordinates. After the event enters the placement queue, the user 
 2. **Handle key decisions**: if map choice, asset choice, or story direction is unclear, the system pauses with ASK.
 3. **Generate and preview**: the Agent registers event content and the UI shows an event preview.
 4. **Apply to queue**: choose **Apply** in the confirmation card to move the event into the placement queue.
-5. **Place manually**: drag the placeable event onto the RPG-Agent-MV desktop map canvas. The system writes the map data.
+5. **Place manually**: drag the placeable event onto the RPG Agent MV desktop map canvas. The system writes the map data.
 6. **Review changes**: inspect the chat flow, event preview, editor, run logs, or project diff.
 7. **Keep or discard**: keep the change if it matches the request; otherwise discard this attempt or ask for an adjustment.
 

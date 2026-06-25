@@ -11,7 +11,7 @@ const enUS = {
     'runtime.permissionFailureUserMessage': [
       'Some file tools were denied by **external_directory** permissions. This usually happens when the agent tries to Read/List the user home folder, global Agent config, or paths outside the repository while running from the game project.',
       'The Agent should only read the **game project** and **`RPG-Agent-MV/`**. Tool instructions start at `RPG-Agent-MV/AGENT_GUIDE.md`; do not read the user home folder, global config, or unauthorized paths outside the product root.',
-      '**End the current session and start a new turn**. If it still fails, confirm opencode directory permissions include the RPG-Agent-MV product root and the current game project.',
+      '**End the current session and start a new turn**. If it still fails, confirm opencode directory permissions include the RPG Agent MV product root and the current game project.',
       'Story events can be placed manually in the **Map Editor**. If the agent already registered an EventContract, continue through the current map editing flow.',
     ].join('\n'),
     'dispatch.noProviderOrModel': 'No opencode provider or model is selected. Bind a provider and model in Settings > Execution Engine.',
@@ -33,7 +33,7 @@ const enUS = {
     'session.planModifyRequested': 'The user requested changes to this plan.',
     'cli.agentConsole.moved': 'Agent console has moved to the Electron app. Start it from the desktop app.',
     'cli.agentConsole.startCommand': 'Start command: cd src/ui/desktop && npm run dev',
-    'cli.agentConsole.readme': 'See README.md and docs/README.md in the RPG-Agent-MV root for details.',
+    'cli.agentConsole.readme': 'See README.md and docs/README.md in the RPG Agent MV root for details.',
 } as const
 
 export default enUS

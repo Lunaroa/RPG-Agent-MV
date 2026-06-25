@@ -22,7 +22,7 @@ This page explains what to check when the project cannot be detected or project 
 1. Open the target project in RPG Maker MV.
 2. Confirm that the project contains maps.
 3. Save the project in RPG Maker MV.
-4. Return to RPG-Agent-MV and select or refresh the project.
+4. Return to RPG Agent MV and select or refresh the project.
 5. In console project management, confirm that maps, events, database files, and audio can be read.
 
 ## If It Still Fails

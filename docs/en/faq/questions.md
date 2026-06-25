@@ -2,7 +2,7 @@
 
 [Back to User Guide](../README.md)
 
-## Does RPG-Agent-MV replace RPG Maker MV?
+## Does RPG Agent MV replace RPG Maker MV?
 
 No. It assists with project-aware production work, but final review, complex map design, plugin semantics, and creative judgment stay with the creator.
 

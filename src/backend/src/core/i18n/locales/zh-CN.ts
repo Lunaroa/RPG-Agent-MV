@@ -11,7 +11,7 @@ const zhCN = {
     'runtime.permissionFailureUserMessage': [
       '部分文件工具因 **external_directory** 权限被拒（常见于在游戏工程 cwd 下尝试 Read 用户主目录、全局 Agent 配置目录或仓库外的路径）。',
       'Agent 应只读：**游戏工程**与 **`RPG-Agent-MV/`**。工具说明从 `RPG-Agent-MV/AGENT_GUIDE.md` 开始，不要读用户主目录、全局配置或产品根之外的未授权路径。',
-      '请**结束当前会话并新建一轮**；若仍失败，确认 opencode 的目录权限包含 RPG-Agent-MV 产品根与当前游戏工程。',
+      '请**结束当前会话并新建一轮**；若仍失败，确认 opencode 的目录权限包含 RPG Agent MV 产品根与当前游戏工程。',
       '剧情事件可在 **地图编辑页** 手动放置；若 agent 已注册 EventContract，应通过当前地图编辑流程继续。',
     ].join('\n'),
     'dispatch.noProviderOrModel': '未选择 opencode 的供应商或模型。请在 设置 → 执行引擎 中绑定供应商与模型。',
@@ -33,7 +33,7 @@ const zhCN = {
     'session.planModifyRequested': '用户要求修改该计划。',
     'cli.agentConsole.moved': 'Agent console 已迁移至 Electron 应用程序，请通过桌面应用启动。',
     'cli.agentConsole.startCommand': '启动方式：cd src/ui/desktop && npm run dev',
-    'cli.agentConsole.readme': '详细文档请参阅 RPG-Agent-MV 根目录 README.md 与 docs/README.md',
+    'cli.agentConsole.readme': '详细文档请参阅 RPG Agent MV 根目录 README.md 与 docs/README.md',
 } as const
 
 export default zhCN

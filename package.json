@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "RPG Maker MV indexing and patching tools for agent workflows.",
-  "author": "RPG-Agent-MV contributors",
+  "author": "RPG Agent MV contributors",
   "scripts": {
     "install:deps": "node scripts/with-electron-mirrors.mjs npm install --ignore-scripts && node scripts/with-electron-mirrors.mjs npm --prefix src/backend install && node scripts/with-electron-mirrors.mjs npm --prefix src/ui/desktop install",
     "check:local": "npm run install:deps && npm run build:opencode-runtime && npm test && node -e \"const cp=require('node:child_process'); const path=require('node:path'); const bin=path.join('runtime','out','opencode','windows-x64','opencode.exe'); cp.execFileSync(bin, ['--version'], {stdio:'inherit'});\"",

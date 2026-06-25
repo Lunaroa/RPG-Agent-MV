@@ -264,7 +264,7 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
     name: "RmmvEvent",
     description:
       "Event contract registry, command patching, feedback, and editor operations on already-placed map events only. "
-      + "New map events: registry.register with the full implementation, the user previews it in the sidebar, the agent asks whether to apply it to the placement queue with apply/adjust/cancel options, and after approval the user drags it onto the RPG-Agent-MV desktop map canvas through createPlacementEvent. "
+      + "New map events: registry.register with the full implementation, the user previews it in the sidebar, the agent asks whether to apply it to the placement queue with apply/adjust/cancel options, and after approval the user drags it onto the RPG Agent MV desktop map canvas through createPlacementEvent. "
       + "Never use editor.update or editor.move to set x/y for new events; never tell the user to place events in external RPG Maker MV editor.",
     inputSchema: {
       action: z.enum([

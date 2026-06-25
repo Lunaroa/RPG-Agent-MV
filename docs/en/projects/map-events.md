@@ -2,7 +2,7 @@
 
 [Back to User Guide](../README.md)
 
-RPG-Agent-MV reads maps, events, database entries, plugins, and assets from the connected RPG Maker MV project so Agent work can be grounded in the real game.
+RPG Agent MV reads maps, events, database entries, plugins, and assets from the connected RPG Maker MV project so Agent work can be grounded in the real game.
 
 Existing events can be inspected and edited through controlled flows. The Agent should identify the target map and event from project facts or from explicit user selection before proposing changes.
 

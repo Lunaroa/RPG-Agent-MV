@@ -4,19 +4,19 @@ This page explains the requirements for connecting an RMMV project, the recommen
 
 ## Project Requirements
 
-RPG-Agent-MV must connect to a real, complete RPG Maker MV project. The target project should at least:
+RPG Agent MV must connect to a real, complete RPG Maker MV project. The target project should at least:
 
 - Open correctly in RPG Maker MV.
 - Contain map data and database data.
 - Contain the assets required by the task.
-- Be readable from the local path used by RPG-Agent-MV.
+- Be readable from the local path used by RPG Agent MV.
 
 If the project is incomplete or the path cannot be accessed, the Agent should stop and explain the reason instead of fabricating a result.
 
 ## Setup Steps
 
 1. Open the target project in RPG Maker MV and save it.
-2. Start RPG-Agent-MV.
+2. Start RPG Agent MV.
 3. Confirm the current project in the console.
 4. Open the map tree in the editor.
 5. Select a map and confirm the canvas displays correctly.
@@ -38,7 +38,7 @@ Stable naming makes it easier for the Agent to identify target objects and conte
 
 ## Switching Projects
 
-After switching projects in the console, confirm that the current project name matches the target project. If data reading fails after a switch, save the project in RPG Maker MV, then return to RPG-Agent-MV and refresh.
+After switching projects in the console, confirm that the current project name matches the target project. If data reading fails after a switch, save the project in RPG Maker MV, then return to RPG Agent MV and refresh.
 
 ## Game-Level Rules
 

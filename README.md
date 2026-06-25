@@ -1,10 +1,10 @@
-# RPG-Agent-MV
+# RPG Agent MV
 
 English | [简体中文](README.zh-CN.md)
 
 A local AI production assistant for individual RPG Maker MV creators.
 
-RPG-Agent-MV turns natural-language production goals into RPG Maker MV event work, script edits, and controlled batch changes inside an existing project. It is designed for solo creators who already have a real RMMV project and want help moving story, event, script, and plugin work forward without losing reviewability.
+RPG Agent MV turns natural-language production goals into RPG Maker MV event work, script edits, and controlled batch changes inside an existing project. It is designed for solo creators who already have a real RMMV project and want help moving story, event, script, and plugin work forward without losing reviewability.
 
 ![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22.5.0-339933.svg)
@@ -26,7 +26,7 @@ Good first tasks include:
 - A chest, transfer point, signpost, or story trigger.
 - A new event draft based on maps and assets that already exist in the project.
 
-New events are not placed automatically at guessed coordinates. The Agent prepares or registers the event, then the user reviews it and places it on the RPG-Agent-MV desktop map canvas.
+New events are not placed automatically at guessed coordinates. The Agent prepares or registers the event, then the user reviews it and places it on the RPG Agent MV desktop map canvas.
 
 ### Batch-Edit Existing Events
 
@@ -41,7 +41,7 @@ Typical uses:
 
 ### Assist With Scripts and Plugin-Related Logic
 
-RPG Maker MV projects often need JavaScript edits, plugin parameter checks, or small utility scripts. RPG-Agent-MV can inspect the project state and help write or adjust code.
+RPG Maker MV projects often need JavaScript edits, plugin parameter checks, or small utility scripts. RPG Agent MV can inspect the project state and help write or adjust code.
 
 Typical uses:
 
@@ -52,13 +52,13 @@ Typical uses:
 
 ### Understand The Current Project
 
-RPG-Agent-MV works around the selected RPG Maker MV project. It reads maps, events, assets, database entries, plugins, switches, variables, and other project context instead of generating isolated text.
+RPG Agent MV works around the selected RPG Maker MV project. It reads maps, events, assets, database entries, plugins, switches, variables, and other project context instead of generating isolated text.
 
 This makes it better suited to daily production work in an existing game project, such as: "make the NPCs in this town sound more like frontier-town residents."
 
 ## Project Boundaries
 
-RPG-Agent-MV is not a full game generator and it does not replace the RPG Maker MV editor.
+RPG Agent MV is not a full game generator and it does not replace the RPG Maker MV editor.
 
 It does not currently promise to:
 
@@ -79,7 +79,7 @@ It is meant to reduce repetitive production work: placing production goals into 
 ## Quick Start
 
 1. Prepare a real RPG Maker MV project that opens correctly in RPG Maker MV.
-2. Start the RPG-Agent-MV desktop app.
+2. Start the RPG Agent MV desktop app.
 3. Configure a model provider and API key in Settings.
 4. Select your RMMV project.
 5. Describe the event, batch edit, or script task in natural language.
@@ -176,4 +176,4 @@ Apache-2.0
 
 Project-owned code, backend code, and desktop wrapper code are licensed under Apache-2.0. Distributed builds include [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), which documents third-party components, runtimes, and dependencies shipped with the product.
 
-RPG-Agent-MV is an independent third-party tool designed to work with RPG Maker MV projects.
+RPG Agent MV is an independent third-party tool designed to work with RPG Maker MV projects.

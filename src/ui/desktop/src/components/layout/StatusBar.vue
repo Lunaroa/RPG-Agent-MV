@@ -8,7 +8,7 @@ const { t } = useI18n();
 
 <template>
   <footer class="statusbar">
-    <span class="sb-item sb-map"><span class="sb-dot" />{{ ui.sbMapLabel || 'RPG-Agent-MV' }}</span>
+    <span class="sb-item sb-map"><span class="sb-dot" />{{ ui.sbMapLabel || 'RPG Agent MV' }}</span>
     <span v-if="ui.sbMode" class="sb-item sb-mode" :class="ui.sbMode">
       {{ ui.sbMode === 'map' ? t('status.mode.map') : t('status.mode.event') }}
     </span>

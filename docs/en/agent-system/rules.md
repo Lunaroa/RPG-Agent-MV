@@ -2,7 +2,7 @@
 
 [Back to User Guide](../README.md)
 
-RPG-Agent-MV uses layered rules: product rules, user preferences, and game-project rules.
+RPG Agent MV uses layered rules: product rules, user preferences, and game-project rules.
 
 Product rules protect the workflow: no guessed event coordinates, no uncontrolled writes, no compatibility workarounds that hide missing requirements, and no broad task expansion without user approval.
 

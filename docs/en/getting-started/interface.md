@@ -2,7 +2,7 @@
 
 [Back to User Guide](../README.md)
 
-RPG-Agent-MV is organized around the current project, the Agent conversation, and the controlled review surfaces for generated work.
+RPG Agent MV is organized around the current project, the Agent conversation, and the controlled review surfaces for generated work.
 
 The main editor area shows the selected project context. Map and event surfaces are for inspection, review, and controlled placement. They are not a full replacement for RPG Maker MV's native editor.
 

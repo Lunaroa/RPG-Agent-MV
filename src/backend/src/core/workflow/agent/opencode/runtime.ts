@@ -958,7 +958,7 @@ export async function runOpencodeSession(
     if (!opencodeSessionId) {
       const created = await client.session.create({
         query: { directory: input.cwd },
-        body: { title: input.prompt.split(/\r?\n/)[0]?.slice(0, 80) || "RPG-Agent-MV" },
+        body: { title: input.prompt.split(/\r?\n/)[0]?.slice(0, 80) || "RPG Agent MV" },
         signal: controller.signal,
       });
       if (created.error || !created.data) throw created.error || new Error("opencode session create failed");

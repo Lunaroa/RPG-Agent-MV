@@ -1,12 +1,12 @@
 # 1.1 Introduction
 
-RPG-Agent-MV is a local desktop tool for RPG Maker MV creators. It connects an AI Agent to an existing RMMV project so it can help generate events, batch-edit existing events, and assist with script, plugin, and project-state work.
+RPG Agent MV is a local desktop tool for RPG Maker MV creators. It connects an AI Agent to an existing RMMV project so it can help generate events, batch-edit existing events, and assist with script, plugin, and project-state work.
 
 The product goal is to reduce repetitive event entry, bulk editing, and script investigation work. The creator describes the goal in natural language, while the tool reads project facts and keeps the resulting changes reviewable.
 
 ## Core Capabilities
 
-RPG-Agent-MV currently focuses on:
+RPG Agent MV currently focuses on:
 
 - **Event generation**: generate RMMV event content and event commands from a natural-language request. New events enter a review and placement flow; the user decides their final position on the map.
 - **Existing event edits**: batch-edit existing map events, such as dialogue, conditions, switches, variables, or related event logic.
@@ -34,7 +34,7 @@ Agent behavior is shaped by several mechanisms:
 
 ## Boundaries
 
-RPG-Agent-MV does not promise to:
+RPG Agent MV does not promise to:
 
 - Generate a complete game from scratch.
 - Fully replace the RPG Maker MV editor.

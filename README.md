@@ -6,7 +6,7 @@ A local AI production assistant for individual RPG Maker MV creators.
 
 RPG Agent MV turns natural-language production goals into RPG Maker MV event work, script edits, and controlled batch changes inside an existing project. It is designed for solo creators who already have a real RMMV project and want help moving story, event, script, and plugin work forward without losing reviewability.
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22.5.0-339933.svg)
 ![Electron](https://img.shields.io/badge/built%20with-Electron-47848F.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)

@@ -49,23 +49,13 @@ function hasMarkers(root: string, markers: readonly string[]): boolean {
   return markers.every((segment) => fs.existsSync(path.join(root, segment)));
 }
 
-/**
- * Resolve workflow root: explicit env first, then walk parents for layout markers.
- */
-export function resolveWorkflowRoot(fromDir?: string): string {
-  const env =
-    process.env.AGENT_RPG_ROOT?.trim() ||
-    process.env.AIWF_WORKFLOW_ROOT?.trim() ||
-    process.env.RMMV_AGENT_WORKFLOW_ROOT?.trim();
-  if (env) return path.resolve(env);
-
+function walkInstallRootFromDir(fromDir?: string): string {
   const start = fromDir ? path.resolve(fromDir) : process.cwd();
   let current = start;
   while (true) {
     for (const markers of WORKFLOW_ROOT_MARKERS) {
       if (hasMarkers(current, markers)) return current;
     }
-    // Check nested product directories used by source checkouts and packaged layouts.
     for (const dirName of [PRODUCT_DIR_NAME, "workspace"]) {
       const nested = path.join(current, dirName);
       for (const markers of WORKFLOW_ROOT_MARKERS) {
@@ -79,12 +69,59 @@ export function resolveWorkflowRoot(fromDir?: string): string {
   throw new Error(`Cannot resolve RPG Agent MV product root from ${start}`);
 }
 
+/**
+ * Read-only install / source bundle root (shipped config, backend sources).
+ */
+export function resolveInstallRoot(fromDir?: string): string {
+  const env = process.env.AGENT_RPG_INSTALL_ROOT?.trim();
+  if (env) return path.resolve(env);
+  return walkInstallRootFromDir(fromDir);
+}
+
+/**
+ * Writable user data root (SQLite, runtime sessions, `.opencode` state).
+ */
+export function resolveUserDataRoot(fromDir?: string): string {
+  const env =
+    process.env.AGENT_RPG_ROOT?.trim() ||
+    process.env.AIWF_WORKFLOW_ROOT?.trim() ||
+    process.env.RMMV_AGENT_WORKFLOW_ROOT?.trim();
+  if (env) return path.resolve(env);
+  return resolveInstallRoot(fromDir);
+}
+
+/**
+ * Resolve writable workflow root: explicit user-data env first, else install root.
+ */
+export function resolveWorkflowRoot(fromDir?: string): string {
+  return resolveUserDataRoot(fromDir);
+}
+
+/**
+ * Shipped bundle root for read-only assets. When `AGENT_RPG_INSTALL_ROOT` is set,
+ * packaged installs read config from install tree while persisting under user data.
+ */
+export function resolveShippedRoot(fallbackWorkflowRoot?: string): string {
+  const install = process.env.AGENT_RPG_INSTALL_ROOT?.trim();
+  if (install) return path.resolve(install);
+  if (fallbackWorkflowRoot) return path.resolve(fallbackWorkflowRoot);
+  return resolveInstallRoot();
+}
+
+export function resolveShippedPath(fallbackWorkflowRoot: string, rel: string): string {
+  return path.join(resolveShippedRoot(fallbackWorkflowRoot), rel);
+}
+
+export function resolveWritablePath(userDataRoot: string, rel: string): string {
+  return path.join(path.resolve(userDataRoot), rel);
+}
+
 export function resolveFromWorkflowRoot(workflowRoot: string, rel: string): string {
   return path.resolve(workflowRoot, rel);
 }
 
 export function resolveAgentsRegistryPath(workflowRoot: string): string {
-  return path.join(workflowRoot, PATHS.agentsRegistry);
+  return resolveShippedPath(workflowRoot, PATHS.agentsRegistry);
 }
 
 /** Canonical agents directory relative to workflow root. */
@@ -94,7 +131,7 @@ export function agentsDirRel(): string {
 
 /** Resolve agents-relative path (e.g. default agent docs) under the canonical config tree. */
 export function resolveAgentsPath(workflowRoot: string, ...segments: string[]): string {
-  return path.join(workflowRoot, "config", "agents", ...segments);
+  return path.join(resolveShippedRoot(workflowRoot), "config", "agents", ...segments);
 }
 
 /**
@@ -167,12 +204,12 @@ export function resolveAgentNodeCommand(
 
 /** Absolute path to product-anchored opencode config/state. */
 export function resolveOpencodeConfigDir(workflowRoot: string): string {
-  return path.join(workflowRoot, PATHS.OpencodeConfigDir);
+  return path.join(path.resolve(workflowRoot), PATHS.OpencodeConfigDir);
 }
 
 /** Shipped opencode config tree (rules, skills source, instructions). */
 export function resolveOpencodeProductConfigDir(workflowRoot: string): string {
-  return path.join(workflowRoot, WORKSPACE_LAYERS.config, "opencode");
+  return path.join(resolveShippedRoot(workflowRoot), WORKSPACE_LAYERS.config, "opencode");
 }
 
 /** Canonical agent rules committed with the product (synced to `.opencode/AGENTS.md` at runtime). */
@@ -226,4 +263,3 @@ export function resolveMemoryUserProfilePath(workflowRoot: string): string {
 export function resolveProjectMemoryDir(workflowRoot: string, projectId: string): string {
   return path.join(resolveMemoryRoot(workflowRoot), projectId);
 }
-

@@ -3,6 +3,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  resolveInstallRoot,
   resolveOpencodeAgentsMdRuntime,
   resolveOpencodeAgentsMdSource,
   resolveOpencodeConfigDir,
@@ -10,6 +11,7 @@ import {
   resolveOpencodeRipgrep,
   resolveOpencodeSkillsDir,
   resolveOpencodeSkillsSourceDir,
+  resolveUserDataRoot,
 } from "./workspace-paths.ts";
 
 const WORKFLOW_ROOT = path.resolve("/tmp/app-root");
@@ -87,4 +89,23 @@ test("opencode config and skills stay product anchored", () => {
   assert.equal(resolveOpencodeAgentsMdRuntime(WORKFLOW_ROOT), path.join(WORKFLOW_ROOT, ".opencode", "AGENTS.md"));
   assert.equal(resolveOpencodeSkillsSourceDir(WORKFLOW_ROOT), path.join(WORKFLOW_ROOT, "config", "opencode", "skills"));
   assert.equal(resolveOpencodeSkillsDir(WORKFLOW_ROOT), path.join(WORKFLOW_ROOT, ".opencode", "skills"));
+});
+
+test("packaged install and user data roots split via env", () => {
+  const install = path.resolve("/tmp/app-install");
+  const userData = path.resolve("/tmp/app-userdata");
+  withEnv({
+    AGENT_RPG_INSTALL_ROOT: install,
+    AGENT_RPG_ROOT: userData,
+    AGENT_RPG_OPENCODE_BIN: undefined,
+    AGENT_RPG_RESOURCES_PATH: undefined,
+  }, () => {
+    assert.equal(resolveInstallRoot(), install);
+    assert.equal(resolveUserDataRoot(), userData);
+    assert.equal(
+      resolveOpencodeAgentsMdSource(userData),
+      path.join(install, "config", "opencode", "AGENTS.md"),
+    );
+    assert.equal(resolveOpencodeConfigDir(userData), path.join(userData, ".opencode"));
+  });
 });

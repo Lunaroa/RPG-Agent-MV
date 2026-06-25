@@ -15,7 +15,9 @@ import {
   normalizeClassParamCurves,
   normalizeTroopPageConditions,
   normalizeStringList,
+  normalizeTermsArray,
   removeStringListItem,
+  termsArraySlotCount,
   setAnimationFrameCellValue,
   setAnimationTimingFlashColor,
   setAnimationTimingSeValue,
@@ -50,6 +52,14 @@ describe('rmmvDatabaseEditor helpers', () => {
     assert.deepEqual(appendStringListItem(['Fight'], false), ['Fight', '']);
     assert.deepEqual(setStringListItem(['Fight'], 0, 'Battle', false), ['Battle']);
     assert.deepEqual(removeStringListItem(['Fight', 'Escape'], 0, false), ['Escape']);
+  });
+
+  it('pads Terms arrays to MV slot counts for native grid editing', () => {
+    assert.equal(termsArraySlotCount('basic', ['等级']), 10);
+    assert.equal(termsArraySlotCount('commands', new Array(26).fill('x')), 26);
+    assert.deepEqual(normalizeTermsArray(['等级', 'Lv'], 'basic'), [
+      '等级', 'Lv', '', '', '', '', '', '', '', '',
+    ]);
   });
 
   it('sorts known Terms messages before custom message keys', () => {

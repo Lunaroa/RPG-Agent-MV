@@ -35,6 +35,27 @@ export const MV_TERMS_LIST_PATHS = new Set([
   'commands',
 ]);
 
+export const MV_TERMS_SLOT_COUNTS = {
+  basic: 10,
+  params: 10,
+  commands: 24,
+} as const;
+
+export type MvTermsArrayPath = keyof typeof MV_TERMS_SLOT_COUNTS;
+
+export function termsArraySlotCount(path: string, value?: unknown): number {
+  const base = MV_TERMS_SLOT_COUNTS[path as MvTermsArrayPath] ?? 0;
+  const actual = Array.isArray(value) ? value.length : 0;
+  return Math.max(base, actual);
+}
+
+export function normalizeTermsArray(value: unknown, path: string): string[] {
+  const list = Array.isArray(value) ? value.map((entry) => String(entry ?? '')) : [];
+  const target = termsArraySlotCount(path, list);
+  while (list.length < target) list.push('');
+  return list;
+}
+
 export interface MvTroopPageConditions {
   turnEnding: boolean;
   turnValid: boolean;

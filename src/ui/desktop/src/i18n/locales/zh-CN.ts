@@ -1334,6 +1334,7 @@ const zhCN = {
     'imgPicker.searchPlaceholder': '搜索图像',
     'imgPicker.none': '(无)',
     'imgPicker.chooseImage': '选择图像',
+    'imgPicker.iconSetMissing': '项目中未找到 IconSet.png',
 
     // ── Batch 5: EventImagePickerDialog ──
     'eventImgPicker.title': '事件图像',
@@ -1522,6 +1523,8 @@ const zhCN = {
     'db.pageSummary': '第 {{index}} 页 · {{span}} · {{commands}} 条指令 · 条件 {{conditions}}',
     'db.chooseFace': '选择脸图',
     'db.chooseCharacter': '选择行走图',
+    'db.chooseIcon': '选择图标',
+    'db.clearEntry': '清空',
     'db.chooseSvBattler': '选择 SV 战斗图',
     'db.chooseEnemyBattler': '选择敌人战斗图',
     'db.chooseImage': '选择{{label}}图像',
@@ -1537,6 +1540,8 @@ const zhCN = {
     'db.slot0Reserved': 'RPG Maker MV 的 0 号槽为空保留位，界面禁止编辑和删除。',
     'db.noEntries': '暂无条目。',
     'db.messageTemplateCount': '{{count}} 条消息模板',
+    'db.messageTypeCol': '类型',
+    'db.messageTextCol': '文本',
     'db.noMessageTemplates': '暂无消息模板。',
     'db.advancedJson': '高级 JSON（新增或删除非标准 message key 时使用）',
     'db.noTraits': '暂无特性。',

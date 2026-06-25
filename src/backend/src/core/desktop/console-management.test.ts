@@ -9,7 +9,7 @@ import { closeDatabase } from '../db/pool.ts';
 import { createDefaultRmmvDatabaseEntry } from '../rmmv/database-schema.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
 import { deleteAsset, getAssetDetail, renameAsset } from './asset-management-service.ts';
-import { createProjectManagedEntry, getProjectManagedEntry, updateProjectManagedEntry } from './project-management-service.ts';
+import { createProjectManagedEntry, getProjectManagedEntry, updateProjectManagedEntry, buildProjectManagementScan } from './project-management-service.ts';
 import { withTestLanguage } from '../i18n/with-test-language.ts';
 import { discardProjectStaging, getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
 
@@ -115,5 +115,22 @@ describe('console management services', { concurrency: false }, () => {
     assert.equal((readJson(getProjectFileForRead(root, project, 'www/data/Actors.json')!) as any[])[2].id, 2);
     assert.equal((readJson(actorsPath) as any[])[2], null);
     assert.throws(() => withTestLanguage(() => createProjectManagedEntry(root, project, { kind: 'database', group: 'System' })), /不能新增/);
+  });
+
+  test('overview scan reads staged database changes and unnamed entries', () => {
+    writeJson(path.join(project, 'www', 'data', 'Skills.json'), [null]);
+    const created = createProjectManagedEntry(root, project, { kind: 'database', group: 'Skills' });
+    const stagedOverview = buildProjectManagementScan(root, project);
+    assert.equal(stagedOverview.database.Skills?.count, 1);
+    assert.equal(stagedOverview.database.Skills?.named.some((entry) => entry.id === created.id), true);
+    updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Skills',
+      id: created.id,
+      value: { ...(created.value as Record<string, unknown>), name: 'Fire II' },
+    });
+    const renamedOverview = buildProjectManagementScan(root, project);
+    assert.equal(renamedOverview.database.Skills?.named.find((entry) => entry.id === created.id)?.name, 'Fire II');
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Skills.json')) as unknown[])[created.id], undefined);
   });
 });

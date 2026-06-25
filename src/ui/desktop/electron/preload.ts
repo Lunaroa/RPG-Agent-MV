@@ -144,6 +144,7 @@ contextBridge.exposeInMainWorld('api', {
     getEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:getEntry', request, project),
     updateEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:updateEntry', request, project),
     createEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:createEntry', request, project),
+    resetEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:resetEntry', request, project),
   },
 
   commonEvents: {

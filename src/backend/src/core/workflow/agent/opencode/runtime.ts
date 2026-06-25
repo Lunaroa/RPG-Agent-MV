@@ -12,7 +12,7 @@ import {
 import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from "../../../../../../contract/i18n.ts";
 import { stripNativeTaskBlocks } from "../../../../../../contract/native-task-blocks.ts";
 import type { ProductLanguage } from "../../../../../../contract/types.ts";
-import { resolveOpencodeCli, resolveOpencodeConfigDir, resolveOpencodeRipgrep } from "../../../workspace-paths.ts";
+import { resolveOpencodeCli, resolveOpencodeConfigDir, resolveOpencodeRipgrep, resolveShippedRoot } from "../../../workspace-paths.ts";
 import { ensureOpencodeRuntimeAssets } from "./runtime-assets.ts";
 import { backendText } from "../../../i18n/messages.ts";
 
@@ -198,7 +198,7 @@ export function ensureOpencodeIsolationDirs(workflowRoot: string): OpencodeIsola
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  ensureOpencodeRuntimeAssets(workflowRoot);
+  ensureOpencodeRuntimeAssets(resolveShippedRoot(workflowRoot), workflowRoot);
   return paths;
 }
 

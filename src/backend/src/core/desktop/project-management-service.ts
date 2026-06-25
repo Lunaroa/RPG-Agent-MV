@@ -6,8 +6,9 @@ import {
   getRmmvDatabaseSchema,
   type RmmvDatabaseTableSchema,
 } from '../rmmv/database-schema.ts';
-import { readJson } from '../rmmv/json.ts';
+import { exists, readJson } from '../rmmv/json.ts';
 import { dataRelativePath, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
+import { scanProjectWithReader } from '../rmmv/project-scanner.ts';
 import { getCommonEvent, updateCommonEvent } from './common-event-service.ts';
 import {
   projectManagedCreateDatabaseOnly,
@@ -25,6 +26,16 @@ import {
   projectManagedListInvalid,
 } from './projectManagementServiceLocalization.ts';
 import { getProjectFileForRead, writeStagedProjectJson } from './staging-service.ts';
+
+export function buildProjectManagementScan(workflowRoot: string, project: string) {
+  const layout = resolveRmmvLayout(project);
+  return scanProjectWithReader(project, (fileName) => {
+    const relative = dataRelativePath(layout, fileName);
+    const file = getProjectFileForRead(workflowRoot, project, relative);
+    if (!file || !exists(file)) return undefined;
+    return readJson(file);
+  }, { includeUnnamedEntries: true });
+}
 
 export function getProjectManagedEntry(
   workflowRoot: string,
@@ -99,6 +110,28 @@ export function createProjectManagedEntry(
   const next = request.value && typeof request.value === 'object' && !Array.isArray(request.value)
     ? { ...base, ...(request.value as Record<string, unknown>), id }
     : base;
+  const validation = schema.validate(next);
+  if (!validation.ok) {
+    throw new Error(projectManagedEntryInvalidWithIssues(validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')));
+  }
+  data[id] = next;
+  writeStagedProjectJson(workflowRoot, project, relativePath, data);
+  return getProjectManagedEntry(workflowRoot, project, { kind: 'database', group: schema.group, id });
+}
+
+export function getDefaultProjectManagedEntry(
+  workflowRoot: string,
+  project: string,
+  request: { kind: ProjectManagedEntry['kind']; group?: string; id: number },
+): ProjectManagedEntry {
+  if (request.kind !== 'database') throw new Error(projectManagedCreateDatabaseOnly());
+  const schema = schemaForManagedEntry(request);
+  if (!schema.isArrayTable) throw new Error(projectManagedFixedDocumentCannotCreate(schema.group));
+  const id = validId(request.id);
+  const relativePath = relativePathFor(project, request);
+  const data = readData(workflowRoot, project, relativePath);
+  if (!Array.isArray(data)) throw new Error(projectManagedGroupMustBeArray(schema.group));
+  const next = createDefaultRmmvDatabaseEntry(schema.group, id);
   const validation = schema.validate(next);
   if (!validation.ok) {
     throw new Error(projectManagedEntryInvalidWithIssues(validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')));

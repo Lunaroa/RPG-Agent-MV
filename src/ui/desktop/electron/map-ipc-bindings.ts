@@ -60,6 +60,7 @@ export const MAP_IPC_CHANNELS = [
   'projectManagement:getEntry',
   'projectManagement:updateEntry',
   'projectManagement:createEntry',
+  'projectManagement:resetEntry',
   'commonEvents:list',
   'commonEvents:get',
   'commonEvents:create',
@@ -232,7 +233,7 @@ export function registerMapIpcHandlers(
     desktop.assetManagement.importLocalAssetFile(workflowRoot, project(value), request));
   handle('projectManagement:overview', (_event, value?: string) => {
     const resolved = project(value);
-    const scan = desktop.scanner.scanProject(resolved);
+    const scan = desktop.projectManagement.buildProjectManagementScan(workflowRoot, resolved);
     const assets = desktop.scanner.buildAssetInventory(resolved);
     return { scan, assets };
   });
@@ -242,6 +243,8 @@ export function registerMapIpcHandlers(
     desktop.projectManagement.updateProjectManagedEntry(workflowRoot, project(value), request));
   handle('projectManagement:createEntry', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.projectManagement.createProjectManagedEntry(workflowRoot, project(value), request));
+  handle('projectManagement:resetEntry', (_event, request: Record<string, unknown>, value?: string) =>
+    desktop.projectManagement.getDefaultProjectManagedEntry(workflowRoot, project(value), request));
 
   handle('commonEvents:list', (_event, value?: string) =>
     desktop.commonEvents.listCommonEvents(workflowRoot, project(value)));

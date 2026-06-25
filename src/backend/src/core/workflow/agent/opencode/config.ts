@@ -9,6 +9,8 @@ import {
 } from "../agent-capabilities.ts";
 import {
   resolveAgentNodeCommand,
+  resolveShippedPath,
+  resolveShippedRoot,
 } from "../../../workspace-paths.ts";
 
 const RMMV_MCP_SERVER_PATH = "src/backend/src/core/rmmv/rmmv-mcp-server.ts";
@@ -110,7 +112,8 @@ function buildProviderConfig(
 }
 
 export function buildOpencodeRmmvMcpConfig(workflowRoot: string, enabled = true): Record<string, unknown> {
-  const rmmvServerPath = path.resolve(workflowRoot, RMMV_MCP_SERVER_PATH);
+  const rmmvServerPath = resolveShippedPath(workflowRoot, RMMV_MCP_SERVER_PATH);
+  const installRoot = resolveShippedRoot(workflowRoot);
   return {
     type: "local",
     command: [
@@ -120,6 +123,7 @@ export function buildOpencodeRmmvMcpConfig(workflowRoot: string, enabled = true)
     ],
     environment: {
       AGENT_RPG_ROOT: workflowRoot,
+      AGENT_RPG_INSTALL_ROOT: installRoot,
       AIWF_WORKFLOW_ROOT: workflowRoot,
       // command[0] 是宿主进程的 process.execPath；桌面端运行时它是 Electron 可执行文件，
       // 必须置位此变量才能让它以内置 Node 方式执行 MCP server，否则会当成应用启动而不连 stdio。

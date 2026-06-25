@@ -23,6 +23,7 @@ describe('build-rmmv-mcp-config', () => {
       assert.match(config.mcp.rmmv.command.at(-1), /rmmv-mcp-server\.ts$/);
       assert.deepEqual(config.mcp.rmmv.environment, {
         AGENT_RPG_ROOT: root,
+        AGENT_RPG_INSTALL_ROOT: root,
         AIWF_WORKFLOW_ROOT: root,
         ELECTRON_RUN_AS_NODE: '1',
       });

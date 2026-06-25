@@ -7,6 +7,7 @@ import {
   resolveFromWorkflowRoot,
   resolveOpencodeAgentsMdSource,
   resolveOpencodeSkillsSourceDir,
+  resolveShippedRoot,
   resolveWorkflowRoot,
 } from "../../workspace-paths.ts";
 import { loadAgentRegistry } from "./agent-registry.ts";
@@ -220,7 +221,8 @@ function listAgentRuntimeRules(workflowRoot: string): RuleSnapshot[] {
 
 function listAgentReferenceDocs(workflowRoot: string): RuleSnapshot[] {
   const out: RuleSnapshot[] = [];
-  const docsRoot = path.join(workflowRoot, "config", "agents", DEFAULT_AGENT_ID, "docs");
+  const shippedRoot = resolveShippedRoot(workflowRoot);
+  const docsRoot = path.join(shippedRoot, "config", "agents", DEFAULT_AGENT_ID, "docs");
   if (!fs.existsSync(docsRoot)) return out;
   const walk = (current: string) => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
@@ -231,7 +233,7 @@ function listAgentReferenceDocs(workflowRoot: string): RuleSnapshot[] {
         continue;
       }
       if (!entry.name.endsWith(".md")) continue;
-      const rel = path.relative(workflowRoot, abs).replace(/\\/g, "/");
+      const rel = path.relative(shippedRoot, abs).replace(/\\/g, "/");
       out.push({
         id: rel,
         title: entry.name.replace(/\.md$/, ""),

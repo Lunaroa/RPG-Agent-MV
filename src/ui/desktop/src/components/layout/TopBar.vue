@@ -46,6 +46,10 @@ async function openDocs() {
   }
 }
 
+function openTutorial() {
+  window.dispatchEvent(new Event('agent-rpg:onboarding-tour:start'));
+}
+
 const menus = computed<{ key: string; label: string; items: { key: string; label: string; shortcut?: string; action: MenuAction }[] }[]>(() => [
   { key: 'file', label: t('topbar.menu.file'), items: [
     { key: 'save', label: t('topbar.menu.save'), shortcut: 'Ctrl+S', action: () => emitEditorCommand('save') },
@@ -55,6 +59,7 @@ const menus = computed<{ key: string; label: string; items: { key: string; label
     { key: 'redo', label: t('topbar.menu.redo'), shortcut: 'Ctrl+Shift+Z', action: () => emitEditorCommand('redo') },
   ]},
   { key: 'help', label: t('topbar.menu.help'), items: [
+    { key: 'tutorial', label: t('topbar.menu.tutorial'), action: openTutorial },
     { key: 'docs', label: t('topbar.menu.docs'), action: openDocs },
   ]},
 ]);

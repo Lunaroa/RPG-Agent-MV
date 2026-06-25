@@ -6,6 +6,7 @@ import en from 'element-plus/es/locale/lang/en'
 import AppRail from './components/layout/AppRail.vue'
 import TopBar from './components/layout/TopBar.vue'
 import StatusBar from './components/layout/StatusBar.vue'
+import OnboardingTour from './components/onboarding/OnboardingTour.vue'
 import { useProjectStore } from './stores/project'
 import { useSettingsStore } from './stores/settings'
 import { useWorkbenchUiStore } from './stores/workbenchUi'
@@ -183,6 +184,7 @@ onUnmounted(() => {
         </main>
       </div>
       <StatusBar />
+      <OnboardingTour v-if="!booting && !bootError" />
     </div>
   </ElConfigProvider>
 </template>

@@ -29,6 +29,7 @@
               <h3>{{ t('settings.model.title') }}</h3>
               <div class="provider-actions">
                 <button class="workbench-button" data-ui-id="settings-manage-providers" @click="onManageProviders">{{ t('settings.model.manageProviders') }}</button>
+                <button class="workbench-button" data-ui-id="settings-sync-providers" :disabled="importPresetsLoading" @click="onSyncProviderSeeds">{{ importPresetsLoading ? t('settings.model.syncingProviders') : t('settings.model.syncProviders') }}</button>
               </div>
 
               <div v-if="importPresetsMessage" class="alert" :class="importPresetsError ? 'alert-error' : 'alert-success'">
@@ -61,8 +62,8 @@
                 <button class="workbench-button primary add-api-btn" data-ui-id="settings-add-api" :title="t('settings.model.addApiTitle')" @click="openAddProviderDialog">{{ t('settings.model.add') }}</button>
               </div>
 
-              <div v-if="displayedProviders.length" class="provider-card-list">
-                <article v-for="p in displayedProviders" :key="p.id" class="provider-card" :class="{ 'is-active': isProviderActive(p.id), 'is-expanded': expandedProviderId === p.id }" @click="onProviderCardClick(p)">
+              <div v-if="displayedProviders.length" class="provider-card-list" data-ui-id="settings-provider-card-list">
+                <article v-for="p in displayedProviders" :key="p.id" class="provider-card" :data-ui-id="`settings-provider-card-${p.id}`" :class="{ 'is-active': isProviderActive(p.id), 'is-expanded': expandedProviderId === p.id }" @click="onProviderCardClick(p)">
                   <header class="provider-card-header">
                     <div class="provider-card-title">
                       <strong>{{ providerDisplayName(p) }}</strong>
@@ -77,12 +78,12 @@
                     <div class="meta-row"><span class="meta-label">{{ t('settings.model.model') }}</span><span class="meta-value mono">{{ cardModelLabel(p) }}</span></div>
                   </div>
                   <footer class="provider-card-footer" @click.stop>
-                    <button class="workbench-button primary" :disabled="activatingProviderId === p.id" @click="onActivateProvider(p)">{{ activatingProviderId === p.id ? t('settings.model.setting') : t('settings.model.setDefault') }}</button>
+                    <button class="workbench-button primary" :data-ui-id="`settings-provider-set-default-${p.id}`" :disabled="activatingProviderId === p.id" @click="onActivateProvider(p)">{{ activatingProviderId === p.id ? t('settings.model.setting') : t('settings.model.setDefault') }}</button>
                     <button class="workbench-button" :disabled="testingProviderId === p.id" @click="onTestProviderCard(p)">{{ testingProviderId === p.id ? t('settings.model.testing') : t('settings.model.test') }}</button>
                     <button class="workbench-link" @click="toggleProviderExpand(p.id)">{{ expandedProviderId === p.id ? t('settings.model.collapse') : t('settings.model.edit') }}</button>
                     <button class="workbench-link danger" :disabled="deletingProviderId === p.id" @click="onDeleteProviderCard(p)">{{ deletingProviderId === p.id ? t('settings.model.deleting') : t('settings.model.delete') }}</button>
                   </footer>
-                  <div v-if="expandedProviderId === p.id" class="provider-card-body" @click.stop>
+                  <div v-if="expandedProviderId === p.id" class="provider-card-body" :data-ui-id="`settings-provider-card-body-${p.id}`" @click.stop>
                     <div class="provider-inline-form">
                       <div class="form-group">
                         <label class="form-label">API Key</label>
@@ -90,6 +91,7 @@
                           v-model="inlineCredentialValue"
                           type="password"
                           class="settings-input"
+                          :data-ui-id="`settings-provider-api-key-${p.id}`"
                           :placeholder="inlineApiKeyPlaceholder"
                           @blur="onInlineProviderConfigBlur"
                           @keydown.enter.prevent="onInlineProviderConfigBlur"
@@ -121,7 +123,7 @@
                             :empty-configured-hint="t('settings.model.fetchModelsFirst')"
                             @select="onBindingModelSelect"
                           />
-                          <button class="workbench-button" :disabled="fetchingModelsId === p.id || !canFetchModelsForCard(p)" @click="onFetchModelsForProvider(p)">{{ fetchingModelsId === p.id ? t('settings.model.fetchingModels') : t('settings.model.fetchModels') }}</button>
+                          <button class="workbench-button" :data-ui-id="`settings-provider-fetch-models-${p.id}`" :disabled="fetchingModelsId === p.id || !canFetchModelsForCard(p)" @click="onFetchModelsForProvider(p)">{{ fetchingModelsId === p.id ? t('settings.model.fetchingModels') : t('settings.model.fetchModels') }}</button>
                         </div>
                         <div v-if="fetchModelsMessage && expandedProviderId === p.id" class="form-hint" :class="fetchModelsOk ? 'fetch-ok' : 'fetch-err'">{{ fetchModelsMessage }}</div>
                         <div class="form-hint">{{ t('settings.model.fetchModelsHint') }}</div>
@@ -167,7 +169,7 @@
                     <div class="dialog-body">
                       <input v-model="addProviderSearch" data-ui-id="settings-add-provider-search" class="settings-input" :placeholder="t('settings.model.searchProviders')" />
                       <div v-if="filteredAvailableToAdd.length" class="add-provider-list">
-                        <button v-for="p in filteredAvailableToAdd" :key="p.id" type="button" class="add-provider-item" @click="onPickProviderToAdd(p)">
+                        <button v-for="p in filteredAvailableToAdd" :key="p.id" type="button" class="add-provider-item" :data-ui-id="`settings-add-provider-${p.id}`" @click="onPickProviderToAdd(p)">
                           <span class="add-provider-name">{{ providerDisplayName(p) }}</span>
                           <span class="add-provider-id mono">{{ p.id }}</span>
                           <span v-if="p.baseUrl" class="add-provider-url" :title="p.baseUrl">{{ p.baseUrl }}</span>

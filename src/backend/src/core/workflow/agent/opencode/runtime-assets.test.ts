@@ -34,7 +34,7 @@ test("ensureOpencodeRuntimeAssets copies AGENTS.md and writes static opencode.js
   roots.push(root);
   seedProductOpencode(root);
 
-  ensureOpencodeRuntimeAssets(root);
+  ensureOpencodeRuntimeAssets(root, root);
 
   const runtimeAgents = resolveOpencodeAgentsMdRuntime(root);
   assert.equal(fs.readFileSync(runtimeAgents, "utf8"), "# Agent rules\n");
@@ -59,7 +59,7 @@ test("buildOpencodeStaticConfig uses absolute paths", () => {
   roots.push(root);
   seedProductOpencode(root);
 
-  const config = buildOpencodeStaticConfig(root) as {
+  const config = buildOpencodeStaticConfig(root, root) as {
     instructions: string[];
     skills: { paths: string[] };
   };

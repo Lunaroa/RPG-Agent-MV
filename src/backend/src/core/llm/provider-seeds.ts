@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { resolveShippedPath } from "../workspace-paths.ts";
 import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
 import { ProviderDao } from "../db/dao/provider-dao.ts";
 import * as providerRegistry from "./provider-registry.ts";
@@ -49,7 +50,7 @@ export interface WriteProviderSeedFileResult {
 }
 
 function seedPath(workflowRoot: string): string {
-  return path.join(workflowRoot, PROVIDER_SEED_RELATIVE_PATH);
+  return resolveShippedPath(workflowRoot, PROVIDER_SEED_RELATIVE_PATH);
 }
 
 function stringValue(value: unknown): string {

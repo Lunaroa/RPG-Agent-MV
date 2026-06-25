@@ -22,15 +22,16 @@ function shouldRefreshFile(source: string, target: string): boolean {
   return fs.statSync(source).mtimeMs > fs.statSync(target).mtimeMs;
 }
 
-export function buildOpencodeStaticConfig(workflowRoot: string): Record<string, unknown> {
-  const preferences = resolveOpencodePersonalPreferencesPath(workflowRoot);
+export function buildOpencodeStaticConfig(installRoot: string, userDataRoot: string): Record<string, unknown> {
+  const preferences = resolveOpencodePersonalPreferencesPath(installRoot);
   if (!fs.existsSync(preferences)) {
     throw new Error(`Missing personal preferences file: ${preferences}`);
   }
-  const skillsDir = resolveOpencodeSkillsSourceDir(workflowRoot);
+  const skillsDir = resolveOpencodeSkillsSourceDir(installRoot);
   if (!fs.existsSync(skillsDir)) {
     throw new Error(`Missing opencode skills directory: ${skillsDir}`);
   }
+  void userDataRoot;
   return {
     $schema: "https://opencode.ai/config.json",
     instructions: [normalizeForJsonPath(preferences)],
@@ -40,14 +41,15 @@ export function buildOpencodeStaticConfig(workflowRoot: string): Record<string, 
   };
 }
 
-/** Materialize shipped opencode assets into project-local `.opencode/` before server start. */
-export function ensureOpencodeRuntimeAssets(workflowRoot: string): void {
-  const root = path.resolve(workflowRoot);
-  const configDir = resolveOpencodeConfigDir(root);
+/** Materialize shipped opencode assets into user-local `.opencode/` before server start. */
+export function ensureOpencodeRuntimeAssets(installRoot: string, userDataRoot: string): void {
+  const install = path.resolve(installRoot);
+  const userData = path.resolve(userDataRoot);
+  const configDir = resolveOpencodeConfigDir(userData);
   fs.mkdirSync(configDir, { recursive: true });
 
-  const agentsSource = resolveOpencodeAgentsMdSource(root);
-  const agentsTarget = resolveOpencodeAgentsMdRuntime(root);
+  const agentsSource = resolveOpencodeAgentsMdSource(install);
+  const agentsTarget = resolveOpencodeAgentsMdRuntime(userData);
   if (!fs.existsSync(agentsSource)) {
     throw new Error(`Missing opencode rules source file: ${agentsSource}`);
   }
@@ -55,7 +57,7 @@ export function ensureOpencodeRuntimeAssets(workflowRoot: string): void {
     fs.copyFileSync(agentsSource, agentsTarget);
   }
 
-  const staticConfig = buildOpencodeStaticConfig(root);
+  const staticConfig = buildOpencodeStaticConfig(install, userData);
   const staticConfigPath = path.join(configDir, "opencode.json");
   const next = `${JSON.stringify(staticConfig, null, 2)}\n`;
   const current = fs.existsSync(staticConfigPath) ? fs.readFileSync(staticConfigPath, "utf8") : "";
@@ -63,7 +65,7 @@ export function ensureOpencodeRuntimeAssets(workflowRoot: string): void {
     fs.writeFileSync(staticConfigPath, next, "utf8");
   }
 
-  const productConfigDir = resolveOpencodeProductConfigDir(root);
+  const productConfigDir = resolveOpencodeProductConfigDir(install);
   if (!fs.existsSync(productConfigDir)) {
     throw new Error(`Missing opencode product config directory: ${productConfigDir}`);
   }

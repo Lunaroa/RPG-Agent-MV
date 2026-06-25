@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 
 import { writeJson } from "../../rmmv/json.ts";
-import { resolveWorkflowRoot } from "../../workspace-paths.ts";
+import { resolveShippedPath, resolveWorkflowRoot } from "../../workspace-paths.ts";
 import * as providerRegistry from "../../llm/provider-registry.ts";
 import { materializeOpencodeEnv } from "../../llm/opencode/materialize-env.ts";
 import { buildEphemeralOpencodeProfile } from "../../llm/opencode/build-profile.ts";
@@ -814,8 +814,10 @@ function resolveAgentCwd(dispatch: DispatchResult): string {
 // 通过环境变量把工作流根与游戏目录告知 agent。正斜杠归一，Node 接受正斜杠路径。
 function buildAgentScopeEnv(dispatch: DispatchResult, agentCwd: string): Record<string, string> {
   const productRoot = dispatch.workflowRoot.replace(/\\/g, "/");
+  const installRoot = resolveShippedPath(dispatch.workflowRoot, ".").replace(/\\/g, "/");
   const env: Record<string, string> = {
     AGENT_RPG_ROOT: productRoot,
+    AGENT_RPG_INSTALL_ROOT: installRoot,
     AIWF_WORKFLOW_ROOT: productRoot,
     AIWF_PROJECT_DIR: agentCwd.replace(/\\/g, "/"),
     ...buildAgentOutputEnv(dispatch.workflowRoot),

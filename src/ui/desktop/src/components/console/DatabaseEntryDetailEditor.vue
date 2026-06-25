@@ -23,11 +23,13 @@ import {
   MV_TROOP_PAGE_SPANS,
   appendStringListItem,
   isMvStringListField,
+  MV_TERMS_LIST_PATHS,
   normalizeAnimationFrames,
   normalizeAnimationTimings,
   normalizeClassParamCurves,
   normalizeTroopPageConditions,
   normalizeStringList,
+  normalizeTermsArray,
   removeAnimationFrameCell,
   removeStringListItem,
   setAnimationFrameCellValue,
@@ -85,7 +87,7 @@ type DbRecord = Record<string, unknown>;
 type DbArrayRecord = Record<string, unknown>[];
 type CatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'assets'>;
 type ImageAssetKind = keyof EditorProjectCatalog['assets'];
-type ImagePickerMode = 'plain' | 'face' | 'character';
+type ImagePickerMode = 'plain' | 'face' | 'character' | 'icon';
 type ImageSelection = { name: string; index: number };
 
 interface SelectOption {
@@ -98,6 +100,7 @@ const props = defineProps<{
   group?: string;
   catalog: EditorProjectCatalog | null;
   schema?: RmmvDatabaseEntrySchema;
+  focusField?: string;
   loadImage?: (url: string) => Promise<HTMLImageElement | null>;
 }>();
 
@@ -125,7 +128,11 @@ const groupLabel = computed(() => {
   const key = String(props.group || '');
   return key ? databaseGroupLabel(key, language.value) : String(props.group || t('db.title'));
 });
-const schemaFields = computed(() => props.schema?.coreFields || []);
+const schemaFields = computed(() => {
+  const fields = props.schema?.coreFields || [];
+  if (!props.focusField) return fields;
+  return fields.filter((field) => field.path === props.focusField);
+});
 const references = computed(() => props.schema?.references || []);
 const schemaDriven = computed(() => schemaFields.value.length > 0);
 const localizedParamOptions = computed(() => localizedOptions(PARAM_OPTIONS));
@@ -144,6 +151,15 @@ const visibleSchemaFields = computed(() => (
     ? schemaFields.value.filter((field) => !ACTOR_IMAGE_FIELD_PATHS.has(field.path))
     : schemaFields.value
 ));
+const ACTOR_RM_BASIC_PATHS = ['id', 'name', 'nickname', 'classId', 'initialLevel', 'maxLevel', 'profile'] as const;
+const actorBasicFields = computed(() => schemaFields.value.filter((field) => (
+  ACTOR_RM_BASIC_PATHS.includes(field.path as typeof ACTOR_RM_BASIC_PATHS[number])
+)));
+const actorNoteField = computed(() => schemaFields.value.find((field) => field.path === 'note'));
+const actorEquipsField = computed(() => schemaFields.value.find((field) => field.path === 'equips'));
+const actorTraitsField = computed(() => schemaFields.value.find((field) => field.path === 'traits'));
+const actorProfileField = computed(() => schemaFields.value.find((field) => field.path === 'profile'));
+const actorBasicScalarFields = computed(() => actorBasicFields.value.filter((field) => field.path !== 'profile'));
 const actorImageSignature = computed(() => [
   props.group || '',
   props.catalog?.project || '',
@@ -360,6 +376,26 @@ function addStringListItem(path: string): void {
 
 function removeStringListItemAt(path: string, index: number): void {
   writePath(path, removeStringListItem(readPath(path), index, stringListReserveZero(path)));
+}
+
+function isTermsArrayField(field: RmmvDatabaseFieldSchema): boolean {
+  return props.group === 'Terms' && MV_TERMS_LIST_PATHS.has(field.path);
+}
+
+function isTypesListField(field: RmmvDatabaseFieldSchema): boolean {
+  return props.group === 'Types' && isMvStringListField(props.group, field.path);
+}
+
+function termsArrayValue(path: string): string[] {
+  return normalizeTermsArray(readPath(path), path);
+}
+
+function termsArrayCellLabel(path: string, index: number): string {
+  return localizedTermLabels.value[path]?.[index] || t('sf.itemN', { n: index + 1 });
+}
+
+function termsArrayGridClass(path: string): string {
+  return path === 'commands' ? 'rmmv-terms-grid--quad' : 'rmmv-terms-grid--pairs';
 }
 
 function isTermsMessagesField(field: RmmvDatabaseFieldSchema): boolean {
@@ -701,6 +737,29 @@ function systemImageAssetForPath(path: string): ImageAssetKind | null {
   return null;
 }
 
+function openIconPicker(): void {
+  openImagePicker(
+    { asset: 'system', mode: 'icon', title: t('db.chooseIcon'), name: 'IconSet', index: numberPathValue('iconIndex') },
+    (selection) => { writePath('iconIndex', selection.index); },
+  );
+}
+
+const iconPreviewStyle = computed(() => {
+  const idx = Math.max(0, Math.floor(numberPathValue('iconIndex')));
+  if (idx === 0) return null;
+  const iconSetAsset = imageAssets('system').find((a) => a.name === 'IconSet');
+  if (!iconSetAsset) return null;
+  const cell = 32;
+  const col = idx % 16;
+  const row = Math.floor(idx / 16);
+  return {
+    backgroundImage: `url("${iconSetAsset.url.replace(/"/g, '\\"')}")`,
+    backgroundSize: `${16 * cell}px auto`,
+    backgroundPosition: `-${col * cell}px -${row * cell}px`,
+    imageRendering: 'pixelated',
+  };
+});
+
 function isEnemyBattlerField(field: RmmvDatabaseFieldSchema): boolean {
   return isEnemyEditor.value && field.path === 'battlerName';
 }
@@ -928,8 +987,139 @@ function updateSound(index: number, key: string, value: unknown): void {
 </script>
 
 <template>
-  <div class="db-editor">
-    <section v-if="schemaDriven" class="editor-section">
+  <div class="db-editor db-editor--compact" :class="{ 'db-editor--actors-rm': isActorImageEditor }">
+    <section v-if="schemaDriven && isActorImageEditor" class="editor-section actor-rm-section">
+      <div class="actor-rm-grid">
+        <div class="actor-rm-left">
+          <div class="rm-panel">
+            <div class="rm-panel-title">{{ t('commonEvent.basicSettings') }}</div>
+            <div class="rm-rows">
+              <label v-for="field in actorBasicScalarFields" :key="field.path" class="rm-row">
+                <span>{{ fieldLabel(field) }}</span>
+                <select
+                  v-if="hasPrimitiveOptions(field)"
+                  :value="Number(primitiveValue(field))"
+                  :disabled="field.path === 'id'"
+                  @change="updatePrimitive(field, ($event.target as HTMLSelectElement).value)"
+                >
+                  <option v-for="option in primitiveOptions(field)" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+                <input
+                  v-else
+                  :type="inputType(field)"
+                  :value="primitiveValue(field)"
+                  :disabled="field.path === 'id'"
+                  @input="updatePrimitive(field, ($event.target as HTMLInputElement).value)"
+                />
+              </label>
+              <label v-if="actorProfileField" class="rm-row rm-row-multiline">
+                <span>{{ fieldLabel(actorProfileField) }}</span>
+                <textarea
+                  :value="String(primitiveValue(actorProfileField))"
+                  rows="2"
+                  @input="updatePrimitive(actorProfileField, ($event.target as HTMLTextAreaElement).value)"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div class="rm-panel">
+            <div class="rm-panel-title">{{ t('db.images') }}</div>
+            <div class="rm-image-row">
+              <button type="button" class="rm-image-slot" @click="openActorFacePicker">
+                <span>{{ t('db.faceGraphic') }}</span>
+                <canvas ref="facePreviewCanvas" width="48" height="48" />
+                <small>{{ imageValueLabel(stringValue('faceName')) }}</small>
+              </button>
+              <button type="button" class="rm-image-slot" @click="openActorCharacterPicker">
+                <span>{{ t('db.characterSprite') }}</span>
+                <canvas ref="characterPreviewCanvas" width="48" height="48" />
+                <small>{{ imageValueLabel(stringValue('characterName')) }}</small>
+              </button>
+              <button type="button" class="rm-image-slot" @click="openActorBattlerPicker">
+                <span>{{ t('db.svBattlerGraphic') }}</span>
+                <canvas ref="battlerPreviewCanvas" width="64" height="48" />
+                <small>{{ imageValueLabel(stringValue('battlerName')) }}</small>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="actorEquipsField" class="rm-panel">
+            <div class="rm-panel-head">
+              <div class="rm-panel-title">{{ fieldLabel(actorEquipsField) }}</div>
+              <button type="button" class="rm-mini-button" @click="replaceArray(actorEquipsField.path, [...arrayValue(actorEquipsField.path), 0])">{{ t('db.addSlot') }}</button>
+            </div>
+            <div v-if="!arrayValue(actorEquipsField.path).length" class="empty-note">{{ t('db.noEquipSlots') }}</div>
+            <table v-else class="rm-equip-table">
+              <tbody>
+                <tr v-for="(_equip, index) in arrayValue(actorEquipsField.path)" :key="`actor-equip-${index}`">
+                  <th scope="row">{{ equipmentSlotLabel(index) }}</th>
+                  <td>
+                    <select :value="Number(arrayValue(actorEquipsField.path)[index] || 0)" @change="updateArrayNumber(actorEquipsField.path, index, Number(($event.target as HTMLSelectElement).value))">
+                      <option v-for="option in equipmentOptions(index)" :key="option.value" :value="option.value">{{ option.label }}</option>
+                    </select>
+                  </td>
+                  <td class="rm-equip-actions">
+                    <button type="button" class="rm-icon-button danger" @click="removeArrayIndex(actorEquipsField.path, index)">×</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div v-if="actorTraitsField" class="actor-rm-right">
+          <div class="rm-panel rm-panel-fill">
+            <div class="rm-panel-head">
+              <div class="rm-panel-title">{{ fieldLabel(actorTraitsField) }}</div>
+              <button type="button" class="rm-mini-button" @click="addArrayObject(actorTraitsField.path, { code: 21, dataId: 0, value: 1 })">{{ t('cmdList.add') }}</button>
+            </div>
+            <div v-if="!arrayRecords(actorTraitsField.path).length" class="empty-note">{{ t('db.noTraits') }}</div>
+            <div v-else class="rm-trait-list">
+              <div v-for="(trait, index) in arrayRecords(actorTraitsField.path)" :key="`actor-trait-${index}`" class="rm-trait-row">
+                <select :value="numberValue(trait, 'code', 21)" :title="t('eventEditorDialog.type')" @change="updateArrayObject(actorTraitsField.path, index, 'code', Number(($event.target as HTMLSelectElement).value))">
+                  <option v-for="option in localizedTraitCodes" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+                <select
+                  v-if="traitTargetOptions(numberValue(trait, 'code', 21)).length"
+                  :value="numberValue(trait, 'dataId')"
+                  :title="t('db.target')"
+                  @change="updateArrayObject(actorTraitsField.path, index, 'dataId', Number(($event.target as HTMLSelectElement).value))"
+                >
+                  <option v-for="option in traitTargetOptions(numberValue(trait, 'code', 21))" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+                <input
+                  v-else
+                  type="number"
+                  :value="numberValue(trait, 'dataId')"
+                  :title="t('db.target')"
+                  @input="updateArrayObject(actorTraitsField.path, index, 'dataId', Number(($event.target as HTMLInputElement).value))"
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  :value="numberValue(trait, 'value', 1)"
+                  :title="t('db.value')"
+                  @input="updateArrayObject(actorTraitsField.path, index, 'value', Number(($event.target as HTMLInputElement).value))"
+                />
+                <button type="button" class="rm-icon-button danger" @click="removeArrayIndex(actorTraitsField.path, index)">×</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <label v-if="actorNoteField" class="rm-note">
+        <span>{{ fieldLabel(actorNoteField) }}</span>
+        <textarea
+          :value="String(primitiveValue(actorNoteField))"
+          rows="2"
+          @input="updatePrimitive(actorNoteField, ($event.target as HTMLTextAreaElement).value)"
+        />
+      </label>
+    </section>
+
+    <section v-else-if="schemaDriven" class="editor-section">
       <div class="section-title">
         <strong>{{ t('db.groupFields', { group: groupLabel }) }}</strong>
         <span>{{ schema?.fileName }} · {{ schema?.isArrayTable ? t('db.arrayTable') : t('db.documentTable') }}</span>
@@ -964,7 +1154,62 @@ function updateSound(index: number, key: string, value: unknown): void {
       </section>
       <div class="field-grid">
         <template v-for="field in visibleSchemaFields" :key="field.path">
-          <section v-if="isStringListField(field)" class="field full complex-editor string-list-editor">
+          <section v-if="isTermsArrayField(field)" class="field full complex-editor rmmv-terms-editor">
+            <div class="complex-title">
+              <span>{{ fieldLabel(field) }}</span>
+            </div>
+            <div class="rmmv-terms-grid" :class="termsArrayGridClass(field.path)">
+              <div
+                v-for="(_entry, index) in termsArrayValue(field.path)"
+                :key="`${field.path}-${index}`"
+                class="rmmv-terms-cell"
+              >
+                <label>
+                  <span>{{ termsArrayCellLabel(field.path, index) }}</span>
+                  <input
+                    :value="termsArrayValue(field.path)[index]"
+                    @input="updateStringListItem(field.path, index, ($event.target as HTMLInputElement).value)"
+                  />
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section v-else-if="isTypesListField(field)" class="field full complex-editor rmmv-type-editor">
+            <div class="complex-title">
+              <span>{{ fieldLabel(field) }}</span>
+              <button type="button" @click="addStringListItem(field.path)">{{ t('cmdList.add') }}</button>
+            </div>
+            <small v-if="stringListReserveZero(field.path)">{{ t('db.slot0Reserved') }}</small>
+            <div v-if="!stringListValue(field.path).length" class="empty-note">{{ t('db.noEntries') }}</div>
+            <div class="rmmv-type-name-list">
+              <div
+                v-for="(entry, index) in stringListValue(field.path)"
+                :key="`${field.path}-${index}`"
+                class="rmmv-type-row"
+              >
+                <span class="rmmv-type-id">{{ stringListRowLabel(field.path, index) }}</span>
+                <input
+                  type="text"
+                  class="rmmv-type-input"
+                  :value="entry"
+                  :disabled="stringListReserveZero(field.path) && index === 0"
+                  @input="updateStringListItem(field.path, index, ($event.target as HTMLInputElement).value)"
+                />
+                <button
+                  v-if="!(stringListReserveZero(field.path) && index === 0)"
+                  type="button"
+                  class="danger rmmv-type-delete"
+                  @click="removeStringListItemAt(field.path, index)"
+                >
+                  {{ t('cmdList.delete') }}
+                </button>
+                <span v-else class="rmmv-type-delete-placeholder" aria-hidden="true" />
+              </div>
+            </div>
+          </section>
+
+          <section v-else-if="isStringListField(field)" class="field full complex-editor string-list-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
               <button type="button" @click="addStringListItem(field.path)">{{ t('cmdList.add') }}</button>
@@ -997,11 +1242,29 @@ function updateSound(index: number, key: string, value: unknown): void {
               <small>{{ t('db.messageTemplateCount', { count: termsMessageEntries(field.path).length }) }}</small>
             </div>
             <div v-if="!termsMessageEntries(field.path).length" class="empty-note">{{ t('db.noMessageTemplates') }}</div>
-            <div v-for="message in termsMessageEntries(field.path)" :key="message.key" class="complex-row terms-message-row">
-              <label>
-                <span>{{ message.label }} <small>{{ message.key }}</small></span>
-                <input :value="message.value" @input="updateObjectField(field.path, message.key, ($event.target as HTMLInputElement).value)" />
-              </label>
+            <div v-else class="rmmv-terms-messages-scroll">
+              <table class="rmmv-terms-messages-table">
+                <thead>
+                  <tr>
+                    <th>{{ t('db.messageTypeCol') }}</th>
+                    <th>{{ t('db.messageTextCol') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="message in termsMessageEntries(field.path)" :key="message.key">
+                    <td class="rmmv-terms-messages-type">
+                      <span>{{ message.label }}</span>
+                      <small>{{ message.key }}</small>
+                    </td>
+                    <td>
+                      <input
+                        :value="message.value"
+                        @input="updateObjectField(field.path, message.key, ($event.target as HTMLInputElement).value)"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
             <details class="advanced-json">
               <summary>{{ t('db.advancedJson') }}</summary>
@@ -1628,6 +1891,15 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
             </section>
 
+          <label v-else-if="field.path === 'iconIndex'" class="field">
+            <span>{{ fieldLabel(field) }}</span>
+            <button type="button" class="image-picker-inline icon-pick-btn" @click="openIconPicker">
+              <span v-if="iconPreviewStyle" class="icon-preview-sprite" :style="iconPreviewStyle" />
+              <span v-else class="icon-preview-none">0</span>
+              <span class="icon-index-label">#{{ numberPathValue('iconIndex') }}</span>
+            </button>
+          </label>
+
           <label v-else-if="!isComplex(field) && fieldKind(field) !== 'boolean'" class="field" :class="{ full: field.path === 'note' || field.path === 'profile' || field.path === 'description' }">
             <span>{{ fieldLabel(field) }}</span>
             <textarea
@@ -1701,7 +1973,204 @@ function updateSound(index: number, key: string, value: unknown): void {
 .db-editor {
   container-type: inline-size;
   display: grid;
-  gap: 12px;
+  gap: 6px;
+}
+.db-editor--compact {
+  gap: 6px;
+}
+.db-editor--compact .editor-section {
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--console-border,#e4dcce);
+  border-radius: 6px;
+  background: var(--console-paper,#fffdfa);
+}
+.db-editor--compact .section-title { font-size: 10px; }
+.db-editor--compact .section-title strong { font-size: 11px; }
+.db-editor--compact .field {
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 6px;
+}
+.db-editor--compact .field.rm-row-multiline,
+.db-editor--compact .field.full:not(.complex-editor) {
+  align-items: start;
+}
+.db-editor--compact input:not([type="checkbox"]),
+.db-editor--compact select,
+.db-editor--compact textarea {
+  padding: 3px 6px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+.db-editor--compact textarea { min-height: 44px; line-height: 1.35; }
+.db-editor--compact button {
+  padding: 3px 8px;
+  font-size: 10px;
+  border-radius: 4px;
+}
+.db-editor--compact .complex-editor {
+  gap: 4px;
+  padding: 6px;
+  border-radius: 6px;
+}
+.db-editor--compact .complex-row {
+  gap: 4px;
+  padding: 4px;
+  border-radius: 4px;
+}
+.db-editor--compact .complex-title { gap: 6px; font-size: 10px; }
+.db-editor--actors-rm .editor-section.actor-rm-section {
+  padding: 4px;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+}
+.actor-rm-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 4px;
+  align-items: stretch;
+  min-height: 0;
+}
+.actor-rm-left,
+.actor-rm-right {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+.actor-rm-right {
+  min-height: 0;
+}
+.rm-panel {
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--console-border,#e4dcce);
+  border-radius: 4px;
+  background: var(--console-paper-soft,#faf5ec);
+}
+.rm-panel-fill {
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.rm-panel-title {
+  color: var(--console-text-soft,#5a5247);
+  font-size: 10px;
+  font-weight: 700;
+}
+.rm-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.rm-rows { display: grid; gap: 3px; }
+.rm-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 4px 6px;
+  align-items: center;
+  color: var(--console-text-muted,#9a8e7e);
+  font-size: 10px;
+}
+.rm-row-multiline { align-items: start; }
+.rm-row>span { line-height: 1.2; }
+.rm-image-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.rm-image-slot {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--console-border,#e4dcce);
+  border-radius: 4px;
+  background: var(--console-paper,#fffdfa);
+  color: var(--console-text-muted,#9a8e7e);
+  font-size: 9px;
+  cursor: pointer;
+}
+.rm-image-slot:hover { border-color: var(--console-accent,#be5630); }
+.rm-image-slot>span { font-weight: 650; color: var(--console-text-soft,#5a5247); }
+.rm-image-slot canvas {
+  width: 100%;
+  max-width: 64px;
+  height: auto;
+  border: 1px solid var(--console-border-strong,#ddd3c2);
+  border-radius: 3px;
+  background: #d7d0c5;
+  image-rendering: pixelated;
+}
+.rm-image-slot small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-equip-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+.rm-equip-table th,
+.rm-equip-table td {
+  padding: 2px 3px;
+  border-top: 1px solid var(--console-border,#e4dcce);
+  vertical-align: middle;
+}
+.rm-equip-table th {
+  width: 58px;
+  color: var(--console-text-muted,#9a8e7e);
+  font-weight: 600;
+  text-align: left;
+}
+.rm-equip-table select { width: 100%; }
+.rm-equip-actions { width: 22px; text-align: right; }
+.rm-trait-list {
+  min-height: 0;
+  max-height: 320px;
+  display: grid;
+  gap: 3px;
+  overflow: auto;
+}
+.rm-trait-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) 44px 22px;
+  gap: 2px;
+  align-items: center;
+}
+.rm-mini-button {
+  padding: 2px 6px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.rm-icon-button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+}
+.rm-icon-button.danger { color: var(--app-danger,#b42318); }
+.rm-note {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 4px 6px;
+  align-items: start;
+  padding: 4px;
+  border: 1px solid var(--console-border,#e4dcce);
+  border-radius: 4px;
+  background: var(--console-paper-soft,#faf5ec);
+  color: var(--console-text-muted,#9a8e7e);
+  font-size: 10px;
 }
 .editor-section {
   display: grid;
@@ -1793,24 +2262,30 @@ function updateSound(index: number, key: string, value: unknown): void {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.icon-pick-btn { display: inline-flex; align-items: center; gap: 6px; }
+.icon-preview-sprite { flex-shrink: 0; width: 32px; height: 32px; image-rendering: pixelated; }
+.icon-preview-none { width: 32px; height: 32px; display: grid; place-items: center; background: var(--app-bg-sunken, #f5f3ef); color: var(--app-text-muted, #888); font-size: 11px; border-radius: 4px; }
+.icon-index-label { font-variant-numeric: tabular-nums; }
 .image-field-editor {
   align-content: start;
 }
-.field-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
-.field { min-width: 0; display: grid; gap: 4px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
+.field-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
+.field { min-width: 0; display: grid; grid-template-columns: 72px minmax(0,1fr); align-items: center; gap: 4px 6px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
 .field.full { grid-column: 1 / -1; }
+.field:has(textarea) { align-items: start; }
+.field:has(textarea)>span { padding-top: 4px; }
 .check-field { display: flex; align-items: center; gap: 7px; color: var(--console-text-soft,#5a5247); font-size: 11px; }
 input:not([type="checkbox"]),select,textarea {
   box-sizing: border-box;
   min-width: 0;
   width: 100%;
   border: 1px solid var(--console-border-strong,#ddd3c2);
-  border-radius: 7px;
+  border-radius: 4px;
   background: var(--console-paper,#fffdfa);
   color: var(--console-text,#211d17);
-  padding: 7px 9px;
+  padding: 3px 6px;
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
 }
 button {
   width: fit-content;
@@ -1859,10 +2334,10 @@ textarea { resize: vertical; line-height: 1.45; }
 .reference-row b { color: var(--console-text-soft,#5a5247); font-weight: 650; }
 .reference-row small { grid-column: 1 / -1; color: var(--console-text-muted,#9a8e7e); line-height: 1.4; }
 .complex-editor {
-  gap: 8px;
-  padding: 10px;
+  gap: 4px;
+  padding: 6px;
   border: 1px solid var(--console-border,#e4dcce);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--console-paper,#fffdfa);
 }
 .complex-title {
@@ -1880,11 +2355,11 @@ textarea { resize: vertical; line-height: 1.45; }
 .complex-row {
   display: grid;
   grid-template-columns: repeat(4,minmax(0,1fr)) auto;
-  gap: 8px;
+  gap: 4px;
   align-items: end;
-  padding: 8px;
+  padding: 4px;
   border: 1px solid var(--console-border,#e4dcce);
-  border-radius: 7px;
+  border-radius: 4px;
   background: var(--console-paper-soft,#faf5ec);
 }
 .complex-row label { min-width: 0; display: grid; gap: 4px; }
@@ -1995,6 +2470,120 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 .terms-section { display: grid; gap: 6px; }
 .terms-section strong { color: var(--console-text-soft,#5a5247); font-size: 11px; }
+.rmmv-terms-grid {
+  display: grid;
+  gap: 6px 10px;
+}
+.rmmv-terms-grid--pairs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rmmv-terms-grid--quad { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rmmv-terms-cell label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.rmmv-terms-cell label span {
+  color: var(--console-text-muted,#9a8e7e);
+  font-size: 10px;
+  line-height: 1.3;
+}
+.rmmv-terms-cell input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 24px;
+  color: var(--console-text, #211d17);
+  background: var(--console-paper, #fffdfa);
+}
+.rmmv-terms-messages-scroll {
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  border: 1px solid var(--console-border,#e4dcce);
+  border-radius: 6px;
+  background: var(--console-paper,#fffdfa);
+}
+.rmmv-terms-messages-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.rmmv-terms-messages-table th,
+.rmmv-terms-messages-table td {
+  border-bottom: 1px solid var(--console-border,#e4dcce);
+  padding: 5px 8px;
+  vertical-align: middle;
+}
+.rmmv-terms-messages-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--console-paper-soft,#faf5ec);
+  color: var(--console-text-soft,#5a5247);
+  font-weight: 650;
+  text-align: left;
+}
+.rmmv-terms-messages-type {
+  width: 38%;
+  min-width: 120px;
+  color: var(--console-text-soft,#5a5247);
+}
+.rmmv-terms-messages-type small {
+  display: block;
+  margin-top: 2px;
+  color: var(--console-text-muted,#9a8e7e);
+  font-size: 10px;
+  font-weight: 500;
+}
+.rmmv-terms-messages-table td input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 24px;
+  color: var(--console-text, #211d17);
+  background: var(--console-paper, #fffdfa);
+}
+.field.full.complex-editor.rmmv-type-editor,
+.field.full.complex-editor.rmmv-terms-editor,
+.field.full.complex-editor.terms-message-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.rmmv-type-name-list {
+  border: 1px solid var(--console-border,#e4dcce);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--console-paper,#fffdfa);
+}
+.rmmv-type-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--console-border,#e4dcce);
+}
+.rmmv-type-row:last-child { border-bottom: 0; }
+.rmmv-type-id {
+  font-family: var(--app-font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--console-accent,#be5630);
+}
+.rmmv-type-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  box-sizing: border-box;
+  color: var(--console-text, #211d17);
+  background: var(--console-paper, #fffdfa);
+}
+.rmmv-type-delete {
+  padding: 3px 8px;
+  font-size: 10px;
+}
+.rmmv-type-delete-placeholder {
+  width: 44px;
+  flex-shrink: 0;
+}
 .class-param-table {
   max-width: 100%;
   overflow: auto;
@@ -2049,7 +2638,10 @@ textarea { resize: vertical; line-height: 1.45; }
   .check-grid { grid-template-columns: 1fr; }
 }
 @container (max-width: 640px) {
-  .editor-section { padding: 10px; }
+  .actor-rm-grid { grid-template-columns: 1fr; }
+  .rm-image-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .rm-trait-list { max-height: none; }
+  .editor-section { padding: 6px; }
   .section-title,
   .complex-title {
     align-items: flex-start;
@@ -2058,6 +2650,8 @@ textarea { resize: vertical; line-height: 1.45; }
     flex: 1 1 100%;
     order: 3;
   }
+  .rmmv-terms-grid--pairs { grid-template-columns: 1fr; }
+  .rmmv-terms-grid--quad { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .field-grid,
   .actor-image-grid,
   .reference-row,

@@ -4,6 +4,7 @@ import path from "path";
 import { ProviderDao } from "../../db/dao/provider-dao.ts";
 import {
   resolveAgentsRegistryPath,
+  resolveWorkflowRelativePath,
   resolveWorkflowRoot,
 } from "../../workspace-paths.ts";
 import { getConfiguredDatabasePath } from "../../db/pool.ts";
@@ -180,7 +181,10 @@ function loadAgentRegistry(options?: RegistryOptions | null): Registry {
     options?.registryPath || resolveAgentsRegistryPath(workflowRoot),
   );
   const registry = readJsonCompatibleYaml(registryPath) as Record<string, unknown>;
-  const profilePath: string = resolveFromRoot(workflowRoot, (registry.providerProfilesFile as string) || "config/api-profiles/profiles.yaml") || "";
+  const profilePath: string = resolveWorkflowRelativePath(
+    workflowRoot,
+    (registry.providerProfilesFile as string) || "config/api-profiles/profiles.yaml",
+  );
   const profileDocument = fs.existsSync(profilePath)
     ? readJsonCompatibleYaml(profilePath) as Record<string, unknown>
     : { profiles: {} };
@@ -188,7 +192,7 @@ function loadAgentRegistry(options?: RegistryOptions | null): Registry {
   const dynamicProfileIds: string[] = mergeDynamicProviderProfiles(profiles, registry.defaultEnvFile as string | null);
   const agents: Record<string, AgentConfig> = {};
   for (const entry of (registry.agents || []) as RegistryEntry[]) {
-    const agentPath: string = resolveFromRoot(workflowRoot, entry.path) || path.join(workflowRoot, entry.path);
+    const agentPath: string = resolveWorkflowRelativePath(workflowRoot, entry.path);
     const agent = readJsonCompatibleYaml(agentPath) as AgentConfig;
     const defaultProfileId: string | null = (agent.runtime && agent.runtime.defaultProfile) || entry.defaultProfile || null;
     const escalationProfileIds: string[] = [
@@ -204,9 +208,11 @@ function loadAgentRegistry(options?: RegistryOptions | null): Registry {
       registryEntry: entry,
       paths: {
         config: agentPath,
-        skills: (agent.skills || []).map((skillPath: string) => resolveFromRoot(workflowRoot, skillPath)).filter((p: string | null): p is string => p !== null),
-        memory: (agent.memory || []).map((memoryPath: string) => resolveFromRoot(workflowRoot, memoryPath)).filter((p: string | null): p is string => p !== null),
-        workspace: agent.workspace && agent.workspace.root ? resolveFromRoot(workflowRoot, agent.workspace.root) : null
+        skills: (agent.skills || []).map((skillPath: string) => resolveWorkflowRelativePath(workflowRoot, skillPath)),
+        memory: (agent.memory || []).map((memoryPath: string) => resolveWorkflowRelativePath(workflowRoot, memoryPath)),
+        workspace: agent.workspace && agent.workspace.root
+          ? resolveWorkflowRelativePath(workflowRoot, agent.workspace.root)
+          : null
       },
       runtime: {
         ...(agent.runtime || {}),
@@ -221,7 +227,7 @@ function loadAgentRegistry(options?: RegistryOptions | null): Registry {
     version: (registry.version as number) || 1,
     workflowRoot,
     registryPath,
-    runtimeRoot: resolveFromRoot(workflowRoot, (registry.runtimeRoot as string) || "runtime") || path.join(workflowRoot, "runtime"),
+    runtimeRoot: resolveWorkflowRelativePath(workflowRoot, (registry.runtimeRoot as string) || "runtime"),
     defaultEnvFile: (registry.defaultEnvFile as string) || null,
     profilePath,
     profiles,
@@ -396,7 +402,7 @@ function readJsonCompatibleYaml(filePath: string): unknown {
 
 function resolveFromRoot(workflowRoot: string, value: string | null | undefined): string | null {
   if (!value) return null;
-  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(workflowRoot, value);
+  return resolveWorkflowRelativePath(workflowRoot, value);
 }
 
 export {

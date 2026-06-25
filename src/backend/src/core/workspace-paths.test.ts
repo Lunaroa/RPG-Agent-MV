@@ -3,6 +3,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  resolveFromWorkflowRoot,
   resolveInstallRoot,
   resolveOpencodeAgentsMdRuntime,
   resolveOpencodeAgentsMdSource,
@@ -12,6 +13,7 @@ import {
   resolveOpencodeSkillsDir,
   resolveOpencodeSkillsSourceDir,
   resolveUserDataRoot,
+  resolveWorkflowRelativePath,
 } from "./workspace-paths.ts";
 
 const WORKFLOW_ROOT = path.resolve("/tmp/app-root");
@@ -89,6 +91,31 @@ test("opencode config and skills stay product anchored", () => {
   assert.equal(resolveOpencodeAgentsMdRuntime(WORKFLOW_ROOT), path.join(WORKFLOW_ROOT, ".opencode", "AGENTS.md"));
   assert.equal(resolveOpencodeSkillsSourceDir(WORKFLOW_ROOT), path.join(WORKFLOW_ROOT, "config", "opencode", "skills"));
   assert.equal(resolveOpencodeSkillsDir(WORKFLOW_ROOT), path.join(WORKFLOW_ROOT, ".opencode", "skills"));
+});
+
+test("shipped config resolves from install root while runtime stays in user data", () => {
+  const install = path.resolve("/tmp/app-install");
+  const userData = path.resolve("/tmp/app-userdata");
+  const agentRel = "config/agents/default/agent.yaml";
+  withEnv({
+    AGENT_RPG_INSTALL_ROOT: install,
+    AGENT_RPG_ROOT: userData,
+    AGENT_RPG_OPENCODE_BIN: undefined,
+    AGENT_RPG_RESOURCES_PATH: undefined,
+  }, () => {
+    assert.equal(
+      resolveWorkflowRelativePath(userData, agentRel),
+      path.join(install, agentRel),
+    );
+    assert.equal(
+      resolveFromWorkflowRoot(userData, "config/capabilities/tool-manifest.json"),
+      path.join(install, "config", "capabilities", "tool-manifest.json"),
+    );
+    assert.equal(
+      resolveWorkflowRelativePath(userData, "runtime"),
+      path.join(userData, "runtime"),
+    );
+  });
 });
 
 test("packaged install and user data roots split via env", () => {

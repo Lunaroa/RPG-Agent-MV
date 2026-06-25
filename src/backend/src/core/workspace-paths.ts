@@ -116,7 +116,69 @@ export function resolveWritablePath(userDataRoot: string, rel: string): string {
   return path.join(path.resolve(userDataRoot), rel);
 }
 
+function normalizeRelativePath(rel: string): string {
+  return rel.replace(/\\/g, "/");
+}
+
+function isWritableWorkflowRelative(rel: string): boolean {
+  const normalized = normalizeRelativePath(rel);
+  return normalized === "runtime"
+    || normalized.startsWith("runtime/")
+    || normalized.startsWith(".opencode/");
+}
+
+function isShippedConfigRelative(rel: string): boolean {
+  return normalizeRelativePath(rel).startsWith("config/");
+}
+
+/**
+ * Resolve read paths relative to workflow layout.
+ * Shipped config is read from install root; runtime state stays under user data.
+ */
+export function resolveWorkflowRelativePath(workflowRoot: string, rel: string): string {
+  if (!rel) throw new Error("resolveWorkflowRelativePath requires a relative path");
+  if (path.isAbsolute(rel)) return path.normalize(rel);
+
+  const userData = path.resolve(workflowRoot);
+  if (isWritableWorkflowRelative(rel)) {
+    return path.join(userData, rel);
+  }
+
+  if (isShippedConfigRelative(rel)) {
+    const userPath = path.join(userData, rel);
+    if (fs.existsSync(userPath)) return userPath;
+    return resolveShippedPath(workflowRoot, rel);
+  }
+
+  return path.join(userData, rel);
+}
+
+/**
+ * Ensure a user-writable copy of a shipped config file exists under user data.
+ */
+export function ensureWritableWorkflowFile(workflowRoot: string, rel: string): string {
+  if (path.isAbsolute(rel)) return path.normalize(rel);
+
+  const userData = path.resolve(workflowRoot);
+  const target = path.join(userData, rel);
+  if (fs.existsSync(target)) return target;
+
+  const shipped = resolveShippedPath(workflowRoot, rel);
+  if (!fs.existsSync(shipped)) {
+    throw new Error(
+      `缺少配置文件: ${rel}；安装目录中未找到 ${shipped}。请重新安装应用。`,
+    );
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(shipped, target);
+  return target;
+}
+
 export function resolveFromWorkflowRoot(workflowRoot: string, rel: string): string {
+  if (path.isAbsolute(rel)) return path.normalize(rel);
+  if (isShippedConfigRelative(rel)) {
+    return resolveShippedPath(workflowRoot, rel);
+  }
   return path.resolve(workflowRoot, rel);
 }
 

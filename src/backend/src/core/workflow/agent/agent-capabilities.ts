@@ -4,6 +4,7 @@ import path from "node:path";
 import { isOpencodeOnlyMode } from "../../../../../contract/opencode-only.ts";
 import { DEFAULT_OPENCODE_TOOLS } from "../../llm/opencode/build-profile.ts";
 import {
+  ensureWritableWorkflowFile,
   resolveFromWorkflowRoot,
   resolveOpencodeAgentsMdSource,
   resolveOpencodeSkillsSourceDir,
@@ -550,8 +551,9 @@ export function getAgentCapabilitiesSnapshot(
 function getAgentConfigPath(workflowRoot: string): string {
   const registry = loadAgentRegistry({ workflowRoot });
   const agent = registry.agents[DEFAULT_AGENT_ID];
-  if (!agent?.paths?.config) throw new Error("Default executor config not found");
-  return agent.paths.config;
+  const rel = agent?.registryEntry?.path;
+  if (!rel) throw new Error("Default executor config not found");
+  return ensureWritableWorkflowFile(workflowRoot, rel);
 }
 
 export function updateAgentToolAllow(

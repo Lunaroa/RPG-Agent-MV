@@ -17,6 +17,12 @@ import {
   normalizeWorkspaceSettings,
 } from '../src/utils/workspaceSettings.ts';
 
+export interface AppRoots {
+  installRoot: string;
+  userDataRoot: string;
+  layoutMigrated?: string[];
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -206,10 +212,8 @@ export function readWorkspaceWindowOptions(): {
 }
 
 // 动态加载后端模块
-async function loadBackendModules() {
-  // __dirname 在构建后是 RPG-Agent-MV/ui/desktop/dist-electron
-  // backend 在 RPG-Agent-MV/src/backend，从 dist-electron 上溯 ../../../backend
-  const corePath = path.resolve(__dirname, '../../../backend/src/core');
+async function loadBackendModules(roots: AppRoots) {
+  const corePath = path.resolve(roots.installRoot, 'src/backend/src/core');
   
   console.log('[ipc] Loading backend modules from:', corePath);
   
@@ -252,9 +256,18 @@ async function loadBackendModules() {
   exists = jsonModule.exists;
 
   const bootstrapModule = await import(new URL('db/bootstrap.ts', coreUrl).href);
-  await bootstrapModule.bootstrapDatabase(workflowRoot);
-  await llm.ensureProviderSeedsInitialized(workflowRoot);
-  await llm.refreshProviderSeedCatalogFields(workflowRoot);
+  await bootstrapModule.bootstrapDatabase(roots.userDataRoot);
+  await llm.ensureProviderSeedsInitialized(roots.userDataRoot);
+  await llm.refreshProviderSeedCatalogFields(roots.userDataRoot);
+
+  if (roots.layoutMigrated && roots.layoutMigrated.length > 0) {
+    const layoutModule = await import(new URL('desktop/user-data-layout.ts', coreUrl).href);
+    layoutModule.recordUserDataLayoutMetadata(
+      roots.userDataRoot,
+      roots.installRoot,
+      roots.layoutMigrated,
+    );
+  }
 
   desktop = {
     project: await import(new URL('desktop/project-service.ts', coreUrl).href),
@@ -280,7 +293,7 @@ async function loadBackendModules() {
     placementQueue: await import(new URL('desktop/placement-queue-service.ts', coreUrl).href),
   };
   const sessionRuntimeModule = await import(new URL('desktop/agent-session-runtime.ts', coreUrl).href);
-  agentSessionRuntime = new sessionRuntimeModule.AgentSessionRuntime(workflowRoot);
+  agentSessionRuntime = new sessionRuntimeModule.AgentSessionRuntime(roots.userDataRoot);
   await agentSessionRuntime.initialize();
 }
 
@@ -789,10 +802,10 @@ function getMapLibraryScreenshotUrl(root: string, assetId: string): string {
   return path.join(root, 'runtime', 'screenshots', `${assetId}.png`);
 }
 
-export async function initializeIpcHandlers(root: string): Promise<void> {
-  workflowRoot = root;
-  
-  await loadBackendModules();
+export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
+  workflowRoot = roots.userDataRoot;
+
+  await loadBackendModules(roots);
   registerAssetProtocol();
   
   registerSessionIpcHandlers(ipcMain, agentSessionRuntime, {

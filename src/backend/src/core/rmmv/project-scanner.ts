@@ -113,16 +113,41 @@ interface ScanResult {
   audit: { summary: FindingSummary; findings: Finding[] };
 }
 
-export function scanProject(projectRoot: string): ScanResult {
-  const root: string = path.resolve(projectRoot);
-  const dataDir: string = resolveDataDir(root);
-  const system: Record<string, unknown> = readOptional(path.join(dataDir, "System.json"), {});
-  const mapInfos: unknown[] = readOptional(path.join(dataDir, "MapInfos.json"), []);
-  const commonEventsRaw: unknown[] = readOptional(path.join(dataDir, "CommonEvents.json"), []);
+export type ProjectJsonReader = (fileName: string) => unknown | undefined;
+
+export interface ScanProjectOptions {
+  includeUnnamedEntries?: boolean;
+}
+
+export function scanProject(projectRoot: string, options?: ScanProjectOptions): ScanResult {
+  const root = path.resolve(projectRoot);
+  const dataDir = resolveDataDir(root);
+  return scanProjectWithReader(root, (fileName) => {
+    const filePath = path.join(dataDir, fileName);
+    if (!exists(filePath)) return undefined;
+    return readJson(filePath);
+  }, options);
+}
+
+export function scanProjectWithReader(
+  projectRoot: string,
+  readFile: ProjectJsonReader,
+  options: ScanProjectOptions = {},
+): ScanResult {
+  const root = path.resolve(projectRoot);
+  const dataDir = resolveDataDir(root);
+  const includeUnnamed = Boolean(options.includeUnnamedEntries);
+  const readOptionalFromReader = <T>(fileName: string, fallback: T): T => {
+    const value = readFile(fileName);
+    return value === undefined ? fallback : (value as T);
+  };
+  const system: Record<string, unknown> = readOptionalFromReader("System.json", {});
+  const mapInfos: unknown[] = readOptionalFromReader("MapInfos.json", []);
+  const commonEventsRaw: unknown[] = readOptionalFromReader("CommonEvents.json", []);
   const names: NameIndex = buildNameIndex(system, commonEventsRaw);
-  const maps: MapSummary[] = scanMaps(dataDir, mapInfos, names);
+  const maps: MapSummary[] = scanMaps(readFile, mapInfos, names);
   const commonEvents: CommonEventSummary[] = summarizeCommonEvents(commonEventsRaw, names);
-  const database: Record<string, DatabaseEntry> = summarizeDatabase(dataDir);
+  const database: Record<string, DatabaseEntry> = summarizeDatabase(readFile, includeUnnamed);
   const audit = auditProject({ root, dataDir, system, mapInfos, maps, commonEvents, names });
 
   return {
@@ -131,8 +156,8 @@ export function scanProject(projectRoot: string): ScanResult {
     dataDir,
     engine: "rpg-maker-mv",
     database,
-    switches: summarizeNamedList((system as { switches?: string[] }).switches || []),
-    variables: summarizeNamedList((system as { variables?: string[] }).variables || []),
+    switches: summarizeNamedList((system as { switches?: string[] }).switches || [], includeUnnamed),
+    variables: summarizeNamedList((system as { variables?: string[] }).variables || [], includeUnnamed),
     commonEvents,
     maps,
     audit
@@ -141,10 +166,6 @@ export function scanProject(projectRoot: string): ScanResult {
 
 export function resolveDataDir(root: string): string {
   return resolveRmmvDataDir(root);
-}
-
-function readOptional<T>(filePath: string, fallback: T): T {
-  return exists(filePath) ? readJson(filePath) as T : fallback;
 }
 
 function buildNameIndex(system: Record<string, unknown>, commonEventsRaw: unknown[]): NameIndex {
@@ -159,10 +180,10 @@ function buildNameIndex(system: Record<string, unknown>, commonEventsRaw: unknow
   };
 }
 
-function summarizeNamedList(list: string[]): { id: number; name: string }[] {
+function summarizeNamedList(list: string[], includeUnnamed = false): { id: number; name: string }[] {
   return (list || [])
     .map((name, id) => ({ id, name: name || "" }))
-    .filter((entry) => entry.id > 0 && entry.name);
+    .filter((entry) => entry.id > 0 && (includeUnnamed || entry.name));
 }
 
 interface MapInfoEntry {
@@ -172,7 +193,7 @@ interface MapInfoEntry {
   order?: number;
 }
 
-function scanMaps(dataDir: string, mapInfos: unknown[], names: NameIndex): MapSummary[] {
+function scanMaps(readFile: ProjectJsonReader, mapInfos: unknown[], names: NameIndex): MapSummary[] {
   const mapEntries: MapEntry[] = ((mapInfos || []) as MapInfoEntry[])
     .filter(Boolean)
     .map((info) => ({
@@ -184,8 +205,8 @@ function scanMaps(dataDir: string, mapInfos: unknown[], names: NameIndex): MapSu
     }));
 
   return mapEntries.map((entry) => {
-    const filePath: string = path.join(dataDir, entry.fileName);
-    if (!exists(filePath)) {
+    const mapData = readFile(entry.fileName);
+    if (mapData === undefined) {
       return {
         ...entry,
         exists: false,
@@ -197,7 +218,7 @@ function scanMaps(dataDir: string, mapInfos: unknown[], names: NameIndex): MapSu
       };
     }
 
-    const map = readJson(filePath) as { width: number; height: number; tilesetId: number; scrollType?: number; events: unknown[] };
+    const map = mapData as { width: number; height: number; tilesetId: number; scrollType?: number; events: unknown[] };
     const events: MapEventSummary[] = (map.events || [])
       .filter(Boolean)
       .map((event) => summarizeMapEvent(event, names));
@@ -423,17 +444,18 @@ function commonEventTrigger(code: number): string {
   return `trigger-${code}`;
 }
 
-function summarizeDatabase(dataDir: string): Record<string, DatabaseEntry> {
+function summarizeDatabase(
+  readFile: ProjectJsonReader,
+  includeUnnamed = false,
+): Record<string, DatabaseEntry> {
   const result: Record<string, DatabaseEntry> = {};
   const tables = new Map<string, unknown>();
   for (const schema of listRmmvDatabaseSchemas()) {
-    const filePath: string = path.join(dataDir, schema.fileName);
-    tables.set(schema.group, exists(filePath) ? readJson(filePath) : null);
+    tables.set(schema.group, readFile(schema.fileName) ?? null);
   }
   for (const schema of listRmmvDatabaseSchemas()) {
     const data = tables.get(schema.group);
-    const filePath: string = path.join(dataDir, schema.fileName);
-    if (!exists(filePath)) {
+    if (data === null) {
       result[schema.group] = { exists: false, count: 0, named: [] };
       continue;
     }
@@ -450,7 +472,7 @@ function summarizeDatabase(dataDir: string): Record<string, DatabaseEntry> {
       exists: true,
       count: entries.length,
       named: entries
-        .filter((entry) => entry.name)
+        .filter((entry) => Number(entry.id) > 0 && (includeUnnamed || entry.name))
         .slice(0, 80)
         .map((entry) => databaseNamedEntry(Number(entry.id), String(entry.name || ""), summarizeDatabasePreview(schema.group, entry, tables)))
     };

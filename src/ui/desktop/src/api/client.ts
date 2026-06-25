@@ -169,6 +169,7 @@ declare global {
         getEntry(request: unknown, project?: string): Promise<unknown>;
         updateEntry(request: unknown, project?: string): Promise<unknown>;
         createEntry(request: unknown, project?: string): Promise<unknown>;
+        resetEntry(request: unknown, project?: string): Promise<unknown>;
       };
       commonEvents: {
         list(project?: string): Promise<unknown>;
@@ -1078,6 +1079,9 @@ export const projectManagement = {
   },
   createEntry(request: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectManagement.createEntry(toPlain(request), project) as Promise<ProjectManagedEntry>;
+  },
+  resetEntry(request: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectManagement.resetEntry(toPlain(request), project) as Promise<ProjectManagedEntry>;
   },
 };
 

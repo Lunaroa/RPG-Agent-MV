@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, protocol } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { resolveWorkflowRoot } from '../../../backend/src/core/workspace-paths.ts';
+import { ensureUserDataLayout } from '../../../backend/src/core/desktop/user-data-layout.ts';
+import { resolveInstallRoot } from '../../../backend/src/core/workspace-paths.ts';
 import { initFileLogger } from '../../../backend/src/core/file-log.ts';
 import {
   cleanupIpcHandlers,
@@ -23,14 +24,12 @@ let mainWindow: BrowserWindow | null = null;
 let windowSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let allowWindowClose = false;
 let closeGuardRunning = false;
+let userDataRoot = '';
+let installRoot = '';
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'rmmv-asset', privileges: { secure: true, standard: true, supportFetchAPI: true } },
 ]);
-
-function workspaceRoot(): string {
-  return resolveWorkflowRoot(__dirname);
-}
 
 function scheduleWindowStateSave(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -43,9 +42,12 @@ function scheduleWindowStateSave(): void {
 
 async function createWindow() {
   initFileLogger();
-  const root = workspaceRoot();
 
-  await initializeIpcHandlers(root);
+  await initializeIpcHandlers({
+    installRoot,
+    userDataRoot,
+    layoutMigrated,
+  });
 
   const windowOptions = readWorkspaceWindowOptions();
   mainWindow = new BrowserWindow({
@@ -54,7 +56,7 @@ async function createWindow() {
     x: windowOptions.x,
     y: windowOptions.y,
     frame: false,
-    icon: path.join(root, 'src', 'ui', 'desktop', 'build', 'icon.ico'),
+    icon: path.join(installRoot, 'src', 'ui', 'desktop', 'build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -65,7 +67,7 @@ async function createWindow() {
   if (windowOptions.shouldMaximize) {
     mainWindow.maximize();
   }
-  await startUiControlBridge(root, () => mainWindow);
+  await startUiControlBridge(userDataRoot, () => mainWindow);
 
   const firstRunDone = Boolean(getWorkspaceSettings().window?.firstRunDone);
   if (!firstRunDone) {
@@ -86,7 +88,7 @@ async function createWindow() {
     event.preventDefault();
     if (closeGuardRunning) return;
     closeGuardRunning = true;
-    void confirmProjectStagingBeforeClose(root, mainWindow).then((confirmed) => {
+    void confirmProjectStagingBeforeClose(userDataRoot, mainWindow).then((confirmed) => {
       closeGuardRunning = false;
       if (!confirmed || !mainWindow || mainWindow.isDestroyed()) return;
       allowWindowClose = true;
@@ -109,8 +111,19 @@ async function createWindow() {
   console.log('[main] Window loaded, IPC handlers ready');
 }
 
+let layoutMigrated: string[] = [];
+
 app.whenReady().then(() => {
+  installRoot = resolveInstallRoot(__dirname);
+  userDataRoot = app.isPackaged ? app.getPath('userData') : installRoot;
+
+  process.env.AGENT_RPG_INSTALL_ROOT = installRoot;
+  process.env.AGENT_RPG_ROOT = userDataRoot;
   if (app.isPackaged) process.env.AGENT_RPG_RESOURCES_PATH = process.resourcesPath;
+
+  const layout = ensureUserDataLayout(installRoot, userDataRoot);
+  layoutMigrated = layout.migrated;
+
   createWindow().catch((err) => {
     const message = err && err.message ? err.message : String(err);
     console.error('[main] failed to start:', err);

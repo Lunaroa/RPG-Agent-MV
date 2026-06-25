@@ -117,6 +117,8 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "RPG Agent MV"
+    "shortcutName": "RPG Agent MV",
+    "include": "build/installer.nsh",
+    "removeDefaultUninstallWelcomePage": true
   }
 }

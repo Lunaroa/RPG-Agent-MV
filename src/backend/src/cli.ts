@@ -24,6 +24,7 @@ import { bootstrapDatabase } from "./core/db/bootstrap.ts";
 import { initFileLogger } from "./core/file-log.ts";
 import { writeOpencodeProviderSeedFile } from "./core/llm/cc-switch-provider-sync.ts";
 import { resolveWorkflowRoot } from "./core/workspace-paths.ts";
+import { executeWorkflow } from "./core/workflow/orchestrator/run.ts";
 
 interface ParsedArgs {
   dryRun?: boolean;
@@ -233,8 +234,60 @@ async function runUiControl(rest: string[]): Promise<number> {
   return result.ok ? 0 : 1;
 }
 
+async function runWorkflowCommand(rest: string[]): Promise<number> {
+  const workflowRoot = resolveWorkflowRoot(import.meta.dirname);
+  const [sub, ...subRest] = rest;
+
+  if (sub !== "run") {
+    throw new Error(
+      `Unknown workflow subcommand: ${sub ?? "(none)"}。用法：workflow run --script <脚本文件> [--summary <说明>] [--title <标题>] [--project <工程>]`,
+    );
+  }
+
+  const args = parseArgs(subRest) as ParsedArgs;
+  const scriptFile = args.script as string | undefined;
+  if (!scriptFile) {
+    throw new Error("workflow run 需要 --script <脚本文件>（AI 现写的只读编排脚本）。");
+  }
+  const script = fs.readFileSync(path.resolve(scriptFile), "utf8");
+  const project = resolveProjectPath(workflowRoot, args.project as string | undefined);
+  const title = (args.title as string | undefined) ?? path.basename(scriptFile);
+
+  if (args.dryRun) {
+    console.log(`workflow run [dry-run]`);
+    console.log(`  project: ${project}`);
+    console.log(`  script: ${path.resolve(scriptFile)} (${script.length} chars)`);
+    console.log("  dry-run: 已读入脚本，未派发任何子 agent。");
+    return 0;
+  }
+
+  const record = await executeWorkflow({
+    workflowRoot,
+    project,
+    script,
+    title,
+    productLanguage: cliLanguage(),
+    onEvent: (event) => {
+      if (event.type === "log") console.log(`  · ${event.message}`);
+    },
+  });
+
+  const reportPath = path.join(workflowRoot, "runtime", "out", "workflows", record.runId, "report.json");
+  if (args.format === "json") {
+    console.log(JSON.stringify(record, null, 2));
+  } else {
+    console.log(`workflow run ${title}: ${record.status}`);
+    console.log(`  runId: ${record.runId}`);
+    console.log(`  子 agent: ${record.agentCount}，tokens: in ${record.inputTokens} / out ${record.outputTokens}`);
+    if (record.error) console.log(`  error: ${record.error}`);
+    console.log(`  report: ${reportPath}`);
+  }
+  return record.status === "completed" ? 0 : 1;
+}
+
 const commandRunners: Record<string, (rest: string[]) => unknown> = {
   "agent-console": runAgentConsole,
+  "workflow": runWorkflowCommand,
   "dev-import-provider-seeds": runDevImportProviderSeeds,
   "deploy-source": runDeploySource,
   "playtest-plan": runPlaytestPlan,

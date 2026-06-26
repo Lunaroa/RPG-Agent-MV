@@ -1278,13 +1278,16 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       .approveProposal(workflowRoot, id, {
         onEvent: (event) => push({ type: 'workflow_run', phase: 'progress', event }),
       })
-      .then(({ proposal: done }) => {
+      .then(({ proposal: done, record }) => {
         push({
           type: 'workflow_run',
           phase: 'done',
           status: done.status,
           runId: done.runId,
+          workflow: done.title,
           reason: done.reason ?? null,
+          // 报告随完成事件回流，前端渲染成一条普通聊天消息（不开报告卡）。
+          report: record?.report ?? null,
         });
       })
       .catch((error: unknown) => {

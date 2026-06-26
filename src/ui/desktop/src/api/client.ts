@@ -53,6 +53,14 @@ declare global {
         unsubscribe(sessionId: string): Promise<{ success: boolean }>;
         onEvent(callback: (data: { sessionId: string; event: unknown }) => void): () => void;
       };
+      workflow: {
+        listProposals(status?: string): Promise<unknown>;
+        getProposal(proposalId: string): Promise<unknown>;
+        approveProposal(proposalId: string): Promise<unknown>;
+        rejectProposal(proposalId: string, reason?: string): Promise<unknown>;
+        getScript(proposalId: string): Promise<unknown>;
+        getReport(proposalId: string): Promise<unknown>;
+      };
       maps: {
         tree(project?: string): Promise<unknown>;
         tilesets(project?: string): Promise<unknown>;

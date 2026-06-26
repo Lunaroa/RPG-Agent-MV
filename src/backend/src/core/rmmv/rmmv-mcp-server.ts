@@ -340,8 +340,9 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
     name: "RmmvWorkflow",
     description:
       "Propose a read-only multi-agent workflow by writing a JS orchestration script for the user to approve. "
-      + "workflow.propose does NOT run anything: it queues a proposal whose script the user reviews and approves in "
-      + "the desktop before it runs in the background. Every subagent it spawns is hard-forced read-only — it can "
+      + "workflow.propose does NOT run anything: it queues a proposal that the user approves as a PLAN in the desktop "
+      + "(they read your natural-language `summary` plan, NOT the code) before it runs in the background. Every subagent "
+      + "it spawns is hard-forced read-only — it can "
       + "read/grep/inspect the project but NEVER edits files or places events; the workflow only returns a report.\n"
       + "The script is an async body that may `return` a JSON-serializable report. Available globals (nothing else — "
       + "no require/process/fs/network):\n"
@@ -357,7 +358,7 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
     inputSchema: {
       action: z.enum(["workflow.propose"]).optional().describe('Always "workflow.propose".'),
       script: z.string().describe("The JS orchestration script (async body using agent/parallel/pipeline/log; may return a report)."),
-      summary: z.string().optional().describe("One-line human summary for the approval card — what this run reviews and reports."),
+      summary: z.string().optional().describe("A short natural-language PLAN shown on the approval card — the user approves THIS, not the code. State what the workflow does, its stages, how many subagents it fans out, and the rough cost. Write it in the user's language; Markdown is fine."),
       title: z.string().optional().describe("Short title for the approval card."),
       project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
       sessionId: z.string().optional().describe("Originating conversation id, to route the report back."),

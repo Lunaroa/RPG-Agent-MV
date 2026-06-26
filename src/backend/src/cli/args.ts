@@ -36,6 +36,8 @@ export interface ParsedArgs {
   scope?: string;
   library?: string;
   role?: string;
+  script?: string;
+  title?: string;
   addEntry?: string;
   intent?: string;
   taskId?: string;
@@ -288,6 +290,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       index += 1;
     } else if (arg === "--role") {
       parsed.role = requireValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--script") {
+      parsed.script = requireValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--title") {
+      parsed.title = requireValue(args, index, arg);
       index += 1;
     } else if (arg === "--add-entry") {
       parsed.addEntry = requireValue(args, index, arg);

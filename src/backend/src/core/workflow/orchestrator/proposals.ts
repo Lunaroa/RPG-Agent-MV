@@ -1,7 +1,8 @@
 // 动态工作流 — 提议与强制人工批准。
 //
 // 形态对齐 Claude Code：agent 调用「发起工作流」工具 = 只提交一个提议就立刻返回（不在那一轮
-// 里同步跑），桌面据此弹审批卡；人点头后由后台真正跑工作流（全程只读），结果作为报告卡片回到对话。
+// 里同步跑）。桌面复用现有「计划审批卡」展示提议（人批准的是 summary 那段大白话计划，不看代码）；
+// 人点头后由后台真正跑工作流（全程只读），跑完的报告作为一条普通聊天消息流回对话（不开报告卡）。
 //
 // 跨进程通道：提议是文件，落在 runtime/out/workflows/proposals/<id>.json。MCP server 进程负责
 // 写入 pending 提议（proposeWorkflow，纯校验+落盘，不碰 LLM）；后端进程负责批准后执行
@@ -30,7 +31,7 @@ export interface WorkflowProposal {
    * 这样人在批准前直接改这个文件，改动即生效（对齐「改脚本文件再复跑」）。读取见 readProposalScript。
    */
   scriptPath: string;
-  /** 审批卡显示的一句话说明。 */
+  /** 计划审批卡展示的大白话计划（markdown）：做什么、分几步、扇出多少、大概多少成本。人批准的是它，不看代码。 */
   summary: string;
   status: WorkflowProposalStatus;
   /** 目标 RMMV 工程绝对路径（提议时锚定，批准时照用，避免漂移）。 */

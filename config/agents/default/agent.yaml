@@ -30,7 +30,8 @@
       "rmmv_RmmvReadContext",
       "rmmv_RmmvMap",
       "rmmv_RmmvEvent",
-      "rmmv_RmmvMemory"
+      "rmmv_RmmvMemory",
+      "rmmv_RmmvWorkflow"
     ],
     "deny": [
       "read_secret_files",

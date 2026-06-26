@@ -139,7 +139,7 @@ export async function runWorkflow(options: RunWorkflowOptions): Promise<Workflow
     dispatched += 1;
 
     await semaphore.acquire();
-    onEvent({ type: "agent-start", label: request.label, index, at: stamp() });
+    onEvent({ type: "agent-start", label: request.label, index, prompt: request.prompt, at: stamp() });
     try {
       const result = await options.agentRunner(request, signal);
       inputTokens += result.inputTokens ?? 0;
@@ -150,6 +150,9 @@ export async function runWorkflow(options: RunWorkflowOptions): Promise<Workflow
         index,
         ok: result.ok,
         blocker: result.blocker ?? null,
+        output: result.text ?? "",
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
         at: stamp(),
       });
       return result;

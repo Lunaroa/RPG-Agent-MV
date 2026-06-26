@@ -162,6 +162,61 @@ export const useSubagentStore = defineStore('subagents', () => {
     if (!sessionId) return
     const at = asString(event.at) || new Date().toISOString()
 
+    // 工作流扇出的子 agent 走另一条线（后台引擎直接派发），把它的逐个子 agent 进度
+    // 翻译成与主 agent 子任务同构的面板条目：标签 + 状态 + 输入(提问) + 输出。
+    if ((event as { type?: string }).type === 'workflow_run') {
+      const wf = event as unknown as Record<string, unknown>
+      if (asString(wf.phase) !== 'progress') return
+      const inner = asRecord(wf.event)
+      const innerType = asString(inner.type)
+      if (innerType !== 'agent-start' && innerType !== 'agent-end') return
+      const proposalId = asString(wf.proposalId)
+      const index = Number(inner.index ?? 0)
+      const id = `wf:${proposalId}:${index}`
+      const agentLabel = asString(inner.label) || `agent ${index}`
+      const innerAt = asString(inner.at) || at
+      if (innerType === 'agent-start') {
+        const prompt = asString(inner.prompt)
+        upsert(sessionId, {
+          id,
+          description: agentLabel,
+          prompt,
+          status: 'running',
+          updatedAt: innerAt,
+          activity: appendActivity(sessionId, id, {
+            kind: 'started',
+            title: label().started,
+            detail: prompt || null,
+            status: 'running',
+            at: innerAt,
+          }),
+        })
+      } else {
+        const ok = inner.ok === true
+        const blocker = asString(inner.blocker)
+        const status: SessionSubagentStatus = ok ? 'completed' : 'failed'
+        const output = asString(inner.output)
+        const existing = itemsFor(sessionId).find((item) => item.id === id)
+        upsert(sessionId, {
+          ...(existing || { id, description: agentLabel, status }),
+          id,
+          description: agentLabel,
+          status,
+          output: output || existing?.output || null,
+          error: ok ? null : (blocker || label().failed),
+          updatedAt: innerAt,
+          activity: appendActivity(sessionId, id, {
+            kind: ok ? 'output' : 'failed',
+            title: subagentResultTitle(status, !ok, lang()),
+            detail: ok ? (output || null) : (blocker || null),
+            status,
+            at: innerAt,
+          }),
+        })
+      }
+      return
+    }
+
     if (event.type === 'tool_call') {
       const callId = asString(event.call_id)
       const tool = asString(event.tool)

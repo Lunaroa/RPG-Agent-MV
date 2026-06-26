@@ -96,8 +96,8 @@ export interface WorkflowModule {
 export type WorkflowEvent =
   | { type: "run-start"; runId: string; workflow: string; at: string }
   | { type: "log"; message: string; at: string }
-  | { type: "agent-start"; label: string; index: number; at: string }
-  | { type: "agent-end"; label: string; index: number; ok: boolean; blocker?: string | null; at: string }
+  | { type: "agent-start"; label: string; index: number; prompt: string; at: string }
+  | { type: "agent-end"; label: string; index: number; ok: boolean; blocker?: string | null; output: string; inputTokens?: number; outputTokens?: number; at: string }
   | { type: "run-end"; runId: string; status: WorkflowRunStatus; agents: number; at: string };
 
 export type WorkflowRunStatus = "completed" | "aborted" | "failed";

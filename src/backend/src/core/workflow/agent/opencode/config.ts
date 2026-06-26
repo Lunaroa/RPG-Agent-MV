@@ -55,6 +55,12 @@ export interface OpencodeRuntimeConfigInput {
   productLanguage?: ProductLanguage | null;
   /** Master memory switch. When false, the memory write tool is hard-removed from the policy. */
   memoryEnabled?: boolean;
+  /**
+   * Read-only session (isolated workflow subagents). Every non-read-only tool is hard-disabled
+   * and the builtin edit/bash/network/external-directory capabilities are permission-denied, so a
+   * read-only subagent can never mutate the game project, place events, or spawn further subagents.
+   */
+  readOnlyTools?: boolean;
 }
 
 function normalizeProviderId(providerId: string): string {
@@ -150,14 +156,15 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
   if (!String(input.provider.baseUrl || "").trim()) {
     throw new Error(backendText('dispatch.providerMissingBaseUrl', input.productLanguage));
   }
+  const readOnly = input.readOnlyTools === true;
   const rmmvMcpEnabled = hasEnabledRmmvMcpTools(workflowRoot);
-  const tools = buildOpencodeToolPolicyFromAgentAllow(workflowRoot);
+  const tools = buildOpencodeToolPolicyFromAgentAllow(workflowRoot, { readOnly });
   // Master memory switch OFF ⇒ hard-remove the memory write tool (true off, not just hidden text).
   if (input.memoryEnabled === false) {
     tools[RMMV_MEMORY_TOOL_ID] = false;
   }
 
-  return {
+  const config: Record<string, unknown> = {
     model: `${providerId}/${modelId}`,
     provider: {
       [providerId]: buildProviderConfig(providerId, input.provider, modelId),
@@ -170,4 +177,18 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
       rmmv: buildOpencodeRmmvMcpConfig(workflowRoot, rmmvMcpEnabled),
     },
   };
+
+  // Defense-in-depth alongside the tool toggles: deny the builtin mutating/network capabilities
+  // outright so a read-only subagent cannot edit files, run shell commands, fetch the network, or
+  // reach outside its directory even if a tool slips through the policy.
+  if (readOnly) {
+    config.permission = {
+      edit: "deny",
+      bash: "deny",
+      webfetch: "deny",
+      external_directory: "deny",
+    };
+  }
+
+  return config;
 }

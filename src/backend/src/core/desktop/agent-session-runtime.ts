@@ -472,6 +472,17 @@ export class AgentSessionRuntime {
     return { ok: true, requestId, taskId: normalizedTaskId };
   }
 
+  /**
+   * 把一条外部事件推进某会话的事件流，让后台工作流的进度/报告内嵌回原对话。
+   * 即使会话已进入终态（agent 那一轮已结束），桌面仍订阅着该会话流，依然能收到。
+   */
+  pushExternalEvent(sessionId: string, event: AgentRuntimeEvent): { ok: boolean; reason?: string } {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false, reason: "session not found" };
+    this.push(session, { ...event, at: typeof event.at === "string" ? event.at : new Date().toISOString() });
+    return { ok: true };
+  }
+
   subscribe(sessionId: string, subscriber: SessionSubscriber, lastSequence = 0): AgentRuntimeEvent[] {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error("session not found");

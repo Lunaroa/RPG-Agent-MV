@@ -1218,6 +1218,82 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   });
 
 
+  // ---- Dynamic workflow proposals (agent proposes → human approves → background run) ----
+  const loadWorkflowProposals = () => import(new URL('workflow/orchestrator/proposals.ts', backendCoreUrl!).href);
+
+  ipcMain.handle('workflow:listProposals', async (_event, status?: string) => {
+    const proposals = await loadWorkflowProposals();
+    const filter = status ? { status: status as never } : undefined;
+    return toIpcPayload({ proposals: proposals.listProposals(workflowRoot, filter) });
+  });
+
+  ipcMain.handle('workflow:getProposal', async (_event, proposalId: string) => {
+    const proposals = await loadWorkflowProposals();
+    return toIpcPayload({ proposal: proposals.readProposal(workflowRoot, String(proposalId || '')) });
+  });
+
+  ipcMain.handle('workflow:rejectProposal', async (_event, proposalId: string, reason?: string) => {
+    const proposals = await loadWorkflowProposals();
+    return toIpcPayload({ proposal: proposals.rejectProposal(workflowRoot, String(proposalId || ''), reason) });
+  });
+
+  ipcMain.handle('workflow:getScript', async (_event, proposalId: string) => {
+    const proposals = await loadWorkflowProposals();
+    try {
+      return toIpcPayload({ ok: true, script: proposals.readProposalScript(workflowRoot, String(proposalId || '')) });
+    } catch (error) {
+      return toIpcPayload({ ok: false, script: null, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  ipcMain.handle('workflow:getReport', async (_event, proposalId: string) => {
+    const proposals = await loadWorkflowProposals();
+    const proposal = proposals.readProposal(workflowRoot, String(proposalId || ''));
+    if (!proposal?.reportPath || !fs.existsSync(proposal.reportPath)) {
+      return toIpcPayload({ ok: false, report: null });
+    }
+    try {
+      return toIpcPayload({ ok: true, report: JSON.parse(fs.readFileSync(proposal.reportPath, 'utf8')) });
+    } catch (error) {
+      return toIpcPayload({ ok: false, report: null, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // 批准 = 后台开跑（立刻返回），进度与报告顺着发起会话的事件流回到对话里。
+  ipcMain.handle('workflow:approveProposal', async (_event, proposalId: string) => {
+    const proposals = await loadWorkflowProposals();
+    const id = String(proposalId || '');
+    const proposal = proposals.readProposal(workflowRoot, id);
+    if (!proposal) throw new Error('提议不存在');
+    if (proposal.status !== 'pending') throw new Error(`提议当前状态为 ${proposal.status}，不能批准`);
+
+    const sessionId = proposal.sessionId;
+    const push = (event: Record<string, unknown>) => {
+      if (sessionId) agentSessionRuntime.pushExternalEvent(sessionId, { ...event, proposalId: id });
+    };
+
+    push({ type: 'workflow_run', phase: 'start', workflow: proposal.title, summary: proposal.summary });
+    // 不 await：后台跑，IPC 立刻返回。进度/报告异步推回会话流。
+    proposals
+      .approveProposal(workflowRoot, id, {
+        onEvent: (event) => push({ type: 'workflow_run', phase: 'progress', event }),
+      })
+      .then(({ proposal: done }) => {
+        push({
+          type: 'workflow_run',
+          phase: 'done',
+          status: done.status,
+          runId: done.runId,
+          reason: done.reason ?? null,
+        });
+      })
+      .catch((error: unknown) => {
+        push({ type: 'workflow_run', phase: 'done', status: 'failed', reason: error instanceof Error ? error.message : String(error) });
+      });
+
+    return toIpcPayload({ ok: true, status: 'running', proposalId: id });
+  });
+
   console.log('[ipc] IPC handlers initialized');
 }
 
@@ -1270,6 +1346,12 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('settings:putAgentSkillEnabled');
   ipcMain.removeHandler('settings:createSkill');
   ipcMain.removeHandler('settings:openCapabilityPath');
+  ipcMain.removeHandler('workflow:listProposals');
+  ipcMain.removeHandler('workflow:getProposal');
+  ipcMain.removeHandler('workflow:rejectProposal');
+  ipcMain.removeHandler('workflow:getScript');
+  ipcMain.removeHandler('workflow:getReport');
+  ipcMain.removeHandler('workflow:approveProposal');
   if (assetProtocolRegistered) {
     protocol.unhandle('rmmv-asset');
     assetProtocolRegistered = false;

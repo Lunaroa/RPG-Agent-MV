@@ -269,6 +269,16 @@ contextBridge.exposeInMainWorld('api', {
     get: (project?: string) => ipcRenderer.invoke('storyOutline:get', project),
     set: (payload: unknown, project?: string) => ipcRenderer.invoke('storyOutline:set', payload, project),
   },
+
+  workflow: {
+    listProposals: (status?: string) => ipcRenderer.invoke('workflow:listProposals', status),
+    getProposal: (proposalId: string) => ipcRenderer.invoke('workflow:getProposal', proposalId),
+    approveProposal: (proposalId: string) => ipcRenderer.invoke('workflow:approveProposal', proposalId),
+    rejectProposal: (proposalId: string, reason?: string) =>
+      ipcRenderer.invoke('workflow:rejectProposal', proposalId, reason),
+    getScript: (proposalId: string) => ipcRenderer.invoke('workflow:getScript', proposalId),
+    getReport: (proposalId: string) => ipcRenderer.invoke('workflow:getReport', proposalId),
+  },
 });
 
 contextBridge.exposeInMainWorld('backend', {

@@ -20,6 +20,12 @@ export interface ToolManifestEntry {
   title: string;
   description: string;
   readOnly?: boolean;
+  /**
+   * 唯一的「只读会话写入」豁免：标 true 表示这工具的唯一副作用是**登记待放置事件**（生成待用户拖放
+   * 落地的待放置事件，绝不直接改工程、绝不自动放置）。只读工作流子 agent 保留这类工具，其余会写工具
+   * 仍一律关死。readOnly 保持诚实（这工具确实会写），由本旗标单独标出这一处受控豁免。
+   */
+  stagingSafe?: boolean;
   defaultAllow?: boolean;
   riskLevel?: ToolRiskLevel;
   riskBadges?: ToolRiskBadge[];
@@ -376,7 +382,7 @@ export function resolveEnabledAgentRuntimeBuiltinTools(
 
 export function buildOpencodeToolPolicyFromAgentAllow(
   workflowRootInput?: string,
-  options?: { env?: EnvironmentLike },
+  options?: { env?: EnvironmentLike; readOnly?: boolean },
 ): Record<string, boolean> {
   const workflowRoot = workflowRootInput
     ? path.resolve(workflowRootInput)
@@ -390,7 +396,20 @@ export function buildOpencodeToolPolicyFromAgentAllow(
   for (const tool of manifest.tools) {
     if (tool.kind !== "builtin" && tool.kind !== "mcp") continue;
     const { available } = evaluateToolAvailability(tool, workflowRoot, options?.env);
-    policy[tool.id] = available && isAllowed(allow, deny, tool.id);
+    const allowed = available && isAllowed(allow, deny, tool.id);
+    // Read-only sessions (isolated workflow subagents) hard-disable every tool not flagged
+    // read-only in the manifest — edits, writes, bash, subagent spawn, and the mutating RMMV
+    // MCP tools all turn off. This is the real enforcement: the `readOnly` flag is not advisory.
+    // The single carve-out: stagingSafe tools (whose only side effect is registering a
+    // pending-placement event) stay on for read-only workflow subagents — they are forced on by
+    // availability alone (not gated by the agent allow-list), since they exist solely to let a
+    // read-only workflow stage event drafts for the user to place. They never reach a normal
+    // session (not in the allow-list → the non-readOnly branch leaves them off).
+    if (options?.readOnly) {
+      policy[tool.id] = tool.stagingSafe === true ? available : (allowed && tool.readOnly === true);
+    } else {
+      policy[tool.id] = allowed;
+    }
   }
   return policy;
 }

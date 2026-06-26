@@ -252,6 +252,8 @@ interface DispatchResult {
   planFilePath?: string | null;
   /** Memory slugs newly surfaced this dispatch (recall), for the caller's running surfaced set. */
   surfacedMemorySlugs?: string[];
+  /** Restrict the opencode runtime to non-mutating tools; isolated workflow subagents set this. */
+  readOnlyTools?: boolean;
 }
 
 interface PathResult {
@@ -486,6 +488,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     blocker,
     planFilePath: options.planFilePath || null,
     surfacedMemorySlugs,
+    readOnlyTools: Boolean(options.readOnlyTools),
     nextActions: options.execute
       ? []
       : ["This was prepared without execution. Start a desktop opencode session to execute it."]
@@ -637,6 +640,7 @@ async function resolveOpencodeConfig(dispatch: DispatchResult): Promise<Record<s
     provider,
     productLanguage: dispatch.productLanguage,
     memoryEnabled: readMemorySettings().enabled,
+    readOnlyTools: dispatch.readOnlyTools === true,
   });
 }
 

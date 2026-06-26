@@ -54,7 +54,7 @@ export interface ExecuteWorkflowOptions {
   project: string;
   /** AI 现写的编排脚本源码（async 体，可 return 报告）。 */
   script: string;
-  /** 审批卡显示的一句话说明。 */
+  /** 计划审批卡展示的大白话计划（markdown）。 */
   summary?: string;
   /** 短标题（运行记录里的 workflow 字段）。 */
   title?: string;

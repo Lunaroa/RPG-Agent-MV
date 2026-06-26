@@ -28,12 +28,26 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
     const listed = await client.listTools();
     const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
 
-    assert.deepEqual([...tools.keys()].sort(), ["RmmvEvent", "RmmvMap", "RmmvMemory", "RmmvReadContext"]);
+    assert.deepEqual([...tools.keys()].sort(), ["RmmvEvent", "RmmvMap", "RmmvMemory", "RmmvReadContext", "RmmvStage", "RmmvWorkflow"]);
     assert.equal(tools.get("RmmvMemory")?.annotations?.readOnlyHint, false);
     assert.equal(tools.get("RmmvReadContext")?.annotations?.readOnlyHint, true);
     assert.equal(tools.get("RmmvMap")?.annotations?.readOnlyHint, false);
     assert.equal(tools.get("RmmvMap")?.annotations?.destructiveHint, true);
     assert.equal(tools.get("RmmvEvent")?.annotations?.readOnlyHint, false);
+    // 工作流发起工具：本身标记会写（readOnlyHint:false，确保只读子 agent 拿不到、不套娃），
+    // schema 收 AI 现写的脚本而非预设名。
+    assert.equal(tools.get("RmmvWorkflow")?.annotations?.readOnlyHint, false);
+    const workflowSchema = JSON.stringify(tools.get("RmmvWorkflow")?.inputSchema || {});
+    assert.match(workflowSchema, /script/);
+    assert.match(workflowSchema, /summary/);
+    assert.doesNotMatch(workflowSchema, /writing-review/);
+    assert.match(tools.get("RmmvWorkflow")?.description || "", /read-only/i);
+    // 待放置事件登记工具：会写（readOnlyHint:false），只登记不放置，schema 只暴露 validate/register。
+    assert.equal(tools.get("RmmvStage")?.annotations?.readOnlyHint, false);
+    const stageSchema = JSON.stringify(tools.get("RmmvStage")?.inputSchema || {});
+    assert.match(stageSchema, /stage\.register/);
+    assert.doesNotMatch(stageSchema, /stage\.adopt|editor|patch/);
+    assert.match(tools.get("RmmvStage")?.description || "", /never places|NEVER places/i);
     const memorySchema = JSON.stringify(tools.get("RmmvMemory")?.inputSchema || {});
     assert.match(memorySchema, /memory\.read-profile/);
     assert.match(memorySchema, /memory\.write-profile/);

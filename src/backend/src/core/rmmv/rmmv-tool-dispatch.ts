@@ -15,6 +15,7 @@ import {
   runRmmvStateSlots,
 } from "./rmmv-handlers.ts";
 import { runRmmvMemory } from "./rmmv-memory-handler.ts";
+import { runRmmvWorkflow } from "./rmmv-workflow-handler.ts";
 
 type RmmvDispatchHandler = (input: RmmvHandlerInput) => RmmvHandlerResult | Promise<RmmvHandlerResult>;
 
@@ -33,6 +34,7 @@ export const RMMV_TOOL_DISPATCH: Record<string, RmmvDispatchHandler> = {
   "common-event-references": runRmmvCommonEventReferences,
   "event-feedback": runRmmvEventFeedback,
   memory: runRmmvMemory,
+  "workflow-propose": runRmmvWorkflow,
 };
 
 export async function dispatchRmmvTool(command: string, input: RmmvHandlerInput): Promise<RmmvHandlerResult> {

@@ -105,6 +105,9 @@ const ACTION_TO_COMMAND: Record<string, string> = {
   "memory.read-profile": "memory",
   "memory.write-profile": "memory",
   "progress.write": "memory",
+  "workflow.propose": "workflow-propose",
+  "stage.validate": "event-registry",
+  "stage.register": "event-registry",
   "editor.update": "event-editor",
   "editor.move": "event-editor",
   "editor.remove": "event-editor",
@@ -154,6 +157,7 @@ const COMMANDS_REQUIRING_ACTION = new Set([
   "map-events",
   "patch",
   "memory",
+  "workflow-propose",
 ]);
 
 // ── Tool specs ──────────────────────────────────────────────────────
@@ -329,6 +333,50 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
       current: z.string().optional().describe("progress.write: what this conversation accomplished or where it currently stands."),
       next: z.string().optional().describe("progress.write: concrete next step for continuation."),
       blockers: z.string().optional().describe("progress.write: blocker or missing input, if any."),
+    },
+    readOnly: false,
+  },
+  {
+    name: "RmmvWorkflow",
+    description:
+      "Propose a read-only multi-agent workflow by writing a JS orchestration script for the user to approve. "
+      + "workflow.propose does NOT run anything: it queues a proposal whose script the user reviews and approves in "
+      + "the desktop before it runs in the background. Every subagent it spawns is hard-forced read-only — it can "
+      + "read/grep/inspect the project but NEVER edits files or places events; the workflow only returns a report.\n"
+      + "The script is an async body that may `return` a JSON-serializable report. Available globals (nothing else — "
+      + "no require/process/fs/network):\n"
+      + "  agent({ prompt, label, schema? }) -> Promise<{ ok, text, data? }>  // fan out one read-only subagent\n"
+      + "  parallel([() => agent(...), ...]) -> Promise<any[]>                // barrier: run all, await together\n"
+      + "  pipeline(items, stage1, stage2, ...) -> Promise<any[]>             // each item flows through stages, no barrier\n"
+      + "  log(message)                                                       // progress line back to the chat\n"
+      + "  args                                                               // optional inputs (usually unused; embed data in the script)\n"
+      + "Quality pattern: fan out several reviewers (parallel), then adversarially verify each finding with independent "
+      + "skeptics before keeping it. The submitted script is persisted to a standalone .js file (its path is returned), "
+      + "which the user can review and edit before approving — the approved run executes the file's current contents. "
+      + "Only the top-level conversation agent has this tool; read-only subagents do not, so workflows never nest.",
+    inputSchema: {
+      action: z.enum(["workflow.propose"]).optional().describe('Always "workflow.propose".'),
+      script: z.string().describe("The JS orchestration script (async body using agent/parallel/pipeline/log; may return a report)."),
+      summary: z.string().optional().describe("One-line human summary for the approval card — what this run reviews and reports."),
+      title: z.string().optional().describe("Short title for the approval card."),
+      project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
+      sessionId: z.string().optional().describe("Originating conversation id, to route the report back."),
+    },
+    readOnly: false,
+  },
+  {
+    name: "RmmvStage",
+    description:
+      "Workflow-only: register a PENDING (to-be-placed) event for the user to drop onto the map. "
+      + "stage.register validates and stores an EventContract as a draft — it NEVER places the event, "
+      + "never sets x/y, never edits the project or any already-placed event; the user manually places it "
+      + "on the desktop map canvas afterwards. stage.validate checks a contract without storing anything. "
+      + "This is the single controlled write available to read-only workflow subagents; everything else stays read-only. "
+      + "Duplicate/conflicting registrations are rejected by the registry, so parallel subagents cannot double-stage.",
+    inputSchema: {
+      action: z.enum(["stage.validate", "stage.register"]),
+      contract: eventContractInput,
+      project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
     },
     readOnly: false,
   },

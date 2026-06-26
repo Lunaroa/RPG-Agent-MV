@@ -160,6 +160,28 @@
       "readOnly": false,
       "riskLevel": "normal",
       "defaultAllow": true
+    },
+    {
+      "id": "rmmv_RmmvWorkflow",
+      "kind": "mcp",
+      "layer": "rmmv",
+      "title": "RMMV 工作流发起",
+      "description": "让 agent 现写一段只读多 agent 编排脚本、提交给用户在桌面批准后才后台运行；只提交提议不直接运行。默认关闭，需在设置里手动打开。标记为会写工具，因此只读子 agent 拿不到它，工作流不会套娃。",
+      "readOnly": false,
+      "riskLevel": "high",
+      "defaultAllow": false
+    },
+    {
+      "id": "rmmv_RmmvStage",
+      "kind": "mcp",
+      "layer": "rmmv",
+      "title": "RMMV 待放置事件登记",
+      "description": "只读工作流子 agent 专用：登记待放置事件（生成待用户拖放落地的事件草稿，绝不直接改工程、绝不自动放置）。普通会话不暴露此工具（普通 agent 走完整事件工具）；它只在工作流的只读子 agent 里开启，是「只读会话」唯一的受控写入口。",
+      "readOnly": false,
+      "stagingSafe": true,
+      "riskLevel": "high",
+      "userToggleable": false,
+      "defaultAllow": false
     }
   ],
   "mcpServers": [

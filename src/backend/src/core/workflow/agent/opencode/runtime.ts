@@ -84,6 +84,7 @@ export interface NormalizeState {
   emittedSubagentToolResults?: Set<string>;
   subagentSessions?: Map<string, SubagentTaskRef>;
   subagentLastTextOutput?: Map<string, string>;
+  pendingPermissionRequest?: boolean;
 }
 
 interface SubagentTaskRef {
@@ -693,8 +694,12 @@ export function normalizeOpencodeEvent(
       });
     }
   } else if (type === "permission.updated" || type === "permission.asked") {
+    state.pendingPermissionRequest = true;
+    console.error(`[perm-diag] permission event received: type=${type} id=${asString(properties.id)} permission=${asString(properties.permission) || asString(properties.type)}`);
     out.push(buildPermissionRequest(properties, at, state.productLanguage));
   } else if (type === "permission.replied") {
+    state.pendingPermissionRequest = false;
+    console.error(`[perm-diag] permission.replied received: id=${asString(properties.permissionID)} reply=${asString(properties.reply) || asString(properties.response)}`);
     out.push({
       type: "opencode_permission_response",
       request_id: asString(properties.permissionID),
@@ -708,6 +713,7 @@ export function normalizeOpencodeEvent(
     });
   } else if (type === "session.status") {
     const status = asRecord(properties.status);
+    console.error(`[perm-diag] session.status: ${asString(status.type)} sessionID=${asString(properties.sessionID)}`);
     if (asString(status.type) === "busy" || asString(status.type) === "retry") {
       out.push({ type: "status", status: "running", at });
     }
@@ -951,6 +957,7 @@ export async function runOpencodeSession(
   const finish = (status: OpencodeRunResult["status"], reason?: string | null) => {
     if (done) return;
     done = true;
+    console.error(`[perm-diag] finish called: status=${status} reason=${reason || "null"} pendingPermission=${state.pendingPermissionRequest}`);
     finalStatus = status;
     blocker = reason || null;
   };
@@ -1020,8 +1027,13 @@ export async function runOpencodeSession(
           }
         }
         if (shouldFinishOpencodeRunOnSessionIdle(raw, opencodeSessionId)) {
-          finish("pass", null);
-          break;
+          if (state.pendingPermissionRequest) {
+            console.error(`[perm-diag] session.idle received but pendingPermissionRequest=true, NOT terminating`);
+          } else {
+            console.error(`[perm-diag] session.idle received, terminating with pass`);
+            finish("pass", null);
+            break;
+          }
         }
       }
     })();
@@ -1126,12 +1138,17 @@ export async function replyOpencodePermission(
   response: "once" | "always" | "reject",
   directory: string,
 ): Promise<boolean> {
-  if (!singleton) return false;
+  if (!singleton) {
+    console.error(`[perm-diag] replyOpencodePermission: no singleton`);
+    return false;
+  }
+  console.error(`[perm-diag] replyOpencodePermission: sessionId=${sessionId} permissionID=${permissionID} response=${response}`);
   const result = await singleton.client.postSessionIdPermissionsPermissionId({
     path: { id: sessionId, permissionID },
     query: { directory },
     body: { response },
   });
+  console.error(`[perm-diag] replyOpencodePermission result: data=${Boolean(result.data)} error=${result.error ? JSON.stringify(result.error) : "none"}`);
   return Boolean(result.data);
 }
 

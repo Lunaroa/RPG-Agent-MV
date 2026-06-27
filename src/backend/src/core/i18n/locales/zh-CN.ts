@@ -1,5 +1,7 @@
 const zhCN = {
     'runtime.stoppedByConsole': 'Agent 后端已被控制台用户停止。',
+    'runtime.agentTimeout': 'Agent 子任务执行超时。',
+    'runtime.agentExited': 'Agent 子任务异常退出（退出码 {{code}}）。',
     'runtime.permissionDenialBlocked': '运行时拒绝了访问工作区外的目录。\n{{userMessage}}',
     'runtime.permissionDenialNoReply': '运行时因目录权限被拒提前结束，未生成回复。\n{{userMessage}}',
     'runtime.optionFallback': '选项 {{index}}',

@@ -82,6 +82,17 @@ function buildSchemaInstruction(prompt: string): string {
 只输出一个 JSON 对象，用 \`\`\`json 围栏块包起来，块外不要写任何解释、前后缀或 Markdown。`;
 }
 
+export function applySchema(
+  value: unknown,
+  schema: (value: unknown) => { ok: true; data: unknown } | { ok: false; error: string },
+): { ok: true; data: unknown } | { ok: false; error: string } {
+  try {
+    return schema(value);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** 构造生产环境 runner：每次调用走一次完整的只读派发。 */
 export function createProductionAgentRunner(config: ProductionRunnerConfig): WorkflowAgentRunner {
   const defaultTimeoutMs = config.defaultTimeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS;
@@ -91,45 +102,55 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
     timeoutMs: number,
     signal: AbortSignal,
   ): Promise<{ status: string; text: string; blocker: string | null; inputTokens: number; outputTokens: number }> {
-    const dispatch = await buildAgentDispatch({
-      workflowRoot: config.workflowRoot,
-      agentId: WORKFLOW_AGENT_ID,
-      project: config.project,
-      intent: prompt,
-      providerId: config.providerId,
-      modelId: config.modelId,
-      executionEngine: config.executionEngine,
-      agentExecutionSettings: config.agentExecutionSettings ?? null,
-      productLanguage: config.productLanguage,
-      readOnlyTools: true, // 铁律：只读
-      skipKnowledgeRefresh: true,
-      execute: true,
-      timeoutMs,
-      signal,
-    });
-    if (dispatch.status === "blocked") {
-      return { status: "blocked", text: "", blocker: dispatch.blocker ?? "dispatch blocked", inputTokens: 0, outputTokens: 0 };
-    }
-    let inputTokens = 0;
-    let outputTokens = 0;
-    const handle = startAgentDispatchProcess(dispatch, { signal, timeoutMs }, (event) => {
-      if (typeof event.inputTokens === "number") inputTokens += event.inputTokens;
-      if (typeof event.outputTokens === "number") outputTokens += event.outputTokens;
-    });
-    const onAbort = () => handle.stop();
-    if (signal.aborted) handle.stop();
-    else signal.addEventListener("abort", onAbort, { once: true });
     try {
-      const result = await handle.promise;
+      const dispatch = await buildAgentDispatch({
+        workflowRoot: config.workflowRoot,
+        agentId: WORKFLOW_AGENT_ID,
+        project: config.project,
+        intent: prompt,
+        providerId: config.providerId,
+        modelId: config.modelId,
+        executionEngine: config.executionEngine,
+        agentExecutionSettings: config.agentExecutionSettings ?? null,
+        productLanguage: config.productLanguage,
+        readOnlyTools: true, // 铁律：只读
+        skipKnowledgeRefresh: true,
+        execute: true,
+        timeoutMs,
+        signal,
+      });
+      if (dispatch.status === "blocked") {
+        return { status: "blocked", text: "", blocker: dispatch.blocker ?? "dispatch blocked", inputTokens: 0, outputTokens: 0 };
+      }
+      let inputTokens = 0;
+      let outputTokens = 0;
+      const handle = startAgentDispatchProcess(dispatch, { signal, timeoutMs }, (event) => {
+        if (typeof event.inputTokens === "number") inputTokens += event.inputTokens;
+        if (typeof event.outputTokens === "number") outputTokens += event.outputTokens;
+      });
+      const onAbort = () => handle.stop();
+      if (signal.aborted) handle.stop();
+      else signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        const result = await handle.promise;
+        return {
+          status: result.status,
+          text: result.backendOutput?.stdout ?? "",
+          blocker: result.blocker ?? null,
+          inputTokens,
+          outputTokens,
+        };
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+      }
+    } catch (err) {
       return {
-        status: result.status,
-        text: result.backendOutput?.stdout ?? "",
-        blocker: result.blocker ?? null,
-        inputTokens,
-        outputTokens,
+        status: "blocked",
+        text: "",
+        blocker: err instanceof Error ? err.message : String(err),
+        inputTokens: 0,
+        outputTokens: 0,
       };
-    } finally {
-      signal.removeEventListener("abort", onAbort);
     }
   }
 
@@ -149,8 +170,10 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
 
     // 无 schema：1 次；有 schema：最多 2 次（校验失败后带纠正提示重试一次）。
     const maxAttempts = wantsJson ? 2 : 1;
+    const deadline = Date.now() + timeoutMs;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const run = await dispatchOnce(attemptPrompt, timeoutMs, signal);
+      const remaining = Math.max(0, deadline - Date.now());
+      const run = await dispatchOnce(attemptPrompt, remaining, signal);
       inputTokens += run.inputTokens;
       outputTokens += run.outputTokens;
       lastText = run.text;
@@ -166,7 +189,7 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
 
       const extracted = extractJsonObject(run.text);
       if (extracted.ok) {
-        const validated = request.schema(extracted.value);
+        const validated = applySchema(extracted.value, request.schema);
         if (validated.ok) {
           return { ok: true, text: run.text, data: validated.data, label: request.label, inputTokens, outputTokens };
         }

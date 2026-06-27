@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { extractJsonObject } from "./agent-runner.ts";
+import { extractJsonObject, applySchema } from "./agent-runner.ts";
 
 test("从 ```json 围栏块抽取对象", () => {
   const text = "前言\n```json\n{\"a\": 1, \"b\": [2,3]}\n```\n后语";
@@ -32,4 +32,23 @@ test("没有 JSON 时返回 ok:false", () => {
 test("围栏块内非法 JSON 返回 ok:false", () => {
   const result = extractJsonObject("```json\n{not valid}\n```");
   assert.equal(result.ok, false);
+});
+
+test("applySchema: 校验器返回 ok:true 时透传 data", () => {
+  const result = applySchema({ n: 1 }, () => ({ ok: true, data: { n: 1 } }));
+  assert.ok(result.ok);
+  assert.deepEqual(result.data, { n: 1 });
+});
+
+test("applySchema: 校验器返回 ok:false 时透传 error", () => {
+  const result = applySchema({}, () => ({ ok: false, error: "missing n" }));
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "missing n");
+});
+
+test("applySchema: 校验器自身抛错时归一为 ok:false，不向上冒泡", () => {
+  const throwingSchema = () => { throw new Error("validator exploded"); };
+  const result = applySchema({}, throwingSchema as unknown as Parameters<typeof applySchema>[1]);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /validator exploded/);
 });

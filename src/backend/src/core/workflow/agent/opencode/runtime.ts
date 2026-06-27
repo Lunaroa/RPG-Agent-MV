@@ -977,6 +977,14 @@ export async function runOpencodeSession(
   }, input.timeoutMs);
   if (timeout.unref) timeout.unref();
 
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
+
   try {
     onEvent({ type: "status", status: "running", at: startedAt });
     onEvent({ type: "command", command: "opencode serve + session.promptAsync", executable: server.executable, at: startedAt });
@@ -999,15 +1007,20 @@ export async function runOpencodeSession(
       sseMaxRetryAttempts: 0,
     });
 
+    const streamGen = subscribed.stream as AsyncGenerator<Record<string, unknown>>;
+
     const streamTask = (async () => {
       console.error(`[perm-diag] SSE stream loop started`);
-      for await (const raw of subscribed.stream as AsyncGenerator<Record<string, unknown>>) {
+      for await (const raw of streamGen) {
         if (!raw || done) {
           if (done) console.error(`[perm-diag] SSE loop: skipping raw because done=true`);
           continue;
         }
         const rawType = asString(raw.type);
         console.error(`[perm-diag] SSE event: type=${rawType}`);
+        if (rawType !== "session.idle" && rawType !== "session.status") {
+          clearIdleTimer();
+        }
         const eventSessionId = sessionIdFromEvent(raw);
         if (
           eventSessionId
@@ -1036,6 +1049,16 @@ export async function runOpencodeSession(
         if (shouldFinishOpencodeRunOnSessionIdle(raw, opencodeSessionId)) {
           if (state.pendingPermissionRequest) {
             console.error(`[perm-diag] session.idle received but pendingPermissionRequest=true, NOT terminating`);
+          } else if (sawToolActivity) {
+            console.error(`[perm-diag] session.idle with toolActivity, starting 15s grace period`);
+            clearIdleTimer();
+            idleTimer = setTimeout(() => {
+              if (!done) {
+                console.error(`[perm-diag] idle grace period expired, terminating`);
+                finish("pass", null);
+                streamGen.return(undefined as never).catch(() => {});
+              }
+            }, 15000);
           } else {
             console.error(`[perm-diag] session.idle received, terminating with pass`);
             finish("pass", null);
@@ -1075,6 +1098,7 @@ export async function runOpencodeSession(
       finish(input.signal?.aborted ? "stopped" : "blocked", message);
     }
   } finally {
+    clearIdleTimer();
     clearTimeout(timeout);
     input.signal?.removeEventListener("abort", abort);
     if (opencodeSessionId && controller.signal.aborted) {

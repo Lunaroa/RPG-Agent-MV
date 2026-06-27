@@ -56,6 +56,14 @@ function proposalsDir(workflowRoot: string): string {
   return path.join(workflowRoot, "runtime", "out", "workflows", "proposals");
 }
 
+const PROPOSAL_ID_RE = /^wp-[A-Za-z0-9_-]{1,64}$/;
+
+function assertSafeProposalId(proposalId: string): void {
+  if (typeof proposalId !== "string" || !PROPOSAL_ID_RE.test(proposalId)) {
+    throw new Error(`非法 proposalId：${proposalId}`);
+  }
+}
+
 function proposalPath(workflowRoot: string, proposalId: string): string {
   return path.join(proposalsDir(workflowRoot), `${proposalId}.json`);
 }
@@ -67,6 +75,7 @@ function scriptFilePath(workflowRoot: string, proposalId: string): string {
 
 /** 读取提议对应的脚本文件内容（单一事实源）。文件缺失时 fail fast。 */
 export function readProposalScript(workflowRoot: string, proposalId: string): string {
+  assertSafeProposalId(proposalId);
   const filePath = scriptFilePath(workflowRoot, proposalId);
   try {
     return fs.readFileSync(filePath, "utf8");
@@ -83,10 +92,27 @@ function makeProposalId(now: Date): string {
 function writeProposal(workflowRoot: string, proposal: WorkflowProposal): void {
   const dir = proposalsDir(workflowRoot);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(proposalPath(workflowRoot, proposal.proposalId), JSON.stringify(proposal, null, 2), "utf8");
+  const finalPath = proposalPath(workflowRoot, proposal.proposalId);
+  const tmpPath = `${finalPath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmpPath, JSON.stringify(proposal, null, 2), "utf8");
+  fs.renameSync(tmpPath, finalPath);
+}
+
+function claimProposal(workflowRoot: string, proposalId: string): () => void {
+  const lockPath = `${proposalPath(workflowRoot, proposalId)}.lock`;
+  const fd = fs.openSync(lockPath, "wx");
+  fs.closeSync(fd);
+  return () => {
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      // 锁文件已被清理或不存在。
+    }
+  };
 }
 
 export function readProposal(workflowRoot: string, proposalId: string): WorkflowProposal | null {
+  assertSafeProposalId(proposalId);
   try {
     const raw = fs.readFileSync(proposalPath(workflowRoot, proposalId), "utf8");
     return JSON.parse(raw) as WorkflowProposal;
@@ -184,42 +210,47 @@ export async function approveProposal(
   options: ApproveProposalOptions = {},
   deps: ProposalDeps = {},
 ): Promise<{ proposal: WorkflowProposal; record: WorkflowRunRecord }> {
-  const proposal = readProposal(workflowRoot, proposalId);
-  if (!proposal) throw new Error(`提议不存在：${proposalId}`);
-  if (proposal.status !== "pending") {
-    throw new Error(`提议 ${proposalId} 当前状态为 ${proposal.status}，不能再批准。`);
-  }
-  const now = deps.now ?? (() => new Date());
-  const execute = options.execute ?? executeWorkflow;
-
-  // 从文件读脚本（单一事实源）：人在批准前改了脚本文件，跑的就是改后的版本。文件缺失则 fail fast。
-  const script = readProposalScript(workflowRoot, proposalId);
-
-  proposal.status = "running";
-  proposal.decidedAt = now().toISOString();
-  writeProposal(workflowRoot, proposal);
-
+  assertSafeProposalId(proposalId);
+  const releaseLock = claimProposal(workflowRoot, proposalId);
   try {
-    const record = await execute({
-      workflowRoot,
-      project: proposal.project,
-      script,
-      summary: proposal.summary,
-      title: proposal.title,
-      signal: options.signal,
-      onEvent: options.onEvent,
-    });
-    proposal.runId = record.runId;
-    proposal.reportPath = path.join(workflowRoot, "runtime", "out", "workflows", record.runId, "report.json");
-    proposal.status = record.status === "completed" ? "completed" : "failed";
-    if (record.status !== "completed") proposal.reason = record.error ?? "工作流未正常完成";
+    const proposal = readProposal(workflowRoot, proposalId);
+    if (!proposal) throw new Error(`提议不存在：${proposalId}`);
+    if (proposal.status !== "pending") {
+      throw new Error(`提议 ${proposalId} 当前状态为 ${proposal.status}，不能再批准。`);
+    }
+    const now = deps.now ?? (() => new Date());
+    const execute = options.execute ?? executeWorkflow;
+
+    const script = readProposalScript(workflowRoot, proposalId);
+
+    proposal.status = "running";
+    proposal.decidedAt = now().toISOString();
     writeProposal(workflowRoot, proposal);
-    return { proposal, record };
-  } catch (error) {
-    proposal.status = "failed";
-    proposal.reason = error instanceof Error ? error.message : String(error);
-    writeProposal(workflowRoot, proposal);
-    throw error;
+
+    try {
+      const record = await execute({
+        workflowRoot,
+        project: proposal.project,
+        script,
+        summary: proposal.summary,
+        title: proposal.title,
+        signal: options.signal,
+        onEvent: options.onEvent,
+      });
+      proposal.runId = record.runId;
+      proposal.reportPath = path.join(workflowRoot, "runtime", "out", "workflows", record.runId, "report.json");
+      proposal.status = record.status === "completed" ? "completed" : "failed";
+      if (record.status !== "completed") proposal.reason = record.error ?? "工作流未正常完成";
+      writeProposal(workflowRoot, proposal);
+      return { proposal, record };
+    } catch (error) {
+      proposal.status = "failed";
+      proposal.reason = error instanceof Error ? error.message : String(error);
+      writeProposal(workflowRoot, proposal);
+      throw error;
+    }
+  } finally {
+    releaseLock();
   }
 }
 
@@ -230,15 +261,21 @@ export function rejectProposal(
   reason?: string,
   deps: ProposalDeps = {},
 ): WorkflowProposal {
-  const proposal = readProposal(workflowRoot, proposalId);
-  if (!proposal) throw new Error(`提议不存在：${proposalId}`);
-  if (proposal.status !== "pending") {
-    throw new Error(`提议 ${proposalId} 当前状态为 ${proposal.status}，不能拒绝。`);
+  assertSafeProposalId(proposalId);
+  const releaseLock = claimProposal(workflowRoot, proposalId);
+  try {
+    const proposal = readProposal(workflowRoot, proposalId);
+    if (!proposal) throw new Error(`提议不存在：${proposalId}`);
+    if (proposal.status !== "pending") {
+      throw new Error(`提议 ${proposalId} 当前状态为 ${proposal.status}，不能拒绝。`);
+    }
+    const now = deps.now ?? (() => new Date());
+    proposal.status = "rejected";
+    proposal.decidedAt = now().toISOString();
+    proposal.reason = reason?.trim() || "用户拒绝";
+    writeProposal(workflowRoot, proposal);
+    return proposal;
+  } finally {
+    releaseLock();
   }
-  const now = deps.now ?? (() => new Date());
-  proposal.status = "rejected";
-  proposal.decidedAt = now().toISOString();
-  proposal.reason = reason?.trim() || "用户拒绝";
-  writeProposal(workflowRoot, proposal);
-  return proposal;
 }

@@ -24,7 +24,7 @@
               :ask="item.ask"
             />
             <AskCard
-              v-else-if="item.type === 'ask' && item.ask"
+              v-else-if="item.type === 'ask' && item.ask && item.ask.type !== 'risk-approval'"
               :ask="item.ask"
               @approve="(id) => emit('approve', id)"
               @revise="(id, fb) => emit('revise', id, fb)"

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { runWorkflow, WorkflowAbortedError, defaultMaxConcurrency } from "./runtime.ts";
-import type { WorkflowAgentRunner, WorkflowContext, WorkflowModule } from "./types.ts";
+import type { WorkflowAgentRunner, WorkflowContext, WorkflowEvent, WorkflowModule } from "./types.ts";
 
 function okRunner(text = "ok"): WorkflowAgentRunner {
   return async (request) => ({ ok: true, text, label: request.label });
@@ -116,4 +116,80 @@ test("token 与 agent 计数汇总", async () => {
 test("defaultMaxConcurrency 在 [1,16] 区间", () => {
   const value = defaultMaxConcurrency();
   assert.ok(value >= 1 && value <= 16, `got ${value}`);
+});
+
+test("abort 时排队中的 waiter 被快速 reject，不逐个耗尽也不死锁", async () => {
+  const controller = new AbortController();
+  let fastCalls = 0;
+  const runner: WorkflowAgentRunner = async (request, signal) => {
+    if (request.label === "slow") {
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new WorkflowAbortedError("slow aborted")), { once: true });
+      });
+      return { ok: true, text: "ok", label: request.label };
+    }
+    fastCalls += 1;
+    return { ok: true, text: "ok", label: request.label };
+  };
+  const module = moduleOf(async (ctx) => {
+    const slow = ctx.agent({ label: "slow", prompt: "p" });
+    const fast = ctx.agent({ label: "fast", prompt: "p" });
+    controller.abort();
+    try { await fast; } catch { /* expected: queued waiter rejected on abort */ }
+    try { await slow; } catch { /* slow aborted via signal */ }
+    return "done";
+  });
+  const record = await runWorkflow({ ...baseOptions, module, agentRunner: runner, signal: controller.signal, limits: { maxConcurrency: 1 } });
+  assert.equal(record.status, "aborted");
+  assert.equal(fastCalls, 0, "queued agent must not execute after abort");
+});
+
+test("onEvent(agent-start) 抛错时 permit 不泄漏，后续 agent 仍能执行", async () => {
+  let callCount = 0;
+  const runner: WorkflowAgentRunner = async (request) => {
+    callCount += 1;
+    return { ok: true, text: "ok", label: request.label };
+  };
+  let startCount = 0;
+  const throwingOnEvent = (event: WorkflowEvent) => {
+    if (event.type === "agent-start") {
+      startCount += 1;
+      if (startCount === 1) throw new Error("onEvent boom");
+    }
+  };
+  const module = moduleOf(async (ctx) => {
+    try { await ctx.agent({ label: "a0", prompt: "p" }); } catch { /* onEvent threw before runner started; swallowed by workflow script */ }
+    await ctx.agent({ label: "a1", prompt: "p" });
+    return "done";
+  });
+  const record = await Promise.race([
+    runWorkflow({ ...baseOptions, module, agentRunner: runner, onEvent: throwingOnEvent, limits: { maxConcurrency: 1 } }),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("deadlock: permit leaked via onEvent throw")), 3000)),
+  ]);
+  assert.equal(callCount, 1, "first agent's runner never started (onEvent threw before it); second agent must still run, proving no permit leak");
+  assert.equal(record.status, "completed");
+});
+
+test("runner 抛错时仍发 agent-end(ok:false) 事件", async () => {
+  const events: WorkflowEvent[] = [];
+  const runner: WorkflowAgentRunner = async () => { throw new Error("runner boom"); };
+  const module = moduleOf(async (ctx) => {
+    try { await ctx.agent({ label: "a0", prompt: "p" }); } catch { /* expected */ }
+    return "done";
+  });
+  await runWorkflow({ ...baseOptions, module, agentRunner: runner, onEvent: (e) => events.push(e) });
+  const ends = events.filter((e) => e.type === "agent-end");
+  assert.equal(ends.length, 1, "agent-end should fire even when runner throws");
+  assert.equal(ends[0].ok, false);
+  assert.match(ends[0].blocker ?? "", /runner boom/);
+});
+
+test("abort 后 module.run 正常返回时 status 仍为 aborted（非 completed）", async () => {
+  const controller = new AbortController();
+  const module = moduleOf(async () => {
+    controller.abort();
+    return "done";
+  });
+  const record = await runWorkflow({ ...baseOptions, module, agentRunner: okRunner(), signal: controller.signal });
+  assert.equal(record.status, "aborted");
 });

@@ -10,6 +10,7 @@ import {
   containsNativeSessionResumeFailure,
   containsRuntimePermissionDenial,
   isPermissionSkippedToolResult,
+  isStoppedByConsole,
   PERMISSION_DENIAL_MODEL_HINT,
 } from "./runtime-issues.ts";
 
@@ -126,5 +127,44 @@ describe("runtime-issues", () => {
 
     assert.equal(outcome?.status, "blocked");
     assert.match(outcome?.blocker || "", /directory permission denial/i);
+  });
+
+  test("non-permission failure fills a non-null blocker (regression: was always null)", () => {
+    const stopped = assessAgentRuntimeOutcome({
+      exitCode: 137,
+      stopped: true,
+      timedOut: false,
+      renderedStdout: "",
+      stderr: "",
+    });
+    assert.equal(stopped.status, "blocked");
+    assert.notEqual(stopped.blocker, null);
+    assert.match(stopped.blocker || "", /stopped by the console/i);
+
+    const timedOut = assessAgentRuntimeOutcome({
+      exitCode: null,
+      stopped: false,
+      timedOut: true,
+      renderedStdout: "",
+      stderr: "",
+    });
+    assert.equal(timedOut.status, "blocked");
+    assert.match(timedOut.blocker || "", /timed out/i);
+
+    const exited = assessAgentRuntimeOutcome({
+      exitCode: 2,
+      stopped: false,
+      timedOut: false,
+      renderedStdout: "",
+      stderr: "",
+    });
+    assert.equal(exited.status, "blocked");
+    assert.match(exited.blocker || "", /code 2/i);
+  });
+
+  test("isStoppedByConsole matches both zh-CN and en-US blocker text", () => {
+    assert.equal(isStoppedByConsole("Agent backend was stopped by the console user."), true);
+    assert.equal(isStoppedByConsole("Agent 后端已被控制台用户停止。"), true);
+    assert.equal(isStoppedByConsole("agent timed out"), false);
   });
 });

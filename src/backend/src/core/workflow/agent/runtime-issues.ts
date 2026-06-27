@@ -49,6 +49,13 @@ export interface RuntimeOutcomeAssessment {
   userMessage: string | null;
 }
 
+/** 运行时识别「被控制台停止」的 blocker 文案：中英文都覆盖（避免靠单一语言文案误判）。 */
+const STOPPED_BY_CONSOLE_RE = /stopped by the console|已被控制台用户停止/i;
+
+export function isStoppedByConsole(blocker: string | null | undefined): boolean {
+  return STOPPED_BY_CONSOLE_RE.test(blocker || "");
+}
+
 export function assessAgentRuntimeOutcome(options: {
   exitCode: number | null;
   stopped: boolean;
@@ -69,7 +76,13 @@ export function assessAgentRuntimeOutcome(options: {
       hadPermissionDenial: false,
       hadAssistantText,
       status: exitOk ? "pass" : "blocked",
-      blocker: exitOk ? null : null,
+      blocker: exitOk
+        ? null
+        : options.stopped
+          ? backendText('runtime.stoppedByConsole', language)
+          : options.timedOut
+            ? backendText('runtime.agentTimeout', language)
+            : backendText('runtime.agentExited', language, { code: String(options.exitCode ?? -1) }),
       userMessage: null,
     };
   }
@@ -140,7 +153,7 @@ export function assessDispatchBackendOutput(dispatch: {
   const explicitSuccessfulTurn = dispatch.status === "pass" && !dispatch.blocker && !timedOut;
   return assessAgentRuntimeOutcome({
     exitCode: exitCode === null && explicitSuccessfulTurn ? 0 : exitCode,
-    stopped: dispatch.blocker?.includes("stopped by the console") ?? false,
+    stopped: isStoppedByConsole(dispatch.blocker),
     timedOut,
     renderedStdout: dispatch.backendOutput.stdout || "",
     stderr: dispatch.backendOutput.stderr || "",

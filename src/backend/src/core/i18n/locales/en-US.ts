@@ -1,5 +1,7 @@
 const enUS = {
     'runtime.stoppedByConsole': 'Agent backend was stopped by the console user.',
+    'runtime.agentTimeout': 'Agent subtask timed out.',
+    'runtime.agentExited': 'Agent subtask exited unexpectedly (code {{code}}).',
     'runtime.permissionDenialBlocked': 'The runtime denied access to a directory outside the workspace.\n{{userMessage}}',
     'runtime.permissionDenialNoReply': 'The runtime ended early after a directory permission denial and did not produce a reply.\n{{userMessage}}',
     'runtime.optionFallback': 'Option {{index}}',

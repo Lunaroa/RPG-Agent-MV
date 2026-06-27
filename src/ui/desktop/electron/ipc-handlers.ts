@@ -1278,8 +1278,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       .approveProposal(workflowRoot, id, {
         onEvent: (event) => push({ type: 'workflow_run', phase: 'progress', event }),
       })
-      .then(({ proposal: done }) => {
-        // 阻塞模型下报告由 tool_result 带回给 agent，这里只推完成状态给子任务面板，不再单独推报告。
+      .then(({ proposal: done, record }) => {
         push({
           type: 'workflow_run',
           phase: 'done',
@@ -1287,6 +1286,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
           runId: done.runId,
           workflow: done.title,
           reason: done.reason ?? null,
+          report: record?.report ?? null,
         });
       })
       .catch((error: unknown) => {

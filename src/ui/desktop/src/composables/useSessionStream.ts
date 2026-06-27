@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { openSessionEventStream } from '../api/client.ts'
+import { openSessionEventStream, workflow } from '../api/client.ts'
 import {
   parseAgentAsk,
   parseAskFromToolCall,
@@ -311,62 +311,27 @@ export function useSessionStream() {
     appendSegment(segment)
   }
 
-  // 工作流发起工具的 MCP 名（opencode 以 服务器_工具 命名，也有 mcp__server__tool 形式）。
-  function isRmmvWorkflowTool(toolName: string): boolean {
-    const name = String(toolName || '')
-    return name === 'rmmv_RmmvWorkflow' || name === 'mcp__rmmv__RmmvWorkflow' || /RmmvWorkflow$/.test(name)
-  }
-
-  // agent 一调用工作流工具就阻塞在后端（等批准）。tool_call 瞬间用入参合成高危审批卡，
-  // 取代对话框；proposalId 此时还不知道（handler 内部生成），先留空，批准时按 title 懒取。
-  function upsertWorkflowProposalAskFromToolCall(event: SessionEvent): void {
-    const input = (event.input && typeof event.input === 'object' ? event.input : {}) as Record<string, unknown>
-    const ask: Ask = {
-      type: 'risk-approval',
-      askId: `workflow-proposal:${event.call_id || ''}`,
-      title: String(input.title || ''),
-      prompt: '',
-      actionLabel: translate('ask.riskApproval.actionWorkflow', productLanguage),
-      script: typeof input.script === 'string' ? input.script : '',
-      riskLevel: 'high',
-      proposalId: '',
-      fromMcp: false,
-      createdAt: new Date().toISOString(),
-      result: null,
-    }
-    upsertAsk(ask)
-  }
-
-  // 工具返回（人批准跑完 / 拒绝 / 超时）时按 data.status 终结卡片。若用户没点过按钮（超时/作废），
-  // 这里负责把卡片锁死，避免按钮还亮着但工具已返回。
-  function finalizeWorkflowProposalAsk(event: SessionEvent): void {
-    const callId = event.call_id || ''
-    if (!callId) return
-    const askId = `workflow-proposal:${callId}`
-    const seg = askSegments.get(askId)
-    if (!seg?.ask) return
-    if (seg.ask.result?.submittedAt) return
+  // 工作流工具的权限审批由 opencode approvalHandler 在执行前完成（弹 risk-approval 卡）。
+  // 用户批准后 handler 执行：propose 落盘 pending 提议 + 立即返回 tool_result。
+  // 这里检测 tool_result 里的 workflow-proposal，自动调 approveProposal IPC 运行工作流——
+  // 用户已在权限审批环节做过决定，不需要再批一次。报告通过 workflow_run 事件异步推回。
+  function autoApproveWorkflowProposal(event: SessionEvent): void {
     const output = typeof event.output === 'string' ? event.output : ''
-    let status = 'completed'
-    if (output) {
-      try {
-        const parsed = JSON.parse(output) as Record<string, unknown>
-        const data = parsed?.data as Record<string, unknown> | undefined
-        if (data && data.kind === 'workflow-proposal' && typeof data.status === 'string') {
-          status = data.status
-        }
-      } catch {
-        // 非 JSON 输出，按完成处理。
+    if (!output.includes('workflow-proposal')) return
+    let proposalId = ''
+    try {
+      const parsed = JSON.parse(output) as Record<string, unknown>
+      const data = parsed?.data as Record<string, unknown> | undefined
+      if (data?.kind === 'workflow-proposal') {
+        proposalId = String(data.proposalId || '')
       }
+    } catch {
+      return
     }
-    const decision = status === 'rejected' || status === 'timeout' || status === 'aborted' || status === 'failed'
-      ? 'reject'
-      : 'approve'
-    updateAskResult(askId, {
-      submittedAt: new Date().toISOString(),
-      decision,
-      workflowStatus: status,
-    } as AskResult)
+    if (!proposalId) return
+    void workflow.approveProposal(proposalId).catch(() => {
+      // 自动批准失败不阻断会话；用户可在子任务面板手动重试。
+    })
   }
 
 
@@ -489,10 +454,6 @@ export function useSessionStream() {
       markReasoningInterrupted()
       finalizeLiveMarkdownSegment()
       nonTextSinceText = true
-      if (event.tool && isRmmvWorkflowTool(event.tool)) {
-        upsertWorkflowProposalAskFromToolCall(event)
-        return
-      }
       if (event.tool && isAskTool(event.tool)) {
         if (shouldSkipStreamAskToolCall(event.tool)) {
           return
@@ -524,7 +485,7 @@ export function useSessionStream() {
     if (event.type === 'tool_result') {
       markReasoningInterrupted()
       emitEventReviewPreviewFromToolResult(event)
-      finalizeWorkflowProposalAsk(event)
+      autoApproveWorkflowProposal(event)
       const existing = event.call_id ? toolSegments.get(event.call_id) : undefined
       if (existing) {
         // 合并回对应 tool_call 行：通过 index 替换以可靠触发响应式更新。

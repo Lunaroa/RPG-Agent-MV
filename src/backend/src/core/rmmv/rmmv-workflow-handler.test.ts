@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { runRmmvWorkflow } from "./rmmv-workflow-handler.ts";
-import { listProposals, readProposalScript, rejectProposal } from "../workflow/orchestrator/proposals.ts";
+import { listProposals, readProposalScript } from "../workflow/orchestrator/proposals.ts";
 
 function tmpRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "wf-handler-"));
@@ -13,10 +13,9 @@ function tmpRoot(): string {
 
 const SCRIPT = `const r = await agent({ prompt: "审一段台词", label: "voice" }); return { ok: r.ok };`;
 
-test("workflow.propose 落盘 pending 提议并阻塞；拒绝后返回 rejected", async () => {
+test("workflow.propose 落盘 pending 提议并立即返回（非阻塞）", async () => {
   const root = tmpRoot();
-  // propose 在首个 await 前同步完成，pending 提议已落盘；handler 此后阻塞轮询。
-  const pending = runRmmvWorkflow({
+  const result = await runRmmvWorkflow({
     action: "propose",
     script: SCRIPT,
     summary: "审 示例角色 的台词",
@@ -24,27 +23,22 @@ test("workflow.propose 落盘 pending 提议并阻塞；拒绝后返回 rejected
     workflowRoot: root,
     project: "/p/demo",
   });
+  const data = result.data as { kind: string; status: string; proposalId: string };
+  assert.equal(data.kind, "workflow-proposal");
+  assert.equal(data.status, "pending");
+
   const proposals = listProposals(root, { status: "pending" });
   assert.equal(proposals.length, 1);
   assert.equal(proposals[0].title, "写作审核");
-  assert.match(readProposalScript(root, proposals[0].proposalId), /agent\(/);
-
-  // 拒绝 → handler 解除阻塞，返回 rejected（不运行任何东西）。
-  rejectProposal(root, proposals[0].proposalId, "测试拒绝");
-  const result = await pending;
-  const data = result.data as { kind: string; status: string; reason?: string };
-  assert.equal(data.kind, "workflow-proposal");
-  assert.equal(data.status, "rejected");
+  assert.equal(proposals[0].proposalId, data.proposalId);
+  assert.match(readProposalScript(root, data.proposalId), /agent\(/);
 });
 
 test("workflow.propose 缺 action 时默认按 propose 处理", async () => {
   const root = tmpRoot();
-  const pending = runRmmvWorkflow({ script: SCRIPT, workflowRoot: root });
-  const proposals = listProposals(root, { status: "pending" });
-  assert.equal(proposals.length, 1);
-  rejectProposal(root, proposals[0].proposalId, "测试拒绝");
-  const result = await pending;
+  const result = await runRmmvWorkflow({ script: SCRIPT, workflowRoot: root });
   assert.equal((result.data as { kind: string }).kind, "workflow-proposal");
+  assert.equal(listProposals(root).length, 1);
 });
 
 test("workflow.propose 空脚本 → 抛错、不留提议", async () => {

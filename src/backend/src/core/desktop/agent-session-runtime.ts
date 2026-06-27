@@ -509,12 +509,16 @@ export class AgentSessionRuntime {
     const requestId = askId
       .replace(AGENT_RUNTIME_PLAN_ASK_PREFIX, "")
       .replace(AGENT_RUNTIME_QUESTION_ASK_PREFIX, "");
+    console.error(`[perm-diag] submitOpencodeAskResult: askId=${askId} askType=${askType} requestId=${requestId} decision=${JSON.stringify(result)}`);
     if (!requestId) return { ok: false, reason: "missing opencode request id" };
     const requestEvent = session.events
       .slice()
       .reverse()
       .find((event) => isOpencodeAskRequestEvent(event, requestId));
-    if (!requestEvent) return { ok: false, reason: "opencode request not found" };
+    if (!requestEvent) {
+      console.error(`[perm-diag] submitOpencodeAskResult: request event NOT FOUND for requestId=${requestId}. Events: ${session.events.filter(e => e.type === "opencode_permission_request").map(e => e.request_id).join(",")}`);
+      return { ok: false, reason: "opencode request not found" };
+    }
 
     const request = asRecord(requestEvent.request);
     const response = askType === "plan-approval"
@@ -523,6 +527,7 @@ export class AgentSessionRuntime {
 
     const behavior = asString(response.behavior);
     const opencodeSessionId = session.opencodeSessionId;
+    console.error(`[perm-diag] submitOpencodeAskResult: behavior=${behavior} opencodeSessionId=${opencodeSessionId} tool_name=${asString(request.tool_name)}`);
     if (opencodeSessionId) {
       const directory = resolveSessionProjectDirectory(session, this.workflowRoot);
       if (asString(request.tool_name) === "AskUserQuestion") {

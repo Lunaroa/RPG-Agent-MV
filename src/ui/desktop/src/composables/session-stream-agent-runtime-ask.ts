@@ -3,11 +3,15 @@ import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/mess
 import { translate } from '../i18n/messages.ts'
 
 export type OpencodeAsk = {
-  type: 'plan-approval' | 'multi-choice-clarify'
+  type: 'plan-approval' | 'multi-choice-clarify' | 'risk-approval'
   askId: string
   title: string
   prompt: string
   planMarkdown?: string
+  actionLabel?: string
+  script?: string
+  riskLevel?: string
+  proposalId?: string
   questions?: Array<{
     id: string
     header: string
@@ -86,6 +90,23 @@ export function askFromOpencodeRequest(event: {
       title: translate('agent.ask.waitingForInput', language),
       prompt: asString(request.description) || translate('agent.ask.answerClarification', language),
       questions,
+      fromMcp: true,
+      createdAt: new Date().toISOString(),
+      result: null,
+    }
+  }
+
+  // 工作流发起工具（rmmv_RmmvWorkflow）配了 "ask" 权限规则：opencode 在执行前发权限请求，
+  // 这里把它变成高危审批卡（risk-approval），展示要执行的脚本。批准→replyOpencodePermission("once")。
+  if (toolName === 'rmmv_RmmvWorkflow' || toolName === 'mcp__rmmv__RmmvWorkflow' || /RmmvWorkflow$/.test(toolName)) {
+    return {
+      type: 'risk-approval',
+      askId: `agent-runtime-plan:${requestId}`,
+      title: asString(input.title) || translate('ask.riskApproval.actionWorkflow', language),
+      prompt: '',
+      actionLabel: translate('ask.riskApproval.actionWorkflow', language),
+      script: asString(input.script),
+      riskLevel: 'high',
       fromMcp: true,
       createdAt: new Date().toISOString(),
       result: null,

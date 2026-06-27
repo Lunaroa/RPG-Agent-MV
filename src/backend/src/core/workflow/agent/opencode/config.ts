@@ -136,9 +136,7 @@ export function buildOpencodeRmmvMcpConfig(workflowRoot: string, enabled = true)
       ELECTRON_RUN_AS_NODE: "1",
     },
     enabled,
-    // 工作流发起工具会阻塞到人批准+后台跑完（最长约 22 分钟），超时必须覆盖这一整个窗口；
-    // 其他 rmmv 工具都是秒级返回，不受影响。
-    timeout: 30 * 60 * 1000,
+    timeout: 10000,
   };
 }
 
@@ -189,6 +187,13 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
       bash: "deny",
       webfetch: "deny",
       external_directory: "deny",
+    };
+  } else {
+    // 工作流发起工具配 "ask"：agent 一调用就阻塞在 opencode 的 approvalHandler，
+    // 发 permission 事件→桌面弹高危审批卡（取代对话框）→批准后才执行工具。
+    // 这是 opencode 原生权限机制（同 ExitPlanMode），在 LLM 执行循环内部阻塞，不发 session.idle。
+    config.permission = {
+      rmmv_RmmvWorkflow: "ask",
     };
   }
 

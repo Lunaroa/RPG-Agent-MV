@@ -692,7 +692,7 @@ export function normalizeOpencodeEvent(
         at,
       });
     }
-  } else if (type === "permission.updated") {
+  } else if (type === "permission.updated" || type === "permission.asked") {
     out.push(buildPermissionRequest(properties, at, state.productLanguage));
   } else if (type === "permission.replied") {
     out.push({
@@ -829,15 +829,32 @@ function buildQuestionRequest(
 function buildPermissionRequest(permission: Record<string, unknown>, at: string, language?: ProductLanguage | null): RuntimeEvent {
   const resolvedLanguage = normalizeProductLanguage(language);
   const requestId = asString(permission.id);
-  const type = asString(permission.type);
+  // plan 模式事件用 type 字段（plan_exit/plan_enter）；approvalHandler 事件用 permission 字段（workflow_tool_approval）。
+  const type = asString(permission.type) || asString(permission.permission);
   const title = asString(permission.title) || type || backendText('runtime.permissionRequired', resolvedLanguage);
   const metadata = asRecord(permission.metadata);
   const planFilePath = asString(metadata.planFilePath) || asString(metadata.planPath) || asString(metadata.path) || null;
+
+  // approvalHandler 的 metadata.tools 是 [{name, args}]，args 是工具入参的 JSON 文本。
+  // 从中提取工具名和入参，让桌面能渲染高危审批卡（展示脚本等实际内容）。
+  const toolsRaw = Array.isArray(metadata.tools) ? metadata.tools : [];
+  const firstTool = toolsRaw.length > 0 ? asRecord(toolsRaw[0]) : null;
+  const toolNameFromMeta = firstTool ? asString(firstTool.name) : "";
+  let toolInput: Record<string, unknown> = {};
+  if (firstTool) {
+    try {
+      const parsed = JSON.parse(asString(firstTool.args));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        toolInput = parsed as Record<string, unknown>;
+      }
+    } catch { /* 非 JSON，忽略 */ }
+  }
+
   const toolName = type === "plan_exit"
     ? "ExitPlanMode"
     : type === "plan_enter"
       ? "EnterPlanMode"
-      : title;
+      : (toolNameFromMeta || title);
   return {
     type: "opencode_permission_request",
     request_id: requestId,
@@ -845,12 +862,14 @@ function buildPermissionRequest(permission: Record<string, unknown>, at: string,
       subtype: "can_use_tool",
       tool_name: toolName,
       description: title,
-      input: {
-        plan: asString(metadata.plan) || title,
-        planFilePath,
-        permissionType: type,
-        pattern: permission.pattern,
-      },
+      input: Object.keys(toolInput).length > 0
+        ? toolInput
+        : {
+            plan: asString(metadata.plan) || title,
+            planFilePath,
+            permissionType: type,
+            pattern: permission.pattern,
+          },
     },
     at,
   };

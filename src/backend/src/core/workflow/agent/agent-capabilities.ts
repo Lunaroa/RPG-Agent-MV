@@ -261,6 +261,12 @@ function isAllowed(allow: string[], deny: string[], toolId: string): boolean {
   return isInAllowList(allow, toolId);
 }
 
+/** Whether a tool is explicitly denied (deny wins, case-insensitive). */
+export function isToolDenied(deny: string[], toolId: string): boolean {
+  const lowered = toolId.toLowerCase();
+  return deny.some((d) => d.toLowerCase() === lowered);
+}
+
 function isInAllowList(allow: string[], toolId: string): boolean {
   const loweredToolId = toolId.toLowerCase();
   return allow.some((entry) => {
@@ -380,6 +386,41 @@ export function resolveEnabledAgentRuntimeBuiltinTools(
     .map((tool) => tool.id);
 }
 
+export type ToolPolicyEntry = { id: string; kind: string; readOnly?: boolean; stagingSafe?: boolean };
+export type ToolAvailability = (tool: ToolPolicyEntry) => boolean;
+
+/**
+ * Resolve per-tool on/off policy from a manifest slice plus allow/deny lists.
+ *
+ * Read-only workflow subagents: every non-read-only tool is hard-disabled (edits, writes,
+ * bash, subagent spawn, mutating RMMV MCP tools...). The single carve-out is `stagingSafe`
+ * tools — their only side effect is registering a pending-placement event draft for the user
+ * to place, so they stay ON by availability for read-only workflow subagents. They are NOT
+ * gated by the allow-list (a read-only stage still needs to stage events), BUT an explicit
+ * deny still wins: a stagingSafe tool listed in `deny` is turned off. Non-read-only sessions
+ * follow plain allow/deny.
+ */
+export function resolveToolPolicy<T extends ToolPolicyEntry>(
+  tools: T[],
+  allow: string[],
+  deny: string[],
+  options: { readOnly?: boolean; isAvailable: (tool: T) => boolean },
+): Record<string, boolean> {
+  const policy: Record<string, boolean> = {};
+  for (const tool of tools) {
+    if (tool.kind !== "builtin" && tool.kind !== "mcp") continue;
+    const available = options.isAvailable(tool);
+    const allowed = available && isAllowed(allow, deny, tool.id);
+    if (options.readOnly) {
+      policy[tool.id] =
+        tool.stagingSafe === true ? available && !isToolDenied(deny, tool.id) : allowed && tool.readOnly === true;
+    } else {
+      policy[tool.id] = allowed;
+    }
+  }
+  return policy;
+}
+
 export function buildOpencodeToolPolicyFromAgentAllow(
   workflowRootInput?: string,
   options?: { env?: EnvironmentLike; readOnly?: boolean },
@@ -392,26 +433,10 @@ export function buildOpencodeToolPolicyFromAgentAllow(
   const agent = registry.agents[DEFAULT_AGENT_ID] || null;
   const allow: string[] = (agent?.tools?.allow as string[]) || [];
   const deny: string[] = (agent?.tools?.deny as string[]) || [];
-  const policy: Record<string, boolean> = {};
-  for (const tool of manifest.tools) {
-    if (tool.kind !== "builtin" && tool.kind !== "mcp") continue;
-    const { available } = evaluateToolAvailability(tool, workflowRoot, options?.env);
-    const allowed = available && isAllowed(allow, deny, tool.id);
-    // Read-only sessions (isolated workflow subagents) hard-disable every tool not flagged
-    // read-only in the manifest — edits, writes, bash, subagent spawn, and the mutating RMMV
-    // MCP tools all turn off. This is the real enforcement: the `readOnly` flag is not advisory.
-    // The single carve-out: stagingSafe tools (whose only side effect is registering a
-    // pending-placement event) stay on for read-only workflow subagents — they are forced on by
-    // availability alone (not gated by the agent allow-list), since they exist solely to let a
-    // read-only workflow stage event drafts for the user to place. They never reach a normal
-    // session (not in the allow-list → the non-readOnly branch leaves them off).
-    if (options?.readOnly) {
-      policy[tool.id] = tool.stagingSafe === true ? available : (allowed && tool.readOnly === true);
-    } else {
-      policy[tool.id] = allowed;
-    }
-  }
-  return policy;
+  return resolveToolPolicy(manifest.tools, allow, deny, {
+    readOnly: options?.readOnly,
+    isAvailable: (tool) => evaluateToolAvailability(tool, workflowRoot, options?.env).available,
+  });
 }
 
 export function hasEnabledRmmvMcpTools(

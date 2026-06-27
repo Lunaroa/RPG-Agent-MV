@@ -93,6 +93,54 @@ test("脚本拿不到 require / process / module（缩小逃逸面）", async ()
   });
 });
 
+test("注入函数的原型链逃逸被阻断：agent.constructor/apply 为 undefined", async () => {
+  const { ctx } = fakeCtx();
+  const report = await runScriptInSandbox(
+    `let leak = "none";
+     try {
+       const Fn = agent.constructor && agent.constructor.constructor;
+       leak = Fn ? typeof Fn("return process")() : "blocked";
+     } catch (e) { leak = "blocked"; }
+     return { ctor: typeof agent.constructor, apply: typeof agent.apply, leak };`,
+    ctx,
+  );
+  const r = json(report) as { ctor: string; apply: string; leak: string };
+  assert.equal(r.ctor, "undefined", "agent.constructor must be blocked");
+  assert.equal(r.apply, "undefined", "agent.apply must be blocked");
+  assert.notEqual(r.leak, "object", "must not reach process via agent.constructor.constructor");
+});
+
+test("args 经 JSON 往返切断宿主原型链，不触达宿主 process", async () => {
+  const { ctx } = fakeCtx();
+  const report = await runScriptInSandbox(
+    `let leak = "none";
+     try {
+       const Fn = args.constructor && args.constructor.constructor;
+       leak = Fn ? typeof Fn("return process")() : "blocked";
+     } catch (e) { leak = "blocked"; }
+     return { leak, role: args.role };`,
+    ctx,
+  );
+  const r = json(report) as { leak: string; role: string };
+  assert.notEqual(r.leak, "object", "must not reach process via args.constructor.constructor");
+  assert.equal(r.role, "示例角色", "args data still readable after JSON round-trip");
+});
+
+test("abort 能中断永不 resolve 的脚本（不死锁）", async () => {
+  const controller = new AbortController();
+  const { ctx } = fakeCtx({ signal: controller.signal });
+  const promise = runScriptInSandbox(`await new Promise(() => {}); return "never";`, ctx);
+  controller.abort();
+  const settled = await Promise.race([
+    promise.then(
+      () => "resolved",
+      (e) => (e instanceof Error ? e.message : String(e)),
+    ),
+    new Promise<string>((resolve) => setTimeout(() => resolve("__timeout__"), 2000)),
+  ]);
+  assert.match(settled, /aborted/i, `abort must interrupt the hanging script; got: ${settled}`);
+});
+
 test("纯计算内置（JSON/Math/Array）在沙箱里可用", async () => {
   const { ctx } = fakeCtx();
   const report = await runScriptInSandbox(

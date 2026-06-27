@@ -93,13 +93,53 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
   return record;
 }
 
+const MAX_REPORT_BYTES = 8 * 1024 * 1024;
+const RUN_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+function cleanReport(report: unknown): unknown {
+  try {
+    const text = JSON.stringify(report, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
+    if (text === undefined) return null;
+    return JSON.parse(text);
+  } catch {
+    return { error: "report not serializable (circular or non-JSON value)" };
+  }
+}
+
+function stringifyWithCap(value: unknown, maxBytes: number): string {
+  let text: string;
+  try {
+    text = JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2);
+  } catch {
+    text = JSON.stringify({ error: "value not serializable" }, null, 2);
+  }
+  if (text.length > maxBytes) {
+    return JSON.stringify({ truncated: true, byteLength: text.length, preview: text.slice(0, maxBytes) }, null, 2);
+  }
+  return text;
+}
+
 /** 把运行记录与报告写入 runtime/out/workflows/<runId>/。返回报告路径。 */
 export function persistRunRecord(workflowRoot: string, record: WorkflowRunRecord): { recordPath: string; reportPath: string } {
+  if (!RUN_ID_RE.test(record.runId)) {
+    throw new Error(`非法 runId：${record.runId}`);
+  }
   const dir = path.join(workflowRoot, "runtime", "out", "workflows", record.runId);
+  const workflowsRoot = path.resolve(path.join(workflowRoot, "runtime", "out", "workflows"));
+  const resolvedDir = path.resolve(dir);
+  if (resolvedDir !== workflowsRoot && !resolvedDir.startsWith(workflowsRoot + path.sep)) {
+    throw new Error(`runId 解析越界：${record.runId}`);
+  }
   fs.mkdirSync(dir, { recursive: true });
   const recordPath = path.join(dir, "record.json");
   const reportPath = path.join(dir, "report.json");
-  fs.writeFileSync(recordPath, JSON.stringify(record, null, 2), "utf8");
-  fs.writeFileSync(reportPath, JSON.stringify(record.report ?? null, null, 2), "utf8");
+  const safeReport = cleanReport(record.report);
+  const safeRecord = { ...record, report: safeReport };
+  try {
+    fs.writeFileSync(recordPath, stringifyWithCap(safeRecord, MAX_REPORT_BYTES), "utf8");
+    fs.writeFileSync(reportPath, stringifyWithCap(safeReport, MAX_REPORT_BYTES), "utf8");
+  } catch (error) {
+    console.error(`[workflow] persistRunRecord 落盘失败：${error instanceof Error ? error.message : String(error)}`);
+  }
   return { recordPath, reportPath };
 }

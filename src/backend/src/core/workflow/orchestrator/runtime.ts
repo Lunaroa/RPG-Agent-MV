@@ -32,27 +32,43 @@ export function defaultLimits(): WorkflowLimits {
   return { maxConcurrency: defaultMaxConcurrency(), maxTotalAgents: DEFAULT_MAX_TOTAL_AGENTS };
 }
 
-/** 极简计数信号量：acquire 拿不到就排队，release 唤醒下一个。 */
+/** 极简计数信号量：acquire 拿不到就排队，release 唤醒下一个。acquire 响应 abort——中止时所有排队 waiter 立即被 reject，避免挂死。 */
 class Semaphore {
   private permits: number;
-  private readonly waiters: Array<() => void> = [];
+  private readonly waiters: Array<{
+    resolve: () => void;
+    onAbort: () => void;
+  }> = [];
 
   constructor(permits: number) {
     this.permits = Math.max(1, permits);
   }
 
-  async acquire(): Promise<void> {
+  async acquire(signal: AbortSignal): Promise<void> {
     if (this.permits > 0) {
       this.permits -= 1;
       return;
     }
-    await new Promise<void>((resolve) => this.waiters.push(resolve));
+    if (signal.aborted) {
+      throw new WorkflowAbortedError("aborted while waiting for permit");
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => reject(new WorkflowAbortedError("aborted while waiting for permit"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.waiters.push({
+        resolve: () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        },
+        onAbort,
+      });
+    });
   }
 
   release(): void {
     const next = this.waiters.shift();
     if (next) {
-      next();
+      next.resolve();
       return;
     }
     this.permits += 1;
@@ -138,9 +154,13 @@ export async function runWorkflow(options: RunWorkflowOptions): Promise<Workflow
     const index = dispatched;
     dispatched += 1;
 
-    await semaphore.acquire();
-    onEvent({ type: "agent-start", label: request.label, index, prompt: request.prompt, at: stamp() });
+    await semaphore.acquire(signal);
+    if (signal.aborted) {
+      semaphore.release();
+      throw new WorkflowAbortedError("workflow aborted after acquiring permit");
+    }
     try {
+      onEvent({ type: "agent-start", label: request.label, index, prompt: request.prompt, at: stamp() });
       const result = await options.agentRunner(request, signal);
       inputTokens += result.inputTokens ?? 0;
       outputTokens += result.outputTokens ?? 0;
@@ -156,6 +176,17 @@ export async function runWorkflow(options: RunWorkflowOptions): Promise<Workflow
         at: stamp(),
       });
       return result;
+    } catch (err) {
+      onEvent({
+        type: "agent-end",
+        label: request.label,
+        index,
+        ok: false,
+        blocker: err instanceof Error ? err.message : String(err),
+        output: "",
+        at: stamp(),
+      });
+      throw err;
     } finally {
       semaphore.release();
     }
@@ -221,6 +252,10 @@ export async function runWorkflow(options: RunWorkflowOptions): Promise<Workflow
     error = err instanceof Error ? err.message : String(err);
   } finally {
     if (options.signal) options.signal.removeEventListener("abort", onExternalAbort);
+  }
+
+  if (signal.aborted && status === "completed") {
+    status = "aborted";
   }
 
   const finishedAt = stamp();

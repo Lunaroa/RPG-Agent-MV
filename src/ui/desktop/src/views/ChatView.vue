@@ -150,7 +150,7 @@ import {
   resolveRegistryContractMapId,
 } from '../utils/placementMapId'
 import type { Ask, AskResult } from '../utils/askParser'
-import { eventRegistry, sessions as sessionsApi, workflow as workflowApi } from '../api/client'
+import { eventRegistry, sessions as sessionsApi } from '../api/client'
 import {
   activeConversationRootId,
   groupSessionsIntoConversations,
@@ -689,65 +689,19 @@ async function settlePendingEventReviewForAsk(
   return eventPlacementAsk.reviewActionsForAsk(askId)
 }
 
-// 通用高危操作审批卡（risk-approval）：不走 submitAskResult/runIntent，
-// 直接调工作流 IPC 批准/拒绝，并就地锁定卡片状态。
-// proposalId 在 tool_call 时还不知道（handler 内部生成，阻塞在 MCP 子进程），
-// 点击批准/拒绝时按 title 懒取最新 pending 提议。tool_call 事件可能比 handler 落盘提议先到，
-// 所以带重试：最多等 3 秒（6 × 500ms）让提议落盘。
-async function resolveProposalId(ask: { proposalId?: string; title?: string }): Promise<string> {
-  const known = String(ask.proposalId || '')
-  if (known) return known
-  const title = String(ask.title || '')
-  for (let attempt = 0; attempt < 6; attempt++) {
-    try {
-      const raw = await workflowApi.listProposals('pending') as { proposals?: Array<Record<string, unknown>> }
-      const list = Array.isArray(raw?.proposals) ? raw.proposals : (Array.isArray(raw) ? raw as Array<Record<string, unknown>> : [])
-      const match = list
-        .filter((p) => p.status === 'pending')
-        .filter((p) => !title || String(p.title || '') === title)
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0]
-      if (match?.proposalId) return String(match.proposalId)
-    } catch {
-      // IPC 暂时不可用，继续重试。
-    }
-    if (attempt < 5) await new Promise((r) => setTimeout(r, 500))
-  }
-  return ''
-}
-
-async function settleRiskApproval(askId: string, decision: 'approve' | 'reject') {
-  const ask = getAsk(askId)
-  if (!ask || ask.result?.submittedAt) return
-  const proposalId = await resolveProposalId(ask)
-  if (!proposalId) {
-    ElMessage.error(t('ask.riskApproval.notFound'))
-    return
-  }
-  try {
-    if (decision === 'approve') {
-      await workflowApi.approveProposal(proposalId)
-    } else {
-      await workflowApi.rejectProposal(proposalId)
-    }
-  } catch (error) {
-    ElMessage.error(formatErrorText(error, decision === 'approve'
-      ? t('ask.riskApproval.approveFailed')
-      : t('ask.riskApproval.rejectFailed')))
-    return
-  }
-  updateAskResult(askId, {
-    submittedAt: new Date().toISOString(),
-    decision,
-    workflowStatus: decision === 'approve' ? 'running' : 'rejected',
-  } as AskResult)
-  await flushPersistTranscript()
-}
+// 通用高危操作审批卡（risk-approval）：走和 plan-approval 相同的 submitAsk 通道。
+// askId 以 agent-runtime-plan: 开头 → submitAskResult → submitOpencodeAskResult → replyOpencodePermission。
+// 批准 = "once"（允许本次），拒绝 = "reject"（阻止工具执行）。
+// 工具执行后 handler 落盘 pending 提议并立即返回，useSessionStream 在 tool_result 到达时自动 approveProposal 运行工作流。
 
 async function handleApprove(askId: string) {
   const ask = getAsk(askId)
   if (!ask) return
   if (ask.type === 'risk-approval') {
-    await settleRiskApproval(askId, 'approve')
+    await submitAsk(askId, { decision: 'approve' }, {
+      intent: '',
+      displayText: t('ask.riskApproval.statusApproved'),
+    })
     return
   }
   try {
@@ -775,7 +729,10 @@ async function handleReject(askId: string, feedback: string) {
   const ask = getAsk(askId)
   if (!ask) return
   if (ask.type === 'risk-approval') {
-    await settleRiskApproval(askId, 'reject')
+    await submitAsk(askId, { decision: 'reject' }, {
+      intent: '',
+      displayText: t('ask.riskApproval.statusRejected'),
+    })
     return
   }
   await submitAsk(askId, { decision: 'reject', feedback }, {

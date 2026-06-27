@@ -8,7 +8,6 @@ export type OpencodeAsk = {
   title: string
   prompt: string
   planMarkdown?: string
-  affectedFiles?: string[]
   questions?: Array<{
     id: string
     header: string
@@ -50,7 +49,6 @@ export function askFromOpencodeRequest(event: {
       title: translate('agent.ask.planPendingApproval', language),
       prompt: asString(request.description) || translate('agent.ask.reviewPlan', language),
       planMarkdown: asString(input.plan),
-      affectedFiles: asString(input.planFilePath) ? [asString(input.planFilePath)] : [],
       fromMcp: true,
       createdAt: new Date().toISOString(),
       result: null,

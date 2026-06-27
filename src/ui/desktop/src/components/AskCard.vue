@@ -21,23 +21,6 @@
         <div class="plan-content markdown-body" v-html="renderMarkdown(ask.planMarkdown || '')" />
       </details>
       <div v-else class="plan-content markdown-body" v-html="renderMarkdown(ask.planMarkdown || '')" />
-      <details v-if="ask.affectedFiles?.length || ask.risks?.length" class="ask-details">
-        <summary>{{ t('ask.plan.impactRisk') }}</summary>
-        <div v-if="ask.affectedFiles?.length" class="plan-meta">
-          <dt>{{ t('ask.plan.affectedFiles') }}</dt>
-          <dd>
-            <code v-for="file in ask.affectedFiles" :key="file">{{ file }}</code>
-          </dd>
-        </div>
-        <div v-if="ask.risks?.length" class="plan-meta">
-          <dt>{{ t('ask.plan.risks') }}</dt>
-          <dd>
-            <ul>
-              <li v-for="risk in ask.risks" :key="risk">{{ risk }}</li>
-            </ul>
-          </dd>
-        </div>
-      </details>
       <div v-if="!isLocked" class="plan-actions">
         <el-button type="primary" @click="handleApprove">{{ t('ask.plan.approve') }}</el-button>
         <el-button type="warning" @click="handleRevise">{{ reviseButtonLabel }}</el-button>
@@ -51,6 +34,18 @@
           :placeholder="planFeedbackPlaceholder"
         />
       </div>
+    </template>
+
+    <!-- Risk Approval Card (通用高危操作审批卡，对齐 Claude Code 权限提示：展示要执行的实际内容) -->
+    <template v-else-if="ask.type === 'risk-approval'">
+      <p class="risk-action-line">{{ t('ask.riskApproval.actionLead') }}<strong>{{ ask.actionLabel || ask.title }}</strong></p>
+      <pre v-if="ask.script" class="risk-script">{{ ask.script }}</pre>
+      <div v-if="!isLocked" class="risk-actions">
+        <el-button size="small" type="primary" @click="handleApprove">{{ t('ask.riskApproval.allowOnce') }}</el-button>
+        <el-button size="small" @click="handleRiskAlwaysAllow">{{ t('ask.riskApproval.alwaysAllow') }}</el-button>
+        <el-button size="small" type="danger" @click="handleRiskReject">{{ t('ask.riskApproval.deny') }}</el-button>
+      </div>
+      <p v-else class="risk-status">{{ riskStatusText }}</p>
     </template>
 
     <!-- Clarify Card -->
@@ -512,6 +507,7 @@ const ASK_KICKER_LABELS: Record<string, string> = {
   'clarify': 'ask.kicker.waitInput',
   'multi-choice-clarify': 'ask.kicker.waitChoice',
   'plan-approval': 'ask.kicker.waitDecision',
+  'risk-approval': 'ask.riskApproval.kicker',
   'production-board': 'ask.kicker.productionBoard',
   'map-selection': 'ask.kicker.mapSelection',
 }
@@ -578,6 +574,24 @@ function handleReject() {
   }
   emit('reject', props.ask.askId, text)
 }
+
+function handleRiskReject() {
+  emit('reject', props.ask.askId, '')
+}
+
+function handleRiskAlwaysAllow() {
+  emit('approve', props.ask.askId)
+}
+
+const riskStatusText = computed(() => {
+  const status = (props.ask.result as any)?.workflowStatus
+  if (status === 'running') return t('ask.riskApproval.statusApproved')
+  if (status === 'completed') return t('ask.riskApproval.statusCompleted')
+  if (status === 'failed') return t('ask.riskApproval.statusFailed')
+  if (status === 'timeout') return t('ask.riskApproval.statusTimeout')
+  if (props.ask.result?.decision === 'reject') return t('ask.riskApproval.statusRejected')
+  return t('ask.riskApproval.statusApproved')
+})
 
 function formatClarifySelectionLabels(selected: string[], otherText: string): string {
   const labels = selected.map((selectedId) => {
@@ -833,6 +847,46 @@ function getAnswerDisplay(question: AskQuestion): string {
 .ask-details summary {
   cursor: pointer;
   padding: 7px 0;
+  font-size: var(--text-sm);
+  color: var(--app-ink-soft);
+}
+
+.risk-action-line {
+  margin: 0 0 8px;
+  font-size: var(--text-sm);
+  color: var(--app-ink-soft);
+}
+
+.risk-action-line strong {
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.risk-script {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  background-color: var(--el-fill-color-light);
+  border-radius: 4px;
+  font-family: var(--app-mono-font, monospace);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--el-text-color-regular);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.risk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.risk-status {
+  margin: 8px 0 0;
   font-size: var(--text-sm);
   color: var(--app-ink-soft);
 }

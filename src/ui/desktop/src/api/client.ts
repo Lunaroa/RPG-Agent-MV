@@ -466,6 +466,27 @@ export const sessions = {
   },
 };
 
+export const workflow = {
+  listProposals(status?: string) {
+    return desktopApi().workflow.listProposals(status);
+  },
+  getProposal(proposalId: string) {
+    return desktopApi().workflow.getProposal(proposalId);
+  },
+  approveProposal(proposalId: string) {
+    return desktopApi().workflow.approveProposal(proposalId);
+  },
+  rejectProposal(proposalId: string, reason?: string) {
+    return desktopApi().workflow.rejectProposal(proposalId, reason);
+  },
+  getScript(proposalId: string) {
+    return desktopApi().workflow.getScript(proposalId);
+  },
+  getReport(proposalId: string) {
+    return desktopApi().workflow.getReport(proposalId);
+  },
+};
+
 export const bootstrap = {
   get() {
     return desktopApi().bootstrap.get() as Promise<BootstrapSnapshot>;

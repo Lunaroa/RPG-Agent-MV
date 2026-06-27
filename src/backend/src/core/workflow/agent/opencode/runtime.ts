@@ -1000,8 +1000,14 @@ export async function runOpencodeSession(
     });
 
     const streamTask = (async () => {
+      console.error(`[perm-diag] SSE stream loop started`);
       for await (const raw of subscribed.stream as AsyncGenerator<Record<string, unknown>>) {
-        if (!raw || done) continue;
+        if (!raw || done) {
+          if (done) console.error(`[perm-diag] SSE loop: skipping raw because done=true`);
+          continue;
+        }
+        const rawType = asString(raw.type);
+        console.error(`[perm-diag] SSE event: type=${rawType}`);
         const eventSessionId = sessionIdFromEvent(raw);
         if (
           eventSessionId
@@ -1023,6 +1029,7 @@ export async function runOpencodeSession(
           }
           onEvent(event);
           if (event.type === "status" && ["blocked", "error", "failed"].includes(String(event.status || ""))) {
+            console.error(`[perm-diag] status blocked/error/failed → finish("blocked")`);
             finish("blocked", asString(event.blocker) || "opencode session failed");
           }
         }
@@ -1036,6 +1043,7 @@ export async function runOpencodeSession(
           }
         }
       }
+      console.error(`[perm-diag] SSE stream loop ENDED naturally (stream closed). done=${done}`);
     })();
 
     const promptResult = await client.session.promptAsync({
@@ -1051,10 +1059,15 @@ export async function runOpencodeSession(
       },
       signal: controller.signal,
     });
-    if (promptResult.error) throw promptResult.error;
+    if (promptResult.error) {
+      console.error(`[perm-diag] promptAsync returned error: ${JSON.stringify(promptResult.error)}`);
+      throw promptResult.error;
+    }
+    console.error(`[perm-diag] promptAsync succeeded, awaiting streamTask`);
 
     await streamTask;
   } catch (error) {
+    console.error(`[perm-diag] CATCH block: error=${error instanceof Error ? error.message : String(error)} done=${done}`);
     if (!done) {
       const message = error instanceof Error ? error.message : String(error);
       stderr += `${message}\n`;

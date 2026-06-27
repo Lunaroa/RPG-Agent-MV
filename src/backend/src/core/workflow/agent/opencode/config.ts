@@ -136,7 +136,9 @@ export function buildOpencodeRmmvMcpConfig(workflowRoot: string, enabled = true)
       ELECTRON_RUN_AS_NODE: "1",
     },
     enabled,
-    timeout: 10000,
+    // 工作流发起工具会阻塞到人批准+后台跑完（最长约 22 分钟），超时必须覆盖这一整个窗口；
+    // 其他 rmmv 工具都是秒级返回，不受影响。
+    timeout: 30 * 60 * 1000,
   };
 }
 

@@ -27,12 +27,6 @@ import {
   type EngineProviderBindingLike,
 } from "./runtime-adapters/index.ts";
 import {
-  prepareKnowledgeContext,
-  type DockerCommandResult,
-  type KnowledgeContext,
-  type KnowledgePreparationProgress
-} from "./knowledge-context.ts";
-import {
   assessAgentRuntimeOutcome,
 } from "./runtime-issues.ts";
 import { buildAgentOutputEnv } from "./agent-output-dirs.ts";
@@ -69,9 +63,6 @@ interface DispatchOptions {
   executionEngine?: AgentExecutionEngine;
   agentExecutionSettings?: AgentExecutionSettingsLike | null;
   projectId?: string;
-  contextMode?: string;
-  skipKnowledgeRefresh?: boolean;
-  knowledgeContextOutDir?: string;
   project?: string;
   files?: string[];
   intent?: string;
@@ -86,8 +77,6 @@ interface DispatchOptions {
   timeoutMs?: number;
   outDir?: string;
   signal?: AbortSignal;
-  preparationTaskId?: string;
-  onPreparationProgress?: (progress: KnowledgePreparationProgress) => void;
   /** Deprecated: legacy ask MCP gateway is disabled; kept for older callers. */
   askMcpGatewayPort?: number | null;
   /** Conversation-scoped plan file relative to the game project cwd. */
@@ -206,14 +195,6 @@ interface SummarizedProfile {
   [key: string]: unknown;
 }
 
-interface AgentRunRecord {
-  status: "pass" | "blocked";
-  stdout?: string;
-  exitCode?: number;
-  error?: string | null;
-  stderr?: string;
-}
-
 interface BackendOutput {
   stdout: string;
   stderr: string;
@@ -250,12 +231,10 @@ interface DispatchResult {
   profileId?: string | null;
   sessionBinding?: EngineProviderBindingLike | null;
   profile?: SummarizedProfile | null;
-  knowledgeContext?: KnowledgeContext;
   prompt?: { system: string; user: string };
   execution?: ExecutionInfo;
   blocker?: string | null;
   nextActions?: string[];
-  agentRunRecord?: AgentRunRecord;
   backendOutput?: BackendOutput;
   planFilePath?: string | null;
   /** Memory slugs newly surfaced this dispatch (recall), for the caller's running surfaced set. */
@@ -301,7 +280,6 @@ interface UserPromptContext {
   registry: Registry;
   agent: AgentConfig;
   profileId: string | null;
-  knowledgeContext: KnowledgeContext;
   workflowRoot: string;
 }
 
@@ -396,22 +374,6 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     profileBlocker = profileResolution.blocker;
   }
   const credentialBlocker: string | null = null;
-  const knowledgeContext: KnowledgeContext = profileBlocker ? {
-    status: "skipped",
-    mode: "off",
-    reason: "profile-blocked"
-  } : await prepareKnowledgeContext({
-    workflowRoot,
-    agentId: agent.id,
-    task,
-    projectId: options.projectId,
-    contextMode: options.contextMode,
-    skipKnowledgeRefresh: options.skipKnowledgeRefresh,
-    outDir: options.knowledgeContextOutDir,
-    signal: options.signal,
-    taskId: options.preparationTaskId || sessionId,
-    onProgress: options.onPreparationProgress
-  });
   // Multi-turn recall: memory resolves every turn. Fresh sessions get the full preamble
   // (profile + index + bodies); continuations get only the newly-surfaced bodies, excluding
   // topics already surfaced earlier in this conversation (passed in via options.alreadySurfaced).
@@ -436,14 +398,13 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     registry,
     agent,
     profileId,
-    knowledgeContext,
     workflowRoot,
     opencodeSessionId: options.opencodeSessionId ?? null,
     planFilePath: options.planFilePath ?? null,
     currentProgressPreamble: options.currentProgressPreamble ?? null,
     memoryPreamble,
   });
-  const runtimeCommand: RuntimeCommand | null = profile && knowledgeContext.status !== "blocked"
+  const runtimeCommand: RuntimeCommand | null = profile
     ? buildRuntimeCommand(profile, executionEngine, {
         userPrompt,
         project: options.project,
@@ -458,12 +419,11 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
         readOnlyTools: Boolean(options.readOnlyTools),
       })
     : null;
-  const runtimeReadinessBlocker: string | null = profile && knowledgeContext.status !== "blocked" && !runtimeCommand
+  const runtimeReadinessBlocker: string | null = profile && !runtimeCommand
     ? resolveRuntimeReadinessBlocker(executionEngine, workflowRoot)
     : null;
   const blocker: string | null = profileBlocker
     || credentialBlocker
-    || knowledgeContext.blocker
     || runtimeReadinessBlocker
     || (runtimeCommand ? null : profile
       ? `Unsupported profile runtime: ${profile.runtime || "(none)"} for engine ${executionEngine}.`
@@ -483,7 +443,6 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     profileId,
     sessionBinding,
     profile: summarizeDispatchProfile(profile),
-    knowledgeContext,
     prompt: {
       system: "",
       user: userPrompt
@@ -571,7 +530,7 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
         productLanguage: dispatch.productLanguage,
         signal: options.signal,
       }, () => {});
-      return recordAgentRunBestEffort({
+      return {
         ...dispatch,
         status: result.status === "pass" ? "pass" : "blocked",
         execution: {
@@ -592,19 +551,19 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
           rawStdout: "",
         },
         blocker: result.blocker,
-      });
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return recordAgentRunBestEffort({
+      return {
         ...dispatch,
         status: "blocked",
         blocker: message,
         execution: { ...dispatch.execution, error: message, executable },
         backendOutput: { stdout: "", stderr: `${message}\n`, rawStdout: "" },
-      });
+      };
     }
   }
-  return recordAgentRunBestEffort({
+  return {
     ...dispatch,
     status: "blocked",
     execution: {
@@ -619,7 +578,7 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
       rawStdout: ""
     },
     blocker: "Unsupported agent stream format; opencode-sse is required.",
-  });
+  };
 }
 
 async function resolveOpencodeConfig(dispatch: DispatchResult): Promise<Record<string, unknown>> {
@@ -681,12 +640,12 @@ function startOpencodeDispatchProcess(
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return recordAgentRunBestEffort({
+      return {
         ...dispatch,
         status: "blocked",
         blocker: message,
         execution: { ...dispatch.execution!, error: message },
-      });
+      };
     }
 
     const command = dispatch.execution!.command!;
@@ -729,7 +688,7 @@ function startOpencodeDispatchProcess(
         signal: controller.signal,
       }, onEvent);
       const finalStatus = result.status === "pass" ? "pass" : stopped ? "stopped" : "blocked";
-      return recordAgentRunBestEffort({
+      return {
         ...dispatch,
         status: finalStatus,
         execution: {
@@ -750,12 +709,12 @@ function startOpencodeDispatchProcess(
           rawStdout: "",
         },
         blocker: result.blocker,
-      });
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       onEvent({ type: "stderr", text: `${message}\n`, at: new Date().toISOString() });
       onEvent({ type: "status", status: "blocked", blocker: message, at: new Date().toISOString() });
-      return recordAgentRunBestEffort({
+      return {
         ...dispatch,
         status: "blocked",
         blocker: message,
@@ -765,7 +724,7 @@ function startOpencodeDispatchProcess(
           stderr: `${message}\n`,
           rawStdout: "",
         },
-      });
+      };
     }
   })().finally(() => {
     // 无论成功/失败/中止，都摘除外部 signal 监听器，杜绝泄漏。
@@ -802,7 +761,7 @@ function startAgentDispatchProcess(dispatch: DispatchResult, options: DispatchOp
   if (dispatch.execution.command.streamFormat === "opencode-sse") {
     return startOpencodeDispatchProcess(dispatch, options, onEvent);
   }
-  const blocked = recordAgentRunBestEffort({
+  const blocked = {
     ...dispatch,
     status: "blocked",
     blocker: `Unsupported agent stream format: ${dispatch.execution.command.streamFormat || "(none)"}. opencode-sse is required.`,
@@ -810,7 +769,7 @@ function startAgentDispatchProcess(dispatch: DispatchResult, options: DispatchOp
       ...dispatch.execution,
       error: "unsupported stream format",
     },
-  });
+  };
   return {
     promise: Promise.resolve(blocked),
     stop: () => {},
@@ -903,16 +862,6 @@ function writeAgentDispatchOutputs(dispatch: DispatchResult, outDir: string): Pa
   }
   fs.writeFileSync(path.join(outDir, "prompt.txt"), `${dispatch.prompt && dispatch.prompt.system || ""}\n\n${dispatch.prompt && dispatch.prompt.user || ""}`, "utf8");
   return { jsonPath, mdPath };
-}
-
-function recordAgentRunBestEffort(dispatch: DispatchResult): DispatchResult {
-  return {
-    ...dispatch,
-    agentRunRecord: {
-      status: "blocked",
-      error: "GraphRAG/knowledge-db run records have been removed.",
-    },
-  };
 }
 
 function buildTask(options: DispatchOptions, workflowRoot?: string): Task {
@@ -1030,22 +979,6 @@ function renderDispatchMarkdown(dispatch: DispatchResult): string {
   if (dispatch.task && dispatch.task.mapId) lines.push(`- Map: ${dispatch.task.mapId}`);
   if (dispatch.task && dispatch.task.intent) lines.push(`- Intent: ${dispatch.task.intent}`);
   if (dispatch.blocker) lines.push(`- Blocker: ${dispatch.blocker}`);
-  if (dispatch.knowledgeContext) {
-    lines.push("");
-    lines.push("## GraphRAG Context");
-    lines.push("");
-    lines.push(`- Mode: ${dispatch.knowledgeContext.mode || "(none)"}`);
-    lines.push(`- Status: ${dispatch.knowledgeContext.status || "(none)"}`);
-    if (dispatch.knowledgeContext.projectId) lines.push(`- Project id: ${dispatch.knowledgeContext.projectId}`);
-    if (dispatch.knowledgeContext.markdownPath) lines.push(`- Markdown: ${dispatch.knowledgeContext.markdownPath}`);
-    if (dispatch.knowledgeContext.jsonPath) lines.push(`- JSON: ${dispatch.knowledgeContext.jsonPath}`);
-    if (dispatch.knowledgeContext.summary) {
-      const summary = dispatch.knowledgeContext.summary as Record<string, unknown>;
-      lines.push(`- Summary: nodes=${summary.nodes || 0}; graphNodes=${summary.graphNodeCount || summary.nodes || 0}; eventPages=${summary.eventPageCount || 0}; edges=${summary.edges || 0}; slots=${summary.slots || 0}; chunks=${summary.chunks || 0}; diagnostics=${summary.diagnostics || 0}; warnings=${summary.warningDiagnostics || 0}; critical=${summary.criticalDiagnostics || 0}`);
-    }
-    if (dispatch.knowledgeContext.blocker) lines.push(`- Blocker: ${dispatch.knowledgeContext.blocker}`);
-    if (dispatch.knowledgeContext.warning) lines.push(`- Warning: ${dispatch.knowledgeContext.warning}`);
-  }
   lines.push("");
   lines.push("## Backend");
   lines.push("");
@@ -1088,16 +1021,6 @@ function stripLargeRuntimeText(dispatch: DispatchResult): DispatchResult {
   if (copy.prompt) {
     copy.prompt.system = summarizeText(copy.prompt.system);
     copy.prompt.user = summarizeText(copy.prompt.user);
-  }
-  if (copy.knowledgeContext) {
-    if (copy.knowledgeContext.markdown) copy.knowledgeContext.markdown = summarizeText(copy.knowledgeContext.markdown);
-    if (copy.knowledgeContext.commands) {
-      copy.knowledgeContext.commands = copy.knowledgeContext.commands.map((command: DockerCommandResult) => ({
-        ...command,
-        stdout: summarizeText(command.stdout || ""),
-        stderr: summarizeText(command.stderr || "")
-      }));
-    }
   }
   if (copy.execution && copy.execution.command && copy.execution.command.args) {
     copy.execution.command.args = copy.execution.command.args.map((arg: string) => arg && arg.length > 200 ? `${arg.slice(0, 200)}... <truncated>` : arg);

@@ -14,7 +14,6 @@ function baseInput(overrides: Partial<OnboardingInput> = {}): OnboardingInput {
     drifts: [],
     reconcileStatus: "clean",
     registryMapIds: [1],
-    rag: { state: "fresh" },
     storyProject: { initialized: true, mode: "original" },
     awaitPlacementCount: 0,
     generatedAt: "2026-06-04T00:00:00.000Z",

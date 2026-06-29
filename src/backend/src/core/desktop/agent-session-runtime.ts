@@ -20,7 +20,6 @@ import { resolveActiveProjectId } from "../memory/active-project.ts";
 import { readCurrentProgressEntry } from "../memory/memory-store.ts";
 import { readMemorySettings } from "../memory/memory-settings.ts";
 import { runMemoryScribe } from "../memory/memory-scribe.ts";
-import { KnowledgeContextAbortedError } from "../workflow/agent/knowledge-context.ts";
 import { loadAgentRegistry } from "../workflow/agent/agent-registry.ts";
 import {
   defaultEngine,
@@ -351,16 +350,12 @@ export class AgentSessionRuntime {
       currentProgressPreamble: this.resolveCurrentProgressPreamble(input, parent, conversationHistory),
       readOnlyTools: input.readOnlyTools,
     });
-    const knowledgeContext = dispatch.knowledgeContext
-      ? (JSON.parse(JSON.stringify(dispatch.knowledgeContext)) as Record<string, unknown>)
-      : null;
     return {
       status: dispatch.status,
       blocker: dispatch.blocker || null,
       profileId: dispatch.profileId || null,
       executionEngine: dispatch.executionEngine || executionEngine,
       command: dispatch.execution?.command?.display || null,
-      knowledgeContext,
     };
   }
 
@@ -724,13 +719,7 @@ export class AgentSessionRuntime {
       currentProgressPreamble: this.resolveCurrentProgressPreamble(input, parent, conversationHistory),
       readOnlyTools: input.readOnlyTools,
       planFilePath: session.planFilePath || undefined,
-      knowledgeContextOutDir: path.join(session.outDir, "knowledge-context"),
-      skipKnowledgeRefresh: true,
       signal: controller.signal,
-      preparationTaskId: session.id,
-      onPreparationProgress: (progress) => {
-        if (session.status !== "stopped") this.push(session, { type: "preparation", ...progress, at: new Date().toISOString() });
-      },
       askMcpGatewayPort: null,
     });
     clearPreparationTimer();
@@ -947,7 +936,7 @@ export class AgentSessionRuntime {
   }
 
   private fail(session: AgentSession, error: Error): void {
-    if (session.status === "stopped" || error instanceof KnowledgeContextAbortedError) {
+    if (session.status === "stopped") {
       this.askGateway.destroySession(session.id).catch(() => {});
       return;
     }

@@ -587,7 +587,7 @@ const riskStatusText = computed(() => {
   const status = (props.ask.result as any)?.workflowStatus
   if (status === 'running') return t('ask.riskApproval.statusApproved')
   if (status === 'completed') return t('ask.riskApproval.statusCompleted')
-  if (status === 'failed') return t('ask.riskApproval.statusFailed')
+  if (status === 'failed' || status === 'aborted') return t('ask.riskApproval.statusFailed')
   if (status === 'timeout') return t('ask.riskApproval.statusTimeout')
   if (props.ask.result?.decision === 'reject') return t('ask.riskApproval.statusRejected')
   return t('ask.riskApproval.statusApproved')

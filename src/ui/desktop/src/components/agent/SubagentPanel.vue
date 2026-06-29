@@ -2,7 +2,7 @@
 import { computed, watch } from 'vue'
 import { Close, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { useSubagentStore } from '../../stores/subagents'
+import { canStopSubagent, useSubagentStore } from '../../stores/subagents'
 import { localizeSubagentActivityTitle, subagentTimelineSegments } from '../../utils/subagentTimeline.ts'
 import TurnSegment from '../TurnSegment.vue'
 import type { SessionSubagentActivity, SessionSubagentItem, SessionSubagentStatus } from '@contract/types'
@@ -41,10 +41,6 @@ function statusText(status: SessionSubagentStatus): string {
   if (status === 'timeout') return t('subagent.status.timeout')
   if (status === 'not_ready') return t('subagent.status.notReady')
   return t('subagent.status.unknown')
-}
-
-function canStop(item: SessionSubagentItem): boolean {
-  return item.status === 'running' || item.status === 'not_ready' || item.status === 'unknown'
 }
 
 function latestActivity(item: SessionSubagentItem): SessionSubagentActivity | null {
@@ -103,7 +99,7 @@ async function stop(item: SessionSubagentItem): Promise<void> {
             <span v-if="recentAction(item)" class="sp-recent">{{ recentAction(item) }}</span>
           </span>
           <button
-            v-if="canStop(item)"
+            v-if="canStopSubagent(item)"
             type="button"
             class="sp-stop"
             :title="t('subagent.stop')"

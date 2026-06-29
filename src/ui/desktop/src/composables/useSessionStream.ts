@@ -84,6 +84,8 @@ const askSegments = new Map<string, ChatSegment>()
 // callId -> tool 段，用于把 tool_result 合并回对应的 tool_call 行。
 const toolSegments = new Map<string, ChatSegment>()
 const askBridgeFailureCallIds = new Set<string>()
+const workflowAskIdByProposal = new Map<string, string>()
+const emittedWorkflowReports = new Set<string>()
 /** 本轮 register 工具调用攒出的待落段预览（clarify ASK 或终态时 flush）。 */
 let pendingEventPreview: EventPreviewItem[] = []
 const eventPreviewByCallId = new Map<string, EventPreviewItem>()
@@ -315,9 +317,108 @@ export function useSessionStream() {
   // 用户批准后 handler 执行：propose 落盘 pending 提议 + 立即返回 tool_result。
   // 这里检测 tool_result 里的 workflow-proposal，自动调 approveProposal IPC 运行工作流——
   // 用户已在权限审批环节做过决定，不需要再批一次。报告通过 workflow_run 事件异步推回。
+  function bindWorkflowProposalToApproval(event: SessionEvent, proposalId: string): void {
+    const input = event.input && typeof event.input === 'object'
+      ? event.input as Record<string, unknown>
+      : {}
+    const title = String(input.title || '')
+    const script = String(input.script || '')
+    const candidates = [...segments.value].reverse().filter((segment) => {
+      const ask = segment.ask as (Ask & { proposalId?: string }) | undefined
+      if (segment.type !== 'ask' || ask?.type !== 'risk-approval') return false
+      if (ask.proposalId && ask.proposalId !== proposalId) return false
+      return ask.result?.decision === 'approve'
+    })
+    const matched = candidates.find((segment) => {
+      const ask = segment.ask as Ask & { script?: string }
+      return (!title || ask.title === title) && (!script || ask.script === script)
+    }) || candidates[0]
+    if (!matched?.ask) return
+    const ask = matched.ask as Ask & { proposalId?: string }
+    const next = {
+      ...ask,
+      proposalId,
+      result: {
+        ...(ask.result || {}),
+        workflowStatus: 'running',
+      },
+    } as Ask
+    replaceAskSegment(matched, next)
+    workflowAskIdByProposal.set(proposalId, next.askId)
+    notifyTranscriptChanged()
+  }
+
+  function updateWorkflowApprovalStatus(proposalId: string, status: string): void {
+    const askId = workflowAskIdByProposal.get(proposalId)
+      || segments.value.find((segment) => (
+        segment.ask?.type === 'risk-approval'
+        && String((segment.ask as Ask & { proposalId?: string }).proposalId || '') === proposalId
+      ))?.ask?.askId
+    if (!askId) return
+    const segment = askSegments.get(askId)
+    if (!segment?.ask) return
+    replaceAskSegment(segment, {
+      ...segment.ask,
+      result: {
+        ...(segment.ask.result || {}),
+        workflowStatus: status,
+      },
+    } as Ask)
+    notifyTranscriptChanged()
+  }
+
+  function formatWorkflowReport(report: unknown): string {
+    if (typeof report === 'string') return report.trim()
+    if (report == null) return ''
+    try {
+      return `\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\``
+    } catch {
+      return String(report)
+    }
+  }
+
+  function handleWorkflowRunEvent(event: SessionEvent): void {
+    if (String(event.phase || '') !== 'done') return
+    const proposalId = String(event.proposalId || '')
+    if (!proposalId) return
+    const status = String(event.status || 'failed')
+    updateWorkflowApprovalStatus(proposalId, status)
+    if (emittedWorkflowReports.has(proposalId)) return
+    emittedWorkflowReports.add(proposalId)
+
+    markReasoningInterrupted()
+    finalizeLiveMarkdownSegment()
+    currentTextSegment = null
+    seenText = false
+    const workflowName = String(event.workflow || translate('ask.riskApproval.actionWorkflow', productLanguage))
+    if (status === 'completed') {
+      const report = formatWorkflowReport(event.report)
+      const heading = translate('chat.workflow.completed', productLanguage, { name: workflowName })
+      appendSegment(createSegment('text', report ? `${heading}\n\n${report}` : heading, {
+        type: 'workflow_report',
+        proposalId,
+        status,
+      }))
+    } else {
+      const reason = String(event.reason || status)
+      appendSegment(createSegment('text', translate('chat.workflow.failed', productLanguage, {
+        name: workflowName,
+        reason,
+      }), {
+        type: 'workflow_report',
+        proposalId,
+        status,
+      }))
+    }
+    notifyTranscriptChanged()
+  }
+
   function autoApproveWorkflowProposal(event: SessionEvent): void {
     const output = typeof event.output === 'string' ? event.output : ''
-    if (!output.includes('workflow-proposal')) return
+    if (!output.includes('workflow-proposal')) {
+      console.warn('[wf-auto-approve] skip: tool_result.output missing workflow-proposal', { output: output.slice(0, 200) })
+      return
+    }
     let proposalId = ''
     try {
       const parsed = JSON.parse(output) as Record<string, unknown>
@@ -325,13 +426,32 @@ export function useSessionStream() {
       if (data?.kind === 'workflow-proposal') {
         proposalId = String(data.proposalId || '')
       }
-    } catch {
+    } catch (error) {
+      console.warn('[wf-auto-approve] skip: output is not valid JSON', error, { output: output.slice(0, 200) })
       return
     }
-    if (!proposalId) return
-    void workflow.approveProposal(proposalId).catch(() => {
-      // 自动批准失败不阻断会话；用户可在子任务面板手动重试。
-    })
+    if (!proposalId) {
+      console.warn('[wf-auto-approve] skip: proposalId not found in output', { output: output.slice(0, 200) })
+      return
+    }
+    bindWorkflowProposalToApproval(event, proposalId)
+    console.log('[wf-auto-approve] matched workflow-proposal; calling approveProposal', { proposalId })
+    void workflow.approveProposal(proposalId)
+      .then((res) => console.log('[wf-auto-approve] approveProposal succeeded', { proposalId, res }))
+      .catch((error) => {
+        const reason = error instanceof Error ? error.message : String(error)
+        console.error('[wf-auto-approve] approveProposal failed (previously swallowed error)', {
+          proposalId,
+          error: reason,
+        })
+        handleWorkflowRunEvent({
+          type: 'workflow_run',
+          phase: 'done',
+          proposalId,
+          status: 'failed',
+          reason,
+        })
+      })
   }
 
 
@@ -371,6 +491,11 @@ export function useSessionStream() {
       if (event.type === 'todo_updated' && Array.isArray(event.todos)) {
         useTaskBoardStore().applyTodoUpdated(attachedSessionId, event.todos)
       }
+    }
+
+    if (event.type === 'workflow_run') {
+      handleWorkflowRunEvent(event)
+      return
     }
 
     if (event.type === 'stdout') {
@@ -774,6 +899,8 @@ export function useSessionStream() {
     askSegments.clear()
     toolSegments.clear()
     askBridgeFailureCallIds.clear()
+    workflowAskIdByProposal.clear()
+    emittedWorkflowReports.clear()
   }
 
   // 在发送前把用户输入作为气泡推入转录。
@@ -790,6 +917,14 @@ export function useSessionStream() {
       const seg: ChatSegment = { ...s, id: `seg_${++segmentCounter}`, content }
       segments.value.push(seg)
       if (seg.type === 'ask' && seg.ask) askSegments.set(seg.ask.askId, seg)
+      if (seg.type === 'ask' && seg.ask?.type === 'risk-approval') {
+        const proposalId = String((seg.ask as Ask & { proposalId?: string }).proposalId || '')
+        if (proposalId) workflowAskIdByProposal.set(proposalId, seg.ask.askId)
+      }
+      if (seg.metadata?.type === 'workflow_report') {
+        const proposalId = String(seg.metadata.proposalId || '')
+        if (proposalId) emittedWorkflowReports.add(proposalId)
+      }
       const callId = seg.metadata?.callId
       if (seg.type === 'tool' && typeof callId === 'string') toolSegments.set(callId, seg)
     }

@@ -10,6 +10,7 @@ import {
 } from "../agent/agent-dispatch.ts";
 import type { AgentExecutionEngine, AgentExecutionSettingsLike } from "../agent/runtime-adapters/index.ts";
 import type { ProductLanguage } from "../../../../../contract/types.ts";
+import { WorkflowAbortedError } from "./runtime.ts";
 import type { WorkflowAgentRequest, WorkflowAgentResult, WorkflowAgentRunner } from "./types.ts";
 
 const DEFAULT_AGENT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -187,6 +188,14 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
       lastBlocker = run.blocker;
 
       if (run.status !== "pass") {
+        // abort（用户停止 / 跑飞上限 / 外部 signal）必须抛 WorkflowAbortedError 冒泡，
+        // 让 parallel/pipeline 立即中止其他分支；若返回 ok:false 会被当普通失败，
+        // module 内部仍按失败逻辑跑完，并行兄弟分支也不会停——刹车踩了车还在滑。
+        if (signal.aborted) {
+          throw new WorkflowAbortedError(
+            `agent ${request.label ?? ""} aborted (status=${run.status})`.trim(),
+          );
+        }
         // 派发层失败（含 stopped/blocked/timeout）：不重试，直接返回失败。
         return { ok: false, text: run.text, blocker: run.blocker ?? `agent ${run.status}`, label: request.label, inputTokens, outputTokens };
       }

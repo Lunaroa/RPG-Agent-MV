@@ -233,6 +233,58 @@ export function deriveSessionSubagents(
     const at = asString(event.at) || new Date(0).toISOString();
     updatedAt = at;
 
+    if (event.type === "workflow_run") {
+      if (asString(event.phase) !== "progress") continue;
+      const inner = asRecord(event.event);
+      const innerType = asString(inner.type);
+      if (innerType !== "agent-start" && innerType !== "agent-end") continue;
+      const proposalId = asString(event.proposalId);
+      const index = Number(inner.index);
+      if (!proposalId || !Number.isInteger(index) || index < 0) continue;
+      const id = `wf:${proposalId}:${index}`;
+      const label = asString(inner.label) || `agent ${index}`;
+      const innerAt = asString(inner.at) || at;
+      if (innerType === "agent-start") {
+        const prompt = asString(inner.prompt);
+        upsert(id, {
+          description: label,
+          prompt,
+          status: "running",
+          taskType: "workflow",
+          updatedAt: innerAt,
+          activity: appendActivity(id, {
+            kind: "started",
+            title: subagentLabels.started,
+            detail: prompt || null,
+            status: "running",
+            at: innerAt,
+          }),
+        });
+      } else {
+        const ok = inner.ok === true;
+        const status: SessionSubagentStatus = ok ? "completed" : "failed";
+        const output = asString(inner.output);
+        const blocker = asString(inner.blocker);
+        const existing = items.get(id);
+        upsert(id, {
+          description: label,
+          status,
+          taskType: "workflow",
+          output: output || existing?.output || null,
+          error: ok ? null : (blocker || subagentLabels.failed),
+          updatedAt: innerAt,
+          activity: appendActivity(id, {
+            kind: ok ? "output" : "failed",
+            title: sessionSubagentResultTitle(status, language),
+            detail: ok ? (output || null) : (blocker || output || null),
+            status,
+            at: innerAt,
+          }),
+        });
+      }
+      continue;
+    }
+
     if (event.type === "tool_call") {
       const callId = asString(event.call_id);
       const tool = asString(event.tool);

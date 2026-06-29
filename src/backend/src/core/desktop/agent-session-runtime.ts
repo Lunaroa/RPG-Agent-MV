@@ -80,6 +80,17 @@ export interface AgentRuntimeEvent {
   [key: string]: unknown;
 }
 
+interface ExternalWorkState {
+  cancel: (() => void) | null;
+}
+
+interface ForegroundWaiter {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}
+
 export interface AgentSession {
   id: string;
   status: string;
@@ -109,6 +120,12 @@ export interface AgentSession {
   surfacedMemorySlugs: string[];
   /** Internal-only opencode context used by the background memory scribe. Never persisted. */
   opencodeRunContext: OpencodeRunContext | null;
+  /** External work that must finish before this turn may emit terminal artifacts/summary. */
+  externalWork: Map<string, ExternalWorkState>;
+  externalWorkFailures: string[];
+  pendingFinalDispatch: Record<string, any> | null;
+  foregroundSettled: boolean;
+  foregroundWaiters: Set<ForegroundWaiter>;
 }
 
 export interface SessionCreateInput {
@@ -196,6 +213,7 @@ export class AgentSessionRuntime {
     for (const session of this.sessions.values()) {
       session.preparationController?.abort();
       if (session.runner) session.runner.stop();
+      this.cancelExternalWork(session);
     }
     await this.askGateway.close();
   }
@@ -287,6 +305,11 @@ export class AgentSessionRuntime {
       // Inherit the parent turn's surfaced set (copied, not shared) so continuations dedup recall.
       surfacedMemorySlugs: parent ? [...(parent.surfacedMemorySlugs || [])] : [],
       opencodeRunContext: null,
+      externalWork: new Map(),
+      externalWorkFailures: [],
+      pendingFinalDispatch: null,
+      foregroundSettled: false,
+      foregroundWaiters: new Set(),
     };
     this.sessions.set(session.id, session);
     ensurePlanDirectory(this.workflowRoot, session.project, planFilePath);
@@ -351,6 +374,9 @@ export class AgentSessionRuntime {
       session.preparationController?.abort();
       session.preparationController = null;
       session.runner?.stop();
+      this.cancelExternalWork(session);
+      session.pendingFinalDispatch = null;
+      this.markForegroundSettled(session);
       this.push(session, { type: "status", status: "stopped", at: session.updatedAt });
       this.persistMeta(session);
       this.pushSummary(session);
@@ -479,7 +505,56 @@ export class AgentSessionRuntime {
   pushExternalEvent(sessionId: string, event: AgentRuntimeEvent): { ok: boolean; reason?: string } {
     const session = this.sessions.get(sessionId);
     if (!session) return { ok: false, reason: "session not found" };
+    if (event.type === "workflow_run" && event.phase === "start") {
+      const proposalId = asString(event.proposalId);
+      if (proposalId) this.reserveExternalWork(session, proposalId);
+    }
     this.push(session, { ...event, at: typeof event.at === "string" ? event.at : new Date().toISOString() });
+    if (event.type === "workflow_run" && event.phase === "done") {
+      const proposalId = asString(event.proposalId);
+      if (proposalId) {
+        this.completeExternalWork(session, proposalId, {
+          status: asString(event.status),
+          reason: asString(event.reason),
+          at: asString(event.at) || new Date().toISOString(),
+        });
+      }
+    }
+    return { ok: true };
+  }
+
+  waitForForegroundSettled(sessionId: string, signal?: AbortSignal): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return Promise.reject(new Error("session not found"));
+    if (session.foregroundSettled) return Promise.resolve();
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error("workflow start aborted"));
+    }
+    return new Promise<void>((resolve, reject) => {
+      const waiter: ForegroundWaiter = { resolve, reject, signal };
+      if (signal) {
+        waiter.onAbort = () => {
+          session.foregroundWaiters.delete(waiter);
+          reject(signal.reason instanceof Error ? signal.reason : new Error("workflow start aborted"));
+        };
+        signal.addEventListener("abort", waiter.onAbort, { once: true });
+      }
+      session.foregroundWaiters.add(waiter);
+    });
+  }
+
+  attachExternalWorkCancellation(
+    sessionId: string,
+    workId: string,
+    cancel: () => void,
+  ): { ok: boolean; reason?: string } {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false, reason: "session not found" };
+    if (TERMINAL.has(session.status)) return { ok: false, reason: `session is ${session.status}` };
+    const normalized = String(workId || "").trim();
+    if (!normalized) return { ok: false, reason: "missing work id" };
+    const work = this.reserveExternalWork(session, normalized);
+    work.cancel = cancel;
     return { ok: true };
   }
 
@@ -564,9 +639,16 @@ export class AgentSessionRuntime {
     session: AgentSession,
     event: AgentRuntimeEvent,
   ): void {
+    const workflowProposalId = proposalIdFromWorkflowToolResult(event);
+    if (workflowProposalId) this.reserveExternalWork(session, workflowProposalId);
     if (event.type === "status" && typeof event.status === "string") {
       if (session.status === "stopped" && event.status !== "stopped") return;
       if (TERMINAL.has(session.status) && session.status !== event.status) return;
+      if (TERMINAL.has(event.status) && session.externalWork.size > 0) {
+        session.updatedAt = String(event.at || new Date().toISOString());
+        this.persistMeta(session);
+        return;
+      }
       session.status = event.status;
       session.updatedAt = String(event.at || new Date().toISOString());
       if (event.status === "running") session.startedAt = session.updatedAt;
@@ -697,9 +779,11 @@ export class AgentSessionRuntime {
     });
     session.runner.promise
       .then((finalDispatch) => {
+        this.markForegroundSettled(session);
         this.finalize(session, finalDispatch);
       })
       .catch((error: Error) => {
+        this.markForegroundSettled(session);
         const dispatch = session.dispatch && typeof session.dispatch === "object"
           ? session.dispatch as Record<string, unknown>
           : { status: session.status };
@@ -718,6 +802,16 @@ export class AgentSessionRuntime {
   }
 
   private finalize(session: AgentSession, finalDispatch: Record<string, any>): void {
+    if (session.status !== "stopped" && session.externalWork.size > 0) {
+      session.pendingFinalDispatch = finalDispatch;
+      session.dispatch = finalDispatch;
+      session.runner = null;
+      session.updatedAt = finalDispatch.execution?.finishedAt || new Date().toISOString();
+      session.finishedAt = null;
+      session.status = "running";
+      this.persistMeta(session);
+      return;
+    }
     try {
       this.finalizeDispatch(session, finalDispatch);
     } catch (error) {
@@ -893,6 +987,64 @@ export class AgentSessionRuntime {
     });
   }
 
+  private reserveExternalWork(session: AgentSession, workId: string): ExternalWorkState {
+    const existing = session.externalWork.get(workId);
+    if (existing) return existing;
+    const work: ExternalWorkState = { cancel: null };
+    session.externalWork.set(workId, work);
+    return work;
+  }
+
+  private cancelExternalWork(session: AgentSession): void {
+    for (const work of session.externalWork.values()) {
+      try {
+        work.cancel?.();
+      } catch {
+        // Cancellation is best effort; session shutdown still proceeds.
+      }
+    }
+    session.externalWork.clear();
+  }
+
+  private completeExternalWork(
+    session: AgentSession,
+    workId: string,
+    outcome: { status: string; reason: string; at: string },
+  ): void {
+    if (!session.externalWork.has(workId)) return;
+    session.externalWork.delete(workId);
+    if (outcome.status !== "completed") {
+      session.externalWorkFailures.push(
+        outcome.reason || `workflow ${workId} ended with status ${outcome.status || "failed"}`,
+      );
+    }
+    if (session.status === "stopped" || session.externalWork.size > 0 || !session.pendingFinalDispatch) return;
+    const finalDispatch = session.pendingFinalDispatch;
+    session.pendingFinalDispatch = null;
+    finalDispatch.execution = {
+      ...(finalDispatch.execution || {}),
+      finishedAt: outcome.at,
+    };
+    if (session.externalWorkFailures.length > 0) {
+      const reason = session.externalWorkFailures.join("; ");
+      finalDispatch.status = "blocked";
+      finalDispatch.blocker = finalDispatch.blocker ? `${finalDispatch.blocker}; ${reason}` : reason;
+    }
+    this.finalize(session, finalDispatch);
+  }
+
+  private markForegroundSettled(session: AgentSession): void {
+    if (session.foregroundSettled) return;
+    session.foregroundSettled = true;
+    for (const waiter of session.foregroundWaiters) {
+      if (waiter.signal && waiter.onAbort) {
+        waiter.signal.removeEventListener("abort", waiter.onAbort);
+      }
+      waiter.resolve();
+    }
+    session.foregroundWaiters.clear();
+  }
+
   private maybeRunMemoryScribe(session: AgentSession, wasStopped: boolean): void {
     const context = session.opencodeRunContext;
     session.opencodeRunContext = null;
@@ -1029,6 +1181,11 @@ export class AgentSessionRuntime {
       // Surfaced set is process-local (not persisted); a restored session restarts dedup empty.
       surfacedMemorySlugs: [],
       opencodeRunContext: null,
+      externalWork: new Map(),
+      externalWorkFailures: [],
+      pendingFinalDispatch: null,
+      foregroundSettled: true,
+      foregroundWaiters: new Set(),
     };
   }
 
@@ -1215,6 +1372,23 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function proposalIdFromWorkflowToolResult(event: AgentRuntimeEvent): string | null {
+  if (event.type !== "tool_result") return null;
+  const tool = asString(event.tool);
+  if (tool && !/RmmvWorkflow$/i.test(tool)) return null;
+  let output: unknown = event.output;
+  if (typeof output === "string") {
+    try {
+      output = JSON.parse(output);
+    } catch {
+      return null;
+    }
+  }
+  const data = asRecord(asRecord(output).data);
+  if (asString(data.kind) !== "workflow-proposal") return null;
+  return asString(data.proposalId) || null;
 }
 
 function resolveSessionProjectDirectory(session: AgentSession, workflowRoot: string): string {

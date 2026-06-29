@@ -12,7 +12,7 @@ import type { AgentExecutionEngine, AgentExecutionSettingsLike } from "../agent/
 import type { ProductLanguage } from "../../../../../contract/types.ts";
 import type { WorkflowAgentRequest, WorkflowAgentResult, WorkflowAgentRunner } from "./types.ts";
 
-const DEFAULT_AGENT_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_AGENT_TIMEOUT_MS = 30 * 60 * 1000;
 const WORKFLOW_AGENT_ID = "default";
 
 export interface ProductionRunnerConfig {
@@ -26,6 +26,8 @@ export interface ProductionRunnerConfig {
   productLanguage?: ProductLanguage;
   /** 单个子 agent 超时缺省值。 */
   defaultTimeoutMs?: number;
+  /** 发起会话 ID：传给子 agent 使 opencode serverKey 一致，避免并行子 agent 互杀 server。 */
+  sessionId?: string;
 }
 
 /** 从子 agent 文本输出里抽取一个 JSON 对象：优先 ```json 围栏块，否则取首个平衡的 {...}。 */
@@ -118,6 +120,7 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
         execute: true,
         timeoutMs,
         signal,
+        sessionId: config.sessionId || "workflow-agent",
       });
       if (dispatch.status === "blocked") {
         return { status: "blocked", text: "", blocker: dispatch.blocker ?? "dispatch blocked", inputTokens: 0, outputTokens: 0 };
@@ -173,6 +176,11 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
     const deadline = Date.now() + timeoutMs;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const remaining = Math.max(0, deadline - Date.now());
+      // 预算耗尽就别再派发：0 会被派发层放大成默认 30min，绕过单 agent 超时预算。
+      if (remaining <= 0 && attempt > 0) {
+        lastBlocker = lastBlocker ?? `agent timeout budget exhausted before retry`;
+        break;
+      }
       const run = await dispatchOnce(attemptPrompt, remaining, signal);
       inputTokens += run.inputTokens;
       outputTokens += run.outputTokens;

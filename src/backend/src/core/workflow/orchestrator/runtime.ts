@@ -38,6 +38,7 @@ class Semaphore {
   private readonly waiters: Array<{
     resolve: () => void;
     onAbort: () => void;
+    aborted: boolean;
   }> = [];
 
   constructor(permits: number) {
@@ -53,20 +54,33 @@ class Semaphore {
       throw new WorkflowAbortedError("aborted while waiting for permit");
     }
     await new Promise<void>((resolve, reject) => {
-      const onAbort = () => reject(new WorkflowAbortedError("aborted while waiting for permit"));
-      signal.addEventListener("abort", onAbort, { once: true });
-      this.waiters.push({
+      const onAbort = () => {
+        entry.aborted = true;
+        // 从队列摘除自己，否则 release 会 shift 出这个已 reject 的死 waiter，吞掉本该归还的 permit。
+        const idx = this.waiters.indexOf(entry);
+        if (idx >= 0) this.waiters.splice(idx, 1);
+        signal.removeEventListener("abort", onAbort);
+        reject(new WorkflowAbortedError("aborted while waiting for permit"));
+      };
+      const entry = {
         resolve: () => {
           signal.removeEventListener("abort", onAbort);
           resolve();
         },
         onAbort,
-      });
+        aborted: false,
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.waiters.push(entry);
     });
   }
 
   release(): void {
-    const next = this.waiters.shift();
+    // 跳过已被 abort 的死 waiter（理论上 onAbort 已自行摘除，这里再做一道防御）。
+    let next = this.waiters.shift();
+    while (next && next.aborted) {
+      next = this.waiters.shift();
+    }
     if (next) {
       next.resolve();
       return;

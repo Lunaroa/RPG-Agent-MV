@@ -754,10 +754,6 @@ export class AgentSessionRuntime {
       await this.askGateway.destroySession(session.id);
       return;
     }
-    if (session.status === "stopped") {
-      await this.askGateway.destroySession(session.id);
-      return;
-    }
     session.runner = this.startDispatch(dispatch, {
       sessionId: session.id,
       timeoutMs: input.timeoutMs,

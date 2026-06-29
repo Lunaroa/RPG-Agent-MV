@@ -228,6 +228,88 @@ describe("session derived state", () => {
     assert.match(failed?.error || "", /subagent unavailable/);
   });
 
+  test("derives persisted dynamic workflow agents with stable parallel identities", () => {
+    const snapshot = subagents("s1", [
+      {
+        type: "workflow_run",
+        phase: "progress",
+        proposalId: "wp-1",
+        event: {
+          type: "agent-start",
+          label: "review:maps",
+          index: 0,
+          prompt: "检查地图",
+          at: "2026-06-15T02:10:00.000Z",
+        },
+        sequence: 1,
+        at: "2026-06-15T02:10:00.000Z",
+      },
+      {
+        type: "workflow_run",
+        phase: "progress",
+        proposalId: "wp-1",
+        event: {
+          type: "agent-start",
+          label: "review:events",
+          index: 1,
+          prompt: "检查事件",
+          at: "2026-06-15T02:10:01.000Z",
+        },
+        sequence: 2,
+        at: "2026-06-15T02:10:01.000Z",
+      },
+      {
+        type: "workflow_run",
+        phase: "progress",
+        proposalId: "wp-1",
+        event: {
+          type: "agent-end",
+          label: "review:maps",
+          index: 0,
+          ok: true,
+          blocker: null,
+          output: "地图检查完成",
+          at: "2026-06-15T02:10:02.000Z",
+        },
+        sequence: 3,
+        at: "2026-06-15T02:10:02.000Z",
+      },
+      {
+        type: "workflow_run",
+        phase: "progress",
+        proposalId: "wp-1",
+        event: {
+          type: "agent-end",
+          label: "review:events",
+          index: 1,
+          ok: false,
+          blocker: "事件读取失败",
+          output: "",
+          at: "2026-06-15T02:10:03.000Z",
+        },
+        sequence: 4,
+        at: "2026-06-15T02:10:03.000Z",
+      },
+    ]);
+
+    assert.equal(snapshot.items.length, 2);
+    const maps = snapshot.items.find((item) => item.id === "wf:wp-1:0");
+    assert.equal(maps?.description, "review:maps");
+    assert.equal(maps?.prompt, "检查地图");
+    assert.equal(maps?.taskType, "workflow");
+    assert.equal(maps?.status, "completed");
+    assert.equal(maps?.output, "地图检查完成");
+    assert.deepEqual(maps?.activity?.map((entry) => entry.kind), ["started", "output"]);
+
+    const events = snapshot.items.find((item) => item.id === "wf:wp-1:1");
+    assert.equal(events?.description, "review:events");
+    assert.equal(events?.prompt, "检查事件");
+    assert.equal(events?.taskType, "workflow");
+    assert.equal(events?.status, "failed");
+    assert.equal(events?.error, "事件读取失败");
+    assert.deepEqual(events?.activity?.map((entry) => entry.kind), ["started", "failed"]);
+  });
+
   test("derives native opencode subagent task events", () => {
     const runningEvents: SessionRuntimeEvent[] = [
       {

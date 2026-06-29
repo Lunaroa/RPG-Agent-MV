@@ -50,6 +50,133 @@ describe("AgentSessionRuntime", () => {
     assert.equal(unsubscribed.some((event) => event.type === "text_delta"), false);
   });
 
+  test("holds terminal session events until an approved workflow finishes", async () => {
+    const harness = await createHarness();
+    const session = await harness.runtime.create({ intent: "run workflow", project: "projects/Project" });
+    const sessionId = String(session.id);
+    const received: AgentRuntimeEvent[] = [];
+    harness.runtime.subscribe(sessionId, { id: "renderer", write: (event) => received.push(event) });
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    harness.emit({
+      type: "tool_result",
+      call_id: "call-workflow",
+      tool: "rmmv_RmmvWorkflow",
+      success: true,
+      output: JSON.stringify({
+        data: {
+          kind: "workflow-proposal",
+          proposalId: "wp-hold-success",
+          status: "pending",
+        },
+      }),
+      at: "2026-06-01T00:00:02.000Z",
+    });
+    const foregroundSettled = harness.runtime.waitForForegroundSettled(sessionId);
+    harness.emit({ type: "status", status: "pass", at: "2026-06-01T00:00:03.000Z" });
+    harness.finish({ status: "pass" });
+    await foregroundSettled;
+    await harness.flush();
+
+    assert.equal(harness.runtime.get(sessionId)?.status, "running");
+    assert.equal(received.some((event) => event.type === "status" && event.status === "pass"), false);
+    assert.equal(received.some((event) => event.type === "artifact"), false);
+    assert.equal(received.some((event) => event.type === "summary"), false);
+
+    harness.runtime.pushExternalEvent(sessionId, {
+      type: "workflow_run",
+      phase: "done",
+      proposalId: "wp-hold-success",
+      status: "completed",
+      report: { ok: true },
+      at: "2026-06-01T00:00:04.000Z",
+    });
+    await harness.flush();
+
+    assert.equal(harness.runtime.get(sessionId)?.status, "pass");
+    const doneIndex = received.findIndex((event) => event.type === "workflow_run" && event.phase === "done");
+    const artifactIndex = received.findIndex((event) => event.type === "artifact");
+    const summaryIndex = received.findIndex((event) => event.type === "summary");
+    assert.ok(doneIndex >= 0);
+    assert.ok(artifactIndex > doneIndex);
+    assert.ok(summaryIndex > artifactIndex);
+    assert.equal(received.find((event) => event.type === "status" && event.status === "pass")?.at, "2026-06-01T00:00:04.000Z");
+  });
+
+  test("workflow failure releases the held session as blocked", async () => {
+    const harness = await createHarness();
+    const session = await harness.runtime.create({ intent: "run failing workflow", project: "projects/Project" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    harness.emit({
+      type: "tool_result",
+      call_id: "call-workflow",
+      tool: "rmmv_RmmvWorkflow",
+      success: true,
+      output: JSON.stringify({
+        data: {
+          kind: "workflow-proposal",
+          proposalId: "wp-hold-failed",
+          status: "pending",
+        },
+      }),
+    });
+    harness.emit({ type: "status", status: "pass", at: "2026-06-01T00:00:03.000Z" });
+    harness.finish({ status: "pass" });
+    await harness.runtime.waitForForegroundSettled(sessionId);
+
+    harness.runtime.pushExternalEvent(sessionId, {
+      type: "workflow_run",
+      phase: "done",
+      proposalId: "wp-hold-failed",
+      status: "failed",
+      reason: "child workflow failed",
+    });
+    await harness.flush();
+
+    assert.equal(harness.runtime.get(sessionId)?.status, "blocked");
+    assert.match(String(harness.runtime.get(sessionId)?.blocker || ""), /child workflow failed/);
+  });
+
+  test("stopping a held workflow cancels external work and finalizes once", async () => {
+    const harness = await createHarness();
+    const session = await harness.runtime.create({ intent: "stop workflow", project: "projects/Project" });
+    const sessionId = String(session.id);
+    const received: AgentRuntimeEvent[] = [];
+    let cancelCalls = 0;
+    harness.runtime.subscribe(sessionId, { id: "renderer", write: (event) => received.push(event) });
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    harness.emit({
+      type: "tool_result",
+      call_id: "call-workflow",
+      tool: "rmmv_RmmvWorkflow",
+      success: true,
+      output: JSON.stringify({
+        data: {
+          kind: "workflow-proposal",
+          proposalId: "wp-hold-stop",
+          status: "pending",
+        },
+      }),
+    });
+    assert.equal(
+      harness.runtime.attachExternalWorkCancellation(sessionId, "wp-hold-stop", () => { cancelCalls += 1; }).ok,
+      true,
+    );
+    harness.emit({ type: "status", status: "pass", at: "2026-06-01T00:00:03.000Z" });
+    harness.finish({ status: "pass" });
+    await harness.runtime.waitForForegroundSettled(sessionId);
+
+    harness.runtime.stop(sessionId);
+    await harness.flush();
+
+    assert.equal(cancelCalls, 1);
+    assert.equal(harness.runtime.get(sessionId)?.status, "stopped");
+    assert.equal(received.filter((event) => event.type === "summary" && event.status === "stopped").length, 1);
+  });
+
   test("allows final pass while a background subagent is still pending", async () => {
     const harness = await createHarness();
     const session = await harness.runtime.create({ intent: "spawn worker", project: "projects/Project" });

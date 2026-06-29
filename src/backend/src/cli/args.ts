@@ -122,7 +122,6 @@ export interface ParsedArgs {
   localOnly?: boolean;
   useLlm?: boolean;
   prepareOnly?: boolean;
-  skipKnowledgeRefresh?: boolean;
   summary?: boolean;
   overwriteZero?: boolean;
   allowReferenceBlockCopy?: boolean;
@@ -471,8 +470,6 @@ export function parseArgs(args: string[]): ParsedArgs {
       parsed.useLlm = true;
     } else if (arg === "--prepare-only") {
       parsed.prepareOnly = true;
-    } else if (arg === "--skip-knowledge-refresh") {
-      parsed.skipKnowledgeRefresh = true;
     } else if (arg === "--summary") {
       parsed.summary = true;
     } else if (arg === "--overwrite-zero") {

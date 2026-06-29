@@ -486,6 +486,7 @@ describe("AgentSessionRuntime", () => {
     const session = await harness.runtime.create({ intent: "plan work" });
     const sessionId = String(session.id);
     await waitForSessionStatus(harness.runtime, sessionId, "running");
+    (harness.runtime as unknown as { sessions: Map<string, { opencodeSessionId: string | null }> }).sessions.get(sessionId)!.opencodeSessionId = "opencode-test-session";
 
     harness.emit({
       type: "opencode_permission_request",
@@ -515,6 +516,7 @@ describe("AgentSessionRuntime", () => {
     const session = await harness.runtime.create({ intent: "plan work", productLanguage: "en-US" });
     const sessionId = String(session.id);
     await waitForSessionStatus(harness.runtime, sessionId, "running");
+    (harness.runtime as unknown as { sessions: Map<string, { opencodeSessionId: string | null }> }).sessions.get(sessionId)!.opencodeSessionId = "opencode-test-session";
 
     harness.emit({
       type: "opencode_permission_request",
@@ -532,6 +534,34 @@ describe("AgentSessionRuntime", () => {
     const opencodeEvent = (harness.runtime.get(sessionId)?.events as AgentRuntimeEvent[])
       .find((event) => event.type === "opencode_permission_response" && event.request_id === "req-plan") as any;
     assert.equal(opencodeEvent.response.response.message, "The user rejected this plan.");
+  });
+
+  test("opencode ASK returns failure when native session is unavailable (no silent success)", async () => {
+    const harness = await createHarness();
+    const session = await harness.runtime.create({ intent: "plan work" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+    // 续链失败等场景下 opencodeSessionId 被清空：此时不应伪造 success 让会话无声卡死。
+    (harness.runtime as unknown as { sessions: Map<string, { opencodeSessionId: string | null }> }).sessions.get(sessionId)!.opencodeSessionId = null;
+
+    harness.emit({
+      type: "opencode_permission_request",
+      request_id: "req-stale",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "ExitPlanMode",
+        input: { plan: "1. 查事实" },
+      },
+      at: "2026-06-01T00:00:02.000Z",
+    });
+
+    const response = await harness.runtime.submitAskResult(sessionId, "agent-runtime-plan:req-stale", { decision: "approve" });
+    assert.equal(response.ok, false);
+    // 不应 push 伪造的 success 响应
+    const fakedSuccess = (harness.runtime.get(sessionId)?.events as AgentRuntimeEvent[])
+      .some((event) => (event.type === "opencode_permission_response" || event.type === "opencode_question_response")
+        && event.request_id === "req-stale");
+    assert.equal(fakedSuccess, false);
   });
 
   test("allocates isolated plan path per conversation and reuses it on continuation", async () => {
@@ -590,6 +620,7 @@ describe("AgentSessionRuntime", () => {
     const session = await harness.runtime.create({ intent: "ask user" });
     const sessionId = String(session.id);
     await waitForSessionStatus(harness.runtime, sessionId, "running");
+    (harness.runtime as unknown as { sessions: Map<string, { opencodeSessionId: string | null }> }).sessions.get(sessionId)!.opencodeSessionId = "opencode-test-session";
 
     harness.emit({
       type: "opencode_question_request",

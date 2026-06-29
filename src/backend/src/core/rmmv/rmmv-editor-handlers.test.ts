@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
+import { EventContractDao } from "../db/dao/event-contract-dao.ts";
 import { getMapFileForRead, getProjectFileForRead } from "../desktop/staging-service.ts";
 import { initializeOriginalStoryProject } from "../desktop/story-page-sync-service.ts";
 import { readJson, writeJson } from "./json.ts";
@@ -140,7 +141,7 @@ describe("RMMV editor handlers", { concurrency: false }, () => {
     }), /cannot duplicate map events directly/i);
   });
 
-  test("event editor actions use managed writes for existing events", () => {
+  test("event editor move rejects unregistered events and allows placed ones", () => {
     writeJson(fixture.mapFile, {
       width: 2,
       height: 2,
@@ -149,6 +150,30 @@ describe("RMMV editor handlers", { concurrency: false }, () => {
       events: [null, { id: 1, name: "Guide", x: 0, y: 0, pages: [{ list: [{ code: 0, indent: 0, parameters: [] }] }] }],
     });
 
+    // 未在注册表登记的事件（baseline / 手工事件）→ 拒绝挪动
+    assert.throws(() => runRmmvEventEditor({
+      action: "move",
+      workflowRoot: fixture.root,
+      project: fixture.project,
+      mapId: 1,
+      eventId: 1,
+      x: 1,
+      y: 1,
+    }), /not a placed agent event/i);
+
+    // 登记一条已放置契约（placement 锚点指向 map 1 / event 1，status = placed）
+    EventContractDao.create("scene.guide", "Project", {
+      engine: "rmmv",
+      kind: "map-event",
+      id: "scene.guide",
+      purpose: "Guide NPC",
+      rmmvTarget: { operation: "add-map-event", mapId: 1, eventId: 1, eventName: "Guide" },
+      implementation: {},
+      status: "placed",
+      placement: { mapId: 1, eventId: 1, x: 0, y: 0 },
+    }, "placed");
+
+    // 已放置 → 允许挪动
     const moved = runRmmvEventEditor({
       action: "move",
       workflowRoot: fixture.root,

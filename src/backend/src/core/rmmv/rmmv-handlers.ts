@@ -17,6 +17,7 @@ import { writeStateSlotsOutputs } from "../report/write-state-slots-report.ts";
 import { writeAssetInventoryOutputs } from "../report/write-asset-inventory-report.ts";
 import { prepareOutputPath } from "../workflow/output-safety.ts";
 import { buildEventContext } from "../workflow/event/event-context.ts";
+import { loadRegistry } from "../workflow/event/event-registry.ts";
 import { runCli as runMapEventsCli } from "../desktop/map-events-cli.ts";
 import { runCli as runEventRegistryCli } from "../workflow/event/event-registry.ts";
 import type { RmmvHandlerInput, RmmvHandlerResult } from "./rmmv-handler-types.ts";
@@ -198,6 +199,26 @@ export function runRmmvMapEditor(input: RmmvHandlerInput): RmmvHandlerResult {
   return resultSummary(`Map editor ${action} completed.`, data);
 }
 
+/**
+ * editor.move 的越权护栏：只允许挪动「已通过注册表正式放置」的 Agent 事件。
+ * baseline/手工事件、未注册事件、仍处于 draft/reviewing 的事件一律拒绝，
+ * 避免 Agent 借 move 改动不归它管的地图事件坐标。
+ */
+function assertPlacedAgentEvent(project: string, mapId: number, eventId: number): void {
+  const registry = loadRegistry(project);
+  const placed = registry.contracts.some((contract) => {
+    const placement = contract.placement as { mapId?: number; eventId?: number } | undefined;
+    if (!placement || placement.mapId !== mapId || placement.eventId !== eventId) return false;
+    return contract.status === "placed" || contract.status === "verified";
+  });
+  if (!placed) {
+    throw new Error(
+      `editor.move rejected: event ${eventId} on map ${mapId} is not a placed agent event. `
+      + `Only events registered and placed via the registry (status placed/verified) can be relocated.`,
+    );
+  }
+}
+
 export function runRmmvEventEditor(input: RmmvHandlerInput): RmmvHandlerResult {
   const workflowRoot = resolveWorkflowRootFromInput(input);
   const project = resolveProjectRoot(input);
@@ -226,11 +247,13 @@ export function runRmmvEventEditor(input: RmmvHandlerInput): RmmvHandlerResult {
       actor,
     );
   } else if (action === "move") {
+    const moveEventId = requirePositiveIntField(input, "eventId");
+    assertPlacedAgentEvent(project, mapId, moveEventId);
     data = updateEvent(
       workflowRoot,
       project,
       mapId,
-      requirePositiveIntField(input, "eventId"),
+      moveEventId,
       {
         x: requireNonNegativeIntField(input, "x"),
         y: requireNonNegativeIntField(input, "y"),

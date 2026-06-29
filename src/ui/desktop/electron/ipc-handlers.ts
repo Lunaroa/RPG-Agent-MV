@@ -1268,14 +1268,30 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     if (proposal.status !== 'pending') throw new Error(`提议当前状态为 ${proposal.status}，不能批准`);
 
     const sessionId = proposal.sessionId;
+    const controller = new AbortController();
     const push = (event: Record<string, unknown>) => {
       if (sessionId) agentSessionRuntime.pushExternalEvent(sessionId, { ...event, proposalId: id });
     };
+    if (sessionId) {
+      const attached = agentSessionRuntime.attachExternalWorkCancellation(
+        sessionId,
+        id,
+        () => controller.abort(new Error('session stopped')),
+      );
+      if (!attached.ok) {
+        push({ type: 'workflow_run', phase: 'done', status: 'failed', reason: attached.reason || '会话已结束' });
+        throw new Error(attached.reason || '无法把工作流绑定到会话');
+      }
+    }
 
     push({ type: 'workflow_run', phase: 'start', workflow: proposal.title, summary: proposal.summary });
-    // 不 await：后台跑，IPC 立刻返回。进度/报告异步推回会话流。
+    // IPC 立刻返回；真正派发先等父 Agent 的前台执行完成，并保持会话占用直到 done 事件释放。
     proposals
       .approveProposal(workflowRoot, id, {
+        signal: controller.signal,
+        beforeExecute: sessionId
+          ? () => agentSessionRuntime.waitForForegroundSettled(sessionId, controller.signal)
+          : undefined,
         onEvent: (event) => push({ type: 'workflow_run', phase: 'progress', event }),
       })
       .then(({ proposal: done, record }) => {
@@ -1290,7 +1306,13 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
         });
       })
       .catch((error: unknown) => {
-        push({ type: 'workflow_run', phase: 'done', status: 'failed', reason: error instanceof Error ? error.message : String(error) });
+        const failed = proposals.readProposal(workflowRoot, id);
+        push({
+          type: 'workflow_run',
+          phase: 'done',
+          status: failed?.status === 'aborted' ? 'aborted' : 'failed',
+          reason: failed?.reason || (error instanceof Error ? error.message : String(error)),
+        });
       });
 
     return toIpcPayload({ ok: true, status: 'running', proposalId: id });

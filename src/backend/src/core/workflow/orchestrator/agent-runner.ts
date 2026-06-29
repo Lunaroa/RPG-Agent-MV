@@ -116,7 +116,6 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
         agentExecutionSettings: config.agentExecutionSettings ?? null,
         productLanguage: config.productLanguage,
         readOnlyTools: true, // 铁律：只读
-        skipKnowledgeRefresh: true,
         execute: true,
         timeoutMs,
         signal,

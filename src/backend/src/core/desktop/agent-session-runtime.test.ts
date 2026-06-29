@@ -8,7 +8,6 @@ import { AgentSessionRuntime, type AgentRuntimeEvent } from "./agent-session-run
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
 import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
-import { KnowledgeContextAbortedError } from "../workflow/agent/knowledge-context.ts";
 import { writeCurrentProgress } from "../memory/memory-store.ts";
 
 const roots: string[] = [];
@@ -1045,25 +1044,6 @@ describe("AgentSessionRuntime", () => {
     assert.equal(meta.opencodeSessionId, "opencode-from-stream");
   });
 
-  test("desktop create skips knowledge refresh during preparation", async () => {
-    let skipKnowledgeRefresh: boolean | undefined;
-    const harness = await createHarness(undefined, async (options: { skipKnowledgeRefresh?: boolean; intent?: unknown; project?: unknown }) => {
-      skipKnowledgeRefresh = options.skipKnowledgeRefresh;
-      return {
-        status: "pending",
-        generatedAt: "2026-06-01T00:00:00.000Z",
-        sessionId: "runtime-session",
-        workflowRoot: "",
-        task: { intent: options.intent, project: options.project, mapId: null, failureKind: null, taskId: null, files: [], conversationHistory: null },
-        profileId: "default",
-        execution: { timeoutMs: 1000, command: { command: "mock", args: [], display: "mock" } },
-      };
-    });
-    await harness.runtime.create({ intent: "inspect project" });
-    await harness.flush();
-    assert.equal(skipKnowledgeRefresh, true);
-  });
-
   test("stops preparation without starting the agent backend", async () => {
     const harness = await createPreparingHarness();
     const session = await harness.runtime.create({ intent: "inspect project" });
@@ -1284,7 +1264,7 @@ async function createPreparingHarness() {
         releaseBuild = resolve;
         options.signal.addEventListener("abort", () => {
           preparationAborted = true;
-          reject(new KnowledgeContextAbortedError());
+          reject(new Error("preparation aborted"));
         }, { once: true });
       });
       return {

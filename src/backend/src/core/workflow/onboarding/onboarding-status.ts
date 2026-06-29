@@ -15,12 +15,10 @@ import { getStoryProjectProfile } from "../../desktop/story-page-sync-service.ts
 import { scanProject } from "../../rmmv/project-scanner.ts";
 import { reconcile, loadRegistry } from "../event/event-registry.ts";
 
-export type RagState = "missing" | "stale" | "fresh" | "unknown";
 export type Severity = "clean" | "needs-attention" | "blocked";
 export type ActionType =
   | "adopt-orphans"
   | "apply-safe-drift"
-  | "build-rag"
   | "confirm-new-maps"
   | "declare-story-project"
   | "await-placement";
@@ -72,10 +70,6 @@ export interface OnboardingStatusReport {
     suspectedNew: SuspectedMap[];
     note: string;
   };
-  rag: {
-    state: RagState;
-    detail?: string;
-  };
   storyProject: {
     initialized: boolean;
     mode?: "original" | "mod";
@@ -104,7 +98,6 @@ export interface OnboardingInput {
   drifts: DriftLike[];
   reconcileStatus: string;
   registryMapIds: number[];
-  rag: { state: RagState; detail?: string };
   storyProject?: {
     initialized: boolean;
     mode?: "original" | "mod";
@@ -166,18 +159,17 @@ export function aggregateOnboardingStatus(input: OnboardingInput): OnboardingSta
 
   const hasOrphans = orphanTagged.length + orphanUntracked.length > 0;
   const hasOtherDrift = drifts.length > 0;
-  const ragNeedsBuild = false;
   const hasSuspectedMaps = suspectedNew.length > 0;
   const storyProject = input.storyProject || { initialized: false };
   const storyProjectUninitialized = !storyProject.initialized;
   const awaitPlacementCount = input.awaitPlacementCount ?? 0;
 
   let severity: Severity;
-  if (input.rag.state === "unknown" || input.reconcileStatus === "no-data-dir") {
+  if (input.reconcileStatus === "no-data-dir") {
     // The audit could not complete, so mark the report blocked while still
     // returning all facts that were collected.
     severity = "blocked";
-  } else if (hasOrphans || hasOtherDrift || ragNeedsBuild || hasSuspectedMaps || storyProjectUninitialized) {
+  } else if (hasOrphans || hasOtherDrift || hasSuspectedMaps || storyProjectUninitialized) {
     severity = "needs-attention";
   } else {
     severity = "clean";
@@ -246,7 +238,6 @@ export function aggregateOnboardingStatus(input: OnboardingInput): OnboardingSta
       suspectedNew,
       note: MAPS_HEURISTIC_NOTE,
     },
-    rag: input.rag,
     storyProject,
     awaitPlacement: { count: awaitPlacementCount },
     severity,
@@ -261,34 +252,6 @@ function pickOrphan(drift: DriftLike): OrphanEntry {
     eventName: drift.eventName,
     referencedId: drift.referencedId,
   };
-}
-
-// Parse single-line JSON output from the removed semantic status probe. Older
-// docker/python invocations could add warnings before JSON, so keep the last
-// parseable JSON line behavior.
-export function parseRagState(stdout: string | null): { state: RagState; detail?: string } {
-  if (!stdout || !stdout.trim()) {
-    return { state: "unknown", detail: "GraphRAG has been removed" };
-  }
-  const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith("{"));
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    try {
-      const json = JSON.parse(lines[i]) as { status?: unknown; stale?: unknown; staleReason?: unknown };
-      const status = String(json.status ?? "");
-      const stale = Boolean(json.stale);
-      const detail = typeof json.staleReason === "string" && json.staleReason ? json.staleReason : status;
-      if (status === "missing") return { state: "missing", detail };
-      if (stale || status === "stale") return { state: "stale", detail };
-      return { state: "fresh", detail: status || undefined };
-    } catch {
-      // Keep scanning backward for a parseable line.
-    }
-  }
-  return { state: "unknown", detail: "GraphRAG has been removed" };
-}
-
-function probeRag(_projectId?: string): { state: RagState; detail?: string } {
-  return { state: 'fresh', detail: 'GraphRAG has been removed; check skipped' };
 }
 
 export interface GatherOptions {
@@ -306,7 +269,6 @@ export async function gatherOnboardingStatus(
   const registryMapIds = registry.contracts
     .map((contract) => contract.rmmvTarget?.mapId)
     .filter((mapId): mapId is number => Number.isInteger(mapId));
-  const rag = probeRag(options.projectId);
   const profile = getStoryProjectProfile(project);
   const storyProject = profile
     ? { initialized: true, mode: profile.mode, baselineVersion: profile.baselineVersion }
@@ -331,7 +293,6 @@ export async function gatherOnboardingStatus(
     })),
     reconcileStatus: recon.status,
     registryMapIds,
-    rag,
     storyProject,
     awaitPlacementCount,
   });
@@ -354,7 +315,6 @@ export function renderOnboardingSummary(report: OnboardingStatusReport): string 
     : "none";
   lines.push(`Registry drift: ${driftSummary} (${report.registry.safeDriftCount} safe to apply; reconcile=${report.registry.reconcileStatus})`);
   lines.push(`Suspected new maps: ${report.maps.suspectedNew.length}/${report.maps.total} (heuristic; human confirmation required)`);
-  lines.push(`Semantic layer: ${report.rag.state}${report.rag.detail ? ` (${report.rag.detail})` : ""}`);
   lines.push(
     `Story project: ${report.storyProject.initialized
       ? "enabled"
@@ -417,12 +377,6 @@ export function renderOnboardingMarkdown(report: OnboardingStatusReport): string
   for (const map of report.maps.suspectedNew) {
     lines.push(`  - Map${pad(map.mapId)} ${map.name} (${map.eventCount} events) - ${map.reasons.join(", ")}`);
   }
-  lines.push("");
-
-  lines.push("## Project Context");
-  lines.push("");
-  lines.push(`- State: ${report.rag.state}`);
-  if (report.rag.detail) lines.push(`- Detail: ${report.rag.detail}`);
   lines.push("");
 
   lines.push("## Story Project");

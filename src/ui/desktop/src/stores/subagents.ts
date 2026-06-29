@@ -87,6 +87,11 @@ function usefulSubagentOutput(value: string): string {
   return text
 }
 
+export function canStopSubagent(item: SessionSubagentItem): boolean {
+  return item.taskType !== 'workflow'
+    && (item.status === 'running' || item.status === 'not_ready' || item.status === 'unknown')
+}
+
 export const useSubagentStore = defineStore('subagents', () => {
   const settingsStore = useSettingsStore()
   const label = () => subagentStoreLabels(normalizeProductLanguage(settingsStore.ui.language))
@@ -171,7 +176,8 @@ export const useSubagentStore = defineStore('subagents', () => {
       const innerType = asString(inner.type)
       if (innerType !== 'agent-start' && innerType !== 'agent-end') return
       const proposalId = asString(wf.proposalId)
-      const index = Number(inner.index ?? 0)
+      const index = Number(inner.index)
+      if (!proposalId || !Number.isInteger(index) || index < 0) return
       const id = `wf:${proposalId}:${index}`
       const agentLabel = asString(inner.label) || `agent ${index}`
       const innerAt = asString(inner.at) || at
@@ -182,6 +188,7 @@ export const useSubagentStore = defineStore('subagents', () => {
           description: agentLabel,
           prompt,
           status: 'running',
+          taskType: 'workflow',
           updatedAt: innerAt,
           activity: appendActivity(sessionId, id, {
             kind: 'started',
@@ -202,6 +209,7 @@ export const useSubagentStore = defineStore('subagents', () => {
           id,
           description: agentLabel,
           status,
+          taskType: 'workflow',
           output: output || existing?.output || null,
           error: ok ? null : (blocker || label().failed),
           updatedAt: innerAt,

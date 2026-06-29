@@ -11,6 +11,7 @@
         :value="modelValue"
         rows="1"
         :placeholder="t('composer.placeholder')"
+        :disabled="isRunning"
         @input="onInput"
         @focus="focused = true"
         @blur="focused = false"

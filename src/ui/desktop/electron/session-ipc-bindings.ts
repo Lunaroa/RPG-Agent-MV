@@ -85,6 +85,7 @@ export function registerSessionIpcHandlers(
     toIpcPayload(runtime.updateTask(sessionId, taskId, patch))
   ));
   ipc.handle('sessions:getPlan', (_event, sessionId: string) => toIpcPayload(runtime.getPlan(sessionId)));
+  // Derive subagents from persisted events so refresh and conversation restore match the live stream.
   ipc.handle('sessions:listSubagents', (_event, sessionId: string) => toIpcPayload(runtime.listSubagents(sessionId)));
   ipc.handle('sessions:stopSubagent', (_event, sessionId: string, taskId: string) => (
     toIpcPayload(runtime.stopSubagent(sessionId, taskId))

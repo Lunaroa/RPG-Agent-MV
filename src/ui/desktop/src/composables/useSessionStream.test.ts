@@ -11,7 +11,7 @@ import { nextTick, ref, watch } from 'vue'
 
 import { patchAskInSegments } from '../../../../contract/session-transcript.ts'
 import type { SessionSubagentItem } from '../../../../contract/types.ts'
-import { useSubagentStore } from '../stores/subagents.ts'
+import { canStopSubagent, useSubagentStore } from '../stores/subagents.ts'
 import { subagentTimelineSegments } from '../utils/subagentTimeline.ts'
 import { upsertToolCallSegment } from './session-stream-tool.ts'
 import { appendSegmentContent, setSegmentContent } from './session-stream-content.ts'
@@ -150,6 +150,161 @@ describe('stream segment content updates', () => {
     )
 
     stream.resetState()
+  })
+
+  test('workflow completion updates the approval card and appends one report message', async () => {
+    setActivePinia(createPinia())
+    const previousApi = (globalThis as any).api
+    const approved: string[] = []
+    ;(globalThis as any).api = {
+      workflow: {
+        approveProposal: async (proposalId: string) => {
+          approved.push(proposalId)
+          return { ok: true }
+        },
+      },
+    }
+    try {
+      const stream = useSessionStream()
+      stream.resetState()
+      stream.replaySessionEvents([{
+        type: 'opencode_permission_request',
+        sequence: 1,
+        request_id: 'perm-workflow',
+        request: {
+          subtype: 'can_use_tool',
+          tool_name: 'rmmv_RmmvWorkflow',
+          description: 'rmmv_RmmvWorkflow',
+          input: { title: '只读巡检', script: 'return { ok: true }' },
+        },
+      }])
+      stream.updateAskResult('agent-runtime-plan:perm-workflow', {
+        submittedAt: '2026-06-28T17:36:25.000Z',
+        decision: 'approve',
+      })
+      stream.replaySessionEvents([
+        {
+          type: 'tool_result',
+          sequence: 2,
+          call_id: 'call-workflow',
+          tool: 'rmmv_RmmvWorkflow',
+          input: { title: '只读巡检', script: 'return { ok: true }' },
+          success: true,
+          output: JSON.stringify({
+            data: { kind: 'workflow-proposal', proposalId: 'wp-report', status: 'pending' },
+          }),
+        },
+        {
+          type: 'workflow_run',
+          sequence: 3,
+          phase: 'done',
+          proposalId: 'wp-report',
+          status: 'completed',
+          workflow: '只读巡检',
+          report: { checked: 3, ok: true },
+        },
+        {
+          type: 'workflow_run',
+          sequence: 4,
+          phase: 'done',
+          proposalId: 'wp-report',
+          status: 'completed',
+          workflow: '只读巡检',
+          report: { checked: 3, ok: true },
+        },
+      ])
+      await nextTick()
+
+      assert.deepEqual(approved, ['wp-report'])
+      const ask = stream.getAsk('agent-runtime-plan:perm-workflow') as any
+      assert.equal(ask?.proposalId, 'wp-report')
+      assert.equal(ask?.result?.workflowStatus, 'completed')
+      const reports = stream.segments.value.filter((segment) => (
+        segment.type === 'text' && segment.content.includes('"checked": 3')
+      ))
+      assert.equal(reports.length, 1)
+      assert.match(reports[0]?.content || '', /```json/)
+
+      const restored = JSON.parse(JSON.stringify(stream.segments.value))
+      stream.restoreSegments(restored)
+      stream.replaySessionEvents([{
+        type: 'workflow_run',
+        sequence: 5,
+        phase: 'done',
+        proposalId: 'wp-report',
+        status: 'completed',
+        workflow: '只读巡检',
+        report: { checked: 3, ok: true },
+      }])
+      assert.equal(
+        stream.segments.value.filter((segment) => (
+          segment.type === 'text' && segment.content.includes('"checked": 3')
+        )).length,
+        1,
+      )
+    } finally {
+      ;(globalThis as any).api = previousApi
+    }
+  })
+
+  test('workflow failure updates the approval card and surfaces the reason', async () => {
+    setActivePinia(createPinia())
+    const previousApi = (globalThis as any).api
+    ;(globalThis as any).api = {
+      workflow: {
+        approveProposal: async () => ({ ok: true }),
+      },
+    }
+    try {
+      const stream = useSessionStream()
+      stream.resetState()
+      stream.replaySessionEvents([{
+        type: 'opencode_permission_request',
+        sequence: 1,
+        request_id: 'perm-workflow-failed',
+        request: {
+          subtype: 'can_use_tool',
+          tool_name: 'rmmv_RmmvWorkflow',
+          input: { title: '失败巡检', script: 'throw new Error("boom")' },
+        },
+      }])
+      stream.updateAskResult('agent-runtime-plan:perm-workflow-failed', {
+        submittedAt: '2026-06-28T17:36:25.000Z',
+        decision: 'approve',
+      })
+      stream.replaySessionEvents([
+        {
+          type: 'tool_result',
+          sequence: 2,
+          call_id: 'call-workflow-failed',
+          tool: 'rmmv_RmmvWorkflow',
+          input: { title: '失败巡检', script: 'throw new Error("boom")' },
+          success: true,
+          output: JSON.stringify({
+            data: { kind: 'workflow-proposal', proposalId: 'wp-report-failed', status: 'pending' },
+          }),
+        },
+        {
+          type: 'workflow_run',
+          sequence: 3,
+          phase: 'done',
+          proposalId: 'wp-report-failed',
+          status: 'failed',
+          workflow: '失败巡检',
+          reason: 'child workflow failed',
+        },
+      ])
+      await nextTick()
+
+      const ask = stream.getAsk('agent-runtime-plan:perm-workflow-failed') as any
+      assert.equal(ask?.result?.workflowStatus, 'failed')
+      assert.equal(
+        stream.segments.value.some((segment) => segment.content.includes('child workflow failed')),
+        true,
+      )
+    } finally {
+      ;(globalThis as any).api = previousApi
+    }
   })
 
   test('hides native task blocks from live assistant text', () => {
@@ -459,6 +614,70 @@ describe('event register preview stream', () => {
 })
 
 describe('subagent stream state', () => {
+  test('only native running subagents expose the single-item stop action', () => {
+    assert.equal(canStopSubagent({
+      id: 'task-native',
+      description: 'native',
+      status: 'running',
+      taskType: 'agent',
+    }), true)
+    assert.equal(canStopSubagent({
+      id: 'wf:wp-1:0',
+      description: 'workflow',
+      status: 'running',
+      taskType: 'workflow',
+    }), false)
+    assert.equal(canStopSubagent({
+      id: 'task-complete',
+      description: 'complete',
+      status: 'completed',
+      taskType: 'agent',
+    }), false)
+  })
+
+  test('records live dynamic workflow agents with the same stable identity as history', () => {
+    setActivePinia(createPinia())
+    const subagents = useSubagentStore()
+
+    subagents.applyRuntimeEvent('s1', {
+      type: 'workflow_run',
+      phase: 'progress',
+      proposalId: 'wp-live',
+      event: {
+        type: 'agent-start',
+        label: 'review:maps',
+        index: 0,
+        prompt: '检查地图',
+        at: '2026-06-15T02:10:00.000Z',
+      },
+      sequence: 1,
+      at: '2026-06-15T02:10:00.000Z',
+    })
+    subagents.applyRuntimeEvent('s1', {
+      type: 'workflow_run',
+      phase: 'progress',
+      proposalId: 'wp-live',
+      event: {
+        type: 'agent-end',
+        label: 'review:maps',
+        index: 0,
+        ok: true,
+        output: '地图检查完成',
+        at: '2026-06-15T02:10:01.000Z',
+      },
+      sequence: 2,
+      at: '2026-06-15T02:10:01.000Z',
+    })
+
+    const item = subagents.itemsFor('s1').find((entry) => entry.id === 'wf:wp-live:0')
+    assert.equal(item?.description, 'review:maps')
+    assert.equal(item?.prompt, '检查地图')
+    assert.equal(item?.taskType, 'workflow')
+    assert.equal(item?.status, 'completed')
+    assert.equal(item?.output, '地图检查完成')
+    assert.deepEqual(item?.activity?.map((entry) => entry.kind), ['started', 'output'])
+  })
+
   test('records live progress activity for right panel details', () => {
     setActivePinia(createPinia())
     const subagents = useSubagentStore()

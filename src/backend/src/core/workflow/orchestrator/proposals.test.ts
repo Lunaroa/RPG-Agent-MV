@@ -129,6 +129,63 @@ test("approveProposal：pending → running → completed，挂上 runId/reportP
   assert.equal(readProposal(root, proposal.proposalId)?.status, "completed");
 });
 
+test("approveProposal waits for the foreground gate before dispatching workflow agents", async () => {
+  const root = tmpRoot();
+  const proposal = proposeWorkflow({ workflowRoot: root, project: "/p", script: SCRIPT }, { makeId: seqId, now: fixedNow });
+  let releaseGate!: () => void;
+  let executeCount = 0;
+  const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+  const running = approveProposal(
+    root,
+    proposal.proposalId,
+    {
+      beforeExecute: async () => gate,
+      execute: async () => {
+        executeCount += 1;
+        return fakeRecord("run-gated");
+      },
+    },
+    { now: fixedNow },
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(readProposal(root, proposal.proposalId)?.status, "running");
+  assert.equal(executeCount, 0);
+
+  releaseGate();
+  const { proposal: done } = await running;
+  assert.equal(executeCount, 1);
+  assert.equal(done.status, "completed");
+});
+
+test("approveProposal aborts while waiting for the foreground gate", async () => {
+  const root = tmpRoot();
+  const proposal = proposeWorkflow({ workflowRoot: root, project: "/p", script: SCRIPT }, { makeId: seqId, now: fixedNow });
+  const controller = new AbortController();
+  let executeCount = 0;
+  const running = approveProposal(
+    root,
+    proposal.proposalId,
+    {
+      signal: controller.signal,
+      beforeExecute: () => new Promise<void>((_resolve, reject) => {
+        controller.signal.addEventListener("abort", () => reject(new Error("session stopped")), { once: true });
+      }),
+      execute: async () => {
+        executeCount += 1;
+        return fakeRecord("run-should-not-start");
+      },
+    },
+    { now: fixedNow },
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort(new Error("session stopped"));
+  await assert.rejects(running, /session stopped/);
+  assert.equal(executeCount, 0);
+  assert.equal(readProposal(root, proposal.proposalId)?.status, "aborted");
+});
+
 test("approveProposal：执行失败 → failed + 原因，并 rethrow", async () => {
   const root = tmpRoot();
   const proposal = proposeWorkflow({ workflowRoot: root, project: "/p", script: SCRIPT }, { makeId: seqId, now: fixedNow });
@@ -146,13 +203,26 @@ test("approveProposal：执行失败 → failed + 原因，并 rethrow", async (
   assert.match(String(after?.reason), /派发炸了/);
 });
 
-test("approveProposal：record 非 completed → failed + 原因", async () => {
+test("approveProposal：record aborted → proposal aborted + 原因", async () => {
   const root = tmpRoot();
   const proposal = proposeWorkflow({ workflowRoot: root, project: "/p", script: SCRIPT }, { makeId: seqId, now: fixedNow });
   const { proposal: done } = await approveProposal(
     root,
     proposal.proposalId,
     { execute: async () => fakeRecord("run-2", "aborted") },
+    { now: fixedNow },
+  );
+  assert.equal(done.status, "aborted");
+  assert.match(String(done.reason), /boom/);
+});
+
+test("approveProposal：record failed → proposal failed + 原因", async () => {
+  const root = tmpRoot();
+  const proposal = proposeWorkflow({ workflowRoot: root, project: "/p", script: SCRIPT }, { makeId: seqId, now: fixedNow });
+  const { proposal: done } = await approveProposal(
+    root,
+    proposal.proposalId,
+    { execute: async () => fakeRecord("run-2f", "failed") },
     { now: fixedNow },
   );
   assert.equal(done.status, "failed");
@@ -202,10 +272,26 @@ test("approveProposal 并发双重批准被锁挡住（不重复执行）", asyn
   await new Promise((resolve) => setImmediate(resolve));
   await assert.rejects(
     approveProposal(root, proposal.proposalId, { execute }, { now: fixedNow }),
-    /EEXIST|already exists|cannot|非法|状态/,
+    /EEXIST|already exists|cannot|非法|状态|锁占用|正在被另一个进程处理/,
     "second concurrent approve must be rejected by the lock",
   );
   releaseExecute();
   await first;
   assert.equal(executeCount, 1, "execute must run exactly once despite concurrent approve");
+});
+
+test("approveProposal：持有进程已死的陈旧锁可被抢占（崩溃残留不死锁）", async () => {
+  const root = tmpRoot();
+  const proposal = proposeWorkflow({ workflowRoot: root, project: "/p", script: SCRIPT }, { makeId: seqId, now: fixedNow });
+  // 模拟前一个进程崩溃后留下的陈旧锁：pid 指向一个几乎肯定不存在的进程。
+  const lockPath = path.join(root, "runtime", "out", "workflows", "proposals", `${proposal.proposalId}.json.lock`);
+  fs.writeFileSync(lockPath, JSON.stringify({ pid: 999999, at: Date.now() }), "utf8");
+  const { proposal: done } = await approveProposal(
+    root,
+    proposal.proposalId,
+    { execute: async () => fakeRecord("run-stale") },
+    { now: fixedNow },
+  );
+  assert.equal(done.status, "completed");
+  assert.equal(done.runId, "run-stale");
 });

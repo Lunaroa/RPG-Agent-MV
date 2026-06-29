@@ -97,6 +97,8 @@ interface SubagentTaskRef {
 }
 
 const SERVER_START_TIMEOUT_MS = 15000;
+const SESSION_STATUS_POLL_MS = 250;
+const TOOL_IDLE_GRACE_MS = 15000;
 let singleton: StartedServer | null = null;
 
 function now(): string {
@@ -229,42 +231,52 @@ export function buildOpencodeServerEnv(
   return env;
 }
 
-async function ensureServer(input: OpencodeRunInput): Promise<StartedServer> {
-  const key = serverKey(input);
-  if (singleton && singleton.key === key && singleton.process.exitCode === null) return singleton;
-  await stopOpencodeServer();
+let ensureServerChain: Promise<unknown> = Promise.resolve();
 
-  const executable = resolveOpencodeCli(input.workflowRoot);
-  if (!fs.existsSync(executable)) {
-    throw new Error(`opencode runtime file is missing: ${executable}`);
-  }
-  // Packaged installs must ship ripgrep so file search works fully offline.
-  // Fail fast instead of letting the opencode runtime silently download it.
-  if (process.env.AGENT_RPG_RESOURCES_PATH?.trim()) {
-    const ripgrep = resolveOpencodeRipgrep(input.workflowRoot);
-    if (!fs.existsSync(ripgrep)) {
-      throw new Error(`Bundled ripgrep is missing: ${ripgrep}. The package did not include rg correctly; rebuild the release package with npm run build:opencode-runtime.`);
+async function ensureServer(input: OpencodeRunInput): Promise<StartedServer> {
+  const prev = ensureServerChain;
+  let release!: () => void;
+  ensureServerChain = new Promise<void>((resolve) => { release = resolve; });
+  try {
+    await prev;
+    const key = serverKey(input);
+    if (singleton && singleton.key === key && singleton.process.exitCode === null) return singleton;
+    await stopOpencodeServer();
+
+    const executable = resolveOpencodeCli(input.workflowRoot);
+    if (!fs.existsSync(executable)) {
+      throw new Error(`opencode runtime file is missing: ${executable}`);
     }
+    // Packaged installs must ship ripgrep so file search works fully offline.
+    // Fail fast instead of letting the opencode runtime silently download it.
+    if (process.env.AGENT_RPG_RESOURCES_PATH?.trim()) {
+      const ripgrep = resolveOpencodeRipgrep(input.workflowRoot);
+      if (!fs.existsSync(ripgrep)) {
+        throw new Error(`Bundled ripgrep is missing: ${ripgrep}. The package did not include rg correctly; rebuild the release package with npm run build:opencode-runtime.`);
+      }
+    }
+    ensureOpencodeIsolationDirs(input.workflowRoot);
+    const env = buildOpencodeServerEnv(input);
+    const args = ["serve", "--hostname=127.0.0.1", "--port=0", "--log-level=INFO"];
+    const proc = childProcess.spawn(executable, args, {
+      cwd: input.workflowRoot,
+      env,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const url = await waitForServerUrl(proc);
+    singleton = {
+      client: createOpencodeClient({ baseUrl: url, directory: input.cwd }),
+      questionClient: createOpencodeV2Client({ baseUrl: url, directory: input.cwd }),
+      process: proc,
+      url,
+      executable,
+      key,
+    };
+    return singleton;
+  } finally {
+    release();
   }
-  ensureOpencodeIsolationDirs(input.workflowRoot);
-  const env = buildOpencodeServerEnv(input);
-  const args = ["serve", "--hostname=127.0.0.1", "--port=0", "--log-level=INFO"];
-  const proc = childProcess.spawn(executable, args, {
-    cwd: input.workflowRoot,
-    env,
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const url = await waitForServerUrl(proc);
-  singleton = {
-    client: createOpencodeClient({ baseUrl: url, directory: input.cwd }),
-    questionClient: createOpencodeV2Client({ baseUrl: url, directory: input.cwd }),
-    process: proc,
-    url,
-    executable,
-    key,
-  };
-  return singleton;
 }
 
 function waitForServerUrl(proc: ChildProcess): Promise<string> {
@@ -385,6 +397,7 @@ function sessionIdFromEvent(event: Record<string, unknown>): string | null {
   const info = asRecord(properties.info);
   return asString(properties.sessionID)
     || asString(part.sessionID)
+    || asString(info.sessionID)
     || asString(info.id)
     || null;
 }
@@ -551,7 +564,8 @@ export function normalizeOpencodeEvent(
   const type = asString(event.type);
   const properties = asRecord(event.properties);
   const out: RuntimeEvent[] = [];
-  if (type === "session.idle") {
+  const statusType = asString(asRecord(properties.status).type);
+  if (type === "session.idle" || (type === "session.status" && statusType === "idle")) {
     const idleSessionId = sessionIdFromEvent(event);
     if (idleSessionId && idleSessionId !== state.rootSessionId) {
       const ref = state.subagentSessions?.get(idleSessionId);
@@ -738,9 +752,73 @@ export function shouldFinishOpencodeRunOnSessionIdle(
   event: Record<string, unknown>,
   parentSessionId: string | null,
 ): boolean {
-  if (asString(event.type) !== "session.idle") return false;
+  const type = asString(event.type);
+  if (type === "session.status") {
+    const status = asRecord(asRecord(event.properties).status);
+    if (asString(status.type) !== "idle") return false;
+  } else if (type !== "session.idle") {
+    return false;
+  }
   const idleSessionId = sessionIdFromEvent(event);
   return !idleSessionId || idleSessionId === parentSessionId;
+}
+
+export function isOpencodeRootTurnActivity(
+  event: Record<string, unknown>,
+  parentSessionId: string | null,
+): boolean {
+  if (!parentSessionId || sessionIdFromEvent(event) !== parentSessionId) return false;
+  const type = asString(event.type);
+  if (type === "session.idle") return false;
+  if (type === "message.updated") {
+    return asString(asRecord(asRecord(event.properties).info).role) === "assistant";
+  }
+  if (type === "message.part.updated" || type === "message.part.delta") return false;
+  if (type !== "session.status") return true;
+  return asString(asRecord(asRecord(event.properties).status).type) !== "idle";
+}
+
+export function isOpencodeRootTurnTerminalActivity(
+  event: Record<string, unknown>,
+  parentSessionId: string | null,
+): boolean {
+  if (!parentSessionId || sessionIdFromEvent(event) !== parentSessionId) return false;
+  const type = asString(event.type);
+  const properties = asRecord(event.properties);
+  if (type === "message.part.updated") {
+    return asString(asRecord(properties.part).type) === "step-finish";
+  }
+  if (type !== "message.updated") return false;
+  const info = asRecord(properties.info);
+  if (asString(info.role) !== "assistant") return false;
+  const time = asRecord(info.time);
+  return typeof time.completed === "number"
+    || Boolean(asString(info.finish))
+    || Object.keys(asRecord(info.error)).length > 0;
+}
+
+export function isOpencodeSessionIdleSnapshot(
+  snapshot: Record<string, unknown>,
+  sessionId: string | null,
+): boolean {
+  if (!sessionId) return false;
+  const status = asRecord(snapshot[sessionId]);
+  return Object.keys(status).length === 0 || asString(status.type) === "idle";
+}
+
+export function shouldCompleteOpencodeTurn(input: {
+  armed: boolean;
+  live: boolean;
+  terminal: boolean;
+  sessionIdle: boolean;
+}): boolean {
+  return input.armed && input.live && input.terminal && input.sessionIdle;
+}
+
+export function shouldBlockUnexpectedOpencodeStreamEnd(
+  input: { done: boolean; aborted: boolean },
+): boolean {
+  return !input.done && !input.aborted;
 }
 
 interface NormalizedQuestion {
@@ -945,6 +1023,11 @@ export async function runOpencodeSession(
   let done = false;
   let sawAssistantContent = false;
   let sawToolActivity = false;
+  let sawTurnActivity = false;
+  let sawTerminalActivity = false;
+  let turnArmed = false;
+  let resolveFinished!: () => void;
+  const finished = new Promise<void>((resolve) => { resolveFinished = resolve; });
   const productLanguage = normalizeProductLanguage(input.productLanguage);
   const state: NormalizeState = {
     emittedToolCalls: new Set<string>(),
@@ -960,6 +1043,7 @@ export async function runOpencodeSession(
     console.error(`[perm-diag] finish called: status=${status} reason=${reason || "null"} pendingPermission=${state.pendingPermissionRequest}`);
     finalStatus = status;
     blocker = reason || null;
+    resolveFinished();
   };
 
   const timeout = setTimeout(() => {
@@ -982,6 +1066,55 @@ export async function runOpencodeSession(
     if (idleTimer) {
       clearTimeout(idleTimer);
       idleTimer = null;
+    }
+  };
+  let streamGen: AsyncGenerator<Record<string, unknown>> | null = null;
+  const stopEventStream = () => {
+    void streamGen?.return(undefined as never).catch(() => {});
+  };
+  const handleRootIdle = (sessionIdle: boolean) => {
+    if (done || !shouldCompleteOpencodeTurn({
+      armed: turnArmed,
+      live: sawTurnActivity,
+      terminal: sawTerminalActivity,
+      sessionIdle,
+    })) {
+      if (!sessionIdle) clearIdleTimer();
+      return;
+    }
+    if (state.pendingPermissionRequest) {
+      console.error(`[perm-diag] idle received but pendingPermissionRequest=true, NOT terminating`);
+      return;
+    }
+    if (sawToolActivity) {
+      if (idleTimer) return;
+      console.error(`[perm-diag] idle with toolActivity, starting 15s grace period`);
+      idleTimer = setTimeout(() => {
+        idleTimer = null;
+        if (!done) {
+          console.error(`[perm-diag] idle grace period expired, terminating`);
+          finish("pass", null);
+          stopEventStream();
+        }
+      }, TOOL_IDLE_GRACE_MS);
+      return;
+    }
+    console.error(`[perm-diag] idle received, terminating with pass`);
+    finish("pass", null);
+    stopEventStream();
+  };
+  const probeRootIdle = async () => {
+    if (done || !turnArmed || !sawTurnActivity || !sawTerminalActivity) return;
+    try {
+      const statusResult = await client.session.status({
+        query: { directory: input.cwd },
+        signal: controller.signal,
+      });
+      if (statusResult.error) return;
+      handleRootIdle(isOpencodeSessionIdleSnapshot(asRecord(statusResult.data), opencodeSessionId));
+    } catch {
+      if (done || controller.signal.aborted) return;
+      // Polling remains active when a single status verification fails.
     }
   };
 
@@ -1007,18 +1140,21 @@ export async function runOpencodeSession(
       sseMaxRetryAttempts: 0,
     });
 
-    const streamGen = subscribed.stream as AsyncGenerator<Record<string, unknown>>;
+    streamGen = subscribed.stream as AsyncGenerator<Record<string, unknown>>;
 
     const streamTask = (async () => {
       console.error(`[perm-diag] SSE stream loop started`);
-      for await (const raw of streamGen) {
+      for await (const raw of streamGen!) {
         if (!raw || done) {
           if (done) console.error(`[perm-diag] SSE loop: skipping raw because done=true`);
           continue;
         }
         const rawType = asString(raw.type);
         console.error(`[perm-diag] SSE event: type=${rawType}`);
-        if (rawType !== "session.idle" && rawType !== "session.status") {
+        const rootIdle = shouldFinishOpencodeRunOnSessionIdle(raw, opencodeSessionId);
+        const rootTurnActivity = isOpencodeRootTurnActivity(raw, opencodeSessionId);
+        const rootTerminalActivity = isOpencodeRootTurnTerminalActivity(raw, opencodeSessionId);
+        if (rootTurnActivity) {
           clearIdleTimer();
         }
         const eventSessionId = sessionIdFromEvent(raw);
@@ -1027,14 +1163,22 @@ export async function runOpencodeSession(
           && eventSessionId !== opencodeSessionId
           && !state.subagentSessions?.has(eventSessionId)
         ) continue;
+        if (rootTurnActivity) {
+          sawTurnActivity = true;
+        }
+        if (rootTerminalActivity) {
+          sawTerminalActivity = true;
+        }
         for (const event of normalizeOpencodeEvent(raw, state)) {
           if (event.type === "text_delta" || event.type === "reasoning_delta") stdout += event.text || "";
           if (event.type === "stderr") stderr += event.text || "";
           if ((event.type === "text_delta" || event.type === "reasoning_delta") && String(event.text || "").trim()) {
             sawAssistantContent = true;
+            sawTerminalActivity = true;
           }
           if (event.type === "tool_call" || event.type === "tool_result") {
             sawToolActivity = true;
+            sawTerminalActivity = true;
           }
           if (event.type === "usage") {
             inputTokens += Number(event.inputTokens || 0);
@@ -1046,28 +1190,23 @@ export async function runOpencodeSession(
             finish("blocked", asString(event.blocker) || "opencode session failed");
           }
         }
-        if (shouldFinishOpencodeRunOnSessionIdle(raw, opencodeSessionId)) {
-          if (state.pendingPermissionRequest) {
-            console.error(`[perm-diag] session.idle received but pendingPermissionRequest=true, NOT terminating`);
-          } else if (sawToolActivity) {
-            console.error(`[perm-diag] session.idle with toolActivity, starting 15s grace period`);
-            clearIdleTimer();
-            idleTimer = setTimeout(() => {
-              if (!done) {
-                console.error(`[perm-diag] idle grace period expired, terminating`);
-                finish("pass", null);
-                streamGen.return(undefined as never).catch(() => {});
-              }
-            }, 15000);
-          } else {
-            console.error(`[perm-diag] session.idle received, terminating with pass`);
-            finish("pass", null);
-            break;
-          }
-        }
+        if (rootIdle) await probeRootIdle();
       }
       console.error(`[perm-diag] SSE stream loop ENDED naturally (stream closed). done=${done}`);
-    })();
+      if (shouldBlockUnexpectedOpencodeStreamEnd({ done, aborted: controller.signal.aborted })) {
+        const reason = "opencode event stream closed before the session reached a terminal state";
+        stderr += `${reason}\n`;
+        onEvent({ type: "stderr", text: `${reason}\n`, at: now() });
+        finish("blocked", reason);
+      }
+    })().catch((error) => {
+      if (shouldBlockUnexpectedOpencodeStreamEnd({ done, aborted: controller.signal.aborted })) {
+        const reason = error instanceof Error ? error.message : String(error);
+        stderr += `${reason}\n`;
+        onEvent({ type: "stderr", text: `${reason}\n`, at: now() });
+        finish("blocked", reason);
+      }
+    });
 
     const promptResult = await client.session.promptAsync({
       path: { id: opencodeSessionId },
@@ -1086,9 +1225,30 @@ export async function runOpencodeSession(
       console.error(`[perm-diag] promptAsync returned error: ${JSON.stringify(promptResult.error)}`);
       throw promptResult.error;
     }
+    turnArmed = true;
     console.error(`[perm-diag] promptAsync succeeded, awaiting streamTask`);
+    const statusPollTask = (async () => {
+      while (!done && !controller.signal.aborted) {
+        await new Promise((resolve) => setTimeout(resolve, SESSION_STATUS_POLL_MS));
+        if (done || controller.signal.aborted) break;
+        try {
+          const statusResult = await client.session.status({
+            query: { directory: input.cwd },
+            signal: controller.signal,
+          });
+          if (statusResult.error) continue;
+          const idle = isOpencodeSessionIdleSnapshot(asRecord(statusResult.data), opencodeSessionId);
+          handleRootIdle(idle);
+        } catch {
+          if (done || controller.signal.aborted) break;
+          // SSE remains authoritative while a status probe is temporarily unavailable.
+        }
+      }
+    })();
 
-    await streamTask;
+    await finished;
+    stopEventStream();
+    await Promise.allSettled([streamTask, statusPollTask]);
   } catch (error) {
     console.error(`[perm-diag] CATCH block: error=${error instanceof Error ? error.message : String(error)} done=${done}`);
     if (!done) {

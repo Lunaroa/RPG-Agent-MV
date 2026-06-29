@@ -598,23 +598,26 @@ export class AgentSessionRuntime {
     const behavior = asString(response.behavior);
     const opencodeSessionId = session.opencodeSessionId;
     console.error(`[perm-diag] submitOpencodeAskResult: behavior=${behavior} opencodeSessionId=${opencodeSessionId} tool_name=${asString(request.tool_name)}`);
-    if (opencodeSessionId) {
-      const directory = resolveSessionProjectDirectory(session, this.workflowRoot);
-      if (asString(request.tool_name) === "AskUserQuestion") {
-        await replyOpencodeQuestion(
-          opencodeSessionId,
-          requestId,
-          buildQuestionReplyAnswers(asRecord(request.input), result),
-          directory,
-        );
-      } else {
-        await replyOpencodePermission(
-          opencodeSessionId,
-          requestId,
-          behavior === "deny" ? "reject" : "once",
-          directory,
-        );
-      }
+    // opencode 会话已断（续链失败被清空等）：不能把答案送回，opencode 那侧会永久挂起。
+    // 诚实返回失败，让前端把该 ASK 标记为 failedAt 并提示用户重开，不 push 伪造的 success。
+    if (!opencodeSessionId) {
+      return { ok: false, reason: "opencode session unavailable; please reopen the session", askType };
+    }
+    const directory = resolveSessionProjectDirectory(session, this.workflowRoot);
+    if (asString(request.tool_name) === "AskUserQuestion") {
+      await replyOpencodeQuestion(
+        opencodeSessionId,
+        requestId,
+        buildQuestionReplyAnswers(asRecord(request.input), result),
+        directory,
+      );
+    } else {
+      await replyOpencodePermission(
+        opencodeSessionId,
+        requestId,
+        behavior === "deny" ? "reject" : "once",
+        directory,
+      );
     }
     this.push(session, {
       type: askType === "plan-approval" ? "opencode_permission_response" : "opencode_question_response",

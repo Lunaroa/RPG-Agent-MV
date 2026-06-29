@@ -50,6 +50,14 @@ import { backendText } from "../../i18n/messages.ts";
 
 const DEFAULT_AGENT_TIMEOUT_MS: number = 30 * 60 * 1000;
 
+/** 解析超时：非正数（含 0/NaN）视为未设置，逐级回落到缺省。避免 `||` 把合法的 0 当 falsy 放大成 30min。 */
+function resolveTimeoutMs(...candidates: Array<number | null | undefined>): number {
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) return candidate;
+  }
+  return DEFAULT_AGENT_TIMEOUT_MS;
+}
+
 interface DispatchOptions {
   workflowRoot?: string;
   agentId?: string;
@@ -482,7 +490,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     },
     execution: {
       requested: Boolean(options.execute),
-      timeoutMs: options.timeoutMs || DEFAULT_AGENT_TIMEOUT_MS,
+      timeoutMs: resolveTimeoutMs(options.timeoutMs, DEFAULT_AGENT_TIMEOUT_MS),
       command: runtimeCommand
     },
     blocker,
@@ -539,7 +547,7 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
       const opencodeConfig = await resolveOpencodeConfig(dispatch);
       const providerId = dispatch.sessionBinding?.providerId || String(dispatch.profile.provider || "");
       const modelId = dispatch.sessionBinding?.modelId || String(dispatch.profile.model || "");
-      const timeoutMs = options.timeoutMs || dispatch.execution.timeoutMs || 600000;
+      const timeoutMs = resolveTimeoutMs(options.timeoutMs, dispatch.execution.timeoutMs, 600000);
       options.onOpencodeRunContext?.({
         workflowRoot: dispatch.workflowRoot,
         cwd: agentCwd,
@@ -651,10 +659,15 @@ function startOpencodeDispatchProcess(
 ): DispatchProcessHandle {
   let stopped = false;
   const controller = new AbortController();
+  // 外部 signal → 内部 controller：监听器必须在 promise settle 时移除，否则每个子 agent
+  // 都往共享的工作流 signal 上挂一个废弃监听器，>10 个子 agent 触发 MaxListenersExceededWarning，
+  // 跑到 maxTotalAgents 还会堆上千个泄漏监听器。{ once: true } 只在 abort 时摘除，正常完成不摘。
+  const onExternalAbort = () => controller.abort(options.signal?.reason);
   if (options.signal) {
-    options.signal.addEventListener("abort", () => controller.abort(options.signal?.reason), { once: true });
+    if (options.signal.aborted) controller.abort(options.signal.reason);
+    else options.signal.addEventListener("abort", onExternalAbort, { once: true });
   }
-  const promise = new Promise<DispatchResult>(async (resolve) => {
+  const promise = (async (): Promise<DispatchResult> => {
     let envInfo: RuntimeEnvResult;
     try {
       envInfo = await buildRuntimeEnv(
@@ -668,13 +681,12 @@ function startOpencodeDispatchProcess(
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      resolve(recordAgentRunBestEffort({
+      return recordAgentRunBestEffort({
         ...dispatch,
         status: "blocked",
         blocker: message,
         execution: { ...dispatch.execution!, error: message },
-      }));
-      return;
+      });
     }
 
     const command = dispatch.execution!.command!;
@@ -692,7 +704,7 @@ function startOpencodeDispatchProcess(
       const opencodeConfig = await resolveOpencodeConfig(dispatch);
       const providerId = dispatch.sessionBinding?.providerId || String(dispatch.profile?.provider || "");
       const modelId = dispatch.sessionBinding?.modelId || String(dispatch.profile?.model || "");
-      const timeoutMs = options.timeoutMs || dispatch.execution!.timeoutMs || 600000;
+      const timeoutMs = resolveTimeoutMs(options.timeoutMs, dispatch.execution!.timeoutMs, 600000);
       options.onOpencodeRunContext?.({
         workflowRoot: dispatch.workflowRoot,
         cwd: agentCwd,
@@ -717,7 +729,7 @@ function startOpencodeDispatchProcess(
         signal: controller.signal,
       }, onEvent);
       const finalStatus = result.status === "pass" ? "pass" : stopped ? "stopped" : "blocked";
-      resolve(recordAgentRunBestEffort({
+      return recordAgentRunBestEffort({
         ...dispatch,
         status: finalStatus,
         execution: {
@@ -738,12 +750,12 @@ function startOpencodeDispatchProcess(
           rawStdout: "",
         },
         blocker: result.blocker,
-      }));
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       onEvent({ type: "stderr", text: `${message}\n`, at: new Date().toISOString() });
       onEvent({ type: "status", status: "blocked", blocker: message, at: new Date().toISOString() });
-      resolve(recordAgentRunBestEffort({
+      return recordAgentRunBestEffort({
         ...dispatch,
         status: "blocked",
         blocker: message,
@@ -753,8 +765,11 @@ function startOpencodeDispatchProcess(
           stderr: `${message}\n`,
           rawStdout: "",
         },
-      }));
+      });
     }
+  })().finally(() => {
+    // 无论成功/失败/中止，都摘除外部 signal 监听器，杜绝泄漏。
+    options.signal?.removeEventListener("abort", onExternalAbort);
   });
 
   return {

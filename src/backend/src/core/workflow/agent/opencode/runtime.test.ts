@@ -4,8 +4,13 @@ import test from "node:test";
 
 import {
   buildOpencodeServerEnv,
+  isOpencodeRootTurnActivity,
+  isOpencodeRootTurnTerminalActivity,
+  isOpencodeSessionIdleSnapshot,
   normalizeOpencodeEvent,
   shouldBlockEmptyOpencodePass,
+  shouldBlockUnexpectedOpencodeStreamEnd,
+  shouldCompleteOpencodeTurn,
   shouldFinishOpencodeRunOnSessionIdle,
   stripNativeTaskBlocks,
   type NormalizeState,
@@ -270,6 +275,22 @@ test("child session idle emits subagent completion notification", () => {
   assert.equal(events[0]?.taskId, "ses_child");
   assert.equal(events[0]?.status, "completed");
   assert.equal(events[0]?.output, "hello");
+
+  const statusState = state();
+  statusState.rootSessionId = "ses_parent";
+  statusState.subagentSessions = current.subagentSessions;
+  statusState.subagentLastTextOutput = current.subagentLastTextOutput;
+  const statusEvents = normalizeOpencodeEvent({
+    type: "session.status",
+    properties: {
+      sessionID: "ses_child",
+      status: { type: "idle" },
+    },
+  }, statusState);
+  assert.equal(statusEvents.length, 1);
+  assert.equal(statusEvents[0]?.type, "subagent_task_notification");
+  assert.equal(statusEvents[0]?.taskId, "ses_child");
+  assert.equal(statusEvents[0]?.status, "completed");
 });
 
 test("only parent session idle should finish opencode run", () => {
@@ -285,6 +306,109 @@ test("only parent session idle should finish opencode run", () => {
     type: "session.idle",
     properties: {},
   }, "ses_parent"), true);
+  assert.equal(shouldFinishOpencodeRunOnSessionIdle({
+    type: "session.status",
+    properties: { sessionID: "ses_parent", status: { type: "idle" } },
+  }, "ses_parent"), true);
+  assert.equal(shouldFinishOpencodeRunOnSessionIdle({
+    type: "session.status",
+    properties: { sessionID: "ses_parent", status: { type: "busy" } },
+  }, "ses_parent"), false);
+  assert.equal(shouldFinishOpencodeRunOnSessionIdle({
+    type: "session.status",
+    properties: { sessionID: "ses_child", status: { type: "idle" } },
+  }, "ses_parent"), false);
+});
+
+test("session status snapshots treat missing or explicit idle as terminal", () => {
+  assert.equal(isOpencodeSessionIdleSnapshot({}, "ses_parent"), true);
+  assert.equal(isOpencodeSessionIdleSnapshot({ ses_parent: { type: "idle" } }, "ses_parent"), true);
+  assert.equal(isOpencodeSessionIdleSnapshot({ ses_parent: { type: "busy" } }, "ses_parent"), false);
+  assert.equal(isOpencodeSessionIdleSnapshot({ ses_parent: { type: "retry" } }, "ses_parent"), false);
+});
+
+test("a turn cannot finish before prompt acceptance, live activity, and current idle status", () => {
+  assert.equal(shouldCompleteOpencodeTurn({ armed: false, live: true, terminal: true, sessionIdle: true }), false);
+  assert.equal(shouldCompleteOpencodeTurn({ armed: true, live: false, terminal: true, sessionIdle: true }), false);
+  assert.equal(shouldCompleteOpencodeTurn({ armed: true, live: true, terminal: true, sessionIdle: false }), false);
+  const liveButNotTerminal = { armed: true, live: true, terminal: false, sessionIdle: true };
+  const terminal = { armed: true, live: true, terminal: true, sessionIdle: true };
+  assert.equal(shouldCompleteOpencodeTurn(liveButNotTerminal), false);
+  assert.equal(shouldCompleteOpencodeTurn(terminal), true);
+});
+
+test("only current-session non-idle events prove that the turn has started", () => {
+  assert.equal(isOpencodeRootTurnActivity({ type: "server.connected", properties: {} }, "ses_parent"), false);
+  assert.equal(isOpencodeRootTurnActivity({
+    type: "session.status",
+    properties: { sessionID: "ses_parent", status: { type: "busy" } },
+  }, "ses_parent"), true);
+  assert.equal(isOpencodeRootTurnActivity({
+    type: "session.status",
+    properties: { sessionID: "ses_parent", status: { type: "idle" } },
+  }, "ses_parent"), false);
+  assert.equal(isOpencodeRootTurnActivity({
+    type: "message.updated",
+    properties: { info: { id: "msg_user", sessionID: "ses_parent", role: "user" } },
+  }, "ses_parent"), false, "submitting the user prompt is not assistant activity");
+  assert.equal(isOpencodeRootTurnActivity({
+    type: "message.updated",
+    properties: { info: { id: "msg_assistant", sessionID: "ses_parent", role: "assistant" } },
+  }, "ses_parent"), true, "the v1 SDK assistant message proves that the turn is live");
+  assert.equal(isOpencodeRootTurnActivity({
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "part_user",
+        sessionID: "ses_parent",
+        messageID: "msg_user",
+        type: "text",
+        text: "prompt",
+      },
+    },
+  }, "ses_parent"), false, "persisting the user prompt part is not assistant activity");
+});
+
+test("only a completed assistant message or step proves terminal turn activity", () => {
+  assert.equal(isOpencodeRootTurnTerminalActivity({
+    type: "message.updated",
+    properties: {
+      info: {
+        id: "msg_assistant",
+        sessionID: "ses_parent",
+        role: "assistant",
+        time: { created: 100 },
+      },
+    },
+  }, "ses_parent"), false);
+  assert.equal(isOpencodeRootTurnTerminalActivity({
+    type: "message.updated",
+    properties: {
+      info: {
+        id: "msg_assistant",
+        sessionID: "ses_parent",
+        role: "assistant",
+        time: { created: 100, completed: 200 },
+      },
+    },
+  }, "ses_parent"), true);
+  assert.equal(isOpencodeRootTurnTerminalActivity({
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "part_finish",
+        sessionID: "ses_parent",
+        messageID: "msg_assistant",
+        type: "step-finish",
+      },
+    },
+  }, "ses_parent"), true);
+});
+
+test("an event stream that closes before a terminal signal is blocked", () => {
+  assert.equal(shouldBlockUnexpectedOpencodeStreamEnd({ done: false, aborted: false }), true);
+  assert.equal(shouldBlockUnexpectedOpencodeStreamEnd({ done: true, aborted: false }), false);
+  assert.equal(shouldBlockUnexpectedOpencodeStreamEnd({ done: false, aborted: true }), false);
 });
 
 test("subagent child todos do not become parent task board updates", () => {

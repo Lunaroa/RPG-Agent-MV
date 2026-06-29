@@ -62,13 +62,17 @@ export interface ExecuteWorkflowOptions {
   args?: unknown;
   productLanguage?: ProductLanguage;
   limits?: Partial<WorkflowLimits>;
+  /** 脚本异步段总超时（毫秒）。缺省挂死兜底值；按工作流规模传入更贴切的预算。 */
+  scriptTimeoutMs?: number;
+  /** 发起会话 ID：传给子 agent 使 opencode serverKey 一致，避免并行子 agent 互杀 server。 */
+  sessionId?: string;
   signal?: AbortSignal;
   onEvent?: (event: WorkflowEvent) => void;
 }
 
 /** 跑一段 AI 编排脚本到底（真实派发，全程只读），并把记录落盘。 */
 export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<WorkflowRunRecord> {
-  const module = buildScriptModule({ script: options.script, summary: options.summary, title: options.title });
+  const module = buildScriptModule({ script: options.script, summary: options.summary, title: options.title, scriptTimeoutMs: options.scriptTimeoutMs });
   const binding = await resolveCliBinding(options.workflowRoot);
   const agentRunner = createProductionAgentRunner({
     workflowRoot: options.workflowRoot,
@@ -78,6 +82,7 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
     executionEngine: binding.executionEngine,
     agentExecutionSettings: binding.agentExecutionSettings,
     productLanguage: options.productLanguage,
+    sessionId: options.sessionId,
   });
   const record = await runWorkflow({
     module,

@@ -20,6 +20,7 @@ export type WorkflowProposalStatus =
   | "running"   // 已批准，后台跑中
   | "completed" // 跑完，有报告
   | "rejected"  // 人拒绝
+  | "aborted"   // 被中止（用户中止 / 工作流引擎判定 aborted）
   | "failed";   // 跑失败
 
 export interface WorkflowProposal {
@@ -98,10 +99,69 @@ function writeProposal(workflowRoot: string, proposal: WorkflowProposal): void {
   fs.renameSync(tmpPath, finalPath);
 }
 
+/** 锁文件最长存活时间：超过即视为崩溃残留，允许抢占。 */
+const STALE_LOCK_MS = 60 * 60 * 1000;
+
+function isProcessAlive(pid: number): boolean {
+  if (!pid || !Number.isFinite(pid)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function claimProposal(workflowRoot: string, proposalId: string): () => void {
   const lockPath = `${proposalPath(workflowRoot, proposalId)}.lock`;
-  const fd = fs.openSync(lockPath, "wx");
-  fs.closeSync(fd);
+  const payload = JSON.stringify({ pid: process.pid, at: Date.now() });
+  const tryAcquire = (): boolean => {
+    try {
+      const fd = fs.openSync(lockPath, "wx");
+      fs.writeSync(fd, payload);
+      fs.closeSync(fd);
+      return true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") throw err;
+      return false;
+    }
+  };
+
+  if (tryAcquire()) {
+    return () => {
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // 锁文件已被清理或不存在。
+      }
+    };
+  }
+
+  // 锁已存在：判定是否为陈旧锁（持有进程已死 或 超过 STALE_LOCK_MS）。
+  let stale = false;
+  try {
+    const raw = fs.readFileSync(lockPath, "utf8");
+    const info = JSON.parse(raw) as { pid?: number; at?: number };
+    const age = Date.now() - (typeof info.at === "number" ? info.at : 0);
+    if (age >= STALE_LOCK_MS) stale = true;
+    else if (typeof info.pid === "number" && !isProcessAlive(info.pid)) stale = true;
+  } catch {
+    // 锁内容损坏：保守起见按陈旧处理（读不出就抢不了会更糟）。
+    stale = true;
+  }
+  if (!stale) {
+    throw new Error(`提议 ${proposalId} 正在被另一个进程处理（锁占用中）。`);
+  }
+  // 抢占陈旧锁：unlink 后重新 wx 创建，避免与并发抢占者竞争。
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    // ignore
+  }
+  if (!tryAcquire()) {
+    throw new Error(`提议 ${proposalId} 正在被另一个进程处理（锁占用中）。`);
+  }
   return () => {
     try {
       fs.unlinkSync(lockPath);
@@ -196,6 +256,8 @@ export function proposeWorkflow(
 export interface ApproveProposalOptions {
   onEvent?: (event: WorkflowEvent) => void;
   signal?: AbortSignal;
+  /** Keep the proposal running but defer agent dispatch until the originating foreground turn settles. */
+  beforeExecute?: () => Promise<void>;
   /** 测试可注入；缺省走真实 executeWorkflow（解析绑定 + 只读派发）。 */
   execute?: typeof executeWorkflow;
 }
@@ -228,23 +290,35 @@ export async function approveProposal(
     writeProposal(workflowRoot, proposal);
 
     try {
+      if (options.beforeExecute) await options.beforeExecute();
       const record = await execute({
         workflowRoot,
         project: proposal.project,
         script,
         summary: proposal.summary,
         title: proposal.title,
+        sessionId: proposal.sessionId ?? undefined,
         signal: options.signal,
         onEvent: options.onEvent,
       });
       proposal.runId = record.runId;
       proposal.reportPath = path.join(workflowRoot, "runtime", "out", "workflows", record.runId, "report.json");
-      proposal.status = record.status === "completed" ? "completed" : "failed";
-      if (record.status !== "completed") proposal.reason = record.error ?? "工作流未正常完成";
+      // 区分 aborted（用户/引擎中止）与 failed（真正失败），语义更准、便于 UI 与统计区分。
+      proposal.status = record.status === "completed"
+        ? "completed"
+        : record.status === "aborted"
+          ? "aborted"
+          : "failed";
+      if (record.status !== "completed") {
+        proposal.reason = record.error
+          ?? (record.status === "aborted" ? "工作流被中止" : "工作流未正常完成");
+      }
       writeProposal(workflowRoot, proposal);
       return { proposal, record };
     } catch (error) {
-      proposal.status = "failed";
+      // execute 抛 WorkflowAbortedError 时算中止；其余算失败。
+      const isAborted = options.signal?.aborted || (error instanceof Error && error.name === "WorkflowAbortedError");
+      proposal.status = isAborted ? "aborted" : "failed";
       proposal.reason = error instanceof Error ? error.message : String(error);
       writeProposal(workflowRoot, proposal);
       throw error;

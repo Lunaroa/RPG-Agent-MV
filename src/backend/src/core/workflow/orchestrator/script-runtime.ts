@@ -23,13 +23,20 @@ export interface ScriptWorkflowInput {
   summary?: string;
   /** 可选短标题。 */
   title?: string;
+  /** 异步段总超时（毫秒）。缺省 DEFAULT_OVERALL_TIMEOUT_MS（挂死兜底）；按工作流规模传入更贴切的预算。 */
+  scriptTimeoutMs?: number;
 }
 
 /** 同步段（编译 + 首个 await 之前）的保护超时：防脚本写出无 await 的死循环卡死运行时。 */
 const SYNC_GUARD_TIMEOUT_MS = 5_000;
 
-/** 异步段总超时：覆盖首个 await 之后的整段执行，防永不 resolve 的 Promise 挂死后端。 */
-const OVERALL_TIMEOUT_MS = 10 * 60 * 1000;
+/**
+ * 异步段总超时兜底：覆盖首个 await 之后的整段执行，防永不 resolve 的 Promise 挂死后端。
+ * 注意这是「挂死兜底」而非「合法运行时长限制」——单个子 agent 默认 10 分钟、maxTotalAgents 默认 1000，
+ * 多阶段扇出工作流的 wall time 远超 10 分钟。故放大到 6 小时仅作挂死保险；调用方可按工作流规模
+ * 经 RunScriptOptions.scriptTimeoutMs / RunWorkflowOptions.scriptTimeoutMs 传入更贴切的预算。
+ */
+const DEFAULT_OVERALL_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 /** 把宿主函数包成 Proxy：阻断 `fn.constructor.constructor` 这类原型链逃逸，但保留可调用性。 */
 function hardenFn<T>(fn: T): T {
@@ -61,16 +68,19 @@ function safeStringifyArgs(args: unknown): string | undefined {
 
 /** 把一段 AI 脚本包装成引擎可跑的工作流模块。 */
 export function buildScriptModule(input: ScriptWorkflowInput): WorkflowModule {
+  const scriptTimeoutMs = input.scriptTimeoutMs;
   return {
     name: input.title?.trim() || "script",
     description: input.summary?.trim() || "AI 现写的只读编排脚本",
-    run: (ctx) => runScriptInSandbox(input.script, ctx),
+    run: (ctx) => runScriptInSandbox(input.script, ctx, scriptTimeoutMs != null ? { scriptTimeoutMs } : {}),
   };
 }
 
 export interface RunScriptOptions {
   /** 同步段保护超时（毫秒）。缺省 SYNC_GUARD_TIMEOUT_MS；测试可调小以快速验证死循环护栏。 */
   syncTimeoutMs?: number;
+  /** 异步段总超时（毫秒）。缺省 DEFAULT_OVERALL_TIMEOUT_MS（挂死兜底）；按工作流规模传入更贴切的预算。 */
+  scriptTimeoutMs?: number;
 }
 
 /** 在受控 vm 上下文里跑脚本，返回脚本 `return` 的报告。 */
@@ -110,6 +120,9 @@ export async function runScriptInSandbox(
   }
 
   // 异步段总超时 + abort 主动 reject：覆盖首个 await 之后的整段执行，防永不 resolve 的 Promise 挂死后端。
+  // 总超时是「挂死兜底」而非「合法运行时长限制」——多 agent 扇出工作流的 wall time 可能很长，
+  // 故默认放大到 6 小时；调用方可按工作流规模经 options.scriptTimeoutMs 传入更贴切的预算。
+  const overallTimeoutMs = options.scriptTimeoutMs ?? DEFAULT_OVERALL_TIMEOUT_MS;
   return await new Promise<unknown>((resolve, reject) => {
     let settled = false;
     const onAbort = () => {
@@ -124,7 +137,7 @@ export async function runScriptInSandbox(
       settled = true;
       ctx.signal.removeEventListener("abort", onAbort);
       reject(new Error("编排脚本执行超时"));
-    }, OVERALL_TIMEOUT_MS);
+    }, overallTimeoutMs);
     if (ctx.signal.aborted) {
       settled = true;
       clearTimeout(timer);

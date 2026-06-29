@@ -88,6 +88,7 @@ async function listModelsForProvider(workflowRoot: string, providerId: string, o
   const apiKey = normalizeApiKey(opts.apiKey || provider.credentialValue || "");
   if (!apiKey) return { ok: false, error: "No usable credential is configured (credentialValue is missing)" };
   if (!baseUrl) return { ok: false, error: "provider baseUrl is not configured" };
+  if (provider.disableModelFetch) return { ok: false, error: "This provider does not support fetching models online; please pick a model from the preset list." };
 
   const client = resolveListModelsClient(provider);
   const clientWithListModels = client as unknown as { listModels?: (opts: { baseUrl: string; apiKey: string }) => Promise<ListModelsResult> };

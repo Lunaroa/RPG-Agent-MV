@@ -164,7 +164,15 @@ test("read-only session adds permission denies; normal session does not", () => 
     webfetch: "deny",
     external_directory: "deny",
   });
-  assert.equal(normal.permission, undefined);
+  // 非 read-only 会话：工作流工具走 ask，并按命令串粒度 deny 危险 shell 命令。
+  const normalPermission = normal.permission as Record<string, unknown>;
+  assert.equal(normalPermission.rmmv_RmmvWorkflow, "ask");
+  const bashRules = normalPermission.bash as Record<string, string>;
+  assert.equal(bashRules["*"], "allow");
+  assert.equal(bashRules["rm -rf *"], "deny");
+  assert.equal(bashRules["rm -rf"], "deny");
+  assert.equal(bashRules["git reset --hard *"], "deny");
+  assert.equal(bashRules["git clean *"], "deny");
 });
 
 test("anthropic-compatible providers use the anthropic AI SDK package", () => {

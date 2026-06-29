@@ -547,6 +547,7 @@ export interface ProviderSummary {
     enabled?: boolean;
     envVar?: string;
   };
+  disableModelFetch?: boolean;
   [key: string]: unknown;
 }
 

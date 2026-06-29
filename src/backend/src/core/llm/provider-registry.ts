@@ -23,6 +23,7 @@ interface ProviderRecord {
   supportedEngines?: string[];
   presetKind?: string;
   opencodeAuth?: OpencodeAuthConfig;
+  disableModelFetch?: boolean;
   [key: string]: unknown;
 }
 
@@ -43,6 +44,7 @@ interface SerializedProvider {
   supportedEngines?: string[];
   presetKind?: string;
   opencodeAuth?: OpencodeAuthConfig;
+  disableModelFetch?: boolean;
   credentialMask: string;
   credentialPresent: boolean;
 }
@@ -58,6 +60,7 @@ interface ProviderPatch {
   supportedEngines?: string[];
   presetKind?: string;
   opencodeAuth?: Partial<OpencodeAuthConfig> | null;
+  disableModelFetch?: boolean;
 }
 
 function loadDocument(_workflowRoot: string): ProviderDocument {
@@ -115,6 +118,9 @@ function upsertProvider(workflowRoot: string, id: string, patch: ProviderPatch):
     opencodeAuth: patch.opencodeAuth !== undefined
       ? normalizeOpencodeAuth(patch.opencodeAuth, previous.opencodeAuth)
       : previous.opencodeAuth,
+    disableModelFetch: patch.disableModelFetch !== undefined
+      ? Boolean(patch.disableModelFetch)
+      : (previous.disableModelFetch ?? false),
   };
 
   doc.providers[id] = merged;
@@ -154,6 +160,7 @@ function serializeProvider(id: string, provider: ProviderRecord): SerializedProv
     supportedEngines: provider.supportedEngines,
     presetKind: provider.presetKind,
     opencodeAuth: provider.opencodeAuth,
+    disableModelFetch: provider.disableModelFetch || undefined,
     credentialMask: credentialValue ? maskValue(credentialValue) : "",
     credentialPresent: Boolean(credentialValue)
   };

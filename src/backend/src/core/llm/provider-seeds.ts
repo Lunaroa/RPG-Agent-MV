@@ -18,6 +18,7 @@ export interface ProviderSeedEntry {
   models?: Array<string | { id: string; label?: string }>;
   supportedEngines?: string[];
   opencodeAuth?: OpencodeAuthConfig;
+  disableModelFetch?: boolean;
 }
 
 export interface ProviderSeedFile {
@@ -234,6 +235,9 @@ export async function refreshProviderSeedCatalogFields(workflowRoot: string): Pr
     if (modelsUrl) patch.modelsUrl = modelsUrl;
     if (entry.opencodeAuth && typeof entry.opencodeAuth === "object") {
       patch.opencodeAuth = entry.opencodeAuth;
+    }
+    if (typeof entry.disableModelFetch === "boolean") {
+      patch.disableModelFetch = entry.disableModelFetch;
     }
     if (Object.keys(patch).length === 0) continue;
 

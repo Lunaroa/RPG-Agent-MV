@@ -3,7 +3,75 @@
   "providers": [
     {
       "id": "agentplan",
-      "label": "火山Agentplan",
+      "label": "火山方舟 Agent Plan",
+      "protocol": "openai-compatible",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "models": [
+        {
+          "id": "ark-code-latest",
+          "label": "Ark Code Latest"
+        },
+        {
+          "id": "doubao-seed-2.0-pro",
+          "label": "Doubao Seed 2.0 Pro"
+        },
+        {
+          "id": "doubao-seed-2.0-code",
+          "label": "Doubao Seed 2.0 Code"
+        },
+        {
+          "id": "doubao-seed-2.0-lite",
+          "label": "Doubao Seed 2.0 Lite"
+        },
+        {
+          "id": "doubao-seed-2.0-mini",
+          "label": "Doubao Seed 2.0 Mini"
+        },
+        {
+          "id": "glm-5.2",
+          "label": "GLM 5.2"
+        },
+        {
+          "id": "glm-5.1",
+          "label": "GLM 5.1 (即将下线)"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "label": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash"
+        },
+        {
+          "id": "minimax-m3",
+          "label": "MiniMax M3"
+        },
+        {
+          "id": "minimax-m2.7",
+          "label": "MiniMax M2.7"
+        },
+        {
+          "id": "kimi-k2.7-code",
+          "label": "Kimi K2.7 Code"
+        },
+        {
+          "id": "kimi-k2.6",
+          "label": "Kimi K2.6"
+        }
+      ],
+      "supportedEngines": [
+        "opencode"
+      ],
+      "opencodeAuth": {
+        "enabled": true,
+        "envVar": "ARK_API_KEY"
+      },
+      "disableModelFetch": true
+    },
+    {
+      "id": "codingplan",
+      "label": "火山方舟 Coding Plan",
       "protocol": "openai-compatible",
       "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3",
       "modelsUrl": "https://ark.cn-beijing.volces.com/api/coding/v3/models",
@@ -11,6 +79,34 @@
         {
           "id": "ark-code-latest",
           "label": "Ark Code Latest"
+        },
+        {
+          "id": "doubao-seed-2.0-code",
+          "label": "Doubao Seed 2.0 Code"
+        },
+        {
+          "id": "doubao-seed-2.0-pro",
+          "label": "Doubao Seed 2.0 Pro"
+        },
+        {
+          "id": "glm-5.2",
+          "label": "GLM 5.2"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "label": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "minimax-m3",
+          "label": "MiniMax M3"
+        },
+        {
+          "id": "kimi-k2.7-code",
+          "label": "Kimi K2.7 Code"
+        },
+        {
+          "id": "kimi-k2.6",
+          "label": "Kimi K2.6"
         }
       ],
       "supportedEngines": [

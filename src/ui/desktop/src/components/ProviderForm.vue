@@ -60,7 +60,7 @@
             type="primary"
             link
             :loading="fetchingModels"
-            :disabled="!isEdit || !provider?.credentialPresent"
+            :disabled="!isEdit || !provider?.credentialPresent || Boolean(provider?.disableModelFetch)"
             @click="handleFetchModels"
           >
             {{ t('provider.fetchFromApi') }}

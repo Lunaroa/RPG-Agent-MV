@@ -1004,7 +1004,7 @@ async function onInlineProviderConfigBlur(event?: Event) {
     inlineAutoSavingProviderId.value = ''
   }
 }
-function canFetchModelsForCard(provider: ProviderSummary): boolean { const key = inlineCredentialValue.value.trim(); return Boolean(key || provider.credentialPresent) }
+function canFetchModelsForCard(provider: ProviderSummary): boolean { if (provider.disableModelFetch) return false; const key = inlineCredentialValue.value.trim(); return Boolean(key || provider.credentialPresent) }
 async function onFetchModelsForProvider(provider: ProviderSummary, options: { silent?: boolean; autoAfterSave?: boolean } = {}) {
   const apiKey = inlineCredentialValue.value.trim()
   if (!apiKey && !provider.credentialPresent) { if (!options.silent) toast('warn', t('settings.model.enterApiKey')); return }

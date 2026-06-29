@@ -1,5 +1,3 @@
-import path from "path";
-
 import type { ProductLanguage } from "../../../../../contract/types.ts";
 import { normalizeProductLanguage } from "../../../../../contract/i18n.ts";
 import { backendText } from "../../i18n/messages.ts";
@@ -7,10 +5,6 @@ import { backendText } from "../../i18n/messages.ts";
 /** Runtime stderr / plain-line messages when external_directory is denied. */
 export const RUNTIME_PERMISSION_DENIAL_RE =
   /permission requested:\s*external_directory|auto-rejecting/i;
-
-/** Short hint injected once per run for the model (not a user-facing blocker). */
-export const PERMISSION_DENIAL_MODEL_HINT =
-  "Directory permission rule: do not Read/List the user home folder, global config, or unauthorized paths outside the product root. Start tool instructions from `AGENT_RPG_ROOT/AGENT_GUIDE.md`.";
 
 export function containsRuntimePermissionDenial(text: string): boolean {
   return RUNTIME_PERMISSION_DENIAL_RE.test(text || "");
@@ -22,15 +16,6 @@ export const NATIVE_SESSION_RESUME_FAILURE_RE =
 
 export function containsNativeSessionResumeFailure(text: string): boolean {
   return NATIVE_SESSION_RESUME_FAILURE_RE.test(text || "");
-}
-
-/** Glob allow-list for external_directory when agent cwd is the MV game project. */
-export function buildExternalDirectoryAllowList(workflowRoot: string): Record<string, "allow"> {
-  const fwd = (p: string) => path.resolve(p).replace(/\\/g, "/");
-  const wf = fwd(workflowRoot);
-  return {
-    [`${wf}/**`]: "allow",
-  };
 }
 
 export function isPermissionSkippedToolResult(output: string, success?: boolean): boolean {

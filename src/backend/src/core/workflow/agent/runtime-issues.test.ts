@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
-import os from "node:os";
 import { describe, test } from "node:test";
 
 import {
   assessDispatchBackendOutput,
   assessAgentRuntimeOutcome,
-  buildExternalDirectoryAllowList,
   buildPermissionFailureUserMessage,
   containsNativeSessionResumeFailure,
   containsRuntimePermissionDenial,
   isPermissionSkippedToolResult,
   isStoppedByConsole,
-  PERMISSION_DENIAL_MODEL_HINT,
 } from "./runtime-issues.ts";
 
 describe("runtime-issues", () => {
@@ -29,16 +26,6 @@ describe("runtime-issues", () => {
       true
     );
     assert.equal(containsRuntimePermissionDenial("List failed"), false);
-  });
-
-  test("buildExternalDirectoryAllowList includes workflow only", () => {
-    const allow = buildExternalDirectoryAllowList("/tmp/app");
-    const keys = Object.keys(allow);
-    const home = os.homedir().replace(/\\/g, "/");
-    assert.ok(keys.some((k) => k.includes("/wf/RPG-Agent-MV/**")));
-    assert.ok(!keys.some((k) => k.endsWith("/wf/rules/**")));
-    assert.ok(!keys.some((k) => k.startsWith(`${home}/`)));
-    assert.ok(keys.every((k) => allow[k] === "allow"));
   });
 
   test("isPermissionSkippedToolResult detects denial in tool output", () => {
@@ -66,7 +53,6 @@ describe("runtime-issues", () => {
     assert.match(buildPermissionFailureUserMessage('en-US'), /Map Editor/i);
     assert.match(buildPermissionFailureUserMessage(), /RPG-Agent-MV/);
     assert.doesNotMatch(buildPermissionFailureUserMessage(), /rules\/\*\*/);
-    assert.match(PERMISSION_DENIAL_MODEL_HINT, /AGENT_GUIDE/);
   });
 
   test("localizes permission denial blockers in English", () => {

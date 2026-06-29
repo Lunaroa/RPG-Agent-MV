@@ -32,20 +32,11 @@
       "rmmv_RmmvEvent",
       "rmmv_RmmvMemory",
       "rmmv_RmmvWorkflow"
-    ],
-    "deny": [
-      "read_secret_files",
-      "Bash:git reset --hard",
-      "Bash:git checkout --",
-      "Bash:git clean",
-      "Bash:Remove-Item -Recurse",
-      "Bash:rm -rf"
     ]
   },
   "permissions": {
     "sourceProject": "write",
-    "writesRmmvData": true,
-    "requiresHumanApprovalForSourceWrite": false
+    "writesRmmvData": true
   },
   "handoff": {
     "acceptsFrom": [

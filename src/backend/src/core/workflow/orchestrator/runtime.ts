@@ -153,10 +153,11 @@ export async function runWorkflow(options: RunWorkflowOptions): Promise<Workflow
   let dispatched = 0; // 已发起的子 agent 总数（含失败），对 maxTotalAgents 计数
   let inputTokens = 0;
   let outputTokens = 0;
+  const agentTasks: Array<Promise<WorkflowAgentResult>> = [];
 
   const stamp = () => now().toISOString();
 
-  async function agent(request: WorkflowAgentRequest): Promise<WorkflowAgentResult> {
+  async function runAgent(request: WorkflowAgentRequest): Promise<WorkflowAgentResult> {
     if (signal.aborted) {
       throw new WorkflowAbortedError("workflow aborted before agent dispatch");
     }
@@ -206,6 +207,14 @@ export async function runWorkflow(options: RunWorkflowOptions): Promise<Workflow
     }
   }
 
+  function agent(request: WorkflowAgentRequest): Promise<WorkflowAgentResult> {
+    const task = runAgent(request);
+    agentTasks.push(task);
+    // 未 await 的子任务也由工作流在结束前统一收口，先挂 rejection handler 避免形成未处理拒绝。
+    void task.catch(() => undefined);
+    return task;
+  }
+
   async function parallel<T>(thunks: Array<() => Promise<T>>): Promise<Array<T | null>> {
     return Promise.all(
       thunks.map(async (thunk) => {
@@ -244,6 +253,7 @@ export async function runWorkflow(options: RunWorkflowOptions): Promise<Workflow
     pipeline,
     log,
     signal,
+    abort: (reason?: unknown) => controller.abort(reason),
     args: options.args,
     workflowRoot: options.workflowRoot,
     project: options.project,
@@ -258,13 +268,21 @@ export async function runWorkflow(options: RunWorkflowOptions): Promise<Workflow
   try {
     report = await options.module.run(ctx);
   } catch (err) {
-    if (signal.aborted || err instanceof WorkflowAbortedError) {
+    const wasAborted = signal.aborted || err instanceof WorkflowAbortedError;
+    if (!signal.aborted) controller.abort(err);
+    if (wasAborted) {
       status = "aborted";
     } else {
       status = "failed";
     }
     error = err instanceof Error ? err.message : String(err);
   } finally {
+    let cursor = 0;
+    while (cursor < agentTasks.length) {
+      const batch = agentTasks.slice(cursor);
+      cursor = agentTasks.length;
+      await Promise.allSettled(batch);
+    }
     if (options.signal) options.signal.removeEventListener("abort", onExternalAbort);
   }
 

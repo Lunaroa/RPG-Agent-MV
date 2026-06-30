@@ -30,8 +30,7 @@
       "rmmv_RmmvReadContext",
       "rmmv_RmmvMap",
       "rmmv_RmmvEvent",
-      "rmmv_RmmvMemory",
-      "rmmv_RmmvWorkflow"
+      "rmmv_RmmvMemory"
     ]
   },
   "permissions": {

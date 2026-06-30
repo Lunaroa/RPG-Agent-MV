@@ -161,7 +161,11 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
     request: WorkflowAgentRequest,
     signal: AbortSignal,
   ): Promise<WorkflowAgentResult> {
-    const timeoutMs = request.timeoutMs ?? defaultTimeoutMs;
+    // 规范化 timeoutMs：非正数（0/负数）视为未设置，回落默认值。
+    // ?? 只挡 null/undefined 不挡 0；若不规范化，0 会被原样传给派发层，
+    // 派发层又把非正数当"未设置"放大成默认 30min，绕过单 agent 超时预算。
+    const rawTimeout = request.timeoutMs ?? defaultTimeoutMs;
+    const timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : defaultTimeoutMs;
     const wantsJson = Boolean(request.schema);
     const basePrompt = wantsJson ? buildSchemaInstruction(request.prompt) : request.prompt;
 
@@ -177,7 +181,8 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const remaining = Math.max(0, deadline - Date.now());
       // 预算耗尽就别再派发：0 会被派发层放大成默认 30min，绕过单 agent 超时预算。
-      if (remaining <= 0 && attempt > 0) {
+      // 首次 attempt 也要检查——否则脚本传 timeoutMs:0 时首次仍以 0 派发、被放大成 30min。
+      if (remaining <= 0) {
         lastBlocker = lastBlocker ?? `agent timeout budget exhausted before retry`;
         break;
       }

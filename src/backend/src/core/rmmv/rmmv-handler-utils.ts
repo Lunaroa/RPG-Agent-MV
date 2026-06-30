@@ -50,7 +50,6 @@ const FIELD_TO_FLAG: Record<string, string> = {
   predicate: "predicate",
   confirmReplaceOutline: "confirm-replace-outline",
   worldFile: "world-file",
-  contextMode: "context-mode",
   files: "files",
   switches: "switches",
   variables: "variables",

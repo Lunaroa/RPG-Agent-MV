@@ -64,6 +64,8 @@ export interface WorkflowContext {
   log: (message: string) => void;
   /** 整体中止信号。 */
   signal: AbortSignal;
+  /** 工作流模块主动中止本次运行；用于脚本总超时等模块级护栏。 */
+  abort: (reason?: unknown) => void;
   /** 工作流参数（来自 CLI / 调用方）。 */
   args: unknown;
   /** 产品仓根。 */

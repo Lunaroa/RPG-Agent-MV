@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { runWorkflow, WorkflowAbortedError, defaultMaxConcurrency } from "./runtime.ts";
+import { buildScriptModule } from "./script-runtime.ts";
 import type { WorkflowAgentRunner, WorkflowContext, WorkflowEvent, WorkflowModule } from "./types.ts";
 
 function okRunner(text = "ok"): WorkflowAgentRunner {
@@ -18,6 +19,20 @@ const baseOptions = {
   makeRunId: () => "wf-fixed",
   now: () => new Date("2026-06-25T00:00:00.000Z"),
 };
+
+async function settleBefore<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 test("agent() 受 maxConcurrency 限流", async () => {
   let active = 0;
@@ -182,6 +197,116 @@ test("runner 抛错时仍发 agent-end(ok:false) 事件", async () => {
   assert.equal(ends.length, 1, "agent-end should fire even when runner throws");
   assert.equal(ends[0].ok, false);
   assert.match(ends[0].blocker ?? "", /runner boom/);
+});
+
+test("module 未 await 子 agent 时，工作流等待子 agent 完成后再结束", async () => {
+  let markStarted: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let releaseAgent: () => void = () => {};
+  const agentGate = new Promise<void>((resolve) => {
+    releaseAgent = resolve;
+  });
+  const runner: WorkflowAgentRunner = async (request) => {
+    markStarted();
+    await agentGate;
+    return { ok: true, text: "done", label: request.label };
+  };
+  const module = moduleOf(async (ctx) => {
+    void ctx.agent({ label: "background", prompt: "p" });
+    return "module-done";
+  });
+
+  let workflowSettled = false;
+  const running = runWorkflow({ ...baseOptions, module, agentRunner: runner })
+    .then((record) => {
+      workflowSettled = true;
+      return record;
+    });
+  try {
+    await started;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(workflowSettled, false, "workflow must remain active while its child agent is running");
+  } finally {
+    releaseAgent();
+  }
+
+  const record = await running;
+  assert.equal(record.status, "completed");
+  assert.equal(record.agentCount, 1);
+});
+
+test("module 失败时取消仍在运行的子 agent，并等待其退出", async () => {
+  const external = new AbortController();
+  let markStarted: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let runnerObservedAbort = false;
+  const runner: WorkflowAgentRunner = async (_request, signal) => {
+    markStarted();
+    await new Promise<void>((_resolve, reject) => {
+      const onAbort = () => {
+        runnerObservedAbort = true;
+        reject(new WorkflowAbortedError("child aborted"));
+      };
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    });
+    throw new Error("unreachable");
+  };
+  const module = moduleOf(async (ctx) => {
+    void ctx.agent({ label: "background", prompt: "p" });
+    await started;
+    throw new Error("module boom");
+  });
+
+  try {
+    const outcome = await settleBefore(
+      runWorkflow({ ...baseOptions, module, agentRunner: runner, signal: external.signal }),
+      500,
+    );
+    assert.notEqual(outcome, null, "workflow must not hang while a failed module leaves a child agent running");
+    assert.equal(runnerObservedAbort, true);
+    assert.equal(outcome?.status, "failed");
+    assert.match(String(outcome?.error), /module boom/);
+  } finally {
+    external.abort();
+  }
+});
+
+test("脚本总超时时取消已派发的子 agent", async () => {
+  const external = new AbortController();
+  let runnerObservedAbort = false;
+  const runner: WorkflowAgentRunner = async (_request, signal) => {
+    await new Promise<void>((_resolve, reject) => {
+      const onAbort = () => {
+        runnerObservedAbort = true;
+        reject(new WorkflowAbortedError("child aborted"));
+      };
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    });
+    throw new Error("unreachable");
+  };
+  const module = buildScriptModule({
+    script: `await agent({ label: "slow", prompt: "p" }); return "never";`,
+    scriptTimeoutMs: 100,
+  });
+
+  try {
+    const outcome = await settleBefore(
+      runWorkflow({ ...baseOptions, module, agentRunner: runner, signal: external.signal }),
+      750,
+    );
+    assert.notEqual(outcome, null, "script timeout must cancel its child agent instead of waiting forever");
+    assert.equal(runnerObservedAbort, true);
+    assert.equal(outcome?.status, "aborted");
+    assert.match(String(outcome?.error), /编排脚本执行超时/);
+  } finally {
+    external.abort();
+  }
 });
 
 test("abort 后 module.run 正常返回时 status 仍为 aborted（非 completed）", async () => {

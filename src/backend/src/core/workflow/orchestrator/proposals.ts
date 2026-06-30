@@ -112,8 +112,55 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+function proposalLockPath(workflowRoot: string, proposalId: string): string {
+  return `${proposalPath(workflowRoot, proposalId)}.lock`;
+}
+
+/** 提议是否被活跃锁占用（非陈旧、持有进程仍存活）。 */
+export function proposalHasActiveLock(workflowRoot: string, proposalId: string): boolean {
+  assertSafeProposalId(proposalId);
+  const lockPath = proposalLockPath(workflowRoot, proposalId);
+  try {
+    const raw = fs.readFileSync(lockPath, "utf8");
+    const info = JSON.parse(raw) as { pid?: number; at?: number };
+    const age = Date.now() - (typeof info.at === "number" ? info.at : 0);
+    if (age >= STALE_LOCK_MS) return false;
+    if (typeof info.pid === "number" && !isProcessAlive(info.pid)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 重启恢复：把未完成且已失去执行进程的提议标记失败，禁止自动重跑造成重复调用或重复修改。
+ * 返回更新后的提议；非 pending/running 或仍有活跃锁时返回 null。
+ */
+export function failUnfinishedProposal(
+  workflowRoot: string,
+  proposalId: string,
+  reason = "应用中断：未完成的工作流不会自动重跑，请确认现有结果后重新发起。",
+  deps: ProposalDeps = {},
+): WorkflowProposal | null {
+  assertSafeProposalId(proposalId);
+  if (proposalHasActiveLock(workflowRoot, proposalId)) return null;
+  const releaseLock = claimProposal(workflowRoot, proposalId);
+  try {
+    const proposal = readProposal(workflowRoot, proposalId);
+    if (!proposal || (proposal.status !== "pending" && proposal.status !== "running")) return null;
+    const now = deps.now ?? (() => new Date());
+    proposal.status = "failed";
+    proposal.decidedAt = now().toISOString();
+    proposal.reason = reason;
+    writeProposal(workflowRoot, proposal);
+    return proposal;
+  } finally {
+    releaseLock();
+  }
+}
+
 function claimProposal(workflowRoot: string, proposalId: string): () => void {
-  const lockPath = `${proposalPath(workflowRoot, proposalId)}.lock`;
+  const lockPath = proposalLockPath(workflowRoot, proposalId);
   const payload = JSON.stringify({ pid: process.pid, at: Date.now() });
   const tryAcquire = (): boolean => {
     try {
@@ -263,7 +310,7 @@ export interface ApproveProposalOptions {
 }
 
 /**
- * 批准并执行提议（后端进程，人点头后调）。把提议置 running → 跑工作流（只读）→ completed/failed。
+ * 批准并执行提议（后端进程，人点头后调）。execute 真正起跑并发出首个事件后再置 running → 跑工作流（只读）→ completed/failed。
  * 只能批准 pending 提议；重复批准或批准已决提议会抛错。
  */
 export async function approveProposal(
@@ -285,9 +332,19 @@ export async function approveProposal(
 
     const script = readProposalScript(workflowRoot, proposalId);
 
-    proposal.status = "running";
-    proposal.decidedAt = now().toISOString();
-    writeProposal(workflowRoot, proposal);
+    let runningPersisted = false;
+    const persistRunning = (): void => {
+      if (runningPersisted) return;
+      runningPersisted = true;
+      proposal.status = "running";
+      proposal.decidedAt = now().toISOString();
+      writeProposal(workflowRoot, proposal);
+    };
+
+    const wrappedOnEvent = (event: WorkflowEvent): void => {
+      if (!runningPersisted) persistRunning();
+      options.onEvent?.(event);
+    };
 
     try {
       if (options.beforeExecute) await options.beforeExecute();
@@ -299,8 +356,9 @@ export async function approveProposal(
         title: proposal.title,
         sessionId: proposal.sessionId ?? undefined,
         signal: options.signal,
-        onEvent: options.onEvent,
+        onEvent: wrappedOnEvent,
       });
+      if (!runningPersisted) persistRunning();
       proposal.runId = record.runId;
       proposal.reportPath = path.join(workflowRoot, "runtime", "out", "workflows", record.runId, "report.json");
       // 区分 aborted（用户/引擎中止）与 failed（真正失败），语义更准、便于 UI 与统计区分。

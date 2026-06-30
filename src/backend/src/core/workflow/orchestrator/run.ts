@@ -94,7 +94,14 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
     signal: options.signal,
     onEvent: options.onEvent,
   });
-  persistRunRecord(options.workflowRoot, record);
+  // 落盘失败不能静默吞：否则 proposal 会被标 completed、reportPath 也写入，
+  // 但报告文件实际不存在，用户点开拿到空，状态与事实自相矛盾。
+  // 落盘失败时把 record.status 降级为 failed（工作流本身可能成功，但磁盘产物丢失）。
+  const persistResult = persistRunRecord(options.workflowRoot, record);
+  if (!persistResult.ok) {
+    record.status = "failed";
+    record.error = `工作流已完成但报告落盘失败：${persistResult.error}`;
+  }
   return record;
 }
 
@@ -124,8 +131,8 @@ function stringifyWithCap(value: unknown, maxBytes: number): string {
   return text;
 }
 
-/** 把运行记录与报告写入 runtime/out/workflows/<runId>/。返回报告路径。 */
-export function persistRunRecord(workflowRoot: string, record: WorkflowRunRecord): { recordPath: string; reportPath: string } {
+/** 把运行记录与报告写入 runtime/out/workflows/<runId>/。返回报告路径与落盘结果。 */
+export function persistRunRecord(workflowRoot: string, record: WorkflowRunRecord): { recordPath: string; reportPath: string; ok: boolean; error?: string } {
   if (!RUN_ID_RE.test(record.runId)) {
     throw new Error(`非法 runId：${record.runId}`);
   }
@@ -144,7 +151,8 @@ export function persistRunRecord(workflowRoot: string, record: WorkflowRunRecord
     fs.writeFileSync(recordPath, stringifyWithCap(safeRecord, MAX_REPORT_BYTES), "utf8");
     fs.writeFileSync(reportPath, stringifyWithCap(safeReport, MAX_REPORT_BYTES), "utf8");
   } catch (error) {
-    console.error(`[workflow] persistRunRecord 落盘失败：${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    return { recordPath, reportPath, ok: false, error: message };
   }
-  return { recordPath, reportPath };
+  return { recordPath, reportPath, ok: true };
 }

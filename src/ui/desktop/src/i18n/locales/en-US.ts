@@ -247,7 +247,6 @@ const enUS = {
     'ask.riskApproval.actionLead': 'Agent wants to ',
     'ask.riskApproval.actionWorkflow': 'run a dynamic workflow',
     'ask.riskApproval.allowOnce': 'Allow once',
-    'ask.riskApproval.alwaysAllow': 'Always allow',
     'ask.riskApproval.deny': 'Deny',
     'ask.riskApproval.statusApproved': 'Approved · running',
     'ask.riskApproval.statusCompleted': 'Completed',

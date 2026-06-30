@@ -6,10 +6,48 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import {
+  isAskContinuationOpen,
+  isAskResultLocked,
   parseAgentAsk,
   parseAskFromToolCall,
   parseOptionalBoolean,
 } from './askParser.ts'
+
+describe('ASK result state', () => {
+  test('treats a canceled ASK as locked', () => {
+    assert.equal(isAskResultLocked({ canceledAt: '2026-06-30T12:00:00.000Z' }), true)
+    assert.equal(isAskResultLocked({}), false)
+  })
+
+  test('pass session end stays unlocked and shows continuation', () => {
+    const result = {
+      sessionEndedAt: '2026-06-30T12:00:00.000Z',
+      cancellationStatus: 'pass',
+    }
+    assert.equal(isAskResultLocked(result), false)
+    assert.equal(isAskContinuationOpen(result), true)
+  })
+
+  test('legacy pass cancel marker stays unlocked', () => {
+    const result = {
+      canceledAt: '2026-06-30T12:00:00.000Z',
+      cancellationStatus: 'pass',
+    }
+    assert.equal(isAskResultLocked(result), false)
+    assert.equal(isAskContinuationOpen(result), true)
+  })
+
+  test('treats submitted and failed ASK as locked', () => {
+    assert.equal(isAskResultLocked({ submittedAt: '2026-06-30T12:00:00.000Z' }), true)
+    assert.equal(isAskResultLocked({ failedAt: '2026-06-30T12:00:00.000Z' }), true)
+  })
+
+  test('unanswered ASK without cancel/submit markers stays unlocked', () => {
+    assert.equal(isAskResultLocked(null), false)
+    assert.equal(isAskResultLocked(undefined), false)
+    assert.equal(isAskResultLocked({ saving: true }), false)
+  })
+})
 
 describe('parseOptionalBoolean', () => {
   test('does not treat string "false" as true', () => {

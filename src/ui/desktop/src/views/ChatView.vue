@@ -149,7 +149,7 @@ import {
   resolveEventMapIdWithAsk,
   resolveRegistryContractMapId,
 } from '../utils/placementMapId'
-import type { Ask, AskResult } from '../utils/askParser'
+import { isAskResultLocked, type Ask, type AskResult } from '../utils/askParser'
 import { eventRegistry, sessions as sessionsApi } from '../api/client'
 import {
   activeConversationRootId,
@@ -285,7 +285,7 @@ const activeAsk = computed<Ask | null>(() => {
   const list = segments.value
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const seg = list[i]
-    if (seg.type === 'ask' && seg.ask && !seg.ask.result?.submittedAt && !seg.ask.result?.failedAt && !seg.ask.result?.canceledAt) {
+    if (seg.type === 'ask' && seg.ask && !isAskResultLocked(seg.ask.result)) {
       return seg.ask
     }
   }
@@ -542,10 +542,8 @@ async function runIntent(
 // new session carrying a formatted intent.
 async function submitAsk(askId: string, result: AskResult, continuation: { intent: string; displayText: string }): Promise<boolean> {
   const ask = getAsk(askId)
-  if (!ask || ask.result?.submittedAt) return false
+  if (!ask || isAskResultLocked(ask.result)) return false
   const prior = { ...(ask.result || {}) }
-  delete prior.canceledAt
-  delete prior.cancellationStatus
   const finalResult: AskResult = { ...prior, ...result, submittedAt: new Date().toISOString() }
   try {
     if (ask.fromMcp && activeSession.value) {

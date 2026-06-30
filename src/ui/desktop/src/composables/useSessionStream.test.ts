@@ -152,7 +152,7 @@ describe('stream segment content updates', () => {
     stream.resetState()
   })
 
-  test('workflow completion updates the approval card and appends one report message', async () => {
+  test('history replay does not approve workflow proposals', async () => {
     setActivePinia(createPinia())
     const previousApi = (globalThis as any).api
     const approved: string[] = []
@@ -167,7 +167,71 @@ describe('stream segment content updates', () => {
     try {
       const stream = useSessionStream()
       stream.resetState()
-      stream.replaySessionEvents([{
+      stream.replaySessionEvents([
+        {
+          type: 'opencode_permission_request',
+          sequence: 1,
+          request_id: 'perm-workflow-history',
+          request: {
+            subtype: 'can_use_tool',
+            tool_name: 'rmmv_RmmvWorkflow',
+            description: 'rmmv_RmmvWorkflow',
+            input: { title: '历史巡检', script: 'return { ok: true }' },
+          },
+        },
+        {
+          type: 'opencode_permission_response',
+          sequence: 2,
+          request_id: 'perm-workflow-history',
+          response: 'once',
+        },
+        {
+          type: 'tool_result',
+          sequence: 3,
+          call_id: 'call-workflow-history',
+          tool: 'rmmv_RmmvWorkflow',
+          input: { title: '历史巡检', script: 'return { ok: true }' },
+          success: true,
+          output: JSON.stringify({
+            data: { kind: 'workflow-proposal', proposalId: 'wp-history', status: 'pending' },
+          }),
+        },
+        {
+          type: 'workflow_run',
+          sequence: 4,
+          phase: 'done',
+          proposalId: 'wp-history',
+          status: 'completed',
+          workflow: '历史巡检',
+          report: { ok: true },
+        },
+      ])
+      await nextTick()
+
+      assert.deepEqual(approved, [])
+    } finally {
+      ;(globalThis as any).api = previousApi
+    }
+  })
+
+  test('workflow completion updates the approval card and appends one report message', async () => {
+    setActivePinia(createPinia())
+    const previousApi = (globalThis as any).api
+    let emitSessionEvent: (data: unknown) => void = () => {}
+    ;(globalThis as any).api = {
+      sessions: {
+        onEvent: (callback: (data: unknown) => void) => {
+          emitSessionEvent = callback
+          return () => {}
+        },
+        subscribe: async () => ({ ok: true }),
+        unsubscribe: async () => ({ ok: true }),
+      },
+    }
+    const stream = useSessionStream()
+    try {
+      await stream.attachToSession('session-workflow-report')
+      emitSessionEvent({ sessionId: 'session-workflow-report', event: {
         type: 'opencode_permission_request',
         sequence: 1,
         request_id: 'perm-workflow',
@@ -177,12 +241,12 @@ describe('stream segment content updates', () => {
           description: 'rmmv_RmmvWorkflow',
           input: { title: '只读巡检', script: 'return { ok: true }' },
         },
-      }])
+      } })
       stream.updateAskResult('agent-runtime-plan:perm-workflow', {
         submittedAt: '2026-06-28T17:36:25.000Z',
         decision: 'approve',
       })
-      stream.replaySessionEvents([
+      for (const event of [
         {
           type: 'tool_result',
           sequence: 2,
@@ -212,10 +276,11 @@ describe('stream segment content updates', () => {
           workflow: '只读巡检',
           report: { checked: 3, ok: true },
         },
-      ])
+      ]) {
+        emitSessionEvent({ sessionId: 'session-workflow-report', event })
+      }
       await nextTick()
 
-      assert.deepEqual(approved, ['wp-report'])
       const ask = stream.getAsk('agent-runtime-plan:perm-workflow') as any
       assert.equal(ask?.proposalId, 'wp-report')
       assert.equal(ask?.result?.workflowStatus, 'completed')
@@ -243,68 +308,86 @@ describe('stream segment content updates', () => {
         1,
       )
     } finally {
+      stream.detachFromSession()
       ;(globalThis as any).api = previousApi
     }
   })
 
+  test('replayed failed event does not flip an already-completed workflow approval card', async () => {
+    setActivePinia(createPinia())
+    const stream = useSessionStream()
+    stream.restoreSegments([{
+      id: 'persisted-workflow-approval',
+      type: 'ask',
+      content: '',
+      timestamp: Date.now(),
+      ask: {
+        type: 'risk-approval',
+        askId: 'agent-runtime-plan:perm-workflow-replay',
+        title: '只读巡检',
+        prompt: '',
+        proposalId: 'wp-replay',
+        result: {
+          submittedAt: '2026-06-28T17:36:25.000Z',
+          decision: 'approve',
+          workflowStatus: 'completed',
+        },
+      },
+    } as any])
+
+    stream.replaySessionEvents([{
+      type: 'workflow_run',
+      sequence: 4,
+      phase: 'done',
+      proposalId: 'wp-replay',
+      status: 'failed',
+      workflow: '只读巡检',
+      reason: '提议 wp-replay 当前状态为 completed，不能再批准。',
+    }])
+    await nextTick()
+
+    const ask = stream.getAsk('agent-runtime-plan:perm-workflow-replay') as any
+    assert.equal(ask?.result?.workflowStatus, 'completed')
+  })
+
   test('workflow failure updates the approval card and surfaces the reason', async () => {
     setActivePinia(createPinia())
-    const previousApi = (globalThis as any).api
-    ;(globalThis as any).api = {
-      workflow: {
-        approveProposal: async () => ({ ok: true }),
+    const stream = useSessionStream()
+    stream.restoreSegments([{
+      id: 'persisted-workflow-failure',
+      type: 'ask',
+      content: '',
+      timestamp: Date.now(),
+      ask: {
+        type: 'risk-approval',
+        askId: 'agent-runtime-plan:perm-workflow-failed',
+        title: '失败巡检',
+        prompt: '',
+        proposalId: 'wp-report-failed',
+        result: {
+          submittedAt: '2026-06-28T17:36:25.000Z',
+          decision: 'approve',
+          workflowStatus: 'running',
+        },
       },
-    }
-    try {
-      const stream = useSessionStream()
-      stream.resetState()
-      stream.replaySessionEvents([{
-        type: 'opencode_permission_request',
-        sequence: 1,
-        request_id: 'perm-workflow-failed',
-        request: {
-          subtype: 'can_use_tool',
-          tool_name: 'rmmv_RmmvWorkflow',
-          input: { title: '失败巡检', script: 'throw new Error("boom")' },
-        },
-      }])
-      stream.updateAskResult('agent-runtime-plan:perm-workflow-failed', {
-        submittedAt: '2026-06-28T17:36:25.000Z',
-        decision: 'approve',
-      })
-      stream.replaySessionEvents([
-        {
-          type: 'tool_result',
-          sequence: 2,
-          call_id: 'call-workflow-failed',
-          tool: 'rmmv_RmmvWorkflow',
-          input: { title: '失败巡检', script: 'throw new Error("boom")' },
-          success: true,
-          output: JSON.stringify({
-            data: { kind: 'workflow-proposal', proposalId: 'wp-report-failed', status: 'pending' },
-          }),
-        },
-        {
-          type: 'workflow_run',
-          sequence: 3,
-          phase: 'done',
-          proposalId: 'wp-report-failed',
-          status: 'failed',
-          workflow: '失败巡检',
-          reason: 'child workflow failed',
-        },
-      ])
-      await nextTick()
+    } as any])
+    stream.replaySessionEvents([{
+      type: 'workflow_run',
+      sequence: 3,
+      phase: 'done',
+      proposalId: 'wp-report-failed',
+      status: 'failed',
+      workflow: '失败巡检',
+      reason: 'child workflow failed',
+    }])
+    await nextTick()
 
-      const ask = stream.getAsk('agent-runtime-plan:perm-workflow-failed') as any
-      assert.equal(ask?.result?.workflowStatus, 'failed')
-      assert.equal(
-        stream.segments.value.some((segment) => segment.content.includes('child workflow failed')),
-        true,
-      )
-    } finally {
-      ;(globalThis as any).api = previousApi
-    }
+    const ask = stream.getAsk('agent-runtime-plan:perm-workflow-failed') as any
+    assert.equal(ask?.result?.workflowStatus, 'failed')
+    assert.equal(
+      stream.segments.value.some((segment) => segment.content.includes('child workflow failed')),
+      true,
+    )
   })
 
   test('hides native task blocks from live assistant text', () => {
@@ -488,6 +571,62 @@ describe('opencode AskUserQuestion stream bridge', () => {
 
     assert.equal(stream.segments.value.length, 1)
     assert.equal(stream.segments.value[0]?.metadata?.type, 'runtime_warning')
+  })
+
+  test('pass terminal status leaves unanswered ASK unlocked for continuation', () => {
+    const stream = useSessionStream()
+    stream.resetState()
+    const askJson = JSON.stringify({
+      type: 'clarify',
+      askId: 'ask-pass-continue',
+      title: '续答测试',
+      prompt: '选一个',
+      options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+    })
+
+    stream.replaySessionEvents([
+      {
+        type: 'text_delta',
+        sequence: 1,
+        text: `<agent-console-ask>${askJson}</agent-console-ask>`,
+      },
+      { type: 'status', sequence: 2, status: 'pass' },
+    ])
+
+    const ask = stream.getAsk('ask-pass-continue')
+    assert.ok(ask)
+    assert.equal(ask?.result?.canceledAt, undefined)
+    assert.ok(ask?.result?.sessionEndedAt)
+    assert.equal(ask?.result?.cancellationStatus, 'pass')
+    assert.equal(ask?.result?.submittedAt, undefined)
+    stream.resetState()
+  })
+
+  test('failed terminal status locks unanswered ASK', () => {
+    const stream = useSessionStream()
+    stream.resetState()
+    const askJson = JSON.stringify({
+      type: 'clarify',
+      askId: 'ask-failed-lock',
+      title: '取消测试',
+      prompt: '选一个',
+      options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+    })
+
+    stream.replaySessionEvents([
+      {
+        type: 'text_delta',
+        sequence: 1,
+        text: `<agent-console-ask>${askJson}</agent-console-ask>`,
+      },
+      { type: 'status', sequence: 2, status: 'failed' },
+    ])
+
+    const ask = stream.getAsk('ask-failed-lock')
+    assert.ok(ask)
+    assert.ok(ask?.result?.canceledAt)
+    assert.equal(ask?.result?.cancellationStatus, 'failed')
+    stream.resetState()
   })
 })
 

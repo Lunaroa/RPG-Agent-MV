@@ -245,7 +245,6 @@ const zhCN = {
     'ask.riskApproval.actionLead': 'Agent 想要',
     'ask.riskApproval.actionWorkflow': '运行动态工作流',
     'ask.riskApproval.allowOnce': '允许一次',
-    'ask.riskApproval.alwaysAllow': '总是允许',
     'ask.riskApproval.deny': '拒绝',
     'ask.riskApproval.statusApproved': '已批准·运行中',
     'ask.riskApproval.statusCompleted': '已完成',

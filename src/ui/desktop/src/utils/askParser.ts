@@ -32,7 +32,9 @@ function uniqueOptionIds(options: AskOptionDraft[]): AskOptionDraft[] {
 
 export interface AskResult {
   submittedAt?: string
+  failedAt?: string
   canceledAt?: string
+  sessionEndedAt?: string
   cancellationStatus?: string
   decision?: string
   feedback?: string
@@ -43,6 +45,22 @@ export interface AskResult {
   error?: string
   answers?: Record<string, { selected: string[]; other: string }>
   [key: string]: unknown
+}
+
+export function isAskResultLocked(result: AskResult | null | undefined): boolean {
+  if (!result) return false
+  if (result.submittedAt || result.failedAt) return true
+  if (result.canceledAt) {
+    return result.cancellationStatus !== 'pass'
+  }
+  return false
+}
+
+/** ASK 所在回合已结束，但用户仍可续答（例如 pass 终态）。 */
+export function isAskContinuationOpen(result: AskResult | null | undefined): boolean {
+  if (!result || result.submittedAt || result.failedAt) return false
+  if (result.sessionEndedAt) return true
+  return Boolean(result.canceledAt && result.cancellationStatus === 'pass')
 }
 
 export interface AskOption {

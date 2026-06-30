@@ -38,7 +38,11 @@ test("opencode config returns dynamic fields including agent tool policy", () =>
   assert.equal((config.mcp as Record<string, Record<string, unknown>>).rmmv.enabled, true);
   assert.equal(config.instructions, undefined);
   assert.equal(config.skills, undefined);
-  assert.equal(config.permission, undefined);
+  const normalPermission = config.permission as Record<string, unknown>;
+  assert.equal(normalPermission.rmmv_RmmvWorkflow, "ask");
+  const bashRules = normalPermission.bash as Record<string, string>;
+  assert.equal(bashRules["*"], "allow");
+  assert.equal(bashRules["rm -rf *"], "deny");
 
   const scribe = (config.agent as Record<string, Record<string, unknown>>)["memory-scribe"];
   assert.ok(scribe);

@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { openSessionEventStream, workflow } from '../api/client.ts'
+import { openSessionEventStream } from '../api/client.ts'
 import {
   parseAgentAsk,
   parseAskFromToolCall,
@@ -315,8 +315,7 @@ export function useSessionStream() {
 
   // 工作流工具的权限审批由 opencode approvalHandler 在执行前完成（弹 risk-approval 卡）。
   // 用户批准后 handler 执行：propose 落盘 pending 提议 + 立即返回 tool_result。
-  // 这里检测 tool_result 里的 workflow-proposal，自动调 approveProposal IPC 运行工作流——
-  // 用户已在权限审批环节做过决定，不需要再批一次。报告通过 workflow_run 事件异步推回。
+  // 后端在 tool_result 到达时自动批准并异步运行；前端只绑定审批卡 UI 并展示 workflow_run 事件。
   function bindWorkflowProposalToApproval(event: SessionEvent, proposalId: string): void {
     const input = event.input && typeof event.input === 'object'
       ? event.input as Record<string, unknown>
@@ -357,6 +356,10 @@ export function useSessionStream() {
     if (!askId) return
     const segment = askSegments.get(askId)
     if (!segment?.ask) return
+    // 终态保护：已 completed/aborted 的卡不被迟到的 failed 事件覆盖。
+    const currentStatus = (segment.ask.result as { workflowStatus?: string } | undefined)?.workflowStatus
+    const TERMINAL = new Set(['completed', 'aborted'])
+    if (TERMINAL.has(currentStatus || '') && status === 'failed') return
     replaceAskSegment(segment, {
       ...segment.ask,
       result: {
@@ -413,10 +416,9 @@ export function useSessionStream() {
     notifyTranscriptChanged()
   }
 
-  function autoApproveWorkflowProposal(event: SessionEvent): void {
+  function bindWorkflowProposalFromToolResult(event: SessionEvent): void {
     const output = typeof event.output === 'string' ? event.output : ''
     if (!output.includes('workflow-proposal')) {
-      console.warn('[wf-auto-approve] skip: tool_result.output missing workflow-proposal', { output: output.slice(0, 200) })
       return
     }
     let proposalId = ''
@@ -426,32 +428,13 @@ export function useSessionStream() {
       if (data?.kind === 'workflow-proposal') {
         proposalId = String(data.proposalId || '')
       }
-    } catch (error) {
-      console.warn('[wf-auto-approve] skip: output is not valid JSON', error, { output: output.slice(0, 200) })
+    } catch {
       return
     }
-    if (!proposalId) {
-      console.warn('[wf-auto-approve] skip: proposalId not found in output', { output: output.slice(0, 200) })
+    if (!proposalId || workflowAskIdByProposal.has(proposalId)) {
       return
     }
     bindWorkflowProposalToApproval(event, proposalId)
-    console.log('[wf-auto-approve] matched workflow-proposal; calling approveProposal', { proposalId })
-    void workflow.approveProposal(proposalId)
-      .then((res) => console.log('[wf-auto-approve] approveProposal succeeded', { proposalId, res }))
-      .catch((error) => {
-        const reason = error instanceof Error ? error.message : String(error)
-        console.error('[wf-auto-approve] approveProposal failed (previously swallowed error)', {
-          proposalId,
-          error: reason,
-        })
-        handleWorkflowRunEvent({
-          type: 'workflow_run',
-          phase: 'done',
-          proposalId,
-          status: 'failed',
-          reason,
-        })
-      })
   }
 
 
@@ -484,7 +467,7 @@ export function useSessionStream() {
     return result + remainder
   }
 
-  function handleSessionEvent(event: SessionEvent): void {
+  function handleSessionEvent(event: SessionEvent, source: 'live' | 'replay' = 'live'): void {
     if (attachedSessionId) {
       useSessionPlanStore().applyRuntimeEvent(attachedSessionId, event)
       useSubagentStore().applyRuntimeEvent(attachedSessionId, event)
@@ -610,7 +593,7 @@ export function useSessionStream() {
     if (event.type === 'tool_result') {
       markReasoningInterrupted()
       emitEventReviewPreviewFromToolResult(event)
-      autoApproveWorkflowProposal(event)
+      bindWorkflowProposalFromToolResult(event)
       const existing = event.call_id ? toolSegments.get(event.call_id) : undefined
       if (existing) {
         // 合并回对应 tool_call 行：通过 index 替换以可靠触发响应式更新。
@@ -719,7 +702,11 @@ export function useSessionStream() {
         isStreaming.value = false
         finalizeLiveMarkdownSegment()
         flushEventPreviewSegment()
-        lockAllPendingAsks(event.status || 'stopped')
+        if (event.status === 'pass') {
+          markPendingAsksSessionEnded()
+        } else {
+          lockAllPendingAsks(event.status || 'stopped')
+        }
       }
       return
     }
@@ -764,6 +751,17 @@ export function useSessionStream() {
       segment.ask = {
         ...segment.ask,
         result: { ...(segment.ask.result || {}), canceledAt, cancellationStatus: status }
+      }
+    }
+  }
+
+  function markPendingAsksSessionEnded(): void {
+    const sessionEndedAt = new Date().toISOString()
+    for (const segment of askSegments.values()) {
+      if (!segment.ask || segment.ask.result?.submittedAt || segment.ask.result?.sessionEndedAt) continue
+      segment.ask = {
+        ...segment.ask,
+        result: { ...(segment.ask.result || {}), sessionEndedAt, cancellationStatus: 'pass' }
       }
     }
   }
@@ -930,13 +928,13 @@ export function useSessionStream() {
     }
   }
 
-  /** 无 chat-log 时从 sessions.get 返回的 events 回放（同 attach 订阅重放逻辑）。 */
+  /** 无 chat-log 时从 sessions.get 返回的 events 重建转录；回放不得触发批准等外部副作用。 */
   function replaySessionEvents(events: SessionEvent[]): void {
     const ordered = [...events].sort(
       (a, b) => Number(a.sequence || 0) - Number(b.sequence || 0)
     )
     for (const event of ordered) {
-      handleSessionEvent(event)
+      handleSessionEvent(event, 'replay')
     }
   }
 

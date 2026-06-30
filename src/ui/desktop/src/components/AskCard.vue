@@ -42,7 +42,6 @@
       <pre v-if="ask.script" class="risk-script">{{ ask.script }}</pre>
       <div v-if="!isLocked" class="risk-actions">
         <el-button size="small" type="primary" @click="handleApprove">{{ t('ask.riskApproval.allowOnce') }}</el-button>
-        <el-button size="small" @click="handleRiskAlwaysAllow">{{ t('ask.riskApproval.alwaysAllow') }}</el-button>
         <el-button size="small" type="danger" @click="handleRiskReject">{{ t('ask.riskApproval.deny') }}</el-button>
       </div>
       <p v-else class="risk-status">{{ riskStatusText }}</p>
@@ -51,7 +50,7 @@
     <!-- Clarify Card -->
     <template v-else-if="ask.type === 'clarify'">
       <strong class="ask-question">{{ clarifyQuestion }}</strong>
-      <p v-if="isCanceled" class="ask-canceled-note">{{ t('ask.canceled') }}</p>
+      <p v-if="showContinuationNote" class="ask-canceled-note">{{ t('ask.canceled') }}</p>
       <div v-if="!isLocked && hasClarifyOptions" class="clarify-options">
         <el-radio-group
           v-if="!ask.multiSelect"
@@ -341,6 +340,7 @@ import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { renderMarkdown } from '../utils/markdown'
 import type { Ask, AskQuestion } from '../utils/askParser'
+import { isAskContinuationOpen, isAskResultLocked } from '../utils/askParser'
 import {
   buildClarifySingleSelectPayload,
   buildMultiSelectMccAnswer,
@@ -452,10 +452,8 @@ const selectedMapCandidate = computed(() =>
   mapCandidates.value.find((candidate) => candidate.mapId === selectedExistingMapId.value),
 )
 const pbEvents = computed(() => (props.ask.eventPlacements || []) as Array<Record<string, any>>)
-const isLocked = computed(() => {
-  return Boolean(props.ask.result?.submittedAt || props.ask.result?.failedAt)
-})
-const isCanceled = computed(() => Boolean(props.ask.result?.canceledAt && !props.ask.result?.submittedAt))
+const isLocked = computed(() => isAskResultLocked(props.ask.result))
+const showContinuationNote = computed(() => isAskContinuationOpen(props.ask.result))
 const failureMessage = computed(() => {
   const result = props.ask.result as Record<string, unknown> | null | undefined
   if (!result?.failedAt) return ''
@@ -577,10 +575,6 @@ function handleReject() {
 
 function handleRiskReject() {
   emit('reject', props.ask.askId, '')
-}
-
-function handleRiskAlwaysAllow() {
-  emit('approve', props.ask.askId)
 }
 
 const riskStatusText = computed(() => {

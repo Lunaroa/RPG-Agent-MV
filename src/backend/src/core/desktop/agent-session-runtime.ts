@@ -52,6 +52,14 @@ import {
   resolveSessionPlanFilePath,
   type ConversationPlanSessionRef,
 } from "./session-plan-path.ts";
+import {
+  approveProposal as executeApprovedWorkflowProposal,
+  failUnfinishedProposal,
+  listProposals as listWorkflowProposals,
+  readProposal as readWorkflowProposal,
+  type WorkflowProposal,
+} from "../workflow/orchestrator/proposals.ts";
+import type { WorkflowEvent, WorkflowRunRecord } from "../workflow/orchestrator/types.ts";
 
 const MAX_EVENTS = 5000;
 const TERMINAL = new Set(["pass", "blocked", "failed", "error", "stopped", "interrupted", "timeout"]);
@@ -125,6 +133,8 @@ export interface AgentSession {
   pendingFinalDispatch: Record<string, any> | null;
   foregroundSettled: boolean;
   foregroundWaiters: Set<ForegroundWaiter>;
+  /** Proposal IDs whose backend approval kickoff already started this process lifetime. */
+  startedWorkflowApprovals: Set<string>;
 }
 
 export interface SessionCreateInput {
@@ -175,6 +185,12 @@ interface RuntimeDependencies {
   activateForSession?: typeof activateForSession;
   loadRegistry?: typeof loadAgentRegistry;
   runMemoryScribe?: typeof runMemoryScribe;
+  // 可注入的 opencode 回复通道，测试用来替代真实 singleton（singleton 在测试环境为 null，
+  // 会让 reply 静默返回 false）。默认用 runtime.ts 的真实实现。
+  replyPermission?: typeof replyOpencodePermission;
+  replyQuestion?: typeof replyOpencodeQuestion;
+  approveWorkflowProposal?: typeof executeApprovedWorkflowProposal;
+  readWorkflowProposal?: typeof readWorkflowProposal;
 }
 
 export class AgentSessionRuntime {
@@ -190,6 +206,10 @@ export class AgentSessionRuntime {
   private readonly activateForSession: typeof activateForSession;
   private readonly loadRegistry: typeof loadAgentRegistry;
   private readonly runMemoryScribe: typeof runMemoryScribe;
+  private readonly replyPermission: typeof replyOpencodePermission;
+  private readonly replyQuestion: typeof replyOpencodeQuestion;
+  private readonly approveWorkflowProposalFn: typeof executeApprovedWorkflowProposal;
+  private readonly readWorkflowProposalFn: typeof readWorkflowProposal;
 
   constructor(workflowRoot: string, deps: RuntimeDependencies = {}) {
     this.workflowRoot = workflowRoot;
@@ -200,12 +220,17 @@ export class AgentSessionRuntime {
     this.activateForSession = deps.activateForSession || activateForSession;
     this.loadRegistry = deps.loadRegistry || loadAgentRegistry;
     this.runMemoryScribe = deps.runMemoryScribe || runMemoryScribe;
+    this.replyPermission = deps.replyPermission || replyOpencodePermission;
+    this.replyQuestion = deps.replyQuestion || replyOpencodeQuestion;
+    this.approveWorkflowProposalFn = deps.approveWorkflowProposal || executeApprovedWorkflowProposal;
+    this.readWorkflowProposalFn = deps.readWorkflowProposal || readWorkflowProposal;
   }
 
   async initialize(): Promise<void> {
     this.askGateway = this.deps.askGateway || createDisabledAskGateway();
     await this.refreshSecrets();
     this.sessions = this.loadPersistedSessions();
+    this.failRestoredWorkflowProposals();
   }
 
   async close(): Promise<void> {
@@ -309,6 +334,7 @@ export class AgentSessionRuntime {
       pendingFinalDispatch: null,
       foregroundSettled: false,
       foregroundWaiters: new Set(),
+      startedWorkflowApprovals: new Set(),
     };
     this.sessions.set(session.id, session);
     ensurePlanDirectory(this.workflowRoot, session.project, planFilePath);
@@ -545,7 +571,6 @@ export class AgentSessionRuntime {
   ): { ok: boolean; reason?: string } {
     const session = this.sessions.get(sessionId);
     if (!session) return { ok: false, reason: "session not found" };
-    if (TERMINAL.has(session.status)) return { ok: false, reason: `session is ${session.status}` };
     const normalized = String(workId || "").trim();
     if (!normalized) return { ok: false, reason: "missing work id" };
     const work = this.reserveExternalWork(session, normalized);
@@ -556,12 +581,162 @@ export class AgentSessionRuntime {
   subscribe(sessionId: string, subscriber: SessionSubscriber, lastSequence = 0): AgentRuntimeEvent[] {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error("session not found");
+    this.reconcilePendingWorkflowProposals(sessionId);
     const replay = session.events.filter((event) => Number(event.sequence || 0) > lastSequence);
     const subscribers = this.subscribers.get(sessionId) || new Map<string, SessionSubscriber>();
     subscribers.set(subscriber.id, subscriber);
     this.subscribers.set(sessionId, subscribers);
     for (const event of replay) subscriber.write(event);
     return replay;
+  }
+
+  /**
+   * 用户已在权限审批环节点头后，由后端在 tool_result 到达时自动批准并异步跑工作流；
+   * 不依赖前端实时订阅。已 running/completed 等终态幂等返回。
+   */
+  approveWorkflowProposal(
+    proposalId: string,
+    sessionIdHint?: string,
+  ): { ok: boolean; reason?: string; status?: string; proposalId?: string } {
+    const normalized = String(proposalId || "").trim();
+    if (!normalized) return { ok: false, reason: "missing proposal id" };
+
+    const proposal = this.readWorkflowProposalFn(this.workflowRoot, normalized);
+    if (!proposal) return { ok: false, reason: "proposal not found" };
+    if (proposal.status !== "pending") {
+      return { ok: true, status: proposal.status, proposalId: normalized };
+    }
+
+    const sessionId = String(sessionIdHint || proposal.sessionId || "").trim();
+    const session = sessionId ? this.sessions.get(sessionId) : undefined;
+    if (session?.startedWorkflowApprovals.has(normalized)) {
+      const current = this.readWorkflowProposalFn(this.workflowRoot, normalized);
+      const status = current?.status === "pending" ? "running" : (current?.status || proposal.status);
+      return { ok: true, status, proposalId: normalized };
+    }
+    if (session && this.hasWorkflowRunLifecycle(session, normalized)) {
+      session.startedWorkflowApprovals.add(normalized);
+      return { ok: true, status: proposal.status, proposalId: normalized };
+    }
+    if (session) session.startedWorkflowApprovals.add(normalized);
+
+    const controller = new AbortController();
+    const push = (event: AgentRuntimeEvent): void => {
+      if (sessionId) this.pushExternalEvent(sessionId, { ...event, proposalId: normalized });
+    };
+
+    if (sessionId) {
+      const attached = this.attachExternalWorkCancellation(
+        sessionId,
+        normalized,
+        () => controller.abort(new Error("session stopped")),
+      );
+      if (!attached.ok) {
+        push({
+          type: "workflow_run",
+          phase: "done",
+          status: "failed",
+          reason: attached.reason || "无法把工作流绑定到会话",
+        });
+        return { ok: false, reason: attached.reason || "无法把工作流绑定到会话" };
+      }
+      if (session) this.reserveExternalWork(session, normalized);
+    }
+
+    push({
+      type: "workflow_run",
+      phase: "start",
+      workflow: proposal.title,
+      summary: proposal.summary,
+    });
+
+    void this.approveWorkflowProposalFn(this.workflowRoot, normalized, {
+      signal: controller.signal,
+      beforeExecute: sessionId
+        ? () => this.waitForForegroundSettled(sessionId, controller.signal)
+        : undefined,
+      onEvent: (event: WorkflowEvent) => push({ type: "workflow_run", phase: "progress", event }),
+    })
+      .then(({ proposal: done, record }: { proposal: WorkflowProposal; record: WorkflowRunRecord }) => {
+        push({
+          type: "workflow_run",
+          phase: "done",
+          status: done.status,
+          runId: done.runId,
+          workflow: done.title,
+          reason: done.reason ?? null,
+          report: record?.report ?? null,
+        });
+      })
+      .catch((error: unknown) => {
+        const failed = this.readWorkflowProposalFn(this.workflowRoot, normalized);
+        push({
+          type: "workflow_run",
+          phase: "done",
+          status: failed?.status === "aborted" ? "aborted" : "failed",
+          reason: failed?.reason || (error instanceof Error ? error.message : String(error)),
+        });
+      });
+
+    return { ok: true, status: "running", proposalId: normalized };
+  }
+
+  reconcilePendingWorkflowProposals(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    const cannotStart = TERMINAL.has(session.status);
+    const proposalIds = new Set<string>();
+    for (const event of session.events) {
+      const proposalId = proposalIdFromWorkflowToolResult(event);
+      if (proposalId) proposalIds.add(proposalId);
+    }
+    for (const proposalId of proposalIds) {
+      if (session.startedWorkflowApprovals.has(proposalId)) continue;
+      if (this.hasWorkflowRunLifecycle(session, proposalId)) {
+        session.startedWorkflowApprovals.add(proposalId);
+        continue;
+      }
+      const proposal = this.readWorkflowProposalFn(this.workflowRoot, proposalId);
+      if (proposal && (proposal.status === "pending" || proposal.status === "running") && cannotStart) {
+        this.failInterruptedWorkflowProposal(session, proposalId);
+        continue;
+      }
+      if (proposal?.status === "running") {
+        this.failInterruptedWorkflowProposal(session, proposalId);
+        continue;
+      }
+      if (proposal?.status === "pending") {
+        void this.approveWorkflowProposal(proposalId, sessionId);
+      }
+    }
+  }
+
+  private failRestoredWorkflowProposals(): void {
+    const unfinished = [
+      ...listWorkflowProposals(this.workflowRoot, { status: "pending" }),
+      ...listWorkflowProposals(this.workflowRoot, { status: "running" }),
+    ];
+    for (const proposal of unfinished) {
+      const session = proposal.sessionId ? this.sessions.get(proposal.sessionId) : undefined;
+      if (!session) continue;
+      this.failInterruptedWorkflowProposal(session, proposal.proposalId);
+    }
+  }
+
+  private failInterruptedWorkflowProposal(session: AgentSession, proposalId: string): void {
+    const reason = "应用中断：未完成的工作流不会自动重跑，请确认现有结果后重新发起。";
+    const failed = failUnfinishedProposal(this.workflowRoot, proposalId, reason);
+    if (!failed) return;
+    session.startedWorkflowApprovals.add(proposalId);
+    this.push(session, {
+      type: "workflow_run",
+      phase: "done",
+      proposalId,
+      status: "failed",
+      workflow: failed.title,
+      reason,
+      at: failed.decidedAt || new Date().toISOString(),
+    });
   }
 
   unsubscribe(sessionId: string, subscriberId: string): void {
@@ -579,14 +754,12 @@ export class AgentSessionRuntime {
     const requestId = askId
       .replace(AGENT_RUNTIME_PLAN_ASK_PREFIX, "")
       .replace(AGENT_RUNTIME_QUESTION_ASK_PREFIX, "");
-    console.error(`[perm-diag] submitOpencodeAskResult: askId=${askId} askType=${askType} requestId=${requestId} decision=${JSON.stringify(result)}`);
     if (!requestId) return { ok: false, reason: "missing opencode request id" };
     const requestEvent = session.events
       .slice()
       .reverse()
       .find((event) => isOpencodeAskRequestEvent(event, requestId));
     if (!requestEvent) {
-      console.error(`[perm-diag] submitOpencodeAskResult: request event NOT FOUND for requestId=${requestId}. Events: ${session.events.filter(e => e.type === "opencode_permission_request").map(e => e.request_id).join(",")}`);
       return { ok: false, reason: "opencode request not found" };
     }
 
@@ -597,27 +770,33 @@ export class AgentSessionRuntime {
 
     const behavior = asString(response.behavior);
     const opencodeSessionId = session.opencodeSessionId;
-    console.error(`[perm-diag] submitOpencodeAskResult: behavior=${behavior} opencodeSessionId=${opencodeSessionId} tool_name=${asString(request.tool_name)}`);
     // opencode 会话已断（续链失败被清空等）：不能把答案送回，opencode 那侧会永久挂起。
     // 诚实返回失败，让前端把该 ASK 标记为 failedAt 并提示用户重开，不 push 伪造的 success。
     if (!opencodeSessionId) {
       return { ok: false, reason: "opencode session unavailable; please reopen the session", askType };
     }
     const directory = resolveSessionProjectDirectory(session, this.workflowRoot);
+    let replyOk: boolean;
     if (asString(request.tool_name) === "AskUserQuestion") {
-      await replyOpencodeQuestion(
+      replyOk = await this.replyQuestion(
         opencodeSessionId,
         requestId,
         buildQuestionReplyAnswers(asRecord(request.input), result),
         directory,
       );
     } else {
-      await replyOpencodePermission(
+      replyOk = await this.replyPermission(
         opencodeSessionId,
         requestId,
         behavior === "deny" ? "reject" : "once",
         directory,
       );
+    }
+    // reply 在 singleton 已停 / permissionID 过期 / opencode 返回 error 时静默返回 false（不抛错）。
+    // 不能在这种情况下 push 伪造的 success：否则 opencode 那侧 approvalHandler 永久挂起等回复，
+    // 而前端被通知成功，会话无声卡死。诚实返回失败，让前端把该 ASK 标记为 failedAt。
+    if (!replyOk) {
+      return { ok: false, reason: "opencode reply failed; session may be stale", askType };
     }
     this.push(session, {
       type: askType === "plan-approval" ? "opencode_permission_response" : "opencode_question_response",
@@ -661,6 +840,17 @@ export class AgentSessionRuntime {
       session.outputTokens = finiteNumber(event.outputTokens);
     }
     this.push(session, event);
+    if (workflowProposalId) {
+      void this.approveWorkflowProposal(workflowProposalId, session.id);
+    }
+  }
+
+  private hasWorkflowRunLifecycle(session: AgentSession, proposalId: string): boolean {
+    return session.events.some((event) => (
+      event.type === "workflow_run"
+      && asString(event.proposalId) === proposalId
+      && (asString(event.phase) === "start" || asString(event.phase) === "done")
+    ));
   }
 
   private async prepareAndStart(session: AgentSession, input: SessionCreateInput, parent?: AgentSession): Promise<void> {
@@ -1174,6 +1364,7 @@ export class AgentSessionRuntime {
       pendingFinalDispatch: null,
       foregroundSettled: true,
       foregroundWaiters: new Set(),
+      startedWorkflowApprovals: new Set(),
     };
   }
 

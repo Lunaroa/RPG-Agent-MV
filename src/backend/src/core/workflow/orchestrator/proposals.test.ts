@@ -6,8 +6,10 @@ import { test } from "node:test";
 
 import {
   approveProposal,
+  failUnfinishedProposal,
   listProposals,
   proposeWorkflow,
+  proposalHasActiveLock,
   readProposal,
   readProposalScript,
   rejectProposal,
@@ -129,6 +131,24 @@ test("approveProposal：pending → running → completed，挂上 runId/reportP
   assert.equal(readProposal(root, proposal.proposalId)?.status, "completed");
 });
 
+test("approveProposal 在 execute 发出首个事件前保持 pending", async () => {
+  const root = tmpRoot();
+  const proposal = proposeWorkflow({ workflowRoot: root, project: "/p", script: SCRIPT }, { makeId: seqId, now: fixedNow });
+  let releaseExecute!: () => void;
+  const execute = async (opts: { onEvent?: (event: { type: string; runId: string; workflow: string; at: string }) => void }) => {
+    assert.equal(readProposal(root, proposal.proposalId)?.status, "pending");
+    opts.onEvent?.({ type: "run-start", runId: "run-defer", workflow: "t", at: fixedNow().toISOString() });
+    assert.equal(readProposal(root, proposal.proposalId)?.status, "running");
+    await new Promise<void>((resolve) => { releaseExecute = resolve; });
+    return fakeRecord("run-defer");
+  };
+  const running = approveProposal(root, proposal.proposalId, { execute: execute as never }, { now: fixedNow });
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseExecute();
+  const { proposal: done } = await running;
+  assert.equal(done.status, "completed");
+});
+
 test("approveProposal waits for the foreground gate before dispatching workflow agents", async () => {
   const root = tmpRoot();
   const proposal = proposeWorkflow({ workflowRoot: root, project: "/p", script: SCRIPT }, { makeId: seqId, now: fixedNow });
@@ -149,7 +169,7 @@ test("approveProposal waits for the foreground gate before dispatching workflow 
   );
 
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(readProposal(root, proposal.proposalId)?.status, "running");
+  assert.equal(readProposal(root, proposal.proposalId)?.status, "pending");
   assert.equal(executeCount, 0);
 
   releaseGate();
@@ -294,4 +314,22 @@ test("approveProposal：持有进程已死的陈旧锁可被抢占（崩溃残�
   );
   assert.equal(done.status, "completed");
   assert.equal(done.runId, "run-stale");
+});
+
+test("failUnfinishedProposal：无活跃锁的 running 孤儿标记失败且不重跑", () => {
+  const root = tmpRoot();
+  const proposal = proposeWorkflow({ workflowRoot: root, project: "/p", script: SCRIPT }, { makeId: seqId, now: fixedNow });
+  const onDisk = readProposal(root, proposal.proposalId)!;
+  onDisk.status = "running";
+  onDisk.decidedAt = fixedNow().toISOString();
+  fs.writeFileSync(
+    path.join(root, "runtime", "out", "workflows", "proposals", `${proposal.proposalId}.json`),
+    JSON.stringify(onDisk, null, 2),
+  );
+  assert.equal(proposalHasActiveLock(root, proposal.proposalId), false);
+  const failed = failUnfinishedProposal(root, proposal.proposalId, "应用中断", { now: fixedNow });
+  assert.ok(failed);
+  assert.equal(failed?.status, "failed");
+  assert.equal(failed?.reason, "应用中断");
+  assert.equal(readProposal(root, proposal.proposalId)?.status, "failed");
 });

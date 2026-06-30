@@ -83,6 +83,58 @@ test("脚本能用 parallel 扇出多个子 agent", async () => {
   assert.deepEqual(json(report), ["echo:a", "echo:b"]);
 });
 
+test("parallel 真正并发派发，不退化成串行", async () => {
+  // 每个子 agent 内部先标记 inFlight 再等 releaseGate；并发派发时两个都会先进入、inFlight=2。
+  // 串行（修复前的 bug）则第一个进入后阻塞等待 releaseGate，第二个根本没启动、inFlight 始终 1。
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let releaseGate: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+  const { ctx } = fakeCtx({
+    agent: async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        await gate;
+      } finally {
+        inFlight -= 1;
+      }
+      return { ok: true, text: "done", label: "x" };
+    },
+  });
+  const promise = runScriptInSandbox(
+    `const rs = await parallel([
+       () => agent({ prompt: "a", label: "l0" }),
+       () => agent({ prompt: "b", label: "l1" }),
+       () => agent({ prompt: "c", label: "l2" }),
+     ]);
+     return rs.map(r => r.text);`,
+    ctx,
+  );
+  try {
+    await waitForCondition(() => maxInFlight >= 2, "parallel concurrent dispatch");
+  } finally {
+    releaseGate?.();
+  }
+  const report = await promise;
+  assert.deepEqual(json(report), ["done", "done", "done"]);
+  assert.ok(maxInFlight >= 2, `parallel must dispatch concurrently, maxInFlight=${maxInFlight}`);
+});
+
+test("顺序 await 两阶段 agent 不崩（tick 分支不返回 undefined）", async () => {
+  // 修复前：setImmediate(resolve) 把 tick promise 解析成 undefined，
+  // 第二个 agent 在第一次 pumpRpcQueues 返回后才入队，setImmediate 抢先胜出，
+  // raced===undefined，读 raced.kind 抛 Cannot read properties of undefined (reading 'kind')。
+  const { ctx } = fakeCtx();
+  const report = await runScriptInSandbox(
+    `const a = await agent({ prompt: "a", label: "l0" });
+     const b = await agent({ prompt: "b", label: "l1" });
+     return [a.text, b.text];`,
+    ctx,
+  );
+  assert.deepEqual(json(report), ["echo:a", "echo:b"]);
+});
+
 test("空脚本 / 纯空白 → fail fast", async () => {
   const { ctx } = fakeCtx();
   await assert.rejects(() => runScriptInSandbox("", ctx), /编排脚本为空/);

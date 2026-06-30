@@ -153,25 +153,34 @@ async function pumpRpcQueues(
   rpcOutbound: RpcOutbound[],
   rpcInbound: RpcInbound[],
 ): Promise<void> {
-  while (rpcOutbound.length > 0) {
-    const msg = rpcOutbound.shift()!;
-    if (msg.method === "log") {
-      await postRpc("log", msg.args);
-      continue;
-    }
-    try {
-      const value = await postRpc("agent", msg.args);
-      rpcInbound.push({ id: msg.id, ok: true, value });
-    } catch (error) {
-      rpcInbound.push({
-        id: msg.id,
-        ok: false,
-        message: error instanceof Error ? error.message : String(error),
-        name: error instanceof Error ? error.name : undefined,
-      });
-    }
-    vm.runInContext("__flushInbound()", context);
+  // 批量并发派发：parallel/pipeline 在首个 await 前会把多条 agent RPC 同步入队 __rpcOutbound，
+  // 父进程 worker.on("message") 也是 fire-and-forget 并发处理。这里把当前队列一次性全发出去并发等回结果，
+  // 再统一回填；逐条 await 会把 parallel 退化成串行（最大并发 1）。
+  if (rpcOutbound.length === 0) return;
+  const batch = rpcOutbound.splice(0, rpcOutbound.length);
+  const results = await Promise.all(
+    batch.map(async (msg) => {
+      if (msg.method === "log") {
+        await postRpc("log", msg.args);
+        return null;
+      }
+      try {
+        const value = await postRpc("agent", msg.args);
+        return { id: msg.id, ok: true as const, value };
+      } catch (error) {
+        return {
+          id: msg.id,
+          ok: false as const,
+          message: error instanceof Error ? error.message : String(error),
+          name: error instanceof Error ? error.name : undefined,
+        };
+      }
+    }),
+  );
+  for (const result of results) {
+    if (result) rpcInbound.push(result);
   }
+  vm.runInContext("__flushInbound()", context);
 }
 
 async function runUntilSettled(
@@ -192,7 +201,7 @@ async function runUntilSettled(
         (value) => ({ kind: "done" as const, value }),
         (error) => ({ kind: "error" as const, error }),
       ),
-      new Promise<{ kind: "tick" }>((resolve) => setImmediate(resolve)),
+      new Promise<{ kind: "tick" }>((resolve) => setImmediate(() => resolve({ kind: "tick" }))),
     ]);
     if (raced.kind === "done") {
       await pumpRpcQueues(context, rpcOutbound, rpcInbound);

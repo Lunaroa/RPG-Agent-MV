@@ -709,11 +709,9 @@ export function normalizeOpencodeEvent(
     }
   } else if (type === "permission.updated" || type === "permission.asked") {
     state.pendingPermissionRequest = true;
-    console.error(`[perm-diag] permission event received: type=${type} id=${asString(properties.id)} permission=${asString(properties.permission) || asString(properties.type)}`);
     out.push(buildPermissionRequest(properties, at, state.productLanguage));
   } else if (type === "permission.replied") {
     state.pendingPermissionRequest = false;
-    console.error(`[perm-diag] permission.replied received: id=${asString(properties.permissionID)} reply=${asString(properties.reply) || asString(properties.response)}`);
     out.push({
       type: "opencode_permission_response",
       request_id: asString(properties.permissionID),
@@ -727,7 +725,6 @@ export function normalizeOpencodeEvent(
     });
   } else if (type === "session.status") {
     const status = asRecord(properties.status);
-    console.error(`[perm-diag] session.status: ${asString(status.type)} sessionID=${asString(properties.sessionID)}`);
     if (asString(status.type) === "busy" || asString(status.type) === "retry") {
       out.push({ type: "status", status: "running", at });
     }
@@ -1011,7 +1008,15 @@ export async function runOpencodeSession(
   const server = await ensureServer(input);
   const client = createOpencodeClient({ baseUrl: server.url, directory: input.cwd });
   const controller = new AbortController();
-  const abort = () => controller.abort(input.signal?.reason);
+  // 外部停止信号到达时，除把内层 controller abort 掉，还要立即 finish("stopped")：
+  // 7aa9c18 把主循环结尾改为 `await finished` 后，finished 只由 finish() 解开，
+  // 仅 controller.abort() 不会解开它，runOpencodeSession 会悬挂到 30min timeout 才返回，
+  // 且最终状态被误报为 "timeout"（finally 里的 session.abort 也被推迟，opencode 那侧持续烧 token）。
+  // blocker 用 runtime.stoppedByConsole 文案，让下游 isStoppedByConsole 能识别（与 CLI 停止路径一致）。
+  const abort = () => {
+    controller.abort(input.signal?.reason);
+    if (!done) finish("stopped", backendText('runtime.stoppedByConsole', productLanguage));
+  };
   input.signal?.addEventListener("abort", abort, { once: true });
   let stdout = "";
   let stderr = "";
@@ -1040,7 +1045,6 @@ export async function runOpencodeSession(
   const finish = (status: OpencodeRunResult["status"], reason?: string | null) => {
     if (done) return;
     done = true;
-    console.error(`[perm-diag] finish called: status=${status} reason=${reason || "null"} pendingPermission=${state.pendingPermissionRequest}`);
     finalStatus = status;
     blocker = reason || null;
     resolveFinished();
@@ -1083,23 +1087,19 @@ export async function runOpencodeSession(
       return;
     }
     if (state.pendingPermissionRequest) {
-      console.error(`[perm-diag] idle received but pendingPermissionRequest=true, NOT terminating`);
       return;
     }
     if (sawToolActivity) {
       if (idleTimer) return;
-      console.error(`[perm-diag] idle with toolActivity, starting 15s grace period`);
       idleTimer = setTimeout(() => {
         idleTimer = null;
         if (!done) {
-          console.error(`[perm-diag] idle grace period expired, terminating`);
           finish("pass", null);
           stopEventStream();
         }
       }, TOOL_IDLE_GRACE_MS);
       return;
     }
-    console.error(`[perm-diag] idle received, terminating with pass`);
     finish("pass", null);
     stopEventStream();
   };
@@ -1117,6 +1117,11 @@ export async function runOpencodeSession(
       // Polling remains active when a single status verification fails.
     }
   };
+
+  // 提升到 try 之前：finally 里要 await allSettled([streamTask, statusPollTask])，
+  // 若 try 在它们声明前就抛错（如 session.create 失败），finally 仍能引用到（undefined）。
+  let streamTask: Promise<void> | undefined;
+  let statusPollTask: Promise<void> | undefined;
 
   try {
     onEvent({ type: "status", status: "running", at: startedAt });
@@ -1142,15 +1147,11 @@ export async function runOpencodeSession(
 
     streamGen = subscribed.stream as AsyncGenerator<Record<string, unknown>>;
 
-    const streamTask = (async () => {
-      console.error(`[perm-diag] SSE stream loop started`);
+    streamTask = (async () => {
       for await (const raw of streamGen!) {
         if (!raw || done) {
-          if (done) console.error(`[perm-diag] SSE loop: skipping raw because done=true`);
           continue;
         }
-        const rawType = asString(raw.type);
-        console.error(`[perm-diag] SSE event: type=${rawType}`);
         const rootIdle = shouldFinishOpencodeRunOnSessionIdle(raw, opencodeSessionId);
         const rootTurnActivity = isOpencodeRootTurnActivity(raw, opencodeSessionId);
         const rootTerminalActivity = isOpencodeRootTurnTerminalActivity(raw, opencodeSessionId);
@@ -1186,13 +1187,11 @@ export async function runOpencodeSession(
           }
           onEvent(event);
           if (event.type === "status" && ["blocked", "error", "failed"].includes(String(event.status || ""))) {
-            console.error(`[perm-diag] status blocked/error/failed → finish("blocked")`);
             finish("blocked", asString(event.blocker) || "opencode session failed");
           }
         }
         if (rootIdle) await probeRootIdle();
       }
-      console.error(`[perm-diag] SSE stream loop ENDED naturally (stream closed). done=${done}`);
       if (shouldBlockUnexpectedOpencodeStreamEnd({ done, aborted: controller.signal.aborted })) {
         const reason = "opencode event stream closed before the session reached a terminal state";
         stderr += `${reason}\n`;
@@ -1222,12 +1221,10 @@ export async function runOpencodeSession(
       signal: controller.signal,
     });
     if (promptResult.error) {
-      console.error(`[perm-diag] promptAsync returned error: ${JSON.stringify(promptResult.error)}`);
       throw promptResult.error;
     }
     turnArmed = true;
-    console.error(`[perm-diag] promptAsync succeeded, awaiting streamTask`);
-    const statusPollTask = (async () => {
+    statusPollTask = (async () => {
       while (!done && !controller.signal.aborted) {
         await new Promise((resolve) => setTimeout(resolve, SESSION_STATUS_POLL_MS));
         if (done || controller.signal.aborted) break;
@@ -1247,19 +1244,27 @@ export async function runOpencodeSession(
     })();
 
     await finished;
-    stopEventStream();
-    await Promise.allSettled([streamTask, statusPollTask]);
   } catch (error) {
-    console.error(`[perm-diag] CATCH block: error=${error instanceof Error ? error.message : String(error)} done=${done}`);
     if (!done) {
-      const message = error instanceof Error ? error.message : String(error);
+      const aborted = Boolean(input.signal?.aborted);
+      // 停止出口的 blocker 统一用 stoppedByConsole 文案，让 isStoppedByConsole 识别为 stopped
+      // 而非按异常 message 误判成 blocked/超时。aborted=true 即外部主动停止。
+      const message = aborted
+        ? backendText('runtime.stoppedByConsole', productLanguage)
+        : (error instanceof Error ? error.message : String(error));
       stderr += `${message}\n`;
       onEvent({ type: "stderr", text: `${message}\n`, at: now() });
-      finish(input.signal?.aborted ? "stopped" : "blocked", message);
+      finish(aborted ? "stopped" : "blocked", message);
     }
   } finally {
+    // 清理统一放 finally：无论正常结束 / 停止 / promptAsync 抛错，都要拆 SSE 流并 abort controller，
+    // 否则 streamTask 会后台挂起、SSE 长连不拆除，多次失败累积泄漏（opencode server 是长驻单例）。
     clearIdleTimer();
     clearTimeout(timeout);
+    stopEventStream();
+    if (!controller.signal.aborted) controller.abort();
+    // streamTask/statusPollTask 可能在 try 声明前就抛错而为 undefined，过滤后再 await。
+    await Promise.allSettled([streamTask, statusPollTask].filter((p): p is Promise<void> => Boolean(p)));
     input.signal?.removeEventListener("abort", abort);
     if (opencodeSessionId && controller.signal.aborted) {
       await client.session.abort({ path: { id: opencodeSessionId }, query: { directory: input.cwd } }).catch(() => {});
@@ -1336,16 +1341,13 @@ export async function replyOpencodePermission(
   directory: string,
 ): Promise<boolean> {
   if (!singleton) {
-    console.error(`[perm-diag] replyOpencodePermission: no singleton`);
     return false;
   }
-  console.error(`[perm-diag] replyOpencodePermission: sessionId=${sessionId} permissionID=${permissionID} response=${response}`);
   const result = await singleton.client.postSessionIdPermissionsPermissionId({
     path: { id: sessionId, permissionID },
     query: { directory },
     body: { response },
   });
-  console.error(`[perm-diag] replyOpencodePermission result: data=${Boolean(result.data)} error=${result.error ? JSON.stringify(result.error) : "none"}`);
   return Boolean(result.data);
 }
 

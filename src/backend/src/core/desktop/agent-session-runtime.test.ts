@@ -9,6 +9,8 @@ import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
 import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
 import { writeCurrentProgress } from "../memory/memory-store.ts";
+import { proposeWorkflow, readProposal } from "../workflow/orchestrator/proposals.ts";
+import type { WorkflowRunRecord } from "../workflow/orchestrator/types.ts";
 
 const roots: string[] = [];
 const runtimes: AgentSessionRuntime[] = [];
@@ -100,6 +102,348 @@ describe("AgentSessionRuntime", () => {
     assert.ok(artifactIndex > doneIndex);
     assert.ok(summaryIndex > artifactIndex);
     assert.equal(received.find((event) => event.type === "status" && event.status === "pass")?.at, "2026-06-01T00:00:04.000Z");
+  });
+
+  test("tool_result auto-approves workflow without live frontend subscription", async () => {
+    let approveCalls = 0;
+    const harness = await createHarness(undefined, undefined, {
+      approveWorkflowProposal: async (_workflowRoot, proposalId, options) => {
+        approveCalls += 1;
+        await options?.beforeExecute?.();
+        return {
+          proposal: {
+            proposalId,
+            status: "completed",
+            title: "只读巡检",
+            runId: "run-auto",
+            reason: null,
+          },
+          record: fakeWorkflowRecord("run-auto"),
+        };
+      },
+    });
+    const session = await harness.runtime.create({ intent: "run workflow", project: "projects/Project" });
+    const sessionId = String(session.id);
+    const received: AgentRuntimeEvent[] = [];
+    harness.runtime.subscribe(sessionId, { id: "renderer", write: (event) => received.push(event) });
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    const root = (harness.runtime as unknown as { workflowRoot: string }).workflowRoot;
+    const proposal = proposeWorkflow({
+      workflowRoot: root,
+      project: path.join(root, "projects", "Project"),
+      script: "return { ok: true };",
+      title: "只读巡检",
+      sessionId,
+    }, { makeId: () => "wp-auto-no-frontend", now: () => new Date("2026-06-01T00:00:00.000Z") });
+
+    harness.emit({
+      type: "tool_result",
+      call_id: "call-workflow",
+      tool: "rmmv_RmmvWorkflow",
+      success: true,
+      output: JSON.stringify({
+        data: {
+          kind: "workflow-proposal",
+          proposalId: proposal.proposalId,
+          status: "pending",
+        },
+      }),
+      at: "2026-06-01T00:00:02.000Z",
+    });
+    const foregroundSettled = harness.runtime.waitForForegroundSettled(sessionId);
+    harness.finish({ status: "pass" });
+    await foregroundSettled;
+    await harness.flush();
+
+    assert.equal(approveCalls, 1);
+    assert.equal(received.some((event) => event.type === "workflow_run" && event.phase === "start"), true);
+    assert.equal(received.some((event) => event.type === "workflow_run" && event.phase === "done" && event.status === "completed"), true);
+  });
+
+  test("reconcilePendingWorkflowProposals approves persisted pending proposals on reconnect", async () => {
+    let approveCalls = 0;
+    const harness = await createHarness(undefined, undefined, {
+      approveWorkflowProposal: async (_workflowRoot, proposalId, options) => {
+        approveCalls += 1;
+        await options?.beforeExecute?.();
+        return {
+          proposal: {
+            proposalId,
+            status: "completed",
+            title: "重连巡检",
+            runId: "run-reconcile",
+            reason: null,
+          },
+          record: fakeWorkflowRecord("run-reconcile"),
+        };
+      },
+    });
+    const session = await harness.runtime.create({ intent: "run workflow", project: "projects/Project" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    const root = (harness.runtime as unknown as { workflowRoot: string }).workflowRoot;
+    const proposal = proposeWorkflow({
+      workflowRoot: root,
+      project: path.join(root, "projects", "Project"),
+      script: "return { ok: true };",
+      title: "重连巡检",
+      sessionId,
+    }, { makeId: () => "wp-reconcile", now: () => new Date("2026-06-01T00:00:00.000Z") });
+
+    const liveSession = (harness.runtime as unknown as { sessions: Map<string, { events: AgentRuntimeEvent[] }> }).sessions.get(sessionId)!;
+    liveSession.events.push({
+      type: "tool_result",
+      sequence: liveSession.events.length + 1,
+      call_id: "call-workflow-reconcile",
+      tool: "rmmv_RmmvWorkflow",
+      success: true,
+      output: JSON.stringify({
+        data: {
+          kind: "workflow-proposal",
+          proposalId: proposal.proposalId,
+          status: "pending",
+        },
+      }),
+      at: "2026-06-01T00:00:02.000Z",
+    });
+
+    harness.runtime.reconcilePendingWorkflowProposals(sessionId);
+    await harness.flush();
+    assert.equal(approveCalls, 1);
+
+    harness.runtime.reconcilePendingWorkflowProposals(sessionId);
+    harness.runtime.subscribe(sessionId, { id: "reconnect", write: () => {} }, 0);
+    await harness.flush();
+    assert.equal(approveCalls, 1);
+  });
+
+  test("reconcilePendingWorkflowProposals fails pending proposal on interrupted restored session", async () => {
+    let approveCalls = 0;
+    const harness = await createHarness(undefined, undefined, {
+      approveWorkflowProposal: async (_workflowRoot, proposalId, options) => {
+        approveCalls += 1;
+        await options?.beforeExecute?.();
+        return {
+          proposal: {
+            proposalId,
+            status: "completed",
+            title: "终态恢复",
+            runId: "run-terminal",
+            reason: null,
+          },
+          record: fakeWorkflowRecord("run-terminal"),
+        };
+      },
+    });
+    const session = await harness.runtime.create({ intent: "run workflow", project: "projects/Project" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    const root = (harness.runtime as unknown as { workflowRoot: string }).workflowRoot;
+    const proposal = proposeWorkflow({
+      workflowRoot: root,
+      project: path.join(root, "projects", "Project"),
+      script: "return { ok: true };",
+      title: "终态恢复",
+      sessionId,
+    }, { makeId: () => "wp-terminal", now: () => new Date("2026-06-01T00:00:00.000Z") });
+
+    const liveSession = (harness.runtime as unknown as { sessions: Map<string, { events: AgentRuntimeEvent[]; status: string }> }).sessions.get(sessionId)!;
+    liveSession.events.push({
+      type: "tool_result",
+      sequence: liveSession.events.length + 1,
+      call_id: "call-workflow-terminal",
+      tool: "rmmv_RmmvWorkflow",
+      success: true,
+      output: JSON.stringify({
+        data: {
+          kind: "workflow-proposal",
+          proposalId: proposal.proposalId,
+          status: "pending",
+        },
+      }),
+      at: "2026-06-01T00:00:02.000Z",
+    });
+    liveSession.status = "interrupted";
+
+    harness.runtime.reconcilePendingWorkflowProposals(sessionId);
+    await harness.flush();
+    assert.equal(approveCalls, 0);
+    const after = readProposal(root, proposal.proposalId)!;
+    assert.equal(after.status, "failed");
+    assert.match(after.reason || "", /应用中断/);
+  });
+
+  test("reconcilePendingWorkflowProposals fails orphan running proposal without rerun", async () => {
+    let approveCalls = 0;
+    const harness = await createHarness(undefined, undefined, {
+      approveWorkflowProposal: async (_workflowRoot, proposalId, options) => {
+        approveCalls += 1;
+        await options?.beforeExecute?.();
+        return {
+          proposal: {
+            proposalId,
+            status: "completed",
+            title: "孤儿恢复",
+            runId: "run-orphan",
+            reason: null,
+          },
+          record: fakeWorkflowRecord("run-orphan"),
+        };
+      },
+    });
+    const session = await harness.runtime.create({ intent: "run workflow", project: "projects/Project" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    const root = (harness.runtime as unknown as { workflowRoot: string }).workflowRoot;
+    const proposal = proposeWorkflow({
+      workflowRoot: root,
+      project: path.join(root, "projects", "Project"),
+      script: "return { ok: true };",
+      title: "孤儿恢复",
+      sessionId,
+    }, { makeId: () => "wp-orphan", now: () => new Date("2026-06-01T00:00:00.000Z") });
+    const onDisk = readProposal(root, proposal.proposalId)!;
+    onDisk.status = "running";
+    onDisk.decidedAt = "2026-06-01T00:00:01.000Z";
+    fs.writeFileSync(
+      path.join(root, "runtime", "out", "workflows", "proposals", `${proposal.proposalId}.json`),
+      JSON.stringify(onDisk, null, 2),
+    );
+
+    const liveSession = (harness.runtime as unknown as { sessions: Map<string, { events: AgentRuntimeEvent[] }> }).sessions.get(sessionId)!;
+    liveSession.events.push({
+      type: "tool_result",
+      sequence: liveSession.events.length + 1,
+      call_id: "call-workflow-orphan",
+      tool: "rmmv_RmmvWorkflow",
+      success: true,
+      output: JSON.stringify({
+        data: {
+          kind: "workflow-proposal",
+          proposalId: proposal.proposalId,
+          status: "running",
+        },
+      }),
+      at: "2026-06-01T00:00:02.000Z",
+    });
+
+    harness.runtime.reconcilePendingWorkflowProposals(sessionId);
+    await harness.flush();
+    assert.equal(approveCalls, 0);
+    const after = readProposal(root, proposal.proposalId)!;
+    assert.equal(after.status, "failed");
+    assert.match(after.reason || "", /应用中断/);
+  });
+
+  test("initialize fails unfinished proposals belonging to restored sessions", async () => {
+    const root = makeRoot();
+    const sessionId = "session-restored-workflow";
+    const outDir = path.join(root, "runtime", "sessions", sessionId, "agent-console");
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, "session-meta.json"), JSON.stringify({
+      id: sessionId,
+      status: "running",
+      profileId: "default",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:01.000Z",
+      intent: "run workflow",
+      project: "projects/Project",
+    }), "utf8");
+    fs.writeFileSync(path.join(outDir, "events.json"), JSON.stringify({
+      sessionId,
+      events: [],
+    }), "utf8");
+    const proposal = proposeWorkflow({
+      workflowRoot: root,
+      project: path.join(root, "projects", "Project"),
+      script: "return { ok: true };",
+      title: "重启恢复",
+      sessionId,
+    }, { makeId: () => "wp-restored-startup", now: () => new Date("2026-06-01T00:00:00.000Z") });
+
+    let approveCalls = 0;
+    const harness = await createHarness(root, undefined, {
+      approveWorkflowProposal: async () => {
+        approveCalls += 1;
+        throw new Error("must not rerun after restart");
+      },
+    });
+
+    assert.equal(approveCalls, 0);
+    assert.equal(harness.runtime.get(sessionId)?.status, "interrupted");
+    assert.equal(readProposal(root, proposal.proposalId)?.status, "failed");
+    const events = harness.runtime.get(sessionId)?.events as AgentRuntimeEvent[];
+    assert.equal(events.some((event) => (
+      event.type === "workflow_run"
+      && event.phase === "done"
+      && event.status === "failed"
+      && event.proposalId === proposal.proposalId
+    )), true);
+  });
+
+  test("approveWorkflowProposal is idempotent for already decided proposals", async () => {
+    let approveCalls = 0;
+    const harness = await createHarness(undefined, undefined, {
+      approveWorkflowProposal: async (_workflowRoot, proposalId) => {
+        approveCalls += 1;
+        return {
+          proposal: {
+            proposalId,
+            status: "completed",
+            title: "已决提议",
+            runId: "run-decided",
+            reason: null,
+          },
+          record: fakeWorkflowRecord("run-decided"),
+        };
+      },
+    });
+    const session = await harness.runtime.create({ intent: "run workflow", project: "projects/Project" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+
+    const root = (harness.runtime as unknown as { workflowRoot: string }).workflowRoot;
+    const proposal = proposeWorkflow({
+      workflowRoot: root,
+      project: path.join(root, "projects", "Project"),
+      script: "return { ok: true };",
+      title: "已决提议",
+      sessionId,
+    }, { makeId: () => "wp-decided", now: () => new Date("2026-06-01T00:00:00.000Z") });
+
+    harness.emit({
+      type: "tool_result",
+      call_id: "call-workflow",
+      tool: "rmmv_RmmvWorkflow",
+      success: true,
+      output: JSON.stringify({
+        data: {
+          kind: "workflow-proposal",
+          proposalId: proposal.proposalId,
+          status: "pending",
+        },
+      }),
+    });
+    const foregroundSettled = harness.runtime.waitForForegroundSettled(sessionId);
+    harness.finish({ status: "pass" });
+    await foregroundSettled;
+    await harness.flush();
+    assert.equal(approveCalls, 1);
+
+    const proposalsDir = path.join(root, "runtime", "out", "workflows", "proposals");
+    const proposalPath = path.join(proposalsDir, `${proposal.proposalId}.json`);
+    const persisted = JSON.parse(fs.readFileSync(proposalPath, "utf8")) as Record<string, unknown>;
+    fs.writeFileSync(proposalPath, JSON.stringify({ ...persisted, status: "completed" }), "utf8");
+
+    const second = harness.runtime.approveWorkflowProposal(proposal.proposalId, sessionId);
+    await harness.flush();
+    assert.equal(second.ok, true);
+    assert.equal(second.status, "completed");
+    assert.equal(approveCalls, 1);
   });
 
   test("workflow failure releases the held session as blocked", async () => {
@@ -561,6 +905,37 @@ describe("AgentSessionRuntime", () => {
     const fakedSuccess = (harness.runtime.get(sessionId)?.events as AgentRuntimeEvent[])
       .some((event) => (event.type === "opencode_permission_response" || event.type === "opencode_question_response")
         && event.request_id === "req-stale");
+    assert.equal(fakedSuccess, false);
+  });
+
+  test("opencode ASK returns failure when reply silently fails (no faked success)", async () => {
+    // reply 在 singleton 已停 / permissionID 过期 / opencode 返回 error 时静默返回 false（不抛错）。
+    // 此时不应 push 伪造的 success 让 opencode 那侧永久挂起、前端却被通知成功。
+    const harness = await createHarness(undefined, undefined, {
+      replyPermission: async () => false,
+      replyQuestion: async () => false,
+    });
+    const session = await harness.runtime.create({ intent: "plan work" });
+    const sessionId = String(session.id);
+    await waitForSessionStatus(harness.runtime, sessionId, "running");
+    (harness.runtime as unknown as { sessions: Map<string, { opencodeSessionId: string | null }> }).sessions.get(sessionId)!.opencodeSessionId = "opencode-test-session";
+
+    harness.emit({
+      type: "opencode_permission_request",
+      request_id: "req-reply-fail",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "ExitPlanMode",
+        input: { plan: "1. 查事实" },
+      },
+      at: "2026-06-01T00:00:02.000Z",
+    });
+
+    const response = await harness.runtime.submitAskResult(sessionId, "agent-runtime-plan:req-reply-fail", { decision: "approve" });
+    assert.equal(response.ok, false);
+    const fakedSuccess = (harness.runtime.get(sessionId)?.events as AgentRuntimeEvent[])
+      .some((event) => (event.type === "opencode_permission_response" || event.type === "opencode_question_response")
+        && event.request_id === "req-reply-fail");
     assert.equal(fakedSuccess, false);
   });
 
@@ -1223,6 +1598,10 @@ async function createHarness(
     activateForSession: async () => ({}),
     writeOutputs: () => ({ jsonPath: "", mdPath: "" }),
     buildDispatch: buildDispatchImpl || defaultBuildDispatch,
+    // 测试环境没有真实 opencode singleton，reply 会静默返回 false。
+    // 注入成功 mock，让"测响应投影逻辑"的用例走真实成功路径而非依赖伪造的 success。
+    replyPermission: async () => true,
+    replyQuestion: async () => true,
     startDispatch: (_dispatch: any, _options: any, onEvent: (event: AgentRuntimeEvent) => void) => {
       emit = onEvent;
       if (harnessOptions.emitOpencodeRunContext && typeof _options.onOpencodeRunContext === "function") {
@@ -1330,6 +1709,21 @@ function makeRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "rmmv-agent-runtime-"));
   roots.push(root);
   return root;
+}
+
+function fakeWorkflowRecord(runId: string): WorkflowRunRecord {
+  return {
+    runId,
+    workflow: "测试工作流",
+    status: "completed",
+    startedAt: "2026-06-01T00:00:00.000Z",
+    finishedAt: "2026-06-01T00:00:01.000Z",
+    agentCount: 1,
+    inputTokens: 0,
+    outputTokens: 0,
+    report: { ok: true },
+    error: null,
+  };
 }
 
 async function waitForSessionStatus(

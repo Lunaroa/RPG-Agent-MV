@@ -1265,57 +1265,9 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     const id = String(proposalId || '');
     const proposal = proposals.readProposal(workflowRoot, id);
     if (!proposal) throw new Error('提议不存在');
-    if (proposal.status !== 'pending') throw new Error(`提议当前状态为 ${proposal.status}，不能批准`);
-
-    const sessionId = proposal.sessionId;
-    const controller = new AbortController();
-    const push = (event: Record<string, unknown>) => {
-      if (sessionId) agentSessionRuntime.pushExternalEvent(sessionId, { ...event, proposalId: id });
-    };
-    if (sessionId) {
-      const attached = agentSessionRuntime.attachExternalWorkCancellation(
-        sessionId,
-        id,
-        () => controller.abort(new Error('session stopped')),
-      );
-      if (!attached.ok) {
-        push({ type: 'workflow_run', phase: 'done', status: 'failed', reason: attached.reason || '会话已结束' });
-        throw new Error(attached.reason || '无法把工作流绑定到会话');
-      }
-    }
-
-    push({ type: 'workflow_run', phase: 'start', workflow: proposal.title, summary: proposal.summary });
-    // IPC 立刻返回；真正派发先等父 Agent 的前台执行完成，并保持会话占用直到 done 事件释放。
-    proposals
-      .approveProposal(workflowRoot, id, {
-        signal: controller.signal,
-        beforeExecute: sessionId
-          ? () => agentSessionRuntime.waitForForegroundSettled(sessionId, controller.signal)
-          : undefined,
-        onEvent: (event) => push({ type: 'workflow_run', phase: 'progress', event }),
-      })
-      .then(({ proposal: done, record }) => {
-        push({
-          type: 'workflow_run',
-          phase: 'done',
-          status: done.status,
-          runId: done.runId,
-          workflow: done.title,
-          reason: done.reason ?? null,
-          report: record?.report ?? null,
-        });
-      })
-      .catch((error: unknown) => {
-        const failed = proposals.readProposal(workflowRoot, id);
-        push({
-          type: 'workflow_run',
-          phase: 'done',
-          status: failed?.status === 'aborted' ? 'aborted' : 'failed',
-          reason: failed?.reason || (error instanceof Error ? error.message : String(error)),
-        });
-      });
-
-    return toIpcPayload({ ok: true, status: 'running', proposalId: id });
+    const result = agentSessionRuntime.approveWorkflowProposal(id, proposal.sessionId || undefined);
+    if (!result.ok) throw new Error(result.reason || '无法批准工作流提议');
+    return toIpcPayload({ ok: true, status: result.status || 'running', proposalId: id });
   });
 
   console.log('[ipc] IPC handlers initialized');

@@ -2,7 +2,7 @@
 //
 // 工具本身的权限审批由 opencode 的 approvalHandler 在执行前完成（config 里配了 "ask" 规则）：
 // agent 一调用就阻塞在 LLM 执行循环内部，桌面弹高危审批卡，批准后才执行本 handler。
-// 本 handler 只负责 propose（落盘 pending 提议）并立即返回；桌面在 tool_result 到达后自动批准
+// 本 handler 只负责 propose（落盘 pending 提议）并立即返回；后端在 tool_result 到达时自动批准
 // 并异步运行工作流，报告通过 workflow_run 事件推回会话。
 
 import { proposeWorkflow } from "../workflow/orchestrator/proposals.ts";

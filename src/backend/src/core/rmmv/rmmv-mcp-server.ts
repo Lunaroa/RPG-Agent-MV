@@ -426,6 +426,22 @@ async function main(): Promise<void> {
         action: COMMANDS_REQUIRING_ACTION.has(command) ? subAction : undefined,
         workflowRoot,
       };
+      // stage.register 是只读子 agent 的唯一受控写口，设计上只暂存待放置草稿（NEVER places）。
+      // 拒绝调用方传入 placed/verified：这两个状态只能由桌面放置/核对动作写入，
+      // 让子 agent 直接落 placed 会伪造注册表身份、污染对账（误认领已有事件）。
+      if (rawAction === "stage.register") {
+        const contract = handlerInput.contract as Record<string, unknown> | undefined;
+        const contractStatus = typeof contract?.status === "string" ? contract.status : undefined;
+        if (contractStatus === "placed" || contractStatus === "verified") {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({
+              ok: false,
+              error: `stage.register cannot set status "${contractStatus}"; placed/verified are only set by the desktop placement/verification actions. Use draft or reviewing.`,
+            }) }],
+            isError: true,
+          };
+        }
+      }
       const tmpDirs: string[] = [];
       try {
         materializeInlineJsonFields(handlerInput, tmpDirs);

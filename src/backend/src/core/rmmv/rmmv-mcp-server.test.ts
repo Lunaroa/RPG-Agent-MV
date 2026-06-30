@@ -223,6 +223,62 @@ test("RMMV MCP stdio exposes localised map errors when mapId is invalid", async 
   }
 });
 
+test("stage.register rejects forged placed/verified status (read-only subagent cannot self-place)", async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rmmv-mcp-server-"));
+  const project = createProjectFixture(workflowRoot);
+  const client = new Client({ name: "rmmv-mcp-test", version: "1.0.0" });
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  env.AGENT_RPG_ROOT = workflowRoot;
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["--experimental-strip-types", path.join(import.meta.dirname, "rmmv-mcp-server.ts")],
+    env,
+    stderr: "pipe",
+  });
+
+  const baseContract = {
+    engine: "rpg-maker-mv",
+    kind: "EventContract",
+    id: "town.elder.intro",
+    purpose: "Register a reviewing elder NPC event for manual placement.",
+    rmmvTarget: { operation: "add-map-event", mapId: 1, eventName: "EV_ElderIntro", trigger: "action-button" },
+    implementation: { commands: [{ kind: "text", text: "The northern road is unsafe." }] },
+  };
+
+  try {
+    await client.connect(transport);
+
+    // placed 必须被拒：只读子 agent 不能伪造"已放置"身份绕过桌面放置流程。
+    const placedRejected = await client.callTool({
+      name: "RmmvStage",
+      arguments: { action: "stage.register", project, contract: { ...baseContract, status: "placed" } },
+    }) as { isError?: boolean; content?: Array<{ type?: string; text?: string }> };
+    assert.equal(placedRejected.isError, true);
+    assert.match(placedRejected.content?.[0]?.text || "", /placed/);
+
+    // verified 同理。
+    const verifiedRejected = await client.callTool({
+      name: "RmmvStage",
+      arguments: { action: "stage.register", project, contract: { ...baseContract, status: "verified" } },
+    }) as { isError?: boolean; content?: Array<{ type?: string; text?: string }> };
+    assert.equal(verifiedRejected.isError, true);
+    assert.match(verifiedRejected.content?.[0]?.text || "", /verified/);
+
+    // 正常草稿登记仍可用，落盘状态为 draft/reviewing（add-map-event 默认 reviewing）。
+    const draftOk = parseToolJson(await client.callTool({
+      name: "RmmvStage",
+      arguments: { action: "stage.register", project, contract: { ...baseContract, status: "draft" } },
+    }));
+    assert.equal(draftOk.data.status, "ok");
+    assert.equal(draftOk.data.contract.status, "draft");
+  } finally {
+    await client.close();
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
 function parseToolJson(result: unknown): any {
   const value = result as { isError?: boolean; content?: Array<{ type?: string; text?: string }> };
   if (value.isError) throw new Error(value.content?.[0]?.text || "MCP tool call failed.");

@@ -265,6 +265,7 @@ async function runWorkflowCommand(rest: string[]): Promise<number> {
     workflowRoot,
     project,
     script,
+    summary: args.summary as string | undefined,
     title,
     productLanguage: cliLanguage(),
     onEvent: (event) => {

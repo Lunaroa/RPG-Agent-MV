@@ -42,7 +42,6 @@ export interface ParsedArgs {
   intent?: string;
   taskId?: string;
   creationMode?: string;
-  contextMode?: string;
   targetSpec?: string;
   review?: string;
   bundle?: string;
@@ -122,7 +121,7 @@ export interface ParsedArgs {
   localOnly?: boolean;
   useLlm?: boolean;
   prepareOnly?: boolean;
-  summary?: boolean;
+  summary?: string;
   overwriteZero?: boolean;
   allowReferenceBlockCopy?: boolean;
   allowMapStructural?: boolean;
@@ -323,9 +322,6 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--creation-mode") {
       parsed.creationMode = requireValue(args, index, arg);
       index += 1;
-    } else if (arg === "--context-mode") {
-      parsed.contextMode = requireValue(args, index, arg);
-      index += 1;
     } else if (arg === "--target-spec") {
       parsed.targetSpec = requireValue(args, index, arg);
       index += 1;
@@ -471,7 +467,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--prepare-only") {
       parsed.prepareOnly = true;
     } else if (arg === "--summary") {
-      parsed.summary = true;
+      parsed.summary = requireValue(args, index, arg);
+      index += 1;
     } else if (arg === "--overwrite-zero") {
       parsed.overwriteZero = true;
     } else if (arg === "--allow-reference-block-copy") {

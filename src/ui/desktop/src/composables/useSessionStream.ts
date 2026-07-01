@@ -467,7 +467,7 @@ export function useSessionStream() {
     return result + remainder
   }
 
-  function handleSessionEvent(event: SessionEvent, source: 'live' | 'replay' = 'live'): void {
+  function handleSessionEvent(event: SessionEvent): void {
     if (attachedSessionId) {
       useSessionPlanStore().applyRuntimeEvent(attachedSessionId, event)
       useSubagentStore().applyRuntimeEvent(attachedSessionId, event)
@@ -934,7 +934,7 @@ export function useSessionStream() {
       (a, b) => Number(a.sequence || 0) - Number(b.sequence || 0)
     )
     for (const event of ordered) {
-      handleSessionEvent(event, 'replay')
+      handleSessionEvent(event)
     }
   }
 

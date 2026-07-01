@@ -200,6 +200,7 @@ test("electron package proof accepts a real unpacked Electron directory package"
   assert.equal(result.files.includes("resources/app/package.json"), true);
   assert.equal(result.files.includes("resources/app/src/ui/desktop/dist/index.html"), true);
   assert.equal(result.files.includes("resources/app/src/backend/src/cli.ts"), true);
+  assert.equal(result.files.includes("resources/app/docs/en/projects/project.md"), true);
   assert.equal(result.files.includes("resources/app/config/provider-seeds/providers.json"), true);
   assert.equal(result.files.includes("resources/app/config/opencode/AGENTS.md"), true);
   assert.equal(result.files.includes("resources/app/config/opencode/rules/runtime-policy.md"), true);
@@ -474,6 +475,7 @@ function createElectronPackageArtifact(root: string): string {
   fs.mkdirSync(path.join(appRoot, "config", "opencode", "instructions"), { recursive: true });
   fs.mkdirSync(path.join(appRoot, "config", "opencode", "skills", "skill-creator"), { recursive: true });
   fs.mkdirSync(path.join(appRoot, "config", "provider-seeds"), { recursive: true });
+  fs.mkdirSync(path.join(appRoot, "docs", "en", "projects"), { recursive: true });
   fs.mkdirSync(opencodeRoot, { recursive: true });
   for (const dependency of [
     path.join("@opencode-ai", "sdk"),
@@ -510,7 +512,7 @@ function createElectronPackageArtifact(root: string): string {
     version: "4.4.3",
   }), "utf8");
   fs.writeFileSync(path.join(appRoot, "src", "contract", "types.ts"), "export {};\n", "utf8");
-  fs.writeFileSync(path.join(appRoot, "AGENTS.md"), "# Agent rules\n", "utf8");
+  fs.writeFileSync(path.join(appRoot, "docs", "en", "projects", "project.md"), "# Project setup\n", "utf8");
   fs.writeFileSync(path.join(appRoot, "config", "agents", "registry.yaml"), "agents: []\n", "utf8");
   fs.writeFileSync(path.join(appRoot, "config", "opencode", "AGENTS.md"), "# Agent rules\n", "utf8");
   fs.writeFileSync(path.join(appRoot, "config", "opencode", "instructions", "personal-preferences.md"), "# Preferences\n", "utf8");

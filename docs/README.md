@@ -28,7 +28,8 @@ RPG Agent MV 用户手册
 ├── 3. Agent 工作流
 │   ├── 3.1 需求描述与确认
 │   ├── 3.2 从生成到落地
-│   └── 3.3 会话与日志
+│   ├── 3.3 会话与日志
+│   └── 3.4 动态工作流
 │
 ├── 4. Agent 体系
 │   ├── 4.1 MCP 工具
@@ -69,6 +70,7 @@ RPG Agent MV 用户手册
 | [3.1-request.md](./3-agent-workflow/3.1-request.md) | 需求描述、边界约束和 ASK 确认 |
 | [3.2-generate.md](./3-agent-workflow/3.2-generate.md) | 事件注册、预览和人工放置流程 |
 | [3.3-sessions.md](./3-agent-workflow/3.3-sessions.md) | 会话延续、运行日志和问题定位 |
+| [3.4-dynamic-workflow.md](./3-agent-workflow/3.4-dynamic-workflow.md) | 动态工作流的提议、审批、执行和报告 |
 
 ### 4. Agent 体系
 
@@ -98,7 +100,7 @@ RPG Agent MV 用户手册
 
 ## 版本信息
 
-- 文档版本：v0.2
-- 最后更新：2026-06-17
-- 适用于：当前 RPG Agent MV 版本
+- 文档版本：v0.2.2
+- 最后更新：2026-07-01
+- 适用于：RPG Agent MV v0.2.2
 

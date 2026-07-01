@@ -35,6 +35,7 @@ The current version is not a full replacement for the RPG Maker MV editor. In th
 | [Requests And Confirmation](agent-workflow/request.md) | Writing requests, stating constraints, and answering ASK cards |
 | [From Generation To Landing](agent-workflow/generate.md) | Event registration, preview, manual placement, and controlled edits |
 | [Sessions And Logs](agent-workflow/sessions.md) | Continuing sessions, reading logs, and diagnosing failed runs |
+| [Dynamic Workflow](agent-workflow/dynamic-workflow.md) | Proposing, approving, executing, and reporting dynamic workflows |
 
 ### 4. Agent System
 
@@ -65,6 +66,6 @@ The current version is not a full replacement for the RPG Maker MV editor. In th
 
 ## Version
 
-- Documentation version: v0.2-en
-- Last updated: 2026-06-21
-- Applies to: current RPG Agent MV version
+- Documentation version: v0.2.2-en
+- Last updated: 2026-07-01
+- Applies to: RPG Agent MV v0.2.2

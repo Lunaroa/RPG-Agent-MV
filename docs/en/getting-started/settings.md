@@ -4,7 +4,7 @@
 
 Settings control the model provider, execution engine, product language, tool permissions, and local project behavior.
 
-Model and provider settings bind the local Agent runtime to a provider, model, API key, and base URL. If a model test fails, fix the provider configuration before starting a production session.
+Model and provider settings bind the local Agent runtime to a provider, model, API key, and base URL. If a model test fails, fix the provider configuration before starting a production session. Some preset providers that don't expose a model-list endpoint (e.g. Volcano Ark Agent Plan / Coding Plan) disable the "fetch models from API" action; pick from their preset list instead.
 
 Language settings control product UI language. RPG Agent MV supports `zh-CN` and `en-US`; this does not change the language of existing game content, dialogue, event text, or asset names.
 

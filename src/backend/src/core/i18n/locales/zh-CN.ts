@@ -36,6 +36,18 @@ const zhCN = {
     'cli.agentConsole.moved': 'Agent console 已迁移至 Electron 应用程序，请通过桌面应用启动。',
     'cli.agentConsole.startCommand': '启动方式：cd src/ui/desktop && npm run dev',
     'cli.agentConsole.readme': '详细文档请参阅 RPG Agent MV 根目录 README.md 与 docs/README.md',
+    'slash.help.description': '列出可用斜杠命令',
+    'slash.help.body': '可用斜杠命令',
+    'slash.tokens.description': '查看当前对话 token 用量',
+    'slash.tokens.summary': '{{percent}}% 已用 · 已用 {{used}} 标记，共 {{limit}}',
+    'slash.tokens.noSession': '当前对话尚无可用 opencode 会话，请先发送一条消息。',
+    'slash.tokens.noModel': '当前对话未绑定模型，无法读取上下文窗口。',
+    'slash.tokens.failed': '读取上下文窗口失败：{{reason}}',
+    'slash.compact.description': '压缩当前对话上下文',
+    'slash.compact.done': '上下文已压缩',
+    'slash.compact.failed': '压缩失败：{{reason}}',
+    'slash.compact.noModel': '当前对话未绑定模型，无法压缩上下文。请先在输入框选择模型。',
+    'slash.unknown': '未知斜杠命令：/{{command}}',
 } as const
 
 export default zhCN

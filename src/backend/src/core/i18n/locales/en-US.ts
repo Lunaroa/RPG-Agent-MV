@@ -36,6 +36,18 @@ const enUS = {
     'cli.agentConsole.moved': 'Agent console has moved to the Electron app. Start it from the desktop app.',
     'cli.agentConsole.startCommand': 'Start command: cd src/ui/desktop && npm run dev',
     'cli.agentConsole.readme': 'See README.md and docs/README.md in the RPG Agent MV root for details.',
+    'slash.help.description': 'List available slash commands',
+    'slash.help.body': 'Available slash commands',
+    'slash.tokens.description': 'Show token usage for the current conversation',
+    'slash.tokens.summary': '{{percent}}% used · {{used}} tokens used, {{limit}} total',
+    'slash.tokens.noSession': 'No opencode session is available for this conversation yet. Send a message first.',
+    'slash.tokens.noModel': 'No model is bound to this conversation, so the context window cannot be read.',
+    'slash.tokens.failed': 'Failed to read context window: {{reason}}',
+    'slash.compact.description': 'Compact the current conversation context',
+    'slash.compact.done': 'Conversation context compacted',
+    'slash.compact.failed': 'Compaction failed: {{reason}}',
+    'slash.compact.noModel': 'No model is bound to this conversation, so context compaction cannot run. Select a model in the composer first.',
+    'slash.unknown': 'Unknown slash command: /{{command}}',
 } as const
 
 export default enUS

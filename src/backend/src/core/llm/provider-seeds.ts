@@ -15,7 +15,7 @@ export interface ProviderSeedEntry {
   protocol?: string;
   baseUrl: string;
   modelsUrl?: string;
-  models?: Array<string | { id: string; label?: string }>;
+  models?: Array<string | { id: string; label?: string; limit?: { context?: number; output?: number } }>;
   supportedEngines?: string[];
   opencodeAuth?: OpencodeAuthConfig;
   disableModelFetch?: boolean;
@@ -58,6 +58,24 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function positiveInteger(value: unknown): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.trunc(parsed);
+}
+
+function normalizeModelLimit(value: unknown): { context?: number; output?: number } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const context = positiveInteger(record.context);
+  const output = positiveInteger(record.output);
+  if (!context && !output) return undefined;
+  return {
+    ...(context ? { context } : {}),
+    ...(output ? { output } : {}),
+  };
+}
+
 function normalizeModels(models: ProviderSeedEntry["models"]): NonNullable<ProviderPatch["models"]> {
   const out: NonNullable<ProviderPatch["models"]> = [];
   const seen = new Set<string>();
@@ -65,10 +83,13 @@ function normalizeModels(models: ProviderSeedEntry["models"]): NonNullable<Provi
     const id = typeof model === "string" ? model : stringValue(model?.id);
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    out.push({
+    const entry: Record<string, unknown> = {
       id,
       label: typeof model === "string" ? id : stringValue(model.label) || id,
-    });
+    };
+    const limit = typeof model === "string" ? undefined : normalizeModelLimit(model.limit);
+    if (limit) entry.limit = limit;
+    out.push(entry);
   }
   return out;
 }
@@ -95,6 +116,9 @@ function providerSeedToPatch(entry: ProviderSeedEntry): { providerId: string; pa
         entry.opencodeAuth && typeof entry.opencodeAuth === "object"
           ? entry.opencodeAuth
           : { enabled: true, envVar: "ANTHROPIC_API_KEY" },
+      disableModelFetch: typeof entry.disableModelFetch === "boolean"
+        ? entry.disableModelFetch
+        : undefined,
     },
   };
 }
@@ -239,6 +263,10 @@ export async function refreshProviderSeedCatalogFields(workflowRoot: string): Pr
     if (typeof entry.disableModelFetch === "boolean") {
       patch.disableModelFetch = entry.disableModelFetch;
     }
+    const seedModels = normalizeModels(entry.models);
+    if (seedModels.some(modelHasLimit)) {
+      patch.models = mergeSeedModels(doc.providers[providerId].models, seedModels);
+    }
     if (Object.keys(patch).length === 0) continue;
 
     await providerRegistry.upsertProvider(workflowRoot, providerId, patch);
@@ -246,6 +274,62 @@ export async function refreshProviderSeedCatalogFields(workflowRoot: string): Pr
   }
 
   return { updated };
+}
+
+function modelIdOf(model: unknown): string {
+  if (typeof model === "string") return stringValue(model);
+  if (model && typeof model === "object" && !Array.isArray(model)) {
+    return stringValue((model as Record<string, unknown>).id);
+  }
+  return "";
+}
+
+function modelHasLimit(model: unknown): boolean {
+  return Boolean(
+    model
+    && typeof model === "object"
+    && !Array.isArray(model)
+    && (model as Record<string, unknown>).limit,
+  );
+}
+
+function mergeSeedModels(
+  existingModels: unknown,
+  seedModels: NonNullable<ProviderPatch["models"]>,
+): NonNullable<ProviderPatch["models"]> {
+  const existing = Array.isArray(existingModels) ? existingModels : [];
+  const seedById = new Map<string, Record<string, unknown>>();
+  for (const seed of seedModels) {
+    const id = modelIdOf(seed);
+    if (id && typeof seed === "object" && !Array.isArray(seed)) {
+      seedById.set(id, seed as Record<string, unknown>);
+    }
+  }
+
+  const merged: NonNullable<ProviderPatch["models"]> = [];
+  const seen = new Set<string>();
+  for (const model of existing) {
+    const id = modelIdOf(model);
+    if (!id) continue;
+    seen.add(id);
+    const seed = seedById.get(id);
+    if (model && typeof model === "object" && !Array.isArray(model)) {
+      const record = model as Record<string, unknown>;
+      merged.push({
+        ...record,
+        ...(seed?.limit ? { limit: seed.limit } : {}),
+      });
+    } else {
+      merged.push(seed ?? { id, label: id });
+    }
+  }
+
+  for (const seed of seedModels) {
+    const id = modelIdOf(seed);
+    if (!id || seen.has(id)) continue;
+    merged.push(seed);
+  }
+  return merged;
 }
 
 export async function ensureProviderSeedsInitialized(workflowRoot: string): Promise<EnsureProviderSeedsResult> {

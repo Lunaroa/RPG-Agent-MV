@@ -4,6 +4,10 @@ import { normalizeApiKey } from "./list-models-resolve.ts";
 interface ModelEntry {
   id: string;
   label: string;
+  limit?: {
+    context?: number;
+    output?: number;
+  };
 }
 
 interface OpencodeAuthConfig {
@@ -142,7 +146,10 @@ function serializeModelEntries(models: ModelEntry[] | undefined): ModelEntry[] {
     }
     const id = String(entry.id || "");
     if (!id) continue;
-    out.push({ id, label: entry.label ? String(entry.label) : id });
+    const serialized: ModelEntry = { id, label: entry.label ? String(entry.label) : id };
+    const limit = normalizeModelLimit((entry as Record<string, unknown>).limit);
+    if (limit) serialized.limit = limit;
+    out.push(serialized);
   }
   return out;
 }
@@ -180,10 +187,31 @@ function normalizeModels(models: unknown[]): ModelEntry[] {
       out.push({ id: m, label: m });
     } else if (typeof m === "object" && (m as Record<string, unknown>).id) {
       const obj = m as Record<string, unknown>;
-      out.push({ id: String(obj.id), label: obj.label ? String(obj.label) : String(obj.id) });
+      const entry: ModelEntry = { id: String(obj.id), label: obj.label ? String(obj.label) : String(obj.id) };
+      const limit = normalizeModelLimit(obj.limit);
+      if (limit) entry.limit = limit;
+      out.push(entry);
     }
   }
   return out;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.trunc(parsed);
+}
+
+function normalizeModelLimit(value: unknown): ModelEntry["limit"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const context = positiveInteger(record.context);
+  const output = positiveInteger(record.output);
+  if (!context && !output) return undefined;
+  return {
+    ...(context ? { context } : {}),
+    ...(output ? { output } : {}),
+  };
 }
 
 function normalizeHiddenModelIds(modelIds: unknown[]): string[] {

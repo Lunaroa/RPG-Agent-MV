@@ -97,6 +97,7 @@ function buildProviderConfig(
   modelId: string,
 ): Record<string, unknown> {
   const baseUrl = providerBaseUrlForOpencode(providerId, provider);
+  const modelConfig = buildModelConfig(provider, modelId);
   return {
     id: providerId,
     name: provider.label || providerId,
@@ -107,13 +108,48 @@ function buildProviderConfig(
       baseURL: baseUrl,
     },
     models: {
-      [modelId]: {
-        id: modelId,
-        name: modelId,
-        tool_call: true,
-        reasoning: true,
-      },
+      [modelId]: modelConfig,
     },
+  };
+}
+
+function buildModelConfig(provider: ProviderRecord, modelId: string): Record<string, unknown> {
+  const model = (provider.models || []).find((entry) => {
+    if (!entry) return false;
+    if (typeof entry === "string") return entry === modelId;
+    return String(entry.id || "") === modelId;
+  });
+  const label = model && typeof model === "object" && "label" in model
+    ? String(model.label || modelId)
+    : modelId;
+  const config: Record<string, unknown> = {
+    id: modelId,
+    name: label,
+    tool_call: true,
+    reasoning: true,
+  };
+  const limit = model && typeof model === "object" && "limit" in model
+    ? normalizeModelLimit((model as Record<string, unknown>).limit)
+    : undefined;
+  if (limit) config.limit = limit;
+  return config;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.trunc(parsed);
+}
+
+function normalizeModelLimit(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const context = positiveInteger(record.context);
+  const output = positiveInteger(record.output);
+  if (!context && !output) return undefined;
+  return {
+    ...(context ? { context } : {}),
+    ...(output ? { output } : {}),
   };
 }
 

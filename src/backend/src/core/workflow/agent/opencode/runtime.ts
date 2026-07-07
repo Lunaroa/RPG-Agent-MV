@@ -233,12 +233,17 @@ export function buildOpencodeServerEnv(
 
 let ensureServerChain: Promise<unknown> = Promise.resolve();
 
-async function ensureServer(input: OpencodeRunInput): Promise<StartedServer> {
+async function ensureServer(input: OpencodeRunInput, options?: { reuse?: boolean }): Promise<StartedServer> {
   const prev = ensureServerChain;
   let release!: () => void;
   ensureServerChain = new Promise<void>((resolve) => { release = resolve; });
   try {
     await prev;
+    // 斜杠命令（tokens/compact）只读会话或压缩，必须复用 agent 跑时已启动的 opencode server：
+    // slash 侧拿不到 provider env（opencodeRunContext 在终态被清空），用空 env 重启 server 会
+    // 丢掉 provider 配置，导致 messages/summarize 报 ProviderModelNotFoundError。reuse=true 时
+    // 只要 singleton 还活着就直接用，不比较 serverKey。
+    if (options?.reuse && singleton && singleton.process.exitCode === null) return singleton;
     const key = serverKey(input);
     if (singleton && singleton.key === key && singleton.process.exitCode === null) return singleton;
     await stopOpencodeServer();
@@ -1375,4 +1380,160 @@ export async function replyOpencodeQuestion(
     answers,
   });
   return Boolean(result.data);
+}
+
+export interface OpencodeSessionActionInput {
+  workflowRoot: string;
+  cwd: string;
+  opencodeSessionId: string;
+  providerId: string;
+  modelId: string;
+  env?: Record<string, string>;
+  config?: Record<string, unknown>;
+}
+
+export interface OpencodeModelLimit {
+  context: number;
+  output?: number;
+}
+
+function buildOpencodeServerBootstrapInput(input: OpencodeSessionActionInput): OpencodeRunInput {
+  return {
+    workflowRoot: input.workflowRoot,
+    cwd: input.cwd,
+    prompt: "",
+    sessionId: "",
+    providerId: "slash-command",
+    modelId: "slash-command",
+    env: input.env ?? {},
+    config: input.config ?? {},
+    timeoutMs: 30_000,
+  };
+}
+
+function extractOpencodeMessageList(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const record = asRecord(data);
+    if (Array.isArray(record.data)) return record.data;
+    if (Array.isArray(record.items)) return record.items;
+  }
+  return [];
+}
+
+export function normalizeOpencodeSessionMessages(data: unknown): Array<Record<string, unknown>> {
+  return extractOpencodeMessageList(data).map((item) => {
+    const record = asRecord(item);
+    if ("info" in record) {
+      return asRecord(record.info);
+    }
+    if (record.type === "assistant") {
+      return {
+        role: "assistant",
+        providerID: record.providerID,
+        modelID: record.modelID,
+        tokens: record.tokens,
+        cost: record.cost,
+      };
+    }
+    return record;
+  });
+}
+
+// opencode v2 错误是 Effect 风格对象 `{ _tag, message, ... }`，不是 Error 实例。
+// `String(error)` 会得到 "[object Object]"，把 SessionNotFoundError / InvalidRequestError
+// 等真实原因吞掉。这里展开成可读字符串，带上 HTTP status 与 sessionID/field 等字段，
+// 让 slash.compact.failed 的 reason 能直接指向根因。
+function describeOpencodeV2Error(error: unknown, response: { status: number }): Error {
+  if (error instanceof Error) return error;
+  const record = asRecord(error);
+  const message = asString(record.message);
+  const tag = asString(record._tag) || asString(record.name);
+  const sessionID = asString(record.sessionID);
+  const field = asString(record.field);
+  const extras: string[] = [];
+  if (response.status) extras.push(`status ${response.status}`);
+  if (sessionID) extras.push(`sessionID=${sessionID}`);
+  if (field) extras.push(`field=${field}`);
+  const head = tag && message ? `${tag}: ${message}` : (tag || message);
+  if (extras.length) return new Error(`${head} (${extras.join("; ")})`);
+  return new Error(head || (error ? JSON.stringify(error) : "opencode error"));
+}
+
+function positiveInteger(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.trunc(parsed);
+}
+
+export async function fetchOpencodeModelLimit(input: OpencodeSessionActionInput): Promise<OpencodeModelLimit> {
+  const providerId = input.providerId.trim();
+  const modelId = input.modelId.trim();
+  if (!providerId || !modelId) {
+    throw new Error("opencode provider or model is missing");
+  }
+
+  const server = await ensureServer(buildOpencodeServerBootstrapInput(input), { reuse: true });
+  const client = createOpencodeClient({ baseUrl: server.url, directory: input.cwd });
+  const result = await client.provider.list({
+    query: { directory: input.cwd },
+  });
+  if (result.error) {
+    throw describeOpencodeV2Error(result.error, result.response);
+  }
+
+  const providers = Array.isArray(asRecord(result.data).all) ? asRecord(result.data).all : [];
+  const provider = providers
+    .map((item) => asRecord(item))
+    .find((item) => asString(item.id) === providerId);
+  if (!provider) {
+    throw new Error(`opencode provider not found: ${providerId}`);
+  }
+
+  const model = asRecord(asRecord(provider.models)[modelId]);
+  if (!Object.keys(model).length) {
+    throw new Error(`opencode model not found: ${providerId}/${modelId}`);
+  }
+
+  const limit = asRecord(model.limit);
+  const context = positiveInteger(limit.context);
+  if (!context) {
+    throw new Error(`opencode model context limit missing: ${providerId}/${modelId}`);
+  }
+
+  return {
+    context,
+    output: positiveInteger(limit.output) ?? undefined,
+  };
+}
+
+export async function fetchOpencodeSessionMessages(input: OpencodeSessionActionInput): Promise<Array<Record<string, unknown>>> {
+  const server = await ensureServer(buildOpencodeServerBootstrapInput(input), { reuse: true });
+  const client = createOpencodeClient({ baseUrl: server.url, directory: input.cwd });
+  const result = await client.session.messages({
+    path: { id: input.opencodeSessionId },
+    query: { directory: input.cwd },
+  });
+  if (result.error) {
+    throw describeOpencodeV2Error(result.error, result.response);
+  }
+  return normalizeOpencodeSessionMessages(result.data);
+}
+
+export async function compactOpencodeSession(input: OpencodeSessionActionInput): Promise<void> {
+  const server = await ensureServer(buildOpencodeServerBootstrapInput(input), { reuse: true });
+  const client = createOpencodeClient({ baseUrl: server.url, directory: input.cwd });
+  // opencode v2 的 session.compact 是上游未实现的 stub（packages/core/src/session.ts 里
+  // 无条件返回 OperationUnavailableError → 503 "Session compact is not available yet"）。
+  // 真实的上下文压缩在 v1 的 session.summarize：它走 compactSvc.create + promptSvc.loop，
+  // 用 LLM 把对话压成摘要。summarize 要求传 providerID/modelID（用哪个模型生成摘要），
+  // 由 AgentSession 持久化的 providerId/modelId 提供。
+  const result = await client.session.summarize({
+    path: { id: input.opencodeSessionId },
+    query: { directory: input.cwd },
+    body: { providerID: input.providerId, modelID: input.modelId },
+  });
+  if (result.error) {
+    throw describeOpencodeV2Error(result.error, result.response);
+  }
 }

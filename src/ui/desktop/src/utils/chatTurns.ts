@@ -57,6 +57,7 @@ function isExecutionSegment(segment: ChatSegment): boolean {
   return segment.type === 'meta'
     && !isMetaType(segment, 'artifact')
     && !isMetaType(segment, 'event-preview-list')
+    && !isMetaType(segment, 'slash_status')
 }
 
 function isEmptyTypedSegment(segment: ChatSegment): boolean {

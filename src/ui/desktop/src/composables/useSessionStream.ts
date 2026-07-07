@@ -906,6 +906,14 @@ export function useSessionStream() {
     appendSegment(createSegment('user', text, metadata))
   }
 
+  function appendSlashStatusSegment(text: string, ok: boolean): void {
+    appendSegment(createSegment('meta', '', {
+      type: 'slash_status',
+      text,
+      ok,
+    }))
+  }
+
   // 加载历史对话：用持久化的 segments 还原整条转录（id 重排避免与后续新段冲突）。
   function restoreSegments(saved: ChatSegment[]): void {
     resetState()
@@ -950,6 +958,7 @@ export function useSessionStream() {
     resetState,
     resetTurnState,
     appendUserSegment,
+    appendSlashStatusSegment,
     restoreSegments,
     replaySessionEvents,
     setProductLanguage,

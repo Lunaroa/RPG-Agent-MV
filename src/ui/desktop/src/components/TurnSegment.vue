@@ -82,6 +82,10 @@
         total {{ (Number(segment.metadata.inputTokens) || 0) + (Number(segment.metadata.outputTokens) || 0) }}
       </span>
     </template>
+    <template v-else-if="segment.metadata?.type === 'slash_status'">
+      <span class="meta-tag" :class="segment.metadata?.ok === false ? 'error' : ''">{{ t('turn.meta.slashStatus') }}</span>
+      <span class="meta-text">{{ segment.metadata.text }}</span>
+    </template>
     <template v-else-if="segment.metadata?.type === 'preparation'">
       <span class="meta-tag">{{ t('turn.meta.prep') }}</span>
       <span class="meta-text">

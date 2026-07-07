@@ -48,6 +48,8 @@ declare global {
         listSubagents(sessionId: string): Promise<unknown>;
         stopSubagent(sessionId: string, taskId: string): Promise<unknown>;
         preview(payload: unknown): Promise<unknown>;
+        listSlashCommands(): Promise<SlashCommandListItem[]>;
+        slashCommand(sessionId: string, command: string, args?: string): Promise<SlashCommandResult>;
         revealArtifacts(sessionId: string): Promise<unknown>;
         subscribe(sessionId: string, lastSequence?: number): Promise<{ sessionId: string; replayed: number }>;
         unsubscribe(sessionId: string): Promise<{ success: boolean }>;
@@ -418,6 +420,33 @@ export const eventRegistry = {
   },
 };
 
+export interface SlashCommandListItem {
+  name: string;
+  descriptionKey: string;
+  argsHint?: string;
+}
+
+export interface SlashCommandResult {
+  ok: boolean;
+  display: 'composer_hint' | 'chat_status';
+  message: string;
+  messageKey?: string;
+  messageParams?: Record<string, string | number>;
+  data?: {
+    contextUsedTokens?: number;
+    contextWindowTokens?: number;
+    contextPercent?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    totalTokens?: number;
+    totalCost?: number;
+    turnCount?: number;
+  };
+}
+
 export const sessions = {
   list() {
     return desktopApi().sessions.list();
@@ -460,6 +489,12 @@ export const sessions = {
   },
   preview(payload: unknown) {
     return desktopApi().sessions.preview(payload);
+  },
+  listSlashCommands() {
+    return desktopApi().sessions.listSlashCommands();
+  },
+  slashCommand(sessionId: string, command: string, args?: string) {
+    return desktopApi().sessions.slashCommand(sessionId, command, args);
   },
   revealArtifacts(sessionId: string) {
     return desktopApi().sessions.revealArtifacts(sessionId);

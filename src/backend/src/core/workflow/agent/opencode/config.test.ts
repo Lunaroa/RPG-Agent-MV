@@ -225,3 +225,30 @@ test("openai-compatible providers use the openai-compatible AI SDK package", () 
   assert.equal(providerConfig.api, "https://api.deepseek.com");
   assert.deepEqual(providerConfig.env, ["OPENAI_API_KEY"]);
 });
+
+test("opencode config carries model context limits from provider metadata", () => {
+  const providerRecord = provider("openai-compatible", "https://example.invalid");
+  providerRecord.models = [
+    {
+      id: "glm-5.2",
+      label: "GLM 5.2",
+      limit: {
+        context: 262144,
+        output: 131072,
+      },
+    },
+  ];
+  const config = buildOpencodeRuntimeConfig({
+    workflowRoot: WORKFLOW_ROOT,
+    providerId: "agentplan",
+    modelId: "glm-5.2",
+    provider: providerRecord,
+  });
+
+  const providerConfig = (config.provider as Record<string, Record<string, unknown>>).agentplan;
+  const models = providerConfig.models as Record<string, Record<string, unknown>>;
+  assert.deepEqual(models["glm-5.2"].limit, {
+    context: 262144,
+    output: 131072,
+  });
+});

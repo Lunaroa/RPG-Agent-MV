@@ -96,8 +96,20 @@
           />
         </div>
 
+        <ComposerTokenUsagePopover
+          v-if="tokenUsage && !activeAsk"
+          class="composer-token-usage"
+          :data="tokenUsage"
+        />
+
+        <ComposerHintBar
+          v-if="composerHint"
+          :text="composerHint"
+          :variant="composerHintVariant"
+        />
+
         <ChatComposer
-          v-else
+          v-if="!activeAsk"
           v-model="inputMsg"
           :is-running="isRunning"
           :available-providers="availableProviders"
@@ -105,6 +117,7 @@
           v-model:selected-model="selectedModel"
           v-model:thinking-level="thinkingLevel"
           v-model:plan-mode="planMode"
+          :slash-commands="slashCommands"
           @send="sendMessage"
           @stop="handleStop"
           @select-profile="onSelectProfile"
@@ -150,7 +163,7 @@ import {
   resolveRegistryContractMapId,
 } from '../utils/placementMapId'
 import { isAskResultLocked, type Ask, type AskResult } from '../utils/askParser'
-import { eventRegistry, sessions as sessionsApi } from '../api/client'
+import { eventRegistry, sessions as sessionsApi, type SlashCommandListItem, type SlashCommandResult } from '../api/client'
 import {
   activeConversationRootId,
   groupSessionsIntoConversations,
@@ -168,6 +181,7 @@ import {
 } from '../utils/chatProviderOptions'
 import { profileIdFromBinding } from '../utils/profile-id'
 import { canSubmitChatMessage, isSendDebounced } from '../utils/chatSendGuard'
+import { parseSlashSubmit } from '../utils/chatSlashInput'
 import {
   approveIntent,
   buildPlanModePrefix,
@@ -183,6 +197,8 @@ import {
 } from '../utils/agentIntent'
 import type { SessionRuntimeEvent } from '../api/client'
 import ChatComposer from '../components/ChatComposer.vue'
+import ComposerHintBar from '../components/ComposerHintBar.vue'
+import ComposerTokenUsagePopover from '../components/ComposerTokenUsagePopover.vue'
 import ChatLog from '../components/ChatLog.vue'
 import AskCard from '../components/AskCard.vue'
 import ConversationList from '../components/ConversationList.vue'
@@ -226,6 +242,7 @@ const {
   detachFromSession,
   resetState,
   appendUserSegment,
+  appendSlashStatusSegment,
   restoreSegments,
   replaySessionEvents,
   setProductLanguage,
@@ -257,8 +274,13 @@ function formatErrorText(errorValue: unknown, fallback?: string): string {
 
 // Agent / 思考档与模型选择写入 workspace（SQLite）。
 const savedComposerPrefs = workspaceStore.settings.composer || {}
+type ComposerTokenUsageData = NonNullable<SlashCommandResult['data']>
 
 const inputMsg = ref('')
+const slashCommands = ref<SlashCommandListItem[]>([])
+const composerHint = ref('')
+const composerHintVariant = ref<'info' | 'error'>('info')
+const tokenUsage = ref<ComposerTokenUsageData | null>(null)
 const sendInFlight = ref(false)
 let lastSendAtMs = 0
 
@@ -430,8 +452,66 @@ function buildPlanModePrefixForSend(): string {
   return buildPlanModePrefix(activePlanFilePath.value.trim())
 }
 
+async function loadSlashCommands(): Promise<void> {
+  try {
+    slashCommands.value = await sessionsApi.listSlashCommands()
+  } catch (error) {
+    console.error('Failed to load slash commands:', error)
+    slashCommands.value = []
+  }
+}
+
+async function handleSlashCommand(command: string, args = ''): Promise<void> {
+  const sessionId = activeSession.value?.id
+  if (!sessionId) {
+    tokenUsage.value = null
+    composerHintVariant.value = 'error'
+    composerHint.value = t('slash.noActiveSession')
+    return
+  }
+
+  try {
+    const result = await sessionsApi.slashCommand(sessionId, command, args)
+    if (result.display === 'composer_hint') {
+      if (result.ok && result.messageKey === 'slash.tokens.summary') {
+        if (
+          !result.data
+          || result.data.contextUsedTokens === undefined
+          || result.data.contextWindowTokens === undefined
+          || result.data.contextPercent === undefined
+        ) {
+          throw new Error('tokens command returned no context window data')
+        }
+        tokenUsage.value = result.data
+        composerHint.value = ''
+        return
+      }
+      tokenUsage.value = null
+      composerHintVariant.value = result.ok ? 'info' : 'error'
+      composerHint.value = result.message
+      return
+    }
+    tokenUsage.value = null
+    appendSlashStatusSegment(result.message, result.ok)
+    void schedulePersistTranscript()
+  } catch (error) {
+    tokenUsage.value = null
+    composerHintVariant.value = 'error'
+    composerHint.value = formatErrorText(error)
+  }
+}
+
 async function sendMessage() {
   const trimmed = inputMsg.value.trim()
+  if (!trimmed) return
+
+  const parsed = parseSlashSubmit(trimmed)
+  if (parsed.kind === 'slash') {
+    inputMsg.value = ''
+    await handleSlashCommand(parsed.command, parsed.args)
+    return
+  }
+
   if (!canSubmitChatMessage(trimmed, composerBusy.value)) return
   const nowMs = Date.now()
   if (isSendDebounced(lastSendAtMs, nowMs)) return
@@ -1409,6 +1489,7 @@ async function resumeChatView(): Promise<void> {
 
   await settingsStore.loadAgentExecution()
   await loadProviders({ preserveCurrentSelection: Boolean(activeSession.value) })
+  await loadSlashCommands()
   await runPreflightCheck()
   await loadHistory()
 }
@@ -1422,6 +1503,12 @@ onMounted(() => {
   observeBottomSlot(bottomSlotRef.value)
   void nextTick(measureBottomSlot)
   void resumeChatView()
+})
+
+watch(inputMsg, (value) => {
+  if (!value.trim()) return
+  if (composerHint.value) composerHint.value = ''
+  if (tokenUsage.value) tokenUsage.value = null
 })
 
 onUnmounted(() => {
@@ -1502,6 +1589,14 @@ onUnmounted(() => {
   pointer-events: auto;
 }
 
+.composer-token-usage {
+  position: absolute;
+  right: max(calc((100% - var(--app-composer-max)) / 2 + 112px), calc(var(--space-8) + 70px));
+  bottom: 82px;
+  z-index: 2;
+  pointer-events: auto;
+}
+
 .ask-dock {
   position: relative;
   z-index: 1;
@@ -1526,6 +1621,11 @@ onUnmounted(() => {
 
   .chat-bottom-slot::before {
     width: 100%;
+  }
+
+  .composer-token-usage {
+    right: var(--space-5);
+    bottom: 80px;
   }
 
   .ask-dock :deep(.ask-card) {

@@ -13,6 +13,15 @@ interface IpcLike {
   removeHandler: (channel: string) => void;
 }
 
+interface SlashCommandResult {
+  ok: boolean;
+  display: 'composer_hint' | 'chat_status';
+  message: string;
+  messageKey?: string;
+  messageParams?: Record<string, string | number>;
+  data?: Record<string, unknown>;
+}
+
 interface SessionRuntime {
   getBootstrap: () => unknown;
   list: () => unknown[];
@@ -29,6 +38,8 @@ interface SessionRuntime {
   getPlan: (sessionId: string) => unknown;
   listSubagents: (sessionId: string) => unknown;
   stopSubagent: (sessionId: string, taskId: string) => unknown;
+  listSlashCommands(): Record<string, unknown>[];
+  slashCommand(sessionId: string, command: string, args?: string): Promise<SlashCommandResult>;
   subscribe: (
     sessionId: string,
     subscriber: { id: string; write: (event: unknown) => void },
@@ -57,6 +68,8 @@ export const SESSION_IPC_CHANNELS = [
   'sessions:listSubagents',
   'sessions:stopSubagent',
   'sessions:preview',
+  'sessions:listSlashCommands',
+  'sessions:slashCommand',
   'sessions:revealArtifacts',
   'sessions:subscribe',
   'sessions:unsubscribe',
@@ -91,6 +104,10 @@ export function registerSessionIpcHandlers(
     toIpcPayload(runtime.stopSubagent(sessionId, taskId))
   ));
   ipc.handle('sessions:preview', (_event, payload: Record<string, unknown>) => runtime.preview(withoutInternalSystemPrompt(payload)));
+  ipc.handle('sessions:listSlashCommands', () => toIpcPayload(runtime.listSlashCommands()));
+  ipc.handle('sessions:slashCommand', async (_event, sessionId: string, command: string, args?: string) => (
+    toIpcPayload(await runtime.slashCommand(sessionId, command, args))
+  ));
   ipc.handle('sessions:revealArtifacts', (_event, sessionId: string) => {
     if (!actions) throw new Error('reveal artifacts is unavailable');
     required(runtime.get(sessionId));

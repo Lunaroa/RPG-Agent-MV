@@ -4,19 +4,27 @@
       class="chat-composer"
       :class="{ 'is-focused': focused, 'has-text': !!modelValue.trim() }"
     >
-      <textarea
-        ref="textareaRef"
-        class="composer-textarea"
-        data-ui-id="chat-input"
-        :value="modelValue"
-        rows="1"
-        :placeholder="t('composer.placeholder')"
-        :disabled="isRunning"
-        @input="onInput"
-        @focus="focused = true"
-        @blur="focused = false"
-        @keydown.enter="onEnter"
-      />
+      <div class="composer-input-shell">
+        <SlashPopover
+          :open="slashOpen"
+          :items="filteredSlashCommands"
+          :active-index="slashActiveIndex"
+          @select="applySlashCommand"
+        />
+        <textarea
+          ref="textareaRef"
+          class="composer-textarea"
+          data-ui-id="chat-input"
+          :value="modelValue"
+          rows="1"
+          :placeholder="t('composer.placeholder')"
+          @input="onInput"
+          @focus="focused = true"
+          @blur="onBlur"
+          @keydown="onKeydown"
+          @keydown.enter="onEnter"
+        />
+      </div>
 
       <div class="composer-footer">
         <div class="composer-footer-left">
@@ -61,13 +69,13 @@
             type="button"
             class="composer-send-btn"
             data-ui-id="chat-send"
-            :class="{ 'is-stop': isRunning }"
-            :disabled="!isRunning && !modelValue.trim()"
-            :title="isRunning ? t('composer.stop') : t('composer.sendEnter')"
-            :aria-label="isRunning ? t('composer.stop') : t('composer.send')"
+            :class="{ 'is-stop': showStopButton }"
+            :disabled="sendDisabled"
+            :title="showStopButton ? t('composer.stop') : t('composer.sendEnter')"
+            :aria-label="showStopButton ? t('composer.stop') : t('composer.send')"
             @click="onSendClick"
           >
-            <el-icon v-if="isRunning"><VideoPause /></el-icon>
+            <el-icon v-if="showStopButton"><VideoPause /></el-icon>
             <el-icon v-else><Top /></el-icon>
           </button>
         </div>
@@ -77,9 +85,17 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { Top, VideoPause } from '@element-plus/icons-vue'
 import ModelPicker from './model-picker/ModelPicker.vue'
+import SlashPopover from './SlashPopover.vue'
+import type { SlashCommandListItem } from '../api/client'
+import { filterSlashCommands } from '../utils/chatSlashFilter'
+import {
+  isCompleteSlashCommand,
+  isSlashInput,
+  shouldOpenSlashPopover,
+} from '../utils/chatSlashInput'
 import { useI18n } from '../i18n'
 
 const props = defineProps<{
@@ -90,6 +106,7 @@ const props = defineProps<{
   selectedModel: string
   thinkingLevel: string
   planMode: boolean
+  slashCommands: SlashCommandListItem[]
 }>()
 
 const emit = defineEmits<{
@@ -105,14 +122,32 @@ const emit = defineEmits<{
 
 const focused = ref(false)
 const textareaRef = ref<HTMLTextAreaElement>()
+const slashActiveIndex = ref(0)
 const { t } = useI18n()
+
+const filteredSlashCommands = computed(() => filterSlashCommands(props.modelValue, props.slashCommands))
+const slashReadyToSend = computed(() => isCompleteSlashCommand(props.modelValue, props.slashCommands))
+const slashOpen = computed(() => (
+  focused.value
+  && !slashReadyToSend.value
+  && shouldOpenSlashPopover(props.modelValue)
+))
+const showStopButton = computed(() => props.isRunning && !isSlashInput(props.modelValue))
+const sendDisabled = computed(() => {
+  if (showStopButton.value) return false
+  return !props.modelValue.trim()
+})
+
+watch([slashOpen, filteredSlashCommands], () => {
+  slashActiveIndex.value = 0
+})
 
 function onSelectProfile(payload: { providerId: string; modelId: string }) {
   emit('select-profile', payload)
 }
 
 function onSendClick() {
-  if (props.isRunning) {
+  if (showStopButton.value) {
     emit('stop')
     return
   }
@@ -121,10 +156,60 @@ function onSendClick() {
 }
 
 function onEnter(event: KeyboardEvent) {
+  if (slashReadyToSend.value) {
+    if (event.shiftKey || event.isComposing) return
+    event.preventDefault()
+    onSendClick()
+    return
+  }
+  if (slashOpen.value && filteredSlashCommands.value.length > 0) {
+    event.preventDefault()
+    const selected = filteredSlashCommands.value[slashActiveIndex.value]
+    if (selected) applySlashCommand(selected.name)
+    return
+  }
   if (event.shiftKey || event.isComposing) return
   event.preventDefault()
-  if (props.isRunning) return
+  if (props.isRunning && !isSlashInput(props.modelValue)) return
   onSendClick()
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (!slashOpen.value || filteredSlashCommands.value.length === 0) return
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    slashActiveIndex.value = (slashActiveIndex.value + 1) % filteredSlashCommands.value.length
+    return
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    const total = filteredSlashCommands.value.length
+    slashActiveIndex.value = (slashActiveIndex.value - 1 + total) % total
+    return
+  }
+  if (event.key === 'Tab') {
+    event.preventDefault()
+    const selected = filteredSlashCommands.value[slashActiveIndex.value]
+    if (selected) applySlashCommand(selected.name)
+    return
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    focused.value = false
+    textareaRef.value?.blur()
+  }
+}
+
+function applySlashCommand(name: string) {
+  emit('update:modelValue', `/${name} `)
+  void nextTick(() => {
+    textareaRef.value?.focus()
+    resizeTextarea()
+  })
+}
+
+function onBlur() {
+  focused.value = false
 }
 
 function onInput(event: Event) {
@@ -142,3 +227,9 @@ function resizeTextarea() {
 
 watch(() => props.modelValue, () => void nextTick(resizeTextarea))
 </script>
+
+<style scoped>
+.composer-input-shell {
+  position: relative;
+}
+</style>

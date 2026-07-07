@@ -59,6 +59,9 @@ contextBridge.exposeInMainWorld('api', {
     stopSubagent: (sessionId: string, taskId: string) =>
       ipcRenderer.invoke('sessions:stopSubagent', sessionId, taskId),
     preview: (payload: unknown) => ipcRenderer.invoke('sessions:preview', payload),
+    listSlashCommands: () => ipcRenderer.invoke('sessions:listSlashCommands'),
+    slashCommand: (sessionId: string, command: string, args?: string) =>
+      ipcRenderer.invoke('sessions:slashCommand', sessionId, command, args),
     revealArtifacts: (sessionId: string) => ipcRenderer.invoke('sessions:revealArtifacts', sessionId),
     subscribe: (sessionId: string, lastSequence?: number) =>
       ipcRenderer.invoke('sessions:subscribe', sessionId, lastSequence),

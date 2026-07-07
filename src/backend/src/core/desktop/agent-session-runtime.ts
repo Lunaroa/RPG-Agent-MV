@@ -32,6 +32,8 @@ import { resolveExecutionEngineForProduct } from "../../../../contract/opencode-
 import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
 import { ensureAgentOutputDirs } from "../workflow/agent/agent-output-dirs.ts";
 import { replyOpencodePermission, replyOpencodeQuestion } from "../workflow/agent/opencode/runtime.ts";
+import { SlashCommandService } from "./slash-command/service.ts";
+import type { SlashCommandResult } from "./slash-command/types.ts";
 import type { ProductLanguage, SessionPlanSnapshot, SessionSubagentSnapshot } from "../../../../contract/types.ts";
 import { normalizeProductLanguage } from "../../../../contract/i18n.ts";
 import { backendText } from "../i18n/messages.ts";
@@ -103,6 +105,8 @@ export interface AgentSession {
   status: string;
   agentId: string;
   profileId: string;
+  providerId: string;
+  modelId: string;
   createdAt: string;
   updatedAt: string;
   outDir: string;
@@ -210,6 +214,7 @@ export class AgentSessionRuntime {
   private readonly replyQuestion: typeof replyOpencodeQuestion;
   private readonly approveWorkflowProposalFn: typeof executeApprovedWorkflowProposal;
   private readonly readWorkflowProposalFn: typeof readWorkflowProposal;
+  private readonly slashCommandService: SlashCommandService;
 
   constructor(workflowRoot: string, deps: RuntimeDependencies = {}) {
     this.workflowRoot = workflowRoot;
@@ -224,6 +229,26 @@ export class AgentSessionRuntime {
     this.replyQuestion = deps.replyQuestion || replyOpencodeQuestion;
     this.approveWorkflowProposalFn = deps.approveWorkflowProposal || executeApprovedWorkflowProposal;
     this.readWorkflowProposalFn = deps.readWorkflowProposal || readWorkflowProposal;
+    this.slashCommandService = new SlashCommandService({
+      workflowRoot,
+      getSession: (sessionId) => {
+        const session = this.sessions.get(sessionId);
+        if (!session) return null;
+        return {
+          id: session.id,
+          status: session.status,
+          project: session.project,
+          opencodeSessionId: session.opencodeSessionId,
+          productLanguage: session.productLanguage,
+          opencodeRunContext: session.opencodeRunContext,
+          providerId: session.providerId,
+          modelId: session.modelId,
+        };
+      },
+      stopSession: (sessionId) => {
+        this.stop(sessionId);
+      },
+    });
   }
 
   async initialize(): Promise<void> {
@@ -306,6 +331,8 @@ export class AgentSessionRuntime {
       status: "preparing",
       agentId: DEFAULT_AGENT_ID,
       profileId: input.profileId || "default",
+      providerId: input.providerId || "",
+      modelId: input.modelId || "",
       createdAt: generatedAt,
       updatedAt: generatedAt,
       outDir: path.join(this.workflowRoot, "runtime", "sessions", sessionId, "agent-console"),
@@ -404,6 +431,14 @@ export class AgentSessionRuntime {
       this.askGateway.destroySession(session.id).catch(() => {});
     }
     return this.summarize(session);
+  }
+
+  listSlashCommands(): Record<string, unknown>[] {
+    return this.slashCommandService.listCommands();
+  }
+
+  async slashCommand(sessionId: string, command: string, args?: string): Promise<SlashCommandResult> {
+    return this.slashCommandService.execute({ sessionId, command, args });
   }
 
   delete(id: string): boolean {
@@ -1269,6 +1304,8 @@ export class AgentSessionRuntime {
       id: session.id,
       status: session.status,
       profileId: session.profileId,
+      providerId: session.providerId,
+      modelId: session.modelId,
       project: session.project,
       productLanguage: session.productLanguage,
       intent: session.intent.slice(0, 240),
@@ -1330,6 +1367,8 @@ export class AgentSessionRuntime {
       status,
       agentId: DEFAULT_AGENT_ID,
       profileId: String(meta.profileId || "default"),
+      providerId: String(meta.providerId || ""),
+      modelId: String(meta.modelId || ""),
       createdAt: String(meta.createdAt || new Date().toISOString()),
       updatedAt: String(meta.updatedAt || meta.createdAt || new Date().toISOString()),
       outDir,

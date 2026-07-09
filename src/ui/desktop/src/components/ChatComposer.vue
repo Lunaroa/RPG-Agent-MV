@@ -51,6 +51,11 @@
         </div>
 
         <div class="composer-footer-right">
+          <ContextUsageRing
+            :context-percent="contextPercent"
+            :context-used-tokens="contextUsedTokens"
+            :context-window-tokens="contextWindowTokens"
+          />
           <ModelPicker
             variant="chip"
             placement="top-end"
@@ -88,6 +93,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { Top, VideoPause } from '@element-plus/icons-vue'
 import ModelPicker from './model-picker/ModelPicker.vue'
+import ContextUsageRing from './ContextUsageRing.vue'
 import SlashPopover from './SlashPopover.vue'
 import type { SlashCommandListItem } from '../api/client'
 import { filterSlashCommands } from '../utils/chatSlashFilter'
@@ -107,6 +113,9 @@ const props = defineProps<{
   thinkingLevel: string
   planMode: boolean
   slashCommands: SlashCommandListItem[]
+  contextPercent?: number | null
+  contextUsedTokens?: number | null
+  contextWindowTokens?: number | null
 }>()
 
 const emit = defineEmits<{

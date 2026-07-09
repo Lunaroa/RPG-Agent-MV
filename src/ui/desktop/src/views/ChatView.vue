@@ -96,12 +96,6 @@
           />
         </div>
 
-        <ComposerTokenUsagePopover
-          v-if="tokenUsage && !activeAsk"
-          class="composer-token-usage"
-          :data="tokenUsage"
-        />
-
         <ComposerHintBar
           v-if="composerHint"
           :text="composerHint"
@@ -118,6 +112,9 @@
           v-model:thinking-level="thinkingLevel"
           v-model:plan-mode="planMode"
           :slash-commands="slashCommands"
+          :context-percent="contextUsage?.contextPercent ?? null"
+          :context-used-tokens="contextUsage?.contextUsedTokens ?? null"
+          :context-window-tokens="contextUsage?.contextWindowTokens ?? null"
           @send="sendMessage"
           @stop="handleStop"
           @select-profile="onSelectProfile"
@@ -163,7 +160,12 @@ import {
   resolveRegistryContractMapId,
 } from '../utils/placementMapId'
 import { isAskResultLocked, type Ask, type AskResult } from '../utils/askParser'
-import { eventRegistry, sessions as sessionsApi, type SlashCommandListItem, type SlashCommandResult } from '../api/client'
+import {
+  eventRegistry,
+  sessions as sessionsApi,
+  type ContextUsageSnapshot,
+  type SlashCommandListItem,
+} from '../api/client'
 import {
   activeConversationRootId,
   groupSessionsIntoConversations,
@@ -198,7 +200,6 @@ import {
 import type { SessionRuntimeEvent } from '../api/client'
 import ChatComposer from '../components/ChatComposer.vue'
 import ComposerHintBar from '../components/ComposerHintBar.vue'
-import ComposerTokenUsagePopover from '../components/ComposerTokenUsagePopover.vue'
 import ChatLog from '../components/ChatLog.vue'
 import AskCard from '../components/AskCard.vue'
 import ConversationList from '../components/ConversationList.vue'
@@ -274,13 +275,13 @@ function formatErrorText(errorValue: unknown, fallback?: string): string {
 
 // Agent / 思考档与模型选择写入 workspace（SQLite）。
 const savedComposerPrefs = workspaceStore.settings.composer || {}
-type ComposerTokenUsageData = NonNullable<SlashCommandResult['data']>
 
 const inputMsg = ref('')
 const slashCommands = ref<SlashCommandListItem[]>([])
 const composerHint = ref('')
 const composerHintVariant = ref<'info' | 'error'>('info')
-const tokenUsage = ref<ComposerTokenUsageData | null>(null)
+const contextUsage = ref<ContextUsageSnapshot | null>(null)
+let contextUsageRequestId = 0
 const sendInFlight = ref(false)
 let lastSendAtMs = 0
 
@@ -374,8 +375,17 @@ watch(currentStatus, (newStatus) => {
     void taskBoard.loadFromBackend(activeSession.value.id)
     void sessionPlan.loadFromBackend(activeSession.value.id)
     void subagents.loadFromBackend(activeSession.value.id)
+    void refreshContextUsage(activeSession.value.id)
   }
 })
+
+watch(
+  () => activeSession.value?.id,
+  (sessionId) => {
+    void refreshContextUsage(sessionId ?? null)
+  },
+  { immediate: true },
+)
 
 // summary 在终态之后到达；再次保存可把 artifact 和结果摘要一起落盘。
 watch(summaryRevision, () => {
@@ -461,10 +471,37 @@ async function loadSlashCommands(): Promise<void> {
   }
 }
 
+async function refreshContextUsage(sessionId?: string | null): Promise<void> {
+  const id = sessionId ?? activeSession.value?.id
+  if (!id) {
+    contextUsage.value = null
+    return
+  }
+
+  const requestId = ++contextUsageRequestId
+  try {
+    const result = await sessionsApi.getContextUsage(id)
+    if (requestId !== contextUsageRequestId) return
+    if (result.ok) {
+      contextUsage.value = result.data
+      return
+    }
+    // New / unbound sessions have no opencode context yet — show empty ring, not a stale value.
+    if (result.messageKey === 'slash.tokens.noSession' || result.messageKey === 'slash.tokens.noModel') {
+      contextUsage.value = null
+      return
+    }
+    // Other failures: keep last good snapshot; do not invent a percent.
+    console.warn('Failed to refresh context usage:', result.message)
+  } catch (error) {
+    if (requestId !== contextUsageRequestId) return
+    console.warn('Failed to refresh context usage:', error)
+  }
+}
+
 async function handleSlashCommand(command: string, args = ''): Promise<void> {
   const sessionId = activeSession.value?.id
   if (!sessionId) {
-    tokenUsage.value = null
     composerHintVariant.value = 'error'
     composerHint.value = t('slash.noActiveSession')
     return
@@ -475,27 +512,32 @@ async function handleSlashCommand(command: string, args = ''): Promise<void> {
     if (result.display === 'composer_hint') {
       if (result.ok && result.messageKey === 'slash.tokens.summary') {
         if (
-          !result.data
-          || result.data.contextUsedTokens === undefined
-          || result.data.contextWindowTokens === undefined
-          || result.data.contextPercent === undefined
+          result.data
+          && result.data.contextUsedTokens !== undefined
+          && result.data.contextWindowTokens !== undefined
+          && result.data.contextPercent !== undefined
         ) {
-          throw new Error('tokens command returned no context window data')
+          contextUsage.value = {
+            contextUsedTokens: result.data.contextUsedTokens,
+            contextWindowTokens: result.data.contextWindowTokens,
+            contextPercent: result.data.contextPercent,
+          }
+        } else {
+          await refreshContextUsage(sessionId)
         }
-        tokenUsage.value = result.data
         composerHint.value = ''
         return
       }
-      tokenUsage.value = null
       composerHintVariant.value = result.ok ? 'info' : 'error'
       composerHint.value = result.message
       return
     }
-    tokenUsage.value = null
     appendSlashStatusSegment(result.message, result.ok)
+    if (command === 'compact' && result.ok) {
+      void refreshContextUsage(sessionId)
+    }
     void schedulePersistTranscript()
   } catch (error) {
-    tokenUsage.value = null
     composerHintVariant.value = 'error'
     composerHint.value = formatErrorText(error)
   }
@@ -1275,6 +1317,7 @@ async function startNewConversation() {
   detachFromSession()
   newConversation()
   resetState()
+  contextUsage.value = null
   if (previousSessionId) {
     taskBoard.clear(previousSessionId)
     sessionPlan.clear(previousSessionId)
@@ -1508,7 +1551,6 @@ onMounted(() => {
 watch(inputMsg, (value) => {
   if (!value.trim()) return
   if (composerHint.value) composerHint.value = ''
-  if (tokenUsage.value) tokenUsage.value = null
 })
 
 onUnmounted(() => {
@@ -1589,14 +1631,6 @@ onUnmounted(() => {
   pointer-events: auto;
 }
 
-.composer-token-usage {
-  position: absolute;
-  right: max(calc((100% - var(--app-composer-max)) / 2 + 112px), calc(var(--space-8) + 70px));
-  bottom: 82px;
-  z-index: 2;
-  pointer-events: auto;
-}
-
 .ask-dock {
   position: relative;
   z-index: 1;
@@ -1621,11 +1655,6 @@ onUnmounted(() => {
 
   .chat-bottom-slot::before {
     width: 100%;
-  }
-
-  .composer-token-usage {
-    right: var(--space-5);
-    bottom: 80px;
   }
 
   .ask-dock :deep(.ask-card) {

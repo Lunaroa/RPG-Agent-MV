@@ -22,6 +22,18 @@ interface SlashCommandResult {
   data?: Record<string, unknown>;
 }
 
+interface GetContextUsageResult {
+  ok: boolean;
+  data?: {
+    contextUsedTokens: number;
+    contextWindowTokens: number;
+    contextPercent: number;
+  };
+  message?: string;
+  messageKey?: string;
+  messageParams?: Record<string, string | number>;
+}
+
 interface SessionRuntime {
   getBootstrap: () => unknown;
   list: () => unknown[];
@@ -39,6 +51,7 @@ interface SessionRuntime {
   listSubagents: (sessionId: string) => unknown;
   stopSubagent: (sessionId: string, taskId: string) => unknown;
   listSlashCommands(): Record<string, unknown>[];
+  getContextUsage(sessionId: string): Promise<GetContextUsageResult>;
   slashCommand(sessionId: string, command: string, args?: string): Promise<SlashCommandResult>;
   subscribe: (
     sessionId: string,
@@ -69,6 +82,7 @@ export const SESSION_IPC_CHANNELS = [
   'sessions:stopSubagent',
   'sessions:preview',
   'sessions:listSlashCommands',
+  'sessions:getContextUsage',
   'sessions:slashCommand',
   'sessions:revealArtifacts',
   'sessions:subscribe',
@@ -105,6 +119,9 @@ export function registerSessionIpcHandlers(
   ));
   ipc.handle('sessions:preview', (_event, payload: Record<string, unknown>) => runtime.preview(withoutInternalSystemPrompt(payload)));
   ipc.handle('sessions:listSlashCommands', () => toIpcPayload(runtime.listSlashCommands()));
+  ipc.handle('sessions:getContextUsage', async (_event, sessionId: string) => (
+    toIpcPayload(await runtime.getContextUsage(sessionId))
+  ));
   ipc.handle('sessions:slashCommand', async (_event, sessionId: string, command: string, args?: string) => (
     toIpcPayload(await runtime.slashCommand(sessionId, command, args))
   ));

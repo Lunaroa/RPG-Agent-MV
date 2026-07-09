@@ -33,7 +33,7 @@ import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
 import { ensureAgentOutputDirs } from "../workflow/agent/agent-output-dirs.ts";
 import { replyOpencodePermission, replyOpencodeQuestion } from "../workflow/agent/opencode/runtime.ts";
 import { SlashCommandService } from "./slash-command/service.ts";
-import type { SlashCommandResult } from "./slash-command/types.ts";
+import type { GetContextUsageResult, SlashCommandResult } from "./slash-command/types.ts";
 import type { ProductLanguage, SessionPlanSnapshot, SessionSubagentSnapshot } from "../../../../contract/types.ts";
 import { normalizeProductLanguage } from "../../../../contract/i18n.ts";
 import { backendText } from "../i18n/messages.ts";
@@ -435,6 +435,10 @@ export class AgentSessionRuntime {
 
   listSlashCommands(): Record<string, unknown>[] {
     return this.slashCommandService.listCommands();
+  }
+
+  async getContextUsage(sessionId: string): Promise<GetContextUsageResult> {
+    return this.slashCommandService.getContextUsage(sessionId);
   }
 
   async slashCommand(sessionId: string, command: string, args?: string): Promise<SlashCommandResult> {

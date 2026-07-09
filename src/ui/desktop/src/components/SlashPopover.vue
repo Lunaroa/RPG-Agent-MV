@@ -10,14 +10,14 @@
       @click="emit('select', item.name)"
     >
       <span class="slash-name">/{{ item.name }}</span>
-      <span class="slash-desc">{{ t(item.descriptionKey) }}</span>
+      <span class="slash-desc">{{ t(item.descriptionKey as MessageKey) }}</span>
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { SlashCommandListItem } from '../api/client'
-import { useI18n } from '../i18n'
+import { useI18n, type MessageKey } from '../i18n'
 
 defineProps<{
   open: boolean

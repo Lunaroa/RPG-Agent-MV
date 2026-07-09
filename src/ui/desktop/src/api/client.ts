@@ -49,6 +49,7 @@ declare global {
         stopSubagent(sessionId: string, taskId: string): Promise<unknown>;
         preview(payload: unknown): Promise<unknown>;
         listSlashCommands(): Promise<SlashCommandListItem[]>;
+        getContextUsage(sessionId: string): Promise<GetContextUsageResult>;
         slashCommand(sessionId: string, command: string, args?: string): Promise<SlashCommandResult>;
         revealArtifacts(sessionId: string): Promise<unknown>;
         subscribe(sessionId: string, lastSequence?: number): Promise<{ sessionId: string; replayed: number }>;
@@ -447,6 +448,21 @@ export interface SlashCommandResult {
   };
 }
 
+export interface ContextUsageSnapshot {
+  contextUsedTokens: number;
+  contextWindowTokens: number;
+  contextPercent: number;
+}
+
+export type GetContextUsageResult =
+  | { ok: true; data: ContextUsageSnapshot }
+  | {
+    ok: false;
+    message: string;
+    messageKey: string;
+    messageParams?: Record<string, string | number>;
+  };
+
 export const sessions = {
   list() {
     return desktopApi().sessions.list();
@@ -492,6 +508,9 @@ export const sessions = {
   },
   listSlashCommands() {
     return desktopApi().sessions.listSlashCommands();
+  },
+  getContextUsage(sessionId: string) {
+    return desktopApi().sessions.getContextUsage(sessionId) as Promise<GetContextUsageResult>;
   },
   slashCommand(sessionId: string, command: string, args?: string) {
     return desktopApi().sessions.slashCommand(sessionId, command, args);

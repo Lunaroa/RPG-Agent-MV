@@ -20,6 +20,21 @@ export interface SlashCommandTokenData {
   turnCount: number;
 }
 
+export interface ContextUsageSnapshot {
+  contextUsedTokens: number;
+  contextWindowTokens: number;
+  contextPercent: number;
+}
+
+export type GetContextUsageResult =
+  | { ok: true; data: ContextUsageSnapshot }
+  | {
+    ok: false;
+    message: string;
+    messageKey: string;
+    messageParams?: Record<string, string | number>;
+  };
+
 export interface SlashCommandResult {
   ok: boolean;
   display: SlashCommandDisplay;

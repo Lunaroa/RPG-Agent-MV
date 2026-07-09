@@ -38,6 +38,11 @@ describe('session IPC binding payload filter', () => {
       getPlan() { return {}; },
       listSubagents() { return []; },
       stopSubagent() { return {}; },
+      listSlashCommands() { return []; },
+      async getContextUsage() { return { ok: false, message: 'n/a', messageKey: 'slash.tokens.noSession' }; },
+      async slashCommand() {
+        return { ok: false, display: 'composer_hint', message: 'n/a' };
+      },
       subscribe() { return [{ sequence: 0 }]; },
       unsubscribe() {},
     };

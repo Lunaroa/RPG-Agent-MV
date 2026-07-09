@@ -2,12 +2,21 @@ import type { ProductLanguage } from "../../../../../contract/types.ts";
 import { backendText } from "../../i18n/messages.ts";
 import { resolveProjectPath } from "../project-service.ts";
 import {
+  resolveOpencodeActionBootstrap,
+  type OpencodeActionBootstrapDeps,
+} from "./opencode-action-bootstrap.ts";
+import {
   aggregateAssistantTokenUsage,
   calculateContextPercent,
   latestAssistantContextTokens,
 } from "./opencode-token-usage.ts";
 import { getSlashCommand, listSlashCommands } from "./registry.ts";
-import type { SlashCommandListItem, SlashCommandResult } from "./types.ts";
+import type {
+  GetContextUsageResult,
+  SlashCommandListItem,
+  SlashCommandResult,
+  SlashCommandTokenData,
+} from "./types.ts";
 import {
   compactOpencodeSession,
   fetchOpencodeModelLimit,
@@ -49,24 +58,30 @@ export interface SlashCommandRuntime {
   fetchMessages?: typeof fetchOpencodeSessionMessages;
   fetchModelLimit?: typeof fetchOpencodeModelLimit;
   compactSession?: typeof compactOpencodeSession;
+  resolveBootstrap?: OpencodeActionBootstrapDeps;
 }
 
-function buildOpencodeActionInput(
+async function buildOpencodeActionInput(
   runtime: SlashCommandRuntime,
   session: SlashCommandSession,
-): OpencodeSessionActionInput {
+): Promise<OpencodeSessionActionInput> {
   const opencodeSessionId = session.opencodeSessionId?.trim();
   if (!opencodeSessionId) {
     throw new Error("missing opencode session");
   }
+  const bootstrap = await resolveOpencodeActionBootstrap(
+    runtime.workflowRoot,
+    session,
+    runtime.resolveBootstrap,
+  );
   return {
     workflowRoot: runtime.workflowRoot,
     cwd: resolveProjectPath(runtime.workflowRoot, session.project),
     opencodeSessionId,
     providerId: session.providerId,
     modelId: session.modelId,
-    env: session.opencodeRunContext?.env ?? {},
-    config: session.opencodeRunContext?.config ?? {},
+    env: bootstrap.env,
+    config: bootstrap.config,
   };
 }
 
@@ -120,20 +135,6 @@ function noSessionResult(language: ProductLanguage): SlashCommandResult {
   };
 }
 
-function commandFailureResult(
-  language: ProductLanguage,
-  key: string,
-  params?: Record<string, string | number>,
-): SlashCommandResult {
-  return {
-    ok: false,
-    display: "composer_hint",
-    message: localized(language, key, params),
-    messageKey: key,
-    messageParams: params,
-  };
-}
-
 function errorReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -147,6 +148,23 @@ export class SlashCommandService {
 
   listCommands(): SlashCommandListItem[] {
     return listSlashCommands();
+  }
+
+  async getContextUsage(sessionId: string): Promise<GetContextUsageResult> {
+    const session = this.runtime.getSession(sessionId);
+    if (!session) {
+      throw new Error(`session not found: ${sessionId}`);
+    }
+    const resolved = await this.resolveContextUsage(session, session.productLanguage);
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        message: resolved.message,
+        messageKey: resolved.messageKey,
+        messageParams: resolved.messageParams,
+      };
+    }
+    return { ok: true, data: resolved.data };
   }
 
   async execute(input: {
@@ -180,21 +198,29 @@ export class SlashCommandService {
     return unknownResult(language, input.command);
   }
 
-  private async executeTokens(
+  private async resolveContextUsage(
     session: SlashCommandSession,
     language: ProductLanguage,
-  ): Promise<SlashCommandResult> {
+  ): Promise<GetContextUsageResult & { aggregate?: SlashCommandTokenData }> {
     if (!session.opencodeSessionId?.trim()) {
-      return noSessionResult(language);
+      return {
+        ok: false,
+        message: localized(language, "slash.tokens.noSession"),
+        messageKey: "slash.tokens.noSession",
+      };
     }
     if (!session.providerId?.trim() || !session.modelId?.trim()) {
-      return commandFailureResult(language, "slash.tokens.noModel");
+      return {
+        ok: false,
+        message: localized(language, "slash.tokens.noModel"),
+        messageKey: "slash.tokens.noModel",
+      };
     }
 
     const fetchMessages = this.runtime.fetchMessages ?? fetchOpencodeSessionMessages;
     const fetchModelLimit = this.runtime.fetchModelLimit ?? fetchOpencodeModelLimit;
     try {
-      const actionInput = buildOpencodeActionInput(this.runtime, session);
+      const actionInput = await buildOpencodeActionInput(this.runtime, session);
       const messages = await fetchMessages(actionInput);
       const aggregate = aggregateAssistantTokenUsage(messages);
       const snapshot = latestAssistantContextTokens(messages);
@@ -206,31 +232,72 @@ export class SlashCommandService {
       const contextUsedTokens = snapshot.usedTokens;
       const contextWindowTokens = modelLimit.context;
       const contextPercent = calculateContextPercent(contextUsedTokens, contextWindowTokens);
-      const data = {
+      return {
+        ok: true,
+        data: {
+          contextUsedTokens,
+          contextWindowTokens,
+          contextPercent,
+        },
+        aggregate,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: localized(language, "slash.tokens.failed", { reason: errorReason(error) }),
+        messageKey: "slash.tokens.failed",
+        messageParams: { reason: errorReason(error) },
+      };
+    }
+  }
+
+  private async executeTokens(
+    session: SlashCommandSession,
+    language: ProductLanguage,
+  ): Promise<SlashCommandResult> {
+    const resolved = await this.resolveContextUsage(session, language);
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        display: "composer_hint",
+        message: resolved.message,
+        messageKey: resolved.messageKey,
+        messageParams: resolved.messageParams,
+      };
+    }
+
+    const { contextUsedTokens, contextWindowTokens, contextPercent } = resolved.data;
+    const aggregate = resolved.aggregate ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      totalCost: 0,
+      turnCount: 0,
+    };
+    return {
+      ok: true,
+      display: "composer_hint",
+      message: localized(language, "slash.tokens.summary", {
+        percent: contextPercent,
+        used: contextUsedTokens,
+        limit: contextWindowTokens,
+      }),
+      messageKey: "slash.tokens.summary",
+      messageParams: {
+        percent: contextPercent,
+        used: contextUsedTokens,
+        limit: contextWindowTokens,
+      },
+      data: {
         ...aggregate,
         contextUsedTokens,
         contextWindowTokens,
         contextPercent,
-      };
-      return {
-        ok: true,
-        display: "composer_hint",
-        message: localized(language, "slash.tokens.summary", {
-          percent: contextPercent,
-          used: contextUsedTokens,
-          limit: contextWindowTokens,
-        }),
-        messageKey: "slash.tokens.summary",
-        messageParams: {
-          percent: contextPercent,
-          used: contextUsedTokens,
-          limit: contextWindowTokens,
-        },
-        data,
-      };
-    } catch (error) {
-      return commandFailureResult(language, "slash.tokens.failed", { reason: errorReason(error) });
-    }
+      },
+    };
   }
 
   private async executeCompact(
@@ -259,7 +326,7 @@ export class SlashCommandService {
 
     const compactSession = this.runtime.compactSession ?? compactOpencodeSession;
     try {
-      await compactSession(buildOpencodeActionInput(this.runtime, session));
+      await compactSession(await buildOpencodeActionInput(this.runtime, session));
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       return {

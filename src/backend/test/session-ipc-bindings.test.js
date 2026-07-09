@@ -48,6 +48,13 @@ describe('session IPC bindings', () => {
         derivedStateCalls.push(['stopSubagent', sessionId, taskId]);
         return { ok: true, requestId: 'req-1' };
       },
+      listSlashCommands() { return [{ name: 'help' }]; },
+      async getContextUsage() {
+        return { ok: true, data: { contextUsedTokens: 0, contextWindowTokens: 1000, contextPercent: 0 } };
+      },
+      async slashCommand() {
+        return { ok: true, display: 'composer_hint', message: 'ok' };
+      },
       subscribe(sessionId, subscriber, lastSequence) {
         subscriptions.push([sessionId, subscriber.id, lastSequence]);
         subscriber.write({ type: 'status', status: 'starting', sequence: 1 });

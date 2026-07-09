@@ -55,4 +55,7 @@ export interface CompatibleProviderSummary {
   hiddenModelIds: string[];
   supportedEngines?: AgentExecutionEngine[];
   presetKind?: string;
+  disableModelFetch?: boolean;
+  opencodeAuth?: { enabled?: boolean; envVar?: string };
+  source?: "opencode" | "product-seed" | "user";
 }

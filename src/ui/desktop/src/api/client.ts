@@ -985,6 +985,8 @@ export const settings = {
       skipped: string[];
       errors: Array<{ providerId: string; error: string }>;
       seedPath: string;
+      catalogCount: number;
+      seedCount: number;
       clearedCount: number;
     }>;
   },

@@ -4,7 +4,14 @@
 
 Settings control the model provider, execution engine, product language, tool permissions, and local project behavior.
 
-Model and provider settings bind the local Agent runtime to a provider, model, API key, and base URL. If a model test fails, fix the provider configuration before starting a production session. Some preset providers that don't expose a model-list endpoint (e.g. Volcano Ark Agent Plan / Coding Plan) disable the "fetch models from API" action; pick from their preset list instead.
+Model and provider settings bind the local Agent runtime to a provider, model, API key, and base URL. If a model test fails, fix the provider configuration before starting a production session.
+
+The provider directory comes from two sources. Click **Sync providers** to write both into local storage:
+
+- **Built-in providers**: the opencode/models.dev runtime catalog (OpenAI, Anthropic, and more).
+- **Product supplements**: Volcano Ark Agent Plan / Coding Plan / DouBaoSeed / BytePlus (local seeds for endpoints that are not in the opencode catalog).
+
+Some product supplements that don't expose a model-list endpoint (e.g. Volcano Ark Agent Plan) disable the "fetch models from API" action; pick from their preset list instead. Syncing providers writes the runtime catalog and product supplements (including model context-limit metadata) and removes unkeyed legacy presets that are outside the current catalog/seed set; providers that already have an API key are kept. Sync requires a working runtime; failures are reported explicitly and do not silently fall back to seed-only import.
 
 Language settings control product UI language. RPG Agent MV supports `zh-CN` and `en-US`; this does not change the language of existing game content, dialogue, event text, or asset names.
 

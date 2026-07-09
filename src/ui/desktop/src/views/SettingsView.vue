@@ -846,8 +846,25 @@ function friendlyConnectionError(message: string | undefined): string {
   return text
 }
 
-function formatProviderSeedSyncMessage(imported: number, clearedCount: number, skipped: number, errorCount: number): string {
-  let message = t('settings.model.syncSeedSummary', { imported })
+function formatProviderSeedSyncMessage(result: {
+  imported?: string[];
+  clearedCount?: number;
+  skipped?: string[];
+  errors?: Array<{ providerId: string; error: string }>;
+  catalogCount?: number;
+  seedCount?: number;
+}): string {
+  const imported = result.imported?.length || 0
+  const clearedCount = result.clearedCount || 0
+  const skipped = result.skipped?.length || 0
+  const errorCount = result.errors?.length || 0
+  const catalogCount = result.catalogCount ?? 0
+  const seedCount = result.seedCount ?? 0
+  let message = t('settings.model.syncSeedSummary', {
+    imported,
+    catalogCount,
+    seedCount,
+  })
   if (clearedCount) message += t('settings.model.syncSeedCleared', { count: clearedCount })
   if (skipped) message += t('settings.model.syncSeedSkipped', { count: skipped })
   message += t('settings.model.syncSeedAction')
@@ -958,6 +975,21 @@ function buildProviderUpsertPatch(): Record<string, unknown> | null {
   const provider = compatibleProviders.value.find((p) => p.id === providerId) || selectedBindingProvider.value
   if (!providerId || !provider) return null
   const patch: Record<string, unknown> = buildInlineProviderConfigPatch(provider) || {}
+  // Catalog / product-seed rows may not exist in SQLite yet — persist directory metadata on first save.
+  if (!provider.credentialPresent) {
+    if (provider.displayName || provider.id) patch.label = provider.displayName || provider.id
+    if (provider.protocol) patch.protocol = provider.protocol
+    if (provider.baseUrl && !patch.baseUrl) patch.baseUrl = provider.baseUrl
+    if (provider.opencodeAuth) patch.opencodeAuth = provider.opencodeAuth
+    if (typeof provider.disableModelFetch === 'boolean') patch.disableModelFetch = provider.disableModelFetch
+    if (Array.isArray(provider.supportedEngines) && provider.supportedEngines.length) {
+      patch.supportedEngines = provider.supportedEngines
+    }
+    if (Array.isArray(provider.models) && provider.models.length && !patch.models) {
+      patch.models = provider.models
+    }
+    if (provider.presetKind) patch.presetKind = provider.presetKind
+  }
   const modelId = resolveBindingModelId(provider)
   if (modelId) {
     const existingModels = normalizeModelOptions(provider, provider.models || [], inlineBaseUrlForProvider(provider), provider.id)
@@ -989,7 +1021,8 @@ async function onInlineProviderConfigBlur(event?: Event) {
   const providerId = activeInlineProviderId()
   const provider = compatibleProviders.value.find((p) => p.id === providerId) || selectedBindingProvider.value
   if (!providerId || !provider || inlineAutoSavingProviderId.value) return
-  const patch = buildInlineProviderConfigPatch(provider)
+  // First activation of a catalog/seed row needs full metadata, not only key/baseUrl.
+  const patch = (!provider.credentialPresent ? buildProviderUpsertPatch() : buildInlineProviderConfigPatch(provider))
   if (!patch) return
   inlineAutoSavingProviderId.value = providerId
   try {
@@ -1178,8 +1211,38 @@ function onManageProviders() { activeName.value = 'providers' }
 async function onSyncProviderSeeds() {
   importPresetsLoading.value = true; importPresetsMessage.value = null; importPresetsError.value = false
   try {
-    const result = await store.syncProviderSeeds(); const imported = result.imported?.length || 0; const skipped = result.skipped?.length || 0; importPresetsMessage.value = formatProviderSeedSyncMessage(imported, result.clearedCount || 0, skipped, result.errors?.length || 0); if (imported > 0) toast('success', t('settings.model.syncProviderSuccess', { count: imported })); else toast('warn', t('settings.model.noProvidersSynced')); await loadCompatibleProviders(); applyAgentExecution()
-  } catch (err) { importPresetsError.value = true; importPresetsMessage.value = err instanceof Error ? err.message : t('settings.model.syncFailed'); toast('error', importPresetsMessage.value) } finally { importPresetsLoading.value = false }
+    const result = await store.syncProviderSeeds()
+    const imported = result.imported?.length || 0
+    const errorCount = result.errors?.length || 0
+    importPresetsMessage.value = formatProviderSeedSyncMessage(result)
+    if (imported > 0 && errorCount === 0) {
+      toast('success', t('settings.model.syncProviderSuccess', {
+        count: imported,
+        catalogCount: result.catalogCount ?? 0,
+        seedCount: result.seedCount ?? 0,
+      }))
+    } else if (imported > 0) {
+      toast('warn', t('settings.model.syncProviderPartial', {
+        count: imported,
+        errors: errorCount,
+        catalogCount: result.catalogCount ?? 0,
+        seedCount: result.seedCount ?? 0,
+      }))
+    } else {
+      toast('warn', errorCount
+        ? t('settings.model.syncProviderAllFailed', { errors: errorCount })
+        : t('settings.model.noProvidersSynced'))
+    }
+    await store.loadProviders()
+    await loadCompatibleProviders()
+    applyAgentExecution()
+  } catch (err) {
+    importPresetsError.value = true
+    importPresetsMessage.value = err instanceof Error ? err.message : t('settings.model.syncFailed')
+    toast('error', importPresetsMessage.value)
+  } finally {
+    importPresetsLoading.value = false
+  }
 }
 function onAddProviderClick() { selectedProvider.value = null; showProviderForm.value = true }
 function onEditProvider(provider: ProviderSummary) { selectedProvider.value = provider; showProviderForm.value = true }

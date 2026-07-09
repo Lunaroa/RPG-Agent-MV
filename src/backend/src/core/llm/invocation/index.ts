@@ -9,6 +9,7 @@ import {
   resolveBinding,
   resolveInvocationCore,
 } from "./resolve.ts";
+import { listProvidersForSettings } from "./settings-providers.ts";
 import type {
   ActivateBindingResult,
   CompatibleProviderSummary,
@@ -25,6 +26,8 @@ export type {
   ResolveInvocationInput,
   ResolveInvocationResult,
 } from "./types.ts";
+export type { ProviderListSource, SettingsProviderSummary } from "./settings-providers.ts";
+export { listProvidersForSettings } from "./settings-providers.ts";
 export {
   sanitizeProfileModelId,
   canonicalProfileProviderId,
@@ -65,25 +68,7 @@ export async function listCompatibleProviders(
   engine: AgentExecutionEngine,
   workflowRoot: string,
 ): Promise<CompatibleProviderSummary[]> {
-  const doc = await providerRegistry.loadDocument(workflowRoot);
-  const out: CompatibleProviderSummary[] = [];
-  for (const [id, provider] of Object.entries(doc.providers || {})) {
-    if (!providerSupportsEngine(provider, engine)) continue;
-    const serialized = providerRegistry.serializeProvider(id, provider);
-    out.push({
-      id: serialized.id,
-      displayName: serialized.label,
-      protocol: serialized.protocol,
-      baseUrl: serialized.baseUrl,
-      defaultModel: serialized.models[0]?.id || "",
-      credentialPresent: serialized.credentialPresent,
-      models: serialized.models,
-      hiddenModelIds: serialized.hiddenModelIds,
-      supportedEngines: defaultSupportedEngines(provider),
-      presetKind: typeof provider.presetKind === "string" ? provider.presetKind : undefined,
-    });
-  }
-  return out;
+  return listProvidersForSettings(engine, workflowRoot);
 }
 
 async function runMaterializers(

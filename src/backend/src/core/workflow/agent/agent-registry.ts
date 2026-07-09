@@ -357,6 +357,11 @@ function mergeDynamicProviderProfiles(profiles: Record<string, ProfileConfig>, d
     const providerId = row.id;
     const provider = row.config as StoredProviderConfig;
     if (!provider) continue;
+    const credentialValue = typeof provider.credentialValue === "string"
+      ? provider.credentialValue.trim()
+      : "";
+    // Full catalog sync may leave 150+ unkeyed presets in SQLite — only activate keyed ones.
+    if (!credentialValue) continue;
     const auth = provider.opencodeAuth || {};
     if (!auth.enabled && provider.protocol !== "anthropic" && provider.protocol !== "openai-compatible") continue;
     const models = Array.isArray(provider.models) ? provider.models : [];

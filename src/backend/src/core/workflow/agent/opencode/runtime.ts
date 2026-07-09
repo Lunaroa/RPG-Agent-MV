@@ -233,6 +233,10 @@ export function buildOpencodeServerEnv(
 
 let ensureServerChain: Promise<unknown> = Promise.resolve();
 
+export async function ensureOpencodeServer(input: OpencodeRunInput, options?: { reuse?: boolean }): Promise<StartedServer> {
+  return ensureServer(input, options);
+}
+
 async function ensureServer(input: OpencodeRunInput, options?: { reuse?: boolean }): Promise<StartedServer> {
   const prev = ensureServerChain;
   let release!: () => void;

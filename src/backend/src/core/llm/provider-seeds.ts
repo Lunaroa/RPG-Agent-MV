@@ -6,6 +6,10 @@ import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
 import { ProviderDao } from "../db/dao/provider-dao.ts";
 import * as providerRegistry from "./provider-registry.ts";
 import type { OpencodeAuthConfig, ProviderPatch } from "./provider-registry.ts";
+import {
+  listOpencodeCatalogProviders,
+  type OpencodeCatalogProvider,
+} from "../workflow/agent/opencode/catalog.ts";
 
 const PROVIDER_SEED_RELATIVE_PATH = path.join("config", "provider-seeds", "providers.json");
 
@@ -30,10 +34,18 @@ export interface SyncProviderSeedsResult {
   imported: string[];
   skipped: string[];
   errors: Array<{ providerId: string; error: string }>;
-  /** 本地种子库文件路径（运行时唯一来源）。 */
+  /** 本地种子库文件路径。 */
   seedPath: string;
-  /** 被清理的旧 Claude 格式（anthropic 且无 Key）供应商数量。 */
+  /** 本次从 opencode 目录写入的供应商数量。 */
+  catalogCount: number;
+  /** 本次从产品种子写入的供应商数量。 */
+  seedCount: number;
+  /** 被清理的无 Key 且不在 catalog∪seed 中的遗留供应商数量。 */
   clearedCount: number;
+}
+
+export interface SyncProviderSeedsDeps {
+  listCatalog?: typeof listOpencodeCatalogProviders;
 }
 
 export interface EnsureProviderSeedsResult {
@@ -112,6 +124,7 @@ function providerSeedToPatch(entry: ProviderSeedEntry): { providerId: string; pa
       supportedEngines: Array.isArray(entry.supportedEngines)
         ? entry.supportedEngines.map(String)
         : undefined,
+      presetKind: "product-seed",
       opencodeAuth:
         entry.opencodeAuth && typeof entry.opencodeAuth === "object"
           ? entry.opencodeAuth
@@ -182,36 +195,126 @@ export function writeProviderSeedFile(
   return { seedPath: filePath, written: doc.providers.length };
 }
 
+function catalogProviderToPatch(
+  provider: OpencodeCatalogProvider,
+): { providerId: string; patch: ProviderPatch } {
+  const providerId = stringValue(provider.id);
+  if (!providerId) throw new Error("catalog provider id is required");
+  // Some models.dev providers omit api URL (SDK supplies the default at runtime).
+  // Still persist the preset so Sync can import the full catalog; user may fill baseUrl later.
+  const baseUrl = stringValue(provider.baseUrl);
+
+  const models: NonNullable<ProviderPatch["models"]> = [];
+  const seen = new Set<string>();
+  for (const model of provider.models || []) {
+    const id = stringValue(model.id);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const entry: Record<string, unknown> = {
+      id,
+      label: stringValue(model.label) || id,
+    };
+    const limit = normalizeModelLimit(model.limit);
+    if (limit) entry.limit = limit;
+    models.push(entry);
+  }
+
+  return {
+    providerId,
+    patch: {
+      label: stringValue(provider.label) || providerId,
+      protocol: provider.protocol || "openai-compatible",
+      baseUrl,
+      models,
+      supportedEngines: ["opencode"],
+      presetKind: "opencode",
+      opencodeAuth: {
+        enabled: true,
+        envVar: stringValue(provider.envVar)
+          || (provider.protocol === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"),
+      },
+    },
+  };
+}
+
+async function upsertMergedProvider(
+  workflowRoot: string,
+  providerId: string,
+  patch: ProviderPatch,
+): Promise<void> {
+  const existing = await providerRegistry.getProvider(workflowRoot, providerId);
+  const nextPatch: ProviderPatch = { ...patch };
+  if (existing && Array.isArray(patch.models)) {
+    nextPatch.models = mergeSeedModels(
+      existing.models,
+      patch.models as NonNullable<ProviderPatch["models"]>,
+    );
+  }
+  await providerRegistry.upsertProvider(workflowRoot, providerId, nextPatch);
+}
+
 /**
- * 从本地种子库（committed 出厂文件）同步供应商到供应商库。完全离线，不读取 cc-switch。
+ * 同步供应商到本地库：opencode 运行时目录 ∪ 产品种子。
  *
- * - 合并保留已有 Key：种子库不含 Key，已填的 Key 一律保留（不清空）。
- * - 清理旧 Claude 格式种子：删除 anthropic 协议且未填 Key、且不在新种子里的遗留供应商；带 Key 或自定义供应商一律保留。
+ * - 先写 catalog（含 models[].limit），再写种子（同 id 时种子覆盖产品字段）。
+ * - 不传 Key：已填的 credentialValue 一律保留。
+ * - models 按 id 合并，不整表盲替换。
+ * - 清理：无 Key 且不在 catalog∪seed 中的遗留项。
+ * - 拉 catalog 失败则整次失败（不回退成只同步种子）。
  */
-export async function syncProviderSeeds(workflowRoot: string): Promise<SyncProviderSeedsResult> {
+export async function syncProviderSeeds(
+  workflowRoot: string,
+  deps: SyncProviderSeedsDeps = {},
+): Promise<SyncProviderSeedsResult> {
+  const listCatalog = deps.listCatalog ?? listOpencodeCatalogProviders;
+  const catalog = await listCatalog(workflowRoot);
   const seed = readProviderSeedFile(workflowRoot);
+
   const imported: string[] = [];
   const skipped: string[] = [];
   const errors: Array<{ providerId: string; error: string }> = [];
-  const seenProviderIds = new Set<string>();
-  const seedIds = new Set<string>();
+  const keepIds = new Set<string>();
+  let catalogCount = 0;
+  let seedCount = 0;
 
+  for (const entry of catalog) {
+    const providerId = stringValue(entry.id);
+    if (!providerId) {
+      skipped.push("");
+      continue;
+    }
+    keepIds.add(providerId);
+    try {
+      const candidate = catalogProviderToPatch(entry);
+      await upsertMergedProvider(workflowRoot, candidate.providerId, candidate.patch);
+      imported.push(candidate.providerId);
+      catalogCount += 1;
+    } catch (error) {
+      errors.push({
+        providerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const seenSeedIds = new Set<string>();
   for (const entry of seed.providers) {
     const providerId = stringValue(entry.id);
     if (!providerId) {
       skipped.push("");
       continue;
     }
-    if (seenProviderIds.has(providerId)) {
+    if (seenSeedIds.has(providerId)) {
       skipped.push(providerId);
       continue;
     }
-    seenProviderIds.add(providerId);
-    seedIds.add(providerId);
+    seenSeedIds.add(providerId);
+    keepIds.add(providerId);
     try {
       const candidate = providerSeedToPatch(entry);
-      await providerRegistry.upsertProvider(workflowRoot, candidate.providerId, candidate.patch);
-      imported.push(candidate.providerId);
+      await upsertMergedProvider(workflowRoot, candidate.providerId, candidate.patch);
+      if (!imported.includes(candidate.providerId)) imported.push(candidate.providerId);
+      seedCount += 1;
     } catch (error) {
       errors.push({
         providerId,
@@ -223,8 +326,8 @@ export async function syncProviderSeeds(workflowRoot: string): Promise<SyncProvi
   const existing = await providerRegistry.listProviders(workflowRoot);
   let clearedCount = 0;
   for (const provider of existing) {
-    if (seedIds.has(provider.id)) continue;
-    if (provider.protocol === "anthropic" && !provider.credentialPresent) {
+    if (keepIds.has(provider.id)) continue;
+    if (!provider.credentialPresent) {
       if (await providerRegistry.removeProvider(workflowRoot, provider.id)) clearedCount += 1;
     }
   }
@@ -237,6 +340,8 @@ export async function syncProviderSeeds(workflowRoot: string): Promise<SyncProvi
     skipped,
     errors,
     seedPath: seedPath(workflowRoot),
+    catalogCount,
+    seedCount,
     clearedCount,
   };
 }

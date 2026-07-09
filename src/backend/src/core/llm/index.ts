@@ -169,3 +169,18 @@ export type {
   SyncProviderSeedsResult,
   WriteProviderSeedFileResult,
 } from "./provider-seeds.ts";
+export {
+  listOpencodeCatalogProviders,
+  mapOpencodeProviderList,
+} from "../workflow/agent/opencode/catalog.ts";
+export type {
+  OpencodeCatalogProvider,
+  OpencodeCatalogModel,
+} from "../workflow/agent/opencode/catalog.ts";
+export {
+  listProvidersForSettings,
+} from "./invocation/settings-providers.ts";
+export type {
+  SettingsProviderSummary,
+  ProviderListSource,
+} from "./invocation/settings-providers.ts";

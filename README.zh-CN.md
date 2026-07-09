@@ -6,7 +6,7 @@
 
 RPG Agent MV 将自然语言目标转换为 RPG Maker MV 项目里的事件、脚本和批量修改任务。它适合个人作者在已有工程上推进剧情、整理事件、改脚本和处理插件相关问题。
 
-![Version](https://img.shields.io/badge/version-0.2.2-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2.3-blue.svg)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22.5.0-339933.svg)
 ![Electron](https://img.shields.io/badge/built%20with-Electron-47848F.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)

@@ -66,6 +66,6 @@ The current version is not a full replacement for the RPG Maker MV editor. In th
 
 ## Version
 
-- Documentation version: v0.2.2-en
-- Last updated: 2026-07-01
-- Applies to: RPG Agent MV v0.2.2
+- Documentation version: v0.2.3-en
+- Last updated: 2026-07-09
+- Applies to: RPG Agent MV v0.2.3

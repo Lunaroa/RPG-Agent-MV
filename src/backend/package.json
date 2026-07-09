@@ -1,6 +1,6 @@
 {
   "name": "rmmv-agent-backend",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "RPG Maker MV agent workflow backend — MCP and core logic.",

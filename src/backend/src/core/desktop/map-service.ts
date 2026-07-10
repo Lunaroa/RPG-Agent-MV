@@ -53,13 +53,12 @@ interface LibraryImportContext {
 }
 import {
   deleteStagedProjectFile,
-  ensureStagedMap,
   getMapFileForRead,
   getProjectFileForRead,
   getProjectStagingStatus,
   getStagingStatus,
   isInside,
-  markStagedMapUpdated,
+  withStagedMapMutation,
   writeStagedProjectBuffer,
   writeStagedProjectJson,
 } from './staging-service.ts';
@@ -201,9 +200,13 @@ export function deleteMapDraft(workflowRoot: string, project: string, mapId: num
 }
 
 export function postMapTiles(workflowRoot: string, project: string, mapId: number, edits: TileEdit[]) {
-  const staged = ensureStagedMap(workflowRoot, project, mapId);
-  const report = applyBrushEdit({ project: staged.project, mapId, edits });
-  return { ...report, staging: markStagedMapUpdated(workflowRoot, project, mapId) };
+  const staged = withStagedMapMutation(
+    workflowRoot,
+    project,
+    mapId,
+    (target) => applyBrushEdit({ project: target.project, mapId, edits }),
+  );
+  return { ...staged.result, staging: staged.staging };
 }
 
 export function setStartPositionDraft(workflowRoot: string, project: string, mapId: number, x: number, y: number) {

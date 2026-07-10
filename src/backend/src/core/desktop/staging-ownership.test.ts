@@ -11,6 +11,7 @@ import { StagingManifestDao } from '../db/dao/staging-manifest-dao.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJson } from '../rmmv/json.ts';
 import { runRmmvMapEditor } from '../rmmv/rmmv-handlers.ts';
+import * as stagingLockApi from './staging-lock.ts';
 import * as stagingApi from './staging-service.ts';
 
 interface Fixture {
@@ -66,6 +67,83 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
     assert.equal((normalized.files as any)['www/data/Actors.json'].operationId, undefined);
   });
 
+  test('uses one Windows project, lock, and file identity across path casing aliases', {
+    skip: process.platform !== 'win32',
+  }, () => {
+    const projectAlias = fixture.project.toUpperCase();
+    assert.notEqual(projectAlias, fixture.project);
+    assert.equal(stagingApi.projectHash(projectAlias), stagingApi.projectHash(fixture.project));
+
+    registerOperation(fixture, operation('database-op-case-a', ['www/data/Actors.json']));
+    expectCode(
+      () => registerOperation(
+        { ...fixture, project: projectAlias },
+        operation('database-op-case-b', ['WWW/DATA/ACTORS.JSON']),
+      ),
+      'STAGING_FILE_OWNED',
+    );
+
+    const file = lockPath(fixture);
+    fs.writeFileSync(file, JSON.stringify({
+      pid: process.pid,
+      token: 'case-shared-lock',
+      createdAt: new Date().toISOString(),
+    }), { flag: 'wx' });
+    expectCode(
+      () => stagingApi.writeStagedProjectJson(
+        fixture.root,
+        projectAlias,
+        'WWW/DATA/CLASSES.JSON',
+        [null],
+      ),
+      'STAGING_BUSY',
+    );
+    fs.unlinkSync(file);
+  });
+
+  test('migrates one legacy case-sensitive v4 identity only when the canonical target is empty', {
+    skip: process.platform !== 'win32',
+  }, () => {
+    const legacyHash = legacyProjectHash(fixture.project);
+    const canonicalHash = canonicalProjectHash(fixture.project);
+    assert.notEqual(legacyHash, canonicalHash);
+    seedLegacyDraft(fixture, legacyHash, 'www/data/Actors.json', [null, { id: 1, name: 'Legacy Draft' }]);
+
+    const projectAlias = fixture.project.toUpperCase();
+    const status = stagingApi.getProjectStagingStatus(fixture.root, projectAlias) as any;
+    assert.equal(stagingApi.projectHash(projectAlias), canonicalHash);
+    assert.equal(status.staged, true);
+    assert.deepEqual(status.operations, []);
+    assert.equal(status.files[0].relativePath, 'www/data/Actors.json');
+    const effective = stagingApi.getProjectFileForRead(
+      fixture.root,
+      projectAlias,
+      'WWW/DATA/ACTORS.JSON',
+    );
+    assert.ok(effective);
+    assert.equal((JSON.parse(fs.readFileSync(effective, 'utf8')) as any)[1].name, 'Legacy Draft');
+    assert.equal(StagingManifestDao.getLatestByProject(legacyHash), null);
+    assert.ok(StagingManifestDao.getLatestByProject(canonicalHash));
+    assert.equal(fs.existsSync(stagingRootForHash(fixture, legacyHash)), false);
+    assert.equal(fs.existsSync(stagingRootForHash(fixture, canonicalHash)), true);
+  });
+
+  test('fails fast instead of merging legacy and canonical Windows staging identities', {
+    skip: process.platform !== 'win32',
+  }, () => {
+    const legacyHash = legacyProjectHash(fixture.project);
+    const canonicalHash = canonicalProjectHash(fixture.project);
+    StagingManifestDao.create(legacyHash, emptyManifest(fixture.project, legacyHash));
+    StagingManifestDao.create(canonicalHash, emptyManifest(fixture.project, canonicalHash));
+
+    expectCode(
+      () => stagingApi.getProjectStagingStatus(fixture.root, fixture.project.toUpperCase()),
+      'STAGING_IDENTITY_COLLISION',
+    );
+    assert.ok(StagingManifestDao.getLatestByProject(legacyHash));
+    assert.ok(StagingManifestDao.getLatestByProject(canonicalHash));
+  });
+
   test('registers disjoint normalized file sets and rejects invalid or overlapping ownership', () => {
     const first = registerOperation(fixture, operation('database-op-a', ['www/data/./Actors.json'])) as any;
     const second = registerOperation(fixture, operation('database-op-b', ['www\\data\\Items.json'])) as any;
@@ -116,6 +194,30 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
     expectCode(
       () => registerOperation(fixture, operation('database-op-parent-segment', ['www/data/../outside.json'])),
       'STAGING_UNSAFE_PATH',
+    );
+  });
+
+  test('treats prototype-named operation IDs as own keys and preserves duplicate error codes', () => {
+    const constructorOperation = registerOperation(
+      fixture,
+      operation('constructor', ['www/data/Actors.json']),
+    ) as any;
+    const toStringOperation = registerOperation(
+      fixture,
+      operation('toString', ['www/data/Items.json']),
+    ) as any;
+
+    assert.equal(constructorOperation.operationId, 'constructor');
+    assert.equal(toStringOperation.operationId, 'toString');
+    assert.equal(getOperation(fixture, 'constructor')?.operationId, 'constructor');
+    assert.equal(getOperation(fixture, 'toString')?.operationId, 'toString');
+    expectCode(
+      () => registerOperation(fixture, operation('constructor', ['www/data/Classes.json'])),
+      'STAGING_DUPLICATE_OPERATION_ID',
+    );
+    expectCode(
+      () => registerOperation(fixture, operation('toString', ['www/data/Skills.json'])),
+      'STAGING_DUPLICATE_OPERATION_ID',
     );
   });
 
@@ -208,6 +310,30 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
       owner('database-op-map'),
     ) as any;
     assert.equal(mapStatus.operationId, 'database-op-map');
+  });
+
+  test('holds one project lock across staged map preparation, mutation, hashing, and manifest update', () => {
+    const mutateStagedMap = requireApi('withStagedMapMutation');
+    const outcome = mutateStagedMap(
+      fixture.root,
+      fixture.project,
+      1,
+      (staged: { mapFile: string }) => {
+        expectCode(
+          () => stagingApi.writeStagedProjectJson(fixture.root, fixture.project, 'www/data/Items.json', [null]),
+          'STAGING_BUSY',
+        );
+        const map = JSON.parse(fs.readFileSync(staged.mapFile, 'utf8')) as Record<string, unknown>;
+        map.width = 4;
+        writeJson(staged.mapFile, map);
+        return { width: map.width };
+      },
+    ) as any;
+
+    assert.deepEqual(outcome.result, { width: 4 });
+    assert.equal(outcome.staging.conflict, false);
+    assert.equal(outcome.staging.draftHash, outcome.staging.recordedDraftHash);
+    assert.equal((JSON.parse(fs.readFileSync(outcome.mapFile, 'utf8')) as any).width, 4);
   });
 
   test('reports every source and draft conflict reason truthfully', () => {
@@ -336,6 +462,44 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
     assert.equal((stagingApi.getProjectStagingStatus(fixture.root, fixture.project) as any).staged, true);
     assert.equal(fs.existsSync(lockPath(fixture)), false);
   });
+
+  test('dead-lock recovery cannot remove a replacement lock acquired after its observation', () => {
+    const recoverObservedLock = (stagingLockApi as unknown as Record<string, unknown>)
+      .tryRemoveObservedProjectStagingLock;
+    assert.equal(typeof recoverObservedLock, 'function', 'expected an atomic observed-lock recovery API');
+
+    const file = lockPath(fixture);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const observed = {
+      pid: 2147483647,
+      token: 'observed-dead-token',
+      createdAt: new Date(0).toISOString(),
+      projectHash: stagingApi.projectHash(fixture.project),
+    };
+    const replacement = {
+      pid: process.pid,
+      token: 'replacement-live-token',
+      createdAt: new Date().toISOString(),
+      projectHash: stagingApi.projectHash(fixture.project),
+    };
+    fs.writeFileSync(file, JSON.stringify(replacement), { flag: 'wx' });
+
+    const recoveredReplacement = (recoverObservedLock as (lockFile: string, metadata: unknown) => boolean)(
+      file,
+      observed,
+    );
+    assert.equal(recoveredReplacement, false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), replacement);
+
+    fs.unlinkSync(file);
+    fs.writeFileSync(file, JSON.stringify(observed), { flag: 'wx' });
+    assert.equal(
+      (recoverObservedLock as (lockFile: string, metadata: unknown) => boolean)(file, observed),
+      true,
+    );
+    assert.equal(fs.existsSync(file), false);
+    assert.equal(fs.existsSync(`${file}.recovery`), false);
+  });
 });
 
 function createFixture(): Fixture {
@@ -425,6 +589,56 @@ function lockPath(fixture: Fixture): string {
     'agent-console-staging',
     `${stagingApi.projectHash(fixture.project)}.lock`,
   );
+}
+
+function legacyProjectHash(project: string): string {
+  return crypto.createHash('sha1').update(path.resolve(project)).digest('hex').slice(0, 16);
+}
+
+function canonicalProjectHash(project: string): string {
+  const real = fs.realpathSync.native(path.resolve(project));
+  const identity = process.platform === 'win32' ? real.toLowerCase() : real;
+  return crypto.createHash('sha1').update(identity).digest('hex').slice(0, 16);
+}
+
+function stagingRootForHash(fixture: Fixture, hash: string): string {
+  return path.join(fixture.root, 'runtime', 'agent-console-staging', hash);
+}
+
+function seedLegacyDraft(
+  fixture: Fixture,
+  hash: string,
+  relativePath: string,
+  value: unknown,
+): void {
+  const source = sourcePath(fixture, relativePath);
+  const draft = path.join(stagingRootForHash(fixture, hash), 'draft', ...relativePath.split('/'));
+  writeJson(draft, value);
+  const baseHash = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
+  const draftHash = crypto.createHash('sha256').update(fs.readFileSync(draft)).digest('hex');
+  StagingManifestDao.create(hash, {
+    ...emptyManifest(fixture.project, hash),
+    files: {
+      [relativePath]: {
+        relativePath,
+        sourceExisted: true,
+        baseHash,
+        baseMtimeMs: fs.statSync(source).mtimeMs,
+        draftHash,
+        updatedAt: new Date().toISOString(),
+      },
+    },
+  });
+}
+
+function emptyManifest(project: string, hash: string): Record<string, unknown> {
+  return {
+    version: 4,
+    project,
+    projectHash: hash,
+    maps: {},
+    files: {},
+  };
 }
 
 function fileStatus(status: any, relativePath: string): any {

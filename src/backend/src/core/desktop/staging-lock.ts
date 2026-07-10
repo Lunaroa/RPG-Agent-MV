@@ -9,6 +9,13 @@ interface ProjectStagingLockContext {
   projectHash: string;
 }
 
+interface ProjectStagingLockMetadata {
+  pid?: unknown;
+  token?: unknown;
+  createdAt?: unknown;
+  projectHash?: unknown;
+}
+
 export function withProjectStagingLock<T>(context: ProjectStagingLockContext, action: () => T): T {
   const token = acquireProjectStagingLock(context);
   try {
@@ -52,9 +59,9 @@ function acquireProjectStagingLock(context: ProjectStagingLockContext): string {
 }
 
 function removeDeadProjectStagingLock(lockFile: string): boolean {
-  let metadata: { pid?: unknown };
+  let metadata: ProjectStagingLockMetadata;
   try {
-    metadata = JSON.parse(fs.readFileSync(lockFile, 'utf8')) as { pid?: unknown };
+    metadata = JSON.parse(fs.readFileSync(lockFile, 'utf8')) as ProjectStagingLockMetadata;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
     return false;
@@ -67,12 +74,61 @@ function removeDeadProjectStagingLock(lockFile: string): boolean {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return false;
   }
+  return tryRemoveObservedProjectStagingLock(lockFile, metadata);
+}
+
+export function tryRemoveObservedProjectStagingLock(
+  lockFile: string,
+  observed: ProjectStagingLockMetadata,
+): boolean {
+  const identity = lockMetadataIdentity(observed);
+  if (!identity) return false;
+  const claimFile = `${lockFile}.recovery-${crypto.createHash('sha256').update(identity).digest('hex').slice(0, 16)}`;
   try {
-    fs.unlinkSync(lockFile);
-    return true;
+    fs.linkSync(lockFile, claimFile);
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT';
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return true;
+    if (code === 'EEXIST') return false;
+    return false;
   }
+  try {
+    const claimed = readLockMetadata(claimFile);
+    if (!claimed || lockMetadataIdentity(claimed) !== identity) return false;
+    const current = readLockMetadata(lockFile);
+    if (!current || lockMetadataIdentity(current) !== identity) return false;
+    try {
+      fs.unlinkSync(lockFile);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ENOENT';
+    }
+  } finally {
+    try {
+      fs.unlinkSync(claimFile);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+}
+
+function readLockMetadata(lockFile: string): ProjectStagingLockMetadata | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(lockFile, 'utf8')) as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as ProjectStagingLockMetadata
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function lockMetadataIdentity(metadata: ProjectStagingLockMetadata): string | null {
+  const token = typeof metadata.token === 'string' && metadata.token ? metadata.token : null;
+  if (token) return `token:${token}`;
+  const pid = Number(metadata.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 0 || typeof metadata.createdAt !== 'string') return null;
+  return `legacy:${pid}:${metadata.createdAt}:${String(metadata.projectHash || '')}`;
 }
 
 function releaseProjectStagingLock(context: ProjectStagingLockContext, token: string): void {

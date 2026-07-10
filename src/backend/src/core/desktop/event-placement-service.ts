@@ -7,7 +7,7 @@ import { createMapEvent, updateMapEvent } from '../workflow/map/map-event-edit.t
 import { loadRegistry, updateContractPlacement } from '../workflow/event/event-registry.ts';
 import { eventContentFingerprint } from '../workflow/event/event-fingerprint.ts';
 import { eventPlacementRegistryMissing } from './eventPlacementServiceLocalization.ts';
-import { ensureStagedMap, markStagedMapUpdated } from './staging-service.ts';
+import { withStagedMapMutation, type StagedMapMutationTarget } from './staging-service.ts';
 
 export interface CreatePlacementEventPayload {
   name: string;
@@ -130,9 +130,7 @@ function resolveRegistryPages(
 }
 
 function placeViaContractPatch(
-  staged: ReturnType<typeof ensureStagedMap>,
-  workflowRoot: string,
-  project: string,
+  staged: StagedMapMutationTarget,
   mapId: number,
   payload: CreatePlacementEventPayload,
   pages: Array<Record<string, unknown>>,
@@ -161,7 +159,6 @@ function placeViaContractPatch(
     mapId,
     eventId,
     event: null,
-    staging: markStagedMapUpdated(workflowRoot, project, mapId),
     usedContractPatch: true,
   };
 }
@@ -172,7 +169,22 @@ export function createPlacementEvent(
   mapId: number,
   payload: CreatePlacementEventPayload,
 ) {
-  const staged = ensureStagedMap(workflowRoot, project, mapId);
+  const staged = withStagedMapMutation(
+    workflowRoot,
+    project,
+    mapId,
+    (target) => createPlacementEventInStagedMap(target, workflowRoot, project, mapId, payload),
+  );
+  return { ...staged.result, staging: staged.staging };
+}
+
+function createPlacementEventInStagedMap(
+  staged: StagedMapMutationTarget,
+  workflowRoot: string,
+  project: string,
+  mapId: number,
+  payload: CreatePlacementEventPayload,
+) {
   const contractId = String(payload.contractId || '').trim() || extractSceneId(payload) || '';
   const sceneId = String(payload.sceneId || '').trim() || null;
 
@@ -193,7 +205,6 @@ export function createPlacementEvent(
         ...report,
         op: 'place',
         reusedExisting: true,
-        staging: markStagedMapUpdated(workflowRoot, project, mapId),
       };
     }
   }
@@ -206,7 +217,7 @@ export function createPlacementEvent(
     pages = resolveRegistryPages(workflowRoot, project, contractId);
   }
   if (pages && hasAbstractPages(pages)) {
-    const report = placeViaContractPatch(staged, workflowRoot, project, mapId, payload, normalizeAbstractPages(pages));
+    const report = placeViaContractPatch(staged, mapId, payload, normalizeAbstractPages(pages));
     if (contractId && Number.isInteger(report.eventId)) {
       const contentHash = fingerprintMapEvent(staged.mapFile, report.eventId);
       markPlacementInRegistry(workflowRoot, project, contractId, mapId, report.eventId, payload.x, payload.y, contentHash);
@@ -233,7 +244,6 @@ export function createPlacementEvent(
     ...report,
     op: 'create',
     eventId,
-    staging: markStagedMapUpdated(workflowRoot, project, mapId),
     usedContractPatch: false,
     shellOnly: true,
   };

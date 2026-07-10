@@ -9,6 +9,7 @@ export const STAGING_ERROR_CODES = {
   invalidManifest: 'STAGING_INVALID_MANIFEST',
   invalidOperationId: 'STAGING_INVALID_OPERATION_ID',
   invalidPlanHash: 'STAGING_INVALID_PLAN_HASH',
+  identityCollision: 'STAGING_IDENTITY_COLLISION',
   operationFileMismatch: 'STAGING_OPERATION_FILE_MISMATCH',
   operationNotFound: 'STAGING_OPERATION_NOT_FOUND',
   operationOwned: 'STAGING_OPERATION_OWNED',

@@ -260,6 +260,49 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
     }
   });
 
+  for (const table of ["system", "types", "terms"] as const) {
+    test(`dbEntry ${table} preserves the complete staged System document`, async () => {
+      const { workflowRoot, project } = await makeStagedProject();
+      try {
+        const system = {
+          gameTitle: "Staged Schema",
+          switches: ["", "Door"],
+          variables: ["", "Progress"],
+          elements: ["", "Physical", "Fire"],
+          skillTypes: ["", "Magic"],
+          weaponTypes: ["", "Sword"],
+          armorTypes: ["", "General Armor"],
+          equipTypes: ["", "Weapon"],
+          terms: {
+            basic: ["Level"],
+            params: ["Max HP"],
+            commands: ["Fight", "Escape"],
+            messages: { victory: "%1 wins!" },
+          },
+          note: "<plugin-note:keep>",
+          pluginExtension: {
+            enabled: true,
+            customNested: { values: [1, { label: "keep" }] },
+          },
+        };
+        writeStagedProjectJson(workflowRoot, project, "www/data/System.json", system);
+
+        const result = await dispatchRmmvTool("db-entry", {
+          workflowRoot,
+          project,
+          table,
+          id: 0,
+        });
+
+        assert.equal((result.data as any).staged, true);
+        assert.deepEqual((result.data as any).value, system);
+      } finally {
+        closeDatabase();
+        fs.rmSync(workflowRoot, { recursive: true, force: true });
+      }
+    });
+  }
+
   test("dbEntry enforces document ids and returns valid empty array slots", async () => {
     const { workflowRoot, project } = await makeStagedProject();
     try {

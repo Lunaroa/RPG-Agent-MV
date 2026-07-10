@@ -77,23 +77,7 @@ function readDocumentValue(schema: RmmvDatabaseTableSchema, raw: unknown): Recor
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error(`dbEntry database table "${schema.key}" is not an object`);
   }
-  const record = raw as Record<string, unknown>;
-  if (schema.key === "types") {
-    return pick(record, ["elements", "skillTypes", "weaponTypes", "armorTypes", "equipTypes"]);
-  }
-  if (schema.key === "terms") {
-    const terms = record.terms;
-    return terms && typeof terms === "object" && !Array.isArray(terms)
-      ? structuredClone(terms as Record<string, unknown>)
-      : {};
-  }
-  return structuredClone(record);
-}
-
-function pick(source: Record<string, unknown>, keys: string[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const key of keys) result[key] = structuredClone(source[key]);
-  return result;
+  return structuredClone(raw as Record<string, unknown>);
 }
 
 function schemaPayload(schema: RmmvDatabaseTableSchema): RmmvDbEntrySchema {

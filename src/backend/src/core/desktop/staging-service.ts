@@ -49,6 +49,12 @@ export interface ProjectStagingActionOptions {
   rejectOperationOwned?: boolean;
 }
 
+export interface StagedMapMutationTarget {
+  project: string;
+  sourceProject: string;
+  mapFile: string;
+}
+
 interface MapEntry extends FileEntry {
   mapId: number;
   sourceMapFile: string;
@@ -73,6 +79,12 @@ interface StagingContext {
   lockFile: string;
 }
 
+interface ResolvedProjectIdentity {
+  project: string;
+  identity: string;
+  legacyHashes: string[];
+}
+
 export type StagingConflictReason =
   | { code: 'SOURCE_EXISTENCE_CHANGED'; expected: boolean; actual: boolean }
   | { code: 'SOURCE_HASH_CHANGED'; expected: string | null; actual: string | null }
@@ -85,7 +97,7 @@ const MANIFEST_VERSION = 4;
 const PATCHER_CONTEXT_FILES = ['CommonEvents.json', 'MapInfos.json', 'System.json', 'Tilesets.json'];
 
 export function projectHash(project: string): string {
-  return crypto.createHash('sha1').update(path.resolve(project)).digest('hex').slice(0, 16);
+  return hashProjectIdentity(resolveProjectIdentity(project).identity);
 }
 
 export function isInside(root: string, candidate: string): boolean {
@@ -99,11 +111,12 @@ export function ensureStagedMap(
   mapId: number,
   ownership?: StagingOwnershipContext,
 ) {
-  const relative = mapRelativePath(project, mapId);
   const context = buildContext(workflowRoot, project);
+  const requestedRelative = mapRelativePath(context.project, mapId);
   return withStagingMutationLock(context, () => {
     const manifest = readManifest(context);
-    assertStagingWriteOwnership(manifest, relative, ownership);
+    const relative = resolveManifestRelativePath(manifest, requestedRelative);
+    assertStagingWriteOwnership(manifest, relative, ownership, relativePathIdentity);
     const entry = ensureDraft(context, manifest, relative);
     ensureDraftProjectDataFiles(context, manifest);
     updateMapEntry(context, manifest, relative, entry);
@@ -119,12 +132,13 @@ export function markStagedMapUpdated(
   ownership?: StagingOwnershipContext,
 ) {
   const context = buildContext(workflowRoot, project);
-  const relative = mapRelativePath(project, mapId);
+  const requestedRelative = mapRelativePath(context.project, mapId);
   return withStagingMutationLock(context, () => {
+    const manifest = readManifest(context);
+    const relative = resolveManifestRelativePath(manifest, requestedRelative);
     const draft = draftFilePath(context, relative);
     if (!fs.existsSync(draft)) throw new Error(`Staged map draft not found: ${relative}`);
-    const manifest = readManifest(context);
-    assertStagingWriteOwnership(manifest, relative, ownership);
+    assertStagingWriteOwnership(manifest, relative, ownership, relativePathIdentity);
     const entry = ensureDraft(context, manifest, relative);
     entry.draftHash = fileHash(draft);
     entry.updatedAt = new Date().toISOString();
@@ -132,6 +146,45 @@ export function markStagedMapUpdated(
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
     return getStagingStatus(workflowRoot, project, mapId);
+  });
+}
+
+export function withStagedMapMutation<T>(
+  workflowRoot: string,
+  project: string,
+  mapId: number,
+  mutation: (staged: StagedMapMutationTarget) => T,
+  ownership?: StagingOwnershipContext,
+) {
+  const context = buildContext(workflowRoot, project);
+  const requestedRelative = mapRelativePath(context.project, mapId);
+  return withStagingMutationLock(context, () => {
+    const manifest = readManifest(context);
+    const relative = resolveManifestRelativePath(manifest, requestedRelative);
+    assertStagingWriteOwnership(manifest, relative, ownership, relativePathIdentity);
+    const entry = ensureDraft(context, manifest, relative);
+    ensureDraftProjectDataFiles(context, manifest);
+    updateMapEntry(context, manifest, relative, entry);
+    writeManifest(context, manifest);
+
+    const mapFile = draftFilePath(context, relative);
+    const staged = {
+      project: context.draftRoot,
+      sourceProject: context.project,
+      mapFile,
+    };
+    const result = mutation(staged);
+    if (!fs.existsSync(mapFile)) throw new Error(`Staged map draft not found: ${relative}`);
+    entry.draftHash = fileHash(mapFile);
+    entry.updatedAt = new Date().toISOString();
+    delete entry.delete;
+    updateMapEntry(context, manifest, relative, entry);
+    writeManifest(context, manifest);
+    return {
+      ...staged,
+      result,
+      staging: getStagingStatus(workflowRoot, project, mapId),
+    };
   });
 }
 
@@ -143,8 +196,9 @@ export function getMapFileForRead(workflowRoot: string, project: string, mapId: 
 
 export function getProjectFileForRead(workflowRoot: string, project: string, relativePath: string): string | null {
   const context = buildContext(workflowRoot, project);
-  const relative = normalizeRelativePath(relativePath);
+  const requestedRelative = normalizeRelativePath(relativePath);
   const manifest = readManifest(context);
+  const relative = resolveManifestRelativePath(manifest, requestedRelative);
   const entry = manifest.files[relative];
   if (entry?.delete) return null;
   if (entry) {
@@ -163,10 +217,11 @@ export function ensureStagedProjectFile(
   ownership?: StagingOwnershipContext,
 ) {
   const context = buildContext(workflowRoot, project);
-  const relative = normalizeRelativePath(relativePath);
+  const requestedRelative = normalizeRelativePath(relativePath);
   return withStagingMutationLock(context, () => {
     const manifest = readManifest(context);
-    assertStagingWriteOwnership(manifest, relative, ownership);
+    const relative = resolveManifestRelativePath(manifest, requestedRelative);
+    assertStagingWriteOwnership(manifest, relative, ownership, relativePathIdentity);
     const entry = ensureDraft(context, manifest, relative);
     writeManifest(context, manifest);
     const draftFile = draftFilePath(context, relative);
@@ -189,10 +244,11 @@ export function writeStagedProjectJson(
   ownership?: StagingOwnershipContext,
 ) {
   const context = buildContext(workflowRoot, project);
-  const relative = normalizeRelativePath(relativePath);
+  const requestedRelative = normalizeRelativePath(relativePath);
   return withStagingMutationLock(context, () => {
     const manifest = readManifest(context);
-    assertStagingWriteOwnership(manifest, relative, ownership);
+    const relative = resolveManifestRelativePath(manifest, requestedRelative);
+    assertStagingWriteOwnership(manifest, relative, ownership, relativePathIdentity);
     const entry = ensureDraft(context, manifest, relative);
     const sourceFile = sourceFilePath(context, relative);
     const draftFile = draftFilePath(context, relative);
@@ -214,10 +270,11 @@ export function writeStagedProjectBuffer(
   ownership?: StagingOwnershipContext,
 ) {
   const context = buildContext(workflowRoot, project);
-  const relative = normalizeRelativePath(relativePath);
+  const requestedRelative = normalizeRelativePath(relativePath);
   return withStagingMutationLock(context, () => {
     const manifest = readManifest(context);
-    assertStagingWriteOwnership(manifest, relative, ownership);
+    const relative = resolveManifestRelativePath(manifest, requestedRelative);
+    assertStagingWriteOwnership(manifest, relative, ownership, relativePathIdentity);
     const entry = ensureDraft(context, manifest, relative);
     const sourceFile = sourceFilePath(context, relative);
     const draftFile = draftFilePath(context, relative);
@@ -239,10 +296,11 @@ export function deleteStagedProjectFile(
   ownership?: StagingOwnershipContext,
 ) {
   const context = buildContext(workflowRoot, project);
-  const relative = normalizeRelativePath(relativePath);
+  const requestedRelative = normalizeRelativePath(relativePath);
   return withStagingMutationLock(context, () => {
     const manifest = readManifest(context);
-    assertStagingWriteOwnership(manifest, relative, ownership);
+    const relative = resolveManifestRelativePath(manifest, requestedRelative);
+    assertStagingWriteOwnership(manifest, relative, ownership, relativePathIdentity);
     const entry = ensureDraft(context, manifest, relative);
     const draftFile = draftFilePath(context, relative);
     if (fs.existsSync(draftFile)) fs.unlinkSync(draftFile);
@@ -277,7 +335,7 @@ export function registerDatabaseStagingOperation(
     }
 
     const files = input.files.map(normalizeRelativePath);
-    if (new Set(files).size !== files.length) {
+    if (new Set(files.map(relativePathIdentity)).size !== files.length) {
       throw new StagingError(
         STAGING_ERROR_CODES.duplicateFile,
         'Database staging operation contains duplicate normalized file paths.',
@@ -285,7 +343,7 @@ export function registerDatabaseStagingOperation(
     }
 
     const manifest = readManifest(context);
-    if (manifest.operations[operationId]) {
+    if (Object.hasOwn(manifest.operations, operationId)) {
       throw new StagingError(
         STAGING_ERROR_CODES.duplicateOperationId,
         `Database staging operation already exists: ${operationId}`,
@@ -293,7 +351,8 @@ export function registerDatabaseStagingOperation(
     }
 
     for (const relative of files) {
-      const existing = manifest.files[relative];
+      const registeredRelative = resolveManifestRelativePath(manifest, relative);
+      const existing = manifest.files[registeredRelative];
       if (existing?.operationId) {
         throw new StagingError(
           STAGING_ERROR_CODES.fileOwned,
@@ -308,7 +367,10 @@ export function registerDatabaseStagingOperation(
           { relativePath: relative },
         );
       }
-      const owner = Object.values(manifest.operations).find((operation) => operation.files.includes(relative));
+      const identity = relativePathIdentity(relative);
+      const owner = Object.values(manifest.operations).find((operation) => (
+        operation.files.some((candidate) => relativePathIdentity(candidate) === identity)
+      ));
       if (owner) {
         throw new StagingError(
           STAGING_ERROR_CODES.fileOwned,
@@ -366,7 +428,10 @@ export function getDatabaseStagingOperation(
 ): StagingOperation | null {
   const context = buildContext(workflowRoot, project);
   const manifest = readManifest(context);
-  const operation = manifest.operations[validateStagingOperationId(operationId)];
+  const validatedOperationId = validateStagingOperationId(operationId);
+  const operation = Object.hasOwn(manifest.operations, validatedOperationId)
+    ? manifest.operations[validatedOperationId]
+    : undefined;
   return operation ? cloneStagingOperation(operation) : null;
 }
 
@@ -400,8 +465,12 @@ export function preflightStagedProjectFiles(
 ) {
   const context = buildContext(workflowRoot, project);
   const manifest = readManifest(context);
-  const normalized = Array.from(new Set(relativePaths.map(normalizeRelativePath)));
-  const entries = normalized.map((relativePath) => {
+  const normalized = relativePaths.map(normalizeRelativePath);
+  const unique = normalized.filter((relativePath, index) => (
+    normalized.findIndex((candidate) => relativePathIdentity(candidate) === relativePathIdentity(relativePath)) === index
+  ));
+  const entries = unique.map((requestedRelativePath) => {
+    const relativePath = resolveManifestRelativePath(manifest, requestedRelativePath);
     const entry = manifest.files[relativePath];
     if (!entry) {
       throw new StagingError(
@@ -425,8 +494,9 @@ export function preflightStagedProjectFiles(
 
 export function getStagingStatus(workflowRoot: string, project: string, mapId: number) {
   const context = buildContext(workflowRoot, project);
-  const relative = mapRelativePath(project, mapId);
+  const requestedRelative = mapRelativePath(context.project, mapId);
   const manifest = readManifest(context);
+  const relative = resolveManifestRelativePath(manifest, requestedRelative);
   const entry = manifest.files[relative];
   if (!entry) return { staged: false, mapId };
   const status = buildFileStatus(context, manifest, relative, entry);
@@ -456,8 +526,8 @@ export function getProjectStagingStatus(workflowRoot: string, project: string) {
 export function applyStagedMap(workflowRoot: string, project: string, mapId: number) {
   const context = buildContext(workflowRoot, project);
   return withStagingMutationLock(context, () => {
-    const relative = mapRelativePath(project, mapId);
     const manifest = readManifest(context);
+    const relative = resolveManifestRelativePath(manifest, mapRelativePath(context.project, mapId));
     assertMapOnlyOperation(manifest, relative);
     const status = getStagingStatus(workflowRoot, project, mapId);
     if (!status.staged) return { applied: false, staging: status };
@@ -472,8 +542,8 @@ export function applyStagedMap(workflowRoot: string, project: string, mapId: num
 export function discardStagedMap(workflowRoot: string, project: string, mapId: number) {
   const context = buildContext(workflowRoot, project);
   return withStagingMutationLock(context, () => {
-    const relative = mapRelativePath(project, mapId);
     const manifest = readManifest(context);
+    const relative = resolveManifestRelativePath(manifest, mapRelativePath(context.project, mapId));
     assertMapOnlyOperation(manifest, relative);
     const entry = manifest.files[relative];
     const hadDraft = Boolean(entry);
@@ -518,28 +588,125 @@ export function discardProjectStaging(
 }
 
 function assertMapOnlyOperation(manifest: Manifest, mapRelative: string): void {
-  const entry = manifest.files[mapRelative];
+  const registeredMapRelative = resolveManifestRelativePath(manifest, mapRelative);
+  const entry = manifest.files[registeredMapRelative];
   if (entry?.operationId) {
     throw new StagingError(
       STAGING_ERROR_CODES.operationOwned,
-      `Operation-owned staged map requires operation-level apply or discard: ${mapRelative}`,
-      { relativePath: mapRelative, operationId: entry.operationId },
+      `Operation-owned staged map requires operation-level apply or discard: ${registeredMapRelative}`,
+      { relativePath: registeredMapRelative, operationId: entry.operationId },
     );
   }
-  const shared = Object.keys(manifest.files).filter((relative) => relative !== mapRelative && !/^(?:www\/)?data\/Map\d{3}\.json$/.test(relative));
+  const mapIdentity = relativePathIdentity(registeredMapRelative);
+  const shared = Object.keys(manifest.files).filter((relative) => (
+    relativePathIdentity(relative) !== mapIdentity && !/^(?:www\/)?data\/Map\d{3}\.json$/i.test(relative)
+  ));
   if (shared.length) {
     throw new Error(stagingSharedFilesRequireProjectAction());
   }
 }
 
 function buildContext(workflowRoot: string, project: string): StagingContext {
-  const root = path.resolve(workflowRoot);
-  const resolvedProject = path.resolve(project);
-  const hash = projectHash(resolvedProject);
+  const root = fs.realpathSync.native(path.resolve(workflowRoot));
+  const resolved = resolveProjectIdentity(project);
+  const hash = hashProjectIdentity(resolved.identity);
   const stagingRoot = path.join(root, STAGING_DIR, hash);
   const draftRoot = path.join(stagingRoot, 'draft');
   const lockFile = path.join(root, STAGING_DIR, `${hash}.lock`);
-  return { workflowRoot: root, project: resolvedProject, projectHash: hash, stagingRoot, draftRoot, lockFile };
+  const context = {
+    workflowRoot: root,
+    project: resolved.project,
+    projectHash: hash,
+    stagingRoot,
+    draftRoot,
+    lockFile,
+  };
+  migrateLegacyStagingIdentity(context, resolved.legacyHashes);
+  return context;
+}
+
+function resolveProjectIdentity(project: string): ResolvedProjectIdentity {
+  const resolved = path.resolve(project);
+  const real = fs.realpathSync.native(resolved);
+  const identity = process.platform === 'win32' ? real.toLowerCase() : real;
+  const canonicalHash = hashProjectIdentity(identity);
+  const legacyHashes = Array.from(new Set([resolved, real].map(hashLegacyProjectPath)))
+    .filter((candidate) => candidate !== canonicalHash);
+  return { project: real, identity, legacyHashes };
+}
+
+function hashProjectIdentity(identity: string): string {
+  return crypto.createHash('sha1').update(identity).digest('hex').slice(0, 16);
+}
+
+function hashLegacyProjectPath(project: string): string {
+  return crypto.createHash('sha1').update(path.resolve(project)).digest('hex').slice(0, 16);
+}
+
+function migrateLegacyStagingIdentity(context: StagingContext, legacyHashes: string[]): void {
+  if (!legacyHashes.some((hash) => stagingIdentityHasState(context.workflowRoot, hash))) return;
+  const hashes = Array.from(new Set([context.projectHash, ...legacyHashes])).sort();
+  withStagingIdentityLocks(context.workflowRoot, hashes, 0, () => {
+    const legacyWithState = legacyHashes.filter((hash) => stagingIdentityHasState(context.workflowRoot, hash));
+    const canonicalHasState = stagingIdentityHasState(context.workflowRoot, context.projectHash);
+    if (legacyWithState.length > 1 || (canonicalHasState && legacyWithState.length > 0)) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.identityCollision,
+        'Canonical and legacy staging identities both contain state; automatic merge is forbidden.',
+        { canonicalHash: context.projectHash, legacyHashes: legacyWithState },
+      );
+    }
+    if (canonicalHasState || legacyWithState.length === 0) return;
+    migrateOneLegacyStagingIdentity(context, legacyWithState[0]);
+  });
+}
+
+function withStagingIdentityLocks<T>(
+  workflowRoot: string,
+  hashes: string[],
+  index: number,
+  action: () => T,
+): T {
+  if (index >= hashes.length) return action();
+  const hash = hashes[index];
+  return withProjectStagingLock({
+    projectHash: hash,
+    lockFile: path.join(workflowRoot, STAGING_DIR, `${hash}.lock`),
+  }, () => withStagingIdentityLocks(workflowRoot, hashes, index + 1, action));
+}
+
+function stagingIdentityHasState(workflowRoot: string, hash: string): boolean {
+  return Boolean(StagingManifestDao.getLatestByProject(hash))
+    || fs.existsSync(path.join(workflowRoot, STAGING_DIR, hash));
+}
+
+function migrateOneLegacyStagingIdentity(context: StagingContext, legacyHash: string): void {
+  const legacyRoot = path.join(context.workflowRoot, STAGING_DIR, legacyHash);
+  const legacyRowExisted = Boolean(StagingManifestDao.getLatestByProject(legacyHash));
+  let movedDraftTree = false;
+  try {
+    if (fs.existsSync(legacyRoot)) {
+      if (fs.existsSync(context.stagingRoot)) {
+        throw new StagingError(
+          STAGING_ERROR_CODES.identityCollision,
+          'Canonical staging directory appeared during legacy migration.',
+          { canonicalHash: context.projectHash, legacyHash },
+        );
+      }
+      fs.mkdirSync(path.dirname(context.stagingRoot), { recursive: true });
+      fs.renameSync(legacyRoot, context.stagingRoot);
+      movedDraftTree = true;
+    }
+    const movedRows = StagingManifestDao.rekeyProject(legacyHash, context.projectHash);
+    if (legacyRowExisted && movedRows === 0) {
+      throw new Error(`Legacy staging manifest disappeared during identity migration: ${legacyHash}`);
+    }
+  } catch (error) {
+    if (movedDraftTree && fs.existsSync(context.stagingRoot) && !fs.existsSync(legacyRoot)) {
+      fs.renameSync(context.stagingRoot, legacyRoot);
+    }
+    throw error;
+  }
 }
 
 function readManifest(context: StagingContext): Manifest {
@@ -552,16 +719,16 @@ function readManifest(context: StagingContext): Manifest {
       projectHash: context.projectHash,
       maps: {},
       files: {},
-      operations: {},
+      operations: Object.create(null) as Record<string, StagingOperation>,
     };
   }
-  const operations = normalizeStagingOperations(value.operations, normalizeRelativePath);
+  const operations = normalizeStagingOperations(value.operations, normalizeRelativePath, relativePathIdentity);
   return {
     version: MANIFEST_VERSION,
     project: context.project,
     projectHash: context.projectHash,
     maps: value.maps || {},
-    files: value.files || {},
+    files: normalizeManifestFiles(value.files),
     operations,
   };
 }
@@ -577,6 +744,43 @@ function writeManifest(context: StagingContext, manifest: Manifest): void {
   const existing = StagingManifestDao.getLatestByProject(context.projectHash);
   if (existing) StagingManifestDao.update(existing.id, normalized);
   else StagingManifestDao.create(context.projectHash, normalized);
+}
+
+function normalizeManifestFiles(value: unknown): Record<string, FileEntry> {
+  if (value === undefined || value === null) return Object.create(null) as Record<string, FileEntry>;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new StagingError(STAGING_ERROR_CODES.invalidManifest, 'Staging manifest files must be an object.');
+  }
+  const normalized = Object.create(null) as Record<string, FileEntry>;
+  const identities = new Set<string>();
+  for (const [rawRelativePath, rawEntry] of Object.entries(value)) {
+    if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.invalidManifest,
+        `Invalid staging file metadata: ${rawRelativePath}`,
+      );
+    }
+    const relativePath = normalizeRelativePath(rawRelativePath);
+    const entryRelativePath = normalizeRelativePath(
+      typeof (rawEntry as Partial<FileEntry>).relativePath === 'string'
+        ? (rawEntry as Partial<FileEntry>).relativePath!
+        : rawRelativePath,
+    );
+    const identity = relativePathIdentity(relativePath);
+    if (relativePathIdentity(entryRelativePath) !== identity || identities.has(identity)) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.identityCollision,
+        `Staging manifest contains colliding file identities: ${rawRelativePath}`,
+        { relativePath: rawRelativePath },
+      );
+    }
+    identities.add(identity);
+    normalized[relativePath] = {
+      ...(rawEntry as FileEntry),
+      relativePath,
+    };
+  }
+  return normalized;
 }
 
 function buildFileStatus(
@@ -637,6 +841,7 @@ function buildFileStatus(
 // Creates the first draft for a file, records source baseline metadata, and
 // copies the source file into the runtime draft area.
 function ensureDraft(context: StagingContext, manifest: Manifest, relative: string): FileEntry {
+  relative = resolveManifestRelativePath(manifest, relative);
   const existing = manifest.files[relative];
   if (existing) return existing;
   const sourceFile = sourceFilePath(context, relative);
@@ -672,10 +877,11 @@ function updateMapEntry(context: StagingContext, manifest: Manifest, relative: s
 }
 
 function removeFileEntry(context: StagingContext, manifest: Manifest, relative: string): void {
+  relative = resolveManifestRelativePath(manifest, relative);
   const draftFile = draftFilePath(context, relative);
   if (fs.existsSync(draftFile)) fs.unlinkSync(draftFile);
   delete manifest.files[relative];
-  const match = /^(?:www\/)?data\/Map(\d{3})\.json$/.exec(relative);
+  const match = /^(?:www\/)?data\/Map(\d{3})\.json$/i.exec(relative);
   if (match) delete manifest.maps[String(Number(match[1]))];
 }
 
@@ -718,7 +924,8 @@ function stagedFileHash(context: StagingContext, relative: string): string | nul
 function ensureDraftProjectDataFiles(context: StagingContext, manifest: Manifest): void {
   const dataRoot = resolveDataDir(context.project);
   for (const fileName of PATCHER_CONTEXT_FILES) {
-    const relative = projectRelativePath(context.project, path.join(dataRoot, fileName));
+    const requestedRelative = projectRelativePath(context.project, path.join(dataRoot, fileName));
+    const relative = resolveManifestRelativePath(manifest, requestedRelative);
     const entry = manifest.files[relative];
     if (entry?.delete) continue;
     const source = entry ? draftFilePath(context, relative) : sourceFilePath(context, relative);
@@ -772,6 +979,25 @@ function normalizeRelativePath(value: string): string {
   return relative;
 }
 
+function relativePathIdentity(relativePath: string): string {
+  const normalized = normalizeRelativePath(relativePath);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function resolveManifestRelativePath(manifest: Manifest, relativePath: string): string {
+  const requested = normalizeRelativePath(relativePath);
+  const identity = relativePathIdentity(requested);
+  const matches = Object.keys(manifest.files).filter((candidate) => relativePathIdentity(candidate) === identity);
+  if (matches.length > 1) {
+    throw new StagingError(
+      STAGING_ERROR_CODES.identityCollision,
+      `Staging manifest contains colliding file identities: ${requested}`,
+      { relativePath: requested, matches },
+    );
+  }
+  return matches[0] || requested;
+}
+
 function mapRelativePath(project: string, mapId: number): string {
   return projectRelativePath(project, path.join(resolveDataDir(project), `Map${String(mapId).padStart(3, '0')}.json`));
 }
@@ -786,5 +1012,5 @@ function fileHash(filePath: string): string {
 }
 
 function mapFilePattern(): RegExp {
-  return /^(?:www\/)?data\/Map\d{3}\.json$/;
+  return /^(?:www\/)?data\/Map\d{3}\.json$/i;
 }

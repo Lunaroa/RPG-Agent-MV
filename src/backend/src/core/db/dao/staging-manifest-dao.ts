@@ -102,6 +102,21 @@ export class StagingManifestDao {
   }
 
   /**
+   * Atomically moves every manifest row to a canonical project identity.
+   * The staging service must hold both project identity locks before calling.
+   */
+  static rekeyProject(oldProjectId: string, newProjectId: string): number {
+    const db = getDatabase();
+    const now = new Date().toISOString();
+    const result = db.prepare(`
+      UPDATE staging_manifests
+      SET project_id = ?, updated_at = ?
+      WHERE project_id = ?
+    `).run(newProjectId, now, oldProjectId);
+    return Number(result.changes);
+  }
+
+  /**
    * 检查项目是否有清单
    */
   static hasManifests(projectId: string): boolean {

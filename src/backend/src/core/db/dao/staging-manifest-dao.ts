@@ -11,6 +11,20 @@ export interface StagingManifest {
 
 export class StagingManifestDao {
   /**
+   * 列出所有暂存清单，供项目身份迁移发现旧 project_id。
+   */
+  static listAll(): StagingManifest[] {
+    const db = getDatabase();
+    const rows = db.prepare(
+      'SELECT * FROM staging_manifests ORDER BY updated_at DESC, id DESC'
+    ).all() as unknown as StagingManifest[];
+    return rows.map(row => ({
+      ...row,
+      manifest: JSON.parse(row.manifest as unknown as string)
+    }));
+  }
+
+  /**
    * 获取项目的所有清单
    */
   static listByProject(projectId: string): StagingManifest[] {

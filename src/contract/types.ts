@@ -480,13 +480,24 @@ export type RmmvDbCatalogRow =
   | RmmvDbCatalogTypesRow
   | RmmvDbCatalogTermsRow;
 
+export interface RmmvDbCatalogPageInfo {
+  total: number;
+  matched: number;
+  offset: number;
+  limit: number;
+  nextOffset: number | null;
+}
+
 export interface RmmvDbCatalogResult {
   generatedAt: string;
   projectRoot: string;
   dataDir: string;
   query: string | null;
+  offset: number;
   limit: number;
+  includeUnnamed: boolean;
   tables: Partial<Record<RmmvDbTableName, RmmvDbCatalogRow[]>>;
+  pageInfo: Partial<Record<RmmvDbTableName, RmmvDbCatalogPageInfo>>;
 }
 
 export interface RmmvCommonEventReference {

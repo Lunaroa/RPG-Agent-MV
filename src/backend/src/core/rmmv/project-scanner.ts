@@ -473,7 +473,6 @@ function summarizeDatabase(
       count: entries.length,
       named: entries
         .filter((entry) => Number(entry.id) > 0 && (includeUnnamed || entry.name))
-        .slice(0, 80)
         .map((entry) => databaseNamedEntry(Number(entry.id), String(entry.name || ""), summarizeDatabasePreview(schema.group, entry, tables)))
     };
   }

@@ -6,6 +6,8 @@ import { analyzeStateSlots } from "./state-slots.ts";
 import { buildAssetInventory } from "./asset-inventory.ts";
 import { buildRmmvMapIndex } from "./map-index.ts";
 import { buildRmmvDbCatalog, type RmmvDbTableName } from "./db-catalog.ts";
+import { readRmmvDbEntry } from "./db-entry.ts";
+import { readEffectiveRmmvDatabaseTable } from "./database-read.ts";
 import { listRmmvDatabaseTableKeys } from "./database-schema.ts";
 import { findCommonEventReferences } from "./common-event-references.ts";
 import { applyPatchToProject, previewPatch, COMMAND_LEVEL_OPS, validateAgentPatchSpec } from "./patcher.ts";
@@ -274,16 +276,31 @@ export function runRmmvEventEditor(input: RmmvHandlerInput): RmmvHandlerResult {
 }
 
 export function runRmmvDbCatalog(input: RmmvHandlerInput): RmmvHandlerResult {
+  const workflowRoot = resolveWorkflowRootFromInput(input);
   const project = resolveProjectRoot(input);
   const tables = parseDbCatalogTables(input.tables);
   const queryRaw = input.query;
   const query = typeof queryRaw === "string" && queryRaw.trim() ? queryRaw : undefined;
-  const limit = parsePositiveInt(input.limit);
-  const result = buildRmmvDbCatalog(project, { tables, query, limit });
+  const offset = parseDbCatalogOffset(input.offset);
+  const limit = parseDbCatalogLimit(input.limit);
+  const includeUnnamed = parseDbCatalogIncludeUnnamed(input.includeUnnamed);
+  const result = buildRmmvDbCatalog(
+    project,
+    { tables, query, offset, limit, includeUnnamed },
+    { readTable: (table) => readEffectiveRmmvDatabaseTable(workflowRoot, project, table)?.value },
+  );
   const counts = Object.entries(result.tables)
     .map(([name, rows]) => `${name}=${rows.length}`)
     .join(" ");
   return resultSummary(`DB catalog: ${counts || "(empty)"}`, result);
+}
+
+export function runRmmvDbEntry(input: RmmvHandlerInput): RmmvHandlerResult {
+  const workflowRoot = resolveWorkflowRootFromInput(input);
+  const project = resolveProjectRoot(input);
+  const table = parseDbTable(input.table);
+  const result = readRmmvDbEntry(workflowRoot, project, { table, id: Number(input.id) });
+  return resultSummary(`DB entry: ${table}#${result.id}`, result);
 }
 
 export function runRmmvCommonEventReferences(input: RmmvHandlerInput): RmmvHandlerResult {
@@ -329,13 +346,35 @@ function parseDbCatalogTables(raw: unknown): RmmvDbTableName[] {
   return Array.from(seen);
 }
 
-function parsePositiveInt(raw: unknown): number | undefined {
+function parseDbTable(raw: unknown): RmmvDbTableName {
+  if (typeof raw !== "string" || !DB_CATALOG_TABLE_NAMES.has(raw as RmmvDbTableName)) {
+    throw new Error(
+      `Unknown dbEntry table '${String(raw ?? "")}'; allowed tables: ${Array.from(DB_CATALOG_TABLE_NAMES).join(", ")}`,
+    );
+  }
+  return raw as RmmvDbTableName;
+}
+
+function parseDbCatalogOffset(raw: unknown): number | undefined {
   if (raw === undefined || raw === null || raw === "") return undefined;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error("'limit' must be a positive integer");
+  if (!Number.isInteger(value) || value < 0) throw new Error("'offset' must be a non-negative integer");
+  return value;
+}
+
+function parseDbCatalogLimit(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 200) {
+    throw new Error("'limit' must be an integer between 1 and 200");
   }
   return value;
+}
+
+function parseDbCatalogIncludeUnnamed(raw: unknown): boolean | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "boolean") throw new Error("'includeUnnamed' must be a boolean");
+  return raw;
 }
 export function runRmmvStateSlots(input: RmmvHandlerInput): RmmvHandlerResult {
   const workflowRoot = resolveWorkflowRootFromInput(input);

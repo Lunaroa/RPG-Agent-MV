@@ -17,6 +17,7 @@ export interface StagingTransactionDependencies {
   beforeReplace?: (entry: StagingTransactionHookEntry) => void;
   beforeDelete?: (entry: StagingTransactionHookEntry) => void;
   beforeDraftMove?: (entry: StagingTransactionHookEntry) => void;
+  beforeDraftRestore?: (entry: StagingTransactionHookEntry) => void;
   beforeManifestUpdate?: () => void;
 }
 
@@ -35,6 +36,7 @@ interface PreparedSourceEntry extends StagingTransactionHookEntry {
 }
 
 interface MovedDraft {
+  entry: StagingTransactionHookEntry;
   draftFile: string;
   trashFile: string;
 }
@@ -64,14 +66,14 @@ export function commitStagingTransaction(input: StagingTransactionInput): void {
       committed.push(entry);
     }
 
-    movedDrafts.push(...moveDraftsToTrash(input.entries, transactionRoot, input.dependencies));
+    moveDraftsToTrash(input.entries, transactionRoot, movedDrafts, input.dependencies);
     input.dependencies?.beforeManifestUpdate?.();
     input.updateManifest();
     metadataCommitted = true;
   } catch (error) {
     if (metadataCommitted) throw error;
     const rollbackErrors = [
-      ...restoreMovedDrafts(movedDrafts),
+      ...restoreMovedDrafts(movedDrafts, input.dependencies),
       ...rollbackCommittedSources(committed),
     ];
     if (rollbackErrors.length > 0) {
@@ -80,7 +82,13 @@ export function commitStagingTransaction(input: StagingTransactionInput): void {
         'Staging transaction failed and rollback could not restore every file.',
       );
     }
-    cleanupPreparedFiles(prepared);
+    const cleanupErrors = cleanupPreparedAfterFailure(prepared);
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        'Staging transaction failed and prepared-file cleanup was incomplete.',
+      );
+    }
     removeTreeIfPresent(transactionRoot);
     throw error;
   }
@@ -94,13 +102,13 @@ export function discardStagingTransaction(input: StagingTransactionInput): void 
   const movedDrafts: MovedDraft[] = [];
   let metadataCommitted = false;
   try {
-    movedDrafts.push(...moveDraftsToTrash(input.entries, transactionRoot, input.dependencies));
+    moveDraftsToTrash(input.entries, transactionRoot, movedDrafts, input.dependencies);
     input.dependencies?.beforeManifestUpdate?.();
     input.updateManifest();
     metadataCommitted = true;
   } catch (error) {
     if (metadataCommitted) throw error;
-    const rollbackErrors = restoreMovedDrafts(movedDrafts);
+    const rollbackErrors = restoreMovedDrafts(movedDrafts, input.dependencies);
     if (rollbackErrors.length > 0) {
       throw new AggregateError(
         [error, ...rollbackErrors],
@@ -155,28 +163,17 @@ function prepareSourceEntry(
 function moveDraftsToTrash(
   entries: StagingTransactionEntry[],
   transactionRoot: string,
+  moved: MovedDraft[],
   dependencies: StagingTransactionDependencies | undefined,
-): MovedDraft[] {
-  const moved: MovedDraft[] = [];
-  try {
-    for (const [index, entry] of entries.entries()) {
-      if (!fs.existsSync(entry.draftFile)) continue;
-      dependencies?.beforeDraftMove?.({ ...entry, index });
-      const trashFile = path.join(transactionRoot, 'draft', ...entry.relativePath.split('/'));
-      fs.mkdirSync(path.dirname(trashFile), { recursive: true });
-      fs.renameSync(entry.draftFile, trashFile);
-      moved.push({ draftFile: entry.draftFile, trashFile });
-    }
-    return moved;
-  } catch (error) {
-    const rollbackErrors = restoreMovedDrafts(moved);
-    if (rollbackErrors.length > 0) {
-      throw new AggregateError(
-        [error, ...rollbackErrors],
-        'Draft transaction preparation failed and rollback was incomplete.',
-      );
-    }
-    throw error;
+): void {
+  for (const [index, entry] of entries.entries()) {
+    if (!fs.existsSync(entry.draftFile)) continue;
+    const hookEntry = { ...entry, index };
+    dependencies?.beforeDraftMove?.(hookEntry);
+    const trashFile = path.join(transactionRoot, 'draft', ...entry.relativePath.split('/'));
+    fs.mkdirSync(path.dirname(trashFile), { recursive: true });
+    fs.renameSync(entry.draftFile, trashFile);
+    moved.push({ entry: hookEntry, draftFile: entry.draftFile, trashFile });
   }
 }
 
@@ -206,10 +203,14 @@ function rollbackCommittedSources(entries: PreparedSourceEntry[]): Error[] {
   return errors;
 }
 
-function restoreMovedDrafts(moved: MovedDraft[]): Error[] {
+function restoreMovedDrafts(
+  moved: MovedDraft[],
+  dependencies: StagingTransactionDependencies | undefined,
+): Error[] {
   const errors: Error[] = [];
   for (const entry of [...moved].reverse()) {
     try {
+      dependencies?.beforeDraftRestore?.(entry.entry);
       fs.mkdirSync(path.dirname(entry.draftFile), { recursive: true });
       fs.renameSync(entry.trashFile, entry.draftFile);
     } catch (error) {
@@ -224,6 +225,21 @@ function cleanupPreparedFiles(entries: PreparedSourceEntry[]): void {
     removeFileIfPresent(entry.backupFile);
     removeFileIfPresent(entry.replacementFile);
   }
+}
+
+function cleanupPreparedAfterFailure(entries: PreparedSourceEntry[]): Error[] {
+  const errors: Error[] = [];
+  for (const entry of [...entries].reverse()) {
+    try {
+      removeFileIfPresent(entry.replacementFile);
+      removeFileIfPresent(entry.backupFile);
+      removeCreatedDirectories(entry.createdDirectories);
+    } catch (error) {
+      errors.push(asError(error));
+      break;
+    }
+  }
+  return errors;
 }
 
 function ensureDirectory(directory: string): string[] {

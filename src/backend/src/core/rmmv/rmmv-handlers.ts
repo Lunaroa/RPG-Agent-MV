@@ -191,9 +191,9 @@ export function runRmmvMapEditor(input: RmmvHandlerInput): RmmvHandlerResult {
   } else if (action === "discard-map") {
     data = discardStagedMap(workflowRoot, project, requirePositiveIntField(input, "mapId"));
   } else if (action === "apply-project") {
-    data = applyProjectStaging(workflowRoot, project);
+    data = applyProjectStaging(workflowRoot, project, { rejectOperationOwned: true });
   } else if (action === "discard-project") {
-    data = discardProjectStaging(workflowRoot, project);
+    data = discardProjectStaging(workflowRoot, project, { rejectOperationOwned: true });
   } else {
     throw new Error(`Unsupported map-editor action: ${action}`);
   }

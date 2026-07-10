@@ -88,6 +88,9 @@ function providerBaseUrlForOpencode(providerId: string, provider: ProviderRecord
   if (provider.protocol === "anthropic" && providerId === "zhipu-glm" && baseUrl === "https://open.bigmodel.cn/api/anthropic") {
     return `${baseUrl}/v1`;
   }
+  if (providerId === "deepseek" && provider.protocol === "openai-compatible" && !baseUrl.endsWith("/v1")) {
+    return `${baseUrl}/v1`;
+  }
   return baseUrl;
 }
 

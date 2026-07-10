@@ -191,6 +191,75 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
   }
 });
 
+test("RmmvReadContext exposes paginated database catalog and entry reads as read-only", async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rmmv-mcp-db-read-"));
+  const project = createProjectFixture(workflowRoot);
+  const client = new Client({ name: "rmmv-mcp-test", version: "1.0.0" });
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+  env.AGENT_RPG_ROOT = workflowRoot;
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["--experimental-strip-types", path.join(import.meta.dirname, "rmmv-mcp-server.ts")],
+    env,
+    stderr: "pipe",
+  });
+
+  try {
+    await client.connect(transport);
+    const listed = await client.listTools();
+    const readContext = listed.tools.find((tool) => tool.name === "RmmvReadContext");
+    assert.ok(readContext);
+    assert.equal(readContext.annotations?.readOnlyHint, true);
+    assert.match(readContext.description || "", /dbEntry/);
+
+    const schema = readContext.inputSchema as {
+      properties?: Record<string, { enum?: string[]; minimum?: number; maximum?: number }>;
+    };
+    assert.ok(schema.properties?.action.enum?.includes("dbEntry"));
+    assert.deepEqual(schema.properties?.table.enum, [
+      "actors", "classes", "skills", "items", "weapons", "armors", "enemies", "troops",
+      "states", "animations", "tilesets", "commonEvents", "system", "types", "terms",
+    ]);
+    assert.equal(schema.properties?.offset.minimum, 0);
+    assert.equal(schema.properties?.limit.minimum, 1);
+    assert.equal(schema.properties?.limit.maximum, 200);
+    assert.ok(schema.properties?.includeUnnamed);
+
+    const catalog = parseToolJson(await client.callTool({
+      name: "RmmvReadContext",
+      arguments: {
+        action: "dbCatalog",
+        project,
+        tables: ["system"],
+        offset: 0,
+        limit: 1,
+        includeUnnamed: true,
+      },
+    }));
+    assert.deepEqual(catalog.data.pageInfo.system, {
+      total: 1,
+      matched: 1,
+      offset: 0,
+      limit: 1,
+      nextOffset: null,
+    });
+
+    const entry = parseToolJson(await client.callTool({
+      name: "RmmvReadContext",
+      arguments: { action: "dbEntry", project, table: "system", id: 0 },
+    }));
+    assert.equal(entry.data.table, "system");
+    assert.equal(entry.data.group, "System");
+    assert.equal(entry.data.id, 0);
+    assert.deepEqual(entry.data.value.switches, [null]);
+  } finally {
+    await client.close();
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
 test("RMMV MCP stdio exposes localised map errors when mapId is invalid", async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rmmv-mcp-server-"));
   const project = createProjectFixture(workflowRoot);

@@ -196,6 +196,27 @@ describe("project-scanner", () => {
       fs.rmSync(root, { recursive: true, force: true });
     });
 
+    test("database summary exposes records after the first 80 entries", () => {
+      const root = tmpDir("scanner-db-complete-");
+      createMinimalProject(root);
+      const dataDir = path.join(root, "www", "data");
+      fs.writeFileSync(
+        path.join(dataDir, "Actors.json"),
+        JSON.stringify([
+          null,
+          ...Array.from({ length: 81 }, (_, index) => ({ id: index + 1, name: `Actor ${index + 1}` })),
+        ]),
+        "utf8",
+      );
+
+      const result = scanProject(root);
+
+      assert.equal(result.database.Actors.named.length, 81);
+      assert.equal(result.database.Actors.named[80].id, 81);
+      assert.equal(result.database.Actors.named[80].name, "Actor 81");
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+
     test("handles flat data layout", () => {
       const root = tmpDir("scanner-flat-");
       createMinimalProject(root, "flat");

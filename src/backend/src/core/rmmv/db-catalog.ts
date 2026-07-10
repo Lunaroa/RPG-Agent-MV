@@ -160,7 +160,21 @@ export type RmmvDbCatalogRow =
 export interface RmmvDbCatalogQuery {
   tables: RmmvDbTableName[];
   query?: string;
+  offset?: number;
   limit?: number;
+  includeUnnamed?: boolean;
+}
+
+export interface RmmvDbCatalogPageInfo {
+  total: number;
+  matched: number;
+  offset: number;
+  limit: number;
+  nextOffset: number | null;
+}
+
+export interface RmmvDbCatalogReadOptions {
+  readTable?: (table: RmmvDbTableName) => unknown | undefined;
 }
 
 export interface RmmvDbCatalogResult {
@@ -168,28 +182,50 @@ export interface RmmvDbCatalogResult {
   projectRoot: string;
   dataDir: string;
   query: string | null;
+  offset: number;
   limit: number;
+  includeUnnamed: boolean;
   tables: Partial<Record<RmmvDbTableName, RmmvDbCatalogRow[]>>;
+  pageInfo: Partial<Record<RmmvDbTableName, RmmvDbCatalogPageInfo>>;
 }
 
 const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
 
-export function buildRmmvDbCatalog(projectRoot: string, query: RmmvDbCatalogQuery): RmmvDbCatalogResult {
+export function buildRmmvDbCatalog(
+  projectRoot: string,
+  query: RmmvDbCatalogQuery,
+  options: RmmvDbCatalogReadOptions = {},
+): RmmvDbCatalogResult {
   const root = path.resolve(projectRoot);
   const dataDir = resolveDataDir(root);
-  const limit = query.limit && Number.isInteger(query.limit) && query.limit > 0 ? query.limit : DEFAULT_LIMIT;
+  const offset = catalogOffset(query.offset);
+  const limit = catalogLimit(query.limit);
+  const includeUnnamed = query.includeUnnamed ?? true;
   const needle = (query.query ?? "").trim().toLowerCase();
   const out: Partial<Record<RmmvDbTableName, RmmvDbCatalogRow[]>> = {};
+  const pageInfo: Partial<Record<RmmvDbTableName, RmmvDbCatalogPageInfo>> = {};
 
   for (const table of query.tables) {
     const schema = getRmmvDatabaseSchemaByKey(table);
-    const file = path.join(dataDir, schema.fileName);
-    const raw = exists(file) ? readJson(file) : (schema.isArrayTable ? [] : null);
+    const raw = options.readTable
+      ? options.readTable(table) ?? (schema.isArrayTable ? [] : null)
+      : readSourceTable(dataDir, table);
     const rows = mapRows(table, raw);
+    const eligible = includeUnnamed ? rows : rows.filter((entry) => entry.named);
     const filtered = needle
-      ? rows.filter((row) => row.name.toLowerCase().includes(needle))
-      : rows;
-    out[table] = filtered.slice(0, limit);
+      ? eligible.filter(({ row }) => row.name.toLowerCase().includes(needle) || String(row.id).includes(needle))
+      : eligible;
+    const page = filtered.slice(offset, offset + limit).map(({ row }) => row);
+    const next = offset + page.length;
+    out[table] = page;
+    pageInfo[table] = {
+      total: totalRecords(schema.isArrayTable, raw),
+      matched: filtered.length,
+      offset,
+      limit,
+      nextOffset: next < filtered.length ? next : null,
+    };
   }
 
   return {
@@ -197,25 +233,64 @@ export function buildRmmvDbCatalog(projectRoot: string, query: RmmvDbCatalogQuer
     projectRoot: root,
     dataDir,
     query: needle ? needle : null,
+    offset,
     limit,
+    includeUnnamed,
     tables: out,
+    pageInfo,
   };
 }
 
-function mapRows(table: RmmvDbTableName, raw: unknown): RmmvDbCatalogRow[] {
+interface MappedCatalogRow {
+  row: RmmvDbCatalogRow;
+  named: boolean;
+}
+
+function mapRows(table: RmmvDbTableName, raw: unknown): MappedCatalogRow[] {
   const schema = getRmmvDatabaseSchemaByKey(table);
-  if (!schema.isArrayTable) return raw && typeof raw === "object" && !Array.isArray(raw) ? [buildDocumentRow(table, raw as Record<string, unknown>)] : [];
+  if (!schema.isArrayTable) {
+    return raw && typeof raw === "object" && !Array.isArray(raw)
+      ? [{ row: buildDocumentRow(table, raw as Record<string, unknown>), named: true }]
+      : [];
+  }
   const entries = Array.isArray(raw) ? raw : [];
-  const rows: RmmvDbCatalogRow[] = [];
+  const rows: MappedCatalogRow[] = [];
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") continue;
     const e = entry as Record<string, unknown>;
     const id = Number(e.id);
     if (!Number.isInteger(id) || id <= 0) continue;
-    const name = String(e.name ?? "") || `#${id}`;
-    rows.push(buildRow(table, id, name, e));
+    const sourceName = String(e.name ?? "");
+    const named = Boolean(sourceName.trim());
+    const name = sourceName || `#${id}`;
+    rows.push({ row: buildRow(table, id, name, e), named });
   }
-  return rows;
+  return rows.sort((left, right) => left.row.id - right.row.id);
+}
+
+function readSourceTable(dataDir: string, table: RmmvDbTableName): unknown {
+  const schema = getRmmvDatabaseSchemaByKey(table);
+  const file = path.join(dataDir, schema.fileName);
+  return exists(file) ? readJson(file) : (schema.isArrayTable ? [] : null);
+}
+
+function totalRecords(isArrayTable: boolean, raw: unknown): number {
+  if (!isArrayTable) return raw && typeof raw === "object" && !Array.isArray(raw) ? 1 : 0;
+  return Array.isArray(raw) ? raw.filter((entry) => entry !== null && entry !== undefined).length : 0;
+}
+
+function catalogOffset(value: number | undefined): number {
+  if (value === undefined) return 0;
+  if (!Number.isInteger(value) || value < 0) throw new Error("dbCatalog 'offset' must be a non-negative integer");
+  return value;
+}
+
+function catalogLimit(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_LIMIT;
+  if (!Number.isInteger(value) || value < 1 || value > MAX_LIMIT) {
+    throw new Error(`dbCatalog 'limit' must be an integer between 1 and ${MAX_LIMIT}`);
+  }
+  return value;
 }
 
 function buildDocumentRow(table: RmmvDbTableName, data: Record<string, unknown>): RmmvDbCatalogRow {

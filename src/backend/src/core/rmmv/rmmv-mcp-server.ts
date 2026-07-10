@@ -46,6 +46,11 @@ console.log = (...args: unknown[]) => {
 
 const JSON_FILE_FIELDS = ["spec", "evidence", "contract"] as const;
 
+const RMMV_DATABASE_TABLES = [
+  "actors", "classes", "skills", "items", "weapons", "armors", "enemies", "troops",
+  "states", "animations", "tilesets", "commonEvents", "system", "types", "terms",
+] as const;
+
 function materializeInlineJsonFields(input: RmmvHandlerInput, tmpDirs: string[]): void {
   for (const field of JSON_FILE_FIELDS) {
     const value = input[field];
@@ -120,6 +125,7 @@ const ACTION_TO_COMMAND: Record<string, string> = {
   "projectStaging": "map-editor",
   "mapStaging": "map-editor",
   "dbCatalog": "db-catalog",
+  "dbEntry": "db-entry",
   "stateSlots": "state-slots",
   "commonEventReferences": "common-event-references",
   // RmmvMap
@@ -216,20 +222,24 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
   {
     name: "RmmvReadContext",
     description:
-      "Read project facts: eventContext, mapIndex, assetInventory, pluginInventory, mapData, tilesets, projectStaging, mapStaging, dbCatalog, stateSlots, and commonEventReferences.",
+      "Read project facts without mutating the project: eventContext, mapIndex, assetInventory, pluginInventory, mapData, tilesets, projectStaging, mapStaging, paginated dbCatalog, full dbEntry records, stateSlots, and commonEventReferences.",
     inputSchema: {
       action: z.enum([
         "eventContext", "mapIndex", "assetInventory", "pluginInventory", "mapData", "tilesets", "projectStaging", "mapStaging",
-        "dbCatalog", "stateSlots", "commonEventReferences",
+        "dbCatalog", "dbEntry", "stateSlots", "commonEventReferences",
       ]),
       project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
       mapId: z.number().int().optional().describe("eventContext/mapData/mapStaging: map id."),
       eventId: z.number().int().optional().describe("eventContext: event id."),
-      tables: z.array(z.string()).optional().describe(
+      tables: z.array(z.enum(RMMV_DATABASE_TABLES)).optional().describe(
         "dbCatalog: tables to read. One or more of: actors, classes, skills, items, weapons, armors, enemies, troops, states, animations, tilesets, commonEvents, system, types, terms.",
       ),
-      query: z.string().optional().describe("dbCatalog: case-insensitive name substring filter."),
-      limit: z.number().int().optional().describe("dbCatalog: per-table row cap (default 50)."),
+      query: z.string().optional().describe("dbCatalog: case-insensitive name or decimal-id substring filter."),
+      offset: z.number().int().nonnegative().optional().describe("dbCatalog: per-table result offset (default 0)."),
+      limit: z.number().int().min(1).max(200).optional().describe("dbCatalog: per-table page size (default 50, maximum 200)."),
+      includeUnnamed: z.boolean().optional().describe("dbCatalog: include unnamed non-null records (default true)."),
+      table: z.enum(RMMV_DATABASE_TABLES).optional().describe("dbEntry: database table to read."),
+      id: z.number().int().nonnegative().optional().describe("dbEntry: positive array-table id; System, Types, and Terms use id 0."),
       switches: z.number().int().optional().describe("stateSlots: max switch candidates to surface."),
       variables: z.number().int().optional().describe("stateSlots: max variable candidates to surface."),
       commonEvents: z.number().int().optional().describe("stateSlots: max common-event candidates to surface."),

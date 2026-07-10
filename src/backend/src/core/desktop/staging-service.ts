@@ -613,7 +613,7 @@ function buildContext(workflowRoot: string, project: string): StagingContext {
   const legacyHashes = discoverLegacyManifestHashes(resolved.identity, hash, resolved.legacyHashes);
   const stagingRoot = path.join(root, STAGING_DIR, hash);
   const draftRoot = path.join(stagingRoot, 'draft');
-  const lockFile = path.join(root, STAGING_DIR, `${hash}.lock`);
+  const lockFile = path.join(root, STAGING_DIR, `${hash}.lock.sqlite`);
   const context = {
     workflowRoot: root,
     project: resolved.project,
@@ -691,7 +691,7 @@ function withStagingIdentityLocks<T>(
   const hash = hashes[index];
   return withProjectStagingLock({
     projectHash: hash,
-    lockFile: path.join(workflowRoot, STAGING_DIR, `${hash}.lock`),
+    lockFile: path.join(workflowRoot, STAGING_DIR, `${hash}.lock.sqlite`),
   }, () => withStagingIdentityLocks(workflowRoot, hashes, index + 1, action));
 }
 

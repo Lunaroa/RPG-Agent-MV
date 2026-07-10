@@ -610,6 +610,7 @@ function buildContext(workflowRoot: string, project: string): StagingContext {
   const root = fs.realpathSync.native(path.resolve(workflowRoot));
   const resolved = resolveProjectIdentity(project);
   const hash = hashProjectIdentity(resolved.identity);
+  const legacyHashes = discoverLegacyManifestHashes(resolved.identity, hash, resolved.legacyHashes);
   const stagingRoot = path.join(root, STAGING_DIR, hash);
   const draftRoot = path.join(stagingRoot, 'draft');
   const lockFile = path.join(root, STAGING_DIR, `${hash}.lock`);
@@ -621,8 +622,27 @@ function buildContext(workflowRoot: string, project: string): StagingContext {
     draftRoot,
     lockFile,
   };
-  migrateLegacyStagingIdentity(context, resolved.legacyHashes);
+  migrateLegacyStagingIdentity(context, legacyHashes);
   return context;
+}
+
+function discoverLegacyManifestHashes(
+  canonicalIdentity: string,
+  canonicalHash: string,
+  knownLegacyHashes: string[],
+): string[] {
+  const hashes = new Set(knownLegacyHashes);
+  for (const row of StagingManifestDao.listAll()) {
+    if (row.project_id === canonicalHash || !/^[a-f0-9]{16}$/i.test(row.project_id)) continue;
+    const manifestProject = row.manifest.project;
+    if (typeof manifestProject !== 'string' || !manifestProject.trim()) continue;
+    try {
+      if (resolveProjectIdentity(manifestProject).identity === canonicalIdentity) hashes.add(row.project_id);
+    } catch {
+      // A manifest whose project no longer resolves cannot be safely attributed.
+    }
+  }
+  return Array.from(hashes);
 }
 
 function resolveProjectIdentity(project: string): ResolvedProjectIdentity {

@@ -83,7 +83,7 @@ export function tryRemoveObservedProjectStagingLock(
 ): boolean {
   const identity = lockMetadataIdentity(observed);
   if (!identity) return false;
-  const claimFile = `${lockFile}.recovery-${crypto.createHash('sha256').update(identity).digest('hex').slice(0, 16)}`;
+  const claimFile = `${lockFile}.recovery-${crypto.randomUUID()}`;
   try {
     fs.linkSync(lockFile, claimFile);
   } catch (error) {

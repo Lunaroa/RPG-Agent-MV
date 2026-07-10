@@ -128,20 +128,53 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
     assert.equal(fs.existsSync(stagingRootForHash(fixture, canonicalHash)), true);
   });
 
-  test('fails fast instead of merging legacy and canonical Windows staging identities', {
+  test('discovers and migrates a v4 manifest written through a third Windows path casing', {
     skip: process.platform !== 'win32',
   }, () => {
-    const legacyHash = legacyProjectHash(fixture.project);
+    const thirdCaseProject = path.join(path.dirname(fixture.project), 'pRoJeCt');
+    const legacyHash = legacyProjectHash(thirdCaseProject);
     const canonicalHash = canonicalProjectHash(fixture.project);
-    StagingManifestDao.create(legacyHash, emptyManifest(fixture.project, legacyHash));
-    StagingManifestDao.create(canonicalHash, emptyManifest(fixture.project, canonicalHash));
+    assert.notEqual(legacyHash, legacyProjectHash(fixture.project));
+    assert.notEqual(legacyHash, canonicalHash);
+    seedLegacyDraft(
+      fixture,
+      legacyHash,
+      'www/data/Actors.json',
+      [null, { id: 1, name: 'Third Case Draft' }],
+      thirdCaseProject,
+    );
+
+    const status = stagingApi.getProjectStagingStatus(fixture.root, fixture.project) as any;
+    assert.equal(status.staged, true);
+    assert.equal(status.files[0].relativePath, 'www/data/Actors.json');
+    assert.equal(StagingManifestDao.getLatestByProject(legacyHash), null);
+    assert.ok(StagingManifestDao.getLatestByProject(canonicalHash));
+    const effective = stagingApi.getProjectFileForRead(
+      fixture.root,
+      fixture.project,
+      'www/data/Actors.json',
+    );
+    assert.ok(effective);
+    assert.equal((JSON.parse(fs.readFileSync(effective, 'utf8')) as any)[1].name, 'Third Case Draft');
+  });
+
+  test('fails fast instead of merging multiple matching legacy Windows staging identities', {
+    skip: process.platform !== 'win32',
+  }, () => {
+    const firstProject = fixture.project;
+    const secondProject = path.join(path.dirname(fixture.project), 'pRoJeCt');
+    const firstHash = legacyProjectHash(firstProject);
+    const secondHash = legacyProjectHash(secondProject);
+    assert.notEqual(firstHash, secondHash);
+    StagingManifestDao.create(firstHash, emptyManifest(firstProject, firstHash));
+    StagingManifestDao.create(secondHash, emptyManifest(secondProject, secondHash));
 
     expectCode(
-      () => stagingApi.getProjectStagingStatus(fixture.root, fixture.project.toUpperCase()),
+      () => stagingApi.getProjectStagingStatus(fixture.root, fixture.project),
       'STAGING_IDENTITY_COLLISION',
     );
-    assert.ok(StagingManifestDao.getLatestByProject(legacyHash));
-    assert.ok(StagingManifestDao.getLatestByProject(canonicalHash));
+    assert.ok(StagingManifestDao.getLatestByProject(firstHash));
+    assert.ok(StagingManifestDao.getLatestByProject(secondHash));
   });
 
   test('registers disjoint normalized file sets and rejects invalid or overlapping ownership', () => {
@@ -500,6 +533,31 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
     assert.equal(fs.existsSync(file), false);
     assert.equal(fs.existsSync(`${file}.recovery`), false);
   });
+
+  test('an orphaned recovery claim never makes dead-lock recovery permanently busy', () => {
+    const recoverObservedLock = (stagingLockApi as unknown as Record<string, unknown>)
+      .tryRemoveObservedProjectStagingLock as (lockFile: string, metadata: unknown) => boolean;
+    assert.equal(typeof recoverObservedLock, 'function');
+
+    const file = lockPath(fixture);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const observed = {
+      pid: 2147483647,
+      token: 'dead-with-orphaned-claim',
+      createdAt: new Date(0).toISOString(),
+      projectHash: stagingApi.projectHash(fixture.project),
+    };
+    fs.writeFileSync(file, JSON.stringify(observed), { flag: 'wx' });
+    const orphanClaim = legacyRecoveryClaimPath(file, observed.token);
+    fs.writeFileSync(orphanClaim, 'orphaned recovery claim', { flag: 'wx' });
+
+    assert.equal(recoverObservedLock(file, observed), true);
+    assert.equal(fs.existsSync(file), false);
+    assert.equal(fs.existsSync(orphanClaim), true);
+    const recoveryFiles = fs.readdirSync(path.dirname(file))
+      .filter((name) => name.startsWith(`${path.basename(file)}.recovery-`));
+    assert.deepEqual(recoveryFiles, [path.basename(orphanClaim)]);
+  });
 });
 
 function createFixture(): Fixture {
@@ -610,6 +668,7 @@ function seedLegacyDraft(
   hash: string,
   relativePath: string,
   value: unknown,
+  manifestProject = fixture.project,
 ): void {
   const source = sourcePath(fixture, relativePath);
   const draft = path.join(stagingRootForHash(fixture, hash), 'draft', ...relativePath.split('/'));
@@ -617,7 +676,7 @@ function seedLegacyDraft(
   const baseHash = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
   const draftHash = crypto.createHash('sha256').update(fs.readFileSync(draft)).digest('hex');
   StagingManifestDao.create(hash, {
-    ...emptyManifest(fixture.project, hash),
+    ...emptyManifest(manifestProject, hash),
     files: {
       [relativePath]: {
         relativePath,
@@ -629,6 +688,12 @@ function seedLegacyDraft(
       },
     },
   });
+}
+
+function legacyRecoveryClaimPath(lockFile: string, token: string): string {
+  const identity = `token:${token}`;
+  const suffix = crypto.createHash('sha256').update(identity).digest('hex').slice(0, 16);
+  return `${lockFile}.recovery-${suffix}`;
 }
 
 function emptyManifest(project: string, hash: string): Record<string, unknown> {

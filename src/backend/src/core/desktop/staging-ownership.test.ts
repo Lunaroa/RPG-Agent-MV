@@ -3,15 +3,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { StagingManifestDao } from '../db/dao/staging-manifest-dao.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJson } from '../rmmv/json.ts';
 import { runRmmvMapEditor } from '../rmmv/rmmv-handlers.ts';
-import * as stagingLockApi from './staging-lock.ts';
 import * as stagingApi from './staging-service.ts';
 
 interface Fixture {
@@ -27,11 +27,20 @@ type OperationInput = {
   files: string[];
 };
 
+interface LockHolder {
+  child: ReturnType<typeof spawn>;
+  readyFile: string;
+  releaseFile: string;
+  stderr: string[];
+}
+
 describe('staging ownership, conflicts, and locking', { concurrency: false }, () => {
   let fixture: Fixture;
+  let lockHolders: LockHolder[];
 
   beforeEach(async () => {
     fixture = createFixture();
+    lockHolders = [];
     await bootstrapDatabase(fixture.root, {
       dbPath: path.join(fixture.root, 'data', 'test-rmmv.db'),
       importLegacyJson: false,
@@ -40,7 +49,8 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(lockHolders.map((holder) => terminateLockHolder(holder)));
     closeDatabase();
     fs.rmSync(fixture.root, { recursive: true, force: true });
   });
@@ -69,7 +79,7 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
 
   test('uses one Windows project, lock, and file identity across path casing aliases', {
     skip: process.platform !== 'win32',
-  }, () => {
+  }, async () => {
     const projectAlias = fixture.project.toUpperCase();
     assert.notEqual(projectAlias, fixture.project);
     assert.equal(stagingApi.projectHash(projectAlias), stagingApi.projectHash(fixture.project));
@@ -83,22 +93,20 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
       'STAGING_FILE_OWNED',
     );
 
-    const file = lockPath(fixture);
-    fs.writeFileSync(file, JSON.stringify({
-      pid: process.pid,
-      token: 'case-shared-lock',
-      createdAt: new Date().toISOString(),
-    }), { flag: 'wx' });
-    expectCode(
-      () => stagingApi.writeStagedProjectJson(
-        fixture.root,
-        projectAlias,
-        'WWW/DATA/CLASSES.JSON',
-        [null],
-      ),
-      'STAGING_BUSY',
-    );
-    fs.unlinkSync(file);
+    const holder = await startLockHolder(fixture, lockHolders);
+    try {
+      expectCode(
+        () => stagingApi.writeStagedProjectJson(
+          fixture.root,
+          projectAlias,
+          'WWW/DATA/CLASSES.JSON',
+          [null],
+        ),
+        'STAGING_BUSY',
+      );
+    } finally {
+      await releaseLockHolder(holder);
+    }
   });
 
   test('migrates one legacy case-sensitive v4 identity only when the canonical target is empty', {
@@ -419,7 +427,6 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
     );
     assert.deepEqual(latestManifest(fixture), before);
     assert.deepEqual(fs.readFileSync(draftPath(fixture, 'www/data/Items.json')), draftBefore);
-    assert.equal(fs.existsSync(lockPath(fixture)), false);
 
     expectCode(
       () => preflight(fixture, ['www/data/Actors.json', 'www/data/States.json']),
@@ -476,87 +483,16 @@ describe('staging ownership, conflicts, and locking', { concurrency: false }, ()
     assert.equal((JSON.parse(fs.readFileSync(sourcePath(fixture, 'www/data/Map001.json'), 'utf8')) as any).width, 3);
   });
 
-  test('fails fast on a live project lock and recovers one provably dead PID lock', () => {
-    fs.mkdirSync(path.dirname(lockPath(fixture)), { recursive: true });
-    fs.writeFileSync(lockPath(fixture), JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }), { flag: 'wx' });
+  test('releases the project lock immediately when the holding process is terminated', async () => {
+    const holder = await startLockHolder(fixture, lockHolders);
     expectCode(
       () => stagingApi.writeStagedProjectJson(fixture.root, fixture.project, 'www/data/Actors.json', []),
       'STAGING_BUSY',
     );
-    assert.equal((stagingApi.getProjectStagingStatus(fixture.root, fixture.project) as any).staged, false);
 
-    fs.unlinkSync(lockPath(fixture));
-    const exited = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
-    assert.equal(exited.status, 0);
-    assert.equal(typeof exited.pid, 'number');
-    fs.writeFileSync(lockPath(fixture), JSON.stringify({ pid: exited.pid, createdAt: new Date().toISOString() }), { flag: 'wx' });
-
+    await terminateLockHolder(holder);
     stagingApi.writeStagedProjectJson(fixture.root, fixture.project, 'www/data/Actors.json', [null]);
     assert.equal((stagingApi.getProjectStagingStatus(fixture.root, fixture.project) as any).staged, true);
-    assert.equal(fs.existsSync(lockPath(fixture)), false);
-  });
-
-  test('dead-lock recovery cannot remove a replacement lock acquired after its observation', () => {
-    const recoverObservedLock = (stagingLockApi as unknown as Record<string, unknown>)
-      .tryRemoveObservedProjectStagingLock;
-    assert.equal(typeof recoverObservedLock, 'function', 'expected an atomic observed-lock recovery API');
-
-    const file = lockPath(fixture);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const observed = {
-      pid: 2147483647,
-      token: 'observed-dead-token',
-      createdAt: new Date(0).toISOString(),
-      projectHash: stagingApi.projectHash(fixture.project),
-    };
-    const replacement = {
-      pid: process.pid,
-      token: 'replacement-live-token',
-      createdAt: new Date().toISOString(),
-      projectHash: stagingApi.projectHash(fixture.project),
-    };
-    fs.writeFileSync(file, JSON.stringify(replacement), { flag: 'wx' });
-
-    const recoveredReplacement = (recoverObservedLock as (lockFile: string, metadata: unknown) => boolean)(
-      file,
-      observed,
-    );
-    assert.equal(recoveredReplacement, false);
-    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), replacement);
-
-    fs.unlinkSync(file);
-    fs.writeFileSync(file, JSON.stringify(observed), { flag: 'wx' });
-    assert.equal(
-      (recoverObservedLock as (lockFile: string, metadata: unknown) => boolean)(file, observed),
-      true,
-    );
-    assert.equal(fs.existsSync(file), false);
-    assert.equal(fs.existsSync(`${file}.recovery`), false);
-  });
-
-  test('an orphaned recovery claim never makes dead-lock recovery permanently busy', () => {
-    const recoverObservedLock = (stagingLockApi as unknown as Record<string, unknown>)
-      .tryRemoveObservedProjectStagingLock as (lockFile: string, metadata: unknown) => boolean;
-    assert.equal(typeof recoverObservedLock, 'function');
-
-    const file = lockPath(fixture);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const observed = {
-      pid: 2147483647,
-      token: 'dead-with-orphaned-claim',
-      createdAt: new Date(0).toISOString(),
-      projectHash: stagingApi.projectHash(fixture.project),
-    };
-    fs.writeFileSync(file, JSON.stringify(observed), { flag: 'wx' });
-    const orphanClaim = legacyRecoveryClaimPath(file, observed.token);
-    fs.writeFileSync(orphanClaim, 'orphaned recovery claim', { flag: 'wx' });
-
-    assert.equal(recoverObservedLock(file, observed), true);
-    assert.equal(fs.existsSync(file), false);
-    assert.equal(fs.existsSync(orphanClaim), true);
-    const recoveryFiles = fs.readdirSync(path.dirname(file))
-      .filter((name) => name.startsWith(`${path.basename(file)}.recovery-`));
-    assert.deepEqual(recoveryFiles, [path.basename(orphanClaim)]);
   });
 });
 
@@ -645,8 +581,92 @@ function lockPath(fixture: Fixture): string {
     fixture.root,
     'runtime',
     'agent-console-staging',
-    `${stagingApi.projectHash(fixture.project)}.lock`,
+    `${stagingApi.projectHash(fixture.project)}.lock.sqlite`,
   );
+}
+
+async function startLockHolder(fixture: Fixture, holders: LockHolder[]): Promise<LockHolder> {
+  const token = crypto.randomUUID();
+  const readyFile = path.join(fixture.root, 'runtime', `lock-ready-${token}`);
+  const releaseFile = path.join(fixture.root, 'runtime', `lock-release-${token}`);
+  fs.mkdirSync(path.dirname(readyFile), { recursive: true });
+  const moduleUrl = pathToFileURL(path.join(import.meta.dirname, 'staging-lock.ts')).href;
+  const script = `
+    import fs from 'node:fs';
+    const { withProjectStagingLock } = await import(process.env.STAGING_LOCK_MODULE);
+    const waitArray = new Int32Array(new SharedArrayBuffer(4));
+    withProjectStagingLock(JSON.parse(process.env.STAGING_LOCK_CONTEXT), () => {
+      fs.writeFileSync(process.env.STAGING_LOCK_READY, 'ready');
+      while (!fs.existsSync(process.env.STAGING_LOCK_RELEASE)) {
+        Atomics.wait(waitArray, 0, 0, 10);
+      }
+    });
+  `;
+  const stderr: string[] = [];
+  const child = spawn(process.execPath, [
+    '--experimental-strip-types',
+    '--experimental-transform-types',
+    '--input-type=module',
+    '-e',
+    script,
+  ], {
+    env: {
+      ...process.env,
+      STAGING_LOCK_MODULE: moduleUrl,
+      STAGING_LOCK_CONTEXT: JSON.stringify({
+        lockFile: lockPath(fixture),
+        projectHash: stagingApi.projectHash(fixture.project),
+      }),
+      STAGING_LOCK_READY: readyFile,
+      STAGING_LOCK_RELEASE: releaseFile,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  child.stderr?.on('data', (chunk) => stderr.push(String(chunk)));
+  const holder = { child, readyFile, releaseFile, stderr };
+  holders.push(holder);
+  await waitForLockHolderReady(holder);
+  return holder;
+}
+
+async function releaseLockHolder(holder: LockHolder): Promise<void> {
+  if (holder.child.exitCode !== null || holder.child.signalCode !== null) return;
+  fs.writeFileSync(holder.releaseFile, 'release');
+  await waitForLockHolderExit(holder);
+  assert.equal(holder.child.exitCode, 0, holder.stderr.join(''));
+}
+
+async function terminateLockHolder(holder: LockHolder): Promise<void> {
+  if (holder.child.exitCode !== null || holder.child.signalCode !== null) return;
+  holder.child.kill();
+  await waitForLockHolderExit(holder);
+}
+
+async function waitForLockHolderReady(holder: LockHolder): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(holder.readyFile)) return;
+    if (holder.child.exitCode !== null || holder.child.signalCode !== null) {
+      throw new Error(`Lock holder exited before ready: ${holder.stderr.join('')}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for lock holder: ${holder.stderr.join('')}`);
+}
+
+async function waitForLockHolderExit(holder: LockHolder): Promise<void> {
+  if (holder.child.exitCode !== null || holder.child.signalCode !== null) return;
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      holder.child.off('exit', onExit);
+      reject(new Error(`Timed out waiting for lock holder exit: ${holder.stderr.join('')}`));
+    }, 5_000);
+    const onExit = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    holder.child.once('exit', onExit);
+  });
 }
 
 function legacyProjectHash(project: string): string {
@@ -688,12 +708,6 @@ function seedLegacyDraft(
       },
     },
   });
-}
-
-function legacyRecoveryClaimPath(lockFile: string, token: string): string {
-  const identity = `token:${token}`;
-  const suffix = crypto.createHash('sha256').update(identity).digest('hex').slice(0, 16);
-  return `${lockFile}.recovery-${suffix}`;
 }
 
 function emptyManifest(project: string, hash: string): Record<string, unknown> {

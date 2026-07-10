@@ -8,6 +8,12 @@ import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import { STAGING_ERROR_CODES, StagingError } from './staging-errors.ts';
 import { withProjectStagingLock } from './staging-lock.ts';
 import {
+  commitStagingTransaction,
+  discardStagingTransaction,
+  type StagingTransactionDependencies,
+  type StagingTransactionEntry,
+} from './staging-transaction.ts';
+import {
   assertStagingWriteOwnership,
   cloneStagingOperation,
   listStagingOperationMetadata,
@@ -47,6 +53,19 @@ export interface FileEntry {
 
 export interface ProjectStagingActionOptions {
   rejectOperationOwned?: boolean;
+  transactionDependencies?: StagingTransactionDependencies;
+}
+
+export interface StagedOperationActionOptions {
+  transactionDependencies?: StagingTransactionDependencies;
+}
+
+export interface ApplyStagedOperationOptions extends StagedOperationActionOptions {
+  validate?: (context: {
+    project: string;
+    operation: StagingOperation;
+    files: ReturnType<typeof preflightStagedProjectFiles>;
+  }) => void;
 }
 
 export interface StagedMapMutationTarget {
@@ -523,33 +542,128 @@ export function getProjectStagingStatus(workflowRoot: string, project: string) {
   };
 }
 
-export function applyStagedMap(workflowRoot: string, project: string, mapId: number) {
+export function applyStagedOperation(
+  workflowRoot: string,
+  project: string,
+  operationId: string,
+  options: ApplyStagedOperationOptions = {},
+) {
   const context = buildContext(workflowRoot, project);
   return withStagingMutationLock(context, () => {
     const manifest = readManifest(context);
-    const relative = resolveManifestRelativePath(manifest, mapRelativePath(context.project, mapId));
-    assertMapOnlyOperation(manifest, relative);
-    const status = getStagingStatus(workflowRoot, project, mapId);
-    if (!status.staged) return { applied: false, staging: status };
-    const entry = manifest.files[relative];
-    applyFileEntry(context, relative, entry);
-    removeFileEntry(context, manifest, relative);
-    writeManifest(context, manifest);
-    return { applied: true, mapId, staging: getStagingStatus(workflowRoot, project, mapId) };
+    const operation = requireStagingOperation(manifest, operationId);
+    const files = resolveOwnedOperationFiles(manifest, operation);
+    const preflight = preflightStagedProjectFiles(workflowRoot, project, files);
+    options.validate?.({ project: context.project, operation: cloneStagingOperation(operation), files: preflight });
+    const nextManifest = cloneManifest(manifest);
+    removeManifestFileMetadata(nextManifest, files);
+    delete nextManifest.operations[operation.operationId];
+    commitStagingTransaction({
+      entries: buildTransactionEntries(context, manifest, files),
+      transactionRoot: transactionRoot(context),
+      dependencies: options.transactionDependencies,
+      updateManifest: () => commitManifest(context, nextManifest),
+    });
+    cleanupStagingFilesystem(context);
+    return {
+      applied: true,
+      files,
+      operation: cloneStagingOperation(operation),
+      staging: getProjectStagingStatus(workflowRoot, project),
+    };
   });
 }
 
-export function discardStagedMap(workflowRoot: string, project: string, mapId: number) {
+export function discardStagedOperation(
+  workflowRoot: string,
+  project: string,
+  operationId: string,
+  options: StagedOperationActionOptions = {},
+) {
+  const context = buildContext(workflowRoot, project);
+  return withStagingMutationLock(context, () => {
+    const manifest = readManifest(context);
+    const operation = requireStagingOperation(manifest, operationId);
+    const files = resolveOwnedOperationFiles(manifest, operation);
+    const nextManifest = cloneManifest(manifest);
+    removeManifestFileMetadata(nextManifest, files);
+    delete nextManifest.operations[operation.operationId];
+    discardStagingTransaction({
+      entries: buildTransactionEntries(context, manifest, files),
+      transactionRoot: transactionRoot(context),
+      dependencies: options.transactionDependencies,
+      updateManifest: () => commitManifest(context, nextManifest),
+    });
+    cleanupStagingFilesystem(context);
+    return {
+      discarded: true,
+      files,
+      operation: cloneStagingOperation(operation),
+      staging: getProjectStagingStatus(workflowRoot, project),
+    };
+  });
+}
+
+export function applyStagedMap(
+  workflowRoot: string,
+  project: string,
+  mapId: number,
+  options: StagedOperationActionOptions = {},
+) {
   const context = buildContext(workflowRoot, project);
   return withStagingMutationLock(context, () => {
     const manifest = readManifest(context);
     const relative = resolveManifestRelativePath(manifest, mapRelativePath(context.project, mapId));
     assertMapOnlyOperation(manifest, relative);
     const entry = manifest.files[relative];
-    const hadDraft = Boolean(entry);
-    removeFileEntry(context, manifest, relative);
-    writeManifest(context, manifest);
-    return { discarded: hadDraft, mapId, staging: getStagingStatus(workflowRoot, project, mapId) };
+    if (!entry) return { applied: false, staging: getStagingStatus(workflowRoot, project, mapId) };
+    preflightStagedProjectFiles(workflowRoot, project, [relative]);
+    const nextManifest = cloneManifest(manifest);
+    removeManifestFileMetadata(nextManifest, [relative]);
+    commitStagingTransaction({
+      entries: buildTransactionEntries(context, manifest, [relative]),
+      transactionRoot: transactionRoot(context),
+      dependencies: options.transactionDependencies,
+      updateManifest: () => commitManifest(context, nextManifest),
+    });
+    cleanupStagingFilesystem(context);
+    return {
+      applied: true,
+      mapId,
+      operations: [],
+      staging: getStagingStatus(workflowRoot, project, mapId),
+    };
+  });
+}
+
+export function discardStagedMap(
+  workflowRoot: string,
+  project: string,
+  mapId: number,
+  options: StagedOperationActionOptions = {},
+) {
+  const context = buildContext(workflowRoot, project);
+  return withStagingMutationLock(context, () => {
+    const manifest = readManifest(context);
+    const relative = resolveManifestRelativePath(manifest, mapRelativePath(context.project, mapId));
+    assertMapOnlyOperation(manifest, relative);
+    const entry = manifest.files[relative];
+    if (!entry) return { discarded: false, mapId, staging: getStagingStatus(workflowRoot, project, mapId) };
+    const nextManifest = cloneManifest(manifest);
+    removeManifestFileMetadata(nextManifest, [relative]);
+    discardStagingTransaction({
+      entries: buildTransactionEntries(context, manifest, [relative]),
+      transactionRoot: transactionRoot(context),
+      dependencies: options.transactionDependencies,
+      updateManifest: () => commitManifest(context, nextManifest),
+    });
+    cleanupStagingFilesystem(context);
+    return {
+      discarded: true,
+      mapId,
+      operations: [],
+      staging: getStagingStatus(workflowRoot, project, mapId),
+    };
   });
 }
 
@@ -562,12 +676,20 @@ export function applyProjectStaging(
   return withStagingMutationLock(context, () => {
     const manifest = readManifest(context);
     if (options.rejectOperationOwned) assertManifestHasNoDatabaseOperations(manifest);
-    const status = getProjectStagingStatus(workflowRoot, project);
-    if (!status.staged) return { applied: false, staging: status };
     const files = Object.keys(manifest.files).sort();
-    for (const relative of files) applyFileEntry(context, relative, manifest.files[relative]);
-    clearStaging(context);
-    return { applied: true, files, staging: getProjectStagingStatus(workflowRoot, project) };
+    const operations = listStagingOperationMetadata(manifest);
+    if (files.length === 0) {
+      return { applied: false, files, operations, staging: getProjectStagingStatus(workflowRoot, project) };
+    }
+    preflightStagedProjectFiles(workflowRoot, project, files);
+    commitStagingTransaction({
+      entries: buildTransactionEntries(context, manifest, files),
+      transactionRoot: transactionRoot(context),
+      dependencies: options.transactionDependencies,
+      updateManifest: () => deleteManifest(context),
+    });
+    cleanupStagingFilesystem(context);
+    return { applied: true, files, operations, staging: getProjectStagingStatus(workflowRoot, project) };
   });
 }
 
@@ -580,10 +702,19 @@ export function discardProjectStaging(
   return withStagingMutationLock(context, () => {
     const manifest = readManifest(context);
     if (options.rejectOperationOwned) assertManifestHasNoDatabaseOperations(manifest);
-    const entries = Object.entries(manifest.files);
-    const existed = entries.length > 0 || fs.existsSync(context.stagingRoot);
-    clearStaging(context);
-    return { discarded: existed, staging: getProjectStagingStatus(workflowRoot, project) };
+    const files = Object.keys(manifest.files).sort();
+    const operations = listStagingOperationMetadata(manifest);
+    if (files.length === 0) {
+      return { discarded: false, files, operations, staging: getProjectStagingStatus(workflowRoot, project) };
+    }
+    discardStagingTransaction({
+      entries: buildTransactionEntries(context, manifest, files),
+      transactionRoot: transactionRoot(context),
+      dependencies: options.transactionDependencies,
+      updateManifest: () => deleteManifest(context),
+    });
+    cleanupStagingFilesystem(context);
+    return { discarded: true, files, operations, staging: getProjectStagingStatus(workflowRoot, project) };
   });
 }
 
@@ -896,31 +1027,112 @@ function updateMapEntry(context: StagingContext, manifest: Manifest, relative: s
   };
 }
 
-function removeFileEntry(context: StagingContext, manifest: Manifest, relative: string): void {
-  relative = resolveManifestRelativePath(manifest, relative);
-  const draftFile = draftFilePath(context, relative);
-  if (fs.existsSync(draftFile)) fs.unlinkSync(draftFile);
-  delete manifest.files[relative];
-  const match = /^(?:www\/)?data\/Map(\d{3})\.json$/i.exec(relative);
-  if (match) delete manifest.maps[String(Number(match[1]))];
+function requireStagingOperation(manifest: Manifest, operationId: string): StagingOperation {
+  const validatedOperationId = validateStagingOperationId(operationId);
+  const operation = Object.hasOwn(manifest.operations, validatedOperationId)
+    ? manifest.operations[validatedOperationId]
+    : undefined;
+  if (!operation) {
+    throw new StagingError(
+      STAGING_ERROR_CODES.operationNotFound,
+      `Database staging operation does not exist: ${validatedOperationId}`,
+      { operationId: validatedOperationId },
+    );
+  }
+  return operation;
 }
 
-function applyFileEntry(context: StagingContext, relative: string, entry: FileEntry | undefined): void {
-  if (!entry) return;
-  const sourceFile = sourceFilePath(context, relative);
-  if (entry.delete) {
-    if (fs.existsSync(sourceFile)) fs.unlinkSync(sourceFile);
+function resolveOwnedOperationFiles(manifest: Manifest, operation: StagingOperation): string[] {
+  const files = operation.files.map((relativePath) => resolveManifestRelativePath(manifest, relativePath));
+  const identities = new Set(files.map(relativePathIdentity));
+  for (const relativePath of files) {
+    const entry = manifest.files[relativePath];
+    if (!entry || entry.operationId !== operation.operationId) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.operationFileMismatch,
+        `Database staging operation does not own the staged file: ${relativePath}`,
+        { relativePath, operationId: operation.operationId },
+      );
+    }
+  }
+  const unexpected = Object.entries(manifest.files).find(([relativePath, entry]) => (
+    entry.operationId === operation.operationId && !identities.has(relativePathIdentity(relativePath))
+  ));
+  if (unexpected) {
+    throw new StagingError(
+      STAGING_ERROR_CODES.operationFileMismatch,
+      `Database staging operation owns an unregistered staged file: ${unexpected[0]}`,
+      { relativePath: unexpected[0], operationId: operation.operationId },
+    );
+  }
+  return files;
+}
+
+function buildTransactionEntries(
+  context: StagingContext,
+  manifest: Manifest,
+  relativePaths: readonly string[],
+): StagingTransactionEntry[] {
+  return relativePaths.map((requestedRelativePath) => {
+    const relativePath = resolveManifestRelativePath(manifest, requestedRelativePath);
+    const entry = manifest.files[relativePath];
+    if (!entry) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.fileNotStaged,
+        `Staged project file is not registered: ${relativePath}`,
+        { relativePath },
+      );
+    }
+    return {
+      relativePath,
+      sourceFile: sourceFilePath(context, relativePath),
+      draftFile: draftFilePath(context, relativePath),
+      delete: Boolean(entry.delete),
+    };
+  });
+}
+
+function cloneManifest(manifest: Manifest): Manifest {
+  return {
+    ...manifest,
+    maps: Object.fromEntries(Object.entries(manifest.maps).map(([key, entry]) => [key, { ...entry }])),
+    files: Object.fromEntries(Object.entries(manifest.files).map(([key, entry]) => [key, { ...entry }])),
+    operations: Object.fromEntries(
+      Object.entries(manifest.operations).map(([key, operation]) => [key, cloneStagingOperation(operation)]),
+    ),
+  };
+}
+
+function removeManifestFileMetadata(manifest: Manifest, relativePaths: readonly string[]): void {
+  for (const requestedRelativePath of relativePaths) {
+    const relativePath = resolveManifestRelativePath(manifest, requestedRelativePath);
+    delete manifest.files[relativePath];
+    const match = /^(?:www\/)?data\/Map(\d{3})\.json$/i.exec(relativePath);
+    if (match) delete manifest.maps[String(Number(match[1]))];
+  }
+}
+
+function commitManifest(context: StagingContext, manifest: Manifest): void {
+  if (Object.keys(manifest.files).length === 0 && Object.keys(manifest.operations).length === 0) {
+    deleteManifest(context);
     return;
   }
-  const draftFile = draftFilePath(context, relative);
-  if (!fs.existsSync(draftFile)) throw new Error(`Staged project file is missing: ${relative}`);
-  fs.mkdirSync(path.dirname(sourceFile), { recursive: true });
-  fs.copyFileSync(draftFile, sourceFile);
+  writeManifest(context, manifest);
 }
 
-function clearStaging(context: StagingContext): void {
-  if (fs.existsSync(context.stagingRoot)) fs.rmSync(context.stagingRoot, { recursive: true, force: true });
-  StagingManifestDao.deleteByProject(context.projectHash);
+function deleteManifest(context: StagingContext): void {
+  const deleted = StagingManifestDao.deleteByProject(context.projectHash);
+  if (deleted === 0) throw new Error(`Staging manifest disappeared: ${context.projectHash}`);
+}
+
+function transactionRoot(context: StagingContext): string {
+  return path.join(context.stagingRoot, 'transactions');
+}
+
+function cleanupStagingFilesystem(context: StagingContext): void {
+  const boundary = path.dirname(context.stagingRoot);
+  removeEmptyParents(transactionRoot(context), boundary);
+  removeEmptyParents(context.draftRoot, boundary);
 }
 
 function isDirty(entry: FileEntry, draftHash: string | null): boolean {

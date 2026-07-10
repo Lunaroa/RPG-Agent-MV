@@ -9,6 +9,7 @@ import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { StagingManifestDao } from '../db/dao/staging-manifest-dao.ts';
 import { closeDatabase } from '../db/pool.ts';
 import * as staging from './staging-service.ts';
+import { commitStagingTransaction } from './staging-transaction.ts';
 
 interface Fixture {
   root: string;
@@ -19,6 +20,8 @@ interface Fixture {
 interface TransactionFaults {
   beforeReplace?: (entry: { relativePath: string; index: number }) => void;
   beforeDelete?: (entry: { relativePath: string; index: number }) => void;
+  beforeDraftMove?: (entry: { relativePath: string; index: number }) => void;
+  beforeDraftRestore?: (entry: { relativePath: string; index: number }) => void;
   beforeManifestUpdate?: () => void;
 }
 
@@ -64,6 +67,90 @@ describe('atomic staging transactions', { concurrency: false }, () => {
     assertSourceSnapshot(fixture, 'www/data/Items.json');
     assert.deepEqual(latestManifest(fixture), manifestBefore);
     assertDraftSnapshots(fixture, draftsBefore);
+  });
+
+  test('retains the transaction tree when a draft move and its restore both fail', () => {
+    stageOperation(fixture, 'database-op-draft-restore', {
+      'www/data/Actors.json': Buffer.from('actors-draft\n'),
+      'www/data/Items.json': Buffer.from('items-draft\n'),
+    });
+    const manifestBefore = latestManifest(fixture);
+    let caught: unknown;
+
+    try {
+      applyOperation(fixture, 'database-op-draft-restore', {
+        beforeDraftMove: ({ index }) => {
+          if (index === 1) throw new Error('injected second draft move failure');
+        },
+        beforeDraftRestore: ({ index }) => {
+          if (index === 0) throw new Error('injected first draft restore failure');
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assert.ok(caught instanceof AggregateError);
+    const messages = caught.errors.map((error) => String((error as Error).message));
+    assert.equal(messages.some((message) => message.includes('second draft move failure')), true);
+    assert.equal(messages.some((message) => message.includes('first draft restore failure')), true);
+    assertSourceSnapshot(fixture, 'www/data/Actors.json');
+    assertSourceSnapshot(fixture, 'www/data/Items.json');
+    assert.deepEqual(latestManifest(fixture), manifestBefore);
+    assert.equal(fs.existsSync(draftPath(fixture, 'www/data/Actors.json')), false);
+    assert.deepEqual(fs.readFileSync(draftPath(fixture, 'www/data/Items.json')), Buffer.from('items-draft\n'));
+
+    const transactionDrafts = findFiles(
+      path.join(stagingRoot(fixture), 'transactions'),
+      (candidate) => candidate.endsWith(path.join('www', 'data', 'Actors.json')),
+    );
+    assert.equal(transactionDrafts.length, 1);
+    assert.deepEqual(fs.readFileSync(transactionDrafts[0]), Buffer.from('actors-draft\n'));
+    const recoveryBackups = findFiles(
+      path.join(fixture.project, 'www', 'data'),
+      (candidate) => candidate.includes('.rmmv-staging-') && candidate.endsWith('.backup'),
+    );
+    assert.equal(recoveryBackups.length >= 2, true);
+  });
+
+  test('removes directories prepared for an uncommitted new file when later preparation fails', () => {
+    const firstSource = path.join(fixture.project, 'generated', 'first', 'First.json');
+    const secondSource = path.join(fixture.project, 'generated', 'second', 'Second.json');
+    const firstDraft = path.join(fixture.root, 'runtime', 'unit-drafts', 'First.json');
+    const missingDraft = path.join(fixture.root, 'runtime', 'unit-drafts', 'Missing.json');
+    fs.mkdirSync(path.dirname(firstDraft), { recursive: true });
+    fs.writeFileSync(firstDraft, Buffer.from('first-draft\n'));
+    let manifestUpdated = false;
+
+    assert.throws(
+      () => commitStagingTransaction({
+        entries: [
+          {
+            relativePath: 'generated/first/First.json',
+            sourceFile: firstSource,
+            draftFile: firstDraft,
+            delete: false,
+          },
+          {
+            relativePath: 'generated/second/Second.json',
+            sourceFile: secondSource,
+            draftFile: missingDraft,
+            delete: false,
+          },
+        ],
+        transactionRoot: path.join(fixture.root, 'runtime', 'unit-transactions'),
+        updateManifest: () => {
+          manifestUpdated = true;
+        },
+      }),
+      /Staged project file is missing/,
+    );
+
+    assert.equal(manifestUpdated, false);
+    assert.equal(fs.existsSync(firstSource), false);
+    assert.equal(fs.existsSync(secondSource), false);
+    assert.equal(fs.existsSync(path.dirname(firstSource)), false);
+    assert.equal(fs.existsSync(path.dirname(secondSource)), false);
   });
 
   test('restores exact existing, new, and deleted source states when deletion fails', () => {
@@ -386,14 +473,27 @@ function sourcePath(fixture: Fixture, relativePath: string): string {
 }
 
 function draftPath(fixture: Fixture, relativePath: string): string {
+  return path.join(stagingRoot(fixture), 'draft', ...relativePath.split('/'));
+}
+
+function stagingRoot(fixture: Fixture): string {
   return path.join(
     fixture.root,
     'runtime',
     'agent-console-staging',
     staging.projectHash(fixture.project),
-    'draft',
-    ...relativePath.split('/'),
   );
+}
+
+function findFiles(root: string, predicate: (candidate: string) => boolean): string[] {
+  if (!fs.existsSync(root)) return [];
+  const matches: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const candidate = path.join(root, entry.name);
+    if (entry.isDirectory()) matches.push(...findFiles(candidate, predicate));
+    else if (entry.isFile() && predicate(candidate)) matches.push(candidate);
+  }
+  return matches;
 }
 
 function assertSourceSnapshot(fixture: Fixture, relativePath: string): void {

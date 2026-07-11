@@ -30,6 +30,13 @@ export function assetGraphIconsetRenameForbidden(language?: ProductLanguage | nu
   });
 }
 
+export function assetGraphReferenceRewriteUnsupported(count: number, language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `有 ${count} 处引用无法安全改写，禁止重命名`,
+    'en-US': `${count} reference(s) cannot be rewritten safely; rename is blocked`,
+  });
+}
+
 export function assetGraphUnsupportedCategory(category: string, language?: ProductLanguage | null): string {
   return pickByLocale(resolveLanguage(language), {
     'zh-CN': `不支持的资产类型：${category}`,

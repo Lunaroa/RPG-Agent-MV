@@ -11,6 +11,7 @@ import {
   applyProjectStaging,
   getProjectFileForRead,
   getProjectStagingStatus,
+  stageProjectFilesAtomically,
 } from './staging-service.ts';
 import {
   deletePluginFile,
@@ -278,17 +279,65 @@ describe('plugin management service', { concurrency: false }, () => {
 
     const installed = installPluginFile(fixture.root, fixture.project, external);
     assert.equal(installed.relativePath, 'www/js/plugins/NewPlugin.js');
+    assert.equal(installed.configuration?.plugins.find((plugin) => plugin.name === 'NewPlugin')?.status, false);
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'NewPlugin.js')), false);
     assert.ok(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/NewPlugin.js'));
+    assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'NewPlugin'), false);
 
     const deleted = deletePluginFile(fixture.root, fixture.project, 'OldPlugin');
     assert.equal(deleted.relativePath, 'www/js/plugins/OldPlugin.js');
+    assert.equal(deleted.configuration?.plugins.some((plugin) => plugin.name === 'OldPlugin'), false);
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'OldPlugin.js')), true);
     assert.equal(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/OldPlugin.js'), null);
+    assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'OldPlugin'), true);
 
     applyProjectStaging(fixture.root, fixture.project);
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'NewPlugin.js')), true);
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'OldPlugin.js')), false);
+    assert.equal(sourcePluginStatus(fixture.project, 'NewPlugin'), false);
+    assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'OldPlugin'), false);
+  });
+
+  test('preserves enabled state, description, and parameters when overwriting a plugin file', () => {
+    const external = path.join(fixture.root, 'external', 'QuestLog.js');
+    fs.mkdirSync(path.dirname(external), { recursive: true });
+    fs.writeFileSync(external, '/* replacement quest */', 'utf8');
+
+    const installed = installPluginFile(fixture.root, fixture.project, external, { overwrite: true });
+    const questLog = installed.configuration?.plugins.find((plugin) => plugin.name === 'QuestLog');
+
+    assert.equal(questLog?.status, true);
+    assert.equal(questLog?.description, 'Quest UI');
+    assert.deepEqual(questLog?.parameters, { visible: 'true' });
+    assert.equal(
+      fs.readFileSync(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/QuestLog.js')!, 'utf8'),
+      '/* replacement quest */',
+    );
+    assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), true);
+  });
+
+  test('does not expose force deletion and rolls back every draft when an atomic stage fails', () => {
+    assert.throws(
+      () => deletePluginFile(fixture.root, fixture.project, 'QuestLog', { force: true }),
+      /force/i,
+    );
+
+    const pluginRelative = 'www/js/plugins/QuestLog.js';
+    const configRelative = 'www/js/plugins.js';
+    const sourcePlugin = fs.readFileSync(path.join(fixture.project, ...pluginRelative.split('/')));
+    const sourceConfig = fs.readFileSync(path.join(fixture.project, ...configRelative.split('/')));
+    assert.throws(() => stageProjectFilesAtomically(fixture.root, fixture.project, [
+      { relativePath: pluginRelative, content: Buffer.from('replacement') },
+      { relativePath: configRelative, content: Buffer.from('replacement config') },
+    ], undefined, {
+      beforeMutation: ({ index }) => {
+        if (index === 1) throw new Error('injected second draft failure');
+      },
+    }), /injected second draft failure/);
+
+    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.deepEqual(fs.readFileSync(getProjectFileForRead(fixture.root, fixture.project, pluginRelative)!), sourcePlugin);
+    assert.deepEqual(fs.readFileSync(getProjectFileForRead(fixture.root, fixture.project, configRelative)!), sourceConfig);
   });
 });
 

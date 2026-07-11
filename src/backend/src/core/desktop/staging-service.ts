@@ -81,6 +81,14 @@ export interface DatabaseStagingDraft {
   expectedSourceHash: string | null;
 }
 
+export type StagedProjectFileMutation =
+  | { relativePath: string; content: Buffer; delete?: false }
+  | { relativePath: string; delete: true; content?: never };
+
+export interface StagedProjectBatchDependencies {
+  beforeMutation?: (mutation: StagedProjectFileMutation & { index: number }) => void;
+}
+
 export interface StagedMapMutationTarget {
   project: string;
   sourceProject: string;
@@ -357,6 +365,83 @@ export function deleteStagedProjectFile(
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
     return { relativePath: relative, deleted: true, entry };
+  });
+}
+
+export function stageProjectFilesAtomically(
+  workflowRoot: string,
+  project: string,
+  mutations: readonly StagedProjectFileMutation[],
+  ownership?: StagingOwnershipContext,
+  dependencies: StagedProjectBatchDependencies = {},
+) {
+  if (!Array.isArray(mutations) || mutations.length === 0) {
+    throw new Error('Atomic project staging requires at least one file mutation.');
+  }
+  const normalized = mutations.map((mutation) => {
+    const relativePath = normalizeRelativePath(mutation.relativePath);
+    if (mutation.delete === true) return { relativePath, delete: true } as const;
+    if (!Buffer.isBuffer(mutation.content)) {
+      throw new Error(`Atomic project staging content must be a Buffer: ${relativePath}`);
+    }
+    return { relativePath, content: mutation.content, delete: false } as const;
+  });
+  if (new Set(normalized.map((mutation) => relativePathIdentity(mutation.relativePath))).size !== normalized.length) {
+    throw new Error('Atomic project staging contains duplicate file paths.');
+  }
+
+  const context = buildContext(workflowRoot, project);
+  return withStagingMutationLock(context, () => {
+    const manifest = readManifest(context);
+    const resolved = normalized.map((mutation) => ({
+      ...mutation,
+      relativePath: resolveManifestRelativePath(manifest, mutation.relativePath),
+    }));
+    for (const mutation of resolved) {
+      assertStagingWriteOwnership(manifest, mutation.relativePath, ownership, relativePathIdentity);
+    }
+    const snapshots = new Map<string, Buffer | null>();
+    for (const mutation of resolved) {
+      const draftFile = draftFilePath(context, mutation.relativePath);
+      snapshots.set(draftFile, fs.existsSync(draftFile) ? fs.readFileSync(draftFile) : null);
+    }
+
+    try {
+      for (const [index, mutation] of resolved.entries()) {
+        dependencies.beforeMutation?.({ ...mutation, index } as StagedProjectFileMutation & { index: number });
+        const entry = ensureDraft(context, manifest, mutation.relativePath);
+        const draftFile = draftFilePath(context, mutation.relativePath);
+        if (mutation.delete) {
+          if (fs.existsSync(draftFile)) fs.unlinkSync(draftFile);
+          entry.delete = true;
+          entry.draftHash = null;
+        } else {
+          fs.mkdirSync(path.dirname(draftFile), { recursive: true });
+          fs.writeFileSync(draftFile, mutation.content);
+          delete entry.delete;
+          entry.draftHash = fileHash(draftFile);
+        }
+        entry.updatedAt = new Date().toISOString();
+        updateMapEntry(context, manifest, mutation.relativePath, entry);
+      }
+      writeManifest(context, manifest);
+    } catch (error) {
+      for (const [draftFile, snapshot] of snapshots) {
+        if (snapshot === null) {
+          if (fs.existsSync(draftFile)) fs.unlinkSync(draftFile);
+          removeEmptyParents(path.dirname(draftFile), context.draftRoot);
+          continue;
+        }
+        fs.mkdirSync(path.dirname(draftFile), { recursive: true });
+        fs.writeFileSync(draftFile, snapshot);
+      }
+      throw error;
+    }
+
+    return {
+      files: resolved.map((mutation) => mutation.relativePath),
+      staging: getProjectStagingStatus(workflowRoot, project),
+    };
   });
 }
 

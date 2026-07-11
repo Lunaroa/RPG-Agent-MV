@@ -947,6 +947,24 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       if (result.canceled) return null;
       return result.filePaths[0] || null;
     },
+    selectPluginFile: async (event: Electron.IpcMainInvokeEvent) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+      const result = await dialog.showOpenDialog(parent, {
+        title: electronText(currentProductLanguage(), 'plugins.selectFileTitle'),
+        properties: ['openFile'],
+        filters: [{ name: 'JavaScript', extensions: ['js'] }],
+      });
+      return result.canceled ? null : result.filePaths[0] || null;
+    },
+    selectAssetFile: async (event: Electron.IpcMainInvokeEvent, category: string, extensions: string[]) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+      const result = await dialog.showOpenDialog(parent, {
+        title: electronText(currentProductLanguage(), 'assets.selectFileTitle', { category }),
+        properties: ['openFile'],
+        filters: [{ name: category, extensions }],
+      });
+      return result.canceled ? null : result.filePaths[0] || null;
+    },
   });
 
   registerInteractivePlaytestIpcHandlers(ipcMain, requireInteractivePlaytestService(), {

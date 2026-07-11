@@ -10,6 +10,8 @@ export interface IpcRegistrar {
 
 export interface ProjectIpcOptions {
   selectProjectDirectory?: (event: unknown) => Promise<string | null>;
+  selectPluginFile?: (event: unknown) => Promise<string | null>;
+  selectAssetFile?: (event: unknown, category: string, extensions: string[]) => Promise<string | null>;
   productLanguage?: () => ProductLanguage;
   withProductLanguage: <T>(language: ProductLanguage, fn: () => T) => T;
 }
@@ -56,6 +58,7 @@ export const MAP_IPC_CHANNELS = [
   'projectAssets:checkDeleteSafety',
   'projectAssets:replaceMissingReference',
   'projectAssets:importLocalFile',
+  'projectAssets:selectImportFile',
   'projectManagement:overview',
   'projectManagement:getEntry',
   'projectManagement:updateEntry',
@@ -79,6 +82,7 @@ export const MAP_IPC_CHANNELS = [
   'plugins:reorder',
   'plugins:updateParameters',
   'plugins:installFile',
+  'plugins:selectInstallFile',
   'plugins:deleteFile',
   'assetLibrary:catalog',
   'assetLibrary:detail',
@@ -232,10 +236,15 @@ export function registerMapIpcHandlers(
     desktop.assetManagement.replaceMissingAssetReference(workflowRoot, project(value), request));
   handle('projectAssets:importLocalFile', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.importLocalAssetFile(workflowRoot, project(value), request));
+  handle('projectAssets:selectImportFile', async (event, category: string) => {
+    if (!options.selectAssetFile) throw new Error(electronText(options.productLanguage?.(), 'assets.selectFileUnsupported'));
+    const extensions = desktop.assetManagement.getAssetImportFileExtensions(category);
+    return options.selectAssetFile(event, category, extensions);
+  });
   handle('projectManagement:overview', (_event, value?: string) => {
     const resolved = project(value);
     const scan = desktop.projectManagement.buildProjectManagementScan(workflowRoot, resolved);
-    const assets = desktop.scanner.buildAssetInventory(resolved);
+    const assets = desktop.assetManagement.buildStagedAwareAssetInventory(workflowRoot, resolved);
     return { scan, assets };
   });
   handle('projectManagement:getEntry', (_event, request: Record<string, unknown>, value?: string) =>
@@ -284,6 +293,10 @@ export function registerMapIpcHandlers(
     desktop.pluginManagement.updatePluginParameters(workflowRoot, project(value), pluginName, parameters || {}));
   handle('plugins:installFile', (_event, sourceFile: string, options?: Record<string, unknown>, value?: string) =>
     desktop.pluginManagement.installPluginFile(workflowRoot, project(value), sourceFile, options || {}));
+  handle('plugins:selectInstallFile', async (event) => {
+    if (!options.selectPluginFile) throw new Error(electronText(options.productLanguage?.(), 'plugins.selectFileUnsupported'));
+    return options.selectPluginFile(event);
+  });
   handle('plugins:deleteFile', (_event, pluginName: string, options?: Record<string, unknown>, value?: string) =>
     desktop.pluginManagement.deletePluginFile(workflowRoot, project(value), pluginName, options || {}));
 

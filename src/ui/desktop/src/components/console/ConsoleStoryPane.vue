@@ -10,6 +10,7 @@ import {
   projectAssets,
   projectManagement,
   type EditorProjectCatalog,
+  type ManagedAssetDetail,
   type ProjectManagedEntry,
   type ProjectOverview,
   type ProjectOverviewAudioBucket,
@@ -44,8 +45,8 @@ import { parseProjectStagingSummary, type ProjectStagingSummary } from '../../ut
 
 type PmDetail =
   | { kind: 'managed'; entry: ProjectManagedEntry }
-  | { kind: 'audio'; category: string; name: string; url: string; fileName: string; relativePath: string; missing?: boolean }
-  | { kind: 'image'; category: string; name: string; url: string; fileName: string; relativePath: string; missing?: boolean };
+  | { kind: 'audio'; category: string; name: string; url: string; fileName: string; relativePath: string; missing?: boolean; staged?: boolean; references?: ManagedAssetDetail['references']; size?: number }
+  | { kind: 'image'; category: string; name: string; url: string; fileName: string; relativePath: string; missing?: boolean; staged?: boolean; references?: ManagedAssetDetail['references']; size?: number };
 
 type ImageGridItem = {
   name: string;
@@ -689,12 +690,6 @@ function showMoreLabel(count: number): string {
   return t('story.showMore', { count });
 }
 
-function previewOnlyNote(kind: 'audio' | 'image'): string {
-  return kind === 'audio'
-    ? t('story.audioPreviewNote')
-    : t('story.imagePreviewNote');
-}
-
 function isCommonEventsGroup(group?: string): boolean {
   return group === 'CommonEvents';
 }
@@ -1228,14 +1223,7 @@ async function openAudioDetail(bucketKey: string, name: string) {
     }
     const relativePath = `www/audio/${bucketKey}/${fileName}`;
     const asset = await projectAssets.detail({ scope: 'project', category: bucketKey, relativePath }, projectStore.currentProject);
-    pmDetail.value = {
-      kind: 'audio',
-      category: bucketKey,
-      name: asset.name,
-      url: asset.url || '',
-      fileName: asset.fileName,
-      relativePath: asset.relativePath,
-    };
+    setAssetDetail('audio', bucketKey, asset);
   } catch (loadError) {
     detailError.value = (loadError as Error).message;
   } finally {
@@ -1266,16 +1254,151 @@ async function openImageDetail(bucketKey: string, name: string) {
     }
     const relativePath = projectRelativeAssetPath(bucket.dir, fileName);
     const asset = await projectAssets.detail({ scope: 'project', category: imageDetailCategory(bucketKey), relativePath }, projectStore.currentProject);
-    pmDetail.value = {
-      kind: 'image',
-      category: bucketKey,
-      name: asset.name,
-      url: asset.url || '',
-      fileName: asset.fileName,
-      relativePath: asset.relativePath,
-    };
+    setAssetDetail('image', bucketKey, asset);
   } catch (loadError) {
     detailError.value = (loadError as Error).message;
+  } finally {
+    detailBusy.value = false;
+  }
+}
+
+function setAssetDetail(kind: 'audio' | 'image', bucketKey: string, asset: ManagedAssetDetail) {
+  pmDetail.value = {
+    kind,
+    category: bucketKey,
+    name: asset.name,
+    url: asset.url || '',
+    fileName: asset.fileName,
+    relativePath: asset.relativePath,
+    staged: asset.staged,
+    references: asset.references,
+    size: asset.size,
+  };
+}
+
+function currentAssetDetail() {
+  const detail = pmDetail.value;
+  return detail?.kind === 'audio' || detail?.kind === 'image' ? detail : null;
+}
+
+function currentAssetTarget() {
+  const detail = currentAssetDetail();
+  if (!detail || detail.missing || !detail.relativePath) return null;
+  return {
+    scope: 'project',
+    category: detail.kind === 'image' ? imageDetailCategory(detail.category) : detail.category,
+    relativePath: detail.relativePath,
+  };
+}
+
+function localFileParts(filePath: string): { fileName: string; name: string } {
+  const fileName = String(filePath || '').split(/[\\/]/).pop() || '';
+  return { fileName, name: fileName.replace(/\.[^.]+$/, '') };
+}
+
+async function importCurrentAssetCategory() {
+  if (!projectStore.currentProject || detailBusy.value || !['audio', 'images'].includes(selected.value)) return;
+  const kind = selected.value === 'audio' ? 'audio' : 'image';
+  const bucketKey = kind === 'audio' ? selectedAudioBucket.value : selectedImageBucket.value;
+  const category = kind === 'image' ? imageDetailCategory(bucketKey) : bucketKey;
+  detailBusy.value = true;
+  detailError.value = '';
+  try {
+    const sourceFile = await projectAssets.selectImportFile(category);
+    if (!sourceFile) return;
+    const { name } = localFileParts(sourceFile);
+    const bucketNames = kind === 'audio'
+      ? assets.value?.audio?.[bucketKey]?.names || []
+      : assets.value?.images?.[bucketKey]?.names || [];
+    const overwrite = bucketNames.includes(name);
+    if (overwrite) {
+      try {
+        await ElMessageBox.confirm(
+          t('story.assetOverwriteConfirm', { name }),
+          t('story.assetOverwriteTitle'),
+          { type: 'warning' },
+        );
+      } catch {
+        return;
+      }
+    }
+    const asset = await projectAssets.importLocalFile({ category, sourceFile, overwrite }, projectStore.currentProject);
+    resetCatalog();
+    if (kind === 'image') await ensureCatalog();
+    await loadData();
+    setAssetDetail(kind, bucketKey, asset);
+  } catch (importError) {
+    detailError.value = (importError as Error).message;
+  } finally {
+    detailBusy.value = false;
+  }
+}
+
+async function renameCurrentAsset() {
+  const detail = currentAssetDetail();
+  const target = currentAssetTarget();
+  if (!detail || !target || !projectStore.currentProject || detailBusy.value) return;
+  let nextName = '';
+  try {
+    const response = await ElMessageBox.prompt(
+      t('story.assetRenamePrompt', { count: detail.references?.length || 0 }),
+      t('story.assetRenameTitle'),
+      { inputValue: detail.name, inputPattern: /^[^<>:"/\\|?*\u0000-\u001f]+$/, inputErrorMessage: t('story.assetNameInvalid') },
+    );
+    nextName = String(response.value || '').trim();
+  } catch {
+    return;
+  }
+  detailBusy.value = true;
+  detailError.value = '';
+  try {
+    const safety = await projectAssets.checkRenameSafety(target, nextName, projectStore.currentProject);
+    if (!safety.ok) throw new Error(safety.blockers.join('\n'));
+    try {
+      await ElMessageBox.confirm(
+        t('story.assetRenameConfirm', { count: safety.references.length }),
+        t('story.assetRenameTitle'),
+        { type: 'warning' },
+      );
+    } catch {
+      return;
+    }
+    const renamed = await projectAssets.rename(target, nextName, projectStore.currentProject);
+    resetCatalog();
+    if (detail.kind === 'image') await ensureCatalog();
+    await loadData();
+    setAssetDetail(detail.kind, detail.category, renamed);
+  } catch (renameError) {
+    detailError.value = (renameError as Error).message;
+  } finally {
+    detailBusy.value = false;
+  }
+}
+
+async function deleteCurrentAsset() {
+  const detail = currentAssetDetail();
+  const target = currentAssetTarget();
+  if (!detail || !target || !projectStore.currentProject || detailBusy.value) return;
+  detailBusy.value = true;
+  detailError.value = '';
+  try {
+    const safety = await projectAssets.checkDeleteSafety(target, projectStore.currentProject);
+    if (!safety.ok) throw new Error(safety.blockers.join('\n'));
+    try {
+      await ElMessageBox.confirm(
+        t('story.assetDeleteConfirm', { name: detail.name }),
+        t('story.assetDeleteTitle'),
+        { type: 'warning' },
+      );
+    } catch {
+      return;
+    }
+    await projectAssets.remove(target, projectStore.currentProject);
+    resetCatalog();
+    closeDetail();
+    await loadData();
+  } catch (deleteError) {
+    detailError.value = (deleteError as Error).message;
   } finally {
     detailBusy.value = false;
   }
@@ -1618,6 +1741,10 @@ function detailTitle(): string {
 
           <!-- ========== Audio ========== -->
           <template v-else-if="selected === 'audio'">
+            <div class="list-toolbar asset-toolbar">
+              <span>{{ selectedAudioBucket.toUpperCase() }}</span>
+              <button type="button" :disabled="detailBusy || stagingBusy" @click="importCurrentAssetCategory">{{ t('story.assetImport') }}</button>
+            </div>
             <div class="id-list">
               <button
                 v-for="n in visibleAudioNames"
@@ -1644,6 +1771,10 @@ function detailTitle(): string {
 
           <!-- ========== Images ========== -->
           <template v-else-if="selected === 'images'">
+            <div class="list-toolbar asset-toolbar">
+              <span>{{ imageBucketLabel(selectedImageBucket) }}</span>
+              <button type="button" :disabled="detailBusy || stagingBusy" @click="importCurrentAssetCategory">{{ t('story.assetImport') }}</button>
+            </div>
             <div class="image-grid">
               <button
                 v-for="item in visibleImageGridItems"
@@ -1790,20 +1921,30 @@ function detailTitle(): string {
               <dt>{{ t('eventEditorDialog.type') }}</dt><dd>{{ pmDetail.category.toUpperCase() }}</dd>
               <dt>{{ t('story.fileName') }}</dt><dd>{{ pmDetail.fileName || '—' }}</dd>
               <dt>{{ t('story.path') }}</dt><dd>{{ pmDetail.relativePath || '—' }}</dd>
+              <dt>{{ t('story.assetReferences') }}</dt><dd>{{ pmDetail.references?.length || 0 }}</dd>
+              <dt>{{ t('story.assetState') }}</dt><dd>{{ pmDetail.staged ? t('story.assetStaged') : t('story.assetSource') }}</dd>
             </dl>
             <audio v-if="pmDetail.url" :src="pmDetail.url" controls />
             <div v-else class="empty-hint">{{ t('story.audioNotFound') }}</div>
+            <div v-if="pmDetail.references?.length" class="asset-reference-list">
+              <span v-for="reference in pmDetail.references" :key="`${reference.file}:${reference.path}`">{{ reference.file }} · {{ reference.path }}</span>
+            </div>
           </div>
           <div v-else-if="pmDetail?.kind === 'image'" class="pm-detail-body image-detail">
             <dl class="audio-facts">
               <dt>{{ t('eventEditorDialog.type') }}</dt><dd>{{ imageBucketLabel(pmDetail.category) }}</dd>
               <dt>{{ t('story.fileName') }}</dt><dd>{{ pmDetail.fileName || '—' }}</dd>
               <dt>{{ t('story.path') }}</dt><dd>{{ pmDetail.relativePath || '—' }}</dd>
+              <dt>{{ t('story.assetReferences') }}</dt><dd>{{ pmDetail.references?.length || 0 }}</dd>
+              <dt>{{ t('story.assetState') }}</dt><dd>{{ pmDetail.staged ? t('story.assetStaged') : t('story.assetSource') }}</dd>
             </dl>
             <div v-if="pmDetail.url" class="image-preview-frame">
               <img :src="pmDetail.url" :alt="pmDetail.name" />
             </div>
             <div v-else class="empty-hint">{{ t('story.imageNotFound') }}</div>
+            <div v-if="pmDetail.references?.length" class="asset-reference-list">
+              <span v-for="reference in pmDetail.references" :key="`${reference.file}:${reference.path}`">{{ reference.file }} · {{ reference.path }}</span>
+            </div>
           </div>
           <div v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'commonEvent'" class="pm-detail-body">
             <StagedEntryInspection :inspection="pmDetail.entry.inspection" />
@@ -1860,7 +2001,13 @@ function detailTitle(): string {
           <div v-if="detailError && pmDetail" class="detail-error">{{ formatErrorText(detailError) }}</div>
           <footer v-if="pmDetail">
             <template v-if="pmDetail.kind === 'audio' || pmDetail.kind === 'image'">
-              <span>{{ previewOnlyNote(pmDetail.kind) }}</span>
+              <span>{{ t('story.assetLifecycleNote') }}</span>
+              <div class="pm-detail-footer-actions">
+                <button type="button" class="secondary-button" :disabled="detailBusy || stagingBusy || pmDetail.missing" @click="renameCurrentAsset">{{ t('story.assetRename') }}</button>
+                <button type="button" class="secondary-button danger" :disabled="detailBusy || stagingBusy || pmDetail.missing" @click="deleteCurrentAsset">{{ t('cmdList.delete') }}</button>
+                <button v-if="stagingDirty" type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="discardProjectStaging">{{ t('editor.toolbar.discard') }}</button>
+                <button v-if="stagingDirty" type="button" class="secondary-button staging-apply-button" :disabled="detailBusy || stagingBusy" @click="applyProjectStaging">{{ t('editor.toolbar.applyStaging') }}</button>
+              </div>
             </template>
             <template v-else>
               <span>{{ t('story.saveStagingNote') }}</span>
@@ -2045,6 +2192,7 @@ function detailTitle(): string {
 .audio-facts dt { color: var(--app-ink-muted); }
 .audio-facts dd { margin: 0; word-break: break-word; }
 .audio-detail audio { width: 100%; }
+.asset-reference-list { display: grid; gap: 4px; padding: 9px; border-radius: 9px; background: var(--console-paper-soft,#faf5ec); color: var(--console-text-muted,#9a8e7e); font: 9.5px/1.45 var(--app-font-mono); overflow-wrap: anywhere; }
 .image-preview-frame {
   min-height: 180px;
   display: grid;
@@ -2117,6 +2265,8 @@ function detailTitle(): string {
 
 /* List toolbar */
 .list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--console-border,#e4dcce); }
+.asset-toolbar { color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
+.asset-toolbar button { min-height: 26px; padding: 0 9px; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 8px; background: var(--console-paper,#fffdfa); color: var(--console-accent,#be5630); font: inherit; cursor: pointer; }
 .database-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
 .database-toolbar .link-button:disabled { opacity: .55; cursor: wait; text-decoration: none; }
 .toggle-label {
@@ -2356,6 +2506,7 @@ function detailTitle(): string {
   border-color: var(--console-accent, #be5630);
   color: var(--console-accent, #be5630);
 }
+.pm-detail-footer-actions .danger { border-color: color-mix(in srgb, var(--app-danger) 35%, var(--console-border-strong,#ddd3c2)); color: var(--app-danger); }
 .detail-facts {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);

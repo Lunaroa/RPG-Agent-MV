@@ -7,7 +7,14 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
-import { deleteAsset, getAssetDetail, importLocalAssetFile, replaceMissingAssetReference } from './asset-management-service.ts';
+import {
+  buildStagedAwareAssetInventory,
+  deleteAsset,
+  getAssetDetail,
+  importLocalAssetFile,
+  renameAsset,
+  replaceMissingAssetReference,
+} from './asset-management-service.ts';
 import { withTestLanguage } from '../i18n/with-test-language.ts';
 import {
   buildAssetReferenceGraph,
@@ -283,6 +290,53 @@ describe('asset reference graph service', { concurrency: false }, () => {
 
     assert.equal(fs.readFileSync(sourcePluginConfig, 'utf8'), beforeSource);
     assert.ok(beforeSource.includes('MissingPlugin'));
+  });
+
+  test('renames references inside plugin parameters before staging the asset move', () => {
+    const sourcePluginConfig = path.join(project, 'www', 'js', 'plugins.js');
+    const sourceConfigBefore = fs.readFileSync(sourcePluginConfig, 'utf8');
+
+    const result = renameAsset(root, project, {
+      scope: 'project',
+      category: 'pictures',
+      relativePath: 'www/img/pictures/Portrait.png',
+    }, 'PortraitAlt');
+
+    assert.equal(result.name, 'PortraitAlt');
+    assert.equal(result.references.length, 2);
+    const stagedPluginConfig = fs.readFileSync(getProjectFileForRead(root, project, 'www/js/plugins.js')!, 'utf8');
+    assert.match(stagedPluginConfig, /img\/pictures\/PortraitAlt/);
+    assert.doesNotMatch(stagedPluginConfig, /img\/pictures\/Portrait"/);
+    assert.match(
+      JSON.stringify(readJson(getProjectFileForRead(root, project, 'www/data/Map001.json')!)),
+      /PortraitAlt/,
+    );
+    assert.equal(fs.readFileSync(sourcePluginConfig, 'utf8'), sourceConfigBefore);
+    assert.equal(getProjectFileForRead(root, project, 'www/img/pictures/Portrait.png'), null);
+    assert.ok(getProjectFileForRead(root, project, 'www/img/pictures/PortraitAlt.png'));
+  });
+
+  test('builds project asset lists from the effective staged add, rename, and delete state', () => {
+    const localFile = path.join(root, 'desktop-local-assets', 'NewPicture.png');
+    fs.mkdirSync(path.dirname(localFile), { recursive: true });
+    fs.writeFileSync(localFile, 'new picture');
+    importLocalAssetFile(root, project, { category: 'pictures', sourceFile: localFile });
+    renameAsset(root, project, {
+      scope: 'project',
+      category: 'pictures',
+      relativePath: 'www/img/pictures/Unused.png',
+    }, 'RenamedUnused');
+    deleteAsset(root, project, {
+      scope: 'project',
+      category: 'pictures',
+      relativePath: 'www/img/pictures/RenamedUnused.png',
+    });
+
+    const inventory = buildStagedAwareAssetInventory(root, project);
+    assert.equal(inventory.images.pictures.names.includes('NewPicture'), true);
+    assert.equal(inventory.images.pictures.names.includes('Unused'), false);
+    assert.equal(inventory.images.pictures.names.includes('RenamedUnused'), false);
+    assert.equal(inventory.images.pictures.files.includes('NewPicture.png'), true);
   });
 });
 

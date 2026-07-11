@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { ArrowDown, ArrowUp, EditPen, Refresh } from '@element-plus/icons-vue';
+import { ElMessageBox } from 'element-plus';
 import {
+  maps as mapsApi,
   plugins as pluginApi,
   type ManagedPluginEntry,
   type ManagedPluginFile,
@@ -13,6 +15,7 @@ import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
 import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 import { translatePluginDiagnosticMessage, translatePluginDiagnosticMessages } from '../../utils/pluginDiagnosticsI18n';
+import { parseProjectStagingSummary } from '../../utils/projectStaging';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
 
 const projectStore = useProjectStore();
@@ -27,6 +30,7 @@ const actionMessage = ref('');
 const parametersText = ref('{}');
 const parametersError = ref('');
 const parameterForm = ref<Record<string, unknown>>({});
+const stagingDirty = ref(false);
 
 const plugins = computed(() => config.value?.plugins || []);
 const pluginFiles = computed(() => config.value?.pluginFiles || []);
@@ -93,6 +97,7 @@ function resetState() {
   parametersText.value = '{}';
   parameterForm.value = {};
   busyKey.value = '';
+  stagingDirty.value = false;
 }
 
 function applyConfig(next: PluginConfigurationResult) {
@@ -109,6 +114,7 @@ async function loadPlugins() {
   actionMessage.value = '';
   try {
     applyConfig(await pluginApi.read(projectStore.currentProject));
+    await refreshStagingStatus();
   } catch (loadError) {
     config.value = null;
     error.value = formatUserFacingErrorMessage(loadError, 'general', language.value);
@@ -124,9 +130,136 @@ async function runAction(key: string, action: () => Promise<PluginConfigurationR
   actionMessage.value = '';
   try {
     applyConfig(await action());
+    await refreshStagingStatus();
     actionMessage.value = message;
   } catch (actionError) {
     error.value = formatUserFacingErrorMessage(actionError, 'general', language.value);
+  } finally {
+    busyKey.value = '';
+  }
+}
+
+async function refreshStagingStatus() {
+  if (!projectStore.currentProject) {
+    stagingDirty.value = false;
+    return;
+  }
+  try {
+    const status = await mapsApi.projectStaging(projectStore.currentProject) as { staged?: boolean };
+    stagingDirty.value = Boolean(status?.staged);
+  } catch {
+    /* Staging status does not block plugin configuration reads. */
+  }
+}
+
+function pluginNameFromPath(filePath: string): string {
+  return String(filePath || '').split(/[\\/]/).pop()?.replace(/\.js$/i, '') || '';
+}
+
+async function installPlugin() {
+  if (!projectStore.currentProject || busyKey.value) return;
+  busyKey.value = 'install';
+  error.value = '';
+  actionMessage.value = '';
+  try {
+    const sourceFile = await pluginApi.selectInstallFile();
+    if (!sourceFile) return;
+    const name = pluginNameFromPath(sourceFile);
+    const overwrite = pluginFiles.value.some((file) => file.name === name && file.exists && !file.deleted);
+    if (overwrite) {
+      try {
+        await ElMessageBox.confirm(
+          t('plugins.overwriteConfirm', { name }),
+          t('plugins.overwriteTitle'),
+          { type: 'warning' },
+        );
+      } catch {
+        return;
+      }
+    }
+    const result = await pluginApi.installFile(sourceFile, { overwrite }, projectStore.currentProject);
+    applyConfig(result.configuration || await pluginApi.read(projectStore.currentProject));
+    selectedName.value = result.name;
+    actionMessage.value = overwrite
+      ? t('plugins.overwriteSuccess', { name: result.name })
+      : t('plugins.installSuccess', { name: result.name });
+    await refreshStagingStatus();
+  } catch (installError) {
+    error.value = formatUserFacingErrorMessage(installError, 'general', language.value);
+  } finally {
+    busyKey.value = '';
+  }
+}
+
+async function deleteSelectedPlugin() {
+  const plugin = selectedPlugin.value;
+  if (!projectStore.currentProject || !plugin?.name || busyKey.value) return;
+  try {
+    await ElMessageBox.confirm(
+      t('plugins.deleteConfirm', { name: plugin.name }),
+      t('plugins.deleteTitle'),
+      { type: 'warning' },
+    );
+  } catch {
+    return;
+  }
+  busyKey.value = `delete:${plugin.name}`;
+  error.value = '';
+  actionMessage.value = '';
+  try {
+    const result = await pluginApi.deleteFile(plugin.name, {}, projectStore.currentProject);
+    applyConfig(result.configuration || await pluginApi.read(projectStore.currentProject));
+    actionMessage.value = t('plugins.deleteSuccess', { name: plugin.name });
+    await refreshStagingStatus();
+  } catch (deleteError) {
+    error.value = formatUserFacingErrorMessage(deleteError, 'general', language.value);
+  } finally {
+    busyKey.value = '';
+  }
+}
+
+async function applyPluginStaging() {
+  if (!projectStore.currentProject || busyKey.value) return;
+  busyKey.value = 'apply-staging';
+  error.value = '';
+  try {
+    const status = await mapsApi.projectStaging(projectStore.currentProject);
+    const summary = parseProjectStagingSummary(status);
+    if (summary.operations.length) {
+      const operations = summary.operations.map((operation) => `${operation.operationId} · ${operation.files.length}`).join('\n');
+      try {
+        await ElMessageBox.confirm(
+          t('plugins.applyAgentOperationsConfirm', { operations }),
+          t('plugins.applyAgentOperationsTitle'),
+          { type: 'warning' },
+        );
+      } catch {
+        return;
+      }
+    }
+    await mapsApi.applyProjectStaging(
+      projectStore.currentProject,
+      summary.operations.map((operation) => operation.operationId),
+    );
+    await loadPlugins();
+    actionMessage.value = t('plugins.applySuccess');
+  } catch (applyError) {
+    error.value = formatUserFacingErrorMessage(applyError, 'general', language.value);
+  } finally {
+    busyKey.value = '';
+  }
+}
+
+async function discardPluginStaging() {
+  if (!projectStore.currentProject || busyKey.value) return;
+  busyKey.value = 'discard-staging';
+  error.value = '';
+  try {
+    await mapsApi.discardProjectStaging(projectStore.currentProject);
+    await loadPlugins();
+    actionMessage.value = t('plugins.discardSuccess');
+  } catch (discardError) {
+    error.value = formatUserFacingErrorMessage(discardError, 'general', language.value);
   } finally {
     busyKey.value = '';
   }
@@ -516,6 +649,9 @@ function pluginFileStatus(file: ManagedPluginFile): string {
               <button type="button" :title="t('plugins.moveDown')" :disabled="!canMove(selectedPlugin, 1)" @click="movePlugin(selectedPlugin, 1)">
                 <ArrowDown />
               </button>
+              <button type="button" class="danger" :disabled="Boolean(busyKey) || !selectedPlugin.fileExists" @click="deleteSelectedPlugin">
+                {{ t('plugins.delete') }}
+              </button>
             </div>
 
             <dl class="facts">
@@ -727,7 +863,12 @@ function pluginFileStatus(file: ManagedPluginFile): string {
       </main>
 
       <aside class="plugin-files-panel">
-        <div class="panel-title">{{ t('plugins.pluginFiles') }}</div>
+        <div class="panel-title">
+          <span>{{ t('plugins.pluginFiles') }}</span>
+          <button type="button" class="text-action" :disabled="Boolean(busyKey)" @click="installPlugin">
+            {{ t('plugins.install') }}
+          </button>
+        </div>
         <div class="file-list">
           <div v-for="file in pluginFiles" :key="file.relativePath" class="file-row" :class="{ staged: file.staged, deleted: file.deleted }">
             <strong>{{ file.fileName }}</strong>
@@ -742,7 +883,11 @@ function pluginFileStatus(file: ManagedPluginFile): string {
           <strong>{{ t('plugins.unconfiguredFiles') }}</strong>
           <span v-for="file in orphanFiles" :key="file.relativePath">{{ file.fileName }}</span>
         </div>
-        <div class="file-note">{{ t('plugins.noFilePicker') }}</div>
+        <div class="file-note">{{ stagingDirty ? t('plugins.stagingPending') : t('plugins.lifecycleNote') }}</div>
+        <div v-if="stagingDirty" class="file-actions">
+          <button type="button" :disabled="Boolean(busyKey)" @click="discardPluginStaging">{{ t('editor.toolbar.discard') }}</button>
+          <button type="button" class="primary" :disabled="Boolean(busyKey)" @click="applyPluginStaging">{{ t('editor.toolbar.applyStaging') }}</button>
+        </div>
       </aside>
     </div>
   </div>
@@ -754,6 +899,7 @@ function pluginFileStatus(file: ManagedPluginFile): string {
 .plugin-list-panel,.plugin-detail-panel,.plugin-files-panel { min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--console-border,#e4dcce); border-radius: 14px; background: var(--console-paper,#fffdfa); }
 .panel-title { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--console-border,#e4dcce); color: var(--console-text-soft,#5a5247); font-size: 12px; font-weight: 650; }
 .panel-title button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--console-text-muted,#9a8e7e); cursor: pointer; }
+.panel-title button.text-action { width: auto; padding: 0 8px; font: inherit; font-size: 10px; font-weight: 700; }
 .panel-title button:hover:not(:disabled) { background: var(--console-accent-soft,#f6e3d7); color: var(--console-accent,#be5630); }
 .panel-title button:disabled,button:disabled { cursor: not-allowed; opacity: .45; }
 .panel-title svg,.plugin-toolbar svg,.params-editor svg { width: 15px; }
@@ -797,6 +943,7 @@ function pluginFileStatus(file: ManagedPluginFile): string {
 .plugin-toolbar { display: flex; gap: 7px; align-items: center; }
 .plugin-toolbar button,.primary { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 9px; background: var(--console-paper,#fffdfa); color: var(--console-text-soft,#5a5247); padding: 0 11px; font: inherit; font-size: 11px; cursor: pointer; }
 .plugin-toolbar button:hover:not(:disabled) { border-color: #d2a88c; color: var(--console-accent,#be5630); }
+.plugin-toolbar button.danger { margin-left: auto; color: var(--app-danger); }
 .facts { display: grid; grid-template-columns: 66px minmax(0,1fr); gap: 8px 10px; margin: 0; padding: 12px; border-radius: 10px; background: var(--console-paper-soft,#faf5ec); font-size: 11px; }
 .facts dt { color: var(--console-text-muted,#9a8e7e); }
 .facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
@@ -840,6 +987,9 @@ function pluginFileStatus(file: ManagedPluginFile): string {
 .orphan-block strong { color: var(--console-text-soft,#5a5247); }
 .orphan-block span { color: var(--console-text-muted,#9a8e7e); font-family: var(--app-font-mono); font-size: 10px; }
 .file-note { margin: 0 10px 10px; padding: 10px; border-radius: 10px; background: var(--console-accent-soft,#f6e3d7); color: var(--console-accent,#be5630); font-size: 11px; line-height: 1.5; }
+.file-actions { display: flex; justify-content: flex-end; gap: 7px; padding: 0 10px 10px; }
+.file-actions button { min-height: 30px; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 8px; background: var(--console-paper,#fffdfa); color: var(--console-text-soft,#5a5247); padding: 0 10px; font: inherit; font-size: 10px; cursor: pointer; }
+.file-actions .primary { border-color: var(--console-accent,#be5630); background: var(--console-accent,#be5630); color: white; }
 .empty,.state { display: grid; place-items: center; min-height: 110px; padding: 20px; color: var(--console-text-muted,#9a8e7e); font-size: 12px; text-align: center; }
 .state { height: 100%; }
 .state.error { color: var(--app-danger); }

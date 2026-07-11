@@ -3,9 +3,10 @@ import path from 'node:path';
 
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import {
-  deleteStagedProjectFile,
   getProjectFileForRead,
   getProjectStagingStatus,
+  stageProjectFilesAtomically,
+  type StagedProjectFileMutation,
   writeStagedProjectBuffer,
 } from './staging-service.ts';
 
@@ -184,22 +185,36 @@ export function installPluginFile(
   const source = path.resolve(sourceFile);
   if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error('Plugin source file does not exist');
   if (path.extname(source).toLowerCase() !== '.js') throw new Error('Only .js plugin files can be installed');
+  if (options.overwrite !== undefined && typeof options.overwrite !== 'boolean') throw new Error('Plugin overwrite must be a boolean');
   const name = normalizePluginFileStem(options.name || path.basename(source, '.js'));
   const relativePath = `${pluginDirRelativePath(project)}/${name}.js`;
-  if (getProjectFileForRead(workflowRoot, project, relativePath) && !options.overwrite) {
+  const targetExists = Boolean(getProjectFileForRead(workflowRoot, project, relativePath));
+  if (targetExists && !options.overwrite) {
     throw new Error(`Plugin file already exists: ${name}.js`);
   }
 
-  writeStagedProjectBuffer(workflowRoot, project, relativePath, fs.readFileSync(source));
-  let configuration: PluginConfigurationResult | undefined;
-  if (options.configuration) {
-    configuration = upsertPluginConfiguration(workflowRoot, project, {
+  const parsed = requireReadablePlugins(workflowRoot, project);
+  const configured = parsed.entries.filter((entry) => entry.name === name);
+  if (configured.length > 1) throw new Error(`Duplicate plugin configuration cannot be modified safely: ${name}`);
+  const mutations: StagedProjectFileMutation[] = [{
+    relativePath,
+    content: fs.readFileSync(source),
+  }];
+  if (configured.length === 0) {
+    const configuration = options.configuration || {};
+    const entry: PluginConfigEntry = {
       name,
-      status: Boolean(options.configuration.status),
-      description: String(options.configuration.description || ''),
-      parameters: isPlainObject(options.configuration.parameters) ? options.configuration.parameters : {},
+      status: false,
+      description: String(configuration.description || ''),
+      parameters: isPlainObject(configuration.parameters) ? structuredClone(configuration.parameters) : {},
+    };
+    mutations.push({
+      relativePath: parsed.relativePath,
+      content: Buffer.from(serializePlugins([...parsed.entries, entry]), 'utf8'),
     });
   }
+  stageProjectFilesAtomically(workflowRoot, project, mutations);
+  const configuration = readPluginConfiguration(workflowRoot, project);
   return {
     name,
     relativePath,
@@ -214,22 +229,25 @@ export function deletePluginFile(
   pluginName: string,
   options: { force?: boolean; removeConfigurationEntry?: boolean } = {},
 ): { name: string; relativePath: string; staging: unknown; configuration?: PluginConfigurationResult } {
-  const name = normalizePluginFileStem(pluginName);
-  const parsed = readPlugins(workflowRoot, project);
-  const configured = parsed.entries.filter((entry) => entry.name === name);
-  if (configured.some((entry) => entry.status) && !options.force && !options.removeConfigurationEntry) {
-    throw new Error(`Plugin is still enabled and cannot be deleted: ${name}`);
+  if (options.force !== undefined) throw new Error('Plugin force deletion is not supported');
+  if (options.removeConfigurationEntry === false) {
+    throw new Error('Plugin file and configuration must be deleted together');
   }
+  const name = normalizePluginFileStem(pluginName);
+  const parsed = requireReadablePlugins(workflowRoot, project);
+  const configured = parsed.entries.filter((entry) => entry.name === name);
+  if (configured.length > 1) throw new Error(`Duplicate plugin configuration cannot be modified safely: ${name}`);
   const relativePath = pluginFileCandidates(project, name).find((candidate) => getProjectFileForRead(workflowRoot, project, candidate));
   if (!relativePath) throw new Error(`Plugin file does not exist: ${name}.js`);
-  deleteStagedProjectFile(workflowRoot, project, relativePath);
-
-  let configuration: PluginConfigurationResult | undefined;
-  if (options.removeConfigurationEntry) {
-    const next = parsed.entries.filter((entry) => entry.name !== name);
-    writePluginsJs(workflowRoot, project, parsed.relativePath, next);
-    configuration = readPluginConfiguration(workflowRoot, project);
-  }
+  const next = parsed.entries.filter((entry) => entry.name !== name);
+  stageProjectFilesAtomically(workflowRoot, project, [
+    { relativePath, delete: true },
+    {
+      relativePath: parsed.relativePath,
+      content: Buffer.from(serializePlugins(next), 'utf8'),
+    },
+  ]);
+  const configuration = readPluginConfiguration(workflowRoot, project);
 
   return {
     name,
@@ -330,20 +348,6 @@ function updatePluginEntry(
   if (matches.length > 1) throw new Error(`Duplicate plugin configuration cannot be modified safely: ${name}`);
   update(matches[0]);
   writePluginsJs(workflowRoot, project, parsed.relativePath, parsed.entries);
-  return readPluginConfiguration(workflowRoot, project);
-}
-
-function upsertPluginConfiguration(
-  workflowRoot: string,
-  project: string,
-  entry: PluginConfigEntry,
-): PluginConfigurationResult {
-  const parsed = readPlugins(workflowRoot, project);
-  const index = parsed.entries.findIndex((item) => item.name === entry.name);
-  const next = [...parsed.entries];
-  if (index >= 0) next[index] = entry;
-  else next.push(entry);
-  writePluginsJs(workflowRoot, project, parsed.relativePath, next);
   return readPluginConfiguration(workflowRoot, project);
 }
 

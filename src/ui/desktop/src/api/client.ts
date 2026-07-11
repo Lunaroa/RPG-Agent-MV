@@ -12,6 +12,16 @@ declare global {
         isMaximized(): Promise<{ maximized: boolean }>;
         openExternalUrl(url: string): Promise<{ ok: boolean }>;
       };
+      app: {
+        getVersion(): Promise<{ version: string }>;
+        checkForUpdates(): Promise<{
+          ok: boolean;
+          status: string;
+          version?: string;
+          channel?: string;
+          error?: string;
+        }>;
+      };
       uiControl: {
         onCommand(callback: (payload: unknown) => void): () => void;
         sendResult(payload: unknown): void;
@@ -378,6 +388,15 @@ export interface PluginConfigurationResult {
 // 默认工程：后端 resolveProjectPath 把空值兜底到 projects/Project，
 // 这里显式传同一相对路径，便于将来切换多工程。
 export const DEFAULT_PROJECT = 'projects/Project';
+
+export const appInfo = {
+  getVersion() {
+    return desktopApi().app.getVersion();
+  },
+  checkForUpdates() {
+    return desktopApi().app.checkForUpdates();
+  },
+};
 
 export const workspace = {
   get() {

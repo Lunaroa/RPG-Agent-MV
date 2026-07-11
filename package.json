@@ -15,6 +15,7 @@
     "playtest:probe": "npm --prefix src/backend run playtest:probe --",
     "deploy:source": "npm --prefix src/backend run deploy:source --",
     "release:electron": "npm run build:opencode-runtime && npm --prefix src/ui/desktop run package --",
+    "release:electron:publish": "npm run build:opencode-runtime && npm --prefix src/ui/desktop run package:publish",
     "release:check": "npm --prefix src/backend run release:check --",
     "release:source": "npm --prefix src/backend run release:source --",
     "workspace:prune-legacy": "node --experimental-strip-types src/backend/src/cli.ts workspace-prune-legacy"

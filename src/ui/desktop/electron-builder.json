@@ -97,6 +97,8 @@
   ],
   "win": {
     "icon": "src/ui/desktop/build/icon.ico",
+    "artifactName": "${productName} Setup ${version}.${ext}",
+    "verifyUpdateCodeSignature": true,
     "target": [
       {
         "target": "dir",
@@ -119,6 +121,15 @@
     "createStartMenuShortcut": true,
     "shortcutName": "RPG Agent MV",
     "include": "build/installer.nsh",
-    "removeDefaultUninstallWelcomePage": true
-  }
+    "removeDefaultUninstallWelcomePage": true,
+    "differentialPackage": true
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "Lunaroa",
+      "repo": "RPG-Agent-MV",
+      "releaseType": "release"
+    }
+  ]
 }

@@ -1782,6 +1782,19 @@ const zhCN = {
     'story.selectFromMiddle': '从中间列表选择地图、事件、开关、变量、公共事件、数据库、音频或图片。',
     'story.saveStagingNote': '保存后进入项目暂存，可统一应用或丢弃。',
     'story.saveChanges': '保存修改',
+    'story.stagedInspection': '暂存差异',
+    'story.stagedFieldCount': '{{count}} 个字段',
+    'story.validationErrorCount': '{{count}} 个错误',
+    'story.validationWarningCount': '{{count}} 个警告',
+    'story.stagedConflict': '源文件或草稿已在此次编辑之外发生变化，当前不能应用。',
+    'story.agentOwnedStaging': '属于 Agent 操作 {{operationId}}，需要整项撤销或整项应用。',
+    'story.pluginSemanticsNotValidated': '未知插件字段会原样保留，但不会验证插件自定义语义。',
+    'story.diffEmpty': '（不存在）',
+    'story.diffEmptyString': '（空字符串）',
+    'story.revertStagedEntry': '撤销此条暂存修改',
+    'story.applyAgentOperationsTitle': '应用 Agent 数据库操作',
+    'story.applyAgentOperationsConfirm': '当前暂存包含以下 Agent 操作：\n{{operations}}\n\n应用前会重新检查全部文件，并一次性原子写入。',
+    'story.agentOperationSummary': '{{operationId}} · {{count}} 个文件',
 } as const
 
 export default zhCN

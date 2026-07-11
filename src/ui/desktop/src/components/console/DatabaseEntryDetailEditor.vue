@@ -22,6 +22,7 @@ import {
   MV_CLASS_PARAM_LEVELS,
   MV_TROOP_PAGE_SPANS,
   appendStringListItem,
+  canRemoveStringListItem,
   isMvStringListField,
   MV_TERMS_LIST_PATHS,
   normalizeAnimationFrames,
@@ -375,7 +376,12 @@ function addStringListItem(path: string): void {
 }
 
 function removeStringListItemAt(path: string, index: number): void {
+  if (!canRemoveStringListItem(readPath(path), index, stringListReserveZero(path))) return;
   writePath(path, removeStringListItem(readPath(path), index, stringListReserveZero(path)));
+}
+
+function canRemoveStringListItemAt(path: string, index: number): boolean {
+  return canRemoveStringListItem(readPath(path), index, stringListReserveZero(path));
 }
 
 function isTermsArrayField(field: RmmvDatabaseFieldSchema): boolean {
@@ -1197,7 +1203,7 @@ function updateSound(index: number, key: string, value: unknown): void {
                   @input="updateStringListItem(field.path, index, ($event.target as HTMLInputElement).value)"
                 />
                 <button
-                  v-if="!(stringListReserveZero(field.path) && index === 0)"
+                  v-if="canRemoveStringListItemAt(field.path, index)"
                   type="button"
                   class="danger rmmv-type-delete"
                   @click="removeStringListItemAt(field.path, index)"
@@ -1226,13 +1232,14 @@ function updateSound(index: number, key: string, value: unknown): void {
                 />
               </label>
               <button
+                v-if="canRemoveStringListItemAt(field.path, index)"
                 type="button"
                 class="danger"
-                :disabled="stringListReserveZero(field.path) && index === 0"
                 @click="removeStringListItemAt(field.path, index)"
               >
                 {{ t('cmdList.delete') }}
               </button>
+              <span v-else class="rmmv-type-delete-placeholder" aria-hidden="true" />
             </div>
           </section>
 

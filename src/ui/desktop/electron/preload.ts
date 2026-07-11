@@ -149,6 +149,7 @@ contextBridge.exposeInMainWorld('api', {
     updateEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:updateEntry', request, project),
     createEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:createEntry', request, project),
     resetEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:resetEntry', request, project),
+    revertEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:revertEntry', request, project),
   },
 
   commonEvents: {
@@ -237,7 +238,8 @@ contextBridge.exposeInMainWorld('api', {
 
   staging: {
     projectStatus: (project?: string) => ipcRenderer.invoke('staging:projectStatus', project),
-    applyProject: (project?: string) => ipcRenderer.invoke('staging:applyProject', project),
+    applyProject: (project?: string, expectedOperationIds?: string[]) =>
+      ipcRenderer.invoke('staging:applyProject', project, expectedOperationIds),
     discardProject: (project?: string) => ipcRenderer.invoke('staging:discardProject', project),
     mapStatus: (mapId: number, project?: string) => ipcRenderer.invoke('staging:mapStatus', mapId, project),
     applyMap: (mapId: number, project?: string) => ipcRenderer.invoke('staging:applyMap', mapId, project),

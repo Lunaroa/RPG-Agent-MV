@@ -61,6 +61,7 @@ export const MAP_IPC_CHANNELS = [
   'projectManagement:updateEntry',
   'projectManagement:createEntry',
   'projectManagement:resetEntry',
+  'projectManagement:revertEntry',
   'commonEvents:list',
   'commonEvents:get',
   'commonEvents:create',
@@ -244,7 +245,9 @@ export function registerMapIpcHandlers(
   handle('projectManagement:createEntry', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.projectManagement.createProjectManagedEntry(workflowRoot, project(value), request));
   handle('projectManagement:resetEntry', (_event, request: Record<string, unknown>, value?: string) =>
-    desktop.projectManagement.getDefaultProjectManagedEntry(workflowRoot, project(value), request));
+    desktop.projectManagement.resetProjectManagedEntry(workflowRoot, project(value), request));
+  handle('projectManagement:revertEntry', (_event, request: Record<string, unknown>, value?: string) =>
+    desktop.projectManagement.revertProjectManagedEntry(workflowRoot, project(value), request));
 
   handle('commonEvents:list', (_event, value?: string) =>
     desktop.commonEvents.listCommonEvents(workflowRoot, project(value)));
@@ -292,7 +295,13 @@ export function registerMapIpcHandlers(
     desktop.assetLibrary.importAssetLibraryEntry(workflowRoot, project(value), assetId));
 
   handle('staging:projectStatus', (_event, value?: string) => desktop.staging.getProjectStagingStatus(workflowRoot, project(value)));
-  handle('staging:applyProject', (_event, value?: string) => desktop.staging.applyProjectStaging(workflowRoot, project(value)));
+  handle('staging:applyProject', (_event, value?: string, expectedOperationIds?: string[]) => {
+    const resolved = project(value);
+    return desktop.staging.applyProjectStaging(workflowRoot, resolved, {
+      expectedOperationIds: expectedOperationIds || [],
+      validate: () => desktop.projectManagement.preflightProjectManagedStagingApply(workflowRoot, resolved),
+    });
+  });
   handle('staging:discardProject', (_event, value?: string) => desktop.staging.discardProjectStaging(workflowRoot, project(value)));
   handle('staging:mapStatus', (_event, mapId: number, value?: string) => desktop.staging.getStagingStatus(workflowRoot, project(value), mapId));
   handle('staging:applyMap', (_event, mapId: number, value?: string) => desktop.staging.applyStagedMap(workflowRoot, project(value), mapId));

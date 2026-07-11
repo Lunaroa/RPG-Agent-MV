@@ -117,6 +117,13 @@ export function appendStringListItem(value: unknown, reserveZero: boolean): stri
   return [...normalizeStringList(value, reserveZero), ''];
 }
 
+export function canRemoveStringListItem(value: unknown, index: number, reserveZero: boolean): boolean {
+  const list = normalizeStringList(value, reserveZero);
+  if (!Number.isInteger(index) || index < 0 || index >= list.length) return false;
+  if (!reserveZero) return true;
+  return index > 0 && index === list.length - 1;
+}
+
 export function removeStringListItem(value: unknown, index: number, reserveZero: boolean): string[] {
   const list = normalizeStringList(value, reserveZero);
   if (reserveZero && index === 0) return list;

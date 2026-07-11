@@ -1398,6 +1398,8 @@ async function selectConversation(leafId: string) {
     if (saved?.length) {
       restoreSegments(saved as never)
       hydrateReviewPreviewFromTranscript(saved as never)
+      const playtestEvents = detail.events?.filter((event) => event.type === 'playtest_run') || []
+      if (playtestEvents.length) replaySessionEvents(playtestEvents)
     } else {
       resetState()
       const events = detail.events

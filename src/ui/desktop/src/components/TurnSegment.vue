@@ -60,6 +60,11 @@
     :events="(segment.metadata?.events as EventPreviewItem[]) || []"
   />
 
+  <PlaytestRunCard
+    v-else-if="segment.type === 'meta' && segment.metadata?.type === 'playtest_run'"
+    :run="segment.metadata || {}"
+  />
+
   <!-- Meta rows for command, artifacts, and token usage. -->
   <div v-else-if="segment.type === 'meta'" class="seg-meta">
     <!-- Commands are collapsed by default to reduce low-level noise. -->
@@ -134,6 +139,7 @@ import { renderMarkdown } from '../utils/markdown'
 import { summarizeToolCall } from '../utils/toolPresentation'
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 import EventPreviewList from './EventPreviewList.vue'
+import PlaytestRunCard from './PlaytestRunCard.vue'
 
 const props = defineProps<{
   segment: ChatSegment

@@ -3,10 +3,20 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { cleanupMapIpcHandlers, registerMapIpcHandlers } from './map-ipc-bindings.js';
+import {
+  cleanupInteractivePlaytestIpcHandlers,
+  registerInteractivePlaytestIpcHandlers,
+} from './interactive-playtest-ipc-bindings.js';
 import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
-import { DEFAULT_AGENT_EXECUTION_ENGINE, type WorkspaceSettings, type WorkspaceWindowState } from '../../../contract/types.ts';
+import {
+  DEFAULT_AGENT_EXECUTION_ENGINE,
+  type InteractivePlaytestResult,
+  type InteractivePlaytestRun,
+  type WorkspaceSettings,
+  type WorkspaceWindowState,
+} from '../../../contract/types.ts';
 import { normalizeProductLanguage, type ProductLanguage } from '../../../contract/i18n.ts';
 import {
   DEFAULT_WINDOW_HEIGHT,
@@ -39,6 +49,7 @@ let writeMapJson: any;
 let exists: any;
 let desktop: any;
 let agentSessionRuntime: any;
+let interactivePlaytestService: any;
 let assetProtocolRegistered = false;
 let backendCoreUrl: URL | null = null;
 let backendWithProductLanguage: (<T>(language: ProductLanguage, fn: () => T) => T) | null = null;
@@ -311,10 +322,94 @@ async function loadBackendModules(roots: AppRoots) {
     storyPages: await import(new URL('desktop/story-page-sync-service.ts', coreUrl).href),
     outline: await import(new URL('desktop/outline-service.ts', coreUrl).href),
     placementQueue: await import(new URL('desktop/placement-queue-service.ts', coreUrl).href),
+    interactivePlaytest: await import(new URL('desktop/interactive-playtest-service.ts', coreUrl).href),
   };
   const sessionRuntimeModule = await import(new URL('desktop/agent-session-runtime.ts', coreUrl).href);
   agentSessionRuntime = new sessionRuntimeModule.AgentSessionRuntime(roots.userDataRoot);
   await agentSessionRuntime.initialize();
+  interactivePlaytestService = new desktop.interactivePlaytest.InteractivePlaytestService(
+    roots.userDataRoot,
+    { onStatus: publishInteractivePlaytestStatus },
+  );
+}
+
+function publishInteractivePlaytestStatus(run: InteractivePlaytestRun): void {
+  const payload = toIpcPayload(run);
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send('playtest:status', payload);
+      }
+    } catch (error) {
+      console.warn(`[playtest] Could not publish run ${run.runId} to a renderer: ${stagingErrorMessage(error)}`);
+    }
+  }
+  if (!run.sessionId || !agentSessionRuntime) return;
+  const terminal = ['stopped', 'exited', 'failed', 'stop_failed'].includes(run.status);
+  const phase = run.status === 'starting' ? 'start' : terminal ? 'done' : 'update';
+  try {
+    const pushed = agentSessionRuntime.pushExternalEvent(run.sessionId, {
+      type: 'playtest_run',
+      phase,
+      ...payload,
+      at: run.updatedAt,
+    });
+    if (!pushed?.ok) {
+      console.warn(`[playtest] Could not publish run ${run.runId} to session ${run.sessionId}: ${pushed?.reason || 'unknown error'}`);
+    }
+  } catch (error) {
+    console.warn(`[playtest] Could not persist run ${run.runId} in session ${run.sessionId}: ${stagingErrorMessage(error)}`);
+  }
+}
+
+function resolveInteractivePlaytestSession(project: string, requestedSessionId?: string): string | undefined {
+  const summaries = agentSessionRuntime?.list?.() as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(summaries)) return undefined;
+  const matchesProject = (session: Record<string, unknown>) => {
+    const sessionProject = typeof session.project === 'string' ? session.project.trim() : '';
+    if (!sessionProject) return false;
+    try {
+      return sameResolvedPath(desktop.project.resolveProjectPath(workflowRoot, sessionProject), project);
+    } catch {
+      return false;
+    }
+  };
+  if (requestedSessionId) {
+    const requested = summaries.find((session) => session.id === requestedSessionId);
+    if (requested && matchesProject(requested)) return requestedSessionId;
+  }
+  return summaries
+    .filter(matchesProject)
+    .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')))
+    .map((session) => String(session.id || '').trim())
+    .find(Boolean);
+}
+
+function sameResolvedPath(left: string, right: string): boolean {
+  const normalize = (value: string) => {
+    let resolved = path.resolve(value);
+    try {
+      resolved = fs.realpathSync.native(resolved);
+    } catch {
+      // The playtest service performs the authoritative existence check.
+    }
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(left) === normalize(right);
+}
+
+function requireInteractivePlaytestService(): any {
+  if (!interactivePlaytestService) throw new Error('Interactive playtest service is not initialized.');
+  return interactivePlaytestService;
+}
+
+export async function shutdownInteractivePlaytest(): Promise<InteractivePlaytestResult> {
+  if (!interactivePlaytestService) return { confirmationRequired: false };
+  const result = await interactivePlaytestService.shutdown() as InteractivePlaytestResult;
+  if (result.run?.status === 'stop_failed') {
+    throw new Error(result.run.error || 'Game.exe process-tree cleanup failed.');
+  }
+  return result;
 }
 
 // 类型定义
@@ -854,6 +949,17 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     },
   });
 
+  registerInteractivePlaytestIpcHandlers(ipcMain, requireInteractivePlaytestService(), {
+    getLastProject: () => String(getWorkspaceSettings().lastProjectPath || ''),
+    resolveProject: (project) => desktop.project.resolveProjectPath(workflowRoot, project),
+    resolveSession: resolveInteractivePlaytestSession,
+    revealEvidence: (runId) => {
+      const run = requireInteractivePlaytestService().getRun(runId) as InteractivePlaytestRun | null;
+      if (!run || !fs.existsSync(run.artifactPath)) throw new Error('Interactive playtest evidence was not found.');
+      shell.showItemInFolder(run.artifactPath);
+    },
+  });
+
   ipcMain.handle('window:minimize', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize();
     return { ok: true };
@@ -1309,8 +1415,13 @@ function registerAssetProtocol(): void {
  * 清理 IPC 处理器
  */
 export function cleanupIpcHandlers(): void {
+  if (interactivePlaytestService) {
+    interactivePlaytestService.shutdownSync();
+    interactivePlaytestService = null;
+  }
   cleanupSessionIpcHandlers(ipcMain);
   cleanupMapIpcHandlers(ipcMain);
+  cleanupInteractivePlaytestIpcHandlers(ipcMain);
   ipcMain.removeHandler('window:minimize');
   ipcMain.removeHandler('window:toggleMaximize');
   ipcMain.removeHandler('window:close');

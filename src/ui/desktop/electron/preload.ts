@@ -152,6 +152,18 @@ contextBridge.exposeInMainWorld('api', {
     revertEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:revertEntry', request, project),
   },
 
+  playtest: {
+    start: (request: unknown) => ipcRenderer.invoke('playtest:start', request),
+    current: () => ipcRenderer.invoke('playtest:current'),
+    stop: () => ipcRenderer.invoke('playtest:stop'),
+    reveal: (runId: string) => ipcRenderer.invoke('playtest:reveal', runId),
+    onStatus: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('playtest:status', handler);
+      return () => ipcRenderer.removeListener('playtest:status', handler);
+    },
+  },
+
   commonEvents: {
     list: (project?: string) => ipcRenderer.invoke('commonEvents:list', project),
     get: (id: number, project?: string) => ipcRenderer.invoke('commonEvents:get', id, project),

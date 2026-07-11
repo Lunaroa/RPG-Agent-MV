@@ -23,6 +23,7 @@ import {
   MV_TROOP_PAGE_SPANS,
   appendStringListItem,
   canRemoveStringListItem,
+  cloneDatabaseEditorRecord,
   isMvStringListField,
   MV_TERMS_LIST_PATHS,
   normalizeAnimationFrames,
@@ -231,13 +232,13 @@ function readPath(path: string): unknown {
 function writePath(path: string, value: unknown): void {
   const segments = path.split('.').filter(Boolean);
   if (!segments.length) return;
-  const next = structuredClone(record.value);
+  const next = cloneDatabaseEditorRecord(record.value);
   setRecordPath(next, segments, value);
   emit('update:modelValue', next);
 }
 
 function writePaths(updates: Array<{ path: string; value: unknown }>): void {
-  const next = structuredClone(record.value);
+  const next = cloneDatabaseEditorRecord(record.value);
   for (const update of updates) {
     const segments = update.path.split('.').filter(Boolean);
     if (segments.length) setRecordPath(next, segments, update.value);

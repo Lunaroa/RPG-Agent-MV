@@ -7,6 +7,7 @@ import {
 } from './rmmvDatabaseLocalization';
 import type { ProductLanguage } from '@contract/types';
 import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts';
+import { cloneDraft } from './clone-draft';
 
 export {
   MV_ANIMATION_BLEND_MODES,
@@ -40,6 +41,10 @@ export const MV_TERMS_SLOT_COUNTS = {
   params: 10,
   commands: 24,
 } as const;
+
+export function cloneDatabaseEditorRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return cloneDraft(value);
+}
 
 export type MvTermsArrayPath = keyof typeof MV_TERMS_SLOT_COUNTS;
 

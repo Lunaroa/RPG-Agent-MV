@@ -229,6 +229,18 @@
                 <div class="form-group"><label class="form-label">{{ t('settings.ui.theme') }}</label><select v-model="uiForm.theme" data-ui-id="settings-ui-theme" class="settings-select" style="width:240px"><option value="auto">{{ t('settings.ui.theme.auto') }}</option><option value="rpgmv">{{ t('settings.ui.theme.rpgmv') }}</option><option value="saas">{{ t('settings.ui.theme.saas') }}</option></select></div>
                 <div class="form-group"><label class="form-label">{{ t('settings.ui.chatFontSize') }}</label><div class="number-input"><button class="workbench-button num-btn" data-ui-id="settings-ui-font-size-dec" @click="uiForm.fontSize = Math.max(11, uiForm.fontSize - 1)">-</button><input type="number" v-model.number="uiForm.fontSize" data-ui-id="settings-ui-font-size" min="11" max="22" class="settings-input num-input-field" /><button class="workbench-button num-btn" data-ui-id="settings-ui-font-size-inc" @click="uiForm.fontSize = Math.min(22, uiForm.fontSize + 1)">+</button></div></div>
                 <div class="form-group"><label class="form-label">{{ t('settings.ui.chatWidth') }}</label><div class="number-input"><button class="workbench-button num-btn" data-ui-id="settings-ui-chat-width-dec" @click="uiForm.chatWidth = Math.max(320, uiForm.chatWidth - 10)">-</button><input type="number" v-model.number="uiForm.chatWidth" data-ui-id="settings-ui-chat-width" min="320" max="960" step="10" class="settings-input num-input-field" /><button class="workbench-button num-btn" data-ui-id="settings-ui-chat-width-inc" @click="uiForm.chatWidth = Math.min(960, uiForm.chatWidth + 10)">+</button></div></div>
+                <div class="form-group">
+                  <label class="form-label">{{ t('settings.ui.appVersion') }}</label>
+                  <div class="status-row">
+                    <span class="status-value mono">{{ appVersionLabel }}</span>
+                    <button
+                      class="workbench-button"
+                      data-ui-id="settings-ui-check-updates"
+                      :disabled="checkingUpdates"
+                      @click="onCheckForUpdates"
+                    >{{ checkingUpdates ? t('settings.ui.checkingUpdates') : t('settings.ui.checkUpdates') }}</button>
+                  </div>
+                </div>
                 <div class="form-group"><button class="workbench-button primary" data-ui-id="settings-ui-save" :disabled="store.loading" @click="onSaveUi">{{ store.loading ? t('settings.ui.saving') : t('settings.ui.save') }}</button></div>
               </div>
             </section>
@@ -464,6 +476,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import {
+  appInfo,
   settings as settingsApi,
   memory as memoryApi,
   type AgentExecutionEngineId,
@@ -830,6 +843,8 @@ const showOpencodeProviderEmptyAlert = computed(
 )
 
 const uiForm = reactive({ theme: 'auto', fontSize: 14, chatWidth: 480, language: normalizeProductLanguage(undefined) })
+const appVersionLabel = ref('—')
+const checkingUpdates = ref(false)
 const permForm = reactive({ askOnWrite: false, askOnBash: false, askOnNetwork: false, autoApproveLimit: 10 })
 const agentExecForm = reactive<AgentExecutionSettings>({ engine: DEFAULT_AGENT_EXECUTION_ENGINE, bindings: {} })
 
@@ -1178,6 +1193,12 @@ function buildBindingsPatch() { const engine = agentExecForm.engine || DEFAULT_A
 onMounted(async () => {
   const tab = typeof route.query.tab === 'string' ? route.query.tab : ''; if (SETTINGS_TABS.has(tab)) activeName.value = tab
   await store.loadAll(); applyUi(); applyPermissions(); applyAgentExecution(); await loadCompatibleProviders()
+  try {
+    const versionInfo = await appInfo.getVersion()
+    appVersionLabel.value = versionInfo.version || '—'
+  } catch {
+    appVersionLabel.value = '—'
+  }
   if (activeName.value === 'memory') {
     await ensureMemoryProjects()
     await loadMemoryOverview()
@@ -1195,6 +1216,30 @@ async function onSaveUi() {
     toast('success', t('settings.ui.saved'))
   } catch (err) {
     toast('error', err instanceof Error ? err.message : t('settings.ui.saveFailed'))
+  }
+}
+
+async function onCheckForUpdates() {
+  checkingUpdates.value = true
+  try {
+    const result = await appInfo.checkForUpdates()
+    if (result.status === 'update-available') {
+      toast('success', t('settings.ui.updateAvailableToast', { version: result.version || '' }))
+    } else if (result.status === 'up-to-date') {
+      toast('success', t('settings.ui.upToDateToast'))
+    } else if (result.status === 'not-packaged') {
+      toast('warn', t('settings.ui.notPackagedToast'))
+    } else if (result.status === 'untrusted-build') {
+      toast('error', t('settings.ui.untrustedBuildToast'))
+    } else if (result.status === 'busy') {
+      toast('warn', t('settings.ui.checkBusyToast'))
+    } else {
+      toast('error', result.error || t('settings.ui.checkFailedToast'))
+    }
+  } catch (err) {
+    toast('error', err instanceof Error ? err.message : t('settings.ui.checkFailedToast'))
+  } finally {
+    checkingUpdates.value = false
   }
 }
 async function onSaveModelEngine() {

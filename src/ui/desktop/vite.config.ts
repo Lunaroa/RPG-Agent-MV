@@ -10,6 +10,14 @@ export default defineConfig({
     electron([
       {
         entry: 'electron/main.ts',
+        vite: {
+          build: {
+            rollupOptions: {
+              // Bundle electron-updater into main.js so packaged builds (node_modules excluded) still work.
+              external: ['electron'],
+            },
+          },
+        },
       },
       {
         entry: 'electron/preload.ts',

@@ -1005,6 +1005,10 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     return { ok: true };
   });
 
+  const { checkForUpdates, getAppVersion } = await import('./auto-updater.js');
+  ipcMain.handle('app:getVersion', () => toIpcPayload({ version: getAppVersion() }));
+  ipcMain.handle('app:checkForUpdates', async () => toIpcPayload(await checkForUpdates({ manual: true })));
+
   ipcMain.handle('workspace:get', () => {
     return toIpcPayload(getWorkspaceSettings());
   });
@@ -1445,6 +1449,8 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('window:close');
   ipcMain.removeHandler('window:isMaximized');
   ipcMain.removeHandler('window:openExternalUrl');
+  ipcMain.removeHandler('app:getVersion');
+  ipcMain.removeHandler('app:checkForUpdates');
   ipcMain.removeHandler('workspace:get');
   ipcMain.removeHandler('workspace:put');
   ipcMain.removeHandler('workspace:patch');

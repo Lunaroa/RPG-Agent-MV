@@ -38,6 +38,27 @@ Start the desktop app from the product root:
 npm --prefix src/ui/desktop run dev
 ```
 
+## In-App Updates
+
+The signed **NSIS installed build** checks only GitHub Releases ([Lunaroa/RPG-Agent-MV](https://github.com/Lunaroa/RPG-Agent-MV)). It does not use a fallback mirror or custom update URL.
+
+When an update is available, the app prompts before downloading and again before restarting. The updater attempts a blockmap differential download and uses the full installer when a differential update is unavailable. Source/`npm run dev` mode does not check for updates. You can also use **Settings → Interface → Check for updates**.
+
+The installed build must contain trusted publisher information. Unsigned builds, missing update configuration, and unexpected repositories are rejected without an insecure fallback.
+
+### Maintainer release
+
+1. Set the same `version` in the product root and desktop/backend packages.
+2. Configure a Windows code-signing certificate and `GH_TOKEN` or `GITHUB_TOKEN`.
+3. Ensure the Git worktree is clean, then publish:
+
+```powershell
+cd RPG-Agent-MV
+npm run release:electron:publish
+```
+
+The command checks the worktree, versions, and token before it builds a signed installer and runs the release boundary check. Any failure stops publication. Verify that the GitHub Release contains `latest.yml`, the installer `.exe`, and the matching `.blockmap`.
+
 ## First Checks After Startup
 
 After the first startup, check these in order:

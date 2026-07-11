@@ -17,6 +17,7 @@ import {
 } from './ipc-handlers.js';
 import { electronText } from './electronLocalization.js';
 import { startUiControlBridge, stopUiControlBridge } from './ui-control-bridge.js';
+import { initAutoUpdater } from './auto-updater.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -115,6 +116,7 @@ async function createWindow() {
   }
 
   console.log('[main] Window loaded, IPC handlers ready');
+  initAutoUpdater(() => currentProductLanguage());
 }
 
 let layoutMigrated: string[] = [];

@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld('api', {
     openExternalUrl: (url: string) => ipcRenderer.invoke('window:openExternalUrl', url),
   },
 
+  app: {
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
+  },
+
   uiControl: {
     onCommand: (callback: (payload: unknown) => void) => {
       const handler = (_event: unknown, payload: unknown) => callback(payload);

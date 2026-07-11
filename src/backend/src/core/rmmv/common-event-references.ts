@@ -195,11 +195,19 @@ function scanCommandList(
 }
 
 class EffectiveProjectReader {
+  readonly workflowRoot: string | null;
+  readonly projectRoot: string;
+  readonly layout: RmmvProjectLayout;
+
   constructor(
-    readonly workflowRoot: string | null,
-    readonly projectRoot: string,
-    readonly layout: RmmvProjectLayout,
-  ) {}
+    workflowRoot: string | null,
+    projectRoot: string,
+    layout: RmmvProjectLayout,
+  ) {
+    this.workflowRoot = workflowRoot;
+    this.projectRoot = projectRoot;
+    this.layout = layout;
+  }
 
   readArray(fileName: string): unknown[] {
     const value = this.readOptional(fileName);

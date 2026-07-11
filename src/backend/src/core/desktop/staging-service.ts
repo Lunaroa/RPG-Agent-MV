@@ -68,6 +68,12 @@ export interface ApplyStagedOperationOptions extends StagedOperationActionOption
   }) => void;
 }
 
+export interface DatabaseStagingDraft {
+  relativePath: string;
+  content: Buffer;
+  expectedSourceHash: string | null;
+}
+
 export interface StagedMapMutationTarget {
   project: string;
   sourceProject: string;
@@ -420,6 +426,159 @@ export function registerDatabaseStagingOperation(
         const draftFile = draftFilePath(context, relative);
         const entry = ensureDraft(context, manifest, relative);
         entry.operationId = operationId;
+        updateMapEntry(context, manifest, relative, entry);
+      }
+      manifest.operations[operationId] = operation;
+      writeManifest(context, manifest);
+      return cloneStagingOperation(operation);
+    } catch (error) {
+      for (const [draftFile, snapshot] of draftSnapshots) {
+        if (snapshot === null) {
+          if (fs.existsSync(draftFile)) fs.unlinkSync(draftFile);
+          removeEmptyParents(path.dirname(draftFile), context.draftRoot);
+          continue;
+        }
+        fs.mkdirSync(path.dirname(draftFile), { recursive: true });
+        fs.writeFileSync(draftFile, snapshot);
+      }
+      throw error;
+    }
+  });
+}
+
+export function stageDatabaseStagingOperationDrafts(
+  workflowRoot: string,
+  project: string,
+  input: RegisterDatabaseStagingOperationInput,
+  drafts: readonly DatabaseStagingDraft[],
+): StagingOperation {
+  const context = buildContext(workflowRoot, project);
+  return withStagingMutationLock(context, () => {
+    const operationId = validateStagingOperationId(input?.operationId);
+    if (!/^[a-f0-9]{64}$/i.test(String(input?.planHash || ''))) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.invalidPlanHash,
+        'Database staging operation planHash must be a SHA-256 hex digest.',
+      );
+    }
+    if (!Array.isArray(input?.files) || input.files.length === 0) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.emptyFileSet,
+        'Database staging operation must own at least one file.',
+      );
+    }
+    if (!Array.isArray(drafts) || drafts.length === 0) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.emptyFileSet,
+        'Database staging operation must provide at least one draft.',
+      );
+    }
+
+    const files = input.files.map(normalizeRelativePath);
+    const fileIdentities = files.map(relativePathIdentity);
+    if (new Set(fileIdentities).size !== files.length) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.duplicateFile,
+        'Database staging operation contains duplicate normalized file paths.',
+      );
+    }
+    const draftByIdentity = new Map<string, DatabaseStagingDraft>();
+    for (const draft of drafts) {
+      const relativePath = normalizeRelativePath(draft.relativePath);
+      if (!Buffer.isBuffer(draft?.content)) {
+        throw new StagingError(STAGING_ERROR_CODES.invalidManifest, 'Database staging draft content must be a Buffer.');
+      }
+      if (draft.expectedSourceHash !== null && !/^[a-f0-9]{64}$/i.test(String(draft.expectedSourceHash))) {
+        throw new StagingError(STAGING_ERROR_CODES.conflict, `Invalid expected source hash: ${relativePath}`);
+      }
+      const identity = relativePathIdentity(relativePath);
+      if (draftByIdentity.has(identity)) {
+        throw new StagingError(STAGING_ERROR_CODES.duplicateFile, `Duplicate database staging draft: ${relativePath}`);
+      }
+      draftByIdentity.set(identity, { ...draft, relativePath });
+    }
+    if (draftByIdentity.size !== files.length || fileIdentities.some((identity) => !draftByIdentity.has(identity))) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.operationFileMismatch,
+        'Database staging operation files and draft contents must match exactly.',
+      );
+    }
+
+    const manifest = readManifest(context);
+    if (Object.hasOwn(manifest.operations, operationId)) {
+      throw new StagingError(
+        STAGING_ERROR_CODES.duplicateOperationId,
+        `Database staging operation already exists: ${operationId}`,
+      );
+    }
+    for (const relative of files) {
+      const registeredRelative = resolveManifestRelativePath(manifest, relative);
+      const existing = manifest.files[registeredRelative];
+      if (existing?.operationId) {
+        throw new StagingError(
+          STAGING_ERROR_CODES.fileOwned,
+          `Staged file is already owned by operation ${existing.operationId}: ${relative}`,
+          { relativePath: relative, operationId: existing.operationId },
+        );
+      }
+      if (existing) {
+        throw new StagingError(
+          STAGING_ERROR_CODES.unownedDraft,
+          `Cannot claim an existing unowned staging draft: ${relative}`,
+          { relativePath: relative },
+        );
+      }
+      const identity = relativePathIdentity(relative);
+      const owner = Object.values(manifest.operations).find((operation) => (
+        operation.files.some((candidate) => relativePathIdentity(candidate) === identity)
+      ));
+      if (owner) {
+        throw new StagingError(
+          STAGING_ERROR_CODES.fileOwned,
+          `Staged file is already owned by operation ${owner.operationId}: ${relative}`,
+          { relativePath: relative, operationId: owner.operationId },
+        );
+      }
+      const draft = draftByIdentity.get(relativePathIdentity(relative))!;
+      const sourceFile = sourceFilePath(context, relative);
+      const actualSourceHash = fs.existsSync(sourceFile) ? fileHash(sourceFile) : null;
+      if (actualSourceHash !== draft.expectedSourceHash) {
+        throw new StagingError(
+          STAGING_ERROR_CODES.conflict,
+          `Source file changed before database staging: ${relative}`,
+          { relativePath: relative, expected: draft.expectedSourceHash, actual: actualSourceHash },
+        );
+      }
+    }
+
+    const operation: StagingOperation = {
+      operationId,
+      kind: 'database',
+      planHash: input.planHash.toLowerCase(),
+      ...(typeof input.sessionId === 'string' && input.sessionId.trim()
+        ? { sessionId: input.sessionId.trim() }
+        : {}),
+      changes: input.changes,
+      files,
+      createdAt: new Date().toISOString(),
+    };
+    const draftSnapshots = new Map<string, Buffer | null>();
+    for (const relative of files) {
+      const draftFile = draftFilePath(context, relative);
+      draftSnapshots.set(draftFile, fs.existsSync(draftFile) ? fs.readFileSync(draftFile) : null);
+    }
+    try {
+      for (const relative of files) {
+        const identity = relativePathIdentity(relative);
+        const draft = draftByIdentity.get(identity)!;
+        const entry = ensureDraft(context, manifest, relative);
+        const draftFile = draftFilePath(context, relative);
+        fs.mkdirSync(path.dirname(draftFile), { recursive: true });
+        fs.writeFileSync(draftFile, draft.content);
+        entry.draftHash = fileHash(draftFile);
+        entry.updatedAt = new Date().toISOString();
+        entry.operationId = operationId;
+        delete entry.delete;
         updateMapEntry(context, manifest, relative, entry);
       }
       manifest.operations[operationId] = operation;

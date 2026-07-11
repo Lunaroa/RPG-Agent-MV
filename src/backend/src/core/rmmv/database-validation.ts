@@ -89,15 +89,17 @@ export function validateRmmvDatabaseTransition(
 }
 
 class SnapshotValidator {
+  readonly snapshot: RmmvDatabaseSnapshot;
   readonly #issues: RmmvDatabaseSemanticIssue[] = [];
   readonly #limitations = [PLUGIN_LIMITATION];
   readonly #mapIds: ReadonlySet<number> | null;
   readonly #maps: readonly RmmvDatabaseMapDocument[];
 
   constructor(
-    readonly snapshot: RmmvDatabaseSnapshot,
+    snapshot: RmmvDatabaseSnapshot,
     options: RmmvDatabaseValidationOptions,
   ) {
+    this.snapshot = snapshot;
     this.#maps = options.maps ?? [];
     this.#mapIds = options.mapIds || this.#maps.length
       ? new Set([...(options.mapIds ?? []), ...this.#maps.map((entry) => entry.mapId)])

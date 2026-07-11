@@ -77,6 +77,21 @@ describe("RMMV database schema registry", () => {
     assert.equal(getRmmvDatabaseSchemaByKey("system").group, "System");
     assert.equal(getRmmvDatabaseSchemaByKey("types").group, "Types");
     assert.equal(getRmmvDatabaseSchemaByKey("terms").group, "Terms");
+    const systemFields = new Set(getRmmvDatabaseSchema("System").coreFields.map((field) => field.path));
+    for (const field of [
+      "currencyUnit",
+      "locale",
+      "attackMotions",
+      "magicSkills",
+      "battlerName",
+      "battlerHue",
+      "testBattlers",
+      "boat",
+      "ship",
+      "airship",
+    ]) {
+      assert.equal(systemFields.has(field), true, `System schema must expose ${field}`);
+    }
   });
 
   test("validation fails fast for unknown groups and invalid entry ids", () => {

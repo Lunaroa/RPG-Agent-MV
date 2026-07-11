@@ -331,6 +331,7 @@ export interface RmmvDatabaseEntrySchema {
   key: string;
   fileName: string;
   isArrayTable: boolean;
+  maxEntries: number | null;
   coreFields: RmmvDatabaseFieldSchema[];
   references: RmmvDatabaseReferenceField[];
 }

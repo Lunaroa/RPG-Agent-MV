@@ -28,6 +28,8 @@
       "todoread",
       "todowrite",
       "rmmv_RmmvReadContext",
+      "rmmv_RmmvDatabase",
+      "rmmv_RmmvDatabaseApply",
       "rmmv_RmmvMap",
       "rmmv_RmmvEvent",
       "rmmv_RmmvMemory"

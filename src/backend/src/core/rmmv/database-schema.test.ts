@@ -120,6 +120,17 @@ describe("RMMV database schema registry", () => {
     const unterminated = validateRmmvDatabaseEntry("Troops", troop);
     assert.equal(unterminated.ok, false);
     assert.match(unterminated.issues.map((issue) => `${issue.path} ${issue.message}`).join("\n"), /pages\[0\]\.list.*end with code 0/);
+
+    pages[0].list = [
+      { code: 401, indent: 0, parameters: ["orphan"] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+    const orphanContinuation = validateRmmvDatabaseEntry("Troops", troop);
+    assert.equal(orphanContinuation.ok, false);
+    assert.match(
+      orphanContinuation.issues.map((issue) => `${issue.path} ${issue.message}`).join("\n"),
+      /continuation code 401.*head code 101/,
+    );
   });
 
   test("every declared group can be looked up by group name", () => {

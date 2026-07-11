@@ -231,6 +231,68 @@ describe("RMMV prospective database validation", () => {
     assert.equal(result.ok, true, result.issues.map((issue) => `${issue.code}: ${issue.message}`).join("\n"));
   });
 
+  test("validates command and page-condition references in common events, troop pages, and maps", () => {
+    const snapshot = validSnapshot();
+    const commonEvent = (snapshot.commonEvents as Array<Record<string, unknown> | null>)[1]!;
+    commonEvent.list = [
+      { code: 117, indent: 0, parameters: [2] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+    const troop = (snapshot.troops as Array<Record<string, unknown> | null>)[1]!;
+    const troopPage = (troop.pages as Array<Record<string, unknown>>)[0];
+    troopPage.list = [
+      { code: 333, indent: 0, parameters: [-1, 0, 2] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+
+    const result = validateRmmvDatabaseSnapshot(snapshot, {
+      mapIds: [1],
+      maps: [{
+        mapId: 1,
+        value: {
+          tilesetId: 2,
+          encounterList: [{ troopId: 2, weight: 10, regionSet: [] }],
+          events: [null, {
+            id: 1,
+            pages: [{
+              conditions: {
+                actorId: 2,
+                actorValid: true,
+                itemId: 2,
+                itemValid: true,
+                selfSwitchCh: "A",
+                selfSwitchValid: false,
+                switch1Id: 2,
+                switch1Valid: true,
+                switch2Id: 1,
+                switch2Valid: false,
+                variableId: 2,
+                variableValid: true,
+                variableValue: 0,
+              },
+              list: [
+                { code: 126, indent: 0, parameters: [2, 0, 0, 1] },
+                { code: 0, indent: 0, parameters: [] },
+              ],
+            }],
+          }],
+        },
+      }],
+    });
+
+    assert.equal(result.ok, false);
+    const paths = result.issues.map((issue) => issue.source.path);
+    assert.ok(paths.includes("commonEvents[1].list[0].parameters[0]"));
+    assert.ok(paths.includes("troops[1].pages[0].list[0].parameters[2]"));
+    assert.ok(paths.includes("maps[1].tilesetId"));
+    assert.ok(paths.includes("maps[1].encounterList[0].troopId"));
+    assert.ok(paths.includes("maps[1].events[1].pages[0].conditions.actorId"));
+    assert.ok(paths.includes("maps[1].events[1].pages[0].conditions.itemId"));
+    assert.ok(paths.includes("maps[1].events[1].pages[0].conditions.switch1Id"));
+    assert.ok(paths.includes("maps[1].events[1].pages[0].conditions.variableId"));
+    assert.ok(paths.includes("maps[1].events[1].pages[0].list[0].parameters[0]"));
+  });
+
   test("requires array record ids to match their stable slot", () => {
     const snapshot: Partial<Record<RmmvDatabaseTableKey, unknown>> = {
       actors: [null, { id: 2, name: "" }],

@@ -66,6 +66,19 @@ describe('common event service', { concurrency: false }, () => {
       null,
       { id: 1, name: 'Call CE', effects: [{ code: 44, dataId: 3, value1: 0, value2: 0 }] },
     ]);
+    writeJson(path.join(dataDir, 'Troops.json'), [
+      null,
+      {
+        id: 1,
+        name: 'Example Troop',
+        pages: [{
+          list: [
+            { code: 117, indent: 0, parameters: [3] },
+            { code: 0, indent: 0, parameters: [] },
+          ],
+        }],
+      },
+    ]);
     await bootstrapDatabase(root, { dbPath: path.join(root, 'data', 'test.db'), importLegacyJson: false });
   });
 
@@ -145,6 +158,7 @@ describe('common event service', { concurrency: false }, () => {
   test('blocks delete when map commands or database effects reference the common event', () => {
     const references = findCommonEventUsages(root, project, 3);
     assert.ok(references.some((ref) => ref.kind === 'mapEventCommand'));
+    assert.ok(references.some((ref) => ref.kind === 'troopEventCommand'));
     assert.ok(references.some((ref) => ref.kind === 'databaseEffect'));
     assert.throws(
       () => withTestLanguage(() => deleteCommonEvent(root, project, { id: 3 })),
@@ -169,6 +183,19 @@ describe('common event service', { concurrency: false }, () => {
     assert.throws(
       () => withTestLanguage(() => changeCommonEventTrigger(root, project, { id: 1, trigger: 2, switchId: 0 })),
       /必须设置有效开关/,
+    );
+  });
+
+  test('rejects structurally orphaned event-command continuations', () => {
+    assert.throws(
+      () => createCommonEvent(root, project, {
+        name: 'Invalid Commands',
+        list: [
+          { code: 401, indent: 0, parameters: ['orphan'] },
+          { code: 0, indent: 0, parameters: [] },
+        ],
+      }),
+      /continuation code 401.*head code 101/,
     );
   });
 });

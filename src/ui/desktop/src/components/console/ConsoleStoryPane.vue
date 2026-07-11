@@ -21,6 +21,7 @@ import {
   type ProjectOverviewMapEvent,
 } from '../../api/client';
 import { cloneDraft } from '../../utils/clone-draft';
+import { createDraftHistory } from '../../utils/draft-history';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { findEditorMapEvent, type MvEditorEvent } from '../../composables/useEventEditor';
 import { usePmEventEditor } from '../../composables/usePmEventEditor';
@@ -140,7 +141,7 @@ async function discardProjectStaging() {
   try {
     await mapsApi.discardProjectStaging(projectStore.currentProject);
     pmDetail.value = null;
-    detailDraft.value = null;
+    resetDetailDraft(null);
     await refreshStagingStatus();
     await loadData();
   } catch (discardError) {
@@ -163,7 +164,7 @@ async function revertCurrentStagedEntry() {
     }, projectStore.currentProject);
     if (result.entry) {
       pmDetail.value = { kind: 'managed', entry: result.entry };
-      detailDraft.value = cloneDraft(result.entry.value);
+      resetDetailDraft(cloneDraft(result.entry.value));
     } else {
       closeDetail();
     }
@@ -270,6 +271,18 @@ const detailDraft = ref<unknown>(null);
 const detailBusy = ref(false);
 const detailError = ref('');
 const detailEditable = computed(() => pmDetail.value?.kind === 'managed');
+const draftHistory = createDraftHistory<unknown>(null);
+const draftUndoCount = ref(0);
+const draftRedoCount = ref(0);
+let activeDraftMergeKey: string | null = null;
+let activeDraftTextControl: HTMLInputElement | HTMLTextAreaElement | null = null;
+let draftFocusSequence = 0;
+const supportsDraftHistory = computed(() => (
+  pmDetail.value?.kind === 'managed'
+  && (pmDetail.value.entry.kind === 'database' || pmDetail.value.entry.kind === 'commonEvent')
+));
+const canUndoDraft = computed(() => supportsDraftHistory.value && draftUndoCount.value > 0);
+const canRedoDraft = computed(() => supportsDraftHistory.value && draftRedoCount.value > 0);
 const canRevertCurrentStagedEntry = computed(() => (
   pmDetail.value?.kind === 'managed'
   && Boolean(pmDetail.value.entry.inspection?.changed)
@@ -280,6 +293,88 @@ const eventPreviewError = ref('');
 const eventPreviewEvent = ref<MvEditorEvent | null>(null);
 const eventPreviewSystemData = ref<{ switches: string[]; variables: string[] } | null>(null);
 let eventPreviewRequest = 0;
+
+function syncDraftHistoryCounts(): void {
+  draftUndoCount.value = draftHistory.undoCount;
+  draftRedoCount.value = draftHistory.redoCount;
+}
+
+function resetDetailDraft(value: unknown): void {
+  activeDraftMergeKey = null;
+  activeDraftTextControl = null;
+  detailDraft.value = draftHistory.reset(value);
+  syncDraftHistoryCounts();
+}
+
+function updateDetailDraft(value: unknown): void {
+  if (!supportsDraftHistory.value) {
+    detailDraft.value = value;
+    return;
+  }
+  const mergeKey = activeDraftTextControl && document.activeElement === activeDraftTextControl
+    ? activeDraftMergeKey
+    : null;
+  detailDraft.value = draftHistory.record(value, mergeKey);
+  syncDraftHistoryCounts();
+}
+
+function undoDetailDraft(): void {
+  if (!canUndoDraft.value) return;
+  activeDraftMergeKey = null;
+  const previous = draftHistory.undo();
+  if (previous !== null) detailDraft.value = previous;
+  syncDraftHistoryCounts();
+  restartFocusedDraftEdit();
+}
+
+function redoDetailDraft(): void {
+  if (!canRedoDraft.value) return;
+  activeDraftMergeKey = null;
+  const next = draftHistory.redo();
+  if (next !== null) detailDraft.value = next;
+  syncDraftHistoryCounts();
+  restartFocusedDraftEdit();
+}
+
+function beginDraftFocusEdit(event: FocusEvent): void {
+  activeDraftTextControl = isContinuousTextControl(event.target) ? event.target : null;
+  activeDraftMergeKey = activeDraftTextControl ? `text:${++draftFocusSequence}` : null;
+}
+
+function endDraftFocusEdit(event: FocusEvent): void {
+  if (event.target !== activeDraftTextControl) return;
+  activeDraftMergeKey = null;
+  activeDraftTextControl = null;
+}
+
+function isContinuousTextControl(target: EventTarget | null): target is HTMLInputElement | HTMLTextAreaElement {
+  if (target instanceof HTMLTextAreaElement) return !target.disabled && !target.readOnly;
+  return target instanceof HTMLInputElement
+    && !target.disabled
+    && !target.readOnly
+    && ['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(target.type || 'text');
+}
+
+function restartFocusedDraftEdit(): void {
+  const focused = document.activeElement;
+  activeDraftTextControl = isContinuousTextControl(focused) ? focused : null;
+  activeDraftMergeKey = activeDraftTextControl ? `text:${++draftFocusSequence}` : null;
+}
+
+function handleDraftHistoryShortcut(event: KeyboardEvent): void {
+  if (!supportsDraftHistory.value || event.altKey || (!event.ctrlKey && !event.metaKey)) return;
+  const key = event.key.toLocaleLowerCase();
+  if (key === 'z') {
+    event.preventDefault();
+    if (event.shiftKey) redoDetailDraft();
+    else undoDetailDraft();
+    return;
+  }
+  if (key === 'y') {
+    event.preventDefault();
+    redoDetailDraft();
+  }
+}
 
 watch(() => projectStore.currentProject, () => {
   selectedMapId.value = null;
@@ -756,7 +851,7 @@ function dbSummary(): string {
 
 function closeDetail() {
   pmDetail.value = null;
-  detailDraft.value = null;
+  resetDetailDraft(null);
   detailError.value = '';
 }
 
@@ -876,13 +971,13 @@ async function openManaged(kind: ProjectManagedEntry['kind'], id: number, group?
   detailBusy.value = true;
   detailError.value = '';
   pmDetail.value = null;
-  detailDraft.value = null;
+  resetDetailDraft(null);
   try {
     if (kind === 'commonEvent' || (kind === 'database' && isCommonEventsGroup(group))) {
       await ensureCatalog();
       const entry = await projectManagement.getEntry({ kind: 'commonEvent', id }, projectStore.currentProject);
       pmDetail.value = { kind: 'managed', entry };
-      detailDraft.value = cloneDraft(entry.value);
+      resetDetailDraft(cloneDraft(entry.value));
       return;
     }
     const [entry] = await Promise.all([
@@ -890,7 +985,7 @@ async function openManaged(kind: ProjectManagedEntry['kind'], id: number, group?
       kind === 'database' ? ensureCatalog() : Promise.resolve(null),
     ]);
     pmDetail.value = { kind: 'managed', entry };
-    detailDraft.value = cloneDraft(entry.value);
+    resetDetailDraft(cloneDraft(entry.value));
   } catch (loadError) {
     detailError.value = (loadError as Error).message;
   } finally {
@@ -945,7 +1040,7 @@ async function pasteDbEntry(id: number) {
       value: merged,
     }, projectStore.currentProject);
     pmDetail.value = { kind: 'managed', entry: updated };
-    detailDraft.value = cloneDraft(updated.value);
+    resetDetailDraft(cloneDraft(updated.value));
     resetCatalog();
     await loadData();
     await refreshStagingStatus();
@@ -966,7 +1061,7 @@ async function clearDbEntry(id: number) {
       projectStore.currentProject,
     );
     pmDetail.value = null;
-    detailDraft.value = null;
+    resetDetailDraft(null);
     resetCatalog();
     await loadData();
     await refreshStagingStatus();
@@ -982,13 +1077,13 @@ async function createDatabaseEntry(group: string) {
   detailBusy.value = true;
   detailError.value = '';
   pmDetail.value = null;
-  detailDraft.value = null;
+  resetDetailDraft(null);
   try {
     const entry = await projectManagement.createEntry({ kind: 'database', group }, projectStore.currentProject);
     resetCatalog();
     await ensureCatalog();
     pmDetail.value = { kind: 'managed', entry };
-    detailDraft.value = cloneDraft(entry.value);
+    resetDetailDraft(cloneDraft(entry.value));
     showUnnamed.value = true;
     await loadData();
   } catch (createError) {
@@ -1011,7 +1106,7 @@ async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents
   detailBusy.value = true;
   detailError.value = '';
   pmDetail.value = null;
-  detailDraft.value = null;
+  resetDetailDraft(null);
   try {
     await ensureCatalog();
     const result = await commonEventsApi.create({
@@ -1024,7 +1119,7 @@ async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents
     await ensureCatalog();
     const entry = await projectManagement.getEntry({ kind: 'commonEvent', id: result.entry.id }, projectStore.currentProject);
     pmDetail.value = { kind: 'managed', entry };
-    detailDraft.value = cloneDraft(entry.value);
+    resetDetailDraft(cloneDraft(entry.value));
     selected.value = targetCategory;
     showUnnamed.value = true;
     await loadData();
@@ -1046,7 +1141,7 @@ async function duplicateCurrentCommonEvent() {
     await ensureCatalog();
     const entry = await projectManagement.getEntry({ kind: 'commonEvent', id: result.entry.id }, projectStore.currentProject);
     pmDetail.value = { kind: 'managed', entry };
-    detailDraft.value = cloneDraft(entry.value);
+    resetDetailDraft(cloneDraft(entry.value));
     selected.value = 'commonEvents';
     showUnnamed.value = true;
     await loadData();
@@ -1206,7 +1301,7 @@ async function openAudioDetail(bucketKey: string, name: string) {
   detailBusy.value = true;
   detailError.value = '';
   pmDetail.value = null;
-  detailDraft.value = null;
+  resetDetailDraft(null);
   try {
     const fileName = resolveAudioFileName(bucketKey, name);
     if (!fileName) {
@@ -1236,7 +1331,7 @@ async function openImageDetail(bucketKey: string, name: string) {
   detailBusy.value = true;
   detailError.value = '';
   pmDetail.value = null;
-  detailDraft.value = null;
+  resetDetailDraft(null);
   try {
     const fileName = resolveImageFileName(bucketKey, name);
     const bucket = assets.value?.images?.[bucketKey];
@@ -1415,7 +1510,7 @@ async function saveDetail() {
         await commonEventsApi.update(entry.id, detailDraft.value, projectStore.currentProject);
         const updated = await projectManagement.getEntry({ kind: 'commonEvent', id: entry.id }, projectStore.currentProject);
         pmDetail.value = { kind: 'managed', entry: updated };
-        detailDraft.value = cloneDraft(updated.value);
+        resetDetailDraft(cloneDraft(updated.value));
       } else {
         const updated = await projectManagement.updateEntry({
           kind: entry.kind,
@@ -1424,7 +1519,7 @@ async function saveDetail() {
           value: detailDraft.value,
         }, projectStore.currentProject);
         pmDetail.value = { kind: 'managed', entry: updated };
-        detailDraft.value = cloneDraft(updated.value);
+        resetDetailDraft(cloneDraft(updated.value));
       }
       if (entry.kind === 'database' || entry.kind === 'commonEvent') {
         resetCatalog();
@@ -1946,19 +2041,37 @@ function detailTitle(): string {
               <span v-for="reference in pmDetail.references" :key="`${reference.file}:${reference.path}`">{{ reference.file }} · {{ reference.path }}</span>
             </div>
           </div>
-          <div v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'commonEvent'" class="pm-detail-body">
+          <div
+            v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'commonEvent'"
+            class="pm-detail-body"
+            @focusin="beginDraftFocusEdit"
+            @focusout="endDraftFocusEdit"
+            @keydown="handleDraftHistoryShortcut"
+          >
             <StagedEntryInspection :inspection="pmDetail.entry.inspection" />
-            <CommonEventDetailEditor v-model="detailDraft" :catalog="editorCatalog" :load-image="loadImage" />
+            <CommonEventDetailEditor
+              :model-value="detailDraft"
+              :catalog="editorCatalog"
+              :load-image="loadImage"
+              @update:model-value="updateDetailDraft"
+            />
           </div>
-          <div v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'database'" class="pm-detail-body">
+          <div
+            v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'database'"
+            class="pm-detail-body"
+            @focusin="beginDraftFocusEdit"
+            @focusout="endDraftFocusEdit"
+            @keydown="handleDraftHistoryShortcut"
+          >
             <StagedEntryInspection :inspection="pmDetail.entry.inspection" />
             <DatabaseEntryDetailEditor
-              v-model="detailDraft"
+              :model-value="detailDraft"
               :group="pmDetail.entry.group"
               :catalog="editorCatalog"
               :schema="pmDetail.entry.schema"
               :focus-field="pmDetail.entry.group && isDocumentSubFieldGroup(pmDetail.entry.group) ? selectedDbSubField : undefined"
               :load-image="loadImage"
+              @update:model-value="updateDetailDraft"
             />
           </div>
           <div v-else-if="pmDetail && detailEditable" class="pm-detail-body">
@@ -2012,6 +2125,26 @@ function detailTitle(): string {
             <template v-else>
               <span>{{ t('story.saveStagingNote') }}</span>
               <div class="pm-detail-footer-actions">
+                <button
+                  v-if="supportsDraftHistory"
+                  type="button"
+                  class="secondary-button"
+                  data-ui-id="story-draft-undo"
+                  :disabled="detailBusy || stagingBusy || !canUndoDraft"
+                  @click="undoDetailDraft"
+                >
+                  {{ t('editor.toolbar.undo') }}
+                </button>
+                <button
+                  v-if="supportsDraftHistory"
+                  type="button"
+                  class="secondary-button"
+                  data-ui-id="story-draft-redo"
+                  :disabled="detailBusy || stagingBusy || !canRedoDraft"
+                  @click="redoDetailDraft"
+                >
+                  {{ t('editor.toolbar.redo') }}
+                </button>
                 <button
                   v-if="canRevertCurrentStagedEntry"
                   type="button"

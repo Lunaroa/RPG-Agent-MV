@@ -13,6 +13,7 @@ import {
   commonEventAlreadyExists,
   commonEventInvalidData,
   commonEventInvalidId,
+  commonEventLimitReached,
   commonEventInvalidTrigger,
   commonEventMissing,
   commonEventNoTriggerSwitchMustBeZero,
@@ -67,6 +68,7 @@ export interface CommonEventUsageReference {
 
 const COMMON_EVENT_FILE = 'CommonEvents.json';
 const SYSTEM_FILE = 'System.json';
+const COMMON_EVENT_MAX_ID = 1000;
 
 export function listCommonEvents(workflowRoot: string, project: string): CommonEventListResult {
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
@@ -107,6 +109,7 @@ export function createCommonEvent(
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
   const commonEvents = readCommonEvents(workflowRoot, project);
   const id = request.id === undefined ? nextCommonEventId(commonEvents) : validId(request.id);
+  assertCommonEventIdWithinLimit(id);
   if (isCommonEventRecord(commonEvents[id])) throw new Error(commonEventAlreadyExists(id));
   ensureArrayIndex(commonEvents, id);
   commonEvents[id] = normalizeCommonEvent(workflowRoot, project, {
@@ -185,6 +188,7 @@ export function duplicateCommonEvent(
   const source = getCommonEvent(workflowRoot, project, request).value as RmmvCommonEvent;
   const commonEvents = readCommonEvents(workflowRoot, project);
   const targetId = request.targetId === undefined ? nextCommonEventId(commonEvents) : validId(request.targetId);
+  assertCommonEventIdWithinLimit(targetId);
   if (isCommonEventRecord(commonEvents[targetId])) throw new Error(commonEventAlreadyExists(targetId));
   ensureArrayIndex(commonEvents, targetId);
   commonEvents[targetId] = normalizeCommonEvent(workflowRoot, project, {
@@ -335,10 +339,14 @@ function dataRelativePath(project: string, fileName: string): string {
 }
 
 function nextCommonEventId(list: unknown[]): number {
-  for (let index = 1; index < list.length; index += 1) {
+  for (let index = 1; index <= COMMON_EVENT_MAX_ID; index += 1) {
     if (!isCommonEventRecord(list[index])) return index;
   }
-  return Math.max(1, list.length);
+  throw new Error(commonEventLimitReached());
+}
+
+function assertCommonEventIdWithinLimit(id: number): void {
+  if (id > COMMON_EVENT_MAX_ID) throw new Error(commonEventLimitReached());
 }
 
 function ensureArrayIndex(list: unknown[], id: number): void {

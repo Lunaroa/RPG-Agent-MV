@@ -9,9 +9,22 @@ import { closeDatabase } from '../db/pool.ts';
 import { createDefaultRmmvDatabaseEntry } from '../rmmv/database-schema.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
 import { deleteAsset, getAssetDetail, renameAsset } from './asset-management-service.ts';
-import { createProjectManagedEntry, getProjectManagedEntry, updateProjectManagedEntry, buildProjectManagementScan } from './project-management-service.ts';
+import {
+  buildProjectManagementScan,
+  createProjectManagedEntry,
+  getProjectManagedEntry,
+  preflightProjectManagedStagingApply,
+  resetProjectManagedEntry,
+  revertProjectManagedEntry,
+  updateProjectManagedEntry,
+} from './project-management-service.ts';
 import { withTestLanguage } from '../i18n/with-test-language.ts';
-import { discardProjectStaging, getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
+import {
+  applyProjectStaging,
+  discardProjectStaging,
+  getProjectFileForRead,
+  getProjectStagingStatus,
+} from './staging-service.ts';
 
 describe('console management services', { concurrency: false }, () => {
   let root: string;
@@ -33,6 +46,7 @@ describe('console management services', { concurrency: false }, () => {
       null,
       { ...createDefaultRmmvDatabaseEntry('Actors', 1), name: 'Hero', characterName: 'Hero' },
     ]);
+    writeCompleteDatabaseFixture(project);
     fs.writeFileSync(path.join(project, 'www', 'img', 'characters', 'Hero.png'), 'hero');
     await bootstrapDatabase(root, { dbPath: path.join(root, 'data', 'test.db'), importLegacyJson: false });
   });
@@ -100,6 +114,34 @@ describe('console management services', { concurrency: false }, () => {
     assert.deepEqual(sourceSystem.skillTypes, ['', 'Magic', 'Special']);
   });
 
+  test('routes type-list changes through stable ids and blocks referenced tail removal', () => {
+    const system = getProjectManagedEntry(root, project, { kind: 'database', group: 'System', id: 0 });
+    assert.throws(
+      () => withTestLanguage(() => updateProjectManagedEntry(root, project, {
+        kind: 'database',
+        group: 'System',
+        id: 0,
+        value: { ...(system.value as Record<string, unknown>), skillTypes: ['', 'Changed'] },
+      })),
+      /Types|类型/,
+    );
+
+    const types = getProjectManagedEntry(root, project, { kind: 'database', group: 'Types', id: 0 });
+    assert.throws(
+      () => withTestLanguage(() => updateProjectManagedEntry(root, project, {
+        kind: 'database',
+        group: 'Types',
+        id: 0,
+        value: { ...(types.value as Record<string, unknown>), skillTypes: [''] },
+      })),
+      /Referenced|引用/,
+    );
+    assert.deepEqual(
+      (readJson(path.join(project, 'www', 'data', 'System.json')) as any).skillTypes,
+      ['', 'Magic', 'Special'],
+    );
+  });
+
   test('creates database entries from schema defaults using the first free id', () => {
     const actorsPath = path.join(project, 'www', 'data', 'Actors.json');
     writeJson(actorsPath, [
@@ -115,6 +157,144 @@ describe('console management services', { concurrency: false }, () => {
     assert.equal((readJson(getProjectFileForRead(root, project, 'www/data/Actors.json')!) as any[])[2].id, 2);
     assert.equal((readJson(actorsPath) as any[])[2], null);
     assert.throws(() => withTestLanguage(() => createProjectManagedEntry(root, project, { kind: 'database', group: 'System' })), /不能新增/);
+  });
+
+  test('reports field-level staged differences and reverts only the selected database record', () => {
+    const actor = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
+    updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      id: 1,
+      value: { ...(actor.value as Record<string, unknown>), name: 'Lead' },
+    });
+    const created = createProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      value: { name: 'Support' },
+    });
+
+    const staged = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
+    assert.equal(staged.inspection?.staged, true);
+    assert.equal(staged.inspection?.changed, true);
+    assert.deepEqual(
+      staged.inspection?.diffs.find((diff) => diff.path === '/name'),
+      { path: '/name', before: 'Hero', after: 'Lead' },
+    );
+    assert.equal(
+      staged.inspection?.issues.some((issue) => issue.severity === 'error'),
+      false,
+      JSON.stringify(staged.inspection?.issues, null, 2),
+    );
+
+    const firstRevert = revertProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      id: 1,
+    });
+    assert.equal((firstRevert.entry?.value as Record<string, unknown>).name, 'Hero');
+    assert.equal((getProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      id: created.id,
+    }).value as Record<string, unknown>).name, 'Support');
+    assert.equal(getProjectStagingStatus(root, project).staged, true);
+
+    const secondRevert = revertProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      id: created.id,
+    });
+    assert.equal(secondRevert.entry, undefined);
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as unknown[])[created.id], undefined);
+    assert.equal(getProjectStagingStatus(root, project).staged, false);
+  });
+
+  test('reverts only the selected System-backed document group', () => {
+    const types = getProjectManagedEntry(root, project, { kind: 'database', group: 'Types', id: 0 });
+    updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Types',
+      id: 0,
+      value: { ...(types.value as Record<string, unknown>), skillTypes: ['', 'Magic', 'Tech'] },
+    });
+    const terms = getProjectManagedEntry(root, project, { kind: 'database', group: 'Terms', id: 0 });
+    updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Terms',
+      id: 0,
+      value: { ...(terms.value as Record<string, unknown>), commands: ['', 'Fight', 'Run'] },
+    });
+
+    const reverted = revertProjectManagedEntry(root, project, { kind: 'database', group: 'Types', id: 0 });
+    assert.deepEqual((reverted.entry?.value as Record<string, unknown>).skillTypes, ['', 'Magic', 'Special']);
+    const stagedSystem = readJson(getProjectFileForRead(root, project, 'www/data/System.json')!) as Record<string, any>;
+    assert.deepEqual(stagedSystem.skillTypes, ['', 'Magic', 'Special']);
+    assert.deepEqual(stagedSystem.terms.commands, ['', 'Fight', 'Run']);
+    assert.equal(getProjectStagingStatus(root, project).staged, true);
+  });
+
+  test('blocks database creation after the original MV id limit is full', () => {
+    writeJson(path.join(project, 'www', 'data', 'Actors.json'), [
+      null,
+      ...Array.from({ length: 1000 }, (_entry, index) => ({
+        ...createDefaultRmmvDatabaseEntry('Actors', index + 1),
+        id: index + 1,
+      })),
+    ]);
+    assert.throws(
+      () => withTestLanguage(() => createProjectManagedEntry(root, project, { kind: 'database', group: 'Actors' })),
+      /1000/,
+    );
+  });
+
+  test('resets only unreferenced array records to stable empty slots', () => {
+    const actorsPath = path.join(project, 'www', 'data', 'Actors.json');
+    const actors = readJson(actorsPath) as unknown[];
+    actors[3] = { ...createDefaultRmmvDatabaseEntry('Actors', 3), id: 3, name: 'Unused' };
+    writeJson(actorsPath, actors);
+
+    assert.throws(
+      () => withTestLanguage(() => resetProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 })),
+      /reference|引用/i,
+    );
+    const reset = resetProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 3 });
+    assert.equal(reset.reset, true);
+    assert.equal((readJson(getProjectFileForRead(root, project, 'www/data/Actors.json')!) as unknown[])[3], null);
+    assert.equal((readJson(actorsPath) as any[])[3].name, 'Unused');
+  });
+
+  test('blocks Apply All when the complete staged database has invalid references', () => {
+    const actor = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
+    updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      id: 1,
+      value: { ...(actor.value as Record<string, unknown>), classId: 99 },
+    });
+    const invalidDraft = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
+    assert.ok(invalidDraft.inspection?.issues.some((issue) => (
+      issue.severity === 'error' && issue.path === 'actors[1].classId'
+    )));
+    assert.throws(
+      () => applyProjectStaging(root, project, {
+        validate: () => preflightProjectManagedStagingApply(root, project),
+      }),
+      /semantic revalidation/,
+    );
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].classId, 1);
+    assert.equal(getProjectStagingStatus(root, project).staged, true);
+
+    updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      id: 1,
+      value: { ...(actor.value as Record<string, unknown>), classId: 1, name: 'Lead' },
+    });
+    const applied = applyProjectStaging(root, project, {
+      validate: () => preflightProjectManagedStagingApply(root, project),
+    });
+    assert.equal(applied.applied, true);
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].name, 'Lead');
   });
 
   test('overview scan reads staged database changes and unnamed entries', () => {
@@ -134,3 +314,60 @@ describe('console management services', { concurrency: false }, () => {
     assert.equal((readJson(path.join(project, 'www', 'data', 'Skills.json')) as unknown[])[created.id], undefined);
   });
 });
+
+function writeCompleteDatabaseFixture(project: string): void {
+  const dataDir = path.join(project, 'www', 'data');
+  const arrayTables: Array<[string, string, number[]]> = [
+    ['Classes', 'Classes.json', [1]],
+    ['Skills', 'Skills.json', []],
+    ['Items', 'Items.json', []],
+    ['Weapons', 'Weapons.json', [1]],
+    ['Armors', 'Armors.json', [1, 2, 3]],
+    ['Enemies', 'Enemies.json', []],
+    ['Troops', 'Troops.json', [1]],
+    ['States', 'States.json', []],
+    ['Animations', 'Animations.json', []],
+    ['Tilesets', 'Tilesets.json', [1]],
+    ['CommonEvents', 'CommonEvents.json', []],
+  ];
+  for (const [group, fileName, ids] of arrayTables) {
+    const records: unknown[] = [null];
+    for (const id of ids) records[id] = createDefaultRmmvDatabaseEntry(group, id);
+    writeJson(path.join(dataDir, fileName), records);
+  }
+  writeJson(path.join(dataDir, 'MapInfos.json'), [null, {
+    id: 1,
+    expanded: true,
+    name: 'Sample Map',
+    order: 1,
+    parentId: 0,
+    scrollX: 0,
+    scrollY: 0,
+  }]);
+  writeJson(path.join(dataDir, 'Map001.json'), {
+    autoplayBgm: false,
+    autoplayBgs: false,
+    battleback1Name: '',
+    battleback2Name: '',
+    bgm: { name: '', pan: 0, pitch: 100, volume: 90 },
+    bgs: { name: '', pan: 0, pitch: 100, volume: 90 },
+    disableDashing: false,
+    displayName: '',
+    encounterList: [],
+    encounterStep: 30,
+    events: [null],
+    height: 1,
+    note: '',
+    parallaxLoopX: false,
+    parallaxLoopY: false,
+    parallaxName: '',
+    parallaxShow: true,
+    parallaxSx: 0,
+    parallaxSy: 0,
+    scrollType: 0,
+    specifyBattleback: false,
+    tilesetId: 1,
+    width: 1,
+    data: [0, 0, 0, 0, 0, 0],
+  });
+}

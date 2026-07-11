@@ -302,6 +302,45 @@ export interface ProjectManagedEntry {
   value: unknown;
   relativePath: string;
   schema?: RmmvDatabaseEntrySchema;
+  inspection?: ProjectManagedEntryInspection;
+}
+
+export interface ProjectManagedFieldDiff {
+  path: string;
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface ProjectManagedEntryIssue {
+  code: string;
+  severity: 'error' | 'warning';
+  table: string;
+  id?: number;
+  path: string;
+  message: string;
+}
+
+export interface ProjectManagedEntryInspection {
+  staged: boolean;
+  changed: boolean;
+  conflict: boolean;
+  operationId?: string;
+  diffs: ProjectManagedFieldDiff[];
+  issues: ProjectManagedEntryIssue[];
+  limitations: string[];
+}
+
+export interface ProjectManagedEntryRevertResult {
+  reverted: true;
+  entry?: ProjectManagedEntry;
+  staging: unknown;
+}
+
+export interface ProjectManagedEntryResetResult {
+  reset: true;
+  id: number;
+  group: string;
+  staging: unknown;
 }
 
 export type RmmvDatabaseFieldKind =

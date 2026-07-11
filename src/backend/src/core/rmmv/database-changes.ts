@@ -6,8 +6,10 @@ import {
   applyStagedOperation,
   discardStagedOperation,
   getProjectFileForRead,
+  getProjectStagingStatus,
   projectHash,
   stageDatabaseStagingOperationDrafts,
+  type StagingOperation,
 } from "../desktop/staging-service.ts";
 import { applyRmmvDatabasePatch, type RmmvDatabaseFieldDiff, type RmmvJsonPatchOperation } from "./database-patch.ts";
 import { readEffectiveRmmvDatabaseTable } from "./database-read.ts";
@@ -164,6 +166,45 @@ export function validateRmmvDatabaseChanges(
   return buildPlan(workflowRoot, project, request).publicPlan.validation;
 }
 
+export function validateEffectiveRmmvDatabaseState(
+  workflowRoot: string,
+  project: string,
+): RmmvDatabaseSemanticValidationResult {
+  const loaded = loadProjectInputs(workflowRoot, path.resolve(project));
+  return validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps });
+}
+
+export function preflightRmmvDatabaseProjectApply(
+  workflowRoot: string,
+  projectRoot: string,
+): RmmvDatabaseSemanticValidationResult {
+  const project = path.resolve(projectRoot);
+  const loaded = loadProjectInputs(workflowRoot, project);
+  const status = getProjectStagingStatus(workflowRoot, project);
+  const operations = status.operations as StagingOperation[];
+  const actualHashes = new Map(loaded.inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
+  const operationOutputs = new Set(operations.flatMap((operation) => operation.files));
+
+  for (const operation of operations) {
+    const metadata = parseAndVerifyOperationMetadata(project, operation);
+    for (const output of metadata.outputs) {
+      if (actualHashes.get(output.relativePath) !== output.afterHash) {
+        throw new Error(`Database operation draft drift blocks apply: ${output.relativePath}`);
+      }
+    }
+    for (const input of metadata.inputHashes) {
+      if (operationOutputs.has(input.relativePath)) continue;
+      if (actualHashes.get(input.relativePath) !== input.effectiveHash) {
+        throw new Error(`Database input drift blocks apply: ${input.relativePath}`);
+      }
+    }
+  }
+
+  const validation = validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps });
+  assertSemanticValidationOk(validation);
+  return validation;
+}
+
 export function stageRmmvDatabaseChanges(
   workflowRoot: string,
   project: string,
@@ -226,30 +267,7 @@ function validateStagedOperationState(
   operation: { planHash: string; files: string[]; changes: unknown },
 ): void {
   const project = path.resolve(projectRoot);
-  const metadata = requireRecord(operation.changes, "Database staging operation metadata");
-  if (metadata.version !== 1 || !Array.isArray(metadata.resolvedChanges)) {
-    throw new Error("Database staging operation metadata is invalid.");
-  }
-  const inputHashes = parseInputHashes(metadata.inputHashes);
-  const outputs = parseOutputHashes(metadata.outputHashes);
-  const outputFiles = new Set(outputs.map((output) => output.relativePath));
-  if (
-    outputFiles.size !== operation.files.length
-    || operation.files.some((relativePath) => !outputFiles.has(relativePath))
-  ) {
-    throw new Error("Database staging operation output files do not match operation ownership.");
-  }
-
-  const recomputedPlanHash = hash(Buffer.from(canonicalJson({
-    version: 1,
-    projectHash: projectHash(project),
-    resolvedChanges: metadata.resolvedChanges,
-    inputHashes,
-    outputs,
-  }), "utf8"));
-  if (recomputedPlanHash !== operation.planHash) {
-    throw new Error("Database staging operation planHash no longer matches its metadata.");
-  }
+  const { inputHashes, outputs } = parseAndVerifyOperationMetadata(project, operation);
 
   const loaded = loadProjectInputs(workflowRoot, project);
   const expected = new Map(inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
@@ -269,11 +287,44 @@ function validateStagedOperationState(
   }
 
   const validation = validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps });
-  if (!validation.ok) {
-    const errors = validation.issues.filter((issue) => issue.severity === "error");
-    const detail = errors.slice(0, 5).map((issue) => `${issue.source.path}: ${issue.message}`).join("; ");
-    throw new Error(`Database staged state failed semantic revalidation (${errors.length} error(s)): ${detail}`);
+  assertSemanticValidationOk(validation);
+}
+
+function parseAndVerifyOperationMetadata(
+  project: string,
+  operation: Pick<StagingOperation, "planHash" | "files" | "changes">,
+): { inputHashes: RmmvDatabaseInputHash[]; outputs: Array<{ relativePath: string; afterHash: string }> } {
+  const metadata = requireRecord(operation.changes, "Database staging operation metadata");
+  if (metadata.version !== 1 || !Array.isArray(metadata.resolvedChanges)) {
+    throw new Error("Database staging operation metadata is invalid.");
   }
+  const inputHashes = parseInputHashes(metadata.inputHashes);
+  const outputs = parseOutputHashes(metadata.outputHashes);
+  const outputFiles = new Set(outputs.map((output) => output.relativePath));
+  if (
+    outputFiles.size !== operation.files.length
+    || operation.files.some((relativePath) => !outputFiles.has(relativePath))
+  ) {
+    throw new Error("Database staging operation output files do not match operation ownership.");
+  }
+  const recomputedPlanHash = hash(Buffer.from(canonicalJson({
+    version: 1,
+    projectHash: projectHash(project),
+    resolvedChanges: metadata.resolvedChanges,
+    inputHashes,
+    outputs,
+  }), "utf8"));
+  if (recomputedPlanHash !== operation.planHash) {
+    throw new Error("Database staging operation planHash no longer matches its metadata.");
+  }
+  return { inputHashes, outputs };
+}
+
+function assertSemanticValidationOk(validation: RmmvDatabaseSemanticValidationResult): void {
+  if (validation.ok) return;
+  const errors = validation.issues.filter((issue) => issue.severity === "error");
+  const detail = errors.slice(0, 5).map((issue) => `${issue.source.path}: ${issue.message}`).join("; ");
+  throw new Error(`Database staged state failed semantic revalidation (${errors.length} error(s)): ${detail}`);
 }
 
 function buildPlan(

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { StagingManifestDao } from '../db/dao/staging-manifest-dao.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
@@ -53,7 +54,13 @@ export interface FileEntry {
 
 export interface ProjectStagingActionOptions {
   rejectOperationOwned?: boolean;
+  expectedOperationIds?: readonly string[];
   transactionDependencies?: StagingTransactionDependencies;
+  validate?: (context: {
+    project: string;
+    files: ReturnType<typeof preflightStagedProjectFiles>;
+    operations: StagingOperation[];
+  }) => void;
 }
 
 export interface StagedOperationActionOptions {
@@ -274,16 +281,31 @@ export function writeStagedProjectJson(
     const manifest = readManifest(context);
     const relative = resolveManifestRelativePath(manifest, requestedRelative);
     assertStagingWriteOwnership(manifest, relative, ownership, relativePathIdentity);
-    const entry = ensureDraft(context, manifest, relative);
     const sourceFile = sourceFilePath(context, relative);
     const draftFile = draftFilePath(context, relative);
+    if (!ownership && sourceJsonEquals(sourceFile, value)) {
+      const existing = manifest.files[relative];
+      if (!existing) {
+        return { relativePath: relative, sourceFile, draftFile, entry: null, restored: true };
+      }
+      const nextManifest = cloneManifest(manifest);
+      removeManifestFileMetadata(nextManifest, [relative]);
+      discardStagingTransaction({
+        entries: buildTransactionEntries(context, manifest, [relative]),
+        transactionRoot: transactionRoot(context),
+        updateManifest: () => commitManifest(context, nextManifest),
+      });
+      cleanupStagingFilesystem(context);
+      return { relativePath: relative, sourceFile, draftFile, entry: null, restored: true };
+    }
+    const entry = ensureDraft(context, manifest, relative);
     writeJsonAtomic(draftFile, value);
     entry.draftHash = fileHash(draftFile);
     entry.updatedAt = new Date().toISOString();
     delete entry.delete;
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
-    return { relativePath: relative, sourceFile, draftFile, entry };
+    return { relativePath: relative, sourceFile, draftFile, entry, restored: false };
   });
 }
 
@@ -837,10 +859,12 @@ export function applyProjectStaging(
     if (options.rejectOperationOwned) assertManifestHasNoDatabaseOperations(manifest);
     const files = Object.keys(manifest.files).sort();
     const operations = listStagingOperationMetadata(manifest);
+    assertExpectedOperationSet(options.expectedOperationIds, operations);
     if (files.length === 0) {
       return { applied: false, files, operations, staging: getProjectStagingStatus(workflowRoot, project) };
     }
-    preflightStagedProjectFiles(workflowRoot, project, files);
+    const preflight = preflightStagedProjectFiles(workflowRoot, project, files);
+    options.validate?.({ project: context.project, files: preflight, operations });
     commitStagingTransaction({
       entries: buildTransactionEntries(context, manifest, files),
       transactionRoot: transactionRoot(context),
@@ -850,6 +874,25 @@ export function applyProjectStaging(
     cleanupStagingFilesystem(context);
     return { applied: true, files, operations, staging: getProjectStagingStatus(workflowRoot, project) };
   });
+}
+
+function assertExpectedOperationSet(
+  expectedOperationIds: readonly string[] | undefined,
+  operations: readonly StagingOperation[],
+): void {
+  if (expectedOperationIds === undefined) return;
+  const expected = [...expectedOperationIds].map(validateStagingOperationId).sort();
+  const actual = operations.map((operation) => operation.operationId).sort();
+  if (
+    expected.length !== actual.length
+    || expected.some((operationId, index) => operationId !== actual[index])
+  ) {
+    throw new StagingError(
+      STAGING_ERROR_CODES.conflict,
+      'The staged Agent database operation set changed after confirmation.',
+      { expectedOperationIds: expected, actualOperationIds: actual },
+    );
+  }
 }
 
 export function discardProjectStaging(
@@ -1326,6 +1369,12 @@ function ensureDraftProjectDataFiles(context: StagingContext, manifest: Manifest
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(source, target);
   }
+}
+
+function sourceJsonEquals(sourceFile: string, value: unknown): boolean {
+  if (!fs.existsSync(sourceFile)) return false;
+  const text = fs.readFileSync(sourceFile, 'utf8').replace(/^\uFEFF/, '');
+  return isDeepStrictEqual(JSON.parse(text), value);
 }
 
 function withStagingMutationLock<T>(context: StagingContext, action: () => T): T {

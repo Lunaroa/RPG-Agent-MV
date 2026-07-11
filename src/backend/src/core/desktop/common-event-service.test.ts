@@ -155,6 +155,27 @@ describe('common event service', { concurrency: false }, () => {
     assert.equal((readJson(stagedFile) as RmmvCommonEventTest[])[2].id, 2);
   });
 
+  test('blocks create and duplicate beyond the original MV common-event limit', () => {
+    writeJson(commonEventsFile, [
+      null,
+      ...Array.from({ length: 1000 }, (_entry, index) => ({
+        id: index + 1,
+        name: `Event ${index + 1}`,
+        trigger: 0,
+        switchId: 0,
+        list: [{ code: 0, indent: 0, parameters: [] }],
+      })),
+    ]);
+    assert.throws(
+      () => withTestLanguage(() => createCommonEvent(root, project, { name: 'Too Many' })),
+      /1000/,
+    );
+    assert.throws(
+      () => withTestLanguage(() => duplicateCommonEvent(root, project, { id: 1, targetId: 1001 })),
+      /1000/,
+    );
+  });
+
   test('blocks delete when map commands or database effects reference the common event', () => {
     const references = findCommonEventUsages(root, project, 3);
     assert.ok(references.some((ref) => ref.kind === 'mapEventCommand'));

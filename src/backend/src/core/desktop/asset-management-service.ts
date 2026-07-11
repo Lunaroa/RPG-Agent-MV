@@ -14,6 +14,7 @@ import type {
   ProjectAssetReplaceMissingReferenceResult,
   ProjectMissingAssetReference,
 } from '../../../../contract/types.ts';
+import { buildAssetInventory } from '../rmmv/asset-inventory.ts';
 import { readJson } from '../rmmv/json.ts';
 import { projectAssetUrl } from './asset-service.ts';
 import {
@@ -52,12 +53,11 @@ import {
   type RmmvAssetCategory,
 } from './asset-reference-graph-service.ts';
 import {
-  deleteStagedProjectFile,
   getProjectFileForRead,
   getProjectStagingStatus,
   isInside,
-  writeStagedProjectBuffer,
-  writeStagedProjectJson,
+  stageProjectFilesAtomically,
+  type StagedProjectFileMutation,
 } from './staging-service.ts';
 
 interface AssetTarget {
@@ -65,6 +65,24 @@ interface AssetTarget {
   category: string;
   relativePath: string;
 }
+
+const INVENTORY_AUDIO_CATEGORIES = ['bgm', 'bgs', 'me', 'se'] as const;
+const INVENTORY_IMAGE_CATEGORIES = {
+  animations: 'animations',
+  battlebacks1: 'battlebacks1',
+  battlebacks2: 'battlebacks2',
+  characters: 'characters',
+  enemies: 'enemies',
+  faces: 'faces',
+  parallaxes: 'parallaxes',
+  pictures: 'pictures',
+  sv_actors: 'svActors',
+  sv_enemies: 'svEnemies',
+  system: 'system',
+  tilesets: 'tilesets',
+  titles1: 'titles1',
+  titles2: 'titles2',
+} as const;
 
 export function getAssetDetail(workflowRoot: string, project: string, target: AssetTarget): ManagedAssetDetail {
   const resolved = resolveAssetPath(workflowRoot, project, target);
@@ -82,6 +100,45 @@ export function getAssetDetail(workflowRoot: string, project: string, target: As
     staged: isAssetStaged(workflowRoot, project, resolved.relativePath),
     references: findProjectAssetReferences(workflowRoot, project, resolved.category, name),
   };
+}
+
+export function getAssetImportFileExtensions(categoryValue: string): string[] {
+  const category = requireAssetCategory(categoryValue);
+  const definition = RMMV_ASSET_CATEGORIES.find((item) => item.id === category);
+  if (!definition) throw new Error(unsupportedAssetCategory(categoryValue));
+  return definition.extensions.map((extension) => extension.replace(/^\./, ''));
+}
+
+export function buildStagedAwareAssetInventory(workflowRoot: string, project: string) {
+  const inventory = buildAssetInventory(project);
+  const graph = buildAssetReferenceGraph(workflowRoot, project);
+  for (const category of INVENTORY_AUDIO_CATEGORIES) {
+    inventory.audio[category] = effectiveInventoryBucket(graph.assets, category, inventory.audio[category]?.dir || '');
+  }
+  for (const [bucket, category] of Object.entries(INVENTORY_IMAGE_CATEGORIES)) {
+    inventory.images[bucket] = effectiveInventoryBucket(graph.assets, category as RmmvAssetCategory, inventory.images[bucket]?.dir || '');
+  }
+  inventory.summary.audio = Object.fromEntries(INVENTORY_AUDIO_CATEGORIES.map((category) => [category, {
+    exists: inventory.audio[category].exists,
+    count: inventory.audio[category].count,
+  }]));
+  inventory.summary.images = Object.fromEntries(Object.keys(INVENTORY_IMAGE_CATEGORIES).map((bucket) => [bucket, {
+    exists: inventory.images[bucket].exists,
+    count: inventory.images[bucket].count,
+  }]));
+  const animationSheets = new Set(inventory.images.animations.names);
+  inventory.animations = inventory.animations.map((animation) => ({
+    ...animation,
+    missingSheets: [animation.animation1Name, animation.animation2Name]
+      .filter(Boolean)
+      .filter((name) => !animationSheets.has(name)),
+  }));
+  inventory.summary.animations = {
+    total: inventory.animations.length,
+    named: inventory.animations.filter((animation) => animation.name).length,
+    withMissingSheets: inventory.animations.filter((animation) => animation.missingSheets.length > 0).length,
+  };
+  return inventory;
 }
 
 export function buildProjectAssetReferenceGraph(workflowRoot: string, project: string): ProjectAssetReferenceGraph {
@@ -147,10 +204,11 @@ export function replaceMissingAssetReference(
     reference.category === category && reference.name === missingName);
   if (!missingReferences.length) throw new Error(assetManagementNotMissingReference());
   const references = mapReferences(missingReferences);
-  const update = replaceProjectAssetReferences(workflowRoot, project, category, missingName, replacementName, references);
-  if (update.updatedReferences === 0) {
+  const update = prepareProjectAssetReferenceMutations(workflowRoot, project, category, missingName, replacementName, references);
+  if (update.updatedReferences !== references.length) {
     throw new Error(assetManagementReplacementUnsupported());
   }
+  stageProjectFilesAtomically(workflowRoot, project, update.mutations);
   return {
     category: request.category,
     missingName,
@@ -187,14 +245,21 @@ export function importLocalAssetFile(
   const targetRelative = `${projectAssetRelativeDirectory(workflowRoot, project, category)}/${targetName}${sourceExtension}`;
   assertProjectRelativeTarget(project, targetRelative);
 
-  const stagedEntry = getProjectStagingStatus(workflowRoot, project).files.find((entry) => entry.relativePath === targetRelative);
-  const sourceTarget = path.join(path.resolve(project), ...targetRelative.split('/'));
-  const targetExists = Boolean(stagedEntry) || Boolean(getProjectFileForRead(workflowRoot, project, targetRelative)) || fs.existsSync(sourceTarget);
-  if (targetExists && input.overwrite !== true) {
+  const graph = buildAssetReferenceGraph(workflowRoot, project);
+  const occupied = graph.assets.filter((asset) => asset.category === category && asset.name === targetName);
+  if (occupied.length > 1) throw new Error(assetManagementTargetNameExists());
+  if (occupied.length === 1 && input.overwrite !== true) {
     throw new Error(assetManagementOverwriteRequired());
   }
 
-  writeStagedProjectBuffer(workflowRoot, project, targetRelative, fs.readFileSync(sourceFile));
+  const mutations: StagedProjectFileMutation[] = [{
+    relativePath: targetRelative,
+    content: fs.readFileSync(sourceFile),
+  }];
+  if (occupied[0] && occupied[0].relativePath !== targetRelative) {
+    mutations.push({ relativePath: occupied[0].relativePath, delete: true });
+  }
+  stageProjectFilesAtomically(workflowRoot, project, mutations);
   return getAssetDetail(workflowRoot, project, {
     scope: 'project',
     category,
@@ -219,9 +284,20 @@ export function renameAsset(
   const nextRelative = `${path.posix.dirname(resolved.relativePath)}/${nextFileName}`;
 
   if (getProjectFileForRead(workflowRoot, project, nextRelative)) throw new Error(assetManagementTargetNameExists());
-  writeStagedProjectBuffer(workflowRoot, project, nextRelative, fs.readFileSync(resolved.absolute));
-  deleteStagedProjectFile(workflowRoot, project, resolved.relativePath);
-  replaceProjectAssetReferences(workflowRoot, project, resolved.category, before, nextName, safety.references);
+  const update = prepareProjectAssetReferenceMutations(
+    workflowRoot,
+    project,
+    resolved.category,
+    before,
+    nextName,
+    safety.references,
+  );
+  if (update.updatedReferences !== safety.references.length) throw new Error(assetManagementReplacementUnsupported());
+  stageProjectFilesAtomically(workflowRoot, project, [
+    { relativePath: nextRelative, content: fs.readFileSync(resolved.absolute) },
+    { relativePath: resolved.relativePath, delete: true },
+    ...update.mutations,
+  ]);
   return getAssetDetail(workflowRoot, project, { ...target, relativePath: nextRelative });
 }
 
@@ -234,7 +310,7 @@ export function deleteAsset(workflowRoot: string, project: string, target: Asset
     name: path.basename(resolved.absolute, path.extname(resolved.absolute)),
   });
   if (!safety.ok) throw new Error(safety.blockers.join('; '));
-  deleteStagedProjectFile(workflowRoot, project, resolved.relativePath);
+  stageProjectFilesAtomically(workflowRoot, project, [{ relativePath: resolved.relativePath, delete: true }]);
   return { deleted: true };
 }
 
@@ -262,6 +338,21 @@ function isAssetStaged(workflowRoot: string, project: string, relativePath: stri
 function findProjectAssetReferences(workflowRoot: string, project: string, category: string, assetName: string): ManagedAssetRef[] {
   return findReferencesForAsset(workflowRoot, project, { category, name: assetName })
     .map((reference) => ({ file: reference.file, path: reference.path }));
+}
+
+function effectiveInventoryBucket(assets: RmmvProjectAsset[], category: RmmvAssetCategory, dir: string) {
+  const matching = assets
+    .filter((asset) => asset.category === category)
+    .sort((left, right) => left.fileName.localeCompare(right.fileName));
+  const files = matching.map((asset) => asset.fileName);
+  const names = [...new Set(matching.map((asset) => asset.name))].sort((left, right) => left.localeCompare(right));
+  return {
+    dir,
+    exists: matching.length > 0 || Boolean(dir && fs.existsSync(dir)),
+    count: names.length,
+    names,
+    files,
+  };
 }
 
 function mapGraphAsset(asset: RmmvProjectAsset): ProjectAssetReferenceGraphAsset {
@@ -304,68 +395,101 @@ function mapReferences(references: RmmvMissingAssetReference[]): RmmvAssetRefere
   }));
 }
 
-function replaceProjectAssetReferences(
+function prepareProjectAssetReferenceMutations(
   workflowRoot: string,
   project: string,
   category: RmmvAssetCategory,
   before: string,
   after: string,
   references: RmmvAssetReference[],
-): { updatedReferences: number; updatedFiles: string[] } {
+): { mutations: StagedProjectFileMutation[]; updatedReferences: number; updatedFiles: string[] } {
   const refsByFile = new Map<string, RmmvAssetReference[]>();
   let updatedReferences = 0;
-  const updatedFiles = new Set<string>();
+  const mutations: StagedProjectFileMutation[] = [];
   for (const reference of references) {
     const list = refsByFile.get(reference.file) || [];
     list.push(reference);
     refsByFile.set(reference.file, list);
   }
-  for (const [relative, refs] of refsByFile.entries()) {
-    if (category === 'plugins' && relative.endsWith('plugins.js')) {
-      const updated = replacePluginConfigReference(workflowRoot, project, relative, before, after);
-      if (updated > 0) {
-        updatedReferences += updated;
-        updatedFiles.add(relative);
+  for (const [relative, refs] of [...refsByFile.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    const file = getProjectFileForRead(workflowRoot, project, relative);
+    if (!file) throw new Error(assetManagementReplacementUnsupported());
+    if (/(?:^|\/)js\/plugins\.js$/i.test(relative)) {
+      const raw = fs.readFileSync(file, 'utf8');
+      const start = raw.indexOf('[');
+      const end = raw.lastIndexOf(']');
+      if (start < 0 || end <= start) throw new Error(assetManagementReplacementUnsupported());
+      const entries = JSON.parse(raw.slice(start, end + 1)) as unknown[];
+      const root = { plugins: entries };
+      for (const ref of refs) {
+        if (!rewriteJsonPathReference(root, ref.path, category, before, after)) {
+          throw new Error(assetManagementReplacementUnsupported());
+        }
+        updatedReferences += 1;
       }
+      const next = `${raw.slice(0, start)}${JSON.stringify(entries, null, 2)}${raw.slice(end + 1)}`;
+      mutations.push({ relativePath: relative, content: Buffer.from(next, 'utf8') });
       continue;
     }
-    if (!relative.endsWith('.json')) continue;
-    const file = getProjectFileForRead(workflowRoot, project, relative);
-    if (!file) continue;
+    if (!relative.toLowerCase().endsWith('.json')) throw new Error(assetManagementReplacementUnsupported());
     const value = readJson(file);
-    let fileUpdated = 0;
     for (const ref of refs) {
-      if (setJsonPathValue(value, ref.path, after)) fileUpdated += 1;
+      if (!rewriteJsonPathReference(value, ref.path, category, before, after)) {
+        throw new Error(assetManagementReplacementUnsupported());
+      }
+      updatedReferences += 1;
     }
-    if (fileUpdated > 0) {
-      writeStagedProjectJson(workflowRoot, project, relative, value);
-      updatedReferences += fileUpdated;
-      updatedFiles.add(relative);
-    }
+    mutations.push({
+      relativePath: relative,
+      content: Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8'),
+    });
   }
-  return { updatedReferences, updatedFiles: Array.from(updatedFiles).sort() };
+  return {
+    mutations,
+    updatedReferences,
+    updatedFiles: mutations.map((mutation) => mutation.relativePath),
+  };
 }
 
-function replacePluginConfigReference(workflowRoot: string, project: string, relative: string, before: string, after: string): number {
-  const file = getProjectFileForRead(workflowRoot, project, relative);
-  if (!file) return 0;
-  const raw = fs.readFileSync(file, 'utf8');
-  const start = raw.indexOf('[');
-  const end = raw.lastIndexOf(']');
-  if (start < 0 || end <= start) return 0;
-  const entries = JSON.parse(raw.slice(start, end + 1)) as Array<Record<string, unknown>>;
-  let updated = 0;
-  for (const entry of entries) {
-    if (entry && entry.name === before) {
-      entry.name = after;
-      updated += 1;
-    }
+function rewriteJsonPathReference(
+  root: unknown,
+  jsonPath: string,
+  category: RmmvAssetCategory,
+  before: string,
+  after: string,
+): boolean {
+  const current = getJsonPathValue(root, jsonPath);
+  const replacement = rewriteAssetReferenceValue(current, category, before, after);
+  if (replacement === undefined) return false;
+  return setJsonPathValue(root, jsonPath, replacement);
+}
+
+function rewriteAssetReferenceValue(
+  current: unknown,
+  category: RmmvAssetCategory,
+  before: string,
+  after: string,
+): string | undefined {
+  if (typeof current !== 'string') return undefined;
+  if (current === before) return after;
+  if (category === 'plugins') return undefined;
+  const separatorIndex = Math.max(current.lastIndexOf('/'), current.lastIndexOf('\\'));
+  const prefix = current.slice(0, separatorIndex + 1);
+  const fileName = current.slice(separatorIndex + 1);
+  const extension = path.extname(fileName);
+  if (path.basename(fileName, extension) !== before) return undefined;
+  return `${prefix}${after}${extension}`;
+}
+
+function getJsonPathValue(root: unknown, jsonPath: string): unknown {
+  const segments = parseJsonPath(jsonPath);
+  if (!segments.length) return undefined;
+  let current = root as any;
+  for (const segment of segments) {
+    current = current?.[segment as any];
+    if (current === undefined || current === null) return current;
   }
-  if (updated > 0) {
-    const next = `${raw.slice(0, start)}${JSON.stringify(entries, null, 2)}${raw.slice(end + 1)}`;
-    writeStagedProjectBuffer(workflowRoot, project, relative, Buffer.from(next, 'utf8'));
-  }
-  return updated;
+  return current;
 }
 
 function setJsonPathValue(root: unknown, jsonPath: string, value: string): boolean {

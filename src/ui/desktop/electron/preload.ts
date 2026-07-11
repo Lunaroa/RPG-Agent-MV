@@ -141,6 +141,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('projectAssets:replaceMissingReference', request, project),
     importLocalFile: (request: unknown, project?: string) =>
       ipcRenderer.invoke('projectAssets:importLocalFile', request, project),
+    selectImportFile: (category: string) => ipcRenderer.invoke('projectAssets:selectImportFile', category),
   },
 
   projectManagement: {
@@ -189,6 +190,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('plugins:updateParameters', pluginName, parameters, project),
     installFile: (sourceFile: string, options?: unknown, project?: string) =>
       ipcRenderer.invoke('plugins:installFile', sourceFile, options, project),
+    selectInstallFile: () => ipcRenderer.invoke('plugins:selectInstallFile'),
     deleteFile: (pluginName: string, options?: unknown, project?: string) =>
       ipcRenderer.invoke('plugins:deleteFile', pluginName, options, project),
   },

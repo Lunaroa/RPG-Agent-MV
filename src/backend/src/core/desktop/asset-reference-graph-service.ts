@@ -7,6 +7,7 @@ import {
   assetGraphIconsetRenameForbidden,
   assetGraphNameInvalid,
   assetGraphNameMissing,
+  assetGraphReferenceRewriteUnsupported,
   assetGraphReferencedBlocker,
   assetGraphTargetNameOccupied,
   assetGraphUnsupportedCategory,
@@ -277,6 +278,8 @@ export function checkAssetRenameSafety(
   if (category === 'system' && name === 'IconSet' && references.some((reference) => reference.path.endsWith('.iconIndex'))) {
     blockers.push(assetGraphIconsetRenameForbidden());
   }
+  const unsupportedReferences = references.filter((reference) => !canRewriteAssetReference(reference));
+  if (unsupportedReferences.length > 0) blockers.push(assetGraphReferenceRewriteUnsupported(unsupportedReferences.length));
   return {
     ok: blockers.length === 0,
     action: 'rename',
@@ -286,6 +289,12 @@ export function checkAssetRenameSafety(
     references,
     blockers,
   };
+}
+
+function canRewriteAssetReference(reference: RmmvAssetReference): boolean {
+  if (reference.file.toLowerCase().endsWith('.json')) return true;
+  return /(?:^|\/)js\/plugins\.js$/i.test(reference.file)
+    && reference.path.startsWith('$.plugins[');
 }
 
 export function normalizeAssetCategory(category: string): RmmvAssetCategory | null {

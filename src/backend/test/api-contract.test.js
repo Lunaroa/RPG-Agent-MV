@@ -20,17 +20,33 @@ describe('map IPC bindings', () => {
       removeHandler(channel) { handlers.delete(channel); },
     };
     const calls = [];
+    const pickerCalls = [];
     const desktop = createDesktopMock(calls);
 
     registerMapIpcHandlers(ipc, 'C:/workflow', desktop, {
       productLanguage: () => 'en-US',
       withProductLanguage: (_language, fn) => fn(),
+      selectPluginFile: async () => {
+        pickerCalls.push(['plugin']);
+        return null;
+      },
+      selectAssetFile: async (_event, category, extensions) => {
+        pickerCalls.push(['asset', category, extensions]);
+        return null;
+      },
     });
     assert.deepEqual([...handlers.keys()].sort(), [...MAP_IPC_CHANNELS].sort());
     assert.equal(MAP_IPC_CHANNELS.some((channel) => channel.startsWith('sharedAssets:')), false);
     assert.equal(MAP_IPC_CHANNELS.includes('assetLibrary:catalog'), true);
     assert.equal(MAP_IPC_CHANNELS.includes('assetLibrary:import'), true);
     assert.equal(MAP_IPC_CHANNELS.includes('projects:remove'), true);
+
+    assert.equal(await handlers.get('plugins:selectInstallFile')({}), null);
+    assert.equal(await handlers.get('projectAssets:selectImportFile')({}, 'pictures'), null);
+    assert.deepEqual(pickerCalls, [
+      ['plugin'],
+      ['asset', 'pictures', ['png', 'jpg', 'jpeg', 'webp', 'rpgmvp']],
+    ]);
 
     const removedProjectList = await handlers.get('projects:remove')(null, '/tmp/project-fixture');
     const tree = await handlers.get('maps:tree')(null, 'projects/Project');
@@ -183,6 +199,9 @@ function createDesktopMock(calls) {
         calls.push(['preflightProjectStaging', root, resolved]);
         return {};
       },
+    },
+    assetManagement: {
+      getAssetImportFileExtensions() { return ['png', 'jpg', 'jpeg', 'webp', 'rpgmvp']; },
     },
     library: {
       listMapLibrary() { return { totalEntries: 0, entries: [] }; },

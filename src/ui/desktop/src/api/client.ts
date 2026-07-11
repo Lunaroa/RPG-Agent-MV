@@ -112,6 +112,7 @@ declare global {
         checkDeleteSafety(target: unknown, project?: string): Promise<unknown>;
         replaceMissingReference(request: unknown, project?: string): Promise<unknown>;
         importLocalFile(request: unknown, project?: string): Promise<unknown>;
+        selectImportFile(category: string): Promise<string | null>;
       };
       settings: {
         listProviders(): Promise<{ providers: unknown[] }>;
@@ -210,6 +211,7 @@ declare global {
         reorder(pluginNames: string[], project?: string): Promise<unknown>;
         updateParameters(pluginName: string, parameters: Record<string, unknown>, project?: string): Promise<unknown>;
         installFile(sourceFile: string, options?: unknown, project?: string): Promise<unknown>;
+        selectInstallFile(): Promise<string | null>;
         deleteFile(pluginName: string, options?: unknown, project?: string): Promise<unknown>;
       };
       assetLibrary: {
@@ -899,6 +901,9 @@ export const projectAssets = {
       project,
     ) as Promise<ManagedAssetDetail>;
   },
+  selectImportFile(category: string) {
+    return desktopApi().projectAssets.selectImportFile(category) as Promise<string | null>;
+  },
 };
 
 export const placementQueue = {
@@ -1241,6 +1246,9 @@ export const commonEvents = {
 };
 
 export const plugins = {
+  selectInstallFile() {
+    return desktopApi().plugins.selectInstallFile() as Promise<string | null>;
+  },
   read(project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.read(project) as Promise<PluginConfigurationResult>;
   },

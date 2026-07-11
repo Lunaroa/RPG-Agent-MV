@@ -12,6 +12,8 @@ Assets are used as project facts. The Agent may reference available faces, chara
 
 Project management reads all 15 MV database areas without the former 80-entry cutoff: actors, classes, skills, items, weapons, armors, enemies, troops, states, animations, tilesets, common events, system, types, and terms. The Inspector shows the effective staged value, field differences, and validation errors. Database and common-event drafts support undo and redo until saved to staging.
 
+For tilesets, the Inspector renders the assigned A1–A5 and B–E images and lets the user paint passage (`○ / × / ☆`), four-direction passage, ladder, bush, counter, damage-floor, and terrain-tag values from 0 through 7. MV-calculated autotile directions remain read-only, the upper-left B tile is fixed to `☆`, and one drag is recorded as one undo step before the draft is saved to staging.
+
 Agent database edits follow validate, dry-run, and stage steps. Applying an Agent-owned operation requires explicit approval and is blocked when the source or draft has drifted. Unknown plugin fields and notes are preserved, but custom plugin semantics are not validated.
 
 Native pickers install `.js` plugins and category-compatible assets. New plugins start disabled; overwrites preserve configuration; plugin deletion stages the file and configuration together. Asset lists reflect staged additions, renames, and deletions immediately. Renames rewrite every known safe reference or are blocked, and deletion is allowed only for unreferenced assets.

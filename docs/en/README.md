@@ -6,7 +6,7 @@ RPG Agent MV is a local AI production tool for RPG Maker MV creators. It helps g
 
 This guide covers first use, project management, Agent workflows, extension points, and common troubleshooting paths.
 
-The current version is not a full replacement for the RPG Maker MV editor. All 15 MV database areas can be read in full and changed through controlled staging, but visual troop formation, full animation and tileset canvases, full map-editing parity, and third-party plugin semantics still require human confirmation.
+The current version is not a full replacement for the RPG Maker MV editor. All 15 MV database areas can be read in full and changed through controlled staging, and tileset passage flags have a visual Inspector editor. Visual troop formation, a full animation canvas, full map-editing parity, and third-party plugin semantics still require human confirmation.
 
 ## Contents
 

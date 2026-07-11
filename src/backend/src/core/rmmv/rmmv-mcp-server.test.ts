@@ -37,6 +37,7 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
       "RmmvMemory",
       "RmmvReadContext",
       "RmmvStage",
+      "RmmvVerify",
       "RmmvWorkflow",
     ]);
     assert.equal(tools.get("RmmvMemory")?.annotations?.readOnlyHint, false);
@@ -47,6 +48,11 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
     assert.equal(tools.get("RmmvDatabase")?.annotations?.readOnlyHint, false);
     assert.equal(tools.get("RmmvDatabaseApply")?.annotations?.readOnlyHint, false);
     assert.equal(tools.get("RmmvDatabaseApply")?.annotations?.destructiveHint, true);
+    assert.equal(tools.get("RmmvVerify")?.annotations?.readOnlyHint, false);
+    assert.equal(tools.get("RmmvVerify")?.annotations?.destructiveHint, false);
+    const verifySchema = JSON.stringify(tools.get("RmmvVerify")?.inputSchema || {});
+    assert.match(verifySchema, /playtest\.probe/);
+    assert.match(verifySchema, /timeoutSeconds/);
     const databaseSchema = JSON.stringify(tools.get("RmmvDatabase")?.inputSchema || {});
     assert.match(databaseSchema, /dryRun/);
     assert.match(databaseSchema, /planHash/);
@@ -95,6 +101,14 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
       arguments: { action: "pluginInventory", project },
     }));
     assert.equal(pluginInventory.data.summary.installedPlugins, 0);
+
+    const incompleteProbeRequest = parseToolJson(await client.callTool({
+      name: "RmmvVerify",
+      arguments: { action: "playtest.probe", project, mapId: 1, x: 0 },
+    }));
+    assert.equal(incompleteProbeRequest.data.status, "blocked");
+    assert.equal(incompleteProbeRequest.data.verified, false);
+    assert.equal(incompleteProbeRequest.data.blockers.some((item: string) => /X and Y/i.test(item)), true);
 
     // RmmvMemory: write a durable note, then read it back through the path-locked tool.
     const memWrite = parseToolJson(await client.callTool({

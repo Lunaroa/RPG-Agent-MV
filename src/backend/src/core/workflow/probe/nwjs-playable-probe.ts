@@ -83,7 +83,7 @@ interface PngImage {
   pixels: Buffer;
 }
 
-interface NwjsPlayableProbeOptions {
+export interface NwjsPlayableProbeOptions {
   timeoutMs?: number;
   artifactDir?: string;
   command?: {
@@ -95,7 +95,7 @@ interface NwjsPlayableProbeOptions {
   stderrPath?: string;
 }
 
-interface RuntimeResult {
+export interface NwjsPlayableProbeResult {
   attempted: boolean;
   method: string;
   status: string;
@@ -118,7 +118,7 @@ interface Artifacts {
   stderr?: string | null;
 }
 
-function runNwjsPlayableProbe(projectRoot: string, options: NwjsPlayableProbeOptions = {}): RuntimeResult {
+function runNwjsPlayableProbe(projectRoot: string, options: NwjsPlayableProbeOptions = {}): NwjsPlayableProbeResult {
   const project: string = path.resolve(projectRoot);
   const command = options.command || {
     executable: path.join(project, "Game.exe"),
@@ -661,7 +661,7 @@ function isProbeTimedOut(probe: ProbeResult): boolean {
   ));
 }
 
-function runtimeResult(method: string, status: string, detail: string, extra: Record<string, unknown> = {}): RuntimeResult {
+function runtimeResult(method: string, status: string, detail: string, extra: Record<string, unknown> = {}): NwjsPlayableProbeResult {
   return {
     attempted: status !== "not-available",
     method,

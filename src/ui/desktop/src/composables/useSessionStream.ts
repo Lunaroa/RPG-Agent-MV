@@ -86,6 +86,7 @@ const toolSegments = new Map<string, ChatSegment>()
 const askBridgeFailureCallIds = new Set<string>()
 const workflowAskIdByProposal = new Map<string, string>()
 const emittedWorkflowReports = new Set<string>()
+const playtestRunSegments = new Map<string, ChatSegment>()
 /** 本轮 register 工具调用攒出的待落段预览（clarify ASK 或终态时 flush）。 */
 let pendingEventPreview: EventPreviewItem[] = []
 const eventPreviewByCallId = new Map<string, EventPreviewItem>()
@@ -416,6 +417,31 @@ export function useSessionStream() {
     notifyTranscriptChanged()
   }
 
+  function handlePlaytestRunEvent(event: SessionEvent): void {
+    const runId = String(event.runId || '').trim()
+    if (!runId) return
+    markReasoningInterrupted()
+    finalizeLiveMarkdownSegment()
+    const existing = playtestRunSegments.get(runId)
+    const metadata = {
+      ...(existing?.metadata || {}),
+      ...event,
+      type: 'playtest_run',
+      runId,
+    }
+    if (existing) {
+      const index = segments.value.indexOf(existing)
+      if (index >= 0) {
+        segments.value[index] = { ...existing, metadata }
+        playtestRunSegments.set(runId, segments.value[index]!)
+      }
+    } else {
+      const segment = pushLiveSegment(createSegment('meta', '', metadata))
+      playtestRunSegments.set(runId, segment)
+    }
+    notifyTranscriptChanged()
+  }
+
   function bindWorkflowProposalFromToolResult(event: SessionEvent): void {
     const output = typeof event.output === 'string' ? event.output : ''
     if (!output.includes('workflow-proposal')) {
@@ -478,6 +504,11 @@ export function useSessionStream() {
 
     if (event.type === 'workflow_run') {
       handleWorkflowRunEvent(event)
+      return
+    }
+
+    if (event.type === 'playtest_run') {
+      handlePlaytestRunEvent(event)
       return
     }
 
@@ -899,6 +930,7 @@ export function useSessionStream() {
     askBridgeFailureCallIds.clear()
     workflowAskIdByProposal.clear()
     emittedWorkflowReports.clear()
+    playtestRunSegments.clear()
   }
 
   // 在发送前把用户输入作为气泡推入转录。
@@ -921,18 +953,37 @@ export function useSessionStream() {
       const content = s.type === 'text' ? stripNativeTaskBlocks(s.content || '') : s.content
       if (s.type === 'text' && !content.trim()) continue
       const seg: ChatSegment = { ...s, id: `seg_${++segmentCounter}`, content }
-      segments.value.push(seg)
-      if (seg.type === 'ask' && seg.ask) askSegments.set(seg.ask.askId, seg)
-      if (seg.type === 'ask' && seg.ask?.type === 'risk-approval') {
-        const proposalId = String((seg.ask as Ask & { proposalId?: string }).proposalId || '')
-        if (proposalId) workflowAskIdByProposal.set(proposalId, seg.ask.askId)
+      const playtestRunId = seg.type === 'meta' && seg.metadata?.type === 'playtest_run'
+        ? String(seg.metadata.runId || '').trim()
+        : ''
+      const existingPlaytest = playtestRunId ? playtestRunSegments.get(playtestRunId) : undefined
+      if (existingPlaytest) {
+        const index = segments.value.indexOf(existingPlaytest)
+        if (index >= 0) {
+          segments.value[index] = {
+            ...existingPlaytest,
+            ...seg,
+            id: existingPlaytest.id,
+            metadata: { ...existingPlaytest.metadata, ...seg.metadata },
+          }
+          playtestRunSegments.set(playtestRunId, segments.value[index]!)
+        }
+        continue
       }
-      if (seg.metadata?.type === 'workflow_report') {
-        const proposalId = String(seg.metadata.proposalId || '')
+      segments.value.push(seg)
+      const restored = segments.value[segments.value.length - 1]!
+      if (playtestRunId) playtestRunSegments.set(playtestRunId, restored)
+      if (restored.type === 'ask' && restored.ask) askSegments.set(restored.ask.askId, restored)
+      if (restored.type === 'ask' && restored.ask?.type === 'risk-approval') {
+        const proposalId = String((restored.ask as Ask & { proposalId?: string }).proposalId || '')
+        if (proposalId) workflowAskIdByProposal.set(proposalId, restored.ask.askId)
+      }
+      if (restored.metadata?.type === 'workflow_report') {
+        const proposalId = String(restored.metadata.proposalId || '')
         if (proposalId) emittedWorkflowReports.add(proposalId)
       }
-      const callId = seg.metadata?.callId
-      if (seg.type === 'tool' && typeof callId === 'string') toolSegments.set(callId, seg)
+      const callId = restored.metadata?.callId
+      if (restored.type === 'tool' && typeof callId === 'string') toolSegments.set(callId, restored)
     }
   }
 

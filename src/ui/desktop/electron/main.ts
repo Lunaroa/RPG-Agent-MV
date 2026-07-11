@@ -13,6 +13,7 @@ import {
   patchWorkspaceSettings,
   readWorkspaceWindowOptions,
   saveWorkspaceWindowState,
+  shutdownInteractivePlaytest,
 } from './ipc-handlers.js';
 import { electronText } from './electronLocalization.js';
 import { startUiControlBridge, stopUiControlBridge } from './ui-control-bridge.js';
@@ -88,12 +89,17 @@ async function createWindow() {
     event.preventDefault();
     if (closeGuardRunning) return;
     closeGuardRunning = true;
-    void confirmProjectStagingBeforeClose(userDataRoot, mainWindow).then((confirmed) => {
+    void (async () => {
+      const confirmed = await confirmProjectStagingBeforeClose(userDataRoot, mainWindow!);
+      if (!confirmed || !mainWindow || mainWindow.isDestroyed()) {
+        closeGuardRunning = false;
+        return;
+      }
+      await shutdownInteractivePlaytest();
       closeGuardRunning = false;
-      if (!confirmed || !mainWindow || mainWindow.isDestroyed()) return;
       allowWindowClose = true;
       mainWindow.close();
-    }).catch((error) => {
+    })().catch((error) => {
       closeGuardRunning = false;
       const message = error instanceof Error ? error.message : String(error);
       dialog.showErrorBox(electronText(currentProductLanguage(), 'main.closeCheckFailed'), message);

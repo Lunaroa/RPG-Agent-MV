@@ -33,6 +33,33 @@ type ChatSegment = {
 }
 
 describe('stream segment content updates', () => {
+  test('merges each interactive playtest run into one persisted card', () => {
+    const stream = useSessionStream()
+    stream.resetState()
+
+    stream.replaySessionEvents([
+      { type: 'playtest_run', sequence: 1, runId: 'run-1', status: 'starting', phase: 'start' },
+      { type: 'playtest_run', sequence: 2, runId: 'run-1', status: 'running', phase: 'update', pid: 4200 },
+      { type: 'playtest_run', sequence: 3, runId: 'run-1', status: 'exited', phase: 'done', exitCode: 0 },
+    ])
+
+    const cards = stream.segments.value.filter((segment) => segment.metadata?.type === 'playtest_run')
+    assert.equal(cards.length, 1)
+    assert.equal(cards[0]?.metadata?.status, 'exited')
+    assert.equal(cards[0]?.metadata?.pid, 4200)
+
+    const persisted = JSON.parse(JSON.stringify(cards))
+    stream.restoreSegments([...persisted, ...persisted])
+    stream.replaySessionEvents([
+      { type: 'playtest_run', sequence: 4, runId: 'run-1', status: 'stop_failed', phase: 'done' },
+    ])
+    const restored = stream.segments.value.filter((segment) => segment.metadata?.type === 'playtest_run')
+    assert.equal(restored.length, 1)
+    assert.equal(restored[0]?.metadata?.status, 'stop_failed')
+
+    stream.resetState()
+  })
+
   test('appendSegmentContent mutates reactive proxy, not stale plain object', async () => {
     const segments = ref<ChatSegment[]>([])
     const plain: ChatSegment = {

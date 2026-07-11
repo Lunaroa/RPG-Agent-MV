@@ -343,6 +343,57 @@ export interface ProjectManagedEntryResetResult {
   staging: unknown;
 }
 
+export type InteractivePlaytestRunStatus =
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'stopped'
+  | 'exited'
+  | 'failed'
+  | 'stop_failed';
+
+export interface InteractivePlaytestStagingSummary {
+  fileCount: number;
+  operationCount: number;
+  mapCount: number;
+  conflict: boolean;
+  files: string[];
+}
+
+export interface InteractivePlaytestRun {
+  runId: string;
+  status: InteractivePlaytestRunStatus;
+  project: string;
+  executable: string;
+  cwd: string;
+  sessionId?: string;
+  pid?: number;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  exitCode: number | null;
+  signal: string | null;
+  error?: string;
+  forced: boolean;
+  stagingIncluded: false;
+  sourceSaveRisk: true;
+  lifecycleOnly: true;
+  artifactDir: string;
+  artifactPath: string;
+  logPath: string;
+  stdoutPath: string;
+  stderrPath: string;
+}
+
+export interface InteractivePlaytestResult {
+  confirmationRequired: boolean;
+  stagingSummary?: InteractivePlaytestStagingSummary;
+  stagingSummaryHash?: string;
+  run?: InteractivePlaytestRun;
+  error?: string;
+}
+
 export type RmmvDatabaseFieldKind =
   | 'string'
   | 'number'

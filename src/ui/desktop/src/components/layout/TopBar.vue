@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { Expand, Fold } from '@element-plus/icons-vue';
-import { PanelRightClose, PanelRightOpen, Minus, Square, X as XIcon } from '@lucide/vue';
+import { PanelRightClose, PanelRightOpen, Minus, Play, Square, X as XIcon } from '@lucide/vue';
 import { resolveUserDocsEntry } from '@contract/docs-path';
-import { settings } from '../../api/client';
+import type { InteractivePlaytestRun } from '@contract/types';
+import { playtest, settings } from '../../api/client';
+import { useSession } from '../../composables/useSession';
 import { useI18n } from '../../i18n';
 import { normalizeProductLanguage } from '../../i18n/messages';
 import { useSettingsStore } from '../../stores/settings';
@@ -19,10 +21,25 @@ const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const router = useRouter();
 const { t } = useI18n();
+const { activeSession } = useSession();
 
 /* ---------- Menu dropdowns ---------- */
 const openMenu = ref<string | null>(null);
 const maximized = ref(false);
+const playtestRun = ref<InteractivePlaytestRun | null>(null);
+const playtestBusy = ref(false);
+let unsubscribePlaytestStatus: (() => void) | null = null;
+
+const playtestLive = computed(() => (
+  playtestRun.value !== null
+  && ['starting', 'running', 'stopping', 'stop_failed'].includes(playtestRun.value.status)
+));
+const playtestTitle = computed(() => {
+  if (playtestRun.value?.status === 'starting') return t('topbar.playtest.starting');
+  if (playtestRun.value?.status === 'stopping') return t('topbar.playtest.stopping');
+  if (!playtestLive.value && !projectStore.currentProject) return t('topbar.playtest.noProject');
+  return playtestLive.value ? t('topbar.playtest.stop') : t('topbar.playtest.start');
+});
 
 type EditorCommand = 'undo' | 'redo' | 'save';
 type MenuAction = () => void | Promise<void>;
@@ -114,6 +131,88 @@ async function closeWindow() {
   void window.api.window.close();
 }
 
+function applyPlaytestRun(run?: InteractivePlaytestRun): void {
+  if (run) playtestRun.value = run;
+}
+
+async function togglePlaytest() {
+  if (playtestBusy.value) return;
+  if (playtestLive.value) {
+    await stopPlaytest();
+    return;
+  }
+  await startPlaytest();
+}
+
+async function startPlaytest() {
+  const project = projectStore.currentProject;
+  if (!project) {
+    ElMessage.info(t('topbar.playtest.noProject'));
+    return;
+  }
+  playtestBusy.value = true;
+  let confirmedStagingHash: string | undefined;
+  try {
+    for (;;) {
+      const result = await playtest.start({
+        project,
+        ...(activeSession.value?.id ? { sessionId: activeSession.value.id } : {}),
+        ...(confirmedStagingHash ? { confirmedStagingHash } : {}),
+      });
+      if (result.confirmationRequired) {
+        const summary = result.stagingSummary;
+        if (!summary || !result.stagingSummaryHash) throw new Error(t('topbar.playtest.invalidResponse'));
+        await ElMessageBox.confirm(
+          `${t('topbar.playtest.confirmStaging', {
+            files: summary.fileCount,
+            operations: summary.operationCount,
+          })}${summary.conflict ? t('topbar.playtest.confirmConflict') : ''}`,
+          t('topbar.playtest.confirmTitle'),
+          {
+            type: 'warning',
+            confirmButtonText: t('topbar.playtest.confirmAction'),
+            cancelButtonText: t('topbar.playtest.confirmCancel'),
+          },
+        );
+        confirmedStagingHash = result.stagingSummaryHash;
+        continue;
+      }
+      if (result.error) throw new Error(result.error);
+      if (!result.run) throw new Error(t('topbar.playtest.invalidResponse'));
+      applyPlaytestRun(result.run);
+      if (['failed', 'stop_failed'].includes(result.run.status)) {
+        throw new Error(result.run.error || t('topbar.playtest.launchFailed'));
+      }
+      if (result.run.status !== 'running') return;
+      ElMessage.warning(t('topbar.playtest.started'));
+      return;
+    }
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return;
+    const message = error instanceof Error ? error.message : String(error);
+    ElMessage.error(t('topbar.playtest.failed', { message }));
+  } finally {
+    playtestBusy.value = false;
+  }
+}
+
+async function stopPlaytest() {
+  playtestBusy.value = true;
+  try {
+    const result = await playtest.stop();
+    if (result.run) applyPlaytestRun(result.run);
+    if (['failed', 'stop_failed'].includes(result.run?.status || '') || result.error) {
+      throw new Error(result.run?.error || result.error || t('topbar.playtest.cleanupFailed'));
+    }
+    if (result.run?.status === 'stopped') ElMessage.success(t('topbar.playtest.stopped'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ElMessage.error(t('topbar.playtest.failed', { message }));
+  } finally {
+    playtestBusy.value = false;
+  }
+}
+
 /* ---------- Keyboard shortcut ---------- */
 function onKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape' && openMenu.value) {
@@ -131,13 +230,17 @@ onMounted(() => {
   document.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', refreshWindowState);
   window.addEventListener('focus', refreshWindowState);
+  unsubscribePlaytestStatus = playtest.onStatus(applyPlaytestRun);
   void refreshWindowState();
+  void playtest.current().then((result) => applyPlaytestRun(result.run)).catch(() => undefined);
 });
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown);
   document.removeEventListener('keydown', onKeyDown);
   window.removeEventListener('resize', refreshWindowState);
   window.removeEventListener('focus', refreshWindowState);
+  unsubscribePlaytestStatus?.();
+  unsubscribePlaytestStatus = null;
 });
 </script>
 
@@ -184,6 +287,21 @@ onUnmounted(() => {
 
     <div class="topbar-fill" />
 
+    <button
+      type="button"
+      class="playtest-toggle"
+      :class="{ live: playtestLive }"
+      data-ui-id="topbar-playtest-toggle"
+      :disabled="playtestBusy || (!playtestLive && !projectStore.currentProject)"
+      :title="playtestTitle"
+      :aria-label="playtestTitle"
+      :aria-pressed="playtestLive"
+      @click="togglePlaytest"
+    >
+      <Square v-if="playtestLive" :size="13" :stroke-width="1.8" />
+      <Play v-else :size="14" :stroke-width="1.8" />
+    </button>
+
     <!-- Toggle auxiliary sidebar -->
     <button
       type="button"
@@ -228,6 +346,7 @@ onUnmounted(() => {
 
 .menu-item,
 .topbar-btn,
+.playtest-toggle,
 .sidebar-toggle,
 .window-controls,
 .window-btn {
@@ -274,6 +393,39 @@ onUnmounted(() => {
 
 .topbar-fill {
   flex: 1;
+}
+
+.playtest-toggle {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--app-ink-soft);
+  cursor: pointer;
+  transition: background-color var(--app-dur) var(--app-ease), color var(--app-dur) var(--app-ease);
+}
+
+.playtest-toggle:hover:not(:disabled) {
+  color: var(--app-success, #2f8f64);
+  background: color-mix(in srgb, var(--app-success, #2f8f64) 10%, transparent);
+}
+
+.playtest-toggle.live {
+  color: var(--app-danger);
+}
+
+.playtest-toggle.live:hover:not(:disabled) {
+  color: var(--app-danger);
+  background: color-mix(in srgb, var(--app-danger) 10%, transparent);
+}
+
+.playtest-toggle:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 
 /* ---------- Dropdown ---------- */

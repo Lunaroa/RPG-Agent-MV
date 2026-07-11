@@ -16,6 +16,13 @@ declare global {
         onCommand(callback: (payload: unknown) => void): () => void;
         sendResult(payload: unknown): void;
       };
+      playtest: {
+        start(request: InteractivePlaytestStartRequest): Promise<InteractivePlaytestResult>;
+        current(): Promise<InteractivePlaytestResult>;
+        stop(): Promise<InteractivePlaytestResult>;
+        reveal(runId: string): Promise<{ ok: boolean }>;
+        onStatus(callback: (run: InteractivePlaytestRun) => void): () => void;
+      };
       projects: {
         list(): Promise<ProjectInfo[]>;
         refresh(): Promise<ProjectInfo[]>;
@@ -238,6 +245,7 @@ import type {
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
+  InteractivePlaytestResult, InteractivePlaytestRun,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
@@ -258,8 +266,15 @@ export type {
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
+  InteractivePlaytestResult, InteractivePlaytestRun,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 };
+
+export interface InteractivePlaytestStartRequest {
+  project: string;
+  sessionId?: string;
+  confirmedStagingHash?: string;
+}
 
 export interface ProjectInfo {
   name: string;
@@ -1174,6 +1189,24 @@ export const projectManagement = {
   },
 };
 
+export const playtest = {
+  start(request: InteractivePlaytestStartRequest) {
+    return desktopApi().playtest.start(toPlain(request)) as Promise<InteractivePlaytestResult>;
+  },
+  current() {
+    return desktopApi().playtest.current() as Promise<InteractivePlaytestResult>;
+  },
+  stop() {
+    return desktopApi().playtest.stop() as Promise<InteractivePlaytestResult>;
+  },
+  reveal(runId: string) {
+    return desktopApi().playtest.reveal(runId);
+  },
+  onStatus(callback: (run: InteractivePlaytestRun) => void) {
+    return desktopApi().playtest.onStatus(callback);
+  },
+};
+
 export const commonEvents = {
   list(project: string = DEFAULT_PROJECT) {
     return desktopApi().commonEvents.list(project) as Promise<CommonEventListResult>;
@@ -1295,4 +1328,4 @@ export function openSessionEventStream(
   };
 }
 
-export const api = { bootstrap, projects, eventRegistry, sessions, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, resolveAssetUrl, openSessionEventStream };
+export const api = { bootstrap, projects, eventRegistry, sessions, playtest, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, resolveAssetUrl, openSessionEventStream };

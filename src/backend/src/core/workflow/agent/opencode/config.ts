@@ -233,6 +233,7 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
     // 这是 opencode 原生权限机制（同 ExitPlanMode），在 LLM 执行循环内部阻塞，不发 session.idle。
     config.permission = {
       rmmv_RmmvWorkflow: "ask",
+      rmmv_RmmvDatabaseApply: "ask",
       // 危险 shell 命令按命令串粒度 deny（opencode permission 对象形态）。
       // bash 工具把整条命令串作为 pattern 送进 Permission.evaluate，Wildcard.match 全匹配，
       // 结尾 " *" 既匹配无参也匹配带参形态。放在 "*": "allow" 之后的 deny 条目由 findLast 命中。

@@ -211,6 +211,7 @@ function schemaPayload(schema: RmmvDatabaseTableSchema): NonNullable<ProjectMana
     key: schema.key,
     fileName: schema.fileName,
     isArrayTable: schema.isArrayTable,
+    maxEntries: schema.maxEntries,
     coreFields: schema.coreFields.map((field) => ({ ...field })),
     references: schema.references.map((field) => ({ ...field })),
   };

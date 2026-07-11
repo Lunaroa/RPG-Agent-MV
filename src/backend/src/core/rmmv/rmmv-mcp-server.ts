@@ -9,6 +9,8 @@
  *
  * Action naming conventions:
  *   - RmmvReadContext:  project, asset, plugin, and map facts
+ *   - RmmvDatabase:     validate, dry-run, stage, or discard controlled database changes
+ *   - RmmvDatabaseApply: apply one approved staged database operation by operationId
  *   - RmmvMap:          current map-editor write operations
  *   - RmmvEvent:        "registry.list" | "registry.validate" | "registry.scaffold" |
  *                       "registry.register" | "registry.show" | "registry.reconcile" |
@@ -50,6 +52,11 @@ const RMMV_DATABASE_TABLES = [
   "actors", "classes", "skills", "items", "weapons", "armors", "enemies", "troops",
   "states", "animations", "tilesets", "commonEvents", "system", "types", "terms",
 ] as const;
+const RMMV_ARRAY_DATABASE_TABLES = [
+  "actors", "classes", "skills", "items", "weapons", "armors", "enemies", "troops",
+  "states", "animations", "tilesets", "commonEvents",
+] as const;
+const RMMV_TYPE_LIST_FIELDS = ["elements", "skillTypes", "weaponTypes", "armorTypes", "equipTypes"] as const;
 
 function materializeInlineJsonFields(input: RmmvHandlerInput, tmpDirs: string[]): void {
   for (const field of JSON_FILE_FIELDS) {
@@ -128,6 +135,11 @@ const ACTION_TO_COMMAND: Record<string, string> = {
   "dbEntry": "db-entry",
   "stateSlots": "state-slots",
   "commonEventReferences": "common-event-references",
+  // RmmvDatabase
+  "validate": "database-changes",
+  "dryRun": "database-changes",
+  "stage": "database-changes",
+  "discard": "database-changes",
   // RmmvMap
   "create": "map-editor",
   "updateProperties": "map-editor",
@@ -164,6 +176,7 @@ const COMMANDS_REQUIRING_ACTION = new Set([
   "patch",
   "memory",
   "workflow-propose",
+  "database-changes",
 ]);
 
 // ── Tool specs ──────────────────────────────────────────────────────
@@ -210,6 +223,48 @@ const eventContractInput = z.union([
   "registry.register/validate EventContract. After register, event stays in reviewing preview until user approves into placement queue. Do not include x/y in rmmvTarget for new map events.",
 );
 
+const databasePatchOperation = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("add"), path: z.string(), value: z.unknown() }).strict(),
+  z.object({ op: z.literal("replace"), path: z.string(), value: z.unknown() }).strict(),
+  z.object({ op: z.literal("remove"), path: z.string() }).strict(),
+]);
+
+const databaseChange = z.discriminatedUnion("op", [
+  z.object({
+    op: z.literal("create"),
+    table: z.enum(RMMV_ARRAY_DATABASE_TABLES),
+    id: z.number().int().positive().optional(),
+    patches: z.array(databasePatchOperation).optional(),
+  }).strict(),
+  z.object({
+    op: z.literal("patch"),
+    table: z.enum(RMMV_DATABASE_TABLES),
+    id: z.number().int().nonnegative(),
+    patches: z.array(databasePatchOperation).min(1),
+  }).strict(),
+  z.object({
+    op: z.literal("reset"),
+    table: z.enum(RMMV_ARRAY_DATABASE_TABLES),
+    id: z.number().int().positive(),
+  }).strict(),
+  z.object({
+    op: z.literal("type.rename"),
+    field: z.enum(RMMV_TYPE_LIST_FIELDS),
+    id: z.number().int().positive(),
+    name: z.string(),
+  }).strict(),
+  z.object({
+    op: z.literal("type.append"),
+    field: z.enum(RMMV_TYPE_LIST_FIELDS),
+    name: z.string(),
+  }).strict(),
+  z.object({
+    op: z.literal("type.removeTail"),
+    field: z.enum(RMMV_TYPE_LIST_FIELDS),
+    id: z.number().int().positive(),
+  }).strict(),
+]);
+
 type RmmvMcpToolSpec = {
   name: string;
   description: string;
@@ -246,6 +301,32 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
       commonEventId: z.number().int().optional().describe("commonEventReferences: id to look up."),
     },
     readOnly: true,
+  },
+  {
+    name: "RmmvDatabase",
+    description:
+      "Main-agent-only controlled database preparation. validate and dryRun never write; stage writes operation-owned drafts only; discard removes exactly one operation draft. Source project files are never applied by this tool.",
+    inputSchema: {
+      action: z.enum(["validate", "dryRun", "stage", "discard"]),
+      project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
+      changes: z.array(databaseChange).min(1).optional().describe("Required for validate, dryRun, and stage."),
+      planHash: z.string().regex(/^[a-f0-9]{64}$/i).optional().describe("stage: exact planHash returned by the current dryRun."),
+      operationId: z.string().optional().describe("discard: operation id to discard."),
+      sessionId: z.string().optional().describe("stage: originating main-agent session id."),
+    },
+    readOnly: false,
+    destructive: true,
+  },
+  {
+    name: "RmmvDatabaseApply",
+    description:
+      "Apply exactly one previously staged database operation after native user approval. Accepts only operationId (plus project routing); rechecks source/draft hashes, plan metadata, input drift, and all semantic rules before an atomic source write.",
+    inputSchema: {
+      project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
+      operationId: z.string().min(1).describe("The staged database operation id shown on the approval card."),
+    },
+    readOnly: false,
+    destructive: true,
   },
   {
     name: "RmmvMap",
@@ -421,8 +502,8 @@ async function main(): Promise<void> {
       annotations: { readOnlyHint: spec.readOnly, destructiveHint: Boolean(spec.destructive) },
     }, async (input: unknown) => {
       const args = (input as Record<string, unknown>) || {};
-      const rawAction = String(args.action ?? "");
-      const command = ACTION_TO_COMMAND[rawAction];
+      const rawAction = spec.name === "RmmvDatabaseApply" ? "apply" : String(args.action ?? "");
+      const command = spec.name === "RmmvDatabaseApply" ? "database-apply" : ACTION_TO_COMMAND[rawAction];
       if (!command) {
         return {
           content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `Unknown action: ${rawAction}` }) }],

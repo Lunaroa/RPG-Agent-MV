@@ -12,6 +12,7 @@ export interface RmmvDbEntrySchema {
   key: string;
   fileName: string;
   isArrayTable: boolean;
+  maxEntries: number | null;
   coreFields: RmmvDatabaseFieldSchema[];
   references: RmmvDatabaseReferenceField[];
 }
@@ -86,6 +87,7 @@ function schemaPayload(schema: RmmvDatabaseTableSchema): RmmvDbEntrySchema {
     key: schema.key,
     fileName: schema.fileName,
     isArrayTable: schema.isArrayTable,
+    maxEntries: schema.maxEntries,
     coreFields: schema.coreFields.map((field) => ({ ...field })),
     references: schema.references.map((field) => ({ ...field })),
   };

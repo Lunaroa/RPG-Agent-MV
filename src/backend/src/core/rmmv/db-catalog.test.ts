@@ -254,6 +254,7 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
       assert.equal(entry.staged, true);
       assert.equal(entry.contentHash, expectedHash);
       assert.equal(entry.schema.key, "skills");
+      assert.equal(entry.schema.maxEntries, 2000);
     } finally {
       closeDatabase();
       fs.rmSync(workflowRoot, { recursive: true, force: true });

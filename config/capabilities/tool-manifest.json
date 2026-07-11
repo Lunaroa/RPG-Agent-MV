@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "tools": [
     {
       "id": "read",
@@ -129,6 +129,26 @@
       "description": "读取事件上下文、地图索引、素材清点、插件清点、状态槽位和数据库目录",
       "readOnly": true,
       "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "rmmv_RmmvDatabase",
+      "kind": "mcp",
+      "layer": "rmmv",
+      "title": "RMMV 数据库暂存",
+      "description": "校验、预演、暂存或放弃数据库批量修改；不会直接写入源工程",
+      "readOnly": false,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "rmmv_RmmvDatabaseApply",
+      "kind": "mcp",
+      "layer": "rmmv",
+      "title": "RMMV 数据库应用",
+      "description": "在原生审批后仅按 operationId 应用一项已暂存数据库操作",
+      "readOnly": false,
+      "riskLevel": "high",
       "defaultAllow": true
     },
     {

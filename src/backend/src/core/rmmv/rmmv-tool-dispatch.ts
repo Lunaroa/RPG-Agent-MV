@@ -15,6 +15,7 @@ import {
   runRmmvPluginInventory,
   runRmmvStateSlots,
 } from "./rmmv-handlers.ts";
+import { runRmmvDatabaseApply, runRmmvDatabaseChanges } from "./database-change-handlers.ts";
 import { runRmmvMemory } from "./rmmv-memory-handler.ts";
 import { runRmmvWorkflow } from "./rmmv-workflow-handler.ts";
 
@@ -32,6 +33,8 @@ export const RMMV_TOOL_DISPATCH: Record<string, RmmvDispatchHandler> = {
   "plugin-inventory": runRmmvPluginInventory,
   "db-catalog": runRmmvDbCatalog,
   "db-entry": runRmmvDbEntry,
+  "database-changes": runRmmvDatabaseChanges,
+  "database-apply": runRmmvDatabaseApply,
   "state-slots": runRmmvStateSlots,
   "common-event-references": runRmmvCommonEventReferences,
   "event-feedback": runRmmvEventFeedback,

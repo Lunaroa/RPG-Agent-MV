@@ -1,4 +1,4 @@
-import { validateEventCommandBasic } from "./event-command-registry.ts";
+import { validateEventCommandList } from "./event-command-registry.ts";
 
 export const STANDARD_RMMV_DATABASE_GROUPS = [
   "Actors",
@@ -624,36 +624,14 @@ function validateRmmvCommandList(
   pathPrefix: string,
   issues: RmmvDatabaseValidationIssue[],
 ): void {
-  if (!Array.isArray(value)) {
+  try {
+    validateEventCommandList(value, pathPrefix);
+  } catch (error) {
     issues.push({
       path: pathPrefix,
-      message: "RMMV event command list must be an array",
-      expected: "array",
+      message: (error as Error).message,
+      expected: "structurally valid RMMV event command list",
       actual: actualKind(value),
-    });
-    return;
-  }
-
-  for (let index = 0; index < value.length; index += 1) {
-    try {
-      validateEventCommandBasic(value[index], `${pathPrefix}[${index}]`);
-    } catch (error) {
-      issues.push({
-        path: `${pathPrefix}[${index}]`,
-        message: (error as Error).message,
-        expected: "registered RMMV event command",
-        actual: actualKind(value[index]),
-      });
-    }
-  }
-
-  const last = value[value.length - 1];
-  if (!last || typeof last !== "object" || Array.isArray(last) || Number((last as Record<string, unknown>).code) !== 0) {
-    issues.push({
-      path: pathPrefix,
-      message: "RMMV event command list must end with code 0",
-      expected: "terminating command code 0",
-      actual: value.length ? actualKind(last) : "empty",
     });
   }
 }

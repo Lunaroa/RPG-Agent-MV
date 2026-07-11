@@ -5,13 +5,19 @@ import {
   listRmmvDatabaseSchemas,
   type RmmvDatabaseTableKey,
 } from "./database-schema.ts";
+import {
+  collectEventCommandReferences,
+  type RmmvEventCommandReference,
+  type RmmvEventReferenceTarget,
+} from "./event-command-references.ts";
 
 export type RmmvDatabaseSnapshot = Partial<Record<RmmvDatabaseTableKey, unknown>>;
 
 export type RmmvDatabaseIssueSeverity = "error" | "warning";
+export type RmmvDatabaseIssueTable = RmmvDatabaseTableKey | "maps";
 
 export interface RmmvDatabaseIssueSource {
-  table: RmmvDatabaseTableKey;
+  table: RmmvDatabaseIssueTable;
   id?: number;
   path: string;
 }
@@ -32,6 +38,12 @@ export interface RmmvDatabaseSemanticValidationResult {
 
 export interface RmmvDatabaseValidationOptions {
   mapIds?: readonly number[];
+  maps?: readonly RmmvDatabaseMapDocument[];
+}
+
+export interface RmmvDatabaseMapDocument {
+  mapId: number;
+  value: unknown;
 }
 
 const ARRAY_TABLE_KEYS = listRmmvDatabaseSchemas()
@@ -80,12 +92,16 @@ class SnapshotValidator {
   readonly #issues: RmmvDatabaseSemanticIssue[] = [];
   readonly #limitations = [PLUGIN_LIMITATION];
   readonly #mapIds: ReadonlySet<number> | null;
+  readonly #maps: readonly RmmvDatabaseMapDocument[];
 
   constructor(
     readonly snapshot: RmmvDatabaseSnapshot,
     options: RmmvDatabaseValidationOptions,
   ) {
-    this.#mapIds = options.mapIds ? new Set(options.mapIds) : null;
+    this.#maps = options.maps ?? [];
+    this.#mapIds = options.mapIds || this.#maps.length
+      ? new Set([...(options.mapIds ?? []), ...this.#maps.map((entry) => entry.mapId)])
+      : null;
   }
 
   validate(): void {
@@ -101,6 +117,7 @@ class SnapshotValidator {
     this.validateStates();
     this.validateCommonEvents();
     this.validateSystem();
+    this.validateMaps();
   }
 
   result(): RmmvDatabaseSemanticValidationResult {
@@ -291,15 +308,14 @@ class SnapshotValidator {
       });
       forEachRecordValue(troop.pages, (page, pageIndex) => {
         const conditions = isRecord(page.conditions) ? page.conditions : null;
-        if (!conditions) return;
         const prefix = `troops[${id}].pages[${pageIndex}].conditions`;
-        if (conditions.actorValid === true) {
+        if (conditions?.actorValid === true) {
           this.recordReference("troops", id, `${prefix}.actorId`, "actors", conditions.actorId);
         }
-        if (conditions.switchValid === true) {
+        if (conditions?.switchValid === true) {
           this.switchReference("troops", id, `${prefix}.switchId`, conditions.switchId);
         }
-        if (conditions.enemyValid === true) {
+        if (conditions?.enemyValid === true) {
           this.fixedRange(
             "DB_REFERENCE_ID",
             "troops",
@@ -310,6 +326,12 @@ class SnapshotValidator {
             Math.max(0, members.length - 1),
           );
         }
+        this.validateEventCommandReferences(
+          "troops",
+          id,
+          page.list,
+          `troops[${id}].pages[${pageIndex}].list`,
+        );
       });
     });
   }
@@ -334,6 +356,12 @@ class SnapshotValidator {
       if (commonEvent.trigger === 1 || commonEvent.trigger === 2) {
         this.switchReference("commonEvents", id, `commonEvents[${id}].switchId`, commonEvent.switchId);
       }
+      this.validateEventCommandReferences(
+        "commonEvents",
+        id,
+        commonEvent.list,
+        `commonEvents[${id}].list`,
+      );
     });
   }
 
@@ -363,6 +391,141 @@ class SnapshotValidator {
     forEachValue(system.magicSkills, (skillTypeId, index) => {
       this.typeReference("system", undefined, `system.magicSkills[${index}]`, "skillTypes", skillTypeId);
     });
+  }
+
+  private validateMaps(): void {
+    for (const mapDocument of this.#maps) {
+      const mapId = asInteger(mapDocument.mapId);
+      if (mapId === null || mapId <= 0) {
+        this.add("DB_REFERENCE_ID", "maps", "maps", "Map id must be a positive integer.");
+        continue;
+      }
+      if (!isRecord(mapDocument.value)) {
+        this.add("DB_ENTRY_SHAPE", "maps", `maps[${mapId}]`, "Map document must be an object.", mapId);
+        continue;
+      }
+      const map = mapDocument.value;
+      this.recordReference("maps", mapId, `maps[${mapId}].tilesetId`, "tilesets", map.tilesetId);
+      forEachRecordValue(map.encounterList, (encounter, encounterIndex) => {
+        this.recordReference(
+          "maps",
+          mapId,
+          `maps[${mapId}].encounterList[${encounterIndex}].troopId`,
+          "troops",
+          encounter.troopId,
+        );
+      });
+
+      const events = asArray(map.events);
+      for (let eventId = 1; eventId < events.length; eventId += 1) {
+        const event = events[eventId];
+        if (!isRecord(event)) continue;
+        if (event.id !== eventId) {
+          this.add(
+            "DB_ENTRY_ID_MISMATCH",
+            "maps",
+            `maps[${mapId}].events[${eventId}].id`,
+            `Map event id must match its stable array slot ${eventId}.`,
+            mapId,
+          );
+        }
+        forEachRecordValue(event.pages, (page, pageIndex) => {
+          const pagePrefix = `maps[${mapId}].events[${eventId}].pages[${pageIndex}]`;
+          const conditions = isRecord(page.conditions) ? page.conditions : null;
+          if (conditions?.actorValid === true) {
+            this.recordReference("maps", mapId, `${pagePrefix}.conditions.actorId`, "actors", conditions.actorId);
+          }
+          if (conditions?.itemValid === true) {
+            this.recordReference("maps", mapId, `${pagePrefix}.conditions.itemId`, "items", conditions.itemId);
+          }
+          if (conditions?.switch1Valid === true) {
+            this.switchReference("maps", mapId, `${pagePrefix}.conditions.switch1Id`, conditions.switch1Id);
+          }
+          if (conditions?.switch2Valid === true) {
+            this.switchReference("maps", mapId, `${pagePrefix}.conditions.switch2Id`, conditions.switch2Id);
+          }
+          if (conditions?.variableValid === true) {
+            this.systemListReference("maps", mapId, `${pagePrefix}.conditions.variableId`, "variables", conditions.variableId);
+          }
+          this.validateEventCommandReferences("maps", mapId, page.list, `${pagePrefix}.list`);
+        });
+      }
+    }
+  }
+
+  private validateEventCommandReferences(
+    sourceTable: RmmvDatabaseIssueTable,
+    sourceId: number | undefined,
+    value: unknown,
+    path: string,
+  ): void {
+    let references: RmmvEventCommandReference[];
+    try {
+      references = collectEventCommandReferences(value, path);
+    } catch (error) {
+      this.add(
+        "DB_EVENT_COMMAND_STRUCTURE",
+        sourceTable,
+        path,
+        error instanceof Error ? error.message : String(error),
+        sourceId,
+      );
+      return;
+    }
+    for (const reference of references) {
+      this.validateEventCommandReference(sourceTable, sourceId, reference);
+    }
+  }
+
+  private validateEventCommandReference(
+    sourceTable: RmmvDatabaseIssueTable,
+    sourceId: number | undefined,
+    reference: RmmvEventCommandReference,
+  ): void {
+    const arrayTargets = new Set<RmmvEventReferenceTarget>([
+      "actors",
+      "classes",
+      "skills",
+      "items",
+      "weapons",
+      "armors",
+      "enemies",
+      "troops",
+      "states",
+      "animations",
+      "tilesets",
+      "commonEvents",
+    ]);
+    if (arrayTargets.has(reference.target)) {
+      this.recordReference(
+        sourceTable,
+        sourceId,
+        reference.path,
+        reference.target as RmmvDatabaseTableKey,
+        reference.value,
+        reference.specialValues,
+      );
+      return;
+    }
+    if (reference.target === "switches" || reference.target === "variables") {
+      this.systemListReference(
+        sourceTable,
+        sourceId,
+        reference.path,
+        reference.target,
+        reference.value,
+        reference.endValue,
+        reference.endPath,
+      );
+      return;
+    }
+    if (reference.target === "maps") {
+      this.mapReferenceFor(sourceTable, sourceId, reference.path, reference.value);
+      return;
+    }
+    if (reference.target === "equipTypes") {
+      this.typeReference(sourceTable, sourceId, reference.path, "equipTypes", reference.value);
+    }
   }
 
   private validateDamage(
@@ -507,7 +670,7 @@ class SnapshotValidator {
   }
 
   private recordReference(
-    sourceTable: RmmvDatabaseTableKey,
+    sourceTable: RmmvDatabaseIssueTable,
     sourceId: number | undefined,
     path: string,
     targetTable: RmmvDatabaseTableKey,
@@ -533,7 +696,7 @@ class SnapshotValidator {
   }
 
   private typeReference(
-    sourceTable: RmmvDatabaseTableKey,
+    sourceTable: RmmvDatabaseIssueTable,
     sourceId: number | undefined,
     path: string,
     typeField: "elements" | "skillTypes" | "weaponTypes" | "armorTypes" | "equipTypes",
@@ -560,31 +723,84 @@ class SnapshotValidator {
   }
 
   private switchReference(
-    sourceTable: RmmvDatabaseTableKey,
+    sourceTable: RmmvDatabaseIssueTable,
     sourceId: number | undefined,
     path: string,
     value: unknown,
   ): void {
-    if (value === undefined) return;
-    const switchId = asInteger(value);
-    const switches = asArray(this.system()?.switches);
-    if (switchId === null || switchId <= 0 || switchId >= switches.length) {
-      this.add("DB_REFERENCE_MISSING", sourceTable, path, `Referenced switch id ${String(value)} is outside System.switches.`, sourceId);
-    }
+    this.systemListReference(sourceTable, sourceId, path, "switches", value);
   }
 
   private mapReference(path: string, value: unknown): void {
+    this.mapReferenceFor("system", undefined, path, value, [0]);
+  }
+
+  private systemListReference(
+    sourceTable: RmmvDatabaseIssueTable,
+    sourceId: number | undefined,
+    path: string,
+    field: "switches" | "variables",
+    value: unknown,
+    endValue?: unknown,
+    endPath?: string,
+  ): void {
+    if (value === undefined) return;
+    const values = asArray(this.system()?.[field]);
+    const startId = asInteger(value);
+    const endId = endValue === undefined ? startId : asInteger(endValue);
+    if (startId === null || startId <= 0 || startId >= values.length) {
+      this.add(
+        "DB_REFERENCE_MISSING",
+        sourceTable,
+        path,
+        `Referenced ${field} id ${String(value)} is outside System.${field}.`,
+        sourceId,
+      );
+    }
+    if (endValue !== undefined && (endId === null || endId <= 0 || endId >= values.length)) {
+      this.add(
+        "DB_REFERENCE_MISSING",
+        sourceTable,
+        endPath ?? path,
+        `Referenced ${field} id ${String(endValue)} is outside System.${field}.`,
+        sourceId,
+      );
+    }
+    if (startId !== null && endId !== null && endValue !== undefined && startId > endId) {
+      this.add(
+        "DB_REFERENCE_RANGE",
+        sourceTable,
+        path,
+        `${field} reference range must start at or before its end.`,
+        sourceId,
+      );
+    }
+  }
+
+  private mapReferenceFor(
+    sourceTable: RmmvDatabaseIssueTable,
+    sourceId: number | undefined,
+    path: string,
+    value: unknown,
+    specialValues: readonly number[] = [],
+  ): void {
     if (value === undefined || this.#mapIds === null) return;
     const mapId = asInteger(value);
-    if (mapId === 0) return;
-    if (mapId === null || mapId < 0 || !this.#mapIds.has(mapId)) {
-      this.add("DB_REFERENCE_MISSING", "system", path, `Referenced map id ${String(value)} does not exist.`);
+    if (mapId !== null && specialValues.includes(mapId)) return;
+    if (mapId === null || mapId <= 0 || !this.#mapIds.has(mapId)) {
+      this.add(
+        "DB_REFERENCE_MISSING",
+        sourceTable,
+        path,
+        `Referenced map id ${String(value)} does not exist.`,
+        sourceId,
+      );
     }
   }
 
   private fixedRange(
     code: string,
-    table: RmmvDatabaseTableKey,
+    table: RmmvDatabaseIssueTable,
     id: number | undefined,
     path: string,
     value: unknown,
@@ -624,7 +840,7 @@ class SnapshotValidator {
 
   private add(
     code: string,
-    table: RmmvDatabaseTableKey,
+    table: RmmvDatabaseIssueTable,
     path: string,
     message: string,
     id?: number,

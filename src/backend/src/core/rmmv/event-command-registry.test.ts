@@ -9,7 +9,8 @@ import {
   STANDARD_EVENT_COMMAND_DEFINITIONS,
   defaultEventCommandParameters,
   eventCommandDefinition,
-  validateEventCommandBasic
+  validateEventCommandBasic,
+  validateEventCommandList,
 } from "./event-command-registry.ts";
 
 const EXPECTED_STANDARD_CODES = [
@@ -77,5 +78,53 @@ describe("RPG Maker MV event command registry", () => {
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 401, indent: 1, parameters: ["line"] }));
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 605, indent: 0, parameters: [0, 1, 0, 0] }));
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 655, indent: 0, parameters: ["console.log('ok')"] }));
+  });
+
+  test("validates nested structured blocks, branches, continuations, and the final terminator", () => {
+    assert.doesNotThrow(() => validateEventCommandList([
+      { code: 102, indent: 0, parameters: [["Yes", "No"], -2, 0, 2, 0] },
+      { code: 402, indent: 0, parameters: [0, "Yes"] },
+      { code: 111, indent: 1, parameters: [0, 1, 0] },
+      { code: 101, indent: 2, parameters: ["", 0, 0, 2] },
+      { code: 401, indent: 2, parameters: ["Nested"] },
+      { code: 411, indent: 1, parameters: [] },
+      { code: 117, indent: 2, parameters: [1] },
+      { code: 412, indent: 1, parameters: [] },
+      { code: 403, indent: 0, parameters: [] },
+      { code: 404, indent: 0, parameters: [] },
+      { code: 0, indent: 0, parameters: [] },
+    ], "event.list"));
+  });
+
+  test("rejects orphan structural commands, missing block terminators, and invalid indentation", () => {
+    assert.throws(
+      () => validateEventCommandList([
+        { code: 401, indent: 0, parameters: ["orphan"] },
+        { code: 0, indent: 0, parameters: [] },
+      ]),
+      /continuation code 401.*head code 101/,
+    );
+    assert.throws(
+      () => validateEventCommandList([
+        { code: 111, indent: 0, parameters: [0, 1, 0] },
+        { code: 117, indent: 1, parameters: [1] },
+        { code: 0, indent: 0, parameters: [] },
+      ]),
+      /code 111.*terminator code 412/,
+    );
+    assert.throws(
+      () => validateEventCommandList([
+        { code: 117, indent: 1, parameters: [1] },
+        { code: 0, indent: 0, parameters: [] },
+      ]),
+      /indent 0/,
+    );
+    assert.throws(
+      () => validateEventCommandList([
+        { code: 0, indent: 0, parameters: [] },
+        { code: 117, indent: 0, parameters: [1] },
+      ]),
+      /code 0 must be the final command/,
+    );
   });
 });

@@ -387,6 +387,95 @@ export function validateEventCommandBasic(commandValue: unknown, label = "eventC
   validateEventCommandParameters(definition, commandObject.parameters, label);
 }
 
+export function validateEventCommandList(
+  commandList: unknown,
+  label = "eventCommandList",
+): asserts commandList is RawEventCommand[] {
+  if (!Array.isArray(commandList)) throw new Error(`${label} must be an array`);
+  if (commandList.length === 0) throw new Error(`${label} must end with code 0 at indent 0`);
+
+  const openBlocks: Array<{ headCode: number; indent: number; terminatorCode: number }> = [];
+  for (let index = 0; index < commandList.length; index += 1) {
+    const commandLabel = `${label}[${index}]`;
+    validateEventCommandBasic(commandList[index], commandLabel);
+    const current = commandList[index] as RawEventCommand;
+
+    if (current.code === 0) {
+      if (index !== commandList.length - 1) throw new Error(`${commandLabel} code 0 must be the final command`);
+      if (current.indent !== 0) throw new Error(`${commandLabel} code 0 must use indent 0`);
+      const unclosed = openBlocks[openBlocks.length - 1];
+      if (unclosed) {
+        throw new Error(
+          `${label} block head code ${unclosed.headCode} at indent ${unclosed.indent} requires terminator code ${unclosed.terminatorCode} before end`,
+        );
+      }
+      continue;
+    }
+
+    const definition = eventCommandDefinition(current.code)!;
+    if (definition.block.kind === "continuation" || definition.block.kind === "terminator") {
+      validateStructuralCommand(commandList, index, current, definition, openBlocks, label);
+      continue;
+    }
+
+    const expectedIndent = openBlocks.length ? openBlocks[openBlocks.length - 1].indent + 1 : 0;
+    if (current.indent !== expectedIndent) {
+      throw new Error(`${commandLabel} must use indent ${expectedIndent}; got ${current.indent}`);
+    }
+
+    if (definition.block.kind === "structured") {
+      const terminatorCode = definition.block.endCode;
+      if (terminatorCode === undefined) {
+        throw new Error(`${commandLabel} structured block head code ${current.code} has no registered terminator`);
+      }
+      openBlocks.push({ headCode: current.code, indent: current.indent, terminatorCode });
+    }
+  }
+
+  const last = commandList[commandList.length - 1] as RawEventCommand;
+  if (last.code !== 0 || last.indent !== 0) throw new Error(`${label} must end with code 0 at indent 0`);
+}
+
+function validateStructuralCommand(
+  commandList: unknown[],
+  index: number,
+  current: RawEventCommand,
+  definition: EventCommandDefinition,
+  openBlocks: Array<{ headCode: number; indent: number; terminatorCode: number }>,
+  label: string,
+): void {
+  const commandLabel = `${label}[${index}]`;
+  const parentCode = definition.block.parentCode;
+  if (parentCode === undefined) throw new Error(`${commandLabel} structural command has no registered parent`);
+  const parent = eventCommandDefinition(parentCode)!;
+
+  if (parent.block.kind === "multiline") {
+    const previous = index > 0 ? commandList[index - 1] : undefined;
+    const previousCommand = previous && typeof previous === "object" && !Array.isArray(previous)
+      ? previous as Partial<RawEventCommand>
+      : null;
+    const allowedPreviousCodes = new Set([parentCode, ...(parent.block.continuationCodes ?? [])]);
+    if (
+      !previousCommand
+      || !allowedPreviousCodes.has(Number(previousCommand.code))
+      || previousCommand.indent !== current.indent
+    ) {
+      throw new Error(
+        `${commandLabel} continuation code ${current.code} requires head code ${parentCode} at the same indent`,
+      );
+    }
+    return;
+  }
+
+  const open = openBlocks[openBlocks.length - 1];
+  if (!open || open.headCode !== parentCode || open.indent !== current.indent) {
+    throw new Error(
+      `${commandLabel} ${definition.block.kind} code ${current.code} requires open head code ${parentCode} at indent ${current.indent}`,
+    );
+  }
+  if (definition.block.kind === "terminator") openBlocks.pop();
+}
+
 export function validateEventCommandParameters(definition: EventCommandDefinition, parameters: unknown[], label = `eventCommand:${definition.code}`): void {
   const expectedLength = definition.parameters.length
     ? Math.max(...definition.parameters.filter((parameter) => !parameter.optional).map((parameter) => parameter.index)) + 1

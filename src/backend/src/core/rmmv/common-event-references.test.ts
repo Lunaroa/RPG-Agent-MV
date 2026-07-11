@@ -117,6 +117,56 @@ describe("findCommonEventReferences", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  test("finds troop-page and skill/item effect references with exact locations", () => {
+    const { root, dataDir } = makeProject();
+    fs.writeFileSync(path.join(dataDir, "MapInfos.json"), JSON.stringify([null]), "utf8");
+    fs.writeFileSync(
+      path.join(dataDir, "CommonEvents.json"),
+      JSON.stringify([null, { id: 1, name: "CE_Target", list: [{ code: 0 }] }]),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(dataDir, "Troops.json"),
+      JSON.stringify([null, {
+        id: 1,
+        pages: [{ list: [{ code: 117, parameters: [1] }, { code: 0 }] }],
+      }]),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(dataDir, "Skills.json"),
+      JSON.stringify([null, { id: 1, effects: [{ code: 44, dataId: 1 }] }]),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(dataDir, "Items.json"),
+      JSON.stringify([null, { id: 2, effects: [{ code: 44, dataId: 1 }] }]),
+      "utf8",
+    );
+
+    const result = findCommonEventReferences(root, 1);
+    assert.deepEqual(result.referencedBy, [
+      { kind: "troopEvent", troopId: 1, pageIndex: 0, commandIndex: 0 },
+      { kind: "databaseEffect", databaseFile: "Skills.json", databaseId: 1, effectIndex: 0 },
+      { kind: "databaseEffect", databaseFile: "Items.json", databaseId: 2, effectIndex: 0 },
+    ]);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test("fails fast instead of hiding invalid database JSON", () => {
+    const { root, dataDir } = makeProject();
+    fs.writeFileSync(path.join(dataDir, "MapInfos.json"), JSON.stringify([null]), "utf8");
+    fs.writeFileSync(
+      path.join(dataDir, "CommonEvents.json"),
+      JSON.stringify([null, { id: 1, name: "CE_Target", list: [{ code: 0 }] }]),
+      "utf8",
+    );
+    fs.writeFileSync(path.join(dataDir, "Items.json"), "{invalid", "utf8");
+
+    assert.throws(() => findCommonEventReferences(root, 1), /Items\.json/);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
   test("rejects non-positive ids", () => {
     const { root } = makeProject();
     assert.throws(() => findCommonEventReferences(root, 0), /commonEventId must be a positive integer/);

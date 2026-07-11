@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "tools": [
     {
       "id": "read",
@@ -157,6 +157,16 @@
       "layer": "rmmv",
       "title": "RMMV 地图编辑",
       "description": "通过 MCP 调用地图创建、属性更新、复制、删除、绘制和 staging 操作",
+      "readOnly": false,
+      "riskLevel": "normal",
+      "defaultAllow": true
+    },
+    {
+      "id": "rmmv_RmmvVerify",
+      "kind": "mcp",
+      "layer": "rmmv",
+      "title": "RMMV 隔离试玩验证",
+      "description": "仅主 Agent 可用：在排除存档的隔离副本中覆盖当前全部暂存并执行严格、有界的试玩探针",
       "readOnly": false,
       "riskLevel": "normal",
       "defaultAllow": true

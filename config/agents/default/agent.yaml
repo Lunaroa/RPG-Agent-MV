@@ -31,6 +31,7 @@
       "rmmv_RmmvDatabase",
       "rmmv_RmmvDatabaseApply",
       "rmmv_RmmvMap",
+      "rmmv_RmmvVerify",
       "rmmv_RmmvEvent",
       "rmmv_RmmvMemory"
     ]

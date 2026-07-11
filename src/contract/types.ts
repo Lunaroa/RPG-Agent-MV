@@ -394,6 +394,54 @@ export interface InteractivePlaytestResult {
   error?: string;
 }
 
+export type RmmvVerifyStatus = 'verified' | 'blocked' | 'review' | 'failed';
+
+export interface RmmvVerifyProbeEvidence {
+  screenshotPath?: string;
+  screenshotExists: boolean;
+  screenshotNonEmpty: boolean;
+  screenshotNonBlank: boolean;
+  expectedMapId: number;
+  actualMapId?: number;
+  mapVerified: boolean;
+  expectedX: number;
+  expectedY: number;
+  actualX?: number;
+  actualY?: number;
+  coordinatesVerified: boolean;
+  runtimeReady: boolean;
+  eventIdle: boolean;
+  noJavascriptErrors: boolean;
+  processExited: boolean;
+  savesExcluded: boolean;
+  sourceUnchanged: boolean;
+  savesUnchanged: boolean;
+  stagingUnchanged: boolean;
+  temporaryProjectCleaned: boolean;
+}
+
+export interface RmmvVerifyResult {
+  status: RmmvVerifyStatus;
+  verified: boolean;
+  project: string;
+  runId: string;
+  generatedAt: string;
+  timeoutMs: number;
+  requestedMapId?: number;
+  requestedX?: number;
+  requestedY?: number;
+  stagedFileCount: number;
+  stagedFiles: string[];
+  stagingDigest: string;
+  evidence: RmmvVerifyProbeEvidence;
+  blockers: string[];
+  review: string[];
+  artifacts: string[];
+  artifactPath: string;
+  workerResult?: unknown;
+  error?: string;
+}
+
 export type RmmvDatabaseFieldKind =
   | 'string'
   | 'number'

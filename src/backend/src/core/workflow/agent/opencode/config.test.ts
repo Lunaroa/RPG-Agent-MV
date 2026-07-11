@@ -37,6 +37,7 @@ test("opencode config returns dynamic fields including agent tool policy", () =>
   assert.equal((config.tools as Record<string, boolean>).rmmv_RmmvReadContext, true);
   assert.equal((config.tools as Record<string, boolean>).rmmv_RmmvDatabase, true);
   assert.equal((config.tools as Record<string, boolean>).rmmv_RmmvDatabaseApply, true);
+  assert.equal((config.tools as Record<string, boolean>).rmmv_RmmvVerify, true);
   assert.equal((config.mcp as Record<string, Record<string, unknown>>).rmmv.enabled, true);
   assert.equal(config.instructions, undefined);
   assert.equal(config.skills, undefined);
@@ -94,6 +95,7 @@ test("read-only session hard-disables every mutating tool but keeps read-only on
   assert.equal(tools.rmmv_RmmvMemory, false);
   assert.equal(tools.rmmv_RmmvDatabase, false);
   assert.equal(tools.rmmv_RmmvDatabaseApply, false);
+  assert.equal(tools.rmmv_RmmvVerify, false);
   assert.equal(tools.edit, false);
   assert.equal(tools.write, false);
   assert.equal(tools.bash, false);

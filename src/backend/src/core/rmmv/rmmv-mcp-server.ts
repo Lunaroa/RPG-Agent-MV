@@ -4,13 +4,14 @@
  *
  * Started by opencode via stdio transport.
  *
- * Simplified workflow (2026-06): removed RmmvTest
- * (playability/runtime checks unreliable in RMMV).
+ * Legacy RmmvTest remains removed. RmmvVerify runs one strict, isolated
+ * staged-project probe in a bounded worker process.
  *
  * Action naming conventions:
  *   - RmmvReadContext:  project, asset, plugin, and map facts
  *   - RmmvDatabase:     validate, dry-run, stage, or discard controlled database changes
  *   - RmmvDatabaseApply: apply one approved staged database operation by operationId
+ *   - RmmvVerify:       run a strict isolated playtest probe for the main Agent
  *   - RmmvMap:          current map-editor write operations
  *   - RmmvEvent:        "registry.list" | "registry.validate" | "registry.scaffold" |
  *                       "registry.register" | "registry.show" | "registry.reconcile" |
@@ -140,6 +141,8 @@ const ACTION_TO_COMMAND: Record<string, string> = {
   "dryRun": "database-changes",
   "stage": "database-changes",
   "discard": "database-changes",
+  // RmmvVerify
+  "playtest.probe": "verify",
   // RmmvMap
   "create": "map-editor",
   "updateProperties": "map-editor",
@@ -329,6 +332,20 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
     destructive: true,
   },
   {
+    name: "RmmvVerify",
+    description:
+      "Main-agent-only strict playtest probe. Copies the source project without saves, overlays all current staging, optionally changes only the copied start position, and runs Game.exe in a hidden bounded worker. Returns verified only when screen, exact map/coordinates, runtime readiness, event idle, JavaScript-error absence, source/save/staging stability, process exit, and temporary cleanup are all proven.",
+    inputSchema: {
+      action: z.literal("playtest.probe"),
+      project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
+      mapId: z.number().int().positive().optional().describe("Optional map id. When provided, x and y are both required."),
+      x: z.number().int().nonnegative().optional().describe("Optional copied-project start X; requires mapId and y."),
+      y: z.number().int().nonnegative().optional().describe("Optional copied-project start Y; requires mapId and x."),
+      timeoutSeconds: z.number().int().min(5).max(60).optional().describe("Probe limit in seconds (default 30; range 5-60)."),
+    },
+    readOnly: false,
+  },
+  {
     name: "RmmvMap",
     description:
       "Operate the current map editor backend: create/update/duplicate/remove maps, paint validated tile edits, and explicitly apply or discard staging. Only exposes features already present in the desktop map editor.",
@@ -472,8 +489,8 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
     },
     readOnly: false,
   },
-  // Deprecated (simplified workflow 2026-06):
-  // RmmvTest — playability/runtime checks unreliable in RMMV environment
+  // Deprecated: broad legacy RmmvTest actions remain removed. Use RmmvVerify
+  // only for the strict isolated probe above.
 ];
 
 // ── main ────────────────────────────────────────────────────────────

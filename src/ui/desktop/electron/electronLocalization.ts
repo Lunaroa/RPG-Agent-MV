@@ -9,6 +9,7 @@ const messages = {
     'staging.discard': '否',
     'staging.cancel': '取消',
     'staging.closeDetail': '当前项目存在暂存修改。选择“是”保存到工程；选择“否”放弃暂存；选择“取消”回到当前界面。',
+    'staging.agentOperations': '将同时应用以下 Agent 数据库操作：\n{{operations}}',
     'staging.saveFailed': '保存修改失败',
     'staging.discardFailed': '放弃修改失败',
     'projects.selectDirectoryTitle': '选择 RPG Maker MV 项目目录',
@@ -25,6 +26,7 @@ const messages = {
     'staging.discard': 'Discard',
     'staging.cancel': 'Cancel',
     'staging.closeDetail': 'The current project has staged changes. Save writes them to the project, Discard removes the staging draft, and Cancel returns to the current window.',
+    'staging.agentOperations': 'The following Agent database operations will also be applied:\n{{operations}}',
     'staging.saveFailed': 'Failed to Save Changes',
     'staging.discardFailed': 'Failed to Discard Changes',
     'projects.selectDirectoryTitle': 'Select RPG Maker MV Project Folder',
@@ -44,7 +46,7 @@ export function electronText(
   params: Record<string, string | number> = {},
 ): string {
   const normalized = normalizeProductLanguage(language);
-  let text = messages[normalized][key] || messages[DEFAULT_PRODUCT_LANGUAGE][key] || key;
+  let text: string = messages[normalized][key] || messages[DEFAULT_PRODUCT_LANGUAGE][key] || key;
   for (const [name, value] of Object.entries(params)) {
     text = text.replaceAll(`{{${name}}}`, String(value));
   }

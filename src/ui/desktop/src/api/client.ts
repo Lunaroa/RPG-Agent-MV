@@ -146,7 +146,7 @@ declare global {
       };
       staging: {
         projectStatus(project?: string): Promise<unknown>;
-        applyProject(project?: string): Promise<unknown>;
+        applyProject(project?: string, expectedOperationIds?: string[]): Promise<unknown>;
         discardProject(project?: string): Promise<unknown>;
         mapStatus(mapId: number, project?: string): Promise<unknown>;
         applyMap(mapId: number, project?: string): Promise<unknown>;
@@ -181,6 +181,7 @@ declare global {
         updateEntry(request: unknown, project?: string): Promise<unknown>;
         createEntry(request: unknown, project?: string): Promise<unknown>;
         resetEntry(request: unknown, project?: string): Promise<unknown>;
+        revertEntry(request: unknown, project?: string): Promise<unknown>;
       };
       commonEvents: {
         list(project?: string): Promise<unknown>;
@@ -221,7 +222,7 @@ function desktopApi(): Window['api'] {
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
   MapTreeNode, MapIndex, TilesetSummary, MapPayload, TileEdit, EventReport,
-  EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry,
+  EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -241,7 +242,7 @@ import type {
 } from '@contract/types';
 export type {
   MapTreeNode, MapIndex, TilesetSummary, MapPayload, TileEdit, EventReport,
-  EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry,
+  EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -610,8 +611,8 @@ export const maps = {
   projectStaging(project: string = DEFAULT_PROJECT) {
     return desktopApi().staging.projectStatus(project);
   },
-  applyProjectStaging(project: string = DEFAULT_PROJECT) {
-    return desktopApi().staging.applyProject(project);
+  applyProjectStaging(project: string = DEFAULT_PROJECT, expectedOperationIds: string[] = []) {
+    return desktopApi().staging.applyProject(project, [...expectedOperationIds]);
   },
   discardProjectStaging(project: string = DEFAULT_PROJECT) {
     return desktopApi().staging.discardProject(project);
@@ -1166,7 +1167,10 @@ export const projectManagement = {
     return desktopApi().projectManagement.createEntry(toPlain(request), project) as Promise<ProjectManagedEntry>;
   },
   resetEntry(request: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
-    return desktopApi().projectManagement.resetEntry(toPlain(request), project) as Promise<ProjectManagedEntry>;
+    return desktopApi().projectManagement.resetEntry(toPlain(request), project) as Promise<ProjectManagedEntryResetResult>;
+  },
+  revertEntry(request: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectManagement.revertEntry(toPlain(request), project) as Promise<ProjectManagedEntryRevertResult>;
   },
 };
 

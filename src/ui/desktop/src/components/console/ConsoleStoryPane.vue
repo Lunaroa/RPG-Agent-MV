@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { ArrowRight } from '@element-plus/icons-vue';
+import { ElMessageBox } from 'element-plus';
 import { useProjectStore } from '../../stores/project';
 import { useRouter } from 'vue-router';
 import {
@@ -26,6 +27,7 @@ import EventEditorDialog from '../editor/EventEditorDialog.vue';
 import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
 import CommonEventDetailEditor from './CommonEventDetailEditor.vue';
 import DatabaseEntryDetailEditor from './DatabaseEntryDetailEditor.vue';
+import StagedEntryInspection from './StagedEntryInspection.vue';
 import MapEventCommandPreview from './MapEventCommandPreview.vue';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
 import { useI18n } from '../../i18n';
@@ -38,6 +40,7 @@ import {
   type StoryCategoryId,
 } from '../../utils/consoleStoryLocalization';
 import { databaseFieldLabel, databaseGroupLabel } from '../../utils/rmmvDatabaseLocalization';
+import { parseProjectStagingSummary, type ProjectStagingSummary } from '../../utils/projectStaging';
 
 type PmDetail =
   | { kind: 'managed'; entry: ProjectManagedEntry }
@@ -73,6 +76,26 @@ function isProjectStagingDirty(status: unknown): boolean {
   return Boolean((status as { staged?: boolean }).staged);
 }
 
+async function confirmAgentOperations(summary: ProjectStagingSummary): Promise<boolean> {
+  if (!summary.operations.length) return true;
+  const operations = summary.operations
+    .map((operation) => t('story.agentOperationSummary', {
+      operationId: operation.operationId,
+      count: operation.files.length,
+    }))
+    .join('\n');
+  try {
+    await ElMessageBox.confirm(
+      t('story.applyAgentOperationsConfirm', { operations }),
+      t('story.applyAgentOperationsTitle'),
+      { type: 'warning' },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function refreshStagingStatus() {
   if (!projectStore.currentProject) {
     stagingDirty.value = false;
@@ -93,7 +116,13 @@ async function applyProjectStaging() {
   stagingBusy.value = true;
   detailError.value = '';
   try {
-    await mapsApi.applyProjectStaging(projectStore.currentProject);
+    const status = await mapsApi.projectStaging(projectStore.currentProject);
+    const summary = parseProjectStagingSummary(status);
+    if (!await confirmAgentOperations(summary)) return;
+    await mapsApi.applyProjectStaging(
+      projectStore.currentProject,
+      summary.operations.map((operation) => operation.operationId),
+    );
     await refreshStagingStatus();
     await loadData();
   } catch (applyError) {
@@ -117,6 +146,36 @@ async function discardProjectStaging() {
     detailError.value = (discardError as Error).message;
   } finally {
     stagingBusy.value = false;
+  }
+}
+
+async function revertCurrentStagedEntry() {
+  if (pmDetail.value?.kind !== 'managed' || !projectStore.currentProject || detailBusy.value) return;
+  const current = pmDetail.value.entry;
+  detailBusy.value = true;
+  detailError.value = '';
+  try {
+    const result = await projectManagement.revertEntry({
+      kind: current.kind,
+      group: current.group,
+      id: current.id,
+    }, projectStore.currentProject);
+    if (result.entry) {
+      pmDetail.value = { kind: 'managed', entry: result.entry };
+      detailDraft.value = cloneDraft(result.entry.value);
+    } else {
+      closeDetail();
+    }
+    if (current.kind === 'database' || current.kind === 'commonEvent') {
+      resetCatalog();
+      await ensureCatalog();
+    }
+    await loadData();
+    await refreshStagingStatus();
+  } catch (revertError) {
+    detailError.value = (revertError as Error).message;
+  } finally {
+    detailBusy.value = false;
   }
 }
 
@@ -210,6 +269,11 @@ const detailDraft = ref<unknown>(null);
 const detailBusy = ref(false);
 const detailError = ref('');
 const detailEditable = computed(() => pmDetail.value?.kind === 'managed');
+const canRevertCurrentStagedEntry = computed(() => (
+  pmDetail.value?.kind === 'managed'
+  && Boolean(pmDetail.value.entry.inspection?.changed)
+  && !pmDetail.value.entry.inspection?.operationId
+));
 const eventPreviewBusy = ref(false);
 const eventPreviewError = ref('');
 const eventPreviewEvent = ref<MvEditorEvent | null>(null);
@@ -821,7 +885,7 @@ async function openManaged(kind: ProjectManagedEntry['kind'], id: number, group?
   try {
     if (kind === 'commonEvent' || (kind === 'database' && isCommonEventsGroup(group))) {
       await ensureCatalog();
-      const entry = await commonEventsApi.get(id, projectStore.currentProject);
+      const entry = await projectManagement.getEntry({ kind: 'commonEvent', id }, projectStore.currentProject);
       pmDetail.value = { kind: 'managed', entry };
       detailDraft.value = cloneDraft(entry.value);
       return;
@@ -902,12 +966,12 @@ async function clearDbEntry(id: number) {
   detailBusy.value = true;
   detailError.value = '';
   try {
-    const entry = await projectManagement.resetEntry(
+    await projectManagement.resetEntry(
       { kind: 'database', group: selectedDbGroup.value, id },
       projectStore.currentProject,
     );
-    pmDetail.value = { kind: 'managed', entry };
-    detailDraft.value = cloneDraft(entry.value);
+    pmDetail.value = null;
+    detailDraft.value = null;
     resetCatalog();
     await loadData();
     await refreshStagingStatus();
@@ -963,8 +1027,9 @@ async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents
     }, projectStore.currentProject);
     resetCatalog();
     await ensureCatalog();
-    pmDetail.value = { kind: 'managed', entry: result.entry };
-    detailDraft.value = cloneDraft(result.entry.value);
+    const entry = await projectManagement.getEntry({ kind: 'commonEvent', id: result.entry.id }, projectStore.currentProject);
+    pmDetail.value = { kind: 'managed', entry };
+    detailDraft.value = cloneDraft(entry.value);
     selected.value = targetCategory;
     showUnnamed.value = true;
     await loadData();
@@ -984,8 +1049,9 @@ async function duplicateCurrentCommonEvent() {
     const result = await commonEventsApi.duplicate(selectedCommonEventId.value, {}, projectStore.currentProject);
     resetCatalog();
     await ensureCatalog();
-    pmDetail.value = { kind: 'managed', entry: result.entry };
-    detailDraft.value = cloneDraft(result.entry.value);
+    const entry = await projectManagement.getEntry({ kind: 'commonEvent', id: result.entry.id }, projectStore.currentProject);
+    pmDetail.value = { kind: 'managed', entry };
+    detailDraft.value = cloneDraft(entry.value);
     selected.value = 'commonEvents';
     showUnnamed.value = true;
     await loadData();
@@ -1223,9 +1289,10 @@ async function saveDetail() {
     if (pmDetail.value.kind === 'managed') {
       const entry = pmDetail.value.entry;
       if (entry.kind === 'commonEvent') {
-        const updated = await commonEventsApi.update(entry.id, detailDraft.value, projectStore.currentProject);
-        pmDetail.value = { kind: 'managed', entry: updated.entry };
-        detailDraft.value = cloneDraft(updated.entry.value);
+        await commonEventsApi.update(entry.id, detailDraft.value, projectStore.currentProject);
+        const updated = await projectManagement.getEntry({ kind: 'commonEvent', id: entry.id }, projectStore.currentProject);
+        pmDetail.value = { kind: 'managed', entry: updated };
+        detailDraft.value = cloneDraft(updated.value);
       } else {
         const updated = await projectManagement.updateEntry({
           kind: entry.kind,
@@ -1739,9 +1806,11 @@ function detailTitle(): string {
             <div v-else class="empty-hint">{{ t('story.imageNotFound') }}</div>
           </div>
           <div v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'commonEvent'" class="pm-detail-body">
+            <StagedEntryInspection :inspection="pmDetail.entry.inspection" />
             <CommonEventDetailEditor v-model="detailDraft" :catalog="editorCatalog" :load-image="loadImage" />
           </div>
           <div v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'database'" class="pm-detail-body">
+            <StagedEntryInspection :inspection="pmDetail.entry.inspection" />
             <DatabaseEntryDetailEditor
               v-model="detailDraft"
               :group="pmDetail.entry.group"
@@ -1796,6 +1865,15 @@ function detailTitle(): string {
             <template v-else>
               <span>{{ t('story.saveStagingNote') }}</span>
               <div class="pm-detail-footer-actions">
+                <button
+                  v-if="canRevertCurrentStagedEntry"
+                  type="button"
+                  class="secondary-button"
+                  :disabled="detailBusy || stagingBusy"
+                  @click="revertCurrentStagedEntry"
+                >
+                  {{ t('story.revertStagedEntry') }}
+                </button>
                 <button
                   v-if="stagingDirty"
                   type="button"

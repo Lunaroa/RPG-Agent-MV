@@ -48,6 +48,12 @@ describe('map IPC bindings', () => {
     assert.deepEqual(imported, { mapId: 2 });
     assert.deepEqual(calls.at(-1), ['import', 'C:/workflow', '/tmp/workflow-fixture/projects/Project', 'demo', { name: 'Imported', parentId: 7 }]);
 
+    await handlers.get('staging:applyProject')(null, 'projects/Project', ['db:one']);
+    assert.deepEqual(calls.slice(-2), [
+      ['preflightProjectStaging', 'C:/workflow', '/tmp/workflow-fixture/projects/Project'],
+      ['applyProjectStaging', 'C:/workflow', '/tmp/workflow-fixture/projects/Project', ['db:one']],
+    ]);
+
     cleanupMapIpcHandlers(ipc);
     assert.equal(handlers.size, 0);
   });
@@ -162,11 +168,21 @@ function createDesktopMock(calls) {
     },
     staging: {
       getProjectStagingStatus() { return {}; },
-      applyProjectStaging() { return {}; },
+      applyProjectStaging(root, resolved, options) {
+        options.validate();
+        calls.push(['applyProjectStaging', root, resolved, options.expectedOperationIds]);
+        return {};
+      },
       discardProjectStaging() { return {}; },
       getStagingStatus() { return {}; },
       applyStagedMap() { return {}; },
       discardStagedMap() { return {}; },
+    },
+    projectManagement: {
+      preflightProjectManagedStagingApply(root, resolved) {
+        calls.push(['preflightProjectStaging', root, resolved]);
+        return {};
+      },
     },
     library: {
       listMapLibrary() { return { totalEntries: 0, entries: [] }; },

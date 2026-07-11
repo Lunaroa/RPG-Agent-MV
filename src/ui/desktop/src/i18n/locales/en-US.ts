@@ -1782,6 +1782,19 @@ const enUS = {
     'story.selectFromMiddle': 'Select a map, event, switch, variable, common event, database entry, audio, or image from the middle list.',
     'story.saveStagingNote': 'Saved changes enter project staging and can be applied or discarded together.',
     'story.saveChanges': 'Save Changes',
+    'story.stagedInspection': 'Staged changes',
+    'story.stagedFieldCount': '{{count}} fields',
+    'story.validationErrorCount': '{{count}} errors',
+    'story.validationWarningCount': '{{count}} warnings',
+    'story.stagedConflict': 'The source file or draft changed outside this edit. Apply is blocked.',
+    'story.agentOwnedStaging': 'Owned by Agent operation {{operationId}}. Revert or apply the complete operation together.',
+    'story.pluginSemanticsNotValidated': 'Unknown plugin fields are preserved; custom plugin semantics are not validated.',
+    'story.diffEmpty': '(not present)',
+    'story.diffEmptyString': '(empty string)',
+    'story.revertStagedEntry': 'Revert this staged change',
+    'story.applyAgentOperationsTitle': 'Apply Agent database operations',
+    'story.applyAgentOperationsConfirm': 'This staging set includes Agent operations:\n{{operations}}\n\nAll files will be rechecked before one atomic apply.',
+    'story.agentOperationSummary': '{{operationId}} · {{count}} files',
 } as const
 
 export default enUS

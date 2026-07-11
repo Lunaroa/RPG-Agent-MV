@@ -105,6 +105,19 @@ function stagingErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function stagingOperationIds(status: unknown): string[] {
+  if (!status || typeof status !== 'object') return [];
+  const operations = (status as { operations?: unknown }).operations;
+  if (!Array.isArray(operations)) return [];
+  return operations.flatMap((operation) => (
+    operation
+      && typeof operation === 'object'
+      && typeof (operation as { operationId?: unknown }).operationId === 'string'
+      ? [(operation as { operationId: string }).operationId]
+      : []
+  ));
+}
+
 export async function confirmProjectStagingBeforeClose(workflowRoot: string, win: BrowserWindow): Promise<boolean> {
   if (!desktop || win.isDestroyed()) return true;
   const lastProjectPath = String(getWorkspaceSettings().lastProjectPath || '').trim();
@@ -129,6 +142,10 @@ export async function confirmProjectStagingBeforeClose(workflowRoot: string, win
   if (!hasProjectStaging(stagingStatus)) return true;
 
   const language = currentProductLanguage();
+  const operationIds = stagingOperationIds(stagingStatus);
+  const operationDetail = operationIds.length
+    ? `\n\n${electronText(language, 'staging.agentOperations', { operations: operationIds.join('\n') })}`
+    : '';
   const result = await dialog.showMessageBox(win, {
     type: 'question',
     title: electronText(language, 'staging.savePrompt'),
@@ -137,14 +154,17 @@ export async function confirmProjectStagingBeforeClose(workflowRoot: string, win
     defaultId: 0,
     cancelId: 2,
     noLink: true,
-    detail: electronText(language, 'staging.closeDetail'),
+    detail: `${electronText(language, 'staging.closeDetail')}${operationDetail}`,
   });
 
   if (result.response === 2) return false;
 
   try {
     if (result.response === 0) {
-      await desktop.staging.applyProjectStaging(workflowRoot, projectPath);
+      await desktop.staging.applyProjectStaging(workflowRoot, projectPath, {
+        expectedOperationIds: operationIds,
+        validate: () => desktop.projectManagement.preflightProjectManagedStagingApply(workflowRoot, projectPath),
+      });
     } else if (result.response === 1) {
       desktop.staging.discardProjectStaging(workflowRoot, projectPath);
     }

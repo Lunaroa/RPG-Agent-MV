@@ -202,6 +202,7 @@ import { isPlacedStatus } from '../utils/placementStatus';
 import { canActivatePlacementOnMap } from '../utils/placementMapPolicy';
 import { placementValidityHint, validatePlacementCell } from '../utils/placementCellValidity';
 import { registerEditorUiControlHandler, type EditorUiControlState } from '../utils/uiControl';
+import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
 import { useI18n, type MessageKey } from '../i18n';
 
 interface ApiError extends Error { status?: number }
@@ -796,10 +797,30 @@ function isStagingDirty(value: unknown) {
 }
 async function refreshStagingStatus() {
   try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject) as { staged?: boolean; maps?: number[] };
+    const status = await mapsApi.projectStaging(projectStore.currentProject) as { staged?: boolean; maps?: number[]; operations?: unknown[] };
     stagedMapIds.value = new Set((status.maps || []).filter(Number.isFinite));
     stagingDirty.value = Boolean(status.staged) || stagedMapIds.value.size > 0;
   } catch { /* staging status does not block the editor */ }
+}
+
+async function confirmAgentOperations(summary: ProjectStagingSummary): Promise<boolean> {
+  if (!summary.operations.length) return true;
+  const operations = summary.operations
+    .map((operation) => t('story.agentOperationSummary', {
+      operationId: operation.operationId,
+      count: operation.files.length,
+    }))
+    .join('\n');
+  try {
+    await ElMessageBox.confirm(
+      t('story.applyAgentOperationsConfirm', { operations }),
+      t('story.applyAgentOperationsTitle'),
+      { type: 'warning' },
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function defaultAudio(name = ''): RmmvAudioSettings {
@@ -944,7 +965,13 @@ async function saveProperties() {
 async function applyStaging() {
   busy.value = true;
   try {
-    await mapsApi.applyProjectStaging(projectStore.currentProject);
+    const status = await mapsApi.projectStaging(projectStore.currentProject);
+    const summary = parseProjectStagingSummary(status);
+    if (!await confirmAgentOperations(summary)) return;
+    await mapsApi.applyProjectStaging(
+      projectStore.currentProject,
+      summary.operations.map((operation) => operation.operationId),
+    );
     if (selectedMapId.value != null) await reloadCurrentMap();
     await refreshStagingStatus();
     ElMessage.success(t('editor.staging.applied'));

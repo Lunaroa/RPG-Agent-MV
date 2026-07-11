@@ -7,6 +7,7 @@ import {
   appendAnimationTiming,
   applyClassParamLinearCurve,
   appendStringListItem,
+  canRemoveStringListItem,
   isMvStringListField,
   normalizeAnimationFrameCell,
   normalizeAnimationFrames,
@@ -46,6 +47,9 @@ describe('rmmvDatabaseEditor helpers', () => {
     assert.deepEqual(setStringListItem(['', 'A'], 0, 'Ignored', true), ['', 'A']);
     assert.deepEqual(removeStringListItem(['', 'A'], 0, true), ['', 'A']);
     assert.deepEqual(removeStringListItem([''], 1, true), ['']);
+    assert.equal(canRemoveStringListItem(['', 'Magic', 'Special'], 1, true), false);
+    assert.equal(canRemoveStringListItem(['', 'Magic', 'Special'], 2, true), true);
+    assert.equal(canRemoveStringListItem(['', 'Magic'], 0, true), false);
   });
 
   it('edits normal Terms lists without reserving a hidden index', () => {

@@ -103,3 +103,10 @@ export function commonEventInvalidId(language?: ProductLanguage | null): string 
     'en-US': 'Invalid common event ID',
   });
 }
+
+export function commonEventLimitReached(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '公共事件已达到 RPG Maker MV 的 ID 上限 1000',
+    'en-US': 'Common events have reached the RPG Maker MV id limit of 1000',
+  });
+}

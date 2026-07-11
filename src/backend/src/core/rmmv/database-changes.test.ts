@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
 import {
+  applyProjectStaging,
   getDatabaseStagingOperation,
   getProjectFileForRead,
   listDatabaseStagingOperations,
@@ -18,6 +19,7 @@ import {
   applyRmmvDatabaseChanges,
   discardRmmvDatabaseChanges,
   dryRunRmmvDatabaseChanges,
+  preflightRmmvDatabaseProjectApply,
   stageRmmvDatabaseChanges,
   type RmmvDatabaseChange,
 } from "./database-changes.ts";
@@ -165,6 +167,28 @@ describe("controlled RMMV database changes", { concurrency: false }, () => {
     assert.equal(applied.applied, true);
     assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Applied Item");
     assert.equal(listDatabaseStagingOperations(workflowRoot, project).length, 0);
+  });
+
+  test("requires the confirmed Agent operation set for desktop Apply All", () => {
+    const changes: RmmvDatabaseChange[] = [{
+      op: "patch",
+      table: "items",
+      id: 1,
+      patches: [{ op: "replace", path: "/name", value: "Desktop Applied Item" }],
+    }];
+    const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
+    const staged = stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash });
+
+    assert.throws(
+      () => applyProjectStaging(workflowRoot, project, { expectedOperationIds: [] }),
+      /operation set changed/i,
+    );
+    const applied = applyProjectStaging(workflowRoot, project, {
+      expectedOperationIds: [staged.operationId],
+      validate: () => preflightRmmvDatabaseProjectApply(workflowRoot, project),
+    });
+    assert.equal(applied.applied, true);
+    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Desktop Applied Item");
   });
 
   test("blocks apply when an untouched semantic input drifted and retains the operation draft", () => {

@@ -91,3 +91,35 @@ export function projectManagedGroupInvalid(group: string, language?: ProductLang
     'en-US': `${group} data is invalid`,
   });
 }
+
+export function projectManagedEntryLimitReached(
+  group: string,
+  maxEntries: number,
+  language?: ProductLanguage | null,
+): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `${group} 已达到 RPG Maker MV 的 ID 上限 ${maxEntries}`,
+    'en-US': `${group} has reached the RPG Maker MV id limit of ${maxEntries}`,
+  });
+}
+
+export function projectManagedOperationOwnedCannotRevert(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '这条修改属于 Agent 数据库操作，不能单独撤销；请放弃对应的完整操作',
+    'en-US': 'This change belongs to an Agent database operation and cannot be reverted separately; discard the complete operation instead',
+  });
+}
+
+export function projectManagedSystemSharedGroupImmutable(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': 'System 编辑不能改动类型或术语字段；请分别在 Types 或 Terms 中编辑，以保持固定 ID',
+    'en-US': 'System editing cannot change type or term fields; edit them through Types or Terms to preserve stable ids',
+  });
+}
+
+export function projectManagedTypeListInvalid(field: string, language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `类型列表 ${field} 无效；ID 0 必须保留为空`,
+    'en-US': `Type list ${field} is invalid; id 0 must remain empty`,
+  });
+}

@@ -346,7 +346,14 @@ describe('atomic staging transactions', { concurrency: false }, () => {
     const manifestBefore = latestManifest(fixture);
 
     assert.throws(
+      () => staging.applyProjectStaging(fixture.root, fixture.project, { expectedOperationIds: [] } as any),
+      /operation set changed/i,
+    );
+    assert.deepEqual(latestManifest(fixture), manifestBefore);
+
+    assert.throws(
       () => staging.applyProjectStaging(fixture.root, fixture.project, {
+        expectedOperationIds: ['database-op-project'],
         transactionDependencies: {
           beforeReplace: ({ index }: { index: number }) => {
             if (index === 1) throw new Error('injected desktop project failure');

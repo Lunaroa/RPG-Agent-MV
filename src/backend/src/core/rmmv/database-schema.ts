@@ -76,6 +76,7 @@ export interface RmmvDatabaseTableSchema {
   key: RmmvDatabaseTableKey;
   fileName: string;
   isArrayTable: boolean;
+  maxEntries: number | null;
   coreFields: readonly RmmvDatabaseFieldSchema[];
   references: readonly RmmvDatabaseReferenceField[];
   createDefaultEntry(id?: number): Record<string, unknown>;
@@ -93,6 +94,24 @@ interface RmmvDatabaseTableDefinition {
 }
 
 const ENTRY_COMMAND_LIST = [{ code: 0, indent: 0, parameters: [] }];
+
+const DATABASE_ENTRY_LIMITS: Readonly<Record<RmmvDatabaseGroup, number | null>> = {
+  Actors: 1000,
+  Classes: 1000,
+  Skills: 2000,
+  Items: 2000,
+  Weapons: 2000,
+  Armors: 2000,
+  Enemies: 2000,
+  Troops: 2000,
+  States: 1000,
+  Animations: 1000,
+  Tilesets: 1000,
+  CommonEvents: 1000,
+  System: null,
+  Types: null,
+  Terms: null,
+};
 
 const DATABASE_DEFINITIONS: readonly RmmvDatabaseTableDefinition[] = [
   arrayTable("Actors", "actors", "Actors.json", [
@@ -459,6 +478,7 @@ function documentTable(
 function withValidator(definition: RmmvDatabaseTableDefinition): RmmvDatabaseTableSchema {
   return {
     ...definition,
+    maxEntries: DATABASE_ENTRY_LIMITS[definition.group],
     validate(value: unknown): RmmvDatabaseValidationResult {
       return validateRecord(definition, value);
     },
@@ -902,7 +922,6 @@ function defaultState(id = 1): Record<string, unknown> {
     note: "",
     overlay: 0,
     priority: 50,
-    releaseByDamage: false,
     removeAtBattleEnd: false,
     removeByDamage: false,
     removeByRestriction: false,

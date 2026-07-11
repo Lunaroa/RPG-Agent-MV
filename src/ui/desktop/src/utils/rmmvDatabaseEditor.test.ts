@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { reactive } from 'vue';
 import {
   animationFramesSummary,
   appendAnimationFrame,
@@ -8,6 +9,7 @@ import {
   applyClassParamLinearCurve,
   appendStringListItem,
   canRemoveStringListItem,
+  cloneDatabaseEditorRecord,
   isMvStringListField,
   normalizeAnimationFrameCell,
   normalizeAnimationFrames,
@@ -34,6 +36,17 @@ import {
 } from './rmmvDatabaseEditor.ts';
 
 describe('rmmvDatabaseEditor helpers', () => {
+  it('clones Vue-reactive database records before immutable field writes', () => {
+    const source = reactive({ name: 'Source', pluginData: { enabled: true } });
+
+    const cloned = cloneDatabaseEditorRecord(source);
+    cloned.name = 'Draft';
+    (cloned.pluginData as { enabled: boolean }).enabled = false;
+
+    assert.deepEqual(source, { name: 'Source', pluginData: { enabled: true } });
+    assert.deepEqual(cloned, { name: 'Draft', pluginData: { enabled: false } });
+  });
+
   it('recognizes MV System and Types name arrays as structured string lists', () => {
     assert.equal(isMvStringListField('System', 'switches'), true);
     assert.equal(isMvStringListField('Types', 'skillTypes'), true);

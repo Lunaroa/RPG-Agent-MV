@@ -52,12 +52,12 @@ import { mvFaceSourceRect } from '../../utils/rmmvFace';
 import MvCommandListEditor from './MvCommandListEditor.vue';
 import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
 import ImageAssetPickerDialog from '../editor/ImageAssetPickerDialog.vue';
+import TilesetFlagCanvasEditor from './TilesetFlagCanvasEditor.vue';
 import {
   ANIMATION_POSITION_OPTIONS,
   DAMAGE_TYPE_OPTIONS,
   DROP_KIND_OPTIONS,
   EFFECT_CODES,
-  FLAG_BITS,
   HIT_TYPE_OPTIONS,
   ITEM_TYPE_OPTIONS,
   MENU_COMMAND_LABELS,
@@ -110,7 +110,6 @@ const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>();
 const { language, t } = useI18n();
 
 const jsonErrors = reactive<Record<string, string>>({});
-const selectedFlagTileId = ref(0);
 const selectedAnimationFrameIndex = ref(0);
 const facePreviewCanvas = ref<HTMLCanvasElement | null>(null);
 const characterPreviewCanvas = ref<HTMLCanvasElement | null>(null);
@@ -566,35 +565,6 @@ function damageElementOptions(): SelectOption[] {
     { value: -1, label: t('db.normalAttack') },
     ...asOptions(catalogEntries('elements')),
   ]);
-}
-
-function flagsValue(path: string): number[] {
-  return arrayValue(path).map((entry) => Number(entry || 0));
-}
-
-function currentFlag(path: string): number {
-  return flagsValue(path)[selectedFlagTileId.value] || 0;
-}
-
-function setFlagValue(path: string, tileId: number, flag: number): void {
-  const next = flagsValue(path);
-  next[tileId] = Math.max(0, Number.isFinite(flag) ? Math.trunc(flag) : 0);
-  writePath(path, next);
-}
-
-function updateCurrentFlag(path: string, raw: string): void {
-  setFlagValue(path, selectedFlagTileId.value, Number.parseInt(raw || '0', 10));
-}
-
-function toggleFlagBit(path: string, bit: number, checked: boolean): void {
-  const flag = currentFlag(path);
-  setFlagValue(path, selectedFlagTileId.value, checked ? flag | bit : flag & ~bit);
-}
-
-function flagSummary(path: string): string {
-  const flags = flagsValue(path);
-  const nonZero = flags.filter((value) => value !== 0).length;
-  return t('db.tileFlagSummary', { total: flags.length, nonZero });
 }
 
 function commandCount(value: unknown): number {
@@ -1692,31 +1662,15 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
           </section>
 
-          <section v-else-if="field.path === 'flags'" class="field full complex-editor">
-            <div class="complex-title">
-              <span>{{ fieldLabel(field) }}</span>
-              <small>{{ flagSummary(field.path) }}</small>
-            </div>
-            <div class="flag-editor">
-              <label>
-                <span>Tile ID</span>
-                <input type="number" min="0" :value="selectedFlagTileId" @input="selectedFlagTileId = Math.max(0, Number(($event.target as HTMLInputElement).value || 0))" />
-              </label>
-              <label>
-                <span>{{ t('db.flagValue') }}</span>
-                <input type="number" :value="currentFlag(field.path)" @input="updateCurrentFlag(field.path, ($event.target as HTMLInputElement).value)" />
-              </label>
-              <div class="flag-bits">
-                <label v-for="bit in FLAG_BITS" :key="bit.value" class="inline-check">
-                  <input
-                    type="checkbox"
-                    :checked="Boolean(currentFlag(field.path) & bit.value)"
-                    @change="toggleFlagBit(field.path, bit.value, ($event.target as HTMLInputElement).checked)"
-                  />
-                  {{ localizedLabel(bit.label) }}
-                </label>
-              </div>
-            </div>
+          <section v-else-if="field.path === 'flags'" class="field full complex-editor tileset-flags-editor">
+            <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
+            <TilesetFlagCanvasEditor
+              :tileset-names="arrayValue('tilesetNames')"
+              :flags="arrayValue(field.path)"
+              :catalog="catalog"
+              :load-image="loadImage"
+              @update:flags="writePath(field.path, $event)"
+            />
           </section>
 
           <label v-else-if="systemImageAssetForPath(field.path)" class="field">
@@ -2404,22 +2358,6 @@ textarea { resize: vertical; line-height: 1.45; }
   color: var(--console-text-muted,#9a8e7e);
   font-size: 11px;
 }
-.flag-editor {
-  display: grid;
-  grid-template-columns: 120px 140px minmax(0,1fr);
-  gap: 8px;
-  align-items: end;
-}
-.flag-editor label { display: grid; gap: 4px; }
-.flag-bits {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  padding: 7px 9px;
-  border: 1px solid var(--console-border,#e4dcce);
-  border-radius: 7px;
-  background: var(--console-paper-soft,#faf5ec);
-}
 .readonly-summary .json-field {
   margin-top: 4px;
 }
@@ -2549,7 +2487,8 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 .field.full.complex-editor.rmmv-type-editor,
 .field.full.complex-editor.rmmv-terms-editor,
-.field.full.complex-editor.terms-message-editor {
+.field.full.complex-editor.terms-message-editor,
+.field.full.complex-editor.tileset-flags-editor {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -2641,8 +2580,7 @@ textarea { resize: vertical; line-height: 1.45; }
   .troop-page-row,
   .troop-condition-row,
   .animation-cell-row,
-  .timing-row,
-  .flag-editor { grid-template-columns: 1fr; }
+  .timing-row { grid-template-columns: 1fr; }
   .check-grid { grid-template-columns: 1fr; }
 }
 @container (max-width: 640px) {
@@ -2679,7 +2617,6 @@ textarea { resize: vertical; line-height: 1.45; }
   .troop-condition-row,
   .animation-cell-row,
   .timing-row,
-  .flag-editor,
   .check-grid {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -218,7 +218,7 @@ class SnapshotValidator {
 
   private validateSkills(): void {
     this.forEachRecord("skills", (skill, id) => {
-      this.typeReference("skills", id, `skills[${id}].stypeId`, "skillTypes", skill.stypeId);
+      this.typeReference("skills", id, `skills[${id}].stypeId`, "skillTypes", skill.stypeId, [0]);
       this.typeReference(
         "skills",
         id,
@@ -281,7 +281,6 @@ class SnapshotValidator {
       forEachRecordValue(enemy.dropItems, (drop, index) => {
         const path = `enemies[${id}].dropItems[${index}]`;
         if (drop.kind === 0) {
-          this.fixedRange("DB_REFERENCE_ID", "enemies", id, `${path}.dataId`, drop.dataId, 0, 0);
           return;
         }
         const targets: Partial<Record<number, RmmvDatabaseTableKey>> = { 1: "items", 2: "weapons", 3: "armors" };

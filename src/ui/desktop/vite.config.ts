@@ -15,6 +15,11 @@ export default defineConfig({
             rollupOptions: {
               // Bundle electron-updater into main.js so packaged builds (node_modules excluded) still work.
               external: ['electron'],
+              output: {
+                // The main bundle is ESM, while electron-updater still contains CommonJS modules.
+                // Give Rolldown's generated CommonJS bridge a real Node require at runtime.
+                banner: "import { createRequire as __createRequire } from 'node:module';\nconst require = __createRequire(import.meta.url);",
+              },
             },
           },
         },

@@ -4,10 +4,10 @@ import {
   MV_CLASS_PARAM_ROW_LENGTH,
   MV_TERMS_MESSAGE_LABELS,
   databaseSummaryText,
-} from './rmmvDatabaseLocalization';
+} from './rmmvDatabaseLocalization.ts';
 import type { ProductLanguage } from '@contract/types';
 import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts';
-import { cloneDraft } from './clone-draft';
+import { cloneDraft } from './clone-draft.ts';
 
 export {
   MV_ANIMATION_BLEND_MODES,
@@ -18,7 +18,7 @@ export {
   MV_CLASS_PARAM_ROW_LENGTH,
   MV_TERMS_MESSAGE_LABELS,
   MV_TROOP_PAGE_SPANS,
-} from './rmmvDatabaseLocalization';
+} from './rmmvDatabaseLocalization.ts';
 
 export const MV_ZERO_RESERVED_LIST_PATHS = new Set([
   'switches',

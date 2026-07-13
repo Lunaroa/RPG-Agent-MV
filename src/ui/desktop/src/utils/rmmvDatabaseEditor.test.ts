@@ -114,6 +114,10 @@ describe('rmmvDatabaseEditor helpers', () => {
     assert.equal(conditions.turnValid, true);
     assert.equal(conditions.enemyHp, 25);
     assert.deepEqual(troopPageConditionSummary(conditions), [
+      'Turn 1+2X',
+      'Enemy #2 HP <= 25%',
+    ]);
+    assert.deepEqual(troopPageConditionSummary(conditions, 'zh-CN'), [
       '回合 1+2X',
       '敌人 #2 HP <= 25%',
     ]);
@@ -122,6 +126,9 @@ describe('rmmvDatabaseEditor helpers', () => {
     assert.deepEqual((withSwitch.conditions as Record<string, unknown>).switchId, 3);
     assert.equal(setTroopPageSpan(withSwitch, 2).span, 2);
     assert.deepEqual(summarizeMvCommandList([{ code: 117, indent: 1, parameters: [2] }]), [
+      '  code 117 · 1 parameters',
+    ]);
+    assert.deepEqual(summarizeMvCommandList([{ code: 117, indent: 1, parameters: [2] }], 8, 'zh-CN'), [
       '  code 117 · 1 参数',
     ]);
   });
@@ -131,7 +138,8 @@ describe('rmmvDatabaseEditor helpers', () => {
     assert.deepEqual(normalizeAnimationFrames([[[1], 'bad']]), [[[1, 0, 0, 100, 0, 0, 255, 0], [0, 0, 0, 100, 0, 0, 255, 0]]]);
 
     const withFrame = appendAnimationFrame([]);
-    assert.equal(animationFramesSummary(withFrame), '1 帧 · 单帧最多 1 个 cell');
+    assert.equal(animationFramesSummary(withFrame), '1 frames · max 1 cells per frame');
+    assert.equal(animationFramesSummary(withFrame, 'zh-CN'), '1 帧 · 单帧最多 1 个 cell');
     const withCell = appendAnimationFrameCell(withFrame, 0);
     const edited = setAnimationFrameCellValue(withCell, 0, 1, 6, 128);
     assert.equal(edited[0][1][6], 128);

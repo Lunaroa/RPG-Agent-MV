@@ -38,7 +38,11 @@ describe('stream segment content updates', () => {
     stream.resetState()
 
     stream.replaySessionEvents([
-      { type: 'playtest_run', sequence: 1, runId: 'run-1', status: 'starting', phase: 'start' },
+      {
+        type: 'playtest_run', sequence: 1, runId: 'run-1', status: 'starting', phase: 'start',
+        mode: 'battle_test', troopId: 3, troopName: 'Sample Troop', temporaryProject: true,
+        stagingIncluded: true,
+      },
       { type: 'playtest_run', sequence: 2, runId: 'run-1', status: 'running', phase: 'update', pid: 4200 },
       { type: 'playtest_run', sequence: 3, runId: 'run-1', status: 'exited', phase: 'done', exitCode: 0 },
     ])
@@ -47,6 +51,11 @@ describe('stream segment content updates', () => {
     assert.equal(cards.length, 1)
     assert.equal(cards[0]?.metadata?.status, 'exited')
     assert.equal(cards[0]?.metadata?.pid, 4200)
+    assert.equal(cards[0]?.metadata?.mode, 'battle_test')
+    assert.equal(cards[0]?.metadata?.troopId, 3)
+    assert.equal(cards[0]?.metadata?.troopName, 'Sample Troop')
+    assert.equal(cards[0]?.metadata?.temporaryProject, true)
+    assert.equal(cards[0]?.metadata?.stagingIncluded, true)
 
     const persisted = JSON.parse(JSON.stringify(cards))
     stream.restoreSegments([...persisted, ...persisted])

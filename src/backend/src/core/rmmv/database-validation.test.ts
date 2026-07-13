@@ -159,6 +159,79 @@ describe("RMMV prospective database validation", () => {
     assert.ok(issuePaths(snapshot).includes("enemies[1].dropItems[0].dataId"));
   });
 
+  test("validates standard enemy action conditions and preserves unknown plugin conditions as warnings", () => {
+    const snapshot = validSnapshot();
+    const enemy = (snapshot.enemies as Array<Record<string, unknown> | null>)[1]!;
+    enemy.actions = [
+      { conditionParam1: 0, conditionParam2: 0, conditionType: 0, rating: 5, skillId: 1 },
+      { conditionParam1: 1, conditionParam2: 3, conditionType: 1, rating: 5, skillId: 1 },
+      { conditionParam1: 0.25, conditionParam2: 0.75, conditionType: 2, rating: 9, skillId: 1 },
+      { conditionParam1: 0.1, conditionParam2: 1, conditionType: 3, rating: 5, skillId: 1 },
+      { conditionParam1: 1, conditionParam2: 0, conditionType: 4, rating: 5, skillId: 1 },
+      { conditionParam1: 12, conditionParam2: 0, conditionType: 5, rating: 5, skillId: 1 },
+      { conditionParam1: 1, conditionParam2: 0, conditionType: 6, rating: 1, skillId: 1 },
+      { conditionParam1: 0, conditionParam2: 0, conditionType: 99, rating: 5, skillId: 1 },
+    ];
+
+    const valid = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.equal(valid.ok, true, valid.issues.map((issue) => `${issue.code}: ${issue.message}`).join("\n"));
+    assert.ok(valid.issues.some((issue) =>
+      issue.code === "DB_PLUGIN_ENEMY_ACTION_CONDITION" && issue.severity === "warning"
+    ));
+
+    enemy.actions = [
+      { conditionParam1: 0.8, conditionParam2: 0.2, conditionType: 3, rating: 10, skillId: 1 },
+      { conditionParam1: 2, conditionParam2: 0, conditionType: 4, rating: 5, skillId: 1 },
+      { conditionParam1: 2, conditionParam2: 0, conditionType: 6, rating: 5, skillId: 1 },
+      { conditionParam1: -1, conditionParam2: 0, conditionType: 1, rating: 5, skillId: 1 },
+    ];
+    const invalid = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.equal(invalid.ok, false);
+    const paths = invalid.issues.map((issue) => issue.source.path);
+    assert.ok(paths.includes("enemies[1].actions[0].conditionParam1"));
+    assert.ok(paths.includes("enemies[1].actions[0].rating"));
+    assert.ok(paths.includes("enemies[1].actions[1].conditionParam1"));
+    assert.ok(paths.includes("enemies[1].actions[2].conditionParam1"));
+    assert.ok(paths.includes("enemies[1].actions[3].conditionParam1"));
+  });
+
+  test("validates equipment against effective equip types and actor or class dual wield", () => {
+    const snapshot = validSnapshot();
+    const actor = (snapshot.actors as Array<Record<string, unknown> | null>)[1]!;
+    const classEntry = (snapshot.classes as Array<Record<string, unknown> | null>)[1]!;
+    const armor = (snapshot.armors as Array<Record<string, unknown> | null>)[1]!;
+
+    classEntry.traits = [{ code: 55, dataId: 1, value: 1 }];
+    assert.equal(validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] }).ok, true);
+
+    classEntry.traits = [];
+    armor.etypeId = 3;
+    const mismatch = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.equal(mismatch.ok, false);
+    assert.ok(mismatch.issues.some((issue) =>
+      issue.code === "DB_EQUIPMENT_SLOT_TYPE" && issue.source.path === "actors[1].equips[1]"
+    ));
+
+    armor.etypeId = 2;
+    actor.equips = [1, 1, 0, 0, 0, 99];
+    const pluginSlot = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.equal(pluginSlot.ok, true);
+    assert.ok(pluginSlot.issues.some((issue) =>
+      issue.code === "DB_PLUGIN_EQUIPMENT_SLOT" && issue.severity === "warning"
+    ));
+  });
+
+  test("validates System Battle Test actor levels from 1 through 99", () => {
+    const snapshot = validSnapshot();
+    const battlers = (snapshot.system as Record<string, unknown>).testBattlers as Array<Record<string, unknown>>;
+    battlers[0].level = 100;
+    const result = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.ok(result.issues.some((issue) => (
+      issue.code === "DB_TEST_BATTLER_LEVEL"
+      && issue.source.path === "system.testBattlers[0].level"
+    )));
+  });
+
   test("reports missing standard references at exact source paths", () => {
     const snapshot = validSnapshot();
     (snapshot.actors as Array<Record<string, unknown> | null>)[1]!.classId = 2;
@@ -234,6 +307,37 @@ describe("RMMV prospective database validation", () => {
     assert.ok(changed.issues.some((issue) =>
       issue.code === "DB_NEW_ENTRY_OVER_LIMIT" && issue.source.path === "skills[2002]"
     ));
+  });
+
+  test("allows reducing legacy troop and test-party overages but blocks extending them", () => {
+    const before = validSnapshot();
+    const troop = (before.troops as Array<Record<string, unknown> | null>)[1]!;
+    troop.members = Array.from({ length: 9 }, () => ({ enemyId: 1, hidden: false, x: 408, y: 436 }));
+    (before.system as Record<string, unknown>).testBattlers = Array.from({ length: 5 }, () => ({
+      actorId: 1,
+      equips: [1, 1],
+      level: 1,
+    }));
+
+    const reduced = structuredClone(before);
+    (reduced.troops as Array<Record<string, unknown> | null>)[1]!.members =
+      ((reduced.troops as Array<Record<string, unknown> | null>)[1]!.members as unknown[]).slice(0, 8);
+    (reduced.system as Record<string, unknown>).testBattlers =
+      ((reduced.system as Record<string, unknown>).testBattlers as unknown[]).slice(0, 4);
+    assert.equal(validateRmmvDatabaseTransition(before, reduced, { mapIds: [1] }).ok, true);
+
+    const extended = structuredClone(before);
+    ((extended.troops as Array<Record<string, unknown> | null>)[1]!.members as unknown[]).push({
+      enemyId: 1,
+      hidden: false,
+      x: 408,
+      y: 436,
+    });
+    ((extended.system as Record<string, unknown>).testBattlers as unknown[]).push({ actorId: 1, equips: [1, 1], level: 1 });
+    const invalid = validateRmmvDatabaseTransition(before, extended, { mapIds: [1] });
+    assert.equal(invalid.ok, false);
+    assert.ok(invalid.issues.some((issue) => issue.code === "DB_TROOP_MEMBER_LIMIT" && issue.severity === "error"));
+    assert.ok(invalid.issues.some((issue) => issue.code === "DB_TEST_BATTLER_LIMIT" && issue.severity === "error"));
   });
 
   test("validates the final batch state so a record may reference another record created in the same batch", () => {

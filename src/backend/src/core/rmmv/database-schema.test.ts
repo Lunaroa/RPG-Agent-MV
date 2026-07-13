@@ -94,6 +94,14 @@ describe("RMMV database schema registry", () => {
     }
   });
 
+  test("declares the conditional State and Switch targets used by enemy actions", () => {
+    const reference = getRmmvDatabaseSchema("Enemies").references.find(
+      (field) => field.path === "actions[].conditionParam1",
+    );
+    assert.equal(reference?.target, "States/Switches");
+    assert.match(reference?.note || "", /condition type/i);
+  });
+
   test("validation fails fast for unknown groups and invalid entry ids", () => {
     assert.throws(() => getRmmvDatabaseSchema("MapInfos"), /Unknown RMMV database group/);
     assert.throws(() => getRmmvDatabaseSchemaByKey("bogus" as never), /Unknown RMMV database table/);

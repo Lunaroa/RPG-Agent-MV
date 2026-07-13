@@ -2,19 +2,21 @@
   <article class="playtest-card" :class="statusTone">
     <div class="playtest-head">
       <Gamepad2 :size="15" :stroke-width="1.7" aria-hidden="true" />
-      <strong>{{ t('playtest.card.title') }}</strong>
+      <strong>{{ isBattleTest ? t('playtest.card.battleTitle') : t('playtest.card.title') }}</strong>
       <span class="playtest-status">{{ statusLabel }}</span>
     </div>
 
     <div class="playtest-details">
       <span v-if="projectName">{{ projectName }}</span>
+      <span v-if="isBattleTest && troopName">{{ troopName }}</span>
+      <span v-if="isBattleTest">{{ t('playtest.card.stagedFiles', { count: stagedFileCount }) }}</span>
       <span v-if="pid">PID {{ pid }}</span>
       <span v-if="duration">{{ duration }}</span>
       <span v-if="exitCode !== null">exit={{ exitCode }}</span>
     </div>
 
     <p v-if="errorText" class="playtest-error">{{ errorText }}</p>
-    <p class="playtest-source">{{ t('playtest.card.sourceOnly') }}</p>
+    <p class="playtest-source">{{ isBattleTest ? t('playtest.card.battleIsolation') : t('playtest.card.sourceOnly') }}</p>
 
     <div class="playtest-foot">
       <span>{{ t('playtest.card.lifecycleOnly') }}</span>
@@ -47,6 +49,9 @@ const { t } = useI18n()
 const revealing = ref(false)
 const runId = computed(() => String(props.run.runId || '').trim())
 const status = computed(() => String(props.run.status || 'starting'))
+const isBattleTest = computed(() => props.run.mode === 'battle_test')
+const troopName = computed(() => String(props.run.troopName || '').trim())
+const stagedFileCount = computed(() => Number(props.run.stagedFileCount || 0))
 const pid = computed(() => Number(props.run.pid) || 0)
 const exitCode = computed(() => props.run.exitCode === null || props.run.exitCode === undefined
   ? null

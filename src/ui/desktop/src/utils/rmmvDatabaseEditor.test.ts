@@ -2,20 +2,25 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { reactive } from 'vue';
 import {
+  alignTroopMembers,
   animationFramesSummary,
   appendAnimationFrame,
   appendAnimationFrameCell,
   appendAnimationTiming,
   applyClassParamLinearCurve,
   appendStringListItem,
+  autoNameTroop,
   canRemoveStringListItem,
   cloneDatabaseEditorRecord,
+  enemyActionConditionPercentage,
+  isStandardEnemyActionConditionType,
   isMvStringListField,
   normalizeAnimationFrameCell,
   normalizeAnimationFrames,
   normalizeAnimationTiming,
   normalizeAnimationTimings,
   normalizeClassParamCurves,
+  normalizeTroopMembers,
   normalizeTroopPageConditions,
   normalizeStringList,
   normalizeTermsArray,
@@ -26,10 +31,13 @@ import {
   setAnimationTimingSeValue,
   setAnimationTimingValue,
   setClassParamCurveLevel,
+  setEnemyActionConditionParameter,
+  setEnemyActionConditionType,
   setStringListItem,
   setTroopPageCondition,
   setTroopPageSpan,
   sortedTermsMessageKeys,
+  standardBlankTroopPage,
   stringListHasReservedZero,
   summarizeMvCommandList,
   troopPageConditionSummary,
@@ -131,6 +139,66 @@ describe('rmmvDatabaseEditor helpers', () => {
     assert.deepEqual(summarizeMvCommandList([{ code: 117, indent: 1, parameters: [2] }], 8, 'zh-CN'), [
       '  code 117 · 1 参数',
     ]);
+  });
+
+  it('edits all standard enemy action conditions with MV storage semantics', () => {
+    const base = { skillId: 1, conditionType: 0, conditionParam1: 0, conditionParam2: 0, rating: 5, plugin: true };
+    assert.equal(isStandardEnemyActionConditionType(6), true);
+    assert.equal(isStandardEnemyActionConditionType(12), false);
+    assert.deepEqual(setEnemyActionConditionType(base, 2), {
+      ...base,
+      conditionType: 2,
+      conditionParam1: 0,
+      conditionParam2: 1,
+    });
+    const hp = setEnemyActionConditionParameter(setEnemyActionConditionType(base, 2), 1, 25);
+    assert.equal(hp.conditionParam1, 0.25);
+    assert.equal(enemyActionConditionPercentage(hp, 1), 25);
+    assert.equal(setEnemyActionConditionParameter(setEnemyActionConditionType(base, 5), 1, 120).conditionParam1, 99);
+    assert.equal(setEnemyActionConditionType(base, 4, { stateId: 3 }).conditionParam1, 3);
+    assert.equal(setEnemyActionConditionType(base, 6, { switchId: 4 }).conditionParam1, 4);
+    assert.throws(() => setEnemyActionConditionType(base, 4), /state reference/i);
+    const unrelatedInvalidFields = setEnemyActionConditionType({ ...base, skillId: 0, rating: 10 }, 1);
+    assert.equal(unrelatedInvalidFields.skillId, 0);
+    assert.equal(unrelatedInvalidFields.rating, 10);
+  });
+
+  it('aligns, names, and clears troop data without reordering or plugin-field loss', () => {
+    const members = [
+      { enemyId: 2, x: 1, y: 2, hidden: false, plugin: 'a' },
+      { enemyId: 1, x: 3, y: 4, hidden: true, plugin: 'b' },
+      { enemyId: 2, x: 5, y: 6, hidden: false, plugin: 'c' },
+    ];
+    const aligned = alignTroopMembers(members);
+    assert.deepEqual(aligned.map((member) => [member.enemyId, member.x, member.y]), [
+      [2, 264, 436],
+      [1, 408, 436],
+      [2, 552, 436],
+    ]);
+    assert.equal(aligned[0].plugin, 'a');
+    assert.deepEqual(normalizeTroopMembers([
+      { enemyId: 0, x: -12, y: 700, hidden: false, plugin: 'legacy' },
+    ])[0], { enemyId: 0, x: -12, y: 700, hidden: false, plugin: 'legacy' });
+    assert.equal(autoNameTroop(members, [{ id: 1, name: 'Bat' }, { id: 2, name: 'Slime' }]), 'Slime*2, Bat');
+    assert.throws(() => autoNameTroop([{ enemyId: 9 }], []), /#9/);
+    assert.deepEqual(standardBlankTroopPage(), {
+      conditions: {
+        turnEnding: false,
+        turnValid: false,
+        enemyValid: false,
+        actorValid: false,
+        switchValid: false,
+        turnA: 0,
+        turnB: 0,
+        enemyIndex: 0,
+        enemyHp: 50,
+        actorId: 1,
+        actorHp: 50,
+        switchId: 1,
+      },
+      list: [{ code: 0, indent: 0, parameters: [] }],
+      span: 0,
+    });
   });
 
   it('normalizes and edits Animations frames one cell field at a time', () => {

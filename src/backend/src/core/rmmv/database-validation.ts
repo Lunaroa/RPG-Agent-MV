@@ -10,6 +10,11 @@ import {
   type RmmvEventCommandReference,
   type RmmvEventReferenceTarget,
 } from "./event-command-references.ts";
+import {
+  hasStandardDualWield,
+  MV_WEAPON_EQUIP_TYPE_ID,
+  standardEquipSlotTypeIds,
+} from "./equipment-slots.ts";
 
 export type RmmvDatabaseSnapshot = Partial<Record<RmmvDatabaseTableKey, unknown>>;
 
@@ -84,6 +89,8 @@ export function validateRmmvDatabaseTransition(
       });
     }
   }
+
+  validateCollectionGrowth(before, after, issues);
 
   return completeResult(issues, result.limitations);
 }
@@ -270,6 +277,7 @@ class SnapshotValidator {
   private validateEnemies(): void {
     this.forEachRecord("enemies", (enemy, id) => {
       forEachRecordValue(enemy.actions, (action, index) => {
+        const path = `enemies[${id}].actions[${index}]`;
         this.recordReference(
           "enemies",
           id,
@@ -277,6 +285,7 @@ class SnapshotValidator {
           "skills",
           action.skillId,
         );
+        this.validateEnemyActionCondition(action, id, path);
       });
       forEachRecordValue(enemy.dropItems, (drop, index) => {
         const path = `enemies[${id}].dropItems[${index}]`;
@@ -298,6 +307,16 @@ class SnapshotValidator {
   private validateTroops(): void {
     this.forEachRecord("troops", (troop, id) => {
       const members = asArray(troop.members);
+      if (members.length > 8) {
+        this.add(
+          "DB_TROOP_MEMBER_LIMIT",
+          "troops",
+          `troops[${id}].members`,
+          `Troop ${id} contains ${members.length} members; RPG Maker MV supports at most 8. Existing data is readable but must not be extended.`,
+          id,
+          "warning",
+        );
+      }
       forEachRecordValue(members, (member, index) => {
         this.recordReference(
           "troops",
@@ -372,8 +391,28 @@ class SnapshotValidator {
     forEachValue(system.partyMembers, (actorId, index) => {
       this.recordReference("system", undefined, `system.partyMembers[${index}]`, "actors", actorId);
     });
-    forEachRecordValue(system.testBattlers, (battler, index) => {
+    const testBattlers = asArray(system.testBattlers);
+    if (testBattlers.length > 4) {
+      this.add(
+        "DB_TEST_BATTLER_LIMIT",
+        "system",
+        "system.testBattlers",
+        `System contains ${testBattlers.length} test battlers; RPG Maker MV Battle Test supports at most 4. Existing data is readable but must not be extended.`,
+        undefined,
+        "warning",
+      );
+    }
+    forEachRecordValue(testBattlers, (battler, index) => {
       this.recordReference("system", undefined, `system.testBattlers[${index}].actorId`, "actors", battler.actorId);
+      this.fixedRange(
+        "DB_TEST_BATTLER_LEVEL",
+        "system",
+        undefined,
+        `system.testBattlers[${index}].level`,
+        battler.level,
+        1,
+        99,
+      );
       this.validateEquipment(
         "system",
         undefined,
@@ -654,20 +693,98 @@ class SnapshotValidator {
     actorId: number | null,
   ): void {
     if (!Array.isArray(value)) return;
-    const dualWield = actorId !== null && this.actorHasDualWield(actorId);
+    const slotTypeIds = standardEquipSlotTypeIds(this.system()?.equipTypes, actorId !== null && this.actorHasDualWield(actorId));
     value.forEach((equipmentId, index) => {
-      const target: RmmvDatabaseTableKey = index === 0 || (index === 1 && dualWield) ? "weapons" : "armors";
-      this.recordReference(sourceTable, sourceId, `${path}[${index}]`, target, equipmentId, [0]);
+      const equipmentPath = `${path}[${index}]`;
+      const slotTypeId = slotTypeIds[index];
+      if (slotTypeId === undefined) {
+        if (equipmentId !== 0 && equipmentId !== null && equipmentId !== undefined) {
+          this.add(
+            "DB_PLUGIN_EQUIPMENT_SLOT",
+            sourceTable,
+            equipmentPath,
+            "Equipment beyond the standard System.equipTypes slots is preserved but its plugin semantics are not validated.",
+            sourceId,
+            "warning",
+          );
+        }
+        return;
+      }
+      const target: RmmvDatabaseTableKey = slotTypeId === MV_WEAPON_EQUIP_TYPE_ID ? "weapons" : "armors";
+      this.recordReference(sourceTable, sourceId, equipmentPath, target, equipmentId, [0]);
+      const equipmentRecord = asInteger(equipmentId) === null ? null : this.record(target, Number(equipmentId));
+      if (equipmentRecord && asInteger(equipmentRecord.etypeId) !== slotTypeId) {
+        this.add(
+          "DB_EQUIPMENT_SLOT_TYPE",
+          sourceTable,
+          equipmentPath,
+          `Equipment type ${String(equipmentRecord.etypeId)} does not match slot type ${slotTypeId}.`,
+          sourceId,
+        );
+      }
     });
   }
 
   private actorHasDualWield(actorId: number): boolean {
     const actor = this.record("actors", actorId);
     if (!actor) return false;
-    if (hasTrait(actor.traits, 55, 1)) return true;
     const classId = asInteger(actor.classId);
     const classEntry = classId === null ? null : this.record("classes", classId);
-    return Boolean(classEntry && hasTrait(classEntry.traits, 55, 1));
+    return hasStandardDualWield(actor, classEntry);
+  }
+
+  private validateEnemyActionCondition(action: Record<string, unknown>, enemyId: number, path: string): void {
+    this.fixedRange("DB_ENEMY_ACTION_RATING", "enemies", enemyId, `${path}.rating`, action.rating, 1, 9);
+    const conditionType = asInteger(action.conditionType);
+    if (conditionType === null) {
+      this.add("DB_ENEMY_ACTION_CONDITION", "enemies", `${path}.conditionType`, "Enemy action condition type must be an integer.", enemyId);
+      return;
+    }
+    if (conditionType < 0 || conditionType > 6) {
+      this.add(
+        "DB_PLUGIN_ENEMY_ACTION_CONDITION",
+        "enemies",
+        `${path}.conditionType`,
+        `Condition type ${conditionType} is not a standard RPG Maker MV condition and is preserved without plugin-semantic validation.`,
+        enemyId,
+        "warning",
+      );
+      return;
+    }
+    if (conditionType === 1) {
+      this.nonnegativeInteger("enemies", enemyId, `${path}.conditionParam1`, action.conditionParam1);
+      this.nonnegativeInteger("enemies", enemyId, `${path}.conditionParam2`, action.conditionParam2);
+    } else if (conditionType === 2 || conditionType === 3) {
+      const minimum = asFiniteNumber(action.conditionParam1);
+      const maximum = asFiniteNumber(action.conditionParam2);
+      if (minimum === null || minimum < 0 || minimum > 1) {
+        this.add("DB_ENEMY_ACTION_CONDITION", "enemies", `${path}.conditionParam1`, "HP/MP condition minimum must be from 0 through 1.", enemyId);
+      }
+      if (maximum === null || maximum < 0 || maximum > 1) {
+        this.add("DB_ENEMY_ACTION_CONDITION", "enemies", `${path}.conditionParam2`, "HP/MP condition maximum must be from 0 through 1.", enemyId);
+      }
+      if (minimum !== null && maximum !== null && minimum > maximum) {
+        this.add("DB_ENEMY_ACTION_CONDITION", "enemies", `${path}.conditionParam1`, "HP/MP condition minimum must not exceed its maximum.", enemyId);
+      }
+    } else if (conditionType === 4) {
+      this.recordReference("enemies", enemyId, `${path}.conditionParam1`, "states", action.conditionParam1);
+    } else if (conditionType === 5) {
+      this.fixedRange("DB_ENEMY_ACTION_CONDITION", "enemies", enemyId, `${path}.conditionParam1`, action.conditionParam1, 1, 99);
+    } else if (conditionType === 6) {
+      this.switchReference("enemies", enemyId, `${path}.conditionParam1`, action.conditionParam1);
+    }
+  }
+
+  private nonnegativeInteger(
+    table: RmmvDatabaseIssueTable,
+    id: number | undefined,
+    path: string,
+    value: unknown,
+  ): void {
+    const integer = asInteger(value);
+    if (integer === null || integer < 0) {
+      this.add("DB_ENEMY_ACTION_CONDITION", table, path, "Value must be a non-negative integer.", id);
+    }
   }
 
   private recordReference(
@@ -871,6 +988,10 @@ function asInteger(value: unknown): number | null {
   return Number.isInteger(value) ? Number(value) : null;
 }
 
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -890,8 +1011,36 @@ function forEachValue(value: unknown, visit: (item: unknown, index: number) => v
   value.forEach(visit);
 }
 
-function hasTrait(value: unknown, code: number, dataId: number): boolean {
-  return Array.isArray(value) && value.some((trait) =>
-    isRecord(trait) && trait.code === code && trait.dataId === dataId
-  );
+function validateCollectionGrowth(
+  before: RmmvDatabaseSnapshot,
+  after: RmmvDatabaseSnapshot,
+  issues: RmmvDatabaseSemanticIssue[],
+): void {
+  const beforeTroops = asArray(before.troops);
+  const afterTroops = asArray(after.troops);
+  for (let id = 1; id < afterTroops.length; id += 1) {
+    const beforeMembers = isRecord(beforeTroops[id]) ? asArray(beforeTroops[id].members).length : 0;
+    const afterMembers = isRecord(afterTroops[id]) ? asArray(afterTroops[id].members).length : 0;
+    if (afterMembers > 8 && afterMembers > beforeMembers) {
+      issues.push({
+        code: "DB_TROOP_MEMBER_LIMIT",
+        severity: "error",
+        source: { table: "troops", id, path: `troops[${id}].members` },
+        message: `Troop member count cannot grow from ${beforeMembers} to ${afterMembers}; RPG Maker MV supports at most 8.`,
+      });
+    }
+  }
+
+  const beforeSystem = isRecord(before.system) ? before.system : null;
+  const afterSystem = isRecord(after.system) ? after.system : null;
+  const beforeBattlers = asArray(beforeSystem?.testBattlers).length;
+  const afterBattlers = asArray(afterSystem?.testBattlers).length;
+  if (afterBattlers > 4 && afterBattlers > beforeBattlers) {
+    issues.push({
+      code: "DB_TEST_BATTLER_LIMIT",
+      severity: "error",
+      source: { table: "system", path: "system.testBattlers" },
+      message: `Test battler count cannot grow from ${beforeBattlers} to ${afterBattlers}; RPG Maker MV supports at most 4.`,
+    });
+  }
 }

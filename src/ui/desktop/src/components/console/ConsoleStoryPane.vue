@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { ArrowRight } from '@element-plus/icons-vue';
-import { ElMessageBox } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { useProjectStore } from '../../stores/project';
 import { useRouter } from 'vue-router';
 import {
@@ -9,6 +9,8 @@ import {
   maps as mapsApi,
   projectAssets,
   projectManagement,
+  playtest,
+  type InteractiveBattleTestBattler,
   type EditorProjectCatalog,
   type ManagedAssetDetail,
   type ProjectManagedEntry,
@@ -29,6 +31,7 @@ import EventEditorDialog from '../editor/EventEditorDialog.vue';
 import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
 import CommonEventDetailEditor from './CommonEventDetailEditor.vue';
 import DatabaseEntryDetailEditor from './DatabaseEntryDetailEditor.vue';
+import BattleTestSetupDialog from './BattleTestSetupDialog.vue';
 import StagedEntryInspection from './StagedEntryInspection.vue';
 import MapEventCommandPreview from './MapEventCommandPreview.vue';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
@@ -270,6 +273,11 @@ const pmDetail = ref<PmDetail | null>(null);
 const detailDraft = ref<unknown>(null);
 const detailBusy = ref(false);
 const detailError = ref('');
+const battleTestDialogVisible = ref(false);
+const battleTestBusy = ref(false);
+const temporaryBattleback1Name = ref('');
+const temporaryBattleback2Name = ref('');
+let battleContextProject = '';
 const detailEditable = computed(() => pmDetail.value?.kind === 'managed');
 const draftHistory = createDraftHistory<unknown>(null);
 const draftUndoCount = ref(0);
@@ -288,6 +296,14 @@ const canRevertCurrentStagedEntry = computed(() => (
   && Boolean(pmDetail.value.entry.inspection?.changed)
   && !pmDetail.value.entry.inspection?.operationId
 ));
+const currentTroopName = computed(() => {
+  const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
+  if (!entry || entry.group !== 'Troops') return '';
+  const draft = detailDraft.value && typeof detailDraft.value === 'object' && !Array.isArray(detailDraft.value)
+    ? detailDraft.value as Record<string, unknown>
+    : {};
+  return String(draft.name || `#${entry.id}`);
+});
 const eventPreviewBusy = ref(false);
 const eventPreviewError = ref('');
 const eventPreviewEvent = ref<MvEditorEvent | null>(null);
@@ -384,8 +400,19 @@ watch(() => projectStore.currentProject, () => {
   closeEventEditor();
   resetCatalog();
   stagingDirty.value = false;
+  battleTestDialogVisible.value = false;
+  temporaryBattleback1Name.value = '';
+  temporaryBattleback2Name.value = '';
+  battleContextProject = '';
   if (projectStore.currentProject) void loadData();
   else workbenchUi.sbStagingDirty = false;
+});
+
+watch(editorCatalog, (catalog) => {
+  if (!catalog || catalog.project === battleContextProject) return;
+  battleContextProject = catalog.project;
+  temporaryBattleback1Name.value = catalog.battle.battleback1Name;
+  temporaryBattleback2Name.value = catalog.battle.battleback2Name;
 });
 
 onMounted(() => {
@@ -1535,6 +1562,61 @@ async function saveDetail() {
   }
 }
 
+async function openBattleTestSetup(): Promise<void> {
+  const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
+  if (!entry || entry.kind !== 'database' || entry.group !== 'Troops') return;
+  if (canUndoDraft.value) {
+    ElMessage.warning(t('battleTest.unsavedDraft'));
+    return;
+  }
+  const troop = detailDraft.value && typeof detailDraft.value === 'object' && !Array.isArray(detailDraft.value)
+    ? detailDraft.value as Record<string, unknown>
+    : {};
+  if (Array.isArray(troop.members) && troop.members.length > 8) {
+    ElMessage.error(t('battleTest.tooManyMembers'));
+    return;
+  }
+  await ensureCatalog();
+  battleTestDialogVisible.value = true;
+}
+
+async function startBattleTest(configuration: {
+  battlers: InteractiveBattleTestBattler[];
+  battleback1Name: string;
+  battleback2Name: string;
+}): Promise<void> {
+  const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
+  const project = projectStore.currentProject;
+  if (!entry || entry.kind !== 'database' || entry.group !== 'Troops' || !project || battleTestBusy.value) return;
+  if (canUndoDraft.value) {
+    battleTestDialogVisible.value = false;
+    ElMessage.warning(t('battleTest.unsavedDraft'));
+    return;
+  }
+  battleTestBusy.value = true;
+  try {
+    const result = await playtest.start({
+      mode: 'battle_test',
+      project,
+      troopId: entry.id,
+      battlers: configuration.battlers,
+      battleback1Name: configuration.battleback1Name,
+      battleback2Name: configuration.battleback2Name,
+    });
+    if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
+      throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'));
+    }
+    temporaryBattleback1Name.value = configuration.battleback1Name;
+    temporaryBattleback2Name.value = configuration.battleback2Name;
+    battleTestDialogVisible.value = false;
+    ElMessage.success(t('battleTest.started'));
+  } catch (error) {
+    ElMessage.error(t('battleTest.failed', { message: (error as Error).message }));
+  } finally {
+    battleTestBusy.value = false;
+  }
+}
+
 function openMapInEditor(mapId: number, eventId?: number) {
   const query: Record<string, string> = { mapId: String(mapId) };
   if (eventId) query.eventId = String(eventId);
@@ -2071,7 +2153,12 @@ function detailTitle(): string {
               :schema="pmDetail.entry.schema"
               :focus-field="pmDetail.entry.group && isDocumentSubFieldGroup(pmDetail.entry.group) ? selectedDbSubField : undefined"
               :load-image="loadImage"
+              :battleback1-name="temporaryBattleback1Name"
+              :battleback2-name="temporaryBattleback2Name"
               @update:model-value="updateDetailDraft"
+              @update:battleback1-name="temporaryBattleback1Name = $event"
+              @update:battleback2-name="temporaryBattleback2Name = $event"
+              @request-battle-test="openBattleTestSetup"
             />
           </div>
           <div v-else-if="pmDetail && detailEditable" class="pm-detail-body">
@@ -2194,6 +2281,17 @@ function detailTitle(): string {
       :overview="eventOverview"
       @close="closeEventEditor"
       @save="saveEvent"
+    />
+
+    <BattleTestSetupDialog
+      :visible="battleTestDialogVisible"
+      :busy="battleTestBusy"
+      :catalog="editorCatalog"
+      :troop-name="currentTroopName"
+      :battleback1-name="temporaryBattleback1Name"
+      :battleback2-name="temporaryBattleback2Name"
+      @close="battleTestDialogVisible = false"
+      @start="startBattleTest"
     />
 
     <teleport to="body">

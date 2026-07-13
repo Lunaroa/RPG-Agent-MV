@@ -11,6 +11,7 @@ import {
   type InteractivePlaytestDependencies,
   type InteractivePlaytestSpawnOptions,
 } from './interactive-playtest-service.ts';
+import type { BattleTestProjectPreparation } from './battle-test-preparation.ts';
 
 describe('interactive desktop playtest lifecycle', { concurrency: false }, () => {
   let root: string;
@@ -220,6 +221,94 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(result.run?.status, 'stopped');
     assert.equal(child.killCalls, 1);
   });
+
+  test('launches Battle Test only from the isolated staged copy with the fixed MV argument', async () => {
+    const child = new FakeChild();
+    const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
+    const isolated = createBattlePreparation(root, project);
+    let cleanupCalls = 0;
+    const service = createService(root, {
+      child,
+      spawnCalls,
+      prepareBattleTest: () => isolated,
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      cleanupIsolated: (preparation) => {
+        cleanupCalls += 1;
+        fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
+      },
+    });
+
+    const starting = service.start(project, {
+      mode: 'battle_test',
+      troopId: 3,
+      battlers: [{ actorId: 1, level: 8, equips: [1, 0] }],
+      battleback1Name: 'Field',
+      battleback2Name: 'Forest',
+    });
+    queueMicrotask(() => child.emitSpawn());
+    const running = await starting;
+    assert.equal(running.run?.mode, 'battle_test');
+    assert.equal(running.run?.troopId, 3);
+    assert.equal(running.run?.troopName, 'Sample Troop');
+    assert.equal(running.run?.stagingIncluded, true);
+    assert.equal(running.run?.sourceSaveRisk, false);
+    assert.equal(running.run?.temporaryProject, true);
+    assert.deepEqual(spawnCalls[0].args, ['test&btest']);
+    assert.equal(spawnCalls[0].executable, isolated.executable);
+    assert.equal(spawnCalls[0].options.cwd, isolated.temporaryProject);
+    assert.equal(cleanupCalls, 0);
+
+    child.emitExit(0, null);
+    const exited = service.current().run!;
+    assert.equal(exited.status, 'exited');
+    assert.equal(exited.sourceUnchanged, true);
+    assert.equal(exited.savesUnchanged, true);
+    assert.equal(exited.stagingUnchanged, true);
+    assert.equal(exited.temporaryProjectCleaned, true);
+    assert.equal(cleanupCalls, 1);
+    assert.equal(fs.existsSync(isolated.temporaryProject), false);
+  });
+
+  test('does not report Battle Test success when isolated cleanup fails', async () => {
+    const child = new FakeChild();
+    const isolated = createBattlePreparation(root, project);
+    let cleanupShouldFail = true;
+    let prepareCalls = 0;
+    const service = createService(root, {
+      child,
+      prepareBattleTest: () => {
+        prepareCalls += 1;
+        return isolated;
+      },
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      cleanupIsolated: (preparation) => {
+        if (cleanupShouldFail) throw new Error('injected isolated cleanup failure');
+        fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
+      },
+    });
+    const starting = service.start(project, {
+      mode: 'battle_test',
+      troopId: 3,
+      battlers: [{ actorId: 1, level: 8, equips: [1, 0] }],
+      battleback1Name: '',
+      battleback2Name: '',
+    });
+    queueMicrotask(() => child.emitSpawn());
+    await starting;
+    child.emitExit(0, null);
+    assert.equal(service.current().run?.status, 'failed');
+    assert.equal(service.current().run?.temporaryProjectCleaned, false);
+    assert.match(String(service.current().run?.error), /cleanup failure/i);
+
+    const blocked = await service.start(project, { mode: 'project' });
+    assert.match(String(blocked.error), /previous Battle Test temporary project/i);
+    assert.equal(prepareCalls, 1);
+
+    cleanupShouldFail = false;
+    const retried = await service.stop();
+    assert.equal(retried.run?.temporaryProjectCleaned, true);
+    assert.equal(fs.existsSync(isolated.temporaryProject), false);
+  });
 });
 
 class FakeChild extends EventEmitter implements InteractivePlaytestChild {
@@ -253,6 +342,9 @@ function createService(workflowRoot: string, options: {
   stagingStatus?: () => unknown;
   spawnCalls?: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }>;
   forceKill?: InteractivePlaytestDependencies['forceKillProcessTree'];
+  prepareBattleTest?: InteractivePlaytestDependencies['prepareBattleTest'];
+  verifyIsolatedSource?: InteractivePlaytestDependencies['verifyIsolatedSource'];
+  cleanupIsolated?: InteractivePlaytestDependencies['cleanupIsolated'];
 }): InteractivePlaytestService {
   return new InteractivePlaytestService(workflowRoot, {
     spawnProcess: (executable, args, spawnOptions) => {
@@ -264,11 +356,34 @@ function createService(workflowRoot: string, options: {
       ok: child.kill(),
     }),
     forceKillProcessTree: options.forceKill || (async () => ({ ok: true })),
+    ...(options.prepareBattleTest ? { prepareBattleTest: options.prepareBattleTest } : {}),
+    ...(options.verifyIsolatedSource ? { verifyIsolatedSource: options.verifyIsolatedSource } : {}),
+    ...(options.cleanupIsolated ? { cleanupIsolated: options.cleanupIsolated } : {}),
     randomUUID: () => '00000000-0000-4000-8000-000000000001',
     startupTimeoutMs: 10,
     stopGraceMs: 10,
     forceExitWaitMs: 10,
   });
+}
+
+function createBattlePreparation(_root: string, sourceProject: string): BattleTestProjectPreparation {
+  const temporaryProject = fs.mkdtempSync(path.join(os.tmpdir(), 'battle-test-copy-'));
+  const executable = path.join(temporaryProject, 'Game.exe');
+  fs.writeFileSync(executable, 'isolated runner', 'utf8');
+  return {
+    sourceProject,
+    temporaryProject,
+    sourceFingerprint: 'source-hash',
+    saveFingerprint: 'save-hash',
+    staging: { files: [{ relativePath: 'data/Troops.json', delete: false, draftHash: 'draft-hash' }], digest: 'staging-hash' },
+    savesExcluded: true,
+    executable,
+    troopId: 3,
+    troopName: 'Sample Troop',
+    battlers: [{ actorId: 1, level: 8, equips: [1, 0] }],
+    battleback1Name: 'Field',
+    battleback2Name: 'Forest',
+  };
 }
 
 function stagedStatus(draftHash: string): unknown {

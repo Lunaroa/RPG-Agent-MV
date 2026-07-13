@@ -29,6 +29,32 @@ describe('editor catalog service', () => {
       assert.equal(catalog.equipTypes[0].name, 'Weapon');
       assert.equal(catalog.actors[0].name, 'Hero');
       assert.equal(catalog.skills[0].name, 'Spark');
+      assert.deepEqual(catalog.battle, {
+        sideView: true,
+        battleback1Name: 'Grassland',
+        battleback2Name: 'Forest',
+        testBattlers: [{ actorId: 1, level: 7, equips: [1, 2, 0] }],
+        actorProfiles: [{
+          actorId: 1,
+          classId: 1,
+          initialLevel: 3,
+          maxLevel: 80,
+          initialEquips: [1, 2, 0],
+          equipSlotTypeIds: [1, 1, 3],
+          actorDualWield: false,
+          classDualWield: true,
+          dualWield: true,
+        }],
+        classProfiles: [{ classId: 1, dualWield: true }],
+      });
+      assert.deepEqual(catalog.weapons[0], { id: 1, name: 'Blade', etypeId: 1 });
+      assert.deepEqual(catalog.armors[0], { id: 1, name: 'Guard', etypeId: 2 });
+      assert.deepEqual(catalog.enemies[0], {
+        id: 1,
+        name: 'Slime',
+        battlerName: 'Slime',
+        battlerHue: 45,
+      });
       assertIncludes(catalog.assets.characters.map((asset) => asset.fileName), 'Hero.png');
       assertIncludes(catalog.assets.faces.map((asset) => asset.fileName), 'HeroFace.png');
       assertIncludes(catalog.assets.svActors.map((asset) => asset.fileName), 'HeroSv.png');
@@ -93,18 +119,39 @@ function writeFlatProject(project: string): void {
     skillTypes: [null, 'Magic'],
     weaponTypes: [null, 'Sword'],
     armorTypes: [null, 'Shield'],
-    equipTypes: [null, 'Weapon'],
+    equipTypes: [null, 'Weapon', 'Shield', 'Body'],
+    optSideView: true,
+    battleback1Name: 'Grassland',
+    battleback2Name: 'Forest',
+    testBattlers: [{ actorId: 1, level: 7, equips: [1, 2, 0] }],
   });
   writeJson(path.join(dataDir, 'MapInfos.json'), [null, { id: 1, name: 'Start', parentId: 0, order: 1 }]);
   writeJson(path.join(dataDir, 'Map001.json'), { width: 17, height: 13, tilesetId: 1, data: [], events: [null] });
-  writeJson(path.join(dataDir, 'Actors.json'), [null, { id: 1, name: 'Hero' }]);
-  writeJson(path.join(dataDir, 'Classes.json'), []);
+  writeJson(path.join(dataDir, 'Actors.json'), [null, {
+    id: 1,
+    name: 'Hero',
+    classId: 1,
+    initialLevel: 3,
+    maxLevel: 80,
+    equips: [1, 2, 0],
+    traits: [],
+  }]);
+  writeJson(path.join(dataDir, 'Classes.json'), [null, {
+    id: 1,
+    name: 'Fighter',
+    traits: [{ code: 55, dataId: 1, value: 1 }],
+  }]);
   writeJson(path.join(dataDir, 'Skills.json'), [null, { id: 1, name: 'Spark' }]);
   writeJson(path.join(dataDir, 'Items.json'), []);
-  writeJson(path.join(dataDir, 'Weapons.json'), []);
-  writeJson(path.join(dataDir, 'Armors.json'), []);
+  writeJson(path.join(dataDir, 'Weapons.json'), [null, { id: 1, name: 'Blade', etypeId: 1 }]);
+  writeJson(path.join(dataDir, 'Armors.json'), [null, { id: 1, name: 'Guard', etypeId: 2 }]);
   writeJson(path.join(dataDir, 'States.json'), []);
-  writeJson(path.join(dataDir, 'Enemies.json'), []);
+  writeJson(path.join(dataDir, 'Enemies.json'), [null, {
+    id: 1,
+    name: 'Slime',
+    battlerName: 'Slime',
+    battlerHue: 45,
+  }]);
   writeJson(path.join(dataDir, 'Troops.json'), []);
   writeJson(path.join(dataDir, 'Tilesets.json'), []);
   writeJson(path.join(dataDir, 'CommonEvents.json'), []);

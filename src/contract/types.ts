@@ -384,6 +384,14 @@ export interface ProjectManagedEntryResetResult {
   staging: unknown;
 }
 
+export interface ProjectManagedDatabaseResizeResult {
+  resized: true;
+  group: string;
+  previousMaximum: number;
+  maximum: number;
+  staging: unknown;
+}
+
 export type InteractivePlaytestRunStatus =
   | 'starting'
   | 'running'

@@ -483,6 +483,20 @@ export const STATE_MOTION_OPTIONS: SelectOption[] = [
   { value: 3, label: '死亡' },
 ];
 
+export const STATE_OVERLAY_OPTIONS: SelectOption[] = [
+  { value: 0, label: '无' },
+  { value: 1, label: '中毒' },
+  { value: 2, label: '黑暗' },
+  { value: 3, label: '沉默' },
+  { value: 4, label: '愤怒' },
+  { value: 5, label: '混乱' },
+  { value: 6, label: '魅惑' },
+  { value: 7, label: '睡眠' },
+  { value: 8, label: '麻痹' },
+  { value: 9, label: '诅咒' },
+  { value: 10, label: '恐惧' },
+];
+
 export const ANIMATION_POSITION_OPTIONS: SelectOption[] = [
   { value: 0, label: '头部' },
   { value: 1, label: '中央' },
@@ -701,6 +715,15 @@ const DATABASE_TEXT_BY_SOURCE_LABEL_BY_LOCALE: Record<ProductLanguage, Record<st
   瞬间: 'Moment',
   目标: 'Target',
   隐藏目标: 'Hide Target',
+  中毒: 'Poison',
+  黑暗: 'Blind',
+  沉默: 'Silence',
+  愤怒: 'Rage',
+  混乱: 'Confusion',
+  魅惑: 'Fascination',
+  麻痹: 'Paralysis',
+  诅咒: 'Curse',
+  恐惧: 'Fear',
   加算: 'Additive',
   正片叠底: 'Multiply',
   滤色: 'Screen',

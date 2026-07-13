@@ -97,6 +97,8 @@ interface DatabaseEntryPreview {
 interface DatabaseEntry {
   exists: boolean;
   count: number;
+  capacity?: number;
+  maxEntries?: number;
   named: { id: number; name: string; preview?: DatabaseEntryPreview }[];
 }
 
@@ -456,7 +458,12 @@ function summarizeDatabase(
   for (const schema of listRmmvDatabaseSchemas()) {
     const data = tables.get(schema.group);
     if (data === null) {
-      result[schema.group] = { exists: false, count: 0, named: [] };
+      result[schema.group] = {
+        exists: false,
+        count: 0,
+        ...(schema.maxEntries !== null ? { capacity: 0, maxEntries: schema.maxEntries } : {}),
+        named: [],
+      };
       continue;
     }
     if (!schema.isArrayTable) {
@@ -471,6 +478,8 @@ function summarizeDatabase(
     result[schema.group] = {
       exists: true,
       count: entries.length,
+      capacity: Math.max(0, (Array.isArray(data) ? data.length : 1) - 1),
+      ...(schema.maxEntries !== null ? { maxEntries: schema.maxEntries } : {}),
       named: entries
         .filter((entry) => Number(entry.id) > 0 && (includeUnnamed || entry.name))
         .map((entry) => databaseNamedEntry(Number(entry.id), String(entry.name || ""), summarizeDatabasePreview(schema.group, entry, tables)))

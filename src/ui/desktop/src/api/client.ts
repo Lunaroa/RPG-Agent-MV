@@ -198,6 +198,7 @@ declare global {
         getEntry(request: unknown, project?: string): Promise<unknown>;
         updateEntry(request: unknown, project?: string): Promise<unknown>;
         createEntry(request: unknown, project?: string): Promise<unknown>;
+        resizeDatabase(request: unknown, project?: string): Promise<unknown>;
         resetEntry(request: unknown, project?: string): Promise<unknown>;
         revertEntry(request: unknown, project?: string): Promise<unknown>;
       };
@@ -241,7 +242,7 @@ function desktopApi(): Window['api'] {
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
   MapTreeNode, MapIndex, TilesetSummary, MapPayload, TileEdit, EventReport,
-  EditorProjectCatalog, EditorActorBattleProfile, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -262,7 +263,7 @@ import type {
 } from '@contract/types';
 export type {
   MapTreeNode, MapIndex, TilesetSummary, MapPayload, TileEdit, EventReport,
-  EditorProjectCatalog, EditorActorBattleProfile, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -803,6 +804,8 @@ export interface ProjectOverviewDbEntry {
 export interface ProjectOverviewDbGroup {
   exists: boolean;
   count: number;
+  capacity?: number;
+  maxEntries?: number;
   named: ProjectOverviewDbEntry[];
 }
 
@@ -1198,6 +1201,9 @@ export const projectManagement = {
   },
   createEntry(request: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectManagement.createEntry(toPlain(request), project) as Promise<ProjectManagedEntry>;
+  },
+  resizeDatabase(request: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectManagement.resizeDatabase(toPlain(request), project) as Promise<ProjectManagedDatabaseResizeResult>;
   },
   resetEntry(request: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectManagement.resetEntry(toPlain(request), project) as Promise<ProjectManagedEntryResetResult>;

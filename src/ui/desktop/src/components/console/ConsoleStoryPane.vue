@@ -639,6 +639,10 @@ const activeDbGroup = computed((): ProjectOverviewDbGroup => {
   return filteredDatabase.value[selectedDbGroup.value] ?? { exists: false, count: 0, named: [] };
 });
 
+const selectedDbGroupMetadata = computed((): ProjectOverviewDbGroup => {
+  return database.value[selectedDbGroup.value] ?? { exists: false, count: 0, named: [] };
+});
+
 const activeAudioBucket = computed((): ProjectOverviewAudioBucket => {
   return filteredAudio.value[selectedAudioBucket.value] ?? {
     dir: '', exists: false, count: 0, names: [], files: [],
@@ -870,6 +874,12 @@ function selectDbSubField(path: string): void {
 }
 
 const canCreateSelectedDbGroup = computed(() => canCreateDatabaseGroup(selectedDbGroup.value));
+const selectedDbCapacity = computed(() => (
+  selectedDbGroupMetadata.value.capacity
+  ?? selectedDbGroupMetadata.value.named.reduce((highest, entry) => Math.max(highest, entry.id), 0)
+));
+const selectedDbMaximumLimit = computed(() => selectedDbGroupMetadata.value.maxEntries ?? null);
+const canResizeSelectedDbGroup = computed(() => selectedDbMaximumLimit.value !== null);
 
 function dbSummary(): string {
   if (!scan.value?.database) return '';
@@ -1126,6 +1136,45 @@ async function createSelectedDatabaseEntry() {
     return;
   }
   await createDatabaseEntry(selectedDbGroup.value);
+}
+
+async function changeSelectedDatabaseMaximum() {
+  const group = selectedDbGroup.value;
+  const limit = selectedDbMaximumLimit.value;
+  if (!limit || !projectStore.currentProject || detailBusy.value || stagingBusy.value) return;
+  try {
+    const answer = await ElMessageBox.prompt(
+      t('story.databaseMaximumPrompt', { current: selectedDbCapacity.value, limit }),
+      t('story.databaseMaximumTitle', { group: dbLabel(group) }),
+      {
+        inputValue: String(selectedDbCapacity.value || 1),
+        inputType: 'number',
+        confirmButtonText: t('story.databaseMaximumConfirm'),
+        inputValidator: (value) => {
+          const maximum = Number(value);
+          return Number.isInteger(maximum) && maximum >= 1 && maximum <= limit
+            ? true
+            : t('story.databaseMaximumInvalid', { limit });
+        },
+      },
+    );
+    const maximum = Number(answer.value);
+    if (maximum === selectedDbCapacity.value) return;
+    detailBusy.value = true;
+    detailError.value = '';
+    await projectManagement.resizeDatabase({ kind: 'database', group, maximum }, projectStore.currentProject);
+    resetCatalog();
+    await ensureCatalog();
+    await loadData();
+    await refreshStagingStatus();
+    ElMessage.success(t('story.databaseMaximumChanged', { maximum }));
+  } catch (changeError) {
+    if (changeError === 'cancel' || changeError === 'close') return;
+    if (changeError && typeof changeError === 'object' && 'action' in changeError) return;
+    detailError.value = (changeError as Error).message;
+  } finally {
+    detailBusy.value = false;
+  }
 }
 
 async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents') {
@@ -1998,6 +2047,15 @@ function detailTitle(): string {
                   @click="createSelectedDatabaseEntry"
                 >
                   {{ t('story.addNew') }}
+                </button>
+                <button
+                  v-if="canResizeSelectedDbGroup"
+                  type="button"
+                  class="link-button"
+                  :disabled="detailBusy || stagingBusy"
+                  @click="changeSelectedDatabaseMaximum"
+                >
+                  {{ t('story.databaseMaximum', { maximum: selectedDbCapacity }) }}
                 </button>
               </template>
             </div>

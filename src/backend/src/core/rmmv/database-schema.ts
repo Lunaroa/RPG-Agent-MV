@@ -723,15 +723,13 @@ function defaultParams(value = 0): number[] {
 }
 
 function defaultClassParams(): number[][] {
-  return Array.from({ length: 8 }, () => Array(100).fill(0));
+  return Array.from({ length: 8 }, (_row, paramIndex) => (
+    Array.from({ length: 100 }, (_value, level) => (level === 0 || paramIndex === 1 ? 0 : 1))
+  ));
 }
 
-function defaultEffect(): Record<string, unknown> {
-  return { code: 0, dataId: 0, value1: 0, value2: 0 };
-}
-
-function defaultTrait(): Record<string, unknown> {
-  return { code: 0, dataId: 0, value: 0 };
+function defaultEnemyParams(): number[] {
+  return [1, 0, 1, 1, 1, 1, 1, 1];
 }
 
 function defaultDropItem(): Record<string, unknown> {
@@ -797,7 +795,7 @@ function defaultSkill(id = 1): Record<string, unknown> {
     animationId: 0,
     damage: defaultDamage(),
     description: "",
-    effects: [defaultEffect()],
+    effects: [],
     hitType: 0,
     iconIndex: 0,
     message1: "",
@@ -825,7 +823,7 @@ function defaultItem(id = 1): Record<string, unknown> {
     consumable: true,
     damage: defaultDamage(),
     description: "",
-    effects: [defaultEffect()],
+    effects: [],
     hitType: 0,
     iconIndex: 0,
     itypeId: 1,
@@ -847,7 +845,7 @@ function defaultWeapon(id = 1): Record<string, unknown> {
     animationId: 0,
     description: "",
     etypeId: 1,
-    traits: [defaultTrait()],
+    traits: [],
     iconIndex: 0,
     name: "",
     note: "",
@@ -863,7 +861,7 @@ function defaultArmor(id = 1): Record<string, unknown> {
     atypeId: 1,
     description: "",
     etypeId: 2,
-    traits: [defaultTrait()],
+    traits: [],
     iconIndex: 0,
     name: "",
     note: "",
@@ -883,8 +881,8 @@ function defaultEnemy(id = 1): Record<string, unknown> {
     gold: 0,
     name: "",
     note: "",
-    params: defaultParams(),
-    traits: [defaultTrait()],
+    params: defaultEnemyParams(),
+    traits: [],
   };
 }
 

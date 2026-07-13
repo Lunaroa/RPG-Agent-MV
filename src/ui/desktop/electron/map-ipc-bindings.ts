@@ -63,6 +63,7 @@ export const MAP_IPC_CHANNELS = [
   'projectManagement:getEntry',
   'projectManagement:updateEntry',
   'projectManagement:createEntry',
+  'projectManagement:resizeDatabase',
   'projectManagement:resetEntry',
   'projectManagement:revertEntry',
   'commonEvents:list',
@@ -253,6 +254,8 @@ export function registerMapIpcHandlers(
     desktop.projectManagement.updateProjectManagedEntry(workflowRoot, project(value), request));
   handle('projectManagement:createEntry', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.projectManagement.createProjectManagedEntry(workflowRoot, project(value), request));
+  handle('projectManagement:resizeDatabase', (_event, request: Record<string, unknown>, value?: string) =>
+    desktop.projectManagement.resizeProjectManagedDatabase(workflowRoot, project(value), request));
   handle('projectManagement:resetEntry', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.projectManagement.resetProjectManagedEntry(workflowRoot, project(value), request));
   handle('projectManagement:revertEntry', (_event, request: Record<string, unknown>, value?: string) =>

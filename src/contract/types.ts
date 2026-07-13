@@ -106,6 +106,47 @@ export interface NamedCatalogEntry {
   name: string;
 }
 
+export interface EditorEnemyCatalogEntry extends NamedCatalogEntry {
+  battlerName: string;
+  battlerHue: number;
+}
+
+export interface EditorEquipmentCatalogEntry extends NamedCatalogEntry {
+  etypeId: number;
+}
+
+export interface EditorActorBattleProfile {
+  actorId: number;
+  classId: number;
+  initialLevel: number;
+  maxLevel: number;
+  initialEquips: number[];
+  equipSlotTypeIds: number[];
+  actorDualWield: boolean;
+  classDualWield: boolean;
+  dualWield: boolean;
+}
+
+export interface EditorClassBattleProfile {
+  classId: number;
+  dualWield: boolean;
+}
+
+export interface EditorBattleTestBattler {
+  actorId: number;
+  level: number;
+  equips: number[];
+}
+
+export interface EditorBattleContext {
+  sideView: boolean;
+  battleback1Name: string;
+  battleback2Name: string;
+  testBattlers: EditorBattleTestBattler[];
+  actorProfiles: EditorActorBattleProfile[];
+  classProfiles: EditorClassBattleProfile[];
+}
+
 export interface ProjectAssetEntry {
   name: string;
   fileName: string;
@@ -352,6 +393,25 @@ export type InteractivePlaytestRunStatus =
   | 'failed'
   | 'stop_failed';
 
+export type InteractivePlaytestMode = 'project' | 'battle_test';
+
+export interface InteractiveBattleTestBattler {
+  actorId: number;
+  level: number;
+  equips: number[];
+}
+
+export interface InteractivePlaytestStartRequest {
+  project: string;
+  mode: InteractivePlaytestMode;
+  sessionId?: string;
+  confirmedStagingHash?: string;
+  troopId?: number;
+  battlers?: InteractiveBattleTestBattler[];
+  battleback1Name?: string;
+  battleback2Name?: string;
+}
+
 export interface InteractivePlaytestStagingSummary {
   fileCount: number;
   operationCount: number;
@@ -363,6 +423,7 @@ export interface InteractivePlaytestStagingSummary {
 export interface InteractivePlaytestRun {
   runId: string;
   status: InteractivePlaytestRunStatus;
+  mode: InteractivePlaytestMode;
   project: string;
   executable: string;
   cwd: string;
@@ -376,8 +437,16 @@ export interface InteractivePlaytestRun {
   signal: string | null;
   error?: string;
   forced: boolean;
-  stagingIncluded: false;
-  sourceSaveRisk: true;
+  stagingIncluded: boolean;
+  sourceSaveRisk: boolean;
+  temporaryProject: boolean;
+  troopId?: number;
+  troopName?: string;
+  stagedFileCount?: number;
+  sourceUnchanged?: boolean;
+  savesUnchanged?: boolean;
+  stagingUnchanged?: boolean;
+  temporaryProjectCleaned?: boolean;
   lifecycleOnly: true;
   artifactDir: string;
   artifactPath: string;
@@ -488,14 +557,15 @@ export interface EditorProjectCatalog {
   classes: NamedCatalogEntry[];
   skills: NamedCatalogEntry[];
   items: NamedCatalogEntry[];
-  weapons: NamedCatalogEntry[];
-  armors: NamedCatalogEntry[];
+  weapons: EditorEquipmentCatalogEntry[];
+  armors: EditorEquipmentCatalogEntry[];
   states: NamedCatalogEntry[];
-  enemies: NamedCatalogEntry[];
+  enemies: EditorEnemyCatalogEntry[];
   troops: NamedCatalogEntry[];
   tilesets: NamedCatalogEntry[];
   commonEvents: NamedCatalogEntry[];
   animations: NamedCatalogEntry[];
+  battle: EditorBattleContext;
   assets: {
     characters: ProjectAssetEntry[];
     faces: ProjectAssetEntry[];

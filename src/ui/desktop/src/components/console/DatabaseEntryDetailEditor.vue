@@ -22,14 +22,20 @@ import {
   MV_CLASS_PARAM_LEVELS,
   MV_TROOP_PAGE_SPANS,
   appendStringListItem,
+  alignTroopMembers,
+  autoNameTroop,
   canRemoveStringListItem,
   cloneDatabaseEditorRecord,
+  enemyActionConditionPercentage,
+  isStandardEnemyActionConditionType,
   isMvStringListField,
   MV_TERMS_LIST_PATHS,
   normalizeAnimationFrames,
   normalizeAnimationTimings,
   normalizeClassParamCurves,
+  normalizeEnemyAction,
   normalizeTroopPageConditions,
+  normalizeTroopMembers,
   normalizeStringList,
   normalizeTermsArray,
   removeAnimationFrameCell,
@@ -39,10 +45,13 @@ import {
   setAnimationTimingSeValue,
   setAnimationTimingValue,
   setClassParamCurveLevel,
+  setEnemyActionConditionParameter,
+  setEnemyActionConditionType,
   setStringListItem,
   setTroopPageCondition,
   setTroopPageSpan,
   sortedTermsMessageKeys,
+  standardBlankTroopPage,
   stringListHasReservedZero,
   troopPageConditionSummary,
 } from '../../utils/rmmvDatabaseEditor';
@@ -53,6 +62,7 @@ import MvCommandListEditor from './MvCommandListEditor.vue';
 import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
 import ImageAssetPickerDialog from '../editor/ImageAssetPickerDialog.vue';
 import TilesetFlagCanvasEditor from './TilesetFlagCanvasEditor.vue';
+import TroopFormationCanvas from './TroopFormationCanvas.vue';
 import {
   ANIMATION_POSITION_OPTIONS,
   DAMAGE_TYPE_OPTIONS,
@@ -87,7 +97,7 @@ import {
 
 type DbRecord = Record<string, unknown>;
 type DbArrayRecord = Record<string, unknown>[];
-type CatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'assets'>;
+type CatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'assets' | 'battle'>;
 type ImageAssetKind = keyof EditorProjectCatalog['assets'];
 type ImagePickerMode = 'plain' | 'face' | 'character' | 'icon';
 type ImageSelection = { name: string; index: number };
@@ -104,9 +114,16 @@ const props = defineProps<{
   schema?: RmmvDatabaseEntrySchema;
   focusField?: string;
   loadImage?: (url: string) => Promise<HTMLImageElement | null>;
+  battleback1Name?: string;
+  battleback2Name?: string;
 }>();
 
-const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>();
+const emit = defineEmits<{
+  'update:modelValue': [value: unknown];
+  'update:battleback1Name': [value: string];
+  'update:battleback2Name': [value: string];
+  'requestBattleTest': [];
+}>();
 const { language, t } = useI18n();
 
 const jsonErrors = reactive<Record<string, string>>({});
@@ -116,6 +133,10 @@ const characterPreviewCanvas = ref<HTMLCanvasElement | null>(null);
 const battlerPreviewCanvas = ref<HTMLCanvasElement | null>(null);
 const enemyBattlerPreviewCanvas = ref<HTMLCanvasElement | null>(null);
 const imagePicker = ref<InstanceType<typeof ImageAssetPickerDialog> | null>(null);
+const selectedTroopMemberIndex = ref(0);
+const enemyActionErrors = reactive<Record<number, string>>({});
+const troopEditorError = ref('');
+const troopPageClipboard = ref<DbRecord | null>(null);
 const ACTOR_IMAGE_FIELD_PATHS = new Set(['faceName', 'faceIndex', 'characterName', 'characterIndex', 'battlerName']);
 let pendingImageCommit: ((selection: ImageSelection) => void) | null = null;
 
@@ -147,6 +168,9 @@ const localizedTermLabels = computed<Record<string, string[]>>(() => Object.from
 ));
 const isActorImageEditor = computed(() => props.group === 'Actors' && schemaDriven.value);
 const isEnemyEditor = computed(() => props.group === 'Enemies' || props.schema?.fileName === 'Enemies.json');
+const isTroopEditor = computed(() => props.group === 'Troops' || props.schema?.fileName === 'Troops.json');
+const activeBattleback1Name = computed(() => props.battleback1Name ?? props.catalog?.battle.battleback1Name ?? '');
+const activeBattleback2Name = computed(() => props.battleback2Name ?? props.catalog?.battle.battleback2Name ?? '');
 const visibleSchemaFields = computed(() => (
   isActorImageEditor.value
     ? schemaFields.value.filter((field) => !ACTOR_IMAGE_FIELD_PATHS.has(field.path))
@@ -186,6 +210,11 @@ watch(actorImageSignature, () => {
 watch(enemyBattlerSignature, () => {
   if (isEnemyEditor.value) void nextTick(paintEnemyBattlerPreview);
 }, { immediate: true });
+watch(() => props.catalog?.project, () => {
+  troopPageClipboard.value = null;
+  selectedTroopMemberIndex.value = 0;
+  troopEditorError.value = '';
+});
 
 function fieldLabel(field: RmmvDatabaseFieldSchema): string {
   return databaseFieldLabel(field.path, language.value);
@@ -538,15 +567,66 @@ function effectTargetOptions(code: number): SelectOption[] {
   }
 }
 
-function equipmentOptions(slotIndex: number): SelectOption[] {
-  return slotIndex === 0
-    ? asOptions(catalogEntries('weapons'), RMMV_NONE_LABEL)
-    : asOptions(catalogEntries('armors'), RMMV_NONE_LABEL);
+function actorProfile(actorId: number) {
+  return props.catalog?.battle.actorProfiles.find((profile) => profile.actorId === actorId);
 }
 
-function equipmentSlotLabel(slotIndex: number): string {
-  const equipType = catalogEntries('equipTypes').find((entry) => entry.id === slotIndex + 1);
-  return equipType ? `${slotIndex + 1}. ${equipType.name}` : t('db.slotN', { n: slotIndex + 1 });
+function currentActorId(): number {
+  return props.group === 'Actors' ? numberPathValue('id') : 0;
+}
+
+function actorEquipSlotTypeIds(actorId: number): number[] {
+  const profile = actorProfile(actorId);
+  if (!profile) return [];
+  if (props.group !== 'Actors' || actorId !== currentActorId()) return [...profile.equipSlotTypeIds];
+  const actorDualWield = arrayRecords('traits').some((trait) => (
+    numberValue(trait, 'code') === 55 && numberValue(trait, 'dataId') === 1
+  ));
+  const currentClassId = numberPathValue('classId', profile.classId);
+  const currentClass = props.catalog?.battle.classProfiles.find((entry) => entry.classId === currentClassId);
+  const classDualWield = currentClass?.dualWield ?? (currentClassId === profile.classId && profile.classDualWield);
+  const dualWield = actorDualWield || classDualWield;
+  const slots = catalogEntries('equipTypes').map((entry) => entry.id);
+  if (dualWield && slots.length >= 2) slots[1] = 1;
+  return slots;
+}
+
+function equipmentRowIndexes(path: string, actorId: number): number[] {
+  const count = Math.max(arrayValue(path).length, actorEquipSlotTypeIds(actorId).length);
+  return Array.from({ length: count }, (_entry, index) => index);
+}
+
+function equipmentOptions(slotIndex: number, actorId = currentActorId()): SelectOption[] {
+  const slotTypeId = actorEquipSlotTypeIds(actorId)[slotIndex];
+  if (slotTypeId === 1) {
+    return fixedOptions([
+      { value: 0, label: localizedLabel(RMMV_NONE_LABEL) },
+      ...(props.catalog?.weapons || [])
+        .filter((entry) => entry.etypeId === slotTypeId)
+        .map((entry) => ({ value: entry.id, label: entry.name })),
+    ]);
+  }
+  return fixedOptions([
+    { value: 0, label: localizedLabel(RMMV_NONE_LABEL) },
+    ...(props.catalog?.armors || [])
+      .filter((entry) => entry.etypeId === slotTypeId)
+      .map((entry) => ({ value: entry.id, label: entry.name })),
+  ]);
+}
+
+function isStandardEquipmentSlot(slotIndex: number, actorId = currentActorId()): boolean {
+  return slotIndex < actorEquipSlotTypeIds(actorId).length;
+}
+
+function equipmentSlotLabel(slotIndex: number, actorId = currentActorId()): string {
+  const equipTypeId = actorEquipSlotTypeIds(actorId)[slotIndex];
+  const equipType = catalogEntries('equipTypes').find((entry) => entry.id === equipTypeId);
+  if (equipType) return `${slotIndex + 1}. ${equipType.name}`;
+  return t('db.pluginEquipSlotN', { n: slotIndex + 1 });
+}
+
+function pluginEquipmentValue(path: string, slotIndex: number): string {
+  return String(arrayValue(path)[slotIndex] ?? 0);
 }
 
 function dropTargetOptions(kind: number): SelectOption[] {
@@ -554,6 +634,131 @@ function dropTargetOptions(kind: number): SelectOption[] {
   if (kind === 2) return asOptions(catalogEntries('weapons'));
   if (kind === 3) return asOptions(catalogEntries('armors'));
   return [];
+}
+
+function enemyActionConditionOptions(): SelectOption[] {
+  return [
+    { value: 0, label: t('db.enemyCondition.always') },
+    { value: 1, label: t('db.enemyCondition.turn') },
+    { value: 2, label: t('db.enemyCondition.hp') },
+    { value: 3, label: t('db.enemyCondition.mp') },
+    { value: 4, label: t('db.enemyCondition.state') },
+    { value: 5, label: t('db.enemyCondition.partyLevel') },
+    { value: 6, label: t('db.enemyCondition.switch') },
+  ];
+}
+
+function updateEnemyActionConditionType(index: number, conditionType: number): void {
+  const next = arrayRecords('actions');
+  try {
+    next[index] = setEnemyActionConditionType(next[index], conditionType, {
+      stateId: catalogEntries('states')[0]?.id,
+      switchId: catalogEntries('switches')[0]?.id,
+    });
+    enemyActionErrors[index] = '';
+    writePath('actions', next);
+  } catch (error) {
+    enemyActionErrors[index] = conditionType === 4
+      ? t('db.enemyCondition.noStates')
+      : conditionType === 6
+        ? t('db.enemyCondition.noSwitches')
+        : (error as Error).message;
+  }
+}
+
+function updateEnemyActionConditionParameter(index: number, parameter: 1 | 2, value: unknown): void {
+  const next = arrayRecords('actions');
+  next[index] = setEnemyActionConditionParameter(next[index], parameter, value);
+  enemyActionErrors[index] = '';
+  writePath('actions', next);
+}
+
+function updateEnemyActionReference(index: number, value: number): void {
+  const next = arrayRecords('actions');
+  const action = normalizeEnemyAction(next[index]);
+  next[index] = { ...action, conditionParam1: value };
+  enemyActionErrors[index] = '';
+  writePath('actions', next);
+}
+
+function updateEnemyActionRating(index: number, value: unknown): void {
+  updateArrayObject('actions', index, 'rating', Math.min(9, Math.max(1, Math.trunc(Number(value) || 1))));
+}
+
+function enemyActionConditionType(action: DbRecord): number {
+  return normalizeEnemyAction(action).conditionType;
+}
+
+function enemyActionPercentage(action: DbRecord, parameter: 1 | 2): number {
+  return enemyActionConditionPercentage(action, parameter);
+}
+
+function enemyActionValidationMessage(action: DbRecord, index: number): string {
+  if (enemyActionErrors[index]) return enemyActionErrors[index];
+  const type = enemyActionConditionType(action);
+  const rating = numberValue(action, 'rating', 5);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 9) return t('db.enemyCondition.ratingRange');
+  if (type === 4 && !catalogEntries('states').length) return t('db.enemyCondition.noStates');
+  if (type === 6 && !catalogEntries('switches').length) return t('db.enemyCondition.noSwitches');
+  if ((type === 2 || type === 3) && numberValue(action, 'conditionParam1') > numberValue(action, 'conditionParam2')) {
+    return t('db.enemyCondition.rangeOrder');
+  }
+  return '';
+}
+
+function addTestBattler(path: string): void {
+  if (arrayRecords(path).length >= 4) return;
+  const used = new Set(arrayRecords(path).map((entry) => numberValue(entry, 'actorId')));
+  const actor = catalogEntries('actors').find((entry) => !used.has(entry.id)) || catalogEntries('actors')[0];
+  if (!actor) return;
+  const profile = actorProfile(actor.id);
+  addArrayObject(path, {
+    actorId: actor.id,
+    level: Math.min(99, Math.max(1, profile?.initialLevel || 1)),
+    equips: initialEquipmentForActor(actor.id),
+  });
+}
+
+function updateTestBattlerActor(path: string, index: number, actorId: number): void {
+  const next = arrayRecords(path);
+  const profile = actorProfile(actorId);
+  next[index] = {
+    ...next[index],
+    actorId,
+    level: Math.min(99, Math.max(1, profile?.initialLevel || 1)),
+    equips: initialEquipmentForActor(actorId),
+  };
+  writePath(path, next);
+}
+
+function initialEquipmentForActor(actorId: number): number[] {
+  const profile = actorProfile(actorId);
+  const equips = [...(profile?.initialEquips || [])];
+  while (equips.length < actorEquipSlotTypeIds(actorId).length) equips.push(0);
+  return equips;
+}
+
+function updateTestBattlerLevel(path: string, index: number, value: unknown): void {
+  updateArrayObject(path, index, 'level', Math.min(99, Math.max(1, Math.trunc(Number(value) || 1))));
+}
+
+function updateTestBattlerEquip(path: string, battlerIndex: number, slotIndex: number, value: number): void {
+  const next = arrayRecords(path);
+  const battler = next[battlerIndex] || {};
+  const equips = Array.isArray(battler.equips) ? [...battler.equips] : [];
+  equips[slotIndex] = value;
+  next[battlerIndex] = { ...battler, equips };
+  writePath(path, next);
+}
+
+function testBattlerEquipRows(battler: DbRecord): number[] {
+  const actorId = numberValue(battler, 'actorId');
+  const equips = Array.isArray(battler.equips) ? battler.equips : [];
+  return Array.from({ length: Math.max(equips.length, actorEquipSlotTypeIds(actorId).length) }, (_entry, index) => index);
+}
+
+function testBattlerEquipValue(battler: DbRecord, slotIndex: number): number {
+  return Number((Array.isArray(battler.equips) ? battler.equips[slotIndex] : 0) || 0);
 }
 
 function updateDamage(key: string, value: unknown): void {
@@ -885,11 +1090,84 @@ function updateTroopPageCommands(index: number, list: MvCommand[]): void {
 }
 
 function addTroopPage(): void {
-  appendArrayValue('pages', {
-    conditions: normalizeTroopPageConditions({}),
-    list: [{ code: 0, indent: 0, parameters: [] }],
-    span: 0,
-  });
+  appendArrayValue('pages', standardBlankTroopPage());
+}
+
+function copyTroopPage(index: number): void {
+  const page = arrayRecords('pages')[index];
+  troopPageClipboard.value = page ? cloneDatabaseEditorRecord(page) : null;
+}
+
+function pasteTroopPage(index?: number): void {
+  if (!troopPageClipboard.value) return;
+  const next = arrayRecords('pages');
+  const copy = cloneDatabaseEditorRecord(troopPageClipboard.value);
+  if (index === undefined || index < 0 || index >= next.length) next.push(copy);
+  else next[index] = copy;
+  writePath('pages', next);
+}
+
+function clearTroopPage(index: number): void {
+  const next = arrayRecords('pages');
+  if (!next[index]) return;
+  next[index] = standardBlankTroopPage();
+  writePath('pages', next);
+}
+
+function addTroopMember(): void {
+  const members = normalizeTroopMembers(readPath('members'));
+  if (members.length >= 8) return;
+  const enemyId = catalogEntries('enemies')[0]?.id;
+  if (!enemyId) {
+    troopEditorError.value = t('db.troopNoEnemies');
+    return;
+  }
+  troopEditorError.value = '';
+  selectedTroopMemberIndex.value = members.length;
+  writePath('members', [...members, { enemyId, x: 408, y: 436, hidden: false }]);
+}
+
+function removeTroopMember(index: number): void {
+  const members = normalizeTroopMembers(readPath('members')).filter((_entry, entryIndex) => entryIndex !== index);
+  selectedTroopMemberIndex.value = Math.min(selectedTroopMemberIndex.value, Math.max(0, members.length - 1));
+  writePath('members', members);
+}
+
+function clearTroopMembers(): void {
+  selectedTroopMemberIndex.value = 0;
+  writePath('members', []);
+}
+
+function alignCurrentTroop(): void {
+  writePath('members', alignTroopMembers(readPath('members')));
+}
+
+function autoNameCurrentTroop(): void {
+  try {
+    writePath('name', autoNameTroop(readPath('members'), props.catalog?.enemies || []));
+    troopEditorError.value = '';
+  } catch {
+    troopEditorError.value = t('db.troopAutoNameMissingReference');
+  }
+}
+
+function updateTroopMembers(value: unknown[]): void {
+  writePath('members', normalizeTroopMembers(value));
+}
+
+function updateTroopMember(index: number, key: 'enemyId' | 'x' | 'y' | 'hidden', value: unknown): void {
+  const members = normalizeTroopMembers(readPath('members'));
+  const current = members[index];
+  if (!current) return;
+  members[index] = {
+    ...current,
+    [key]: key === 'hidden'
+      ? Boolean(value)
+      : key === 'enemyId'
+        ? Math.max(1, Math.trunc(Number(value) || 1))
+        : Math.min(key === 'x' ? 816 : 624, Math.max(0, Math.trunc(Number(value) || 0))),
+  };
+  writePath('members', members);
 }
 
 function troopEnemyIndexOptions(): SelectOption[] {
@@ -1024,21 +1302,19 @@ function updateSound(index: number, key: string, value: unknown): void {
           <div v-if="actorEquipsField" class="rm-panel">
             <div class="rm-panel-head">
               <div class="rm-panel-title">{{ fieldLabel(actorEquipsField) }}</div>
-              <button type="button" class="rm-mini-button" @click="replaceArray(actorEquipsField.path, [...arrayValue(actorEquipsField.path), 0])">{{ t('db.addSlot') }}</button>
             </div>
-            <div v-if="!arrayValue(actorEquipsField.path).length" class="empty-note">{{ t('db.noEquipSlots') }}</div>
+            <div v-if="!equipmentRowIndexes(actorEquipsField.path, currentActorId()).length" class="empty-note">{{ t('db.noEquipSlots') }}</div>
             <table v-else class="rm-equip-table">
               <tbody>
-                <tr v-for="(_equip, index) in arrayValue(actorEquipsField.path)" :key="`actor-equip-${index}`">
-                  <th scope="row">{{ equipmentSlotLabel(index) }}</th>
+                <tr v-for="index in equipmentRowIndexes(actorEquipsField.path, currentActorId())" :key="`actor-equip-${index}`">
+                  <th scope="row">{{ equipmentSlotLabel(index, currentActorId()) }}</th>
                   <td>
-                    <select :value="Number(arrayValue(actorEquipsField.path)[index] || 0)" @change="updateArrayNumber(actorEquipsField.path, index, Number(($event.target as HTMLSelectElement).value))">
-                      <option v-for="option in equipmentOptions(index)" :key="option.value" :value="option.value">{{ option.label }}</option>
+                    <select v-if="isStandardEquipmentSlot(index, currentActorId())" :value="Number(arrayValue(actorEquipsField.path)[index] || 0)" @change="updateArrayNumber(actorEquipsField.path, index, Number(($event.target as HTMLSelectElement).value))">
+                      <option v-for="option in equipmentOptions(index, currentActorId())" :key="option.value" :value="option.value">{{ option.label }}</option>
                     </select>
+                    <span v-else class="plugin-slot-value">{{ pluginEquipmentValue(actorEquipsField.path, index) }}</span>
                   </td>
-                  <td class="rm-equip-actions">
-                    <button type="button" class="rm-icon-button danger" @click="removeArrayIndex(actorEquipsField.path, index)">×</button>
-                  </td>
+                  <td class="rm-equip-actions"><small v-if="!isStandardEquipmentSlot(index, currentActorId())">{{ t('db.pluginEquipSlotReadonly') }}</small></td>
                 </tr>
               </tbody>
             </table>
@@ -1340,19 +1616,18 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'equips'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="replaceArray(field.path, [...arrayValue(field.path), 0])">{{ t('db.addSlot') }}</button>
             </div>
-            <div v-if="!arrayValue(field.path).length" class="empty-note">{{ t('db.noEquipSlots') }}</div>
-            <div v-for="(_equip, index) in arrayValue(field.path)" :key="`equip-${index}`" class="complex-row compact-row">
+            <div v-if="!equipmentRowIndexes(field.path, currentActorId()).length" class="empty-note">{{ t('db.noEquipSlots') }}</div>
+            <div v-for="index in equipmentRowIndexes(field.path, currentActorId())" :key="`equip-${index}`" class="complex-row compact-row">
               <label>
-                <span>{{ equipmentSlotLabel(index) }}</span>
-                <select :value="Number(arrayValue(field.path)[index] || 0)" @change="updateArrayNumber(field.path, index, Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in equipmentOptions(index)" :key="option.value" :value="option.value">{{ option.label }}</option>
+                <span>{{ equipmentSlotLabel(index, currentActorId()) }}</span>
+                <select v-if="isStandardEquipmentSlot(index, currentActorId())" :value="Number(arrayValue(field.path)[index] || 0)" @change="updateArrayNumber(field.path, index, Number(($event.target as HTMLSelectElement).value))">
+                  <option v-for="option in equipmentOptions(index, currentActorId())" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
+                <span v-else class="plugin-slot-value">{{ pluginEquipmentValue(field.path, index) }} · {{ t('db.pluginEquipSlotReadonly') }}</span>
               </label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
-            <small>{{ t('db.equipSlotNote') }}</small>
+            <small>{{ t('db.fixedEquipSlotNote') }}</small>
           </section>
 
           <section v-else-if="field.path === 'learnings'" class="field full complex-editor">
@@ -1376,24 +1651,58 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
           </section>
 
-          <section v-else-if="field.path === 'actions'" class="field full complex-editor">
+          <section v-else-if="field.path === 'actions'" class="field full complex-editor stacked-complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
               <button type="button" @click="addArrayObject(field.path, { skillId: catalogEntries('skills')[0]?.id || 1, conditionType: 0, conditionParam1: 0, conditionParam2: 0, rating: 5 })">{{ t('cmdList.add') }}</button>
             </div>
             <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noActions') }}</div>
-            <div v-for="(action, index) in arrayRecords(field.path)" :key="`action-${index}`" class="complex-row action-row">
+            <div v-for="(action, index) in arrayRecords(field.path)" :key="`action-${index}`" class="complex-row action-row semantic-action-row">
               <label>
                 <span>{{ t('db.skill') }}</span>
                 <select :value="numberValue(action, 'skillId')" @change="updateArrayObject(field.path, index, 'skillId', Number(($event.target as HTMLSelectElement).value))">
                   <option v-for="option in asOptions(catalogEntries('skills'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label><span>{{ t('db.conditionType') }}</span><input type="number" :value="numberValue(action, 'conditionType')" @input="updateArrayObject(field.path, index, 'conditionType', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>{{ t('db.condition1') }}</span><input type="number" :value="numberValue(action, 'conditionParam1')" @input="updateArrayObject(field.path, index, 'conditionParam1', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>{{ t('db.condition2') }}</span><input type="number" :value="numberValue(action, 'conditionParam2')" @input="updateArrayObject(field.path, index, 'conditionParam2', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>{{ t('eventEditorDialog.priority') }}</span><input type="number" :value="numberValue(action, 'rating', 5)" @input="updateArrayObject(field.path, index, 'rating', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label>
+                <span>{{ t('db.conditionType') }}</span>
+                <select
+                  v-if="isStandardEnemyActionConditionType(enemyActionConditionType(action))"
+                  :value="enemyActionConditionType(action)"
+                  @change="updateEnemyActionConditionType(index, Number(($event.target as HTMLSelectElement).value))"
+                >
+                  <option v-for="option in enemyActionConditionOptions()" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+                <input v-else type="number" :value="enemyActionConditionType(action)" readonly />
+              </label>
+              <div v-if="isStandardEnemyActionConditionType(enemyActionConditionType(action))" class="action-condition-fields">
+                <template v-if="enemyActionConditionType(action) === 1">
+                  <label><span>{{ t('db.enemyCondition.turnA') }}</span><input type="number" min="0" :value="numberValue(action, 'conditionParam1')" @input="updateEnemyActionConditionParameter(index, 1, ($event.target as HTMLInputElement).value)" /></label>
+                  <label><span>{{ t('db.enemyCondition.turnB') }}</span><input type="number" min="0" :value="numberValue(action, 'conditionParam2')" @input="updateEnemyActionConditionParameter(index, 2, ($event.target as HTMLInputElement).value)" /></label>
+                </template>
+                <template v-else-if="enemyActionConditionType(action) === 2 || enemyActionConditionType(action) === 3">
+                  <label><span>{{ t('db.enemyCondition.minimum') }}</span><input type="number" min="0" max="100" :value="enemyActionPercentage(action, 1)" @input="updateEnemyActionConditionParameter(index, 1, ($event.target as HTMLInputElement).value)" /></label>
+                  <label><span>{{ t('db.enemyCondition.maximum') }}</span><input type="number" min="0" max="100" :value="enemyActionPercentage(action, 2)" @input="updateEnemyActionConditionParameter(index, 2, ($event.target as HTMLInputElement).value)" /></label>
+                </template>
+                <label v-else-if="enemyActionConditionType(action) === 4">
+                  <span>{{ t('db.enemyCondition.state') }}</span>
+                  <select :value="numberValue(action, 'conditionParam1')" @change="updateEnemyActionReference(index, Number(($event.target as HTMLSelectElement).value))">
+                    <option v-for="option in asOptions(catalogEntries('states'))" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  </select>
+                </label>
+                <label v-else-if="enemyActionConditionType(action) === 5"><span>{{ t('db.enemyCondition.partyLevel') }}</span><input type="number" min="1" max="99" :value="numberValue(action, 'conditionParam1', 1)" @input="updateEnemyActionConditionParameter(index, 1, ($event.target as HTMLInputElement).value)" /></label>
+                <label v-else-if="enemyActionConditionType(action) === 6">
+                  <span>{{ t('db.enemyCondition.switch') }}</span>
+                  <select :value="numberValue(action, 'conditionParam1')" @change="updateEnemyActionReference(index, Number(($event.target as HTMLSelectElement).value))">
+                    <option v-for="option in asOptions(catalogEntries('switches'))" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  </select>
+                </label>
+                <span v-else class="action-always-note">{{ t('db.enemyCondition.noParameters') }}</span>
+              </div>
+              <div v-else class="plugin-condition-note">{{ t('db.enemyCondition.pluginReadonly', { code: enemyActionConditionType(action) }) }}</div>
+              <label><span>{{ t('eventEditorDialog.priority') }}</span><input type="number" min="1" max="9" :value="numberValue(action, 'rating', 5)" @input="updateEnemyActionRating(index, ($event.target as HTMLInputElement).value)" /></label>
               <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
+              <em v-if="enemyActionValidationMessage(action, index)" class="action-condition-error">{{ enemyActionValidationMessage(action, index) }}</em>
             </div>
           </section>
 
@@ -1426,24 +1735,72 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
           </section>
 
-          <section v-else-if="field.path === 'members'" class="field full complex-editor">
-            <div class="complex-title">
+          <section v-else-if="field.path === 'members'" class="field full complex-editor stacked-complex-editor troop-formation-editor">
+            <div class="complex-title troop-formation-head">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { enemyId: catalogEntries('enemies')[0]?.id || 1, x: 0, y: 0, hidden: false })">{{ t('cmdList.add') }}</button>
+              <small>{{ t('db.troopMemberLimit', { count: arrayRecords(field.path).length }) }}</small>
+              <button type="button" :disabled="arrayRecords(field.path).length >= 8" @click="addTroopMember">{{ t('cmdList.add') }}</button>
+              <button type="button" :disabled="!arrayRecords(field.path).length" @click="clearTroopMembers">{{ t('db.clearAll') }}</button>
+              <button type="button" :disabled="!arrayRecords(field.path).length" @click="alignCurrentTroop">{{ t('db.alignTroop') }}</button>
+              <button type="button" :disabled="!arrayRecords(field.path).length" @click="autoNameCurrentTroop">{{ t('db.autoNameTroop') }}</button>
+              <button type="button" class="battle-test-button" :disabled="arrayRecords(field.path).length > 8" @click="emit('requestBattleTest')">{{ t('db.battleTest') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noTroopMembers') }}</div>
-            <div v-for="(member, index) in arrayRecords(field.path)" :key="`member-${index}`" class="complex-row member-row">
+            <div class="battleback-controls">
+              <label>
+                <span>{{ t('db.battleback1') }}</span>
+                <select :value="activeBattleback1Name" @change="emit('update:battleback1Name', ($event.target as HTMLSelectElement).value)">
+                  <option value="">{{ t('imgPicker.none') }}</option>
+                  <option v-for="asset in catalog?.assets.battlebacks1 || []" :key="asset.name" :value="asset.name">{{ asset.name }}</option>
+                </select>
+              </label>
+              <label>
+                <span>{{ t('db.battleback2') }}</span>
+                <select :value="activeBattleback2Name" @change="emit('update:battleback2Name', ($event.target as HTMLSelectElement).value)">
+                  <option value="">{{ t('imgPicker.none') }}</option>
+                  <option v-for="asset in catalog?.assets.battlebacks2 || []" :key="asset.name" :value="asset.name">{{ asset.name }}</option>
+                </select>
+              </label>
+            </div>
+            <div class="troop-formation-layout">
+              <TroopFormationCanvas
+                :model-value="arrayValue(field.path)"
+                :catalog="catalog"
+                :battleback1-name="activeBattleback1Name"
+                :battleback2-name="activeBattleback2Name"
+                :selected-index="selectedTroopMemberIndex"
+                :load-image="loadImage"
+                @update:model-value="updateTroopMembers"
+                @update:selected-index="selectedTroopMemberIndex = $event"
+              />
+              <div class="troop-member-list">
+                <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noTroopMembers') }}</div>
+                <button
+                  v-for="(member, index) in arrayRecords(field.path)"
+                  :key="`member-select-${index}`"
+                  type="button"
+                  class="troop-member-select"
+                  :class="{ active: selectedTroopMemberIndex === index }"
+                  @click="selectedTroopMemberIndex = index"
+                >
+                  <b>#{{ index + 1 }}</b>
+                  <span>{{ catalog?.enemies.find((entry) => entry.id === numberValue(member, 'enemyId'))?.name || t('db.enemyN', { id: numberValue(member, 'enemyId') }) }}</span>
+                  <small>{{ numberValue(member, 'x') }}, {{ numberValue(member, 'y') }}<template v-if="boolValue(member, 'hidden')"> · {{ t('db.hidden') }}</template></small>
+                </button>
+              </div>
+            </div>
+            <div v-if="arrayRecords(field.path)[selectedTroopMemberIndex]" class="complex-row member-row troop-selected-member">
               <label>
                 <span>{{ t('db.enemy') }}</span>
-                <select :value="numberValue(member, 'enemyId')" @change="updateArrayObject(field.path, index, 'enemyId', Number(($event.target as HTMLSelectElement).value))">
+                <select :value="numberValue(arrayRecords(field.path)[selectedTroopMemberIndex], 'enemyId')" @change="updateTroopMember(selectedTroopMemberIndex, 'enemyId', Number(($event.target as HTMLSelectElement).value))">
                   <option v-for="option in asOptions(catalogEntries('enemies'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label><span>X</span><input type="number" :value="numberValue(member, 'x')" @input="updateArrayObject(field.path, index, 'x', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>Y</span><input type="number" :value="numberValue(member, 'y')" @input="updateArrayObject(field.path, index, 'y', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label class="inline-check"><input type="checkbox" :checked="boolValue(member, 'hidden')" @change="updateArrayObject(field.path, index, 'hidden', ($event.target as HTMLInputElement).checked)" /> {{ t('db.hidden') }}</label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
+              <label><span>X</span><input type="number" min="0" max="816" :value="numberValue(arrayRecords(field.path)[selectedTroopMemberIndex], 'x')" @input="updateTroopMember(selectedTroopMemberIndex, 'x', ($event.target as HTMLInputElement).value)" /></label>
+              <label><span>Y</span><input type="number" min="0" max="624" :value="numberValue(arrayRecords(field.path)[selectedTroopMemberIndex], 'y')" @input="updateTroopMember(selectedTroopMemberIndex, 'y', ($event.target as HTMLInputElement).value)" /></label>
+              <label class="inline-check"><input type="checkbox" :checked="boolValue(arrayRecords(field.path)[selectedTroopMemberIndex], 'hidden')" @change="updateTroopMember(selectedTroopMemberIndex, 'hidden', ($event.target as HTMLInputElement).checked)" /> {{ t('db.hidden') }}</label>
+              <button type="button" class="danger" @click="removeTroopMember(selectedTroopMemberIndex)">{{ t('cmdList.delete') }}</button>
             </div>
+            <em v-if="troopEditorError" class="action-condition-error">{{ troopEditorError }}</em>
           </section>
 
           <section v-else-if="field.path === 'damage'" class="field full complex-editor">
@@ -1533,22 +1890,38 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
           </section>
 
-          <section v-else-if="field.path === 'testBattlers'" class="field full complex-editor">
+          <section v-else-if="field.path === 'testBattlers'" class="field full complex-editor stacked-complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { actorId: catalogEntries('actors')[0]?.id || 1, level: 1, equips: [0, 0, 0, 0, 0] })">{{ t('cmdList.add') }}</button>
+              <small>{{ t('db.testBattlerLimit', { count: arrayRecords(field.path).length }) }}</small>
+              <button type="button" :disabled="arrayRecords(field.path).length >= 4 || !catalogEntries('actors').length" @click="addTestBattler(field.path)">{{ t('cmdList.add') }}</button>
             </div>
             <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noTestBattlers') }}</div>
-            <div v-for="(battler, index) in arrayRecords(field.path)" :key="`test-battler-${index}`" class="complex-row learning-row">
-              <label>
-                <span>{{ t('mapPreview.actor') }}</span>
-                <select :value="numberValue(battler, 'actorId')" @change="updateArrayObject(field.path, index, 'actorId', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in asOptions(catalogEntries('actors'))" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-              </label>
-              <label><span>{{ t('db.level') }}</span><input type="number" :value="numberValue(battler, 'level', 1)" @input="updateArrayObject(field.path, index, 'level', Number(($event.target as HTMLInputElement).value))" /></label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
-            </div>
+            <article v-for="(battler, index) in arrayRecords(field.path)" :key="`test-battler-${index}`" class="test-battler-card">
+              <div class="complex-row test-battler-head">
+                <label>
+                  <span>{{ t('mapPreview.actor') }}</span>
+                  <select :value="numberValue(battler, 'actorId')" @change="updateTestBattlerActor(field.path, index, Number(($event.target as HTMLSelectElement).value))">
+                    <option v-for="option in asOptions(catalogEntries('actors'))" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  </select>
+                </label>
+                <label><span>{{ t('db.level') }}</span><input type="number" min="1" max="99" :value="numberValue(battler, 'level', 1)" @input="updateTestBattlerLevel(field.path, index, ($event.target as HTMLInputElement).value)" /></label>
+                <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
+              </div>
+              <div class="test-battler-equips">
+                <label v-for="slotIndex in testBattlerEquipRows(battler)" :key="`test-battler-${index}-equip-${slotIndex}`">
+                  <span>{{ equipmentSlotLabel(slotIndex, numberValue(battler, 'actorId')) }}</span>
+                  <select
+                    v-if="isStandardEquipmentSlot(slotIndex, numberValue(battler, 'actorId'))"
+                    :value="testBattlerEquipValue(battler, slotIndex)"
+                    @change="updateTestBattlerEquip(field.path, index, slotIndex, Number(($event.target as HTMLSelectElement).value))"
+                  >
+                    <option v-for="option in equipmentOptions(slotIndex, numberValue(battler, 'actorId'))" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  </select>
+                  <span v-else class="plugin-slot-value">{{ testBattlerEquipValue(battler, slotIndex) }} · {{ t('db.pluginEquipSlotReadonly') }}</span>
+                </label>
+              </div>
+            </article>
           </section>
 
           <section v-else-if="field.path === 'menuCommands'" class="field full complex-editor">
@@ -1691,11 +2064,12 @@ function updateSound(index: number, key: string, value: unknown): void {
             </button>
           </label>
 
-          <section v-else-if="field.path === 'pages'" class="field full complex-editor troop-pages-editor">
+          <section v-else-if="field.path === 'pages'" class="field full complex-editor stacked-complex-editor troop-pages-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
               <small>{{ t('db.pagesMalformed', { pages: arrayValue(field.path).length, malformed: invalidArrayItemCount(field.path) }) }}</small>
               <button type="button" @click="addTroopPage">{{ t('db.addPage') }}</button>
+              <button v-if="troopPageClipboard && !arrayRecords(field.path).length" type="button" @click="pasteTroopPage()">{{ t('db.pastePage') }}</button>
             </div>
             <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noBattleEventPages') }}</div>
             <article v-for="(page, index) in arrayRecords(field.path)" :key="`troop-page-${index}`" class="troop-page-card">
@@ -1711,6 +2085,11 @@ function updateSound(index: number, key: string, value: unknown): void {
                   <input type="checkbox" :checked="troopPageConditions(page).turnEnding" @change="updateTroopPageCondition(index, 'turnEnding', ($event.target as HTMLInputElement).checked)" />
                   {{ t('db.turnEnd') }}
                 </label>
+                <div class="troop-page-actions">
+                  <button type="button" @click="copyTroopPage(index)">{{ t('db.copyPage') }}</button>
+                  <button type="button" :disabled="!troopPageClipboard" @click="pasteTroopPage(index)">{{ t('db.pastePage') }}</button>
+                  <button type="button" @click="clearTroopPage(index)">{{ t('db.clearPage') }}</button>
+                </div>
                 <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('db.deletePage') }}</button>
               </div>
               <div class="complex-row troop-condition-row">
@@ -2334,6 +2713,94 @@ textarea { resize: vertical; line-height: 1.45; }
 .terms-message-row label span small { margin-left: 6px; font-weight: 500; color: var(--console-text-muted,#9a8e7e); }
 .learning-row { grid-template-columns: 120px minmax(0,1fr) auto; }
 .member-row { grid-template-columns: minmax(0,1.4fr) 90px 90px 110px auto; }
+.semantic-action-row { grid-template-columns: minmax(120px,1fr) minmax(130px,.8fr) minmax(220px,1.6fr) 90px auto; }
+.action-condition-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+.action-condition-fields label { display: grid; gap: 4px; min-width: 0; }
+.action-condition-fields label span { color: var(--console-text-muted,#9a8e7e); }
+.action-always-note,
+.plugin-condition-note,
+.plugin-slot-value {
+  align-self: center;
+  color: var(--console-text-muted,#9a8e7e);
+  font-size: 11px;
+}
+.action-condition-error {
+  grid-column: 1 / -1;
+  color: var(--el-color-danger);
+  font-size: 11px;
+  font-style: normal;
+}
+.troop-formation-head .battle-test-button {
+  margin-left: auto;
+  border-color: var(--app-accent,#9a6a2f);
+}
+.field.full.complex-editor.stacked-complex-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+.battleback-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.battleback-controls label,
+.test-battler-equips label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--console-text-muted,#9a8e7e);
+  font-size: 11px;
+}
+.troop-formation-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(150px, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+.troop-member-list {
+  display: grid;
+  gap: 4px;
+  max-height: 430px;
+  overflow: auto;
+}
+.troop-member-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 7px;
+  width: 100%;
+  padding: 7px 8px;
+  text-align: left;
+  background: var(--console-paper-soft,#faf5ec);
+}
+.troop-member-select b { grid-row: 1 / 3; align-self: center; }
+.troop-member-select span,
+.troop-member-select small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.troop-member-select small { color: var(--console-text-muted,#9a8e7e); }
+.troop-member-select.active {
+  border-color: var(--app-accent,#9a6a2f);
+  box-shadow: inset 3px 0 var(--app-accent,#9a6a2f);
+}
+.troop-selected-member { margin-top: 2px; }
+.test-battler-card {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--console-border,#e4dcce);
+  border-radius: 5px;
+  background: var(--console-paper-soft,#faf5ec);
+}
+.test-battler-head { grid-template-columns: minmax(0, 1fr) 100px auto; }
+.test-battler-equips {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
 .drop-row { grid-template-columns: 120px minmax(0,1fr) 100px auto; }
 .damage-row { grid-template-columns: 100px 160px minmax(0,1fr) 100px 110px; }
 .param-row { grid-template-columns: repeat(4,minmax(0,1fr)); align-items: start; }
@@ -2366,7 +2833,8 @@ textarea { resize: vertical; line-height: 1.45; }
   display: grid;
   gap: 8px;
 }
-.troop-page-row { grid-template-columns: 160px minmax(0,1fr) auto; }
+.troop-page-row { grid-template-columns: 150px minmax(100px,.5fr) minmax(0,1fr) auto; }
+.troop-page-actions { display: flex; flex-wrap: wrap; gap: 4px; align-items: end; }
 .troop-condition-row { grid-template-columns: repeat(6,minmax(0,1fr)); }
 .troop-command-list {
   min-width: 0;
@@ -2570,6 +3038,7 @@ textarea { resize: vertical; line-height: 1.45; }
 @media (max-width: 1460px) {
   .field-grid { grid-template-columns: 1fr; }
   .complex-row,
+  .semantic-action-row,
   .member-row,
   .drop-row,
   .damage-row,
@@ -2581,9 +3050,11 @@ textarea { resize: vertical; line-height: 1.45; }
   .troop-condition-row,
   .animation-cell-row,
   .timing-row { grid-template-columns: 1fr; }
+  .troop-formation-layout { grid-template-columns: minmax(0, 1fr); }
   .check-grid { grid-template-columns: 1fr; }
 }
 @container (max-width: 640px) {
+  .troop-formation-layout { grid-template-columns: minmax(0, 1fr); }
   .actor-rm-grid { grid-template-columns: 1fr; }
   .rm-image-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .rm-trait-list { max-height: none; }
@@ -2620,6 +3091,9 @@ textarea { resize: vertical; line-height: 1.45; }
   .check-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+  .battleback-controls,
+  .test-battler-equips,
+  .action-condition-fields { grid-template-columns: minmax(0, 1fr); }
   .complex-row {
     align-items: stretch;
     padding: 10px;

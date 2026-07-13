@@ -241,7 +241,7 @@ function desktopApi(): Window['api'] {
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
   MapTreeNode, MapIndex, TilesetSummary, MapPayload, TileEdit, EventReport,
-  EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult,
+  EditorProjectCatalog, EditorActorBattleProfile, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -257,12 +257,12 @@ import type {
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
-  InteractivePlaytestResult, InteractivePlaytestRun,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractiveBattleTestBattler,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
   MapTreeNode, MapIndex, TilesetSummary, MapPayload, TileEdit, EventReport,
-  EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult,
+  EditorProjectCatalog, EditorActorBattleProfile, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -278,15 +278,9 @@ export type {
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
-  InteractivePlaytestResult, InteractivePlaytestRun,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractiveBattleTestBattler,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 };
-
-export interface InteractivePlaytestStartRequest {
-  project: string;
-  sessionId?: string;
-  confirmedStagingHash?: string;
-}
 
 export interface ProjectInfo {
   name: string;

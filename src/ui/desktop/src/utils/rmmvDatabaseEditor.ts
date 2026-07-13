@@ -89,6 +89,136 @@ export interface MvAnimationTiming {
   flashDuration: number;
 }
 
+export interface MvTroopMember extends Record<string, unknown> {
+  enemyId: number;
+  x: number;
+  y: number;
+  hidden: boolean;
+}
+
+export interface MvEnemyAction extends Record<string, unknown> {
+  skillId: number;
+  conditionType: number;
+  conditionParam1: number;
+  conditionParam2: number;
+  rating: number;
+}
+
+export const MV_ENEMY_ACTION_CONDITION_TYPES = [0, 1, 2, 3, 4, 5, 6] as const;
+
+export function isStandardEnemyActionConditionType(value: unknown): value is typeof MV_ENEMY_ACTION_CONDITION_TYPES[number] {
+  return Number.isInteger(value) && MV_ENEMY_ACTION_CONDITION_TYPES.includes(value as typeof MV_ENEMY_ACTION_CONDITION_TYPES[number]);
+}
+
+export function setEnemyActionConditionType(
+  action: unknown,
+  conditionType: number,
+  references: { stateId?: number; switchId?: number } = {},
+): MvEnemyAction {
+  const source = normalizeEnemyAction(action);
+  if (!isStandardEnemyActionConditionType(conditionType)) return source;
+  let conditionParam1 = 0;
+  let conditionParam2 = 0;
+  if (conditionType === 2 || conditionType === 3) conditionParam2 = 1;
+  if (conditionType === 4) conditionParam1 = requirePositiveReference(references.stateId, 'state');
+  if (conditionType === 5) conditionParam1 = 1;
+  if (conditionType === 6) conditionParam1 = requirePositiveReference(references.switchId, 'switch');
+  return { ...source, conditionType, conditionParam1, conditionParam2 };
+}
+
+export function setEnemyActionConditionParameter(
+  action: unknown,
+  parameter: 1 | 2,
+  value: unknown,
+): MvEnemyAction {
+  const source = normalizeEnemyAction(action);
+  const key = parameter === 1 ? 'conditionParam1' : 'conditionParam2';
+  let normalized: number;
+  if (source.conditionType === 2 || source.conditionType === 3) {
+    normalized = clampInteger(value, 0, 100) / 100;
+  } else if (source.conditionType === 5) {
+    normalized = clampInteger(value, 1, 99, 1);
+  } else {
+    normalized = Math.max(0, toInteger(value, 0));
+  }
+  return { ...source, [key]: normalized };
+}
+
+export function enemyActionConditionPercentage(action: unknown, parameter: 1 | 2): number {
+  const source = normalizeEnemyAction(action);
+  const ratio = parameter === 1 ? source.conditionParam1 : source.conditionParam2;
+  return Math.round(ratio * 100);
+}
+
+export function normalizeEnemyAction(action: unknown): MvEnemyAction {
+  const source = action && typeof action === 'object' && !Array.isArray(action)
+    ? action as Record<string, unknown>
+    : {};
+  return {
+    ...source,
+    skillId: finiteNumber(source.skillId, 1),
+    conditionType: finiteNumber(source.conditionType, 0),
+    conditionParam1: finiteNumber(source.conditionParam1, 0),
+    conditionParam2: finiteNumber(source.conditionParam2, 0),
+    rating: finiteNumber(source.rating, 5),
+  };
+}
+
+export function alignTroopMembers(value: unknown): MvTroopMember[] {
+  const members = normalizeTroopMembers(value);
+  const count = members.length;
+  if (count === 0) return members;
+  const spacing = count === 1 ? 0 : Math.min(144, 640 / (count - 1));
+  return members.map((member, index) => ({
+    ...member,
+    x: Math.round(408 + (index - (count - 1) / 2) * spacing),
+    y: 436,
+  }));
+}
+
+export function autoNameTroop(
+  value: unknown,
+  enemies: readonly { id: number; name: string }[],
+): string {
+  const members = normalizeTroopMembers(value);
+  const names = new Map(enemies.map((enemy) => [enemy.id, enemy.name]));
+  const order: number[] = [];
+  const counts = new Map<number, number>();
+  for (const member of members) {
+    if (!names.has(member.enemyId)) throw new Error(`Missing enemy reference #${member.enemyId}.`);
+    if (!counts.has(member.enemyId)) order.push(member.enemyId);
+    counts.set(member.enemyId, (counts.get(member.enemyId) || 0) + 1);
+  }
+  return order.map((enemyId) => {
+    const name = names.get(enemyId)!;
+    const count = counts.get(enemyId)!;
+    return count > 1 ? `${name}*${count}` : name;
+  }).join(', ');
+}
+
+export function normalizeTroopMembers(value: unknown): MvTroopMember[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const member = entry as Record<string, unknown>;
+    return [{
+      ...member,
+      enemyId: finiteNumber(member.enemyId, 0),
+      x: finiteNumber(member.x, 408),
+      y: finiteNumber(member.y, 436),
+      hidden: Boolean(member.hidden),
+    }];
+  });
+}
+
+export function standardBlankTroopPage(): Record<string, unknown> {
+  return {
+    conditions: normalizeTroopPageConditions({}),
+    list: [{ code: 0, indent: 0, parameters: [] }],
+    span: 0,
+  };
+}
+
 export function isMvStringListField(group: string | undefined, path: string): boolean {
   if (group === 'System') return MV_ZERO_RESERVED_LIST_PATHS.has(path);
   if (group === 'Types') return MV_ZERO_RESERVED_LIST_PATHS.has(path);
@@ -427,6 +557,17 @@ function normalizeAnimationCellField(fieldIndex: number, amount: unknown): numbe
   if (fieldIndex === 6) return clampInteger(amount, 0, 255, 255);
   if (fieldIndex === 7) return clampInteger(amount, 0, 3, 0);
   return toInteger(amount, 0);
+}
+
+function requirePositiveReference(value: unknown, label: string): number {
+  const reference = toInteger(value, 0);
+  if (reference <= 0) throw new Error(`A ${label} reference is required for this condition.`);
+  return reference;
+}
+
+function finiteNumber(value: unknown, fallback: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
 }
 
 function toInteger(value: unknown, fallback: number): number {

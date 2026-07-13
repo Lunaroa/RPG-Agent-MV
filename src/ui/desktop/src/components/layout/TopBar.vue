@@ -155,6 +155,7 @@ async function startPlaytest() {
   try {
     for (;;) {
       const result = await playtest.start({
+        mode: 'project',
         project,
         ...(activeSession.value?.id ? { sessionId: activeSession.value.id } : {}),
         ...(confirmedStagingHash ? { confirmedStagingHash } : {}),

@@ -5,12 +5,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type {
+  InteractiveBattleTestBattler,
+  InteractivePlaytestMode,
   InteractivePlaytestResult,
   InteractivePlaytestRun,
   InteractivePlaytestRunStatus,
   InteractivePlaytestStagingSummary,
 } from '../../../../contract/types.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
+import {
+  prepareBattleTestProject,
+  type BattleTestConfiguration,
+  type BattleTestProjectPreparation,
+} from './battle-test-preparation.ts';
+import { cleanupIsolatedProject, verifyIsolatedSourceState } from './isolated-project-preparation.ts';
 import { getProjectStagingStatus } from './staging-service.ts';
 
 export interface InteractivePlaytestStream extends EventEmitter {
@@ -44,6 +52,13 @@ export interface InteractivePlaytestDependencies {
   forceKillProcessTree: (child: InteractivePlaytestChild) => Promise<{ ok: boolean; error?: string }>;
   forceKillProcessTreeSync: (child: InteractivePlaytestChild) => { ok: boolean; error?: string };
   onStatus: (run: InteractivePlaytestRun) => void;
+  prepareBattleTest: (
+    workflowRoot: string,
+    project: string,
+    configuration: BattleTestConfiguration,
+  ) => BattleTestProjectPreparation;
+  verifyIsolatedSource: typeof verifyIsolatedSourceState;
+  cleanupIsolated: typeof cleanupIsolatedProject;
   randomUUID: () => string;
   now: () => Date;
   startupTimeoutMs: number;
@@ -52,8 +67,13 @@ export interface InteractivePlaytestDependencies {
 }
 
 export interface InteractivePlaytestStartOptions {
+  mode?: InteractivePlaytestMode;
   confirmedStagingHash?: string;
   sessionId?: string;
+  troopId?: number;
+  battlers?: InteractiveBattleTestBattler[];
+  battleback1Name?: string;
+  battleback2Name?: string;
 }
 
 interface StagingConfirmation {
@@ -81,6 +101,7 @@ export class InteractivePlaytestService {
   #child: InteractivePlaytestChild | null = null;
   #stopRequested = false;
   #stopPromise: Promise<InteractivePlaytestResult> | null = null;
+  #battlePreparation: BattleTestProjectPreparation | null = null;
 
   constructor(
     workflowRoot: string,
@@ -94,6 +115,9 @@ export class InteractivePlaytestService {
       forceKillProcessTree: dependencies.forceKillProcessTree || defaultForceKillProcessTree,
       forceKillProcessTreeSync: dependencies.forceKillProcessTreeSync || defaultForceKillProcessTreeSync,
       onStatus: dependencies.onStatus || (() => undefined),
+      prepareBattleTest: dependencies.prepareBattleTest || prepareBattleTestProject,
+      verifyIsolatedSource: dependencies.verifyIsolatedSource || verifyIsolatedSourceState,
+      cleanupIsolated: dependencies.cleanupIsolated || cleanupIsolatedProject,
       randomUUID: dependencies.randomUUID || crypto.randomUUID,
       now: dependencies.now || (() => new Date()),
       startupTimeoutMs: dependencies.startupTimeoutMs ?? STARTUP_TIMEOUT_MS,
@@ -124,30 +148,58 @@ export class InteractivePlaytestService {
         error: `Interactive playtest ${this.#currentRun?.runId || ''} is already running.`,
       };
     }
+    if (this.#battlePreparation) {
+      this.#retryPendingBattleCleanup();
+      if (this.#battlePreparation) {
+        return {
+          ...this.current(),
+          error: 'A previous Battle Test temporary project could not be cleaned up. New playtests are blocked until cleanup succeeds.',
+        };
+      }
+    }
 
+    const mode = options.mode || 'project';
     let project: string;
     try {
       project = fs.realpathSync.native(path.resolve(projectRoot));
     } catch {
       return { confirmationRequired: false, error: `RMMV project directory does not exist: ${path.resolve(projectRoot)}` };
     }
-    const executable = path.join(project, 'Game.exe');
-    if (!isFile(executable)) {
-      return { confirmationRequired: false, error: `Game.exe was not found in the current project root: ${executable}` };
-    }
-
-    let staging: StagingConfirmation;
-    try {
-      staging = buildStagingConfirmation(this.#dependencies.getStagingStatus(this.#workflowRoot, project));
-    } catch (error) {
-      return { confirmationRequired: false, error: errorMessage(error) };
-    }
-    if (staging.staged && options.confirmedStagingHash !== staging.hash) {
-      return {
-        confirmationRequired: true,
-        stagingSummary: staging.summary,
-        stagingSummaryHash: staging.hash,
-      };
+    let launchProject = project;
+    let executable = path.join(project, 'Game.exe');
+    let battlePreparation: BattleTestProjectPreparation | null = null;
+    if (mode === 'project') {
+      if (!isFile(executable)) {
+        return { confirmationRequired: false, error: `Game.exe was not found in the current project root: ${executable}` };
+      }
+      let staging: StagingConfirmation;
+      try {
+        staging = buildStagingConfirmation(this.#dependencies.getStagingStatus(this.#workflowRoot, project));
+      } catch (error) {
+        return { confirmationRequired: false, error: errorMessage(error) };
+      }
+      if (staging.staged && options.confirmedStagingHash !== staging.hash) {
+        return {
+          confirmationRequired: true,
+          stagingSummary: staging.summary,
+          stagingSummaryHash: staging.hash,
+        };
+      }
+    } else if (mode === 'battle_test') {
+      try {
+        battlePreparation = this.#dependencies.prepareBattleTest(this.#workflowRoot, project, {
+          troopId: requirePositiveInteger(options.troopId, 'Battle Test troopId'),
+          battlers: Array.isArray(options.battlers) ? options.battlers : [],
+          battleback1Name: String(options.battleback1Name || ''),
+          battleback2Name: String(options.battleback2Name || ''),
+        });
+      } catch (error) {
+        return { confirmationRequired: false, error: errorMessage(error) };
+      }
+      launchProject = battlePreparation.temporaryProject;
+      executable = battlePreparation.executable;
+    } else {
+      return { confirmationRequired: false, error: `Unsupported interactive playtest mode: ${String(mode)}` };
     }
 
     const now = this.#dependencies.now();
@@ -156,17 +208,24 @@ export class InteractivePlaytestService {
     const run: InteractivePlaytestRun = {
       runId,
       status: 'starting',
+      mode,
       project,
       executable,
-      cwd: project,
+      cwd: launchProject,
       ...(options.sessionId ? { sessionId: options.sessionId } : {}),
       startedAt: now.toISOString(),
       updatedAt: now.toISOString(),
       exitCode: null,
       signal: null,
       forced: false,
-      stagingIncluded: false,
-      sourceSaveRisk: true,
+      stagingIncluded: mode === 'battle_test',
+      sourceSaveRisk: mode === 'project',
+      temporaryProject: mode === 'battle_test',
+      ...(battlePreparation ? {
+        troopId: battlePreparation.troopId,
+        troopName: battlePreparation.troopName,
+        stagedFileCount: battlePreparation.staging.files.length,
+      } : {}),
       lifecycleOnly: true,
       artifactDir,
       artifactPath: path.join(artifactDir, 'playtest-run.json'),
@@ -178,6 +237,7 @@ export class InteractivePlaytestService {
     this.#currentRun = run;
     this.#runs.set(runId, run);
     this.#stopRequested = false;
+    this.#battlePreparation = battlePreparation;
     this.#publish(run, 'launch requested');
 
     return new Promise<InteractivePlaytestResult>((resolve) => {
@@ -192,14 +252,14 @@ export class InteractivePlaytestService {
 
       let child: InteractivePlaytestChild;
       try {
-        child = this.#dependencies.spawnProcess(executable, [], {
-          cwd: project,
+        child = this.#dependencies.spawnProcess(executable, mode === 'battle_test' ? ['test&btest'] : [], {
+          cwd: launchProject,
           windowsHide: false,
           shell: false,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (error) {
-        this.#finish('failed', { error: errorMessage(error) });
+        this.#finishWithIsolation('failed', { error: errorMessage(error) });
         resolveStart();
         return;
       }
@@ -215,7 +275,7 @@ export class InteractivePlaytestService {
       child.once('error', (error: Error) => {
         if (!this.#isCurrent(runId) || TERMINAL_STATUSES.has(this.#currentRun!.status)) return;
         this.#child = null;
-        this.#finish('failed', { error: error.message });
+        this.#finishWithIsolation('failed', { error: error.message });
         resolveStart();
       });
       child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => {
@@ -223,7 +283,7 @@ export class InteractivePlaytestService {
         if (this.#currentRun!.status === 'stop_failed') {
           const existingError = this.#currentRun!.error;
           this.#child = null;
-          this.#finish('failed', {
+          this.#finishWithIsolation('failed', {
             exitCode: code,
             signal,
             ...(existingError ? { error: existingError } : {}),
@@ -235,7 +295,7 @@ export class InteractivePlaytestService {
         const stopped = this.#stopRequested;
         const existingError = this.#currentRun?.error;
         this.#child = null;
-        this.#finish(stopped ? 'stopped' : code === 0 ? 'exited' : 'failed', {
+        this.#finishWithIsolation(stopped ? 'stopped' : code === 0 ? 'exited' : 'failed', {
           exitCode: code,
           signal,
           ...(stopped || code === 0 || existingError
@@ -255,7 +315,10 @@ export class InteractivePlaytestService {
   async stop(): Promise<InteractivePlaytestResult> {
     if (this.#stopPromise) return this.#stopPromise;
     const child = this.#child;
-    if (!child || child.exitCode !== null) return this.current();
+    if (!child || child.exitCode !== null) {
+      this.#retryPendingBattleCleanup();
+      return this.current();
+    }
     this.#stopPromise = this.#stopChild(child).finally(() => {
       this.#stopPromise = null;
     });
@@ -268,13 +331,16 @@ export class InteractivePlaytestService {
 
   shutdownSync(): InteractivePlaytestResult {
     const child = this.#child;
-    if (!child || child.exitCode !== null) return this.current();
+    if (!child || child.exitCode !== null) {
+      this.#retryPendingBattleCleanup();
+      return this.current();
+    }
     this.#stopRequested = true;
     this.#dependencies.requestGracefulStop(child);
     const forced = this.#dependencies.forceKillProcessTreeSync(child);
     if (child.exitCode !== null) {
       this.#child = null;
-      this.#finish('stopped', { exitCode: child.exitCode, signal: child.signalCode, forced: true });
+      this.#finishWithIsolation('stopped', { exitCode: child.exitCode, signal: child.signalCode, forced: true });
     } else {
       this.#finish('stop_failed', {
         forced: true,
@@ -346,6 +412,64 @@ export class InteractivePlaytestService {
     this.#publish(this.#currentRun, status);
   }
 
+  #finishWithIsolation(
+    status: Extract<InteractivePlaytestRunStatus, 'stopped' | 'exited' | 'failed'>,
+    patch: Partial<InteractivePlaytestRun>,
+  ): void {
+    const isolation = this.#finalizeBattlePreparation();
+    const errors = [patch.error, isolation.error].filter(Boolean);
+    this.#finish(isolation.error ? 'failed' : status, {
+      ...patch,
+      ...isolation.patch,
+      ...(errors.length ? { error: errors.join(' ') } : {}),
+    });
+  }
+
+  #retryPendingBattleCleanup(): void {
+    if (!this.#battlePreparation || !this.#currentRun) return;
+    const existingError = this.#currentRun.error;
+    this.#finishWithIsolation('failed', existingError ? { error: existingError } : {});
+  }
+
+  #finalizeBattlePreparation(): { patch: Partial<InteractivePlaytestRun>; error?: string } {
+    const preparation = this.#battlePreparation;
+    if (!preparation) return { patch: {} };
+    const failures: string[] = [];
+    let sourceUnchanged = false;
+    let savesUnchanged = false;
+    let stagingUnchanged = false;
+    try {
+      const state = this.#dependencies.verifyIsolatedSource(this.#workflowRoot, preparation);
+      sourceUnchanged = state.sourceUnchanged;
+      savesUnchanged = state.savesUnchanged;
+      stagingUnchanged = state.stagingUnchanged;
+      if (!sourceUnchanged) failures.push('Source project content changed during Battle Test.');
+      if (!savesUnchanged) failures.push('Source project save content changed during Battle Test.');
+      if (!stagingUnchanged) failures.push(`Staged project content changed during Battle Test.${state.stagingError ? ` ${state.stagingError}` : ''}`);
+    } catch (error) {
+      failures.push(`Battle Test source isolation could not be verified: ${errorMessage(error)}`);
+    }
+
+    let temporaryProjectCleaned = false;
+    try {
+      this.#dependencies.cleanupIsolated(preparation);
+      temporaryProjectCleaned = !fs.existsSync(preparation.temporaryProject);
+      if (!temporaryProjectCleaned) failures.push('Battle Test temporary project still exists after cleanup.');
+    } catch (error) {
+      failures.push(`Battle Test temporary project cleanup failed: ${errorMessage(error)}`);
+    }
+    if (temporaryProjectCleaned) this.#battlePreparation = null;
+    return {
+      patch: {
+        sourceUnchanged,
+        savesUnchanged,
+        stagingUnchanged,
+        temporaryProjectCleaned,
+      },
+      ...(failures.length ? { error: failures.join(' ') } : {}),
+    };
+  }
+
   #publish(run: InteractivePlaytestRun, logMessage: string): void {
     appendLog(run.logPath, `${run.updatedAt} ${run.status} ${logMessage}\n`);
     writeJsonAtomic(run.artifactPath, run);
@@ -399,7 +523,7 @@ function initializeArtifacts(run: InteractivePlaytestRun): void {
   fs.writeFileSync(run.stderrPath, '', 'utf8');
   fs.writeFileSync(
     run.logPath,
-    'RPG Agent MV interactive playtest\nEvidence scope: process lifecycle only; this does not prove story or playability.\n',
+    `RPG Agent MV ${run.mode === 'battle_test' ? 'isolated Battle Test' : 'interactive source playtest'}\nEvidence scope: process lifecycle and isolation only; this does not prove battle, story, or playability correctness.\n`,
     'utf8',
   );
 }
@@ -500,6 +624,12 @@ function isFile(filePath: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function requirePositiveInteger(value: unknown, label: string): number {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number <= 0) throw new Error(`${label} must be a positive integer.`);
+  return number;
 }
 
 function errorMessage(error: unknown): string {

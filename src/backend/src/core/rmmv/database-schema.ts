@@ -254,6 +254,7 @@ const DATABASE_DEFINITIONS: readonly RmmvDatabaseTableDefinition[] = [
   ], [
     ref("battlerName", "img/enemies"),
     ref("actions[].skillId", "Skills"),
+    ref("actions[].conditionParam1", "States/Switches", "Condition target depends on the enemy action condition type."),
     ref("dropItems", "Items/Weapons/Armors", "Drop item target depends on drop kind."),
     ref("traits", "System/Types and database records", "Trait dataId target depends on trait code."),
   ], defaultEnemy),

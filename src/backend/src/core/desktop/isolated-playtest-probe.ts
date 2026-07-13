@@ -1,7 +1,6 @@
 import childProcess from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,10 +12,14 @@ import type {
 import { writeJsonAtomic } from '../rmmv/json.ts';
 import type { NwjsPlayableProbeResult } from '../workflow/probe/nwjs-playable-probe.ts';
 import {
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  preflightStagedProjectFiles,
-} from './staging-service.ts';
+  cleanupIsolatedProject,
+  emptyIsolatedStagingSnapshot,
+  IsolatedProjectPreparationError,
+  prepareIsolatedStagedProject,
+  verifyIsolatedSourceState,
+  type IsolatedProjectPreparation,
+  type IsolatedStagingSnapshot,
+} from './isolated-project-preparation.ts';
 
 export interface IsolatedPlaytestProbeOptions {
   mapId?: number;
@@ -57,17 +60,6 @@ export interface IsolatedProbeWorkerProcessDependencies {
   ) => childProcess.ChildProcess;
 }
 
-interface StagedFileSnapshot {
-  relativePath: string;
-  delete: boolean;
-  draftHash: string | null;
-}
-
-interface StagingSnapshot {
-  files: StagedFileSnapshot[];
-  digest: string;
-}
-
 interface RequestedStart {
   mapId: number;
   x: number;
@@ -95,7 +87,7 @@ export async function runIsolatedRmmvPlaytestProbe(
   dependencies: Partial<IsolatedPlaytestProbeDependencies> = {},
 ): Promise<RmmvVerifyResult> {
   const workflowRoot = fs.realpathSync.native(path.resolve(workflowRootInput));
-  const project = path.resolve(projectInput);
+  let project = path.resolve(projectInput);
   const now = dependencies.now || (() => new Date());
   const randomUUID = dependencies.randomUUID || crypto.randomUUID;
   const generated = now();
@@ -105,9 +97,8 @@ export async function runIsolatedRmmvPlaytestProbe(
   fs.mkdirSync(artifactDir, { recursive: true });
 
   let timeoutMs = DEFAULT_TIMEOUT_MS;
-  let sourceFingerprintBefore = '';
-  let saveFingerprintBefore = '';
-  let stagingBefore: StagingSnapshot = emptyStagingSnapshot();
+  let stagingBefore: IsolatedStagingSnapshot = emptyIsolatedStagingSnapshot();
+  let preparation: IsolatedProjectPreparation | null = null;
   let requestedStart: RequestedStart = { mapId: 0, x: 0, y: 0 };
   let temporaryProject = '';
   let workerResponse: IsolatedProbeWorkerResponse | undefined;
@@ -119,14 +110,14 @@ export async function runIsolatedRmmvPlaytestProbe(
 
   try {
     timeoutMs = normalizeTimeout(options.timeoutMs);
-    if (!isDirectory(project)) throw new ProbePreflightError(`RMMV project directory does not exist: ${project}`);
-    sourceFingerprintBefore = fingerprintProjectSource(project);
-    saveFingerprintBefore = fingerprintSaveState(project);
-    stagingBefore = snapshotStaging(workflowRoot, project);
-    temporaryProject = (dependencies.createTemporaryProject || defaultCreateTemporaryProject)();
-    copyProjectExcludingSaves(project, temporaryProject);
-    savesExcluded = candidateSavePaths(temporaryProject).every((candidate) => !fs.existsSync(candidate));
-    overlayStagedFiles(workflowRoot, project, temporaryProject, stagingBefore.files);
+    preparation = prepareIsolatedStagedProject(workflowRoot, project, {
+      temporaryPrefix: 'rmmv-agent-verify-',
+      ...(dependencies.createTemporaryProject ? { createTemporaryProject: dependencies.createTemporaryProject } : {}),
+    });
+    project = preparation.sourceProject;
+    stagingBefore = preparation.staging;
+    temporaryProject = preparation.temporaryProject;
+    savesExcluded = preparation.savesExcluded;
     requestedStart = configureTemporaryStart(temporaryProject, options);
     assertProbeRuntime(temporaryProject);
 
@@ -143,12 +134,13 @@ export async function runIsolatedRmmvPlaytestProbe(
     workerResponse = await (dependencies.executeWorker || executeIsolatedProbeWorker)(request);
   } catch (error) {
     const message = errorMessage(error);
-    if (error instanceof ProbePreflightError || !workerStarted) blockers.push(message);
+    if (error instanceof ProbePreflightError || error instanceof IsolatedProjectPreparationError || !workerStarted) blockers.push(message);
     else workerResponse = { ok: false, error: message };
   } finally {
-    if (temporaryProject) {
+    if (preparation) {
       try {
-        (dependencies.removeTemporaryProject || defaultRemoveTemporaryProject)(temporaryProject);
+        if (dependencies.removeTemporaryProject) cleanupIsolatedProject(preparation, dependencies.removeTemporaryProject);
+        else cleanupIsolatedProject(preparation);
       } catch (error) {
         cleanupError = errorMessage(error);
       }
@@ -157,18 +149,12 @@ export async function runIsolatedRmmvPlaytestProbe(
 
   const temporaryProjectCleaned = !temporaryProject || !fs.existsSync(temporaryProject);
   if (!temporaryProjectCleaned && !cleanupError) cleanupError = 'Temporary project still exists after cleanup.';
-  const sourceUnchanged = sourceFingerprintBefore
-    ? safeFingerprint(() => fingerprintProjectSource(project)) === sourceFingerprintBefore
-    : true;
-  const savesUnchanged = saveFingerprintBefore
-    ? safeFingerprint(() => fingerprintSaveState(project)) === saveFingerprintBefore
-    : true;
-  let stagingUnchanged = true;
-  try {
-    stagingUnchanged = snapshotStaging(workflowRoot, project).digest === stagingBefore.digest;
-  } catch (error) {
-    stagingUnchanged = false;
-    blockers.push(`Staging preflight changed or conflicted during probe: ${errorMessage(error)}`);
+  const isolationState = preparation
+    ? verifyIsolatedSourceState(workflowRoot, preparation)
+    : { sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true };
+  const { sourceUnchanged, savesUnchanged, stagingUnchanged } = isolationState;
+  if ('stagingError' in isolationState && isolationState.stagingError) {
+    blockers.push(`Staging preflight changed or conflicted during probe: ${isolationState.stagingError}`);
   }
   if (!sourceUnchanged) blockers.push('Source project content changed during the isolated probe.');
   if (!savesUnchanged) blockers.push('Source project save content changed during the isolated probe.');
@@ -242,70 +228,6 @@ export async function runIsolatedRmmvPlaytestProbe(
   if (!result.artifacts.includes(artifactPath)) result.artifacts.unshift(artifactPath);
   writeJsonAtomic(artifactPath, result);
   return result;
-}
-
-function snapshotStaging(workflowRoot: string, project: string): StagingSnapshot {
-  const status = getProjectStagingStatus(workflowRoot, project) as {
-    files?: Array<Record<string, unknown>>;
-    operations?: unknown[];
-    maps?: number[];
-  };
-  const relativePaths = (status.files || []).map((entry) => String(entry.relativePath || '')).filter(Boolean);
-  const preflight = relativePaths.length
-    ? preflightStagedProjectFiles(workflowRoot, project, relativePaths) as Array<Record<string, unknown>>
-    : [];
-  const files = preflight.map((entry) => ({
-    relativePath: String(entry.relativePath || ''),
-    delete: Boolean(entry.delete),
-    draftHash: typeof entry.draftHash === 'string' ? entry.draftHash : null,
-  })).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-  const digestPayload = {
-    files: preflight.map((entry) => ({
-      relativePath: entry.relativePath,
-      delete: Boolean(entry.delete),
-      baseHash: entry.baseHash ?? null,
-      sourceHash: entry.sourceHash ?? null,
-      draftHash: entry.draftHash ?? null,
-      recordedDraftHash: entry.recordedDraftHash ?? null,
-      operationId: entry.operationId ?? null,
-      conflictReasons: entry.conflictReasons ?? [],
-    })).sort((left, right) => String(left.relativePath).localeCompare(String(right.relativePath))),
-    operations: Array.isArray(status.operations) ? status.operations : [],
-    maps: Array.isArray(status.maps) ? [...status.maps].sort((a, b) => a - b) : [],
-  };
-  return {
-    files,
-    digest: sha256(Buffer.from(JSON.stringify(digestPayload), 'utf8')),
-  };
-}
-
-function emptyStagingSnapshot(): StagingSnapshot {
-  return { files: [], digest: sha256(Buffer.from(JSON.stringify({ files: [], operations: [], maps: [] }), 'utf8')) };
-}
-
-function overlayStagedFiles(
-  workflowRoot: string,
-  sourceProject: string,
-  temporaryProject: string,
-  files: StagedFileSnapshot[],
-): void {
-  for (const entry of files) {
-    const target = confinedProjectPath(temporaryProject, entry.relativePath);
-    if (entry.delete) {
-      fs.rmSync(target, { force: true });
-      continue;
-    }
-    const draft = getProjectFileForRead(workflowRoot, sourceProject, entry.relativePath);
-    if (!draft || !isFile(draft)) throw new ProbePreflightError(`Staged draft is missing: ${entry.relativePath}`);
-    if (!entry.draftHash || sha256(fs.readFileSync(draft)) !== entry.draftHash) {
-      throw new ProbePreflightError(`Staged draft hash changed while preparing probe: ${entry.relativePath}`);
-    }
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(draft, target);
-    if (sha256(fs.readFileSync(target)) !== entry.draftHash) {
-      throw new ProbePreflightError(`Staged draft changed while copying probe input: ${entry.relativePath}`);
-    }
-  }
 }
 
 function configureTemporaryStart(project: string, options: IsolatedPlaytestProbeOptions): RequestedStart {
@@ -451,30 +373,6 @@ function readRawProbe(run: NwjsPlayableProbeResult | undefined): Record<string, 
   }
 }
 
-function copyProjectExcludingSaves(sourceProject: string, temporaryProject: string): void {
-  const source = fs.realpathSync.native(path.resolve(sourceProject));
-  fs.rmSync(temporaryProject, { recursive: true, force: true });
-  fs.mkdirSync(temporaryProject, { recursive: true });
-  fs.cpSync(source, temporaryProject, {
-    recursive: true,
-    preserveTimestamps: true,
-    filter: (sourcePath) => {
-      const relative = normalizeRelative(path.relative(source, sourcePath));
-      if (!relative) return true;
-      const lower = relative.toLowerCase();
-      return lower !== '.git'
-        && !lower.startsWith('.git/')
-        && lower !== 'save'
-        && !lower.startsWith('save/')
-        && lower !== 'www/save'
-        && !lower.startsWith('www/save/');
-    },
-  });
-  if (candidateSavePaths(temporaryProject).some((candidate) => fs.existsSync(candidate))) {
-    throw new ProbePreflightError('Temporary project copy still contains a save directory.');
-  }
-}
-
 function assertProbeRuntime(project: string): void {
   const gameExe = path.join(project, 'Game.exe');
   if (!isFile(gameExe)) throw new ProbePreflightError(`RMMV probe runner was not found: ${gameExe}`);
@@ -493,58 +391,6 @@ function assertProbeRuntime(project: string): void {
   if (missingEngineFiles.length > 0) {
     throw new ProbePreflightError(`RMMV runtime is incomplete; missing js/${missingEngineFiles.join(', js/')}.`);
   }
-}
-
-function fingerprintProjectSource(project: string): string {
-  return fingerprintTree(project, (relative) => {
-    const lower = relative.toLowerCase();
-    return lower === '.git'
-      || lower.startsWith('.git/')
-      || lower === 'save'
-      || lower.startsWith('save/')
-      || lower === 'www/save'
-      || lower.startsWith('www/save/');
-  });
-}
-
-function fingerprintSaveState(project: string): string {
-  const hash = crypto.createHash('sha256');
-  for (const candidate of candidateSavePaths(project)) {
-    const relative = normalizeRelative(path.relative(project, candidate));
-    hash.update(`${relative}:${fs.existsSync(candidate) ? 'exists' : 'missing'}\n`);
-    if (isDirectory(candidate)) hash.update(fingerprintTree(candidate, () => false));
-  }
-  return hash.digest('hex');
-}
-
-function fingerprintTree(root: string, exclude: (relative: string) => boolean): string {
-  const hash = crypto.createHash('sha256');
-  if (!fs.existsSync(root)) return hash.update('missing').digest('hex');
-  for (const entry of listTreeEntries(root)) {
-    const relative = normalizeRelative(path.relative(root, entry));
-    if (!relative || exclude(relative)) continue;
-    const stat = fs.lstatSync(entry);
-    if (stat.isDirectory()) continue;
-    if (stat.isSymbolicLink()) {
-      hash.update(`link:${relative}:${fs.readlinkSync(entry)}\n`);
-      continue;
-    }
-    if (!stat.isFile()) continue;
-    hash.update(`file:${relative}:${stat.size}:`);
-    hash.update(fs.readFileSync(entry));
-    hash.update('\n');
-  }
-  return hash.digest('hex');
-}
-
-function listTreeEntries(root: string): string[] {
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    const absolute = path.join(root, entry.name);
-    out.push(absolute);
-    if (entry.isDirectory()) out.push(...listTreeEntries(absolute));
-  }
-  return out.sort((left, right) => left.localeCompare(right));
 }
 
 export async function executeIsolatedProbeWorker(
@@ -622,15 +468,6 @@ function stopProcessTree(child: childProcess.ChildProcess): void {
   }
 }
 
-function defaultCreateTemporaryProject(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'rmmv-agent-verify-'));
-}
-
-function defaultRemoveTemporaryProject(project: string): void {
-  fs.rmSync(project, { recursive: true, force: true });
-  if (fs.existsSync(project)) throw new Error(`Temporary project could not be removed: ${project}`);
-}
-
 function resolveDataDir(project: string): string {
   const candidates = [path.join(project, 'www', 'data'), path.join(project, 'data')];
   const dataDir = candidates.find((candidate) => isFile(path.join(candidate, 'System.json')));
@@ -645,18 +482,6 @@ function readJsonRecord(filePath: string, label: string): Record<string, unknown
   } catch (error) {
     throw new ProbePreflightError(`${label} is invalid JSON: ${errorMessage(error)}`);
   }
-}
-
-function confinedProjectPath(project: string, relativePath: string): string {
-  const normalized = normalizeRelative(relativePath);
-  if (!normalized || normalized.startsWith('../') || path.isAbsolute(relativePath)) {
-    throw new ProbePreflightError(`Unsafe staged project path: ${relativePath}`);
-  }
-  const root = path.resolve(project);
-  const target = path.resolve(root, normalized);
-  const relative = path.relative(root, target);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new ProbePreflightError(`Unsafe staged project path: ${relativePath}`);
-  return target;
 }
 
 function normalizeTimeout(value: number | undefined): number {
@@ -684,14 +509,6 @@ function finiteInteger(value: unknown): number | undefined {
   return Number.isInteger(parsed) ? parsed : undefined;
 }
 
-function candidateSavePaths(project: string): string[] {
-  return [path.join(project, 'save'), path.join(project, 'www', 'save')];
-}
-
-function safeFingerprint(read: () => string): string {
-  try { return read(); } catch { return ''; }
-}
-
 function recordValue(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 }
@@ -709,20 +526,8 @@ function buildRunId(now: Date, uuid: string): string {
   return `probe-${stamp}-${uuid.replace(/[^a-z0-9]/gi, '').slice(0, 12).toLowerCase()}`;
 }
 
-function normalizeRelative(value: string): string {
-  return value.replace(/\\/g, '/').replace(/^\.\//, '');
-}
-
-function sha256(content: Buffer): string {
-  return crypto.createHash('sha256').update(content).digest('hex');
-}
-
 function isFile(filePath: string): boolean {
   return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
-}
-
-function isDirectory(dirPath: string): boolean {
-  return fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory();
 }
 
 function errorMessage(error: unknown): string {

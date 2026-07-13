@@ -39,6 +39,7 @@ describe('interactive playtest IPC bindings', () => {
     assert.deepEqual([...handlers.keys()].sort(), [...INTERACTIVE_PLAYTEST_IPC_CHANNELS].sort());
     await handlers.get('playtest:start')?.(null, {
       project: 'projects/sample',
+      mode: 'project',
       sessionId: 'session-current',
       confirmedStagingHash: 'summary-hash',
     });
@@ -48,6 +49,7 @@ describe('interactive playtest IPC bindings', () => {
 
     assert.deepEqual(calls, [
       ['start', 'resolved:projects/sample', {
+        mode: 'project',
         sessionId: 'session-current',
         confirmedStagingHash: 'summary-hash',
       }],
@@ -58,5 +60,54 @@ describe('interactive playtest IPC bindings', () => {
 
     cleanupInteractivePlaytestIpcHandlers(ipc);
     assert.equal(handlers.size, 0);
+  });
+
+  test('passes only structured Battle Test configuration and rejects arbitrary launch arguments', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const calls: unknown[][] = [];
+    const service = {
+      async start(project: string, options: Record<string, unknown>) {
+        calls.push([project, options]);
+        return { confirmationRequired: false };
+      },
+      current: () => ({ confirmationRequired: false }),
+      stop: async () => ({ confirmationRequired: false }),
+    };
+    registerInteractivePlaytestIpcHandlers({
+      handle(channel, listener) { handlers.set(channel, listener); },
+      removeHandler(channel) { handlers.delete(channel); },
+    }, service, {
+      getLastProject: () => '',
+      resolveProject: (project) => project,
+      resolveSession: () => undefined,
+      revealEvidence: () => undefined,
+    });
+
+    await handlers.get('playtest:start')?.(null, {
+      project: 'projects/sample',
+      mode: 'battle_test',
+      troopId: 3,
+      battlers: [{ actorId: 1, level: 12, equips: [1, 0] }],
+      battleback1Name: 'Field',
+      battleback2Name: 'Forest',
+    });
+    assert.deepEqual(calls, [[
+      'projects/sample',
+      {
+        mode: 'battle_test',
+        troopId: 3,
+        battlers: [{ actorId: 1, level: 12, equips: [1, 0] }],
+        battleback1Name: 'Field',
+        battleback2Name: 'Forest',
+      },
+    ]]);
+    await assert.rejects(
+      () => handlers.get('playtest:start')?.(null, {
+        project: 'projects/sample',
+        mode: 'battle_test',
+        args: ['--arbitrary'],
+      }) as Promise<unknown>,
+      /does not accept field.*args/i,
+    );
   });
 });

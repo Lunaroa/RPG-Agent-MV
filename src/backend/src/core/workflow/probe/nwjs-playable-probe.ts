@@ -310,7 +310,7 @@ function waitForProbeResult(resultPath: string, child: childProcess.ChildProcess
   };
 }
 
-function ensureProcessStopped(
+export function ensureProcessStopped(
   child: childProcess.ChildProcess,
   timeoutMs: number,
 ): { exited: boolean; exitCode: number | null; signal: string | null } {
@@ -329,12 +329,38 @@ function ensureProcessStopped(
 function isProcessAlive(child: childProcess.ChildProcess): boolean {
   if (!child.pid) return false;
   if (child.exitCode !== null) return false;
+  if (process.platform === "win32") return isWindowsProcessAlive(child.pid);
   try {
     child.kill(0);
     return true;
   } catch {
     return false;
   }
+}
+
+function isWindowsProcessAlive(pid: number): boolean {
+  const result = childProcess.spawnSync("tasklist", [
+    "/FI",
+    "PID eq " + pid,
+    "/FO",
+    "CSV",
+    "/NH",
+  ], {
+    encoding: "utf8",
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail = String(result.stderr || "").trim() || "exit " + result.status;
+    throw new Error("tasklist failed while checking PID " + pid + ": " + detail);
+  }
+  return String(result.stdout || "")
+    .split(/\r?\n/)
+    .some((line) => {
+      const match = /^"[^"]*","(\d+)"/.exec(line.trim());
+      return match?.[1] === String(pid);
+    });
 }
 
 function stopProcess(child: childProcess.ChildProcess): void {
@@ -370,6 +396,7 @@ function enrichProbeWithScreenEvidence(probe: ProbeResult, screenPath: string): 
     exists: true,
     screenshotWritten: true
   };
+  if (normalizeRuntimeJsErrors(probe.errors).length > 0) return;
   const playerVisible = probe.map && probe.map.player && probe.map.player.visible && probe.map.player.characterName;
   if (probe.status === "fail" && probe.screen.nonBlank && probe.map && probe.map.onStartMap && playerVisible && probe.events && probe.events.complete) {
     probe.status = "pass";
@@ -671,7 +698,7 @@ function runtimeResult(method: string, status: string, detail: string, extra: Re
   };
 }
 
-function renderProbeScript(resultPath: string, screenPath: string, timeoutMs: number): string {
+export function renderProbeScript(resultPath: string, screenPath: string, timeoutMs: number): string {
   return `/* eslint-disable */
 (function () {
   var fs = null;
@@ -681,6 +708,8 @@ function renderProbeScript(resultPath: string, screenPath: string, timeoutMs: nu
   var startedAt = Date.now();
   var timeoutMs = ${JSON.stringify(timeoutMs)};
   var errors = [];
+  var lastErrorPrinterText = "";
+  var engineErrorHookInstalled = false;
   var launchedMap = false;
   var firstMapAt = 0;
   var captureInFlight = false;
@@ -703,6 +732,45 @@ function renderProbeScript(resultPath: string, screenPath: string, timeoutMs: nu
       stack: reason && reason.stack ? String(reason.stack).slice(0, 1000) : ""
     });
   });
+  function recordHandledRuntimeError(error, source) {
+    var message = String(error && error.message || error || "unknown error");
+    var stack = error && error.stack ? String(error.stack).slice(0, 1000) : "";
+    var duplicate = errors.some(function (entry) {
+      return entry.source === source && entry.message === message && entry.stack === stack;
+    });
+    if (duplicate) return;
+    errors.push({
+      message: message,
+      source: source,
+      line: 0,
+      column: 0,
+      stack: stack
+    });
+  }
+  function installEngineErrorHook() {
+    if (engineErrorHookInstalled || !window.SceneManager || typeof window.SceneManager.catchException !== "function") return;
+    var originalCatchException = window.SceneManager.catchException;
+    window.SceneManager.catchException = function (error) {
+      recordHandledRuntimeError(error, "SceneManager.catchException");
+      return originalCatchException.apply(this, arguments);
+    };
+    engineErrorHookInstalled = true;
+  }
+  function captureRmmvErrorPrinter() {
+    var graphicsPrinter = window.Graphics && window.Graphics._errorPrinter;
+    var domPrinter = typeof document.getElementById === "function" && document.getElementById("ErrorPrinter");
+    var printer = graphicsPrinter || domPrinter;
+    var text = printer && String(printer.innerText || printer.textContent || "").replace(/\\s+/g, " ").trim();
+    if (!text || text === lastErrorPrinterText) return;
+    lastErrorPrinterText = text;
+    errors.push({
+      message: text.slice(0, 1000),
+      source: "RMMV_ErrorPrinter",
+      line: 0,
+      column: 0,
+      stack: ""
+    });
+  }
   function write(result) {
     result.generatedAt = new Date().toISOString();
     result.elapsedMs = Date.now() - startedAt;
@@ -718,7 +786,28 @@ function renderProbeScript(resultPath: string, screenPath: string, timeoutMs: nu
     return scene && scene.constructor && scene.constructor.name || null;
   }
   function ready() {
-    return Boolean(window.DataManager && window.SceneManager && window.Graphics && window.$dataSystem && window.$dataMapInfos);
+    if (!(window.DataManager && window.SceneManager && window.Graphics && window.$dataSystem && window.$dataMapInfos)) {
+      return false;
+    }
+    if (typeof window.DataManager.isDatabaseLoaded !== "function") return false;
+    try {
+      return Boolean(window.DataManager.isDatabaseLoaded());
+    } catch (error) {
+      var message = "Database readiness check failed: " + String(error && error.message || error || "unknown error");
+      var alreadyRecorded = errors.some(function (entry) {
+        return entry.source === "DataManager.isDatabaseLoaded" && entry.message === message;
+      });
+      if (!alreadyRecorded) {
+        errors.push({
+          message: message,
+          source: "DataManager.isDatabaseLoaded",
+          line: 0,
+          column: 0,
+          stack: error && error.stack ? String(error.stack).slice(0, 1000) : ""
+        });
+      }
+      return false;
+    }
   }
   function pressOk() {
     if (!window.Input) return;
@@ -919,6 +1008,8 @@ function renderProbeScript(resultPath: string, screenPath: string, timeoutMs: nu
   }
   function tick() {
     var elapsed = Date.now() - startedAt;
+    installEngineErrorHook();
+    captureRmmvErrorPrinter();
     if (errors.length) {
       write({
         status: "fail",

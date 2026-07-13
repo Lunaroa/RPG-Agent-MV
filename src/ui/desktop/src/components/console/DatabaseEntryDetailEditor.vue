@@ -13,13 +13,8 @@ import type {
 import { useI18n } from '../../i18n';
 import {
   animationFramesSummary,
-  appendAnimationFrame,
-  appendAnimationFrameCell,
   appendAnimationTiming,
-  MV_ANIMATION_BLEND_MODES,
-  MV_ANIMATION_CELL_FIELDS,
   MV_ANIMATION_FLASH_SCOPES,
-  MV_CLASS_PARAM_LEVELS,
   MV_TROOP_PAGE_SPANS,
   appendStringListItem,
   alignTroopMembers,
@@ -30,21 +25,17 @@ import {
   isStandardEnemyActionConditionType,
   isMvStringListField,
   MV_TERMS_LIST_PATHS,
-  normalizeAnimationFrames,
   normalizeAnimationTimings,
-  normalizeClassParamCurves,
   normalizeEnemyAction,
   normalizeTroopPageConditions,
   normalizeTroopMembers,
   normalizeStringList,
   normalizeTermsArray,
-  removeAnimationFrameCell,
+  removeAnimationTiming as removeAnimationTimingValue,
   removeStringListItem,
-  setAnimationFrameCellValue,
   setAnimationTimingFlashColor,
   setAnimationTimingSeValue,
   setAnimationTimingValue,
-  setClassParamCurveLevel,
   setEnemyActionConditionParameter,
   setEnemyActionConditionType,
   setStringListItem,
@@ -61,13 +52,16 @@ import { mvFaceSourceRect } from '../../utils/rmmvFace';
 import MvCommandListEditor from './MvCommandListEditor.vue';
 import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
 import ImageAssetPickerDialog from '../editor/ImageAssetPickerDialog.vue';
+import AnimationFrameCanvasEditor from './AnimationFrameCanvasEditor.vue';
+import ClassParameterCurveEditor from './ClassParameterCurveEditor.vue';
+import DatabaseEffectEditor from './DatabaseEffectEditor.vue';
+import DatabaseTraitEditor from './DatabaseTraitEditor.vue';
 import TilesetFlagCanvasEditor from './TilesetFlagCanvasEditor.vue';
 import TroopFormationCanvas from './TroopFormationCanvas.vue';
 import {
   ANIMATION_POSITION_OPTIONS,
   DAMAGE_TYPE_OPTIONS,
   DROP_KIND_OPTIONS,
-  EFFECT_CODES,
   HIT_TYPE_OPTIONS,
   ITEM_TYPE_OPTIONS,
   MENU_COMMAND_LABELS,
@@ -77,17 +71,15 @@ import {
   RMMV_NONE_LABEL,
   SCOPE_OPTIONS,
   SOUND_LABELS,
-  SPARAM_OPTIONS,
   STATE_AUTO_REMOVE_OPTIONS,
   STATE_MOTION_OPTIONS,
+  STATE_OVERLAY_OPTIONS,
   STATE_RESTRICTION_OPTIONS,
   TERM_LABELS,
   TILESET_MODE_OPTIONS,
   TILESET_NAME_LABELS,
   TONE_LABELS,
-  TRAIT_CODES,
   TRIGGER_OPTIONS,
-  XPARAM_OPTIONS,
   databaseFieldLabel,
   databaseGroupLabel,
   databaseTermMessageLabel,
@@ -127,7 +119,6 @@ const emit = defineEmits<{
 const { language, t } = useI18n();
 
 const jsonErrors = reactive<Record<string, string>>({});
-const selectedAnimationFrameIndex = ref(0);
 const facePreviewCanvas = ref<HTMLCanvasElement | null>(null);
 const characterPreviewCanvas = ref<HTMLCanvasElement | null>(null);
 const battlerPreviewCanvas = ref<HTMLCanvasElement | null>(null);
@@ -158,8 +149,6 @@ const schemaFields = computed(() => {
 const references = computed(() => props.schema?.references || []);
 const schemaDriven = computed(() => schemaFields.value.length > 0);
 const localizedParamOptions = computed(() => localizedOptions(PARAM_OPTIONS));
-const localizedTraitCodes = computed(() => localizedOptions(TRAIT_CODES));
-const localizedEffectCodes = computed(() => localizedOptions(EFFECT_CODES));
 const localizedMenuCommandLabels = computed(() => MENU_COMMAND_LABELS.map(localizedLabel));
 const localizedToneLabels = computed(() => TONE_LABELS.map(localizedLabel));
 const localizedSoundLabels = computed(() => SOUND_LABELS.map(localizedLabel));
@@ -168,7 +157,6 @@ const localizedTermLabels = computed<Record<string, string[]>>(() => Object.from
 ));
 const isActorImageEditor = computed(() => props.group === 'Actors' && schemaDriven.value);
 const isEnemyEditor = computed(() => props.group === 'Enemies' || props.schema?.fileName === 'Enemies.json');
-const isTroopEditor = computed(() => props.group === 'Troops' || props.schema?.fileName === 'Troops.json');
 const activeBattleback1Name = computed(() => props.battleback1Name ?? props.catalog?.battle.battleback1Name ?? '');
 const activeBattleback2Name = computed(() => props.battleback2Name ?? props.catalog?.battle.battleback2Name ?? '');
 const visibleSchemaFields = computed(() => (
@@ -503,6 +491,7 @@ function primitiveOptions(field: RmmvDatabaseFieldSchema): SelectOption[] {
     case 'restriction': return localizedOptions(STATE_RESTRICTION_OPTIONS);
     case 'autoRemovalTiming': return localizedOptions(STATE_AUTO_REMOVE_OPTIONS);
     case 'motion': return localizedOptions(STATE_MOTION_OPTIONS);
+    case 'overlay': return localizedOptions(STATE_OVERLAY_OPTIONS);
     case 'position': return localizedOptions(ANIMATION_POSITION_OPTIONS);
     case 'mode': return localizedOptions(TILESET_MODE_OPTIONS);
     default:
@@ -512,59 +501,6 @@ function primitiveOptions(field: RmmvDatabaseFieldSchema): SelectOption[] {
 
 function hasPrimitiveOptions(field: RmmvDatabaseFieldSchema): boolean {
   return primitiveOptions(field).length > 0;
-}
-
-function traitTargetOptions(code: number): SelectOption[] {
-  switch (code) {
-    case 11:
-    case 31:
-      return asOptions(catalogEntries('elements'));
-    case 13:
-    case 14:
-    case 32:
-      return asOptions(catalogEntries('states'));
-    case 21:
-      return localizedParamOptions.value;
-    case 22:
-      return localizedOptions(XPARAM_OPTIONS);
-    case 23:
-      return localizedOptions(SPARAM_OPTIONS);
-    case 41:
-    case 42:
-      return asOptions(catalogEntries('skillTypes'));
-    case 43:
-    case 44:
-      return asOptions(catalogEntries('skills'));
-    case 51:
-      return asOptions(catalogEntries('weaponTypes'));
-    case 52:
-      return asOptions(catalogEntries('armorTypes'));
-    case 53:
-    case 54:
-      return asOptions(catalogEntries('equipTypes'));
-    default:
-      return [];
-  }
-}
-
-function effectTargetOptions(code: number): SelectOption[] {
-  switch (code) {
-    case 21:
-    case 22:
-      return asOptions(catalogEntries('states'));
-    case 31:
-    case 32:
-    case 33:
-    case 34:
-    case 42:
-      return localizedParamOptions.value;
-    case 43:
-      return asOptions(catalogEntries('skills'));
-    case 44:
-      return asOptions(catalogEntries('commonEvents'));
-    default:
-      return [];
-  }
 }
 
 function actorProfile(actorId: number) {
@@ -789,6 +725,11 @@ function localizedTroopPageConditionSummary(value: unknown): string[] {
 
 function framesSummary(path: string): string {
   return animationFramesSummary(readPath(path), language.value);
+}
+
+function animationFrameCount(path: string): number {
+  const frames = readPath(path);
+  return Array.isArray(frames) ? frames.length : 0;
 }
 
 function invalidArrayItemCount(path: string): number {
@@ -1059,14 +1000,6 @@ function updateMessagesRecord(key: string, value: string): void {
   writePath('messages', { ...objectValue('messages'), [key]: value });
 }
 
-function classParamValue(paramIndex: number, level: number): number {
-  return normalizeClassParamCurves(readPath('params'))[paramIndex]?.[level] ?? 0;
-}
-
-function updateClassParam(paramIndex: number, level: number, value: number): void {
-  writePath('params', setClassParamCurveLevel(readPath('params'), paramIndex, level, value));
-}
-
 function troopPageConditions(page: DbRecord) {
   return normalizeTroopPageConditions(page.conditions);
 }
@@ -1180,38 +1113,6 @@ function troopEnemyIndexOptions(): SelectOption[] {
   });
 }
 
-function animationFrames(path: string): number[][][] {
-  return normalizeAnimationFrames(readPath(path));
-}
-
-function selectedAnimationFrame(path: string): number[][] {
-  const frames = animationFrames(path);
-  const index = Math.min(Math.max(selectedAnimationFrameIndex.value, 0), Math.max(0, frames.length - 1));
-  return frames[index] || [];
-}
-
-function selectAnimationFrame(index: number): void {
-  selectedAnimationFrameIndex.value = Math.max(0, index);
-}
-
-function addAnimationFrame(path: string): void {
-  const next = appendAnimationFrame(readPath(path));
-  writePath(path, next);
-  selectedAnimationFrameIndex.value = Math.max(0, next.length - 1);
-}
-
-function addAnimationFrameCell(path: string): void {
-  writePath(path, appendAnimationFrameCell(readPath(path), selectedAnimationFrameIndex.value));
-}
-
-function updateAnimationFrameCell(path: string, cellIndex: number, fieldIndex: number, value: number): void {
-  writePath(path, setAnimationFrameCellValue(readPath(path), selectedAnimationFrameIndex.value, cellIndex, fieldIndex, value));
-}
-
-function deleteAnimationFrameCell(path: string, cellIndex: number): void {
-  writePath(path, removeAnimationFrameCell(readPath(path), selectedAnimationFrameIndex.value, cellIndex));
-}
-
 function animationTimings(path: string) {
   return normalizeAnimationTimings(readPath(path));
 }
@@ -1221,7 +1122,7 @@ function addAnimationTiming(path: string): void {
 }
 
 function removeAnimationTiming(path: string, index: number): void {
-  writePath(path, animationTimings(path).filter((_timing, timingIndex) => timingIndex !== index));
+  writePath(path, removeAnimationTimingValue(readPath(path), index));
 }
 
 function updateAnimationTiming(path: string, index: number, key: Parameters<typeof setAnimationTimingValue>[2], value: unknown): void {
@@ -1325,39 +1226,13 @@ function updateSound(index: number, key: string, value: unknown): void {
           <div class="rm-panel rm-panel-fill">
             <div class="rm-panel-head">
               <div class="rm-panel-title">{{ fieldLabel(actorTraitsField) }}</div>
-              <button type="button" class="rm-mini-button" @click="addArrayObject(actorTraitsField.path, { code: 21, dataId: 0, value: 1 })">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayRecords(actorTraitsField.path).length" class="empty-note">{{ t('db.noTraits') }}</div>
-            <div v-else class="rm-trait-list">
-              <div v-for="(trait, index) in arrayRecords(actorTraitsField.path)" :key="`actor-trait-${index}`" class="rm-trait-row">
-                <select :value="numberValue(trait, 'code', 21)" :title="t('eventEditorDialog.type')" @change="updateArrayObject(actorTraitsField.path, index, 'code', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in localizedTraitCodes" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-                <select
-                  v-if="traitTargetOptions(numberValue(trait, 'code', 21)).length"
-                  :value="numberValue(trait, 'dataId')"
-                  :title="t('db.target')"
-                  @change="updateArrayObject(actorTraitsField.path, index, 'dataId', Number(($event.target as HTMLSelectElement).value))"
-                >
-                  <option v-for="option in traitTargetOptions(numberValue(trait, 'code', 21))" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-                <input
-                  v-else
-                  type="number"
-                  :value="numberValue(trait, 'dataId')"
-                  :title="t('db.target')"
-                  @input="updateArrayObject(actorTraitsField.path, index, 'dataId', Number(($event.target as HTMLInputElement).value))"
-                />
-                <input
-                  type="number"
-                  step="0.01"
-                  :value="numberValue(trait, 'value', 1)"
-                  :title="t('db.value')"
-                  @input="updateArrayObject(actorTraitsField.path, index, 'value', Number(($event.target as HTMLInputElement).value))"
-                />
-                <button type="button" class="rm-icon-button danger" @click="removeArrayIndex(actorTraitsField.path, index)">×</button>
-              </div>
-            </div>
+            <DatabaseTraitEditor
+              :model-value="arrayValue(actorTraitsField.path)"
+              :catalog="catalog"
+              compact
+              @update:model-value="writePath(actorTraitsField.path, $event)"
+            />
           </div>
         </div>
       </div>
@@ -1536,81 +1411,21 @@ function updateSound(index: number, key: string, value: unknown): void {
           </section>
 
           <section v-else-if="field.path === 'traits'" class="field full complex-editor">
-            <div class="complex-title">
-              <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { code: 21, dataId: 0, value: 1 })">{{ t('cmdList.add') }}</button>
-            </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noTraits') }}</div>
-            <div v-for="(trait, index) in arrayRecords(field.path)" :key="`trait-${index}`" class="complex-row trait-row">
-              <label>
-                <span>{{ t('eventEditorDialog.type') }}</span>
-                <select :value="numberValue(trait, 'code', 21)" @change="updateArrayObject(field.path, index, 'code', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in localizedTraitCodes" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-              </label>
-              <label>
-                <span>{{ t('db.target') }}</span>
-                <select
-                  v-if="traitTargetOptions(numberValue(trait, 'code', 21)).length"
-                  :value="numberValue(trait, 'dataId')"
-                  @change="updateArrayObject(field.path, index, 'dataId', Number(($event.target as HTMLSelectElement).value))"
-                >
-                  <option v-for="option in traitTargetOptions(numberValue(trait, 'code', 21))" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-                <input
-                  v-else
-                  type="number"
-                  :value="numberValue(trait, 'dataId')"
-                  @input="updateArrayObject(field.path, index, 'dataId', Number(($event.target as HTMLInputElement).value))"
-                />
-              </label>
-              <label>
-                <span>{{ t('db.value') }}</span>
-                <input type="number" step="0.01" :value="numberValue(trait, 'value', 1)" @input="updateArrayObject(field.path, index, 'value', Number(($event.target as HTMLInputElement).value))" />
-              </label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
-            </div>
+            <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
+            <DatabaseTraitEditor
+              :model-value="arrayValue(field.path)"
+              :catalog="catalog"
+              @update:model-value="writePath(field.path, $event)"
+            />
           </section>
 
           <section v-else-if="field.path === 'effects'" class="field full complex-editor">
-            <div class="complex-title">
-              <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { code: 11, dataId: 0, value1: 0, value2: 0 })">{{ t('cmdList.add') }}</button>
-            </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noEffects') }}</div>
-            <div v-for="(effect, index) in arrayRecords(field.path)" :key="`effect-${index}`" class="complex-row effect-row">
-              <label>
-                <span>{{ t('eventEditorDialog.type') }}</span>
-                <select :value="numberValue(effect, 'code', 11)" @change="updateArrayObject(field.path, index, 'code', Number(($event.target as HTMLSelectElement).value))">
-                  <option v-for="option in localizedEffectCodes" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-              </label>
-              <label>
-                <span>{{ t('db.target') }}</span>
-                <select
-                  v-if="effectTargetOptions(numberValue(effect, 'code', 11)).length"
-                  :value="numberValue(effect, 'dataId')"
-                  @change="updateArrayObject(field.path, index, 'dataId', Number(($event.target as HTMLSelectElement).value))"
-                >
-                  <option v-for="option in effectTargetOptions(numberValue(effect, 'code', 11))" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-                <input
-                  v-else
-                  type="number"
-                  :value="numberValue(effect, 'dataId')"
-                  @input="updateArrayObject(field.path, index, 'dataId', Number(($event.target as HTMLInputElement).value))"
-                />
-              </label>
-              <label>
-                <span>{{ t('db.value1') }}</span>
-                <input type="number" step="0.01" :value="numberValue(effect, 'value1')" @input="updateArrayObject(field.path, index, 'value1', Number(($event.target as HTMLInputElement).value))" />
-              </label>
-              <label>
-                <span>{{ t('db.value2') }}</span>
-                <input type="number" step="0.01" :value="numberValue(effect, 'value2')" @input="updateArrayObject(field.path, index, 'value2', Number(($event.target as HTMLInputElement).value))" />
-              </label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
-            </div>
+            <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
+            <DatabaseEffectEditor
+              :model-value="arrayValue(field.path)"
+              :catalog="catalog"
+              @update:model-value="writePath(field.path, $event)"
+            />
           </section>
 
           <section v-else-if="field.path === 'equips'" class="field full complex-editor">
@@ -1832,22 +1647,10 @@ function updateSound(index: number, key: string, value: unknown): void {
               <span>{{ fieldLabel(field) }}</span>
               <small>{{ t('db.paramCurveNote') }}</small>
             </div>
-            <div class="class-param-table">
-              <div class="class-param-row class-param-head">
-                <span>{{ t('db.parameter') }}</span>
-                <b v-for="level in MV_CLASS_PARAM_LEVELS" :key="level">Lv{{ level }}</b>
-              </div>
-              <div v-for="(param, paramIndex) in localizedParamOptions" :key="param.value" class="class-param-row">
-                <span>{{ param.label }}</span>
-                <input
-                  v-for="level in MV_CLASS_PARAM_LEVELS"
-                  :key="level"
-                  type="number"
-                  :value="classParamValue(paramIndex, level)"
-                  @input="updateClassParam(paramIndex, level, Number(($event.target as HTMLInputElement).value))"
-                />
-              </div>
-            </div>
+            <ClassParameterCurveEditor
+              :model-value="readPath(field.path)"
+              @update:model-value="writePath(field.path, $event)"
+            />
           </section>
 
           <section v-else-if="field.path === 'params'" class="field full complex-editor">
@@ -2149,54 +1952,17 @@ function updateSound(index: number, key: string, value: unknown): void {
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
               <small>{{ t('db.framesMalformed', { summary: framesSummary(field.path), malformed: invalidArrayItemCount(field.path) }) }}</small>
-              <button type="button" @click="addAnimationFrame(field.path)">{{ t('db.addFrame') }}</button>
             </div>
-            <div v-if="!animationFrames(field.path).length" class="empty-note">{{ t('db.noAnimFrames') }}</div>
-            <div v-else class="animation-frame-editor">
-              <div class="animation-frame-list">
-                <button
-                  v-for="(_frame, index) in animationFrames(field.path)"
-                  :key="`frame-${index}`"
-                  type="button"
-                  :class="{ active: selectedAnimationFrameIndex === index }"
-                  @click="selectAnimationFrame(index)"
-                >
-                  {{ index + 1 }}
-                </button>
-              </div>
-              <div class="complex-title">
-                <span>{{ t('db.frameCells', { n: selectedAnimationFrameIndex + 1 }) }}</span>
-                <button type="button" @click="addAnimationFrameCell(field.path)">{{ t('db.addCell') }}</button>
-              </div>
-              <div v-if="!selectedAnimationFrame(field.path).length" class="empty-note">{{ t('db.noCells') }}</div>
-              <div v-for="(cell, cellIndex) in selectedAnimationFrame(field.path)" :key="`cell-${cellIndex}`" class="complex-row animation-cell-row">
-                <label v-for="(cellField, fieldIndex) in MV_ANIMATION_CELL_FIELDS" :key="cellField.key">
-                  <span>{{ localizedLabel(cellField.label) }}</span>
-                  <select
-                    v-if="cellField.key === 'blendMode'"
-                    :value="cell[fieldIndex]"
-                    @change="updateAnimationFrameCell(field.path, cellIndex, fieldIndex, Number(($event.target as HTMLSelectElement).value))"
-                  >
-                    <option v-for="option in localizedOptions(MV_ANIMATION_BLEND_MODES)" :key="option.value" :value="option.value">{{ option.label }}</option>
-                  </select>
-                  <select
-                    v-else-if="cellField.key === 'mirror'"
-                    :value="cell[fieldIndex]"
-                    @change="updateAnimationFrameCell(field.path, cellIndex, fieldIndex, Number(($event.target as HTMLSelectElement).value))"
-                  >
-                    <option :value="0">{{ t('db.no') }}</option>
-                    <option :value="1">{{ t('db.yes') }}</option>
-                  </select>
-                  <input
-                    v-else
-                    type="number"
-                    :value="cell[fieldIndex]"
-                    @input="updateAnimationFrameCell(field.path, cellIndex, fieldIndex, Number(($event.target as HTMLInputElement).value))"
-                  />
-                </label>
-                <button type="button" class="danger" @click="deleteAnimationFrameCell(field.path, cellIndex)">{{ t('cmdList.delete') }}</button>
-              </div>
-            </div>
+            <AnimationFrameCanvasEditor
+              :model-value="readPath(field.path)"
+              :catalog="catalog"
+              :animation1-name="stringValue('animation1Name')"
+              :animation1-hue="numberPathValue('animation1Hue')"
+              :animation2-name="stringValue('animation2Name')"
+              :animation2-hue="numberPathValue('animation2Hue')"
+              :load-image="loadImage"
+              @update:model-value="writePath(field.path, $event)"
+            />
           </section>
 
           <section v-else-if="field.path === 'timings'" class="field full complex-editor">
@@ -2207,16 +1973,16 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
             <div v-if="!animationTimings(field.path).length" class="empty-note">{{ t('db.noTimings') }}</div>
             <div v-for="(timing, index) in animationTimings(field.path)" :key="`timing-${index}`" class="complex-row timing-row">
-              <label><span>{{ t('db.frame') }}</span><input type="number" :value="timing.frame" @input="updateAnimationTiming(field.path, index, 'frame', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('db.frame') }}</span><input type="number" min="0" :max="Math.max(0, animationFrameCount('frames') - 1)" :value="timing.frame" @input="updateAnimationTiming(field.path, index, 'frame', Number(($event.target as HTMLInputElement).value))" /></label>
               <label>
                 <span>SE</span>
                 <select :value="timing.se.name" @change="updateAnimationTimingSe(field.path, index, 'name', ($event.target as HTMLSelectElement).value)">
                   <option v-for="option in audioAssetOptions('se')" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label><span>{{ t('moveRoute.volume') }}</span><input type="number" :value="timing.se.volume" @input="updateAnimationTimingSe(field.path, index, 'volume', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>{{ t('moveRoute.pitch') }}</span><input type="number" :value="timing.se.pitch" @input="updateAnimationTimingSe(field.path, index, 'pitch', Number(($event.target as HTMLInputElement).value))" /></label>
-              <label><span>{{ t('moveRoute.pan') }}</span><input type="number" :value="timing.se.pan" @input="updateAnimationTimingSe(field.path, index, 'pan', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.volume') }}</span><input type="number" min="0" max="100" :value="timing.se.volume" @input="updateAnimationTimingSe(field.path, index, 'volume', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pitch') }}</span><input type="number" min="50" max="150" :value="timing.se.pitch" @input="updateAnimationTimingSe(field.path, index, 'pitch', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pan') }}</span><input type="number" min="-100" max="100" :value="timing.se.pan" @input="updateAnimationTimingSe(field.path, index, 'pan', Number(($event.target as HTMLInputElement).value))" /></label>
               <label>
                 <span>Flash</span>
                 <select :value="timing.flashScope" @change="updateAnimationTiming(field.path, index, 'flashScope', Number(($event.target as HTMLSelectElement).value))">
@@ -2227,7 +1993,7 @@ function updateSound(index: number, key: string, value: unknown): void {
                 <span>{{ label }}</span>
                 <input type="number" min="0" max="255" :value="timing.flashColor[colorIndex]" @input="updateAnimationTimingFlash(field.path, index, colorIndex, Number(($event.target as HTMLInputElement).value))" />
               </label>
-              <label><span>{{ t('db.duration') }}</span><input type="number" :value="timing.flashDuration" @input="updateAnimationTiming(field.path, index, 'flashDuration', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('db.duration') }}</span><input type="number" min="1" max="200" :value="timing.flashDuration" @input="updateAnimationTiming(field.path, index, 'flashDuration', Number(($event.target as HTMLInputElement).value))" /></label>
               <button type="button" class="danger" @click="removeAnimationTiming(field.path, index)">{{ t('cmdList.delete') }}</button>
             </div>
             </section>

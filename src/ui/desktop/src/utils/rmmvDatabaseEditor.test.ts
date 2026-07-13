@@ -7,6 +7,7 @@ import {
   appendAnimationFrame,
   appendAnimationFrameCell,
   appendAnimationTiming,
+  duplicateAnimationFrame,
   applyClassParamLinearCurve,
   appendStringListItem,
   autoNameTroop,
@@ -25,6 +26,8 @@ import {
   normalizeStringList,
   normalizeTermsArray,
   removeStringListItem,
+  removeAnimationFrame,
+  removeAnimationTiming,
   termsArraySlotCount,
   setAnimationFrameCellValue,
   setAnimationTimingFlashColor,
@@ -108,6 +111,17 @@ describe('rmmvDatabaseEditor helpers', () => {
 
     const linear = applyClassParamLinearCurve(edited, 0, 1, 5, 10, 50);
     assert.deepEqual(linear[0].slice(1, 6), [10, 20, 30, 40, 50]);
+
+    const pluginRow = { formula: 'plugin-curve' };
+    const withPluginData = Array.from({ length: 9 }, (_entry, index) => (
+      index === 8 ? pluginRow : Array.from({ length: 102 }, (_value, level) => level)
+    ));
+    const preserved = setClassParamCurveLevel(withPluginData, 0, 10, 123);
+    assert.equal(preserved[0][10], 123);
+    assert.equal(preserved[0][101], 101);
+    assert.deepEqual(preserved[8], pluginRow);
+    assert.equal(setClassParamCurveLevel(curves, 0, 1, 20000)[0][1], 9999);
+    assert.equal(setClassParamCurveLevel(curves, 2, 1, -1)[2][1], 1);
   });
 
   it('structures Troops pages and preserves MV command summaries for review', () => {
@@ -211,22 +225,34 @@ describe('rmmvDatabaseEditor helpers', () => {
     const withCell = appendAnimationFrameCell(withFrame, 0);
     const edited = setAnimationFrameCellValue(withCell, 0, 1, 6, 128);
     assert.equal(edited[0][1][6], 128);
+
+    const pluginCell = [1, 2, 3, 100, 0, 0, 255, 0, 444];
+    const preserved = setAnimationFrameCellValue([[pluginCell]], 0, 0, 1, 22);
+    assert.equal(preserved[0][0][1], 22);
+    assert.equal(preserved[0][0][8], 444);
+    const duplicated = duplicateAnimationFrame(preserved, 0);
+    assert.deepEqual(duplicated[1], preserved[0]);
+    assert.notEqual(duplicated[1], preserved[0]);
+    assert.deepEqual(removeAnimationFrame(duplicated, 0), [preserved[0]]);
+    assert.equal(setAnimationFrameCellValue(preserved, 0, 0, 3, 1)[0][0][3], 20);
   });
 
   it('normalizes and edits Animations SE timing and flash timing', () => {
     const timing = normalizeAnimationTiming({
       frame: 12,
-      se: { name: 'Slash1', volume: 120, pitch: 30, pan: -120 },
       flashScope: 9,
       flashColor: [300, -1, 60],
       flashDuration: 6,
+      pluginTiming: true,
+      se: { name: 'Slash1', volume: 120, pitch: 30, pan: -120, pluginSe: true },
     });
     assert.deepEqual(timing, {
       frame: 12,
-      se: { name: 'Slash1', volume: 100, pitch: 50, pan: -100 },
+      se: { name: 'Slash1', volume: 100, pitch: 50, pan: -100, pluginSe: true },
       flashScope: 3,
       flashColor: [255, 0, 60, 255],
       flashDuration: 6,
+      pluginTiming: true,
     });
 
     let timings = appendAnimationTiming([]);
@@ -236,5 +262,9 @@ describe('rmmvDatabaseEditor helpers', () => {
     assert.equal(normalizeAnimationTimings(timings)[0].frame, 18);
     assert.equal(normalizeAnimationTimings(timings)[0].se.name, 'Hit1');
     assert.equal(normalizeAnimationTimings(timings)[0].flashColor[2], 90);
+    assert.deepEqual(removeAnimationTiming([{ ...timing }, { ...timing, frame: 13 }], 0)[0].frame, 13);
+    assert.equal(normalizeAnimationTiming({ flashDuration: 0 }).flashDuration, 1);
+    assert.equal(normalizeAnimationTiming({ flashDuration: 999 }).flashDuration, 200);
+    assert.equal(setAnimationTimingValue([timing], 0, 'flashDuration', 0)[0].flashDuration, 1);
   });
 });

@@ -56,6 +56,9 @@ const ARRAY_TABLE_KEYS = listRmmvDatabaseSchemas()
   .map((schema) => schema.key);
 
 const PLUGIN_LIMITATION = "Unknown plugin fields and note-tag semantics are preserved but are not validated.";
+const STANDARD_TRAIT_CODES = new Set([11, 12, 13, 14, 21, 22, 23, 31, 32, 33, 34, 41, 42, 43, 44, 51, 52, 53, 54, 55, 61, 62, 63, 64]);
+const STANDARD_EFFECT_CODES = new Set([11, 12, 13, 21, 22, 31, 32, 33, 34, 41, 42, 43, 44]);
+const FIXED_ONE_TRAIT_CODES = new Set([14, 31, 41, 42, 43, 44, 51, 52, 53, 54, 55, 62, 63, 64]);
 
 export function validateRmmvDatabaseSnapshot(
   snapshot: RmmvDatabaseSnapshot,
@@ -124,6 +127,8 @@ class SnapshotValidator {
     this.validateEnemies();
     this.validateTroops();
     this.validateStates();
+    this.validateAnimations();
+    this.validateTilesets();
     this.validateCommonEvents();
     this.validateSystem();
     this.validateMaps();
@@ -203,6 +208,21 @@ class SnapshotValidator {
   private validateActors(): void {
     this.forEachRecord("actors", (actor, id) => {
       this.recordReference("actors", id, `actors[${id}].classId`, "classes", actor.classId);
+      this.fixedRange("DB_ACTOR_LEVEL", "actors", id, `actors[${id}].initialLevel`, actor.initialLevel, 1, 99);
+      this.fixedRange("DB_ACTOR_LEVEL", "actors", id, `actors[${id}].maxLevel`, actor.maxLevel, 1, 99);
+      const initialLevel = asInteger(actor.initialLevel);
+      const maxLevel = asInteger(actor.maxLevel);
+      if (initialLevel !== null && maxLevel !== null && initialLevel > maxLevel) {
+        this.add(
+          "DB_ACTOR_LEVEL_ORDER",
+          "actors",
+          `actors[${id}].initialLevel`,
+          "Initial level must not exceed max level.",
+          id,
+        );
+      }
+      this.fixedRange("DB_ACTOR_IMAGE_INDEX", "actors", id, `actors[${id}].characterIndex`, actor.characterIndex, 0, 7);
+      this.fixedRange("DB_ACTOR_IMAGE_INDEX", "actors", id, `actors[${id}].faceIndex`, actor.faceIndex, 0, 7);
       this.validateTraits("actors", id, actor.traits, `actors[${id}].traits`);
       this.validateEquipment("actors", id, actor.equips, `actors[${id}].equips`, id);
     });
@@ -210,7 +230,17 @@ class SnapshotValidator {
 
   private validateClasses(): void {
     this.forEachRecord("classes", (classEntry, id) => {
+      this.validateClassParameterCurves(classEntry.params, id);
       forEachRecordValue(classEntry.learnings, (learning, index) => {
+        this.fixedRange(
+          "DB_CLASS_LEARNING_LEVEL",
+          "classes",
+          id,
+          `classes[${id}].learnings[${index}].level`,
+          learning.level,
+          1,
+          99,
+        );
         this.recordReference(
           "classes",
           id,
@@ -243,6 +273,9 @@ class SnapshotValidator {
         [0],
       );
       this.recordReference("skills", id, `skills[${id}].animationId`, "animations", skill.animationId, [0, -1]);
+      this.validateUsableItemNumbers("skills", id, skill);
+      this.fixedRange("DB_SKILL_MP_COST", "skills", id, `skills[${id}].mpCost`, skill.mpCost, 0, 999);
+      this.fixedRange("DB_SKILL_TP_COST", "skills", id, `skills[${id}].tpCost`, skill.tpCost, 0, 100);
       this.validateDamage("skills", id, skill.damage, `skills[${id}].damage`);
       this.validateEffects("skills", id, skill.effects, `skills[${id}].effects`);
     });
@@ -250,8 +283,10 @@ class SnapshotValidator {
 
   private validateItems(): void {
     this.forEachRecord("items", (item, id) => {
-      this.fixedRange("DB_REFERENCE_ID", "items", id, `items[${id}].itypeId`, item.itypeId, 1, 2);
+      this.fixedRange("DB_REFERENCE_ID", "items", id, `items[${id}].itypeId`, item.itypeId, 1, 4);
       this.recordReference("items", id, `items[${id}].animationId`, "animations", item.animationId, [0, -1]);
+      this.validateUsableItemNumbers("items", id, item);
+      this.fixedRange("DB_SHOP_PRICE", "items", id, `items[${id}].price`, item.price, 0, 999999);
       this.validateDamage("items", id, item.damage, `items[${id}].damage`);
       this.validateEffects("items", id, item.effects, `items[${id}].effects`);
     });
@@ -262,6 +297,8 @@ class SnapshotValidator {
       this.typeReference("weapons", id, `weapons[${id}].wtypeId`, "weaponTypes", weapon.wtypeId);
       this.typeReference("weapons", id, `weapons[${id}].etypeId`, "equipTypes", weapon.etypeId);
       this.recordReference("weapons", id, `weapons[${id}].animationId`, "animations", weapon.animationId, [0]);
+      this.fixedRange("DB_SHOP_PRICE", "weapons", id, `weapons[${id}].price`, weapon.price, 0, 999999);
+      this.validateEquipmentParameters("weapons", id, weapon.params);
       this.validateTraits("weapons", id, weapon.traits, `weapons[${id}].traits`);
     });
   }
@@ -270,12 +307,18 @@ class SnapshotValidator {
     this.forEachRecord("armors", (armor, id) => {
       this.typeReference("armors", id, `armors[${id}].atypeId`, "armorTypes", armor.atypeId);
       this.typeReference("armors", id, `armors[${id}].etypeId`, "equipTypes", armor.etypeId);
+      this.fixedRange("DB_SHOP_PRICE", "armors", id, `armors[${id}].price`, armor.price, 0, 999999);
+      this.validateEquipmentParameters("armors", id, armor.params);
       this.validateTraits("armors", id, armor.traits, `armors[${id}].traits`);
     });
   }
 
   private validateEnemies(): void {
     this.forEachRecord("enemies", (enemy, id) => {
+      this.fixedRange("DB_ENEMY_HUE", "enemies", id, `enemies[${id}].battlerHue`, enemy.battlerHue, 0, 360);
+      this.fixedRange("DB_ENEMY_REWARD", "enemies", id, `enemies[${id}].exp`, enemy.exp, 0, 9999999);
+      this.fixedRange("DB_ENEMY_REWARD", "enemies", id, `enemies[${id}].gold`, enemy.gold, 0, 9999999);
+      this.validateEnemyParameters(enemy.params, id);
       forEachRecordValue(enemy.actions, (action, index) => {
         const path = `enemies[${id}].actions[${index}]`;
         this.recordReference(
@@ -289,6 +332,7 @@ class SnapshotValidator {
       });
       forEachRecordValue(enemy.dropItems, (drop, index) => {
         const path = `enemies[${id}].dropItems[${index}]`;
+        this.fixedRange("DB_ENEMY_DROP_DENOMINATOR", "enemies", id, `${path}.denominator`, drop.denominator, 1, 1000);
         if (drop.kind === 0) {
           return;
         }
@@ -318,24 +362,42 @@ class SnapshotValidator {
         );
       }
       forEachRecordValue(members, (member, index) => {
+        const memberPath = `troops[${id}].members[${index}]`;
         this.recordReference(
           "troops",
           id,
-          `troops[${id}].members[${index}].enemyId`,
+          `${memberPath}.enemyId`,
           "enemies",
           member.enemyId,
         );
+        this.fixedRange("DB_TROOP_MEMBER_POSITION", "troops", id, `${memberPath}.x`, member.x, 0, 816);
+        this.fixedRange("DB_TROOP_MEMBER_POSITION", "troops", id, `${memberPath}.y`, member.y, 0, 624);
       });
       forEachRecordValue(troop.pages, (page, pageIndex) => {
+        this.fixedRange(
+          "DB_TROOP_PAGE_SPAN",
+          "troops",
+          id,
+          `troops[${id}].pages[${pageIndex}].span`,
+          page.span,
+          0,
+          2,
+        );
         const conditions = isRecord(page.conditions) ? page.conditions : null;
         const prefix = `troops[${id}].pages[${pageIndex}].conditions`;
+        if (conditions?.turnValid === true) {
+          this.nonnegativeInteger("troops", id, `${prefix}.turnA`, conditions.turnA, "DB_TROOP_PAGE_CONDITION");
+          this.nonnegativeInteger("troops", id, `${prefix}.turnB`, conditions.turnB, "DB_TROOP_PAGE_CONDITION");
+        }
         if (conditions?.actorValid === true) {
           this.recordReference("troops", id, `${prefix}.actorId`, "actors", conditions.actorId);
+          this.fixedRange("DB_TROOP_PAGE_CONDITION", "troops", id, `${prefix}.actorHp`, conditions.actorHp, 0, 100);
         }
         if (conditions?.switchValid === true) {
           this.switchReference("troops", id, `${prefix}.switchId`, conditions.switchId);
         }
         if (conditions?.enemyValid === true) {
+          this.fixedRange("DB_TROOP_PAGE_CONDITION", "troops", id, `${prefix}.enemyHp`, conditions.enemyHp, 0, 100);
           this.fixedRange(
             "DB_REFERENCE_ID",
             "troops",
@@ -358,7 +420,123 @@ class SnapshotValidator {
 
   private validateStates(): void {
     this.forEachRecord("states", (state, id) => {
+      this.fixedRange("DB_STATE_RESTRICTION", "states", id, `states[${id}].restriction`, state.restriction, 0, 4);
+      this.fixedRange("DB_STATE_PRIORITY", "states", id, `states[${id}].priority`, state.priority, 0, 100);
+      this.fixedRange("DB_STATE_MOTION", "states", id, `states[${id}].motion`, state.motion, 0, 3);
+      this.fixedRange("DB_STATE_OVERLAY", "states", id, `states[${id}].overlay`, state.overlay, 0, 10);
+      this.fixedRange(
+        "DB_STATE_AUTO_REMOVAL",
+        "states",
+        id,
+        `states[${id}].autoRemovalTiming`,
+        state.autoRemovalTiming,
+        0,
+        2,
+      );
+      this.fixedRange("DB_STATE_TURNS", "states", id, `states[${id}].minTurns`, state.minTurns, 0, 9999);
+      this.fixedRange("DB_STATE_TURNS", "states", id, `states[${id}].maxTurns`, state.maxTurns, 0, 9999);
+      const minimumTurns = asInteger(state.minTurns);
+      const maximumTurns = asInteger(state.maxTurns);
+      if (minimumTurns !== null && maximumTurns !== null && minimumTurns > maximumTurns) {
+        this.add(
+          "DB_STATE_TURN_ORDER",
+          "states",
+          `states[${id}].minTurns`,
+          "Minimum removal turns must not exceed maximum removal turns.",
+          id,
+        );
+      }
+      this.fixedRange(
+        "DB_STATE_DAMAGE_REMOVAL",
+        "states",
+        id,
+        `states[${id}].chanceByDamage`,
+        state.chanceByDamage,
+        0,
+        100,
+      );
+      this.fixedRange(
+        "DB_STATE_WALK_REMOVAL",
+        "states",
+        id,
+        `states[${id}].stepsToRemove`,
+        state.stepsToRemove,
+        0,
+        9999,
+      );
       this.validateTraits("states", id, state.traits, `states[${id}].traits`);
+    });
+  }
+
+  private validateAnimations(): void {
+    this.forEachRecord("animations", (animation, id) => {
+      this.fixedRange("DB_ANIMATION_POSITION", "animations", id, `animations[${id}].position`, animation.position, 0, 3);
+      this.fixedRange("DB_ANIMATION_HUE", "animations", id, `animations[${id}].animation1Hue`, animation.animation1Hue, 0, 360);
+      this.fixedRange("DB_ANIMATION_HUE", "animations", id, `animations[${id}].animation2Hue`, animation.animation2Hue, 0, 360);
+
+      const frames = asArray(animation.frames);
+      if (frames.length > 200) {
+        this.add(
+          "DB_ANIMATION_FRAME_LIMIT",
+          "animations",
+          `animations[${id}].frames`,
+          `Animation ${id} contains ${frames.length} frames; RPG Maker MV supports at most 200. Existing data is readable but must not be extended.`,
+          id,
+          "warning",
+        );
+      }
+      frames.forEach((frame, frameIndex) => {
+        const framePath = `animations[${id}].frames[${frameIndex}]`;
+        if (!Array.isArray(frame)) {
+          this.add("DB_ANIMATION_FRAME_SHAPE", "animations", framePath, "Animation frame must be an array.", id);
+          return;
+        }
+        if (frame.length > 16) {
+          this.add(
+            "DB_ANIMATION_CELL_LIMIT",
+            "animations",
+            framePath,
+            `Animation frame ${frameIndex + 1} contains ${frame.length} cells; RPG Maker MV supports at most 16. Existing data is readable but must not be extended.`,
+            id,
+            "warning",
+          );
+        }
+        frame.forEach((cell, cellIndex) => this.validateAnimationCell(cell, id, `${framePath}[${cellIndex}]`));
+      });
+
+      forEachRecordValue(animation.timings, (timing, timingIndex) => {
+        const timingPath = `animations[${id}].timings[${timingIndex}]`;
+        if (frames.length > 0) {
+          this.fixedRange("DB_ANIMATION_TIMING_FRAME", "animations", id, `${timingPath}.frame`, timing.frame, 0, frames.length - 1);
+        } else {
+          this.fixedRange("DB_ANIMATION_TIMING_FRAME", "animations", id, `${timingPath}.frame`, timing.frame, 0, 0);
+        }
+        this.fixedRange("DB_ANIMATION_FLASH_SCOPE", "animations", id, `${timingPath}.flashScope`, timing.flashScope, 0, 3);
+        this.fixedRange("DB_ANIMATION_FLASH_DURATION", "animations", id, `${timingPath}.flashDuration`, timing.flashDuration, 1, 200);
+        const flashColor = asArray(timing.flashColor);
+        for (let colorIndex = 0; colorIndex < 4; colorIndex += 1) {
+          this.fixedRange(
+            "DB_ANIMATION_FLASH_COLOR",
+            "animations",
+            id,
+            `${timingPath}.flashColor[${colorIndex}]`,
+            flashColor[colorIndex],
+            0,
+            255,
+          );
+        }
+        if (isRecord(timing.se)) this.validateAudio(timing.se, "animations", id, `${timingPath}.se`);
+      });
+    });
+  }
+
+  private validateTilesets(): void {
+    this.forEachRecord("tilesets", (tileset, id) => {
+      this.fixedRange("DB_TILESET_MODE", "tilesets", id, `tilesets[${id}].mode`, tileset.mode, 0, 1);
+      const flags = asArray(tileset.flags);
+      flags.forEach((flag, index) => {
+        this.fixedRange("DB_TILESET_FLAG", "tilesets", id, `tilesets[${id}].flags[${index}]`, flag, 0, 0xffff);
+      });
     });
   }
 
@@ -426,11 +604,57 @@ class SnapshotValidator {
     this.mapReference("system.editMapId", system.editMapId);
     for (const vehicleName of ["boat", "ship", "airship"] as const) {
       const vehicle = isRecord(system[vehicleName]) ? system[vehicleName] : null;
-      if (vehicle) this.mapReference(`system.${vehicleName}.startMapId`, vehicle.startMapId);
+      if (vehicle) {
+        this.mapReference(`system.${vehicleName}.startMapId`, vehicle.startMapId);
+        this.fixedRange("DB_SYSTEM_IMAGE_INDEX", "system", undefined, `system.${vehicleName}.characterIndex`, vehicle.characterIndex, 0, 7);
+        this.nonnegativeInteger("system", undefined, `system.${vehicleName}.startX`, vehicle.startX, "DB_SYSTEM_NUMBER");
+        this.nonnegativeInteger("system", undefined, `system.${vehicleName}.startY`, vehicle.startY, "DB_SYSTEM_NUMBER");
+      }
     }
     forEachValue(system.magicSkills, (skillTypeId, index) => {
       this.typeReference("system", undefined, `system.magicSkills[${index}]`, "skillTypes", skillTypeId);
     });
+    this.fixedRange("DB_SYSTEM_HUE", "system", undefined, "system.battlerHue", system.battlerHue, 0, 360);
+    this.nonnegativeInteger("system", undefined, "system.versionId", system.versionId, "DB_SYSTEM_NUMBER");
+    this.nonnegativeInteger("system", undefined, "system.startX", system.startX, "DB_SYSTEM_NUMBER");
+    this.nonnegativeInteger("system", undefined, "system.startY", system.startY, "DB_SYSTEM_NUMBER");
+    for (const audioField of ["titleBgm", "battleBgm", "victoryMe", "defeatMe", "gameoverMe"] as const) {
+      const audio = system[audioField];
+      if (isRecord(audio)) this.validateAudio(audio, "system", undefined, `system.${audioField}`);
+    }
+    for (const vehicleName of ["boat", "ship", "airship"] as const) {
+      const vehicle = system[vehicleName];
+      if (isRecord(vehicle) && isRecord(vehicle.bgm)) {
+        this.validateAudio(vehicle.bgm, "system", undefined, `system.${vehicleName}.bgm`);
+      }
+    }
+    forEachRecordValue(system.sounds, (sound, index) => {
+      this.validateAudio(sound, "system", undefined, `system.sounds[${index}]`);
+    });
+    forEachRecordValue(system.attackMotions, (motion, index) => {
+      this.fixedRange("DB_SYSTEM_ATTACK_MOTION", "system", undefined, `system.attackMotions[${index}].type`, motion.type, 0, 2);
+      this.fixedRange(
+        "DB_SYSTEM_WEAPON_IMAGE",
+        "system",
+        undefined,
+        `system.attackMotions[${index}].weaponImageId`,
+        motion.weaponImageId,
+        0,
+        30,
+      );
+    });
+    const tone = asArray(system.windowTone);
+    for (let index = 0; index < 4; index += 1) {
+      this.fixedRange(
+        "DB_SYSTEM_WINDOW_TONE",
+        "system",
+        undefined,
+        `system.windowTone[${index}]`,
+        tone[index],
+        index === 3 ? 0 : -255,
+        255,
+      );
+    }
   }
 
   private validateMaps(): void {
@@ -580,6 +804,8 @@ class SnapshotValidator {
       return;
     }
     this.typeReference(table, id, `${path}.elementId`, "elements", value.elementId, [0, -1]);
+    this.fixedRange("DB_DAMAGE_TYPE", table, id, `${path}.type`, value.type, 0, 6);
+    this.fixedRange("DB_DAMAGE_VARIANCE", table, id, `${path}.variance`, value.variance, 0, 100);
     if (value.formula === undefined) return;
     if (typeof value.formula !== "string") {
       this.add("DB_FORMULA_SYNTAX", table, `${path}.formula`, "Damage formula must be a JavaScript string.", id);
@@ -607,6 +833,17 @@ class SnapshotValidator {
         return;
       }
       if (code === 0) return;
+      if (!STANDARD_TRAIT_CODES.has(code)) {
+        this.add(
+          "DB_PLUGIN_TRAIT_CODE",
+          table,
+          `${itemPath}.code`,
+          `Trait code ${code} is not a standard RPG Maker MV trait and is preserved without plugin-semantic validation.`,
+          id,
+          "warning",
+        );
+        return;
+      }
       if (code === 11 || code === 31) {
         this.typeReference(table, id, `${itemPath}.dataId`, "elements", trait.dataId);
       } else if (code === 13 || code === 14 || code === 32) {
@@ -629,7 +866,7 @@ class SnapshotValidator {
           23: [0, 9],
           33: [0, 0],
           34: [0, 0],
-          55: [0, 1],
+          55: [1, 1],
           61: [0, 0],
           62: [0, 3],
           63: [0, 2],
@@ -639,6 +876,19 @@ class SnapshotValidator {
         if (range) {
           this.fixedRange("DB_TRAIT_DATA_ID", table, id, `${itemPath}.dataId`, trait.dataId, range[0], range[1]);
         }
+      }
+      if ([11, 12, 13, 21, 23, 32].includes(code)) {
+        this.finiteRange("DB_TRAIT_VALUE", table, id, `${itemPath}.value`, trait.value, 0, 10);
+      } else if (code === 22) {
+        this.finiteRange("DB_TRAIT_VALUE", table, id, `${itemPath}.value`, trait.value, -10, 10);
+      } else if (code === 33) {
+        this.fixedRange("DB_TRAIT_VALUE", table, id, `${itemPath}.value`, trait.value, -1000, 1000);
+      } else if (code === 34) {
+        this.fixedRange("DB_TRAIT_VALUE", table, id, `${itemPath}.value`, trait.value, 0, 9);
+      } else if (code === 61) {
+        this.finiteRange("DB_TRAIT_VALUE", table, id, `${itemPath}.value`, trait.value, 0, 1);
+      } else if (FIXED_ONE_TRAIT_CODES.has(code)) {
+        this.fixedRange("DB_TRAIT_VALUE", table, id, `${itemPath}.value`, trait.value, 1, 1);
       }
     });
   }
@@ -657,6 +907,17 @@ class SnapshotValidator {
         return;
       }
       if (code === 0) return;
+      if (!STANDARD_EFFECT_CODES.has(code)) {
+        this.add(
+          "DB_PLUGIN_EFFECT_CODE",
+          table,
+          `${itemPath}.code`,
+          `Effect code ${code} is not a standard RPG Maker MV effect and is preserved without plugin-semantic validation.`,
+          id,
+          "warning",
+        );
+        return;
+      }
       if (code === 21) {
         this.recordReference(table, id, `${itemPath}.dataId`, "states", effect.dataId, [0]);
       } else if (code === 22) {
@@ -681,6 +942,29 @@ class SnapshotValidator {
         if (range) {
           this.fixedRange("DB_EFFECT_DATA_ID", table, id, `${itemPath}.dataId`, effect.dataId, range[0], range[1]);
         }
+      }
+      if (code === 11) {
+        this.finiteRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, -1, 1);
+        this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value2`, effect.value2, -999999, 999999);
+      } else if (code === 12) {
+        this.finiteRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, -1, 1);
+        this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value2`, effect.value2, -9999, 9999);
+      } else if (code === 13) {
+        this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, 0, 100);
+      } else if (code === 21) {
+        this.finiteRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, 0, 10);
+      } else if (code === 22) {
+        this.finiteRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, 0, 1);
+      } else if (code === 31 || code === 32) {
+        this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, 1, 1000);
+      } else if (code === 42) {
+        this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, 1, 1000);
+      }
+      if (![11, 12].includes(code)) {
+        this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value2`, effect.value2, 0, 0);
+      }
+      if ([33, 34, 41, 43, 44].includes(code)) {
+        this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, 0, 0);
       }
     });
   }
@@ -723,6 +1007,135 @@ class SnapshotValidator {
         );
       }
     });
+  }
+
+  private validateUsableItemNumbers(
+    table: "skills" | "items",
+    id: number,
+    entry: Record<string, unknown>,
+  ): void {
+    this.fixedRange("DB_USABLE_SCOPE", table, id, `${table}[${id}].scope`, entry.scope, 0, 11);
+    this.fixedRange("DB_USABLE_OCCASION", table, id, `${table}[${id}].occasion`, entry.occasion, 0, 3);
+    this.fixedRange("DB_USABLE_SPEED", table, id, `${table}[${id}].speed`, entry.speed, -2000, 2000);
+    this.fixedRange("DB_USABLE_SUCCESS", table, id, `${table}[${id}].successRate`, entry.successRate, 0, 100);
+    this.fixedRange("DB_USABLE_REPEATS", table, id, `${table}[${id}].repeats`, entry.repeats, 1, 9);
+    this.fixedRange("DB_USABLE_HIT_TYPE", table, id, `${table}[${id}].hitType`, entry.hitType, 0, 2);
+    this.fixedRange("DB_USABLE_TP_GAIN", table, id, `${table}[${id}].tpGain`, entry.tpGain, 0, 100);
+  }
+
+  private validateClassParameterCurves(value: unknown, classId: number): void {
+    const rows = asArray(value);
+    for (let paramIndex = 0; paramIndex < 8; paramIndex += 1) {
+      const row = rows[paramIndex];
+      if (!Array.isArray(row)) {
+        this.add(
+          "DB_CLASS_PARAM_CURVE_SHAPE",
+          "classes",
+          `classes[${classId}].params[${paramIndex}]`,
+          "Each standard class parameter curve must be an array indexed from level 1 through 99.",
+          classId,
+        );
+        continue;
+      }
+      const minimum = paramIndex === 1 ? 0 : 1;
+      const maximum = paramIndex <= 1 ? 9999 : 999;
+      for (let level = 1; level <= 99; level += 1) {
+        this.fixedRange(
+          "DB_CLASS_PARAM_VALUE",
+          "classes",
+          classId,
+          `classes[${classId}].params[${paramIndex}][${level}]`,
+          row[level],
+          minimum,
+          maximum,
+        );
+      }
+    }
+    if (rows.length > 8) {
+      this.add(
+        "DB_PLUGIN_CLASS_PARAM_CURVE",
+        "classes",
+        `classes[${classId}].params`,
+        "Parameter curves beyond the eight standard RPG Maker MV parameters are preserved but their plugin semantics are not validated.",
+        classId,
+        "warning",
+      );
+    }
+  }
+
+  private validateEquipmentParameters(
+    table: "weapons" | "armors",
+    id: number,
+    value: unknown,
+  ): void {
+    const params = asArray(value);
+    for (let paramIndex = 0; paramIndex < 8; paramIndex += 1) {
+      const limit = paramIndex <= 1 ? 5000 : 500;
+      this.fixedRange(
+        "DB_EQUIPMENT_PARAM_VALUE",
+        table,
+        id,
+        `${table}[${id}].params[${paramIndex}]`,
+        params[paramIndex],
+        -limit,
+        limit,
+      );
+    }
+  }
+
+  private validateEnemyParameters(value: unknown, enemyId: number): void {
+    const params = asArray(value);
+    const ranges: readonly (readonly [number, number])[] = [
+      [1, 999999],
+      [0, 9999],
+      [1, 999],
+      [1, 999],
+      [1, 999],
+      [1, 999],
+      [1, 999],
+      [1, 999],
+    ];
+    ranges.forEach(([minimum, maximum], paramIndex) => {
+      this.fixedRange(
+        "DB_ENEMY_PARAM_VALUE",
+        "enemies",
+        enemyId,
+        `enemies[${enemyId}].params[${paramIndex}]`,
+        params[paramIndex],
+        minimum,
+        maximum,
+      );
+    });
+  }
+
+  private validateAnimationCell(value: unknown, animationId: number, path: string): void {
+    if (!Array.isArray(value) || value.length < 8) {
+      this.add("DB_ANIMATION_CELL_SHAPE", "animations", path, "Animation cell must contain the eight standard MV values.", animationId);
+      return;
+    }
+    const pattern = asInteger(value[0]);
+    if (pattern === null || pattern < -1 || pattern > 199) {
+      this.add("DB_ANIMATION_CELL_PATTERN", "animations", `${path}[0]`, "Pattern must be an integer from -1 through 199.", animationId);
+      return;
+    }
+    this.fixedRange("DB_ANIMATION_CELL_X", "animations", animationId, `${path}[1]`, value[1], -408, 408);
+    this.fixedRange("DB_ANIMATION_CELL_Y", "animations", animationId, `${path}[2]`, value[2], -312, 312);
+    this.fixedRange("DB_ANIMATION_CELL_SCALE", "animations", animationId, `${path}[3]`, value[3], 20, 800);
+    this.fixedRange("DB_ANIMATION_CELL_ROTATION", "animations", animationId, `${path}[4]`, value[4], -360, 360);
+    this.fixedRange("DB_ANIMATION_CELL_MIRROR", "animations", animationId, `${path}[5]`, value[5], 0, 1);
+    this.fixedRange("DB_ANIMATION_CELL_OPACITY", "animations", animationId, `${path}[6]`, value[6], 0, 255);
+    this.fixedRange("DB_ANIMATION_CELL_BLEND", "animations", animationId, `${path}[7]`, value[7], 0, 3);
+  }
+
+  private validateAudio(
+    value: Record<string, unknown>,
+    table: RmmvDatabaseIssueTable,
+    id: number | undefined,
+    path: string,
+  ): void {
+    this.fixedRange("DB_AUDIO_VOLUME", table, id, `${path}.volume`, value.volume, 0, 100);
+    this.fixedRange("DB_AUDIO_PITCH", table, id, `${path}.pitch`, value.pitch, 50, 150);
+    this.fixedRange("DB_AUDIO_PAN", table, id, `${path}.pan`, value.pan, -100, 100);
   }
 
   private actorHasDualWield(actorId: number): boolean {
@@ -780,10 +1193,12 @@ class SnapshotValidator {
     id: number | undefined,
     path: string,
     value: unknown,
+    code = "DB_ENEMY_ACTION_CONDITION",
   ): void {
+    if (value === undefined) return;
     const integer = asInteger(value);
     if (integer === null || integer < 0) {
-      this.add("DB_ENEMY_ACTION_CONDITION", table, path, "Value must be a non-negative integer.", id);
+      this.add(code, table, path, "Value must be a non-negative integer.", id);
     }
   }
 
@@ -925,9 +1340,26 @@ class SnapshotValidator {
     minimum: number,
     maximum: number,
   ): void {
+    if (value === undefined) return;
     const dataId = asInteger(value);
     if (dataId === null || dataId < minimum || dataId > maximum) {
       this.add(code, table, path, `Value must be an integer from ${minimum} through ${maximum}.`, id);
+    }
+  }
+
+  private finiteRange(
+    code: string,
+    table: RmmvDatabaseIssueTable,
+    id: number | undefined,
+    path: string,
+    value: unknown,
+    minimum: number,
+    maximum: number,
+  ): void {
+    if (value === undefined) return;
+    const number = asFiniteNumber(value);
+    if (number === null || number < minimum || number > maximum) {
+      this.add(code, table, path, `Value must be a number from ${minimum} through ${maximum}.`, id);
     }
   }
 
@@ -1042,5 +1474,32 @@ function validateCollectionGrowth(
       source: { table: "system", path: "system.testBattlers" },
       message: `Test battler count cannot grow from ${beforeBattlers} to ${afterBattlers}; RPG Maker MV supports at most 4.`,
     });
+  }
+
+  const beforeAnimations = asArray(before.animations);
+  const afterAnimations = asArray(after.animations);
+  for (let id = 1; id < afterAnimations.length; id += 1) {
+    const beforeFrames = isRecord(beforeAnimations[id]) ? asArray(beforeAnimations[id].frames) : [];
+    const afterFrames = isRecord(afterAnimations[id]) ? asArray(afterAnimations[id].frames) : [];
+    if (afterFrames.length > 200 && afterFrames.length > beforeFrames.length) {
+      issues.push({
+        code: "DB_ANIMATION_FRAME_LIMIT",
+        severity: "error",
+        source: { table: "animations", id, path: `animations[${id}].frames` },
+        message: `Animation frame count cannot grow from ${beforeFrames.length} to ${afterFrames.length}; RPG Maker MV supports at most 200.`,
+      });
+    }
+    for (let frameIndex = 0; frameIndex < afterFrames.length; frameIndex += 1) {
+      const beforeCells = Array.isArray(beforeFrames[frameIndex]) ? beforeFrames[frameIndex].length : 0;
+      const afterCells = Array.isArray(afterFrames[frameIndex]) ? afterFrames[frameIndex].length : 0;
+      if (afterCells > 16 && afterCells > beforeCells) {
+        issues.push({
+          code: "DB_ANIMATION_CELL_LIMIT",
+          severity: "error",
+          source: { table: "animations", id, path: `animations[${id}].frames[${frameIndex}]` },
+          message: `Animation cell count cannot grow from ${beforeCells} to ${afterCells}; RPG Maker MV supports at most 16 cells per frame.`,
+        });
+      }
+    }
   }
 }

@@ -8,6 +8,7 @@ import {
 import type { ProductLanguage } from '@contract/types';
 import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../i18n/messages.ts';
 import { cloneDraft } from './clone-draft.ts';
+import { classParameterValueRange } from './rmmvDatabaseSemantics.ts';
 
 export {
   MV_ANIMATION_BLEND_MODES,
@@ -76,14 +77,16 @@ export interface MvTroopPageConditions {
   switchId: number;
 }
 
-export interface MvAnimationTiming {
+export interface MvAnimationSe extends Record<string, unknown> {
+  name: string;
+  volume: number;
+  pitch: number;
+  pan: number;
+}
+
+export interface MvAnimationTiming extends Record<string, unknown> {
   frame: number;
-  se: {
-    name: string;
-    volume: number;
-    pitch: number;
-    pan: number;
-  };
+  se: MvAnimationSe;
   flashScope: number;
   flashColor: number[];
   flashDuration: number;
@@ -293,9 +296,10 @@ export function setClassParamCurveLevel(
   level: number,
   amount: number,
 ): number[][] {
-  const rows = normalizeClassParamCurves(value);
+  const rows = mutableClassParamCurves(value);
   if (!isValidParamIndex(paramIndex) || !isValidClassLevel(level)) return rows;
-  rows[paramIndex][level] = toInteger(amount, 0);
+  const range = classParameterValueRange(paramIndex);
+  rows[paramIndex][level] = clampInteger(amount, range.minimum, range.maximum, range.minimum);
   return rows;
 }
 
@@ -307,18 +311,24 @@ export function applyClassParamLinearCurve(
   startValue: number,
   endValue: number,
 ): number[][] {
-  const rows = normalizeClassParamCurves(value);
+  const rows = mutableClassParamCurves(value);
   if (!isValidParamIndex(paramIndex)) return rows;
+  const range = classParameterValueRange(paramIndex);
   const first = clampInteger(startLevel, 1, 99);
   const last = clampInteger(endLevel, 1, 99);
   const from = Math.min(first, last);
   const to = Math.max(first, last);
-  const fromValue = toInteger(first <= last ? startValue : endValue, 0);
-  const toValue = toInteger(first <= last ? endValue : startValue, fromValue);
+  const fromValue = clampInteger(first <= last ? startValue : endValue, range.minimum, range.maximum, range.minimum);
+  const toValue = clampInteger(first <= last ? endValue : startValue, range.minimum, range.maximum, fromValue);
   const span = Math.max(1, to - from);
   for (let level = from; level <= to; level += 1) {
     const ratio = to === from ? 0 : (level - from) / span;
-    rows[paramIndex][level] = Math.round(fromValue + (toValue - fromValue) * ratio);
+    rows[paramIndex][level] = clampInteger(
+      Math.round(fromValue + (toValue - fromValue) * ratio),
+      range.minimum,
+      range.maximum,
+      range.minimum,
+    );
   }
   return rows;
 }
@@ -390,16 +400,16 @@ export function summarizeMvCommandList(value: unknown, limit = 8, language: Prod
 
 export function normalizeAnimationFrameCell(value: unknown): number[] {
   const source = Array.isArray(value) ? value : [];
-  return [
-    toInteger(source[0], 0),
-    toInteger(source[1], 0),
-    toInteger(source[2], 0),
-    toInteger(source[3], 100),
-    toInteger(source[4], 0),
-    clampInteger(source[5], 0, 1, 0),
-    clampInteger(source[6], 0, 255, 255),
-    clampInteger(source[7], 0, 3, 0),
-  ];
+  const result = [...source] as number[];
+  result[0] = clampInteger(source[0], -1, 199, 0);
+  result[1] = clampInteger(source[1], -408, 408, 0);
+  result[2] = clampInteger(source[2], -312, 312, 0);
+  result[3] = clampInteger(source[3], 20, 800, 100);
+  result[4] = clampInteger(source[4], -360, 360, 0);
+  result[5] = clampInteger(source[5], 0, 1, 0);
+  result[6] = clampInteger(source[6], 0, 255, 255);
+  result[7] = clampInteger(source[7], 0, 3, 0);
+  return result;
 }
 
 export function normalizeAnimationFrames(value: unknown): number[][][] {
@@ -416,7 +426,7 @@ export function setAnimationFrameCellValue(
   fieldIndex: number,
   amount: number,
 ): number[][][] {
-  const frames = normalizeAnimationFrames(value);
+  const frames = mutableAnimationFrames(value);
   if (frameIndex < 0 || cellIndex < 0 || fieldIndex < 0 || fieldIndex >= MV_ANIMATION_CELL_FIELDS.length) return frames;
   while (frames.length <= frameIndex) frames.push([]);
   while (frames[frameIndex].length <= cellIndex) frames[frameIndex].push(defaultAnimationCell());
@@ -425,19 +435,36 @@ export function setAnimationFrameCellValue(
 }
 
 export function appendAnimationFrame(value: unknown): number[][][] {
-  return [...normalizeAnimationFrames(value), [defaultAnimationCell()]];
+  const frames = mutableAnimationFrames(value);
+  if (frames.length >= 200) return frames;
+  return [...frames, [defaultAnimationCell()]];
+}
+
+export function duplicateAnimationFrame(value: unknown, frameIndex: number): number[][][] {
+  const frames = mutableAnimationFrames(value);
+  if (frames.length >= 200 || frameIndex < 0 || frameIndex >= frames.length) return frames;
+  frames.splice(frameIndex + 1, 0, cloneDraft(frames[frameIndex]));
+  return frames;
+}
+
+export function removeAnimationFrame(value: unknown, frameIndex: number): number[][][] {
+  const frames = mutableAnimationFrames(value);
+  if (frameIndex < 0 || frameIndex >= frames.length) return frames;
+  frames.splice(frameIndex, 1);
+  return frames;
 }
 
 export function appendAnimationFrameCell(value: unknown, frameIndex: number): number[][][] {
-  const frames = normalizeAnimationFrames(value);
+  const frames = mutableAnimationFrames(value);
   if (frameIndex < 0) return frames;
   while (frames.length <= frameIndex) frames.push([]);
+  if (frames[frameIndex].length >= 16) return frames;
   frames[frameIndex] = [...frames[frameIndex], defaultAnimationCell()];
   return frames;
 }
 
 export function removeAnimationFrameCell(value: unknown, frameIndex: number, cellIndex: number): number[][][] {
-  const frames = normalizeAnimationFrames(value);
+  const frames = mutableAnimationFrames(value);
   if (frameIndex < 0 || frameIndex >= frames.length) return frames;
   frames[frameIndex] = frames[frameIndex].filter((_cell, index) => index !== cellIndex);
   return frames;
@@ -459,22 +486,24 @@ export function normalizeAnimationTiming(value: unknown): MvAnimationTiming {
     ? source.se as Record<string, unknown>
     : {};
   const color = Array.isArray(source.flashColor) ? source.flashColor : [];
+  const flashColor = [...color] as number[];
+  flashColor[0] = clampInteger(color[0], 0, 255, 255);
+  flashColor[1] = clampInteger(color[1], 0, 255, 255);
+  flashColor[2] = clampInteger(color[2], 0, 255, 255);
+  flashColor[3] = clampInteger(color[3], 0, 255, 255);
   return {
-    frame: toInteger(source.frame, 0),
+    ...source,
+    frame: Math.max(0, toInteger(source.frame, 0)),
     se: {
+      ...se,
       name: String(se.name ?? ''),
       volume: clampInteger(se.volume, 0, 100, 90),
       pitch: clampInteger(se.pitch, 50, 150, 100),
       pan: clampInteger(se.pan, -100, 100, 0),
     },
     flashScope: clampInteger(source.flashScope, 0, 3, 0),
-    flashColor: [
-      clampInteger(color[0], 0, 255, 255),
-      clampInteger(color[1], 0, 255, 255),
-      clampInteger(color[2], 0, 255, 255),
-      clampInteger(color[3], 0, 255, 255),
-    ],
-    flashDuration: Math.max(0, toInteger(source.flashDuration, 5)),
+    flashColor,
+    flashDuration: clampInteger(source.flashDuration, 1, 200, 5),
   };
 }
 
@@ -486,6 +515,13 @@ export function appendAnimationTiming(value: unknown): MvAnimationTiming[] {
   return [...normalizeAnimationTimings(value), normalizeAnimationTiming({})];
 }
 
+export function removeAnimationTiming(value: unknown, index: number): MvAnimationTiming[] {
+  const timings = normalizeAnimationTimings(value);
+  if (index < 0 || index >= timings.length) return timings;
+  timings.splice(index, 1);
+  return timings;
+}
+
 export function setAnimationTimingValue(value: unknown, index: number, key: keyof Omit<MvAnimationTiming, 'se' | 'flashColor'>, nextValue: unknown): MvAnimationTiming[] {
   const timings = normalizeAnimationTimings(value);
   if (index < 0 || index >= timings.length) return timings;
@@ -494,7 +530,9 @@ export function setAnimationTimingValue(value: unknown, index: number, key: keyo
     ...current,
     [key]: key === 'flashScope'
       ? clampInteger(nextValue, 0, 3, current.flashScope)
-      : Math.max(0, toInteger(nextValue, Number(current[key]) || 0)),
+      : key === 'flashDuration'
+        ? clampInteger(nextValue, 1, 200, current.flashDuration)
+        : Math.max(0, toInteger(nextValue, Number(current[key]) || 0)),
   };
   return timings;
 }
@@ -533,6 +571,26 @@ function isValidParamIndex(value: number): boolean {
   return Number.isInteger(value) && value >= 0 && value < MV_CLASS_PARAM_COUNT;
 }
 
+function mutableClassParamCurves(value: unknown): number[][] {
+  const rows = cloneDraft(Array.isArray(value) ? value : []) as unknown[];
+  while (rows.length < MV_CLASS_PARAM_COUNT) rows.push([]);
+  for (let paramIndex = 0; paramIndex < MV_CLASS_PARAM_COUNT; paramIndex += 1) {
+    const row = Array.isArray(rows[paramIndex]) ? [...rows[paramIndex] as unknown[]] : [];
+    while (row.length < MV_CLASS_PARAM_ROW_LENGTH) row.push(0);
+    if (row[0] === undefined) row[0] = 0;
+    rows[paramIndex] = row;
+  }
+  return rows as number[][];
+}
+
+function mutableAnimationFrames(value: unknown): number[][][] {
+  const frames = cloneDraft(Array.isArray(value) ? value : []) as unknown[];
+  return frames.map((frame) => {
+    if (!Array.isArray(frame)) return [];
+    return frame.map((cell) => Array.isArray(cell) ? [...cell] : defaultAnimationCell());
+  }) as number[][][];
+}
+
 function isValidClassLevel(value: number): boolean {
   return Number.isInteger(value) && value >= 1 && value <= 99;
 }
@@ -552,7 +610,11 @@ function defaultAnimationCell(): number[] {
 }
 
 function normalizeAnimationCellField(fieldIndex: number, amount: unknown): number {
-  if (fieldIndex === 3) return Math.max(0, toInteger(amount, 100));
+  if (fieldIndex === 0) return clampInteger(amount, -1, 199, 0);
+  if (fieldIndex === 1) return clampInteger(amount, -408, 408, 0);
+  if (fieldIndex === 2) return clampInteger(amount, -312, 312, 0);
+  if (fieldIndex === 3) return clampInteger(amount, 20, 800, 100);
+  if (fieldIndex === 4) return clampInteger(amount, -360, 360, 0);
   if (fieldIndex === 5) return clampInteger(amount, 0, 1, 0);
   if (fieldIndex === 6) return clampInteger(amount, 0, 255, 255);
   if (fieldIndex === 7) return clampInteger(amount, 0, 3, 0);

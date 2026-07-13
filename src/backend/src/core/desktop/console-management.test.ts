@@ -14,6 +14,7 @@ import {
   createProjectManagedEntry,
   getProjectManagedEntry,
   preflightProjectManagedStagingApply,
+  resizeProjectManagedDatabase,
   resetProjectManagedEntry,
   revertProjectManagedEntry,
   updateProjectManagedEntry,
@@ -45,6 +46,7 @@ describe('console management services', { concurrency: false }, () => {
     writeJson(path.join(project, 'www', 'data', 'Actors.json'), [
       null,
       { ...createDefaultRmmvDatabaseEntry('Actors', 1), name: 'Hero', characterName: 'Hero' },
+      null,
     ]);
     writeCompleteDatabaseFixture(project);
     fs.writeFileSync(path.join(project, 'www', 'img', 'characters', 'Hero.png'), 'hero');
@@ -159,6 +161,53 @@ describe('console management services', { concurrency: false }, () => {
     assert.throws(() => withTestLanguage(() => createProjectManagedEntry(root, project, { kind: 'database', group: 'System' })), /不能新增/);
   });
 
+  test('changes database capacity through staging without deleting occupied ids', () => {
+    const unchanged = resizeProjectManagedDatabase(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      maximum: 2,
+    });
+    assert.equal(unchanged.previousMaximum, 2);
+    assert.equal(unchanged.maximum, 2);
+    assert.equal(unchanged.staging.staged, false);
+
+    const expanded = resizeProjectManagedDatabase(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      maximum: 4,
+    });
+    assert.equal(expanded.previousMaximum, 2);
+    assert.equal(expanded.maximum, 4);
+    const expandedActors = buildProjectManagementScan(root, project).database.Actors;
+    assert.equal(expandedActors?.capacity, 4);
+    assert.equal(expandedActors?.maxEntries, 1000);
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as unknown[]).length, 3);
+
+    const created = createProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      value: { name: 'Support' },
+    });
+    assert.equal(created.id, 2);
+    assert.throws(
+      () => withTestLanguage(() => resizeProjectManagedDatabase(root, project, {
+        kind: 'database',
+        group: 'Actors',
+        maximum: 1,
+      })),
+      /不能缩小|cannot be reduced/,
+    );
+
+    resetProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 2 });
+    const reduced = resizeProjectManagedDatabase(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      maximum: 1,
+    });
+    assert.equal(reduced.maximum, 1);
+    assert.equal(buildProjectManagementScan(root, project).database.Actors?.capacity, 1);
+  });
+
   test('reports field-level staged differences and reverts only the selected database record', () => {
     const actor = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
     updateProjectManagedEntry(root, project, {
@@ -205,7 +254,7 @@ describe('console management services', { concurrency: false }, () => {
       id: created.id,
     });
     assert.equal(secondRevert.entry, undefined);
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as unknown[])[created.id], undefined);
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as unknown[])[created.id], null);
     assert.equal(getProjectStagingStatus(root, project).staged, false);
   });
 
@@ -298,7 +347,7 @@ describe('console management services', { concurrency: false }, () => {
   });
 
   test('overview scan reads staged database changes and unnamed entries', () => {
-    writeJson(path.join(project, 'www', 'data', 'Skills.json'), [null]);
+    writeJson(path.join(project, 'www', 'data', 'Skills.json'), [null, null]);
     const created = createProjectManagedEntry(root, project, { kind: 'database', group: 'Skills' });
     const stagedOverview = buildProjectManagementScan(root, project);
     assert.equal(stagedOverview.database.Skills?.count, 1);
@@ -311,7 +360,7 @@ describe('console management services', { concurrency: false }, () => {
     });
     const renamedOverview = buildProjectManagementScan(root, project);
     assert.equal(renamedOverview.database.Skills?.named.find((entry) => entry.id === created.id)?.name, 'Fire II');
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Skills.json')) as unknown[])[created.id], undefined);
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Skills.json')) as unknown[])[created.id], null);
   });
 });
 
@@ -332,7 +381,11 @@ function writeCompleteDatabaseFixture(project: string): void {
   ];
   for (const [group, fileName, ids] of arrayTables) {
     const records: unknown[] = [null];
-    for (const id of ids) records[id] = createDefaultRmmvDatabaseEntry(group, id);
+    for (const id of ids) {
+      const record = createDefaultRmmvDatabaseEntry(group, id);
+      if (group === 'Armors') record.etypeId = id + 1;
+      records[id] = record;
+    }
     writeJson(path.join(dataDir, fileName), records);
   }
   writeJson(path.join(dataDir, 'MapInfos.json'), [null, {

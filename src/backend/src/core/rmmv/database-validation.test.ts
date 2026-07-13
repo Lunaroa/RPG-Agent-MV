@@ -134,6 +134,11 @@ describe("RMMV prospective database validation", () => {
     const state = createDefaultRmmvDatabaseEntry("States", 1);
     assert.equal(Object.hasOwn(state, "releaseByDamage"), false);
     assert.equal(Object.hasOwn(state, "removeByDamage"), true);
+    assert.deepEqual(createDefaultRmmvDatabaseEntry("Skills", 1).effects, []);
+    assert.deepEqual(createDefaultRmmvDatabaseEntry("Items", 1).effects, []);
+    assert.deepEqual(createDefaultRmmvDatabaseEntry("Weapons", 1).traits, []);
+    assert.deepEqual(createDefaultRmmvDatabaseEntry("Armors", 1).traits, []);
+    assert.deepEqual(createDefaultRmmvDatabaseEntry("Enemies", 1).traits, []);
   });
 
   test("accepts standard direct, trait, effect, equipment, map, and special-value references", () => {
@@ -291,6 +296,59 @@ describe("RMMV prospective database validation", () => {
     assert.ok(codes.includes("DB_EFFECT_DATA_ID"));
   });
 
+  test("validates the standard numeric range matrix at exact database paths", () => {
+    const snapshot = validSnapshot();
+    (snapshot.actors as Array<Record<string, unknown> | null>)[1]!.initialLevel = 0;
+    ((snapshot.classes as Array<Record<string, unknown> | null>)[1]!.params as number[][])[0][99] = 10000;
+    (snapshot.skills as Array<Record<string, unknown> | null>)[1]!.speed = 2001;
+    (snapshot.items as Array<Record<string, unknown> | null>)[1]!.itypeId = 5;
+    ((snapshot.weapons as Array<Record<string, unknown> | null>)[1]!.params as number[])[2] = 501;
+    ((snapshot.enemies as Array<Record<string, unknown> | null>)[1]!.params as number[])[0] = 0;
+    (snapshot.states as Array<Record<string, unknown> | null>)[1]!.overlay = 11;
+    const animation = (snapshot.animations as Array<Record<string, unknown> | null>)[1]!;
+    animation.frames = [[[-1, 409, 0, 100, 0, 0, 255, 0]]];
+    const tileset = (snapshot.tilesets as Array<Record<string, unknown> | null>)[1]!;
+    tileset.mode = 2;
+    tileset.flags = [65536];
+    const system = snapshot.system as Record<string, unknown>;
+    system.attackMotions = [{ type: 3, weaponImageId: 31 }];
+
+    const paths = issuePaths(snapshot);
+    assert.ok(paths.includes("actors[1].initialLevel"));
+    assert.ok(paths.includes("classes[1].params[0][99]"));
+    assert.ok(paths.includes("skills[1].speed"));
+    assert.ok(paths.includes("items[1].itypeId"));
+    assert.ok(paths.includes("weapons[1].params[2]"));
+    assert.ok(paths.includes("enemies[1].params[0]"));
+    assert.ok(paths.includes("states[1].overlay"));
+    assert.ok(paths.includes("animations[1].frames[0][0][1]"));
+    assert.ok(paths.includes("tilesets[1].mode"));
+    assert.ok(paths.includes("tilesets[1].flags[0]"));
+    assert.ok(paths.includes("system.attackMotions[0].type"));
+    assert.ok(paths.includes("system.attackMotions[0].weaponImageId"));
+  });
+
+  test("checks fixed operands on standard traits and effects but only warns for plugin codes", () => {
+    const snapshot = validSnapshot();
+    const state = (snapshot.states as Array<Record<string, unknown> | null>)[1]!;
+    state.traits = [
+      { code: 14, dataId: 1, value: 0 },
+      { code: 900, dataId: 999, value: -999, pluginField: true },
+    ];
+    const item = (snapshot.items as Array<Record<string, unknown> | null>)[1]!;
+    item.effects = [
+      { code: 43, dataId: 1, value1: 1, value2: 0 },
+      { code: 901, dataId: 999, value1: -999, value2: 999, pluginField: true },
+    ];
+
+    const result = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.equal(result.ok, false);
+    assert.ok(result.issues.some((issue) => issue.code === "DB_TRAIT_VALUE" && issue.source.path === "states[1].traits[0].value"));
+    assert.ok(result.issues.some((issue) => issue.code === "DB_EFFECT_VALUE" && issue.source.path === "items[1].effects[0].value1"));
+    assert.ok(result.issues.some((issue) => issue.code === "DB_PLUGIN_TRAIT_CODE" && issue.severity === "warning"));
+    assert.ok(result.issues.some((issue) => issue.code === "DB_PLUGIN_EFFECT_CODE" && issue.severity === "warning"));
+  });
+
   test("reports existing over-limit data but only blocks newly occupied over-limit slots", () => {
     const beforeSkills: Array<Record<string, unknown> | null> = [null];
     beforeSkills[2001] = { id: 2001, name: "" };
@@ -338,6 +396,29 @@ describe("RMMV prospective database validation", () => {
     assert.equal(invalid.ok, false);
     assert.ok(invalid.issues.some((issue) => issue.code === "DB_TROOP_MEMBER_LIMIT" && issue.severity === "error"));
     assert.ok(invalid.issues.some((issue) => issue.code === "DB_TEST_BATTLER_LIMIT" && issue.severity === "error"));
+  });
+
+  test("allows reducing legacy animation overages but blocks extending them", () => {
+    const before = validSnapshot();
+    const animation = (before.animations as Array<Record<string, unknown> | null>)[1]!;
+    animation.frames = Array.from({ length: 201 }, () => (
+      Array.from({ length: 17 }, () => [-1, 0, 0, 100, 0, 0, 255, 0])
+    ));
+
+    const reduced = structuredClone(before);
+    (reduced.animations as Array<Record<string, unknown> | null>)[1]!.frames =
+      ((reduced.animations as Array<Record<string, unknown> | null>)[1]!.frames as unknown[]).slice(0, 200);
+    assert.equal(validateRmmvDatabaseTransition(before, reduced, { mapIds: [1] }).ok, true);
+
+    const extended = structuredClone(before);
+    ((extended.animations as Array<Record<string, unknown> | null>)[1]!.frames as unknown[]).push([]);
+    (((extended.animations as Array<Record<string, unknown> | null>)[1]!.frames as unknown[][])[0]).push(
+      [-1, 0, 0, 100, 0, 0, 255, 0],
+    );
+    const result = validateRmmvDatabaseTransition(before, extended, { mapIds: [1] });
+    assert.equal(result.ok, false);
+    assert.ok(result.issues.some((issue) => issue.code === "DB_ANIMATION_FRAME_LIMIT" && issue.severity === "error"));
+    assert.ok(result.issues.some((issue) => issue.code === "DB_ANIMATION_CELL_LIMIT" && issue.severity === "error"));
   });
 
   test("validates the final batch state so a record may reference another record created in the same batch", () => {

@@ -154,6 +154,7 @@ contextBridge.exposeInMainWorld('api', {
     getEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:getEntry', request, project),
     updateEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:updateEntry', request, project),
     createEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:createEntry', request, project),
+    resizeDatabase: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:resizeDatabase', request, project),
     resetEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:resetEntry', request, project),
     revertEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:revertEntry', request, project),
   },

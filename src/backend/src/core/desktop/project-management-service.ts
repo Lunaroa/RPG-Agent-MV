@@ -6,6 +6,7 @@ import type {
   ProjectManagedEntryInspection,
   ProjectManagedEntryRevertResult,
   ProjectManagedEntryResetResult,
+  ProjectManagedDatabaseResizeResult,
   ProjectManagedFieldDiff,
 } from '../../../../contract/types.ts';
 import {
@@ -26,6 +27,7 @@ import {
 import { getCommonEvent, updateCommonEvent } from './common-event-service.ts';
 import {
   projectManagedCreateDatabaseOnly,
+  projectManagedCapacityReached,
   projectManagedDatabaseKindInvalid,
   projectManagedEntryIdImmutable,
   projectManagedEntryIdInvalid,
@@ -39,6 +41,8 @@ import {
   projectManagedGroupInvalid,
   projectManagedGroupMustBeArray,
   projectManagedListInvalid,
+  projectManagedMaximumInvalid,
+  projectManagedMaximumOccupied,
   projectManagedOperationOwnedCannotRevert,
   projectManagedSystemSharedGroupImmutable,
   projectManagedTypeListInvalid,
@@ -258,6 +262,53 @@ export function resetProjectManagedEntry(
 }
 
 export const getDefaultProjectManagedEntry = resetProjectManagedEntry;
+
+export function resizeProjectManagedDatabase(
+  workflowRoot: string,
+  project: string,
+  request: { kind: ProjectManagedEntry['kind']; group?: string; maximum: number },
+): ProjectManagedDatabaseResizeResult {
+  if (request.kind !== 'database') throw new Error(projectManagedCreateDatabaseOnly());
+  const schema = schemaForManagedEntry(request);
+  if (!schema.isArrayTable || schema.maxEntries === null) {
+    throw new Error(projectManagedFixedDocumentCannotCreate(schema.group));
+  }
+  const maximum = Number(request.maximum);
+  if (!Number.isInteger(maximum) || maximum < 1 || maximum > schema.maxEntries) {
+    throw new Error(projectManagedMaximumInvalid(schema.group, schema.maxEntries));
+  }
+  const relativePath = relativePathFor(project, request);
+  const data = readData(workflowRoot, project, relativePath);
+  if (!Array.isArray(data)) throw new Error(projectManagedGroupMustBeArray(schema.group));
+  const previousMaximum = Math.max(0, data.length - 1);
+  if (maximum === previousMaximum) {
+    return {
+      resized: true,
+      group: schema.group,
+      previousMaximum,
+      maximum,
+      staging: getProjectStagingStatus(workflowRoot, project),
+    };
+  }
+  if (maximum < previousMaximum) {
+    const occupiedIds: number[] = [];
+    for (let id = maximum + 1; id < data.length; id += 1) {
+      if (data[id] !== null && data[id] !== undefined) occupiedIds.push(id);
+    }
+    if (occupiedIds.length) throw new Error(projectManagedMaximumOccupied(schema.group, occupiedIds));
+    data.length = maximum + 1;
+  } else {
+    while (data.length <= maximum) data.push(null);
+  }
+  writeStagedProjectJson(workflowRoot, project, relativePath, data);
+  return {
+    resized: true,
+    group: schema.group,
+    previousMaximum,
+    maximum,
+    staging: getProjectStagingStatus(workflowRoot, project),
+  };
+}
 
 function relativePathFor(project: string, request: { kind: ProjectManagedEntry['kind']; group?: string }): string {
   const layout = resolveRmmvLayout(project);
@@ -518,12 +569,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function nextFreeId(data: unknown[], maxEntries: number | null, group: string): number {
-  const lastCandidate = maxEntries ?? Math.max(1, data.length);
+  const currentCapacity = Math.max(0, data.length - 1);
+  const lastCandidate = maxEntries === null ? currentCapacity : Math.min(currentCapacity, maxEntries);
   for (let id = 1; id <= lastCandidate; id += 1) {
     if (!data[id]) return id;
   }
-  if (maxEntries !== null) throw new Error(projectManagedEntryLimitReached(group, maxEntries));
-  return Math.max(1, data.length);
+  if (maxEntries !== null && currentCapacity >= maxEntries) {
+    throw new Error(projectManagedEntryLimitReached(group, maxEntries));
+  }
+  throw new Error(projectManagedCapacityReached(group, currentCapacity));
 }
 
 function schemaPayload(schema: RmmvDatabaseTableSchema): NonNullable<ProjectManagedEntry['schema']> {

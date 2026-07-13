@@ -103,6 +103,43 @@ export function projectManagedEntryLimitReached(
   });
 }
 
+export function projectManagedCapacityReached(
+  group: string,
+  capacity: number,
+  language?: ProductLanguage | null,
+): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `${group} 当前容量 ${capacity} 已用满；请先调整数据库容量`,
+    'en-US': `${group} capacity ${capacity} is full; change the database capacity before adding another entry`,
+  });
+}
+
+export function projectManagedMaximumInvalid(
+  group: string,
+  maximum: number,
+  language?: ProductLanguage | null,
+): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `${group} 的容量必须是 1 到 ${maximum} 之间的整数`,
+    'en-US': `${group} capacity must be an integer from 1 through ${maximum}`,
+  });
+}
+
+export function projectManagedMaximumOccupied(
+  group: string,
+  ids: readonly number[],
+  language?: ProductLanguage | null,
+): string {
+  const detail = ids.slice(0, 8).join(', ');
+  const more = ids.length > 8
+    ? pickByLocale(resolveLanguage(language), { 'zh-CN': ` 等 ${ids.length} 条`, 'en-US': ` and ${ids.length - 8} more` })
+    : '';
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `${group} 不能缩小：目标范围外仍有数据（ID ${detail}${more}）。请先清空这些条目`,
+    'en-US': `${group} cannot be reduced because occupied entries remain outside the target range (ids ${detail}${more}); clear those entries first`,
+  });
+}
+
 export function projectManagedOperationOwnedCannotRevert(language?: ProductLanguage | null): string {
   return pickByLocale(resolveLanguage(language), {
     'zh-CN': '这条修改属于 Agent 数据库操作，不能单独撤销；请放弃对应的完整操作',

@@ -143,6 +143,22 @@ describe("RMMV prospective database validation", () => {
     assert.match(result.limitations.join("\n"), /plugin/i);
   });
 
+  test("accepts MV skill type zero and ignores dataId for disabled enemy drop slots", () => {
+    const snapshot = validSnapshot();
+    (snapshot.skills as Array<Record<string, unknown> | null>)[1]!.stypeId = 0;
+    (snapshot.enemies as Array<Record<string, unknown> | null>)[1]!.dropItems = [
+      { kind: 0, dataId: 1, denominator: 1 },
+    ];
+
+    const valid = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.equal(valid.ok, true, valid.issues.map((issue) => `${issue.code}: ${issue.message}`).join("\n"));
+
+    (snapshot.enemies as Array<Record<string, unknown> | null>)[1]!.dropItems = [
+      { kind: 1, dataId: 2, denominator: 1 },
+    ];
+    assert.ok(issuePaths(snapshot).includes("enemies[1].dropItems[0].dataId"));
+  });
+
   test("reports missing standard references at exact source paths", () => {
     const snapshot = validSnapshot();
     (snapshot.actors as Array<Record<string, unknown> | null>)[1]!.classId = 2;

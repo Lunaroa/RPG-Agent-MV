@@ -18,6 +18,7 @@ import {
 import { electronText } from './electronLocalization.js';
 import { startUiControlBridge, stopUiControlBridge } from './ui-control-bridge.js';
 import { initAutoUpdater } from './auto-updater.js';
+import { RMMV_ASSET_SCHEME } from './asset-protocol-policy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,7 +31,7 @@ let userDataRoot = '';
 let installRoot = '';
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'rmmv-asset', privileges: { secure: true, standard: true, supportFetchAPI: true } },
+  RMMV_ASSET_SCHEME,
 ]);
 
 function scheduleWindowStateSave(): void {

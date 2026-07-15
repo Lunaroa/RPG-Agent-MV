@@ -77,6 +77,7 @@ type DatabasePreviewAsset =
   | "faces"
   | "svActors"
   | "enemies"
+  | "svEnemies"
   | "animations"
   | "tilesets"
   | "battlebacks1"
@@ -501,7 +502,7 @@ function summarizeDatabasePreview(group: string, entry: unknown, tables: Map<str
         || namedAssetPreview("character", "characters", stringValue(record.characterName), numberValue(record.characterIndex), PROJECT_SCANNER_PREVIEW_LABELS.character)
         || namedAssetPreview("svActor", "svActors", stringValue(record.battlerName), undefined, PROJECT_SCANNER_PREVIEW_LABELS.svActor);
     case "Enemies":
-      return namedAssetPreview("image", "enemies", stringValue(record.battlerName), undefined, PROJECT_SCANNER_PREVIEW_LABELS.enemyBattler);
+      return namedAssetPreview("image", enemyBattlerPreviewAsset(tables), stringValue(record.battlerName), undefined, PROJECT_SCANNER_PREVIEW_LABELS.enemyBattler);
     case "Troops":
       return troopPreview(record, tables);
     case "Animations":
@@ -544,9 +545,13 @@ function troopPreview(record: Record<string, unknown>, tables: Map<string, unkno
     if (enemyId === undefined || enemyId <= 0) continue;
     const enemy = enemies.find((item) => numberValue(asRecord(item)?.id) === enemyId);
     const battlerName = stringValue(asRecord(enemy)?.battlerName);
-    if (battlerName) return namedAssetPreview("image", "enemies", battlerName, undefined, PROJECT_SCANNER_PREVIEW_LABELS.troopMember);
+    if (battlerName) return namedAssetPreview("image", enemyBattlerPreviewAsset(tables), battlerName, undefined, PROJECT_SCANNER_PREVIEW_LABELS.troopMember);
   }
   return undefined;
+}
+
+function enemyBattlerPreviewAsset(tables: Map<string, unknown>): "enemies" | "svEnemies" {
+  return asRecord(tables.get("System"))?.optSideView === true ? "svEnemies" : "enemies";
 }
 
 function firstTilesetPreview(record: Record<string, unknown>): DatabaseEntryPreview | undefined {

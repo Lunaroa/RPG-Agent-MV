@@ -26,7 +26,11 @@ describe('parseEventPreviewFromRegisterTool', () => {
     assert.deepEqual(item, {
       contractId: 'tavern.bartender.intro',
       eventName: 'EV_BartenderIntro',
+      sceneId: undefined,
+      targetMapId: null,
+      trigger: undefined,
       summary: 'Sample NPC intro',
+      placementHint: undefined,
     })
   })
 

@@ -8,6 +8,7 @@ describe("controlled RMMV database JSON patch", () => {
   test("updates declared primitive and nested fields while preserving plugin data", () => {
     const skill = {
       ...createDefaultRmmvDatabaseEntry("Skills", 1),
+      effects: [{ code: 21, dataId: 1, value1: 1, value2: 0 }],
       pluginData: { mode: "custom" },
     };
     const result = applyRmmvDatabasePatch("skills", skill, [
@@ -30,13 +31,13 @@ describe("controlled RMMV database JSON patch", () => {
       path: "/effects/-",
       value: { code: 44, dataId: 1, value1: 0, value2: 0 },
     }]);
-    assert.equal((added.value.effects as unknown[]).length, 2);
+    assert.equal((added.value.effects as unknown[]).length, 1);
 
     const removed = applyRmmvDatabasePatch("skills", added.value, [{ op: "remove", path: "/effects/0" }]);
-    assert.equal((removed.value.effects as unknown[]).length, 1);
+    assert.equal((removed.value.effects as unknown[]).length, 0);
 
     assert.throws(
-      () => applyRmmvDatabasePatch("skills", skill, [{
+      () => applyRmmvDatabasePatch("skills", added.value, [{
         op: "replace",
         path: "/damage",
         value: { type: 0, elementId: 0, formula: "0", variance: 0, critical: false },
@@ -44,7 +45,7 @@ describe("controlled RMMV database JSON patch", () => {
       /cannot replace an existing complex value/i,
     );
     assert.throws(
-      () => applyRmmvDatabasePatch("skills", skill, [{
+      () => applyRmmvDatabasePatch("skills", added.value, [{
         op: "replace",
         path: "/effects/0",
         value: { code: 44, dataId: 1, value1: 0, value2: 0 },
@@ -110,6 +111,33 @@ describe("controlled RMMV database JSON patch", () => {
     assert.throws(
       () => applyRmmvDatabasePatch("system", system, [{ op: "remove", path: "/switches/1" }]),
       /tail/i,
+    );
+  });
+
+  test("keeps fixed-length database arrays stable while allowing scalar replacement", () => {
+    const classEntry = createDefaultRmmvDatabaseEntry("Classes", 1);
+    const replaced = applyRmmvDatabasePatch("classes", classEntry, [{
+      op: "replace",
+      path: "/params/0/99",
+      value: 500,
+    }]);
+    assert.equal(((replaced.value.params as number[][])[0]).length, 100);
+    assert.equal((replaced.value.params as number[][])[0][99], 500);
+
+    assert.throws(
+      () => applyRmmvDatabasePatch("classes", classEntry, [{ op: "remove", path: "/params/0/99" }]),
+      /fixed-length/i,
+    );
+    assert.throws(
+      () => applyRmmvDatabasePatch("classes", classEntry, [{ op: "add", path: "/expParams/-", value: 1 }]),
+      /fixed-length/i,
+    );
+    assert.throws(
+      () => applyRmmvDatabasePatch("system", createDefaultRmmvDatabaseEntry("System"), [{
+        op: "remove",
+        path: "/windowTone/3",
+      }]),
+      /fixed-length/i,
     );
   });
 

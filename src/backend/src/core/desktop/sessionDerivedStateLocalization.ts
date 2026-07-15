@@ -90,11 +90,11 @@ const SESSION_SUBAGENT_LABELS_BY_LOCALE = {
 } as const satisfies Record<ProductLanguage, SessionSubagentLabels>;
 
 export function sessionPlanLabels(language?: ProductLanguage | null): SessionPlanLabels {
-  return pickByLocale(resolveLanguage(language), SESSION_PLAN_LABELS_BY_LOCALE);
+  return pickByLocale<SessionPlanLabels>(resolveLanguage(language), SESSION_PLAN_LABELS_BY_LOCALE);
 }
 
 export function sessionSubagentLabels(language?: ProductLanguage | null): SessionSubagentLabels {
-  return pickByLocale(resolveLanguage(language), SESSION_SUBAGENT_LABELS_BY_LOCALE);
+  return pickByLocale<SessionSubagentLabels>(resolveLanguage(language), SESSION_SUBAGENT_LABELS_BY_LOCALE);
 }
 
 export function sessionSubagentToolTitle(toolName: string, language?: ProductLanguage | null): string {

@@ -1,5 +1,5 @@
-import { withProductLanguage, type ProductLanguage } from './request-language.ts';
-import { normalizeProductLanguage } from '../../../../contract/i18n.ts';
+import { withProductLanguage } from './request-language.ts';
+import { normalizeProductLanguage, type ProductLanguage } from '../../../../contract/i18n.ts';
 
 // Tests pin to zh-CN so error-message regex assertions remain stable when the
 // product default locale changes (e.g. the en-US flip for v0.2.0).

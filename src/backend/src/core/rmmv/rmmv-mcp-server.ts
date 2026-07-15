@@ -31,7 +31,7 @@ import "../../suppress-warnings.ts";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { DEFAULT_PRODUCT_LANGUAGE } from "../../../../contract/i18n.ts";
+import { normalizeProductLanguage } from "../../../../contract/i18n.ts";
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { initFileLogger, toolLogger } from "../file-log.ts";
 import { dispatchRmmvTool } from "./rmmv-tool-dispatch.ts";
@@ -553,7 +553,8 @@ async function main(): Promise<void> {
       const tmpDirs: string[] = [];
       try {
         materializeInlineJsonFields(handlerInput, tmpDirs);
-        const result = await withProductLanguage(DEFAULT_PRODUCT_LANGUAGE, () => dispatchRmmvTool(command, handlerInput));
+        const productLanguage = normalizeProductLanguage(process.env.RMMV_PRODUCT_LANGUAGE);
+        const result = await withProductLanguage(productLanguage, () => dispatchRmmvTool(command, handlerInput));
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result) }],
         };

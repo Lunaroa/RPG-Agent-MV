@@ -22,7 +22,7 @@ export function getRequestProductLanguage(): ProductLanguage {
 }
 
 export function resolveLanguage(explicit?: ProductLanguage | null): ProductLanguage {
-  if (explicit != null && explicit !== '') {
+  if (explicit != null) {
     return normalizeProductLanguage(explicit);
   }
   return getRequestProductLanguage();

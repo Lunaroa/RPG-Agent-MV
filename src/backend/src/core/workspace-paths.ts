@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { ProductLanguage } from "../../../contract/i18n.ts";
+import { backendText } from "./i18n/messages.ts";
+
 /** Top-level product directory name (formerly `workspace/`). */
 export const PRODUCT_DIR_NAME = "RPG-Agent-MV";
 
@@ -156,7 +159,11 @@ export function resolveWorkflowRelativePath(workflowRoot: string, rel: string): 
 /**
  * Ensure a user-writable copy of a shipped config file exists under user data.
  */
-export function ensureWritableWorkflowFile(workflowRoot: string, rel: string): string {
+export function ensureWritableWorkflowFile(
+  workflowRoot: string,
+  rel: string,
+  productLanguage?: ProductLanguage | null,
+): string {
   if (path.isAbsolute(rel)) return path.normalize(rel);
 
   const userData = path.resolve(workflowRoot);
@@ -165,9 +172,10 @@ export function ensureWritableWorkflowFile(workflowRoot: string, rel: string): s
 
   const shipped = resolveShippedPath(workflowRoot, rel);
   if (!fs.existsSync(shipped)) {
-    throw new Error(
-      `缺少配置文件: ${rel}；安装目录中未找到 ${shipped}。请重新安装应用。`,
-    );
+    throw new Error(backendText("workspace.configMissing", productLanguage, {
+      relativePath: rel,
+      shippedPath: shipped,
+    }));
   }
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(shipped, target);

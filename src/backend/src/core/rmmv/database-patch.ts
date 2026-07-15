@@ -23,7 +23,7 @@ export interface RmmvDatabasePatchResult {
 type PatchNode = ScalarNode | ObjectNode | ArrayNode | DynamicNode;
 interface ScalarNode { kind: "scalar" }
 interface ObjectNode { kind: "object"; fields: Readonly<Record<string, PatchNode>> }
-interface ArrayNode { kind: "array"; element: PatchNode; stableTail?: boolean }
+interface ArrayNode { kind: "array"; element: PatchNode; stableTail?: boolean; fixedLength?: boolean }
 interface DynamicNode { kind: "dynamic" }
 
 const scalar: ScalarNode = Object.freeze({ kind: "scalar" });
@@ -33,6 +33,7 @@ const array = (element: PatchNode, stableTail = false): ArrayNode => ({
   element,
   ...(stableTail ? { stableTail: true } : {}),
 });
+const fixedArray = (element: PatchNode): ArrayNode => ({ kind: "array", element, fixedLength: true });
 const object = (fields: Record<string, PatchNode>): ObjectNode => ({ kind: "object", fields });
 
 const trait = object({ code: scalar, dataId: scalar, value: scalar });
@@ -85,8 +86,8 @@ const NESTED_FIELDS: Partial<Record<RmmvDatabaseTableKey, Record<string, PatchNo
     traits: array(trait),
   },
   classes: {
-    expParams: array(scalar),
-    params: array(array(scalar)),
+    expParams: fixedArray(scalar),
+    params: fixedArray(fixedArray(scalar)),
     learnings: array(object({ level: scalar, note: scalar, skillId: scalar })),
     traits: array(trait),
   },
@@ -99,15 +100,15 @@ const NESTED_FIELDS: Partial<Record<RmmvDatabaseTableKey, Record<string, PatchNo
     effects: array(effect),
   },
   weapons: {
-    params: array(scalar),
+    params: fixedArray(scalar),
     traits: array(trait),
   },
   armors: {
-    params: array(scalar),
+    params: fixedArray(scalar),
     traits: array(trait),
   },
   enemies: {
-    params: array(scalar),
+    params: fixedArray(scalar),
     traits: array(trait),
     actions: array(object({
       conditionParam1: scalar,
@@ -126,9 +127,9 @@ const NESTED_FIELDS: Partial<Record<RmmvDatabaseTableKey, Record<string, PatchNo
     traits: array(trait),
   },
   animations: {
-    frames: array(array(array(scalar))),
+    frames: array(array(fixedArray(scalar))),
     timings: array(object({
-      flashColor: array(scalar),
+      flashColor: fixedArray(scalar),
       flashDuration: scalar,
       flashScope: scalar,
       frame: scalar,
@@ -137,7 +138,7 @@ const NESTED_FIELDS: Partial<Record<RmmvDatabaseTableKey, Record<string, PatchNo
   },
   tilesets: {
     flags: array(scalar),
-    tilesetNames: array(scalar),
+    tilesetNames: fixedArray(scalar),
   },
   commonEvents: {
     list: eventList,
@@ -155,16 +156,16 @@ const NESTED_FIELDS: Partial<Record<RmmvDatabaseTableKey, Record<string, PatchNo
     victoryMe: audio,
     defeatMe: audio,
     gameoverMe: audio,
-    sounds: array(audio),
-    menuCommands: array(scalar),
-    windowTone: array(scalar),
+    sounds: fixedArray(audio),
+    menuCommands: fixedArray(scalar),
+    windowTone: fixedArray(scalar),
     attackMotions: array(object({ type: scalar, weaponImageId: scalar })),
     magicSkills: array(scalar),
   },
   terms: {
-    basic: array(scalar),
-    params: array(scalar),
-    commands: array(scalar),
+    basic: fixedArray(scalar),
+    params: fixedArray(scalar),
+    commands: fixedArray(scalar),
     messages: defaultTermMessagesSchema(),
   },
 };
@@ -305,6 +306,9 @@ function applyArrayElement(
   diffs: RmmvDatabaseFieldDiff[],
 ): void {
   if (!Array.isArray(parent)) throw new Error(`Database patch parent is not an array: ${operation.path}`);
+  if (schema.fixedLength && operation.op !== "replace") {
+    throw new Error(`Fixed-length database arrays do not allow insertion or removal: ${operation.path}`);
+  }
   if (operation.op === "add") {
     const index = addArrayIndex(segment, parent.length, operation.path);
     if (schema.stableTail && index !== parent.length) {

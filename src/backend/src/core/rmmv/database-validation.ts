@@ -1,4 +1,5 @@
 import { Script } from "node:vm";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   getRmmvDatabaseSchemaByKey,
@@ -46,6 +47,10 @@ export interface RmmvDatabaseValidationOptions {
   maps?: readonly RmmvDatabaseMapDocument[];
 }
 
+export interface RmmvDatabaseTransitionValidationOptions extends RmmvDatabaseValidationOptions {
+  beforeMaps?: readonly RmmvDatabaseMapDocument[];
+}
+
 export interface RmmvDatabaseMapDocument {
   mapId: number;
   value: unknown;
@@ -58,7 +63,6 @@ const ARRAY_TABLE_KEYS = listRmmvDatabaseSchemas()
 const PLUGIN_LIMITATION = "Unknown plugin fields and note-tag semantics are preserved but are not validated.";
 const STANDARD_TRAIT_CODES = new Set([11, 12, 13, 14, 21, 22, 23, 31, 32, 33, 34, 41, 42, 43, 44, 51, 52, 53, 54, 55, 61, 62, 63, 64]);
 const STANDARD_EFFECT_CODES = new Set([11, 12, 13, 21, 22, 31, 32, 33, 34, 41, 42, 43, 44]);
-const FIXED_ONE_TRAIT_CODES = new Set([14, 31, 41, 42, 43, 44, 51, 52, 53, 54, 55, 62, 63, 64]);
 
 export function validateRmmvDatabaseSnapshot(
   snapshot: RmmvDatabaseSnapshot,
@@ -72,10 +76,26 @@ export function validateRmmvDatabaseSnapshot(
 export function validateRmmvDatabaseTransition(
   before: RmmvDatabaseSnapshot,
   after: RmmvDatabaseSnapshot,
-  options: RmmvDatabaseValidationOptions = {},
+  options: RmmvDatabaseTransitionValidationOptions = {},
 ): RmmvDatabaseSemanticValidationResult {
-  const result = validateRmmvDatabaseSnapshot(after, options);
-  const issues = [...result.issues];
+  const beforeOptions: RmmvDatabaseValidationOptions = {
+    ...(options.mapIds ? { mapIds: options.mapIds } : {}),
+    ...(options.beforeMaps || options.maps ? { maps: options.beforeMaps ?? options.maps } : {}),
+  };
+  const afterOptions: RmmvDatabaseValidationOptions = {
+    ...(options.mapIds ? { mapIds: options.mapIds } : {}),
+    ...(options.maps ? { maps: options.maps } : {}),
+  };
+  const beforeResult = validateRmmvDatabaseSnapshot(before, beforeOptions);
+  const result = validateRmmvDatabaseSnapshot(after, afterOptions);
+  const issues = prospectiveIssues(
+    beforeResult.issues,
+    result.issues,
+    before,
+    after,
+    beforeOptions.maps ?? [],
+    afterOptions.maps ?? [],
+  );
 
   for (const table of ARRAY_TABLE_KEYS) {
     const schema = getRmmvDatabaseSchemaByKey(table);
@@ -230,6 +250,7 @@ class SnapshotValidator {
 
   private validateClasses(): void {
     this.forEachRecord("classes", (classEntry, id) => {
+      this.fixedArrayLength("classes", id, `classes[${id}].expParams`, classEntry.expParams, 4);
       this.validateClassParameterCurves(classEntry.params, id);
       forEachRecordValue(classEntry.learnings, (learning, index) => {
         this.fixedRange(
@@ -514,6 +535,7 @@ class SnapshotValidator {
         this.fixedRange("DB_ANIMATION_FLASH_SCOPE", "animations", id, `${timingPath}.flashScope`, timing.flashScope, 0, 3);
         this.fixedRange("DB_ANIMATION_FLASH_DURATION", "animations", id, `${timingPath}.flashDuration`, timing.flashDuration, 1, 200);
         const flashColor = asArray(timing.flashColor);
+        this.fixedArrayLength("animations", id, `${timingPath}.flashColor`, timing.flashColor, 4);
         for (let colorIndex = 0; colorIndex < 4; colorIndex += 1) {
           this.fixedRange(
             "DB_ANIMATION_FLASH_COLOR",
@@ -533,6 +555,7 @@ class SnapshotValidator {
   private validateTilesets(): void {
     this.forEachRecord("tilesets", (tileset, id) => {
       this.fixedRange("DB_TILESET_MODE", "tilesets", id, `tilesets[${id}].mode`, tileset.mode, 0, 1);
+      this.fixedArrayLength("tilesets", id, `tilesets[${id}].tilesetNames`, tileset.tilesetNames, 9);
       const flags = asArray(tileset.flags);
       flags.forEach((flag, index) => {
         this.fixedRange("DB_TILESET_FLAG", "tilesets", id, `tilesets[${id}].flags[${index}]`, flag, 0, 0xffff);
@@ -631,6 +654,8 @@ class SnapshotValidator {
     forEachRecordValue(system.sounds, (sound, index) => {
       this.validateAudio(sound, "system", undefined, `system.sounds[${index}]`);
     });
+    this.fixedArrayLength("system", undefined, "system.sounds", system.sounds, 24);
+    this.fixedArrayLength("system", undefined, "system.menuCommands", system.menuCommands, 6);
     forEachRecordValue(system.attackMotions, (motion, index) => {
       this.fixedRange("DB_SYSTEM_ATTACK_MOTION", "system", undefined, `system.attackMotions[${index}].type`, motion.type, 0, 2);
       this.fixedRange(
@@ -644,6 +669,7 @@ class SnapshotValidator {
       );
     });
     const tone = asArray(system.windowTone);
+    this.fixedArrayLength("system", undefined, "system.windowTone", system.windowTone, 4);
     for (let index = 0; index < 4; index += 1) {
       this.fixedRange(
         "DB_SYSTEM_WINDOW_TONE",
@@ -887,8 +913,6 @@ class SnapshotValidator {
         this.fixedRange("DB_TRAIT_VALUE", table, id, `${itemPath}.value`, trait.value, 0, 9);
       } else if (code === 61) {
         this.finiteRange("DB_TRAIT_VALUE", table, id, `${itemPath}.value`, trait.value, 0, 1);
-      } else if (FIXED_ONE_TRAIT_CODES.has(code)) {
-        this.fixedRange("DB_TRAIT_VALUE", table, id, `${itemPath}.value`, trait.value, 1, 1);
       }
     });
   }
@@ -1025,6 +1049,7 @@ class SnapshotValidator {
 
   private validateClassParameterCurves(value: unknown, classId: number): void {
     const rows = asArray(value);
+    this.fixedArrayLength("classes", classId, `classes[${classId}].params`, value, 8);
     for (let paramIndex = 0; paramIndex < 8; paramIndex += 1) {
       const row = rows[paramIndex];
       if (!Array.isArray(row)) {
@@ -1037,6 +1062,7 @@ class SnapshotValidator {
         );
         continue;
       }
+      this.fixedArrayLength("classes", classId, `classes[${classId}].params[${paramIndex}]`, row, 100);
       const minimum = paramIndex === 1 ? 0 : 1;
       const maximum = paramIndex <= 1 ? 9999 : 999;
       for (let level = 1; level <= 99; level += 1) {
@@ -1069,6 +1095,7 @@ class SnapshotValidator {
     value: unknown,
   ): void {
     const params = asArray(value);
+    this.fixedArrayLength(table, id, `${table}[${id}].params`, value, 8);
     for (let paramIndex = 0; paramIndex < 8; paramIndex += 1) {
       const limit = paramIndex <= 1 ? 5000 : 500;
       this.fixedRange(
@@ -1085,6 +1112,7 @@ class SnapshotValidator {
 
   private validateEnemyParameters(value: unknown, enemyId: number): void {
     const params = asArray(value);
+    this.fixedArrayLength("enemies", enemyId, `enemies[${enemyId}].params`, value, 8);
     const ranges: readonly (readonly [number, number])[] = [
       [1, 999999],
       [0, 9999],
@@ -1109,7 +1137,7 @@ class SnapshotValidator {
   }
 
   private validateAnimationCell(value: unknown, animationId: number, path: string): void {
-    if (!Array.isArray(value) || value.length < 8) {
+    if (!Array.isArray(value) || value.length !== 8) {
       this.add("DB_ANIMATION_CELL_SHAPE", "animations", path, "Animation cell must contain the eight standard MV values.", animationId);
       return;
     }
@@ -1118,6 +1146,7 @@ class SnapshotValidator {
       this.add("DB_ANIMATION_CELL_PATTERN", "animations", `${path}[0]`, "Pattern must be an integer from -1 through 199.", animationId);
       return;
     }
+    if (pattern === -1) return;
     this.fixedRange("DB_ANIMATION_CELL_X", "animations", animationId, `${path}[1]`, value[1], -408, 408);
     this.fixedRange("DB_ANIMATION_CELL_Y", "animations", animationId, `${path}[2]`, value[2], -312, 312);
     this.fixedRange("DB_ANIMATION_CELL_SCALE", "animations", animationId, `${path}[3]`, value[3], 20, 800);
@@ -1347,6 +1376,23 @@ class SnapshotValidator {
     }
   }
 
+  private fixedArrayLength(
+    table: RmmvDatabaseIssueTable,
+    id: number | undefined,
+    path: string,
+    value: unknown,
+    expectedLength: number,
+  ): void {
+    if (!Array.isArray(value) || value.length === expectedLength) return;
+    this.add(
+      "DB_FIXED_ARRAY_LENGTH",
+      table,
+      path,
+      `Array must contain exactly ${expectedLength} values; received ${value.length}.`,
+      id,
+    );
+  }
+
   private finiteRange(
     code: string,
     table: RmmvDatabaseIssueTable,
@@ -1420,6 +1466,89 @@ function asInteger(value: unknown): number | null {
   return Number.isInteger(value) ? Number(value) : null;
 }
 
+function prospectiveIssues(
+  before: readonly RmmvDatabaseSemanticIssue[],
+  after: readonly RmmvDatabaseSemanticIssue[],
+  beforeSnapshot: RmmvDatabaseSnapshot,
+  afterSnapshot: RmmvDatabaseSnapshot,
+  beforeMaps: readonly RmmvDatabaseMapDocument[],
+  afterMaps: readonly RmmvDatabaseMapDocument[],
+): RmmvDatabaseSemanticIssue[] {
+  const existingErrors = new Map<string, unknown[]>();
+  for (const issue of before) {
+    if (issue.severity !== "error") continue;
+    const identity = semanticIssueIdentity(issue);
+    const values = existingErrors.get(identity) ?? [];
+    values.push(semanticIssueValue(beforeSnapshot, beforeMaps, issue));
+    existingErrors.set(identity, values);
+  }
+
+  return after.filter((issue) => {
+    if (issue.severity !== "error") return true;
+    const identity = semanticIssueIdentity(issue);
+    const existingValues = existingErrors.get(identity);
+    if (!existingValues?.length) return true;
+    const afterValue = semanticIssueValue(afterSnapshot, afterMaps, issue);
+    const matchingIndex = existingValues.findIndex((beforeValue) => isDeepStrictEqual(beforeValue, afterValue));
+    if (matchingIndex < 0) return true;
+    existingValues.splice(matchingIndex, 1);
+    return false;
+  });
+}
+
+function semanticIssueIdentity(issue: RmmvDatabaseSemanticIssue): string {
+  return JSON.stringify([
+    issue.code,
+    issue.severity,
+    issue.source.table,
+    issue.source.id ?? null,
+    issue.source.path,
+    issue.message,
+  ]);
+}
+
+const ISSUE_VALUE_UNAVAILABLE = Symbol("issue-value-unavailable");
+
+function semanticIssueValue(
+  snapshot: RmmvDatabaseSnapshot,
+  maps: readonly RmmvDatabaseMapDocument[],
+  issue: RmmvDatabaseSemanticIssue,
+): unknown {
+  const { table, id, path } = issue.source;
+  if (table === "maps") {
+    if (id === undefined) return maps;
+    const document = maps.find((entry) => entry.mapId === id);
+    if (!document) return ISSUE_VALUE_UNAVAILABLE;
+    return readIssuePath(document.value, path, `maps[${id}]`);
+  }
+  return readIssuePath(snapshot[table], path, table);
+}
+
+function readIssuePath(root: unknown, path: string, prefix: string): unknown {
+  if (path === prefix) return root;
+  if (!path.startsWith(prefix)) return ISSUE_VALUE_UNAVAILABLE;
+  let remaining = path.slice(prefix.length);
+  let current = root;
+  while (remaining.length > 0) {
+    const property = /^\.([A-Za-z_$][A-Za-z0-9_$]*)/.exec(remaining);
+    if (property) {
+      if (!isRecord(current)) return ISSUE_VALUE_UNAVAILABLE;
+      current = current[property[1]];
+      remaining = remaining.slice(property[0].length);
+      continue;
+    }
+    const index = /^\[(\d+)\]/.exec(remaining);
+    if (index) {
+      if (!Array.isArray(current)) return ISSUE_VALUE_UNAVAILABLE;
+      current = current[Number(index[1])];
+      remaining = remaining.slice(index[0].length);
+      continue;
+    }
+    return ISSUE_VALUE_UNAVAILABLE;
+  }
+  return current;
+}
+
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -1451,8 +1580,10 @@ function validateCollectionGrowth(
   const beforeTroops = asArray(before.troops);
   const afterTroops = asArray(after.troops);
   for (let id = 1; id < afterTroops.length; id += 1) {
-    const beforeMembers = isRecord(beforeTroops[id]) ? asArray(beforeTroops[id].members).length : 0;
-    const afterMembers = isRecord(afterTroops[id]) ? asArray(afterTroops[id].members).length : 0;
+    const beforeTroop = beforeTroops[id];
+    const afterTroop = afterTroops[id];
+    const beforeMembers = isRecord(beforeTroop) ? asArray(beforeTroop.members).length : 0;
+    const afterMembers = isRecord(afterTroop) ? asArray(afterTroop.members).length : 0;
     if (afterMembers > 8 && afterMembers > beforeMembers) {
       issues.push({
         code: "DB_TROOP_MEMBER_LIMIT",
@@ -1479,8 +1610,10 @@ function validateCollectionGrowth(
   const beforeAnimations = asArray(before.animations);
   const afterAnimations = asArray(after.animations);
   for (let id = 1; id < afterAnimations.length; id += 1) {
-    const beforeFrames = isRecord(beforeAnimations[id]) ? asArray(beforeAnimations[id].frames) : [];
-    const afterFrames = isRecord(afterAnimations[id]) ? asArray(afterAnimations[id].frames) : [];
+    const beforeAnimation = beforeAnimations[id];
+    const afterAnimation = afterAnimations[id];
+    const beforeFrames = isRecord(beforeAnimation) ? asArray(beforeAnimation.frames) : [];
+    const afterFrames = isRecord(afterAnimation) ? asArray(afterAnimation.frames) : [];
     if (afterFrames.length > 200 && afterFrames.length > beforeFrames.length) {
       issues.push({
         code: "DB_ANIMATION_FRAME_LIMIT",
@@ -1490,8 +1623,10 @@ function validateCollectionGrowth(
       });
     }
     for (let frameIndex = 0; frameIndex < afterFrames.length; frameIndex += 1) {
-      const beforeCells = Array.isArray(beforeFrames[frameIndex]) ? beforeFrames[frameIndex].length : 0;
-      const afterCells = Array.isArray(afterFrames[frameIndex]) ? afterFrames[frameIndex].length : 0;
+      const beforeFrame = beforeFrames[frameIndex];
+      const afterFrame = afterFrames[frameIndex];
+      const beforeCells = Array.isArray(beforeFrame) ? beforeFrame.length : 0;
+      const afterCells = Array.isArray(afterFrame) ? afterFrame.length : 0;
       if (afterCells > 16 && afterCells > beforeCells) {
         issues.push({
           code: "DB_ANIMATION_CELL_LIMIT",

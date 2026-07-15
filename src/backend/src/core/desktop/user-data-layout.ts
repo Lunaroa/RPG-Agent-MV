@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { ProductLanguage } from "../../../../contract/i18n.ts";
 import { getDatabase } from "../db/pool.ts";
+import { backendText } from "../i18n/messages.ts";
 import { PATHS } from "../workspace-paths.ts";
 import { ensureOpencodeRuntimeAssets } from "../workflow/agent/opencode/runtime-assets.ts";
 
@@ -99,12 +101,12 @@ function installHasLegacyUserData(installRoot: string): boolean {
   return false;
 }
 
-function movePath(source: string, dest: string): void {
+function movePath(source: string, dest: string, productLanguage?: ProductLanguage | null): void {
   if (!pathExists(source)) return;
   if (pathExists(dest)) {
-    throw new Error(
-      `用户数据迁移冲突：目标已存在 ${dest}；请备份后删除冲突项，或清空用户数据目录后重试。`,
-    );
+    throw new Error(backendText("userData.migration.targetConflict", productLanguage, {
+      destination: dest,
+    }));
   }
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.renameSync(source, dest);
@@ -115,41 +117,49 @@ function moveTreeRelative(
   userDataRoot: string,
   relativePath: string,
   migrated: string[],
+  productLanguage?: ProductLanguage | null,
 ): void {
   const source = path.join(installRoot, relativePath);
   if (!pathExists(source)) return;
   const dest = path.join(userDataRoot, relativePath);
   if (pathExists(dest)) return;
-  movePath(source, dest);
+  movePath(source, dest, productLanguage);
   migrated.push(relativePath.replace(/\\/g, "/"));
 }
 
-function moveDatabaseSidecars(installRoot: string, userDataRoot: string, migrated: string[]): void {
+function moveDatabaseSidecars(
+  installRoot: string,
+  userDataRoot: string,
+  migrated: string[],
+  productLanguage?: ProductLanguage | null,
+): void {
   const dbRel = PATHS.dataDb;
   const dbName = path.basename(dbRel);
   const dbDir = path.dirname(dbRel);
   for (const suffix of ["-wal", "-shm"]) {
     const rel = path.join(dbDir, `${dbName}${suffix}`);
-    moveTreeRelative(installRoot, userDataRoot, rel, migrated);
+    moveTreeRelative(installRoot, userDataRoot, rel, migrated, productLanguage);
   }
 }
 
-function migrateInstallUserData(installRoot: string, userDataRoot: string): string[] {
+function migrateInstallUserData(
+  installRoot: string,
+  userDataRoot: string,
+  productLanguage?: ProductLanguage | null,
+): string[] {
   const migrated: string[] = [];
   const installDb = path.join(installRoot, PATHS.dataDb);
   const userDb = path.join(userDataRoot, PATHS.dataDb);
   if (pathExists(installDb) && pathExists(userDb)) {
-    throw new Error(
-      `用户数据迁移冲突：安装目录与用户目录均存在数据库。\n`
-      + `  安装目录: ${installDb}\n`
-      + `  用户目录: ${userDb}\n`
-      + `请备份后删除其中一份，再重新启动应用。`,
-    );
+    throw new Error(backendText("userData.migration.databaseConflict", productLanguage, {
+      installDatabase: installDb,
+      userDatabase: userDb,
+    }));
   }
 
   if (pathExists(installDb) && !pathExists(userDb)) {
-    moveTreeRelative(installRoot, userDataRoot, PATHS.dataDb, migrated);
-    moveDatabaseSidecars(installRoot, userDataRoot, migrated);
+    moveTreeRelative(installRoot, userDataRoot, PATHS.dataDb, migrated, productLanguage);
+    moveDatabaseSidecars(installRoot, userDataRoot, migrated, productLanguage);
   }
 
   const runtimeRel = PATHS.runtimeRoot;
@@ -157,7 +167,7 @@ function migrateInstallUserData(installRoot: string, userDataRoot: string): stri
   const userRuntime = path.join(userDataRoot, runtimeRel);
   if (pathExists(installRuntime) && hasLegacyRuntimeData(installRuntime)) {
     if (!pathExists(userRuntime)) {
-      moveTreeRelative(installRoot, userDataRoot, runtimeRel, migrated);
+      moveTreeRelative(installRoot, userDataRoot, runtimeRel, migrated, productLanguage);
     }
   }
 
@@ -166,7 +176,7 @@ function migrateInstallUserData(installRoot: string, userDataRoot: string): stri
   const userOpencode = path.join(userDataRoot, opencodeRel);
   if (pathExists(installOpencode) && hasLegacyOpencodeData(installOpencode)) {
     if (!pathExists(userOpencode)) {
-      moveTreeRelative(installRoot, userDataRoot, opencodeRel, migrated);
+      moveTreeRelative(installRoot, userDataRoot, opencodeRel, migrated, productLanguage);
     }
   }
 
@@ -174,7 +184,7 @@ function migrateInstallUserData(installRoot: string, userDataRoot: string): stri
   const installProjects = path.join(installRoot, projectsRel);
   const userProjects = path.join(userDataRoot, projectsRel);
   if (hasLegacyProjectsDir(installProjects) && !pathExists(userProjects)) {
-    moveTreeRelative(installRoot, userDataRoot, projectsRel, migrated);
+    moveTreeRelative(installRoot, userDataRoot, projectsRel, migrated, productLanguage);
   }
 
   return migrated;
@@ -183,7 +193,11 @@ function migrateInstallUserData(installRoot: string, userDataRoot: string): stri
 /**
  * Ensure writable user-data directories exist and migrate legacy install-dir state once.
  */
-export function ensureUserDataLayout(installRoot: string, userDataRoot: string): EnsureUserDataLayoutResult {
+export function ensureUserDataLayout(
+  installRoot: string,
+  userDataRoot: string,
+  productLanguage?: ProductLanguage | null,
+): EnsureUserDataLayoutResult {
   const install = path.resolve(installRoot);
   const userData = path.resolve(userDataRoot);
   const result: EnsureUserDataLayoutResult = {
@@ -206,7 +220,7 @@ export function ensureUserDataLayout(installRoot: string, userDataRoot: string):
   }
 
   if (installHasLegacyUserData(install)) {
-    result.migrated = migrateInstallUserData(install, userData);
+    result.migrated = migrateInstallUserData(install, userData, productLanguage);
   }
 
   fs.mkdirSync(path.join(userData, "data"), { recursive: true });

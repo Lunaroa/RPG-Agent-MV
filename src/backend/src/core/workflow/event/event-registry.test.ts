@@ -246,6 +246,134 @@ test("validateContract checks raw MV commands nested inside branch commands", ()
   assert.ok(errors.some((e) => e.field === "implementation.commands[0].onWin[0]" && /move route command code/.test(e.message)));
 });
 
+test("validateContract accepts switch / variable / self-switch with valid fields", () => {
+  const errors = validateContract(baseContract({
+    implementation: {
+      commands: [
+        { kind: "switch", id: 5, value: true },
+        { kind: "variable", id: 10, value: 1 },
+        { kind: "self-switch", name: "A", value: true },
+      ],
+    },
+  }));
+  assert.deepEqual(errors, []);
+});
+
+test("validateContract rejects switch missing id, id 0, or string id", () => {
+  const missing = validateContract(baseContract({
+    implementation: { commands: [{ kind: "switch", value: true }] },
+  }));
+  assert.ok(missing.some((e) => e.field === "implementation.commands[0].id" && /switch\.id must be an integer >= 1/.test(e.message)));
+
+  const zero = validateContract(baseContract({
+    implementation: { commands: [{ kind: "switch", id: 0, value: true }] },
+  }));
+  assert.ok(zero.some((e) => e.field === "implementation.commands[0].id" && /switch\.id must be an integer >= 1/.test(e.message)));
+
+  const stringId = validateContract(baseContract({
+    implementation: { commands: [{ kind: "switch", id: "42", value: true }] },
+  }));
+  assert.ok(stringId.some((e) => e.field === "implementation.commands[0].id" && /switch\.id must be an integer >= 1/.test(e.message)));
+});
+
+test("validateContract rejects non-boolean switch.value", () => {
+  const errors = validateContract(baseContract({
+    implementation: { commands: [{ kind: "switch", id: 1, value: 1 }] },
+  }));
+  assert.ok(errors.some((e) => e.field === "implementation.commands[0].value" && /boolean/.test(e.message)));
+});
+
+test("validateContract rejects invalid variable.id and self-switch.name", () => {
+  const variable = validateContract(baseContract({
+    implementation: { commands: [{ kind: "variable", id: 0, value: 1 }] },
+  }));
+  assert.ok(variable.some((e) => e.field === "implementation.commands[0].id" && /variable\.id must be an integer >= 1/.test(e.message)));
+
+  const selfSwitch = validateContract(baseContract({
+    implementation: { commands: [{ kind: "self-switch", name: "E", value: true }] },
+  }));
+  assert.ok(selfSwitch.some((e) => e.field === "implementation.commands[0].name" && /A.*B.*C.*D/.test(e.message)));
+});
+
+test("validateContract rejects invalid variable and self-switch values", () => {
+  const errors = validateContract(baseContract({
+    implementation: {
+      commands: [
+        { kind: "variable", id: 1, value: -1 },
+        { kind: "self-switch", name: "A", value: "yes" },
+      ],
+    },
+  }));
+  assert.ok(errors.some((e) =>
+    e.field === "implementation.commands[0].value"
+    && /variable\.value must be an integer >= 0/.test(e.message)
+  ));
+  assert.ok(errors.some((e) =>
+    e.field === "implementation.commands[1].value"
+    && /self-switch\.value.*boolean/.test(e.message)
+  ));
+});
+
+test("validateContract enforces every conditional-branch condition field", () => {
+  const errors = validateContract(baseContract({
+    implementation: {
+      commands: [
+        { kind: "conditional-branch" },
+        { kind: "conditional-branch", condition: { type: "switch", id: 1 } },
+        { kind: "conditional-branch", condition: { kind: "switch", id: 0, value: "on" } },
+        { kind: "conditional-branch", condition: { kind: "variable", id: 0, value: -1, operator: "==" } },
+        { kind: "conditional-branch", condition: { kind: "self-switch", name: "E", value: 1 } },
+      ],
+    },
+  }));
+  const fields = new Set(errors.map((error) => error.field));
+  assert.ok(fields.has("implementation.commands[0].condition"));
+  assert.ok(fields.has("implementation.commands[1].condition.kind"));
+  assert.ok(fields.has("implementation.commands[2].condition.id"));
+  assert.ok(fields.has("implementation.commands[2].condition.value"));
+  assert.ok(fields.has("implementation.commands[3].condition.id"));
+  assert.ok(fields.has("implementation.commands[3].condition.value"));
+  assert.ok(fields.has("implementation.commands[3].condition.operator"));
+  assert.ok(fields.has("implementation.commands[4].condition.name"));
+  assert.ok(fields.has("implementation.commands[4].condition.value"));
+});
+
+test("validateContract applies conditional semantics through nested command containers", () => {
+  const errors = validateContract(baseContract({
+    implementation: {
+      commands: [{
+        kind: "choice",
+        choices: [{
+          text: "Continue",
+          commands: [{
+            kind: "loop",
+            commands: [{
+              kind: "conditional-branch",
+              condition: { kind: "variable", id: 1, value: -1 },
+            }],
+          }],
+        }],
+      }],
+    },
+  }));
+  assert.ok(errors.some((error) =>
+    error.field === "implementation.commands[0].choices[0].commands[0].commands[0].condition.value"
+  ));
+});
+
+test("validateContract rejects invalid switch.id nested inside conditional-branch", () => {
+  const errors = validateContract(baseContract({
+    implementation: {
+      commands: [{
+        kind: "conditional-branch",
+        condition: { type: "self-switch", name: "A" },
+        then: [{ kind: "switch", id: 0, value: true }],
+      }],
+    },
+  }));
+  assert.ok(errors.some((e) => e.field === "implementation.commands[0].then[0].id" && /switch\.id must be an integer >= 1/.test(e.message)));
+});
+
 test("validateContract checks add-map-event mapId / eventName", () => {
   const errors = validateContract(baseContract({
     rmmvTarget: { operation: "add-map-event" },

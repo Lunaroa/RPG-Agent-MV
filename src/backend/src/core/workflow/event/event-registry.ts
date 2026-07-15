@@ -4,7 +4,12 @@ import { EventContractDao } from "../../db/dao/event-contract-dao.ts";
 import { eventContentFingerprint } from "./event-fingerprint.ts";
 import { adoptedOrphanPurpose, eventRegistryDefaultDialogue } from "./eventRegistryLocalization.ts";
 import { updateMapEvent } from "../map/map-event-edit.ts";
-import { KNOWN_COMMAND_KINDS, COMMAND_KIND_ALIASES, normalizeCommands } from "../../rmmv/event-page-compiler.ts";
+import {
+  KNOWN_COMMAND_KINDS,
+  COMMAND_KIND_ALIASES,
+  normalizeCommands,
+  validateCommandSemantics,
+} from "../../rmmv/event-page-compiler.ts";
 import { validateEventCommandBasic } from "../../rmmv/event-command-registry.ts";
 
 const ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
@@ -573,6 +578,19 @@ function validateStateBlock(errors: ValidationError[], label: string, block?: Re
 }
 
 /**
+ * 校验与编译器一致的状态命令和条件分支语义，
+ * 避免注册通过、拖到地图编译时才暴露字段或取值错误。
+ */
+function validateCommandFields(errors: ValidationError[], field: string, kind: string, cmd: Record<string, unknown>): void {
+  for (const issue of validateCommandSemantics(kind, cmd)) {
+    errors.push({
+      field: issue.field ? `${field}.${issue.field}` : field,
+      message: issue.message,
+    });
+  }
+}
+
+/**
  * 递归校验命令 `kind` 是否在编译器白名单内（含 conditional-branch / choice / loop 的嵌套命令）。
  * 这是「治本」：写错 kind（如 show-text）在 validate/register 当场报错并给出正确写法，
  * 不再骗过验证、注册成功、拖到放置时才抛 "Unsupported command kind"。
@@ -597,6 +615,8 @@ function validateCommandKinds(errors: ValidationError[], label: string, commands
         message: `Unknown command kind "${kind}". ${alias ? `Did you mean "${alias}"? ` : ""}`
           + `Allowed kinds: ${[...KNOWN_COMMAND_KINDS].join(", ")}.`,
       });
+    } else {
+      validateCommandFields(errors, field, kind, cmd);
     }
     if (kind === "raw-command" || kind === "mv-command") {
       try {

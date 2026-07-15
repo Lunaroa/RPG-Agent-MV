@@ -13,15 +13,7 @@ import {
 } from '../api/client';
 import { clone, findEditorMapEvent, type MvEditorEvent } from './useEventEditor';
 import { translate } from '../i18n/messages.ts'
-
-function loadBitmap(url: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => resolve(null);
-    image.src = url;
-  });
-}
+import { loadImageElement } from '../utils/imageLoading.ts';
 
 export function usePmEventEditor(projectId: () => string, onSaved?: () => void | Promise<void>) {
   const { language } = useI18n();
@@ -55,12 +47,12 @@ export function usePmEventEditor(projectId: () => string, onSaved?: () => void |
   }
 
   async function loadImage(url: string) {
-    return loadBitmap(await resolveAssetUrl(url));
+    return loadImageElement(await resolveAssetUrl(url));
   }
 
   async function preloadTileset(urls: (string | null)[]) {
     const resolved = await Promise.all(urls.map((url) => (url ? resolveAssetUrl(url) : Promise.resolve(null))));
-    return Promise.all(resolved.map((url) => (url ? loadBitmap(url) : Promise.resolve(null))));
+    return Promise.all(resolved.map((url) => (url ? loadImageElement(url) : Promise.resolve(null))));
   }
 
   async function openMapEventEditor(mapId: number, eventId: number) {

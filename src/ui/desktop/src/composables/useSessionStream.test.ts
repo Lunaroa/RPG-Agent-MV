@@ -69,6 +69,27 @@ describe('stream segment content updates', () => {
     stream.resetState()
   })
 
+  test('keeps text around a playtest card in chronological segments', () => {
+    const stream = useSessionStream()
+    stream.resetState()
+
+    stream.replaySessionEvents([
+      { type: 'text_delta', sequence: 1, text: 'Before playtest.' },
+      { type: 'playtest_run', sequence: 2, runId: 'run-order', status: 'starting', phase: 'start' },
+      { type: 'text_delta', sequence: 3, text: 'After playtest.' },
+    ])
+
+    assert.deepEqual(
+      stream.segments.value.map((segment) => [segment.type, segment.content, segment.metadata?.type]),
+      [
+        ['text', 'Before playtest.', undefined],
+        ['meta', '', 'playtest_run'],
+        ['text', 'After playtest.', undefined],
+      ],
+    )
+    stream.resetState()
+  })
+
   test('appendSegmentContent mutates reactive proxy, not stale plain object', async () => {
     const segments = ref<ChatSegment[]>([])
     const plain: ChatSegment = {
@@ -882,7 +903,7 @@ describe('subagent stream state', () => {
 
     const item = subagents.itemsFor('s1').find((entry) => entry.id === 'task-search')
     assert.equal(item?.status, 'running')
-    assert.equal(item?.activity?.at(-1)?.title, '正在使用 Grep')
+    assert.equal(item?.activity?.at(-1)?.title, 'Using Grep')
     assert.equal(item?.activity?.at(-1)?.tool, 'Grep')
     assert.deepEqual(item?.activity?.at(-1)?.input, { pattern: 'Map', path: 'data' })
     assert.equal(item?.activity?.at(-1)?.output, '41 matches')
@@ -1059,7 +1080,7 @@ describe('subagent timeline presentation', () => {
 
     const segments = subagentTimelineSegments(item)
     assert.equal(
-      segments.some((segment) => segment.type === 'text' && segment.content.includes('没有收到正文输出')),
+      segments.some((segment) => segment.type === 'text' && segment.content.includes('no text output was received')),
       true,
     )
     assert.equal(

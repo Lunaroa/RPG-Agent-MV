@@ -7,6 +7,7 @@ interface DraftHistoryEntry<T> {
 export interface DraftHistory<T> {
   readonly undoCount: number;
   readonly redoCount: number;
+  readonly dirty: boolean;
   current(): T;
   reset(value: T): T;
   record(value: T, mergeKey?: string | null): T;
@@ -18,6 +19,7 @@ export function createDraftHistory<T>(initialValue: T, limit = 100): DraftHistor
   if (!Number.isInteger(limit) || limit <= 0) throw new Error('Draft history limit must be a positive integer.');
 
   let value = cloneSnapshot(initialValue);
+  let savedBaseline = cloneSnapshot(initialValue);
   let undoStack: DraftHistoryEntry<T>[] = [];
   let redoStack: DraftHistoryEntry<T>[] = [];
 
@@ -28,11 +30,15 @@ export function createDraftHistory<T>(initialValue: T, limit = 100): DraftHistor
     get redoCount() {
       return redoStack.length;
     },
+    get dirty() {
+      return !snapshotEquals(value, savedBaseline);
+    },
     current() {
       return cloneSnapshot(value);
     },
     reset(nextValue) {
       value = cloneSnapshot(nextValue);
+      savedBaseline = cloneSnapshot(nextValue);
       undoStack = [];
       redoStack = [];
       return cloneSnapshot(value);
@@ -81,5 +87,18 @@ function cloneSnapshot<T>(value: T): T {
 }
 
 function snapshotEquals<T>(left: T, right: T): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((entry, index) => snapshotEquals(entry, right[index]));
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).sort();
+  const rightKeys = Object.keys(rightRecord).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key, index) => (
+    key === rightKeys[index] && snapshotEquals(leftRecord[key], rightRecord[key])
+  ));
 }

@@ -15,7 +15,8 @@ import {
   type AgentExecutionSettingsLike,
 } from "../agent/runtime-adapters/index.ts";
 import { resolveExecutionEngineForProduct } from "../../../../../contract/opencode-only.ts";
-import type { ProductLanguage } from "../../../../../contract/types.ts";
+import { normalizeProductLanguage, type ProductLanguage } from "../../../../../contract/i18n.ts";
+import { backendText } from "../../i18n/messages.ts";
 import { createProductionAgentRunner } from "./agent-runner.ts";
 import { buildScriptModule } from "./script-runtime.ts";
 import { runWorkflow } from "./runtime.ts";
@@ -29,7 +30,10 @@ export interface ResolvedCliBinding {
 }
 
 /** 从保存的 agentExecution 设置解析「与桌面同源」的供应商/模型绑定；缺供应商/模型则 fail fast。 */
-export async function resolveCliBinding(workflowRoot: string): Promise<ResolvedCliBinding> {
+export async function resolveCliBinding(
+  workflowRoot: string,
+  productLanguage?: ProductLanguage | null,
+): Promise<ResolvedCliBinding> {
   let settings: AgentExecutionSettingsLike = { engine: defaultEngine() };
   try {
     const stored = ConsoleSettingsDao.get("agentExecution");
@@ -41,9 +45,7 @@ export async function resolveCliBinding(workflowRoot: string): Promise<ResolvedC
   const bindings = settings.bindings as Record<string, EngineProviderBinding | undefined> | undefined;
   const binding = resolveSessionBinding({ settingsBinding: bindings?.[executionEngine] || null });
   if (!binding?.providerId || !binding?.modelId) {
-    throw new Error(
-      "未找到可用的供应商/模型绑定。请先在桌面应用里选好供应商与模型（或配置 agentExecution 设置）后再运行工作流。",
-    );
+    throw new Error(backendText("workflow.binding.missing", productLanguage));
   }
   await activateForSession(workflowRoot, executionEngine, binding);
   return { providerId: binding.providerId, modelId: binding.modelId, executionEngine, agentExecutionSettings: settings };
@@ -72,8 +74,15 @@ export interface ExecuteWorkflowOptions {
 
 /** 跑一段 AI 编排脚本到底（真实派发，全程只读），并把记录落盘。 */
 export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<WorkflowRunRecord> {
-  const module = buildScriptModule({ script: options.script, summary: options.summary, title: options.title, scriptTimeoutMs: options.scriptTimeoutMs });
-  const binding = await resolveCliBinding(options.workflowRoot);
+  const productLanguage = normalizeProductLanguage(options.productLanguage);
+  const module = buildScriptModule({
+    script: options.script,
+    summary: options.summary,
+    title: options.title,
+    scriptTimeoutMs: options.scriptTimeoutMs,
+    productLanguage,
+  });
+  const binding = await resolveCliBinding(options.workflowRoot, productLanguage);
   const agentRunner = createProductionAgentRunner({
     workflowRoot: options.workflowRoot,
     project: options.project,
@@ -81,7 +90,7 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
     modelId: binding.modelId,
     executionEngine: binding.executionEngine,
     agentExecutionSettings: binding.agentExecutionSettings,
-    productLanguage: options.productLanguage,
+    productLanguage,
     sessionId: options.sessionId,
   });
   const record = await runWorkflow({
@@ -97,10 +106,12 @@ export async function executeWorkflow(options: ExecuteWorkflowOptions): Promise<
   // 落盘失败不能静默吞：否则 proposal 会被标 completed、reportPath 也写入，
   // 但报告文件实际不存在，用户点开拿到空，状态与事实自相矛盾。
   // 落盘失败时把 record.status 降级为 failed（工作流本身可能成功，但磁盘产物丢失）。
-  const persistResult = persistRunRecord(options.workflowRoot, record);
+  const persistResult = persistRunRecord(options.workflowRoot, record, productLanguage);
   if (!persistResult.ok) {
     record.status = "failed";
-    record.error = `工作流已完成但报告落盘失败：${persistResult.error}`;
+    record.error = backendText("workflow.report.persistFailed", productLanguage, {
+      reason: persistResult.error ?? "unknown error",
+    });
   }
   return record;
 }
@@ -132,15 +143,19 @@ function stringifyWithCap(value: unknown, maxBytes: number): string {
 }
 
 /** 把运行记录与报告写入 runtime/out/workflows/<runId>/。返回报告路径与落盘结果。 */
-export function persistRunRecord(workflowRoot: string, record: WorkflowRunRecord): { recordPath: string; reportPath: string; ok: boolean; error?: string } {
+export function persistRunRecord(
+  workflowRoot: string,
+  record: WorkflowRunRecord,
+  productLanguage?: ProductLanguage | null,
+): { recordPath: string; reportPath: string; ok: boolean; error?: string } {
   if (!RUN_ID_RE.test(record.runId)) {
-    throw new Error(`非法 runId：${record.runId}`);
+    throw new Error(backendText("workflow.run.invalidId", productLanguage, { runId: record.runId }));
   }
   const dir = path.join(workflowRoot, "runtime", "out", "workflows", record.runId);
   const workflowsRoot = path.resolve(path.join(workflowRoot, "runtime", "out", "workflows"));
   const resolvedDir = path.resolve(dir);
   if (resolvedDir !== workflowsRoot && !resolvedDir.startsWith(workflowsRoot + path.sep)) {
-    throw new Error(`runId 解析越界：${record.runId}`);
+    throw new Error(backendText("workflow.run.pathEscape", productLanguage, { runId: record.runId }));
   }
   fs.mkdirSync(dir, { recursive: true });
   const recordPath = path.join(dir, "record.json");

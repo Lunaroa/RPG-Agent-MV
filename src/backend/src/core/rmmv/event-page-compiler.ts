@@ -119,6 +119,91 @@ export const COMMAND_KIND_ALIASES: Readonly<Record<string, string>> = {
   "change-item": "change-items"
 };
 
+export interface CommandSemanticIssue {
+  field: string;
+  message: string;
+}
+
+const BRANCH_CONDITION_KINDS = new Set(["switch", "variable", "self-switch"]);
+const BRANCH_VARIABLE_OPERATORS = new Set(["===", ">=", "<=", ">", "<", "!=="]);
+const SELF_SWITCH_NAMES = new Set(["A", "B", "C", "D"]);
+
+/**
+ * 状态命令与条件分支在注册校验、实际编译两条路径共用同一份语义契约，
+ * 避免契约先通过登记、直到放置时才失败。
+ */
+export function validateCommandSemantics(
+  kind: string,
+  command: Record<string, unknown>,
+): CommandSemanticIssue[] {
+  const issues: CommandSemanticIssue[] = [];
+  const integerAtLeast = (field: string, value: unknown, minimum: number, label: string): void => {
+    if (!Number.isInteger(value) || Number(value) < minimum) {
+      issues.push({ field, message: `${label} must be an integer >= ${minimum}.` });
+    }
+  };
+  const optionalBoolean = (field: string, value: unknown, label: string): void => {
+    if (value !== undefined && typeof value !== "boolean") {
+      issues.push({ field, message: `${label}, if present, must be a boolean.` });
+    }
+  };
+
+  if (kind === "switch") {
+    integerAtLeast("id", command.id, 1, "switch.id");
+    optionalBoolean("value", command.value, "switch.value");
+    return issues;
+  }
+  if (kind === "variable") {
+    integerAtLeast("id", command.id, 1, "variable.id");
+    integerAtLeast("value", command.value, 0, "variable.value");
+    return issues;
+  }
+  if (kind === "self-switch") {
+    if (typeof command.name !== "string" || !SELF_SWITCH_NAMES.has(command.name)) {
+      issues.push({ field: "name", message: 'self-switch.name must be "A" / "B" / "C" / "D".' });
+    }
+    optionalBoolean("value", command.value, "self-switch.value");
+    return issues;
+  }
+  if (kind !== "conditional-branch") return issues;
+
+  const condition = command.condition;
+  if (!condition || typeof condition !== "object" || Array.isArray(condition)) {
+    return [{ field: "condition", message: "conditional-branch.condition must be an object." }];
+  }
+  const branch = condition as Record<string, unknown>;
+  const conditionKind = branch.kind;
+  if (typeof conditionKind !== "string" || !BRANCH_CONDITION_KINDS.has(conditionKind)) {
+    return [{
+      field: "condition.kind",
+      message: "conditional-branch.condition.kind must be switch, variable, or self-switch.",
+    }];
+  }
+  if (conditionKind === "switch") {
+    integerAtLeast("condition.id", branch.id, 1, "conditional-branch.switch.id");
+    optionalBoolean("condition.value", branch.value, "conditional-branch.switch.value");
+  } else if (conditionKind === "variable") {
+    integerAtLeast("condition.id", branch.id, 1, "conditional-branch.variable.id");
+    integerAtLeast("condition.value", branch.value, 0, "conditional-branch.variable.value");
+    if (branch.operator !== undefined
+      && (typeof branch.operator !== "string" || !BRANCH_VARIABLE_OPERATORS.has(branch.operator))) {
+      issues.push({
+        field: "condition.operator",
+        message: "conditional-branch.variable.operator must be ===, >=, <=, >, <, or !==.",
+      });
+    }
+  } else {
+    if (typeof branch.name !== "string" || !SELF_SWITCH_NAMES.has(branch.name)) {
+      issues.push({
+        field: "condition.name",
+        message: 'conditional-branch.self-switch.name must be "A" / "B" / "C" / "D".',
+      });
+    }
+    optionalBoolean("condition.value", branch.value, "conditional-branch.self-switch.value");
+  }
+  return issues;
+}
+
 /** 头顶气泡的文字写法 → balloonId（模型爱写 `bubble:"..."`，归一到整数 id）。 */
 const BALLOON_TEXT_TO_ID: Readonly<Record<string, number>> = {
   "!": 1,
@@ -1248,6 +1333,8 @@ function appendCommand(list: CompiledCommand[], command: CommandSpec, system: un
   // 防御性 kind 归一：兜底未经注册归一化的编译路径（如 patch 直接编译）。
   const canonicalKind = COMMAND_KIND_ALIASES[command.kind];
   if (canonicalKind && canonicalKind !== command.kind) command = { ...command, kind: canonicalKind };
+  const semanticIssues = validateCommandSemantics(command.kind, command as unknown as Record<string, unknown>);
+  if (semanticIssues.length > 0) throw new Error(semanticIssues[0].message);
   switch (command.kind) {
     case "raw-command":
     case "mv-command":

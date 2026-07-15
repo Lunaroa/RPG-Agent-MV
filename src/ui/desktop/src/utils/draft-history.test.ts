@@ -53,7 +53,26 @@ describe('draft history', () => {
 
     assert.equal(history.undoCount, 0);
     assert.equal(history.redoCount, 0);
+    assert.equal(history.dirty, false);
     assert.deepEqual(history.current(), { name: 'staged' });
+  });
+
+  test('dirty state compares against the saved baseline instead of undo availability', () => {
+    const history = createDraftHistory({ name: 'saved', detail: { value: 1 } }, 2);
+
+    history.record({ name: 'first', detail: { value: 1 } });
+    history.record({ name: 'second', detail: { value: 1 } });
+    history.record({ name: 'third', detail: { value: 1 } });
+    assert.equal(history.dirty, true);
+
+    history.undo();
+    history.undo();
+    assert.equal(history.undoCount, 0);
+    assert.equal(history.dirty, true, 'truncated history must not masquerade as a saved draft');
+
+    history.record({ detail: { value: 1 }, name: 'saved' });
+    assert.equal(history.dirty, false, 'structurally equal data is saved even when key order differs');
+    assert.equal(history.undoCount > 0, true);
   });
 
   test('stores isolated snapshots instead of retaining caller-owned objects', () => {

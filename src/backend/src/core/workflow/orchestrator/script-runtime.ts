@@ -5,6 +5,8 @@
 
 import { Worker } from "node:worker_threads";
 
+import { normalizeProductLanguage, type ProductLanguage } from "../../../../../contract/i18n.ts";
+import { backendText } from "../../i18n/messages.ts";
 import { WorkflowAbortedError } from "./runtime.ts";
 import type { WorkflowAgentRequest, WorkflowContext, WorkflowModule } from "./types.ts";
 
@@ -17,6 +19,7 @@ export interface ScriptWorkflowInput {
   title?: string;
   /** 异步段总超时（毫秒）。缺省 DEFAULT_OVERALL_TIMEOUT_MS（挂死兜底）；按工作流规模传入更贴切的预算。 */
   scriptTimeoutMs?: number;
+  productLanguage?: ProductLanguage | null;
 }
 
 /** 同步段（编译 + 首个 await 之前）的保护超时：防脚本写出无 await 的死循环卡死 Worker。 */
@@ -46,10 +49,14 @@ function safeStringifyArgs(args: unknown): string | undefined {
 /** 把一段 AI 脚本包装成引擎可跑的工作流模块。 */
 export function buildScriptModule(input: ScriptWorkflowInput): WorkflowModule {
   const scriptTimeoutMs = input.scriptTimeoutMs;
+  const productLanguage = normalizeProductLanguage(input.productLanguage);
   return {
     name: input.title?.trim() || "script",
-    description: input.summary?.trim() || "AI 现写的只读编排脚本",
-    run: (ctx) => runScriptInSandbox(input.script, ctx, scriptTimeoutMs != null ? { scriptTimeoutMs } : {}),
+    description: input.summary?.trim() || backendText("workflow.proposal.defaultSummary", productLanguage),
+    run: (ctx) => runScriptInSandbox(input.script, ctx, {
+      ...(scriptTimeoutMs != null ? { scriptTimeoutMs } : {}),
+      productLanguage,
+    }),
   };
 }
 
@@ -58,6 +65,7 @@ export interface RunScriptOptions {
   syncTimeoutMs?: number;
   /** 异步段总超时（毫秒）。缺省 DEFAULT_OVERALL_TIMEOUT_MS（挂死兜底）；按工作流规模传入更贴切的预算。 */
   scriptTimeoutMs?: number;
+  productLanguage?: ProductLanguage | null;
 }
 
 type WorkerOutbound =
@@ -71,8 +79,9 @@ export async function runScriptInSandbox(
   ctx: WorkflowContext,
   options: RunScriptOptions = {},
 ): Promise<unknown> {
+  const productLanguage = normalizeProductLanguage(options.productLanguage);
   if (typeof script !== "string" || !script.trim()) {
-    throw new Error("编排脚本为空。");
+    throw new Error(backendText("workflow.script.empty", productLanguage));
   }
 
   const overallTimeoutMs = options.scriptTimeoutMs ?? DEFAULT_OVERALL_TIMEOUT_MS;
@@ -101,7 +110,7 @@ export async function runScriptInSandbox(
     };
 
     const timer = setTimeout(() => {
-      const timeoutError = new Error("编排脚本执行超时");
+      const timeoutError = new Error(backendText("workflow.script.timeout", productLanguage));
       worker.postMessage({ type: "abort" });
       settle(async () => {
         await Promise.allSettled([...inFlightAgents]);
@@ -172,8 +181,8 @@ export async function runScriptInSandbox(
       settle(() =>
         reject(
           code === 0
-            ? new Error("编排脚本 worker 意外退出")
-            : new Error("编排脚本执行超时"),
+            ? new Error(backendText("workflow.script.workerExited", productLanguage))
+            : new Error(backendText("workflow.script.timeout", productLanguage)),
         ),
       );
     });
@@ -184,6 +193,7 @@ export async function runScriptInSandbox(
       argsJson: safeStringifyArgs(ctx.args),
       project: ctx.project,
       syncTimeoutMs,
+      productLanguage,
     });
   });
 }

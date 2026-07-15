@@ -1486,7 +1486,8 @@ export async function fetchOpencodeModelLimit(input: OpencodeSessionActionInput)
     throw describeOpencodeV2Error(result.error, result.response);
   }
 
-  const providers = Array.isArray(asRecord(result.data).all) ? asRecord(result.data).all : [];
+  const providerList = asRecord(result.data).all;
+  const providers: unknown[] = Array.isArray(providerList) ? providerList : [];
   const provider = providers
     .map((item) => asRecord(item))
     .find((item) => asString(item.id) === providerId);

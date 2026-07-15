@@ -10,6 +10,7 @@ import {
 import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
+import { withAssetCanvasCors } from './asset-protocol-policy.js';
 import {
   DEFAULT_AGENT_EXECUTION_ENGINE,
   type InteractivePlaytestResult,
@@ -1412,9 +1413,11 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     const proposals = await loadWorkflowProposals();
     const id = String(proposalId || '');
     const proposal = proposals.readProposal(workflowRoot, id);
-    if (!proposal) throw new Error('提议不存在');
+    if (!proposal) throw new Error(electronText(currentProductLanguage(), 'workflow.proposalMissing'));
     const result = agentSessionRuntime.approveWorkflowProposal(id, proposal.sessionId || undefined);
-    if (!result.ok) throw new Error(result.reason || '无法批准工作流提议');
+    if (!result.ok) {
+      throw new Error(result.reason || electronText(currentProductLanguage(), 'workflow.approveFailed'));
+    }
     return toIpcPayload({ ok: true, status: result.status || 'running', proposalId: id });
   });
 
@@ -1423,11 +1426,12 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
 
 function registerAssetProtocol(): void {
   if (assetProtocolRegistered) return;
-  protocol.handle('rmmv-asset', (request) => {
+  protocol.handle('rmmv-asset', async (request) => {
     try {
-      return net.fetch(pathToFileURL(desktop.assets.resolveAssetRequest(workflowRoot, request.url)).toString());
+      const response = await net.fetch(pathToFileURL(desktop.assets.resolveAssetRequest(workflowRoot, request.url)).toString());
+      return withAssetCanvasCors(response);
     } catch {
-      return new Response('not found', { status: 404 });
+      return withAssetCanvasCors(new Response('not found', { status: 404 }));
     }
   });
   assetProtocolRegistered = true;

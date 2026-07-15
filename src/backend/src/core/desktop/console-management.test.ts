@@ -169,7 +169,7 @@ describe('console management services', { concurrency: false }, () => {
     });
     assert.equal(unchanged.previousMaximum, 2);
     assert.equal(unchanged.maximum, 2);
-    assert.equal(unchanged.staging.staged, false);
+    assert.equal((unchanged.staging as { staged: boolean }).staged, false);
 
     const expanded = resizeProjectManagedDatabase(root, project, {
       kind: 'database',

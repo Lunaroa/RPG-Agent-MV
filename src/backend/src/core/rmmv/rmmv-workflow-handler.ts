@@ -6,20 +6,24 @@
 // 并异步运行工作流，报告通过 workflow_run 事件推回会话。
 
 import { proposeWorkflow } from "../workflow/orchestrator/proposals.ts";
+import type { ProductLanguage } from "../../../../contract/i18n.ts";
+import { backendText } from "../i18n/messages.ts";
+import { resolveLanguage } from "../i18n/request-language.ts";
 import type { RmmvHandlerInput, RmmvHandlerResult } from "./rmmv-handler-types.ts";
 import { resolveProjectRoot, resolveWorkflowRootFromInput } from "./rmmv-handler-utils.ts";
 
 export async function runRmmvWorkflow(input: RmmvHandlerInput): Promise<RmmvHandlerResult> {
+  const productLanguage = resolveLanguage(input.productLanguage as ProductLanguage | null | undefined);
   const action = String(input.action ?? "propose");
   if (action !== "propose") {
-    throw new Error(`Unknown workflow action: ${action}`);
+    throw new Error(backendText("workflow.proposal.unknownAction", productLanguage, { action }));
   }
 
   const workflowRoot = resolveWorkflowRootFromInput(input);
   const project = resolveProjectRoot(input);
   const script = typeof input.script === "string" ? input.script : "";
   if (!script.trim()) {
-    throw new Error("workflow.propose 需要一段非空的编排脚本（script）。");
+    throw new Error(backendText("workflow.proposal.scriptRequired", productLanguage));
   }
   const summary = typeof input.summary === "string" ? input.summary : undefined;
   const title = typeof input.title === "string" ? input.title : undefined;
@@ -28,12 +32,21 @@ export async function runRmmvWorkflow(input: RmmvHandlerInput): Promise<RmmvHand
       ? input.sessionId.trim()
       : (process.env.AIWF_SESSION_ID || null);
 
-  const proposal = proposeWorkflow({ workflowRoot, project, script, summary, title, sessionId });
+  const proposal = proposeWorkflow({
+    workflowRoot,
+    project,
+    script,
+    summary,
+    title,
+    sessionId,
+    productLanguage,
+  });
 
   return {
-    summary:
-      `工作流提议「${proposal.title}」已创建并自动批准（用户已通过权限审批）。`
-      + `\n脚本已存为独立文件：${proposal.scriptPath}，即将异步运行。`,
+    summary: [
+      backendText("workflow.proposal.created", productLanguage, { title: proposal.title }),
+      backendText("workflow.proposal.scriptQueued", productLanguage, { path: proposal.scriptPath }),
+    ].join("\n"),
     data: {
       kind: "workflow-proposal",
       proposalId: proposal.proposalId,

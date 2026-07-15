@@ -366,7 +366,9 @@ test("RMMV MCP stdio exposes localised map errors when mapId is invalid", async 
     });
 
     assert.equal(mapNotFound.isError, true);
-    const message = mapNotFound.content?.[0]?.text || "";
+    assert.ok(Array.isArray(mapNotFound.content));
+    const firstContent = mapNotFound.content[0] as { text?: unknown } | undefined;
+    const message = typeof firstContent?.text === "string" ? firstContent.text : "";
     assert.match(message, /Map not found: 999/);
     assert.doesNotMatch(message, /outside an IPC request scope/);
   } finally {

@@ -107,6 +107,22 @@ describe("RMMV event-command references", () => {
     ]);
   });
 
+  test("collects variable-selected actor targets and Force Action actor subjects", () => {
+    assert.deepEqual(signatures(referencesFor({ code: 311, parameters: [1, 6, 0, 0, 10, false] })), [
+      "variables:6:list[0].parameters[1]",
+    ]);
+    assert.deepEqual(signatures(referencesFor({ code: 339, parameters: [1, 4, 7, -1] })), [
+      "actors:4:list[0].parameters[1]",
+      "skills:7:list[0].parameters[2]",
+    ]);
+  });
+
+  test("does not misclassify a Force Action troop-member index as an enemy database id", () => {
+    assert.deepEqual(signatures(referencesFor({ code: 339, parameters: [0, 4, 7, -1] })), [
+      "skills:7:list[0].parameters[2]",
+    ]);
+  });
+
   test("does not infer references from Script or Plugin Command text", () => {
     assert.deepEqual(referencesFor({ code: 355, parameters: ["$gameTemp.reserveCommonEvent(99)"] }), []);
     assert.deepEqual(referencesFor({ code: 356, parameters: ["CallCommonEvent 99"] }), []);

@@ -306,7 +306,7 @@ describe("RMMV prospective database validation", () => {
     ((snapshot.enemies as Array<Record<string, unknown> | null>)[1]!.params as number[])[0] = 0;
     (snapshot.states as Array<Record<string, unknown> | null>)[1]!.overlay = 11;
     const animation = (snapshot.animations as Array<Record<string, unknown> | null>)[1]!;
-    animation.frames = [[[-1, 409, 0, 100, 0, 0, 255, 0]]];
+    animation.frames = [[[0, 409, 0, 100, 0, 0, 255, 0]]];
     const tileset = (snapshot.tilesets as Array<Record<string, unknown> | null>)[1]!;
     tileset.mode = 2;
     tileset.flags = [65536];
@@ -328,11 +328,14 @@ describe("RMMV prospective database validation", () => {
     assert.ok(paths.includes("system.attackMotions[0].weaponImageId"));
   });
 
-  test("checks fixed operands on standard traits and effects but only warns for plugin codes", () => {
+  test("accepts unused values on set traits, checks effect operands, and only warns for plugin codes", () => {
     const snapshot = validSnapshot();
     const state = (snapshot.states as Array<Record<string, unknown> | null>)[1]!;
     state.traits = [
       { code: 14, dataId: 1, value: 0 },
+      { code: 41, dataId: 1, value: 0 },
+      { code: 51, dataId: 1, value: 0 },
+      { code: 52, dataId: 1, value: 0 },
       { code: 900, dataId: 999, value: -999, pluginField: true },
     ];
     const item = (snapshot.items as Array<Record<string, unknown> | null>)[1]!;
@@ -343,10 +346,85 @@ describe("RMMV prospective database validation", () => {
 
     const result = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
     assert.equal(result.ok, false);
-    assert.ok(result.issues.some((issue) => issue.code === "DB_TRAIT_VALUE" && issue.source.path === "states[1].traits[0].value"));
+    assert.equal(result.issues.some((issue) => issue.code === "DB_TRAIT_VALUE"), false);
     assert.ok(result.issues.some((issue) => issue.code === "DB_EFFECT_VALUE" && issue.source.path === "items[1].effects[0].value1"));
     assert.ok(result.issues.some((issue) => issue.code === "DB_PLUGIN_TRAIT_CODE" && issue.severity === "warning"));
     assert.ok(result.issues.some((issue) => issue.code === "DB_PLUGIN_EFFECT_CODE" && issue.severity === "warning"));
+  });
+
+  test("skips inactive animation-cell operands and reports malformed fixed-length arrays", () => {
+    const snapshot = validSnapshot();
+    const animation = (snapshot.animations as Array<Record<string, unknown> | null>)[1]!;
+    animation.frames = [[[-1, 9999, -9999, 1, 9999, 3, -1, 99]]];
+
+    const inactive = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.equal(inactive.issues.some((issue) => issue.code.startsWith("DB_ANIMATION_CELL_") && issue.code !== "DB_ANIMATION_CELL_SHAPE"), false);
+
+    const classEntry = (snapshot.classes as Array<Record<string, unknown> | null>)[1]!;
+    (classEntry.expParams as unknown[]).pop();
+    ((classEntry.params as unknown[][])[0]).pop();
+    ((snapshot.weapons as Array<Record<string, unknown> | null>)[1]!.params as unknown[]).pop();
+    ((snapshot.enemies as Array<Record<string, unknown> | null>)[1]!.params as unknown[]).pop();
+    (snapshot.system as Record<string, unknown>).windowTone = [0, 0, 0];
+
+    const malformed = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    const paths = malformed.issues
+      .filter((issue) => issue.code === "DB_FIXED_ARRAY_LENGTH")
+      .map((issue) => issue.source.path);
+    assert.ok(paths.includes("classes[1].expParams"));
+    assert.ok(paths.includes("classes[1].params[0]"));
+    assert.ok(paths.includes("weapons[1].params"));
+    assert.ok(paths.includes("enemies[1].params"));
+    assert.ok(paths.includes("system.windowTone"));
+  });
+
+  test("transition validation ignores unchanged legacy errors but blocks newly introduced errors", () => {
+    const before = validSnapshot();
+    (before.items as Array<Record<string, unknown> | null>)[1]!.price = -1;
+    const after = structuredClone(before);
+    (after.items as Array<Record<string, unknown> | null>)[1]!.name = "Updated";
+
+    const unrelated = validateRmmvDatabaseTransition(before, after, { mapIds: [1] });
+    assert.equal(unrelated.ok, true);
+    assert.equal(unrelated.issues.some((issue) => issue.source.path === "items[1].price"), false);
+
+    (after.items as Array<Record<string, unknown> | null>)[1]!.price = -2;
+    const worsenedLegacyValue = validateRmmvDatabaseTransition(before, after, { mapIds: [1] });
+    assert.equal(worsenedLegacyValue.ok, false);
+    assert.ok(worsenedLegacyValue.issues.some((issue) => issue.source.path === "items[1].price"));
+
+    (after.items as Array<Record<string, unknown> | null>)[1]!.price = -1;
+    (after.items as Array<Record<string, unknown> | null>)[1]!.speed = 2001;
+    const introduced = validateRmmvDatabaseTransition(before, after, { mapIds: [1] });
+    assert.equal(introduced.ok, false);
+    assert.ok(introduced.issues.some((issue) => issue.source.path === "items[1].speed"));
+  });
+
+  test("transition validation compares map issues against the actual before and after documents", () => {
+    const snapshot = validSnapshot();
+    const beforeMap = {
+      mapId: 1,
+      value: {
+        tilesetId: 1,
+        encounterList: [],
+        events: [null, { id: 2, pages: [] }],
+      },
+    };
+    const afterMap = structuredClone(beforeMap);
+    ((afterMap.value.events as Array<Record<string, unknown> | null>)[1]!).id = 3;
+
+    const unchanged = validateRmmvDatabaseTransition(snapshot, structuredClone(snapshot), {
+      beforeMaps: [beforeMap],
+      maps: [structuredClone(beforeMap)],
+    });
+    assert.equal(unchanged.ok, true);
+
+    const changed = validateRmmvDatabaseTransition(snapshot, structuredClone(snapshot), {
+      beforeMaps: [beforeMap],
+      maps: [afterMap],
+    });
+    assert.equal(changed.ok, false);
+    assert.ok(changed.issues.some((issue) => issue.source.path === "maps[1].events[1].id"));
   });
 
   test("reports existing over-limit data but only blocks newly occupied over-limit slots", () => {

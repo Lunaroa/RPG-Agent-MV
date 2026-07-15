@@ -15,7 +15,7 @@ describe('placementErrors', () => {
     const message = formatPlacementError(new Error('缺少完整实现'), {
       contractId: 'inn.greeting',
       eventName: '酒馆招呼',
-    });
+    }, 'zh-CN');
     assert.match(message, /无法放置「酒馆招呼」/);
     assert.match(message, /registry\.register/);
   });

@@ -291,6 +291,10 @@ const supportsDraftHistory = computed(() => (
 ));
 const canUndoDraft = computed(() => supportsDraftHistory.value && draftUndoCount.value > 0);
 const canRedoDraft = computed(() => supportsDraftHistory.value && draftRedoCount.value > 0);
+const hasUnsavedDraft = computed(() => {
+  void detailDraft.value;
+  return supportsDraftHistory.value && draftHistory.dirty;
+});
 const canRevertCurrentStagedEntry = computed(() => (
   pmDetail.value?.kind === 'managed'
   && Boolean(pmDetail.value.entry.inspection?.changed)
@@ -1614,7 +1618,7 @@ async function saveDetail() {
 async function openBattleTestSetup(): Promise<void> {
   const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
   if (!entry || entry.kind !== 'database' || entry.group !== 'Troops') return;
-  if (canUndoDraft.value) {
+  if (hasUnsavedDraft.value) {
     ElMessage.warning(t('battleTest.unsavedDraft'));
     return;
   }
@@ -1637,7 +1641,7 @@ async function startBattleTest(configuration: {
   const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
   const project = projectStore.currentProject;
   if (!entry || entry.kind !== 'database' || entry.group !== 'Troops' || !project || battleTestBusy.value) return;
-  if (canUndoDraft.value) {
+  if (hasUnsavedDraft.value) {
     battleTestDialogVisible.value = false;
     ElMessage.warning(t('battleTest.unsavedDraft'));
     return;

@@ -147,7 +147,7 @@ function serializeModelEntries(models: ModelEntry[] | undefined): ModelEntry[] {
     const id = String(entry.id || "");
     if (!id) continue;
     const serialized: ModelEntry = { id, label: entry.label ? String(entry.label) : id };
-    const limit = normalizeModelLimit((entry as Record<string, unknown>).limit);
+    const limit = normalizeModelLimit(entry.limit);
     if (limit) serialized.limit = limit;
     out.push(serialized);
   }

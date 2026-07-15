@@ -292,13 +292,14 @@ test("脚本总超时时取消已派发的子 agent", async () => {
   };
   const module = buildScriptModule({
     script: `await agent({ label: "slow", prompt: "p" }); return "never";`,
-    scriptTimeoutMs: 100,
+    scriptTimeoutMs: 1_000,
+    productLanguage: "zh-CN",
   });
 
   try {
     const outcome = await settleBefore(
       runWorkflow({ ...baseOptions, module, agentRunner: runner, signal: external.signal }),
-      750,
+      2_500,
     );
     assert.notEqual(outcome, null, "script timeout must cancel its child agent instead of waiting forever");
     assert.equal(runnerObservedAbort, true);

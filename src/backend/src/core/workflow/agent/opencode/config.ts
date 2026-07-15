@@ -2,6 +2,7 @@ import path from "node:path";
 
 import type { ProviderRecord } from "../../../llm/provider-registry.ts";
 import type { ProductLanguage } from "../../../../../../contract/types.ts";
+import { normalizeProductLanguage } from "../../../../../../contract/i18n.ts";
 import { backendText } from "../../../i18n/messages.ts";
 import {
   buildOpencodeToolPolicyFromAgentAllow,
@@ -132,7 +133,7 @@ function buildModelConfig(provider: ProviderRecord, modelId: string): Record<str
     reasoning: true,
   };
   const limit = model && typeof model === "object" && "limit" in model
-    ? normalizeModelLimit((model as Record<string, unknown>).limit)
+    ? normalizeModelLimit(model.limit)
     : undefined;
   if (limit) config.limit = limit;
   return config;
@@ -156,7 +157,11 @@ function normalizeModelLimit(value: unknown): Record<string, number> | undefined
   };
 }
 
-export function buildOpencodeRmmvMcpConfig(workflowRoot: string, enabled = true): Record<string, unknown> {
+export function buildOpencodeRmmvMcpConfig(
+  workflowRoot: string,
+  enabled = true,
+  productLanguage?: ProductLanguage | null,
+): Record<string, unknown> {
   const rmmvServerPath = resolveShippedPath(workflowRoot, RMMV_MCP_SERVER_PATH);
   const installRoot = resolveShippedRoot(workflowRoot);
   return {
@@ -170,6 +175,7 @@ export function buildOpencodeRmmvMcpConfig(workflowRoot: string, enabled = true)
       AGENT_RPG_ROOT: workflowRoot,
       AGENT_RPG_INSTALL_ROOT: installRoot,
       AIWF_WORKFLOW_ROOT: workflowRoot,
+      RMMV_PRODUCT_LANGUAGE: normalizeProductLanguage(productLanguage),
       // command[0] 是宿主进程的 process.execPath；桌面端运行时它是 Electron 可执行文件，
       // 必须置位此变量才能让它以内置 Node 方式执行 MCP server，否则会当成应用启动而不连 stdio。
       ELECTRON_RUN_AS_NODE: "1",
@@ -213,7 +219,7 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
       [MEMORY_SCRIBE_AGENT]: buildMemoryScribeAgentConfig(Object.keys(tools)),
     },
     mcp: {
-      rmmv: buildOpencodeRmmvMcpConfig(workflowRoot, rmmvMcpEnabled),
+      rmmv: buildOpencodeRmmvMcpConfig(workflowRoot, rmmvMcpEnabled, input.productLanguage),
     },
   };
 

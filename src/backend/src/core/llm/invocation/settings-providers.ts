@@ -1,6 +1,5 @@
 import type { AgentExecutionEngine } from "../../workflow/agent/runtime-adapters/types.ts";
 import * as providerRegistry from "../provider-registry.ts";
-import type { ProviderRecord } from "../provider-registry.ts";
 import { readProviderSeedFile, type ProviderSeedEntry } from "../provider-seeds.ts";
 import type { CompatibleProviderSummary } from "./types.ts";
 
@@ -87,7 +86,7 @@ function fromRegistry(
     models: provider.models.map((model) => ({ id: model.id, label: model.label || model.id })),
     hiddenModelIds: provider.hiddenModelIds || [],
     supportedEngines: (provider.supportedEngines as AgentExecutionEngine[] | undefined)
-      || supportedEnginesFor(provider as ProviderRecord),
+      || supportedEnginesFor(provider),
     presetKind: provider.presetKind,
     source,
     disableModelFetch: provider.disableModelFetch,
@@ -137,7 +136,7 @@ export async function listProvidersForSettings(
   const seedIds = new Set(seedFile.providers.map((entry) => entry.id));
 
   for (const provider of registry) {
-    if (!supportsEngine(provider as ProviderRecord, engine)) continue;
+    if (!supportsEngine(provider, engine)) continue;
     const source: ProviderListSource = provider.credentialPresent
       ? "user"
       : (seedIds.has(provider.id) || provider.presetKind === "product-seed"

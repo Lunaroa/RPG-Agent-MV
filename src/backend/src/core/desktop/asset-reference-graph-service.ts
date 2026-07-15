@@ -114,6 +114,7 @@ interface ScanContext {
   layout: ProjectAssetLayout;
   references: RmmvAssetReference[];
   referenceKeys: Set<string>;
+  enemyBattlerCategory: 'enemies' | 'svEnemies';
 }
 
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.rpgmvp'];
@@ -185,6 +186,7 @@ export function buildAssetReferenceGraph(workflowRoot: string, project: string):
     layout,
     references: [],
     referenceKeys: new Set(),
+    enemyBattlerCategory: 'enemies',
   };
 
   scanDatabaseReferences(context);
@@ -366,6 +368,7 @@ function scanDatabaseReferences(context: ScanContext): void {
 
 function scanSystem(context: ScanContext, value: unknown, file: string): void {
   if (!isRecord(value)) return;
+  context.enemyBattlerCategory = value.optSideView === true ? 'svEnemies' : 'enemies';
   addReference(context, 'titles1', value.title1Name, file, '$.title1Name', 'System title image');
   addReference(context, 'titles2', value.title2Name, file, '$.title2Name', 'System title image');
   addReference(context, 'battlebacks1', value.battleback1Name, file, '$.battleback1Name', 'System battleback');
@@ -403,7 +406,7 @@ function scanIconDatabase(context: ScanContext, value: unknown, file: string, so
 
 function scanEnemies(context: ScanContext, value: unknown, file: string): void {
   forEachDatabaseEntry(value, (entry, index) => {
-    addReference(context, 'enemies', entry.battlerName, file, `$[${index}].battlerName`, 'Enemy battler');
+    addReference(context, context.enemyBattlerCategory, entry.battlerName, file, `$[${index}].battlerName`, 'Enemy battler');
   });
 }
 

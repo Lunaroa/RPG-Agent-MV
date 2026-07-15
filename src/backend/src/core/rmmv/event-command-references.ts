@@ -189,6 +189,7 @@ function collectCommandReferences(
       add(1, "animations");
       return;
     case 339:
+      if (command.parameters[0] === 1) add(1, "actors");
       add(2, "skills");
       return;
     default:
@@ -246,6 +247,15 @@ function collectActorTarget(
   pathPrefix: string,
   references: RmmvEventCommandReference[],
 ): void {
+  if (command.parameters[0] === 1) {
+    references.push({
+      target: "variables",
+      value: command.parameters[1],
+      path: `${pathPrefix}[${commandIndex}].parameters[1]`,
+      commandIndex,
+    });
+    return;
+  }
   if (command.parameters[0] !== 0) return;
   references.push({
     target: "actors",

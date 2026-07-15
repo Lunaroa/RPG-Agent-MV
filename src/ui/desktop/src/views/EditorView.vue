@@ -203,6 +203,7 @@ import { canActivatePlacementOnMap } from '../utils/placementMapPolicy';
 import { placementValidityHint, validatePlacementCell } from '../utils/placementCellValidity';
 import { registerEditorUiControlHandler, type EditorUiControlState } from '../utils/uiControl';
 import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
+import { loadImageElement } from '../utils/imageLoading.ts';
 import { useI18n, type MessageKey } from '../i18n';
 
 interface ApiError extends Error { status?: number }
@@ -767,12 +768,7 @@ async function preloadTileset(urls: (string | null)[]) {
   return Promise.all(resolved.map((url) => url ? loadImage(url) : Promise.resolve(null)));
 }
 function loadImage(url: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => resolve(null);
-    image.src = url;
-  });
+  return loadImageElement(url);
 }
 async function preloadEventCharacters(map: MvMap) {
   const names = new Set<string>();

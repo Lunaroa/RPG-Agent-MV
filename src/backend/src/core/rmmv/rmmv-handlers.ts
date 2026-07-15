@@ -9,7 +9,7 @@ import { buildRmmvDbCatalog, type RmmvDbTableName } from "./db-catalog.ts";
 import { readRmmvDbEntry } from "./db-entry.ts";
 import { readEffectiveRmmvDatabaseTable } from "./database-read.ts";
 import { listRmmvDatabaseTableKeys } from "./database-schema.ts";
-import { findCommonEventReferences } from "./common-event-references.ts";
+import { findEffectiveCommonEventReferences } from "./common-event-references.ts";
 import { applyPatchToProject, previewPatch, COMMAND_LEVEL_OPS, validateAgentPatchSpec } from "./patcher.ts";
 import { applyAgentPagePatch } from "../desktop/story-page-sync-service.ts";
 import { writeEventContextOutputs } from "../report/write-event-context-report.ts";
@@ -304,12 +304,13 @@ export function runRmmvDbEntry(input: RmmvHandlerInput): RmmvHandlerResult {
 }
 
 export function runRmmvCommonEventReferences(input: RmmvHandlerInput): RmmvHandlerResult {
+  const workflowRoot = resolveWorkflowRootFromInput(input);
   const project = resolveProjectRoot(input);
   const commonEventId = Number(input.commonEventId);
   if (!Number.isInteger(commonEventId) || commonEventId <= 0) {
     throw new Error("Missing commonEventId");
   }
-  const result = findCommonEventReferences(project, commonEventId);
+  const result = findEffectiveCommonEventReferences(workflowRoot, project, commonEventId);
   const summary = `Common event ${commonEventId}: ${result.referencedBy.length} reference(s)`;
   return resultSummary(summary, result);
 }

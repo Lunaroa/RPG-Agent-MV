@@ -126,6 +126,15 @@ interface BuiltPlan {
   drafts: Array<{ relativePath: string; content: Buffer; expectedSourceHash: string | null }>;
 }
 
+export interface RmmvEffectiveDatabaseValidationState {
+  snapshot: RmmvDatabaseSnapshot;
+  maps: RmmvDatabaseMapDocument[];
+}
+
+interface LoadProjectInputOptions {
+  sourceOnlyRelativePaths?: ReadonlySet<string>;
+}
+
 const ARRAY_TABLES: readonly RmmvArrayDatabaseTableKey[] = [
   "actors",
   "classes",
@@ -174,16 +183,39 @@ export function validateEffectiveRmmvDatabaseState(
   return validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps });
 }
 
+export function captureEffectiveRmmvDatabaseValidationState(
+  workflowRoot: string,
+  project: string,
+): RmmvEffectiveDatabaseValidationState {
+  const loaded = loadProjectInputs(workflowRoot, path.resolve(project));
+  return {
+    snapshot: structuredClone(loaded.snapshot),
+    maps: structuredClone(loaded.maps),
+  };
+}
+
+export function validateEffectiveRmmvDatabaseTransition(
+  workflowRoot: string,
+  project: string,
+  before: RmmvEffectiveDatabaseValidationState,
+): RmmvDatabaseSemanticValidationResult {
+  const after = loadProjectInputs(workflowRoot, path.resolve(project));
+  return validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
+    beforeMaps: before.maps,
+    maps: after.maps,
+  });
+}
+
 export function preflightRmmvDatabaseProjectApply(
   workflowRoot: string,
   projectRoot: string,
 ): RmmvDatabaseSemanticValidationResult {
   const project = path.resolve(projectRoot);
-  const loaded = loadProjectInputs(workflowRoot, project);
   const status = getProjectStagingStatus(workflowRoot, project);
+  if (status.conflict) throw new Error("Database staging conflict blocks apply.");
   const operations = status.operations as StagingOperation[];
-  const actualHashes = new Map(loaded.inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
-  const operationOutputs = new Set(operations.flatMap((operation) => operation.files));
+  const after = loadProjectInputs(workflowRoot, project);
+  const actualHashes = new Map(after.inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
 
   for (const operation of operations) {
     const metadata = parseAndVerifyOperationMetadata(project, operation);
@@ -192,15 +224,14 @@ export function preflightRmmvDatabaseProjectApply(
         throw new Error(`Database operation draft drift blocks apply: ${output.relativePath}`);
       }
     }
-    for (const input of metadata.inputHashes) {
-      if (operationOutputs.has(input.relativePath)) continue;
-      if (actualHashes.get(input.relativePath) !== input.effectiveHash) {
-        throw new Error(`Database input drift blocks apply: ${input.relativePath}`);
-      }
-    }
   }
 
-  const validation = validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps });
+  const sourceOnlyRelativePaths = new Set(status.files.map((file) => file.relativePath));
+  const before = loadProjectInputs(workflowRoot, project, { sourceOnlyRelativePaths });
+  const validation = validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
+    beforeMaps: before.maps,
+    maps: after.maps,
+  });
   assertSemanticValidationOk(validation);
   return validation;
 }
@@ -269,24 +300,32 @@ function validateStagedOperationState(
   const project = path.resolve(projectRoot);
   const { inputHashes, outputs } = parseAndVerifyOperationMetadata(project, operation);
 
-  const loaded = loadProjectInputs(workflowRoot, project);
-  const expected = new Map(inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
+  const after = loadProjectInputs(workflowRoot, project);
+  const actual = new Map(after.inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
+  const approvedInputs = new Map(inputHashes.map((entry) => [entry.relativePath, entry]));
   for (const output of outputs) {
-    if (!expected.has(output.relativePath)) {
+    const approvedInput = approvedInputs.get(output.relativePath);
+    if (!approvedInput) {
       throw new Error(`Database staging output is not part of the approved input set: ${output.relativePath}`);
     }
-    expected.set(output.relativePath, output.afterHash);
-  }
-  const actual = new Map(loaded.inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
-  const allPaths = new Set([...expected.keys(), ...actual.keys()]);
-  const drift = [...allPaths]
-    .sort()
-    .filter((relativePath) => expected.get(relativePath) !== actual.get(relativePath));
-  if (drift.length) {
-    throw new Error(`Database input drift blocks apply: ${drift.join(", ")}`);
+    if (actual.get(output.relativePath) !== output.afterHash) {
+      throw new Error(`Database operation draft drift blocks apply: ${output.relativePath}`);
+    }
   }
 
-  const validation = validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps });
+  const sourceOnlyRelativePaths = new Set(outputs.map((output) => output.relativePath));
+  const before = loadProjectInputs(workflowRoot, project, { sourceOnlyRelativePaths });
+  for (const output of outputs) {
+    const approvedSourceHash = approvedInputs.get(output.relativePath)!.sourceHash;
+    const currentSourceHash = before.inputHashes.find((entry) => entry.relativePath === output.relativePath)?.sourceHash;
+    if (currentSourceHash !== approvedSourceHash) {
+      throw new Error(`Database source drift blocks apply: ${output.relativePath}`);
+    }
+  }
+  const validation = validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
+    beforeMaps: before.maps,
+    maps: after.maps,
+  });
   assertSemanticValidationOk(validation);
 }
 
@@ -348,7 +387,10 @@ function buildPlan(
     applyChange(after, change, changeIndex, resolvedChanges, diffs, affected);
   });
 
-  const validation = validateRmmvDatabaseTransition(before, after, { maps: loaded.maps });
+  const validation = validateRmmvDatabaseTransition(before, after, {
+    beforeMaps: loaded.maps,
+    maps: loaded.maps,
+  });
   const files: RmmvDatabasePlanFile[] = [];
   const drafts: BuiltPlan["drafts"] = [];
   for (const physicalTable of [...affected.keys()].sort()) {
@@ -548,7 +590,11 @@ function markAffected(
   affected.set(physicalTable, groups);
 }
 
-function loadProjectInputs(workflowRoot: string, project: string): {
+function loadProjectInputs(
+  workflowRoot: string,
+  project: string,
+  options: LoadProjectInputOptions = {},
+): {
   snapshot: RmmvDatabaseSnapshot;
   maps: RmmvDatabaseMapDocument[];
   physical: Map<RmmvArrayDatabaseTableKey | "system", LoadedPhysicalTable>;
@@ -557,25 +603,35 @@ function loadProjectInputs(workflowRoot: string, project: string): {
   const snapshot: RmmvDatabaseSnapshot = {};
   const physical = new Map<RmmvArrayDatabaseTableKey | "system", LoadedPhysicalTable>();
   const inputHashes: RmmvDatabaseInputHash[] = [];
+  const layout = resolveRmmvLayout(project);
   for (const table of PHYSICAL_TABLES) {
-    const effective = readEffectiveRmmvDatabaseTable(workflowRoot, project, table);
-    if (!effective) throw new Error(`Required RMMV database file is missing: ${getRmmvDatabaseSchemaByKey(table).fileName}`);
-    const sourceHash = sourceFileHash(project, effective.relativePath);
+    const schema = getRmmvDatabaseSchemaByKey(table);
+    const relativePath = dataRelativePath(layout, schema.fileName);
+    const sourceOnly = options.sourceOnlyRelativePaths?.has(relativePath) ?? false;
+    const effective = sourceOnly
+      ? readSourceDatabaseTable(project, relativePath)
+      : readEffectiveRmmvDatabaseTable(workflowRoot, project, table);
+    if (!effective) throw new Error(`Required RMMV database file is missing: ${schema.fileName}`);
+    const sourceHash = sourceFileHash(project, relativePath);
     const loaded: LoadedPhysicalTable = {
       table,
-      relativePath: effective.relativePath,
+      relativePath,
       value: effective.value,
       sourceHash,
       effectiveHash: effective.contentHash,
     };
     physical.set(table, loaded);
     snapshot[table] = structuredClone(effective.value);
-    inputHashes.push({ relativePath: effective.relativePath, sourceHash, effectiveHash: effective.contentHash });
+    inputHashes.push({ relativePath, sourceHash, effectiveHash: effective.contentHash });
   }
 
-  const layout = resolveRmmvLayout(project);
   const mapInfosRelative = dataRelativePath(layout, "MapInfos.json");
-  const mapInfos = readEffectiveJsonInput(workflowRoot, project, mapInfosRelative);
+  const mapInfos = readEffectiveJsonInput(
+    workflowRoot,
+    project,
+    mapInfosRelative,
+    options.sourceOnlyRelativePaths?.has(mapInfosRelative) ?? false,
+  );
   if (!Array.isArray(mapInfos.value)) throw new Error(`${mapInfosRelative} must contain a JSON array.`);
   inputHashes.push(mapInfos.hashes);
   const maps: RmmvDatabaseMapDocument[] = [];
@@ -584,7 +640,12 @@ function loadProjectInputs(workflowRoot: string, project: string): {
     const mapId = Number(info.id);
     if (!Number.isInteger(mapId) || mapId <= 0) throw new Error(`${mapInfosRelative} contains an invalid map id.`);
     const relativePath = dataRelativePath(layout, `Map${String(mapId).padStart(3, "0")}.json`);
-    const loaded = readEffectiveJsonInput(workflowRoot, project, relativePath);
+    const loaded = readEffectiveJsonInput(
+      workflowRoot,
+      project,
+      relativePath,
+      options.sourceOnlyRelativePaths?.has(relativePath) ?? false,
+    );
     maps.push({ mapId, value: loaded.value });
     inputHashes.push(loaded.hashes);
   }
@@ -592,11 +653,18 @@ function loadProjectInputs(workflowRoot: string, project: string): {
   return { snapshot, maps, physical, inputHashes };
 }
 
-function readEffectiveJsonInput(workflowRoot: string, project: string, relativePath: string): {
+function readEffectiveJsonInput(
+  workflowRoot: string,
+  project: string,
+  relativePath: string,
+  sourceOnly = false,
+): {
   value: unknown;
   hashes: RmmvDatabaseInputHash;
 } {
-  const effectiveFile = getProjectFileForRead(workflowRoot, project, relativePath);
+  const effectiveFile = sourceOnly
+    ? path.resolve(project, ...relativePath.split("/"))
+    : getProjectFileForRead(workflowRoot, project, relativePath);
   if (!effectiveFile) throw new Error(`Required RMMV project file is missing: ${relativePath}`);
   const content = fs.readFileSync(effectiveFile);
   let value: unknown;
@@ -614,6 +682,20 @@ function readEffectiveJsonInput(workflowRoot: string, project: string, relativeP
       effectiveHash: hash(content),
     },
   };
+}
+
+function readSourceDatabaseTable(project: string, relativePath: string): { value: unknown; contentHash: string } | null {
+  const file = path.resolve(project, ...relativePath.split("/"));
+  if (!fs.existsSync(file)) return null;
+  const content = fs.readFileSync(file);
+  let value: unknown;
+  try {
+    value = JSON.parse(content.toString("utf8").replace(/^\uFEFF/, ""));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid RMMV database JSON at ${relativePath}: ${detail}`, { cause: error });
+  }
+  return { value, contentHash: hash(content) };
 }
 
 function requireTable(value: unknown, index: number): RmmvDatabaseTableKey {

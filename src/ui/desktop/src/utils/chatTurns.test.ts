@@ -142,7 +142,7 @@ describe('buildChatTurns', () => {
     if (group.type !== 'execution-group') return
 
     assert.deepEqual(visibleExecutionGroupSegments(group).map((item) => item.id), ['t1', 's3'])
-    assert.equal(summarizeExecutionGroup(group).state, 'blocked')
+    assert.equal(summarizeExecutionGroup(group, 'zh-CN').state, 'blocked')
   })
 
   test('ignores empty text and reasoning segments between execution records', () => {
@@ -177,7 +177,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'failed',
       createdFiles: 0,
       editedFiles: 0,
@@ -197,7 +197,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'complete',
       createdFiles: 0,
       editedFiles: 0,
@@ -216,7 +216,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'complete',
       createdFiles: 0,
       editedFiles: 0,
@@ -233,7 +233,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'blocked',
       createdFiles: 0,
       editedFiles: 0,
@@ -278,7 +278,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'complete',
       createdFiles: 1,
       editedFiles: 2,
@@ -318,7 +318,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'complete',
       createdFiles: 1,
       editedFiles: 1,
@@ -346,7 +346,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'complete',
       createdFiles: 0,
       editedFiles: 0,
@@ -369,7 +369,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'complete',
       createdFiles: 1,
       editedFiles: 0,
@@ -395,7 +395,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'running',
       createdFiles: 1,
       editedFiles: 0,
@@ -439,7 +439,7 @@ describe('buildChatTurns', () => {
     assert.equal(group.type, 'execution-group')
     if (group.type !== 'execution-group') return
 
-    assert.deepEqual(summarizeExecutionGroup(group), {
+    assert.deepEqual(summarizeExecutionGroup(group, 'zh-CN'), {
       state: 'complete',
       createdFiles: 0,
       editedFiles: 0,

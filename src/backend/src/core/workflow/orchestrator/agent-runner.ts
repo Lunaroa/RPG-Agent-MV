@@ -81,8 +81,8 @@ function matchFirstBalancedObject(text: string): string | null {
 function buildSchemaInstruction(prompt: string): string {
   return `${prompt}
 
-# 输出格式（严格）
-只输出一个 JSON 对象，用 \`\`\`json 围栏块包起来，块外不要写任何解释、前后缀或 Markdown。`;
+# Output format (strict)
+Output exactly one JSON object inside a \`\`\`json fenced block. Do not write explanations, prefixes, suffixes, or any other Markdown outside the block.`;
 }
 
 export function applySchema(
@@ -216,16 +216,16 @@ export function createProductionAgentRunner(config: ProductionRunnerConfig): Wor
         }
         attemptPrompt = `${basePrompt}
 
-# 上一次输出不符合要求
-原因：${validated.error}
-请只重新输出修正后的 JSON 对象（同样用 \`\`\`json 围栏块），不要解释。`;
+# The previous output did not satisfy the schema
+Reason: ${validated.error}
+Output only the corrected JSON object inside a \`\`\`json fenced block. Do not explain.`;
         lastBlocker = `schema validation failed: ${validated.error}`;
       } else {
         attemptPrompt = `${basePrompt}
 
-# 上一次没解析到 JSON
-原因：${extracted.error}
-请只输出一个 JSON 对象，用 \`\`\`json 围栏块包起来。`;
+# No JSON object was found in the previous output
+Reason: ${extracted.error}
+Output exactly one JSON object inside a \`\`\`json fenced block.`;
         lastBlocker = `json extraction failed: ${extracted.error}`;
       }
     }

@@ -230,7 +230,10 @@ test("openai-compatible providers use the openai-compatible AI SDK package", () 
 
   const providerConfig = (config.provider as Record<string, Record<string, unknown>>)["deepseek"];
   assert.equal(providerConfig.npm, "@ai-sdk/openai-compatible");
-  assert.equal(providerConfig.api, "https://api.deepseek.com");
+  assert.equal(providerConfig.api, "https://api.deepseek.com/v1");
+  assert.deepEqual(providerConfig.options, {
+    baseURL: "https://api.deepseek.com/v1",
+  });
   assert.deepEqual(providerConfig.env, ["OPENAI_API_KEY"]);
 });
 

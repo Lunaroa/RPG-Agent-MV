@@ -778,6 +778,7 @@ export type ProjectOverviewDbPreviewAsset =
   | 'faces'
   | 'svActors'
   | 'enemies'
+  | 'svEnemies'
   | 'animations'
   | 'tilesets'
   | 'battlebacks1'

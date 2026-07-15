@@ -64,6 +64,23 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assertUnused(graph.unusedAssets, 'plugins', 'UnusedPlugin');
   });
 
+  test('classifies enemy battler references by the effective battle perspective', () => {
+    const data = path.join(project, 'www', 'data');
+    const system = readJson(path.join(data, 'System.json')) as Record<string, unknown>;
+    writeJson(path.join(data, 'System.json'), { ...system, optSideView: true });
+    writeJson(path.join(data, 'Enemies.json'), [
+      null,
+      { id: 1, name: 'Sample Enemy', battlerName: 'SampleBattler' },
+    ]);
+
+    const graph = buildAssetReferenceGraph(root, project);
+
+    assertReference(graph.references, 'svEnemies', 'SampleBattler', 'www/data/Enemies.json');
+    assert.equal(graph.references.some((reference) => (
+      reference.category === 'enemies' && reference.name === 'SampleBattler'
+    )), false);
+  });
+
   test('exposes missing references, unused assets and mutation safety checks', () => withTestLanguage(() => {
     const missing = findMissingAssetReferences(root, project);
     const unused = findUnusedProjectAssets(root, project);

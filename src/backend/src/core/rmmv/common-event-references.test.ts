@@ -4,6 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { bootstrapDatabase } from "../db/bootstrap.ts";
+import { closeDatabase } from "../db/pool.ts";
+import { writeStagedProjectJson } from "../desktop/staging-service.ts";
+import { runRmmvCommonEventReferences } from "./rmmv-handlers.ts";
 import { findCommonEventReferences } from "./common-event-references.ts";
 
 function tmpDir(prefix: string): string {
@@ -170,6 +174,53 @@ describe("findCommonEventReferences", () => {
   test("rejects non-positive ids", () => {
     const { root } = makeProject();
     assert.throws(() => findCommonEventReferences(root, 0), /commonEventId must be a positive integer/);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test("MCP handler reports references from the effective staged map", async () => {
+    const { root, dataDir } = makeProject();
+    await bootstrapDatabase(root, {
+      dbPath: path.join(root, "data", "test.db"),
+      importLegacyJson: false,
+    });
+    fs.writeFileSync(
+      path.join(dataDir, "MapInfos.json"),
+      JSON.stringify([null, { id: 1, name: "Map001", parentId: 0, order: 1 }]),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(dataDir, "CommonEvents.json"),
+      JSON.stringify([null, { id: 1, name: "CE_Target", list: [{ code: 0 }] }]),
+      "utf8",
+    );
+    writeMap(dataDir, 1, [null]);
+    writeStagedProjectJson(root, root, "www/data/Map001.json", {
+      width: 5,
+      height: 5,
+      tilesetId: 1,
+      events: [null, {
+        id: 1,
+        pages: [{ list: [{ code: 117, parameters: [1] }, { code: 0, parameters: [] }] }],
+      }],
+    });
+
+    assert.equal(findCommonEventReferences(root, 1).referencedBy.length, 0);
+    const result = runRmmvCommonEventReferences({
+      workflowRoot: root,
+      project: root,
+      commonEventId: 1,
+    });
+    const data = result.data as { referencedBy: unknown[] };
+    assert.equal(data.referencedBy.length, 1);
+    assert.deepEqual(data.referencedBy[0], {
+      kind: "mapEvent",
+      mapId: 1,
+      eventId: 1,
+      pageIndex: 0,
+      commandIndex: 0,
+    });
+
+    closeDatabase();
     fs.rmSync(root, { recursive: true, force: true });
   });
 });

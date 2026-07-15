@@ -26,7 +26,7 @@ describe('placementMapPolicy', () => {
   });
 
   test('formatSuggestedMapHint uses MAP### label', () => {
-    assert.equal(formatSuggestedMapHint(6), '建议 MAP006');
+    assert.equal(formatSuggestedMapHint(6, 'zh-CN'), '建议 MAP006');
   });
 });
 

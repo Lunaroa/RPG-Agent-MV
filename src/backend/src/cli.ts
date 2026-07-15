@@ -237,17 +237,20 @@ async function runUiControl(rest: string[]): Promise<number> {
 async function runWorkflowCommand(rest: string[]): Promise<number> {
   const workflowRoot = resolveWorkflowRoot(import.meta.dirname);
   const [sub, ...subRest] = rest;
+  const productLanguage = cliLanguage();
 
   if (sub !== "run") {
-    throw new Error(
-      `Unknown workflow subcommand: ${sub ?? "(none)"}。用法：workflow run --script <脚本文件> [--summary <说明>] [--title <标题>] [--project <工程>]`,
-    );
+    throw new Error(cliText(
+      "workflow.cli.unknownSubcommand",
+      { subcommand: sub ?? "(none)" },
+      productLanguage,
+    ));
   }
 
   const args = parseArgs(subRest) as ParsedArgs;
   const scriptFile = args.script as string | undefined;
   if (!scriptFile) {
-    throw new Error("workflow run 需要 --script <脚本文件>（AI 现写的只读编排脚本）。");
+    throw new Error(cliText("workflow.cli.scriptFileRequired", {}, productLanguage));
   }
   const script = fs.readFileSync(path.resolve(scriptFile), "utf8");
   const project = resolveProjectPath(workflowRoot, args.project as string | undefined);
@@ -257,7 +260,7 @@ async function runWorkflowCommand(rest: string[]): Promise<number> {
     console.log(`workflow run [dry-run]`);
     console.log(`  project: ${project}`);
     console.log(`  script: ${path.resolve(scriptFile)} (${script.length} chars)`);
-    console.log("  dry-run: 已读入脚本，未派发任何子 agent。");
+    console.log(cliText("workflow.cli.dryRunLoaded", {}, productLanguage));
     return 0;
   }
 
@@ -267,7 +270,7 @@ async function runWorkflowCommand(rest: string[]): Promise<number> {
     script,
     summary: args.summary as string | undefined,
     title,
-    productLanguage: cliLanguage(),
+    productLanguage,
     onEvent: (event) => {
       if (event.type === "log") console.log(`  · ${event.message}`);
     },
@@ -279,7 +282,11 @@ async function runWorkflowCommand(rest: string[]): Promise<number> {
   } else {
     console.log(`workflow run ${title}: ${record.status}`);
     console.log(`  runId: ${record.runId}`);
-    console.log(`  子 agent: ${record.agentCount}，tokens: in ${record.inputTokens} / out ${record.outputTokens}`);
+    console.log(cliText("workflow.cli.agentUsage", {
+      count: record.agentCount,
+      inputTokens: record.inputTokens,
+      outputTokens: record.outputTokens,
+    }, productLanguage));
     if (record.error) console.log(`  error: ${record.error}`);
     console.log(`  report: ${reportPath}`);
   }
@@ -380,11 +387,16 @@ function cliLanguage(): ProductLanguage {
   const explicit = String(process.env.RMMV_PRODUCT_LANGUAGE || process.env.RPG_AGENT_MV_LANGUAGE || "").trim();
   if (explicit) return normalizeProductLanguage(explicit);
   const locale = String(process.env.LANG || process.env.LANGUAGE || process.env.LC_ALL || process.env.LC_MESSAGES || "").toLowerCase();
+  if (locale.startsWith("zh")) return "zh-CN";
   return locale.startsWith("en") ? "en-US" : DEFAULT_PRODUCT_LANGUAGE;
 }
 
-function cliText(key: BackendMessageKey): string {
-  return backendText(key, cliLanguage());
+function cliText(
+  key: BackendMessageKey,
+  params: Record<string, string | number> = {},
+  language: ProductLanguage = cliLanguage(),
+): string {
+  return backendText(key, language, params);
 }
 
 async function main(argv: string[]): Promise<number> {

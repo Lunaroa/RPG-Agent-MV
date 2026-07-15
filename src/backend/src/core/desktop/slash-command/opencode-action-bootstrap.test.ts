@@ -42,6 +42,7 @@ test("resolveOpencodeActionBootstrap rebuilds from provider registry when run co
           opencodeAuth: { enabled: true, envVar: "OPENAI_API_KEY" },
         },
       },
+      profiles: {},
     }),
     materializeEnv: (provider, options) => {
       loadedProviderId = String(provider?.id || "");
@@ -97,9 +98,10 @@ test("resolveOpencodeActionBootstrap fails fast when provider credential is miss
             protocol: "openai-compatible",
             baseUrl: "https://example.test/v3",
             credentialValue: "",
-            models: [{ id: "glm-5.2" }],
+            models: [{ id: "glm-5.2", label: "GLM 5.2" }],
           },
         },
+        profiles: {},
       }),
       materializeEnv: () => ({
         env: {},

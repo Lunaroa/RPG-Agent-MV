@@ -262,7 +262,7 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
   });
 
   for (const table of ["system", "types", "terms"] as const) {
-    test(`dbEntry ${table} preserves the complete staged System document`, async () => {
+    test(`dbEntry ${table} returns its staged logical document`, async () => {
       const { workflowRoot, project } = await makeStagedProject();
       try {
         const system = {
@@ -296,7 +296,18 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
         });
 
         assert.equal((result.data as any).staged, true);
-        assert.deepEqual((result.data as any).value, system);
+        const expected = table === "system"
+          ? system
+          : table === "types"
+            ? {
+              elements: system.elements,
+              skillTypes: system.skillTypes,
+              weaponTypes: system.weaponTypes,
+              armorTypes: system.armorTypes,
+              equipTypes: system.equipTypes,
+            }
+            : system.terms;
+        assert.deepEqual((result.data as any).value, expected);
       } finally {
         closeDatabase();
         fs.rmSync(workflowRoot, { recursive: true, force: true });

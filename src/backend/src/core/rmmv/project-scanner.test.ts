@@ -196,6 +196,28 @@ describe("project-scanner", () => {
       fs.rmSync(root, { recursive: true, force: true });
     });
 
+    test("uses side-view enemy assets for enemy and troop previews", () => {
+      const root = tmpDir("scanner-side-view-");
+      createMinimalProject(root);
+      const dataDir = path.join(root, "www", "data");
+      const system = JSON.parse(fs.readFileSync(path.join(dataDir, "System.json"), "utf8"));
+      fs.writeFileSync(path.join(dataDir, "System.json"), JSON.stringify({ ...system, optSideView: true }), "utf8");
+      fs.writeFileSync(path.join(dataDir, "Enemies.json"), JSON.stringify([
+        null,
+        { id: 1, name: "Sample Enemy", battlerName: "SampleBattler" },
+      ]), "utf8");
+      fs.writeFileSync(path.join(dataDir, "Troops.json"), JSON.stringify([
+        null,
+        { id: 1, name: "Sample Troop", members: [{ enemyId: 1, x: 400, y: 400 }] },
+      ]), "utf8");
+
+      const result = scanProject(root);
+
+      assert.equal(result.database.Enemies.named[0].preview?.asset, "svEnemies");
+      assert.equal(result.database.Troops.named[0].preview?.asset, "svEnemies");
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+
     test("database summary exposes records after the first 80 entries", () => {
       const root = tmpDir("scanner-db-complete-");
       createMinimalProject(root);

@@ -12,6 +12,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { normalizeProductLanguage, type ProductLanguage } from "../../../../../contract/i18n.ts";
+import { backendText } from "../../i18n/messages.ts";
 import { executeWorkflow } from "./run.ts";
 import type { WorkflowEvent, WorkflowRunRecord } from "./types.ts";
 
@@ -39,6 +41,8 @@ export interface WorkflowProposal {
   project: string;
   /** 发起该提议的会话 id（可选，便于把结果接回对话）。 */
   sessionId: string | null;
+  /** 创建提议时的产品语言；跨进程批准与恢复时继续沿用。 */
+  productLanguage: ProductLanguage;
   createdAt: string;
   decidedAt: string | null;
   /** 批准跑完后的运行 id 与报告路径。 */
@@ -59,9 +63,9 @@ function proposalsDir(workflowRoot: string): string {
 
 const PROPOSAL_ID_RE = /^wp-[A-Za-z0-9_-]{1,64}$/;
 
-function assertSafeProposalId(proposalId: string): void {
+function assertSafeProposalId(proposalId: string, productLanguage?: ProductLanguage | null): void {
   if (typeof proposalId !== "string" || !PROPOSAL_ID_RE.test(proposalId)) {
-    throw new Error(`非法 proposalId：${proposalId}`);
+    throw new Error(backendText("workflow.proposal.invalidId", productLanguage, { proposalId }));
   }
 }
 
@@ -75,13 +79,17 @@ function scriptFilePath(workflowRoot: string, proposalId: string): string {
 }
 
 /** 读取提议对应的脚本文件内容（单一事实源）。文件缺失时 fail fast。 */
-export function readProposalScript(workflowRoot: string, proposalId: string): string {
-  assertSafeProposalId(proposalId);
+export function readProposalScript(
+  workflowRoot: string,
+  proposalId: string,
+  productLanguage?: ProductLanguage | null,
+): string {
+  assertSafeProposalId(proposalId, productLanguage);
   const filePath = scriptFilePath(workflowRoot, proposalId);
   try {
     return fs.readFileSync(filePath, "utf8");
   } catch {
-    throw new Error(`提议脚本文件缺失：${filePath}`);
+    throw new Error(backendText("workflow.proposal.scriptMissing", productLanguage, { path: filePath }));
   }
 }
 
@@ -117,8 +125,12 @@ function proposalLockPath(workflowRoot: string, proposalId: string): string {
 }
 
 /** 提议是否被活跃锁占用（非陈旧、持有进程仍存活）。 */
-export function proposalHasActiveLock(workflowRoot: string, proposalId: string): boolean {
-  assertSafeProposalId(proposalId);
+export function proposalHasActiveLock(
+  workflowRoot: string,
+  proposalId: string,
+  productLanguage?: ProductLanguage | null,
+): boolean {
+  assertSafeProposalId(proposalId, productLanguage);
   const lockPath = proposalLockPath(workflowRoot, proposalId);
   try {
     const raw = fs.readFileSync(lockPath, "utf8");
@@ -139,19 +151,20 @@ export function proposalHasActiveLock(workflowRoot: string, proposalId: string):
 export function failUnfinishedProposal(
   workflowRoot: string,
   proposalId: string,
-  reason = "应用中断：未完成的工作流不会自动重跑，请确认现有结果后重新发起。",
+  reason?: string,
   deps: ProposalDeps = {},
 ): WorkflowProposal | null {
-  assertSafeProposalId(proposalId);
-  if (proposalHasActiveLock(workflowRoot, proposalId)) return null;
-  const releaseLock = claimProposal(workflowRoot, proposalId);
+  const preview = readProposal(workflowRoot, proposalId);
+  const productLanguage = normalizeProductLanguage(preview?.productLanguage);
+  if (proposalHasActiveLock(workflowRoot, proposalId, productLanguage)) return null;
+  const releaseLock = claimProposal(workflowRoot, proposalId, productLanguage);
   try {
-    const proposal = readProposal(workflowRoot, proposalId);
+    const proposal = readProposal(workflowRoot, proposalId, productLanguage);
     if (!proposal || (proposal.status !== "pending" && proposal.status !== "running")) return null;
     const now = deps.now ?? (() => new Date());
     proposal.status = "failed";
     proposal.decidedAt = now().toISOString();
-    proposal.reason = reason;
+    proposal.reason = reason ?? backendText("workflow.proposal.interrupted", productLanguage);
     writeProposal(workflowRoot, proposal);
     return proposal;
   } finally {
@@ -159,7 +172,11 @@ export function failUnfinishedProposal(
   }
 }
 
-function claimProposal(workflowRoot: string, proposalId: string): () => void {
+function claimProposal(
+  workflowRoot: string,
+  proposalId: string,
+  productLanguage?: ProductLanguage | null,
+): () => void {
   const lockPath = proposalLockPath(workflowRoot, proposalId);
   const payload = JSON.stringify({ pid: process.pid, at: Date.now() });
   const tryAcquire = (): boolean => {
@@ -198,7 +215,7 @@ function claimProposal(workflowRoot: string, proposalId: string): () => void {
     stale = true;
   }
   if (!stale) {
-    throw new Error(`提议 ${proposalId} 正在被另一个进程处理（锁占用中）。`);
+    throw new Error(backendText("workflow.proposal.lockBusy", productLanguage, { proposalId }));
   }
   // 抢占陈旧锁：unlink 后重新 wx 创建，避免与并发抢占者竞争。
   try {
@@ -207,7 +224,7 @@ function claimProposal(workflowRoot: string, proposalId: string): () => void {
     // ignore
   }
   if (!tryAcquire()) {
-    throw new Error(`提议 ${proposalId} 正在被另一个进程处理（锁占用中）。`);
+    throw new Error(backendText("workflow.proposal.lockBusy", productLanguage, { proposalId }));
   }
   return () => {
     try {
@@ -218,11 +235,17 @@ function claimProposal(workflowRoot: string, proposalId: string): () => void {
   };
 }
 
-export function readProposal(workflowRoot: string, proposalId: string): WorkflowProposal | null {
-  assertSafeProposalId(proposalId);
+export function readProposal(
+  workflowRoot: string,
+  proposalId: string,
+  productLanguage?: ProductLanguage | null,
+): WorkflowProposal | null {
+  assertSafeProposalId(proposalId, productLanguage);
   try {
     const raw = fs.readFileSync(proposalPath(workflowRoot, proposalId), "utf8");
-    return JSON.parse(raw) as WorkflowProposal;
+    const proposal = JSON.parse(raw) as WorkflowProposal;
+    proposal.productLanguage = normalizeProductLanguage(proposal.productLanguage);
+    return proposal;
   } catch {
     return null;
   }
@@ -244,6 +267,7 @@ export function listProposals(
     try {
       const raw = fs.readFileSync(path.join(dir, name), "utf8");
       const proposal = JSON.parse(raw) as WorkflowProposal;
+      proposal.productLanguage = normalizeProductLanguage(proposal.productLanguage);
       if (filter?.status && proposal.status !== filter.status) continue;
       proposals.push(proposal);
     } catch {
@@ -265,12 +289,14 @@ export function proposeWorkflow(
     summary?: string;
     title?: string;
     sessionId?: string | null;
+    productLanguage?: ProductLanguage | null;
   },
   deps: ProposalDeps = {},
 ): WorkflowProposal {
+  const productLanguage = normalizeProductLanguage(input.productLanguage);
   const script = typeof input.script === "string" ? input.script.trim() : "";
   if (!script) {
-    throw new Error("workflow.propose 需要一段非空的编排脚本（script）。");
+    throw new Error(backendText("workflow.proposal.scriptRequired", productLanguage));
   }
   const now = deps.now ?? (() => new Date());
   const makeId = deps.makeId ?? (() => makeProposalId(now()));
@@ -284,12 +310,13 @@ export function proposeWorkflow(
   const createdAt = now().toISOString();
   const proposal: WorkflowProposal = {
     proposalId,
-    title: input.title?.trim() || "工作流脚本",
+    title: input.title?.trim() || backendText("workflow.proposal.defaultTitle", productLanguage),
     scriptPath,
-    summary: input.summary?.trim() || "AI 现写的只读编排脚本",
+    summary: input.summary?.trim() || backendText("workflow.proposal.defaultSummary", productLanguage),
     status: "pending",
     project: input.project,
     sessionId: input.sessionId ?? null,
+    productLanguage,
     createdAt,
     decidedAt: null,
     runId: null,
@@ -303,6 +330,7 @@ export function proposeWorkflow(
 export interface ApproveProposalOptions {
   onEvent?: (event: WorkflowEvent) => void;
   signal?: AbortSignal;
+  productLanguage?: ProductLanguage | null;
   /** Keep the proposal running but defer agent dispatch until the originating foreground turn settles. */
   beforeExecute?: () => Promise<void>;
   /** 测试可注入；缺省走真实 executeWorkflow（解析绑定 + 只读派发）。 */
@@ -319,18 +347,24 @@ export async function approveProposal(
   options: ApproveProposalOptions = {},
   deps: ProposalDeps = {},
 ): Promise<{ proposal: WorkflowProposal; record: WorkflowRunRecord }> {
-  assertSafeProposalId(proposalId);
-  const releaseLock = claimProposal(workflowRoot, proposalId);
+  const preview = readProposal(workflowRoot, proposalId, options.productLanguage);
+  const productLanguage = normalizeProductLanguage(options.productLanguage ?? preview?.productLanguage);
+  const releaseLock = claimProposal(workflowRoot, proposalId, productLanguage);
   try {
-    const proposal = readProposal(workflowRoot, proposalId);
-    if (!proposal) throw new Error(`提议不存在：${proposalId}`);
+    const proposal = readProposal(workflowRoot, proposalId, productLanguage);
+    if (!proposal) {
+      throw new Error(backendText("workflow.proposal.notFound", productLanguage, { proposalId }));
+    }
     if (proposal.status !== "pending") {
-      throw new Error(`提议 ${proposalId} 当前状态为 ${proposal.status}，不能再批准。`);
+      throw new Error(backendText("workflow.proposal.cannotApprove", productLanguage, {
+        proposalId,
+        status: proposal.status,
+      }));
     }
     const now = deps.now ?? (() => new Date());
     const execute = options.execute ?? executeWorkflow;
 
-    const script = readProposalScript(workflowRoot, proposalId);
+    const script = readProposalScript(workflowRoot, proposalId, productLanguage);
 
     let runningPersisted = false;
     const persistRunning = (): void => {
@@ -355,6 +389,7 @@ export async function approveProposal(
         summary: proposal.summary,
         title: proposal.title,
         sessionId: proposal.sessionId ?? undefined,
+        productLanguage,
         signal: options.signal,
         onEvent: wrappedOnEvent,
       });
@@ -369,7 +404,10 @@ export async function approveProposal(
           : "failed";
       if (record.status !== "completed") {
         proposal.reason = record.error
-          ?? (record.status === "aborted" ? "工作流被中止" : "工作流未正常完成");
+          ?? backendText(
+            record.status === "aborted" ? "workflow.proposal.aborted" : "workflow.proposal.incomplete",
+            productLanguage,
+          );
       }
       writeProposal(workflowRoot, proposal);
       return { proposal, record };
@@ -393,18 +431,24 @@ export function rejectProposal(
   reason?: string,
   deps: ProposalDeps = {},
 ): WorkflowProposal {
-  assertSafeProposalId(proposalId);
-  const releaseLock = claimProposal(workflowRoot, proposalId);
+  const preview = readProposal(workflowRoot, proposalId);
+  const productLanguage = normalizeProductLanguage(preview?.productLanguage);
+  const releaseLock = claimProposal(workflowRoot, proposalId, productLanguage);
   try {
-    const proposal = readProposal(workflowRoot, proposalId);
-    if (!proposal) throw new Error(`提议不存在：${proposalId}`);
+    const proposal = readProposal(workflowRoot, proposalId, productLanguage);
+    if (!proposal) {
+      throw new Error(backendText("workflow.proposal.notFound", productLanguage, { proposalId }));
+    }
     if (proposal.status !== "pending") {
-      throw new Error(`提议 ${proposalId} 当前状态为 ${proposal.status}，不能拒绝。`);
+      throw new Error(backendText("workflow.proposal.cannotReject", productLanguage, {
+        proposalId,
+        status: proposal.status,
+      }));
     }
     const now = deps.now ?? (() => new Date());
     proposal.status = "rejected";
     proposal.decidedAt = now().toISOString();
-    proposal.reason = reason?.trim() || "用户拒绝";
+    proposal.reason = reason?.trim() || backendText("workflow.proposal.userRejected", productLanguage);
     writeProposal(workflowRoot, proposal);
     return proposal;
   } finally {

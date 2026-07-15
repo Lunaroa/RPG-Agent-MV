@@ -438,6 +438,7 @@ export function useSessionStream() {
     } else {
       const segment = pushLiveSegment(createSegment('meta', '', metadata))
       playtestRunSegments.set(runId, segment)
+      nonTextSinceText = true
     }
     notifyTranscriptChanged()
   }

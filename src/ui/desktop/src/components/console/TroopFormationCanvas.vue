@@ -4,6 +4,7 @@ import type { EditorEnemyCatalogEntry, EditorProjectCatalog } from '../../api/cl
 import { useI18n } from '../../i18n';
 import { normalizeTroopMembers, type MvTroopMember } from '../../utils/rmmvDatabaseEditor';
 import { rotateHuePixelsLikeMv } from '../../utils/rmmvHue';
+import { enemyBattlerAssetKind } from '../../utils/rmmvBattleAssets.ts';
 
 const WIDTH = 816;
 const HEIGHT = 624;
@@ -121,7 +122,7 @@ async function loadEnemyImage(
     nextErrors.push(t('db.troopMissingEnemyGraphic', { name: enemy?.name || t('story.unnamed') }));
     return null;
   }
-  const kind = props.catalog?.battle.sideView ? 'svEnemies' : 'enemies';
+  const kind = enemyBattlerAssetKind(props.catalog?.battle.sideView === true);
   const asset = props.catalog?.assets[kind].find((entry) => entry.name === enemy.battlerName);
   if (!asset) {
     nextErrors.push(t('db.troopMissingEnemyGraphic', { name: enemy.battlerName }));
@@ -211,6 +212,14 @@ function finishDrag(event: PointerEvent): void {
   emit('update:modelValue', members);
 }
 
+function cancelDrag(event: PointerEvent): void {
+  if (!drag) return;
+  drag = null;
+  const target = canvas.value;
+  if (target?.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
+  void renderFormation();
+}
+
 function toggleHidden(event: MouseEvent): void {
   event.preventDefault();
   const point = pointerPosition(event);
@@ -277,7 +286,7 @@ function clamp(value: number, minimum: number, maximum: number): number {
       @pointerdown="startDrag"
       @pointermove="previewDrag"
       @pointerup="finishDrag"
-      @pointercancel="finishDrag"
+      @pointercancel="cancelDrag"
       @contextmenu="toggleHidden"
     />
     <div v-if="errors.length" class="formation-errors" role="alert">

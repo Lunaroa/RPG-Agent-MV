@@ -22,7 +22,7 @@ describe('placementCellValidity', () => {
     const map = blankMap();
     map.events = [{ id: 1, x: 1, y: 1, pages: [] }];
     assert.equal(validatePlacementCell(map, [], 3, 0).valid, false);
-    assert.match(validatePlacementCell(map, [], 1, 1).reason || '', /已有事件/);
+    assert.match(validatePlacementCell(map, [], 1, 1, 'zh-CN').reason || '', /已有事件/);
     assert.equal(validatePlacementCell(map, [], 0, 0).valid, true);
   });
 

@@ -36,7 +36,7 @@
       </div>
     </template>
 
-    <!-- Risk Approval Card (通用高危操作审批卡，对齐 Claude Code 权限提示：展示要执行的实际内容) -->
+    <!-- General risk-approval card showing the concrete operation awaiting permission. -->
     <template v-else-if="ask.type === 'risk-approval'">
       <p class="risk-action-line">{{ t('ask.riskApproval.actionLead') }}<strong>{{ ask.actionLabel || ask.title }}</strong></p>
       <pre v-if="ask.script" class="risk-script">{{ ask.script }}</pre>

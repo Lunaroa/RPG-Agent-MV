@@ -11,6 +11,7 @@ describe('translateKnownIssue', () => {
     assert.match(
       translateKnownIssue(
         'Auto-imported from a local RPG Maker MV installation; EULA/license has not been reviewed for redistribution.',
+        'zh-CN',
       ),
       /本机 RPG Maker MV/,
     );
@@ -36,7 +37,7 @@ describe('translateKnownIssues', () => {
     const out = translateKnownIssues([
       'Offline render does not show events, player, plugins, weather, screen tint, animations, or runtime effects.',
       'unknown',
-    ]);
+    ], 'zh-CN');
     assert.match(out[0], /离线预览/);
     assert.equal(out[1], 'unknown');
   });

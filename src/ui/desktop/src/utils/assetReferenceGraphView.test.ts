@@ -116,7 +116,7 @@ describe('assetReferenceGraphView', () => {
       file: 'www/data/System.json',
       path: '$.windowTone',
       source: 'System config',
-    }), '配置');
+    }, 'zh-CN'), '配置');
     assert.equal(referenceSourceLabel({
       category: 'system',
       name: 'Window',

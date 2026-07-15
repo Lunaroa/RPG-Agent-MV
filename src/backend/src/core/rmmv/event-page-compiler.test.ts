@@ -41,6 +41,24 @@ test("change-items compiles to code 126", () => {
   assert.deepStrictEqual(item.parameters, [3, 0, 0, 2]);
 });
 
+test("compileCommands rejects invalid state values and conditional fields", () => {
+  assert.throws(
+    () => compileCommands([{ kind: "variable", id: 1, value: -1 }] as never, null, ""),
+    /variable\.value must be an integer >= 0/,
+  );
+  assert.throws(
+    () => compileCommands([{ kind: "self-switch", name: "A", value: "yes" }] as never, null, ""),
+    /self-switch\.value.*boolean/,
+  );
+  assert.throws(
+    () => compileCommands([{
+      kind: "conditional-branch",
+      condition: { kind: "variable", id: 1, value: 0, operator: "==" },
+    }] as never, null, ""),
+    /conditional-branch\.variable\.operator/,
+  );
+});
+
 test("normalizeCommands rewrites change-items operation aliases (add/gain/0)", () => {
   withProductLanguage("en-US", () => {
   for (const [operation, expectedOp] of [["add", 0], ["gain", 0], [0, 0], ["remove", 1], [1, 1]] as const) {

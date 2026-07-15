@@ -33,7 +33,11 @@ import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
 import { ensureAgentOutputDirs } from "../workflow/agent/agent-output-dirs.ts";
 import { replyOpencodePermission, replyOpencodeQuestion } from "../workflow/agent/opencode/runtime.ts";
 import { SlashCommandService } from "./slash-command/service.ts";
-import type { GetContextUsageResult, SlashCommandResult } from "./slash-command/types.ts";
+import type {
+  GetContextUsageResult,
+  SlashCommandListItem,
+  SlashCommandResult,
+} from "./slash-command/types.ts";
 import type { ProductLanguage, SessionPlanSnapshot, SessionSubagentSnapshot } from "../../../../contract/types.ts";
 import { normalizeProductLanguage } from "../../../../contract/i18n.ts";
 import { backendText } from "../i18n/messages.ts";
@@ -433,7 +437,7 @@ export class AgentSessionRuntime {
     return this.summarize(session);
   }
 
-  listSlashCommands(): Record<string, unknown>[] {
+  listSlashCommands(): SlashCommandListItem[] {
     return this.slashCommandService.listCommands();
   }
 
@@ -648,6 +652,7 @@ export class AgentSessionRuntime {
 
     const sessionId = String(sessionIdHint || proposal.sessionId || "").trim();
     const session = sessionId ? this.sessions.get(sessionId) : undefined;
+    const productLanguage = session?.productLanguage ?? proposal.productLanguage;
     if (session?.startedWorkflowApprovals.has(normalized)) {
       const current = this.readWorkflowProposalFn(this.workflowRoot, normalized);
       const status = current?.status === "pending" ? "running" : (current?.status || proposal.status);
@@ -671,13 +676,14 @@ export class AgentSessionRuntime {
         () => controller.abort(new Error("session stopped")),
       );
       if (!attached.ok) {
+        const reason = attached.reason || backendText("workflow.proposal.attachFailed", productLanguage);
         push({
           type: "workflow_run",
           phase: "done",
           status: "failed",
-          reason: attached.reason || "无法把工作流绑定到会话",
+          reason,
         });
-        return { ok: false, reason: attached.reason || "无法把工作流绑定到会话" };
+        return { ok: false, reason };
       }
       if (session) this.reserveExternalWork(session, normalized);
     }
@@ -691,6 +697,7 @@ export class AgentSessionRuntime {
 
     void this.approveWorkflowProposalFn(this.workflowRoot, normalized, {
       signal: controller.signal,
+      productLanguage,
       beforeExecute: sessionId
         ? () => this.waitForForegroundSettled(sessionId, controller.signal)
         : undefined,
@@ -763,7 +770,7 @@ export class AgentSessionRuntime {
   }
 
   private failInterruptedWorkflowProposal(session: AgentSession, proposalId: string): void {
-    const reason = "应用中断：未完成的工作流不会自动重跑，请确认现有结果后重新发起。";
+    const reason = backendText("workflow.proposal.interrupted", session.productLanguage);
     const failed = failUnfinishedProposal(this.workflowRoot, proposalId, reason);
     if (!failed) return;
     session.startedWorkflowApprovals.add(proposalId);

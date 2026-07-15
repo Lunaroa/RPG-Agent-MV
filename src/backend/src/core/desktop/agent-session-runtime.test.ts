@@ -9,7 +9,11 @@ import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
 import { ConsoleSettingsDao } from "../db/dao/console-settings-dao.ts";
 import { writeCurrentProgress } from "../memory/memory-store.ts";
-import { proposeWorkflow, readProposal } from "../workflow/orchestrator/proposals.ts";
+import {
+  proposeWorkflow,
+  readProposal,
+  type ApproveProposalOptions,
+} from "../workflow/orchestrator/proposals.ts";
 import type { WorkflowRunRecord } from "../workflow/orchestrator/types.ts";
 
 const roots: string[] = [];
@@ -107,7 +111,11 @@ describe("AgentSessionRuntime", () => {
   test("tool_result auto-approves workflow without live frontend subscription", async () => {
     let approveCalls = 0;
     const harness = await createHarness(undefined, undefined, {
-      approveWorkflowProposal: async (_workflowRoot, proposalId, options) => {
+      approveWorkflowProposal: async (
+        _workflowRoot: string,
+        proposalId: string,
+        options?: ApproveProposalOptions,
+      ) => {
         approveCalls += 1;
         await options?.beforeExecute?.();
         return {
@@ -164,7 +172,11 @@ describe("AgentSessionRuntime", () => {
   test("reconcilePendingWorkflowProposals approves persisted pending proposals on reconnect", async () => {
     let approveCalls = 0;
     const harness = await createHarness(undefined, undefined, {
-      approveWorkflowProposal: async (_workflowRoot, proposalId, options) => {
+      approveWorkflowProposal: async (
+        _workflowRoot: string,
+        proposalId: string,
+        options?: ApproveProposalOptions,
+      ) => {
         approveCalls += 1;
         await options?.beforeExecute?.();
         return {
@@ -222,7 +234,11 @@ describe("AgentSessionRuntime", () => {
   test("reconcilePendingWorkflowProposals fails pending proposal on interrupted restored session", async () => {
     let approveCalls = 0;
     const harness = await createHarness(undefined, undefined, {
-      approveWorkflowProposal: async (_workflowRoot, proposalId, options) => {
+      approveWorkflowProposal: async (
+        _workflowRoot: string,
+        proposalId: string,
+        options?: ApproveProposalOptions,
+      ) => {
         approveCalls += 1;
         await options?.beforeExecute?.();
         return {
@@ -273,13 +289,17 @@ describe("AgentSessionRuntime", () => {
     assert.equal(approveCalls, 0);
     const after = readProposal(root, proposal.proposalId)!;
     assert.equal(after.status, "failed");
-    assert.match(after.reason || "", /应用中断/);
+    assert.match(after.reason || "", /application was interrupted/i);
   });
 
   test("reconcilePendingWorkflowProposals fails orphan running proposal without rerun", async () => {
     let approveCalls = 0;
     const harness = await createHarness(undefined, undefined, {
-      approveWorkflowProposal: async (_workflowRoot, proposalId, options) => {
+      approveWorkflowProposal: async (
+        _workflowRoot: string,
+        proposalId: string,
+        options?: ApproveProposalOptions,
+      ) => {
         approveCalls += 1;
         await options?.beforeExecute?.();
         return {
@@ -336,7 +356,7 @@ describe("AgentSessionRuntime", () => {
     assert.equal(approveCalls, 0);
     const after = readProposal(root, proposal.proposalId)!;
     assert.equal(after.status, "failed");
-    assert.match(after.reason || "", /应用中断/);
+    assert.match(after.reason || "", /application was interrupted/i);
   });
 
   test("initialize fails unfinished proposals belonging to restored sessions", async () => {
@@ -388,7 +408,7 @@ describe("AgentSessionRuntime", () => {
   test("approveWorkflowProposal is idempotent for already decided proposals", async () => {
     let approveCalls = 0;
     const harness = await createHarness(undefined, undefined, {
-      approveWorkflowProposal: async (_workflowRoot, proposalId) => {
+      approveWorkflowProposal: async (_workflowRoot: string, proposalId: string) => {
         approveCalls += 1;
         return {
           proposal: {

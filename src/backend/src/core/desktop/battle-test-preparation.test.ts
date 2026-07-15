@@ -92,6 +92,27 @@ describe('isolated Battle Test preparation', { concurrency: false }, () => {
       battleback2Name: 'Forest',
     }), /at most 8/i);
   });
+
+  test('allows unrelated legacy database errors while validating the Battle Test changes', () => {
+    const systemFile = path.join(project, 'data', 'System.json');
+    const system = readJson(systemFile);
+    system.sounds[0].pitch = 200;
+    writeJson(systemFile, system);
+    const animationsFile = path.join(project, 'data', 'Animations.json');
+    const animations = readJson(animationsFile);
+    animations[1].frames = [[[-1, 9999, -9999, 1, 9999, 3, -1, 99]]];
+    writeJson(animationsFile, animations);
+
+    const preparation = prepareBattleTestProject(root, project, {
+      troopId: 1,
+      battlers: [{ actorId: 1, level: 10, equips: [1, 1] }],
+      battleback1Name: 'Field',
+      battleback2Name: 'Forest',
+    });
+
+    assert.equal(preparation.troopId, 1);
+    cleanupIsolatedProject(preparation);
+  });
 });
 
 function createProject(root: string): string {

@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { InteractiveBattleTestBattler } from '../../../../contract/types.ts';
-import { validateEffectiveRmmvDatabaseState } from '../rmmv/database-changes.ts';
+import {
+  captureEffectiveRmmvDatabaseValidationState,
+  validateEffectiveRmmvDatabaseTransition,
+} from '../rmmv/database-changes.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
 import { resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import {
@@ -53,6 +56,14 @@ export function prepareBattleTestProject(
     const system = readRecord(systemPath, 'System.json');
     const troops = readArray(troopsPath, 'Troops.json');
     const actors = readArray(actorsPath, 'Actors.json');
+    const validationBaseline = captureEffectiveRmmvDatabaseValidationState(workflowRoot, isolated.temporaryProject);
+    const baselineSystemValue = validationBaseline.snapshot.system;
+    if (!baselineSystemValue || typeof baselineSystemValue !== 'object' || Array.isArray(baselineSystemValue)) {
+      throw new BattleTestPreparationError('System.json must contain an object.');
+    }
+    const baselineSystem = baselineSystemValue as Record<string, unknown>;
+    baselineSystem.testTroopId = 0;
+    baselineSystem.testBattlers = [];
     const troop = recordAt(troops, configuration.troopId, `Troop #${configuration.troopId}`);
     const members = Array.isArray(troop.members) ? troop.members : [];
     if (members.length > 8) {
@@ -72,7 +83,11 @@ export function prepareBattleTestProject(
     system.battleback2Name = configuration.battleback2Name;
     writeJsonAtomic(systemPath, system);
 
-    const validation = validateEffectiveRmmvDatabaseState(workflowRoot, isolated.temporaryProject);
+    const validation = validateEffectiveRmmvDatabaseTransition(
+      workflowRoot,
+      isolated.temporaryProject,
+      validationBaseline,
+    );
     const errors = validation.issues.filter((issue) => issue.severity === 'error');
     if (errors.length > 0) {
       const detail = errors.slice(0, 5).map((issue) => `${issue.source.path}: ${issue.message}`).join(' ');

@@ -5,14 +5,18 @@
       data-ui-id="language-picker"
       role="dialog"
       aria-modal="true"
-      aria-label="选择语言 / Choose language"
+      :aria-label="`${translate('onboarding.languagePicker.title', 'zh-CN')} / ${translate('onboarding.languagePicker.title', 'en-US')}`"
     >
       <div class="language-dim" />
       <section class="language-card">
-        <h1 class="language-title">选择语言</h1>
-        <p class="language-subtitle">Choose your language</p>
+        <h1 class="language-title">{{ translate('onboarding.languagePicker.title', 'zh-CN') }}</h1>
+        <p class="language-subtitle">{{ translate('onboarding.languagePicker.title', 'en-US') }}</p>
 
-        <div class="language-options" role="listbox" aria-label="Language options">
+        <div
+          class="language-options"
+          role="listbox"
+          :aria-label="translate('onboarding.languagePicker.options', selected)"
+        >
           <button
             v-for="option in options"
             :key="option.value"
@@ -68,7 +72,7 @@ const options = computed(() =>
 )
 
 const continueLabel = computed(() =>
-  selected.value === 'zh-CN' ? '继续' : 'Continue',
+  translate('onboarding.languagePicker.continue', selected.value),
 )
 
 async function confirmSelection(): Promise<void> {

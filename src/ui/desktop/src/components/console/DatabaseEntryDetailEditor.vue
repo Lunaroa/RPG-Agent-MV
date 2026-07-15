@@ -58,6 +58,7 @@ import DatabaseEffectEditor from './DatabaseEffectEditor.vue';
 import DatabaseTraitEditor from './DatabaseTraitEditor.vue';
 import TilesetFlagCanvasEditor from './TilesetFlagCanvasEditor.vue';
 import TroopFormationCanvas from './TroopFormationCanvas.vue';
+import { enemyBattlerAssetKind } from '../../utils/rmmvBattleAssets.ts';
 import {
   ANIMATION_POSITION_OPTIONS,
   DAMAGE_TYPE_OPTIONS,
@@ -157,6 +158,7 @@ const localizedTermLabels = computed<Record<string, string[]>>(() => Object.from
 ));
 const isActorImageEditor = computed(() => props.group === 'Actors' && schemaDriven.value);
 const isEnemyEditor = computed(() => props.group === 'Enemies' || props.schema?.fileName === 'Enemies.json');
+const enemyImageAsset = computed(() => enemyBattlerAssetKind(props.catalog?.battle.sideView === true));
 const activeBattleback1Name = computed(() => props.battleback1Name ?? props.catalog?.battle.battleback1Name ?? '');
 const activeBattleback2Name = computed(() => props.battleback2Name ?? props.catalog?.battle.battleback2Name ?? '');
 const visibleSchemaFields = computed(() => (
@@ -188,8 +190,9 @@ const actorImageSignature = computed(() => [
 const enemyBattlerSignature = computed(() => [
   isEnemyEditor.value ? 'enemy' : '',
   props.catalog?.project || '',
+  enemyImageAsset.value,
   stringValue('battlerName'),
-  props.catalog?.assets.enemies.length || 0,
+  props.catalog?.assets[enemyImageAsset.value].length || 0,
 ].join('|'));
 
 watch(actorImageSignature, () => {
@@ -821,7 +824,7 @@ function openActorBattlerPicker(): void {
 }
 
 function openEnemyBattlerPicker(path: string): void {
-  openSimpleImagePicker(path, 'enemies', t('db.chooseEnemyBattler'));
+  openSimpleImagePicker(path, enemyImageAsset.value, t('db.chooseEnemyBattler'));
 }
 
 function openSimpleImagePicker(path: string, asset: ImageAssetKind, title: string): void {
@@ -971,7 +974,7 @@ async function paintBattlerPreview(): Promise<void> {
 async function paintEnemyBattlerPreview(): Promise<void> {
   const context = clearPreview(enemyBattlerPreviewCanvas.value);
   if (!context) return;
-  const image = await loadCatalogImage('enemies', stringValue('battlerName'));
+  const image = await loadCatalogImage(enemyImageAsset.value, stringValue('battlerName'));
   if (!image) return;
   drawCenteredImage(context, image, { sx: 0, sy: 0, sw: image.naturalWidth, sh: image.naturalHeight });
 }

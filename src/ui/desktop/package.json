@@ -6,6 +6,9 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "test": "node scripts/run-tests.mjs",
+    "test:node": "node scripts/run-tests.mjs node",
+    "test:vitest": "node scripts/run-tests.mjs vitest",
     "build": "vue-tsc -b && vite build",
     "prepare:electron-runtime": "install-electron",
     "prepackage": "npm run prepare:electron-runtime && npm --prefix ../../.. run build:opencode-runtime",
@@ -36,9 +39,11 @@
     "electron": "^42.3.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.0",
+    "tsx": "^4.23.1",
     "typescript": "~6.0.2",
     "vite": "^8.0.12",
     "vite-plugin-electron": "^0.29.1",
+    "vitest": "^4.1.10",
     "vue-tsc": "^3.2.8"
   }
 }

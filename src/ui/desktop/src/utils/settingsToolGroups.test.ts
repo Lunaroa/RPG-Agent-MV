@@ -32,7 +32,7 @@ describe('settingsToolGroups', () => {
       tool('Read', 'core'),
       tool('Agent', 'subagent'),
       tool('Custom', 'zzz'),
-    ])
+    ], 'zh-CN')
 
     assert.deepEqual(groups.map((group) => group.layer), ['core', 'network', 'subagent', 'zzz'])
     assert.equal(groups[0].label, '核心文件工具')

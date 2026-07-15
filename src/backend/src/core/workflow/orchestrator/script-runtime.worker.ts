@@ -4,6 +4,9 @@
 import vm from "node:vm";
 import { parentPort } from "node:worker_threads";
 
+import type { ProductLanguage } from "../../../../../contract/i18n.ts";
+import { backendText } from "../../i18n/messages.ts";
+
 const WORKFLOW_ABORTED = "WorkflowAbortedError";
 
 type WorkerInbound =
@@ -13,6 +16,7 @@ type WorkerInbound =
       argsJson?: string;
       project: string;
       syncTimeoutMs: number;
+      productLanguage: ProductLanguage;
     }
   | { type: "abort" };
 
@@ -228,7 +232,9 @@ ${message.script}
   } catch (error) {
     parentPort!.postMessage({
       type: "fail",
-      message: `编排脚本编译/启动失败：${error instanceof Error ? error.message : String(error)}`,
+      message: backendText("workflow.script.compileFailed", message.productLanguage, {
+        reason: error instanceof Error ? error.message : String(error),
+      }),
     } satisfies WorkerOutbound);
     return;
   }

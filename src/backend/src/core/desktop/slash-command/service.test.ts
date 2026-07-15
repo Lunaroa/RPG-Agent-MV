@@ -33,13 +33,14 @@ function stubBootstrap() {
           label: "Provider 1",
           protocol: "openai-compatible" as const,
           baseUrl: "https://example.test",
-          credentialValue: "secret",
-          models: [{ id: "model-1", limit: { context: 1000 } }],
+          credentialValue: "<API_KEY>",
+          models: [{ id: "model-1", label: "Model 1", limit: { context: 1000 } }],
         },
       },
+      profiles: {},
     }),
     materializeEnv: () => ({
-      env: { OPENAI_API_KEY: "secret" },
+      env: { OPENAI_API_KEY: "<API_KEY>" },
       envKeys: ["OPENAI_API_KEY"],
       blocker: null,
     }),
@@ -120,8 +121,8 @@ test("getContextUsage rebuilds bootstrap after run context is cleared", async ()
     stopSession: () => {},
     resolveBootstrap: stubBootstrap(),
     fetchMessages: async (input) => {
-      assert.equal(input.env.OPENAI_API_KEY, "secret");
-      assert.equal(input.config.model, "provider-1/model-1");
+      assert.equal(input.env?.OPENAI_API_KEY, "<API_KEY>");
+      assert.equal(input.config?.model, "provider-1/model-1");
       sawRebuiltEnv = true;
       return [
         {

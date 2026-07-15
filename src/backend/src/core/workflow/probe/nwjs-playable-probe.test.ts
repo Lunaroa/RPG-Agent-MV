@@ -125,7 +125,7 @@ test('captures exceptions handled by the RPG Maker scene manager', () => {
     SceneManager: {
       _scene: null,
       goto: () => undefined,
-      catchException: () => {
+      catchException: (_error?: unknown) => {
         originalHandlerCalls += 1;
       },
     },

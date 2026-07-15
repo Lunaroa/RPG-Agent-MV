@@ -61,7 +61,8 @@ test("RmmvMemory read-profile and write-profile round-trip the shared author pro
     assert.deepEqual(written.data, { bytes: Buffer.byteLength("Prefers terse dialogue.", "utf8") });
 
     const read = runRmmvMemory({ ...base, action: "read-profile" });
-    assert.equal(read.data.content, "Prefers terse dialogue.\n");
+    const readData = read.data as { content?: unknown };
+    assert.equal(readData.content, "Prefers terse dialogue.\n");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

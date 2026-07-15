@@ -78,7 +78,22 @@ function readDocumentValue(schema: RmmvDatabaseTableSchema, raw: unknown): Recor
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error(`dbEntry database table "${schema.key}" is not an object`);
   }
-  return structuredClone(raw as Record<string, unknown>);
+  const record = raw as Record<string, unknown>;
+  if (schema.key === "types") {
+    return pickDocumentFields(record, ["elements", "skillTypes", "weaponTypes", "armorTypes", "equipTypes"]);
+  }
+  if (schema.key === "terms") {
+    const terms = record.terms;
+    if (!terms || typeof terms !== "object" || Array.isArray(terms)) {
+      throw new Error('dbEntry database table "terms" is missing System.terms');
+    }
+    return structuredClone(terms as Record<string, unknown>);
+  }
+  return structuredClone(record);
+}
+
+function pickDocumentFields(source: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
+  return Object.fromEntries(fields.map((field) => [field, structuredClone(source[field])]));
 }
 
 function schemaPayload(schema: RmmvDatabaseTableSchema): RmmvDbEntrySchema {

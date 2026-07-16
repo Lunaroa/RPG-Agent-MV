@@ -298,6 +298,7 @@ export type {
 };
 
 export interface ProjectRegistrationResult {
+  canceled?: boolean;
   project: ProjectInfo | null;
   projects: ProjectInfo[];
 }

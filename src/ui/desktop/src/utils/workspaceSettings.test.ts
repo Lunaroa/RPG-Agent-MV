@@ -17,6 +17,22 @@ describe('workspaceSettings', () => {
     expect(settings.layout?.leftDockTilesOpen).toBe(true)
     expect(settings.layout?.leftDockPaletteHeight).toBeUndefined()
     expect(settings.layout?.agentPanelWidth).toBe(480)
+    expect(settings.suppressProjectCompatibilityWarnings).toBe(false)
+  })
+
+  it('persists the project compatibility warning preference without resetting other settings', () => {
+    const merged = mergeWorkspaceSettings(
+      { lastProjectPath: 'projects/Project' },
+      { suppressProjectCompatibilityWarnings: true },
+    )
+
+    expect(merged.lastProjectPath).toBe('projects/Project')
+    expect(merged.suppressProjectCompatibilityWarnings).toBe(true)
+  })
+
+  it('migrates the previous version-warning preference to compatibility warnings', () => {
+    const settings = normalizeWorkspaceSettings({ suppressUnsupportedMZVersionWarnings: true })
+    expect(settings.suppressProjectCompatibilityWarnings).toBe(true)
   })
 
   it('computes max palette height from workbench height', () => {

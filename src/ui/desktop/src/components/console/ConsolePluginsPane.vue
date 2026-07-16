@@ -247,10 +247,11 @@ async function applyPluginStaging() {
         return;
       }
     }
-    await mapsApi.applyProjectStaging(
+    const result = await mapsApi.applyProjectStaging(
       projectStore.currentProject,
       summary.operations.map((operation) => operation.operationId),
-    );
+    ) as { canceled?: boolean };
+    if (result?.canceled) return;
     await loadPlugins();
     actionMessage.value = t('plugins.applySuccess');
   } catch (applyError) {

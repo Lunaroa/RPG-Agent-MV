@@ -1067,10 +1067,11 @@ async function applyStaging() {
     const status = await mapsApi.projectStaging(projectStore.currentProject);
     const summary = parseProjectStagingSummary(status);
     if (!await confirmAgentOperations(summary)) return;
-    await mapsApi.applyProjectStaging(
+    const result = await mapsApi.applyProjectStaging(
       projectStore.currentProject,
       summary.operations.map((operation) => operation.operationId),
-    );
+    ) as { canceled?: boolean };
+    if (result?.canceled) return;
     if (selectedMapId.value != null) await reloadCurrentMap();
     await refreshStagingStatus();
     ElMessage.success(t('editor.staging.applied'));
@@ -1096,7 +1097,8 @@ async function discardStaging() {
 async function applyOneMap(mapId: number) {
   busy.value = true;
   try {
-    await mapsApi.applyMapStaging(mapId, projectStore.currentProject);
+    const result = await mapsApi.applyMapStaging(mapId, projectStore.currentProject) as { canceled?: boolean };
+    if (result?.canceled) return;
     if (selectedMapId.value === mapId) await reloadCurrentMap();
     await loadTree();
     ElMessage.success(t('editor.staging.mapApplied', { mapId }));

@@ -131,6 +131,63 @@ function stagingOperationIds(status: unknown): string[] {
   ));
 }
 
+async function showProjectCompatibilityWarning(
+  parent: BrowserWindow | undefined,
+  warning: {
+    detectedVersion: string;
+    supportedVersion: string;
+    versionMismatch: boolean;
+    encryptedResources: boolean;
+    encryptedImages: boolean;
+    encryptedAudio: boolean;
+  },
+  action: 'import' | 'write',
+): Promise<{ confirmed: boolean; suppressFutureWarnings: boolean }> {
+  if (getWorkspaceSettings().suppressProjectCompatibilityWarnings) {
+    return { confirmed: true, suppressFutureWarnings: true };
+  }
+  const language = currentProductLanguage();
+  const details: string[] = [];
+  if (warning.versionMismatch) {
+    details.push(electronText(language, 'projects.compatibilityVersionDetail', warning));
+  }
+  if (warning.encryptedResources) {
+    const scopeKey = warning.encryptedImages && warning.encryptedAudio
+      ? 'projects.compatibilityEncryptedImagesAudio'
+      : warning.encryptedImages
+        ? 'projects.compatibilityEncryptedImages'
+        : 'projects.compatibilityEncryptedAudio';
+    details.push(electronText(language, 'projects.compatibilityEncryptionDetail', {
+      scope: electronText(language, scopeKey),
+    }));
+  }
+  details.push(electronText(
+    language,
+    action === 'import' ? 'projects.compatibilityImportDetail' : 'projects.compatibilityWriteDetail',
+  ));
+  const result = await dialog.showMessageBox(parent, {
+    type: 'warning',
+    title: electronText(language, 'projects.compatibilityWarningTitle'),
+    message: electronText(language, 'projects.compatibilityWarningMessage'),
+    detail: details.join('\n\n'),
+    buttons: [
+      electronText(
+        language,
+        action === 'import' ? 'projects.compatibilityContinueImport' : 'projects.compatibilityContinueWrite',
+      ),
+      electronText(language, 'projects.compatibilityCancel'),
+    ],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    checkboxLabel: electronText(language, 'projects.compatibilitySuppress'),
+    checkboxChecked: false,
+  });
+  const confirmed = result.response === 0;
+  const suppressFutureWarnings = confirmed && result.checkboxChecked;
+  return { confirmed, suppressFutureWarnings };
+}
+
 export async function confirmProjectStagingBeforeClose(workflowRoot: string, win: BrowserWindow): Promise<boolean> {
   if (!desktop || win.isDestroyed()) return true;
   const lastProjectPath = String(getWorkspaceSettings().lastProjectPath || '').trim();
@@ -174,6 +231,14 @@ export async function confirmProjectStagingBeforeClose(workflowRoot: string, win
 
   try {
     if (result.response === 0) {
+      const compatibilityWarning = desktop.project.getProjectCompatibilityWarning(projectPath);
+      if (compatibilityWarning?.versionMismatch) {
+        const confirmation = await showProjectCompatibilityWarning(win, compatibilityWarning, 'write');
+        if (!confirmation.confirmed) return false;
+        if (confirmation.suppressFutureWarnings) {
+          patchWorkspaceSettings({ suppressProjectCompatibilityWarnings: true });
+        }
+      }
       await desktop.staging.applyProjectStaging(workflowRoot, projectPath, {
         expectedOperationIds: operationIds,
         validate: () => desktop.projectManagement.preflightProjectManagedStagingApply(workflowRoot, projectPath),
@@ -943,6 +1008,27 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   registerMapIpcHandlers(ipcMain, workflowRoot, desktop, {
     productLanguage: currentProductLanguage,
     withProductLanguage: withBackendProductLanguage,
+    shouldSuppressProjectCompatibilityWarnings: () => Boolean(
+      getWorkspaceSettings().suppressProjectCompatibilityWarnings,
+    ),
+    suppressProjectCompatibilityWarnings: () => {
+      patchWorkspaceSettings({ suppressProjectCompatibilityWarnings: true });
+    },
+    confirmProjectCompatibility: async (
+      event: Electron.IpcMainInvokeEvent,
+      warning: {
+        detectedVersion: string;
+        supportedVersion: string;
+        versionMismatch: boolean;
+        encryptedResources: boolean;
+        encryptedImages: boolean;
+        encryptedAudio: boolean;
+      },
+      action: 'import' | 'write',
+    ) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+      return showProjectCompatibilityWarning(parent, warning, action);
+    },
     selectProjectDirectory: async (event: Electron.IpcMainInvokeEvent) => {
       const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
       const result = await dialog.showOpenDialog(parent, {

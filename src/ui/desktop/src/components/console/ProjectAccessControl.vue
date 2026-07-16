@@ -52,6 +52,10 @@ const errorText = computed(() =>
   ),
 );
 const selectedProjectLabel = computed(() => projectStore.currentProjectInfo?.name || t('projectAccess.selectProject'));
+const selectedEngineLabel = computed(() => {
+  const engine = projectStore.currentProjectInfo?.engine;
+  return engine === 'rpg-maker-mz' ? 'MZ' : engine === 'rpg-maker-mv' ? 'MV' : '';
+});
 const contextMenuStyle = computed(() => ({
   left: `${projectContext.value.x}px`,
   top: `${projectContext.value.y}px`,
@@ -171,7 +175,10 @@ onBeforeUnmount(() => {
           :aria-expanded="dropdownOpen"
           @click="toggleDropdown"
         >
-          <span>{{ selectedProjectLabel }}</span>
+          <span class="project-trigger-name">
+            <span class="project-trigger-label">{{ selectedProjectLabel }}</span>
+            <span v-if="selectedEngineLabel" class="engine-badge">{{ selectedEngineLabel }}</span>
+          </span>
           <i class="project-trigger-arrow" aria-hidden="true"></i>
         </button>
 
@@ -265,11 +272,31 @@ label {
   cursor: pointer;
 }
 
-.project-trigger span {
+.project-trigger-name {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-trigger-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.engine-badge {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  border-radius: 4px;
+  color: var(--console-text-faint, #8b8173);
+  font-family: var(--app-font-mono);
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: .04em;
 }
 
 .project-trigger.empty {

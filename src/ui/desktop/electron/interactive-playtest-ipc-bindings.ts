@@ -1,5 +1,6 @@
 import type {
   InteractiveBattleTestBattler,
+  InteractiveParticleAnimationPreview,
   InteractivePlaytestMode,
   InteractivePlaytestResult,
 } from '../../../contract/types.ts';
@@ -28,6 +29,7 @@ interface InteractivePlaytestServiceLike {
       battlers?: InteractiveBattleTestBattler[];
       battleback1Name?: string;
       battleback2Name?: string;
+      animationPreview?: InteractiveParticleAnimationPreview;
     },
   ): Promise<InteractivePlaytestResult>;
   current(): InteractivePlaytestResult;
@@ -46,11 +48,12 @@ export function registerInteractivePlaytestIpcHandlers(
   service: InteractivePlaytestServiceLike,
   dependencies: InteractivePlaytestIpcDependencies,
 ): void {
-  ipc.handle('playtest:start', async (_event, request?: Record<string, unknown>) => {
+  ipc.handle('playtest:start', async (event, request?: Record<string, unknown>) => {
     const body = request && typeof request === 'object' ? request : {};
     assertKnownStartFields(body);
-    const mode = body.mode === 'project' || body.mode === 'battle_test' ? body.mode : null;
-    if (!mode) throw new Error('playtest:start mode must be project or battle_test.');
+    const mode = body.mode === 'project' || body.mode === 'battle_test' || body.mode === 'particle_preview' ? body.mode : null;
+    if (!mode) throw new Error('playtest:start mode must be project, battle_test, or particle_preview.');
+    assertModeFields(body, mode);
     const requestedProject = typeof body.project === 'string' && body.project.trim()
       ? body.project.trim()
       : dependencies.getLastProject().trim();
@@ -67,12 +70,18 @@ export function registerInteractivePlaytestIpcHandlers(
     };
     if (mode === 'project') {
       if (confirmedStagingHash) options.confirmedStagingHash = confirmedStagingHash;
-    } else {
+    } else if (mode === 'battle_test') {
       if (confirmedStagingHash) throw new Error('battle_test does not accept confirmedStagingHash.');
       options.troopId = positiveInteger(body.troopId, 'battle_test troopId');
       options.battlers = parseBattlers(body.battlers);
       options.battleback1Name = stringField(body.battleback1Name, 'battleback1Name');
       options.battleback2Name = stringField(body.battleback2Name, 'battleback2Name');
+    } else {
+      if (confirmedStagingHash) throw new Error('particle_preview does not accept confirmedStagingHash.');
+      if (!body.animationPreview || typeof body.animationPreview !== 'object' || Array.isArray(body.animationPreview)) {
+        throw new Error('particle_preview animationPreview must be an object.');
+      }
+      options.animationPreview = body.animationPreview as unknown as InteractiveParticleAnimationPreview;
     }
     return toIpcPayload(await service.start(project, options));
   });
@@ -93,11 +102,27 @@ const START_FIELDS = new Set([
   'battlers',
   'battleback1Name',
   'battleback2Name',
+  'animationPreview',
 ]);
 
 function assertKnownStartFields(body: Record<string, unknown>): void {
   const unknown = Object.keys(body).filter((key) => !START_FIELDS.has(key));
   if (unknown.length) throw new Error(`playtest:start does not accept field(s): ${unknown.join(', ')}`);
+}
+
+function assertModeFields(body: Record<string, unknown>, mode: InteractivePlaytestMode): void {
+  const present = (field: string) => body[field] !== undefined;
+  const battleFields = ['troopId', 'battlers', 'battleback1Name', 'battleback2Name'];
+  if (mode !== 'project' && present('confirmedStagingHash')) {
+    throw new Error(`${mode} does not accept confirmedStagingHash.`);
+  }
+  if (mode !== 'battle_test') {
+    const invalid = battleFields.filter(present);
+    if (invalid.length) throw new Error(`${mode} does not accept Battle Test field(s): ${invalid.join(', ')}.`);
+  }
+  if (mode !== 'particle_preview' && present('animationPreview')) {
+    throw new Error(`${mode} does not accept animationPreview.`);
+  }
 }
 
 function positiveInteger(value: unknown, label: string): number {

@@ -1,20 +1,14 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { projects as projectsApi, type ProjectRegistrationResult, type ProjectRemovalResult } from '../api/client';
+import type { ProjectInfo } from '@contract/types';
 import { resolveStoredProjectPath, type ProjectInfoLike } from '../utils/workspaceSettings';
 import { normalizeProductLanguage } from '../i18n/messages';
 import { projectStoreText } from './projectStoreLocalization';
 import { useSettingsStore } from './settings';
 import { useWorkspaceStore } from './workspace';
 
-export interface ProjectInfo {
-  name: string;
-  path: string;
-  isDefault: boolean;
-  source?: 'workspace' | 'registered';
-  dataDir?: string;
-  layout?: 'www-data' | 'data';
-}
+export type { ProjectInfo } from '@contract/types';
 
 export const useProjectStore = defineStore('project', () => {
   const projects = ref<ProjectInfo[]>([]);

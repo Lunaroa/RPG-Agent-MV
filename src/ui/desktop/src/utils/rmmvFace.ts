@@ -17,20 +17,27 @@ export function normalizeMvFaceIndex(value: unknown): number {
   return Math.max(0, Math.min(MV_FACE_MAX_INDEX, Math.floor(index)));
 }
 
-export function mvFaceSourceRect(faceIndex: unknown): MvFaceSourceRect {
+export function mvFaceSourceRect(faceIndex: unknown, faceSize = MV_FACE_WIDTH): MvFaceSourceRect {
   const index = normalizeMvFaceIndex(faceIndex);
+  const size = normalizeFaceSize(faceSize);
   return {
-    sx: (index % MV_FACE_COLUMNS) * MV_FACE_WIDTH,
-    sy: Math.floor(index / MV_FACE_COLUMNS) * MV_FACE_HEIGHT,
-    sw: MV_FACE_WIDTH,
-    sh: MV_FACE_HEIGHT,
+    sx: (index % MV_FACE_COLUMNS) * size,
+    sy: Math.floor(index / MV_FACE_COLUMNS) * size,
+    sw: size,
+    sh: size,
   };
 }
 
-export function mvFaceIndexFromCanvasPoint(x: number, y: number): number {
+export function mvFaceIndexFromCanvasPoint(x: number, y: number, faceSize = MV_FACE_WIDTH): number {
   const safeX = Number.isFinite(x) ? x : 0;
   const safeY = Number.isFinite(y) ? y : 0;
-  const column = Math.max(0, Math.min(MV_FACE_COLUMNS - 1, Math.floor(safeX / MV_FACE_WIDTH)));
-  const row = Math.max(0, Math.min(MV_FACE_ROWS - 1, Math.floor(safeY / MV_FACE_HEIGHT)));
+  const size = normalizeFaceSize(faceSize);
+  const column = Math.max(0, Math.min(MV_FACE_COLUMNS - 1, Math.floor(safeX / size)));
+  const row = Math.max(0, Math.min(MV_FACE_ROWS - 1, Math.floor(safeY / size)));
   return row * MV_FACE_COLUMNS + column;
+}
+
+export function normalizeFaceSize(value: unknown): number {
+  const size = Number(value);
+  return Number.isInteger(size) && size > 0 ? size : MV_FACE_WIDTH;
 }

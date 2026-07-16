@@ -14,6 +14,8 @@ import { useI18n } from '../../i18n';
 import {
   animationFramesSummary,
   appendAnimationTiming,
+  appendMzAnimationFlashTiming,
+  appendMzAnimationSoundTiming,
   MV_ANIMATION_FLASH_SCOPES,
   MV_TROOP_PAGE_SPANS,
   appendStringListItem,
@@ -26,16 +28,26 @@ import {
   isMvStringListField,
   MV_TERMS_LIST_PATHS,
   normalizeAnimationTimings,
+  normalizeMzAnimationFlashTimings,
+  normalizeMzAnimationRotation,
+  normalizeMzAnimationSoundTimings,
   normalizeEnemyAction,
   normalizeTroopPageConditions,
   normalizeTroopMembers,
   normalizeStringList,
   normalizeTermsArray,
   removeAnimationTiming as removeAnimationTimingValue,
+  removeMzAnimationFlashTiming,
+  removeMzAnimationSoundTiming,
   removeStringListItem,
   setAnimationTimingFlashColor,
   setAnimationTimingSeValue,
   setAnimationTimingValue,
+  setMzAnimationFlashTimingColor,
+  setMzAnimationFlashTimingValue,
+  setMzAnimationRotationAxis,
+  setMzAnimationSoundTimingFrame,
+  setMzAnimationSoundTimingSeValue,
   setEnemyActionConditionParameter,
   setEnemyActionConditionType,
   setStringListItem,
@@ -90,7 +102,7 @@ import {
 
 type DbRecord = Record<string, unknown>;
 type DbArrayRecord = Record<string, unknown>[];
-type CatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'assets' | 'battle'>;
+type CatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'engine' | 'tileSize' | 'screenWidth' | 'screenHeight' | 'faceSize' | 'iconSize' | 'assets' | 'battle'>;
 type ImageAssetKind = keyof EditorProjectCatalog['assets'];
 type ImagePickerMode = 'plain' | 'face' | 'character' | 'icon';
 type ImageSelection = { name: string; index: number };
@@ -116,6 +128,7 @@ const emit = defineEmits<{
   'update:battleback1Name': [value: string];
   'update:battleback2Name': [value: string];
   'requestBattleTest': [];
+  'requestParticlePreview': [];
 }>();
 const { language, t } = useI18n();
 
@@ -137,13 +150,31 @@ const record = computed<DbRecord>(() => (
     ? props.modelValue as DbRecord
     : {}
 ));
+const MZ_ANIMATION_FIELDS = new Set([
+  'displayType', 'effectName', 'scale', 'speed', 'flashTimings', 'soundTimings',
+  'offsetX', 'offsetY', 'rotation', 'alignBottom',
+]);
+const MV_ANIMATION_FIELDS = new Set([
+  'animation1Name', 'animation1Hue', 'animation2Name', 'animation2Hue', 'position', 'frames', 'timings',
+]);
+const PARTICLE_ROTATION_AXES = ['x', 'y', 'z'] as const;
+const isMZParticleAnimation = computed(() => props.group === 'Animations'
+  && props.catalog?.engine === 'rpg-maker-mz'
+  && (Object.hasOwn(record.value, 'effectName') || Object.hasOwn(record.value, 'displayType')));
+const projectScreenWidth = computed(() => Math.max(1, Number(props.catalog?.screenWidth) || 816));
+const projectScreenHeight = computed(() => Math.max(1, Number(props.catalog?.screenHeight) || 624));
 
 const groupLabel = computed(() => {
   const key = String(props.group || '');
   return key ? databaseGroupLabel(key, language.value) : String(props.group || t('db.title'));
 });
 const schemaFields = computed(() => {
-  const fields = props.schema?.coreFields || [];
+  let fields = props.schema?.coreFields || [];
+  if (props.group === 'Animations' && props.catalog?.engine === 'rpg-maker-mz') {
+    fields = fields.filter((field) => isMZParticleAnimation.value
+      ? !MV_ANIMATION_FIELDS.has(field.path)
+      : !MZ_ANIMATION_FIELDS.has(field.path));
+  }
   if (!props.focusField) return fields;
   return fields.filter((field) => field.path === props.focusField);
 });
@@ -496,6 +527,11 @@ function primitiveOptions(field: RmmvDatabaseFieldSchema): SelectOption[] {
     case 'motion': return localizedOptions(STATE_MOTION_OPTIONS);
     case 'overlay': return localizedOptions(STATE_OVERLAY_OPTIONS);
     case 'position': return localizedOptions(ANIMATION_POSITION_OPTIONS);
+    case 'displayType': return isMZParticleAnimation.value ? [
+      { value: 0, label: t('db.particleDisplayEach') },
+      { value: 1, label: t('db.particleDisplayTargets') },
+      { value: 2, label: t('db.particleDisplayScreen') },
+    ] : [];
     case 'mode': return localizedOptions(TILESET_MODE_OPTIONS);
     default:
       return [];
@@ -936,7 +972,7 @@ async function paintFacePreview(): Promise<void> {
   if (!context) return;
   const image = await loadCatalogImage('faces', stringValue('faceName'));
   if (!image) return;
-  drawCenteredImage(context, image, mvFaceSourceRect(numberPathValue('faceIndex')));
+  drawCenteredImage(context, image, mvFaceSourceRect(numberPathValue('faceIndex'), props.catalog?.faceSize));
 }
 
 async function paintCharacterPreview(): Promise<void> {
@@ -1101,7 +1137,7 @@ function updateTroopMember(index: number, key: 'enemyId' | 'x' | 'y' | 'hidden',
       ? Boolean(value)
       : key === 'enemyId'
         ? Math.max(1, Math.trunc(Number(value) || 1))
-        : Math.min(key === 'x' ? 816 : 624, Math.max(0, Math.trunc(Number(value) || 0))),
+        : Math.min(key === 'x' ? projectScreenWidth.value : projectScreenHeight.value, Math.max(0, Math.trunc(Number(value) || 0))),
   };
   writePath('members', members);
 }
@@ -1138,6 +1174,59 @@ function updateAnimationTimingSe(path: string, index: number, key: Parameters<ty
 
 function updateAnimationTimingFlash(path: string, index: number, colorIndex: number, value: unknown): void {
   writePath(path, setAnimationTimingFlashColor(readPath(path), index, colorIndex, value));
+}
+
+function particleRotation() {
+  return normalizeMzAnimationRotation(readPath('rotation'));
+}
+
+function updateParticleRotation(axis: 'x' | 'y' | 'z', value: unknown): void {
+  writePath('rotation', setMzAnimationRotationAxis(readPath('rotation'), axis, value));
+}
+
+function particleFlashTimings(path: string) {
+  return normalizeMzAnimationFlashTimings(readPath(path));
+}
+
+function addParticleFlashTiming(path: string): void {
+  writePath(path, appendMzAnimationFlashTiming(readPath(path)));
+}
+
+function deleteParticleFlashTiming(path: string, index: number): void {
+  writePath(path, removeMzAnimationFlashTiming(readPath(path), index));
+}
+
+function updateParticleFlashTiming(path: string, index: number, key: 'frame' | 'duration', value: unknown): void {
+  writePath(path, setMzAnimationFlashTimingValue(readPath(path), index, key, value));
+}
+
+function updateParticleFlashColor(path: string, index: number, colorIndex: number, value: unknown): void {
+  writePath(path, setMzAnimationFlashTimingColor(readPath(path), index, colorIndex, value));
+}
+
+function particleSoundTimings(path: string) {
+  return normalizeMzAnimationSoundTimings(readPath(path));
+}
+
+function addParticleSoundTiming(path: string): void {
+  writePath(path, appendMzAnimationSoundTiming(readPath(path)));
+}
+
+function deleteParticleSoundTiming(path: string, index: number): void {
+  writePath(path, removeMzAnimationSoundTiming(readPath(path), index));
+}
+
+function updateParticleSoundFrame(path: string, index: number, value: unknown): void {
+  writePath(path, setMzAnimationSoundTimingFrame(readPath(path), index, value));
+}
+
+function updateParticleSoundSe(
+  path: string,
+  index: number,
+  key: 'name' | 'volume' | 'pitch' | 'pan',
+  value: unknown,
+): void {
+  writePath(path, setMzAnimationSoundTimingSeValue(readPath(path), index, key, value));
 }
 
 function updateSound(index: number, key: string, value: unknown): void {
@@ -1561,7 +1650,7 @@ function updateSound(index: number, key: string, value: unknown): void {
               <button type="button" :disabled="!arrayRecords(field.path).length" @click="clearTroopMembers">{{ t('db.clearAll') }}</button>
               <button type="button" :disabled="!arrayRecords(field.path).length" @click="alignCurrentTroop">{{ t('db.alignTroop') }}</button>
               <button type="button" :disabled="!arrayRecords(field.path).length" @click="autoNameCurrentTroop">{{ t('db.autoNameTroop') }}</button>
-              <button type="button" class="battle-test-button" :disabled="arrayRecords(field.path).length > 8" @click="emit('requestBattleTest')">{{ t('db.battleTest') }}</button>
+              <button type="button" class="battle-test-button" data-ui-id="database-battle-test-open" :disabled="arrayRecords(field.path).length > 8" @click="emit('requestBattleTest')">{{ t('db.battleTest') }}</button>
             </div>
             <div class="battleback-controls">
               <label>
@@ -1613,8 +1702,8 @@ function updateSound(index: number, key: string, value: unknown): void {
                   <option v-for="option in asOptions(catalogEntries('enemies'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
-              <label><span>X</span><input type="number" min="0" max="816" :value="numberValue(arrayRecords(field.path)[selectedTroopMemberIndex], 'x')" @input="updateTroopMember(selectedTroopMemberIndex, 'x', ($event.target as HTMLInputElement).value)" /></label>
-              <label><span>Y</span><input type="number" min="0" max="624" :value="numberValue(arrayRecords(field.path)[selectedTroopMemberIndex], 'y')" @input="updateTroopMember(selectedTroopMemberIndex, 'y', ($event.target as HTMLInputElement).value)" /></label>
+              <label><span>X</span><input type="number" min="0" :max="projectScreenWidth" :value="numberValue(arrayRecords(field.path)[selectedTroopMemberIndex], 'x')" @input="updateTroopMember(selectedTroopMemberIndex, 'x', ($event.target as HTMLInputElement).value)" /></label>
+              <label><span>Y</span><input type="number" min="0" :max="projectScreenHeight" :value="numberValue(arrayRecords(field.path)[selectedTroopMemberIndex], 'y')" @input="updateTroopMember(selectedTroopMemberIndex, 'y', ($event.target as HTMLInputElement).value)" /></label>
               <label class="inline-check"><input type="checkbox" :checked="boolValue(arrayRecords(field.path)[selectedTroopMemberIndex], 'hidden')" @change="updateTroopMember(selectedTroopMemberIndex, 'hidden', ($event.target as HTMLInputElement).checked)" /> {{ t('db.hidden') }}</label>
               <button type="button" class="danger" @click="removeTroopMember(selectedTroopMemberIndex)">{{ t('cmdList.delete') }}</button>
             </div>
@@ -2001,6 +2090,73 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
             </section>
 
+          <section v-else-if="field.path === 'rotation' && isMZParticleAnimation" class="field full complex-editor particle-rotation-editor">
+            <div class="complex-title">
+              <span>{{ fieldLabel(field) }}</span>
+              <small>{{ t('db.particleRotationHint') }}</small>
+            </div>
+            <div class="complex-row particle-rotation-row">
+              <label v-for="axis in PARTICLE_ROTATION_AXES" :key="`particle-rotation-${axis}`">
+                <span>{{ axis.toUpperCase() }}</span>
+                <input
+                  type="number"
+                  min="-360"
+                  max="360"
+                  :value="particleRotation()[axis]"
+                  @input="updateParticleRotation(axis, Number(($event.target as HTMLInputElement).value))"
+                />
+              </label>
+            </div>
+          </section>
+
+          <section v-else-if="field.path === 'flashTimings' && isMZParticleAnimation" class="field full complex-editor particle-timing-editor">
+            <div class="complex-title">
+              <span>{{ fieldLabel(field) }}</span>
+              <small>{{ t('db.timingCount', { count: particleFlashTimings(field.path).length }) }}</small>
+              <button type="button" @click="addParticleFlashTiming(field.path)">{{ t('db.addTiming') }}</button>
+            </div>
+            <div v-if="!particleFlashTimings(field.path).length" class="empty-note">{{ t('db.noTimings') }}</div>
+            <div
+              v-for="(timing, index) in particleFlashTimings(field.path)"
+              :key="`particle-flash-${index}`"
+              class="complex-row particle-flash-row"
+            >
+              <label><span>{{ t('db.frame') }}</span><input type="number" min="0" max="99999" :value="timing.frame" @input="updateParticleFlashTiming(field.path, index, 'frame', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('db.duration') }}</span><input type="number" min="1" max="99999" :value="timing.duration" @input="updateParticleFlashTiming(field.path, index, 'duration', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label v-for="(label, colorIndex) in ['R', 'G', 'B', 'A']" :key="`particle-flash-${index}-${label}`">
+                <span>{{ label }}</span>
+                <input type="number" min="0" max="255" :value="timing.color[colorIndex]" @input="updateParticleFlashColor(field.path, index, colorIndex, Number(($event.target as HTMLInputElement).value))" />
+              </label>
+              <button type="button" class="danger" @click="deleteParticleFlashTiming(field.path, index)">{{ t('cmdList.delete') }}</button>
+            </div>
+          </section>
+
+          <section v-else-if="field.path === 'soundTimings' && isMZParticleAnimation" class="field full complex-editor particle-timing-editor">
+            <div class="complex-title">
+              <span>{{ fieldLabel(field) }}</span>
+              <small>{{ t('db.timingCount', { count: particleSoundTimings(field.path).length }) }}</small>
+              <button type="button" @click="addParticleSoundTiming(field.path)">{{ t('db.addTiming') }}</button>
+            </div>
+            <div v-if="!particleSoundTimings(field.path).length" class="empty-note">{{ t('db.noTimings') }}</div>
+            <div
+              v-for="(timing, index) in particleSoundTimings(field.path)"
+              :key="`particle-sound-${index}`"
+              class="complex-row particle-sound-row"
+            >
+              <label><span>{{ t('db.frame') }}</span><input type="number" min="0" max="99999" :value="timing.frame" @input="updateParticleSoundFrame(field.path, index, Number(($event.target as HTMLInputElement).value))" /></label>
+              <label>
+                <span>SE</span>
+                <select :value="timing.se.name" @change="updateParticleSoundSe(field.path, index, 'name', ($event.target as HTMLSelectElement).value)">
+                  <option v-for="option in audioAssetOptions('se')" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+              </label>
+              <label><span>{{ t('moveRoute.volume') }}</span><input type="number" min="0" max="100" :value="timing.se.volume" @input="updateParticleSoundSe(field.path, index, 'volume', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pitch') }}</span><input type="number" min="50" max="150" :value="timing.se.pitch" @input="updateParticleSoundSe(field.path, index, 'pitch', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>{{ t('moveRoute.pan') }}</span><input type="number" min="-100" max="100" :value="timing.se.pan" @input="updateParticleSoundSe(field.path, index, 'pan', Number(($event.target as HTMLInputElement).value))" /></label>
+              <button type="button" class="danger" @click="deleteParticleSoundTiming(field.path, index)">{{ t('cmdList.delete') }}</button>
+            </div>
+          </section>
+
           <label v-else-if="field.path === 'iconIndex'" class="field">
             <span>{{ fieldLabel(field) }}</span>
             <button type="button" class="image-picker-inline icon-pick-btn" @click="openIconPicker">
@@ -2009,6 +2165,22 @@ function updateSound(index: number, key: string, value: unknown): void {
               <span class="icon-index-label">#{{ numberPathValue('iconIndex') }}</span>
             </button>
           </label>
+
+          <section v-else-if="field.path === 'effectName'" class="field particle-effect-field">
+            <span>{{ fieldLabel(field) }}</span>
+            <div class="particle-effect-controls">
+              <select :value="stringValue(field.path)" @change="writePath(field.path, ($event.target as HTMLSelectElement).value)">
+                <option value="">{{ t('imgPicker.none') }}</option>
+                <option v-for="asset in catalog?.assets.effects || []" :key="asset.fileName" :value="asset.name">{{ asset.name }}</option>
+              </select>
+              <button
+                type="button"
+                data-ui-id="database-particle-preview"
+                :disabled="!stringValue(field.path)"
+                @click="emit('requestParticlePreview')"
+              >{{ t('db.previewParticle') }}</button>
+            </div>
+          </section>
 
           <label v-else-if="!isComplex(field) && fieldKind(field) !== 'boolean'" class="field" :class="{ full: field.path === 'note' || field.path === 'profile' || field.path === 'description' }">
             <span>{{ fieldLabel(field) }}</span>
@@ -2646,6 +2818,16 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 .animation-cell-row { grid-template-columns: repeat(8,minmax(64px,1fr)) auto; }
 .timing-row { grid-template-columns: 70px minmax(0,1.3fr) repeat(3,76px) 100px repeat(4,62px) 70px auto; }
+.particle-rotation-row { grid-template-columns: repeat(3, minmax(90px, 1fr)); }
+.particle-flash-row { grid-template-columns: repeat(2, minmax(84px, .8fr)) repeat(4, minmax(58px, .55fr)) auto; }
+.particle-sound-row { grid-template-columns: 84px minmax(130px, 1.4fr) repeat(3, minmax(76px, .8fr)) auto; }
+.particle-effect-controls {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+.particle-effect-controls select { min-width: 0; }
 .check-grid {
   display: grid;
   grid-template-columns: repeat(3,minmax(0,1fr));

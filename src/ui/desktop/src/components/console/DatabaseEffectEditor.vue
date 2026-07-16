@@ -20,7 +20,7 @@ import {
   type MvSemanticReferences,
 } from '../../utils/rmmvDatabaseSemantics';
 
-type CatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'assets' | 'battle'>;
+type CatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'engine' | 'tileSize' | 'screenWidth' | 'screenHeight' | 'assets' | 'battle'>;
 type SelectOption = { value: number; label: string };
 
 const props = defineProps<{

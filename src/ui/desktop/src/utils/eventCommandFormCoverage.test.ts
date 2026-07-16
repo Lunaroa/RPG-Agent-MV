@@ -3,6 +3,8 @@ import { describe, test } from 'node:test';
 
 import {
   COMMAND_DEFINITIONS,
+  commandDefinition,
+  commandPages,
   commandTemplate,
   normalizeEventCommandParameters,
 } from '../composables/eventCommandCatalog.ts';
@@ -67,5 +69,36 @@ describe('event command form coverage', () => {
     assert.deepEqual(commandTemplate('comment')[0]?.parameters, ['']);
     assert.deepEqual(commandTemplate('label')[0]?.parameters, ['']);
     assert.deepEqual(commandTemplate('jumpLabel')[0]?.parameters, ['']);
+  });
+
+  test('uses MZ 1.10 parameter forms and structured plugin commands', () => {
+    const [text] = commandTemplate('text', 1, 'rpg-maker-mz');
+    assert.deepEqual(text?.parameters, ['', 0, 0, 2, '']);
+
+    const [selectItem] = commandTemplate('selectItem', 1, 'rpg-maker-mz');
+    assert.deepEqual(selectItem?.parameters, [1, 2]);
+    assert.deepEqual(
+      commandDefinition(104, 'rpg-maker-mz')?.fields[1]?.options?.map(([value]) => value),
+      [1, 2, 3, 4],
+    );
+
+    const [movePicture] = commandTemplate('movePicture', 1, 'rpg-maker-mz');
+    assert.equal(movePicture?.parameters.length, 13);
+    assert.equal(movePicture?.parameters[12], 0);
+
+    const [actorImages] = commandTemplate('actorImages', 1, 'rpg-maker-mz');
+    assert.deepEqual(actorImages?.parameters, [1, '', 0, '', 0, '']);
+    assert.equal(commandDefinition(322, 'rpg-maker-mz')?.fields[1]?.asset, 'faces');
+    assert.equal(commandDefinition(322, 'rpg-maker-mz')?.fields[3]?.asset, 'characters');
+
+    const [battleAnimation] = commandTemplate('battleAnimation', 1, 'rpg-maker-mz');
+    assert.deepEqual(battleAnimation?.parameters, [-1, 1]);
+
+    const [plugin] = commandTemplate('plugin', 1, 'rpg-maker-mz');
+    assert.equal(plugin?.code, 357);
+    assert.deepEqual(plugin?.parameters, ['', '', '', {}]);
+    const codes = commandPages('rpg-maker-mz').flatMap((groups) => groups.flatMap((group) => group.items.map((item) => item.code)));
+    assert.equal(codes.includes(356), false);
+    assert.equal(codes.includes(357), true);
   });
 });

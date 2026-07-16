@@ -92,6 +92,23 @@ export interface MvAnimationTiming extends Record<string, unknown> {
   flashDuration: number;
 }
 
+export interface MzAnimationRotation extends Record<string, unknown> {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface MzAnimationFlashTiming extends Record<string, unknown> {
+  frame: number;
+  duration: number;
+  color: number[];
+}
+
+export interface MzAnimationSoundTiming extends Record<string, unknown> {
+  frame: number;
+  se: MvAnimationSe;
+}
+
 export interface MvTroopMember extends Record<string, unknown> {
   enemyId: number;
   x: number;
@@ -564,6 +581,152 @@ export function setAnimationTimingFlashColor(value: unknown, index: number, colo
   const color = [...timings[index].flashColor];
   color[colorIndex] = clampInteger(nextValue, 0, 255, color[colorIndex]);
   timings[index] = { ...timings[index], flashColor: color };
+  return timings;
+}
+
+export function normalizeMzAnimationRotation(value: unknown): MzAnimationRotation {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  return {
+    ...source,
+    x: clampInteger(source.x, -360, 360, 0),
+    y: clampInteger(source.y, -360, 360, 0),
+    z: clampInteger(source.z, -360, 360, 0),
+  };
+}
+
+export function setMzAnimationRotationAxis(
+  value: unknown,
+  axis: 'x' | 'y' | 'z',
+  nextValue: unknown,
+): MzAnimationRotation {
+  const rotation = normalizeMzAnimationRotation(value);
+  return { ...rotation, [axis]: clampInteger(nextValue, -360, 360, rotation[axis]) };
+}
+
+export function normalizeMzAnimationFlashTiming(value: unknown): MzAnimationFlashTiming {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const sourceColor = Array.isArray(source.color) ? source.color : [];
+  return {
+    ...source,
+    frame: clampInteger(source.frame, 0, 99999, 0),
+    duration: clampInteger(source.duration, 1, 99999, 30),
+    color: Array.from({ length: 4 }, (_entry, index) => clampInteger(sourceColor[index], 0, 255, 255)),
+  };
+}
+
+export function normalizeMzAnimationFlashTimings(value: unknown): MzAnimationFlashTiming[] {
+  return Array.isArray(value) ? value.map(normalizeMzAnimationFlashTiming) : [];
+}
+
+export function appendMzAnimationFlashTiming(value: unknown): MzAnimationFlashTiming[] {
+  return [...normalizeMzAnimationFlashTimings(value), normalizeMzAnimationFlashTiming({})];
+}
+
+export function removeMzAnimationFlashTiming(value: unknown, index: number): MzAnimationFlashTiming[] {
+  const timings = normalizeMzAnimationFlashTimings(value);
+  if (index < 0 || index >= timings.length) return timings;
+  timings.splice(index, 1);
+  return timings;
+}
+
+export function setMzAnimationFlashTimingValue(
+  value: unknown,
+  index: number,
+  key: 'frame' | 'duration',
+  nextValue: unknown,
+): MzAnimationFlashTiming[] {
+  const timings = normalizeMzAnimationFlashTimings(value);
+  if (index < 0 || index >= timings.length) return timings;
+  const current = timings[index];
+  timings[index] = {
+    ...current,
+    [key]: key === 'duration'
+      ? clampInteger(nextValue, 1, 99999, current.duration)
+      : clampInteger(nextValue, 0, 99999, current.frame),
+  };
+  return timings;
+}
+
+export function setMzAnimationFlashTimingColor(
+  value: unknown,
+  index: number,
+  colorIndex: number,
+  nextValue: unknown,
+): MzAnimationFlashTiming[] {
+  const timings = normalizeMzAnimationFlashTimings(value);
+  if (index < 0 || index >= timings.length || colorIndex < 0 || colorIndex > 3) return timings;
+  const color = [...timings[index].color];
+  color[colorIndex] = clampInteger(nextValue, 0, 255, color[colorIndex]);
+  timings[index] = { ...timings[index], color };
+  return timings;
+}
+
+export function normalizeMzAnimationSoundTiming(value: unknown): MzAnimationSoundTiming {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const sourceSe = source.se && typeof source.se === 'object' && !Array.isArray(source.se)
+    ? source.se as Record<string, unknown>
+    : {};
+  return {
+    ...source,
+    frame: clampInteger(source.frame, 0, 99999, 0),
+    se: {
+      ...sourceSe,
+      name: String(sourceSe.name ?? ''),
+      volume: clampInteger(sourceSe.volume, 0, 100, 90),
+      pitch: clampInteger(sourceSe.pitch, 50, 150, 100),
+      pan: clampInteger(sourceSe.pan, -100, 100, 0),
+    },
+  };
+}
+
+export function normalizeMzAnimationSoundTimings(value: unknown): MzAnimationSoundTiming[] {
+  return Array.isArray(value) ? value.map(normalizeMzAnimationSoundTiming) : [];
+}
+
+export function appendMzAnimationSoundTiming(value: unknown): MzAnimationSoundTiming[] {
+  return [...normalizeMzAnimationSoundTimings(value), normalizeMzAnimationSoundTiming({})];
+}
+
+export function removeMzAnimationSoundTiming(value: unknown, index: number): MzAnimationSoundTiming[] {
+  const timings = normalizeMzAnimationSoundTimings(value);
+  if (index < 0 || index >= timings.length) return timings;
+  timings.splice(index, 1);
+  return timings;
+}
+
+export function setMzAnimationSoundTimingFrame(value: unknown, index: number, nextValue: unknown): MzAnimationSoundTiming[] {
+  const timings = normalizeMzAnimationSoundTimings(value);
+  if (index < 0 || index >= timings.length) return timings;
+  timings[index] = {
+    ...timings[index],
+    frame: clampInteger(nextValue, 0, 99999, timings[index].frame),
+  };
+  return timings;
+}
+
+export function setMzAnimationSoundTimingSeValue(
+  value: unknown,
+  index: number,
+  key: 'name' | 'volume' | 'pitch' | 'pan',
+  nextValue: unknown,
+): MzAnimationSoundTiming[] {
+  const timings = normalizeMzAnimationSoundTimings(value);
+  if (index < 0 || index >= timings.length) return timings;
+  const current = timings[index];
+  const next = key === 'name'
+    ? String(nextValue ?? '')
+    : key === 'volume'
+      ? clampInteger(nextValue, 0, 100, current.se.volume)
+      : key === 'pitch'
+        ? clampInteger(nextValue, 50, 150, current.se.pitch)
+        : clampInteger(nextValue, -100, 100, current.se.pan);
+  timings[index] = { ...current, se: { ...current.se, [key]: next } };
   return timings;
 }
 

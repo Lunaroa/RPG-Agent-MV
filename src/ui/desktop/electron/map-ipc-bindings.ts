@@ -32,6 +32,7 @@ export const MAP_IPC_CHANNELS = [
   'maps:importPackageFromLibrary',
   'maps:updateProperties',
   'maps:reparent',
+  'maps:move',
   'maps:duplicate',
   'maps:remove',
   'maps:postTiles',
@@ -43,6 +44,7 @@ export const MAP_IPC_CHANNELS = [
   'events:update',
   'events:remove',
   'events:duplicate',
+  'events:search',
   'eventRegistry:contracts',
   'eventRegistry:showContract',
   'eventRegistry:script',
@@ -166,6 +168,8 @@ export function registerMapIpcHandlers(
     desktop.maps.importMapPackageFromLibrary(workflowRoot, project(value), assetIds, parentMapId || 0, properties || {}));
   handle('maps:updateProperties', (_event, mapId: number, properties: Record<string, unknown>, value?: string) => desktop.maps.updateMapPropertiesDraft(workflowRoot, project(value), mapId, properties));
   handle('maps:reparent', (_event, mapId: number, parentId: number, value?: string) => desktop.maps.reparentMapDraft(workflowRoot, project(value), mapId, parentId));
+  handle('maps:move', (_event, mapId: number, targetMapId: number, position: 'before' | 'after' | 'inside', value?: string) =>
+    desktop.maps.moveMapDraft(workflowRoot, project(value), mapId, targetMapId, position));
   handle('maps:duplicate', (_event, mapId: number, parentId: number, value?: string) => desktop.maps.duplicateMapDraft(workflowRoot, project(value), mapId, parentId));
   handle('maps:remove', (_event, mapId: number, value?: string) => desktop.maps.deleteMapDraft(workflowRoot, project(value), mapId));
   handle('maps:postTiles', (_event, mapId: number, edits: unknown[], value?: string) => desktop.maps.postMapTiles(workflowRoot, project(value), mapId, edits));
@@ -185,6 +189,8 @@ export function registerMapIpcHandlers(
     invokeDesktop(() => desktop.events.removeEvent(workflowRoot, project(value), mapId, eventId)));
   handle('events:duplicate', (_event, mapId: number, eventId: number, value?: string) =>
     invokeDesktop(() => desktop.events.duplicateEvent(workflowRoot, project(value), mapId, eventId)));
+  handle('events:search', (_event, query: string, value?: string) =>
+    invokeDesktop(() => desktop.maps.searchProjectEvents(workflowRoot, project(value), query)));
   const registryOptions = (relProject?: string) => ({
     runtimeRoot: path.join(workflowRoot, 'runtime'),
     projectPath: project(relProject),

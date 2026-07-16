@@ -29,7 +29,7 @@ import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import type { EditorProjectCatalog } from '../../api/client';
 import { clone, defaultImage, imageSummary, type MvEventImage } from '../../composables/useEventEditor';
-import { TILE_ID_A5, TILE_SIZE, eventCharacterFrame, isBigCharacterName } from '../../composables/useMapRenderer';
+import { TILE_ID_A5, eventCharacterFrame, isBigCharacterName } from '../../composables/useMapRenderer';
 const props = defineProps<{ catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null> }>();
 const emit = defineEmits<{ commit: [image: MvEventImage] }>();
 const { language, t } = useI18n();
@@ -43,6 +43,7 @@ const tileCanvas = ref<HTMLCanvasElement>();
 const characterCache = new Map<string, HTMLImageElement | null>();
 const tileTab = ref('B');
 const summary = computed(() => imageSummary(draft.value, language.value));
+const tileSize = computed(() => Math.max(1, Number(props.catalog?.tileSize) || 48));
 const filteredCharacters = computed(() => (props.catalog?.assets.characters || []).filter((asset) => asset.name.toLowerCase().includes(search.value.toLowerCase())));
 const tileTabs = computed(() => [
   { label: 'A5', image: props.tilesetImages[4], base: TILE_ID_A5 },
@@ -110,13 +111,13 @@ function paintTileSheet() {
   canvas.width = entry.image.naturalWidth; canvas.height = entry.image.naturalHeight;
   const context = canvas.getContext('2d')!; context.drawImage(entry.image, 0, 0);
   context.strokeStyle = 'rgba(255,255,255,.4)';
-  for (let x = 0; x <= canvas.width / TILE_SIZE; x++) { context.beginPath(); context.moveTo(x * TILE_SIZE + .5, 0); context.lineTo(x * TILE_SIZE + .5, canvas.height); context.stroke(); }
-  for (let y = 0; y <= canvas.height / TILE_SIZE; y++) { context.beginPath(); context.moveTo(0, y * TILE_SIZE + .5); context.lineTo(canvas.width, y * TILE_SIZE + .5); context.stroke(); }
+  for (let x = 0; x <= canvas.width / tileSize.value; x++) { context.beginPath(); context.moveTo(x * tileSize.value + .5, 0); context.lineTo(x * tileSize.value + .5, canvas.height); context.stroke(); }
+  for (let y = 0; y <= canvas.height / tileSize.value; y++) { context.beginPath(); context.moveTo(0, y * tileSize.value + .5); context.lineTo(canvas.width, y * tileSize.value + .5); context.stroke(); }
 }
 function pickTileCell(event: MouseEvent) {
   const canvas = tileCanvas.value, entry = tileTabs.value.find((item) => item.label === tileTab.value);
   if (!canvas || !entry) return;
-  const rect = canvas.getBoundingClientRect(), col = Math.floor((event.clientX - rect.left) * canvas.width / rect.width / TILE_SIZE), row = Math.floor((event.clientY - rect.top) * canvas.height / rect.height / TILE_SIZE);
+  const rect = canvas.getBoundingClientRect(), col = Math.floor((event.clientX - rect.left) * canvas.width / rect.width / tileSize.value), row = Math.floor((event.clientY - rect.top) * canvas.height / rect.height / tileSize.value);
   const tileId = entry.label === 'A5' ? entry.base + row * 8 + col : entry.base + (col < 8 ? 0 : 128) + row * 8 + col % 8;
   Object.assign(draft.value, { tileId, characterName: '', characterIndex: 0, pattern: 1, direction: 2 });
 }

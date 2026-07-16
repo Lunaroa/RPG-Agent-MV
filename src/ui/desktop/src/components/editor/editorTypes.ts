@@ -1,14 +1,24 @@
-import type { MapTreeNode, RmmvAudioSettings } from '../../api/client';
+import type { EventSearchHit, MapTreeNode, RmmvAudioSettings, RmmvMapEncounter } from '../../api/client';
 
 export type EditorMode = 'map' | 'event';
 export type MapTool = 'pencil' | 'rect' | 'ellipse' | 'fill' | 'eraser';
 export type MapPaintMode = 'tile' | 'shadow' | 'region';
+export type MapLayerSelection = 'auto' | 0 | 1 | 2 | 3;
 export type TileTab = 'A' | 'B' | 'C' | 'D' | 'E';
 export type EditorStatusKind = '' | 'busy' | 'saved' | 'error';
 
 export interface TreeNode extends MapTreeNode {
   children?: TreeNode[];
 }
+
+export interface EditorEventListItem {
+  id: number;
+  name: string;
+  x: number;
+  y: number;
+}
+
+export type EditorEventSearchHit = EventSearchHit;
 
 export interface PaletteTab {
   tab: TileTab;
@@ -39,6 +49,6 @@ export interface MapPropertiesForm {
   parallaxSy: number;
   parallaxShow: boolean;
   encounterStep: number;
-  encounterListText: string;
+  encounterList: RmmvMapEncounter[];
   note: string;
 }

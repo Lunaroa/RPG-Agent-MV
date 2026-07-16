@@ -22,6 +22,10 @@ export interface ProjectInfo {
   missingRecommended?: string[];
   engine: RpgMakerEngine;
   engineVersion: string | null;
+  engineVersionSupported?: boolean;
+  encryptedResources?: boolean;
+  encryptedImages?: boolean;
+  encryptedAudio?: boolean;
   tileSize: number;
   screenWidth: number;
   screenHeight: number;
@@ -1053,6 +1057,7 @@ export interface WorkspaceEditorProjectState {
 
 export interface WorkspaceSettings {
   lastProjectPath?: string;
+  suppressProjectCompatibilityWarnings?: boolean;
   window?: WorkspaceWindowState;
   layout?: WorkspaceLayoutState;
   composer?: WorkspaceComposerState;

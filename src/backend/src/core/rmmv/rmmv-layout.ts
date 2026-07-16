@@ -22,6 +22,10 @@ export interface RmmvProjectLayout {
 export interface RmmvProjectManifest extends RmmvProjectLayout {
   engine: RpgMakerEngine;
   engineVersion: string | null;
+  engineVersionSupported: boolean;
+  encryptedResources: boolean;
+  encryptedImages: boolean;
+  encryptedAudio: boolean;
   tileSize: number;
   screenWidth: number;
   screenHeight: number;
@@ -149,7 +153,7 @@ export function inspectRmmvProject(projectRoot: string): RmmvProjectManifest {
   const system = readJsonIfPossible(path.join(layout.dataDir, 'System.json'));
   const engineInspection = inspectRpgMakerEngine(layout.projectRoot, layout.resourceRoot, system);
   if (engineInspection.engine === 'rpg-maker-mz' && layout.kind !== 'data') {
-    throw new Error('RPG Maker MZ is supported only as an editable source project with a root data folder.');
+    throw new Error('RPG Maker MZ is supported only with a root data folder.');
   }
   const engineProfile = RPG_MAKER_ENGINE_PROFILES[engineInspection.engine];
 
@@ -187,9 +191,7 @@ export function inspectRmmvProject(projectRoot: string): RmmvProjectManifest {
   for (const relative of engineProfile.resourceDirs) {
     if (!resourceDirs[relative]) missingRecommended.push(resourceRelativePath(layout, relative));
   }
-  if (engineInspection.engine === 'rpg-maker-mz') {
-    if (!projectMarker.gameRmmzProject) missingRequired.push('game.rmmzproject');
-  } else if (!projectMarker.gameRpgProject) {
+  if (engineInspection.engine === 'rpg-maker-mv' && !projectMarker.gameRpgProject) {
     missingRecommended.push('Game.rpgproject');
   }
 
@@ -204,6 +206,10 @@ export function inspectRmmvProject(projectRoot: string): RmmvProjectManifest {
     ...layout,
     engine: engineInspection.engine,
     engineVersion: engineInspection.engineVersion,
+    engineVersionSupported: engineInspection.engineVersionSupported,
+    encryptedResources: engineInspection.encryption.encryptedResources,
+    encryptedImages: engineInspection.encryption.encryptedImages,
+    encryptedAudio: engineInspection.encryption.encryptedAudio,
     tileSize: engineInspection.canvas.tileSize,
     screenWidth: engineInspection.canvas.screenWidth,
     screenHeight: engineInspection.canvas.screenHeight,

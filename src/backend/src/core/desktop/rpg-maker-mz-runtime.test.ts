@@ -39,7 +39,8 @@ describe('RPG Maker MZ project-local runtime validation', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('accepts a complete MZ 1.10.0 source project with its own NW.js runtime', () => {
+  test('accepts a complete MZ 1.10.0 runtime without requiring an editor marker', () => {
+    fs.rmSync(path.join(root, 'game.rmmzproject'));
     const runtime = resolveRpgMakerMZProjectRuntime(root);
     assert.equal(runtime.executable, path.join(root, 'Game.exe'));
     assert.equal(runtime.projectRoot, root);

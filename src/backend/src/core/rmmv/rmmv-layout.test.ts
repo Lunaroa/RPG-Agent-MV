@@ -82,7 +82,7 @@ describe('RMMV layout resolver', () => {
     }
   });
 
-  test('detects a strict RPG Maker MZ 1.10.0 source project and canvas settings', () => {
+  test('detects an RPG Maker MZ 1.10.0 project and canvas settings', () => {
     const root = tempRoot();
     try {
       writeMZProject(root, '1.10.0', 24, 1280, 720);
@@ -102,23 +102,38 @@ describe('RMMV layout resolver', () => {
     }
   });
 
-  test('rejects RPG Maker MZ projects with an unsupported core version', () => {
+  test('accepts a recognizable older RPG Maker MZ core and marks it unsupported', () => {
     const root = tempRoot();
     try {
       writeMZProject(root, '1.9.0', 48, 816, 624);
-      assert.throws(() => inspectRmmvProject(root), /1\.10\.0 core scripts are required/);
+      const manifest = inspectRmmvProject(root);
+      assert.equal(manifest.engineVersion, '1.9.0');
+      assert.equal(manifest.engineVersionSupported, false);
     } finally {
       removeRoot(root);
     }
   });
 
-  test('rejects deployed or mixed MZ structures before editing', () => {
+  test('rejects an MZ core that does not report a recognizable version', () => {
+    const root = tempRoot();
+    try {
+      writeMZProject(root, 'legacy', 48, 816, 624);
+      assert.throws(() => inspectRmmvProject(root), /recognizable semantic version/);
+    } finally {
+      removeRoot(root);
+    }
+  });
+
+  test('accepts an MZ project without an editor marker but still rejects mixed engines', () => {
     const deployedRoot = tempRoot();
     const mixedRoot = tempRoot();
     try {
       writeMZProject(deployedRoot, '1.10.0', 48, 816, 624);
       fs.rmSync(path.join(deployedRoot, 'game.rmmzproject'));
-      assert.throws(() => inspectRmmvProject(deployedRoot), /editable source projects containing game\.rmmzproject/);
+      const manifest = inspectRmmvProject(deployedRoot);
+      assert.equal(manifest.engine, 'rpg-maker-mz');
+      assert.equal(manifest.projectMarker.gameRmmzProject, false);
+      assert.equal(manifest.editable, true);
 
       writeMZProject(mixedRoot, '1.10.0', 48, 816, 624);
       fs.writeFileSync(path.join(mixedRoot, 'Game.rpgproject'), 'RPGMV 1.6.2', 'utf8');
@@ -129,7 +144,7 @@ describe('RMMV layout resolver', () => {
     }
   });
 
-  test('rejects encrypted MZ resources and conflicting source/deployment data roots', () => {
+  test('records encrypted MZ resources and rejects conflicting data roots', () => {
     const encryptedRoot = tempRoot();
     const encryptedFileRoot = tempRoot();
     const mixedDataRoot = tempRoot();
@@ -137,14 +152,24 @@ describe('RMMV layout resolver', () => {
       writeMZProject(encryptedRoot, '1.10.0', 48, 816, 624);
       const encryptedSystemFile = path.join(encryptedRoot, 'data', 'System.json');
       const encryptedSystem = JSON.parse(fs.readFileSync(encryptedSystemFile, 'utf8'));
-      fs.writeFileSync(encryptedSystemFile, JSON.stringify({ ...encryptedSystem, hasEncryptedImages: true }), 'utf8');
-      assert.throws(() => inspectRmmvProject(encryptedRoot), /Encrypted RPG Maker MZ resources are not supported/);
+      fs.writeFileSync(encryptedSystemFile, JSON.stringify({
+        ...encryptedSystem,
+        hasEncryptedImages: true,
+        hasEncryptedAudio: true,
+      }), 'utf8');
+      const encryptedManifest = inspectRmmvProject(encryptedRoot);
+      assert.equal(encryptedManifest.editable, true);
+      assert.equal(encryptedManifest.encryptedResources, true);
+      assert.equal(encryptedManifest.encryptedImages, true);
+      assert.equal(encryptedManifest.encryptedAudio, true);
 
       writeMZProject(encryptedFileRoot, '1.10.0', 48, 816, 624);
       const encryptedAsset = path.join(encryptedFileRoot, 'img', 'pictures', 'nested', 'Sample.png_');
       fs.mkdirSync(path.dirname(encryptedAsset), { recursive: true });
       fs.writeFileSync(encryptedAsset, 'encrypted', 'utf8');
-      assert.throws(() => inspectRmmvProject(encryptedFileRoot), /Encrypted RPG Maker resource is not supported/);
+      const encryptedFileManifest = inspectRmmvProject(encryptedFileRoot);
+      assert.equal(encryptedFileManifest.encryptedResources, true);
+      assert.equal(encryptedFileManifest.encryptedImages, true);
 
       writeMZProject(mixedDataRoot, '1.10.0', 48, 816, 624);
       fs.mkdirSync(path.join(mixedDataRoot, 'www', 'data'), { recursive: true });

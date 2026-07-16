@@ -45,7 +45,7 @@ export const RPG_MAKER_MZ_REQUIRED_WEB_RUNTIME_FILES = [
 ] as const;
 
 /**
- * Known NW.js runtime payload that must stay in the source project. Isolated
+ * Known NW.js runtime payload that must stay in the project directory. Isolated
  * runs launch the original Game.exe against the temporary app directory, so
  * these files and directories are deliberately not copied into os.tmpdir().
  */
@@ -106,7 +106,7 @@ export function createRpgMakerMZRuntimeOutputSanitizer(
 }
 
 /**
- * Validates the NW.js runtime shipped beside a source project's Game.exe.
+ * Validates the NW.js runtime shipped beside a project's Game.exe.
  * Validation is static: no project executable or script is run here.
  */
 export function resolveRpgMakerMZProjectRuntime(
@@ -114,7 +114,7 @@ export function resolveRpgMakerMZProjectRuntime(
 ): RpgMakerMZProjectRuntime {
   const selected = String(projectDirectory || '').trim();
   if (!selected) {
-    throw new RpgMakerMZRuntimeError('Select an RPG Maker MZ source project that includes its local Game.exe runtime.');
+    throw new RpgMakerMZRuntimeError('Select an RPG Maker MZ project that includes its local Game.exe runtime.');
   }
 
   let root: string;
@@ -126,10 +126,6 @@ export function resolveRpgMakerMZProjectRuntime(
   if (!isDirectory(root)) {
     throw new RpgMakerMZRuntimeError('The RPG Maker MZ project location is not a directory.');
   }
-  if (!isFile(path.join(root, 'game.rmmzproject'))) {
-    throw new RpgMakerMZRuntimeError('The selected directory is not an editable RPG Maker MZ source project.');
-  }
-
   const corePath = path.join(root, 'js', 'rmmz_core.js');
   if (!isFile(corePath)) {
     throw new RpgMakerMZRuntimeError('The RPG Maker MZ project is missing js/rmmz_core.js.');
@@ -137,7 +133,7 @@ export function resolveRpgMakerMZProjectRuntime(
   const identity = readRpgMakerCoreIdentity(fs.readFileSync(corePath, 'utf8'));
   if (identity.name !== 'MZ' || identity.version !== SUPPORTED_RPG_MAKER_MZ_VERSION) {
     throw new RpgMakerMZRuntimeError(
-      `The project-local runtime requires an RPG Maker MZ ${SUPPORTED_RPG_MAKER_MZ_VERSION} source project.`,
+      `The project-local runtime requires an RPG Maker MZ ${SUPPORTED_RPG_MAKER_MZ_VERSION} project.`,
     );
   }
 

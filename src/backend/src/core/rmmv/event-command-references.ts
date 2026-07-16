@@ -1,5 +1,6 @@
 import { validateEventCommandList, type RawEventCommand } from "./event-command-registry.ts";
 import type { RmmvDatabaseTableKey } from "./database-schema.ts";
+import type { RpgMakerEngine } from "./rpg-maker-engine.ts";
 
 export type RmmvEventReferenceTarget =
   | RmmvDatabaseTableKey
@@ -21,8 +22,9 @@ export interface RmmvEventCommandReference {
 export function collectEventCommandReferences(
   commandList: unknown,
   pathPrefix = "eventCommandList",
+  engine: RpgMakerEngine = "rpg-maker-mv",
 ): RmmvEventCommandReference[] {
-  validateEventCommandList(commandList, pathPrefix);
+  validateEventCommandList(commandList, pathPrefix, engine);
   const references: RmmvEventCommandReference[] = [];
   commandList.forEach((command, commandIndex) => {
     collectCommandReferences(command, commandIndex, pathPrefix, references);
@@ -262,6 +264,7 @@ function collectActorTarget(
     value: command.parameters[1],
     path: `${pathPrefix}[${commandIndex}].parameters[1]`,
     commandIndex,
+    specialValues: [0],
   });
 }
 

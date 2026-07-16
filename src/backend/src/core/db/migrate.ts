@@ -589,7 +589,37 @@ function getMigrations(): Migration[] {
       name: 'drop_old_story_board_artifacts',
       up: dropOldStoryBoardArtifacts,
     },
+    {
+      version: 11,
+      name: 'event_contract_engine_backfill',
+      up: backfillEventContractEngines,
+    },
   ];
+}
+
+/**
+ * Existing contracts predate multi-engine support. They are deterministically
+ * MV contracts; keep every other field and all relational metadata untouched.
+ */
+export function backfillEventContractEngines(db: WorkflowDatabase = getDatabase()): void {
+  if (!tableExists(db, 'event_contracts') || !tableColumns(db, 'event_contracts').has('contract')) return;
+  const rows = db.prepare('SELECT rid, contract FROM event_contracts ORDER BY rid').all() as Array<{
+    rid: number;
+    contract: string;
+  }>;
+  const update = db.prepare('UPDATE event_contracts SET contract = ? WHERE rid = ?');
+  for (const row of rows) {
+    let contract: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(row.contract) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+      contract = parsed as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (contract.engine !== undefined) continue;
+    update.run(JSON.stringify({ ...contract, engine: 'rpg-maker-mv' }), row.rid);
+  }
 }
 
 /**

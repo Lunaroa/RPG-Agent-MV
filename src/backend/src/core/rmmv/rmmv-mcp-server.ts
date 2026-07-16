@@ -192,7 +192,8 @@ const eventCommandInput = z.record(z.string(), z.unknown()).describe(
 
 const eventContractInput = z.union([
   z.object({
-    engine: z.literal("rpg-maker-mv").optional().describe("Required by registry: always \"rpg-maker-mv\"."),
+    engine: z.enum(["rpg-maker-mv", "rpg-maker-mz"]).optional()
+      .describe("Required by registry and must match the selected project's detected engine."),
     kind: z.literal("EventContract").optional().describe("Required by registry: always \"EventContract\"."),
     id: z.string().optional().describe("Required dotted id, e.g. town.villager.elder."),
     purpose: z.string().optional().describe("Required human-readable purpose, >= 10 chars."),
@@ -334,7 +335,7 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
   {
     name: "RmmvVerify",
     description:
-      "Main-agent-only strict playtest probe. Copies the source project without saves, overlays all current staging, optionally changes only the copied start position, and runs Game.exe in a hidden bounded worker. Returns verified only when screen, exact map/coordinates, runtime readiness, event idle, JavaScript-error absence, source/save/staging stability, process exit, and temporary cleanup are all proven.",
+      "Main-agent-only strict playtest probe. Copies the source project without saves, overlays all current staging, optionally changes only the copied start position, and runs the validated MV/MZ game runtime in a hidden bounded worker. Returns verified only when screen, exact map/coordinates, runtime readiness, event idle, JavaScript-error absence, source/save/staging stability, process exit, and temporary cleanup are all proven.",
     inputSchema: {
       action: z.literal("playtest.probe"),
       project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
@@ -362,11 +363,15 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
       height: z.number().int().min(1).max(256).optional(),
       tilesetId: z.number().int().positive().optional(),
       edits: z.array(z.object({
+        kind: z.enum(["tile", "autotile", "shadow", "region"]).optional(),
         x: z.number().int().nonnegative(),
         y: z.number().int().nonnegative(),
-        layer: z.number().int().min(0).max(5),
+        layer: z.union([z.number().int().min(0).max(5), z.literal("auto")]),
         tileId: z.number().int().nonnegative().optional(),
         autotileKind: z.number().int().nonnegative().optional(),
+        preserveAutotileShape: z.boolean().optional(),
+        shadowBits: z.number().int().min(0).max(15).optional(),
+        regionId: z.number().int().min(0).max(255).optional(),
       })).optional().describe("paint: non-empty validated cell edits."),
     },
     readOnly: false,

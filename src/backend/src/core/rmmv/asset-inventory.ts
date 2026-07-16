@@ -19,9 +19,12 @@ interface AssetBucket {
 interface AnimationEntry {
   id: number;
   name: string;
+  kind: "particle" | "mv-compatible";
+  effectName: string;
   animation1Name: string;
   animation2Name: string;
   missingSheets: string[];
+  missingEffects: string[];
 }
 
 interface AssetInventoryResult {
@@ -33,10 +36,12 @@ interface AssetInventoryResult {
   summary: {
     audio: Record<string, { exists: boolean; count: number }>;
     images: Record<string, { exists: boolean; count: number }>;
-    animations: { total: number; named: number; withMissingSheets: number };
+    effects: { exists: boolean; count: number };
+    animations: { total: number; named: number; withMissingSheets: number; withMissingEffects: number };
   };
   audio: Record<string, AssetBucket>;
   images: Record<string, AssetBucket>;
+  effects: AssetBucket;
   animations: AnimationEntry[];
 }
 
@@ -46,16 +51,21 @@ export function buildAssetInventory(projectRoot: string): AssetInventoryResult {
   const wwwRoot: string = path.dirname(dataDir);
   const audioRoot: string = path.join(wwwRoot, "audio");
   const imageRoot: string = path.join(wwwRoot, "img");
+  const effectRoot: string = path.join(wwwRoot, "effects");
   const animations: AnimationEntry[] = readAnimations(dataDir);
   const audio: Record<string, AssetBucket> = {} as Record<string, AssetBucket>;
   const images: Record<string, AssetBucket> = {} as Record<string, AssetBucket>;
   for (const folder of AUDIO_DIRS) audio[folder] = listAssets(path.join(audioRoot, folder), AUDIO_EXTENSIONS);
   for (const folder of IMAGE_DIRS) images[folder] = listAssets(path.join(imageRoot, folder), IMAGE_EXTENSIONS);
+  const effects = listAssets(effectRoot, new Set([".efkefc"]));
   const animationsWithSheetStatus: AnimationEntry[] = animations.map((animation) => ({
     ...animation,
     missingSheets: [animation.animation1Name, animation.animation2Name]
       .filter(Boolean)
-      .filter((name) => !hasNamedAsset(images.animations, name))
+      .filter((name) => !hasNamedAsset(images.animations, name)),
+    missingEffects: animation.effectName && !hasNamedAsset(effects, animation.effectName)
+      ? [animation.effectName]
+      : [],
   }));
 
   return {
@@ -67,14 +77,17 @@ export function buildAssetInventory(projectRoot: string): AssetInventoryResult {
     summary: {
       audio: summarizeBuckets(audio),
       images: summarizeBuckets(images),
+      effects: { exists: effects.exists, count: effects.count },
       animations: {
         total: animationsWithSheetStatus.length,
         named: animationsWithSheetStatus.filter((animation) => animation.name).length,
-        withMissingSheets: animationsWithSheetStatus.filter((animation) => animation.missingSheets.length).length
+        withMissingSheets: animationsWithSheetStatus.filter((animation) => animation.missingSheets.length).length,
+        withMissingEffects: animationsWithSheetStatus.filter((animation) => animation.missingEffects.length).length,
       }
     },
     audio,
     images,
+    effects,
     animations: animationsWithSheetStatus
   };
 }
@@ -84,6 +97,7 @@ interface RMMVAnimation {
   name?: string;
   animation1Name?: string;
   animation2Name?: string;
+  effectName?: string;
 }
 
 function readAnimations(dataDir: string): AnimationEntry[] {
@@ -95,21 +109,37 @@ function readAnimations(dataDir: string): AnimationEntry[] {
     .map((animation) => ({
       id: animation.id,
       name: animation.name || "",
+      kind: animation.effectName ? "particle" : "mv-compatible",
+      effectName: animation.effectName || "",
       animation1Name: animation.animation1Name || "",
       animation2Name: animation.animation2Name || "",
-      missingSheets: []
+      missingSheets: [],
+      missingEffects: []
     }));
 }
 
 function listAssets(dir: string, extensions: Set<string>): AssetBucket {
   if (!fs.existsSync(dir)) return { dir, exists: false, count: 0, names: [], files: [] };
-  const files: string[] = fs.readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
+  const files: string[] = listFilesRecursively(dir)
     .filter((name) => extensions.has(path.extname(name).toLowerCase()))
     .sort((a, b) => a.localeCompare(b));
-  const names: string[] = Array.from(new Set(files.map((file) => path.basename(file, path.extname(file))))).sort((a, b) => a.localeCompare(b));
+  const names: string[] = Array.from(new Set(files.map((file) => file.slice(0, -path.extname(file).length)))).sort((a, b) => a.localeCompare(b));
   return { dir, exists: true, count: names.length, names, files };
+}
+
+function listFilesRecursively(root: string): string[] {
+  const files: string[] = [];
+  const visit = (directory: string, prefix: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute, relative);
+      else if (entry.isFile()) files.push(relative);
+    }
+  };
+  visit(root, "");
+  return files;
 }
 
 function summarizeBuckets(buckets: Record<string, AssetBucket>): Record<string, { exists: boolean; count: number }> {

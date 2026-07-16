@@ -39,6 +39,7 @@ export interface IsolatedProjectStateEvidence {
 export interface IsolatedProjectPreparationOptions {
   temporaryPrefix?: string;
   createTemporaryProject?: () => string;
+  excludeRelativePaths?: readonly string[];
 }
 
 export class IsolatedProjectPreparationError extends Error {}
@@ -64,7 +65,7 @@ export function prepareIsolatedStagedProject(
   const staging = snapshotProjectStaging(workflowRoot, sourceProject);
   const temporaryProject = (options.createTemporaryProject || (() => defaultCreateTemporaryProject(options.temporaryPrefix)))();
   try {
-    copyProjectExcludingSaves(sourceProject, temporaryProject);
+    copyProjectExcludingSaves(sourceProject, temporaryProject, options.excludeRelativePaths || []);
     overlayStagedProjectFiles(workflowRoot, sourceProject, temporaryProject, staging.files);
     const savesExcluded = candidateSavePaths(temporaryProject).every((candidate) => !fs.existsSync(candidate));
     if (!savesExcluded) throw new IsolatedProjectPreparationError('Temporary project copy still contains a save directory.');
@@ -168,8 +169,13 @@ function overlayStagedProjectFiles(
   }
 }
 
-function copyProjectExcludingSaves(sourceProject: string, temporaryProject: string): void {
+function copyProjectExcludingSaves(
+  sourceProject: string,
+  temporaryProject: string,
+  excludedRelativePaths: readonly string[],
+): void {
   const source = fs.realpathSync.native(path.resolve(sourceProject));
+  const exclusions = excludedRelativePaths.map((relative) => normalizeRelative(relative).toLowerCase());
   fs.rmSync(temporaryProject, { recursive: true, force: true });
   fs.mkdirSync(temporaryProject, { recursive: true });
   fs.cpSync(source, temporaryProject, {
@@ -179,7 +185,8 @@ function copyProjectExcludingSaves(sourceProject: string, temporaryProject: stri
       const relative = normalizeRelative(path.relative(source, sourcePath));
       if (!relative) return true;
       const lower = relative.toLowerCase();
-      return lower !== '.git'
+      return !exclusions.some((excluded) => lower === excluded || lower.startsWith(`${excluded}/`))
+        && lower !== '.git'
         && !lower.startsWith('.git/')
         && lower !== 'save'
         && !lower.startsWith('save/')

@@ -2,14 +2,15 @@ import fs from "fs";
 import path from "path";
 import { isEmptyCommonEventSlot } from "./common-event-slot.ts";
 import {
-  EVENT_COMMAND_BLOCK_HEAD_CODES,
-  EVENT_COMMAND_BLOCK_PAIRINGS,
-  EVENT_COMMAND_CONTINUATION_CODES,
+  eventCommandBlockHeadCodes,
+  eventCommandBlockPairings,
+  eventCommandContinuationCodes,
   validateEventCommandBasic
 } from "./event-command-registry.ts";
 import { readJson, writeJson, writeMapJson } from "./json.ts";
-import { resolveDataDir } from "./project-scanner.ts";
 import { compileCommands, compileImage, compilePage, validateImageName } from "./event-page-compiler.ts";
+import { inspectRmmvProject } from "./rmmv-layout.ts";
+import type { RpgMakerEngine } from "./rpg-maker-engine.ts";
 
 const COMMON_EVENT_TRIGGERS: Record<string, number> = {
   none: 0,
@@ -20,7 +21,7 @@ const COMMON_EVENT_TRIGGERS: Record<string, number> = {
 const MAX_GENERATED_MAP_SIZE: number = 256;
 
 interface PatchSpec {
-  engine: string;
+  engine: RpgMakerEngine;
   operations: PatchOperation[];
 }
 
@@ -38,6 +39,7 @@ interface PatchReport {
 }
 
 interface PatchContext {
+  engine: RpgMakerEngine;
   root: string;
   dataDir: string;
   commonEventFile: string;
@@ -168,8 +170,16 @@ export function previewPatch(projectRoot: string, spec: PatchSpec): PatchReport 
 
 function createPatchContext(root: string, spec: PatchSpec): PatchContext {
   validateSpecShape(spec);
-  const dataDir: string = resolveDataDir(root);
+  const manifest = inspectRmmvProject(root);
+  if (!manifest.editable) {
+    throw new Error(`Project is not editable: ${manifest.missingRequired.join(', ')}`);
+  }
+  if (spec.engine !== manifest.engine) {
+    throw new Error(`Patch spec engine ${spec.engine} does not match project engine ${manifest.engine}`);
+  }
+  const dataDir: string = manifest.dataDir;
   return {
+    engine: manifest.engine,
     root,
     dataDir,
     commonEventFile: path.join(dataDir, "CommonEvents.json"),
@@ -437,7 +447,7 @@ function prepareCommonEvent(context: PatchContext, operation: PatchOperation): P
     name: operation.name,
     trigger,
     switchId,
-    list: compileCommands(operation.commands as never[], context.system, context.dataDir, context as unknown as { plannedMaps?: Map<number, unknown> })
+    list: compileCommands(operation.commands as never[], context.system, context.dataDir, context)
   };
   context.reservedCommonEventIds.add(operation.id as number);
 
@@ -615,7 +625,7 @@ function compileNewMapEvent(eventSpec: PatchOperation, eventId: number, operatio
     note: stripInternalAiNote(eventSpec.note),
     x: eventSpec.x,
     y: eventSpec.y,
-    pages: (eventSpec.pages as never[]).map((page) => compilePage(page, context.system, context.dataDir, context as unknown as { plannedMaps?: Map<number, unknown> }))
+    pages: (eventSpec.pages as never[]).map((page) => compilePage(page, context.system, context.dataDir, context))
   };
 }
 
@@ -654,7 +664,7 @@ function prepareMapEvent(context: PatchContext, operation: PatchOperation): Prep
     note,
     x,
     y,
-    pages: (operation.pages as never[]).map((page) => compilePage(page, context.system, context.dataDir, context as unknown as { plannedMaps?: Map<number, unknown> }))
+    pages: (operation.pages as never[]).map((page) => compilePage(page, context.system, context.dataDir, context))
   };
 
   return {
@@ -797,7 +807,7 @@ function prepareEventPage(context: PatchContext, operation: PatchOperation): Pre
   if (!Array.isArray(event.pages)) throw new Error(`Event ${operation.eventId} on map ${operation.mapId} has no pages array`);
   if (!operation.page || typeof operation.page !== "object") throw new Error("add-event-page requires a page object");
 
-  const page = compilePage(operation.page as never, context.system, context.dataDir, context as unknown as { plannedMaps?: Map<number, unknown> });
+  const page = compilePage(operation.page as never, context.system, context.dataDir, context);
   const pageNumber: number = event.pages.length + 1;
   return {
     mapFile,
@@ -817,17 +827,13 @@ function prepareEventPage(context: PatchContext, operation: PatchOperation): Pre
   };
 }
 
-const BLOCK_HEAD_CODES: ReadonlySet<number> = EVENT_COMMAND_BLOCK_HEAD_CODES;
-const CONTINUATION_CODES: ReadonlySet<number> = EVENT_COMMAND_CONTINUATION_CODES;
-const BLOCK_PAIRINGS: Readonly<Record<number, { continuations?: readonly number[]; terminator?: number }>> = EVENT_COMMAND_BLOCK_PAIRINGS;
-
 interface RawCommand {
   code: number;
   indent: number;
   parameters: unknown[];
 }
 
-function assertRawCommandShape(command: unknown, label: string): asserts command is RawCommand {
+function assertRawCommandShape(command: unknown, label: string, engine: RpgMakerEngine): asserts command is RawCommand {
   if (!command || typeof command !== "object" || Array.isArray(command)) {
     throw new Error(`${label} must be an object with code/indent/parameters`);
   }
@@ -841,12 +847,12 @@ function assertRawCommandShape(command: unknown, label: string): asserts command
   if (!Array.isArray(cmd.parameters)) {
     throw new Error(`${label}.parameters must be an array`);
   }
-  validateEventCommandBasic(cmd, label);
+  validateEventCommandBasic(cmd, label, engine);
 }
 
-function findBlockRange(list: RawCommand[], headIndex: number): { start: number; end: number } {
+function findBlockRange(list: RawCommand[], headIndex: number, engine: RpgMakerEngine): { start: number; end: number } {
   const head: RawCommand = list[headIndex];
-  const pairing = BLOCK_PAIRINGS[head.code];
+  const pairing = eventCommandBlockPairings(engine)[head.code];
   if (!pairing) return { start: headIndex, end: headIndex };
   const headIndent: number = head.indent;
   let end: number = headIndex;
@@ -869,24 +875,24 @@ function findBlockRange(list: RawCommand[], headIndex: number): { start: number;
   return { start: headIndex, end };
 }
 
-function validateCommandStream(list: unknown[], label: string): void {
+function validateCommandStream(list: unknown[], label: string, engine: RpgMakerEngine): void {
   if (!Array.isArray(list)) throw new Error(`${label} must be an array of commands`);
   if (list.length === 0) throw new Error(`${label} must have at least one command (a code:0 terminator)`);
   let prevIndent: number = 0;
   const openHeads: { code: number; indent: number; atIndex: number }[] = [];
   for (let i = 0; i < list.length; i += 1) {
     const cmd = list[i];
-    assertRawCommandShape(cmd, `${label}[${i}]`);
+    assertRawCommandShape(cmd, `${label}[${i}]`, engine);
     if ((cmd as RawCommand).indent > prevIndent + 1) {
       throw new Error(`${label}[${i}] indent ${(cmd as RawCommand).indent} jumps more than one level from previous indent ${prevIndent}`);
     }
-    if (CONTINUATION_CODES.has((cmd as RawCommand).code)) {
+    if (eventCommandContinuationCodes(engine).has((cmd as RawCommand).code)) {
       const matchedHead: boolean = openHeads.some((h) => h.indent === (cmd as RawCommand).indent);
       if (!matchedHead && (cmd as RawCommand).indent !== 0 && openHeads.length === 0) {
         throw new Error(`${label}[${i}] continuation/terminator code ${(cmd as RawCommand).code} has no open block head`);
       }
     }
-    if (BLOCK_HEAD_CODES.has((cmd as RawCommand).code)) {
+    if (eventCommandBlockHeadCodes(engine).has((cmd as RawCommand).code)) {
       openHeads.push({ code: (cmd as RawCommand).code, indent: (cmd as RawCommand).indent, atIndex: i });
     }
     while (openHeads.length && openHeads[openHeads.length - 1].indent >= (cmd as RawCommand).indent && i > openHeads[openHeads.length - 1].atIndex) {
@@ -944,7 +950,7 @@ function prepareReplaceEventCommand(context: PatchContext, operation: PatchOpera
   if ((operation.commandIndex as number) >= page.list.length) {
     throw new Error(`${opLabel}.commandIndex ${operation.commandIndex} is out of range (page has ${page.list.length} commands)`);
   }
-  assertRawCommandShape(operation.command, `${opLabel}.command`);
+  assertRawCommandShape(operation.command, `${opLabel}.command`, context.engine);
   const before: RawCommand = page.list[operation.commandIndex as number];
   if (before.code !== (operation.command as RawCommand).code) {
     throw new Error(`${opLabel} requires the new command.code (${(operation.command as RawCommand).code}) to equal the existing command.code (${before.code}); to change command type use patch-event-page`);
@@ -952,7 +958,7 @@ function prepareReplaceEventCommand(context: PatchContext, operation: PatchOpera
   if (before.indent !== (operation.command as RawCommand).indent) {
     throw new Error(`${opLabel} requires command.indent (${(operation.command as RawCommand).indent}) to equal the existing indent (${before.indent})`);
   }
-  if (BLOCK_HEAD_CODES.has(before.code)) {
+  if (eventCommandBlockHeadCodes(context.engine).has(before.code)) {
     throw new Error(`${opLabel} refuses to replace block-head code ${before.code} (use patch-event-page to restructure the block)`);
   }
   if (before.code === 0) {
@@ -961,7 +967,7 @@ function prepareReplaceEventCommand(context: PatchContext, operation: PatchOpera
   const after: RawCommand = { code: (operation.command as RawCommand).code, indent: (operation.command as RawCommand).indent, parameters: (operation.command as RawCommand).parameters };
   const newList: RawCommand[] = page.list.slice();
   newList[operation.commandIndex as number] = after;
-  validateCommandStream(newList, `${opLabel} resulting page.list`);
+  validateCommandStream(newList, `${opLabel} resulting page.list`, context.engine);
   return {
     mapFile,
     map,
@@ -1002,11 +1008,11 @@ function prepareInsertEventCommand(context: PatchContext, operation: PatchOperat
   if (where !== "before" && where !== "after") {
     throw new Error(`${opLabel}.where must be 'before' or 'after'`);
   }
-  assertRawCommandShape(operation.command, `${opLabel}.command`);
-  if (BLOCK_HEAD_CODES.has((operation.command as RawCommand).code)) {
+  assertRawCommandShape(operation.command, `${opLabel}.command`, context.engine);
+  if (eventCommandBlockHeadCodes(context.engine).has((operation.command as RawCommand).code)) {
     throw new Error(`${opLabel} refuses to insert a block-head code ${(operation.command as RawCommand).code} (use patch-event-page to add nested structures)`);
   }
-  if (CONTINUATION_CODES.has((operation.command as RawCommand).code)) {
+  if (eventCommandContinuationCodes(context.engine).has((operation.command as RawCommand).code)) {
     throw new Error(`${opLabel} refuses to insert continuation/terminator code ${(operation.command as RawCommand).code} (these only belong inside an existing block; use patch-event-page)`);
   }
   if ((operation.command as RawCommand).code === 0) {
@@ -1020,7 +1026,7 @@ function prepareInsertEventCommand(context: PatchContext, operation: PatchOperat
   const insertAt: number = where === "before" ? (operation.commandIndex as number) : (operation.commandIndex as number) + 1;
   const newCmd: RawCommand = { code: (operation.command as RawCommand).code, indent: (operation.command as RawCommand).indent, parameters: (operation.command as RawCommand).parameters };
   newList.splice(insertAt, 0, newCmd);
-  validateCommandStream(newList, `${opLabel} resulting page.list`);
+  validateCommandStream(newList, `${opLabel} resulting page.list`, context.engine);
   return {
     mapFile,
     map,
@@ -1066,19 +1072,19 @@ function prepareDeleteEventCommand(context: PatchContext, operation: PatchOperat
   const includeChildren: boolean = operation.includeChildren === true;
   let deleteStart: number = operation.commandIndex as number;
   let deleteEnd: number = operation.commandIndex as number;
-  if (BLOCK_HEAD_CODES.has(target.code)) {
+  if (eventCommandBlockHeadCodes(context.engine).has(target.code)) {
     if (!includeChildren) {
       throw new Error(`${opLabel} refuses to delete block-head code ${target.code} without includeChildren:true (otherwise its continuations/terminator would dangle)`);
     }
-    const range = findBlockRange(page.list, operation.commandIndex as number);
+    const range = findBlockRange(page.list, operation.commandIndex as number, context.engine);
     deleteStart = range.start;
     deleteEnd = range.end;
-  } else if (CONTINUATION_CODES.has(target.code)) {
+  } else if (eventCommandContinuationCodes(context.engine).has(target.code)) {
     throw new Error(`${opLabel} refuses to delete continuation/terminator code ${target.code} directly; delete the block head with includeChildren:true instead`);
   }
   const newList: RawCommand[] = page.list.slice();
   const removed: RawCommand[] = newList.splice(deleteStart, deleteEnd - deleteStart + 1);
-  validateCommandStream(newList, `${opLabel} resulting page.list`);
+  validateCommandStream(newList, `${opLabel} resulting page.list`, context.engine);
   return {
     mapFile,
     map,
@@ -1117,8 +1123,8 @@ function preparePatchEventPage(context: PatchContext, operation: PatchOperation)
   if (!Array.isArray(operation.commands)) {
     throw new Error(`${opLabel}.commands must be an array of high-level command descriptors (kind/...)`);
   }
-  const compiled: RawCommand[] = compileCommands(operation.commands as never[], context.system, context.dataDir, context as unknown as { plannedMaps?: Map<number, unknown> });
-  validateCommandStream(compiled, `${opLabel} compiled commands`);
+  const compiled: RawCommand[] = compileCommands(operation.commands as never[], context.system, context.dataDir, context);
+  validateCommandStream(compiled, `${opLabel} compiled commands`, context.engine);
   return {
     mapFile,
     map,
@@ -1186,7 +1192,9 @@ function nextEventId(events: unknown[]): number {
 
 function validateSpecShape(spec: PatchSpec): void {
   if (!spec || typeof spec !== "object") throw new Error("Patch spec must be an object");
-  if (spec.engine !== "rpg-maker-mv") throw new Error("Patch spec engine must be rpg-maker-mv");
+  if (spec.engine !== "rpg-maker-mv" && spec.engine !== "rpg-maker-mz") {
+    throw new Error("Patch spec engine must be rpg-maker-mv or rpg-maker-mz");
+  }
   if (!Array.isArray(spec.operations) || spec.operations.length === 0) {
     throw new Error("Patch spec requires at least one operation");
   }

@@ -975,8 +975,14 @@ function isRmmvProjectMarker(rel: string): boolean {
   const lower = rel.toLowerCase();
   return lower === "game.rpgproject"
     || lower.endsWith("/game.rpgproject")
+    || lower === "game.rmmzproject"
+    || lower.endsWith("/game.rmmzproject")
+    || lower === "data/system.json"
+    || lower.endsWith("/data/system.json")
     || lower === "www/data/system.json"
     || lower.endsWith("/www/data/system.json")
+    || lower === "js/rmmz_core.js"
+    || lower.endsWith("/js/rmmz_core.js")
     || lower === "www/js/rpg_core.js"
     || lower.endsWith("/www/js/rpg_core.js");
 }

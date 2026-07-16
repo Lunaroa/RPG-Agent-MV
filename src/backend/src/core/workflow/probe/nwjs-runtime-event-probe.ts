@@ -3,11 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-interface BackupEntry {
-  filePath: string;
-  existed: boolean;
-  content: Buffer | null;
-}
+import type { RpgMakerEngine } from "../../rmmv/rpg-maker-engine.ts";
+import { inspectRmmvProject } from "../../rmmv/rmmv-layout.ts";
+import {
+  RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS,
+  resolveRpgMakerMZProjectRuntime,
+} from "../../desktop/rpg-maker-mz-runtime.ts";
 
 interface ProbeResult {
   status: string;
@@ -27,24 +28,46 @@ interface RuntimeResult {
 
 interface NwjsRuntimeEventProbeOptions {
   timeoutMs?: number;
+  engine?: RpgMakerEngine;
 }
 
 function runNwjsRuntimeEventProbe(projectRoot: string, plan: unknown, options: NwjsRuntimeEventProbeOptions = {}): RuntimeResult {
   const project: string = path.resolve(projectRoot);
-  const sourceExe: string = path.join(project, "Game.exe");
-  if (!fs.existsSync(sourceExe)) {
-    return runtimeResult("nwjs", "not-available", `Game.exe was not found at ${sourceExe}.`);
+  let engine: RpgMakerEngine;
+  try {
+    engine = inspectRmmvProject(project).engine;
+  } catch (error) {
+    return runtimeResult("nwjs", "not-available", error instanceof Error ? error.message : String(error));
+  }
+  if (options.engine && options.engine !== engine) {
+    return runtimeResult("nwjs", "fail", `Runtime probe engine ${options.engine} does not match project engine ${engine}.`);
+  }
+
+  let executable: string;
+  if (engine === "rpg-maker-mz") {
+    try {
+      executable = resolveRpgMakerMZProjectRuntime(project).executable;
+    } catch (error) {
+      return runtimeResult("nwjs", "not-available", error instanceof Error ? error.message : String(error));
+    }
+  } else {
+    executable = path.join(project, "Game.exe");
+    if (!fs.existsSync(executable)) {
+      return runtimeResult("nwjs", "not-available", "Game.exe was not found in the RPG Maker MV source project.");
+    }
   }
 
   const timeoutMs: number = options.timeoutMs || 12000;
   const tempRoot: string = fs.mkdtempSync(path.join(os.tmpdir(), "rmmv-agent-runtime-event-"));
+  const temporaryProject = path.join(tempRoot, "project");
   const resultPath: string = path.join(tempRoot, "runtime-event-result.json");
-  const backups: BackupEntry[] = backupProbeFiles(project, ["www/index.html", "www/js/AIWF_RuntimeEventProbe.js"]);
   try {
-    injectRuntimeProbe(project, resultPath, plan, timeoutMs);
-    const gameExe: string = path.join(project, "Game.exe");
-    const child = childProcess.spawn(gameExe, ["--disable-audio"], {
-      cwd: project,
+    copyProjectForProbe(project, temporaryProject, engine);
+    injectRuntimeProbe(temporaryProject, resultPath, plan, timeoutMs, engine);
+    const gameExe = engine === "rpg-maker-mv" ? path.join(temporaryProject, "Game.exe") : executable;
+    const args = engine === "rpg-maker-mz" ? [temporaryProject, "--disable-audio"] : ["--disable-audio"];
+    const child = childProcess.spawn(gameExe, args, {
+      cwd: temporaryProject,
       windowsHide: true,
       stdio: "ignore"
     });
@@ -55,13 +78,13 @@ function runNwjsRuntimeEventProbe(projectRoot: string, plan: unknown, options: N
       method: "nwjs",
       status: probe.status === "pass" ? "pass" : "fail",
       detail: probe.detail || (probe.status === "pass" ? "All NW.js runtime event tests passed." : "NW.js runtime event tests failed."),
-      gameExe: sourceExe,
+      gameExe: engine === "rpg-maker-mz" ? "project-local-rpg-maker-mz-nwjs" : "isolated-rpg-maker-mv-nwjs",
+      engine,
       probe
     };
   } catch (error) {
-    return runtimeResult("nwjs", "fail", (error as Error).message, { gameExe: sourceExe });
+    return runtimeResult("nwjs", "fail", (error as Error).message, { engine });
   } finally {
-    restoreProbeFiles(backups);
     try {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     } catch (e) {
@@ -70,34 +93,12 @@ function runNwjsRuntimeEventProbe(projectRoot: string, plan: unknown, options: N
   }
 }
 
-function backupProbeFiles(project: string, relativePaths: string[]): BackupEntry[] {
-  return relativePaths.map((relativePath: string): BackupEntry => {
-    const filePath: string = path.join(project, relativePath);
-    return {
-      filePath,
-      existed: fs.existsSync(filePath),
-      content: fs.existsSync(filePath) ? fs.readFileSync(filePath) : null
-    };
-  });
-}
-
-function restoreProbeFiles(backups: BackupEntry[]): void {
-  for (const backup of backups.slice().reverse()) {
-    if (backup.existed) {
-      fs.mkdirSync(path.dirname(backup.filePath), { recursive: true });
-      fs.writeFileSync(backup.filePath, backup.content!);
-    } else {
-      fs.rmSync(backup.filePath, { force: true });
-    }
-  }
-}
-
-function injectRuntimeProbe(project: string, resultPath: string, plan: unknown, timeoutMs: number): void {
-  const www: string = path.join(project, "www");
+function injectRuntimeProbe(project: string, resultPath: string, plan: unknown, timeoutMs: number, engine: RpgMakerEngine): void {
+  const www: string = inspectRmmvProject(project).resourceRoot;
   const indexPath: string = path.join(www, "index.html");
   if (!fs.existsSync(indexPath)) throw new Error(`Cannot inject runtime event probe; index.html not found at ${indexPath}`);
   const probePath: string = path.join(www, "js", "AIWF_RuntimeEventProbe.js");
-  fs.writeFileSync(probePath, renderRuntimeProbeScript(resultPath, plan, timeoutMs), "utf8");
+  fs.writeFileSync(probePath, renderRuntimeProbeScript(resultPath, plan, timeoutMs, engine), "utf8");
   const html: string = fs.readFileSync(indexPath, "utf8");
   if (html.includes("AIWF_RuntimeEventProbe.js")) return;
   const scriptTag = '        <script type="text/javascript" src="js/AIWF_RuntimeEventProbe.js"></script>\n';
@@ -161,8 +162,9 @@ function runtimeResult(method: string, status: string, detail: string, extra: Re
   };
 }
 
-function renderRuntimeProbeScript(resultPath: string, plan: unknown, timeoutMs: number): string {
-  const planJson: string = JSON.stringify(plan).replace(/</g, "\\u003c");
+function renderRuntimeProbeScript(resultPath: string, plan: unknown, timeoutMs: number, engine: RpgMakerEngine): string {
+  const planEnvelope = Array.isArray(plan) ? { engine, tests: plan } : plan;
+  const planJson: string = JSON.stringify(planEnvelope).replace(/</g, "\\u003c");
   return `/* eslint-disable */
 (function () {
   var fs = null;
@@ -296,7 +298,7 @@ function renderRuntimeProbeScript(resultPath: string, plan: unknown, timeoutMs: 
     okTimer = null;
   }
   async function setupNewGame() {
-    if (!ready()) throw new Error("RPG Maker MV runtime is not ready.");
+    if (!ready()) throw new Error("RPG Maker runtime is not ready.");
     window.DataManager.setupNewGame();
     if (window.Scene_Map) window.SceneManager.goto(window.Scene_Map);
     await waitUntil(function () {
@@ -417,7 +419,7 @@ function renderRuntimeProbeScript(resultPath: string, plan: unknown, timeoutMs: 
   }
   async function run() {
     write({ status: "running", detail: "Waiting for runtime readiness." });
-    await waitUntil(ready, "RPG Maker MV runtime readiness", Math.min(timeoutMs, 12000));
+    await waitUntil(ready, "RPG Maker runtime readiness", Math.min(timeoutMs, 12000));
     startOkPulses();
     var tests = [];
     for (var index = 0; index < (plan.tests || []).length; index += 1) {
@@ -455,4 +457,24 @@ function renderRuntimeProbeScript(resultPath: string, plan: unknown, timeoutMs: 
 `;
 }
 
-export { runNwjsRuntimeEventProbe };
+function copyProjectForProbe(sourceProject: string, temporaryProject: string, engine: RpgMakerEngine): void {
+  const exclusions = new Set(
+    (engine === "rpg-maker-mz" ? RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS : [])
+      .map((entry) => entry.toLowerCase()),
+  );
+  fs.mkdirSync(temporaryProject, { recursive: true });
+  fs.cpSync(sourceProject, temporaryProject, {
+    recursive: true,
+    force: true,
+    filter(source) {
+      const relative = path.relative(sourceProject, source).replace(/\\/g, "/");
+      if (!relative) return true;
+      const lower = relative.toLowerCase();
+      if (lower === "save" || lower.startsWith("save/") || lower === "www/save" || lower.startsWith("www/save/")) return false;
+      const rootEntry = lower.split("/")[0];
+      return !exclusions.has(rootEntry);
+    },
+  });
+}
+
+export { copyProjectForProbe, renderRuntimeProbeScript, runNwjsRuntimeEventProbe };

@@ -11,6 +11,8 @@ import {
   validateCommandSemantics,
 } from "../../rmmv/event-page-compiler.ts";
 import { validateEventCommandBasic } from "../../rmmv/event-command-registry.ts";
+import { inspectRmmvProject } from "../../rmmv/rmmv-layout.ts";
+import type { RpgMakerEngine } from "../../rmmv/rpg-maker-engine.ts";
 
 const ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 const SCENE_OR_QUEST_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -26,6 +28,14 @@ const OPERATION_ENUM = new Set(["add-map-event", "add-event-page", "add-common-e
 const SELF_SWITCH_ENUM = new Set(["A", "B", "C", "D"]);
 const STATUS_ENUM = new Set(["reviewing", "draft", "placed", "verified", "rejected", "abandoned"]);
 const AIWF_TOKEN_RE = /AIWF:(?:rid|story|event-contract):/;
+
+function isRpgMakerEngine(value: unknown): value is RpgMakerEngine {
+  return value === "rpg-maker-mv" || value === "rpg-maker-mz";
+}
+
+function contractEngine(contract: EventContract): RpgMakerEngine {
+  return isRpgMakerEngine(contract.engine) ? contract.engine : "rpg-maker-mv";
+}
 
 interface RegistryOptions {
   runtimeRoot?: string;
@@ -63,7 +73,7 @@ interface PlacementRecord {
 }
 
 interface EventContract {
-  engine: string;
+  engine: RpgMakerEngine;
   kind: string;
   /** 自增整数主键（系统分配的稳定身份锚点，不随 id 改名/复用漂移）。 */
   rid?: number;
@@ -305,8 +315,9 @@ function normalizeContractEnvelope(contract: EventContract): { contract: EventCo
   const normalizedFields: string[] = [];
   const raw = contract as EventContract & { type?: string; contractType?: string };
   const next: EventContract = { ...contract };
+  const rawEngine = (contract as unknown as { engine?: unknown }).engine;
 
-  if (next.engine === undefined || next.engine === null || next.engine === "") {
+  if (rawEngine === undefined || rawEngine === null || rawEngine === "") {
     next.engine = "rpg-maker-mv";
     normalizedFields.push("engine");
   }
@@ -358,13 +369,13 @@ function buildValidationHints(errors: ValidationError[], normalizedFields: strin
   if (normalizedFields.length > 0) {
     hints.push(
       `Auto-filled missing envelope fields: ${normalizedFields.join(", ")}. `
-      + "Always include \"engine\": \"rpg-maker-mv\" and \"kind\": \"EventContract\" at the top of every contract.",
+      + "Always include the selected project's engine and \"kind\": \"EventContract\" at the top of every contract.",
     );
   }
 
   if (fields.has("engine") || fields.has("kind")) {
     hints.push(
-      "Required envelope: { \"engine\": \"rpg-maker-mv\", \"kind\": \"EventContract\", ... }. "
+      "Required envelope: { \"engine\": \"rpg-maker-mv\" | \"rpg-maker-mz\", \"kind\": \"EventContract\", ... }. "
       + "Create one with: event-registry scaffold --id <scene.role.beat> --map-id <N> "
       + "--purpose \"...\" --out ../../runtime/out/<task>/contract.json",
     );
@@ -393,6 +404,7 @@ function buildValidationHints(errors: ValidationError[], normalizedFields: strin
 }
 
 function scaffoldContract(options: {
+  engine?: RpgMakerEngine;
   id: string;
   mapId: number;
   purpose: string;
@@ -404,7 +416,7 @@ function scaffoldContract(options: {
   const eventName = options.eventName?.trim()
     || `EV_${options.id.split(".").map((part) => part.replace(/[^A-Za-z0-9]/g, "")).filter(Boolean).join("_")}`;
   return {
-    engine: "rpg-maker-mv",
+    engine: options.engine ?? "rpg-maker-mv",
     kind: "EventContract",
     id: options.id,
     purpose: options.purpose,
@@ -429,8 +441,8 @@ function validateContract(contract: EventContract): ValidationError[] {
     return [{ field: "<root>", message: "Contract must be a JSON object." }];
   }
 
-  if (contract.engine !== "rpg-maker-mv") {
-    errors.push({ field: "engine", message: 'engine must be "rpg-maker-mv".' });
+  if (!isRpgMakerEngine(contract.engine)) {
+    errors.push({ field: "engine", message: 'engine must be "rpg-maker-mv" or "rpg-maker-mz".' });
   }
   if (contract.kind !== "EventContract") {
     errors.push({ field: "kind", message: 'kind must be "EventContract".' });
@@ -528,13 +540,13 @@ function validateContract(contract: EventContract): ValidationError[] {
       });
     }
     if (Array.isArray(impl.commands)) {
-      validateCommandKinds(errors, "implementation.commands", impl.commands);
+      validateCommandKinds(errors, "implementation.commands", impl.commands, contractEngine(contract));
     }
     if (Array.isArray(impl.pages)) {
       impl.pages.forEach((page, i) => {
         const cmds = page && typeof page === "object" ? (page as { commands?: unknown }).commands : undefined;
         if (Array.isArray(cmds)) {
-          validateCommandKinds(errors, `implementation.pages[${i}].commands`, cmds);
+          validateCommandKinds(errors, `implementation.pages[${i}].commands`, cmds, contractEngine(contract));
         }
       });
     }
@@ -581,8 +593,14 @@ function validateStateBlock(errors: ValidationError[], label: string, block?: Re
  * 校验与编译器一致的状态命令和条件分支语义，
  * 避免注册通过、拖到地图编译时才暴露字段或取值错误。
  */
-function validateCommandFields(errors: ValidationError[], field: string, kind: string, cmd: Record<string, unknown>): void {
-  for (const issue of validateCommandSemantics(kind, cmd)) {
+function validateCommandFields(
+  errors: ValidationError[],
+  field: string,
+  kind: string,
+  cmd: Record<string, unknown>,
+  engine: RpgMakerEngine,
+): void {
+  for (const issue of validateCommandSemantics(kind, cmd, engine)) {
     errors.push({
       field: issue.field ? `${field}.${issue.field}` : field,
       message: issue.message,
@@ -595,7 +613,7 @@ function validateCommandFields(errors: ValidationError[], field: string, kind: s
  * 这是「治本」：写错 kind（如 show-text）在 validate/register 当场报错并给出正确写法，
  * 不再骗过验证、注册成功、拖到放置时才抛 "Unsupported command kind"。
  */
-function validateCommandKinds(errors: ValidationError[], label: string, commands: unknown[]): void {
+function validateCommandKinds(errors: ValidationError[], label: string, commands: unknown[], engine: RpgMakerEngine): void {
   commands.forEach((raw, i) => {
     const field = `${label}[${i}]`;
     if (!raw || typeof raw !== "object") {
@@ -616,41 +634,47 @@ function validateCommandKinds(errors: ValidationError[], label: string, commands
           + `Allowed kinds: ${[...KNOWN_COMMAND_KINDS].join(", ")}.`,
       });
     } else {
-      validateCommandFields(errors, field, kind, cmd);
+      validateCommandFields(errors, field, kind, cmd, engine);
     }
-    if (kind === "raw-command" || kind === "mv-command") {
+    if (kind === "raw-command" || kind === "mv-command" || kind === "mz-command") {
       try {
+        if (kind === "mv-command" && engine !== "rpg-maker-mv") {
+          throw new Error("mv-command cannot be used in an RPG Maker MZ contract.");
+        }
+        if (kind === "mz-command" && engine !== "rpg-maker-mz") {
+          throw new Error("mz-command cannot be used in an RPG Maker MV contract.");
+        }
         validateEventCommandBasic({
           code: cmd.code,
           indent: cmd.indent,
           parameters: cmd.parameters,
-        }, field);
+        }, field, engine);
       } catch (err) {
         errors.push({
           field,
-          message: err instanceof Error ? err.message : "Invalid raw RPG Maker MV command.",
+          message: err instanceof Error ? err.message : "Invalid raw RPG Maker command.",
         });
       }
     }
     // 嵌套结构里的命令也要校验，否则错 kind 藏在分支/选项/循环里仍会漏到放置阶段。
     if (kind === "conditional-branch") {
       const then = (cmd.then ?? cmd.commands) as unknown;
-      if (Array.isArray(then)) validateCommandKinds(errors, `${field}.then`, then);
-      if (Array.isArray(cmd.else)) validateCommandKinds(errors, `${field}.else`, cmd.else as unknown[]);
+      if (Array.isArray(then)) validateCommandKinds(errors, `${field}.then`, then, engine);
+      if (Array.isArray(cmd.else)) validateCommandKinds(errors, `${field}.else`, cmd.else as unknown[], engine);
     } else if (kind === "loop") {
-      if (Array.isArray(cmd.commands)) validateCommandKinds(errors, `${field}.commands`, cmd.commands as unknown[]);
+      if (Array.isArray(cmd.commands)) validateCommandKinds(errors, `${field}.commands`, cmd.commands as unknown[], engine);
     } else if (kind === "choice") {
       if (Array.isArray(cmd.choices)) {
         (cmd.choices as unknown[]).forEach((choice, j) => {
           const nested = choice && typeof choice === "object" ? (choice as { commands?: unknown }).commands : undefined;
-          if (Array.isArray(nested)) validateCommandKinds(errors, `${field}.choices[${j}].commands`, nested);
+          if (Array.isArray(nested)) validateCommandKinds(errors, `${field}.choices[${j}].commands`, nested, engine);
         });
       }
-      if (Array.isArray(cmd.cancelCommands)) validateCommandKinds(errors, `${field}.cancelCommands`, cmd.cancelCommands as unknown[]);
+      if (Array.isArray(cmd.cancelCommands)) validateCommandKinds(errors, `${field}.cancelCommands`, cmd.cancelCommands as unknown[], engine);
     } else if (kind === "battle") {
-      if (Array.isArray(cmd.onWin)) validateCommandKinds(errors, `${field}.onWin`, cmd.onWin as unknown[]);
-      if (Array.isArray(cmd.onEscape)) validateCommandKinds(errors, `${field}.onEscape`, cmd.onEscape as unknown[]);
-      if (Array.isArray(cmd.onLose)) validateCommandKinds(errors, `${field}.onLose`, cmd.onLose as unknown[]);
+      if (Array.isArray(cmd.onWin)) validateCommandKinds(errors, `${field}.onWin`, cmd.onWin as unknown[], engine);
+      if (Array.isArray(cmd.onEscape)) validateCommandKinds(errors, `${field}.onEscape`, cmd.onEscape as unknown[], engine);
+      if (Array.isArray(cmd.onLose)) validateCommandKinds(errors, `${field}.onLose`, cmd.onLose as unknown[], engine);
     }
   });
 }
@@ -723,11 +747,23 @@ function detectConflicts(contract: EventContract, existing: EventContract[]): Co
   return conflicts;
 }
 
-async function validateContractFile(contract: EventContract, options?: { skipNormalize?: boolean }): Promise<RegisterResult> {
+async function validateContractFile(
+  contract: EventContract,
+  options?: { skipNormalize?: boolean; projectPath?: string },
+): Promise<RegisterResult> {
   const normalized = options?.skipNormalize
     ? { contract, normalizedFields: [] as string[] }
     : normalizeContractEnvelope(contract);
   const errors: ValidationError[] = validateContract(normalized.contract);
+  if (options?.projectPath && errors.length === 0) {
+    const projectEngine = inspectRmmvProject(options.projectPath).engine;
+    if (normalized.contract.engine !== projectEngine) {
+      errors.push({
+        field: "engine",
+        message: `Contract engine ${normalized.contract.engine} does not match project engine ${projectEngine}.`,
+      });
+    }
+  }
   if (errors.length) {
     return {
       status: "rejected",
@@ -753,6 +789,15 @@ async function validateContractFile(contract: EventContract, options?: { skipNor
 async function registerContract(projectPath: string, contract: EventContract, options?: RegistryOptions): Promise<RegisterResult> {
   const normalized = normalizeContractEnvelope(contract);
   const errors: ValidationError[] = validateContract(normalized.contract);
+  if (errors.length === 0) {
+    const projectEngine = inspectRmmvProject(projectPath).engine;
+    if (normalized.contract.engine !== projectEngine) {
+      errors.push({
+        field: "engine",
+        message: `Contract engine ${normalized.contract.engine} does not match project engine ${projectEngine}.`,
+      });
+    }
+  }
   if (errors.length) {
     return {
       status: "rejected",
@@ -1451,7 +1496,7 @@ function adoptOrphan(
     : adoptedOrphanPurpose(opts.mapId, opts.eventId, eventName);
 
   const contract: EventContract = {
-    engine: "rpg-maker-mv",
+    engine: inspectRmmvProject(projectPath).engine,
     kind: "EventContract",
     rid,
     id: opts.id,
@@ -1582,7 +1627,9 @@ async function runRegister(args: CliArgs): Promise<number> {
 
 async function runValidate(args: CliArgs): Promise<number> {
   const contract = readContractFromFlag(args);
-  const result = await validateContractFile(contract);
+  const result = await validateContractFile(contract, {
+    projectPath: args.project ? String(args.project) : undefined,
+  });
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   return result.status === "ok" ? 0 : 1;
 }
@@ -1597,6 +1644,7 @@ async function runScaffold(args: CliArgs): Promise<number> {
     throw new Error("--map-id must be an integer >= 1.");
   }
   const contract = scaffoldContract({
+    engine: args.project ? inspectRmmvProject(String(args.project)).engine : "rpg-maker-mv",
     id: String(args.id),
     mapId,
     purpose: String(args.purpose),
@@ -1727,8 +1775,8 @@ function printUsageAndFail(): number {
     "Usage: npm --prefix src/backend run cli -- event-registry <list|register|validate|scaffold|show|reconcile|verify> [args]\n" +
     "  list      --project <p>\n" +
     "  register  --project <p> --contract <file.json>\n" +
-    "  validate  --contract <file.json>\n" +
-    "  scaffold  --id <dotted.id> --map-id <N> --purpose \"...\" --out <file.json> [--event-name EV_Name] [--trigger action-button] [--text \"...\"] [--scene-id scene-id]\n" +
+    "  validate  --contract <file.json> [--project <p>]\n" +
+    "  scaffold  --id <dotted.id> --map-id <N> --purpose \"...\" --out <file.json> [--project <p>] [--event-name EV_Name] [--trigger action-button] [--text \"...\"] [--scene-id scene-id]\n" +
     "  show      --project <p> <contractId>\n" +
     "  reconcile --project <p> [--apply] [--orphans]\n" +
     "  verify    --project <p> <contractId> --evidence <verification.json>\n" +

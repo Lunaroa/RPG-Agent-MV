@@ -1,8 +1,12 @@
 ﻿import path from "path";
 
+import { isDeepStrictEqual } from "node:util";
+
 import { validateEventCommandBasic } from "../../rmmv/event-command-registry.ts";
 import { readJson, writeJson } from "../../rmmv/json.ts";
 import { validateMoveRouteCommandBasic } from "../../rmmv/move-route-registry.ts";
+import { inspectRmmvProject } from "../../rmmv/rmmv-layout.ts";
+import type { RpgMakerEngine } from "../../rmmv/rpg-maker-engine.ts";
 
 interface MapEventOptions {
   project?: string;
@@ -75,6 +79,7 @@ interface MVMoveRoute {
 
 interface MapContext {
   project: string;
+  engine: RpgMakerEngine;
   mapId: number;
   mapFile: string;
   map: { events: (MVEvent | null)[]; width: number; height: number; [key: string]: unknown };
@@ -101,7 +106,7 @@ function createMapEvent(options: MapEventOptions): EventReport {
     x: source.x,
     y: source.y,
     pages: source.pages
-  }, context.map, "event");
+  }, context.map, "event", context.engine);
   context.map.events[eventId] = event;
   writeJson(context.mapFile, context.map);
   return report("create", context, eventId, null, event);
@@ -119,7 +124,7 @@ function updateMapEvent(options: MapEventOptions): EventReport {
     ...source,
     id: eventId,
     pages: source.pages !== undefined ? source.pages : before.pages
-  }, context.map, "event");
+  }, context.map, "event", context.engine, before);
   context.map.events[eventId] = event;
   writeJson(context.mapFile, context.map);
   return report("update", context, eventId, before, event);
@@ -147,7 +152,7 @@ function duplicateMapEvent(options: MapEventOptions): EventReport {
     name: `${before.name || `EV${sourceId}`} Copy`,
     x: clamp(Number(before.x || 0) + 1, 0, context.map.width - 1),
     y: clamp(Number(before.y || 0) + 1, 0, context.map.height - 1)
-  }, context.map, "event");
+  }, context.map, "event", context.engine, before);
   context.map.events[eventId] = event;
   writeJson(context.mapFile, context.map);
   return report("duplicate", context, eventId, before, event);
@@ -157,13 +162,20 @@ function loadMapContext(options: MapEventOptions): MapContext {
   if (!options || !options.project) throw new Error("project is required.");
   const mapId = assertMapId(options.mapId);
   const project = path.resolve(options.project);
-  const mapFile = path.join(project, "www", "data", `Map${String(mapId).padStart(3, "0")}.json`);
+  const manifest = inspectRmmvProject(project);
+  const mapFile = path.join(manifest.dataDir, `Map${String(mapId).padStart(3, "0")}.json`);
   const map = readJson(mapFile) as MapContext["map"];
   if (!Array.isArray(map.events)) map.events = [null];
-  return { project, mapId, mapFile, map };
+  return { project, engine: manifest.engine, mapId, mapFile, map };
 }
 
-function normalizeEvent(event: Partial<MVEvent>, map: { width: number; height: number }, label: string): MVEvent {
+function normalizeEvent(
+  event: Partial<MVEvent>,
+  map: { width: number; height: number },
+  label: string,
+  engine: RpgMakerEngine,
+  previous?: MVEvent,
+): MVEvent {
   const result = clone(event || {}) as MVEvent;
   result.id = assertInt(result.id, `${label}.id`, 1);
   if (typeof result.name !== "string" || !result.name.trim()) throw new Error(`${label}.name must be a non-empty string.`);
@@ -175,21 +187,39 @@ function normalizeEvent(event: Partial<MVEvent>, map: { width: number; height: n
     throw new Error(`${label} coordinate (${result.x},${result.y}) is outside map ${map.width}x${map.height}.`);
   }
   result.pages = Array.isArray(result.pages) && result.pages.length
-    ? result.pages.map((page, index) => normalizePage(page, `${label}.pages[${index}]`))
+    ? result.pages.map((page, index) => normalizePage(
+      page,
+      `${label}.pages[${index}]`,
+      engine,
+      previous?.pages?.[index],
+    ))
     : [defaultPage()];
   return result;
 }
 
-function normalizePage(page: Partial<MVPage>, label: string): MVPage {
+function normalizePage(
+  page: Partial<MVPage>,
+  label: string,
+  engine: RpgMakerEngine,
+  previous?: MVPage,
+): MVPage {
   const result = { ...defaultPage(), ...clone(page || {}) } as MVPage;
   result.conditions = normalizeConditions(result.conditions || {});
   result.image = normalizeImage(result.image || {});
+  const listUnchanged = Boolean(previous && isDeepStrictEqual(result.list, previous.list));
+  const sourceListLength = Array.isArray(result.list) ? result.list.length : 0;
   result.list = Array.isArray(result.list)
     ? result.list
-      .map((command, index) => normalizeCommand(command, `${label}.list[${index}]`))
+      .map((command, index) => normalizeCommand(
+        command,
+        `${label}.list[${index}]`,
+        engine,
+        previous?.list?.[index],
+      ))
       .filter((command) => !isInternalAiComment(command))
     : [{ code: 0, indent: 0, parameters: [] }];
-  if (!result.list.length || result.list[result.list.length - 1].code !== 0) {
+  const preservedListShape = listUnchanged && result.list.length === sourceListLength;
+  if (!preservedListShape && (!result.list.length || result.list[result.list.length - 1].code !== 0)) {
     result.list.push({ code: 0, indent: 0, parameters: [] });
   }
   result.moveFrequency = assertInt(result.moveFrequency, `${label}.moveFrequency`, 1);
@@ -201,7 +231,9 @@ function normalizePage(page: Partial<MVPage>, label: string): MVPage {
   result.stepAnime = Boolean(result.stepAnime);
   result.through = Boolean(result.through);
   result.walkAnime = result.walkAnime === undefined ? true : Boolean(result.walkAnime);
-  result.moveRoute = normalizeMoveRoute(result.moveRoute);
+  result.moveRoute = previous && isDeepStrictEqual(result.moveRoute, previous.moveRoute)
+    ? clone(previous.moveRoute)
+    : normalizeMoveRoute(result.moveRoute);
   return result;
 }
 
@@ -251,14 +283,20 @@ function normalizeMoveRoute(route: Partial<MVMoveRoute> | undefined): MVMoveRout
   };
 }
 
-function normalizeCommand(command: Partial<MVCommand>, label: string): MVCommand {
+function normalizeCommand(
+  command: Partial<MVCommand>,
+  label: string,
+  engine: RpgMakerEngine,
+  previous?: MVCommand,
+): MVCommand {
   if (!command || typeof command !== "object" || Array.isArray(command)) throw new Error(`${label} must be an object.`);
+  if (previous && isDeepStrictEqual(command, previous)) return clone(previous);
   const normalized = {
     code: assertInt(command.code, `${label}.code`, 0),
     indent: assertInt(defaultValue(command.indent, 0), `${label}.indent`, 0),
     parameters: Array.isArray(command.parameters) ? clone(command.parameters) : []
   };
-  validateEventCommandBasic(normalized, label);
+  validateEventCommandBasic(normalized, label, engine);
   return normalized;
 }
 

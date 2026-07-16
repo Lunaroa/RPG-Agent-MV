@@ -35,6 +35,15 @@ describe("RPG Maker MV move route registry", () => {
     assert.deepEqual(moveRouteCommandDefinition(45)?.parameters.map((parameter) => parameter.name), ["script"]);
   });
 
+  test("accepts omitted parameters only for parameterless route commands", () => {
+    assert.doesNotThrow(() => validateMoveRouteCommandBasic({ code: 0 }));
+    assert.doesNotThrow(() => validateMoveRouteCommandBasic({ code: 37 }));
+    assert.throws(
+      () => validateMoveRouteCommandBasic({ code: 15 }),
+      /must have 1 value/,
+    );
+  });
+
   test("rejects unknown route codes and bad route parameters", () => {
     assert.throws(
       () => validateMoveRouteCommandBasic({ code: 46, parameters: [] }),

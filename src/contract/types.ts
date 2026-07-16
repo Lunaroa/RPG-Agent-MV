@@ -8,6 +8,27 @@ export type { ProductLanguage } from './i18n.ts';
 //
 // 零运行时依赖：纯类型文件，编译后被擦除。
 
+export type RpgMakerEngine = 'rpg-maker-mv' | 'rpg-maker-mz';
+
+export interface ProjectInfo {
+  name: string;
+  path: string;
+  isDefault: boolean;
+  source?: 'workspace' | 'registered';
+  dataDir?: string;
+  layout?: 'www-data' | 'data';
+  resourceRoot?: string;
+  runnableStructure?: boolean;
+  missingRecommended?: string[];
+  engine: RpgMakerEngine;
+  engineVersion: string | null;
+  tileSize: number;
+  screenWidth: number;
+  screenHeight: number;
+  faceSize: number;
+  iconSize: number;
+}
+
 export interface MapTreeNode {
   id: number;
   name: string;
@@ -20,6 +41,26 @@ export interface MapIndex {
   project: string;
   blocks: MapTreeNode[];
   maps: MapTreeNode[];
+}
+
+export type MapMovePosition = 'before' | 'after' | 'inside';
+
+export interface EventSearchHit {
+  mapId: number;
+  mapName: string;
+  eventId: number;
+  eventName: string;
+  pageIndex: number | null;
+  commandIndex: number | null;
+  matchKind: 'id' | 'name' | 'note' | 'command';
+  text: string;
+}
+
+export interface EventSearchResult {
+  project: string;
+  query: string;
+  hits: EventSearchHit[];
+  truncated: boolean;
 }
 
 export interface TilesetSummary {
@@ -76,6 +117,13 @@ export interface RmmvSystemPosition {
 
 export interface MapPayload {
   project: string;
+  engine: RpgMakerEngine;
+  engineVersion: string | null;
+  tileSize: number;
+  screenWidth: number;
+  screenHeight: number;
+  faceSize: number;
+  iconSize: number;
   info: { id: number; name: string; parentId?: number; [key: string]: unknown };
   map: RmmvMapProperties & {
     width: number;
@@ -85,12 +133,13 @@ export interface MapPayload {
     events: unknown[];
     [key: string]: unknown;
   };
+  parallaxImageUrl?: string | null;
   tileset: {
     id: number;
     name: string;
     tilesetNames: string[];
     flags: number[];
-      imageUrls: (string | null)[];
+    imageUrls: (string | null)[];
   } | null;
   system: {
     switches: string[];
@@ -401,12 +450,32 @@ export type InteractivePlaytestRunStatus =
   | 'failed'
   | 'stop_failed';
 
-export type InteractivePlaytestMode = 'project' | 'battle_test';
+export type InteractivePlaytestMode = 'project' | 'battle_test' | 'particle_preview';
 
 export interface InteractiveBattleTestBattler {
   actorId: number;
   level: number;
   equips: number[];
+}
+
+export interface InteractiveParticleAnimationPreview {
+  displayType: number;
+  effectName: string;
+  scale: number;
+  speed: number;
+  offsetX: number;
+  offsetY: number;
+  rotation: { x: number; y: number; z: number };
+  alignBottom: boolean;
+  flashTimings: Array<{
+    frame: number;
+    duration: number;
+    color: number[];
+  }>;
+  soundTimings: Array<{
+    frame: number;
+    se: RmmvAudioSettings;
+  }>;
 }
 
 export interface InteractivePlaytestStartRequest {
@@ -418,6 +487,7 @@ export interface InteractivePlaytestStartRequest {
   battlers?: InteractiveBattleTestBattler[];
   battleback1Name?: string;
   battleback2Name?: string;
+  animationPreview?: InteractiveParticleAnimationPreview;
 }
 
 export interface InteractivePlaytestStagingSummary {
@@ -432,6 +502,7 @@ export interface InteractivePlaytestRun {
   runId: string;
   status: InteractivePlaytestRunStatus;
   mode: InteractivePlaytestMode;
+  engine: RpgMakerEngine;
   project: string;
   executable: string;
   cwd: string;
@@ -451,6 +522,7 @@ export interface InteractivePlaytestRun {
   troopId?: number;
   troopName?: string;
   stagedFileCount?: number;
+  effectName?: string;
   sourceUnchanged?: boolean;
   savesUnchanged?: boolean;
   stagingUnchanged?: boolean;
@@ -553,6 +625,12 @@ export interface RmmvDatabaseEntrySchema {
 
 export interface EditorProjectCatalog {
   project: string;
+  engine: RpgMakerEngine;
+  tileSize: number;
+  screenWidth: number;
+  screenHeight: number;
+  faceSize: number;
+  iconSize: number;
   maps: MapTreeNode[];
   switches: NamedCatalogEntry[];
   variables: NamedCatalogEntry[];
@@ -594,7 +672,128 @@ export interface EditorProjectCatalog {
     me: ProjectAssetEntry[];
     se: ProjectAssetEntry[];
     movies: ProjectAssetEntry[];
+    effects: ProjectAssetEntry[];
   };
+}
+
+export type PluginParameterKind =
+  | 'text'
+  | 'multiline'
+  | 'number'
+  | 'boolean'
+  | 'select'
+  | 'combo'
+  | 'json'
+  | 'file'
+  | 'database'
+  | 'map'
+  | 'location'
+  | 'struct'
+  | 'array';
+
+export interface PluginParameterSchemaField {
+  key: string;
+  label: string;
+  kind: PluginParameterKind;
+  description: string;
+  rawType?: string;
+  defaultValue?: unknown;
+  options?: Array<{ value: string | number | boolean; label: string }>;
+  min?: number;
+  max?: number;
+  decimals?: number;
+  directory?: string;
+  required?: boolean;
+  parent?: string;
+  editable?: boolean;
+  unsupportedReason?: string;
+  databaseTable?: string;
+  structName?: string;
+  fields?: PluginParameterSchemaField[];
+  item?: PluginParameterSchemaField;
+}
+
+export interface PluginParameterSchema {
+  source: 'rmmv-plugin-header';
+  fields: PluginParameterSchemaField[];
+  structs?: Record<string, PluginParameterSchemaField[]>;
+  warnings: string[];
+}
+
+export interface PluginCommandArgument extends PluginParameterSchemaField {
+  name: string;
+}
+
+export interface PluginCommandHint {
+  pluginName: string;
+  command: string;
+  source: 'command-comparison' | 'switch-command-case' | 'mz-command-header';
+  evidence: string;
+  displayName?: string;
+  arguments?: PluginCommandArgument[];
+}
+
+export interface PluginDependencyMetadata {
+  base: string[];
+  orderAfter: string[];
+  orderBefore: string[];
+  requiredAssets: string[];
+  noteAssets: Array<{
+    parameter: string;
+    directory: string;
+    type: string;
+    data: string;
+  }>;
+}
+
+export interface ManagedPluginEntry {
+  index: number;
+  name: string;
+  status: boolean;
+  description: string;
+  parameters: Record<string, unknown>;
+  parameterCount: number;
+  fileName: string;
+  fileRelativePath: string;
+  fileExists: boolean;
+  parameterSchema?: PluginParameterSchema;
+  parameterSchemaWarnings: string[];
+  commandHints: PluginCommandHint[];
+  targets: string[];
+  dependencies?: PluginDependencyMetadata;
+}
+
+export interface ManagedPluginFile {
+  name: string;
+  fileName: string;
+  relativePath: string;
+  exists: boolean;
+  staged: boolean;
+  deleted: boolean;
+  size: number | null;
+}
+
+export interface PluginValidationIssue {
+  severity: 'error' | 'warn';
+  code: string;
+  message: string;
+  pluginName?: string;
+  index?: number;
+  relativePath?: string;
+}
+
+export interface PluginValidationResult {
+  ok: boolean;
+  issues: PluginValidationIssue[];
+}
+
+export interface PluginConfigurationResult {
+  project: string;
+  relativePath: string;
+  exists: boolean;
+  plugins: ManagedPluginEntry[];
+  pluginFiles: ManagedPluginFile[];
+  validation: PluginValidationResult;
 }
 
 export interface RmmvMapSummary {
@@ -741,9 +940,10 @@ export interface TileEdit {
   kind?: 'tile' | 'autotile' | 'shadow' | 'region';
   x: number;
   y: number;
-  layer?: number;
+  layer?: number | 'auto';
   tileId?: number;
   autotileKind?: number;
+  preserveAutotileShape?: boolean;
   shadowBits?: number;
   regionId?: number;
 }
@@ -767,7 +967,7 @@ export interface ProviderSummary {
   defaultModel?: string;
   credentialPresent?: boolean;
   credentialMask?: string;
-  models?: Array<{ id: string; label: string }>;
+  models?: ProviderModelSummary[];
   hiddenModelIds?: string[];
   supportedEngines?: AgentExecutionEngineId[];
   presetKind?: 'official' | 'kimi-plan' | 'custom' | 'opencode' | string;
@@ -777,6 +977,14 @@ export interface ProviderSummary {
   };
   disableModelFetch?: boolean;
   [key: string]: unknown;
+}
+
+export type ModelInputModality = 'text' | 'audio' | 'image' | 'video' | 'pdf';
+
+export interface ProviderModelSummary {
+  id: string;
+  label: string;
+  inputModalities?: ModelInputModality[];
 }
 
 export interface EngineProviderBinding {
@@ -933,6 +1141,22 @@ export interface SessionRuntimeEvent {
   [key: string]: unknown;
 }
 
+export interface SessionImageAttachmentInput {
+  clientId?: string;
+  filename: string;
+  mime: string;
+  dataBase64: string;
+  sizeBytes: number;
+}
+
+export interface SessionImageAttachment {
+  id: string;
+  filename: string;
+  mime: string;
+  sizeBytes: number;
+  url: string;
+}
+
 export interface SessionSummary {
   id: string;
   status: SessionStatus | string;
@@ -941,6 +1165,7 @@ export interface SessionSummary {
   productLanguage?: ProductLanguage;
   intent: string;
   displayText: string;
+  imageAttachments?: SessionImageAttachment[];
   parentSessionId?: string | null;
   blocker?: string | null;
   createdAt: string;

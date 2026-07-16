@@ -463,3 +463,53 @@ test("decompile preserves unsupported branch-nested raw commands with explicit r
   assert.ok(unsupported.length >= 1);
   assert.ok(nested.reason && nested.reason.length > 0);
 });
+
+test("MZ text commands round-trip the speaker name without changing MV text shape", () => {
+  const compiled = compileCommands([
+    { kind: "text", text: "Hello", speakerName: "Guide" }
+  ] as never, null, "", { engine: "rpg-maker-mz" });
+  assert.deepStrictEqual(compiled[0], {
+    code: 101,
+    indent: 0,
+    parameters: ["", 0, 0, 2, "Guide"]
+  });
+
+  const ast = decompileCommands(compiled, { engine: "rpg-maker-mz" }) as unknown as Cmd[];
+  assert.equal(ast[0]?.speakerName, "Guide");
+  assert.throws(
+    () => compileCommands([{ kind: "text", text: "Hello", speakerName: "Guide" }] as never, null, ""),
+    /only available in RPG Maker MZ/
+  );
+});
+
+test("MZ plugin commands compile and round-trip as 357/657 structures", () => {
+  const raw: RawCompiledCommand[] = [
+    { code: 357, indent: 0, parameters: ["SamplePlugin", "showNotice", "Show Notice", { message: "Hello", duration: "60" }] },
+    { code: 657, indent: 0, parameters: ["message = Hello"] },
+    { code: 657, indent: 0, parameters: ["duration = 60"] },
+    { code: 0, indent: 0, parameters: [] }
+  ];
+  const ast = decompileCommands(raw, { engine: "rpg-maker-mz" }) as unknown as Cmd[];
+  assert.deepStrictEqual(ast[0], {
+    kind: "plugin",
+    pluginName: "SamplePlugin",
+    commandName: "showNotice",
+    displayName: "Show Notice",
+    args: { message: "Hello", duration: "60" }
+  });
+  assert.deepStrictEqual(
+    compileCommands(ast, null, "", { engine: "rpg-maker-mz" }),
+    raw
+  );
+});
+
+test("raw event commands cannot cross engine boundaries", () => {
+  assert.throws(
+    () => compileCommands([{ kind: "raw-command", code: 356, indent: 0, parameters: ["Legacy command"] }] as never, null, "", { engine: "rpg-maker-mz" }),
+    /not valid for RPG Maker MZ/
+  );
+  assert.throws(
+    () => compileCommands([{ kind: "mz-command", code: 357, indent: 0, parameters: ["Plugin", "command", "Command", {}] }] as never, null, ""),
+    /cannot be compiled for an RPG Maker MV project/
+  );
+});

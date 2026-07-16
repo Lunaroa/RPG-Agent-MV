@@ -11,6 +11,7 @@ interface AnimationSummary {
   total: number;
   named: number;
   withMissingSheets: number;
+  withMissingEffects: number;
 }
 
 interface AssetSummary {
@@ -30,7 +31,9 @@ interface AnimationEntry {
   name?: string;
   animation1Name?: string;
   animation2Name?: string;
+  effectName?: string;
   missingSheets?: string[];
+  missingEffects?: string[];
 }
 
 interface AssetInventory {
@@ -50,7 +53,7 @@ function writeAssetInventoryOutputs(inventory: AssetInventory, outDir: string): 
 
 function renderAssetInventory(inventory: AssetInventory): string {
   const lines = [];
-  lines.push("# RPG Maker MV Asset Inventory");
+  lines.push("# RPG Maker Asset Inventory");
   lines.push("");
   lines.push(`Generated: ${inventory.generatedAt}`);
   lines.push(`Project: ${inventory.projectRoot}`);
@@ -63,7 +66,7 @@ function renderAssetInventory(inventory: AssetInventory): string {
   for (const [folder, summary] of Object.entries(inventory.summary.images)) {
     lines.push(`- img/${folder}: ${summary.exists ? summary.count : "missing folder"}`);
   }
-  lines.push(`- Animations: ${inventory.summary.animations.total} total, ${inventory.summary.animations.named} named, ${inventory.summary.animations.withMissingSheets} with missing sheets`);
+  lines.push(`- Animations: ${inventory.summary.animations.total} total, ${inventory.summary.animations.named} named, ${inventory.summary.animations.withMissingSheets} with missing sheets, ${inventory.summary.animations.withMissingEffects} with missing effects`);
   lines.push("");
   lines.push("## Audio");
   lines.push("");
@@ -86,18 +89,20 @@ function renderAssetInventory(inventory: AssetInventory): string {
   } else {
     for (const animation of inventory.animations.slice(0, 120)) {
       const sheets = [animation.animation1Name, animation.animation2Name].filter(Boolean).join(", ") || "no sheets";
-      const missing = animation.missingSheets && animation.missingSheets.length ? ` missing=${animation.missingSheets.join(", ")}` : "";
-      lines.push(`- ${animation.id}: ${animation.name || "(unnamed)"} (${sheets})${missing}`);
+      const effect = animation.effectName ? ` effect=${animation.effectName}` : "";
+      const missingSheets = animation.missingSheets && animation.missingSheets.length ? ` missingSheets=${animation.missingSheets.join(", ")}` : "";
+      const missingEffects = animation.missingEffects && animation.missingEffects.length ? ` missingEffects=${animation.missingEffects.join(", ")}` : "";
+      lines.push(`- ${animation.id}: ${animation.name || "(unnamed)"} (${sheets})${effect}${missingSheets}${missingEffects}`);
     }
     if (inventory.animations.length > 120) lines.push(`- ... ${inventory.animations.length - 120} more animations omitted. See asset-inventory.json.`);
   }
   lines.push("");
   lines.push("## Review Guidance");
   lines.push("");
-  lines.push("- Use asset names exactly as shown here, without file extensions, in RPG Maker MV commands.");
+  lines.push("- Use asset names exactly as shown here, without file extensions, in RPG Maker commands.");
   lines.push("- `play-se` must reference an asset under `audio/se`.");
   lines.push("- Text face names must reference `img/faces`; event character images must reference `img/characters`.");
-  lines.push("- Animation commands should use a valid Animations.json ID, and its sheets should exist under `img/animations`.");
+  lines.push("- Animation commands should use a valid Animations.json ID; compatibility animation sheets belong under `img/animations`, while MZ particle effects belong under `effects`.");
   lines.push("");
   return `${lines.join("\n")}\n`;
 }

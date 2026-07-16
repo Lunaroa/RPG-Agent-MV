@@ -3,6 +3,7 @@ import path from 'node:path';
 import { normalizeCommands } from '../rmmv/event-page-compiler.ts';
 import { readJson } from '../rmmv/json.ts';
 import { applyPatchToProject } from '../rmmv/patcher.ts';
+import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { createMapEvent, updateMapEvent } from '../workflow/map/map-event-edit.ts';
 import { loadRegistry, updateContractPlacement } from '../workflow/event/event-registry.ts';
 import { eventContentFingerprint } from '../workflow/event/event-fingerprint.ts';
@@ -124,6 +125,11 @@ function resolveRegistryPages(
   const registry = loadRegistry(project, { runtimeRoot: path.join(workflowRoot, 'runtime') });
   const contract = registry.contracts.find((c) => c.id === contractId);
   if (!contract?.implementation || typeof contract.implementation !== 'object') return null;
+  const engine = inspectRmmvProject(project).engine;
+  const contractEngine = contract.engine === 'rpg-maker-mz' ? 'rpg-maker-mz' : 'rpg-maker-mv';
+  if (contractEngine !== engine) {
+    throw new Error(`Event contract engine ${contractEngine} does not match project engine ${engine}.`);
+  }
   const trigger = (contract.rmmvTarget as { trigger?: string } | undefined)?.trigger;
   const pages = normalizeContractImplementation(contract.implementation as Record<string, unknown>, trigger);
   return pages ? normalizeAbstractPages(pages) : null;
@@ -140,7 +146,7 @@ function placeViaContractPatch(
     ? buildPlacementNote(contractId, payload.note)
     : stripInternalAiMarkers(String(payload.note || ''));
   const spec = {
-    engine: 'rpg-maker-mv' as const,
+    engine: inspectRmmvProject(staged.sourceProject).engine,
     operations: [{
       op: 'add-map-event',
       mapId,
@@ -151,6 +157,7 @@ function placeViaContractPatch(
       pages,
     }],
   };
+  staged.ensureCompleteProjectContext();
   const patchReport = applyPatchToProject(staged.project, spec);
   const opReport = patchReport.operations[patchReport.operations.length - 1] as { eventId?: number };
   const eventId = Number(opReport?.eventId);

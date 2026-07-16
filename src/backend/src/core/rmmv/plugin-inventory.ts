@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { exists, readJson } from "./json.ts";
-import { resolveDataDir } from "./project-scanner.ts";
+import { resolveRmmvLayout } from "./rmmv-layout.ts";
 
 interface PluginOccurrence {
   source: string;
@@ -51,13 +51,14 @@ interface PluginInventoryResult {
 
 export function buildPluginInventory(projectRoot: string): PluginInventoryResult {
   const root: string = path.resolve(projectRoot);
-  const dataDir: string = resolveDataDir(root);
+  const layout = resolveRmmvLayout(root);
+  const dataDir: string = layout.dataDir;
   const mapInfos = readJson(path.join(dataDir, "MapInfos.json")) as unknown[];
   const commonEvents: unknown[] = exists(path.join(dataDir, "CommonEvents.json"))
     ? readJson(path.join(dataDir, "CommonEvents.json")) as unknown[]
     : [];
-  const installedPlugins: InstalledPlugin[] = readInstalledPlugins(root);
-  const pluginFiles: string[] = listPluginFiles(root);
+  const installedPlugins: InstalledPlugin[] = readInstalledPlugins(layout.resourceRoot);
+  const pluginFiles: string[] = listPluginFiles(layout.resourceRoot);
   const occurrences: PluginOccurrence[] = [
     ...collectMapPluginCommands(dataDir, mapInfos),
     ...collectCommonEventPluginCommands(commonEvents)
@@ -157,10 +158,13 @@ interface LocationBase {
 
 function collectCommandsFromList(commands: RMMVCommand[], location: LocationBase, result: PluginOccurrence[]): void {
   for (const command of commands || []) {
-    if (!command || command.code !== 356) continue;
-    const raw: string = String(command.parameters && command.parameters[0] || "").trim();
+    if (!command || (command.code !== 356 && command.code !== 357)) continue;
+    const parameters = command.parameters || [];
+    const raw = command.code === 357
+      ? structuredMZPluginCommand(parameters)
+      : String(parameters[0] || "").trim();
     if (!raw) continue;
-    const parsed = parsePluginCommand(raw);
+    const parsed = command.code === 357 ? parseMZPluginCommand(parameters) : parsePluginCommand(raw);
     result.push({
       ...location,
       raw,
@@ -169,6 +173,26 @@ function collectCommandsFromList(commands: RMMVCommand[], location: LocationBase
       shape: parsed.shape
     });
   }
+}
+
+function structuredMZPluginCommand(parameters: unknown[]): string {
+  const plugin = String(parameters[0] || "");
+  const command = String(parameters[1] || "");
+  const args = isRecord(parameters[3]) ? parameters[3] : {};
+  return `${plugin}:${command}${Object.keys(args).length ? ` ${JSON.stringify(args)}` : ""}`.trim();
+}
+
+function parseMZPluginCommand(parameters: unknown[]): { commandName: string; args: string[]; shape: string } {
+  const plugin = String(parameters[0] || "");
+  const command = String(parameters[1] || "");
+  const args = isRecord(parameters[3])
+    ? Object.entries(parameters[3]).map(([key, value]) => `${key}=${String(value)}`)
+    : [];
+  return {
+    commandName: `${plugin}:${command}`,
+    args,
+    shape: args.map((entry) => entry.replace(/=.*/, "=<value>")).join(" "),
+  };
 }
 
 export function parsePluginCommand(raw: string): { commandName: string; args: string[]; shape: string } {
@@ -231,8 +255,8 @@ function terseOccurrence(occurrence: PluginOccurrence): { location: string; raw:
   };
 }
 
-function readInstalledPlugins(root: string): InstalledPlugin[] {
-  const filePath: string = path.join(root, "www", "js", "plugins.js");
+function readInstalledPlugins(resourceRoot: string): InstalledPlugin[] {
+  const filePath: string = path.join(resourceRoot, "js", "plugins.js");
   if (!exists(filePath)) return [];
   const raw: string = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
   const start: number = raw.indexOf("[");
@@ -255,10 +279,29 @@ function readInstalledPlugins(root: string): InstalledPlugin[] {
   }
 }
 
-function listPluginFiles(root: string): string[] {
-  const dir: string = path.join(root, "www", "js", "plugins");
+function listPluginFiles(resourceRoot: string): string[] {
+  const dir: string = path.join(resourceRoot, "js", "plugins");
   if (!exists(dir)) return [];
-  return fs.readdirSync(dir)
+  return listFilesRecursively(dir)
     .filter((name) => name.toLowerCase().endsWith(".js"))
     .sort();
+}
+
+function listFilesRecursively(root: string): string[] {
+  const files: string[] = [];
+  const visit = (directory: string, prefix: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute, relative);
+      else if (entry.isFile()) files.push(relative);
+    }
+  };
+  visit(root, "");
+  return files;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

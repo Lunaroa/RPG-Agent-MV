@@ -143,7 +143,7 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
         action: "paint",
         project,
         mapId: 1,
-        edits: [{ x: 0, y: 0, layer: 0, tileId: 7 }],
+        edits: [{ kind: "tile", x: 0, y: 0, layer: "auto", tileId: 7 }],
       },
     }));
     assert.equal(painted.data.changedCells, 1);
@@ -151,8 +151,8 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
       name: "RmmvReadContext",
       arguments: { action: "mapData", project, mapId: 1 },
     }));
-    assert.equal(stagedMapData.data.map.data[0], 7);
-    assert.equal((readJson(path.join(project, "www", "data", "Map001.json")) as any).data[0], 0);
+    assert.equal(stagedMapData.data.map.data[8], 7);
+    assert.equal((readJson(path.join(project, "www", "data", "Map001.json")) as any).data[8], 0);
 
     await client.callTool({
       name: "RmmvMap",
@@ -162,7 +162,7 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
       name: "RmmvReadContext",
       arguments: { action: "mapData", project, mapId: 1 },
     }));
-    assert.equal(discardedMapData.data.map.data[0], 0);
+    assert.equal(discardedMapData.data.map.data[8], 0);
 
     const patchWithoutSpec = await client.callTool({
       name: "RmmvEvent",

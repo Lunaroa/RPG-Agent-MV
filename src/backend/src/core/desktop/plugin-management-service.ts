@@ -1,7 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+
+import type {
+  ManagedPluginEntry,
+  ManagedPluginFile,
+  PluginCommandArgument,
+  PluginCommandHint,
+  PluginConfigurationResult,
+  PluginDependencyMetadata,
+  PluginParameterSchema,
+  PluginParameterSchemaField,
+  PluginValidationIssue,
+  PluginValidationResult,
+} from '../../../../contract/types.ts';
 
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
+import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import {
   getProjectFileForRead,
   getProjectStagingStatus,
@@ -9,85 +24,6 @@ import {
   type StagedProjectFileMutation,
   writeStagedProjectBuffer,
 } from './staging-service.ts';
-
-export interface ManagedPluginEntry {
-  index: number;
-  name: string;
-  status: boolean;
-  description: string;
-  parameters: Record<string, unknown>;
-  parameterCount: number;
-  fileName: string;
-  fileRelativePath: string;
-  fileExists: boolean;
-  parameterSchema?: PluginParameterSchema;
-  parameterSchemaWarnings: string[];
-  commandHints: PluginCommandHint[];
-}
-
-export interface PluginParameterSchemaField {
-  key: string;
-  label: string;
-  kind: 'text' | 'number' | 'boolean' | 'select' | 'json' | 'struct' | 'array';
-  description: string;
-  rawType?: string;
-  defaultValue?: unknown;
-  options?: Array<{ value: string | number | boolean; label: string }>;
-  min?: number;
-  max?: number;
-  directory?: string;
-  required?: boolean;
-  structName?: string;
-  fields?: PluginParameterSchemaField[];
-  item?: PluginParameterSchemaField;
-}
-
-export interface PluginParameterSchema {
-  source: 'rmmv-plugin-header';
-  fields: PluginParameterSchemaField[];
-  structs?: Record<string, PluginParameterSchemaField[]>;
-  warnings: string[];
-}
-
-export interface PluginCommandHint {
-  pluginName: string;
-  command: string;
-  source: 'command-comparison' | 'switch-command-case';
-  evidence: string;
-}
-
-export interface ManagedPluginFile {
-  name: string;
-  fileName: string;
-  relativePath: string;
-  exists: boolean;
-  staged: boolean;
-  deleted: boolean;
-  size: number | null;
-}
-
-export interface PluginValidationIssue {
-  severity: 'error' | 'warn';
-  code: string;
-  message: string;
-  pluginName?: string;
-  index?: number;
-  relativePath?: string;
-}
-
-export interface PluginValidationResult {
-  ok: boolean;
-  issues: PluginValidationIssue[];
-}
-
-export interface PluginConfigurationResult {
-  project: string;
-  relativePath: string;
-  exists: boolean;
-  plugins: ManagedPluginEntry[];
-  pluginFiles: ManagedPluginFile[];
-  validation: PluginValidationResult;
-}
 
 interface PluginConfigEntry {
   name: string;
@@ -167,6 +103,14 @@ export function updatePluginParameters(
   parameters: Record<string, unknown>,
 ): PluginConfigurationResult {
   if (!isPlainObject(parameters)) throw new Error('Plugin parameters must be an object');
+  const managed = readPluginConfiguration(workflowRoot, project).plugins.find((entry) => entry.name === pluginName);
+  if (!managed) throw new Error(`Plugin does not exist: ${pluginName}`);
+  for (const field of managed.parameterSchema?.fields || []) {
+    if (field.editable !== false) continue;
+    if (!isDeepStrictEqual(parameters[field.key], managed.parameters[field.key])) {
+      throw new Error(`Plugin parameter ${field.key} uses unsupported type ${field.rawType || '(unknown)'} and must be preserved unchanged`);
+    }
+  }
   return updatePluginEntry(workflowRoot, project, pluginName, (entry) => {
     entry.parameters = structuredClone(parameters);
   });
@@ -260,6 +204,7 @@ export function deletePluginFile(
 export function validatePluginConfiguration(workflowRoot: string, project: string): PluginValidationResult {
   const parsed = readPlugins(workflowRoot, project);
   const issues: PluginValidationIssue[] = [];
+  const engineTarget = inspectRmmvProject(project).engine === 'rpg-maker-mz' ? 'MZ' : 'MV';
   if (!parsed.exists) {
     issues.push({
       severity: 'error',
@@ -330,6 +275,54 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
         index,
       });
     }
+    const targets = readPluginTargets(workflowRoot, project, fileRelativePath);
+    if (targets.length && !targets.includes(engineTarget)) {
+      issues.push({
+        severity: 'error',
+        code: 'plugin-engine-target-mismatch',
+        message: `Plugin ${name} targets ${targets.join('/')} but the project engine is ${engineTarget}`,
+        pluginName: name,
+        index,
+        relativePath: fileRelativePath,
+      });
+    }
+  });
+
+  parsed.entries.forEach((entry, index) => {
+    if (!entry.status || !entry.name) return;
+    const fileRelativePath = resolveExistingPluginFileRelativePath(workflowRoot, project, entry.name);
+    if (!fileRelativePath) return;
+    const dependencies = readPluginDependencies(workflowRoot, project, fileRelativePath);
+    for (const dependency of dependencies.base) {
+      const resolved = resolveConfiguredDependency(parsed.entries, dependency);
+      if (!resolved) {
+        issues.push({
+          severity: 'error',
+          code: 'plugin-base-missing',
+          message: `Plugin ${entry.name} requires missing base plugin ${dependency}`,
+          pluginName: entry.name,
+          index,
+        });
+      } else if (!resolved.entry.status) {
+        issues.push({
+          severity: 'error',
+          code: 'plugin-base-disabled',
+          message: `Plugin ${entry.name} requires enabled base plugin ${resolved.entry.name}`,
+          pluginName: entry.name,
+          index,
+        });
+      } else if (resolved.index >= index) {
+        issues.push({
+          severity: 'error',
+          code: 'plugin-base-order-invalid',
+          message: `Plugin ${entry.name} must be ordered after base plugin ${resolved.entry.name}`,
+          pluginName: entry.name,
+          index,
+        });
+      }
+    }
+    validatePluginOrderingHint(issues, parsed.entries, entry.name, index, dependencies.orderAfter, 'after');
+    validatePluginOrderingHint(issues, parsed.entries, entry.name, index, dependencies.orderBefore, 'before');
   });
 
   return { ok: !issues.some((issue) => issue.severity === 'error'), issues };
@@ -436,6 +429,8 @@ function toManagedEntry(
   const commandHints = entry.name && fileRelativePath
     ? extractPluginCommandHintsFromFile(workflowRoot, project, entry.name, fileRelativePath)
     : [];
+  const targets = fileRelativePath ? readPluginTargets(workflowRoot, project, fileRelativePath) : [];
+  const dependencies = fileRelativePath ? readPluginDependencies(workflowRoot, project, fileRelativePath) : undefined;
   const fileName = entry.name ? `${entry.name}.js` : '';
   return {
     index,
@@ -450,6 +445,8 @@ function toManagedEntry(
     parameterSchema: metadata.schema,
     parameterSchemaWarnings: metadata.warnings,
     commandHints,
+    targets,
+    dependencies,
   };
 }
 
@@ -458,11 +455,11 @@ function listPluginFiles(workflowRoot: string, project: string): ManagedPluginFi
   for (const dir of pluginDirCandidates(project)) {
     const absoluteDir = path.join(project, dir);
     if (!fs.existsSync(absoluteDir)) continue;
-    for (const fileName of fs.readdirSync(absoluteDir).filter((name) => name.toLowerCase().endsWith('.js')).sort()) {
+    for (const fileName of listFilesRecursively(absoluteDir).filter((name) => name.toLowerCase().endsWith('.js')).sort()) {
       const relativePath = `${dir}/${fileName}`;
       const absolute = getProjectFileForRead(workflowRoot, project, relativePath) || path.join(absoluteDir, fileName);
       result.set(relativePath, {
-        name: path.basename(fileName, '.js'),
+        name: fileName.slice(0, -3),
         fileName,
         relativePath,
         exists: true,
@@ -533,9 +530,10 @@ function normalizeConfiguredPluginName(value: string): string {
 }
 
 function normalizePluginFileStem(value: string): string {
-  const name = String(value || '').trim().replace(/\.js$/i, '');
-  if (!name || name === '.' || name === '..') throw new Error('Invalid plugin name');
-  if (/[<>:"/\\|?*\u0000-\u001f]/.test(name) || name.split(/[\\/]/).some((part) => part === '..')) {
+  const name = String(value || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').replace(/\.js$/i, '');
+  const parts = name.split('/');
+  if (!name || parts.some((part) => !part || part === '.' || part === '..')) throw new Error('Invalid plugin name');
+  if (/[<>:"|?*\u0000-\u001f]/.test(name)) {
     throw new Error('Invalid plugin name');
   }
   return name;
@@ -551,7 +549,120 @@ function assertUniqueConfiguredNames(entries: PluginConfigEntry[]): void {
 }
 
 function isPluginFileRelativePath(relativePath: string): boolean {
-  return /^(?:www\/)?js\/plugins\/[^/]+\.js$/i.test(relativePath);
+  return /^(?:www\/)?js\/plugins\/(?:[^/]+\/)*[^/]+\.js$/i.test(relativePath)
+    && !relativePath.split('/').some((part) => part === '..');
+}
+
+function listFilesRecursively(root: string): string[] {
+  const files: string[] = [];
+  const visit = (directory: string, prefix: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute, relative);
+      else if (entry.isFile()) files.push(relative);
+    }
+  };
+  visit(root, '');
+  return files;
+}
+
+function readPluginTargets(workflowRoot: string, project: string, fileRelativePath: string): string[] {
+  const absolutePath = fileRelativePath ? getProjectFileForRead(workflowRoot, project, fileRelativePath) : null;
+  if (!absolutePath) return [];
+  const raw = fs.readFileSync(absolutePath, 'utf8');
+  return dedupeStrings([...raw.matchAll(/^[ \t*]*@target\s+([^\r\n*]+)/gim)]
+    .flatMap((match) => match[1].trim().split(/[\s,]+/))
+    .map((target) => target.toUpperCase())
+    .filter((target) => target === 'MV' || target === 'MZ'));
+}
+
+function readPluginDependencies(
+  workflowRoot: string,
+  project: string,
+  fileRelativePath: string,
+): PluginDependencyMetadata {
+  const absolutePath = getProjectFileForRead(workflowRoot, project, fileRelativePath);
+  if (!absolutePath) return { base: [], orderAfter: [], orderBefore: [], requiredAssets: [], noteAssets: [] };
+  const raw = fs.readFileSync(absolutePath, 'utf8');
+  const tags = (name: string): string[] => [...raw.matchAll(new RegExp(`^[ \\t*]*@${name}\\s+([^\\r\\n*]+)`, 'gim'))]
+    .flatMap((match) => name.toLowerCase() === 'requiredassets'
+      ? [stripAnnotationQuotes(match[1].trim())]
+      : match[1].trim().split(/[\s,]+/).map(stripAnnotationQuotes))
+    .filter(Boolean);
+  return {
+    base: dedupeStrings(tags('base')),
+    orderAfter: dedupeStrings(tags('orderAfter')),
+    orderBefore: dedupeStrings(tags('orderBefore')),
+    requiredAssets: dedupeStrings(tags('requiredAssets').map((value) => value.replace(/\\/g, '/'))),
+    noteAssets: readPluginNoteAssetDeclarations(raw),
+  };
+}
+
+function readPluginNoteAssetDeclarations(raw: string): PluginDependencyMetadata['noteAssets'] {
+  const result: PluginDependencyMetadata['noteAssets'] = [];
+  let current: PluginDependencyMetadata['noteAssets'][number] | null = null;
+  const flush = (): void => {
+    if (current?.parameter && current.directory && current.type) result.push(current);
+    current = null;
+  };
+  for (const match of raw.matchAll(/^[ \t*]*@(noteParam|noteDir|noteType|noteData)\s+([^\r\n*]+)/gim)) {
+    const tag = match[1].toLowerCase();
+    const value = stripAnnotationQuotes(match[2].trim());
+    if (tag === 'noteparam') {
+      flush();
+      current = { parameter: value, directory: '', type: '', data: '' };
+    } else if (current && tag === 'notedir') current.directory = value.replace(/\\/g, '/').replace(/\/$/, '');
+    else if (current && tag === 'notetype') current.type = value.toLowerCase();
+    else if (current && tag === 'notedata') current.data = value;
+  }
+  flush();
+  return result;
+}
+
+function stripAnnotationQuotes(value: string): string {
+  const trimmed = String(value || '').trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function resolveConfiguredDependency(
+  entries: PluginConfigEntry[],
+  dependency: string,
+): { entry: PluginConfigEntry; index: number } | null {
+  const normalized = String(dependency || '').trim().replace(/\.js$/i, '').replace(/\\/g, '/');
+  const exactIndex = entries.findIndex((entry) => entry.name === normalized);
+  if (exactIndex >= 0) return { entry: entries[exactIndex], index: exactIndex };
+  const basenameMatches = entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => path.posix.basename(entry.name) === normalized);
+  return basenameMatches.length === 1 ? basenameMatches[0] : null;
+}
+
+function validatePluginOrderingHint(
+  issues: PluginValidationIssue[],
+  entries: PluginConfigEntry[],
+  pluginName: string,
+  pluginIndex: number,
+  dependencies: string[],
+  relation: 'after' | 'before',
+): void {
+  for (const dependency of dependencies) {
+    const resolved = resolveConfiguredDependency(entries, dependency);
+    if (!resolved?.entry.status) continue;
+    const valid = relation === 'after' ? pluginIndex > resolved.index : pluginIndex < resolved.index;
+    if (valid) continue;
+    issues.push({
+      severity: 'error',
+      code: relation === 'after' ? 'plugin-order-after-invalid' : 'plugin-order-before-invalid',
+      message: `Plugin ${pluginName} must be ordered ${relation} ${resolved.entry.name}`,
+      pluginName,
+      index: pluginIndex,
+    });
+  }
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -596,10 +707,27 @@ function parsePluginParameterSchema(
   if (!header) {
     return { warnings: [`Plugin ${pluginName} does not have a parseable parameter header (@plugindesc was not found)`] };
   }
-  const preWarnings: string[] = [];
-  const structBlocks = extractStructDefinitionBlocks(raw, preWarnings);
+  const metadataWarnings: string[] = [];
+  const structResolver = createSchemaParseContext(raw, metadataWarnings);
+  const context = structResolver.context;
+  const parseResult = parseHeaderToSchema(header, context);
+  const warnings = dedupeStrings([...metadataWarnings, ...parseResult.warnings]);
+  const structs = structResolver.parsedStructs();
+  if (!parseResult.fields.length) {
+    return { warnings: warnings.length ? warnings : [`No parameters were parsed from plugin ${pluginName} parameter comments`] };
+  }
+  return {
+    schema: { source: 'rmmv-plugin-header', fields: parseResult.fields, structs, warnings },
+    warnings,
+  };
+}
+
+function createSchemaParseContext(
+  raw: string,
+  warnings: string[],
+): { context: SchemaParseContext; parsedStructs(): Record<string, PluginParameterSchemaField[]> } {
+  const structBlocks = extractStructDefinitionBlocks(raw, warnings);
   const structCache = new Map<string, StructCacheEntry>();
-  const structWarnings: string[] = [];
   const context: SchemaParseContext = {
     resolveStruct(name: string): PluginParameterSchemaField[] | null {
       const normalized = normalizeStructName(name);
@@ -607,35 +735,29 @@ function parsePluginParameterSchema(
       if (cached?.status === 'done') return cached.fields || [];
       if (cached?.status === 'missing') return null;
       if (cached?.status === 'parsing') {
-        structWarnings.push(`struct ${name} has a circular reference and was rejected`);
+        warnings.push(`struct ${name} has a circular reference and was rejected`);
         return null;
       }
       const block = structBlocks.get(normalized);
       if (!block) {
         structCache.set(normalized, { status: 'missing' });
-        structWarnings.push(`Missing /*~struct~${name}: */ definition for struct ${name}`);
+        warnings.push(`Missing /*~struct~${name}: */ definition for struct ${name}`);
         return null;
       }
       structCache.set(normalized, { status: 'parsing' });
       const parsed = parseHeaderToSchema(block, context);
-      for (const warning of parsed.warnings) structWarnings.push(`struct ${name}: ${warning}`);
+      for (const warning of parsed.warnings) warnings.push(`struct ${name}: ${warning}`);
       structCache.set(normalized, { status: 'done', fields: parsed.fields });
       return parsed.fields;
     },
   };
-  const parseResult = parseHeaderToSchema(header, context);
-  const warnings = dedupeStrings([...preWarnings, ...parseResult.warnings, ...structWarnings]);
-  const structs = Object.fromEntries(
-    [...structCache.entries()]
-      .filter(([, entry]) => entry.status === 'done')
-      .map(([name, entry]) => [name, entry.fields || []]),
-  );
-  if (!parseResult.fields.length) {
-    return { warnings: warnings.length ? warnings : [`No parameters were parsed from plugin ${pluginName} parameter comments`] };
-  }
   return {
-    schema: { source: 'rmmv-plugin-header', fields: parseResult.fields, structs, warnings },
-    warnings,
+    context,
+    parsedStructs: () => Object.fromEntries(
+      [...structCache.entries()]
+        .filter(([, entry]) => entry.status === 'done')
+        .map(([name, entry]) => [name, entry.fields || []]),
+    ),
   };
 }
 
@@ -711,9 +833,14 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
         current.unsupportedReason = `Parameter ${current.key} @type "${rest || '(empty)'}" is not supported: ${mapped.unsupportedReason}`;
       } else {
         current.kind = mapped.kind;
-        current.structName = mapped.structName;
-        current.fields = mapped.fields;
-        current.item = mapped.item;
+        if (mapped.structName) current.structName = mapped.structName;
+        else delete current.structName;
+        if (mapped.fields) current.fields = mapped.fields;
+        else delete current.fields;
+        if (mapped.item) current.item = mapped.item;
+        else delete current.item;
+        if (mapped.databaseTable) current.databaseTable = mapped.databaseTable;
+        else delete current.databaseTable;
       }
       continue;
     }
@@ -739,7 +866,7 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
 
     if (tag === 'option') {
       const target = optionTarget(current);
-      if (target.kind !== 'select') target.kind = 'select';
+      if (target.kind !== 'select' && target.kind !== 'combo') target.kind = 'select';
       const option = parseOptionLine(rest, target.kind);
       target.options = target.options || [];
       target.options.push(option);
@@ -749,6 +876,11 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
 
     if (tag === 'value') {
       const target = optionTarget(current);
+      if (target.kind === 'combo') {
+        warnings.push(`Parameter ${current.key} uses @value with combo; MZ combo values come from @option, so @value was ignored`);
+        optionWaitingForValue = false;
+        continue;
+      }
       if (!target.options || target.options.length === 0) {
         warnings.push(`Parameter ${current.key} has @value without a matching @option`);
         continue;
@@ -777,6 +909,18 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
       continue;
     }
 
+    if (tag === 'parent') {
+      current.parent = rest || undefined;
+      continue;
+    }
+
+    if (tag === 'decimals') {
+      const decimals = Number(rest);
+      if (Number.isInteger(decimals) && decimals >= 0) setNumericDecimals(current, decimals);
+      else warnings.push(`Parameter ${current.key} has an invalid @decimals: ${rest}`);
+      continue;
+    }
+
     if (tag === 'require') {
       current.required = rest === '' || rest === '1' || /^true$/i.test(rest);
       continue;
@@ -795,6 +939,7 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
     warnings.push(`Parameter ${current.key} @${tag} is not supported yet`);
   }
   flushCurrentParameter(fields, current, warnings);
+  validateParameterParentTree(fields, warnings);
   if (!fields.length) {
     return { fields: [], warnings: ['No @param definitions were parsed'] };
   }
@@ -813,6 +958,9 @@ function flushCurrentParameter(
   }
   if (current.unsupportedReason) {
     warnings.push(current.unsupportedReason);
+    const { onLabel, offLabel, ...readonlyField } = current;
+    readonlyField.editable = false;
+    fields.push(readonlyField);
     return null;
   }
   if (current.kind === 'number') {
@@ -914,8 +1062,29 @@ function isGlobalPluginMetadataTag(tag: string): boolean {
 
 function isIgnorableParameterMetadataTag(tag: string): boolean {
   return [
-    'parent', 'decimals', 'clamp',
+    'clamp',
   ].includes(tag);
+}
+
+function validateParameterParentTree(fields: PluginParameterSchemaField[], warnings: string[]): void {
+  const byKey = new Map(fields.map((field) => [field.key, field]));
+  for (const field of fields) {
+    if (!field.parent) continue;
+    if (!byKey.has(field.parent)) {
+      warnings.push(`Parameter ${field.key} references missing @parent ${field.parent}`);
+      continue;
+    }
+    const visited = new Set([field.key]);
+    let parent = field.parent;
+    while (parent) {
+      if (visited.has(parent)) {
+        warnings.push(`Parameter ${field.key} has a circular @parent chain`);
+        break;
+      }
+      visited.add(parent);
+      parent = byKey.get(parent)?.parent || '';
+    }
+  }
 }
 
 function normalizeStructName(value: string): string {
@@ -927,7 +1096,7 @@ function dedupeStrings(values: string[]): string[] {
 }
 
 type ParameterTypeMapping =
-  | Pick<PluginParameterSchemaField, 'kind' | 'rawType' | 'structName' | 'fields' | 'item'>
+  | Pick<PluginParameterSchemaField, 'kind' | 'rawType' | 'structName' | 'fields' | 'item' | 'databaseTable'>
   | { unsupportedReason: string };
 
 function mapParameterType(raw: string, context?: SchemaParseContext): ParameterTypeMapping | null {
@@ -967,34 +1136,45 @@ function mapParameterType(raw: string, context?: SchemaParseContext): ParameterT
 function mapArrayItemType(
   raw: string,
   context?: SchemaParseContext,
-): Pick<PluginParameterSchemaField, 'kind' | 'rawType' | 'structName' | 'fields' | 'item'> | { unsupportedReason: string } | null {
-  const structMatch = raw.match(/^struct\s*<\s*([^>]+?)\s*>$/i);
-  if (structMatch) {
-    const structName = structMatch[1].trim();
-    const fields = context?.resolveStruct(structName);
-    if (!fields?.length) return { unsupportedReason: `struct ${structName} is undefined or has no fields` };
-    return { kind: 'struct', rawType: raw, structName, fields };
-  }
-  if (/\[\]$/.test(raw)) return { unsupportedReason: 'Nested arrays are not supported yet' };
-  return mapScalarParameterKind(raw);
+): Pick<PluginParameterSchemaField, 'kind' | 'rawType' | 'structName' | 'fields' | 'item' | 'databaseTable'> | { unsupportedReason: string } | null {
+  return mapParameterType(raw, context);
 }
 
-function mapScalarParameterKind(raw: string): Pick<PluginParameterSchemaField, 'kind' | 'rawType'> | null {
-  const kind = mapParameterKind(raw);
-  return kind ? { kind, rawType: raw || undefined } : null;
-}
-
-function mapParameterKind(raw: string): PluginParameterSchemaField['kind'] | null {
+function mapScalarParameterKind(
+  raw: string,
+): Pick<PluginParameterSchemaField, 'kind' | 'rawType' | 'databaseTable'> | null {
   const value = raw.toLowerCase().trim();
-  if (!value) return 'text';
+  if (!value) return { kind: 'text' };
   if (/\[\]$/.test(value) || /^struct\s*</.test(value)) return null;
-  if (['number', 'numeric', 'integer', 'float', 'decimal'].includes(value)) return 'number';
-  if (['actor', 'class', 'skill', 'item', 'weapon', 'armor', 'enemy', 'troop', 'state', 'animation', 'tileset', 'common_event', 'common event', 'switch', 'variable'].includes(value)) return 'number';
-  if (['boolean', 'bool', 'onoff', 'on/off', 'switch'].includes(value)) return 'boolean';
-  if (['select', 'combo', 'dropdown'].includes(value)) return 'select';
-  if (['json', 'object', 'note'].includes(value)) return 'json';
-  if (['string', 'text', 'multiline_string', 'multiline string', 'multiline'].includes(value)) return 'text';
-  if (value === 'file' || value.startsWith('file ')) return 'text';
+  const rawType = raw || undefined;
+  if (['number', 'numeric', 'integer', 'float', 'decimal'].includes(value)) return { kind: 'number', rawType };
+  if (['boolean', 'bool', 'onoff', 'on/off'].includes(value)) return { kind: 'boolean', rawType };
+  if (['select', 'dropdown'].includes(value)) return { kind: 'select', rawType };
+  if (value === 'combo') return { kind: 'combo', rawType };
+  if (['json', 'object', 'note'].includes(value)) return { kind: 'json', rawType };
+  if (['multiline_string', 'multiline string', 'multiline'].includes(value)) return { kind: 'multiline', rawType };
+  if (['string', 'text'].includes(value)) return { kind: 'text', rawType };
+  if (value === 'file' || value.startsWith('file ')) return { kind: 'file', rawType };
+  if (value === 'map') return { kind: 'map', rawType };
+  if (value === 'location') return { kind: 'location', rawType };
+  const databaseTables: Record<string, string> = {
+    actor: 'Actors',
+    class: 'Classes',
+    skill: 'Skills',
+    item: 'Items',
+    weapon: 'Weapons',
+    armor: 'Armors',
+    enemy: 'Enemies',
+    troop: 'Troops',
+    state: 'States',
+    animation: 'Animations',
+    tileset: 'Tilesets',
+    common_event: 'CommonEvents',
+    'common event': 'CommonEvents',
+    switch: 'System.switches',
+    variable: 'System.variables',
+  };
+  if (databaseTables[value]) return { kind: 'database', rawType, databaseTable: databaseTables[value] };
   return null;
 }
 
@@ -1009,6 +1189,14 @@ function setNumericBound(field: WorkingPluginParameterSchemaField, key: 'min' | 
     return;
   }
   field[key] = value;
+}
+
+function setNumericDecimals(field: WorkingPluginParameterSchemaField, value: number): void {
+  if (field.kind === 'array' && field.item && field.item.kind === 'number') {
+    field.item.decimals = value;
+    return;
+  }
+  field.decimals = value;
 }
 
 function validateNumberDefault(field: Pick<PluginParameterSchemaField, 'defaultValue'>, label: string, warnings: string[]): void {
@@ -1081,7 +1269,12 @@ function extractPluginCommandHintsFromFile(
 
 function extractPluginCommandHints(pluginName: string, raw: string): PluginCommandHint[] {
   const hints = new Map<string, PluginCommandHint>();
-  const add = (command: string, source: PluginCommandHint['source'], offset: number) => {
+  const add = (
+    command: string,
+    source: PluginCommandHint['source'],
+    offset: number,
+    details: Pick<PluginCommandHint, 'displayName' | 'arguments'> = {},
+  ) => {
     const normalized = command.trim();
     if (!normalized || /\s/.test(normalized)) return;
     const key = `${source}:${normalized.toLowerCase()}`;
@@ -1091,6 +1284,7 @@ function extractPluginCommandHints(pluginName: string, raw: string): PluginComma
       command: normalized,
       source,
       evidence: sourceLineAt(raw, offset),
+      ...details,
     });
   };
 
@@ -1110,7 +1304,174 @@ function extractPluginCommandHints(pluginName: string, raw: string): PluginComma
     }
   }
 
+
+  for (const declaration of parseMZPluginCommands(raw)) {
+    add(declaration.command, 'mz-command-header', declaration.offset, {
+      displayName: declaration.displayName,
+      arguments: declaration.arguments,
+    });
+  }
+
   return Array.from(hints.values()).sort((a, b) => a.command.localeCompare(b.command));
+}
+
+interface ParsedMZPluginCommand {
+  command: string;
+  displayName: string;
+  arguments: PluginCommandArgument[];
+  offset: number;
+}
+
+interface WorkingPluginCommandArgument extends PluginCommandArgument {
+  unsupportedReason?: string;
+  onLabel?: string;
+  offLabel?: string;
+}
+
+function parseMZPluginCommands(raw: string): ParsedMZPluginCommand[] {
+  const result: ParsedMZPluginCommand[] = [];
+  const metadataWarnings: string[] = [];
+  const context = createSchemaParseContext(raw, metadataWarnings).context;
+  for (const blockMatch of raw.matchAll(/\/\*:(?:[a-z][a-z0-9_-]*)?\s*([\s\S]*?)\*\//gi)) {
+    const block = blockMatch[1] || '';
+    const lines = parseHeaderLines(block);
+    const target = lines
+      .map((line) => line.match(/^@target\s+(.+)$/i)?.[1]?.trim())
+      .find(Boolean);
+    if (target && !target.split(/\s+/).some((value) => value.toUpperCase() === 'MZ')) continue;
+
+    let current: ParsedMZPluginCommand | null = null;
+    let argument: WorkingPluginCommandArgument | null = null;
+    let optionWaitingForValue = false;
+    const flushArgument = (): void => {
+      if (current && argument) {
+        if (argument.kind === 'boolean' && (argument.onLabel || argument.offLabel)) {
+          argument.options = [
+            { label: argument.onLabel || 'ON', value: 'true' },
+            { label: argument.offLabel || 'OFF', value: 'false' },
+          ];
+        }
+        const { onLabel, offLabel, ...field } = argument;
+        current.arguments.push(field);
+      }
+      argument = null;
+      optionWaitingForValue = false;
+    };
+    const flushCommand = (): void => {
+      flushArgument();
+      if (current?.command) result.push(current);
+      current = null;
+    };
+
+    for (const line of lines) {
+      const tag = line.match(/^@([A-Za-z][A-Za-z0-9_-]*)\b\s*(.*)$/);
+      if (!tag) continue;
+      const name = tag[1].toLowerCase();
+      const value = tag[2].trim();
+      if (name === 'command') {
+        flushCommand();
+        current = {
+          command: value,
+          displayName: value,
+          arguments: [],
+          offset: (blockMatch.index || 0) + block.indexOf(line),
+        };
+        continue;
+      }
+      if (!current) continue;
+      if (name === 'arg') {
+        flushArgument();
+        argument = { name: value, key: value, label: value, description: '', kind: 'text', rawType: 'string', defaultValue: '' };
+        continue;
+      }
+      if (name === 'text') {
+        if (argument) argument.label = value || argument.label;
+        else current.displayName = value || current.displayName;
+        continue;
+      }
+      if (name === 'desc' && argument) {
+        argument.description = argument.description ? `${argument.description}\n${value}` : value;
+        continue;
+      }
+      if (name === 'type' && argument) {
+        const mapped = mapParameterType(value || 'string', context);
+        argument.rawType = value || 'string';
+        if (!mapped) {
+          argument.editable = false;
+          argument.unsupportedReason = `Plugin command argument ${argument.name} uses unsupported type ${value || '(empty)'}`;
+        } else if ('unsupportedReason' in mapped) {
+          argument.editable = false;
+          argument.unsupportedReason = mapped.unsupportedReason;
+        } else {
+          argument.kind = mapped.kind;
+          if (mapped.structName) argument.structName = mapped.structName;
+          if (mapped.fields) argument.fields = mapped.fields;
+          if (mapped.item) argument.item = mapped.item;
+          if (mapped.databaseTable) argument.databaseTable = mapped.databaseTable;
+        }
+        continue;
+      }
+      if (name === 'default' && argument) {
+        argument.defaultValue = value;
+        continue;
+      }
+      if (name === 'min' && argument) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) setNumericBound(argument, 'min', parsed);
+        continue;
+      }
+      if (name === 'max' && argument) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) setNumericBound(argument, 'max', parsed);
+        continue;
+      }
+      if (name === 'decimals' && argument) {
+        const parsed = Number(value);
+        if (Number.isInteger(parsed) && parsed >= 0) setNumericDecimals(argument, parsed);
+        continue;
+      }
+      if (name === 'dir' && argument) {
+        argument.directory = value || undefined;
+        continue;
+      }
+      if (name === 'parent' && argument) {
+        argument.parent = value || undefined;
+        continue;
+      }
+      if (name === 'require' && argument) {
+        argument.required = value === '' || value === '1' || /^true$/i.test(value);
+        continue;
+      }
+      if (name === 'option' && argument) {
+        const target = optionTarget(argument);
+        if (target.kind !== 'select' && target.kind !== 'combo') target.kind = 'select';
+        target.options = target.options || [];
+        target.options.push(parseOptionLine(value, target.kind));
+        optionWaitingForValue = true;
+        continue;
+      }
+      if (name === 'value' && argument && optionWaitingForValue) {
+        const target = optionTarget(argument);
+        if (target.kind === 'combo') {
+          optionWaitingForValue = false;
+          continue;
+        }
+        const option = target.options?.[target.options.length - 1];
+        if (option) option.value = parseOptionValue(value, target.kind);
+        optionWaitingForValue = false;
+        continue;
+      }
+      if (name === 'on' && argument) {
+        argument.onLabel = value || 'ON';
+        continue;
+      }
+      if (name === 'off' && argument) {
+        argument.offLabel = value || 'OFF';
+      }
+    }
+    flushCommand();
+  }
+  return result;
 }
 
 function sourceLineAt(raw: string, offset: number): string {

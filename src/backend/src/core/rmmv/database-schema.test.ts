@@ -7,6 +7,7 @@ import {
   getRmmvDatabaseSchema,
   getRmmvDatabaseSchemaByKey,
   listRmmvDatabaseSchemas,
+  rpgMakerDatabaseEntryLimit,
   validateRmmvDatabaseEntry,
   type RmmvDatabaseGroup,
 } from "./database-schema.ts";
@@ -92,6 +93,39 @@ describe("RMMV database schema registry", () => {
     ]) {
       assert.equal(systemFields.has(field), true, `System schema must expose ${field}`);
     }
+  });
+
+  test("uses MZ-native animation defaults and MZ 1.10 database limits", () => {
+    const animation = createDefaultRmmvDatabaseEntry("Animations", 4, "rpg-maker-mz");
+    assert.deepEqual(animation, {
+      id: 4,
+      name: "",
+      displayType: 0,
+      effectName: "",
+      scale: 100,
+      speed: 100,
+      flashTimings: [],
+      soundTimings: [],
+      offsetX: 0,
+      offsetY: 0,
+      rotation: { x: 0, y: 0, z: 0 },
+      alignBottom: false,
+    });
+    assert.equal(rpgMakerDatabaseEntryLimit("Armors", "rpg-maker-mv"), 2000);
+    for (const group of ["Actors", "Classes", "States", "Skills", "Items", "Weapons", "Armors", "Enemies", "Troops", "CommonEvents"]) {
+      assert.equal(rpgMakerDatabaseEntryLimit(group, "rpg-maker-mz"), 9999, group);
+    }
+    assert.equal(rpgMakerDatabaseEntryLimit("Animations", "rpg-maker-mz"), 1000);
+
+    const skill = createDefaultRmmvDatabaseEntry("Skills", 2, "rpg-maker-mz");
+    const state = createDefaultRmmvDatabaseEntry("States", 3, "rpg-maker-mz");
+    const system = createDefaultRmmvDatabaseEntry("System", undefined, "rpg-maker-mz");
+    assert.equal(skill.messageType, 0);
+    assert.equal(state.messageType, 0);
+    assert.equal(state.releaseByDamage, false);
+    assert.equal(system.battleSystem, 0);
+    assert.deepEqual(system.itemCategories, [true, true, true, true]);
+    assert.equal((system.advanced as Record<string, unknown>).screenWidth, 816);
   });
 
   test("declares the conditional State and Switch targets used by enemy actions", () => {

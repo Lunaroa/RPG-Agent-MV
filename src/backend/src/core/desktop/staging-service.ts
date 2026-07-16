@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { StagingManifestDao } from '../db/dao/staging-manifest-dao.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
+import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
+import { RPG_MAKER_ENGINE_PROFILES } from '../rmmv/rpg-maker-engine.ts';
 import { STAGING_ERROR_CODES, StagingError } from './staging-errors.ts';
 import { withProjectStagingLock } from './staging-lock.ts';
 import {
@@ -93,6 +95,7 @@ export interface StagedMapMutationTarget {
   project: string;
   sourceProject: string;
   mapFile: string;
+  ensureCompleteProjectContext: () => void;
 }
 
 interface MapEntry extends FileEntry {
@@ -208,10 +211,11 @@ export function withStagedMapMutation<T>(
     writeManifest(context, manifest);
 
     const mapFile = draftFilePath(context, relative);
-    const staged = {
+    const staged: StagedMapMutationTarget = {
       project: context.draftRoot,
       sourceProject: context.project,
       mapFile,
+      ensureCompleteProjectContext: () => ensureDraftProjectDataFiles(context, manifest, true),
     };
     const result = mutation(staged);
     if (!fs.existsSync(mapFile)) throw new Error(`Staged map draft not found: ${relative}`);
@@ -221,7 +225,9 @@ export function withStagedMapMutation<T>(
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
     return {
-      ...staged,
+      project: staged.project,
+      sourceProject: staged.sourceProject,
+      mapFile: staged.mapFile,
       result,
       staging: getStagingStatus(workflowRoot, project, mapId),
     };
@@ -1440,20 +1446,56 @@ function stagedFileHash(context: StagingContext, relative: string): string | nul
   return fs.existsSync(draftFile) ? fileHash(draftFile) : null;
 }
 
-function ensureDraftProjectDataFiles(context: StagingContext, manifest: Manifest): void {
-  const dataRoot = resolveDataDir(context.project);
+function ensureDraftProjectDataFiles(
+  context: StagingContext,
+  manifest: Manifest,
+  completeProjectContext = false,
+): void {
+  const projectManifest = inspectRmmvProject(context.project);
+  const dataRoot = projectManifest.dataDir;
   for (const fileName of PATCHER_CONTEXT_FILES) {
-    const requestedRelative = projectRelativePath(context.project, path.join(dataRoot, fileName));
-    const relative = resolveManifestRelativePath(manifest, requestedRelative);
-    const entry = manifest.files[relative];
-    if (entry?.delete) continue;
-    const source = entry ? draftFilePath(context, relative) : sourceFilePath(context, relative);
-    if (!fs.existsSync(source)) continue;
-    const target = draftFilePath(context, relative);
-    if (path.resolve(source) === path.resolve(target)) continue;
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(source, target);
+    copyDraftProjectFile(context, manifest, path.join(dataRoot, fileName));
   }
+  if (completeProjectContext) {
+    for (const mapFile of projectManifest.mapFiles) {
+      if (mapFile.exists) copyDraftProjectFile(context, manifest, path.join(dataRoot, mapFile.fileName));
+    }
+  }
+
+  if (projectManifest.engine === 'rpg-maker-mz') {
+    const profile = RPG_MAKER_ENGINE_PROFILES[projectManifest.engine];
+    copyProjectOwnedContextFile(context, path.join(projectManifest.projectRoot, profile.projectMarker));
+    for (const relative of profile.engineFiles) {
+      copyProjectOwnedContextFile(
+        context,
+        path.join(projectManifest.resourceRoot, ...relative.split('/')),
+      );
+    }
+  }
+}
+
+function copyDraftProjectFile(context: StagingContext, manifest: Manifest, sourcePath: string): void {
+  const requestedRelative = projectRelativePath(context.project, sourcePath);
+  const relative = resolveManifestRelativePath(manifest, requestedRelative);
+  const entry = manifest.files[relative];
+  if (entry?.delete) return;
+  const source = entry ? draftFilePath(context, relative) : sourceFilePath(context, relative);
+  copyDraftContextFile(source, draftFilePath(context, relative));
+}
+
+function copyProjectOwnedContextFile(context: StagingContext, source: string): void {
+  if (!isInside(context.project, source)) {
+    throw new Error(`Project context file escapes the project root: ${source}`);
+  }
+  const relative = path.relative(context.project, source);
+  copyDraftContextFile(source, path.join(context.draftRoot, relative));
+}
+
+function copyDraftContextFile(source: string, target: string): void {
+  if (!fs.existsSync(source) || !fs.statSync(source).isFile()) return;
+  if (path.resolve(source) === path.resolve(target)) return;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
 }
 
 function sourceJsonEquals(sourceFile: string, value: unknown): boolean {

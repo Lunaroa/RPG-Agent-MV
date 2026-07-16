@@ -11,7 +11,7 @@ import type {
   ProjectAssetEntry,
 } from '../../../../contract/types.ts';
 import { readJson } from '../rmmv/json.ts';
-import { assetBucketRelativePath, dataRelativePath, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
+import { assetBucketRelativePath, dataRelativePath, inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import { hasStandardDualWieldTrait, standardEquipSlotTypeIds } from '../rmmv/equipment-slots.ts';
 import { projectAssetUrl } from './asset-service.ts';
 import { buildMapIndex } from './map-service.ts';
@@ -37,10 +37,12 @@ const ASSET_BUCKETS = {
   me: { bucket: 'me', extensions: new Set(['.ogg', '.m4a']) },
   se: { bucket: 'se', extensions: new Set(['.ogg', '.m4a']) },
   movies: { bucket: 'movies', extensions: new Set(['.webm', '.mp4']) },
+  effects: { bucket: 'effects', extensions: new Set(['.efkefc']) },
 } as const;
 
 export function buildEditorProjectCatalog(workflowRoot: string, project: string): EditorProjectCatalog {
   const layout = resolveRmmvLayout(project);
+  const manifest = inspectRmmvProject(project);
   const dataFile = (fileName: string) => dataRelativePath(layout, fileName);
   const assetDir = (key: keyof typeof ASSET_BUCKETS) => assetBucketRelativePath(layout, ASSET_BUCKETS[key].bucket);
   const system = readProjectJson(workflowRoot, project, dataFile('System.json'), {});
@@ -51,6 +53,12 @@ export function buildEditorProjectCatalog(workflowRoot: string, project: string)
   const enemies = readProjectJson(workflowRoot, project, dataFile('Enemies.json'), []);
   return {
     project,
+    engine: manifest.engine,
+    tileSize: manifest.tileSize,
+    screenWidth: manifest.screenWidth,
+    screenHeight: manifest.screenHeight,
+    faceSize: manifest.faceSize,
+    iconSize: manifest.iconSize,
     maps: buildMapIndex(workflowRoot, project).maps,
     switches: namedStringList(system.switches),
     variables: namedStringList(system.variables),
@@ -99,6 +107,7 @@ export function buildEditorProjectCatalog(workflowRoot: string, project: string)
       me: listProjectAssets(workflowRoot, project, assetDir('me'), ASSET_BUCKETS.me.extensions),
       se: listProjectAssets(workflowRoot, project, assetDir('se'), ASSET_BUCKETS.se.extensions),
       movies: listProjectAssets(workflowRoot, project, assetDir('movies'), ASSET_BUCKETS.movies.extensions),
+      effects: listProjectAssets(workflowRoot, project, assetDir('effects'), ASSET_BUCKETS.effects.extensions),
     },
   };
 }
@@ -224,23 +233,37 @@ function listProjectAssets(workflowRoot: string, project: string, directory: str
   const files = new Map<string, boolean>();
   const absolute = path.join(project, ...directory.split('/'));
   if (fs.existsSync(absolute)) {
-    for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
-      if (entry.isFile() && extensions.has(path.extname(entry.name).toLowerCase())) files.set(entry.name, true);
+    for (const fileName of listFilesRecursively(absolute)) {
+      if (extensions.has(path.extname(fileName).toLowerCase())) files.set(fileName, true);
     }
   }
   const prefix = `${directory}/`;
   for (const entry of getProjectStagingStatus(workflowRoot, project).files) {
     if (!entry.relativePath.startsWith(prefix)) continue;
     const fileName = entry.relativePath.slice(prefix.length);
-    if (!fileName || fileName.includes('/') || !extensions.has(path.extname(fileName).toLowerCase())) continue;
+    if (!fileName || !extensions.has(path.extname(fileName).toLowerCase())) continue;
     if (entry.delete) files.delete(fileName);
     else files.set(fileName, true);
   }
   return [...files.keys()]
     .sort((a, b) => a.localeCompare(b))
     .map((fileName) => ({
-      name: path.basename(fileName, path.extname(fileName)),
+      name: fileName.slice(0, -path.extname(fileName).length),
       fileName,
       url: projectAssetUrl(project, `${directory}/${fileName}`),
     }));
+}
+
+function listFilesRecursively(root: string): string[] {
+  const files: string[] = [];
+  const visit = (directory: string, prefix: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute, relative);
+      else if (entry.isFile()) files.push(relative);
+    }
+  };
+  visit(root, '');
+  return files;
 }

@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 
 import { closeDatabase, configureDatabase, getDatabase } from "./pool.ts";
-import { backfillEventContractRids, migrate, reconcileSchemaDrift } from "./migrate.ts";
+import { backfillEventContractEngines, backfillEventContractRids, migrate, reconcileSchemaDrift } from "./migrate.ts";
 import { bootstrapDatabase } from "./bootstrap.ts";
 import { EventContractDao } from "./dao/event-contract-dao.ts";
 
@@ -340,6 +340,38 @@ test("backfillEventContractRids writes rid into contract JSON blobs in SQLite", 
   assert.equal(byId["a.b.one"], 8);
 });
 
+test("migration v11 backfills legacy contracts as MV without changing their identity or status", () => {
+  migrate();
+  const db = getDatabase();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO event_contracts (contract_id, project_id, contract, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    "scene.engine.legacy",
+    "Sample",
+    JSON.stringify({ id: "scene.engine.legacy", purpose: "fixture", rmmvTarget: { mapId: 1 } }),
+    "reviewing",
+    now,
+    now,
+  );
+
+  backfillEventContractEngines();
+  backfillEventContractEngines();
+
+  const row = db.prepare(`
+    SELECT contract_id, project_id, contract, status, created_at, updated_at
+    FROM event_contracts WHERE contract_id = ?
+  `).get("scene.engine.legacy") as Record<string, string>;
+  const contract = JSON.parse(row.contract) as Record<string, unknown>;
+  assert.equal(contract.engine, "rpg-maker-mv");
+  assert.equal(contract.id, "scene.engine.legacy");
+  assert.equal(row.project_id, "Sample");
+  assert.equal(row.status, "reviewing");
+  assert.equal(row.created_at, now);
+  assert.equal(row.updated_at, now);
+});
+
 test("migration v10 builds the current story module tables and markdown outline", () => {
   const storyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rmmv-migrate-story-"));
   configureDatabase({ path: path.join(storyRoot, "story.db") });
@@ -421,7 +453,7 @@ test("migration v10 drops structured outline tables and old story board artifact
   assert.ok(!tableExists(db, "story_block_contracts"), "old story board link table dropped");
   const anchorCols = (db.prepare("PRAGMA table_info(story_event_anchors)").all() as { name: string }[]).map((col) => col.name);
   assert.equal(anchorCols.includes("block_id"), false);
-  assert.equal((db.prepare("SELECT MAX(version) AS version FROM migrations").get() as { version: number }).version, 10);
+  assert.equal((db.prepare("SELECT MAX(version) AS version FROM migrations").get() as { version: number }).version, 11);
 
   closeDatabase();
   fs.rmSync(v8Root, { recursive: true, force: true });

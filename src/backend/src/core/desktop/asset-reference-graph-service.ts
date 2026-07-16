@@ -13,6 +13,8 @@ import {
   assetGraphUnsupportedCategory,
 } from './assetReferenceGraphLocalization.ts';
 import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
+import { readPluginConfiguration } from './plugin-management-service.ts';
+import type { PluginParameterSchemaField } from '../../../../contract/types.ts';
 
 export type RmmvAssetCategory =
   | 'characters'
@@ -35,7 +37,8 @@ export type RmmvAssetCategory =
   | 'se'
   | 'movies'
   | 'fonts'
-  | 'plugins';
+  | 'plugins'
+  | 'effects';
 
 export interface RmmvAssetCategoryDefinition {
   id: RmmvAssetCategory;
@@ -142,6 +145,7 @@ export const RMMV_ASSET_CATEGORIES: RmmvAssetCategoryDefinition[] = [
   { id: 'movies', directory: 'movies', extensions: ['.webm', '.mp4', '.rpgmvm'] },
   { id: 'fonts', directory: 'fonts', extensions: ['.css', '.ttf', '.otf', '.woff', '.woff2'] },
   { id: 'plugins', directory: 'js/plugins', extensions: ['.js'] },
+  { id: 'effects', directory: 'effects', extensions: ['.efkefc'] },
 ];
 
 const CATEGORY_BY_ID = new Map(RMMV_ASSET_CATEGORIES.map((category) => [category.id, category]));
@@ -159,6 +163,8 @@ const CATEGORY_ALIASES: Record<string, RmmvAssetCategory> = {
   'js/plugins': 'plugins',
   plugin: 'plugins',
   plugins: 'plugins',
+  effect: 'effects',
+  effects: 'effects',
 };
 
 const DATABASE_FILES = [
@@ -273,7 +279,11 @@ export function checkAssetRenameSafety(
   if (!asset) {
     blockers.push(assetGraphAssetMissing());
   } else {
-    nextRelativePath = `${path.posix.dirname(asset.relativePath)}/${nextName}${path.extname(asset.fileName)}`;
+    const relativeDir = categoryRelativeDirectory({
+      dataRelativeDir: graph.dataRelativeDir,
+      gameRootRelative: graph.gameRootRelative,
+    }, category);
+    nextRelativePath = `${relativeDir}/${nextName}${path.extname(asset.fileName)}`;
     const occupied = graph.assets.some((item) => item.relativePath === nextRelativePath);
     if (occupied) blockers.push(assetGraphTargetNameOccupied());
   }
@@ -295,6 +305,9 @@ export function checkAssetRenameSafety(
 
 function canRewriteAssetReference(reference: RmmvAssetReference): boolean {
   if (reference.file.toLowerCase().endsWith('.json')) return true;
+  if (/(?:^|\/)js\/plugins\/(?:[^/]+\/)*[^/]+\.js$/i.test(reference.file)) {
+    return reference.source.startsWith('Plugin declaration');
+  }
   return /(?:^|\/)js\/plugins\.js$/i.test(reference.file)
     && reference.path.startsWith('$.plugins[');
 }
@@ -421,11 +434,14 @@ function scanTroops(context: ScanContext, value: unknown, file: string): void {
 
 function scanAnimations(context: ScanContext, value: unknown, file: string): void {
   forEachDatabaseEntry(value, (entry, index) => {
+    addReference(context, 'effects', entry.effectName, file, `$[${index}].effectName`, 'MZ particle animation effect');
     addReference(context, 'animations', entry.animation1Name, file, `$[${index}].animation1Name`, 'Animation sheet');
     addReference(context, 'animations', entry.animation2Name, file, `$[${index}].animation2Name`, 'Animation sheet');
-    if (!Array.isArray(entry.timings)) return;
-    entry.timings.forEach((timing, timingIndex) => {
+    if (Array.isArray(entry.timings)) entry.timings.forEach((timing, timingIndex) => {
       if (isRecord(timing)) addAudioReference(context, 'se', timing.se, file, `$[${index}].timings[${timingIndex}].se`, 'Animation timing SE');
+    });
+    if (Array.isArray(entry.soundTimings)) entry.soundTimings.forEach((timing, timingIndex) => {
+      if (isRecord(timing)) addAudioReference(context, 'se', timing.se, file, `$[${index}].soundTimings[${timingIndex}].se`, 'MZ animation timing SE');
     });
   });
 }
@@ -568,11 +584,104 @@ function scanPluginConfiguration(context: ScanContext): void {
   } catch {
     return;
   }
+  const managedByName = new Map(readPluginConfiguration(context.workflowRoot, context.project).plugins.map((plugin) => [plugin.name, plugin]));
   entries.forEach((entry, index) => {
     if (!isRecord(entry)) return;
     addReference(context, 'plugins', entry.name, relative, `$.plugins[${index}].name`, 'Plugin configuration');
     scanPluginParameters(context, entry.parameters, relative, `$.plugins[${index}].parameters`);
+    const pluginName = String(entry.name || '');
+    const managed = managedByName.get(pluginName);
+    if (!managed) return;
+    for (const field of managed.parameterSchema?.fields || []) {
+      scanDeclaredPluginParameter(
+        context,
+        field,
+        isRecord(entry.parameters) ? entry.parameters[field.key] : undefined,
+        relative,
+        `$.plugins[${index}].parameters${jsonPathKey(field.key)}`,
+      );
+    }
+    managed.dependencies?.requiredAssets.forEach((asset, assetIndex) => {
+      scanResourceString(context, asset, managed.fileRelativePath, `@requiredAssets[${assetIndex}]`, 'Plugin declaration');
+    });
+    for (const declaration of managed.dependencies?.noteAssets || []) {
+      scanPluginNoteAssets(context, managed.fileRelativePath, declaration);
+    }
   });
+}
+
+function scanDeclaredPluginParameter(
+  context: ScanContext,
+  field: PluginParameterSchemaField,
+  rawValue: unknown,
+  file: string,
+  jsonPath: string,
+): void {
+  const value = parsePluginStructuredValue(rawValue);
+  if (field.kind === 'file' && field.directory && typeof value === 'string' && value.trim()) {
+    scanResourceString(context, `${field.directory}/${value}`.replace(/\/+/g, '/'), file, jsonPath, 'Plugin file parameter');
+    return;
+  }
+  if (field.kind === 'struct' && isRecord(value)) {
+    for (const child of field.fields || []) {
+      scanDeclaredPluginParameter(context, child, value[child.key], file, jsonPath);
+    }
+    return;
+  }
+  if (field.kind === 'array' && Array.isArray(value) && field.item) {
+    value.forEach((item) => scanDeclaredPluginParameter(context, field.item!, item, file, jsonPath));
+  }
+}
+
+function parsePluginStructuredValue(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed || !/^[\[{]/.test(trimmed)) return value;
+  try { return JSON.parse(trimmed); } catch { return value; }
+}
+
+function scanPluginNoteAssets(
+  context: ScanContext,
+  pluginFile: string,
+  declaration: { parameter: string; directory: string; type: string; data: string },
+): void {
+  if (declaration.type !== 'file' || !declaration.data) return;
+  const dataFiles: Record<string, string> = {
+    actor: 'Actors.json', actors: 'Actors.json', class: 'Classes.json', classes: 'Classes.json',
+    skill: 'Skills.json', skills: 'Skills.json', item: 'Items.json', items: 'Items.json',
+    weapon: 'Weapons.json', weapons: 'Weapons.json', armor: 'Armors.json', armors: 'Armors.json',
+    enemy: 'Enemies.json', enemies: 'Enemies.json', state: 'States.json', states: 'States.json',
+    tileset: 'Tilesets.json', tilesets: 'Tilesets.json', common_event: 'CommonEvents.json', commonevents: 'CommonEvents.json',
+  };
+  const fileName = dataFiles[declaration.data.toLowerCase().replace(/[\s-]/g, '')] || dataFiles[declaration.data.toLowerCase()];
+  if (!fileName) return;
+  const relative = `${context.layout.dataRelativeDir}/${fileName}`;
+  const absolute = getProjectFileForRead(context.workflowRoot, context.project, relative);
+  if (!absolute) return;
+  const escaped = declaration.parameter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`<${escaped}\\s*:\\s*([^>]+)>`, 'gi');
+  const visit = (value: unknown, jsonPath: string): void => {
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => visit(entry, `${jsonPath}[${index}]`));
+      return;
+    }
+    if (!isRecord(value)) return;
+    if (typeof value.note === 'string') {
+      for (const match of value.note.matchAll(pattern)) {
+        scanResourceString(
+          context,
+          `${declaration.directory}/${match[1].trim()}`.replace(/\/+/g, '/'),
+          relative,
+          `${jsonPath}.note`,
+          `Plugin note declaration (${path.posix.basename(pluginFile)})`,
+        );
+      }
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (key !== 'note') visit(child, `${jsonPath}${jsonPathKey(key)}`);
+    }
+  };
+  visit(readJson(absolute), '$');
 }
 
 function scanPluginParameters(context: ScanContext, value: unknown, file: string, jsonPath: string): void {
@@ -593,12 +702,14 @@ function scanPluginParameters(context: ScanContext, value: unknown, file: string
 function scanResourceString(context: ScanContext, value: string, file: string, jsonPath: string, source: string): void {
   const normalized = value.trim().replace(/\\/g, '/').replace(/^www\//, '').replace(/^\/+/, '');
   if (!normalized) return;
-  const match = /^((?:img|audio|movies|fonts|js\/plugins)\/[^.]+)(?:\.[A-Za-z0-9]+)?$/.exec(normalized);
+  const match = /^((?:img|audio|movies|fonts|effects|js\/plugins)\/[^.]+)(?:\.[A-Za-z0-9]+)?$/.exec(normalized);
   if (!match) return;
-  const directory = path.posix.dirname(match[1]);
-  const category = CATEGORY_BY_DIRECTORY.get(directory);
+  const assetPath = match[1];
+  const category = RMMV_ASSET_CATEGORIES
+    .filter((candidate) => assetPath.startsWith(`${candidate.directory}/`))
+    .sort((left, right) => right.directory.length - left.directory.length)[0];
   if (!category) return;
-  addReference(context, category.id, path.posix.basename(match[1]), file, jsonPath, source);
+  addReference(context, category.id, assetPath.slice(category.directory.length + 1), file, jsonPath, source);
 }
 
 function listProjectAssets(context: ScanContext): RmmvProjectAsset[] {
@@ -607,13 +718,12 @@ function listProjectAssets(context: ScanContext): RmmvProjectAsset[] {
     const relativeDir = categoryRelativeDirectory(context.layout, category.id);
     const sourceDir = path.join(context.project, ...relativeDir.split('/'));
     if (fs.existsSync(sourceDir)) {
-      for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
-        if (!entry.isFile()) continue;
-        const extension = path.extname(entry.name).toLowerCase();
+      for (const fileName of listFilesRecursively(sourceDir)) {
+        const extension = path.extname(fileName).toLowerCase();
         if (!category.extensions.includes(extension)) continue;
-        const relativePath = `${relativeDir}/${entry.name}`;
-        const absolutePath = path.join(sourceDir, entry.name);
-        byRelative.set(relativePath, makeAsset(category.id, relativePath, absolutePath, false));
+        const relativePath = `${relativeDir}/${fileName}`;
+        const absolutePath = path.join(sourceDir, ...fileName.split('/'));
+        byRelative.set(relativePath, makeAsset(category.id, relativePath, absolutePath, false, context.layout));
       }
     }
   }
@@ -626,16 +736,23 @@ function listProjectAssets(context: ScanContext): RmmvProjectAsset[] {
     }
     const absolutePath = getProjectFileForRead(context.workflowRoot, context.project, staged.relativePath);
     if (!absolutePath) continue;
-    byRelative.set(staged.relativePath, makeAsset(category.id, staged.relativePath, absolutePath, true));
+    byRelative.set(staged.relativePath, makeAsset(category.id, staged.relativePath, absolutePath, true, context.layout));
   }
   return Array.from(byRelative.values()).sort((a, b) => a.category.localeCompare(b.category) || a.relativePath.localeCompare(b.relativePath));
 }
 
-function makeAsset(category: RmmvAssetCategory, relativePath: string, absolutePath: string, staged: boolean): RmmvProjectAsset {
-  const fileName = path.basename(relativePath);
+function makeAsset(
+  category: RmmvAssetCategory,
+  relativePath: string,
+  absolutePath: string,
+  staged: boolean,
+  layout: ProjectAssetLayout,
+): RmmvProjectAsset {
+  const relativeDir = categoryRelativeDirectory(layout, category);
+  const fileName = relativePath.slice(relativeDir.length + 1);
   return {
     category,
-    name: path.basename(fileName, path.extname(fileName)),
+    name: fileName.slice(0, -path.extname(fileName).length),
     fileName,
     relativePath,
     absolutePath,
@@ -653,6 +770,21 @@ function categoryForRelativePath(layout: ProjectAssetLayout, relativePath: strin
     return category;
   }
   return null;
+}
+
+function listFilesRecursively(root: string): string[] {
+  const files: string[] = [];
+  const visit = (directory: string, prefix: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute, relative);
+      else if (entry.isFile()) files.push(relative);
+    }
+  };
+  visit(root, '');
+  return files;
 }
 
 function listDataJsonRelatives(context: ScanContext): string[] {
@@ -692,7 +824,7 @@ function resolveProjectAssetLayout(workflowRoot: string, project: string): Proje
       return candidate;
     }
   }
-  throw new Error(`Cannot find RPG Maker MV data folder under ${project}`);
+  throw new Error(`Cannot find an RPG Maker data folder under ${project}`);
 }
 
 function categoryRelativeDirectory(layout: ProjectAssetLayout, category: RmmvAssetCategory): string {
@@ -742,16 +874,23 @@ function normalizeAssetReferenceName(value: unknown): string {
 }
 
 function normalizeAssetName(value: string): string {
-  const name = String(value || '').trim();
-  if (!name || /[<>:"/\\|?*\u0000-\u001f]/.test(name)) throw new Error(assetGraphNameInvalid());
+  const name = String(value || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!name || name.split('/').some((part) => !part || part === '.' || part === '..' || /[<>:"|?*\u0000-\u001f]/.test(part))) {
+    throw new Error(assetGraphNameInvalid());
+  }
   return name;
 }
 
 function targetAssetName(target: AssetGraphTarget): string {
   if (target.name) return normalizeAssetName(target.name);
   if (target.relativePath) {
-    const fileName = path.posix.basename(target.relativePath.replace(/\\/g, '/'));
-    return normalizeAssetName(path.posix.basename(fileName, path.posix.extname(fileName)));
+    const normalized = target.relativePath.replace(/\\/g, '/');
+    const category = normalizeAssetCategory(target.category);
+    const definition = category ? CATEGORY_BY_ID.get(category) : null;
+    const marker = definition ? `${definition.directory}/` : '';
+    const markerIndex = marker ? normalized.indexOf(marker) : -1;
+    const withinCategory = markerIndex >= 0 ? normalized.slice(markerIndex + marker.length) : path.posix.basename(normalized);
+    return normalizeAssetName(withinCategory.slice(0, -path.posix.extname(withinCategory).length));
   }
   throw new Error(assetGraphNameMissing());
 }

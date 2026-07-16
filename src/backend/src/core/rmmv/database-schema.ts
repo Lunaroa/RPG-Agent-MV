@@ -1,4 +1,5 @@
 import { validateEventCommandList } from "./event-command-registry.ts";
+import type { RpgMakerEngine } from "./rpg-maker-engine.ts";
 
 export const STANDARD_RMMV_DATABASE_GROUPS = [
   "Actors",
@@ -80,7 +81,7 @@ export interface RmmvDatabaseTableSchema {
   coreFields: readonly RmmvDatabaseFieldSchema[];
   references: readonly RmmvDatabaseReferenceField[];
   createDefaultEntry(id?: number): Record<string, unknown>;
-  validate(value: unknown): RmmvDatabaseValidationResult;
+  validate(value: unknown, engine?: RpgMakerEngine): RmmvDatabaseValidationResult;
 }
 
 interface RmmvDatabaseTableDefinition {
@@ -111,6 +112,19 @@ const DATABASE_ENTRY_LIMITS: Readonly<Record<RmmvDatabaseGroup, number | null>> 
   System: null,
   Types: null,
   Terms: null,
+};
+
+const MZ_DATABASE_ENTRY_LIMIT_OVERRIDES: Readonly<Partial<Record<RmmvDatabaseGroup, number>>> = {
+  Actors: 9999,
+  Classes: 9999,
+  Skills: 9999,
+  Items: 9999,
+  Weapons: 9999,
+  Armors: 9999,
+  Enemies: 9999,
+  Troops: 9999,
+  States: 9999,
+  CommonEvents: 9999,
 };
 
 const DATABASE_DEFINITIONS: readonly RmmvDatabaseTableDefinition[] = [
@@ -173,6 +187,7 @@ const DATABASE_DEFINITIONS: readonly RmmvDatabaseTableDefinition[] = [
     arrayField("effects"),
     stringField("message1"),
     stringField("message2"),
+    integerField("messageType"),
   ], [
     ref("stypeId", "Types.skillTypes"),
     ref("requiredWtypeId1", "Types.weaponTypes"),
@@ -281,6 +296,7 @@ const DATABASE_DEFINITIONS: readonly RmmvDatabaseTableDefinition[] = [
     booleanField("removeAtBattleEnd"),
     booleanField("removeByRestriction"),
     booleanField("removeByDamage"),
+    booleanField("releaseByDamage"),
     integerField("chanceByDamage"),
     booleanField("removeByWalking"),
     integerField("stepsToRemove"),
@@ -288,6 +304,7 @@ const DATABASE_DEFINITIONS: readonly RmmvDatabaseTableDefinition[] = [
     stringField("message2"),
     stringField("message3"),
     stringField("message4"),
+    integerField("messageType"),
     stringField("note"),
     arrayField("traits"),
   ], [
@@ -303,6 +320,16 @@ const DATABASE_DEFINITIONS: readonly RmmvDatabaseTableDefinition[] = [
     integerField("position"),
     arrayField("frames"),
     arrayField("timings"),
+    integerField("displayType"),
+    stringField("effectName"),
+    integerField("scale"),
+    integerField("speed"),
+    arrayField("flashTimings"),
+    arrayField("soundTimings"),
+    integerField("offsetX"),
+    integerField("offsetY"),
+    objectField("rotation"),
+    booleanField("alignBottom"),
   ], [
     ref("animation1Name", "img/animations"),
     ref("animation2Name", "img/animations"),
@@ -376,6 +403,29 @@ const DATABASE_DEFINITIONS: readonly RmmvDatabaseTableDefinition[] = [
     booleanField("optSideView"),
     booleanField("optSlipDeath"),
     booleanField("optTransparent"),
+    objectField("advanced"),
+    integerField("tileSize"),
+    integerField("faceSize"),
+    integerField("iconSize"),
+    integerField("battleSystem"),
+    arrayField("itemCategories"),
+    objectField("titleCommandWindow"),
+    stringField("advanced.gameId"),
+    integerField("advanced.screenWidth"),
+    integerField("advanced.screenHeight"),
+    integerField("advanced.uiAreaWidth"),
+    integerField("advanced.uiAreaHeight"),
+    stringField("advanced.mainFontFilename"),
+    stringField("advanced.numberFontFilename"),
+    stringField("advanced.fallbackFonts"),
+    integerField("advanced.fontSize"),
+    integerField("advanced.picturesUpperLimit"),
+    numberField("advanced.screenScale"),
+    integerField("advanced.windowOpacity"),
+    booleanField("optAutosave"),
+    booleanField("optKeyItemsNumber"),
+    booleanField("optSplashScreen"),
+    booleanField("optMessageSkip"),
   ], [
     ref("startMapId", "MapInfos"),
     ref("boat.startMapId", "MapInfos"),
@@ -459,12 +509,30 @@ export function isRmmvDatabaseGroup(groupOrKey: string): boolean {
   return SCHEMA_LOOKUP.has(String(groupOrKey || "").trim().toLowerCase());
 }
 
-export function createDefaultRmmvDatabaseEntry(groupOrKey: string, id?: number): Record<string, unknown> {
-  return getRmmvDatabaseSchema(groupOrKey).createDefaultEntry(id);
+export function createDefaultRmmvDatabaseEntry(
+  groupOrKey: string,
+  id?: number,
+  engine: RpgMakerEngine = "rpg-maker-mv",
+): Record<string, unknown> {
+  const schema = getRmmvDatabaseSchema(groupOrKey);
+  if (engine !== "rpg-maker-mz") return schema.createDefaultEntry(id);
+  if (schema.group === "Animations") return defaultMZAnimation(id);
+  if (schema.group === "System") return defaultMZSystem();
+  const entry = schema.createDefaultEntry(id);
+  if (schema.group === "Skills") entry.messageType = 0;
+  if (schema.group === "States") {
+    entry.messageType = 0;
+    entry.releaseByDamage = false;
+  }
+  return entry;
 }
 
-export function validateRmmvDatabaseEntry(groupOrKey: string, value: unknown): RmmvDatabaseValidationResult {
-  return getRmmvDatabaseSchema(groupOrKey).validate(value);
+export function validateRmmvDatabaseEntry(
+  groupOrKey: string,
+  value: unknown,
+  engine: RpgMakerEngine = "rpg-maker-mv",
+): RmmvDatabaseValidationResult {
+  return getRmmvDatabaseSchema(groupOrKey).validate(value, engine);
 }
 
 function arrayTable(
@@ -493,8 +561,8 @@ function withValidator(definition: RmmvDatabaseTableDefinition): RmmvDatabaseTab
   return {
     ...definition,
     maxEntries: DATABASE_ENTRY_LIMITS[definition.group],
-    validate(value: unknown): RmmvDatabaseValidationResult {
-      return validateRecord(definition, value);
+    validate(value: unknown, engine: RpgMakerEngine = "rpg-maker-mv"): RmmvDatabaseValidationResult {
+      return validateRecord(definition, value, engine);
     },
   };
 }
@@ -529,6 +597,10 @@ function integerField(path: string): RmmvDatabaseFieldSchema {
   return { path, kind: "integer" };
 }
 
+function numberField(path: string): RmmvDatabaseFieldSchema {
+  return { path, kind: "number" };
+}
+
 function stringField(path: string): RmmvDatabaseFieldSchema {
   return { path, kind: "string" };
 }
@@ -552,6 +624,7 @@ function ref(path: string, target: string, note?: string): RmmvDatabaseReference
 function validateRecord(
   definition: RmmvDatabaseTableDefinition,
   value: unknown,
+  engine: RpgMakerEngine,
 ): RmmvDatabaseValidationResult {
   const issues: RmmvDatabaseValidationIssue[] = [];
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -602,7 +675,7 @@ function validateRecord(
     }
   }
 
-  validateDatabaseSpecificFields(definition.group, record, issues);
+  validateDatabaseSpecificFields(definition.group, record, issues, engine);
 
   return { ok: issues.length === 0, issues };
 }
@@ -611,6 +684,7 @@ function validateDatabaseSpecificFields(
   group: RmmvDatabaseGroup,
   record: Record<string, unknown>,
   issues: RmmvDatabaseValidationIssue[],
+  engine: RpgMakerEngine,
 ): void {
   if (group === "Troops") {
     const pages = record.pages;
@@ -625,21 +699,22 @@ function validateDatabaseSpecificFields(
         });
         return;
       }
-      validateRmmvCommandList((page as Record<string, unknown>).list, `pages[${index}].list`, issues);
+      validateRmmvCommandList((page as Record<string, unknown>).list, `pages[${index}].list`, issues, engine);
     });
     return;
   }
 
-  if (group === "CommonEvents") validateRmmvCommandList(record.list, "list", issues);
+  if (group === "CommonEvents") validateRmmvCommandList(record.list, "list", issues, engine);
 }
 
 function validateRmmvCommandList(
   value: unknown,
   pathPrefix: string,
   issues: RmmvDatabaseValidationIssue[],
+  engine: RpgMakerEngine,
 ): void {
   try {
-    validateEventCommandList(value, pathPrefix);
+    validateEventCommandList(value, pathPrefix, engine);
   } catch (error) {
     issues.push({
       path: pathPrefix,
@@ -726,6 +801,16 @@ function defaultClassParams(): number[][] {
   return Array.from({ length: 8 }, (_row, paramIndex) => (
     Array.from({ length: 100 }, (_value, level) => (level === 0 || paramIndex === 1 ? 0 : 1))
   ));
+}
+
+export function rpgMakerDatabaseEntryLimit(
+  groupOrKey: string,
+  engine: RpgMakerEngine = "rpg-maker-mv",
+): number | null {
+  const group = getRmmvDatabaseSchema(groupOrKey).group;
+  return engine === "rpg-maker-mz"
+    ? MZ_DATABASE_ENTRY_LIMIT_OVERRIDES[group] ?? DATABASE_ENTRY_LIMITS[group]
+    : DATABASE_ENTRY_LIMITS[group];
 }
 
 function defaultEnemyParams(): number[] {
@@ -933,6 +1018,53 @@ function defaultAnimation(id = 1): Record<string, unknown> {
     name: "",
     position: 1,
     timings: [],
+  };
+}
+
+function defaultMZAnimation(id = 1): Record<string, unknown> {
+  return {
+    id,
+    displayType: 0,
+    effectName: "",
+    flashTimings: [],
+    name: "",
+    offsetX: 0,
+    offsetY: 0,
+    rotation: { x: 0, y: 0, z: 0 },
+    scale: 100,
+    soundTimings: [],
+    speed: 100,
+    alignBottom: false,
+  };
+}
+
+function defaultMZSystem(): Record<string, unknown> {
+  return {
+    ...defaultSystem(),
+    advanced: {
+      gameId: "",
+      screenWidth: 816,
+      screenHeight: 624,
+      uiAreaWidth: 816,
+      uiAreaHeight: 624,
+      mainFontFilename: "mplus-1m-regular.woff",
+      numberFontFilename: "mplus-2p-bold-sub.woff",
+      fallbackFonts: "Verdana, sans-serif",
+      fontSize: 26,
+      picturesUpperLimit: 300,
+      screenScale: 1,
+      windowOpacity: 192,
+    },
+    battleSystem: 0,
+    faceSize: 144,
+    iconSize: 32,
+    itemCategories: [true, true, true, true],
+    optAutosave: true,
+    optKeyItemsNumber: true,
+    optMessageSkip: false,
+    optSplashScreen: true,
+    tileSize: 48,
+    titleCommandWindow: { background: 0, offsetX: 0, offsetY: 0 },
   };
 }
 

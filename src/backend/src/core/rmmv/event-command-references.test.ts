@@ -115,6 +115,10 @@ describe("RMMV event-command references", () => {
       "actors:4:list[0].parameters[1]",
       "skills:7:list[0].parameters[2]",
     ]);
+
+    const entireParty = referencesFor({ code: 311, parameters: [0, 0, 0, 0, 10, false] });
+    assert.deepEqual(signatures(entireParty), ["actors:0:list[0].parameters[1]"]);
+    assert.deepEqual(entireParty[0].specialValues, [0]);
   });
 
   test("does not misclassify a Force Action troop-member index as an enemy database id", () => {

@@ -3,6 +3,7 @@ import path from "path";
 
 import { readJson, writeJson } from "../../rmmv/json.ts";
 import { resolveDataDir } from "../../rmmv/project-scanner.ts";
+import { inspectRmmvProject } from "../../rmmv/rmmv-layout.ts";
 import { LAYERS } from "../../rmmv/map-blocks.ts";
 import { resolveAutotileLayer, isSupportedAutotileKind, classifyAutotileKind } from "./tile-autotile.ts";
 
@@ -16,9 +17,10 @@ interface BrushEditInput {
   kind?: "tile" | "autotile" | "shadow" | "region";
   x: number;
   y: number;
-  layer?: number;
+  layer?: number | "auto";
   tileId?: number;
   autotileKind?: number;
+  preserveAutotileShape?: boolean;
   shadowBits?: number;
   regionId?: number;
 }
@@ -30,6 +32,7 @@ interface NormalizedEdit {
   layer: number;
   tileId?: number;
   autotileKind?: number;
+  preserveAutotileShape?: boolean;
   shadowBits?: number;
   regionId?: number;
 }
@@ -57,6 +60,7 @@ interface BrushEditReport {
 
 const TILE_ID_A1 = 2048;
 const TILE_ID_MAX = 8192;
+const TILE_ID_UPPER_MAX = 1024;
 const PAINT_LAYERS = 4;
 const SHADOW_LAYER = 4;
 const REGION_LAYER = 5;
@@ -107,7 +111,15 @@ function applyBrushEdit(options: BrushEditOptions): BrushEditReport {
   validateMap(map, mapId);
 
   const before = map.data.slice();
-  const normalized = edits.map((edit, index) => normalizeEdit(edit, index, map));
+  const engine = inspectRmmvProject(project).engine;
+  const tilesetMode = readTilesetMode(dataDir, map);
+  const placementMap = { width: map.width, height: map.height, data: map.data.slice() };
+  const normalized: NormalizedEdit[] = [];
+  edits.forEach((edit, index) => {
+    const next = normalizeEdit(edit, index, placementMap, tilesetMode);
+    normalized.push(...next);
+    for (const normalizedEdit of next) applyPlacementPreview(placementMap, normalizedEdit);
+  });
 
   // 1. literal/metadata placements first, so erases land before autotile re-resolution.
   for (const edit of normalized) {
@@ -133,9 +145,15 @@ function applyBrushEdit(options: BrushEditOptions): BrushEditReport {
   const resolvedLayers = [];
   for (const layer of [...touchedLayers].sort((a, b) => a - b)) {
     if (autotileByLayer.has(layer) || layerHasSupportedAutotile(map, layer)) {
-      resolveLayer(map, layer, autotileByLayer.get(layer) || []);
+      const preserved = new Set(normalized
+        .filter((edit) => edit.layer === layer && edit.kind === "tile" && edit.preserveAutotileShape)
+        .map((edit) => edit.y * map.width + edit.x));
+      resolveLayer(map, layer, autotileByLayer.get(layer) || [], preserved);
       resolvedLayers.push(layer);
     }
+  }
+  if (engine === "rpg-maker-mz" && normalized.some((edit) => edit.layer < PAINT_LAYERS)) {
+    updateMZAutoshadows(map, normalized);
   }
 
   // 4. diff before/after.
@@ -163,14 +181,19 @@ function applyBrushEdit(options: BrushEditOptions): BrushEditReport {
     mapId,
     mapFile,
     size: { width: map.width, height: map.height },
-    requestedEdits: normalized.length,
+    requestedEdits: edits.length,
     changedCells: changes.length,
     resolvedLayers,
     changes
   };
 }
 
-function normalizeEdit(edit: BrushEditInput, index: number, map: { width: number; height: number }): NormalizedEdit {
+function normalizeEdit(
+  edit: BrushEditInput,
+  index: number,
+  map: { width: number; height: number; data: number[] },
+  tilesetMode: number | null,
+): NormalizedEdit[] {
   if (!edit || typeof edit !== "object") throw new Error(`edits[${index}] must be an object.`);
   assertInt(edit.x, `edits[${index}].x`, 0);
   assertInt(edit.y, `edits[${index}].y`, 0);
@@ -187,16 +210,16 @@ function normalizeEdit(edit: BrushEditInput, index: number, map: { width: number
     assertMetadataLayer(edit.layer, SHADOW_LAYER, index, "shadow");
     assertInt(edit.shadowBits, `edits[${index}].shadowBits`, 0);
     if (edit.shadowBits! > 15) throw new Error(`edits[${index}].shadowBits must be <= 15.`);
-    return { kind: "shadow", x: edit.x, y: edit.y, layer: SHADOW_LAYER, shadowBits: edit.shadowBits };
+    return [{ kind: "shadow", x: edit.x, y: edit.y, layer: SHADOW_LAYER, shadowBits: edit.shadowBits }];
   }
   if (inferredKind === "region") {
     assertMetadataLayer(edit.layer, REGION_LAYER, index, "region");
     assertInt(edit.regionId, `edits[${index}].regionId`, 0);
     if (edit.regionId! > 255) throw new Error(`edits[${index}].regionId must be <= 255.`);
-    return { kind: "region", x: edit.x, y: edit.y, layer: REGION_LAYER, regionId: edit.regionId };
+    return [{ kind: "region", x: edit.x, y: edit.y, layer: REGION_LAYER, regionId: edit.regionId }];
   }
 
-  const layer = normalizePaintLayer(edit.layer, index);
+  const autoLayer = edit.layer === "auto";
   if (inferredKind === "autotile") {
     assertInt(edit.autotileKind, `edits[${index}].autotileKind`, 0);
     const classification = classifyAutotileKind(edit.autotileKind);
@@ -206,14 +229,63 @@ function normalizeEdit(edit: BrushEditInput, index: number, map: { width: number
         (classification.reason || classification.strategy)
       );
     }
-    return { kind: "autotile", x: edit.x, y: edit.y, layer, autotileKind: edit.autotileKind };
+    const layer = autoLayer ? automaticLayerForAutotile(edit.autotileKind!) : normalizePaintLayer(edit.layer, index);
+    const result: NormalizedEdit[] = [{ kind: "autotile", x: edit.x, y: edit.y, layer, autotileKind: edit.autotileKind }];
+    if (autoLayer && layer === 1 && tilesetMode === 0) {
+      const baseKind = supportedAutotileKindOf(valueAt(map, 0, edit.x, edit.y));
+      const classification = classifyAutotileKind(baseKind);
+      if (classification.tab === "A2" && classification.localKind !== null && classification.localKind % 8 < 4
+        && (classification.localKind % 4 === 1 || classification.localKind % 4 === 3)) {
+        result.unshift({ kind: "autotile", x: edit.x, y: edit.y, layer: 0, autotileKind: baseKind - 1 });
+      }
+    }
+    return result;
   }
 
   assertInt(edit.tileId, `edits[${index}].tileId`, 0);
   if (edit.tileId >= TILE_ID_MAX) {
     throw new Error(`edits[${index}].tileId ${edit.tileId} exceeds max ${TILE_ID_MAX}.`);
   }
-  return { kind: "tile", x: edit.x, y: edit.y, layer, tileId: edit.tileId };
+  if (!autoLayer) {
+    const layer = normalizePaintLayer(edit.layer, index);
+    return [{ kind: "tile", x: edit.x, y: edit.y, layer, tileId: edit.tileId, preserveAutotileShape: edit.preserveAutotileShape === true }];
+  }
+  return automaticLiteralEdits(map, edit.x, edit.y, edit.tileId!, edit.preserveAutotileShape === true);
+}
+
+function automaticLayerForAutotile(kind: number): number {
+  const classification = classifyAutotileKind(kind);
+  return classification.tab === "A2" && classification.localKind !== null && classification.localKind % 8 >= 4 ? 1 : 0;
+}
+
+function automaticLiteralEdits(
+  map: { width: number; height: number; data: number[] },
+  x: number,
+  y: number,
+  tileId: number,
+  preserveAutotileShape: boolean,
+): NormalizedEdit[] {
+  if (tileId === 0) {
+    return [
+      { kind: "tile", x, y, layer: 2, tileId: 0 },
+      { kind: "tile", x, y, layer: 3, tileId: 0 },
+    ];
+  }
+  if (tileId < TILE_ID_UPPER_MAX) {
+    const first = valueAt(map, 2, x, y);
+    const second = valueAt(map, 3, x, y);
+    if (first === 0) return [{ kind: "tile", x, y, layer: 2, tileId }];
+    if (second === 0 || second === tileId) return [{ kind: "tile", x, y, layer: 3, tileId }];
+    return [
+      { kind: "tile", x, y, layer: 2, tileId: second },
+      { kind: "tile", x, y, layer: 3, tileId },
+    ];
+  }
+  if (tileId >= TILE_ID_A1) {
+    const kind = Math.floor((tileId - TILE_ID_A1) / 48);
+    return [{ kind: "tile", x, y, layer: automaticLayerForAutotile(kind), tileId, preserveAutotileShape }];
+  }
+  return [{ kind: "tile", x, y, layer: 0, tileId }];
 }
 
 function normalizePaintLayer(layer: unknown, index: number): number {
@@ -224,6 +296,58 @@ function normalizePaintLayer(layer: unknown, index: number): number {
     throw new Error(`edits[${index}].layer must be < ${PAINT_LAYERS} for tile/autotile edits.`);
   }
   return layer;
+}
+
+function valueAt(map: { width: number; height: number; data: number[] }, layer: number, x: number, y: number): number {
+  return Number(map.data[cellIndex(map, layer, x, y)] || 0);
+}
+
+function applyPlacementPreview(
+  map: { width: number; height: number; data: number[] },
+  edit: NormalizedEdit,
+): void {
+  const index = cellIndex(map, edit.layer, edit.x, edit.y);
+  if (edit.kind === "autotile") map.data[index] = TILE_ID_A1 + edit.autotileKind! * 48;
+  else if (edit.kind === "shadow") map.data[index] = edit.shadowBits!;
+  else if (edit.kind === "region") map.data[index] = edit.regionId!;
+  else map.data[index] = edit.tileId!;
+}
+
+function readTilesetMode(dataDir: string, map: Record<string, unknown>): number | null {
+  const tilesetId = Number(map.tilesetId);
+  const file = path.join(dataDir, "Tilesets.json");
+  if (!Number.isInteger(tilesetId) || tilesetId <= 0 || !fs.existsSync(file)) return null;
+  const tilesets = readJson(file);
+  if (!Array.isArray(tilesets) || !tilesets[tilesetId] || typeof tilesets[tilesetId] !== "object") return null;
+  const mode = Number((tilesets[tilesetId] as Record<string, unknown>).mode);
+  return Number.isInteger(mode) ? mode : null;
+}
+
+function updateMZAutoshadows(
+  map: { width: number; height: number; data: number[] },
+  edits: NormalizedEdit[],
+): void {
+  const candidates = new Set<string>();
+  for (const edit of edits) {
+    if (edit.layer >= PAINT_LAYERS) continue;
+    for (let y = Math.max(0, edit.y - 1); y <= Math.min(map.height - 1, edit.y + 1); y += 1) {
+      for (let x = Math.max(0, edit.x); x <= Math.min(map.width - 1, edit.x + 1); x += 1) candidates.add(`${x},${y}`);
+    }
+  }
+  for (const key of candidates) {
+    const [x, y] = key.split(",").map(Number);
+    if (x <= 0 || y <= 0) continue;
+    const leftKind = supportedAutotileKindOf(valueAt(map, 0, x - 1, y));
+    const upperLeftKind = supportedAutotileKindOf(valueAt(map, 0, x - 1, y - 1));
+    const leftClass = classifyAutotileKind(leftKind);
+    const shouldShadow = leftKind >= 0 && leftKind === upperLeftKind
+      && (leftClass.tab === "A3" || leftClass.tab === "A4")
+      && valueAt(map, 0, x, y) !== valueAt(map, 0, x - 1, y);
+    const shadowIndex = cellIndex(map, SHADOW_LAYER, x, y);
+    const current = Number(map.data[shadowIndex] || 0);
+    if (shouldShadow && current === 0) map.data[shadowIndex] = 5;
+    else if (!shouldShadow && current === 5) map.data[shadowIndex] = 0;
+  }
 }
 
 function assertMetadataLayer(layer: unknown, expected: number, index: number, kind: "shadow" | "region"): void {
@@ -240,7 +364,12 @@ function changeKindForLayer(layer: number): NormalizedEdit["kind"] {
   return "tile";
 }
 
-function resolveLayer(map: { width: number; height: number; data: number[] }, layer: number, autotileEdits: NormalizedEdit[]): void {
+function resolveLayer(
+  map: { width: number; height: number; data: number[] },
+  layer: number,
+  autotileEdits: NormalizedEdit[],
+  preservedCells: ReadonlySet<number> = new Set(),
+): void {
   const layerSize = map.width * map.height;
   const base = layer * layerSize;
 
@@ -258,7 +387,7 @@ function resolveLayer(map: { width: number; height: number; data: number[] }, la
 
   const resolved = resolveAutotileLayer(kindGrid, map.width, map.height);
   for (let cell = 0; cell < layerSize; cell += 1) {
-    if (kindGrid[cell] >= 0) map.data[base + cell] = resolved[cell];
+    if (kindGrid[cell] >= 0 && !preservedCells.has(cell)) map.data[base + cell] = resolved[cell];
   }
 }
 

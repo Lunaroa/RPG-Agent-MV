@@ -13,6 +13,7 @@ import {
   commandBlockSpanIndices,
   editableCommandSpans,
   MOVE_ROUTE_OPERATIONS,
+  quickObtainEventTemplate,
   type MvEventPage,
 } from '../../../../ui/desktop/src/composables/useEventEditor.ts';
 import { eventCommandDefinition } from '../rmmv/event-command-registry.ts';
@@ -67,5 +68,18 @@ describe('MV event command catalog', () => {
   test('lists every editable MV move route operation from 1 through 45', () => {
     const codes = MOVE_ROUTE_OPERATIONS.map(([code]) => code);
     assert.deepEqual(codes, Array.from({ length: 45 }, (_value, index) => index + 1));
+  });
+
+  test('builds the MZ obtain quick event without an image or sound', () => {
+    for (const [kind, code] of [['item', 126], ['weapon', 127], ['armor', 128]] as const) {
+      const event = quickObtainEventTemplate(kind, 3, 4, 7, 8, 'Sample Entry');
+      assert.equal(event.x, 7);
+      assert.equal(event.y, 8);
+      assert.equal(event.pages[0].trigger, 0);
+      assert.equal(event.pages[0].image.characterName, '');
+      assert.equal(event.pages[0].list[0].code, code);
+      assert.deepEqual(event.pages[0].list[0].parameters, [3, 0, 0, 4, ...(code === 126 ? [] : [false])]);
+      assert.equal(event.pages[0].list.some((command) => command.code === 250), false);
+    }
   });
 });

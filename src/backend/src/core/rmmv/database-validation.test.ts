@@ -164,6 +164,20 @@ describe("RMMV prospective database validation", () => {
     assert.ok(issuePaths(snapshot).includes("enemies[1].dropItems[0].dataId"));
   });
 
+  test("accepts the MZ-only friend and everyone target scopes without widening MV", () => {
+    for (const scope of [12, 13, 14]) {
+      const snapshot = validSnapshot();
+      (snapshot.skills as Array<Record<string, unknown> | null>)[1]!.scope = scope;
+      const mz = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1], engine: "rpg-maker-mz" });
+      assert.equal(mz.issues.some((issue) => issue.code === "DB_USABLE_SCOPE"), false);
+    }
+
+    const snapshot = validSnapshot();
+    (snapshot.skills as Array<Record<string, unknown> | null>)[1]!.scope = 12;
+    const mv = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1], engine: "rpg-maker-mv" });
+    assert.ok(mv.issues.some((issue) => issue.code === "DB_USABLE_SCOPE"));
+  });
+
   test("validates standard enemy action conditions and preserves unknown plugin conditions as warnings", () => {
     const snapshot = validSnapshot();
     const enemy = (snapshot.enemies as Array<Record<string, unknown> | null>)[1]!;
@@ -443,6 +457,100 @@ describe("RMMV prospective database validation", () => {
     assert.ok(changed.issues.some((issue) =>
       issue.code === "DB_NEW_ENTRY_OVER_LIMIT" && issue.source.path === "skills[2002]"
     ));
+  });
+
+  test("uses the MZ 1.10 entry limit when validating new armor slots", () => {
+    const before: RmmvDatabaseSnapshot = { armors: [null] };
+    const armors: Array<Record<string, unknown> | null> = [null];
+    armors[9999] = { id: 9999, name: "" };
+
+    const mz = validateRmmvDatabaseTransition(before, { armors }, { engine: "rpg-maker-mz" });
+    assert.equal(mz.ok, true);
+
+    const overLimit = [...armors];
+    overLimit[10000] = { id: 10000, name: "" };
+    const invalidMZ = validateRmmvDatabaseTransition(before, { armors: overLimit }, { engine: "rpg-maker-mz" });
+    assert.equal(invalidMZ.ok, false);
+    assert.ok(invalidMZ.issues.some((issue) => (
+      issue.code === "DB_NEW_ENTRY_OVER_LIMIT"
+      && issue.source.path === "armors[10000]"
+      && /RPG Maker MZ limit of 9999/.test(issue.message)
+    )));
+
+    const mv = validateRmmvDatabaseTransition(before, { armors }, { engine: "rpg-maker-mv" });
+    assert.equal(mv.ok, false);
+    assert.ok(mv.issues.some((issue) => issue.code === "DB_NEW_ENTRY_OVER_LIMIT"));
+  });
+
+  test("strictly validates MZ particle rotation, flash, and sound timing shapes", () => {
+    const particle = {
+      id: 1,
+      name: "Sample Particle",
+      displayType: 0,
+      effectName: "fx/Spark",
+      scale: 100,
+      speed: 100,
+      offsetX: 0,
+      offsetY: 0,
+      rotation: { x: 0, y: 0, z: 0 },
+      alignBottom: false,
+      flashTimings: [{ frame: 0, duration: 30, color: [255, 255, 255, 255] }],
+      soundTimings: [{ frame: 0, se: { name: "Hit1", volume: 90, pitch: 100, pan: 0 } }],
+    };
+    const valid = validateRmmvDatabaseSnapshot({ animations: [null, particle] }, { engine: "rpg-maker-mz" });
+    assert.equal(valid.ok, true);
+
+    const invalid = structuredClone(particle);
+    invalid.flashTimings[0].color[2] = 300;
+    (invalid.soundTimings as unknown[])[0] = null;
+    const result = validateRmmvDatabaseSnapshot({ animations: [null, invalid] }, { engine: "rpg-maker-mz" });
+    assert.equal(result.ok, false);
+    assert.ok(result.issues.some((issue) => (
+      issue.code === "DB_MZ_ANIMATION_FLASH_COLOR"
+      && issue.source.path === "animations[1].flashTimings[0].color[2]"
+    )));
+    assert.ok(result.issues.some((issue) => (
+      issue.code === "DB_MZ_ANIMATION_SOUND_TIMING"
+      && issue.source.path === "animations[1].soundTimings[0]"
+    )));
+
+    const malformed = structuredClone(particle) as Record<string, unknown>;
+    malformed.flashTimings = {};
+    malformed.soundTimings = "bad";
+    const malformedResult = validateRmmvDatabaseSnapshot({ animations: [null, malformed] }, { engine: "rpg-maker-mz" });
+    assert.ok(malformedResult.issues.some((issue) => issue.code === "DB_MZ_ANIMATION_FLASH_TIMINGS"));
+    assert.ok(malformedResult.issues.some((issue) => issue.code === "DB_MZ_ANIMATION_SOUND_TIMINGS"));
+  });
+
+  test("exposes and strictly validates the MZ 1.10 advanced system settings", () => {
+    const system = createDefaultRmmvDatabaseEntry("System", undefined, "rpg-maker-mz");
+    system.partyMembers = [];
+    system.testTroopId = 0;
+    const advanced = system.advanced as Record<string, unknown>;
+    assert.equal(advanced.picturesUpperLimit, 300);
+    assert.equal(advanced.screenScale, 1);
+    assert.equal(advanced.windowOpacity, 192);
+
+    const valid = validateRmmvDatabaseSnapshot({ system }, { engine: "rpg-maker-mz" });
+    assert.equal(valid.ok, true, valid.issues.map((issue) => `${issue.code}: ${issue.message}`).join("\n"));
+
+    advanced.mainFontFilename = 42;
+    advanced.fontSize = 0;
+    advanced.picturesUpperLimit = 1.5;
+    advanced.screenScale = 0;
+    advanced.windowOpacity = 256;
+    system.optMessageSkip = "yes";
+    const invalid = validateRmmvDatabaseSnapshot({ system }, { engine: "rpg-maker-mz" });
+    for (const code of [
+      "DB_MZ_SYSTEM_TEXT",
+      "DB_MZ_FONT_SIZE",
+      "DB_MZ_PICTURE_LIMIT",
+      "DB_MZ_SCREEN_SCALE",
+      "DB_MZ_WINDOW_OPACITY",
+      "DB_MZ_SYSTEM_OPTION",
+    ]) {
+      assert.ok(invalid.issues.some((issue) => issue.code === code), `missing ${code}`);
+    }
   });
 
   test("allows reducing legacy troop and test-party overages but blocks extending them", () => {

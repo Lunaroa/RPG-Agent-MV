@@ -120,8 +120,8 @@ export function storyBaselinePageModified(
 
 export function storyInvalidRmmvProject(project: string, language?: ProductLanguage | null): string {
   return pickByLocale(resolveLanguage(language), {
-    'zh-CN': `不是有效的 RPG Maker MV 工程：${project}`,
-    'en-US': `Not a valid RPG Maker MV project: ${project}`,
+    'zh-CN': `不是有效的 RPG Maker MV/MZ 工程：${project}`,
+    'en-US': `Not a valid RPG Maker MV/MZ project: ${project}`,
   });
 }
 

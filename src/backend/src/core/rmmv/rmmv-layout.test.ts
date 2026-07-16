@@ -81,6 +81,80 @@ describe('RMMV layout resolver', () => {
       removeRoot(root);
     }
   });
+
+  test('detects a strict RPG Maker MZ 1.10.0 source project and canvas settings', () => {
+    const root = tempRoot();
+    try {
+      writeMZProject(root, '1.10.0', 24, 1280, 720);
+
+      const manifest = inspectRmmvProject(root);
+
+      assert.equal(manifest.engine, 'rpg-maker-mz');
+      assert.equal(manifest.engineVersion, '1.10.0');
+      assert.equal(manifest.tileSize, 24);
+      assert.equal(manifest.screenWidth, 1280);
+      assert.equal(manifest.screenHeight, 720);
+      assert.equal(manifest.projectMarker.gameRmmzProject, true);
+      assert.equal(manifest.editable, true);
+      assert.equal(manifest.runnableStructure, true);
+    } finally {
+      removeRoot(root);
+    }
+  });
+
+  test('rejects RPG Maker MZ projects with an unsupported core version', () => {
+    const root = tempRoot();
+    try {
+      writeMZProject(root, '1.9.0', 48, 816, 624);
+      assert.throws(() => inspectRmmvProject(root), /1\.10\.0 core scripts are required/);
+    } finally {
+      removeRoot(root);
+    }
+  });
+
+  test('rejects deployed or mixed MZ structures before editing', () => {
+    const deployedRoot = tempRoot();
+    const mixedRoot = tempRoot();
+    try {
+      writeMZProject(deployedRoot, '1.10.0', 48, 816, 624);
+      fs.rmSync(path.join(deployedRoot, 'game.rmmzproject'));
+      assert.throws(() => inspectRmmvProject(deployedRoot), /editable source projects containing game\.rmmzproject/);
+
+      writeMZProject(mixedRoot, '1.10.0', 48, 816, 624);
+      fs.writeFileSync(path.join(mixedRoot, 'Game.rpgproject'), 'RPGMV 1.6.2', 'utf8');
+      assert.throws(() => inspectRmmvProject(mixedRoot), /Conflicting RPG Maker MV\/MZ/);
+    } finally {
+      removeRoot(deployedRoot);
+      removeRoot(mixedRoot);
+    }
+  });
+
+  test('rejects encrypted MZ resources and conflicting source/deployment data roots', () => {
+    const encryptedRoot = tempRoot();
+    const encryptedFileRoot = tempRoot();
+    const mixedDataRoot = tempRoot();
+    try {
+      writeMZProject(encryptedRoot, '1.10.0', 48, 816, 624);
+      const encryptedSystemFile = path.join(encryptedRoot, 'data', 'System.json');
+      const encryptedSystem = JSON.parse(fs.readFileSync(encryptedSystemFile, 'utf8'));
+      fs.writeFileSync(encryptedSystemFile, JSON.stringify({ ...encryptedSystem, hasEncryptedImages: true }), 'utf8');
+      assert.throws(() => inspectRmmvProject(encryptedRoot), /Encrypted RPG Maker MZ resources are not supported/);
+
+      writeMZProject(encryptedFileRoot, '1.10.0', 48, 816, 624);
+      const encryptedAsset = path.join(encryptedFileRoot, 'img', 'pictures', 'nested', 'Sample.png_');
+      fs.mkdirSync(path.dirname(encryptedAsset), { recursive: true });
+      fs.writeFileSync(encryptedAsset, 'encrypted', 'utf8');
+      assert.throws(() => inspectRmmvProject(encryptedFileRoot), /Encrypted RPG Maker resource is not supported/);
+
+      writeMZProject(mixedDataRoot, '1.10.0', 48, 816, 624);
+      fs.mkdirSync(path.join(mixedDataRoot, 'www', 'data'), { recursive: true });
+      assert.throws(() => inspectRmmvProject(mixedDataRoot), /Conflicting RPG Maker source\/deployment data folders/);
+    } finally {
+      removeRoot(encryptedRoot);
+      removeRoot(encryptedFileRoot);
+      removeRoot(mixedDataRoot);
+    }
+  });
 });
 
 function tempRoot(): string {
@@ -107,6 +181,46 @@ function writeProject(root: string, layout: 'www-data' | 'data'): void {
   for (const fileName of RMMV_STANDARD_DATABASE_FILES) {
     fs.writeFileSync(path.join(dataDir, fileName), JSON.stringify(fileName === 'System.json'
       ? { switches: [null], variables: [null], gameTitle: 'Layout Test' }
+      : []), 'utf8');
+  }
+  fs.writeFileSync(path.join(dataDir, 'MapInfos.json'), JSON.stringify([null, { id: 1, name: 'Start' }]), 'utf8');
+  fs.writeFileSync(path.join(dataDir, 'Map001.json'), JSON.stringify({ width: 17, height: 13, tilesetId: 1, data: [], events: [null] }), 'utf8');
+}
+
+function writeMZProject(
+  root: string,
+  version: string,
+  tileSize: 16 | 24 | 32 | 48,
+  screenWidth: number,
+  screenHeight: number,
+): void {
+  const dataDir = path.join(root, 'data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.writeFileSync(path.join(root, 'game.rmmzproject'), 'RPGMZ', 'utf8');
+  fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html>', 'utf8');
+  fs.writeFileSync(path.join(root, 'package.json'), '{"main":"index.html"}', 'utf8');
+  fs.mkdirSync(path.join(root, 'js', 'plugins'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'js', 'rmmz_core.js'),
+    `Utils.RPGMAKER_NAME = "MZ";\nUtils.RPGMAKER_VERSION = "${version}";\n`,
+    'utf8',
+  );
+  for (const fileName of ['rmmz_managers.js', 'rmmz_objects.js', 'rmmz_scenes.js', 'rmmz_sprites.js', 'rmmz_windows.js', 'main.js']) {
+    fs.writeFileSync(path.join(root, 'js', fileName), '', 'utf8');
+  }
+  fs.writeFileSync(path.join(root, 'js', 'plugins.js'), 'var $plugins = [];', 'utf8');
+  for (const directory of ['audio', 'fonts', 'img', 'movies', 'effects']) fs.mkdirSync(path.join(root, directory), { recursive: true });
+  for (const fileName of RMMV_STANDARD_DATABASE_FILES) {
+    fs.writeFileSync(path.join(dataDir, fileName), JSON.stringify(fileName === 'System.json'
+      ? {
+          switches: [null],
+          variables: [null],
+          gameTitle: 'MZ Layout Test',
+          tileSize,
+          faceSize: 144,
+          iconSize: 32,
+          advanced: { screenWidth, screenHeight },
+        }
       : []), 'utf8');
   }
   fs.writeFileSync(path.join(dataDir, 'MapInfos.json'), JSON.stringify([null, { id: 1, name: 'Start' }]), 'utf8');

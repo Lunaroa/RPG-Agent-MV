@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { findMapLibraryScreenshot } from './library-service.ts';
 import { getProjectFileForRead, isInside } from './staging-service.ts';
+import { chatImageExtension, isChatImageMime } from '../../../../contract/chat-image-attachments.ts';
 
 export function projectAssetUrl(project: string, relativePath: string): string {
   const token = Buffer.from(path.resolve(project), 'utf8').toString('base64url');
@@ -51,6 +52,32 @@ export function resolveAssetRequest(workflowRoot: string, requestUrl: string): s
     const stagingRoot = path.join(path.resolve(workflowRoot), 'runtime', 'agent-console-staging');
     if (!filePath || (!isInside(project, filePath) && !isInside(stagingRoot, filePath))) throw new Error('Project asset path is outside allowed roots.');
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) throw new Error('Project asset not found.');
+    return filePath;
+  }
+  if (url.hostname === 'session') {
+    const [sessionId, attachmentId, ...extra] = url.pathname.replace(/^\/+/, '').split('/').map(decodeURIComponent);
+    if (!sessionId || !attachmentId || extra.length || !/^[A-Za-z0-9_-]+$/.test(sessionId) || !/^[A-Za-z0-9_-]+$/.test(attachmentId)) {
+      throw new Error('Invalid session asset URL.');
+    }
+    const sessionRoot = path.join(path.resolve(workflowRoot), 'runtime', 'sessions', sessionId);
+    const outDir = path.join(sessionRoot, 'agent-console');
+    const metaPath = path.join(outDir, 'session-meta.json');
+    if (!isInside(path.join(path.resolve(workflowRoot), 'runtime', 'sessions'), sessionRoot) || !fs.existsSync(metaPath)) {
+      throw new Error('Session asset not found.');
+    }
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as Record<string, unknown>;
+    if (String(meta.id || '') !== sessionId || !Array.isArray(meta.imageAttachments)) {
+      throw new Error('Session asset is not registered.');
+    }
+    const attachment = meta.imageAttachments.find((item: unknown) => (
+      item && typeof item === 'object' && String((item as Record<string, unknown>).id || '') === attachmentId
+    )) as Record<string, unknown> | undefined;
+    if (!attachment || !isChatImageMime(attachment.mime)) throw new Error('Session asset is not registered.');
+    const attachmentsRoot = path.join(outDir, 'attachments');
+    const filePath = path.join(attachmentsRoot, `${attachmentId}.${chatImageExtension(attachment.mime)}`);
+    if (!isInside(attachmentsRoot, filePath) || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      throw new Error('Session asset not found.');
+    }
     return filePath;
   }
   throw new Error('Unknown asset namespace.');

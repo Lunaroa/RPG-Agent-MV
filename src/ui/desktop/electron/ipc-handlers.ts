@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, net, protocol, screen, shell } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain, net, protocol, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -43,6 +43,7 @@ let StagingManifestDao: any;
 let MapSelectionDao: any;
 let scanProject: any;
 let resolveDataDir: any;
+let inspectRmmvProject: any;
 let applyPatchToProject: any;
 let readJson: any;
 let writeJson: any;
@@ -277,6 +278,7 @@ async function loadBackendModules(roots: AppRoots) {
   const projectScannerModule = await import(new URL('rmmv/project-scanner.ts', coreUrl).href);
   scanProject = projectScannerModule.scanProject;
   resolveDataDir = projectScannerModule.resolveDataDir;
+  inspectRmmvProject = (await import(new URL('rmmv/rmmv-layout.ts', coreUrl).href)).inspectRmmvProject;
   
   const patcherModule = await import(new URL('rmmv/patcher.ts', coreUrl).href);
   applyPatchToProject = patcherModule.applyPatchToProject;
@@ -330,7 +332,9 @@ async function loadBackendModules(roots: AppRoots) {
   await agentSessionRuntime.initialize();
   interactivePlaytestService = new desktop.interactivePlaytest.InteractivePlaytestService(
     roots.userDataRoot,
-    { onStatus: publishInteractivePlaytestStatus },
+    {
+      onStatus: publishInteractivePlaytestStatus,
+    },
   );
 }
 
@@ -408,7 +412,7 @@ export async function shutdownInteractivePlaytest(): Promise<InteractivePlaytest
   if (!interactivePlaytestService) return { confirmationRequired: false };
   const result = await interactivePlaytestService.shutdown() as InteractivePlaytestResult;
   if (result.run?.status === 'stop_failed') {
-    throw new Error(result.run.error || 'Game.exe process-tree cleanup failed.');
+    throw new Error(result.run.error || 'Game runtime process-tree cleanup failed.');
   }
   return result;
 }
@@ -497,7 +501,7 @@ async function buildMapPayload(projectPath: string, mapId: number): Promise<MapP
  */
 async function createMap(projectPath: string, properties: Record<string, unknown>): Promise<Record<string, unknown>> {
   const spec = {
-    engine: 'rpg-maker-mv',
+    engine: inspectRmmvProject(projectPath).engine,
     operations: [{
       op: 'add-map',
       ...properties
@@ -629,7 +633,7 @@ async function removeMap(projectPath: string, mapId: number): Promise<Record<str
  */
 async function postMapTiles(projectPath: string, mapId: number, edits: unknown[]): Promise<Record<string, unknown>> {
   const spec = {
-    engine: 'rpg-maker-mv',
+    engine: inspectRmmvProject(projectPath).engine,
     operations: [{
       op: 'set-map-tiles',
       mapId,
@@ -660,7 +664,7 @@ async function playtestMap(projectPath: string, mapId: number, startX?: number, 
  */
 async function createEvent(projectPath: string, mapId: number, event: Record<string, unknown>): Promise<Record<string, unknown>> {
   const spec = {
-    engine: 'rpg-maker-mv',
+    engine: inspectRmmvProject(projectPath).engine,
     operations: [{
       op: 'add-map-event',
       mapId,
@@ -1009,6 +1013,17 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   const { checkForUpdates, getAppVersion } = await import('./auto-updater.js');
   ipcMain.handle('app:getVersion', () => toIpcPayload({ version: getAppVersion() }));
   ipcMain.handle('app:checkForUpdates', async () => toIpcPayload(await checkForUpdates({ manual: true })));
+  ipcMain.handle('clipboard:readImage', () => {
+    const image = clipboard.readImage();
+    if (image.isEmpty()) return null;
+    const bytes = image.toPNG();
+    return toIpcPayload({
+      filename: 'pasted-image.png',
+      mime: 'image/png',
+      sizeBytes: bytes.byteLength,
+      dataBase64: bytes.toString('base64'),
+    });
+  });
 
   ipcMain.handle('workspace:get', () => {
     return toIpcPayload(getWorkspaceSettings());
@@ -1455,6 +1470,7 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('window:openExternalUrl');
   ipcMain.removeHandler('app:getVersion');
   ipcMain.removeHandler('app:checkForUpdates');
+  ipcMain.removeHandler('clipboard:readImage');
   ipcMain.removeHandler('workspace:get');
   ipcMain.removeHandler('workspace:put');
   ipcMain.removeHandler('workspace:patch');

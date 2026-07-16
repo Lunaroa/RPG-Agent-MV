@@ -2,9 +2,23 @@
   <div class="chat-composer-wrap" data-ui-id="chat-composer">
     <div
       class="chat-composer"
-      :class="{ 'is-focused': focused, 'has-text': !!modelValue.trim() }"
+      :class="{ 'is-focused': focused, 'has-text': !!modelValue.trim() || attachments.length > 0 }"
     >
       <div class="composer-input-shell">
+        <div v-if="attachments.length" class="composer-attachment-grid" data-ui-id="chat-image-drafts">
+          <div v-for="attachment in attachments" :key="attachment.id" class="composer-attachment">
+            <img :src="attachment.previewUrl" :alt="attachment.filename" />
+            <button
+              type="button"
+              class="composer-attachment-remove"
+              :aria-label="t('composer.image.remove', { name: attachment.filename })"
+              :title="t('composer.image.remove', { name: attachment.filename })"
+              @click="emit('remove-image', attachment.id)"
+            >
+              <el-icon><Close /></el-icon>
+            </button>
+          </div>
+        </div>
         <SlashPopover
           :open="slashOpen"
           :items="filteredSlashCommands"
@@ -23,6 +37,7 @@
           @blur="onBlur"
           @keydown="onKeydown"
           @keydown.enter="onEnter"
+          @paste="onPaste"
         />
       </div>
 
@@ -91,7 +106,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { Top, VideoPause } from '@element-plus/icons-vue'
+import { Close, Top, VideoPause } from '@element-plus/icons-vue'
 import ModelPicker from './model-picker/ModelPicker.vue'
 import ContextUsageRing from './ContextUsageRing.vue'
 import SlashPopover from './SlashPopover.vue'
@@ -103,11 +118,13 @@ import {
   shouldOpenSlashPopover,
 } from '../utils/chatSlashInput'
 import { useI18n } from '../i18n'
+import type { DraftChatImage } from '../utils/chatImageAttachments'
+import type { ModelInputModality } from '@contract/types'
 
 const props = defineProps<{
   modelValue: string
   isRunning: boolean
-  availableProviders: Array<{ id: string; label: string; models: Array<{ id: string; label: string }> }>
+  availableProviders: Array<{ id: string; label: string; models: Array<{ id: string; label: string; inputModalities?: ModelInputModality[] }> }>
   selectedProvider: string
   selectedModel: string
   thinkingLevel: string
@@ -116,6 +133,8 @@ const props = defineProps<{
   contextPercent?: number | null
   contextUsedTokens?: number | null
   contextWindowTokens?: number | null
+  attachments: DraftChatImage[]
+  imageInputBlocked?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -127,6 +146,9 @@ const emit = defineEmits<{
   'update:thinkingLevel': [v: string]
   'update:planMode': [v: boolean]
   'select-profile': [payload: { providerId: string; modelId: string }]
+  'paste-files': [files: File[]]
+  'paste-native-image': []
+  'remove-image': [id: string]
 }>()
 
 const focused = ref(false)
@@ -138,13 +160,15 @@ const filteredSlashCommands = computed(() => filterSlashCommands(props.modelValu
 const slashReadyToSend = computed(() => isCompleteSlashCommand(props.modelValue, props.slashCommands))
 const slashOpen = computed(() => (
   focused.value
+  && props.attachments.length === 0
   && !slashReadyToSend.value
   && shouldOpenSlashPopover(props.modelValue)
 ))
 const showStopButton = computed(() => props.isRunning && !isSlashInput(props.modelValue))
 const sendDisabled = computed(() => {
   if (showStopButton.value) return false
-  return !props.modelValue.trim()
+  if (props.imageInputBlocked) return true
+  return !props.modelValue.trim() && props.attachments.length === 0
 })
 
 watch([slashOpen, filteredSlashCommands], () => {
@@ -160,7 +184,7 @@ function onSendClick() {
     emit('stop')
     return
   }
-  if (!props.modelValue.trim()) return
+  if ((!props.modelValue.trim() && props.attachments.length === 0) || props.imageInputBlocked) return
   emit('send')
 }
 
@@ -227,6 +251,22 @@ function onInput(event: Event) {
   void nextTick(resizeTextarea)
 }
 
+function onPaste(event: ClipboardEvent) {
+  const files = Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file))
+  if (files.length > 0) {
+    event.preventDefault()
+    emit('paste-files', files)
+    return
+  }
+  if (!event.clipboardData?.getData('text/plain')) {
+    event.preventDefault()
+    emit('paste-native-image')
+  }
+}
+
 function resizeTextarea() {
   const el = textareaRef.value
   if (!el) return
@@ -240,5 +280,53 @@ watch(() => props.modelValue, () => void nextTick(resizeTextarea))
 <style scoped>
 .composer-input-shell {
   position: relative;
+}
+
+.composer-attachment-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 2px;
+}
+
+.composer-attachment {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-bg-soft);
+}
+
+.composer-attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.composer-attachment-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  color: #fff;
+  background: rgb(20 20 20 / 82%);
+  border: 1px solid rgb(255 255 255 / 45%);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.composer-attachment-remove:hover {
+  background: rgb(20 20 20 / 100%);
+}
+
+.composer-attachment-remove:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
 }
 </style>

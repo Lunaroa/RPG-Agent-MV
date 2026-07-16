@@ -174,6 +174,8 @@ function withoutInternalSystemPrompt(payload: Record<string, unknown>): Record<s
     'thinkingLevel',
     'timeoutMs',
     'productLanguage',
+    'imageAttachments',
+    'requiresImageInput',
   ];
   const safe: Record<string, unknown> = {};
   for (const key of allowed) {

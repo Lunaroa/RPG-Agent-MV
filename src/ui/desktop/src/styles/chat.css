@@ -553,8 +553,32 @@
   justify-content: flex-end;
 }
 
+.seg-user .user-message-content {
+  display: flex;
+  width: min(80%, 560px);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.seg-user .user-image-grid {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.seg-user .user-image-grid img {
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: var(--app-bg-soft);
+}
+
 .seg-user .user-bubble {
-  max-width: 80%;
+  max-width: 100%;
   padding: 9px 14px;
   border: 0;
   border-radius: 14px 14px 5px 14px;

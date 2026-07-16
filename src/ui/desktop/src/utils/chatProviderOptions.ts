@@ -1,4 +1,5 @@
 import { DEFAULT_AGENT_EXECUTION_ENGINE } from '@contract/types'
+import type { ModelInputModality } from '@contract/types'
 import type { ProviderSummary } from '../api/client'
 import { useWorkspaceStore } from '../stores/workspace'
 import {
@@ -12,7 +13,7 @@ import { isRawModelVisible, visibleProviderModels } from './modelVisibility'
 export interface ChatProviderOption {
   id: string
   label: string
-  models: Array<{ id: string; label: string }>
+  models: Array<{ id: string; label: string; inputModalities?: ModelInputModality[] }>
 }
 
 export interface ChatModelSelection {
@@ -114,11 +115,12 @@ export function configuredCompatibleProviders(providers: ProviderSummary[]): Pro
   return providers.filter((p) => p.credentialPresent)
 }
 
-export function providerModelsForPicker(provider: ProviderSummary): Array<{ id: string; label: string }> {
+export function providerModelsForPicker(provider: ProviderSummary): Array<{ id: string; label: string; inputModalities?: ModelInputModality[] }> {
   if (provider.models?.length) {
     const raw = visibleProviderModels(provider).map((m) => ({
       id: m.id,
       label: m.label || m.id,
+      ...(m.inputModalities ? { inputModalities: [...m.inputModalities] } : {}),
     }))
     return normalizeModelOptions(provider, raw)
   }

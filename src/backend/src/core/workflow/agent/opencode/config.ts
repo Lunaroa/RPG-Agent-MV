@@ -62,6 +62,7 @@ export interface OpencodeRuntimeConfigInput {
    * read-only subagent can never mutate the game project, place events, or spawn further subagents.
    */
   readOnlyTools?: boolean;
+  imageInputRequired?: boolean;
 }
 
 function normalizeProviderId(providerId: string): string {
@@ -99,9 +100,10 @@ function buildProviderConfig(
   providerId: string,
   provider: ProviderRecord,
   modelId: string,
+  imageInputRequired = false,
 ): Record<string, unknown> {
   const baseUrl = providerBaseUrlForOpencode(providerId, provider);
-  const modelConfig = buildModelConfig(provider, modelId);
+  const modelConfig = buildModelConfig(provider, modelId, imageInputRequired);
   return {
     id: providerId,
     name: provider.label || providerId,
@@ -117,7 +119,11 @@ function buildProviderConfig(
   };
 }
 
-function buildModelConfig(provider: ProviderRecord, modelId: string): Record<string, unknown> {
+function buildModelConfig(
+  provider: ProviderRecord,
+  modelId: string,
+  imageInputRequired: boolean,
+): Record<string, unknown> {
   const model = (provider.models || []).find((entry) => {
     if (!entry) return false;
     if (typeof entry === "string") return entry === modelId;
@@ -136,6 +142,16 @@ function buildModelConfig(provider: ProviderRecord, modelId: string): Record<str
     ? normalizeModelLimit(model.limit)
     : undefined;
   if (limit) config.limit = limit;
+  const inputModalities = model && typeof model === 'object' && 'inputModalities' in model
+    && Array.isArray(model.inputModalities)
+    ? model.inputModalities.map(String)
+    : undefined;
+  if (inputModalities !== undefined || imageInputRequired) {
+    config.modalities = {
+      input: inputModalities ?? ['text', 'image'],
+      output: ['text'],
+    };
+  }
   return config;
 }
 
@@ -212,7 +228,7 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
   const config: Record<string, unknown> = {
     model: `${providerId}/${modelId}`,
     provider: {
-      [providerId]: buildProviderConfig(providerId, input.provider, modelId),
+      [providerId]: buildProviderConfig(providerId, input.provider, modelId, input.imageInputRequired),
     },
     tools,
     agent: {

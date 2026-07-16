@@ -1,6 +1,7 @@
 import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { ChildProcess } from "node:child_process";
 
 import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk";
@@ -48,6 +49,25 @@ export interface OpencodeRunInput {
   /** opencode agent to run the prompt under. Defaults to "build"; the memory scribe uses a sandboxed agent. */
   agentName?: string;
   signal?: AbortSignal;
+  imageAttachments?: OpencodeImageAttachment[];
+}
+
+export interface OpencodeImageAttachment {
+  filename: string;
+  mime: string;
+  filePath: string;
+}
+
+export function buildOpencodePromptParts(input: Pick<OpencodeRunInput, 'prompt' | 'imageAttachments'>): Array<Record<string, unknown>> {
+  return [
+    { type: 'text', text: input.prompt },
+    ...(input.imageAttachments || []).map((attachment) => ({
+      type: 'file',
+      mime: attachment.mime,
+      filename: attachment.filename,
+      url: pathToFileURL(attachment.filePath).toString(),
+    })),
+  ];
 }
 
 export interface OpencodeRunResult {
@@ -1225,7 +1245,7 @@ export async function runOpencodeSession(
           modelID: input.modelId,
         },
         agent: input.agentName || "build",
-        parts: [{ type: "text", text: input.prompt }],
+        parts: buildOpencodePromptParts(input) as never,
       },
       signal: controller.signal,
     });

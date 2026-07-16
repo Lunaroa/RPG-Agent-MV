@@ -38,7 +38,12 @@ import type {
   SlashCommandListItem,
   SlashCommandResult,
 } from "./slash-command/types.ts";
-import type { ProductLanguage, SessionPlanSnapshot, SessionSubagentSnapshot } from "../../../../contract/types.ts";
+import type {
+  ProductLanguage,
+  SessionImageAttachmentInput,
+  SessionPlanSnapshot,
+  SessionSubagentSnapshot,
+} from "../../../../contract/types.ts";
 import { normalizeProductLanguage } from "../../../../contract/i18n.ts";
 import { backendText } from "../i18n/messages.ts";
 import {
@@ -66,6 +71,12 @@ import {
   type WorkflowProposal,
 } from "../workflow/orchestrator/proposals.ts";
 import type { WorkflowEvent, WorkflowRunRecord } from "../workflow/orchestrator/types.ts";
+import {
+  requireStoredSessionImageAttachment,
+  restoreSessionImageAttachments,
+  storeSessionImageAttachments,
+  type StoredSessionImageAttachment,
+} from "./session-image-attachments.ts";
 
 const MAX_EVENTS = 5000;
 const TERMINAL = new Set(["pass", "blocked", "failed", "error", "stopped", "interrupted", "timeout"]);
@@ -116,6 +127,7 @@ export interface AgentSession {
   outDir: string;
   intent: string;
   displayText: string;
+  imageAttachments: StoredSessionImageAttachment[];
   productLanguage: ProductLanguage;
   project: string;
   parentSessionId: string | null;
@@ -159,6 +171,8 @@ export interface SessionCreateInput {
   taskId?: string;
   files?: string[];
   thinkingLevel?: string;
+  imageAttachments?: SessionImageAttachmentInput[];
+  requiresImageInput?: boolean;
   timeoutMs?: number;
   /** Internal-only: inject the complete persisted chain when native session resume is unavailable. */
   completeConversationHistory?: boolean;
@@ -330,6 +344,21 @@ export class AgentSessionRuntime {
       parent,
       (id) => this.sessions.get(id),
     );
+    const productLanguage = normalizeProductLanguage(input.productLanguage);
+    await this.assertImageInputSupported(input, productLanguage);
+    const outDir = path.join(this.workflowRoot, "runtime", "sessions", sessionId, "agent-console");
+    let imageAttachments: StoredSessionImageAttachment[] = [];
+    try {
+      imageAttachments = await storeSessionImageAttachments(
+        outDir,
+        sessionId,
+        input.imageAttachments,
+        productLanguage,
+      );
+    } catch (error) {
+      fs.rmSync(path.dirname(outDir), { recursive: true, force: true });
+      throw error;
+    }
     const session: AgentSession = {
       id: sessionId,
       status: "preparing",
@@ -339,10 +368,13 @@ export class AgentSessionRuntime {
       modelId: input.modelId || "",
       createdAt: generatedAt,
       updatedAt: generatedAt,
-      outDir: path.join(this.workflowRoot, "runtime", "sessions", sessionId, "agent-console"),
+      outDir,
       intent: input.intent || "",
-      displayText: input.displayText || (input.intent || "").split("\n")[0].slice(0, 200),
-      productLanguage: normalizeProductLanguage(input.productLanguage),
+      displayText: input.displayText
+        || (input.intent || "").split("\n")[0].slice(0, 200)
+        || (imageAttachments.length ? backendText('session.imageMessage', productLanguage) : ''),
+      imageAttachments,
+      productLanguage,
       project: input.project || "projects/Project",
       parentSessionId: input.continuationOf || null,
       planFilePath,
@@ -367,15 +399,22 @@ export class AgentSessionRuntime {
       foregroundWaiters: new Set(),
       startedWorkflowApprovals: new Set(),
     };
-    this.sessions.set(session.id, session);
-    ensurePlanDirectory(this.workflowRoot, session.project, planFilePath);
-    this.push(session, { type: "status", status: session.status, blocker: session.blocker, at: generatedAt });
-    this.persistMeta(session);
+    try {
+      ensurePlanDirectory(this.workflowRoot, session.project, planFilePath);
+      this.sessions.set(session.id, session);
+      this.push(session, { type: "status", status: session.status, blocker: session.blocker, at: generatedAt });
+      this.persistMeta(session);
+    } catch (error) {
+      this.sessions.delete(session.id);
+      fs.rmSync(path.dirname(session.outDir), { recursive: true, force: true });
+      throw error;
+    }
     void this.prepareAndStart(session, input, parent).catch((error: Error) => this.fail(session, error));
     return this.summarize(session);
   }
 
   async preview(input: SessionCreateInput): Promise<Record<string, unknown>> {
+    await this.assertImageInputSupported(input, normalizeProductLanguage(input.productLanguage));
     const executionEngine = this.resolveExecutionEngine(input);
     const sessionBinding = this.resolveInputSessionBinding(input);
     await this.activateForSession(this.workflowRoot, executionEngine, sessionBinding);
@@ -995,6 +1034,7 @@ export class AgentSessionRuntime {
       timeoutMs: input.timeoutMs,
       outDir: session.outDir,
       opencodeSessionId: parent?.opencodeSessionId || session.opencodeSessionId || undefined,
+      imageAttachments: this.resolveRunImageAttachments(session, conversationHistory),
       onOpencodeRunContext: (context) => {
         session.opencodeRunContext = context;
       },
@@ -1321,6 +1361,7 @@ export class AgentSessionRuntime {
       productLanguage: session.productLanguage,
       intent: session.intent.slice(0, 240),
       displayText: session.displayText,
+      imageAttachments: session.imageAttachments.map(({ filePath: _filePath, ...attachment }) => attachment),
       parentSessionId: session.parentSessionId,
       planFilePath: session.planFilePath,
       blocker: session.blocker,
@@ -1385,6 +1426,7 @@ export class AgentSessionRuntime {
       outDir,
       intent: String(meta.intent || ""),
       displayText: String(meta.displayText || meta.intent || "Interrupted session"),
+      imageAttachments: restoreSessionImageAttachments(outDir, meta.imageAttachments),
       productLanguage,
       project: String(meta.project || "projects/Project"),
       parentSessionId: meta.parentSessionId || null,
@@ -1449,6 +1491,44 @@ export class AgentSessionRuntime {
       profileId: input.profileId,
       settingsBinding: bindings?.[engine] || null,
     });
+  }
+
+  private async assertImageInputSupported(
+    input: SessionCreateInput,
+    productLanguage: ProductLanguage,
+  ): Promise<void> {
+    if (!input.requiresImageInput && !input.imageAttachments?.length) return;
+    const binding = this.resolveInputSessionBinding(input);
+    if (!binding?.providerId || !binding.modelId) return;
+    const provider = await providerRegistry.getProvider(this.workflowRoot, binding.providerId);
+    if (providerRegistry.modelImageInputCapability(provider, binding.modelId) === false) {
+      throw new Error(backendText('session.image.modelUnsupported', productLanguage));
+    }
+  }
+
+  private resolveRunImageAttachments(
+    session: AgentSession,
+    conversationHistory: string | undefined,
+  ): StoredSessionImageAttachment[] {
+    const ordered: StoredSessionImageAttachment[] = [];
+    const seen = new Set<string>();
+    const append = (attachment: StoredSessionImageAttachment): void => {
+      const key = `${attachment.id}:${attachment.sizeBytes}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      ordered.push(requireStoredSessionImageAttachment(attachment, session.productLanguage));
+    };
+    if (conversationHistory) {
+      const chain: AgentSession[] = [];
+      let current = session.parentSessionId ? this.sessions.get(session.parentSessionId) : undefined;
+      while (current) {
+        chain.unshift(current);
+        current = current.parentSessionId ? this.sessions.get(current.parentSessionId) : undefined;
+      }
+      for (const ancestor of chain) ancestor.imageAttachments.forEach(append);
+    }
+    session.imageAttachments.forEach(append);
+    return ordered;
   }
 
   private getAgentExecutionSettings(): AgentExecutionSettingsLike {

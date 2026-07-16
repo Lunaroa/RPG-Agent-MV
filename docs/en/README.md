@@ -2,11 +2,11 @@
 
 [简体中文](../README.md) | English
 
-RPG Agent MV is a local AI production tool for RPG Maker MV creators. It helps generate event drafts, batch-edit existing events, and assist with script, plugin, and project-state work through natural-language requests.
+RPG Agent MV is a local AI production tool for RPG Maker MV and RPG Maker MZ 1.10.0 creators. It helps generate event drafts, batch-edit existing events, and assist with script, plugin, and project-state work through natural-language requests.
 
 This guide covers first use, project management, Agent workflows, extension points, and common troubleshooting paths.
 
-The current version is not a full replacement for the RPG Maker MV editor. All 15 MV database areas can be read in full and changed through controlled staging, and tileset passage flags have a visual Inspector editor. Visual troop formation, a full animation canvas, full map-editing parity, and third-party plugin semantics still require human confirmation.
+The app is not a replacement for the RPG Maker editor. MV and strictly supported MZ projects share project management, map, event, database, asset, plugin, staging, versioning, and playtest flows. Authors must still confirm third-party plugin semantics and final in-game results.
 
 ## Contents
 
@@ -53,6 +53,7 @@ The current version is not a full replacement for the RPG Maker MV editor. All 1
 | [FAQ](faq/questions.md) | Common questions and practical answers |
 | [Project Detection Failed](faq/project-detection.md) | What to check when the project cannot be read |
 | [Model And Runtime Checks](faq/model-check.md) | What to check when the model or runtime fails |
+| [MZ 1.10.0 Official Compatibility Evidence](faq/mz-official-evidence.md) | Official requirements, implementation areas, and focused tests |
 
 ## Quick Links
 
@@ -63,9 +64,10 @@ The current version is not a full replacement for the RPG Maker MV editor. All 1
 - Extension and rules: [MCP Tools](agent-system/mcp-tools.md)
 - Project detection failures: [Project Detection Failed](faq/project-detection.md)
 - Model failures: [Model And Runtime Checks](faq/model-check.md)
+- MZ compatibility evidence: [MZ 1.10.0 Official Compatibility Evidence](faq/mz-official-evidence.md)
 
 ## Version
 
-- Documentation version: v0.3.0-en
-- Last updated: 2026-07-15
-- Applies to: RPG Agent MV v0.3.0
+- Documentation version: v0.4.0-en
+- Last updated: 2026-07-16
+- Applies to: RPG Agent MV v0.4.0

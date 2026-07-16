@@ -2,11 +2,11 @@
 
 简体中文 | [English](en/README.md)
 
-> 面向 RPG Maker MV 制作者的本地 AI 制作工具。RPG Agent MV 支持通过自然语言生成事件、批量修改既有事件，并辅助处理脚本、插件和项目状态问题。
+> 面向 RPG Maker MV 与 RPG Maker MZ 1.10.0 制作者的本地 AI 制作工具。RPG Agent MV 支持通过自然语言生成事件、批量修改既有事件，并辅助处理脚本、插件和项目状态问题。
 
 本手册分为三部分：第 1 章介绍安装、界面与首次任务；第 2 至第 3 章说明项目管理与 Agent 工作流；第 4 至第 5 章说明扩展机制、配置和问题排查。
 
-当前版本不是 RPG Maker MV 编辑器的完整复刻。文中的“编辑器”“数据库”“资产库”均指 RPG Agent MV 已接入的受控能力；15 类数据库已支持完整读取和受控暂存修改，图块集可在 Inspector 中可视化编辑通行标志，但敌群可视化编队、完整动画画布、完整地图编辑体验以及第三方插件语义仍需人工确认。
+当前版本不是 RPG Maker 编辑器的复刻。文中的“编辑器”“数据库”“资产库”均指 RPG Agent MV 已接入的受控能力；MV 与严格版本的 MZ 工程共用项目管理、地图、事件、数据库、素材、插件、暂存、版本保存和试玩流程。第三方插件的业务语义及最终游戏效果仍需作者确认。
 
 ## 目录结构
 
@@ -88,6 +88,7 @@ RPG Agent MV 用户手册
 | [5.1-questions.md](./5-faq/5.1-questions.md) | 高频问题 |
 | [5.2-project-detection.md](./5-faq/5.2-project-detection.md) | 项目无法识别时的排查步骤 |
 | [5.3-model-check.md](./5-faq/5.3-model-check.md) | 模型不可用、运行失败和本地状态冲突 |
+| [5.4-mz-official-evidence.md](./5-faq/5.4-mz-official-evidence.md) | MZ 1.10.0 官方要求、实现位置与定向测试证据 |
 
 ## 快速入口
 
@@ -97,10 +98,11 @@ RPG Agent MV 用户手册
 - 需求确认：[3.1 需求描述与确认](./3-agent-workflow/3.1-request.md)
 - 扩展与规则：[第 4 章 Agent 体系](./4-agent-system/4.1-mcp-tools.md)
 - 问题排查：[5.1 FAQ](./5-faq/5.1-questions.md)
+- MZ 兼容证据：[5.4 MZ 1.10.0 官方兼容证据](./5-faq/5.4-mz-official-evidence.md)
 
 ## 版本信息
 
-- 文档版本：v0.3.0
-- 最后更新：2026-07-15
-- 适用于：RPG Agent MV v0.3.0
+- 文档版本：v0.4.0
+- 最后更新：2026-07-16
+- 适用于：RPG Agent MV v0.4.0
 

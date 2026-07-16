@@ -20,28 +20,45 @@
         <option v-for="asset in assetOptions(field)" :key="asset.fileName" :value="asset.name">{{ asset.name }}</option>
       </select>
     </label>
+    <button v-if="coordinateMode" type="button" class="coordinate-picker-button" @click="openCoordinatePicker">
+      {{ t(coordinateMode === 'screen' ? 'coordinate.chooseScreen' : 'coordinate.chooseMap') }}
+      <span>{{ coordinateSummary }}</span>
+    </button>
+    <div v-if="command.code === 213" class="balloon-preview">
+      <canvas ref="balloonCanvas" width="96" height="96" />
+      <span>{{ balloonAssetAvailable ? t('balloon.previewProjectAsset') : t('balloon.assetMissing') }}</span>
+    </div>
     <p v-if="!visibleFields.length" class="no-fields">{{ t('cmdFields.noParams') }}</p>
     <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="loadImage" @commit="commitImageField" />
+    <CoordinatePickerDialog ref="coordinatePicker" :catalog="catalog" @commit="commitCoordinate" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import type { RpgMakerEngine } from '@contract/types';
 import type { EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry } from '../../api/client';
 import { useI18n } from '../../i18n';
 import { commandDefinition, type CommandAssetKey, type CommandField, type CommandFieldVisibility } from '../../composables/eventCommandCatalog';
 import { localizeCommandField } from '../../utils/eventCommandLocalization';
 import type { MvCommand } from '../../composables/useEventEditor';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
+import CoordinatePickerDialog from './CoordinatePickerDialog.vue';
 
-const props = defineProps<{ command: MvCommand; catalog: EditorProjectCatalog | null; loadImage: (url: string) => Promise<HTMLImageElement | null> }>();
+const props = defineProps<{ command: MvCommand; engine: RpgMakerEngine; catalog: EditorProjectCatalog | null; loadImage: (url: string) => Promise<HTMLImageElement | null>; mapId?: number | null }>();
 const emit = defineEmits<{ change: [] }>();
 const { language, t } = useI18n();
-const definition = computed(() => commandDefinition(props.command.code));
+const definition = computed(() => commandDefinition(props.command.code, props.engine));
 const visibleFields = computed(() => (definition.value?.fields || [])
   .filter((field) => isFieldVisible(field) && !isPairedImageIndexField(field))
   .map((field) => localizeCommandField(field, language.value)));
 const imagePicker = ref<InstanceType<typeof ImageAssetPickerDialog> | null>(null);
+const coordinatePicker = ref<InstanceType<typeof CoordinatePickerDialog> | null>(null);
+const balloonCanvas = ref<HTMLCanvasElement | null>(null);
+const balloonImage = ref<HTMLImageElement | null>(null);
+const balloonAssetAvailable = ref(false);
+let balloonFrame = 0;
+let balloonTimer: ReturnType<typeof setInterval> | null = null;
 const pendingImageField = ref<CommandField | null>(null);
 const imageAssetKinds = new Set<CommandAssetKey>([
   'characters',
@@ -59,6 +76,34 @@ const imageAssetKinds = new Set<CommandAssetKey>([
   'titles1',
   'titles2',
 ]);
+const coordinateMode = computed<'map' | 'screen' | null>(() => {
+  const parameters = props.command.parameters;
+  if (props.command.code === 201 && Number(parameters[0]) === 0) return 'map';
+  if (props.command.code === 202 && Number(parameters[1]) === 0) return 'map';
+  if (props.command.code === 203 && Number(parameters[1]) === 0) return 'map';
+  if (props.command.code === 285 && Number(parameters[2]) === 0) return 'map';
+  if ((props.command.code === 231 || props.command.code === 232) && Number(parameters[3]) === 0) return 'screen';
+  return null;
+});
+const coordinateSummary = computed(() => {
+  const spec = coordinateParameterSpec();
+  if (!spec) return '';
+  const map = spec.mode === 'map' ? `${String(spec.mapId).padStart(3, '0')} · ` : '';
+  return `${map}(${spec.x}, ${spec.y})`;
+});
+watch([
+  () => props.command.code,
+  () => Number(props.command.parameters[1]),
+  () => props.catalog?.assets.system,
+], () => { void loadBalloonPreview(); }, { immediate: true });
+onMounted(() => {
+  balloonTimer = setInterval(() => {
+    if (props.command.code !== 213 || !balloonImage.value) return;
+    balloonFrame = (balloonFrame + 1) % 8;
+    paintBalloonPreview();
+  }, 120);
+});
+onUnmounted(() => { if (balloonTimer) clearInterval(balloonTimer); });
 
 function fieldValue(field: CommandField) {
   let value: unknown = props.command.parameters;
@@ -123,14 +168,84 @@ function commitImageField(selection: { name: string; index: number }): void {
   pendingImageField.value = null;
   emit('change');
 }
+function openCoordinatePicker(): void {
+  const spec = coordinateParameterSpec();
+  if (!spec) return;
+  coordinatePicker.value?.open({
+    mode: spec.mode,
+    mapId: spec.mapId,
+    x: spec.x,
+    y: spec.y,
+    allowMapChange: spec.allowMapChange,
+  });
+}
+function commitCoordinate(selection: { mapId: number; x: number; y: number }): void {
+  if (props.command.code === 201) {
+    setPath([1], selection.mapId); setPath([2], selection.x); setPath([3], selection.y);
+  } else if (props.command.code === 202) {
+    setPath([2], selection.mapId); setPath([3], selection.x); setPath([4], selection.y);
+  } else if (props.command.code === 203) {
+    setPath([2], selection.x); setPath([3], selection.y);
+  } else if (props.command.code === 285) {
+    setPath([3], selection.x); setPath([4], selection.y);
+  } else if (props.command.code === 231 || props.command.code === 232) {
+    setPath([4], selection.x); setPath([5], selection.y);
+  }
+  emit('change');
+}
+function coordinateParameterSpec(): { mode: 'map' | 'screen'; mapId: number; x: number; y: number; allowMapChange: boolean } | null {
+  const p = props.command.parameters;
+  if (props.command.code === 201 && Number(p[0]) === 0) return { mode: 'map', mapId: Number(p[1]) || Number(props.mapId) || 1, x: Number(p[2]) || 0, y: Number(p[3]) || 0, allowMapChange: true };
+  if (props.command.code === 202 && Number(p[1]) === 0) return { mode: 'map', mapId: Number(p[2]) || Number(props.mapId) || 1, x: Number(p[3]) || 0, y: Number(p[4]) || 0, allowMapChange: true };
+  if (props.command.code === 203 && Number(p[1]) === 0) return { mode: 'map', mapId: Number(props.mapId) || 1, x: Number(p[2]) || 0, y: Number(p[3]) || 0, allowMapChange: false };
+  if (props.command.code === 285 && Number(p[2]) === 0) return { mode: 'map', mapId: Number(props.mapId) || 1, x: Number(p[3]) || 0, y: Number(p[4]) || 0, allowMapChange: false };
+  if ((props.command.code === 231 || props.command.code === 232) && Number(p[3]) === 0) return { mode: 'screen', mapId: Number(props.mapId) || 1, x: Number(p[4]) || 0, y: Number(p[5]) || 0, allowMapChange: false };
+  return null;
+}
+async function loadBalloonPreview(): Promise<void> {
+  if (props.command.code !== 213) return;
+  const asset = props.catalog?.assets.system.find((entry) => {
+    const name = (entry.name || entry.fileName).split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '').toLowerCase();
+    return name === 'balloon';
+  });
+  balloonImage.value = asset ? await props.loadImage(asset.url) : null;
+  balloonAssetAvailable.value = Boolean(balloonImage.value);
+  balloonFrame = 0;
+  await nextTick();
+  paintBalloonPreview();
+}
+function paintBalloonPreview(): void {
+  const canvas = balloonCanvas.value;
+  if (!canvas) return;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = '#171a1f';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const image = balloonImage.value;
+  if (!image) {
+    context.fillStyle = '#9aa2ad';
+    context.font = '11px sans-serif';
+    context.textAlign = 'center';
+    context.fillText('Balloon.png', canvas.width / 2, canvas.height / 2);
+    return;
+  }
+  const cellSize = Math.floor(image.naturalWidth / 8);
+  const balloonId = Math.max(1, Math.trunc(Number(props.command.parameters[1]) || 1));
+  const sourceY = (balloonId - 1) * cellSize;
+  if (cellSize <= 0 || sourceY + cellSize > image.naturalHeight) return;
+  context.imageSmoothingEnabled = false;
+  context.drawImage(image, balloonFrame * cellSize, sourceY, cellSize, cellSize, 0, 0, canvas.width, canvas.height);
+}
 function imagePickerMode(field: CommandField): 'plain' | 'face' | 'character' {
   if (field.asset === 'faces') return 'face';
   if (field.asset === 'characters' && pairedImageIndexPath(field)) return 'character';
   return 'plain';
 }
 function pairedImageIndexPath(field: CommandField): CommandField['path'] | null {
-  if (props.command.code === 322 && samePath(field.path, [1])) return [2];
-  if (props.command.code === 322 && samePath(field.path, [3])) return [4];
+  if (props.command.code === 322 && (samePath(field.path, [1]) || samePath(field.path, [3]))) {
+    return [Number(field.path[0]) + 1];
+  }
   if (props.command.code === 323 && samePath(field.path, [1])) return [2];
   return null;
 }
@@ -157,4 +272,9 @@ textarea { grid-column: 1 / -1; font-family: var(--app-font-mono); resize: verti
 label:has(textarea) { grid-column: 1 / -1; }
 input[type="checkbox"] { justify-self: start; }
 .no-fields { grid-column: 1 / -1; margin: 0; color: var(--app-ink-muted); font-size: 12px; }
+.coordinate-picker-button { grid-column:1 / -1; min-height:30px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 8px; border:1px solid var(--app-border); border-radius:var(--app-radius-sm); background:var(--app-bg-soft); color:var(--app-ink); cursor:pointer; }
+.coordinate-picker-button:hover { border-color:var(--app-accent); background:var(--app-accent-soft); }
+.coordinate-picker-button span { color:var(--app-ink-muted); font:11px var(--app-font-mono); }
+.balloon-preview { grid-column:1 / -1; display:flex; align-items:center; gap:10px; color:var(--app-ink-muted); font-size:11px; }
+.balloon-preview canvas { width:72px; height:72px; border:1px solid var(--app-border); border-radius:var(--app-radius-sm); image-rendering:pixelated; background:#171a1f; }
 </style>

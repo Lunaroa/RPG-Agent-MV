@@ -200,7 +200,8 @@ export function commandSpanLength(list: MvCommand[], index: number): number {
         : head === 205 ? 505
           : head === 302 ? 605
             : head === 355 ? 655
-              : null;
+              : head === 357 ? 657
+                : null;
   if (follower == null) return 1;
   let length = 1;
   while (list[index + length]?.code === follower) length += 1;
@@ -212,7 +213,7 @@ export function ensureTerminator(list: MvCommand[]): void {
   list.push({ code: 0, indent: 0, parameters: [] });
 }
 
-const STRUCTURE_END: Record<number, number> = { 102: 404, 111: 412, 112: 413, 301: 604 };
+const STRUCTURE_END: Record<number, number> = { 102: 404, 109: 0, 111: 412, 112: 413, 301: 604 };
 const STRUCTURE_OPEN = new Set(Object.keys(STRUCTURE_END).map(Number));
 const STRUCTURE_CLOSE = new Set(Object.values(STRUCTURE_END));
 const STRUCTURE_BRANCH = new Set([402, 403, 411, 601, 602, 603]);
@@ -258,10 +259,11 @@ export function commandBlockSpanIndices(spans: MvCommandSpan[], selected: number
     if (!endCode) continue;
     let depth = 0;
     for (let index = selectedIndex + 1; index < spans.length; index += 1) {
-      const code = spans[index].commands[0]?.code;
+      const command = spans[index].commands[0];
+      const code = command?.code;
       expanded.add(index);
       if (code === spans[selectedIndex].commands[0].code) depth += 1;
-      else if (code === endCode) {
+      else if (code === endCode && command?.indent === spans[selectedIndex].commands[0].indent) {
         if (!depth) break;
         depth -= 1;
       }
@@ -272,8 +274,20 @@ export function commandBlockSpanIndices(spans: MvCommandSpan[], selected: number
 
 export function commandInsertIndent(list: MvCommand[], rawIndex: number): number {
   let indent = 0;
+  const skipIndents: number[] = [];
   for (let index = 0; index < rawIndex; index += 1) {
-    const code = list[index]?.code;
+    const command = list[index];
+    const code = command?.code;
+    if (code === 109) {
+      skipIndents.push(command.indent);
+      indent = command.indent + 1;
+      continue;
+    }
+    if (code === 0 && skipIndents[skipIndents.length - 1] === command?.indent) {
+      skipIndents.pop();
+      indent = command.indent;
+      continue;
+    }
     if (STRUCTURE_CLOSE.has(code)) indent = Math.max(0, indent - 1);
     if (STRUCTURE_BRANCH.has(code)) indent = Math.max(0, indent - 1);
     if (STRUCTURE_OPEN.has(code)) indent += 1;
@@ -375,6 +389,7 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 403) return line(translate('eventEditor.command.whenCancel', language), 'text');
   if (command.code === 404) return line(translate('eventEditor.command.endChoices', language), 'control');
   if (command.code === 108 || command.code === 408) return line(translate('eventEditor.command.comment', language, { text: String(p[0] || '') }), 'normal');
+  if (command.code === 109) return line(translate('eventEditor.command.skip', language), 'control');
   if (command.code === 111) return line(translate('eventEditor.command.if', language, { cond: conditionBranchDisplay(system || null, p, language) }), 'text');
   if (command.code === 112) return line(translate('eventEditor.command.loop', language), 'control');
   if (command.code === 113) return line(translate('eventEditor.command.breakLoop', language), 'control');
@@ -396,11 +411,12 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 314) return line(translate('eventEditor.command.recoverAll', language), 'control');
   if (command.code === 117) return line(translate('eventEditor.command.commonEvent', language, { id: String(p[0] || 0) }), 'control');
   if (command.code === 356) return line(translate('eventEditor.command.pluginCommand', language, { cmd: String(p[0] || '') }), 'control');
+  if (command.code === 357) return line(translate('eventEditor.command.pluginCommand', language, { cmd: `${String(p[0] || '')}:${String(p[2] || p[1] || '')}` }), 'control');
   if (command.code === 411) return line(translate('eventEditor.command.else', language), 'control');
   if (command.code === 412) return line(translate('eventEditor.command.branchEnd', language), 'control');
   if (command.code === 413) return line(translate('eventEditor.command.repeatAbove', language), 'control');
   if (command.code === 505) return { label: `${translate('eventEditor.colon', language)}${moveRouteCommandLabel(p[0], language)}`, tone: 'control', indent: Math.min(indent + 1, 12) };
-  if (command.code === 405 || command.code === 408 || command.code === 605 || command.code === 655) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
+  if (command.code === 405 || command.code === 408 || command.code === 605 || command.code === 655 || command.code === 657) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
   const standardLabel = standardCommandLabel(command.code, language);
   if (!standardLabel.startsWith('Raw command ')) return line(`${standardLabel}${p.length ? `${translate('eventEditor.colon', language)} ${JSON.stringify(p)}` : ''}`, 'control');
   return line(`Raw command ${command.code}: ${JSON.stringify(p)}`, 'raw');
@@ -410,10 +426,10 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
 // separate from commandDisplay tone because preview components depend on that
 // lower-granularity tone.
 const TONE_TEXT = new Set([101, 401, 102, 402, 403, 404, 405]);
-const TONE_FLOW = new Set([111, 112, 113, 115, 117, 119, 411, 412, 413]);
+const TONE_FLOW = new Set([109, 111, 112, 113, 115, 117, 119, 411, 412, 413]);
 const TONE_DATA = new Set([121, 122, 123, 124, 125, 126, 127, 128, 129, 133, 311, 312, 313, 314, 315, 316, 317]);
 const TONE_MOVE = new Set([201, 202, 203, 204, 205, 206, 505]);
-const TONE_RAW = new Set([355, 356, 357, 655]);
+const TONE_RAW = new Set([355, 356, 357, 655, 657]);
 const TONE_STAGE = new Set([
   211, 212, 213, 214, 216, 217, 221, 222, 223, 224, 225,
   230, 231, 232, 233, 234, 235, 236, 241, 242, 243, 244, 245, 246, 249, 250, 251, 261, 285,
@@ -440,6 +456,31 @@ export function moveRouteCommandLabel(command: unknown, language: ProductLanguag
 // ---- Quick event templates ----
 
 export type QuickEventType = 'transfer' | 'door' | 'treasure' | 'inn';
+export type QuickObtainKind = 'item' | 'weapon' | 'armor';
+
+export function quickObtainEventTemplate(
+  kind: QuickObtainKind,
+  databaseId: number,
+  quantity: number,
+  x: number,
+  y: number,
+  name = '',
+): MvEditorEvent {
+  if (!Number.isInteger(databaseId) || databaseId <= 0) throw new Error('The obtain event database ID must be a positive integer');
+  if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('The obtain event quantity must be a positive integer');
+  const commandCode = kind === 'item' ? 126 : kind === 'weapon' ? 127 : 128;
+  const event = defaultEvent(0, x, y);
+  event.name = name;
+  const page = event.pages[0];
+  page.trigger = 0;
+  page.priorityType = 1;
+  page.image = defaultImage();
+  page.list = [
+    { code: commandCode, indent: 0, parameters: [databaseId, 0, 0, quantity, ...(commandCode === 126 ? [] : [false])] },
+    { code: 0, indent: 0, parameters: [] },
+  ];
+  return event;
+}
 
 export function quickEventTemplate(type: QuickEventType, x: number, y: number): MvEditorEvent {
   const ev = defaultEvent(0, x, y);

@@ -13,6 +13,7 @@ const COMMAND_LABELS_BY_LOCALE: Record<ProductLanguage, Record<number, string>> 
     104: 'Select Item',
     105: 'Show Scrolling Text',
     108: 'Comment',
+    109: 'Skip',
     111: 'Conditional Branch',
     112: 'Loop',
     113: 'Break Loop',
@@ -112,6 +113,7 @@ const COMMAND_LABELS_BY_LOCALE: Record<ProductLanguage, Record<number, string>> 
     354: 'Return to Title Screen',
     355: 'Script',
     356: 'Plugin Command',
+    357: 'Plugin Command',
   },
 };
 

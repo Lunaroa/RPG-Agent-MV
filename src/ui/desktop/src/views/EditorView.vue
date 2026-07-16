@@ -4,11 +4,13 @@
       v-model:mode="mode"
       v-model:tool="tool"
       v-model:paint-mode="paintMode"
+      v-model:layer="layer"
       v-model:region-id="regionId"
       v-model:shadow-bits="shadowBits"
       v-model:show-regions="showRegions"
       v-model:show-tile-flags="showTileFlags"
       :tile-flags-available="tileFlagsAvailable"
+      :supports-layer-selection="Boolean(editorCatalog)"
       :zoom="zoom"
       :undo-len="undoLen"
       :redo-len="redoLen"
@@ -36,6 +38,12 @@
         :selected-map-id="selectedMapId"
         :staged-map-ids="stagedMapIds"
         :expanded-map-ids="expandedMapIds"
+        :current-events="currentEvents"
+        :selected-event-id="selectedEventId"
+        :event-search-query="eventSearchQuery"
+        :event-search-hits="eventSearchHits"
+        :event-search-loading="eventSearchLoading"
+        :event-search-truncated="eventSearchTruncated"
         @palette-ready="setPaletteCanvas"
         @palette-mousedown="onPaletteMouseDown"
         @palette-mousemove="onPaletteMouseMove"
@@ -45,6 +53,11 @@
         @node-expand="onTreeNodeExpand"
         @node-collapse="onTreeNodeCollapse"
         @node-contextmenu="onTreeContextMenu"
+        @node-drop="moveMapFromTree"
+        @update:event-search-query="eventSearchQuery = $event"
+        @select-event="selectEvent"
+        @open-event="openEventEditor"
+        @open-search-hit="openEventSearchHit"
       />
 
       <div class="center-col">
@@ -124,6 +137,7 @@
       @close="closeEventEditor"
       @save="saveEvent"
     />
+    <QuickObtainEventDialog ref="quickObtainDialog" :catalog="editorCatalog" @commit="createObtainEvent" />
 
     <teleport to="body">
       <div v-if="treeContext.visible" class="ctx-mask" @mousedown.self="closeTreeContext" @contextmenu.prevent="closeTreeContext">
@@ -159,6 +173,7 @@
               <li @click="quickCreate('door')">{{ t('editor.ctx.door') }}</li>
               <li @click="quickCreate('treasure')">{{ t('editor.ctx.treasure') }}</li>
               <li @click="quickCreate('inn')">{{ t('editor.ctx.inn') }}</li>
+              <li v-if="editorCatalog?.engine === 'rpg-maker-mz'" @click="openQuickObtain">{{ t('editor.ctx.obtain') }}</li>
             </ul>
           </li>
           <li class="ctx-sep" />
@@ -180,12 +195,13 @@ import { useRoute, useRouter } from 'vue-router';
 import EditorToolbar from '../components/editor/EditorToolbar.vue';
 import LeftDock from '../components/layout/LeftDock.vue';
 import EventEditorDialog from '../components/editor/EventEditorDialog.vue';
+import QuickObtainEventDialog from '../components/editor/QuickObtainEventDialog.vue';
 import MapPropertiesDialog from '../components/editor/MapPropertiesDialog.vue';
 import BottomPanel from '../components/editor/BottomPanel.vue';
-import type { EditorMode, EditorStatusKind, MapPaintMode, MapPropertiesForm, MapTool, TreeNode } from '../components/editor/editorTypes';
-import { eventRegistry, events as eventsApi, maps as mapsApi, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapTreeNode, type RmmvAudioSettings, type RmmvMapEncounter, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
+import type { EditorEventListItem, EditorEventSearchHit, EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapPropertiesForm, MapTool, TreeNode } from '../components/editor/editorTypes';
+import { eventRegistry, events as eventsApi, maps as mapsApi, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapTreeNode, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
 import { useMapCanvasEditor, type PlacementFlashCell } from '../composables/useMapCanvasEditor';
-import { clone, defaultEvent, quickEventTemplate, type MvEditorEvent, type MvEventImage, type QuickEventType } from '../composables/useEventEditor';
+import { clone, defaultEvent, quickEventTemplate, quickObtainEventTemplate, type MvEditorEvent, type MvEventImage, type QuickEventType, type QuickObtainKind } from '../composables/useEventEditor';
 import {
   EDITOR_DEFAULT_ZOOM,
   readEditorWorkspaceSelection,
@@ -254,7 +270,7 @@ const tool = ref<MapTool>('pencil');
 const paintMode = ref<MapPaintMode>('tile');
 const regionId = ref(1);
 const shadowBits = ref(15);
-const layer = ref(0);
+const layer = ref<MapLayerSelection>(0);
 const showGrid = ref(true);
 const showEvents = ref(true);
 const showRegions = ref(false);
@@ -265,12 +281,19 @@ const statusKind = ref<EditorStatusKind>('');
 const stagingDirty = ref(false);
 const stagedMapIds = ref(new Set<number>());
 const selectedEventId = ref<number | null>(null);
+const currentEvents = ref<EditorEventListItem[]>([]);
+const eventSearchQuery = ref('');
+const eventSearchHits = ref<EditorEventSearchHit[]>([]);
+const eventSearchLoading = ref(false);
+const eventSearchTruncated = ref(false);
 const currentMapName = ref('');
+const currentTileSize = ref(48);
 const propertiesDialogOpen = ref(false);
 const propertiesDialogMode = ref<'create' | 'edit'>('edit');
 const properties = reactive<MapPropertiesForm>(defaultMapPropertiesForm());
 const eventDialogOpen = ref(false);
 const eventDialogRef = ref<InstanceType<typeof EventEditorDialog>>();
+const quickObtainDialog = ref<InstanceType<typeof QuickObtainEventDialog>>();
 const eventDraft = ref<MvEditorEvent | null>(null);
 const eventOverview = ref<StoryEventOverview | null>(null);
 const eventSaving = ref(false);
@@ -282,9 +305,12 @@ const canvasContext = reactive({ visible: false, x: 0, y: 0, cellX: 0, cellY: 0,
 const systemData = ref<{ switches: string[]; variables: string[] } | null>(null);
 const editorCatalog = ref<EditorProjectCatalog | null>(null);
 const currentTilesetImages = shallowRef<(HTMLImageElement | null)[]>([]);
+const currentParallaxImage = shallowRef<HTMLImageElement | null>(null);
 
 let currentMap: EditableMap | null = null;
 let unregisterUiControlHandler: (() => void) | null = null;
+let eventSearchTimer: ReturnType<typeof setTimeout> | null = null;
+let eventSearchSequence = 0;
 const characterImages = new Map<string, HTMLImageElement | null>();
 const characterAssetUrls = new Map<string, string>();
 
@@ -312,6 +338,8 @@ function rotatePlacementDirection(deltaY: number) {
 }
 
 const canvasEditor = useMapCanvasEditor({
+  tileSize: currentTileSize,
+  parallaxImage: currentParallaxImage,
   mode,
   tool,
   paintMode,
@@ -404,6 +432,7 @@ onUnmounted(() => {
   workbenchUi.clearStatusBar();
   window.removeEventListener('keydown', onEditorKeyDown);
   window.removeEventListener(EDITOR_COMMAND_EVENT, onEditorCommand as EventListener);
+  if (eventSearchTimer) clearTimeout(eventSearchTimer);
 });
 watch(mode, persistWorkspaceSelection);
 watch(tileTab, persistWorkspaceSelection);
@@ -428,6 +457,33 @@ watch(placementStatusHint, (hint) => {
 });
 watch(tileFlagsAvailable, (available) => {
   if (!available) showTileFlags.value = false;
+});
+watch(eventSearchQuery, (query) => {
+  if (eventSearchTimer) clearTimeout(eventSearchTimer);
+  const sequence = ++eventSearchSequence;
+  const trimmed = query.trim();
+  if (!trimmed) {
+    eventSearchHits.value = [];
+    eventSearchLoading.value = false;
+    eventSearchTruncated.value = false;
+    return;
+  }
+  eventSearchLoading.value = true;
+  eventSearchTimer = setTimeout(async () => {
+    try {
+      const result = await eventsApi.search(trimmed, projectStore.currentProject);
+      if (sequence !== eventSearchSequence) return;
+      eventSearchHits.value = result.hits;
+      eventSearchTruncated.value = result.truncated;
+    } catch (error) {
+      if (sequence !== eventSearchSequence) return;
+      eventSearchHits.value = [];
+      eventSearchTruncated.value = false;
+      setStatus(t('editor.event.searchFailed', { message: (error as Error).message }), 'error');
+    } finally {
+      if (sequence === eventSearchSequence) eventSearchLoading.value = false;
+    }
+  }, 180);
 });
 
 /* ---- Sync status bar data to global store ---- */
@@ -494,6 +550,34 @@ function findTreeNode(mapId: number): TreeNode | undefined {
   return visit(mapTree.value);
 }
 async function handleNodeClick(node: TreeNode) { await loadMap(node.id); }
+async function moveMapFromTree(source: TreeNode, target: TreeNode, position: 'before' | 'after' | 'inside') {
+  if (busy.value) return;
+  busy.value = true;
+  setStatus(t('editor.map.reordering'), 'busy');
+  try {
+    await mapsApi.move(source.id, target.id, position, projectStore.currentProject);
+    await loadTree();
+    if (selectedMapId.value != null) {
+      expandedMapIds.value = [...new Set([...expandedMapIds.value, ...ancestorMapIdsFor(mapTree.value, selectedMapId.value)])];
+    }
+    setStatus(t('editor.map.reordered'), 'saved');
+  } catch (error) {
+    await loadTree();
+    setStatus(t('editor.map.reorderFailed', { message: (error as Error).message }), 'error');
+    ElMessage.error(t('editor.map.reorderFailed', { message: (error as Error).message }));
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function openEventSearchHit(hit: EditorEventSearchHit) {
+  mode.value = 'event';
+  if (selectedMapId.value !== hit.mapId && !(await loadMap(hit.mapId, { quiet: true }))) return;
+  selectedEventId.value = hit.eventId;
+  expandedMapIds.value = [...new Set([...expandedMapIds.value, ...ancestorMapIdsFor(mapTree.value, hit.mapId)])];
+  renderMap();
+  await openEventEditor(hit.eventId);
+}
 async function openPreferredMap(savedMapId?: number) {
   const routeMapId = Number(route.query.mapId);
   const candidates = [...new Set([
@@ -713,6 +797,7 @@ async function loadEditorCatalog() {
   try {
     const catalog = await projectAssets.editorCatalog(projectStore.currentProject);
     editorCatalog.value = catalog;
+    layer.value = 'auto';
     characterAssetUrls.clear();
     for (const asset of catalog.assets.characters) characterAssetUrls.set(asset.name, asset.url);
   } catch (error) {
@@ -726,15 +811,21 @@ async function loadMap(mapId: number, options: { quiet?: boolean } = {}) {
     const payload = await mapsApi.get(mapId, projectStore.currentProject);
     const nextMap = payloadToMap(payload.map);
     const names = payload.tileset?.tilesetNames || [];
-    const images = await preloadTileset(payload.tileset?.imageUrls || []);
+    const [images, parallaxImage] = await Promise.all([
+      preloadTileset(payload.tileset?.imageUrls || []),
+      preloadOptionalImage(payload.parallaxImageUrl),
+    ]);
     selectedMapId.value = mapId;
+    currentTileSize.value = payload.tileSize;
     currentMap = nextMap;
+    syncCurrentEvents(nextMap);
     selectedEventId.value = null;
     systemData.value = payload.system || null;
     currentMapName.value = String(payload.info.name || '');
     tilesetFlags.value = Array.isArray(payload.tileset?.flags) ? payload.tileset.flags : [];
     setPropertiesFromMap(currentMapName.value, nextMap, Number(payload.info.parentId || 0));
     stagingDirty.value = isStagingDirty(payload.staging);
+    currentParallaxImage.value = parallaxImage;
     await setMap(nextMap, names, images, true);
     currentTilesetImages.value = images;
     await preloadEventCharacters(nextMap);
@@ -752,9 +843,13 @@ async function loadMap(mapId: number, options: { quiet?: boolean } = {}) {
 async function reloadCurrentMap() {
   if (selectedMapId.value == null) return;
   const payload = await mapsApi.get(selectedMapId.value, projectStore.currentProject);
+  const parallaxImage = await preloadOptionalImage(payload.parallaxImageUrl);
   currentMap = payloadToMap(payload.map);
+  syncCurrentEvents(currentMap);
+  currentTileSize.value = payload.tileSize;
   systemData.value = payload.system || null;
   stagingDirty.value = isStagingDirty(payload.staging);
+  currentParallaxImage.value = parallaxImage;
   replaceMap(currentMap);
   await preloadEventCharacters(currentMap);
   renderMap();
@@ -769,6 +864,16 @@ async function preloadTileset(urls: (string | null)[]) {
 }
 function loadImage(url: string): Promise<HTMLImageElement | null> {
   return loadImageElement(url);
+}
+async function preloadOptionalImage(url?: string | null): Promise<HTMLImageElement | null> {
+  if (!url) return null;
+  return loadImage(await resolveAssetUrl(url));
+}
+function syncCurrentEvents(map: MvMap | null) {
+  currentEvents.value = (map?.events || [])
+    .filter((event): event is MvEvent => Boolean(event && Number.isInteger(event.id) && event.id > 0))
+    .map((event) => ({ id: event.id, name: event.name || `EV${String(event.id).padStart(3, '0')}`, x: event.x, y: event.y }))
+    .sort((left, right) => left.id - right.id);
 }
 async function preloadEventCharacters(map: MvMap) {
   const names = new Set<string>();
@@ -855,7 +960,7 @@ function defaultMapPropertiesForm(): MapPropertiesForm {
     parallaxSy: 0,
     parallaxShow: false,
     encounterStep: 30,
-    encounterListText: '[]',
+    encounterList: [],
     note: '',
   };
 }
@@ -884,19 +989,14 @@ function setPropertiesFromMap(name: string, map: Partial<EditableMap>, parentId:
     parallaxSy: Number(map.parallaxSy || 0),
     parallaxShow: Boolean(map.parallaxShow),
     encounterStep: Number(map.encounterStep || 30),
-    encounterListText: JSON.stringify(Array.isArray(map.encounterList) ? map.encounterList : [], null, 2),
+    encounterList: (Array.isArray(map.encounterList) ? map.encounterList : []).map((encounter) => ({
+      ...encounter,
+      regionSet: Array.isArray(encounter.regionSet) ? [...encounter.regionSet] : [],
+    })),
     note: String(map.note || ''),
   });
 }
 function mapPropertiesPayload(): Record<string, unknown> {
-  let encounterList: RmmvMapEncounter[] = [];
-  try {
-    const parsed = properties.encounterListText.trim() ? JSON.parse(properties.encounterListText) : [];
-    if (!Array.isArray(parsed)) throw new Error('encounterList must be an array');
-    encounterList = parsed as RmmvMapEncounter[];
-  } catch (error) {
-    throw new Error(t('editor.map.encounterListInvalid', { message: (error as Error).message }));
-  }
   return {
     name: properties.name,
     displayName: properties.displayName,
@@ -919,7 +1019,10 @@ function mapPropertiesPayload(): Record<string, unknown> {
     parallaxSx: properties.parallaxSx,
     parallaxSy: properties.parallaxSy,
     parallaxShow: properties.parallaxShow,
-    encounterList,
+    encounterList: properties.encounterList.map((encounter) => ({
+      ...encounter,
+      regionSet: [...encounter.regionSet],
+    })),
     encounterStep: properties.encounterStep,
     note: properties.note,
   };
@@ -1101,6 +1204,17 @@ function quickCreate(type: QuickEventType) {
   eventDraft.value = quickEventTemplate(type, canvasContext.cellX, canvasContext.cellY);
   eventDialogOpen.value = true;
   closeCanvasContext();
+}
+function openQuickObtain() {
+  if (canvasContext.eventId != null || editorCatalog.value?.engine !== 'rpg-maker-mz') return;
+  const position = { x: canvasContext.cellX, y: canvasContext.cellY };
+  closeCanvasContext();
+  quickObtainDialog.value?.open(position);
+}
+function createObtainEvent(selection: { kind: QuickObtainKind; databaseId: number; quantity: number; x: number; y: number; name: string }) {
+  eventOverview.value = null;
+  eventDraft.value = quickObtainEventTemplate(selection.kind, selection.databaseId, selection.quantity, selection.x, selection.y, selection.name);
+  eventDialogOpen.value = true;
 }
 
 function getUiControlState(): EditorUiControlState {
@@ -1291,7 +1405,10 @@ function clearCurrentMap() {
   selectedMapId.value = null;
   currentMap = null;
   currentMapName.value = '';
+  currentTileSize.value = 48;
   currentTilesetImages.value = [];
+  currentParallaxImage.value = null;
+  syncCurrentEvents(null);
   clearMap();
 }
 </script>

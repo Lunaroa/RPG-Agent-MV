@@ -1,6 +1,6 @@
 <template>
   <aside ref="workbenchRef" class="editor-workbench" :class="{ resizing }">
-    <section class="workbench-pane palette-pane" :class="{ collapsed: !tilesOpen }" :style="palettePaneStyle">
+    <section v-show="mode === 'map'" class="workbench-pane palette-pane" :class="{ collapsed: !tilesOpen }" :style="palettePaneStyle">
       <header class="pane-header clickable" @click="toggleTiles">
         <strong>{{ t('editor.left.tiles') }}</strong>
         <span v-if="brushInfo" class="tile-chip">{{ brushInfo }}</span>
@@ -15,7 +15,7 @@
       </nav>
     </section>
     <div
-      v-show="tilesOpen"
+      v-show="mode === 'map' && tilesOpen"
       class="pane-resizer"
       role="separator"
       aria-orientation="horizontal"
@@ -23,6 +23,53 @@
       @dblclick="resetPaletteHeight"
       @mousedown.prevent="startResize"
     />
+
+    <section v-if="mode === 'event'" class="workbench-pane event-list-pane">
+      <header class="pane-header">
+        <strong>{{ t('editor.left.events') }}</strong>
+        <span class="pane-count">{{ currentEvents.length }}</span>
+      </header>
+      <label class="event-search">
+        <span aria-hidden="true">⌕</span>
+        <input
+          :value="eventSearchQuery"
+          type="search"
+          :placeholder="t('editor.left.searchEvents')"
+          @input="$emit('update:event-search-query', ($event.target as HTMLInputElement).value)"
+        />
+      </label>
+      <div class="event-list">
+        <template v-if="eventSearchQuery.trim()">
+          <button
+            v-for="hit in eventSearchHits"
+            :key="`${hit.mapId}:${hit.eventId}:${hit.pageIndex}:${hit.commandIndex}:${hit.matchKind}`"
+            type="button"
+            class="event-row search-hit"
+            @dblclick="$emit('open-search-hit', hit)"
+          >
+            <span class="event-row-main"><strong>#{{ hit.eventId }} {{ hit.eventName }}</strong><small>{{ hit.mapName }} · {{ searchHitLocation(hit) }}</small></span>
+            <span class="event-row-text">{{ hit.text }}</span>
+          </button>
+          <div v-if="eventSearchLoading" class="pane-empty">{{ t('editor.left.searchingEvents') }}</div>
+          <div v-else-if="!eventSearchHits.length" class="pane-empty">{{ t('editor.left.noEventMatches') }}</div>
+          <div v-if="eventSearchTruncated" class="pane-empty compact">{{ t('editor.left.searchTruncated') }}</div>
+        </template>
+        <template v-else>
+          <button
+            v-for="event in currentEvents"
+            :key="event.id"
+            type="button"
+            class="event-row"
+            :class="{ active: event.id === selectedEventId }"
+            @click="$emit('select-event', event.id)"
+            @dblclick="$emit('open-event', event.id)"
+          >
+            <span class="event-row-main"><strong>#{{ event.id }} {{ event.name }}</strong><small>{{ event.x }}, {{ event.y }}</small></span>
+          </button>
+          <div v-if="!currentEvents.length" class="pane-empty">{{ t('editor.left.noEvents') }}</div>
+        </template>
+      </div>
+    </section>
 
     <section class="workbench-pane tree-pane">
       <header class="pane-header">
@@ -33,6 +80,7 @@
           :data="mapTree"
           :props="{ children: 'children', label: 'name' }"
           node-key="id"
+          draggable
           highlight-current
           :default-expanded-keys="expandedMapIds"
           :current-node-key="selectedMapId ?? undefined"
@@ -40,6 +88,8 @@
           @node-expand="(data: TreeNode) => $emit('node-expand', data)"
           @node-collapse="(data: TreeNode) => $emit('node-collapse', data)"
           @node-contextmenu="(event: MouseEvent, data: TreeNode) => $emit('node-contextmenu', event, data)"
+          :allow-drop="allowTreeDrop"
+          @node-drop="onTreeNodeDrop"
         >
           <template #default="{ node, data }">
             <span class="tree-node">
@@ -56,7 +106,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import type { EditorMode, MapPaintMode, PaletteTab, TileTab, TreeNode } from '../editor/editorTypes';
+import type { EditorEventListItem, EditorEventSearchHit, EditorMode, MapPaintMode, PaletteTab, TileTab, TreeNode } from '../editor/editorTypes';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
 import { useI18n } from '../../i18n';
@@ -80,6 +130,12 @@ defineProps<{
   selectedMapId: number | null;
   stagedMapIds: Set<number>;
   expandedMapIds: number[];
+  currentEvents: EditorEventListItem[];
+  selectedEventId: number | null;
+  eventSearchQuery: string;
+  eventSearchHits: EditorEventSearchHit[];
+  eventSearchLoading: boolean;
+  eventSearchTruncated: boolean;
 }>();
 
 const workbenchUi = useWorkbenchUiStore();
@@ -95,6 +151,11 @@ const emit = defineEmits<{
   'node-expand': [node: TreeNode];
   'node-collapse': [node: TreeNode];
   'node-contextmenu': [event: MouseEvent, node: TreeNode];
+  'node-drop': [source: TreeNode, target: TreeNode, position: 'before' | 'after' | 'inside'];
+  'update:event-search-query': [query: string];
+  'select-event': [eventId: number];
+  'open-event': [eventId: number];
+  'open-search-hit': [hit: EditorEventSearchHit];
 }>();
 
 const workbenchRef = ref<HTMLElement>();
@@ -109,6 +170,34 @@ const palettePaneStyle = computed(() => (
 
 function toggleTiles() {
   workbenchUi.setLeftDockTilesOpen(!workbenchUi.leftDockTilesOpen);
+}
+
+function nodeContains(root: TreeNode, mapId: number): boolean {
+  return root.id === mapId || Boolean(root.children?.some((child) => nodeContains(child, mapId)));
+}
+
+function allowTreeDrop(
+  draggingNode: { data: TreeNode },
+  dropNode: { data: TreeNode },
+): boolean {
+  return draggingNode.data.id !== dropNode.data.id && !nodeContains(draggingNode.data, dropNode.data.id);
+}
+
+function onTreeNodeDrop(
+  draggingNode: { data: TreeNode },
+  dropNode: { data: TreeNode },
+  dropType: 'before' | 'after' | 'inner',
+): void {
+  emit('node-drop', draggingNode.data, dropNode.data, dropType === 'inner' ? 'inside' : dropType);
+}
+
+function searchHitLocation(hit: EditorEventSearchHit): string {
+  if (hit.pageIndex == null) {
+    if (hit.matchKind === 'id') return t('editor.left.match.id');
+    if (hit.matchKind === 'name') return t('editor.left.match.name');
+    return t('editor.left.match.note');
+  }
+  return t('editor.left.commandLocation', { page: hit.pageIndex + 1, command: (hit.commandIndex ?? 0) + 1 });
 }
 
 function startResize(event: MouseEvent) {
@@ -181,6 +270,7 @@ onMounted(() => {
 .palette-pane { flex:0 0 214px; }
 .palette-pane.collapsed { flex:0 0 30px; }
 .tree-pane { flex:1 1 auto; }
+.event-list-pane { flex:0 0 min(42%, 300px); margin-bottom:8px; }
 .pane-resizer {
   height: 8px;
   flex: 0 0 8px;
@@ -226,6 +316,7 @@ onMounted(() => {
   font-weight: 700;
 }
 .pane-header.clickable{cursor:pointer}.pane-chevron{color:var(--app-ink-muted);font-size:12px}.tile-chip{margin-left:auto;max-width:104px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 6px;border-radius:4px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-size:10px;font-weight:600}
+.pane-count{min-width:20px;padding:1px 5px;border-radius:4px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-size:10px;text-align:center}.event-search{height:30px;margin:5px;display:flex;align-items:center;gap:5px;padding:0 7px;border:1px solid var(--app-border);border-radius:5px;background:var(--app-bg-sunken);color:var(--app-ink-muted)}.event-search input{width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--app-ink);font:inherit;font-size:11px}.event-list{min-height:0;flex:1;overflow:auto;padding:0 4px 5px}.event-row{width:100%;min-height:34px;padding:5px 6px;display:flex;flex-direction:column;align-items:stretch;gap:2px;border:0;border-radius:4px;background:transparent;color:var(--app-ink);text-align:left;cursor:pointer}.event-row:hover,.event-row.active{background:var(--app-bg-sunken)}.event-row.active{box-shadow:inset 3px 0 0 var(--app-accent)}.event-row-main{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}.event-row-main strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}.event-row-main small,.event-row-text{color:var(--app-ink-muted);font-size:9px}.event-row-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.search-hit{border-bottom:1px solid var(--app-border)}.pane-empty.compact{padding-top:4px;padding-bottom:4px}
 .tile-tabs { display: flex; gap: 1px; padding: 3px; border-top:1px solid var(--app-border); background: var(--app-bg); }
 .tile-tabs button {
   min-width: 0;

@@ -9,7 +9,6 @@
         <template v-if="draft">
           <div class="ev-meta-bar">
             <label class="ev-inline-field name"><span>{{ t('commonEvent.name') }}</span><input v-model="draft.name" data-ui-id="event-editor-name" :disabled="shellLocked" @input="markDirty" /></label>
-            <label class="ev-inline-field note"><span>{{ t('eventEditorDialog.note') }}</span><input v-model="draft.note" data-ui-id="event-editor-note" :disabled="shellLocked" @input="markDirty" /></label>
             <label class="ev-inline-field coord"><span>X</span><input v-model.number="draft.x" data-ui-id="event-editor-x" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
             <label class="ev-inline-field coord"><span>Y</span><input v-model.number="draft.y" data-ui-id="event-editor-y" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
             <div class="ev-toolbar-group page-tools" :aria-label="t('eventEditorDialog.pageActions')">
@@ -19,6 +18,7 @@
               <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-clear" :disabled="currentPageLocked" @click="clearPage">{{ t('eventEditorDialog.clearPage') }}</button>
               <button type="button" class="ev-tool-btn danger" data-ui-id="event-editor-page-delete" :disabled="currentPageLocked || draft.pages.length <= 1" @click="deletePage">{{ t('eventEditorDialog.deletePage') }}</button>
             </div>
+            <label class="ev-inline-field note"><span>{{ t('eventEditorDialog.note') }}</span><textarea v-model="draft.note" rows="2" data-ui-id="event-editor-note" :disabled="shellLocked" @input="markDirty" /></label>
           </div>
           <div v-if="shellLocked || currentPageLocked" class="ev-lock-banner">
             {{ currentPageLocked ? t('eventEditorDialog.protectedPage') : t('eventEditorDialog.protectedFields') }}
@@ -62,14 +62,16 @@
                 <legend>{{ t('eventEditorDialog.options') }}</legend>
                 <label v-for="[key, label] in pageOptions" :key="key" class="ev-check"><input v-model="currentPage[key]" type="checkbox" @change="markDirty" />{{ label }}</label>
               </fieldset>
-              <fieldset class="ev-group priority-group" :disabled="currentPageLocked">
-                <legend>{{ t('eventEditorDialog.priority') }}</legend>
-                <select v-model.number="currentPage.priorityType" @change="markDirty"><option v-for="[value, label] in localizedPriorities" :key="value" :value="Number(value)">{{ label }}</option></select>
-              </fieldset>
-              <fieldset class="ev-group trigger-group" :disabled="currentPageLocked">
-                <legend>{{ t('commonEvent.trigger') }}</legend>
-                <select v-model.number="currentPage.trigger" @change="markDirty"><option v-for="[value, label] in localizedTriggers" :key="value" :value="Number(value)">{{ label }}</option></select>
-              </fieldset>
+              <div class="behavior-groups">
+                <fieldset class="ev-group priority-group" :disabled="currentPageLocked">
+                  <legend>{{ t('eventEditorDialog.priority') }}</legend>
+                  <select v-model.number="currentPage.priorityType" @change="markDirty"><option v-for="[value, label] in localizedPriorities" :key="value" :value="Number(value)">{{ label }}</option></select>
+                </fieldset>
+                <fieldset class="ev-group trigger-group" :disabled="currentPageLocked">
+                  <legend>{{ t('commonEvent.trigger') }}</legend>
+                  <select v-model.number="currentPage.trigger" data-ui-id="event-editor-trigger" @change="markDirty"><option v-for="[value, label] in localizedTriggers" :key="value" :value="Number(value)">{{ label }}</option></select>
+                </fieldset>
+              </div>
             </aside>
             <section class="ev-commands" :class="{ locked: currentPageLocked }">
               <strong class="ev-cmd-title">{{ t('commonEvent.contents') }}</strong>
@@ -120,8 +122,8 @@
     </div>
   </teleport>
   <EventImagePickerDialog ref="imagePicker" :catalog="catalog" :tileset-images="tilesetImages" :load-image="loadImage" @commit="setImage" />
-  <MoveRouteDialog ref="routeDialog" @commit="setPageRoute" />
-  <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="loadImage" @commit="commitCommand" />
+  <MoveRouteDialog ref="routeDialog" :preview-x="draft?.x" :preview-y="draft?.y" @commit="setPageRoute" />
+  <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="loadImage" :event-x="draft?.x" :event-y="draft?.y" @commit="commitCommand" />
 </template>
 
 <script setup lang="ts">
@@ -381,7 +383,8 @@ defineExpose({ markSaved });
 }
 
 .ev-inline-field.note {
-  flex: 1 1 210px;
+  flex: 1 0 100%;
+  align-items: flex-start;
 }
 
 .ev-inline-field.coord {
@@ -398,6 +401,23 @@ defineExpose({ markSaved });
   background: var(--app-bg);
   color: var(--app-ink);
   font-size: var(--text-sm);
+}
+
+.ev-inline-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  max-height: 96px;
+  padding: 5px 6px;
+  resize: vertical;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg);
+  color: var(--app-ink);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.4;
 }
 
 .page-tools {
@@ -509,7 +529,8 @@ defineExpose({ markSaved });
   grid-template-columns: 104px 1fr;
   gap: 4px 6px;
   align-content: start;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   background: var(--app-bg-soft);
 }
 
@@ -547,9 +568,11 @@ defineExpose({ markSaved });
   grid-column: 1;
 }
 
-.priority-group,
-.trigger-group {
+.behavior-groups {
   grid-column: 2;
+  display: grid;
+  gap: 4px;
+  align-content: start;
 }
 
 .ev-group select,
@@ -839,9 +862,4 @@ defineExpose({ markSaved });
   }
 }
 
-@media (max-height: 680px) {
-  .ev-settings {
-    overflow: auto;
-  }
-}
 </style>

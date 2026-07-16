@@ -4,7 +4,9 @@ import { ArrowDown, ArrowUp, EditPen, Refresh } from '@element-plus/icons-vue';
 import { ElMessageBox } from 'element-plus';
 import {
   maps as mapsApi,
+  projectAssets,
   plugins as pluginApi,
+  type EditorProjectCatalog,
   type ManagedPluginEntry,
   type ManagedPluginFile,
   type PluginConfigurationResult,
@@ -17,10 +19,12 @@ import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 import { translatePluginDiagnosticMessage, translatePluginDiagnosticMessages } from '../../utils/pluginDiagnosticsI18n';
 import { parseProjectStagingSummary } from '../../utils/projectStaging';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
+import PluginParameterInput from '../editor/PluginParameterInput.vue';
 
 const projectStore = useProjectStore();
 const { language, t } = useI18n();
 const config = ref<PluginConfigurationResult | null>(null);
+const editorCatalog = ref<EditorProjectCatalog | null>(null);
 const selectedName = ref('');
 const search = ref('');
 const loading = ref(false);
@@ -89,6 +93,7 @@ onMounted(() => {
 
 function resetState() {
   config.value = null;
+  editorCatalog.value = null;
   selectedName.value = '';
   search.value = '';
   error.value = '';
@@ -113,7 +118,12 @@ async function loadPlugins() {
   error.value = '';
   actionMessage.value = '';
   try {
-    applyConfig(await pluginApi.read(projectStore.currentProject));
+    const [nextConfig, catalog] = await Promise.all([
+      pluginApi.read(projectStore.currentProject),
+      projectAssets.editorCatalog(projectStore.currentProject),
+    ]);
+    applyConfig(nextConfig);
+    editorCatalog.value = catalog;
     await refreshStagingStatus();
   } catch (loadError) {
     config.value = null;
@@ -360,7 +370,11 @@ function buildParametersPayload(reportErrors: boolean): Record<string, unknown> 
   if (!parsed) return null;
   if (!hasSchemaFields.value) return parsed;
   const next: Record<string, unknown> = { ...parsed };
-  for (const field of schemaFields.value) next[field.key] = serializeFieldValue(field, parameterForm.value[field.key]);
+  for (const field of schemaFields.value) {
+    next[field.key] = field.editable === false
+      ? selectedPlugin.value?.parameters[field.key]
+      : serializeFieldValue(field, parameterForm.value[field.key]);
+  }
   return next;
 }
 
@@ -389,6 +403,10 @@ function normalizeFieldFormValue(field: PluginParameterSchemaField, rawValue: un
   const value = rawValue ?? field.defaultValue;
   if (field.kind === 'struct') return normalizeStructValue(field, value);
   if (field.kind === 'array') return normalizeArrayValue(field, value);
+  if (field.kind === 'location') {
+    const parsed = parseMaybeJson(value);
+    return isPlainObject(parsed) ? parsed : { mapId: 0, x: 0, y: 0 };
+  }
   if (value === undefined || value === null) return defaultFieldFormValue(field);
   return value;
 }
@@ -396,6 +414,7 @@ function normalizeFieldFormValue(field: PluginParameterSchemaField, rawValue: un
 function defaultFieldFormValue(field: PluginParameterSchemaField): unknown {
   if (field.kind === 'struct') return normalizeStructValue(field, field.defaultValue);
   if (field.kind === 'array') return normalizeArrayValue(field, field.defaultValue);
+  if (field.kind === 'location') return normalizeFieldFormValue(field, field.defaultValue);
   if (field.kind === 'boolean') return field.defaultValue ?? 'false';
   return field.defaultValue ?? '';
 }
@@ -434,11 +453,12 @@ function serializeFieldValue(field: PluginParameterSchemaField, value: unknown):
     const entries = Array.isArray(value) ? value : [];
     if (!item) return '[]';
     return JSON.stringify(entries.map((entry) =>
-      item.kind === 'struct'
-        ? JSON.stringify(serializeStructValue(item, entry))
+      item.kind === 'struct' || item.kind === 'array'
+        ? serializeFieldValue(item, entry)
         : serializeScalarFieldValue(item, entry),
     ));
   }
+  if (field.kind === 'location') return JSON.stringify(isPlainObject(value) ? value : { mapId: 0, x: 0, y: 0 });
   return serializeScalarFieldValue(field, value);
 }
 
@@ -464,7 +484,23 @@ function isWideField(field: PluginParameterSchemaField): boolean {
   return field.kind === 'json'
     || field.kind === 'struct'
     || field.kind === 'array'
+    || field.kind === 'multiline'
+    || field.kind === 'location'
+    || field.editable === false
     || (field.kind === 'text' && String(parameterFormValue(field)).length > 80);
+}
+
+function schemaDepth(field: PluginParameterSchemaField): number {
+  const byKey = new Map(schemaFields.value.map((entry) => [entry.key, entry]));
+  const visited = new Set([field.key]);
+  let parent = field.parent;
+  let depth = 0;
+  while (parent && byKey.has(parent) && !visited.has(parent)) {
+    visited.add(parent);
+    depth += 1;
+    parent = byKey.get(parent)?.parent;
+  }
+  return depth;
 }
 
 function structFields(field: PluginParameterSchemaField): PluginParameterSchemaField[] {
@@ -534,6 +570,9 @@ function fieldMeta(field: PluginParameterSchemaField) {
     field.rawType ? `type: ${field.rawType}` : '',
     field.structName ? `struct: ${field.structName}` : '',
     field.directory ? `dir: ${field.directory}` : '',
+    field.databaseTable ? `data: ${field.databaseTable}` : '',
+    field.parent ? `parent: ${field.parent}` : '',
+    field.decimals != null ? `decimals: ${field.decimals}` : '',
     field.required ? 'required' : '',
     field.defaultValue !== undefined && field.defaultValue !== '' ? `default: ${String(field.defaultValue)}` : '',
   ].filter(Boolean);
@@ -663,13 +702,26 @@ function pluginFileStatus(file: ManagedPluginFile): string {
             </dl>
 
             <div v-if="schemaFields.length" class="schema-params">
-              <div v-for="field in schemaFields" :key="field.key" class="param-field" :class="{ full: isWideField(field) }">
+              <div
+                v-for="field in schemaFields"
+                :key="field.key"
+                class="param-field"
+                :class="{ full: isWideField(field), 'tree-child': schemaDepth(field) > 0 }"
+                :style="{ '--plugin-param-depth': String(schemaDepth(field)) }"
+              >
                 <span>
                   <strong>{{ field.label }}</strong>
                   <code>{{ field.key }}</code>
                 </span>
+                <PluginParameterInput
+                  v-if="field.editable === false || ['file', 'database', 'map', 'location', 'multiline', 'combo', 'json', 'struct', 'array'].includes(field.kind)"
+                  :field="field"
+                  :model-value="parameterFormValue(field)"
+                  :catalog="editorCatalog"
+                  @update:model-value="setParameterFormValue(field, $event)"
+                />
                 <input
-                  v-if="field.kind === 'text'"
+                  v-else-if="field.kind === 'text'"
                   :value="parameterFormValue(field)"
                   @input="setParameterFormValue(field, parameterInputValue($event))"
                 />
@@ -679,6 +731,7 @@ function pluginFileStatus(file: ManagedPluginFile): string {
                   type="number"
                   :min="field.min"
                   :max="field.max"
+                  :step="field.decimals == null ? 1 : 10 ** -Math.max(0, field.decimals)"
                   @input="setParameterFormValue(field, parameterInputValue($event))"
                 />
                 <label v-else-if="field.kind === 'boolean'" class="param-check">
@@ -954,6 +1007,7 @@ function pluginFileStatus(file: ManagedPluginFile): string {
 .schema-warnings { display: grid; gap: 5px; padding: 9px 10px; border-radius: 10px; background: var(--app-warn-soft); color: var(--app-warn); font-size: 11px; line-height: 1.45; }
 .schema-params { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; padding: 12px; border: 1px solid var(--console-border,#e4dcce); border-radius: 10px; background: var(--console-paper-soft,#faf5ec); }
 .param-field { min-width: 0; display: grid; gap: 5px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
+.param-field.tree-child { padding-left: calc(var(--plugin-param-depth) * 12px); border-left: 1px solid var(--console-border,#e4dcce); }
 .param-field.full { grid-column: 1 / -1; }
 .param-field > span,.nested-field > span { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .schema-params strong { overflow: hidden; color: var(--console-text-soft,#5a5247); text-overflow: ellipsis; white-space: nowrap; }

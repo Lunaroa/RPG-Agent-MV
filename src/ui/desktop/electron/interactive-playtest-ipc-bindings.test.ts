@@ -110,4 +110,65 @@ describe('interactive playtest IPC bindings', () => {
       /does not accept field.*args/i,
     );
   });
+
+  test('passes a structured particle preview only in particle preview mode', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const calls: unknown[][] = [];
+    const service = {
+      async start(project: string, options: Record<string, unknown>) {
+        calls.push([project, options]);
+        return { confirmationRequired: false };
+      },
+      current: () => ({ confirmationRequired: false }),
+      stop: async () => ({ confirmationRequired: false }),
+    };
+    registerInteractivePlaytestIpcHandlers({
+      handle(channel, listener) { handlers.set(channel, listener); },
+      removeHandler(channel) { handlers.delete(channel); },
+    }, service, {
+      getLastProject: () => '',
+      resolveProject: (project) => project,
+      resolveSession: () => undefined,
+      revealEvidence: () => undefined,
+    });
+    const animationPreview = {
+      displayType: 0,
+      effectName: 'fx/Spark',
+      scale: 100,
+      speed: 100,
+      offsetX: 0,
+      offsetY: 0,
+      rotation: { x: 0, y: 0, z: 0 },
+      alignBottom: false,
+      flashTimings: [],
+      soundTimings: [],
+    };
+
+    await handlers.get('playtest:start')?.(null, {
+      project: 'projects/sample',
+      mode: 'particle_preview',
+      animationPreview,
+    });
+    assert.deepEqual(calls, [[
+      'projects/sample',
+      { mode: 'particle_preview', animationPreview },
+    ]]);
+    await assert.rejects(
+      () => handlers.get('playtest:start')?.(null, {
+        project: 'projects/sample',
+        mode: 'project',
+        animationPreview,
+      }) as Promise<unknown>,
+      /project does not accept animationPreview/i,
+    );
+    await assert.rejects(
+      () => handlers.get('playtest:start')?.(null, {
+        project: 'projects/sample',
+        mode: 'particle_preview',
+        animationPreview,
+        troopId: 1,
+      }) as Promise<unknown>,
+      /does not accept Battle Test field/i,
+    );
+  });
 });

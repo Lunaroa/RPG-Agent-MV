@@ -49,7 +49,7 @@ import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import type { EditorProjectCatalog, ProjectAssetEntry } from '../../api/client';
-import { MV_FACE_COLUMNS, MV_FACE_HEIGHT, MV_FACE_ROWS, MV_FACE_WIDTH, mvFaceIndexFromCanvasPoint, normalizeMvFaceIndex } from '../../utils/rmmvFace';
+import { MV_FACE_COLUMNS, MV_FACE_ROWS, mvFaceIndexFromCanvasPoint, normalizeFaceSize, normalizeMvFaceIndex } from '../../utils/rmmvFace';
 import { isBigCharacterName } from '../../composables/useMapRenderer';
 
 type ImageAssetKind = keyof EditorProjectCatalog['assets'];
@@ -87,20 +87,17 @@ let bitmap: HTMLImageElement | null = null;
 const imageCache = new Map<string, HTMLImageElement | null>();
 
 function iconGridLayout(): { cols: number; rows: number; nativeCellW: number; nativeCellH: number } {
-  const w = bitmap?.naturalWidth || 512;
-  const h = bitmap?.naturalHeight || 512;
-  let cols: number;
-  if (w === h || Math.abs(w - 512) < 16) {
-    cols = 16;
-  } else {
-    const aspect = w / h;
-    cols = Math.max(2, Math.min(32, Math.round(16 * Math.sqrt(aspect))));
-  }
-  const nativeCellW = w / cols;
-  const nativeCellH = Math.round(nativeCellW);
-  const rows = Math.max(1, Math.ceil(h / nativeCellH));
+  const iconSize = Math.max(1, Number(props.catalog?.iconSize) || 32);
+  const w = bitmap?.naturalWidth || iconSize * 16;
+  const h = bitmap?.naturalHeight || iconSize * 16;
+  const cols = Math.max(1, Math.floor(w / iconSize));
+  const rows = Math.max(1, Math.floor(h / iconSize));
+  const nativeCellW = iconSize;
+  const nativeCellH = iconSize;
   return { cols, rows, nativeCellW, nativeCellH };
 }
+
+const faceSize = computed(() => normalizeFaceSize(props.catalog?.faceSize));
 
 const assets = computed<ProjectAssetEntry[]>(() => props.catalog?.assets[assetKind.value] || []);
 const selectedAsset = computed(() => assets.value.find((asset) => asset.name === name.value) || null);
@@ -181,20 +178,20 @@ function fillCanvas(width: number, height: number): CanvasRenderingContext2D | n
 }
 
 function paintFaceSheet() {
-  const width = bitmap?.naturalWidth || MV_FACE_WIDTH * MV_FACE_COLUMNS;
-  const height = bitmap?.naturalHeight || MV_FACE_HEIGHT * MV_FACE_ROWS;
+  const width = bitmap?.naturalWidth || faceSize.value * MV_FACE_COLUMNS;
+  const height = bitmap?.naturalHeight || faceSize.value * MV_FACE_ROWS;
   const context = fillCanvas(width, height);
   if (!context) return;
   if (!bitmap) return;
   context.drawImage(bitmap, 0, 0);
   context.strokeStyle = 'rgba(255,255,255,.55)';
   context.lineWidth = 1;
-  for (let x = 0; x <= MV_FACE_COLUMNS; x += 1) drawLine(context, x * MV_FACE_WIDTH + 0.5, 0, x * MV_FACE_WIDTH + 0.5, height);
-  for (let y = 0; y <= MV_FACE_ROWS; y += 1) drawLine(context, 0, y * MV_FACE_HEIGHT + 0.5, width, y * MV_FACE_HEIGHT + 0.5);
+  for (let x = 0; x <= MV_FACE_COLUMNS; x += 1) drawLine(context, x * faceSize.value + 0.5, 0, x * faceSize.value + 0.5, height);
+  for (let y = 0; y <= MV_FACE_ROWS; y += 1) drawLine(context, 0, y * faceSize.value + 0.5, width, y * faceSize.value + 0.5);
   const faceIndex = normalizeMvFaceIndex(index.value);
   context.strokeStyle = '#fff';
   context.lineWidth = 3;
-  context.strokeRect(faceIndex % MV_FACE_COLUMNS * MV_FACE_WIDTH + 1.5, Math.floor(faceIndex / MV_FACE_COLUMNS) * MV_FACE_HEIGHT + 1.5, MV_FACE_WIDTH - 3, MV_FACE_HEIGHT - 3);
+  context.strokeRect(faceIndex % MV_FACE_COLUMNS * faceSize.value + 1.5, Math.floor(faceIndex / MV_FACE_COLUMNS) * faceSize.value + 1.5, faceSize.value - 3, faceSize.value - 3);
 }
 
 function paintCharacterSheet() {
@@ -271,7 +268,7 @@ function pickCell(event: MouseEvent) {
   const x = (event.clientX - rect.left) * canvas.value.width / rect.width;
   const y = (event.clientY - rect.top) * canvas.value.height / rect.height;
   if (mode.value === 'face') {
-    index.value = mvFaceIndexFromCanvasPoint(x, y);
+    index.value = mvFaceIndexFromCanvasPoint(x, y, faceSize.value);
     paintFaceSheet();
     return;
   }

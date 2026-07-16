@@ -38,4 +38,9 @@ describe('rmmvFace helpers', () => {
     assert.equal(mvFaceIndexFromCanvasPoint(0, 144), 4);
     assert.equal(mvFaceIndexFromCanvasPoint(999, 999), 7);
   });
+
+  test('uses the project face size for MZ face sheets', () => {
+    assert.deepEqual(mvFaceSourceRect(5, 192), { sx: 192, sy: 192, sw: 192, sh: 192 });
+    assert.equal(mvFaceIndexFromCanvasPoint(390, 210, 192), 6);
+  });
 });

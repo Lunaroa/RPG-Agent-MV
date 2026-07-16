@@ -1,7 +1,11 @@
 import type { EditorProjectCatalog } from '../api/client';
 import type { MvCommand } from '../composables/useEventEditor';
+import type { RpgMakerEngine } from '@contract/types';
 
-export type CommandCatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'assets' | 'maps'> | 'maps' | 'tilesets';
+export type CommandCatalogKey = Exclude<
+  keyof EditorProjectCatalog,
+  'project' | 'engine' | 'tileSize' | 'screenWidth' | 'screenHeight' | 'assets' | 'battle'
+>;
 export type CommandAssetKey = keyof EditorProjectCatalog['assets'];
 export type CommandFieldPath = (number | string)[];
 
@@ -378,20 +382,44 @@ export const STANDARD_COMMAND_CODES = COMMAND_DEFINITIONS.map((item) => item.cod
 const definitionByCode = new Map(COMMAND_DEFINITIONS.map((definition) => [definition.code, definition]));
 const definitionByKind = new Map(COMMAND_DEFINITIONS.map((definition) => [definition.kind, definition]));
 
-export function commandDefinition(code: number): CommandDefinition | undefined {
-  return definitionByCode.get(code);
+const MZ_COMMAND_PAGES = COMMAND_PAGES.map((groups) => groups.map((group) => ({
+  ...group,
+  items: group.items.flatMap((item) => {
+    const mapped = toMZCommandDefinition(item);
+    if (item.code !== 108) return [mapped];
+    return [mapped, {
+      code: 109,
+      kind: 'skip',
+      label: '跳过',
+      page: item.page,
+      group: item.group,
+      fields: [],
+    } satisfies CommandDefinition];
+  }),
+})));
+const MZ_COMMAND_DEFINITIONS = MZ_COMMAND_PAGES.flatMap((groups) => groups.flatMap((group) => group.items));
+const mzDefinitionByCode = new Map(MZ_COMMAND_DEFINITIONS.map((definition) => [definition.code, definition]));
+const mzDefinitionByKind = new Map(MZ_COMMAND_DEFINITIONS.map((definition) => [definition.kind, definition]));
+
+export function commandPages(engine: RpgMakerEngine = 'rpg-maker-mv') {
+  return engine === 'rpg-maker-mz' ? MZ_COMMAND_PAGES : COMMAND_PAGES;
 }
-export function commandLabel(code: number): string {
-  return commandDefinition(code)?.label || `Raw command ${code}`;
+
+export function commandDefinition(code: number, engine: RpgMakerEngine = 'rpg-maker-mv'): CommandDefinition | undefined {
+  return (engine === 'rpg-maker-mz' ? mzDefinitionByCode : definitionByCode).get(code);
 }
-export function commandTemplate(kind: string, mapId = 1): MvCommand[] {
-  const code = definitionByKind.get(kind)?.code ?? 0;
+export function commandLabel(code: number, engine: RpgMakerEngine = 'rpg-maker-mv'): string {
+  return commandDefinition(code, engine)?.label || `Raw command ${code}`;
+}
+export function commandTemplate(kind: string, mapId = 1, engine: RpgMakerEngine = 'rpg-maker-mv'): MvCommand[] {
+  const code = (engine === 'rpg-maker-mz' ? mzDefinitionByKind : definitionByKind).get(kind)?.code ?? 0;
   const p = (...parameters: unknown[]): MvCommand => ({ code, indent: 0, parameters });
   const templates: Record<number, MvCommand[]> = {
-    101: [p('', 0, 0, 2), { code: 401, indent: 0, parameters: [''] }],
+    101: [p('', 0, 0, 2, ...(engine === 'rpg-maker-mz' ? [''] : [])), { code: 401, indent: 0, parameters: [''] }],
     102: [p(['Yes', 'No'], 0, 1, 2, 0), { code: 402, indent: 0, parameters: [0, 'Yes'] }, { code: 402, indent: 0, parameters: [1, 'No'] }, { code: 404, indent: 0, parameters: [] }],
     105: [p(2, false), { code: 405, indent: 0, parameters: [''] }],
     108: [p('')],
+    109: [p(), { code: 0, indent: 0, parameters: [] }],
     111: [p(0, 1, 0), { code: 412, indent: 0, parameters: [] }],
     112: [p(), { code: 413, indent: 0, parameters: [] }],
     205: [p(0, defaultMoveRoute())],
@@ -406,7 +434,7 @@ export function commandTemplate(kind: string, mapId = 1): MvCommand[] {
     319: [1, 0, 0], 320: [1, ''], 321: [1, 1, false], 324: [1, ''], 325: [1, ''],
     201: [0, mapId, 0, 0, 2, 0], 202: [0, 0, mapId, 0, 0], 203: [0, 0, 0, 0, 0], 204: [2, 1, 4, false], 206: [],
     211: [0], 216: [0], 217: [], 212: [0, 1, true], 213: [0, 1, true], 214: [],
-    230: [60], 231: [1, '', 0, 0, 0, 0, 100, 100, 255, 0], 232: [1, 0, 0, 0, 0, 0, 100, 100, 255, 0, 60, true],
+    230: [60], 231: [1, '', 0, 0, 0, 0, 100, 100, 255, 0], 232: [1, 0, 0, 0, 0, 0, 100, 100, 255, 0, 60, true, ...(engine === 'rpg-maker-mz' ? [0] : [])],
     233: [1, 0], 234: [1, [0, 0, 0, 0], 60, true], 235: [1], 221: [], 222: [], 223: [[0, 0, 0, 0], 60, true],
     224: [[255, 255, 255, 170], 30, true], 225: [5, 5, 30, true], 236: ['none', 5, 60, true],
     241: [defaultAudio()], 242: [10], 243: [], 244: [], 245: [defaultAudio()], 246: [10], 249: [defaultAudio()], 250: [defaultAudio()], 251: [], 261: [''],
@@ -414,15 +442,23 @@ export function commandTemplate(kind: string, mapId = 1): MvCommand[] {
     132: [defaultAudio()], 133: [defaultAudio()], 139: [defaultAudio()], 140: [0, defaultAudio()], 134: [0], 135: [0], 136: [0], 137: [0],
     138: [[0, 0, 0, 0]], 322: [1, '', 0, '', 0, ''], 323: [0, '', 0], 281: [0], 282: [1], 283: ['', ''], 284: ['', false, false, 0, 0], 285: [1, 0, 0, 0, 0],
     331: [-1, 0, 0, 0, false], 332: [-1, 0, 0, 0], 342: [-1, 0, 0, 0], 333: [-1, 0, 1], 334: [-1], 335: [0],
-    336: [0, 1], 337: [-1, 1, false], 339: [0, 0, 1, -1], 340: [], 356: [''],
+    336: [0, 1], 337: engine === 'rpg-maker-mz' ? [-1, 1] : [-1, 1, false], 339: [0, 0, 1, -1], 340: [], 356: [''],
+    357: ['', '', '', {}],
   };
   return cloneCommands(templates[code] || [{ code, indent: 0, parameters: defaults[code] || [] }]);
 }
-export function defaultCommandParams(code: number): unknown[] {
-  return cloneCommands(commandTemplate(commandDefinition(code)?.kind || 'raw'))[0]?.parameters || [];
+export function defaultCommandParams(code: number, engine: RpgMakerEngine = 'rpg-maker-mv'): unknown[] {
+  return cloneCommands(commandTemplate(commandDefinition(code, engine)?.kind || 'raw', 1, engine))[0]?.parameters || [];
 }
-export function normalizeEventCommandParameters(command: MvCommand): MvCommand {
+export function normalizeEventCommandParameters(command: MvCommand, engine: RpgMakerEngine = 'rpg-maker-mv'): MvCommand {
   const p = command.parameters;
+  if (command.code === 101 && engine === 'rpg-maker-mz') ensureStringAt(p, 4, '');
+  if (command.code === 357 && engine === 'rpg-maker-mz') {
+    ensureStringAt(p, 0, '');
+    ensureStringAt(p, 1, '');
+    ensureStringAt(p, 2, String(p[1] || ''));
+    if (!p[3] || Array.isArray(p[3]) || typeof p[3] !== 'object') p[3] = {};
+  }
   if (command.code === 111) {
     normalizeConditionalBranchParameters(p);
   } else if (command.code === 122) {
@@ -435,6 +471,48 @@ export function normalizeEventCommandParameters(command: MvCommand): MvCommand {
     ensureNumberAt(p, 1, 0);
   }
   return command;
+}
+
+function toMZCommandDefinition(definition: CommandDefinition): CommandDefinition {
+  if (definition.code === 104) {
+    return withFields(definition, [
+      { label: '变量', path: [0], kind: 'database', catalog: 'variables' },
+      { label: '物品类型', path: [1], kind: 'select', options: [[1, '普通物品'], [2, '关键物品'], [3, '隐藏物品 A'], [4, '隐藏物品 B']] },
+    ]);
+  }
+  if (definition.code === 232) {
+    return withFields(definition, [
+      ...pictureFields(false),
+      { label: '持续帧数', path: [10], kind: 'number', min: 0 },
+      { label: '等待结束', path: [11], kind: 'boolean' },
+      { label: '缓动', path: [12], kind: 'select', options: [[0, '匀速'], [1, '慢速开始'], [2, '慢速结束'], [3, '慢速开始和结束']] },
+    ]);
+  }
+  if (definition.code === 285) {
+    return withFields(definition, locationInfoFields().map((field) => field.path[0] === 1 ? {
+      ...field,
+      options: [[0, '地形标记'], [1, '事件编号'], [2, '图块编号（层 1）'], [3, '图块编号（层 2）'], [4, '图块编号（层 3）'], [5, '图块编号（层 4）'], [6, '区域编号']],
+    } : field));
+  }
+  if (definition.code === 322) {
+    return withFields(definition, [
+      { label: '角色', path: [0], kind: 'database', catalog: 'actors' },
+      { label: '脸图', path: [1], kind: 'asset', asset: 'faces' },
+      { label: '脸图索引', path: [2], kind: 'number', min: 0, max: 7 },
+      { label: '角色图', path: [3], kind: 'asset', asset: 'characters' },
+      { label: '角色图索引', path: [4], kind: 'number', min: 0, max: 7 },
+      { label: '战斗图', path: [5], kind: 'asset', asset: 'svActors' },
+    ]);
+  }
+  if (definition.code === 337) return withFields(definition, definition.fields.slice(0, 2));
+  if (definition.code === 356) {
+    return { ...definition, code: 357, fields: [] };
+  }
+  return { ...definition, fields: definition.fields.map((field) => ({ ...field })) };
+}
+
+function withFields(definition: CommandDefinition, fields: CommandField[]): CommandDefinition {
+  return { ...definition, fields };
 }
 export function applyCommandIndent(commands: MvCommand[], indent: number): MvCommand[] {
   const min = commands.reduce((value, command) => Math.min(value, command.indent), Number.POSITIVE_INFINITY);

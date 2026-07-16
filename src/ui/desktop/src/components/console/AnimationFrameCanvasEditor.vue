@@ -16,8 +16,6 @@ import {
 import { localizeDatabaseLabel, localizeDatabaseOptions } from '../../utils/rmmvDatabaseLocalization';
 import { rotateHuePixelsLikeMv } from '../../utils/rmmvHue';
 
-const WIDTH = 816;
-const HEIGHT = 624;
 const CELL_SIZE = 192;
 const PALETTE_CELL = 44;
 const PALETTE_COLUMNS = 5;
@@ -38,6 +36,8 @@ const emit = defineEmits<{
 }>();
 
 const { language, t } = useI18n();
+const width = computed(() => Math.max(1, Number(props.catalog?.screenWidth) || 816));
+const height = computed(() => Math.max(1, Number(props.catalog?.screenHeight) || 624));
 const canvas = ref<HTMLCanvasElement | null>(null);
 const paletteCanvas = ref<HTMLCanvasElement | null>(null);
 const selectedFrameIndex = ref(0);
@@ -67,6 +67,8 @@ watch(
     props.animation1Hue,
     props.animation2Name,
     props.animation2Hue,
+    width.value,
+    height.value,
     selectedFrameIndex.value,
     selectedCellIndex.value,
   ],
@@ -154,7 +156,7 @@ async function renderCanvas(previewFrame?: number[][]): Promise<void> {
   const target = canvas.value;
   const context = target?.getContext('2d', { willReadFrequently: true });
   if (!target || !context) return;
-  context.clearRect(0, 0, WIDTH, HEIGHT);
+  context.clearRect(0, 0, width.value, height.value);
   drawCanvasBackground(context);
   const nextErrors: string[] = [];
   const sheets = await Promise.all([
@@ -171,28 +173,28 @@ async function renderCanvas(previewFrame?: number[][]): Promise<void> {
 
 function drawCanvasBackground(context: CanvasRenderingContext2D): void {
   context.fillStyle = '#171a1f';
-  context.fillRect(0, 0, WIDTH, HEIGHT);
+  context.fillRect(0, 0, width.value, height.value);
   context.save();
   context.strokeStyle = 'rgba(157, 170, 184, .09)';
   context.lineWidth = 1;
-  for (let x = 24; x < WIDTH; x += 48) {
+  for (let x = 24; x < width.value; x += 48) {
     context.beginPath();
     context.moveTo(x, 0);
-    context.lineTo(x, HEIGHT);
+    context.lineTo(x, height.value);
     context.stroke();
   }
-  for (let y = 24; y < HEIGHT; y += 48) {
+  for (let y = 24; y < height.value; y += 48) {
     context.beginPath();
     context.moveTo(0, y);
-    context.lineTo(WIDTH, y);
+    context.lineTo(width.value, y);
     context.stroke();
   }
   context.strokeStyle = 'rgba(245, 184, 75, .4)';
   context.beginPath();
-  context.moveTo(WIDTH / 2, 0);
-  context.lineTo(WIDTH / 2, HEIGHT);
-  context.moveTo(0, HEIGHT / 2);
-  context.lineTo(WIDTH, HEIGHT / 2);
+  context.moveTo(width.value / 2, 0);
+  context.lineTo(width.value / 2, height.value);
+  context.moveTo(0, height.value / 2);
+  context.lineTo(width.value, height.value / 2);
   context.stroke();
   context.restore();
 }
@@ -212,7 +214,7 @@ function drawCell(
   const sourceX = (localPattern % PALETTE_COLUMNS) * CELL_SIZE;
   const sourceY = Math.floor(localPattern / PALETTE_COLUMNS) * CELL_SIZE;
   context.save();
-  context.translate(WIDTH / 2 + cell[1], HEIGHT / 2 + cell[2]);
+  context.translate(width.value / 2 + cell[1], height.value / 2 + cell[2]);
   context.rotate(cell[4] * Math.PI / 180);
   context.scale(cell[5] ? -scale : scale, scale);
   context.globalAlpha = cell[6] / 255;
@@ -284,8 +286,8 @@ function load(url: string): Promise<HTMLImageElement | null> {
 function pointerPosition(event: PointerEvent): { x: number; y: number } {
   const bounds = canvas.value!.getBoundingClientRect();
   return {
-    x: (event.clientX - bounds.left) * WIDTH / bounds.width,
-    y: (event.clientY - bounds.top) * HEIGHT / bounds.height,
+    x: (event.clientX - bounds.left) * width.value / bounds.width,
+    y: (event.clientY - bounds.top) * height.value / bounds.height,
   };
 }
 
@@ -294,8 +296,8 @@ function hitTest(x: number, y: number): number {
     const cell = selectedFrame.value[index];
     if (cell[0] < 0 || cell[0] > 199) continue;
     const scale = Math.max(.01, cell[3] / 100);
-    const dx = x - (WIDTH / 2 + cell[1]);
-    const dy = y - (HEIGHT / 2 + cell[2]);
+    const dx = x - (width.value / 2 + cell[1]);
+    const dy = y - (height.value / 2 + cell[2]);
     const angle = -cell[4] * Math.PI / 180;
     const localX = (Math.cos(angle) * dx - Math.sin(angle) * dy) / scale;
     const localY = (Math.sin(angle) * dx + Math.cos(angle) * dy) / scale;
@@ -446,8 +448,9 @@ function clamp(value: number, minimum: number, maximum: number): number {
         <div class="canvas-column">
           <canvas
             ref="canvas"
-            :width="WIDTH"
-            :height="HEIGHT"
+            :width="width"
+            :height="height"
+            :style="{ aspectRatio: `${width} / ${height}` }"
             :aria-label="t('db.animationCanvas')"
             @pointerdown="startDrag"
             @pointermove="previewDrag"
@@ -509,7 +512,7 @@ function clamp(value: number, minimum: number, maximum: number): number {
 .frame-strip button.active, .cell-strip button.active { color: var(--el-color-primary); border-color: var(--el-color-primary); background: color-mix(in srgb, var(--el-color-primary) 12%, transparent); }
 .canvas-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; align-items: start; }
 .canvas-column { min-width: 0; }
-.canvas-column > canvas { display: block; width: 100%; aspect-ratio: 816 / 624; border: 1px solid var(--console-border, #3c424a); border-radius: 5px; cursor: move; image-rendering: auto; }
+.canvas-column > canvas { display: block; width: 100%; border: 1px solid var(--console-border, #3c424a); border-radius: 5px; cursor: move; image-rendering: auto; }
 .cell-controls { display: grid; gap: 7px; }
 .cell-controls label { display: grid; gap: 3px; }
 .cell-controls label > span { color: var(--el-text-color-secondary); font-size: 10px; }

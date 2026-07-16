@@ -162,6 +162,7 @@ function clamp(value: unknown, minimum: number, maximum: number): number {
 <template>
   <el-dialog
     class="battle-test-dialog"
+    data-ui-id="battle-test-dialog"
     :model-value="visible"
     :title="t('battleTest.title', { troop: troopName })"
     width="min(680px, 92vw)"
@@ -223,7 +224,7 @@ function clamp(value: unknown, minimum: number, maximum: number): number {
     </div>
     <template #footer>
       <button type="button" :disabled="busy" @click="emit('close')">{{ t('editor.mapProperties.cancel') }}</button>
-      <button type="button" class="primary" :disabled="busy || !battlers.length" @click="start">
+      <button type="button" class="primary" data-ui-id="battle-test-start" :disabled="busy || !battlers.length" @click="start">
         {{ busy ? t('battleTest.starting') : t('battleTest.start') }}
       </button>
     </template>

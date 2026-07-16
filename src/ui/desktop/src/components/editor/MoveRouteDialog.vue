@@ -91,6 +91,31 @@
               <label><input v-model="draft.skippable" type="checkbox" /> {{ t('moveRoute.skipIfCannot') }}</label>
               <label><input v-model="draft.wait" type="checkbox" /> {{ t('moveRoute.waitForCompletion') }}</label>
             </div>
+            <section class="route-preview" :class="{ stopped: preview.stop }">
+              <div class="route-preview-heading">
+                <strong>{{ t('moveRoute.preview') }}</strong>
+                <span>{{ previewStatus }}</span>
+              </div>
+              <svg viewBox="0 0 240 120" role="img" :aria-label="t('moveRoute.preview')">
+                <defs>
+                  <pattern id="route-preview-grid" width="12" height="12" patternUnits="userSpaceOnUse">
+                    <path d="M 12 0 L 0 0 0 12" class="preview-grid-line" />
+                  </pattern>
+                </defs>
+                <rect width="240" height="120" class="preview-grid" />
+                <polyline v-if="previewGeometry.points.length > 1" :points="previewGeometry.polyline" class="preview-path" />
+                <circle
+                  v-for="(point, index) in previewGeometry.points"
+                  :key="`${point.x}:${point.y}:${index}`"
+                  :cx="point.x"
+                  :cy="point.y"
+                  :r="index === 0 || index === previewGeometry.points.length - 1 ? 4 : 2"
+                  :class="index === 0 ? 'preview-start' : index === previewGeometry.points.length - 1 ? 'preview-end' : 'preview-point'"
+                />
+                <text :x="previewGeometry.end.x + 7" :y="previewGeometry.end.y + 4" class="preview-direction">{{ previewDirection }}</text>
+              </svg>
+              <p>{{ t('moveRoute.previewNote') }}</p>
+            </section>
           </main>
         </div>
         <footer class="editor-modal-footer"><button type="button" class="editor-btn" @click="close">{{ t('eventcmd.cancel') }}</button><button type="button" class="editor-btn primary" @click="commit">{{ t('eventcmd.ok') }}</button></footer>
@@ -106,6 +131,8 @@ import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import { clone, defaultMoveRoute, moveRouteCommandLabel, type MvMoveRoute } from '../../composables/useEventEditor';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
+import { simulateMoveRoute } from '../../utils/moveRoutePreview';
+const props = withDefaults(defineProps<{ previewX?: number; previewY?: number }>(), { previewX: 0, previewY: 0 });
 const emit = defineEmits<{ commit: [route: MvMoveRoute] }>();
 const { language, t } = useI18n();
 const subDialogZ = String(LAYER_Z.subDialog);
@@ -119,6 +146,18 @@ const BLEND_OPTIONS = computed(() => eventEditorText(language.value).blendModes)
 const localizedMoveSpeeds = computed(() => eventEditorText(language.value).moveSpeeds);
 const localizedMoveFreqs = computed(() => eventEditorText(language.value).moveFrequencies);
 const localizedMoveRouteOperations = computed(() => eventEditorText(language.value).moveRouteOperations);
+const preview = computed(() => simulateMoveRoute(draft.value.list, { x: props.previewX, y: props.previewY }));
+const previewGeometry = computed(() => buildPreviewGeometry(preview.value.points));
+const previewDirection = computed(() => ({ 2: '↓', 4: '←', 6: '→', 8: '↑' }[preview.value.finalState.direction]));
+const previewStatus = computed(() => {
+  const stop = preview.value.stop;
+  if (!stop) return t('moveRoute.previewComplete', {
+    x: preview.value.finalState.x,
+    y: preview.value.finalState.y,
+    frames: preview.value.finalState.elapsedFrames,
+  });
+  return t(`moveRoute.previewStop.${stop.kind}`, { step: stop.stepIndex + 1, code: stop.code });
+});
 
 function onKeyDown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
@@ -136,7 +175,7 @@ function open(route: MvMoveRoute) {
 }
 function close() { visible.value = false; }
 function addStep() {
-  const parameters = newCode.value === 14 ? [0, 0] : [15, 27, 28, 29, 30, 42, 43].includes(newCode.value) ? [1] : newCode.value === 41 ? ['', 0] : newCode.value === 44 ? [{ name: '', volume: 90, pitch: 100, pan: 0 }] : newCode.value === 45 ? [''] : [];
+  const parameters = defaultStepParameters(newCode.value);
   draft.value.list.push({ code: newCode.value, parameters });
   selected.value = draft.value.list.length - 1;
 }
@@ -183,13 +222,41 @@ function commit() {
 function localizedMoveRouteCommandLabel(step: MvMoveRoute['list'][number]): string {
   return moveRouteCommandLabel(step, language.value);
 }
+function defaultStepParameters(code: number): unknown[] {
+  if (code === 14) return [0, 0];
+  if (code === 15) return [60];
+  if (code === 27 || code === 28) return [1];
+  if (code === 29) return [4];
+  if (code === 30) return [3];
+  if (code === 41) return ['', 0];
+  if (code === 42) return [255];
+  if (code === 43) return [0];
+  if (code === 44) return [{ name: '', volume: 90, pitch: 100, pan: 0 }];
+  if (code === 45) return [''];
+  return [];
+}
+
+function buildPreviewGeometry(points: Array<{ x: number; y: number }>) {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const scale = Math.min(24, 204 / Math.max(1, maxX - minX), 84 / Math.max(1, maxY - minY));
+  const offsetX = 18 + (204 - (maxX - minX) * scale) / 2;
+  const offsetY = 18 + (84 - (maxY - minY) * scale) / 2;
+  const mapped = points.map((point) => ({ x: offsetX + (point.x - minX) * scale, y: offsetY + (point.y - minY) * scale }));
+  const end = mapped[mapped.length - 1] || { x: 120, y: 60 };
+  return { points: mapped, end, polyline: mapped.map((point) => `${point.x},${point.y}`).join(' ') };
+}
 
 defineExpose({ open });
 </script>
 
 <style scoped>
 .sub-overlay { z-index: v-bind(subDialogZ); }
-.sub-dialog { width: min(700px, 86vw); }
+.sub-dialog { width: min(760px, 86vw); }
 .route-body { min-height: 340px; display: grid; grid-template-columns: 180px 1fr; }
 aside { padding: 12px; border-right: 1px solid var(--app-border); color: var(--app-ink-muted); font-size: 12px; }
 aside label { display: grid; gap: 5px; margin-bottom: 8px; }
@@ -205,5 +272,18 @@ main { padding: 12px; }
 .route-params label, .route-params p { min-width: 0; display: grid; gap: 4px; margin: 0; }
 .route-params textarea, .route-params p { grid-column: 1 / -1; }
 .route-options { color: var(--app-ink); font-size: 13px; }
+.route-preview { margin-top: 10px; padding: 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-bg-soft); }
+.route-preview.stopped { border-color: var(--app-warn); }
+.route-preview-heading { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; color: var(--app-ink); font-size: 12px; }
+.route-preview-heading span { color: var(--app-ink-muted); text-align: right; }
+.route-preview svg { width: 100%; height: 120px; display: block; border: 1px solid var(--app-border); background: var(--app-bg); }
+.preview-grid { fill: url(#route-preview-grid); }
+.preview-grid-line { fill: none; stroke: var(--app-border); stroke-width: .5; }
+.preview-path { fill: none; stroke: var(--app-accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.preview-start { fill: var(--app-success); }
+.preview-end { fill: var(--app-accent); }
+.preview-point { fill: var(--app-ink-muted); }
+.preview-direction { fill: var(--app-ink); font-size: 13px; font-weight: 700; }
+.route-preview p { margin: 5px 0 0; color: var(--app-ink-muted); font-size: 11px; }
 @media (max-width: 620px) { .route-body { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--app-border); } }
 </style>

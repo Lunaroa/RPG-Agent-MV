@@ -11,6 +11,7 @@ import {
   projectManagement,
   playtest,
   type InteractiveBattleTestBattler,
+  type InteractiveParticleAnimationPreview,
   type EditorProjectCatalog,
   type ManagedAssetDetail,
   type ProjectManagedEntry,
@@ -275,6 +276,7 @@ const detailBusy = ref(false);
 const detailError = ref('');
 const battleTestDialogVisible = ref(false);
 const battleTestBusy = ref(false);
+const particlePreviewBusy = ref(false);
 const temporaryBattleback1Name = ref('');
 const temporaryBattleback2Name = ref('');
 let battleContextProject = '';
@@ -1384,7 +1386,8 @@ async function openAudioDetail(bucketKey: string, name: string) {
   resetDetailDraft(null);
   try {
     const fileName = resolveAudioFileName(bucketKey, name);
-    if (!fileName) {
+    const bucket = assets.value?.audio?.[bucketKey];
+    if (!fileName || !bucket) {
       pmDetail.value = {
         kind: 'audio',
         category: bucketKey,
@@ -1396,7 +1399,7 @@ async function openAudioDetail(bucketKey: string, name: string) {
       };
       return;
     }
-    const relativePath = `www/audio/${bucketKey}/${fileName}`;
+    const relativePath = projectRelativeAssetPath(bucket.dir, fileName);
     const asset = await projectAssets.detail({ scope: 'project', category: bucketKey, relativePath }, projectStore.currentProject);
     setAssetDetail('audio', bucketKey, asset);
   } catch (loadError) {
@@ -1670,6 +1673,36 @@ async function startBattleTest(configuration: {
   }
 }
 
+async function startParticlePreview(): Promise<void> {
+  const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
+  const project = projectStore.currentProject;
+  if (!entry || entry.kind !== 'database' || entry.group !== 'Animations' || !project || particlePreviewBusy.value) return;
+  if (editorCatalog.value?.engine !== 'rpg-maker-mz') {
+    ElMessage.error(t('db.particlePreviewMZOnly'));
+    return;
+  }
+  if (!detailDraft.value || typeof detailDraft.value !== 'object' || Array.isArray(detailDraft.value)) {
+    ElMessage.error(t('db.particlePreviewInvalid'));
+    return;
+  }
+  particlePreviewBusy.value = true;
+  try {
+    const result = await playtest.start({
+      mode: 'particle_preview',
+      project,
+      animationPreview: cloneDraft(detailDraft.value) as unknown as InteractiveParticleAnimationPreview,
+    });
+    if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
+      throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'));
+    }
+    ElMessage.success(t('db.particlePreviewStarted'));
+  } catch (error) {
+    ElMessage.error(t('db.particlePreviewFailed', { message: (error as Error).message }));
+  } finally {
+    particlePreviewBusy.value = false;
+  }
+}
+
 function openMapInEditor(mapId: number, eventId?: number) {
   const query: Record<string, string> = { mapId: String(mapId) };
   if (eventId) query.eventId = String(eventId);
@@ -1704,6 +1737,7 @@ function detailTitle(): string {
             v-for="cat in categories"
             :key="cat.id"
             type="button"
+            :data-ui-id="`story-category-${cat.id}`"
             class="folder"
             :class="{ active: selected === cat.id }"
             @click="selectCategory(cat.id)"
@@ -1739,6 +1773,7 @@ function detailTitle(): string {
               v-for="opt in dbGroupOptions"
               :key="opt.key"
               type="button"
+              :data-ui-id="`story-database-group-${opt.key}`"
               class="sub-category-button"
               :class="{ active: opt.key === selectedDbGroup }"
               @click="selectDbGroup(opt.key)"
@@ -2082,6 +2117,7 @@ function detailTitle(): string {
                 v-for="entry in visibleDbGridItems"
                 :key="entry.id"
                 type="button"
+                :data-ui-id="`story-database-entry-${selectedDbGroup}-${entry.id}`"
                 class="image-grid-card database-grid-card"
                 :class="{ active: activeDbKey === `${selectedDbGroup}:${entry.id}`, missing: entry.missing || !entry.preview }"
                 @click="openManaged('database', entry.id, selectedDbGroup)"
@@ -2119,6 +2155,7 @@ function detailTitle(): string {
                 v-for="entry in visibleDbEntries"
                 :key="entry.id"
                 type="button"
+                :data-ui-id="`story-database-entry-${selectedDbGroup}-${entry.id}`"
                 class="id-row"
                 @click="openManaged('database', entry.id, selectedDbGroup)"
                 @contextmenu.prevent="openDbContextMenu($event, entry.id)"
@@ -2221,6 +2258,7 @@ function detailTitle(): string {
               @update:battleback1-name="temporaryBattleback1Name = $event"
               @update:battleback2-name="temporaryBattleback2Name = $event"
               @request-battle-test="openBattleTestSetup"
+              @request-particle-preview="startParticlePreview"
             />
           </div>
           <div v-else-if="pmDetail && detailEditable" class="pm-detail-body">

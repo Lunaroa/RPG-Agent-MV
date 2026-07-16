@@ -1,4 +1,4 @@
-// RPG Maker MV 地图渲染。忠实移植自 RPG-Agent-MV/frontend/src/app/map-renderer.js：
+// RPG Maker MV/MZ 地图渲染。忠实移植自 RPG-Agent-MV/frontend/src/app/map-renderer.js：
 // 真实 tileset 绘制 + autotile 拼接 + 阴影层 + 事件框。
 //
 // 红线（重构设计文档）：这里全部是纯函数，渲染对象（Canvas context、map.data、
@@ -47,14 +47,21 @@ export interface MvMap {
   tilesetId?: number;
   data: number[];
   events?: (MvEvent | null)[];
+  parallaxName?: string;
+  parallaxLoopX?: boolean;
+  parallaxLoopY?: boolean;
+  parallaxShow?: boolean;
 }
 
 export interface DrawOptions {
   tilesetImages: (HTMLImageElement | null)[];
+  parallaxImage?: HTMLImageElement | null;
+  tileSize?: number;
   tilesetFlags?: number[];
   showGrid?: boolean;
   showRegions?: boolean;
   showTileFlags?: boolean;
+  activeLayer?: number | null;
   selectedEventId?: number | null;
   activePageIndex?: (event: MvEvent) => number;
   defaultPage?: () => MvEventPage;
@@ -92,22 +99,48 @@ export const AUTOTILE_KINDS: number[] = (() => {
 })();
 
 export function drawMapContent(context: CanvasRenderingContext2D, map: MvMap, options: DrawOptions): void {
-  context.clearRect(0, 0, map.width * TILE_SIZE, map.height * TILE_SIZE);
+  const tileSize = normalizedTileSize(options.tileSize);
+  context.clearRect(0, 0, map.width * tileSize, map.height * tileSize);
   context.fillStyle = '#203b20';
-  context.fillRect(0, 0, map.width * TILE_SIZE, map.height * TILE_SIZE);
+  context.fillRect(0, 0, map.width * tileSize, map.height * tileSize);
+  drawParallax(context, map, options.parallaxImage || null, tileSize);
   for (let z = 0; z < PAINT_LAYERS; z += 1) {
+    context.save();
+    if (Number.isInteger(options.activeLayer) && z !== options.activeLayer) context.globalAlpha = 0.24;
     for (let y = 0; y < map.height; y += 1) {
       for (let x = 0; x < map.width; x += 1) {
         const tileId = map.data[(z * map.height + y) * map.width + x] || 0;
-        drawTile(context, options.tilesetImages, tileId, x * TILE_SIZE, y * TILE_SIZE);
+        drawTile(context, options.tilesetImages, tileId, x * tileSize, y * tileSize, tileSize);
       }
     }
+    context.restore();
   }
-  drawShadowLayer(context, map);
-  if (options.showRegions) drawRegionLayer(context, map);
-  if (options.showTileFlags) drawTileFlagLayer(context, map, options.tilesetFlags || []);
-  if (options.showGrid) drawGrid(context, map.width, map.height);
-  drawEvents(context, map.events || [], options);
+  drawShadowLayer(context, map, tileSize);
+  if (options.showRegions) drawRegionLayer(context, map, tileSize);
+  if (options.showTileFlags) drawTileFlagLayer(context, map, options.tilesetFlags || [], tileSize);
+  if (options.showGrid) drawGrid(context, map.width, map.height, tileSize);
+  drawEvents(context, map.events || [], options, tileSize);
+}
+
+function drawParallax(
+  context: CanvasRenderingContext2D,
+  map: MvMap,
+  image: HTMLImageElement | null,
+  tileSize: number,
+): void {
+  if (!map.parallaxShow || !map.parallaxName || !image) return;
+  const imageWidth = Number(image.naturalWidth);
+  const imageHeight = Number(image.naturalHeight);
+  if (imageWidth <= 0 || imageHeight <= 0) return;
+  const canvasWidth = map.width * tileSize;
+  const canvasHeight = map.height * tileSize;
+  const columns = Math.ceil(canvasWidth / imageWidth);
+  const rows = Math.ceil(canvasHeight / imageHeight);
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      context.drawImage(image, column * imageWidth, row * imageHeight);
+    }
+  }
 }
 
 export function drawTile(
@@ -116,44 +149,45 @@ export function drawTile(
   tileId: number,
   dx: number,
   dy: number,
+  tileSize = TILE_SIZE,
 ): void {
   if (!tileId) return;
   if (tileId >= TILE_ID_A1) {
-    drawAutotileApprox(context, images, tileId, dx, dy);
+    drawAutotileApprox(context, images, tileId, dx, dy, tileSize);
     return;
   }
   if (tileId >= TILE_ID_A5) {
-    if (images[4]) drawSheetTile(context, images[4]!, tileId - TILE_ID_A5, dx, dy);
+    if (images[4]) drawSheetTile(context, images[4]!, tileId - TILE_ID_A5, dx, dy, tileSize);
     return;
   }
   const sheetNumber = Math.floor(tileId / 256);
-  drawNormalTile(context, images[5 + sheetNumber] || null, tileId, dx, dy);
+  drawNormalTile(context, images[5 + sheetNumber] || null, tileId, dx, dy, tileSize);
 }
 
-function drawNormalTile(context: CanvasRenderingContext2D, image: HTMLImageElement | null, tileId: number, dx: number, dy: number): void {
+function drawNormalTile(context: CanvasRenderingContext2D, image: HTMLImageElement | null, tileId: number, dx: number, dy: number, tileSize: number): void {
   if (!image) {
-    drawFallback(context, tileId, dx, dy);
+    drawFallback(context, tileId, dx, dy, tileSize);
     return;
   }
-  const sx = ((Math.floor(tileId / 128) % 2) * 8 + (tileId % 8)) * TILE_SIZE;
-  const sy = (Math.floor((tileId % 256) / 8) % 16) * TILE_SIZE;
-  if (sx + TILE_SIZE > image.naturalWidth || sy + TILE_SIZE > image.naturalHeight) drawFallback(context, tileId, dx, dy);
-  else context.drawImage(image, sx, sy, TILE_SIZE, TILE_SIZE, dx, dy, TILE_SIZE, TILE_SIZE);
+  const sx = ((Math.floor(tileId / 128) % 2) * 8 + (tileId % 8)) * tileSize;
+  const sy = (Math.floor((tileId % 256) / 8) % 16) * tileSize;
+  if (sx + tileSize > image.naturalWidth || sy + tileSize > image.naturalHeight) drawFallback(context, tileId, dx, dy, tileSize);
+  else context.drawImage(image, sx, sy, tileSize, tileSize, dx, dy, tileSize, tileSize);
 }
 
-function drawSheetTile(context: CanvasRenderingContext2D, image: HTMLImageElement, localId: number, dx: number, dy: number): void {
-  const sx = (localId % 8) * TILE_SIZE;
-  const sy = Math.floor(localId / 8) * TILE_SIZE;
-  if (sx + TILE_SIZE <= image.naturalWidth && sy + TILE_SIZE <= image.naturalHeight) {
-    context.drawImage(image, sx, sy, TILE_SIZE, TILE_SIZE, dx, dy, TILE_SIZE, TILE_SIZE);
+function drawSheetTile(context: CanvasRenderingContext2D, image: HTMLImageElement, localId: number, dx: number, dy: number, tileSize: number): void {
+  const sx = (localId % 8) * tileSize;
+  const sy = Math.floor(localId / 8) * tileSize;
+  if (sx + tileSize <= image.naturalWidth && sy + tileSize <= image.naturalHeight) {
+    context.drawImage(image, sx, sy, tileSize, tileSize, dx, dy, tileSize, tileSize);
   }
 }
 
-function drawAutotileApprox(context: CanvasRenderingContext2D, images: (HTMLImageElement | null)[], tileId: number, dx: number, dy: number): void {
+function drawAutotileApprox(context: CanvasRenderingContext2D, images: (HTMLImageElement | null)[], tileId: number, dx: number, dy: number, tileSize: number): void {
   const sheetInfo = autotileSheet(tileId);
   const image = images[sheetInfo.index];
   if (!image) {
-    drawFallback(context, tileId, dx, dy);
+    drawFallback(context, tileId, dx, dy, tileSize);
     return;
   }
   const kind = Math.floor((tileId - TILE_ID_A1) / 48);
@@ -162,7 +196,7 @@ function drawAutotileApprox(context: CanvasRenderingContext2D, images: (HTMLImag
   const ty = Math.floor(kind / 8);
   const placement = autotilePlacement(sheetInfo.index, kind, tx, ty);
   const table = placement.table[shape % placement.table.length];
-  const half = TILE_SIZE / 2;
+  const half = tileSize / 2;
   for (let index = 0; index < 4; index += 1) {
     const [qsx, qsy] = table[index];
     const sx = (placement.bx * 2 + qsx) * half;
@@ -192,46 +226,46 @@ function autotilePlacement(sheetIndex: number, kind: number, tx: number, ty: num
   return { bx: tx * 2, by: Math.floor((ty - 10) * 2.5 + (ty % 2 === 1 ? 0.5 : 0)), table: ty % 2 === 1 ? WALL_AUTOTILE_TABLE : FLOOR_AUTOTILE_TABLE };
 }
 
-function drawFallback(context: CanvasRenderingContext2D, seed: number, dx: number, dy: number): void {
+function drawFallback(context: CanvasRenderingContext2D, seed: number, dx: number, dy: number, tileSize: number): void {
   context.fillStyle = `hsl(${(Number(seed) * 37) % 360}, 38%, 42%)`;
-  context.fillRect(dx, dy, TILE_SIZE, TILE_SIZE);
+  context.fillRect(dx, dy, tileSize, tileSize);
 }
 
-export function drawGrid(context: CanvasRenderingContext2D, width: number, height: number): void {
+export function drawGrid(context: CanvasRenderingContext2D, width: number, height: number, tileSize = TILE_SIZE): void {
   context.strokeStyle = 'rgba(0,0,0,.22)';
   context.lineWidth = 1;
   context.beginPath();
   for (let x = 0; x <= width; x += 1) {
-    context.moveTo(x * TILE_SIZE + 0.5, 0);
-    context.lineTo(x * TILE_SIZE + 0.5, height * TILE_SIZE);
+    context.moveTo(x * tileSize + 0.5, 0);
+    context.lineTo(x * tileSize + 0.5, height * tileSize);
   }
   for (let y = 0; y <= height; y += 1) {
-    context.moveTo(0, y * TILE_SIZE + 0.5);
-    context.lineTo(width * TILE_SIZE, y * TILE_SIZE + 0.5);
+    context.moveTo(0, y * tileSize + 0.5);
+    context.lineTo(width * tileSize, y * tileSize + 0.5);
   }
   context.stroke();
 }
 
-function drawShadowLayer(context: CanvasRenderingContext2D, map: MvMap): void {
+function drawShadowLayer(context: CanvasRenderingContext2D, map: MvMap, tileSize: number): void {
   const base = SHADOW_LAYER * map.width * map.height;
   if (!Array.isArray(map.data) || map.data.length <= base) return;
   context.save();
   context.fillStyle = 'rgba(0, 0, 0, .34)';
-  const half = TILE_SIZE / 2;
+  const half = tileSize / 2;
   for (let y = 0; y < map.height; y += 1) {
     for (let x = 0; x < map.width; x += 1) {
       const bits = map.data[base + y * map.width + x] || 0;
       if (!bits) continue;
-      if (bits & 1) context.fillRect(x * TILE_SIZE, y * TILE_SIZE, half, half);
-      if (bits & 2) context.fillRect(x * TILE_SIZE + half, y * TILE_SIZE, half, half);
-      if (bits & 4) context.fillRect(x * TILE_SIZE, y * TILE_SIZE + half, half, half);
-      if (bits & 8) context.fillRect(x * TILE_SIZE + half, y * TILE_SIZE + half, half, half);
+      if (bits & 1) context.fillRect(x * tileSize, y * tileSize, half, half);
+      if (bits & 2) context.fillRect(x * tileSize + half, y * tileSize, half, half);
+      if (bits & 4) context.fillRect(x * tileSize, y * tileSize + half, half, half);
+      if (bits & 8) context.fillRect(x * tileSize + half, y * tileSize + half, half, half);
     }
   }
   context.restore();
 }
 
-function drawRegionLayer(context: CanvasRenderingContext2D, map: MvMap): void {
+function drawRegionLayer(context: CanvasRenderingContext2D, map: MvMap, tileSize: number): void {
   const base = REGION_LAYER * map.width * map.height;
   if (!Array.isArray(map.data) || map.data.length <= base) return;
   context.save();
@@ -243,20 +277,21 @@ function drawRegionLayer(context: CanvasRenderingContext2D, map: MvMap): void {
       const id = map.data[base + y * map.width + x] || 0;
       if (!id) continue;
       const hue = (id * 47) % 360;
-      const px = x * TILE_SIZE;
-      const py = y * TILE_SIZE;
+      const px = x * tileSize;
+      const py = y * tileSize;
       context.fillStyle = `hsla(${hue}, 82%, 52%, .28)`;
-      context.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+      context.fillRect(px, py, tileSize, tileSize);
       context.fillStyle = 'rgba(0, 0, 0, .58)';
-      context.fillRect(px + 10, py + 14, TILE_SIZE - 20, 20);
+      const labelWidth = Math.max(12, tileSize - 4);
+      context.fillRect(px + (tileSize - labelWidth) / 2, py + Math.max(1, (tileSize - 20) / 2), labelWidth, Math.min(20, tileSize - 2));
       context.fillStyle = '#fff';
-      context.fillText(String(id), px + TILE_SIZE / 2, py + TILE_SIZE / 2 + 1);
+      context.fillText(String(id), px + tileSize / 2, py + tileSize / 2 + 1);
     }
   }
   context.restore();
 }
 
-function drawTileFlagLayer(context: CanvasRenderingContext2D, map: MvMap, flags: number[]): void {
+function drawTileFlagLayer(context: CanvasRenderingContext2D, map: MvMap, flags: number[], tileSize: number): void {
   if (!flags.length) return;
   context.save();
   context.textAlign = 'center';
@@ -272,28 +307,29 @@ function drawTileFlagLayer(context: CanvasRenderingContext2D, map: MvMap, flags:
       }
       const summary = summarizeTileStackFlags(tileIds, flags);
       if (!summary.hasOverlay) continue;
-      drawFlagSummary(context, x, y, summary);
+      drawFlagSummary(context, x, y, summary, tileSize);
     }
   }
   context.restore();
 }
 
-function drawFlagSummary(context: CanvasRenderingContext2D, x: number, y: number, summary: MvTileFlagStackSummary): void {
-  const px = x * TILE_SIZE;
-  const py = y * TILE_SIZE;
+function drawFlagSummary(context: CanvasRenderingContext2D, x: number, y: number, summary: MvTileFlagStackSummary, tileSize: number): void {
+  const px = x * tileSize;
+  const py = y * tileSize;
   const color = flagSummaryColor(summary);
   context.fillStyle = color.fill;
-  context.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+  context.fillRect(px, py, tileSize, tileSize);
   context.strokeStyle = color.stroke;
   context.lineWidth = 1;
-  context.strokeRect(px + 0.5, py + 0.5, TILE_SIZE - 1, TILE_SIZE - 1);
+  context.strokeRect(px + 0.5, py + 0.5, tileSize - 1, tileSize - 1);
 
   const tokens = flagSummaryTokens(summary).slice(0, 4);
   if (!tokens.length) return;
   context.fillStyle = 'rgba(0, 0, 0, .66)';
-  context.fillRect(px + 4, py + TILE_SIZE - 16, TILE_SIZE - 8, 12);
+  const inset = Math.min(4, Math.max(1, tileSize / 8));
+  context.fillRect(px + inset, py + tileSize - Math.min(16, tileSize), tileSize - inset * 2, Math.min(12, tileSize - 2));
   context.fillStyle = '#fff';
-  context.fillText(tokens.join(' '), px + TILE_SIZE / 2, py + TILE_SIZE - 9);
+  context.fillText(tokens.join(' '), px + tileSize / 2, py + tileSize - Math.min(9, tileSize / 2));
 }
 
 function flagSummaryColor(summary: MvTileFlagStackSummary): { fill: string; stroke: string } {
@@ -304,51 +340,53 @@ function flagSummaryColor(summary: MvTileFlagStackSummary): { fill: string; stro
   return { fill: 'rgba(14, 165, 233, .16)', stroke: 'rgba(14, 165, 233, .58)' };
 }
 
-function drawEvents(context: CanvasRenderingContext2D, events: (MvEvent | null)[], options: DrawOptions): void {
+function drawEvents(context: CanvasRenderingContext2D, events: (MvEvent | null)[], options: DrawOptions, tileSize: number): void {
   const activePageIndex = options.activePageIndex || (() => 0);
   const defaultPage = options.defaultPage || (() => ({ image: {} }));
   const getCharacterImage = options.getCharacterImage || (() => null);
   for (const event of events.filter(Boolean) as MvEvent[]) {
-    const x = event.x * TILE_SIZE;
-    const y = event.y * TILE_SIZE;
+    const x = event.x * tileSize;
+    const y = event.y * tileSize;
     const selected = event.id === options.selectedEventId;
     const page = (event.pages && event.pages[activePageIndex(event)]) || defaultPage();
     const image: MvEventImage = page.image || {};
     let drawn = false;
     if (Number(image.tileId) > 0) {
-      drawTile(context, options.tilesetImages, Number(image.tileId), x, y);
+      drawTile(context, options.tilesetImages, Number(image.tileId), x, y, tileSize);
       drawn = true;
     } else if (image.characterName) {
-      drawn = drawEventCharacter(context, image, x, y, getCharacterImage);
+      drawn = drawEventCharacter(context, image, x, y, getCharacterImage, tileSize);
     }
-    drawEventFrame(context, x, y, selected, drawn);
+    drawEventFrame(context, x, y, selected, drawn, tileSize);
   }
 }
 
-function drawEventFrame(context: CanvasRenderingContext2D, x: number, y: number, selected: boolean, hasGraphic: boolean): void {
+function drawEventFrame(context: CanvasRenderingContext2D, x: number, y: number, selected: boolean, hasGraphic: boolean, tileSize: number): void {
   context.save();
   context.lineWidth = selected ? 3 : 2;
   context.strokeStyle = selected ? 'rgba(255, 255, 255, .96)' : 'rgba(0, 0, 0, .72)';
-  context.strokeRect(x + 5.5, y + 5.5, TILE_SIZE - 11, TILE_SIZE - 11);
+  const inset = Math.min(5.5, tileSize / 5);
+  context.strokeRect(x + inset, y + inset, tileSize - inset * 2, tileSize - inset * 2);
   if (selected) {
     context.lineWidth = 1;
     context.strokeStyle = 'rgba(255, 222, 78, .98)';
-    context.strokeRect(x + 2.5, y + 2.5, TILE_SIZE - 5, TILE_SIZE - 5);
+    context.strokeRect(x + 2.5, y + 2.5, tileSize - 5, tileSize - 5);
   } else if (hasGraphic) {
     context.lineWidth = 1;
     context.strokeStyle = 'rgba(255, 255, 255, .48)';
-    context.strokeRect(x + 6.5, y + 6.5, TILE_SIZE - 13, TILE_SIZE - 13);
+    const inner = Math.min(6.5, tileSize / 4);
+    context.strokeRect(x + inner, y + inner, tileSize - inner * 2, tileSize - inner * 2);
   }
   context.restore();
 }
 
-function drawEventCharacter(context: CanvasRenderingContext2D, image: MvEventImage, x: number, y: number, getCharacterImage: (name: string) => HTMLImageElement | null): boolean {
+function drawEventCharacter(context: CanvasRenderingContext2D, image: MvEventImage, x: number, y: number, getCharacterImage: (name: string) => HTMLImageElement | null, tileSize: number): boolean {
   const bitmap = getCharacterImage(image.characterName || '');
   if (!bitmap) return false;
   const frame = eventCharacterFrame(bitmap, image);
   if (!frame) return false;
-  const dx = Math.round(x + TILE_SIZE / 2 - frame.sw / 2);
-  const dy = Math.round(y + TILE_SIZE - frame.sh);
+  const dx = Math.round(x + tileSize / 2 - frame.sw / 2);
+  const dy = Math.round(y + tileSize - frame.sh);
   context.drawImage(bitmap, frame.sx, frame.sy, frame.sw, frame.sh, dx, dy, frame.sw, frame.sh);
   return true;
 }
@@ -375,6 +413,10 @@ export function eventCharacterFrame(bitmap: HTMLImageElement, image: MvEventImag
 export function isBigCharacterName(name: string): boolean {
   const sign = String(name || '').match(/^[!$]+/);
   return Boolean(sign && sign[0].includes('$'));
+}
+
+function normalizedTileSize(value: number | undefined): number {
+  return value === 16 || value === 24 || value === 32 || value === 48 ? value : TILE_SIZE;
 }
 
 function clampInt(value: number | undefined, min: number, max: number): number {

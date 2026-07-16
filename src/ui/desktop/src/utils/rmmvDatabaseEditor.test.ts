@@ -7,6 +7,8 @@ import {
   appendAnimationFrame,
   appendAnimationFrameCell,
   appendAnimationTiming,
+  appendMzAnimationFlashTiming,
+  appendMzAnimationSoundTiming,
   duplicateAnimationFrame,
   applyClassParamLinearCurve,
   appendStringListItem,
@@ -20,6 +22,11 @@ import {
   normalizeAnimationFrames,
   normalizeAnimationTiming,
   normalizeAnimationTimings,
+  normalizeMzAnimationFlashTiming,
+  normalizeMzAnimationFlashTimings,
+  normalizeMzAnimationRotation,
+  normalizeMzAnimationSoundTiming,
+  normalizeMzAnimationSoundTimings,
   normalizeClassParamCurves,
   normalizeTroopMembers,
   normalizeTroopPageConditions,
@@ -28,11 +35,18 @@ import {
   removeStringListItem,
   removeAnimationFrame,
   removeAnimationTiming,
+  removeMzAnimationFlashTiming,
+  removeMzAnimationSoundTiming,
   termsArraySlotCount,
   setAnimationFrameCellValue,
   setAnimationTimingFlashColor,
   setAnimationTimingSeValue,
   setAnimationTimingValue,
+  setMzAnimationFlashTimingColor,
+  setMzAnimationFlashTimingValue,
+  setMzAnimationRotationAxis,
+  setMzAnimationSoundTimingFrame,
+  setMzAnimationSoundTimingSeValue,
   setClassParamCurveLevel,
   setEnemyActionConditionParameter,
   setEnemyActionConditionType,
@@ -266,5 +280,60 @@ describe('rmmvDatabaseEditor helpers', () => {
     assert.equal(normalizeAnimationTiming({ flashDuration: 0 }).flashDuration, 1);
     assert.equal(normalizeAnimationTiming({ flashDuration: 999 }).flashDuration, 200);
     assert.equal(setAnimationTimingValue([timing], 0, 'flashDuration', 0)[0].flashDuration, 1);
+  });
+
+  it('edits MZ particle rotation, flash, and sound timings without losing extension fields', () => {
+    assert.deepEqual(normalizeMzAnimationRotation({ x: -999, y: 25, z: 999, pluginAxis: 8 }), {
+      x: -360,
+      y: 25,
+      z: 360,
+      pluginAxis: 8,
+    });
+    assert.deepEqual(setMzAnimationRotationAxis({ x: 1, y: 2, z: 3, pluginAxis: 8 }, 'y', 90), {
+      x: 1,
+      y: 90,
+      z: 3,
+      pluginAxis: 8,
+    });
+
+    const flash = normalizeMzAnimationFlashTiming({
+      frame: -1,
+      duration: 0,
+      color: [300, -1, 60],
+      pluginFlash: true,
+    });
+    assert.deepEqual(flash, {
+      frame: 0,
+      duration: 1,
+      color: [255, 0, 60, 255],
+      pluginFlash: true,
+    });
+    let flashes = appendMzAnimationFlashTiming([flash]);
+    flashes = setMzAnimationFlashTimingValue(flashes, 1, 'frame', 15);
+    flashes = setMzAnimationFlashTimingValue(flashes, 1, 'duration', 40);
+    flashes = setMzAnimationFlashTimingColor(flashes, 1, 3, 128);
+    assert.equal(normalizeMzAnimationFlashTimings(flashes)[1].frame, 15);
+    assert.equal(normalizeMzAnimationFlashTimings(flashes)[1].duration, 40);
+    assert.equal(normalizeMzAnimationFlashTimings(flashes)[1].color[3], 128);
+    assert.equal(removeMzAnimationFlashTiming(flashes, 0)[0].frame, 15);
+
+    const sound = normalizeMzAnimationSoundTiming({
+      frame: 2,
+      pluginSound: true,
+      se: { name: 'Hit1', volume: 120, pitch: 20, pan: -120, pluginSe: true },
+    });
+    assert.deepEqual(sound, {
+      frame: 2,
+      pluginSound: true,
+      se: { name: 'Hit1', volume: 100, pitch: 50, pan: -100, pluginSe: true },
+    });
+    let sounds = appendMzAnimationSoundTiming([sound]);
+    sounds = setMzAnimationSoundTimingFrame(sounds, 1, 24);
+    sounds = setMzAnimationSoundTimingSeValue(sounds, 1, 'name', 'Blow1');
+    sounds = setMzAnimationSoundTimingSeValue(sounds, 1, 'volume', 75);
+    assert.equal(normalizeMzAnimationSoundTimings(sounds)[1].frame, 24);
+    assert.equal(normalizeMzAnimationSoundTimings(sounds)[1].se.name, 'Blow1');
+    assert.equal(normalizeMzAnimationSoundTimings(sounds)[1].se.volume, 75);
+    assert.equal(removeMzAnimationSoundTiming(sounds, 0)[0].frame, 24);
   });
 });

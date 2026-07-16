@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, protocol } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { ensureUserDataLayout } from '../../../backend/src/core/desktop/user-data-layout.ts';
-import { resolveInstallRoot } from '../../../backend/src/core/workspace-paths.ts';
+import { resolveInstallRoot, resolveUserDataRoot } from '../../../backend/src/core/workspace-paths.ts';
 import { initFileLogger } from '../../../backend/src/core/file-log.ts';
 import {
   cleanupIpcHandlers,
@@ -124,7 +124,7 @@ let layoutMigrated: string[] = [];
 
 app.whenReady().then(() => {
   installRoot = resolveInstallRoot(__dirname);
-  userDataRoot = app.isPackaged ? app.getPath('userData') : installRoot;
+  userDataRoot = app.isPackaged ? app.getPath('userData') : resolveUserDataRoot(__dirname);
 
   process.env.AGENT_RPG_INSTALL_ROOT = installRoot;
   process.env.AGENT_RPG_ROOT = userDataRoot;

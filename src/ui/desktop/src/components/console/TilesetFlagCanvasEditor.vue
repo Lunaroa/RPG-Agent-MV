@@ -39,8 +39,8 @@
       <canvas
         v-show="currentImageState === 'ready'"
         ref="canvasRef"
-        :width="currentSheet.columns * TILE_SIZE"
-        :height="currentSheet.rows * TILE_SIZE"
+        :width="currentSheet.columns * tileSize"
+        :height="currentSheet.rows * tileSize"
         :style="canvasStyle"
         role="application"
         tabindex="0"
@@ -66,7 +66,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
 import type { EditorProjectCatalog } from '../../api/client';
-import { drawTile, TILE_SIZE } from '../../composables/useMapRenderer';
+import { drawTile } from '../../composables/useMapRenderer';
 import { useI18n } from '../../i18n';
 import {
   MV_TILESET_FLAG_BITS,
@@ -108,6 +108,7 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:flags': [flags: unknown[]] }>();
 const { t } = useI18n();
 const DISPLAY_TILE_SIZE = 28;
+const tileSize = computed(() => Math.max(1, Number(props.catalog?.tileSize) || 48));
 
 const sheets = MV_TILESET_SHEETS;
 const selectedSheetKey = ref<MvTilesetSheetKey>('A1');
@@ -178,7 +179,7 @@ const imageSignature = computed(() => {
 
 watch(imageSignature, () => void loadTilesetImages(), { immediate: true });
 watch(
-  [selectedSheetKey, mode, selectedRow, selectedColumn, imageRevision, () => props.flags],
+  [selectedSheetKey, mode, selectedRow, selectedColumn, imageRevision, tileSize, () => props.flags],
   () => void nextTick(paintCanvas),
 );
 watch(selectedSheetKey, () => {
@@ -253,11 +254,11 @@ function paintCanvas(): void {
 
   for (let row = 0; row < sheet.rows; row += 1) {
     for (let column = 0; column < sheet.columns; column += 1) {
-      const x = column * TILE_SIZE;
-      const y = row * TILE_SIZE;
+      const x = column * tileSize.value;
+      const y = row * tileSize.value;
       drawChecker(context, x, y, row, column);
       const cell = mvTilesetFlagCell(sheet.key, row, column);
-      drawTile(context, tilesetImages, cell.representativeTileId, x, y);
+      drawTile(context, tilesetImages, cell.representativeTileId, x, y, tileSize.value);
       drawModeOverlay(context, cell, inspectMvTilesetFlagCell(flags, cell), x, y);
     }
   }
@@ -265,13 +266,13 @@ function paintCanvas(): void {
   context.save();
   context.strokeStyle = '#f7a36a';
   context.lineWidth = 3;
-  context.strokeRect(selectedColumn.value * TILE_SIZE + 1.5, selectedRow.value * TILE_SIZE + 1.5, TILE_SIZE - 3, TILE_SIZE - 3);
+  context.strokeRect(selectedColumn.value * tileSize.value + 1.5, selectedRow.value * tileSize.value + 1.5, tileSize.value - 3, tileSize.value - 3);
   context.restore();
 }
 
 function drawChecker(context: CanvasRenderingContext2D, x: number, y: number, row: number, column: number): void {
   context.fillStyle = (row + column) % 2 === 0 ? '#d8d5ce' : '#c7c3bb';
-  context.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+  context.fillRect(x, y, tileSize.value, tileSize.value);
 }
 
 function drawCellGrid(context: CanvasRenderingContext2D, columns: number, rows: number): void {
@@ -280,12 +281,12 @@ function drawCellGrid(context: CanvasRenderingContext2D, columns: number, rows: 
   context.lineWidth = 1;
   context.beginPath();
   for (let column = 0; column <= columns; column += 1) {
-    context.moveTo(column * TILE_SIZE + 0.5, 0);
-    context.lineTo(column * TILE_SIZE + 0.5, rows * TILE_SIZE);
+    context.moveTo(column * tileSize.value + 0.5, 0);
+    context.lineTo(column * tileSize.value + 0.5, rows * tileSize.value);
   }
   for (let row = 0; row <= rows; row += 1) {
-    context.moveTo(0, row * TILE_SIZE + 0.5);
-    context.lineTo(columns * TILE_SIZE, row * TILE_SIZE + 0.5);
+    context.moveTo(0, row * tileSize.value + 0.5);
+    context.lineTo(columns * tileSize.value, row * tileSize.value + 0.5);
   }
   context.stroke();
   context.restore();
@@ -331,19 +332,19 @@ function drawOverlayToken(context: CanvasRenderingContext2D, x: number, y: numbe
   context.font = '800 29px "JetBrains Mono", monospace';
   context.lineWidth = 5;
   context.strokeStyle = 'rgba(19, 24, 28, .76)';
-  context.strokeText(token, x + TILE_SIZE / 2, y + TILE_SIZE / 2 + 1);
+  context.strokeText(token, x + tileSize.value / 2, y + tileSize.value / 2 + 1);
   context.fillStyle = color;
-  context.fillText(token, x + TILE_SIZE / 2, y + TILE_SIZE / 2 + 1);
+  context.fillText(token, x + tileSize.value / 2, y + tileSize.value / 2 + 1);
   context.restore();
 }
 
 function drawFixedMark(context: CanvasRenderingContext2D, x: number, y: number): void {
   context.save();
   context.fillStyle = 'rgba(19, 24, 28, .78)';
-  context.fillRect(x + TILE_SIZE - 13, y + 2, 10, 10);
+  context.fillRect(x + tileSize.value - 13, y + 2, 10, 10);
   context.strokeStyle = '#ffe8a3';
   context.lineWidth = 1.5;
-  context.strokeRect(x + TILE_SIZE - 11, y + 5, 6, 5);
+  context.strokeRect(x + tileSize.value - 11, y + 5, 6, 5);
   context.restore();
 }
 
@@ -482,10 +483,10 @@ function pointerHit(event: PointerEvent): PointerHit | null {
   if (!rect.width || !rect.height) return null;
   const x = (event.clientX - rect.left) * canvas.width / rect.width;
   const y = (event.clientY - rect.top) * canvas.height / rect.height;
-  const column = Math.floor(x / TILE_SIZE);
-  const row = Math.floor(y / TILE_SIZE);
+  const column = Math.floor(x / tileSize.value);
+  const row = Math.floor(y / tileSize.value);
   if (column < 0 || row < 0 || column >= currentSheet.value.columns || row >= currentSheet.value.rows) return null;
-  return { row, column, localX: x % TILE_SIZE, localY: y % TILE_SIZE };
+  return { row, column, localX: x % tileSize.value, localY: y % tileSize.value };
 }
 
 function selectHit(hit: PointerHit): void {
@@ -494,8 +495,8 @@ function selectHit(hit: PointerHit): void {
 }
 
 function directionFromHit(hit: PointerHit): MvTilesetDirectionBit {
-  const dx = hit.localX - TILE_SIZE / 2;
-  const dy = hit.localY - TILE_SIZE / 2;
+  const dx = hit.localX - tileSize.value / 2;
+  const dy = hit.localY - tileSize.value / 2;
   if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? MV_TILESET_FLAG_BITS.left : MV_TILESET_FLAG_BITS.right;
   if (Math.abs(dy) > 0) return dy < 0 ? MV_TILESET_FLAG_BITS.up : MV_TILESET_FLAG_BITS.down;
   return selectedDirection.value;

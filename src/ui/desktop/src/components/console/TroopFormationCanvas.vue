@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import type { EditorEnemyCatalogEntry, EditorProjectCatalog } from '../../api/client';
 import { useI18n } from '../../i18n';
 import { normalizeTroopMembers, type MvTroopMember } from '../../utils/rmmvDatabaseEditor';
 import { rotateHuePixelsLikeMv } from '../../utils/rmmvHue';
 import { enemyBattlerAssetKind } from '../../utils/rmmvBattleAssets.ts';
-
-const WIDTH = 816;
-const HEIGHT = 624;
 
 const props = defineProps<{
   modelValue: unknown[];
@@ -24,6 +21,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const width = computed(() => Math.max(1, Number(props.catalog?.screenWidth) || 816));
+const height = computed(() => Math.max(1, Number(props.catalog?.screenHeight) || 624));
 const canvas = ref<HTMLCanvasElement | null>(null);
 const errors = ref<string[]>([]);
 const imageCache = new Map<string, Promise<HTMLImageElement | null>>();
@@ -40,6 +39,8 @@ watch(
     props.battleback1Name,
     props.battleback2Name,
     props.selectedIndex,
+    width.value,
+    height.value,
   ],
   () => void renderFormation(),
   { deep: true, immediate: true },
@@ -55,9 +56,9 @@ async function renderFormation(preview?: MvTroopMember[]): Promise<void> {
   const target = canvas.value;
   const context = target?.getContext('2d', { willReadFrequently: true });
   if (!target || !context) return;
-  context.clearRect(0, 0, WIDTH, HEIGHT);
+  context.clearRect(0, 0, width.value, height.value);
   context.fillStyle = '#171b20';
-  context.fillRect(0, 0, WIDTH, HEIGHT);
+  context.fillRect(0, 0, width.value, height.value);
   const nextErrors: string[] = [];
 
   await drawBattleback(context, 'battlebacks1', props.battleback1Name, nextErrors);
@@ -108,10 +109,10 @@ async function drawBattleback(
     nextErrors.push(t('db.troopMissingBattleback', { name, kind }));
     return;
   }
-  const scale = Math.max(WIDTH / image.width, HEIGHT / image.height);
-  const width = image.width * scale;
-  const height = image.height * scale;
-  context.drawImage(image, (WIDTH - width) / 2, (HEIGHT - height) / 2, width, height);
+  const scale = Math.max(width.value / image.width, height.value / image.height);
+  const renderedWidth = image.width * scale;
+  const renderedHeight = image.height * scale;
+  context.drawImage(image, (width.value - renderedWidth) / 2, (height.value - renderedHeight) / 2, renderedWidth, renderedHeight);
 }
 
 async function loadEnemyImage(
@@ -161,8 +162,8 @@ function load(url: string): Promise<HTMLImageElement | null> {
 function pointerPosition(event: PointerEvent | MouseEvent): { x: number; y: number } {
   const rect = canvas.value!.getBoundingClientRect();
   return {
-    x: Math.round((event.clientX - rect.left) * WIDTH / rect.width),
-    y: Math.round((event.clientY - rect.top) * HEIGHT / rect.height),
+    x: Math.round((event.clientX - rect.left) * width.value / rect.width),
+    y: Math.round((event.clientY - rect.top) * height.value / rect.height),
   };
 }
 
@@ -192,8 +193,8 @@ function previewDrag(event: PointerEvent): void {
   const members = normalizeTroopMembers(props.modelValue);
   members[drag.index] = {
     ...members[drag.index],
-    x: clamp(drag.originalX + point.x - drag.startX, 0, WIDTH),
-    y: clamp(drag.originalY + point.y - drag.startY, 0, HEIGHT),
+    x: clamp(drag.originalX + point.x - drag.startX, 0, width.value),
+    y: clamp(drag.originalY + point.y - drag.startY, 0, height.value),
   };
   void renderFormation(members);
 }
@@ -206,8 +207,8 @@ function finishDrag(event: PointerEvent): void {
   const members = normalizeTroopMembers(props.modelValue);
   members[current.index] = {
     ...members[current.index],
-    x: clamp(current.originalX + point.x - current.startX, 0, WIDTH),
-    y: clamp(current.originalY + point.y - current.startY, 0, HEIGHT),
+    x: clamp(current.originalX + point.x - current.startX, 0, width.value),
+    y: clamp(current.originalY + point.y - current.startY, 0, height.value),
   };
   emit('update:modelValue', members);
 }
@@ -280,8 +281,9 @@ function clamp(value: number, minimum: number, maximum: number): number {
   <div class="troop-formation">
     <canvas
       ref="canvas"
-      :width="WIDTH"
-      :height="HEIGHT"
+      :width="width"
+      :height="height"
+      :style="{ aspectRatio: `${width} / ${height}` }"
       :aria-label="t('db.troopFormationCanvas')"
       @pointerdown="startDrag"
       @pointermove="previewDrag"
@@ -304,7 +306,6 @@ function clamp(value: number, minimum: number, maximum: number): number {
 .troop-formation canvas {
   display: block;
   width: 100%;
-  aspect-ratio: 816 / 624;
   border: 1px solid var(--console-border, #4a5058);
   border-radius: 3px;
   background: #171b20;

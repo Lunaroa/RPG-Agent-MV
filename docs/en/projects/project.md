@@ -4,10 +4,11 @@ This page explains the requirements for connecting an RPG Maker MV or MZ project
 
 ## Project Requirements
 
-RPG Agent MV must connect to a real, complete RPG Maker MV project or an RPG Maker MZ 1.10.0 editor source project. The target project should at least:
+RPG Agent MV must connect to a complete RPG Maker MV or MZ project directory with readable data and core scripts. The target project should at least:
 
 - Open correctly in its matching RPG Maker editor.
-- For MZ, contain `game.rmmzproject`, report core version 1.10.0 exactly, and contain neither a deployed layout nor encrypted resources.
+- For MZ, contain a root `data` directory, complete MZ core scripts, and a recognizable core version. `game.rmmzproject` is optional provenance metadata, not an import requirement.
+- MZ 1.10.0 is the fully validated baseline. Older cores and encrypted resources require compatibility confirmation; encrypted asset capabilities may remain limited while project data stays editable.
 - Contain map data and database data.
 - Contain the assets required by the task.
 - Be readable from the local path used by RPG Agent MV.
@@ -16,7 +17,7 @@ If the project is incomplete or the path cannot be accessed, the Agent should st
 
 ## Setup Steps
 
-1. Open and save the target in its matching RPG Maker editor. Update older MZ core scripts from RPG Maker MZ 1.10.0 first.
+1. Open and save the target in its matching RPG Maker editor. Older MZ cores may continue after a warning; to use the fully validated baseline, back up the project and update its core scripts from RPG Maker MZ 1.10.0.
 2. Start RPG Agent MV.
 3. Confirm the current project in the console.
 4. Open the map tree in the editor.

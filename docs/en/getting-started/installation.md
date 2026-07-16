@@ -6,7 +6,7 @@ This page explains the requirements, startup path, and first checks for RPG Agen
 
 Before using RPG Agent MV, prepare:
 
-- A real RPG Maker MV project, or an undeployed and unencrypted RPG Maker MZ source project whose core version is exactly 1.10.0.
+- A complete RPG Maker MV or MZ project directory with readable project data and core scripts. MZ 1.10.0 is the fully validated baseline; older cores and encrypted resources show compatibility warnings, and encrypted asset capabilities may remain limited.
 - A working model provider, API key, and default model.
 - A local project path that RPG Agent MV can read.
 - A Git worktree for the RMMV project is recommended, so changes can be reviewed and organized.
@@ -76,7 +76,7 @@ If any item fails, fix the environment or project setup before running complex e
 
 | Symptom | What to check |
 |---|---|
-| Project is not shown | Confirm the matching editor can open and save it; MZ must be an unencrypted 1.10.0 source project |
+| Project is not shown | Confirm the directory contains readable `data/System.json`, `MapInfos.json`, map files, and matching core scripts; an editor project marker is not required |
 | MZ playtest cannot start | Check that the source project root contains complete `Game.exe`, `nw.dll`, `icudtl.dat`, locale packs, and related NW.js files; the app does not run or download an unknown runner |
 | Model is unavailable | Check provider, API key, Base URL, and default model; see [Model And Runtime Checks](../faq/model-check.md) |
 | Map cannot open | Check map files, tilesets, and local assets |

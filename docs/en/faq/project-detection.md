@@ -12,8 +12,9 @@ This page explains what to check when the project cannot be detected or project 
 ## Common Causes
 
 - The selected directory is not an RPG Maker MV or supported MZ source project.
-- An MZ project does not report core version 1.10.0, is missing `game.rmmzproject`, or contains mixed MV files.
-- The selected folder is a deployed package or contains encrypted resources.
+- An MZ project does not report a recognizable core version or contains mixed MV files. `game.rmmzproject` is not required for detection.
+- The data layouts conflict, or required project data or core files are missing.
+- Recognizable older cores and encrypted resources show compatibility warnings instead of being rejected only for those conditions; encrypted asset capabilities may remain limited.
 - Project data files are missing or damaged.
 - Map files are missing.
 - The project has not been saved in its matching RPG Maker editor.
@@ -23,7 +24,7 @@ This page explains what to check when the project cannot be detected or project 
 
 1. Open the target project in its matching RPG Maker editor.
 2. Confirm that the project contains maps.
-3. Save the project. For older MZ cores, run Update Corescripts from RPG Maker MZ 1.10.0.
+3. Save the project. Older MZ cores may continue after confirmation; to use the fully validated baseline, back up the project and run Update Corescripts from RPG Maker MZ 1.10.0.
 4. Return to RPG Agent MV and select or refresh the project.
 5. In console project management, confirm that maps, events, database files, and audio can be read.
 

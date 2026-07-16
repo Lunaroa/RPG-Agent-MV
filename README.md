@@ -79,13 +79,15 @@ It is meant to reduce repetitive production work: placing production goals into 
 ### Engine Compatibility
 
 - Existing RPG Maker MV support remains available.
-- RPG Maker MZ support is strict: only undeployed, unencrypted editor source projects whose core scripts report exactly MZ 1.10.0 are accepted.
-- Project markers, core scripts, data layout, tile size, and canvas size are detected automatically. Mixed MV/MZ files, deployed layouts, encrypted resources, and other MZ core versions are rejected before writes.
+- RPG Maker MZ 1.10.0 is the fully validated baseline. Recognizable older MZ projects may be imported and edited after an explicit compatibility warning; the warning appears again before staged changes are written unless the user chooses not to see future compatibility warnings.
+- Project markers are optional. Core scripts, data layout, tile size, canvas size, and encryption state are detected automatically. Encrypted projects may be loaded after a warning, while encrypted asset listing, preview, replacement, and validation can remain limited.
+- Mixed MV/MZ files, conflicting data layouts, missing required project data, and unrecognizable core versions are rejected before writes.
+- Imported older MZ cores remain outside the validated playtest boundary. Update the project core to MZ 1.10.0 before using MZ playtest or isolated runtime validation.
 - RPG Maker MZ does not need to be installed. Editing works from the source project alone; playtest and isolated Battle Test statically validate and use the NW.js runtime beside that project's `Game.exe`. Detection never executes it, and isolated runs do not copy the runtime.
 
 ## Quick Start
 
-1. Prepare a real RPG Maker MV project, or an undeployed and unencrypted RPG Maker MZ 1.10.0 source project.
+1. Prepare a complete RPG Maker MV or MZ project directory with readable project data and core scripts. MZ 1.10.0 is the fully validated baseline; recognizable older cores and encrypted resources require explicit confirmation.
 2. Start the RPG Agent MV desktop app.
 3. Configure a model provider and API key in Settings.
 4. Select your RMMV project.
@@ -117,7 +119,7 @@ based on variable 12, give the player that many healing potions, and show a mess
 - Windows
 - Node.js 22.5 or later
 - npm
-- A real RPG Maker MV project or supported RPG Maker MZ 1.10.0 source project
+- A complete RPG Maker MV or MZ project directory; MZ 1.10.0 is the fully validated baseline
 
 ### Install Dependencies
 

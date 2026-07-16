@@ -1,12 +1,13 @@
 # 2.1 Project Setup
 
-This page explains the requirements for connecting an RMMV project, the recommended project state, and what to check when switching projects.
+This page explains the requirements for connecting an RPG Maker MV or MZ project, the recommended project state, and what to check when switching projects.
 
 ## Project Requirements
 
-RPG Agent MV must connect to a real, complete RPG Maker MV project. The target project should at least:
+RPG Agent MV must connect to a real, complete RPG Maker MV project or an RPG Maker MZ 1.10.0 editor source project. The target project should at least:
 
-- Open correctly in RPG Maker MV.
+- Open correctly in its matching RPG Maker editor.
+- For MZ, contain `game.rmmzproject`, report core version 1.10.0 exactly, and contain neither a deployed layout nor encrypted resources.
 - Contain map data and database data.
 - Contain the assets required by the task.
 - Be readable from the local path used by RPG Agent MV.
@@ -15,7 +16,7 @@ If the project is incomplete or the path cannot be accessed, the Agent should st
 
 ## Setup Steps
 
-1. Open the target project in RPG Maker MV and save it.
+1. Open and save the target in its matching RPG Maker editor. Update older MZ core scripts from RPG Maker MZ 1.10.0 first.
 2. Start RPG Agent MV.
 3. Confirm the current project in the console.
 4. Open the map tree in the editor.
@@ -38,7 +39,13 @@ Stable naming makes it easier for the Agent to identify target objects and conte
 
 ## Switching Projects
 
-After switching projects in the console, confirm that the current project name matches the target project. If data reading fails after a switch, save the project in RPG Maker MV, then return to RPG Agent MV and refresh.
+After switching projects, confirm the MV/MZ badge beside the project name. If data reading fails, save the project in its matching editor, then return to RPG Agent MV and refresh. Engine detection is automatic and cannot be switched manually.
+
+## MZ Playtest Runtime
+
+RPG Maker MZ does not need to be installed. Editing depends only on the source project. Normal playtest and isolated Battle Test statically validate the source project's `Game.exe`, `nw.dll`, `icudtl.dat`, locale packs, and other NW.js files. Project detection never executes `Game.exe`. Isolated runs keep the runner in the source project and pass it the temporary project path instead of copying it.
+
+If the local runtime is missing or incomplete, map, event, database, asset, plugin, and staging work remains available. Normal playtest and Battle Test fail before launch with the missing runtime file named explicitly.
 
 ## Game-Level Rules
 

@@ -2,16 +2,22 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A local AI production assistant for individual RPG Maker MV creators.
+A local AI production assistant for individual RPG Maker MV and RPG Maker MZ 1.10.0 creators.
 
-RPG Agent MV turns natural-language production goals into RPG Maker MV event work, script edits, and controlled batch changes inside an existing project. It is designed for solo creators who already have a real RMMV project and want help moving story, event, script, and plugin work forward without losing reviewability.
+RPG Agent MV turns natural-language production goals into engine-correct event work, script edits, and controlled batch changes inside an existing MV or MZ project. The product name remains RPG Agent MV, while the project engine is detected automatically.
 
-![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22.5.0-339933.svg)
 ![Electron](https://img.shields.io/badge/built%20with-Electron-47848F.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 
 [User Guide](docs/en/README.md) | [Quick Start](#quick-start) | [Run From Source](#run-from-source) | [Project Boundaries](#project-boundaries)
+
+## Preview
+
+| Home | Console |
+|---|---|
+| ![Home](docs/assets/preview/home-workspace.png) | ![Console](docs/assets/preview/console-workspace.png) |
 
 ## What It Does
 
@@ -41,7 +47,7 @@ Typical uses:
 
 ### Assist With Scripts and Plugin-Related Logic
 
-RPG Maker MV projects often need JavaScript edits, plugin parameter checks, or small utility scripts. RPG Agent MV can inspect the project state and help write or adjust code.
+RPG Maker projects often need JavaScript edits, plugin parameter checks, or small utility scripts. RPG Agent MV can inspect the project state and help write or adjust code using the selected project's MV or MZ format.
 
 Typical uses:
 
@@ -52,13 +58,13 @@ Typical uses:
 
 ### Understand The Current Project
 
-RPG Agent MV works around the selected RPG Maker MV project. It reads maps, events, assets, database entries, plugins, switches, variables, and other project context instead of generating isolated text.
+RPG Agent MV works around the selected RPG Maker MV or MZ project. It reads maps, events, assets, database entries, plugins, switches, variables, and other project context instead of generating isolated text.
 
 This makes it better suited to daily production work in an existing game project, such as: "make the NPCs in this town sound more like frontier-town residents."
 
 ## Project Boundaries
 
-RPG Agent MV is not a full game generator and it does not replace the RPG Maker MV editor.
+RPG Agent MV is not a full game generator and it does not replace the RPG Maker editor.
 
 It does not currently promise to:
 
@@ -70,15 +76,16 @@ It does not currently promise to:
 
 It is meant to reduce repetitive production work: placing production goals into a real project, reviewing the result, and keeping changes visible and reversible.
 
-## Preview
+### Engine Compatibility
 
-| Home | Console |
-|---|---|
-| ![Home](docs/assets/preview/home-workspace.png) | ![Console](docs/assets/preview/console-workspace.png) |
+- Existing RPG Maker MV support remains available.
+- RPG Maker MZ support is strict: only undeployed, unencrypted editor source projects whose core scripts report exactly MZ 1.10.0 are accepted.
+- Project markers, core scripts, data layout, tile size, and canvas size are detected automatically. Mixed MV/MZ files, deployed layouts, encrypted resources, and other MZ core versions are rejected before writes.
+- RPG Maker MZ does not need to be installed. Editing works from the source project alone; playtest and isolated Battle Test statically validate and use the NW.js runtime beside that project's `Game.exe`. Detection never executes it, and isolated runs do not copy the runtime.
 
 ## Quick Start
 
-1. Prepare a real RPG Maker MV project that opens correctly in RPG Maker MV.
+1. Prepare a real RPG Maker MV project, or an undeployed and unencrypted RPG Maker MZ 1.10.0 source project.
 2. Start the RPG Agent MV desktop app.
 3. Configure a model provider and API key in Settings.
 4. Select your RMMV project.
@@ -110,7 +117,7 @@ based on variable 12, give the player that many healing potions, and show a mess
 - Windows
 - Node.js 22.5 or later
 - npm
-- A real RPG Maker MV project
+- A real RPG Maker MV project or supported RPG Maker MZ 1.10.0 source project
 
 ### Install Dependencies
 
@@ -176,4 +183,4 @@ Apache-2.0
 
 Project-owned code, backend code, and desktop wrapper code are licensed under Apache-2.0. Distributed builds include [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), which documents third-party components, runtimes, and dependencies shipped with the product.
 
-RPG Agent MV is an independent third-party tool designed to work with RPG Maker MV projects.
+RPG Agent MV is an independent third-party tool designed to work with RPG Maker MV and supported RPG Maker MZ projects.

@@ -79,8 +79,16 @@ export const RPG_MAKER_ENGINE_PROFILES: Record<RpgMakerEngine, RpgMakerEnginePro
 export interface RpgMakerEngineInspection {
   engine: RpgMakerEngine;
   engineVersion: string | null;
+  engineVersionSupported: boolean;
+  encryption: RpgMakerEncryptionStatus;
   profile: RpgMakerEngineProfile;
   canvas: RpgMakerCanvasSettings;
+}
+
+export interface RpgMakerEncryptionStatus {
+  encryptedResources: boolean;
+  encryptedImages: boolean;
+  encryptedAudio: boolean;
 }
 
 export interface RpgMakerCoreIdentity {
@@ -114,20 +122,17 @@ export function inspectRpgMakerEngine(
     return {
       engine: 'rpg-maker-mv',
       engineVersion: readMVVersion(root, resources),
+      engineVersionSupported: true,
+      encryption: inspectRpgMakerEncryption(resources, system),
       profile: RPG_MAKER_ENGINE_PROFILES['rpg-maker-mv'],
       canvas: { tileSize: 48, screenWidth: 816, screenHeight: 624, faceSize: 144, iconSize: 32 },
     };
   }
 
-  if (!mzMarker) {
-    throw new Error(
-      `RPG Maker MZ projects must be editable source projects containing game.rmmzproject: ${root}`,
-    );
-  }
   const missingCore = RPG_MAKER_MZ_ENGINE_FILES
     .filter((relative) => !fileExists(resolveRelative(resources, relative)));
   if (missingCore.length) {
-    throw new Error(`RPG Maker MZ source project is missing required runtime files: ${missingCore.join(', ')}`);
+    throw new Error(`RPG Maker MZ project is missing required runtime files: ${missingCore.join(', ')}`);
   }
 
   const coreSource = fs.readFileSync(path.join(resources, 'js', 'rmmz_core.js'), 'utf8');
@@ -135,18 +140,17 @@ export function inspectRpgMakerEngine(
   if (name !== 'MZ') {
     throw new Error(`Expected RPG Maker MZ core signature, found ${name || 'none'} in js/rmmz_core.js`);
   }
-  if (version !== SUPPORTED_RPG_MAKER_MZ_VERSION) {
-    throw new Error(
-      `RPG Maker MZ ${SUPPORTED_RPG_MAKER_MZ_VERSION} core scripts are required; found ${version || 'unknown'}. `
-      + 'Open the project in RPG Maker MZ 1.10.0 and run Game > Update Corescripts.',
-    );
+  if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error('RPG Maker MZ core scripts must report a recognizable semantic version in js/rmmz_core.js.');
   }
 
-  assertUnencryptedMZSource(resources, system);
+  const encryption = inspectRpgMakerEncryption(resources, system);
 
   return {
     engine: 'rpg-maker-mz',
     engineVersion: version,
+    engineVersionSupported: version === SUPPORTED_RPG_MAKER_MZ_VERSION,
+    encryption,
     profile: RPG_MAKER_ENGINE_PROFILES['rpg-maker-mz'],
     canvas: readMZCanvasSettings(system),
   };
@@ -159,23 +163,24 @@ export function readRpgMakerCoreIdentity(source: string): RpgMakerCoreIdentity {
   };
 }
 
-function assertUnencryptedMZSource(resourceRoot: string, system: unknown): void {
+function inspectRpgMakerEncryption(resourceRoot: string, system: unknown): RpgMakerEncryptionStatus {
   const record = asRecord(system);
-  if (record?.hasEncryptedImages === true || record?.hasEncryptedAudio === true) {
-    throw new Error('Encrypted RPG Maker MZ resources are not supported; register an unencrypted editor source project.');
-  }
-  const encryptedExtensions = new Set(['.rpgmvp', '.rpgmvo', '.rpgmvm', '.png_', '.ogg_', '.m4a_']);
-  for (const relative of ['img', 'audio', 'movies', 'effects']) {
-    const root = path.join(resourceRoot, relative);
-    const encrypted = firstFileWithExtension(root, encryptedExtensions);
-    if (encrypted) {
-      throw new Error(`Encrypted RPG Maker resource is not supported: ${path.relative(resourceRoot, encrypted).replaceAll('\\', '/')}`);
-    }
-  }
+  const encryptedImages = record?.hasEncryptedImages === true
+    || hasFileWithExtension(path.join(resourceRoot, 'img'), new Set(['.rpgmvp', '.png_']));
+  const encryptedAudio = record?.hasEncryptedAudio === true
+    || ['audio', 'movies'].some((relative) => hasFileWithExtension(
+      path.join(resourceRoot, relative),
+      new Set(['.rpgmvo', '.rpgmvm', '.ogg_', '.m4a_']),
+    ));
+  return {
+    encryptedResources: encryptedImages || encryptedAudio,
+    encryptedImages,
+    encryptedAudio,
+  };
 }
 
-function firstFileWithExtension(root: string, extensions: ReadonlySet<string>): string | null {
-  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return null;
+function hasFileWithExtension(root: string, extensions: ReadonlySet<string>): boolean {
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return false;
   const pending = [root];
   while (pending.length) {
     const current = pending.pop()!;
@@ -183,10 +188,10 @@ function firstFileWithExtension(root: string, extensions: ReadonlySet<string>): 
       if (entry.isSymbolicLink()) continue;
       const absolute = path.join(current, entry.name);
       if (entry.isDirectory()) pending.push(absolute);
-      else if (entry.isFile() && extensions.has(path.extname(entry.name).toLowerCase())) return absolute;
+      else if (entry.isFile() && extensions.has(path.extname(entry.name).toLowerCase())) return true;
     }
   }
-  return null;
+  return false;
 }
 
 export function engineLabel(engine: RpgMakerEngine): 'MV' | 'MZ' {

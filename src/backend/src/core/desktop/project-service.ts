@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 
 import type { ProjectGitBaselineResult, ProjectInfo, ProjectVersionSaveOptions } from '../../../../contract/types.ts';
 import { inspectRmmvProject, type RmmvLayoutKind, type RmmvProjectManifest } from '../rmmv/rmmv-layout.ts';
+import { SUPPORTED_RPG_MAKER_MZ_VERSION } from '../rmmv/rpg-maker-engine.ts';
 import {
   projectCheckGitDependency,
   projectDataDirMissing,
@@ -61,6 +62,15 @@ interface ProjectValidation {
   manifest: RmmvProjectManifest;
   gameTitle?: string;
   mapCount: number;
+}
+
+export interface ProjectCompatibilityWarning {
+  detectedVersion: string;
+  supportedVersion: string;
+  versionMismatch: boolean;
+  encryptedResources: boolean;
+  encryptedImages: boolean;
+  encryptedAudio: boolean;
 }
 
 export function resolveProjectPath(workflowRoot: string, project?: string): string {
@@ -153,6 +163,21 @@ export function validateRmmvProjectDirectory(projectPath: string): ProjectValida
   return validateDataDir(projectRoot, manifest);
 }
 
+export function getProjectCompatibilityWarning(projectPath: string): ProjectCompatibilityWarning | null {
+  const manifest = validateRmmvProjectDirectory(projectPath).manifest;
+  if (manifest.engine !== 'rpg-maker-mz') return null;
+  const versionMismatch = !manifest.engineVersionSupported;
+  if (!versionMismatch && !manifest.encryptedResources) return null;
+  return {
+    detectedVersion: manifest.engineVersion!,
+    supportedVersion: SUPPORTED_RPG_MAKER_MZ_VERSION,
+    versionMismatch,
+    encryptedResources: manifest.encryptedResources,
+    encryptedImages: manifest.encryptedImages,
+    encryptedAudio: manifest.encryptedAudio,
+  };
+}
+
 function listWorkspaceProjects(workflowRoot: string): ProjectInfo[] {
   const projectsDir = path.resolve(workflowRoot, 'projects');
   if (!fs.existsSync(projectsDir)) return [];
@@ -183,6 +208,10 @@ function listWorkspaceProjects(workflowRoot: string): ProjectInfo[] {
       layout: validation.layout,
       engine: validation.manifest.engine,
       engineVersion: validation.manifest.engineVersion,
+      engineVersionSupported: validation.manifest.engineVersionSupported,
+      encryptedResources: validation.manifest.encryptedResources,
+      encryptedImages: validation.manifest.encryptedImages,
+      encryptedAudio: validation.manifest.encryptedAudio,
       tileSize: validation.manifest.tileSize,
       screenWidth: validation.manifest.screenWidth,
       screenHeight: validation.manifest.screenHeight,
@@ -234,6 +263,10 @@ function toProjectInfo(input: {
     missingRecommended: input.validation.manifest.missingRecommended,
     engine: input.validation.manifest.engine,
     engineVersion: input.validation.manifest.engineVersion,
+    engineVersionSupported: input.validation.manifest.engineVersionSupported,
+    encryptedResources: input.validation.manifest.encryptedResources,
+    encryptedImages: input.validation.manifest.encryptedImages,
+    encryptedAudio: input.validation.manifest.encryptedAudio,
     tileSize: input.validation.manifest.tileSize,
     screenWidth: input.validation.manifest.screenWidth,
     screenHeight: input.validation.manifest.screenHeight,

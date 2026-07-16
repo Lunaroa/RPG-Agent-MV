@@ -6,6 +6,7 @@ import { describe, test } from 'node:test';
 
 import {
   listProjects,
+  getProjectCompatibilityWarning,
   refreshProjects,
   registerExternalProject,
   removeRegisteredProject,
@@ -62,12 +63,39 @@ describe('desktop project service', () => {
       const registered = registerExternalProject(root, external);
       const refreshed = refreshProjects(root);
 
+      assert.equal(getProjectCompatibilityWarning(external), null);
       assert.equal(registered.engine, 'rpg-maker-mz');
       assert.equal(registered.engineVersion, '1.10.0');
+      assert.equal(registered.engineVersionSupported, true);
       assert.equal(registered.tileSize, 32);
       assert.equal(registered.screenWidth, 960);
       assert.equal(registered.screenHeight, 540);
       assert.equal(refreshed[0]?.engine, 'rpg-maker-mz');
+    } finally {
+      removeRoot(root);
+      removeRoot(external);
+    }
+  });
+
+  test('registers an older recognizable MZ core and exposes a compatibility warning', () => {
+    const root = tempRoot();
+    const external = tempRoot();
+    try {
+      writeMZProject(external, 'MZ Sample', '1.9.0');
+
+      const warning = getProjectCompatibilityWarning(external);
+      const registered = registerExternalProject(root, external);
+
+      assert.deepEqual(warning, {
+        detectedVersion: '1.9.0',
+        supportedVersion: '1.10.0',
+        versionMismatch: true,
+        encryptedResources: false,
+        encryptedImages: false,
+        encryptedAudio: false,
+      });
+      assert.equal(registered.engineVersion, '1.9.0');
+      assert.equal(registered.engineVersionSupported, false);
     } finally {
       removeRoot(root);
       removeRoot(external);
@@ -193,14 +221,14 @@ function writeRmmvProject(projectRoot: string, layout: 'www-data' | 'data', game
   }), 'utf8');
 }
 
-function writeMZProject(projectRoot: string, gameTitle: string): void {
+function writeMZProject(projectRoot: string, gameTitle: string, version = '1.10.0'): void {
   writeRmmvProject(projectRoot, 'data', gameTitle);
   fs.writeFileSync(path.join(projectRoot, 'game.rmmzproject'), 'RPGMZ', 'utf8');
   for (const relative of RPG_MAKER_MZ_ENGINE_FILES) {
     const file = path.join(projectRoot, ...relative.split('/'));
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const content = relative === 'js/rmmz_core.js'
-      ? 'Utils.RPGMAKER_NAME = "MZ";\nUtils.RPGMAKER_VERSION = "1.10.0";\n'
+      ? `Utils.RPGMAKER_NAME = "MZ";\nUtils.RPGMAKER_VERSION = "${version}";\n`
       : relative === 'package.json'
         ? '{"main":"index.html"}'
         : relative === 'js/plugins.js'

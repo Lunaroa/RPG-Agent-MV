@@ -4,7 +4,7 @@ import { describe, test } from 'node:test';
 import { registerSessionIpcHandlers } from './session-ipc-bindings.ts';
 
 describe('session IPC binding payload filter', () => {
-  test('allows productLanguage while filtering internal fields for create and preview', async () => {
+  test('allows public image input while filtering internal fields for create and preview', async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const createInputs: Array<Record<string, unknown>> = [];
     const previewInputs: Array<Record<string, unknown>> = [];
@@ -60,6 +60,8 @@ describe('session IPC binding payload filter', () => {
     const payload = {
       intent: 'normal',
       productLanguage: 'en-US',
+      imageAttachments: [{ filename: 'pasted-image.png', mime: 'image/png', sizeBytes: 8, dataBase64: 'data' }],
+      requiresImageInput: true,
       systemPrompt: 'should be stripped',
       completeConversationHistory: true,
       readOnlyTools: true,
@@ -68,8 +70,14 @@ describe('session IPC binding payload filter', () => {
     await handlers.get('sessions:create')?.(event, payload);
     await handlers.get('sessions:preview')?.(event, payload);
 
-    assert.deepEqual(createInputs, [{ intent: 'normal', productLanguage: 'en-US' }]);
-    assert.deepEqual(previewInputs, [{ intent: 'normal', productLanguage: 'en-US' }]);
+    const expected = {
+      intent: 'normal',
+      productLanguage: 'en-US',
+      imageAttachments: payload.imageAttachments,
+      requiresImageInput: true,
+    };
+    assert.deepEqual(createInputs, [expected]);
+    assert.deepEqual(previewInputs, [expected]);
 
     for (const input of [...createInputs, ...previewInputs]) {
       assert.equal('systemPrompt' in input, false);

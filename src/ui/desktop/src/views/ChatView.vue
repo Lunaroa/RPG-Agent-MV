@@ -97,9 +97,9 @@
         </div>
 
         <ComposerHintBar
-          v-if="composerHint"
-          :text="composerHint"
-          :variant="composerHintVariant"
+          v-if="effectiveComposerHint"
+          :text="effectiveComposerHint"
+          :variant="effectiveComposerHintVariant"
         />
 
         <ChatComposer
@@ -115,9 +115,14 @@
           :context-percent="contextUsage?.contextPercent ?? null"
           :context-used-tokens="contextUsage?.contextUsedTokens ?? null"
           :context-window-tokens="contextUsage?.contextWindowTokens ?? null"
+          :attachments="draftImages"
+          :image-input-blocked="imageInputBlocked"
           @send="sendMessage"
           @stop="handleStop"
           @select-profile="onSelectProfile"
+          @paste-files="handlePastedFiles"
+          @paste-native-image="handleNativeImagePaste"
+          @remove-image="removeDraftImage"
         />
       </div>
     </div>
@@ -138,6 +143,7 @@ import {
   type EventPreviewItem,
 } from '../composables/useSessionStream'
 import { DEFAULT_AGENT_EXECUTION_ENGINE } from '@contract/types'
+import type { ModelInputModality, SessionImageAttachmentInput } from '@contract/types'
 import { extractChatLogSegments, loadPersistedSegmentsFromChain, shouldPersistChatLog } from '@contract/session-transcript'
 import { useEventPlacementAskStore, type PlacementListEvent } from '../stores/eventPlacementAsk'
 import { useTaskBoardStore } from '../stores/taskBoard'
@@ -162,6 +168,7 @@ import {
 import { isAskResultLocked, type Ask, type AskResult } from '../utils/askParser'
 import {
   eventRegistry,
+  clipboard as clipboardApi,
   sessions as sessionsApi,
   type ContextUsageSnapshot,
   type SlashCommandListItem,
@@ -206,6 +213,14 @@ import ConversationList from '../components/ConversationList.vue'
 import { useWorkbenchUiStore } from '../stores/workbenchUi'
 import { normalizeProductLanguage, useI18n } from '../i18n'
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
+import {
+  ChatImageValidationError,
+  nativeClipboardImageToFile,
+  revokeDraftChatImage,
+  serializeDraftChatImages,
+  validatePastedImageBatch,
+  type DraftChatImage,
+} from '../utils/chatImageAttachments'
 
 const props = withDefaults(defineProps<{
   view?: 'chat' | 'history'
@@ -280,6 +295,8 @@ const inputMsg = ref('')
 const slashCommands = ref<SlashCommandListItem[]>([])
 const composerHint = ref('')
 const composerHintVariant = ref<'info' | 'error'>('info')
+const imagePasteError = ref('')
+const draftImages = ref<DraftChatImage[]>([])
 const contextUsage = ref<ContextUsageSnapshot | null>(null)
 let contextUsageRequestId = 0
 const sendInFlight = ref(false)
@@ -347,7 +364,7 @@ watch(
 )
 
 watch(
-  [activeAsk, inputMsg, isRunning],
+  [activeAsk, inputMsg, isRunning, draftImages],
   () => { void nextTick(measureBottomSlot) },
   { flush: 'post' },
 )
@@ -360,7 +377,26 @@ const historySessions = ref<Session[]>([])
 const historyLoading = ref(false)
 const historyError = ref('')
 const preflightBlocker = ref<string | null>(null)
-const availableProviders = ref<Array<{ id: string; label: string; models: Array<{ id: string; label: string }> }>>([])
+const availableProviders = ref<Array<{
+  id: string
+  label: string
+  models: Array<{ id: string; label: string; inputModalities?: ModelInputModality[] }>
+}>>([])
+
+const selectedModelInputModalities = computed(() => availableProviders.value
+  .find((provider) => provider.id === selectedProvider.value)
+  ?.models.find((model) => model.id === selectedModel.value)
+  ?.inputModalities)
+const imageInputBlocked = computed(() => (
+  draftImages.value.length > 0
+  && selectedModelInputModalities.value !== undefined
+  && !selectedModelInputModalities.value.includes('image')
+))
+const imageCompatibilityHint = computed(() => imageInputBlocked.value ? t('composer.image.modelUnsupported') : '')
+const effectiveComposerHint = computed(() => imageCompatibilityHint.value || imagePasteError.value || composerHint.value)
+const effectiveComposerHintVariant = computed<'info' | 'error'>(() => (
+  imageCompatibilityHint.value || imagePasteError.value ? 'error' : composerHintVariant.value
+))
 
 const headerTitle = computed(() => titleForSession(historySessions.value, activeSession.value?.id, currentProductLanguage.value))
 
@@ -545,16 +581,21 @@ async function handleSlashCommand(command: string, args = ''): Promise<void> {
 
 async function sendMessage() {
   const trimmed = inputMsg.value.trim()
-  if (!trimmed) return
+  if (!trimmed && draftImages.value.length === 0) return
 
   const parsed = parseSlashSubmit(trimmed)
   if (parsed.kind === 'slash') {
+    if (draftImages.value.length > 0) {
+      imagePasteError.value = t('composer.image.slashBlocked')
+      return
+    }
     inputMsg.value = ''
     await handleSlashCommand(parsed.command, parsed.args)
     return
   }
 
-  if (!canSubmitChatMessage(trimmed, composerBusy.value)) return
+  if (imageInputBlocked.value) return
+  if (composerBusy.value || (trimmed && !canSubmitChatMessage(trimmed, composerBusy.value))) return
   const nowMs = Date.now()
   if (isSendDebounced(lastSendAtMs, nowMs)) return
   lastSendAtMs = nowMs
@@ -563,11 +604,56 @@ async function sendMessage() {
   const planModePrefix = buildPlanModePrefixForSend()
 
   try {
-    await runIntent(`${planModePrefix}${intent}`, intent)
-    inputMsg.value = ''
+    const imageAttachments = await serializeDraftChatImages(draftImages.value)
+    const sent = await runIntent(`${planModePrefix}${intent}`, intent || t('chat.image.message'), {
+      userText: intent,
+      imageAttachments,
+    })
+    if (sent) clearDraftImages()
   } catch (error) {
     console.error('Failed to create session:', error)
+    composerHintVariant.value = 'error'
+    composerHint.value = formatErrorText(error)
   }
+}
+
+async function handlePastedFiles(files: File[]): Promise<void> {
+  try {
+    const added = await validatePastedImageBatch(files, draftImages.value)
+    draftImages.value = [...draftImages.value, ...added]
+    imagePasteError.value = ''
+  } catch (error) {
+    imagePasteError.value = imageValidationMessage(error)
+  }
+}
+
+async function handleNativeImagePaste(): Promise<void> {
+  try {
+    const payload = await clipboardApi.readImage()
+    if (!payload) return
+    await handlePastedFiles([nativeClipboardImageToFile(payload)])
+  } catch (error) {
+    imagePasteError.value = formatErrorText(error)
+  }
+}
+
+function removeDraftImage(id: string): void {
+  const target = draftImages.value.find((image) => image.id === id)
+  if (target) revokeDraftChatImage(target)
+  draftImages.value = draftImages.value.filter((image) => image.id !== id)
+  imagePasteError.value = ''
+}
+
+function clearDraftImages(): void {
+  draftImages.value.forEach(revokeDraftChatImage)
+  draftImages.value = []
+  inputMsg.value = ''
+  imagePasteError.value = ''
+}
+
+function imageValidationMessage(error: unknown): string {
+  if (!(error instanceof ChatImageValidationError)) return formatErrorText(error)
+  return t(`composer.image.error.${error.code}`)
 }
 
 // 跑一轮：链尾会话作为 continuationOf 串接同一对话（优先复用 opencode 会话；必要时保留转录）。
@@ -607,6 +693,7 @@ async function runPreflightCheck(): Promise<boolean> {
       productLanguage: currentProductLanguage.value,
       intent: t('chat.preflight.title'),
       project: projectStore.currentProject,
+      requiresImageInput: draftImages.value.length > 0,
     }) as { status?: string; blocker?: string | null }
     if (preview.status === 'blocked' && preview.blocker) {
       preflightBlocker.value = formatErrorText(preview.blocker)
@@ -623,9 +710,13 @@ async function runPreflightCheck(): Promise<boolean> {
 async function runIntent(
   intent: string,
   displayText: string,
-  options: { userMetadata?: Record<string, unknown> } = {},
-): Promise<void> {
-  if (composerBusy.value) return
+  options: {
+    userMetadata?: Record<string, unknown>
+    userText?: string
+    imageAttachments?: SessionImageAttachmentInput[]
+  } = {},
+): Promise<boolean> {
+  if (composerBusy.value) return false
   sendInFlight.value = true
   try {
     const modelPayload = buildChatSessionModelPayload()
@@ -638,7 +729,7 @@ async function runIntent(
     const executionEngine = settingsStore.agentExecution.engine || DEFAULT_AGENT_EXECUTION_ENGINE
 
     const ok = await runPreflightCheck()
-    if (!ok) return
+    if (!ok) return false
 
     const session = await createSession({
       ...modelPayload,
@@ -647,13 +738,19 @@ async function runIntent(
       project: projectStore.currentProject,
       intent,
       displayText,
+      imageAttachments: options.imageAttachments,
+      requiresImageInput: Boolean(options.imageAttachments?.length),
       continuationOf,
       thinkingLevel: thinkingLevel.value,
       timeoutMs: 1800000
     })
     await attachToSession(session.id, { fresh })
     // 在重置之后、实时事件到达之前推入用户气泡，保证它排在本轮 agent 输出前面。
-    appendUserSegment(displayText, options.userMetadata)
+    appendUserSegment(options.userText ?? displayText, {
+      ...options.userMetadata,
+      ...(session.imageAttachments?.length ? { imageAttachments: session.imageAttachments } : {}),
+    })
+    return true
   } finally {
     sendInFlight.value = false
   }
@@ -1556,6 +1653,7 @@ watch(inputMsg, (value) => {
 })
 
 onUnmounted(() => {
+  draftImages.value.forEach(revokeDraftChatImage)
   bottomSlotObserver?.disconnect()
   bottomSlotObserver = null
   registerTranscriptPersister(null)

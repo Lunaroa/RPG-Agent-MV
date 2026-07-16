@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import { sessions } from '../api/client.ts'
-import type { ProductLanguage, SessionSummary } from '@contract/types'
+import type { ProductLanguage, SessionImageAttachmentInput, SessionSummary } from '@contract/types'
 
 export type Session = SessionSummary
 
@@ -46,6 +46,8 @@ export function useSession() {
     continuationOf?: string
     thinkingLevel?: string
     timeoutMs?: number
+    imageAttachments?: SessionImageAttachmentInput[]
+    requiresImageInput?: boolean
   }): Promise<Session> {
     isRunning.value = true
     isStopped.value = false

@@ -13,7 +13,7 @@ export function isRawModelVisible(
 
 export function visibleProviderModels(
   provider: Pick<ProviderSummary, 'models' | 'hiddenModelIds'>,
-): Array<{ id: string; label: string }> {
+): NonNullable<ProviderSummary['models']> {
   const hidden = new Set(normalizedHiddenModelIds(provider))
   return (provider.models || []).filter((model) => !hidden.has(model.id))
 }

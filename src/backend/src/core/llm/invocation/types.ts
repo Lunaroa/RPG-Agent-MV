@@ -51,7 +51,7 @@ export interface CompatibleProviderSummary {
   baseUrl: string;
   defaultModel: string;
   credentialPresent: boolean;
-  models: Array<{ id: string; label: string }>;
+  models: Array<{ id: string; label: string; inputModalities?: string[] }>;
   hiddenModelIds: string[];
   supportedEngines?: AgentExecutionEngine[];
   presetKind?: string;

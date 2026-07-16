@@ -22,6 +22,14 @@ declare global {
           error?: string;
         }>;
       };
+      clipboard: {
+        readImage(): Promise<{
+          filename: string;
+          mime: string;
+          sizeBytes: number;
+          dataBase64: string;
+        } | null>;
+      };
       uiControl: {
         onCommand(callback: (payload: unknown) => void): () => void;
         sendResult(payload: unknown): void;
@@ -90,6 +98,7 @@ declare global {
         importPackageFromLibrary(assetIds: string[], parentMapId?: number | null, properties?: Record<string, unknown>, project?: string): Promise<unknown>;
         updateProperties(mapId: number, properties: Record<string, unknown>, project?: string): Promise<unknown>;
         reparent(mapId: number, parentId: number, project?: string): Promise<unknown>;
+        move(mapId: number, targetMapId: number, position: MapMovePosition, project?: string): Promise<unknown>;
         duplicate(mapId: number, parentId: number, project?: string): Promise<unknown>;
         remove(mapId: number, project?: string): Promise<unknown>;
         postTiles(mapId: number, edits: unknown[], project?: string): Promise<unknown>;
@@ -103,6 +112,7 @@ declare global {
         update(mapId: number, eventId: number, event: Record<string, unknown>, project?: string): Promise<unknown>;
         remove(mapId: number, eventId: number, project?: string): Promise<unknown>;
         duplicate(mapId: number, eventId: number, project?: string): Promise<unknown>;
+        search(query: string, project?: string): Promise<unknown>;
       };
       eventRegistry: {
         contracts(project?: string, filters?: Record<string, unknown>): Promise<unknown>;
@@ -241,7 +251,7 @@ function desktopApi(): Window['api'] {
 
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
-  MapTreeNode, MapIndex, TilesetSummary, MapPayload, TileEdit, EventReport,
+  MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
@@ -258,11 +268,13 @@ import type {
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractiveBattleTestBattler,
+  ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
+  PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
-  MapTreeNode, MapIndex, TilesetSummary, MapPayload, TileEdit, EventReport,
+  MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
@@ -279,18 +291,11 @@ export type {
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractiveBattleTestBattler,
+  ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
+  PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 };
-
-export interface ProjectInfo {
-  name: string;
-  path: string;
-  isDefault: boolean;
-  source?: 'workspace' | 'registered';
-  dataDir?: string;
-  layout?: 'www-data' | 'data';
-}
 
 export interface ProjectRegistrationResult {
   project: ProjectInfo | null;
@@ -299,85 +304,6 @@ export interface ProjectRegistrationResult {
 
 export interface ProjectRemovalResult {
   projects: ProjectInfo[];
-}
-
-export interface ManagedPluginEntry {
-  index: number;
-  name: string;
-  status: boolean;
-  description: string;
-  parameters: Record<string, unknown>;
-  parameterCount: number;
-  fileName: string;
-  fileRelativePath: string;
-  fileExists: boolean;
-  parameterSchema?: PluginParameterSchema;
-  parameterSchemaWarnings: string[];
-  commandHints: PluginCommandHint[];
-}
-
-export interface PluginParameterSchemaField {
-  key: string;
-  label: string;
-  kind: 'text' | 'number' | 'boolean' | 'select' | 'json' | 'struct' | 'array';
-  description: string;
-  rawType?: string;
-  defaultValue?: unknown;
-  options?: Array<{ value: string | number | boolean; label: string }>;
-  min?: number;
-  max?: number;
-  directory?: string;
-  required?: boolean;
-  structName?: string;
-  fields?: PluginParameterSchemaField[];
-  item?: PluginParameterSchemaField;
-}
-
-export interface PluginParameterSchema {
-  source: 'rmmv-plugin-header';
-  fields: PluginParameterSchemaField[];
-  structs?: Record<string, PluginParameterSchemaField[]>;
-  warnings: string[];
-}
-
-export interface PluginCommandHint {
-  pluginName: string;
-  command: string;
-  source: 'command-comparison' | 'switch-command-case';
-  evidence: string;
-}
-
-export interface ManagedPluginFile {
-  name: string;
-  fileName: string;
-  relativePath: string;
-  exists: boolean;
-  staged: boolean;
-  deleted: boolean;
-  size: number | null;
-}
-
-export interface PluginValidationIssue {
-  severity: 'error' | 'warn';
-  code: string;
-  message: string;
-  pluginName?: string;
-  index?: number;
-  relativePath?: string;
-}
-
-export interface PluginValidationResult {
-  ok: boolean;
-  issues: PluginValidationIssue[];
-}
-
-export interface PluginConfigurationResult {
-  project: string;
-  relativePath: string;
-  exists: boolean;
-  plugins: ManagedPluginEntry[];
-  pluginFiles: ManagedPluginFile[];
-  validation: PluginValidationResult;
 }
 
 // 默认工程：后端 resolveProjectPath 把空值兜底到 projects/Project，
@@ -495,6 +421,12 @@ export type GetContextUsageResult =
     messageParams?: Record<string, string | number>;
   };
 
+export const clipboard = {
+  readImage() {
+    return desktopApi().clipboard.readImage();
+  },
+};
+
 export const sessions = {
   list() {
     return desktopApi().sessions.list();
@@ -606,6 +538,9 @@ export const maps = {
   },
   reparent(mapId: number, parentId: number, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.reparent(mapId, parentId, project);
+  },
+  move(mapId: number, targetMapId: number, position: MapMovePosition, project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.move(mapId, targetMapId, position, project);
   },
   duplicate(mapId: number, parentId: number, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.duplicate(mapId, parentId, project);
@@ -851,11 +786,22 @@ export interface ProjectOverview {
     summary: {
       audio: Record<string, { exists: boolean; count: number }>;
       images: Record<string, { exists: boolean; count: number }>;
-      animations: { total: number; named: number; withMissingSheets: number };
+      effects: { exists: boolean; count: number };
+      animations: { total: number; named: number; withMissingSheets: number; withMissingEffects: number };
     };
     audio: Record<string, ProjectOverviewAudioBucket>;
     images: Record<string, ProjectOverviewImageBucket>;
-    animations: Array<{ id: number; name: string; animation1Name: string; animation2Name: string; missingSheets: string[] }>;
+    effects: ProjectOverviewImageBucket;
+    animations: Array<{
+      id: number;
+      name: string;
+      kind: 'particle' | 'mv-compatible';
+      effectName: string;
+      animation1Name: string;
+      animation2Name: string;
+      missingSheets: string[];
+      missingEffects: string[];
+    }>;
   };
 }
 
@@ -881,6 +827,9 @@ export const events = {
   },
   duplicate(mapId: number, eventId: number, project: string = DEFAULT_PROJECT) {
     return desktopApi().events.duplicate(mapId, eventId, project) as Promise<EventReport>;
+  },
+  search(query: string, project: string = DEFAULT_PROJECT) {
+    return desktopApi().events.search(query, project) as Promise<EventSearchResult>;
   },
 };
 

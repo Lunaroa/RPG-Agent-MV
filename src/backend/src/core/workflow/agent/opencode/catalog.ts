@@ -8,6 +8,7 @@ export type OpencodeCatalogProviderSource = "opencode";
 export interface OpencodeCatalogModel {
   id: string;
   label: string;
+  inputModalities?: string[];
   limit?: { context?: number; output?: number };
 }
 
@@ -86,9 +87,11 @@ function mapModels(rawModels: unknown): OpencodeCatalogModel[] {
     const limitRecord = asRecord(model.limit);
     const context = positiveInteger(limitRecord.context);
     const output = positiveInteger(limitRecord.output);
+    const inputModalities = readInputModalities(model);
     out.push({
       id: modelId,
       label: asString(model.name) || modelId,
+      ...(inputModalities ? { inputModalities } : {}),
       ...(context || output
         ? {
           limit: {
@@ -100,6 +103,21 @@ function mapModels(rawModels: unknown): OpencodeCatalogModel[] {
     });
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function readInputModalities(model: Record<string, unknown>): string[] | undefined {
+  const capabilities = asRecord(model.capabilities);
+  if (Object.hasOwn(capabilities, 'input')) {
+    const input = asRecord(capabilities.input);
+    return Object.entries(input)
+      .filter(([, enabled]) => enabled === true)
+      .map(([modality]) => modality);
+  }
+  const modalities = asRecord(model.modalities);
+  if (Array.isArray(modalities.input)) {
+    return [...new Set(modalities.input.map(asString).filter(Boolean))];
+  }
+  return undefined;
 }
 
 export function mapOpencodeProviderList(data: unknown): OpencodeCatalogProvider[] {

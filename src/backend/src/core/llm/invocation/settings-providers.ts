@@ -37,8 +37,8 @@ function supportsEngine(
   return supportedEnginesFor(provider).includes(engine);
 }
 
-function seedModels(entry: ProviderSeedEntry): Array<{ id: string; label: string }> {
-  const out: Array<{ id: string; label: string }> = [];
+function seedModels(entry: ProviderSeedEntry): Array<{ id: string; label: string; inputModalities?: string[] }> {
+  const out: Array<{ id: string; label: string; inputModalities?: string[] }> = [];
   for (const model of entry.models || []) {
     if (typeof model === "string") {
       const id = model.trim();
@@ -48,7 +48,11 @@ function seedModels(entry: ProviderSeedEntry): Array<{ id: string; label: string
     if (!model || typeof model !== "object") continue;
     const id = String(model.id || "").trim();
     if (!id) continue;
-    out.push({ id, label: String(model.label || id) });
+    out.push({
+      id,
+      label: String(model.label || id),
+      ...(Array.isArray(model.inputModalities) ? { inputModalities: [...model.inputModalities] } : {}),
+    });
   }
   return out;
 }
@@ -83,7 +87,11 @@ function fromRegistry(
     baseUrl: provider.baseUrl,
     defaultModel: provider.models[0]?.id || "",
     credentialPresent: provider.credentialPresent,
-    models: provider.models.map((model) => ({ id: model.id, label: model.label || model.id })),
+    models: provider.models.map((model) => ({
+      id: model.id,
+      label: model.label || model.id,
+      ...(model.inputModalities ? { inputModalities: [...model.inputModalities] } : {}),
+    })),
     hiddenModelIds: provider.hiddenModelIds || [],
     supportedEngines: (provider.supportedEngines as AgentExecutionEngine[] | undefined)
       || supportedEnginesFor(provider),

@@ -1,7 +1,18 @@
 <template>
   <!-- User message bubble, right aligned. -->
   <div v-if="segment.type === 'user'" class="seg-user">
-    <div class="user-bubble">{{ segment.content }}</div>
+    <div class="user-message-content">
+      <div v-if="userImages.length" class="user-image-grid">
+        <img
+          v-for="image in userImages"
+          :key="image.id"
+          :src="image.url"
+          :alt="image.filename"
+          loading="lazy"
+        />
+      </div>
+      <div v-if="segment.content" class="user-bubble">{{ segment.content }}</div>
+    </div>
   </div>
 
   <!-- Agent text: stream as plain text, then render markdown once the segment settles. -->
@@ -134,6 +145,7 @@
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { ArrowRight, Loading, Select, CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
 import type { ChatSegment, EventPreviewItem } from '../composables/useSessionStream'
+import type { SessionImageAttachment } from '@contract/types'
 import { useI18n } from '../i18n'
 import { renderMarkdown } from '../utils/markdown'
 import { summarizeToolCall } from '../utils/toolPresentation'
@@ -150,6 +162,16 @@ const props = defineProps<{
 const textHtml = ref('')
 const reasonHtml = ref('')
 const { language, t } = useI18n()
+const userImages = computed<SessionImageAttachment[]>(() => {
+  const images = props.segment.metadata?.imageAttachments
+  if (!Array.isArray(images)) return []
+  return images.filter((image): image is SessionImageAttachment => Boolean(
+    image
+    && typeof image === 'object'
+    && typeof (image as SessionImageAttachment).id === 'string'
+    && typeof (image as SessionImageAttachment).url === 'string',
+  ))
+})
 
 function renderNow(): void {
   if (props.segment.type === 'text') {

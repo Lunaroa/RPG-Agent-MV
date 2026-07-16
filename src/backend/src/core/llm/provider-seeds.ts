@@ -19,7 +19,12 @@ export interface ProviderSeedEntry {
   protocol?: string;
   baseUrl: string;
   modelsUrl?: string;
-  models?: Array<string | { id: string; label?: string; limit?: { context?: number; output?: number } }>;
+  models?: Array<string | {
+    id: string;
+    label?: string;
+    inputModalities?: string[];
+    limit?: { context?: number; output?: number };
+  }>;
   supportedEngines?: string[];
   opencodeAuth?: OpencodeAuthConfig;
   disableModelFetch?: boolean;
@@ -101,6 +106,9 @@ function normalizeModels(models: ProviderSeedEntry["models"]): NonNullable<Provi
     };
     const limit = typeof model === "string" ? undefined : normalizeModelLimit(model.limit);
     if (limit) entry.limit = limit;
+    if (typeof model !== "string" && Array.isArray(model.inputModalities)) {
+      entry.inputModalities = [...new Set(model.inputModalities.map(String).filter(Boolean))];
+    }
     out.push(entry);
   }
   return out;
@@ -216,6 +224,7 @@ function catalogProviderToPatch(
     };
     const limit = normalizeModelLimit(model.limit);
     if (limit) entry.limit = limit;
+    if (Array.isArray(model.inputModalities)) entry.inputModalities = [...model.inputModalities];
     models.push(entry);
   }
 
@@ -423,6 +432,9 @@ function mergeSeedModels(
       merged.push({
         ...record,
         ...(seed?.limit ? { limit: seed.limit } : {}),
+        ...(seed && Object.hasOwn(seed, 'inputModalities')
+          ? { inputModalities: seed.inputModalities }
+          : {}),
       });
     } else {
       merged.push(seed ?? { id, label: id });

@@ -4,6 +4,7 @@ import { normalizeApiKey } from "./list-models-resolve.ts";
 interface ModelEntry {
   id: string;
   label: string;
+  inputModalities?: string[];
   limit?: {
     context?: number;
     output?: number;
@@ -147,6 +148,8 @@ function serializeModelEntries(models: ModelEntry[] | undefined): ModelEntry[] {
     const id = String(entry.id || "");
     if (!id) continue;
     const serialized: ModelEntry = { id, label: entry.label ? String(entry.label) : id };
+    const inputModalities = normalizeInputModalities(entry.inputModalities);
+    if (inputModalities) serialized.inputModalities = inputModalities;
     const limit = normalizeModelLimit(entry.limit);
     if (limit) serialized.limit = limit;
     out.push(serialized);
@@ -188,12 +191,19 @@ function normalizeModels(models: unknown[]): ModelEntry[] {
     } else if (typeof m === "object" && (m as Record<string, unknown>).id) {
       const obj = m as Record<string, unknown>;
       const entry: ModelEntry = { id: String(obj.id), label: obj.label ? String(obj.label) : String(obj.id) };
+      const inputModalities = normalizeInputModalities(obj.inputModalities);
+      if (inputModalities) entry.inputModalities = inputModalities;
       const limit = normalizeModelLimit(obj.limit);
       if (limit) entry.limit = limit;
       out.push(entry);
     }
   }
   return out;
+}
+
+function normalizeInputModalities(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return [...new Set(value.map(String).map((item) => item.trim()).filter(Boolean))];
 }
 
 function positiveInteger(value: unknown): number | undefined {
@@ -216,6 +226,17 @@ function normalizeModelLimit(value: unknown): ModelEntry["limit"] | undefined {
 
 function normalizeHiddenModelIds(modelIds: unknown[]): string[] {
   return [...new Set(modelIds.map(String).filter(Boolean))];
+}
+
+function modelImageInputCapability(
+  provider: Pick<ProviderRecord, 'models'> | null | undefined,
+  modelId: string,
+): boolean | null {
+  const model = provider?.models?.find((entry) => (
+    typeof entry === 'string' ? entry === modelId : entry?.id === modelId
+  ));
+  if (!model || typeof model === 'string' || model.inputModalities === undefined) return null;
+  return model.inputModalities.includes('image');
 }
 
 function normalizeOpencodeAuth(
@@ -252,5 +273,6 @@ export {
   asyncUpsertProvider as upsertProvider,
   asyncRemoveProvider as removeProvider,
   serializeProvider,
-  maskValue
+  maskValue,
+  modelImageInputCapability,
 };

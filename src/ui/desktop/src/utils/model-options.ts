@@ -1,4 +1,5 @@
 import type { ProviderSummary } from '../api/client'
+import type { ModelInputModality } from '@contract/types'
 
 const KNOWN_MODEL_DISPLAY_LABELS: Record<string, string> = {
   'minimax-m3': 'MiniMax M3',
@@ -13,7 +14,7 @@ const BRAND_TOKENS: Record<string, string> = {
   kimi: 'Kimi',
 }
 
-export type ModelOption = { id: string; label: string }
+export type ModelOption = { id: string; label: string; inputModalities?: ModelInputModality[] }
 
 export function sanitizeModelIdForProvider(
   _provider: Pick<ProviderSummary, 'id'> | null | undefined,
@@ -65,6 +66,10 @@ export function normalizeModelOptions(
 ): ModelOption[] {
   return (models || []).map((model) => {
     const id = sanitizeModelIdForProvider(null, model.id)
-    return { id, label: formatModelDisplayLabel(id, model) }
+    return {
+      id,
+      label: formatModelDisplayLabel(id, model),
+      ...(model.inputModalities ? { inputModalities: [...model.inputModalities] } : {}),
+    }
   })
 }

@@ -214,4 +214,46 @@ describe("renderOpencodeUserPrompt plan path injection", () => {
     // The memory preamble precedes the project label.
     assert.ok(prompt.indexOf("FULL_PREAMBLE_BODY") < prompt.indexOf("Project: projects/Demo"));
   });
+
+  test("injects the detected MZ engine context on fresh and continuation turns", () => {
+    const baseContext = {
+      task: {
+        intent: "Create a project-compatible event",
+        project: "projects/sample",
+        mapId: null,
+        failureKind: null,
+        taskId: null,
+        files: [],
+        conversationHistory: null,
+      },
+      registry: { registryPath: "", agents: {}, profiles: {} } as never,
+      agent: { id: "default" } as never,
+      profileId: "default",
+      workflowRoot: "/tmp/workflow",
+      planFilePath: null,
+      projectEngine: {
+        engine: "rpg-maker-mz" as const,
+        engineVersion: "1.10.0",
+        tileSize: 24,
+        screenWidth: 960,
+        screenHeight: 540,
+        faceSize: 144,
+        iconSize: 32,
+      },
+    };
+
+    const freshPrompt = renderOpencodeUserPrompt({
+      ...baseContext,
+      opencodeSessionId: null,
+    });
+    const continuationPrompt = renderOpencodeUserPrompt({
+      ...baseContext,
+      opencodeSessionId: "opencode-session-123",
+    });
+
+    for (const prompt of [freshPrompt, continuationPrompt]) {
+      assert.match(prompt, /RPG Maker engine: MZ 1\.10\.0; tile 24px; screen 960x540\./);
+      assert.match(prompt, /Generate and validate event commands only for this engine\./);
+    }
+  });
 });

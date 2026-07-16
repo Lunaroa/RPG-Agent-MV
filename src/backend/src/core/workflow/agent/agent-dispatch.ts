@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 
 import { writeJson } from "../../rmmv/json.ts";
+import { inspectRmmvProject } from "../../rmmv/rmmv-layout.ts";
+import type { RpgMakerEngine } from "../../rmmv/rpg-maker-engine.ts";
 import { resolveShippedPath, resolveWorkflowRoot } from "../../workspace-paths.ts";
 import * as providerRegistry from "../../llm/provider-registry.ts";
 import { materializeOpencodeEnv } from "../../llm/opencode/materialize-env.ts";
@@ -37,7 +39,7 @@ import { readMemorySettings } from "../../memory/memory-settings.ts";
 import {
   buildOpencodeRuntimeConfig,
 } from "./opencode/config.ts";
-import { runOpencodeSession } from "./opencode/runtime.ts";
+import { runOpencodeSession, type OpencodeImageAttachment } from "./opencode/runtime.ts";
 import type { ProductLanguage } from "../../../../../contract/types.ts";
 import { normalizeProductLanguage } from "../../../../../contract/i18n.ts";
 import { backendText } from "../../i18n/messages.ts";
@@ -87,6 +89,7 @@ interface DispatchOptions {
   alreadySurfaced?: string[];
   /** Internal-only: expose the exact opencode run context to the desktop session runtime. */
   onOpencodeRunContext?: (context: OpencodeRunContext) => void;
+  imageAttachments?: OpencodeImageAttachment[];
 }
 
 export interface OpencodeRunContext {
@@ -281,6 +284,17 @@ interface UserPromptContext {
   agent: AgentConfig;
   profileId: string | null;
   workflowRoot: string;
+  projectEngine?: AgentProjectEngineContext | null;
+}
+
+interface AgentProjectEngineContext {
+  engine: RpgMakerEngine;
+  engineVersion: string | null;
+  tileSize: number;
+  screenWidth: number;
+  screenHeight: number;
+  faceSize: number;
+  iconSize: number;
 }
 
 interface BuildRuntimeCommandContext {
@@ -392,6 +406,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
   });
   const memoryPreamble = memory.preamble;
   const surfacedMemorySlugs = memory.surfacedSlugs;
+  const projectEngine = readAgentProjectEngineContext(task.project);
   const userPrompt = renderOpencodeUserPrompt({
     task,
     productLanguage,
@@ -403,6 +418,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     planFilePath: options.planFilePath ?? null,
     currentProgressPreamble: options.currentProgressPreamble ?? null,
     memoryPreamble,
+    projectEngine,
   });
   const runtimeCommand: RuntimeCommand | null = profile
     ? buildRuntimeCommand(profile, executionEngine, {
@@ -503,7 +519,7 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
   if (command.streamFormat === "opencode-sse") {
     const executable = resolveExecutable(command.command, spawnEnv);
     try {
-      const opencodeConfig = await resolveOpencodeConfig(dispatch);
+      const opencodeConfig = await resolveOpencodeConfig(dispatch, Boolean(options.imageAttachments?.length));
       const providerId = dispatch.sessionBinding?.providerId || String(dispatch.profile.provider || "");
       const modelId = dispatch.sessionBinding?.modelId || String(dispatch.profile.model || "");
       const timeoutMs = resolveTimeoutMs(options.timeoutMs, dispatch.execution.timeoutMs, 600000);
@@ -529,6 +545,7 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
         timeoutMs,
         productLanguage: dispatch.productLanguage,
         signal: options.signal,
+        imageAttachments: options.imageAttachments,
       }, () => {});
       return {
         ...dispatch,
@@ -581,7 +598,10 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
   };
 }
 
-async function resolveOpencodeConfig(dispatch: DispatchResult): Promise<Record<string, unknown>> {
+async function resolveOpencodeConfig(
+  dispatch: DispatchResult,
+  imageInputRequired = false,
+): Promise<Record<string, unknown>> {
   const binding = dispatch.sessionBinding;
   const providerId = binding?.providerId || String(dispatch.profile?.provider || "").trim();
   const modelId = binding?.modelId || String(dispatch.profile?.model || "").trim();
@@ -608,6 +628,7 @@ async function resolveOpencodeConfig(dispatch: DispatchResult): Promise<Record<s
     productLanguage: dispatch.productLanguage,
     memoryEnabled: readMemorySettings().enabled,
     readOnlyTools: dispatch.readOnlyTools === true,
+    imageInputRequired,
   });
 }
 
@@ -660,7 +681,7 @@ function startOpencodeDispatchProcess(
     };
 
     try {
-      const opencodeConfig = await resolveOpencodeConfig(dispatch);
+      const opencodeConfig = await resolveOpencodeConfig(dispatch, Boolean(options.imageAttachments?.length));
       const providerId = dispatch.sessionBinding?.providerId || String(dispatch.profile?.provider || "");
       const modelId = dispatch.sessionBinding?.modelId || String(dispatch.profile?.model || "");
       const timeoutMs = resolveTimeoutMs(options.timeoutMs, dispatch.execution!.timeoutMs, 600000);
@@ -686,6 +707,7 @@ function startOpencodeDispatchProcess(
         timeoutMs,
         productLanguage: dispatch.productLanguage,
         signal: controller.signal,
+        imageAttachments: options.imageAttachments,
       }, onEvent);
       const finalStatus = result.status === "pass" ? "pass" : stopped ? "stopped" : "blocked";
       return {
@@ -802,7 +824,35 @@ function buildAgentScopeEnv(dispatch: DispatchResult, agentCwd: string): Record<
   };
   const planFilePath = String(dispatch.planFilePath || "").trim();
   if (planFilePath) env.AGENT_RPG_SESSION_PLAN_PATH = planFilePath;
+  const projectEngine = readAgentProjectEngineContext(dispatch.task?.project || null);
+  if (projectEngine) {
+    env.AGENT_RPG_ENGINE = projectEngine.engine;
+    env.AGENT_RPG_ENGINE_VERSION = projectEngine.engineVersion || "";
+    env.AGENT_RPG_TILE_SIZE = String(projectEngine.tileSize);
+    env.AGENT_RPG_SCREEN_WIDTH = String(projectEngine.screenWidth);
+    env.AGENT_RPG_SCREEN_HEIGHT = String(projectEngine.screenHeight);
+    env.AGENT_RPG_FACE_SIZE = String(projectEngine.faceSize);
+    env.AGENT_RPG_ICON_SIZE = String(projectEngine.iconSize);
+  }
   return env;
+}
+
+function readAgentProjectEngineContext(project: string | null | undefined): AgentProjectEngineContext | null {
+  if (!project) return null;
+  try {
+    const manifest = inspectRmmvProject(project);
+    return {
+      engine: manifest.engine,
+      engineVersion: manifest.engineVersion,
+      tileSize: manifest.tileSize,
+      screenWidth: manifest.screenWidth,
+      screenHeight: manifest.screenHeight,
+      faceSize: manifest.faceSize,
+      iconSize: manifest.iconSize,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -957,6 +1007,15 @@ export function renderOpencodeUserPrompt(context: OpencodeUserPromptContext): st
     if (context.task.mapId) {
       lines.push(`${backendText('prompt.mapIdLabel', AGENT_PROMPT_LANGUAGE)}: ${context.task.mapId}`);
     }
+  }
+  if (context.projectEngine) {
+    const label = context.projectEngine.engine === "rpg-maker-mz" ? "MZ" : "MV";
+    lines.push(
+      `RPG Maker engine: ${label}${context.projectEngine.engineVersion ? ` ${context.projectEngine.engineVersion}` : ""}; `
+      + `tile ${context.projectEngine.tileSize}px; screen ${context.projectEngine.screenWidth}x${context.projectEngine.screenHeight}. `
+      + `Face ${context.projectEngine.faceSize}px; icon ${context.projectEngine.iconSize}px. `
+      + "Generate and validate event commands only for this engine.",
+    );
   }
   const planLines = buildSessionPlanPathPromptLines(String(context.planFilePath || ""));
   if (planLines.length > 0) lines.push(...planLines);

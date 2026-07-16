@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('api', {
     checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
   },
 
+  clipboard: {
+    readImage: () => ipcRenderer.invoke('clipboard:readImage'),
+  },
+
   uiControl: {
     onCommand: (callback: (payload: unknown) => void) => {
       const handler = (_event: unknown, payload: unknown) => callback(payload);
@@ -92,6 +96,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('maps:updateProperties', mapId, properties, project),
     reparent: (mapId: number, parentId: number, project?: string) =>
       ipcRenderer.invoke('maps:reparent', mapId, parentId, project),
+    move: (mapId: number, targetMapId: number, position: 'before' | 'after' | 'inside', project?: string) =>
+      ipcRenderer.invoke('maps:move', mapId, targetMapId, position, project),
     duplicate: (mapId: number, parentId: number, project?: string) =>
       ipcRenderer.invoke('maps:duplicate', mapId, parentId, project),
     remove: (mapId: number, project?: string) => ipcRenderer.invoke('maps:remove', mapId, project),
@@ -116,6 +122,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('events:remove', mapId, eventId, project),
     duplicate: (mapId: number, eventId: number, project?: string) =>
       ipcRenderer.invoke('events:duplicate', mapId, eventId, project),
+    search: (query: string, project?: string) => ipcRenderer.invoke('events:search', query, project),
   },
 
   eventRegistry: {

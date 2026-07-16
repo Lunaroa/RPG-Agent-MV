@@ -2,17 +2,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type {
+  EventSearchResult,
   MapIndex,
+  MapMovePosition,
   MapPayload,
   RmmvAudioSettings,
   RmmvMapEncounter,
+  RpgMakerEngine,
   RmmvSystemPosition,
   RmmvSystemPositionTarget,
   TilesetSummary,
   TileEdit,
 } from '../../../../contract/types.ts';
 import { readJson } from '../rmmv/json.ts';
+import { validateEventCommandList } from '../rmmv/event-command-registry.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
+import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { applyBrushEdit } from '../workflow/map/map-brush-edit.ts';
 import { projectAssetUrl } from './asset-service.ts';
 import { getMapLibraryEntry, mapLibraryIndexPath } from './library-service.ts';
@@ -34,6 +39,7 @@ import {
   mapPackageTransferIdsRemapped,
   mapParallaxImageMissing,
   mapPositionTargetInvalid,
+  mapProjectParallaxImageMissing,
   mapProjectTilesetImageMissing,
   mapSizeInvalid,
   mapSourceTilesetMissing,
@@ -47,6 +53,7 @@ import { resolveLocalSourcePath } from './local-assets-service.ts';
 import { prepareRmmvPlaytestPlan } from './runtime-deploy-service.ts';
 
 interface LibraryImportContext {
+  engine: RpgMakerEngine;
   mapInfos: any[];
   tilesets: any[];
   tilesetRegistry: Map<string, number>;
@@ -92,6 +99,7 @@ export function buildTilesetIndex(workflowRoot: string, project: string): { proj
 }
 
 export function buildMapPayload(workflowRoot: string, project: string, mapId: number): MapPayload {
+  const manifest = inspectRmmvProject(project);
   const dataDir = resolveDataDir(project);
   const mapInfosFile = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'))
     || path.join(dataDir, 'MapInfos.json');
@@ -110,6 +118,13 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
   const names = tileset && Array.isArray(tileset.tilesetNames) ? tileset.tilesetNames : [];
   return {
     project,
+    engine: manifest.engine,
+    engineVersion: manifest.engineVersion,
+    tileSize: manifest.tileSize,
+    screenWidth: manifest.screenWidth,
+    screenHeight: manifest.screenHeight,
+    faceSize: manifest.faceSize,
+    iconSize: manifest.iconSize,
     info,
     map: {
       ...map,
@@ -119,6 +134,9 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
       data: Array.isArray(map.data) ? map.data : [],
       events: Array.isArray(map.events) ? map.events : [],
     },
+    parallaxImageUrl: map.parallaxName && map.parallaxShow
+      ? projectParallaxImageUrl(workflowRoot, project, String(map.parallaxName))
+      : null,
     tileset: tileset ? {
       id: Number(tileset.id),
       name: String(tileset.name || ''),
@@ -173,6 +191,111 @@ export function reparentMapDraft(workflowRoot: string, project: string, mapId: n
   const next = { ...info, parentId, order: nextMapOrder(context.mapInfos, parentId) };
   writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), upsertMapInfo(context.mapInfos, next));
   return { mapId, info: next, staging: getProjectStagingStatus(workflowRoot, project) };
+}
+
+export function moveMapDraft(
+  workflowRoot: string,
+  project: string,
+  mapId: number,
+  targetMapId: number,
+  position: MapMovePosition,
+) {
+  if (!Number.isInteger(mapId) || mapId <= 0) throw new Error('mapId must be a positive integer');
+  if (!Number.isInteger(targetMapId) || targetMapId <= 0) throw new Error('targetMapId must be a positive integer');
+  if (!['before', 'after', 'inside'].includes(position)) throw new Error(`Unsupported map move position: ${String(position)}`);
+  if (mapId === targetMapId) throw new Error('A map cannot be moved relative to itself');
+
+  const context = readProjectData(workflowRoot, project);
+  const source = context.mapInfos[mapId];
+  const target = context.mapInfos[targetMapId];
+  if (!source) throw new Error(mapInfoNotFound(mapId));
+  if (!target) throw new Error(mapInfoNotFound(targetMapId));
+  const oldParentId = Number(source.parentId || 0);
+  const parentId = position === 'inside' ? targetMapId : Number(target.parentId || 0);
+  assertMapParentDoesNotCreateCycle(context.mapInfos, mapId, parentId);
+
+  const infos = context.mapInfos.slice();
+  infos[mapId] = { ...source, parentId };
+  const siblings = infos
+    .filter(Boolean)
+    .filter((info: any) => Number(info.parentId || 0) === parentId && Number(info.id) !== mapId)
+    .sort(compareMapInfoOrder)
+    .map((info: any) => Number(info.id));
+  if (position === 'inside') {
+    siblings.push(mapId);
+  } else {
+    const targetIndex = siblings.indexOf(targetMapId);
+    if (targetIndex < 0) throw new Error('Map move target is not in the expected sibling group');
+    siblings.splice(position === 'before' ? targetIndex : targetIndex + 1, 0, mapId);
+  }
+
+  const ordered = normalizeMapTreeOrder(infos, new Map([[parentId, siblings]]));
+  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), ordered);
+  return {
+    mapId,
+    targetMapId,
+    position,
+    oldParentId,
+    parentId,
+    maps: buildMapIndex(workflowRoot, project).maps,
+    staging: getProjectStagingStatus(workflowRoot, project),
+  };
+}
+
+export function searchProjectEvents(
+  workflowRoot: string,
+  project: string,
+  rawQuery: string,
+  limit = 200,
+): EventSearchResult {
+  const query = String(rawQuery || '').trim();
+  if (!query) return { project: path.resolve(project), query: '', hits: [], truncated: false };
+  if (query.length > 200) throw new Error('Event search query must be 200 characters or fewer');
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error('Event search limit must be an integer from 1 to 1000');
+  const needle = query.toLocaleLowerCase();
+  const idMatch = /^#?0*(\d+)$/.exec(query);
+  const eventIdQuery = idMatch ? Number(idMatch[1]) : null;
+  const hits: EventSearchResult['hits'] = [];
+  let truncated = false;
+  const add = (hit: EventSearchResult['hits'][number]): void => {
+    if (hits.length >= limit) {
+      truncated = true;
+      return;
+    }
+    hits.push(hit);
+  };
+
+  for (const mapInfo of buildMapIndex(workflowRoot, project).maps) {
+    if (truncated) break;
+    const mapFile = getMapFileForRead(workflowRoot, project, mapInfo.id);
+    if (!mapFile || !fs.existsSync(mapFile)) continue;
+    const map = readJson(mapFile) as { events?: unknown[] };
+    for (const rawEvent of Array.isArray(map.events) ? map.events : []) {
+      if (truncated) break;
+      if (!rawEvent || typeof rawEvent !== 'object' || Array.isArray(rawEvent)) continue;
+      const event = rawEvent as Record<string, unknown>;
+      const eventId = Number(event.id);
+      if (!Number.isInteger(eventId) || eventId <= 0) continue;
+      const eventName = String(event.name || `EV${String(eventId).padStart(3, '0')}`);
+      const base = { mapId: mapInfo.id, mapName: mapInfo.name, eventId, eventName };
+      if (eventIdQuery === eventId) add({ ...base, pageIndex: null, commandIndex: null, matchKind: 'id', text: `#${eventId}` });
+      if (eventName.toLocaleLowerCase().includes(needle)) add({ ...base, pageIndex: null, commandIndex: null, matchKind: 'name', text: eventName });
+      const note = String(event.note || '');
+      if (note.toLocaleLowerCase().includes(needle)) add({ ...base, pageIndex: null, commandIndex: null, matchKind: 'note', text: summarizeSearchText(note) });
+      const pages = Array.isArray(event.pages) ? event.pages : [];
+      pages.forEach((rawPage, pageIndex) => {
+        if (truncated || !rawPage || typeof rawPage !== 'object' || Array.isArray(rawPage)) return;
+        const list = Array.isArray((rawPage as Record<string, unknown>).list) ? (rawPage as Record<string, unknown>).list as unknown[] : [];
+        list.forEach((rawCommand, commandIndex) => {
+          if (truncated || !rawCommand || typeof rawCommand !== 'object' || Array.isArray(rawCommand)) return;
+          const text = collectCommandSearchText((rawCommand as Record<string, unknown>).parameters);
+          if (!text.toLocaleLowerCase().includes(needle)) return;
+          add({ ...base, pageIndex, commandIndex, matchKind: 'command', text: summarizeSearchText(text) });
+        });
+      });
+    }
+  }
+  return { project: path.resolve(project), query, hits, truncated };
 }
 
 export function duplicateMapDraft(workflowRoot: string, project: string, sourceMapId: number, parentId: number) {
@@ -313,6 +436,14 @@ export function importMapPackageFromLibrary(
   const sourceInfos = readSourceMapInfos(items[0]?.entry, workflowRoot);
   const context = createLibraryImportContext(workflowRoot, project);
   const includeEvents = shouldIncludeMapEvents(properties);
+  if (includeEvents) {
+    for (const { entry } of items) {
+      validateImportedMapEvents(
+        readJson(firstLibraryMapFile(workflowRoot, entry)),
+        context.engine,
+      );
+    }
+  }
   const mergedDependencies = mergePackageDependencies(items.map((item) => item.entry), workflowRoot);
 
   const uniqueSourceTilesets = new Map<number, { entry: Record<string, any>; sourceMap: any }>();
@@ -424,6 +555,8 @@ function importMapDraftEntry(
   dependencyHost?: Record<string, any>,
 ) {
   const sourceMap = readJson(firstLibraryMapFile(workflowRoot, entry)) as any;
+  const includeEvents = shouldIncludeMapEvents(properties);
+  if (includeEvents) validateImportedMapEvents(sourceMap, context.engine);
   const tilesetId = ensureImportedTileset(
     workflowRoot,
     project,
@@ -452,7 +585,7 @@ function importMapDraftEntry(
   if (normalized.width !== map.width || normalized.height !== map.height) {
     map = resizeMapData(map, normalized.width, normalized.height);
   }
-  if (!shouldIncludeMapEvents(properties)) map = { ...map, events: blankMapEvents() };
+  if (!includeEvents) map = { ...map, events: blankMapEvents() };
   copyParallaxIfAvailable(workflowRoot, project, entry, map, warnings);
   const info = createMapInfo(mapId, normalized, context.mapInfos);
   context.mapInfos = upsertMapInfo(context.mapInfos, info);
@@ -473,7 +606,30 @@ function readProjectData(workflowRoot: string, project: string) {
 
 function createLibraryImportContext(workflowRoot: string, project: string): LibraryImportContext {
   const data = readProjectData(workflowRoot, project);
-  return { ...data, tilesetRegistry: new Map() };
+  return { engine: inspectRmmvProject(project).engine, ...data, tilesetRegistry: new Map() };
+}
+
+function validateImportedMapEvents(map: unknown, engine: RpgMakerEngine): void {
+  if (!map || typeof map !== 'object') return;
+  const events = Array.isArray((map as { events?: unknown }).events)
+    ? (map as { events: unknown[] }).events
+    : [];
+  events.forEach((event, eventIndex) => {
+    if (!event || typeof event !== 'object') return;
+    const pages = Array.isArray((event as { pages?: unknown }).pages)
+      ? (event as { pages: unknown[] }).pages
+      : [];
+    pages.forEach((page, pageIndex) => {
+      if (!page || typeof page !== 'object') return;
+      const list = (page as { list?: unknown }).list;
+      if (!Array.isArray(list)) return;
+      validateEventCommandList(
+        list,
+        `map.events[${eventIndex}].pages[${pageIndex}].list`,
+        engine,
+      );
+    });
+  });
 }
 
 function normalizeMapProperties(properties: Record<string, any>, tilesets: any[], defaults: Record<string, any> = {}) {
@@ -588,6 +744,81 @@ function createMapInfo(id: number, properties: Record<string, any>, infos: any[]
 function upsertMapInfo(infos: any[], info: any) { const next = infos.slice(); next[info.id] = info; return next; }
 function nextMapId(infos: any[]) { for (let id = 1; id < 10000; id += 1) if (!infos[id]) return id; throw new Error(mapNoAvailableId()); }
 function nextMapOrder(infos: any[], parentId: number) { return Math.max(0, ...infos.filter(Boolean).filter((info) => Number(info.parentId || 0) === Number(parentId || 0)).map((info) => Number(info.order) || 0)) + 1; }
+
+function compareMapInfoOrder(left: any, right: any): number {
+  return Number(left.order || 0) - Number(right.order || 0) || Number(left.id) - Number(right.id);
+}
+
+function assertMapParentDoesNotCreateCycle(infos: any[], mapId: number, parentId: number): void {
+  if (parentId === 0) return;
+  const seen = new Set<number>();
+  let cursor = parentId;
+  while (cursor !== 0) {
+    if (cursor === mapId) throw new Error('Map move would create a parent-child cycle');
+    if (seen.has(cursor)) throw new Error('MapInfos already contains a parent-child cycle');
+    seen.add(cursor);
+    const info = infos[cursor];
+    if (!info) throw new Error(mapInfoNotFound(cursor));
+    cursor = Number(info.parentId || 0);
+  }
+}
+
+function normalizeMapTreeOrder(infos: any[], overrides: Map<number, number[]>): any[] {
+  const next = infos.map((info) => info ? { ...info } : info);
+  const groups = new Map<number, number[]>();
+  for (const info of next.filter(Boolean)) {
+    const parentId = Number(info.parentId || 0);
+    const group = groups.get(parentId) || [];
+    group.push(Number(info.id));
+    groups.set(parentId, group);
+  }
+  for (const [parentId, ids] of groups) {
+    ids.sort((left, right) => compareMapInfoOrder(next[left], next[right]));
+    const override = overrides.get(parentId);
+    if (!override) continue;
+    if (override.length !== ids.length || new Set(override).size !== ids.length || override.some((id) => !ids.includes(id))) {
+      throw new Error('Map sibling order does not contain exactly the expected maps');
+    }
+    groups.set(parentId, [...override]);
+  }
+
+  let order = 1;
+  const visited = new Set<number>();
+  const visit = (parentId: number): void => {
+    for (const id of groups.get(parentId) || []) {
+      if (visited.has(id)) throw new Error('MapInfos contains a parent-child cycle');
+      visited.add(id);
+      next[id] = { ...next[id], order: order++ };
+      visit(id);
+    }
+  };
+  visit(0);
+  if (visited.size !== next.filter(Boolean).length) throw new Error('MapInfos contains an orphaned map or parent-child cycle');
+  return next;
+}
+
+function collectCommandSearchText(value: unknown): string {
+  const values: string[] = [];
+  const visit = (item: unknown): void => {
+    if (typeof item === 'string') {
+      if (item.trim()) values.push(item.trim());
+      return;
+    }
+    if (Array.isArray(item)) {
+      item.forEach(visit);
+      return;
+    }
+    if (!item || typeof item !== 'object') return;
+    Object.values(item as Record<string, unknown>).forEach(visit);
+  };
+  visit(value);
+  return values.join(' · ');
+}
+
+function summarizeSearchText(value: string): string {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
+}
 function firstTilesetId(tilesets: any[]) { return tilesets.find(Boolean)?.id || 1; }
 function audioObject(name: unknown): RmmvAudioSettings { return { name: String(name || ''), volume: 90, pitch: 100, pan: 0 }; }
 function clampInt(value: unknown, min: number, max: number, fallback: number) { const number = Number(value); return Number.isFinite(number) ? Math.max(min, Math.min(max, Math.round(number))) : fallback; }
@@ -634,6 +865,32 @@ function projectTilesetImageUrl(workflowRoot: string, project: string, name: str
     throw new Error(mapProjectTilesetImageMissing(name));
   }
   return projectAssetUrl(project, relative);
+}
+
+function projectParallaxImageUrl(workflowRoot: string, project: string, name: string): string {
+  const relative = projectImageRelativePath(workflowRoot, project, 'parallaxes', name);
+  if (!relative) throw new Error(mapProjectParallaxImageMissing(name));
+  return projectAssetUrl(project, relative);
+}
+
+function projectImageRelativePath(
+  workflowRoot: string,
+  project: string,
+  directory: 'parallaxes',
+  name: string,
+): string | null {
+  for (const relative of projectImageCandidates(project, directory, name)) {
+    if (getProjectFileForRead(workflowRoot, project, relative)) return relative;
+  }
+  return null;
+}
+
+function projectImageCandidates(project: string, directory: 'parallaxes', name: string): string[] {
+  const fileName = `${name}.png`;
+  const dataRelative = path.relative(path.resolve(project), resolveDataDir(project)).replace(/\\/g, '/');
+  const primary = dataRelative.startsWith('www/') ? `www/img/${directory}/${fileName}` : `img/${directory}/${fileName}`;
+  const fallback = primary.startsWith('www/') ? `img/${directory}/${fileName}` : `www/img/${directory}/${fileName}`;
+  return primary === fallback ? [primary] : [primary, fallback];
 }
 
 function projectTilesetImageRelativePath(workflowRoot: string, project: string, name: string): string | null {
@@ -960,7 +1217,8 @@ function blankMapEvents(): null[] {
 
 function copyParallaxIfAvailable(workflowRoot: string, project: string, entry: Record<string, any>, map: any, warnings: string[]) {
   if (!map.parallaxName) return;
-  const relative = `www/img/parallaxes/${map.parallaxName}.png`;
+  const gameRoot = inspectRmmvProject(project).resourceRootRelative;
+  const relative = `${gameRoot ? `${gameRoot}/` : ''}img/parallaxes/${map.parallaxName}.png`;
   if (getProjectFileForRead(workflowRoot, project, relative)) return;
   const source = resolveLibraryAssetPath(entry, 'parallaxes', map.parallaxName, workflowRoot);
   if (source) writeStagedProjectBuffer(workflowRoot, project, relative, fs.readFileSync(source));

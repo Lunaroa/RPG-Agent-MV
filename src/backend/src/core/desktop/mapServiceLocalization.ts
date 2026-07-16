@@ -78,6 +78,13 @@ export function mapProjectTilesetImageMissing(name: string, language?: ProductLa
   });
 }
 
+export function mapProjectParallaxImageMissing(name: string, language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `缺少远景图片：${name}.png（当前地图已启用“在编辑器中显示”，请检查项目 img/parallaxes 目录）`,
+    'en-US': `Missing parallax image: ${name}.png (this map has "Show in editor" enabled; check the project img/parallaxes directory)`,
+  });
+}
+
 export function mapInvalidSourceTilesetId(assetId: unknown, language?: ProductLanguage | null): string {
   return pickByLocale(resolveLanguage(language), {
     'zh-CN': `无效的源图块集 id（${assetId}）`,

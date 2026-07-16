@@ -258,7 +258,7 @@ function renderProbeHtml(plan: TestPlan): string {
     throw new Error("Timed out waiting for direct map data load for " + mapId);
   }
   async function ensureReady() {
-    await waitUntil(function (win) { return ready(win); }, "RPG Maker MV runtime readiness");
+    await waitUntil(function (win) { return ready(win); }, "RPG Maker runtime readiness");
   }
   async function setupNewGame() {
     const win = gameWindow();

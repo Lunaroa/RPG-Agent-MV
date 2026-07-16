@@ -95,8 +95,8 @@ export function projectNotRegistered(path: string, language?: ProductLanguage | 
 
 export function projectNotRunnable(path: string, detail: string, language?: ProductLanguage | null): string {
   return pickByLocale(resolveLanguage(language), {
-    'zh-CN': `不是可用的 RPG Maker MV 项目：${path}。${detail}`,
-    'en-US': `Not a usable RPG Maker MV project: ${path}. ${detail}`,
+    'zh-CN': `不是可用的 RPG Maker MV/MZ 项目：${path}。${detail}`,
+    'en-US': `Not a usable RPG Maker MV/MZ project: ${path}. ${detail}`,
   });
 }
 
@@ -106,8 +106,8 @@ export function projectNotEditable(path: string, missing: string[], language?: P
     'en-US': missing.join(', '),
   });
   return pickByLocale(resolveLanguage(language), {
-    'zh-CN': `不是可编辑的 RPG Maker MV 项目：${path}。缺少：${joined}`,
-    'en-US': `Not an editable RPG Maker MV project: ${path}. Missing: ${joined}`,
+    'zh-CN': `不是可编辑的 RPG Maker MV/MZ 项目：${path}。缺少：${joined}`,
+    'en-US': `Not an editable RPG Maker MV/MZ project: ${path}. Missing: ${joined}`,
   });
 }
 

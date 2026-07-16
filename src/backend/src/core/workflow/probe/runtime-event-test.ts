@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { readJson } from "../../rmmv/json.ts";
 import { resolveDataDir } from "../../rmmv/project-scanner.ts";
+import { inspectRmmvProject, type RmmvProjectManifest } from "../../rmmv/rmmv-layout.ts";
+import type { RpgMakerEngine } from "../../rmmv/rpg-maker-engine.ts";
 import { runNwjsRuntimeEventProbe } from "./nwjs-runtime-event-probe.ts";
 
 const DEFAULT_TIMEOUT_MS: number = 12000;
@@ -55,6 +57,7 @@ interface StaticReviewResult {
 interface RuntimeEventTestReport {
   generatedAt: string;
   projectRoot: string;
+  engine: RpgMakerEngine;
   mode: string;
   timeoutMs: number;
   status: string;
@@ -102,11 +105,18 @@ function buildRuntimeEventTest(projectRoot: string, testPlan: unknown, options: 
   const project: string = path.resolve(projectRoot);
   const mode: string = normalizeMode(options.mode || "static");
   const timeoutMs: number = normalizeTimeout(options.timeoutMs);
-  const plan: TestDefinition[] = normalizePlan(testPlan);
-  const staticReview: StaticReviewResult = reviewRuntimeTestPlan(project, plan);
+  const manifest = safeInspectProject(project);
+  const declaredEngine = declaredPlanEngine(testPlan);
+  if (manifest && declaredEngine && declaredEngine !== manifest.engine) {
+    throw new Error(`Runtime event test plan engine ${declaredEngine} does not match project engine ${manifest.engine}.`);
+  }
+  const engine = manifest?.engine || declaredEngine || "rpg-maker-mv";
+  const plan: TestDefinition[] = normalizePlan(testPlan, engine);
+  const staticReview: StaticReviewResult = reviewRuntimeTestPlan(project, plan, engine, manifest);
   const report: RuntimeEventTestReport = {
     generatedAt: new Date().toISOString(),
     projectRoot: project,
+    engine,
     mode,
     timeoutMs,
     status: staticReview.summary.blockingFindings > 0 ? "blocked" : "static-pass",
@@ -137,6 +147,7 @@ function buildRuntimeEventTest(projectRoot: string, testPlan: unknown, options: 
   }
 
   const runtime: RuntimeProbeResult = runRuntimeEventProbe(project, plan, {
+    engine,
     mode,
     timeoutMs,
     browserPath: options.browserPath
@@ -168,10 +179,10 @@ function normalizeTimeout(value: unknown): number {
   return parsed;
 }
 
-function normalizePlan(plan: unknown): TestDefinition[] {
+function normalizePlan(plan: unknown, engine: RpgMakerEngine): TestDefinition[] {
   if (!plan || typeof plan !== "object" || Array.isArray(plan)) throw new Error("Runtime event test plan must be an object.");
   const planObj = plan as Record<string, unknown>;
-  if (planObj.engine && planObj.engine !== "rpg-maker-mv") throw new Error("Runtime event test plan engine must be rpg-maker-mv.");
+  if (planObj.engine && planObj.engine !== engine) throw new Error(`Runtime event test plan engine must be ${engine}.`);
   const tests: unknown[] = Array.isArray(planObj.tests) ? planObj.tests as unknown[] : [];
   return tests.map((test: unknown, index: number) => normalizeTest(test, index));
 }
@@ -189,7 +200,12 @@ function normalizeTest(test: unknown, index: number): TestDefinition {
   };
 }
 
-function reviewRuntimeTestPlan(project: string, plan: TestDefinition[]): StaticReviewResult {
+function reviewRuntimeTestPlan(
+  project: string,
+  plan: TestDefinition[],
+  engine: RpgMakerEngine = safeInspectProject(project)?.engine || "rpg-maker-mv",
+  inspectedManifest: RmmvProjectManifest | null = safeInspectProject(project),
+): StaticReviewResult {
   const findings: Finding[] = [];
   const dataDir: string | null = safeResolveDataDir(project);
   const system: Record<string, unknown> | null = dataDir ? readJsonIfExists(path.join(dataDir, "System.json")) as Record<string, unknown> | null : null;
@@ -198,13 +214,14 @@ function reviewRuntimeTestPlan(project: string, plan: TestDefinition[]): StaticR
     addFinding(findings, "blocker", "project-missing", `Project path does not exist: ${project}`);
   }
   if (!dataDir) {
-    addFinding(findings, "blocker", "data-dir-missing", "Project does not have a readable RPG Maker MV data directory.");
+    addFinding(findings, "blocker", "data-dir-missing", "Project does not have a readable RPG Maker data directory.");
   }
   if (plan.length === 0) {
     addFinding(findings, "blocker", "empty-test-plan", "Runtime event test plan must contain at least one test.");
   }
   for (const [testIndex, test] of plan.entries()) {
-    reviewTest(project, dataDir, system, mapInfos, test, testIndex, findings);
+    const resourceRoot = inspectedManifest?.resourceRoot || (engine === "rpg-maker-mz" ? project : path.join(project, "www"));
+    reviewTest(resourceRoot, dataDir, system, mapInfos, test, testIndex, findings);
   }
   return {
     status: findings.some((finding: Finding) => finding.severity === "blocker") ? "blocked" : "ready",
@@ -217,23 +234,23 @@ function reviewRuntimeTestPlan(project: string, plan: TestDefinition[]): StaticR
   };
 }
 
-function reviewTest(project: string, dataDir: string | null, system: Record<string, unknown> | null, mapInfos: unknown[] | null, test: TestDefinition, testIndex: number, findings: Finding[]): void {
+function reviewTest(resourceRoot: string, dataDir: string | null, system: Record<string, unknown> | null, mapInfos: unknown[] | null, test: TestDefinition, testIndex: number, findings: Finding[]): void {
   if (!test.steps.length && !test.expectations.length) {
     addFinding(findings, "review", "test-has-no-actions", `${test.id} has no steps or expectations.`, { testId: test.id });
   }
   if (test.start) reviewPosition(dataDir, mapInfos, test.start, findings, `${test.id}.start`);
   for (const [stepIndex, step] of test.steps.entries()) {
-    reviewStep(project, dataDir, system, mapInfos, step, findings, `${test.id}.steps[${stepIndex}]`);
+    reviewStep(resourceRoot, dataDir, system, mapInfos, step, findings, `${test.id}.steps[${stepIndex}]`);
   }
   for (const [expectIndex, expectation] of test.expectations.entries()) {
-    reviewStep(project, dataDir, system, mapInfos, expectation, findings, `${test.id}.expectations[${expectIndex}]`);
+    reviewStep(resourceRoot, dataDir, system, mapInfos, expectation, findings, `${test.id}.expectations[${expectIndex}]`);
   }
   if (!test.id || /\s/.test(test.id)) {
     addFinding(findings, "review", "test-id-weak", `tests[${testIndex}] should use a stable whitespace-free id.`, { testId: test.id });
   }
 }
 
-function reviewStep(project: string, dataDir: string | null, system: Record<string, unknown> | null, mapInfos: unknown[] | null, step: TestStep, findings: Finding[], label: string): void {
+function reviewStep(resourceRoot: string, dataDir: string | null, system: Record<string, unknown> | null, mapInfos: unknown[] | null, step: TestStep, findings: Finding[], label: string): void {
   if (!step || typeof step !== "object" || Array.isArray(step)) {
     addFinding(findings, "blocker", "step-invalid", `${label} must be an object.`);
     return;
@@ -248,7 +265,7 @@ function reviewStep(project: string, dataDir: string | null, system: Record<stri
   } else if (type === "assert-player") {
     reviewPosition(dataDir, mapInfos, step as unknown as Record<string, unknown>, findings, label);
   } else if (type === "assert-player-visible") {
-    if (step.characterName) reviewCharacterImage(project, step.characterName, findings, label);
+    if (step.characterName) reviewCharacterImage(resourceRoot, step.characterName, findings, label);
   } else if (type === "interact-event" || type === "assert-event-position") {
     reviewEventReference(dataDir, step.mapId, step.eventId, findings, label);
   } else if (type === "assert-switch") {
@@ -316,7 +333,7 @@ function reviewSystemEntry(system: Record<string, unknown> | null, key: string, 
   }
 }
 
-function reviewCharacterImage(project: string, characterName: unknown, findings: Finding[], label: string): void {
+function reviewCharacterImage(resourceRoot: string, characterName: unknown, findings: Finding[], label: string): void {
   if (typeof characterName !== "string" || !characterName.trim()) {
     addFinding(findings, "blocker", "character-name-invalid", `${label} requires a non-empty characterName.`);
     return;
@@ -325,20 +342,22 @@ function reviewCharacterImage(project: string, characterName: unknown, findings:
     addFinding(findings, "blocker", "character-name-invalid", `${label} uses an unsafe characterName: ${characterName}`);
     return;
   }
-  const imagePath: string = path.join(project, "www", "img", "characters", `${characterName}.png`);
+  const imagePath: string = path.join(resourceRoot, "img", "characters", `${characterName}.png`);
   if (!fs.existsSync(imagePath)) {
     addFinding(findings, "blocker", "character-image-missing", `${label} references missing character image: ${imagePath}`, { characterName, imagePath });
   }
 }
 
-function runRuntimeEventProbe(project: string, plan: TestDefinition[], options: { mode: string; timeoutMs: number; browserPath?: string }): RuntimeProbeResult {
+function runRuntimeEventProbe(project: string, plan: TestDefinition[], options: { engine: RpgMakerEngine; mode: string; timeoutMs: number; browserPath?: string }): RuntimeProbeResult {
   if (options.mode === "nwjs") {
     return runNwjsRuntimeEventProbe(project, plan, {
+      engine: options.engine,
       timeoutMs: options.timeoutMs
     }) as RuntimeProbeResult;
   }
   if (options.mode === "auto") {
     const nwjs = runNwjsRuntimeEventProbe(project, plan, {
+      engine: options.engine,
       timeoutMs: options.timeoutMs
     }) as RuntimeProbeResult;
     if (nwjs.status !== "not-available") return nwjs;
@@ -447,6 +466,22 @@ function safeResolveDataDir(project: string): string | null {
     console.warn('[runtime-event-test] Failed to resolve data dir:', project, e);
     return null;
   }
+}
+
+function safeInspectProject(project: string): RmmvProjectManifest | null {
+  try {
+    return inspectRmmvProject(project);
+  } catch {
+    return null;
+  }
+}
+
+function declaredPlanEngine(plan: unknown): RpgMakerEngine | null {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return null;
+  const value = (plan as Record<string, unknown>).engine;
+  if (value === undefined || value === null || value === "") return null;
+  if (value === "rpg-maker-mv" || value === "rpg-maker-mz") return value;
+  throw new Error(`Unsupported runtime event test plan engine: ${String(value)}`);
 }
 
 function addFinding(findings: Finding[], severity: string, code: string, message: string, details: Record<string, unknown> = {}): void {

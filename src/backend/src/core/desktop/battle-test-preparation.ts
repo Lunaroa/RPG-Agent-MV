@@ -2,18 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { InteractiveBattleTestBattler } from '../../../../contract/types.ts';
+import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import {
   captureEffectiveRmmvDatabaseValidationState,
   validateEffectiveRmmvDatabaseTransition,
 } from '../rmmv/database-changes.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
-import { resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
+import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import {
   cleanupIsolatedProject,
   prepareIsolatedStagedProject,
   verifyIsolatedSourceState,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
+import { RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS } from './rpg-maker-mz-runtime.ts';
 
 export interface BattleTestConfiguration {
   troopId: number;
@@ -23,7 +25,8 @@ export interface BattleTestConfiguration {
 }
 
 export interface BattleTestProjectPreparation extends IsolatedProjectPreparation {
-  executable: string;
+  engine: RpgMakerEngine;
+  executable?: string;
   troopId: number;
   troopName: string;
   battlers: InteractiveBattleTestBattler[];
@@ -42,14 +45,18 @@ export function prepareBattleTestProject(
   dependencies: BattleTestPreparationDependencies = {},
 ): BattleTestProjectPreparation {
   validateConfigurationShape(configuration);
+  const sourceLayout = inspectRmmvProject(project);
   const isolated = prepareIsolatedStagedProject(workflowRoot, project, {
     temporaryPrefix: 'rmmv-agent-battle-test-',
     ...(dependencies.createTemporaryProject ? { createTemporaryProject: dependencies.createTemporaryProject } : {}),
+    ...(sourceLayout.engine === 'rpg-maker-mz'
+      ? { excludeRelativePaths: RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS }
+      : {}),
   });
   try {
     const preflightState = verifyIsolatedSourceState(workflowRoot, isolated);
     assertStableSource(preflightState);
-    const layout = resolveRmmvLayout(isolated.temporaryProject);
+    const layout = inspectRmmvProject(isolated.temporaryProject);
     const systemPath = path.join(layout.dataDir, 'System.json');
     const troopsPath = path.join(layout.dataDir, 'Troops.json');
     const actorsPath = path.join(layout.dataDir, 'Actors.json');
@@ -93,13 +100,18 @@ export function prepareBattleTestProject(
       const detail = errors.slice(0, 5).map((issue) => `${issue.source.path}: ${issue.message}`).join(' ');
       throw new BattleTestPreparationError(`Battle Test database validation failed with ${errors.length} error(s). ${detail}`);
     }
-    const executable = path.join(isolated.temporaryProject, 'Game.exe');
-    if (!isFile(executable)) throw new BattleTestPreparationError(`Game.exe was not found in the isolated project: ${executable}`);
+    const executable = layout.engine === 'rpg-maker-mv'
+      ? path.join(isolated.temporaryProject, 'Game.exe')
+      : undefined;
+    if (layout.engine === 'rpg-maker-mv' && (!executable || !isFile(executable))) {
+      throw new BattleTestPreparationError('Game.exe was not found in the isolated RPG Maker MV project.');
+    }
     assertStableSource(verifyIsolatedSourceState(workflowRoot, isolated));
 
     return {
       ...isolated,
-      executable,
+      engine: layout.engine,
+      ...(executable ? { executable } : {}),
       troopId: configuration.troopId,
       troopName: String(troop.name || `#${configuration.troopId}`),
       battlers: configuration.battlers.map((entry) => ({ ...entry, equips: [...entry.equips] })),

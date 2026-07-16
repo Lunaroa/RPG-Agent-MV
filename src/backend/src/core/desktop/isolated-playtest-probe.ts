@@ -10,6 +10,11 @@ import type {
   RmmvVerifyStatus,
 } from '../../../../contract/types.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
+import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
+import {
+  RPG_MAKER_ENGINE_PROFILES,
+  type RpgMakerEngine,
+} from '../rmmv/rpg-maker-engine.ts';
 import type { NwjsPlayableProbeResult } from '../workflow/probe/nwjs-playable-probe.ts';
 import {
   cleanupIsolatedProject,
@@ -20,6 +25,12 @@ import {
   type IsolatedProjectPreparation,
   type IsolatedStagingSnapshot,
 } from './isolated-project-preparation.ts';
+import {
+  createRpgMakerMZRuntimeOutputSanitizer,
+  redactRpgMakerMZRuntimePath,
+  resolveRpgMakerMZProjectRuntime,
+  RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS,
+} from './rpg-maker-mz-runtime.ts';
 
 export interface IsolatedPlaytestProbeOptions {
   mapId?: number;
@@ -36,6 +47,8 @@ export interface IsolatedProbeWorkerRequest {
   mapId: number;
   x: number;
   y: number;
+  engine: RpgMakerEngine;
+  runtimeExecutable?: string;
 }
 
 export interface IsolatedProbeWorkerResponse {
@@ -70,16 +83,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MIN_TIMEOUT_MS = 5_000;
 const MAX_TIMEOUT_MS = 60_000;
 const WORKER_EXIT_OVERHEAD_MS = 15_000;
-const REQUIRED_ENGINE_FILES = [
-  'rpg_core.js',
-  'rpg_managers.js',
-  'rpg_objects.js',
-  'rpg_scenes.js',
-  'rpg_sprites.js',
-  'rpg_windows.js',
-  'main.js',
-] as const;
-
 export async function runIsolatedRmmvPlaytestProbe(
   workflowRootInput: string,
   projectInput: string,
@@ -107,19 +110,29 @@ export async function runIsolatedRmmvPlaytestProbe(
   let savesExcluded = false;
   const blockers: string[] = [];
   const review: string[] = [];
+  let engine: RpgMakerEngine = 'rpg-maker-mv';
+  let mzRuntimeExecutable = '';
 
   try {
     timeoutMs = normalizeTimeout(options.timeoutMs);
+    const sourceManifest = inspectRmmvProject(project);
+    engine = sourceManifest.engine;
+    if (engine === 'rpg-maker-mz') {
+      mzRuntimeExecutable = resolveRpgMakerMZProjectRuntime(project).executable;
+    }
     preparation = prepareIsolatedStagedProject(workflowRoot, project, {
       temporaryPrefix: 'rmmv-agent-verify-',
       ...(dependencies.createTemporaryProject ? { createTemporaryProject: dependencies.createTemporaryProject } : {}),
+      ...(engine === 'rpg-maker-mz'
+        ? { excludeRelativePaths: RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS }
+        : {}),
     });
     project = preparation.sourceProject;
     stagingBefore = preparation.staging;
     temporaryProject = preparation.temporaryProject;
     savesExcluded = preparation.savesExcluded;
     requestedStart = configureTemporaryStart(temporaryProject, options);
-    assertProbeRuntime(temporaryProject);
+    assertProbeRuntime(temporaryProject, engine);
 
     const request: IsolatedProbeWorkerRequest = {
       temporaryProject,
@@ -129,6 +142,10 @@ export async function runIsolatedRmmvPlaytestProbe(
       mapId: requestedStart.mapId,
       x: requestedStart.x,
       y: requestedStart.y,
+      engine,
+      runtimeExecutable: engine === 'rpg-maker-mz'
+        ? mzRuntimeExecutable
+        : path.join(temporaryProject, 'Game.exe'),
     };
     workerStarted = true;
     workerResponse = await (dependencies.executeWorker || executeIsolatedProbeWorker)(request);
@@ -373,23 +390,30 @@ function readRawProbe(run: NwjsPlayableProbeResult | undefined): Record<string, 
   }
 }
 
-function assertProbeRuntime(project: string): void {
-  const gameExe = path.join(project, 'Game.exe');
-  if (!isFile(gameExe)) throw new ProbePreflightError(`RMMV probe runner was not found: ${gameExe}`);
+function assertProbeRuntime(project: string, expectedEngine: RpgMakerEngine): void {
+  const manifest = inspectRmmvProject(project);
+  if (manifest.engine !== expectedEngine) {
+    throw new ProbePreflightError('The isolated project engine does not match the source project engine.');
+  }
+  if (expectedEngine === 'rpg-maker-mv') {
+    const gameExe = path.join(project, 'Game.exe');
+    if (!isFile(gameExe)) throw new ProbePreflightError(`RPG Maker MV probe runner was not found: ${gameExe}`);
+  }
 
-  const webRoot = [path.join(project, 'www'), project]
-    .find((candidate) => isFile(path.join(candidate, 'index.html')));
-  if (!webRoot) throw new ProbePreflightError('RMMV index.html was not found in www or the project root.');
+  const webRoot = manifest.resourceRoot;
+  if (!isFile(path.join(webRoot, 'index.html'))) {
+    throw new ProbePreflightError('RPG Maker index.html was not found in the project runtime root.');
+  }
 
   const packageCandidates = [path.join(project, 'package.json'), path.join(webRoot, 'package.json')];
   if (!packageCandidates.some(isFile)) {
-    throw new ProbePreflightError('RMMV package.json was not found for the copied runtime.');
+    throw new ProbePreflightError('RPG Maker package.json was not found for the copied runtime.');
   }
 
-  const missingEngineFiles = [...REQUIRED_ENGINE_FILES, 'plugins.js']
-    .filter((fileName) => !isFile(path.join(webRoot, 'js', fileName)));
+  const missingEngineFiles = RPG_MAKER_ENGINE_PROFILES[expectedEngine].engineFiles
+    .filter((relative) => !isFile(path.join(webRoot, ...relative.split('/'))));
   if (missingEngineFiles.length > 0) {
-    throw new ProbePreflightError(`RMMV runtime is incomplete; missing js/${missingEngineFiles.join(', js/')}.`);
+    throw new ProbePreflightError(`RPG Maker runtime is incomplete; missing ${missingEngineFiles.join(', ')}.`);
   }
 }
 
@@ -402,7 +426,8 @@ export async function executeIsolatedProbeWorker(
   const stdoutPath = path.join(request.artifactDir, 'worker.stdout.log');
   const stderrPath = path.join(request.artifactDir, 'worker.stderr.log');
   fs.mkdirSync(request.artifactDir, { recursive: true });
-  writeJsonAtomic(requestPath, request);
+  const { runtimeExecutable: _privateRuntimeExecutable, ...persistedRequest } = request;
+  writeJsonAtomic(requestPath, persistedRequest);
   fs.writeFileSync(stdoutPath, '', 'utf8');
   fs.writeFileSync(stderrPath, '', 'utf8');
   const workerScript = fileURLToPath(new URL('./isolated-playtest-probe-worker.ts', import.meta.url));
@@ -418,11 +443,46 @@ export async function executeIsolatedProbeWorker(
     windowsHide: true,
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      ...(request.engine === 'rpg-maker-mz' && request.runtimeExecutable
+        ? { RPG_AGENT_MZ_NWJS_EXECUTABLE: request.runtimeExecutable }
+        : {}),
+    },
   });
-  child.stdout?.on('data', (chunk) => fs.appendFileSync(stdoutPath, chunk));
-  child.stderr?.on('data', (chunk) => fs.appendFileSync(stderrPath, chunk));
-  return awaitWorkerResponse(child, responsePath, request.timeoutMs + WORKER_EXIT_OVERHEAD_MS);
+  const privateRuntime = request.engine === 'rpg-maker-mz' ? request.runtimeExecutable || '' : '';
+  const flushStdout = attachWorkerOutput(child.stdout, stdoutPath, privateRuntime);
+  const flushStderr = attachWorkerOutput(child.stderr, stderrPath, privateRuntime);
+  const response = await awaitWorkerResponse(child, responsePath, request.timeoutMs + WORKER_EXIT_OVERHEAD_MS);
+  flushStdout();
+  flushStderr();
+  if (!privateRuntime) return response;
+  const sanitizedResponse = JSON.parse(
+    redactRpgMakerMZRuntimePath(JSON.stringify(response), privateRuntime),
+  ) as IsolatedProbeWorkerResponse;
+  writeJsonAtomic(responsePath, sanitizedResponse);
+  return sanitizedResponse;
+}
+
+function attachWorkerOutput(
+  stream: NodeJS.ReadableStream | null,
+  outputPath: string,
+  privateRuntime: string,
+): () => void {
+  const sanitizer = createRpgMakerMZRuntimeOutputSanitizer(privateRuntime);
+  const append = (value: string | Buffer) => {
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
+    if (bytes.length > 0) fs.appendFileSync(outputPath, bytes);
+  };
+  const flush = () => append(sanitizer.flush());
+  stream?.on('data', (chunk) => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+    append(privateRuntime ? sanitizer.push(bytes.toString('utf8')) : bytes);
+  });
+  stream?.once('end', flush);
+  stream?.once('close', flush);
+  return flush;
 }
 
 function awaitWorkerResponse(

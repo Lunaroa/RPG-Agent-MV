@@ -6,6 +6,12 @@ import childProcess from 'node:child_process';
 
 import { getMapFileForRead } from './staging-service.ts';
 import { runNwjsPlayableProbe } from '../workflow/probe/nwjs-playable-probe.ts';
+import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
+import {
+  RPG_MAKER_ENGINE_PROFILES,
+  type RpgMakerEngine,
+} from '../rmmv/rpg-maker-engine.ts';
+import { resolveRpgMakerMZProjectRuntime } from './rpg-maker-mz-runtime.ts';
 
 export type RuntimePlanStatus = 'runnable' | 'blocked';
 export type RuntimeExecutionStatus = 'not-started' | 'completed' | 'failed' | 'timed-out' | 'blocked';
@@ -119,6 +125,7 @@ export interface RmmvPlaytestPlan {
   execution: 'not-started';
   generatedAt: string;
   project: string;
+  engine: RpgMakerEngine;
   mapId?: number;
   startMapId?: number;
   startX: number;
@@ -195,6 +202,7 @@ export interface RmmvDeployManifest {
   target: DeployTarget;
   generatedAt: string;
   project: string;
+  engine: RpgMakerEngine;
   sourceRoot: string;
   targetDir: string;
   manifestPath: string;
@@ -220,16 +228,6 @@ export interface DeployOptions {
   generatedAt?: string;
 }
 
-const ENGINE_FILES = [
-  'rpg_core.js',
-  'rpg_managers.js',
-  'rpg_objects.js',
-  'rpg_scenes.js',
-  'rpg_sprites.js',
-  'rpg_windows.js',
-  'main.js',
-] as const;
-
 const DEFAULT_PLAYTEST_TIMEOUT_MS = 15000;
 
 export function prepareRmmvPlaytestPlan(
@@ -251,6 +249,8 @@ export function prepareRmmvPlaytestPlan(
   const checks: RuntimeCheck[] = [];
   const issues: RuntimeIssue[] = [];
   const layout = resolveRuntimeLayout(projectRoot);
+  const engineFiles = RPG_MAKER_ENGINE_PROFILES[layout.engine].engineFiles
+    .filter((relative) => relative.startsWith('js/') && relative !== 'js/plugins.js');
   const startX = normalizeCoordinate(options.startX);
   const startY = normalizeCoordinate(options.startY);
   const probeKeywords = normalizeProbeKeywords(options.probeKeywords);
@@ -275,14 +275,15 @@ export function prepareRmmvPlaytestPlan(
   addPathCheck(checks, issues, 'data-dir', 'blocker', layout.dataDir, 'RMMV data directory', 'directory');
   addPathCheck(checks, issues, 'index-html', 'blocker', layout.indexHtml, 'Browser/NW.js entry index.html', 'file');
   addPathCheck(checks, issues, 'package-json', 'blocker', layout.packageJson, 'NW.js package metadata', 'file');
-  for (const fileName of ENGINE_FILES) {
+  for (const relative of engineFiles) {
+    const fileName = path.basename(relative);
     addPathCheck(
       checks,
       issues,
       `engine-${fileName}`,
       'blocker',
-      layout.webRoot ? path.join(layout.webRoot, 'js', fileName) : null,
-      `RPG Maker MV engine file ${fileName}`,
+      layout.webRoot ? path.join(layout.webRoot, ...relative.split('/')) : null,
+      `RPG Maker ${layout.engine === 'rpg-maker-mz' ? 'MZ' : 'MV'} engine file ${fileName}`,
       'file',
     );
   }
@@ -326,6 +327,7 @@ export function prepareRmmvPlaytestPlan(
     execution: 'not-started',
     generatedAt,
     project: projectRoot,
+    engine: layout.engine,
     mapId: Number.isInteger(options.mapId) && Number(options.mapId) > 0 ? Number(options.mapId) : undefined,
     startMapId: systemStartMapId || undefined,
     startX,
@@ -1194,10 +1196,12 @@ export function prepareRmmvDeployCandidate(
     issues,
     'core-js',
     'blocker',
-    layout.webRoot && ENGINE_FILES.every((fileName) => isFile(path.join(layout.webRoot!, 'js', fileName)))
+    layout.webRoot && RPG_MAKER_ENGINE_PROFILES[layout.engine].engineFiles
+      .filter((relative) => relative.startsWith('js/') && relative !== 'js/plugins.js')
+      .every((relative) => isFile(path.join(layout.webRoot!, ...relative.split('/'))))
       ? path.join(layout.webRoot, 'js')
       : null,
-    'RPG Maker MV engine JavaScript set',
+    `RPG Maker ${layout.engine === 'rpg-maker-mz' ? 'MZ' : 'MV'} engine JavaScript set`,
     'directory',
   );
   if (target === 'windows') {
@@ -1229,6 +1233,7 @@ export function prepareRmmvDeployCandidate(
     target,
     generatedAt,
     project: projectRoot,
+    engine: layout.engine,
     sourceRoot,
     targetDir,
     manifestPath,
@@ -1242,6 +1247,7 @@ export function prepareRmmvDeployCandidate(
 }
 
 function resolveRuntimeLayout(projectRoot: string): {
+  engine: RpgMakerEngine;
   webRoot: string | null;
   dataDir: string | null;
   indexHtml: string | null;
@@ -1250,13 +1256,15 @@ function resolveRuntimeLayout(projectRoot: string): {
   pluginsDir: string | null;
   gameExe: string | null;
 } {
-  const webRoot = firstExistingDirectory([path.join(projectRoot, 'www'), projectRoot], 'index.html');
-  const dataDir = firstExistingDirectory([path.join(projectRoot, 'www', 'data'), path.join(projectRoot, 'data')]);
+  const manifest = inspectRmmvProject(projectRoot);
+  const webRoot = manifest.resourceRoot;
+  const dataDir = manifest.dataDir;
   const packageJson = firstExistingFile([
     path.join(projectRoot, 'package.json'),
     webRoot ? path.join(webRoot, 'package.json') : '',
   ]);
   return {
+    engine: manifest.engine,
     webRoot,
     dataDir,
     indexHtml: webRoot ? path.join(webRoot, 'index.html') : null,
@@ -1272,6 +1280,23 @@ function resolveRunner(
   layout: ReturnType<typeof resolveRuntimeLayout>,
   nwjsRunner?: string,
 ): { kind: 'game-exe' | 'nwjs' | 'missing'; path?: string; command?: RuntimeCommand; detail: string } {
+  if (layout.engine === 'rpg-maker-mz') {
+    try {
+      const runtime = resolveRpgMakerMZProjectRuntime(projectRoot);
+      return {
+        kind: 'game-exe',
+        path: runtime.executable,
+        command: { executable: runtime.executable, args: [projectRoot], cwd: projectRoot },
+        detail: 'The validated project-local RPG Maker MZ Game.exe runtime is available.',
+      };
+    } catch (error) {
+      return {
+        kind: 'missing',
+        path: path.join(projectRoot, 'Game.exe'),
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
   if (nwjsRunner) {
     const runnerPath = path.resolve(nwjsRunner);
     if (!isFile(runnerPath)) {

@@ -8,7 +8,7 @@ import {
   type CommonEventReference,
 } from '../rmmv/common-event-references.ts';
 import { readJson } from '../rmmv/json.ts';
-import { dataRelativePath as layoutDataRelativePath, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
+import { dataRelativePath as layoutDataRelativePath, inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import {
   commonEventAlreadyExists,
   commonEventInvalidData,
@@ -282,7 +282,7 @@ function normalizeCommonEvent(
   const name = String(value.name || '');
   const trigger = validateTrigger(Number(value.trigger ?? 0));
   const switchId = validateTriggerSwitch(workflowRoot, project, trigger, Number(value.switchId ?? 0));
-  const list = normalizeCommandList(value.list);
+  const list = normalizeCommandList(project, value.list);
   return {
     ...clone(value),
     id,
@@ -293,13 +293,13 @@ function normalizeCommonEvent(
   };
 }
 
-function normalizeCommandList(value: unknown): RawEventCommand[] {
+function normalizeCommandList(project: string, value: unknown): RawEventCommand[] {
   const list = Array.isArray(value) ? clone(value) : [{ code: 0, indent: 0, parameters: [] }];
   if (!list.length) list.push({ code: 0, indent: 0, parameters: [] });
   if (!isRawCommand(list[list.length - 1]) || Number((list[list.length - 1] as RawEventCommand).code) !== 0) {
     list.push({ code: 0, indent: 0, parameters: [] });
   }
-  validateEventCommandList(list, 'commonEvent.list');
+  validateEventCommandList(list, 'commonEvent.list', inspectRmmvProject(project).engine);
   return list as RawEventCommand[];
 }
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { execFile, type ExecFileException } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import type { ProjectGitBaselineResult, ProjectVersionSaveOptions } from '../../../../contract/types.ts';
+import type { ProjectGitBaselineResult, ProjectInfo, ProjectVersionSaveOptions } from '../../../../contract/types.ts';
 import { inspectRmmvProject, type RmmvLayoutKind, type RmmvProjectManifest } from '../rmmv/rmmv-layout.ts';
 import {
   projectCheckGitDependency,
@@ -39,19 +39,8 @@ import {
 } from './projectServiceLocalization.ts';
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 15_000;
-
-export interface ProjectInfo {
-  name: string;
-  path: string;
-  isDefault: boolean;
-  source?: 'workspace' | 'registered';
-  dataDir?: string;
-  layout?: RmmvLayoutKind;
-  resourceRoot?: string;
-  runnableStructure?: boolean;
-  missingRecommended?: string[];
-}
+const DEFAULT_GIT_READ_TIMEOUT_MS = 30_000;
+const DEFAULT_GIT_WRITE_TIMEOUT_MS = 300_000;
 
 interface RegisteredProject {
   path: string;
@@ -192,6 +181,13 @@ function listWorkspaceProjects(workflowRoot: string): ProjectInfo[] {
       source: 'workspace',
       dataDir: validation.dataDir,
       layout: validation.layout,
+      engine: validation.manifest.engine,
+      engineVersion: validation.manifest.engineVersion,
+      tileSize: validation.manifest.tileSize,
+      screenWidth: validation.manifest.screenWidth,
+      screenHeight: validation.manifest.screenHeight,
+      faceSize: validation.manifest.faceSize,
+      iconSize: validation.manifest.iconSize,
     });
   }
 
@@ -236,6 +232,13 @@ function toProjectInfo(input: {
     resourceRoot: input.validation.resourceRoot,
     runnableStructure: input.validation.manifest.runnableStructure,
     missingRecommended: input.validation.manifest.missingRecommended,
+    engine: input.validation.manifest.engine,
+    engineVersion: input.validation.manifest.engineVersion,
+    tileSize: input.validation.manifest.tileSize,
+    screenWidth: input.validation.manifest.screenWidth,
+    screenHeight: input.validation.manifest.screenHeight,
+    faceSize: input.validation.manifest.faceSize,
+    iconSize: input.validation.manifest.iconSize,
   };
 }
 
@@ -524,7 +527,7 @@ function samePath(a: string, b: string): boolean {
 }
 
 async function runGit(cwd: string, args: string[], label = `git ${args.join(' ')}`): Promise<{ stdout: string; stderr: string }> {
-  const timeoutMs = gitCommandTimeoutMs();
+  const timeoutMs = gitCommandTimeoutMs(args);
   const invocation = gitInvocation(args);
   try {
     const result = await execFileAsync(invocation.command, invocation.args, {
@@ -557,10 +560,12 @@ async function runGit(cwd: string, args: string[], label = `git ${args.join(' ')
   }
 }
 
-function gitCommandTimeoutMs(): number {
+function gitCommandTimeoutMs(args: readonly string[]): number {
   const raw = Number(process.env.RMMV_GIT_TIMEOUT_MS || '');
   if (Number.isFinite(raw) && raw > 0) return raw;
-  return DEFAULT_GIT_COMMAND_TIMEOUT_MS;
+  return args[0] === 'add' || args[0] === 'commit'
+    ? DEFAULT_GIT_WRITE_TIMEOUT_MS
+    : DEFAULT_GIT_READ_TIMEOUT_MS;
 }
 
 function gitInvocation(args: string[]): { command: string; args: string[] } {

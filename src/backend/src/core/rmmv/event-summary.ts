@@ -312,6 +312,13 @@ function summarizeCommandList(commands: RMMVCommand[], names: { switches: string
       case 356:
         pushLimited(facts.pluginCommands, String(p[0] || "").trim(), 12);
         break;
+      case 357:
+        pushLimited(
+          facts.pluginCommands,
+          [String(p[0] || "").trim(), String(p[1] || "").trim()].filter(Boolean).join(":"),
+          12,
+        );
+        break;
       default:
         break;
     }

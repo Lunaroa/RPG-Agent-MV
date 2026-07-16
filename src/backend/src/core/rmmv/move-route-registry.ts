@@ -20,7 +20,7 @@ export interface MoveRouteCommandDefinition {
 
 export interface MoveRouteCommand {
   code: number;
-  parameters: unknown[];
+  parameters?: unknown[];
 }
 
 const int = (index: number, name: string, min?: number, max?: number): MoveRouteParameterSchema => ({
@@ -122,14 +122,14 @@ export function validateMoveRouteCommandBasic(command: unknown, label = "moveRou
   if (!Number.isInteger(cmd.code) || cmd.code < 0) {
     throw new Error(`${label}.code must be a non-negative integer`);
   }
-  if (!Array.isArray(cmd.parameters)) {
+  if (cmd.parameters !== undefined && !Array.isArray(cmd.parameters)) {
     throw new Error(`${label}.parameters must be an array`);
   }
   const definition = moveRouteCommandDefinition(cmd.code);
   if (!definition) {
     throw new Error(`${label}.code ${cmd.code} is not a standard RPG Maker MV move route command code`);
   }
-  validateParameters(definition, cmd.parameters, label);
+  validateParameters(definition, cmd.parameters ?? [], label);
 }
 
 function validateParameters(definition: MoveRouteCommandDefinition, parameters: unknown[], label: string): void {

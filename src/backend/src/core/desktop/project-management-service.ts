@@ -12,10 +12,11 @@ import type {
 import {
   createDefaultRmmvDatabaseEntry,
   getRmmvDatabaseSchema,
+  rpgMakerDatabaseEntryLimit,
   type RmmvDatabaseTableSchema,
 } from '../rmmv/database-schema.ts';
 import { exists, readJson } from '../rmmv/json.ts';
-import { dataRelativePath, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
+import { dataRelativePath, inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import { scanProjectWithReader } from '../rmmv/project-scanner.ts';
 import {
   dryRunRmmvDatabaseChanges,
@@ -88,6 +89,7 @@ export function getProjectManagedEntry(
     });
   }
   const schema = schemaForManagedEntry(request);
+  const engine = inspectRmmvProject(project).engine;
   if (!schema.isArrayTable) {
     if (Number(request.id) !== 0) throw new Error(projectManagedFixedDocumentIdRequired(schema.group));
     return withEntryInspection(workflowRoot, project, request, {
@@ -95,7 +97,7 @@ export function getProjectManagedEntry(
       id: 0,
       relativePath,
       value: readDocumentEntry(schema, data),
-      schema: schemaPayload(schema),
+      schema: schemaPayload(schema, engine),
     });
   }
   if (!Array.isArray(data) || !data[id]) throw new Error(projectManagedEntryMissing());
@@ -104,7 +106,7 @@ export function getProjectManagedEntry(
     id,
     relativePath,
     value: data[id],
-    schema: schemaPayload(schema),
+    schema: schemaPayload(schema, engine),
   });
 }
 
@@ -132,12 +134,13 @@ export function updateProjectManagedEntry(
   } else {
     if (!request.value || typeof request.value !== 'object' || Array.isArray(request.value)) throw new Error(projectManagedEntryInvalid());
     const schema = schemaForManagedEntry(request);
-    const next = structuredClone(request.value as Record<string, unknown>);
+    const engine = inspectRmmvProject(project).engine;
+    const next = mergeRecord(isRecord(current.value) ? current.value : {}, request.value as Record<string, unknown>);
     if (schema.isArrayTable && Number(next.id) !== current.id) throw new Error(projectManagedEntryIdImmutable());
     if (!schema.isArrayTable) {
       assertDocumentMutationAllowed(workflowRoot, project, schema, current.value, next);
     }
-    const validation = schema.validate(next);
+    const validation = schema.validate(next, engine);
     if (!validation.ok) {
       throw new Error(projectManagedEntryInvalidWithIssues(validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')));
     }
@@ -162,12 +165,13 @@ export function createProjectManagedEntry(
   const relativePath = relativePathFor(project, request);
   const data = readData(workflowRoot, project, relativePath);
   if (!Array.isArray(data)) throw new Error(projectManagedGroupMustBeArray(schema.group));
-  const id = nextFreeId(data, schema.maxEntries, schema.group);
-  const base = createDefaultRmmvDatabaseEntry(schema.group, id);
+  const engine = inspectRmmvProject(project).engine;
+  const id = nextFreeId(data, rpgMakerDatabaseEntryLimit(schema.group, engine), schema.group);
+  const base = createDefaultRmmvDatabaseEntry(schema.group, id, engine);
   const next = request.value && typeof request.value === 'object' && !Array.isArray(request.value)
     ? { ...base, ...(request.value as Record<string, unknown>), id }
     : base;
-  const validation = schema.validate(next);
+  const validation = schema.validate(next, engine);
   if (!validation.ok) {
     throw new Error(projectManagedEntryInvalidWithIssues(validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')));
   }
@@ -270,12 +274,14 @@ export function resizeProjectManagedDatabase(
 ): ProjectManagedDatabaseResizeResult {
   if (request.kind !== 'database') throw new Error(projectManagedCreateDatabaseOnly());
   const schema = schemaForManagedEntry(request);
-  if (!schema.isArrayTable || schema.maxEntries === null) {
+  const engine = inspectRmmvProject(project).engine;
+  const entryLimit = rpgMakerDatabaseEntryLimit(schema.group, engine);
+  if (!schema.isArrayTable || entryLimit === null) {
     throw new Error(projectManagedFixedDocumentCannotCreate(schema.group));
   }
   const maximum = Number(request.maximum);
-  if (!Number.isInteger(maximum) || maximum < 1 || maximum > schema.maxEntries) {
-    throw new Error(projectManagedMaximumInvalid(schema.group, schema.maxEntries));
+  if (!Number.isInteger(maximum) || maximum < 1 || maximum > entryLimit) {
+    throw new Error(projectManagedMaximumInvalid(schema.group, entryLimit));
   }
   const relativePath = relativePathFor(project, request);
   const data = readData(workflowRoot, project, relativePath);
@@ -580,20 +586,51 @@ function nextFreeId(data: unknown[], maxEntries: number | null, group: string): 
   throw new Error(projectManagedCapacityReached(group, currentCapacity));
 }
 
-function schemaPayload(schema: RmmvDatabaseTableSchema): NonNullable<ProjectManagedEntry['schema']> {
+function schemaPayload(
+  schema: RmmvDatabaseTableSchema,
+  engine: 'rpg-maker-mv' | 'rpg-maker-mz',
+): NonNullable<ProjectManagedEntry['schema']> {
+  const mzOnlyFields = new Set([
+    'advanced', 'tileSize', 'faceSize', 'iconSize', 'battleSystem', 'itemCategories', 'titleCommandWindow',
+    'advanced.gameId', 'advanced.screenWidth', 'advanced.screenHeight',
+    'advanced.uiAreaWidth', 'advanced.uiAreaHeight', 'advanced.mainFontFilename',
+    'advanced.numberFontFilename', 'advanced.fallbackFonts', 'advanced.fontSize',
+    'advanced.picturesUpperLimit', 'advanced.screenScale', 'advanced.windowOpacity',
+    'optAutosave', 'optKeyItemsNumber', 'optSplashScreen', 'optMessageSkip',
+    'messageType', 'releaseByDamage',
+    'displayType', 'effectName', 'scale', 'speed', 'flashTimings', 'soundTimings',
+    'offsetX', 'offsetY', 'rotation', 'alignBottom',
+  ]);
   const coreFields = schema.group === 'System'
     ? schema.coreFields.filter((field) => (
       field.path !== 'terms'
       && !TYPE_LIST_KEYS.includes(field.path as typeof TYPE_LIST_KEYS[number])
     ))
     : schema.coreFields;
+  const contextualFields = engine === 'rpg-maker-mz'
+    ? coreFields.filter((field) => field.path !== 'advanced')
+    : coreFields.filter((field) => !mzOnlyFields.has(field.path));
   return {
     group: schema.group,
     key: schema.key,
     fileName: schema.fileName,
     isArrayTable: schema.isArrayTable,
-    maxEntries: schema.maxEntries,
-    coreFields: coreFields.map((field) => ({ ...field })),
+    maxEntries: rpgMakerDatabaseEntryLimit(schema.group, engine),
+    coreFields: contextualFields.map((field) => ({ ...field })),
     references: schema.references.map((field) => ({ ...field })),
   };
+}
+
+function mergeRecord(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = structuredClone(current);
+  for (const [key, value] of Object.entries(patch)) {
+    const previous = result[key];
+    result[key] = isRecord(previous) && isRecord(value)
+      ? mergeRecord(previous, value)
+      : structuredClone(value);
+  }
+  return result;
 }

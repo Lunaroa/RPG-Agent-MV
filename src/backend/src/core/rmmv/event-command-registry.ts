@@ -1,4 +1,5 @@
 import { validateMoveRouteCommandBasic } from "./move-route-registry.ts";
+import type { RpgMakerEngine } from "./rpg-maker-engine.ts";
 
 export type EventCommandParameterType =
   | "integer"
@@ -10,6 +11,7 @@ export type EventCommandParameterType =
   | "tone"
   | "color"
   | "stringArray"
+  | "stringRecord"
   | "moveRoute"
   | "moveRouteCommand"
   | "any";
@@ -28,6 +30,7 @@ export type EventCommandBlockKind = "none" | "multiline" | "structured" | "conti
 
 export interface EventCommandBlockMetadata {
   kind: EventCommandBlockKind;
+  optional?: boolean;
   continuationCodes?: readonly number[];
   branchCodes?: readonly number[];
   endCode?: number;
@@ -74,6 +77,7 @@ const audio = (index: number, name: string): EventCommandParameterSchema => ({ i
 const tone = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "tone" });
 const color = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "color" });
 const stringArray = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "stringArray" });
+const stringRecord = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "stringRecord" });
 const moveRoute = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "moveRoute" });
 const moveRouteCommand = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "moveRouteCommand" });
 const choice = (index: number, name: string, enumValues: readonly (number | string | boolean)[]): EventCommandParameterSchema => ({
@@ -118,7 +122,7 @@ const command = (
 
 const actorTargetParameters = (offset = 0): EventCommandParameterSchema[] => [
   choice(offset, "actorTargetType", ACTOR_TARGET),
-  integer(offset + 1, "actorIdOrPartyIndex", 1)
+  integer(offset + 1, "actorIdOrPartyIndex", 0)
 ];
 
 const operandParameters = (offset = 0): EventCommandParameterSchema[] => [
@@ -149,9 +153,11 @@ const picturePlacementParameters = (includeName: boolean): EventCommandParameter
 const structured = (
   continuationCodes: readonly number[] = [],
   branchCodes: readonly number[] = [],
-  endCode?: number
+  endCode?: number,
+  optional = false,
 ): EventCommandBlockMetadata => ({
   kind: "structured",
+  ...(optional ? { optional: true } : {}),
   ...(continuationCodes.length ? { continuationCodes } : {}),
   ...(branchCodes.length ? { branchCodes } : {}),
   ...(endCode === undefined ? {} : { endCode })
@@ -186,9 +192,12 @@ export const STANDARD_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition
   command(121, "Control Switches", "Game Progression", [integer(0, "startSwitchId", 1), integer(1, "endSwitchId", 1), choice(2, "value", ON_OFF)], [1, 1, 0]),
   command(122, "Control Variables", "Game Progression", [integer(0, "startVariableId", 1), integer(1, "endVariableId", 1), choice(2, "operation", OPERATION), choice(3, "operandType", OPERAND), any(4, "operand"), optionalAny(5, "operandExtraA"), optionalAny(6, "operandExtraB")], [1, 1, 0, 0, 0], { parameterMode: "min" }),
   command(123, "Control Self Switch", "Game Progression", [choice(0, "selfSwitch", ["A", "B", "C", "D"]), choice(1, "value", ON_OFF)], ["A", 0]),
-  command(124, "Control Timer", "Game Progression", [choice(0, "operation", [0, 1]), integer(1, "seconds", 0)], [0, 60], { parameterMode: "min" }),
+  command(124, "Control Timer", "Game Progression", [
+    choice(0, "operation", [0, 1]),
+    { ...integer(1, "seconds", 0), optional: true },
+  ], [0, 60], { parameterMode: "min" }),
 
-  command(111, "Conditional Branch", "Flow Control", [choice(0, "conditionType", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]), any(1, "operandA"), any(2, "operandB"), optionalAny(3, "operandC"), optionalAny(4, "operandD")], [0, 1, 0], { parameterMode: "min", block: structured([], [411], 412) }),
+  command(111, "Conditional Branch", "Flow Control", [choice(0, "conditionType", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]), any(1, "operandA"), optionalAny(2, "operandB"), optionalAny(3, "operandC"), optionalAny(4, "operandD")], [0, 1, 0], { parameterMode: "min", block: structured([], [411], 412) }),
   command(112, "Loop", "Flow Control", [], [], { block: structured([], [], 413) }),
   command(113, "Break Loop", "Flow Control"),
   command(115, "Exit Event Processing", "Flow Control"),
@@ -257,7 +266,7 @@ export const STANDARD_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition
   command(251, "Stop SE", "Audio/Video"),
   command(261, "Play Movie", "Audio/Video", [string(0, "movieName")], [""]),
 
-  command(301, "Battle Processing", "Scene Control", [choice(0, "troopSource", [0, 1, 2]), integer(1, "troopIdOrVariableId", 0), boolean(2, "canEscape"), boolean(3, "canLose")], [0, 1, true, false], { block: structured([], [601, 602, 603], 604) }),
+  command(301, "Battle Processing", "Scene Control", [choice(0, "troopSource", [0, 1, 2]), integer(1, "troopIdOrVariableId", 0), boolean(2, "canEscape"), boolean(3, "canLose")], [0, 1, true, false], { block: structured([], [601, 602, 603], 604, true) }),
   command(302, "Shop Processing", "Scene Control", [choice(0, "goodsType", [0, 1, 2]), integer(1, "itemId", 1), choice(2, "priceType", [0, 1]), integer(3, "price", 0), boolean(4, "purchaseOnly")], [0, 1, 0, 0, false], { block: multiline([605]) }),
   command(303, "Name Input Processing", "Scene Control", [integer(0, "actorId", 1), integer(1, "maxCharacters", 1, 16)], [1, 8]),
   command(351, "Open Menu Screen", "Scene Control"),
@@ -302,7 +311,7 @@ export const STRUCTURAL_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefiniti
   command(0, "End of List", "Structural", [], [], { standard: false }),
   command(401, "Text Line", "Message", [string(0, "text")], [""], { standard: false, block: child("continuation", 101) }),
   command(402, "When Choice", "Message", [integer(0, "choiceIndex", 0), string(1, "choiceText")], [0, ""], { standard: false, block: child("continuation", 102) }),
-  command(403, "When Cancel", "Message", [], [], { standard: false, block: child("continuation", 102) }),
+  command(403, "When Cancel", "Message", [optionalAny(0, "choiceIndex"), optionalAny(1, "choiceText")], [], { parameterMode: "min", standard: false, block: child("continuation", 102) }),
   command(404, "End Choices", "Message", [], [], { standard: false, block: child("terminator", 102) }),
   command(405, "Scrolling Text Line", "Message", [string(0, "text")], [""], { standard: false, block: child("continuation", 105) }),
   command(408, "Comment Line", "Flow Control", [string(0, "text")], [""], { standard: false, block: child("continuation", 108) }),
@@ -318,6 +327,70 @@ export const STRUCTURAL_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefiniti
   command(655, "Script Line", "Advanced", [string(0, "line")], [""], { standard: false, block: child("continuation", 355) })
 ]);
 
+const MZ_STANDARD_OVERRIDES = new Map<number, EventCommandDefinition>([
+  [101, command(101, "Show Text", "Message", [
+    string(0, "faceName"),
+    integer(1, "faceIndex", 0),
+    choice(2, "background", [0, 1, 2]),
+    choice(3, "positionType", [0, 1, 2]),
+    string(4, "speakerName")
+  ], ["", 0, 0, 2, ""], { block: multiline([401]) })],
+  [104, command(104, "Select Item", "Message", [integer(0, "variableId", 1), choice(1, "itemType", [1, 2, 3, 4])], [1, 2])],
+  [232, command(232, "Move Picture", "Picture", [
+    ...picturePlacementParameters(false),
+    integer(10, "duration", 0),
+    boolean(11, "wait"),
+    choice(12, "easingType", [0, 1, 2, 3])
+  ], [1, 0, 0, 0, 0, 0, 100, 100, 255, 0, 60, true, 0])],
+  [285, command(285, "Get Location Info", "Map", [
+    integer(0, "variableId", 1),
+    choice(1, "infoType", [0, 1, 2, 3, 4, 5, 6]),
+    choice(2, "locationType", LOCATION_OPERAND),
+    integer(3, "xOrVariableId", 0),
+    integer(4, "yOrVariableId", 0)
+  ], [1, 0, 0, 0, 0])],
+  [322, command(322, "Change Actor Images", "System Settings", [
+    integer(0, "actorId", 1),
+    string(1, "faceName"),
+    integer(2, "faceIndex", 0, 7),
+    string(3, "characterName"),
+    integer(4, "characterIndex", 0, 7),
+    string(5, "battlerName")
+  ], [1, "", 0, "", 0, ""])],
+  [337, command(337, "Show Battle Animation", "Battle", [
+    integer(0, "enemyIndex", -1),
+    integer(1, "animationId", 1),
+    { ...boolean(2, "includeEntireTroop"), optional: true }
+  ], [-1, 1], { parameterMode: "min" })]
+]);
+
+export const MZ_STANDARD_EVENT_COMMAND_CODES: readonly number[] = Object.freeze([
+  ...STANDARD_EVENT_COMMAND_CODES.filter((code) => code !== 356),
+  109,
+  357
+]);
+
+export const MZ_STANDARD_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition[] = Object.freeze([
+  ...STANDARD_EVENT_COMMAND_DEFINITIONS
+    .filter((definition) => definition.code !== 356)
+    .map((definition) => MZ_STANDARD_OVERRIDES.get(definition.code) ?? definition),
+  command(109, "Skip", "Flow Control", [], [], { block: structured([], [], 0) }),
+  command(357, "Plugin Command", "Advanced", [
+    string(0, "pluginName"),
+    string(1, "commandName"),
+    string(2, "displayName"),
+    stringRecord(3, "arguments")
+  ], ["", "", "", {}], { block: multiline([657]) })
+]);
+
+export const MZ_STRUCTURAL_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition[] = Object.freeze([
+  ...STRUCTURAL_EVENT_COMMAND_DEFINITIONS,
+  command(657, "Plugin Command Argument", "Advanced", [string(0, "argument")], [""], {
+    standard: false,
+    block: child("continuation", 357)
+  })
+]);
+
 export const ALL_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition[] = Object.freeze([
   ...STANDARD_EVENT_COMMAND_DEFINITIONS,
   ...STRUCTURAL_EVENT_COMMAND_DEFINITIONS
@@ -326,6 +399,20 @@ export const ALL_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition[] = 
 const definitionByCode = new Map<number, EventCommandDefinition>(
   ALL_EVENT_COMMAND_DEFINITIONS.map((definition) => [definition.code, definition])
 );
+
+export const MZ_ALL_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition[] = Object.freeze([
+  ...MZ_STANDARD_EVENT_COMMAND_DEFINITIONS,
+  ...MZ_STRUCTURAL_EVENT_COMMAND_DEFINITIONS
+]);
+
+const mzDefinitionByCode = new Map<number, EventCommandDefinition>(
+  MZ_ALL_EVENT_COMMAND_DEFINITIONS.map((definition) => [definition.code, definition])
+);
+
+const definitionsByEngine: Readonly<Record<RpgMakerEngine, ReadonlyMap<number, EventCommandDefinition>>> = Object.freeze({
+  "rpg-maker-mv": definitionByCode,
+  "rpg-maker-mz": mzDefinitionByCode
+});
 
 export const EVENT_COMMAND_BLOCK_PAIRINGS: Readonly<Record<number, { continuations?: readonly number[]; terminator?: number }>> = Object.freeze(
   Object.fromEntries(
@@ -350,23 +437,56 @@ export const EVENT_COMMAND_CONTINUATION_CODES: ReadonlySet<number> = Object.free
   )
 );
 
+export const MZ_EVENT_COMMAND_BLOCK_PAIRINGS: Readonly<Record<number, { continuations?: readonly number[]; terminator?: number }>> =
+  buildBlockPairings(MZ_ALL_EVENT_COMMAND_DEFINITIONS);
+export const MZ_EVENT_COMMAND_BLOCK_HEAD_CODES: ReadonlySet<number> = Object.freeze(new Set(Object.keys(MZ_EVENT_COMMAND_BLOCK_PAIRINGS).map(Number)));
+export const MZ_EVENT_COMMAND_CONTINUATION_CODES: ReadonlySet<number> = Object.freeze(
+  new Set(
+    MZ_STRUCTURAL_EVENT_COMMAND_DEFINITIONS
+      .filter((definition) => definition.block.kind === "continuation" || definition.block.kind === "terminator")
+      .map((definition) => definition.code)
+  )
+);
+
 assertRegistryIntegrity();
 
-export function eventCommandDefinition(code: number): EventCommandDefinition | undefined {
-  return definitionByCode.get(code);
+export function eventCommandDefinitions(engine: RpgMakerEngine = "rpg-maker-mv"): readonly EventCommandDefinition[] {
+  return engine === "rpg-maker-mz" ? MZ_ALL_EVENT_COMMAND_DEFINITIONS : ALL_EVENT_COMMAND_DEFINITIONS;
 }
 
-export function isKnownEventCommandCode(code: number): boolean {
-  return definitionByCode.has(code);
+export function eventCommandBlockPairings(
+  engine: RpgMakerEngine = "rpg-maker-mv"
+): Readonly<Record<number, { continuations?: readonly number[]; terminator?: number }>> {
+  return engine === "rpg-maker-mz" ? MZ_EVENT_COMMAND_BLOCK_PAIRINGS : EVENT_COMMAND_BLOCK_PAIRINGS;
 }
 
-export function defaultEventCommandParameters(code: number): unknown[] {
-  const definition = eventCommandDefinition(code);
-  if (!definition) throw new Error(`Unknown RPG Maker MV event command code ${code}`);
+export function eventCommandBlockHeadCodes(engine: RpgMakerEngine = "rpg-maker-mv"): ReadonlySet<number> {
+  return engine === "rpg-maker-mz" ? MZ_EVENT_COMMAND_BLOCK_HEAD_CODES : EVENT_COMMAND_BLOCK_HEAD_CODES;
+}
+
+export function eventCommandContinuationCodes(engine: RpgMakerEngine = "rpg-maker-mv"): ReadonlySet<number> {
+  return engine === "rpg-maker-mz" ? MZ_EVENT_COMMAND_CONTINUATION_CODES : EVENT_COMMAND_CONTINUATION_CODES;
+}
+
+export function eventCommandDefinition(code: number, engine: RpgMakerEngine = "rpg-maker-mv"): EventCommandDefinition | undefined {
+  return definitionsByEngine[engine].get(code);
+}
+
+export function isKnownEventCommandCode(code: number, engine: RpgMakerEngine = "rpg-maker-mv"): boolean {
+  return definitionsByEngine[engine].has(code);
+}
+
+export function defaultEventCommandParameters(code: number, engine: RpgMakerEngine = "rpg-maker-mv"): unknown[] {
+  const definition = eventCommandDefinition(code, engine);
+  if (!definition) throw new Error(`Unknown ${engineLabel(engine)} event command code ${code}`);
   return clone(Array.from(definition.defaultParameters));
 }
 
-export function validateEventCommandBasic(commandValue: unknown, label = "eventCommand"): asserts commandValue is RawEventCommand {
+export function validateEventCommandBasic(
+  commandValue: unknown,
+  label = "eventCommand",
+  engine: RpgMakerEngine = "rpg-maker-mv"
+): asserts commandValue is RawEventCommand {
   if (!commandValue || typeof commandValue !== "object" || Array.isArray(commandValue)) {
     throw new Error(`${label} must be an object with code/indent/parameters`);
   }
@@ -380,9 +500,12 @@ export function validateEventCommandBasic(commandValue: unknown, label = "eventC
   if (!Array.isArray(commandObject.parameters)) {
     throw new Error(`${label}.parameters must be an array`);
   }
-  const definition = eventCommandDefinition(commandObject.code);
+  const definition = eventCommandDefinition(commandObject.code, engine);
   if (!definition) {
-    throw new Error(`${label}.code ${commandObject.code} is not a standard RPG Maker MV event command code`);
+    if (engine === "rpg-maker-mv") {
+      throw new Error(`${label}.code ${commandObject.code} is not a standard RPG Maker MV event command code`);
+    }
+    throw new Error(`${label}.code ${commandObject.code} is not valid for RPG Maker MZ`);
   }
   validateEventCommandParameters(definition, commandObject.parameters, label);
 }
@@ -390,6 +513,7 @@ export function validateEventCommandBasic(commandValue: unknown, label = "eventC
 export function validateEventCommandList(
   commandList: unknown,
   label = "eventCommandList",
+  engine: RpgMakerEngine = "rpg-maker-mv"
 ): asserts commandList is RawEventCommand[] {
   if (!Array.isArray(commandList)) throw new Error(`${label} must be an array`);
   if (commandList.length === 0) throw new Error(`${label} must end with code 0 at indent 0`);
@@ -397,24 +521,36 @@ export function validateEventCommandList(
   const openBlocks: Array<{ headCode: number; indent: number; terminatorCode: number }> = [];
   for (let index = 0; index < commandList.length; index += 1) {
     const commandLabel = `${label}[${index}]`;
-    validateEventCommandBasic(commandList[index], commandLabel);
+    validateEventCommandBasic(commandList[index], commandLabel, engine);
     const current = commandList[index] as RawEventCommand;
 
     if (current.code === 0) {
-      if (index !== commandList.length - 1) throw new Error(`${commandLabel} code 0 must be the final command`);
-      if (current.indent !== 0) throw new Error(`${commandLabel} code 0 must use indent 0`);
-      const unclosed = openBlocks[openBlocks.length - 1];
-      if (unclosed) {
-        throw new Error(
-          `${label} block head code ${unclosed.headCode} at indent ${unclosed.indent} requires terminator code ${unclosed.terminatorCode} before end`,
-        );
+      if (index === commandList.length - 1) {
+        if (current.indent !== 0) throw new Error(`${commandLabel} final code 0 must use indent 0`);
+        const unclosed = openBlocks[openBlocks.length - 1];
+        if (unclosed) {
+          throw new Error(
+            `${label} block head code ${unclosed.headCode} at indent ${unclosed.indent} requires terminator code ${unclosed.terminatorCode} before end`,
+          );
+        }
+      } else if (
+        openBlocks.length
+        && openBlocks[openBlocks.length - 1].terminatorCode === 0
+        && current.indent === openBlocks[openBlocks.length - 1].indent
+      ) {
+        openBlocks.pop();
+      } else {
+        const expectedIndent = openBlocks.length ? openBlocks[openBlocks.length - 1].indent + 1 : 0;
+        if (current.indent !== expectedIndent) {
+          throw new Error(`${commandLabel} internal code 0 must use indent ${expectedIndent}; got ${current.indent}`);
+        }
       }
       continue;
     }
 
-    const definition = eventCommandDefinition(current.code)!;
+    const definition = eventCommandDefinition(current.code, engine)!;
     if (definition.block.kind === "continuation" || definition.block.kind === "terminator") {
-      validateStructuralCommand(commandList, index, current, definition, openBlocks, label);
+      validateStructuralCommand(commandList, index, current, definition, openBlocks, label, engine);
       continue;
     }
 
@@ -423,7 +559,7 @@ export function validateEventCommandList(
       throw new Error(`${commandLabel} must use indent ${expectedIndent}; got ${current.indent}`);
     }
 
-    if (definition.block.kind === "structured") {
+    if (definition.block.kind === "structured" && startsStructuredBlock(commandList, index, current, definition)) {
       const terminatorCode = definition.block.endCode;
       if (terminatorCode === undefined) {
         throw new Error(`${commandLabel} structured block head code ${current.code} has no registered terminator`);
@@ -443,11 +579,12 @@ function validateStructuralCommand(
   definition: EventCommandDefinition,
   openBlocks: Array<{ headCode: number; indent: number; terminatorCode: number }>,
   label: string,
+  engine: RpgMakerEngine,
 ): void {
   const commandLabel = `${label}[${index}]`;
   const parentCode = definition.block.parentCode;
   if (parentCode === undefined) throw new Error(`${commandLabel} structural command has no registered parent`);
-  const parent = eventCommandDefinition(parentCode)!;
+  const parent = eventCommandDefinition(parentCode, engine)!;
 
   if (parent.block.kind === "multiline") {
     const previous = index > 0 ? commandList[index - 1] : undefined;
@@ -493,6 +630,75 @@ export function validateEventCommandParameters(definition: EventCommandDefinitio
     }
     validateParameter(schema, parameters[schema.index], `${label}.parameters[${schema.index}]`);
   }
+  validateVariantParameterShape(definition.code, parameters, label);
+}
+
+function startsStructuredBlock(
+  commandList: unknown[],
+  index: number,
+  current: RawEventCommand,
+  definition: EventCommandDefinition,
+): boolean {
+  if (!definition.block.optional) return true;
+  const nextValue = commandList[index + 1];
+  if (!nextValue || typeof nextValue !== "object" || Array.isArray(nextValue)) return false;
+  const next = nextValue as Partial<RawEventCommand>;
+  if (next.indent !== current.indent) return false;
+  const structuralCodes = new Set([
+    ...(definition.block.branchCodes ?? []),
+    ...(definition.block.endCode === undefined ? [] : [definition.block.endCode]),
+  ]);
+  return structuralCodes.has(Number(next.code));
+}
+
+const CONDITIONAL_BRANCH_PARAMETER_LENGTHS: Readonly<Record<number, readonly number[]>> = Object.freeze({
+  0: [3],
+  1: [5],
+  2: [3],
+  3: [3],
+  4: [3, 4],
+  5: [3, 4],
+  6: [3],
+  7: [3],
+  8: [2],
+  9: [3],
+  10: [3],
+  11: [3],
+  12: [2],
+  13: [2],
+});
+const ACTOR_TARGET_EVENT_CODES = new Set([311, 312, 313, 314, 315, 316, 317, 318, 326]);
+
+function validateVariantParameterShape(code: number, parameters: unknown[], label: string): void {
+  if (code === 111) {
+    const conditionType = Number(parameters[0]);
+    const allowedLengths = CONDITIONAL_BRANCH_PARAMETER_LENGTHS[conditionType];
+    if (allowedLengths && !allowedLengths.includes(parameters.length)) {
+      throw new Error(
+        `${label}.parameters for conditional branch type ${conditionType} must have ${allowedLengths.join(" or ")} value(s); got ${parameters.length}`,
+      );
+    }
+  }
+  if (code === 124) {
+    const operation = Number(parameters[0]);
+    const allowedLengths = operation === 0 ? [2] : [1, 2];
+    if (!allowedLengths.includes(parameters.length)) {
+      throw new Error(
+        `${label}.parameters for timer operation ${operation} must have ${allowedLengths.join(" or ")} value(s); got ${parameters.length}`,
+      );
+    }
+  }
+  if (code === 403) {
+    const validLegacyShape = parameters.length === 2
+      && Number.isInteger(parameters[0])
+      && parameters[1] === null;
+    if (parameters.length !== 0 && !validLegacyShape) {
+      throw new Error(`${label}.parameters for cancel branch must be empty or [integer, null]`);
+    }
+  }
+  if (ACTOR_TARGET_EVENT_CODES.has(code) && Number(parameters[0]) === 1 && Number(parameters[1]) < 1) {
+    throw new Error(`${label}.parameters[1] (actorVariableId) must be >= 1 when actorTargetType is 1`);
+  }
 }
 
 function validateParameter(schema: EventCommandParameterSchema, value: unknown, label: string): void {
@@ -524,6 +730,12 @@ function validateParameter(schema: EventCommandParameterSchema, value: unknown, 
   if (schema.type === "stringArray") {
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
       throw new Error(`${label} (${schema.name}) must be an array of strings`);
+    }
+    return;
+  }
+  if (schema.type === "stringRecord") {
+    if (!value || typeof value !== "object" || Array.isArray(value) || !Object.values(value).every((item) => typeof item === "string")) {
+      throw new Error(`${label} (${schema.name}) must be an object with string values`);
     }
     return;
   }
@@ -582,6 +794,39 @@ function assertRegistryIntegrity(): void {
   }
   const allCodes = ALL_EVENT_COMMAND_DEFINITIONS.map((definition) => definition.code);
   if (new Set(allCodes).size !== allCodes.length) throw new Error("RMMV event command registry has duplicate codes");
+
+  if (MZ_STANDARD_EVENT_COMMAND_DEFINITIONS.length !== MZ_STANDARD_EVENT_COMMAND_CODES.length) {
+    throw new Error(`RPG Maker MZ event command registry must cover 106 standard commands; got ${MZ_STANDARD_EVENT_COMMAND_DEFINITIONS.length}`);
+  }
+  const mzStandardCodes = MZ_STANDARD_EVENT_COMMAND_DEFINITIONS.map((definition) => definition.code);
+  if (new Set(mzStandardCodes).size !== mzStandardCodes.length) throw new Error("RPG Maker MZ event command registry has duplicate standard codes");
+  for (const code of MZ_STANDARD_EVENT_COMMAND_CODES) {
+    if (!mzDefinitionByCode.has(code)) throw new Error(`RPG Maker MZ event command registry is missing standard code ${code}`);
+  }
+  const mzAllCodes = MZ_ALL_EVENT_COMMAND_DEFINITIONS.map((definition) => definition.code);
+  if (new Set(mzAllCodes).size !== mzAllCodes.length) throw new Error("RPG Maker MZ event command registry has duplicate codes");
+}
+
+function buildBlockPairings(
+  definitions: readonly EventCommandDefinition[]
+): Readonly<Record<number, { continuations?: readonly number[]; terminator?: number }>> {
+  return Object.freeze(
+    Object.fromEntries(
+      definitions
+        .filter((definition) => definition.block.continuationCodes?.length || definition.block.branchCodes?.length || definition.block.endCode !== undefined)
+        .map((definition) => [
+          definition.code,
+          {
+            continuations: [...(definition.block.continuationCodes || []), ...(definition.block.branchCodes || [])],
+            ...(definition.block.endCode === undefined ? {} : { terminator: definition.block.endCode })
+          }
+        ])
+    )
+  );
+}
+
+function engineLabel(engine: RpgMakerEngine): string {
+  return engine === "rpg-maker-mz" ? "RPG Maker MZ" : "RPG Maker MV";
 }
 
 function clone<T>(value: T): T {

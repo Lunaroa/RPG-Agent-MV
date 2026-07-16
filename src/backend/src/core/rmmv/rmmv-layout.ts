@@ -1,6 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import {
+  inspectRpgMakerEngine,
+  RPG_MAKER_ENGINE_PROFILES,
+  RPG_MAKER_MV_ENGINE_FILES,
+  type RpgMakerEngine,
+} from './rpg-maker-engine.ts';
+
 export type RmmvLayoutKind = 'www-data' | 'data';
 
 export interface RmmvProjectLayout {
@@ -13,8 +20,16 @@ export interface RmmvProjectLayout {
 }
 
 export interface RmmvProjectManifest extends RmmvProjectLayout {
+  engine: RpgMakerEngine;
+  engineVersion: string | null;
+  tileSize: number;
+  screenWidth: number;
+  screenHeight: number;
+  faceSize: number;
+  iconSize: number;
   projectMarker: {
     gameRpgProject: boolean;
+    gameRmmzProject: boolean;
     indexHtml: boolean;
     packageJson: boolean;
   };
@@ -47,18 +62,7 @@ export const RMMV_STANDARD_DATABASE_FILES = [
   'Weapons.json',
 ] as const;
 
-export const RMMV_ENGINE_FILES = [
-  'index.html',
-  'package.json',
-  'js/rpg_core.js',
-  'js/rpg_managers.js',
-  'js/rpg_objects.js',
-  'js/rpg_scenes.js',
-  'js/rpg_sprites.js',
-  'js/rpg_windows.js',
-  'js/main.js',
-  'js/plugins.js',
-] as const;
+export const RMMV_ENGINE_FILES = RPG_MAKER_MV_ENGINE_FILES;
 
 export const RMMV_RESOURCE_DIRS = [
   'audio',
@@ -90,6 +94,7 @@ export const RMMV_ASSET_BUCKETS = {
   movies: { directory: 'movies', extensions: ['.webm', '.mp4'] },
   fonts: { directory: 'fonts', extensions: ['.ttf', '.otf', '.woff', '.woff2'] },
   plugins: { directory: 'js/plugins', extensions: ['.js'] },
+  effects: { directory: 'effects', extensions: ['.efkefc'] },
 } as const;
 
 export function resolveRmmvLayout(projectRoot: string): RmmvProjectLayout {
@@ -112,8 +117,15 @@ export function resolveRmmvLayout(projectRoot: string): RmmvProjectLayout {
       resourceRootRelative: '',
     },
   ];
-  const found = candidates.find((candidate) => directoryExists(candidate.dataDir));
-  if (!found) throw new Error(`Cannot find RPG Maker MV data folder under ${root}`);
+  const foundCandidates = candidates.filter((candidate) => directoryExists(candidate.dataDir));
+  const hasMZSignal = fileExists(path.join(root, 'game.rmmzproject'))
+    || fileExists(path.join(root, 'js', 'rmmz_core.js'))
+    || fileExists(path.join(root, 'www', 'js', 'rmmz_core.js'));
+  if (hasMZSignal && foundCandidates.length > 1) {
+    throw new Error(`Conflicting RPG Maker source/deployment data folders under ${root}`);
+  }
+  const found = foundCandidates[0];
+  if (!found) throw new Error(`Cannot find an RPG Maker data folder under ${root}`);
   return found;
 }
 
@@ -134,6 +146,13 @@ export function inspectRmmvProject(projectRoot: string): RmmvProjectManifest {
   const missingRequired: string[] = [];
   const missingRecommended: string[] = [];
 
+  const system = readJsonIfPossible(path.join(layout.dataDir, 'System.json'));
+  const engineInspection = inspectRpgMakerEngine(layout.projectRoot, layout.resourceRoot, system);
+  if (engineInspection.engine === 'rpg-maker-mz' && layout.kind !== 'data') {
+    throw new Error('RPG Maker MZ is supported only as an editable source project with a root data folder.');
+  }
+  const engineProfile = RPG_MAKER_ENGINE_PROFILES[engineInspection.engine];
+
   const databaseFiles = Object.fromEntries(
     RMMV_STANDARD_DATABASE_FILES.map((fileName) => [fileName, fileExists(path.join(layout.dataDir, fileName))]),
   ) as Record<string, boolean>;
@@ -146,34 +165,50 @@ export function inspectRmmvProject(projectRoot: string): RmmvProjectManifest {
 
   const mapFiles = inspectMapFiles(layout, missingRequired);
   const engineFiles = Object.fromEntries(
-    RMMV_ENGINE_FILES.map((relative) => [relative, fileExists(path.join(layout.resourceRoot, ...relative.split('/')))]),
+    engineProfile.engineFiles.map((relative) => [relative, fileExists(path.join(layout.resourceRoot, ...relative.split('/')))]),
   ) as Record<string, boolean>;
   const resourceDirs = Object.fromEntries(
-    RMMV_RESOURCE_DIRS.map((relative) => [relative, directoryExists(path.join(layout.resourceRoot, ...relative.split('/')))]),
+    engineProfile.resourceDirs.map((relative) => [relative, directoryExists(path.join(layout.resourceRoot, ...relative.split('/')))]),
   ) as Record<string, boolean>;
 
   const projectMarker = {
     gameRpgProject: fileExists(path.join(layout.projectRoot, 'Game.rpgproject')),
+    gameRmmzProject: fileExists(path.join(layout.projectRoot, 'game.rmmzproject')),
     indexHtml: engineFiles['index.html'],
     packageJson: engineFiles['package.json'],
   };
-  for (const relative of RMMV_ENGINE_FILES) {
-    if (!engineFiles[relative]) missingRecommended.push(resourceRelativePath(layout, relative));
+  for (const relative of engineProfile.engineFiles) {
+    if (!engineFiles[relative]) {
+      const target = resourceRelativePath(layout, relative);
+      if (engineInspection.engine === 'rpg-maker-mz') missingRequired.push(target);
+      else missingRecommended.push(target);
+    }
   }
-  for (const relative of RMMV_RESOURCE_DIRS) {
+  for (const relative of engineProfile.resourceDirs) {
     if (!resourceDirs[relative]) missingRecommended.push(resourceRelativePath(layout, relative));
   }
-  if (!projectMarker.gameRpgProject) missingRecommended.push('Game.rpgproject');
+  if (engineInspection.engine === 'rpg-maker-mz') {
+    if (!projectMarker.gameRmmzProject) missingRequired.push('game.rmmzproject');
+  } else if (!projectMarker.gameRpgProject) {
+    missingRecommended.push('Game.rpgproject');
+  }
 
   const editable = missingRequired.length === 0;
   const runnableStructure = editable
     && engineFiles['index.html']
     && engineFiles['package.json']
-    && engineFiles['js/rpg_core.js']
+    && engineFiles[engineProfile.coreScript]
     && engineFiles['js/plugins.js'];
 
   return {
     ...layout,
+    engine: engineInspection.engine,
+    engineVersion: engineInspection.engineVersion,
+    tileSize: engineInspection.canvas.tileSize,
+    screenWidth: engineInspection.canvas.screenWidth,
+    screenHeight: engineInspection.canvas.screenHeight,
+    faceSize: engineInspection.canvas.faceSize,
+    iconSize: engineInspection.canvas.iconSize,
     projectMarker,
     engineFiles,
     resourceDirs,

@@ -16,6 +16,7 @@ import { readEffectiveRmmvDatabaseTable } from "./database-read.ts";
 import {
   createDefaultRmmvDatabaseEntry,
   getRmmvDatabaseSchemaByKey,
+  rpgMakerDatabaseEntryLimit,
   type RmmvDatabaseTableKey,
 } from "./database-schema.ts";
 import {
@@ -25,7 +26,8 @@ import {
   type RmmvDatabaseSemanticValidationResult,
   type RmmvDatabaseSnapshot,
 } from "./database-validation.ts";
-import { dataRelativePath, resolveRmmvLayout } from "./rmmv-layout.ts";
+import { dataRelativePath, inspectRmmvProject, resolveRmmvLayout } from "./rmmv-layout.ts";
+import type { RpgMakerEngine } from "./rpg-maker-engine.ts";
 
 export type RmmvArrayDatabaseTableKey = Exclude<RmmvDatabaseTableKey, "system" | "types" | "terms">;
 export type RmmvTypeListField = "elements" | "skillTypes" | "weaponTypes" | "armorTypes" | "equipTypes";
@@ -180,7 +182,7 @@ export function validateEffectiveRmmvDatabaseState(
   project: string,
 ): RmmvDatabaseSemanticValidationResult {
   const loaded = loadProjectInputs(workflowRoot, path.resolve(project));
-  return validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps });
+  return validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps, engine: loaded.engine });
 }
 
 export function captureEffectiveRmmvDatabaseValidationState(
@@ -203,6 +205,7 @@ export function validateEffectiveRmmvDatabaseTransition(
   return validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
     beforeMaps: before.maps,
     maps: after.maps,
+    engine: after.engine,
   });
 }
 
@@ -231,6 +234,7 @@ export function preflightRmmvDatabaseProjectApply(
   const validation = validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
     beforeMaps: before.maps,
     maps: after.maps,
+    engine: after.engine,
   });
   assertSemanticValidationOk(validation);
   return validation;
@@ -325,6 +329,7 @@ function validateStagedOperationState(
   const validation = validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
     beforeMaps: before.maps,
     maps: after.maps,
+    engine: after.engine,
   });
   assertSemanticValidationOk(validation);
 }
@@ -384,12 +389,13 @@ function buildPlan(
   const affected = new Map<RmmvArrayDatabaseTableKey | "system", Set<RmmvDatabaseTableKey>>();
 
   request.changes.forEach((change, changeIndex) => {
-    applyChange(after, change, changeIndex, resolvedChanges, diffs, affected);
+    applyChange(after, change, changeIndex, resolvedChanges, diffs, affected, loaded.engine);
   });
 
   const validation = validateRmmvDatabaseTransition(before, after, {
     beforeMaps: loaded.maps,
     maps: loaded.maps,
+    engine: loaded.engine,
   });
   const files: RmmvDatabasePlanFile[] = [];
   const drafts: BuiltPlan["drafts"] = [];
@@ -444,6 +450,7 @@ function applyChange(
   resolved: ResolvedRmmvDatabaseChange[],
   diffs: Array<Omit<RmmvDatabasePlanDiff, "relativePath"> & { physicalTable: RmmvArrayDatabaseTableKey | "system" }>,
   affected: Map<RmmvArrayDatabaseTableKey | "system", Set<RmmvDatabaseTableKey>>,
+  engine: RpgMakerEngine,
 ): void {
   if (!change || typeof change !== "object") throw new Error(`Database change ${changeIndex} must be an object.`);
   if (change.op === "create") {
@@ -451,12 +458,13 @@ function applyChange(
     const records = requireArray(snapshot[table], `${table} database`);
     const id = change.id === undefined ? smallestEmptySlot(records) : positiveId(change.id, `${table} create id`);
     const schema = getRmmvDatabaseSchemaByKey(table);
-    if (schema.maxEntries !== null && id > schema.maxEntries) {
-      throw new Error(`${schema.group} create id ${id} exceeds the RPG Maker MV limit of ${schema.maxEntries}.`);
+    const entryLimit = rpgMakerDatabaseEntryLimit(table, engine);
+    if (entryLimit !== null && id > entryLimit) {
+      throw new Error(`${schema.group} create id ${id} exceeds the RPG Maker ${engine === 'rpg-maker-mz' ? 'MZ' : 'MV'} limit of ${entryLimit}.`);
     }
     if (isRecord(records[id])) throw new Error(`${schema.group} id ${id} is already occupied.`);
     while (records.length <= id) records.push(null);
-    let entry = createDefaultRmmvDatabaseEntry(table, id);
+    let entry = createDefaultRmmvDatabaseEntry(table, id, engine);
     const patches = change.patches ?? [];
     let createPatchDiffs: RmmvDatabaseFieldDiff[] = [];
     if (!Array.isArray(patches)) throw new Error(`Database create patches must be an array at change ${changeIndex}.`);
@@ -599,11 +607,13 @@ function loadProjectInputs(
   maps: RmmvDatabaseMapDocument[];
   physical: Map<RmmvArrayDatabaseTableKey | "system", LoadedPhysicalTable>;
   inputHashes: RmmvDatabaseInputHash[];
+  engine: RpgMakerEngine;
 } {
   const snapshot: RmmvDatabaseSnapshot = {};
   const physical = new Map<RmmvArrayDatabaseTableKey | "system", LoadedPhysicalTable>();
   const inputHashes: RmmvDatabaseInputHash[] = [];
   const layout = resolveRmmvLayout(project);
+  const engine = inspectRmmvProject(project).engine;
   for (const table of PHYSICAL_TABLES) {
     const schema = getRmmvDatabaseSchemaByKey(table);
     const relativePath = dataRelativePath(layout, schema.fileName);
@@ -650,7 +660,7 @@ function loadProjectInputs(
     inputHashes.push(loaded.hashes);
   }
   inputHashes.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-  return { snapshot, maps, physical, inputHashes };
+  return { snapshot, maps, physical, inputHashes, engine };
 }
 
 function readEffectiveJsonInput(

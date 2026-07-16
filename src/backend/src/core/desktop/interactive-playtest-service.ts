@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import type {
   InteractiveBattleTestBattler,
+  InteractiveParticleAnimationPreview,
   InteractivePlaytestMode,
   InteractivePlaytestResult,
   InteractivePlaytestRun,
@@ -13,13 +14,25 @@ import type {
   InteractivePlaytestStagingSummary,
 } from '../../../../contract/types.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
+import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
+import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import {
   prepareBattleTestProject,
   type BattleTestConfiguration,
   type BattleTestProjectPreparation,
 } from './battle-test-preparation.ts';
 import { cleanupIsolatedProject, verifyIsolatedSourceState } from './isolated-project-preparation.ts';
+import {
+  prepareParticleAnimationPreview,
+  type ParticleAnimationPreviewPreparation,
+} from './particle-animation-preview-preparation.ts';
 import { getProjectStagingStatus } from './staging-service.ts';
+import {
+  createRpgMakerMZRuntimeOutputSanitizer,
+  redactRpgMakerMZRuntimePath,
+  resolveRpgMakerMZProjectRuntime,
+  type RpgMakerMZProjectRuntime,
+} from './rpg-maker-mz-runtime.ts';
 
 export interface InteractivePlaytestStream extends EventEmitter {
   on(event: 'data', listener: (chunk: Buffer | string) => void): this;
@@ -52,11 +65,18 @@ export interface InteractivePlaytestDependencies {
   forceKillProcessTree: (child: InteractivePlaytestChild) => Promise<{ ok: boolean; error?: string }>;
   forceKillProcessTreeSync: (child: InteractivePlaytestChild) => { ok: boolean; error?: string };
   onStatus: (run: InteractivePlaytestRun) => void;
+  inspectProject: (project: string) => { engine: RpgMakerEngine; editable: boolean; missingRequired: string[] };
+  resolveMZRuntime: (projectDirectory: string) => RpgMakerMZProjectRuntime;
   prepareBattleTest: (
     workflowRoot: string,
     project: string,
     configuration: BattleTestConfiguration,
   ) => BattleTestProjectPreparation;
+  prepareParticlePreview: (
+    workflowRoot: string,
+    project: string,
+    animation: InteractiveParticleAnimationPreview,
+  ) => ParticleAnimationPreviewPreparation;
   verifyIsolatedSource: typeof verifyIsolatedSourceState;
   cleanupIsolated: typeof cleanupIsolatedProject;
   randomUUID: () => string;
@@ -74,6 +94,7 @@ export interface InteractivePlaytestStartOptions {
   battlers?: InteractiveBattleTestBattler[];
   battleback1Name?: string;
   battleback2Name?: string;
+  animationPreview?: InteractiveParticleAnimationPreview;
 }
 
 interface StagingConfirmation {
@@ -101,7 +122,7 @@ export class InteractivePlaytestService {
   #child: InteractivePlaytestChild | null = null;
   #stopRequested = false;
   #stopPromise: Promise<InteractivePlaytestResult> | null = null;
-  #battlePreparation: BattleTestProjectPreparation | null = null;
+  #battlePreparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | null = null;
 
   constructor(
     workflowRoot: string,
@@ -115,7 +136,10 @@ export class InteractivePlaytestService {
       forceKillProcessTree: dependencies.forceKillProcessTree || defaultForceKillProcessTree,
       forceKillProcessTreeSync: dependencies.forceKillProcessTreeSync || defaultForceKillProcessTreeSync,
       onStatus: dependencies.onStatus || (() => undefined),
+      inspectProject: dependencies.inspectProject || inspectRmmvProject,
+      resolveMZRuntime: dependencies.resolveMZRuntime || resolveRpgMakerMZProjectRuntime,
       prepareBattleTest: dependencies.prepareBattleTest || prepareBattleTestProject,
+      prepareParticlePreview: dependencies.prepareParticlePreview || prepareParticleAnimationPreview,
       verifyIsolatedSource: dependencies.verifyIsolatedSource || verifyIsolatedSourceState,
       cleanupIsolated: dependencies.cleanupIsolated || cleanupIsolatedProject,
       randomUUID: dependencies.randomUUID || crypto.randomUUID,
@@ -153,7 +177,7 @@ export class InteractivePlaytestService {
       if (this.#battlePreparation) {
         return {
           ...this.current(),
-          error: 'A previous Battle Test temporary project could not be cleaned up. New playtests are blocked until cleanup succeeds.',
+          error: 'A previous isolated playtest project could not be cleaned up. New playtests are blocked until cleanup succeeds.',
         };
       }
     }
@@ -163,13 +187,45 @@ export class InteractivePlaytestService {
     try {
       project = fs.realpathSync.native(path.resolve(projectRoot));
     } catch {
-      return { confirmationRequired: false, error: `RMMV project directory does not exist: ${path.resolve(projectRoot)}` };
+      return { confirmationRequired: false, error: `RPG Maker project directory does not exist: ${path.resolve(projectRoot)}` };
     }
+    let engine: RpgMakerEngine;
+    try {
+      const manifest = this.#dependencies.inspectProject(project);
+      if (!manifest.editable) {
+        return {
+          confirmationRequired: false,
+          error: `The RPG Maker project is not editable: ${manifest.missingRequired.join(', ')}`,
+        };
+      }
+      engine = manifest.engine;
+    } catch (error) {
+      return { confirmationRequired: false, error: errorMessage(error) };
+    }
+
+    let mzRuntime: RpgMakerMZProjectRuntime | null = null;
+    if (engine === 'rpg-maker-mz') {
+      try {
+        mzRuntime = this.#dependencies.resolveMZRuntime(project);
+      } catch (error) {
+        return {
+          confirmationRequired: false,
+          error: errorMessage(error),
+        };
+      }
+    }
+
     let launchProject = project;
-    let executable = path.join(project, 'Game.exe');
+    let executable = engine === 'rpg-maker-mz'
+      ? mzRuntime!.executable
+      : path.join(project, 'Game.exe');
+    let evidenceExecutable = engine === 'rpg-maker-mz'
+      ? 'project-local-rpg-maker-mz-nwjs'
+      : executable;
     let battlePreparation: BattleTestProjectPreparation | null = null;
+    let particlePreparation: ParticleAnimationPreviewPreparation | null = null;
     if (mode === 'project') {
-      if (!isFile(executable)) {
+      if (engine === 'rpg-maker-mv' && !isFile(executable)) {
         return { confirmationRequired: false, error: `Game.exe was not found in the current project root: ${executable}` };
       }
       let staging: StagingConfirmation;
@@ -197,7 +253,36 @@ export class InteractivePlaytestService {
         return { confirmationRequired: false, error: errorMessage(error) };
       }
       launchProject = battlePreparation.temporaryProject;
-      executable = battlePreparation.executable;
+      if (battlePreparation.engine !== engine) {
+        try { this.#dependencies.cleanupIsolated(battlePreparation); } catch { /* Report the engine mismatch first. */ }
+        return { confirmationRequired: false, error: 'Battle Test project engine changed while preparing the isolated copy.' };
+      }
+      if (engine === 'rpg-maker-mv') {
+        if (!battlePreparation.executable) {
+          try { this.#dependencies.cleanupIsolated(battlePreparation); } catch { /* Report the missing runner first. */ }
+          return { confirmationRequired: false, error: 'Game.exe was not found in the isolated RPG Maker MV project.' };
+        }
+        executable = battlePreparation.executable;
+        evidenceExecutable = executable;
+      }
+    } else if (mode === 'particle_preview') {
+      if (!options.animationPreview) {
+        return { confirmationRequired: false, error: 'Particle animation preview data is required.' };
+      }
+      try {
+        particlePreparation = this.#dependencies.prepareParticlePreview(
+          this.#workflowRoot,
+          project,
+          options.animationPreview,
+        );
+      } catch (error) {
+        return { confirmationRequired: false, error: errorMessage(error) };
+      }
+      launchProject = particlePreparation.appDirectory;
+      if (particlePreparation.engine !== engine) {
+        try { this.#dependencies.cleanupIsolated(particlePreparation); } catch { /* Report the engine mismatch first. */ }
+        return { confirmationRequired: false, error: 'Particle preview project engine changed while preparing the isolated copy.' };
+      }
     } else {
       return { confirmationRequired: false, error: `Unsupported interactive playtest mode: ${String(mode)}` };
     }
@@ -209,23 +294,25 @@ export class InteractivePlaytestService {
       runId,
       status: 'starting',
       mode,
-      project,
-      executable,
-      cwd: launchProject,
+      engine,
+      project: mode === 'particle_preview' ? '[current RPG Maker MZ project]' : project,
+      executable: evidenceExecutable,
+      cwd: mode === 'particle_preview' ? '[isolated particle preview]' : launchProject,
       ...(options.sessionId ? { sessionId: options.sessionId } : {}),
       startedAt: now.toISOString(),
       updatedAt: now.toISOString(),
       exitCode: null,
       signal: null,
       forced: false,
-      stagingIncluded: mode === 'battle_test',
+      stagingIncluded: mode !== 'project',
       sourceSaveRisk: mode === 'project',
-      temporaryProject: mode === 'battle_test',
+      temporaryProject: mode !== 'project',
       ...(battlePreparation ? {
         troopId: battlePreparation.troopId,
         troopName: battlePreparation.troopName,
         stagedFileCount: battlePreparation.staging.files.length,
       } : {}),
+      ...(particlePreparation ? { effectName: particlePreparation.effectName } : {}),
       lifecycleOnly: true,
       artifactDir,
       artifactPath: path.join(artifactDir, 'playtest-run.json'),
@@ -237,7 +324,7 @@ export class InteractivePlaytestService {
     this.#currentRun = run;
     this.#runs.set(runId, run);
     this.#stopRequested = false;
-    this.#battlePreparation = battlePreparation;
+    this.#battlePreparation = battlePreparation || particlePreparation;
     this.#publish(run, 'launch requested');
 
     return new Promise<InteractivePlaytestResult>((resolve) => {
@@ -252,20 +339,27 @@ export class InteractivePlaytestService {
 
       let child: InteractivePlaytestChild;
       try {
-        child = this.#dependencies.spawnProcess(executable, mode === 'battle_test' ? ['test&btest'] : [], {
+        const args = engine === 'rpg-maker-mz'
+          ? [launchProject, ...(mode === 'battle_test' ? ['test&btest'] : [])]
+          : mode === 'battle_test' ? ['test&btest'] : [];
+        child = this.#dependencies.spawnProcess(executable, args, {
           cwd: launchProject,
           windowsHide: false,
           shell: false,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (error) {
-        this.#finishWithIsolation('failed', { error: errorMessage(error) });
+        this.#finishWithIsolation('failed', { error: redactMZRuntimePath(errorMessage(error), mzRuntime) });
         resolveStart();
         return;
       }
       this.#child = child;
-      attachOutput(child.stdout, run.stdoutPath, run.logPath);
-      attachOutput(child.stderr, run.stderrPath, run.logPath);
+      const flushStdout = attachOutput(child.stdout, run.stdoutPath, run.logPath, mzRuntime);
+      const flushStderr = attachOutput(child.stderr, run.stderrPath, run.logPath, mzRuntime);
+      const flushOutput = () => {
+        flushStdout();
+        flushStderr();
+      };
 
       child.once('spawn', () => {
         if (!this.#isCurrent(runId) || TERMINAL_STATUSES.has(this.#currentRun!.status)) return;
@@ -274,12 +368,14 @@ export class InteractivePlaytestService {
       });
       child.once('error', (error: Error) => {
         if (!this.#isCurrent(runId) || TERMINAL_STATUSES.has(this.#currentRun!.status)) return;
+        flushOutput();
         this.#child = null;
-        this.#finishWithIsolation('failed', { error: error.message });
+        this.#finishWithIsolation('failed', { error: redactMZRuntimePath(error.message, mzRuntime) });
         resolveStart();
       });
       child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => {
         if (!this.#isCurrent(runId)) return;
+        flushOutput();
         if (this.#currentRun!.status === 'stop_failed') {
           const existingError = this.#currentRun!.error;
           this.#child = null;
@@ -300,7 +396,7 @@ export class InteractivePlaytestService {
           signal,
           ...(stopped || code === 0 || existingError
             ? {}
-            : { error: `Game.exe exited with code ${code ?? 'unknown'}.` }),
+            : { error: `The playtest runner exited with code ${code ?? 'unknown'}.` }),
         });
         resolveStart();
       });
@@ -344,7 +440,7 @@ export class InteractivePlaytestService {
     } else {
       this.#finish('stop_failed', {
         forced: true,
-        error: forced.error || 'Game.exe process-tree cleanup could not be confirmed before application exit.',
+        error: forced.error || 'The playtest runner process-tree cleanup could not be confirmed before application exit.',
       });
     }
     return this.current();
@@ -354,14 +450,14 @@ export class InteractivePlaytestService {
     this.#stopRequested = true;
     this.#update({ status: 'stopping' }, 'graceful stop requested');
     const graceful = this.#dependencies.requestGracefulStop(child);
-    const gracefulError = graceful.error || (graceful.ok ? '' : 'Game.exe rejected the graceful stop request.');
+    const gracefulError = graceful.error || (graceful.ok ? '' : 'The playtest runner rejected the graceful stop request.');
     if (await waitForExit(child, this.#dependencies.stopGraceMs)) return this.current();
 
     this.#update({ forced: true }, 'force process-tree cleanup requested');
     const forced = await this.#dependencies.forceKillProcessTree(child);
     if (await waitForExit(child, this.#dependencies.forceExitWaitMs)) return this.current();
 
-    const error = forced.error || gracefulError || 'Game.exe process tree did not exit after forced cleanup.';
+    const error = forced.error || gracefulError || 'The playtest runner process tree did not exit after forced cleanup.';
     this.#finish('stop_failed', { forced: true, error });
     return this.current();
   }
@@ -369,7 +465,7 @@ export class InteractivePlaytestService {
   async #handleStartupTimeout(child: InteractivePlaytestChild): Promise<void> {
     this.#update({
       forced: true,
-      error: `Game.exe startup timed out after ${this.#dependencies.startupTimeoutMs}ms.`,
+      error: `The playtest runner startup timed out after ${this.#dependencies.startupTimeoutMs}ms.`,
     }, 'startup timeout');
     const forced = await this.#dependencies.forceKillProcessTree(child);
     this.#update({}, 'startup timeout cleanup requested');
@@ -378,8 +474,8 @@ export class InteractivePlaytestService {
       this.#finish('stop_failed', {
         forced: true,
         error: forced.error
-          ? `Game.exe startup timed out; cleanup failed: ${forced.error}`
-          : `Game.exe startup timed out and its process tree did not exit after cleanup.`,
+          ? `The playtest runner startup timed out; cleanup failed: ${forced.error}`
+          : 'The playtest runner startup timed out and its process tree did not exit after cleanup.',
       });
     }
   }
@@ -434,6 +530,7 @@ export class InteractivePlaytestService {
   #finalizeBattlePreparation(): { patch: Partial<InteractivePlaytestRun>; error?: string } {
     const preparation = this.#battlePreparation;
     if (!preparation) return { patch: {} };
+    const label = this.#currentRun?.mode === 'particle_preview' ? 'Particle preview' : 'Battle Test';
     const failures: string[] = [];
     let sourceUnchanged = false;
     let savesUnchanged = false;
@@ -443,20 +540,20 @@ export class InteractivePlaytestService {
       sourceUnchanged = state.sourceUnchanged;
       savesUnchanged = state.savesUnchanged;
       stagingUnchanged = state.stagingUnchanged;
-      if (!sourceUnchanged) failures.push('Source project content changed during Battle Test.');
-      if (!savesUnchanged) failures.push('Source project save content changed during Battle Test.');
-      if (!stagingUnchanged) failures.push(`Staged project content changed during Battle Test.${state.stagingError ? ` ${state.stagingError}` : ''}`);
+      if (!sourceUnchanged) failures.push(`Source project content changed during ${label}.`);
+      if (!savesUnchanged) failures.push(`Source project save content changed during ${label}.`);
+      if (!stagingUnchanged) failures.push(`Staged project content changed during ${label}.${state.stagingError ? ` ${state.stagingError}` : ''}`);
     } catch (error) {
-      failures.push(`Battle Test source isolation could not be verified: ${errorMessage(error)}`);
+      failures.push(`${label} source isolation could not be verified: ${errorMessage(error)}`);
     }
 
     let temporaryProjectCleaned = false;
     try {
       this.#dependencies.cleanupIsolated(preparation);
       temporaryProjectCleaned = !fs.existsSync(preparation.temporaryProject);
-      if (!temporaryProjectCleaned) failures.push('Battle Test temporary project still exists after cleanup.');
+      if (!temporaryProjectCleaned) failures.push(`${label} temporary project still exists after cleanup.`);
     } catch (error) {
-      failures.push(`Battle Test temporary project cleanup failed: ${errorMessage(error)}`);
+      failures.push(`${label} temporary project cleanup failed: ${errorMessage(error)}`);
     }
     if (temporaryProjectCleaned) this.#battlePreparation = null;
     return {
@@ -523,7 +620,7 @@ function initializeArtifacts(run: InteractivePlaytestRun): void {
   fs.writeFileSync(run.stderrPath, '', 'utf8');
   fs.writeFileSync(
     run.logPath,
-    `RPG Agent MV ${run.mode === 'battle_test' ? 'isolated Battle Test' : 'interactive source playtest'}\nEvidence scope: process lifecycle and isolation only; this does not prove battle, story, or playability correctness.\n`,
+    `RPG Agent MV ${run.mode === 'battle_test' ? 'isolated Battle Test' : run.mode === 'particle_preview' ? 'isolated MZ particle preview' : 'interactive source playtest'}\nEvidence scope: process lifecycle and isolation only; this does not prove battle, story, or playability correctness.\n`,
     'utf8',
   );
 }
@@ -532,12 +629,29 @@ function attachOutput(
   stream: InteractivePlaytestStream | null,
   outputPath: string,
   logPath: string,
-): void {
-  stream?.on('data', (chunk) => {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+  mzRuntime: RpgMakerMZProjectRuntime | null,
+): () => void {
+  const sanitizer = createRpgMakerMZRuntimeOutputSanitizer(mzRuntime?.executable || '');
+  const append = (value: string | Buffer) => {
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
+    if (bytes.length === 0) return;
     fs.appendFileSync(outputPath, bytes);
     fs.appendFileSync(logPath, bytes);
+  };
+  const flush = () => {
+    append(sanitizer.flush());
+  };
+  stream?.on('data', (chunk) => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+    if (!mzRuntime) {
+      append(bytes);
+      return;
+    }
+    append(sanitizer.push(bytes.toString('utf8')));
   });
+  stream?.once('end', flush);
+  stream?.once('close', flush);
+  return flush;
 }
 
 function appendLog(filePath: string, message: string): void {
@@ -580,7 +694,7 @@ function defaultRequestGracefulStop(child: InteractivePlaytestChild): { ok: bool
       : { ok: false, error: result.error?.message || `taskkill failed with status ${result.status ?? 'unknown'}.` };
   }
   try {
-    return child.kill('SIGTERM') ? { ok: true } : { ok: false, error: 'Game.exe rejected SIGTERM.' };
+    return child.kill('SIGTERM') ? { ok: true } : { ok: false, error: 'The playtest runner rejected SIGTERM.' };
   } catch (error) {
     return { ok: false, error: errorMessage(error) };
   }
@@ -591,7 +705,7 @@ async function defaultForceKillProcessTree(child: InteractivePlaytestChild): Pro
 }
 
 function defaultForceKillProcessTreeSync(child: InteractivePlaytestChild): { ok: boolean; error?: string } {
-  if (!child.pid) return { ok: false, error: 'Game.exe process id is unavailable.' };
+  if (!child.pid) return { ok: false, error: 'The playtest runner process id is unavailable.' };
   if (process.platform === 'win32') {
     const result = childProcess.spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
       windowsHide: true,
@@ -602,7 +716,7 @@ function defaultForceKillProcessTreeSync(child: InteractivePlaytestChild): { ok:
       : { ok: false, error: result.error?.message || `taskkill failed with status ${result.status ?? 'unknown'}.` };
   }
   try {
-    return child.kill('SIGKILL') ? { ok: true } : { ok: false, error: 'Game.exe rejected SIGKILL.' };
+    return child.kill('SIGKILL') ? { ok: true } : { ok: false, error: 'The playtest runner rejected SIGKILL.' };
   } catch (error) {
     return { ok: false, error: errorMessage(error) };
   }
@@ -634,4 +748,11 @@ function requirePositiveInteger(value: unknown, label: string): number {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function redactMZRuntimePath(
+  message: string,
+  runtime: RpgMakerMZProjectRuntime | null,
+): string {
+  return redactRpgMakerMZRuntimePath(message, runtime?.executable || '');
 }

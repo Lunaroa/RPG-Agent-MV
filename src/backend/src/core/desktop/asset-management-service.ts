@@ -88,7 +88,7 @@ export function getAssetDetail(workflowRoot: string, project: string, target: As
   const resolved = resolveAssetPath(workflowRoot, project, target);
   if (!fs.existsSync(resolved.absolute)) throw new Error(assetManagementAssetMissing());
   const fileName = path.basename(resolved.absolute);
-  const name = path.basename(fileName, path.extname(fileName));
+  const name = assetNameFromRelative(workflowRoot, project, resolved.category, resolved.relativePath);
   return {
     scope: target.scope,
     name,
@@ -118,6 +118,7 @@ export function buildStagedAwareAssetInventory(workflowRoot: string, project: st
   for (const [bucket, category] of Object.entries(INVENTORY_IMAGE_CATEGORIES)) {
     inventory.images[bucket] = effectiveInventoryBucket(graph.assets, category as RmmvAssetCategory, inventory.images[bucket]?.dir || '');
   }
+  inventory.effects = effectiveInventoryBucket(graph.assets, 'effects', inventory.effects?.dir || '');
   inventory.summary.audio = Object.fromEntries(INVENTORY_AUDIO_CATEGORIES.map((category) => [category, {
     exists: inventory.audio[category].exists,
     count: inventory.audio[category].count,
@@ -126,17 +127,22 @@ export function buildStagedAwareAssetInventory(workflowRoot: string, project: st
     exists: inventory.images[bucket].exists,
     count: inventory.images[bucket].count,
   }]));
+  inventory.summary.effects = { exists: inventory.effects.exists, count: inventory.effects.count };
   const animationSheets = new Set(inventory.images.animations.names);
   inventory.animations = inventory.animations.map((animation) => ({
     ...animation,
     missingSheets: [animation.animation1Name, animation.animation2Name]
       .filter(Boolean)
       .filter((name) => !animationSheets.has(name)),
+    missingEffects: animation.effectName && !inventory.effects.names.includes(animation.effectName)
+      ? [animation.effectName]
+      : [],
   }));
   inventory.summary.animations = {
     total: inventory.animations.length,
     named: inventory.animations.filter((animation) => animation.name).length,
     withMissingSheets: inventory.animations.filter((animation) => animation.missingSheets.length > 0).length,
+    withMissingEffects: inventory.animations.filter((animation) => animation.missingEffects.length > 0).length,
   };
   return inventory;
 }
@@ -277,11 +283,11 @@ export function renameAsset(
   const resolved = resolveAssetPath(workflowRoot, project, target);
   if (!fs.existsSync(resolved.absolute)) throw new Error(assetManagementAssetMissing());
   const ext = path.extname(resolved.absolute);
-  const before = path.basename(resolved.absolute, ext);
+  const before = assetNameFromRelative(workflowRoot, project, resolved.category, resolved.relativePath);
   const safety = checkAssetRenameSafety(workflowRoot, project, { category: resolved.category, relativePath: resolved.relativePath, name: before }, nextName);
   if (!safety.ok) throw new Error(safety.blockers.join('; '));
-  const nextFileName = `${nextName}${ext}`;
-  const nextRelative = `${path.posix.dirname(resolved.relativePath)}/${nextFileName}`;
+  if (!safety.nextRelativePath) throw new Error(assetManagementReplacementUnsupported());
+  const nextRelative = safety.nextRelativePath;
 
   if (getProjectFileForRead(workflowRoot, project, nextRelative)) throw new Error(assetManagementTargetNameExists());
   const update = prepareProjectAssetReferenceMutations(
@@ -307,7 +313,7 @@ export function deleteAsset(workflowRoot: string, project: string, target: Asset
   const safety = checkAssetDeleteSafety(workflowRoot, project, {
     category: resolved.category,
     relativePath: resolved.relativePath,
-    name: path.basename(resolved.absolute, path.extname(resolved.absolute)),
+    name: assetNameFromRelative(workflowRoot, project, resolved.category, resolved.relativePath),
   });
   if (!safety.ok) throw new Error(safety.blockers.join('; '));
   stageProjectFilesAtomically(workflowRoot, project, [{ relativePath: resolved.relativePath, delete: true }]);
@@ -431,6 +437,14 @@ function prepareProjectAssetReferenceMutations(
       mutations.push({ relativePath: relative, content: Buffer.from(next, 'utf8') });
       continue;
     }
+    if (/(?:^|\/)js\/plugins\/(?:[^/]+\/)*[^/]+\.js$/i.test(relative)) {
+      const raw = fs.readFileSync(file, 'utf8');
+      const next = rewriteAssetReferenceValue(raw, category, before, after);
+      if (next === undefined || next === raw) throw new Error(assetManagementReplacementUnsupported());
+      updatedReferences += refs.length;
+      mutations.push({ relativePath: relative, content: Buffer.from(next, 'utf8') });
+      continue;
+    }
     if (!relative.toLowerCase().endsWith('.json')) throw new Error(assetManagementReplacementUnsupported());
     const value = readJson(file);
     for (const ref of refs) {
@@ -473,12 +487,59 @@ function rewriteAssetReferenceValue(
   if (typeof current !== 'string') return undefined;
   if (current === before) return after;
   if (category === 'plugins') return undefined;
-  const separatorIndex = Math.max(current.lastIndexOf('/'), current.lastIndexOf('\\'));
-  const prefix = current.slice(0, separatorIndex + 1);
-  const fileName = current.slice(separatorIndex + 1);
-  const extension = path.extname(fileName);
-  if (path.basename(fileName, extension) !== before) return undefined;
-  return `${prefix}${after}${extension}`;
+  const normalized = current.replace(/\\/g, '/');
+  const extension = path.posix.extname(normalized);
+  const stem = extension ? normalized.slice(0, -extension.length) : normalized;
+  const definition = RMMV_ASSET_CATEGORIES.find((candidate) => candidate.id === category);
+  const candidates = [
+    before,
+    ...(definition ? [
+      `${definition.directory}/${before}`,
+      `www/${definition.directory}/${before}`,
+    ] : []),
+  ];
+  const matched = candidates.find((candidate) => stem === candidate);
+  if (matched) {
+    const next = `${stem.slice(0, stem.length - before.length)}${after}${extension}`;
+    return current.includes('\\') && !current.includes('/') ? next.replaceAll('/', '\\') : next;
+  }
+  let next = current;
+  let changed = false;
+  for (const candidate of candidates.sort((left, right) => right.length - left.length)) {
+    const replacement = `${candidate.slice(0, candidate.length - before.length)}${after}`;
+    const result = replaceEmbeddedPath(next, candidate, replacement);
+    next = result.value;
+    changed ||= result.changed;
+  }
+  return changed ? next : undefined;
+}
+
+function replaceEmbeddedPath(value: string, before: string, after: string): { value: string; changed: boolean } {
+  const variants = [before, before.replaceAll('/', '\\')].filter((entry, index, list) => list.indexOf(entry) === index);
+  let next = value;
+  let changed = false;
+  for (const variant of variants) {
+    let offset = 0;
+    while (offset < next.length) {
+      const index = next.indexOf(variant, offset);
+      if (index < 0) break;
+      const beforeChar = index > 0 ? next[index - 1] : '';
+      const tail = next.slice(index + variant.length);
+      const extension = /^\.[A-Za-z0-9]+/.exec(tail)?.[0] || '';
+      const afterChar = tail[extension.length] || '';
+      const beforeBoundary = !beforeChar || !/[A-Za-z0-9_./\\-]/.test(beforeChar);
+      const afterBoundary = !afterChar || !/[A-Za-z0-9_./\\-]/.test(afterChar);
+      if (!beforeBoundary || !afterBoundary) {
+        offset = index + variant.length;
+        continue;
+      }
+      const replacement = variant.includes('\\') ? after.replaceAll('/', '\\') : after;
+      next = `${next.slice(0, index)}${replacement}${next.slice(index + variant.length)}`;
+      offset = index + replacement.length;
+      changed = true;
+    }
+  }
+  return { value: next, changed };
 }
 
 function getJsonPathValue(root: unknown, jsonPath: string): unknown {
@@ -538,15 +599,28 @@ function parseJsonPath(jsonPath: string): Array<string | number> {
 }
 
 function normalizeAssetName(value: string): string {
-  const name = value.trim();
-  if (!name || /[<>:"/\\|?*\u0000-\u001f]/.test(name)) throw new Error(assetManagementInvalidName());
+  const name = value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!name || name.split('/').some((part) => !part || part === '.' || part === '..' || /[<>:"|?*\u0000-\u001f]/.test(part))) {
+    throw new Error(assetManagementInvalidName());
+  }
   return name;
 }
 
 function normalizeImportTargetName(value: string): string {
-  const name = normalizeAssetName(value);
-  if (name.includes('/') || name.includes('\\') || name === '.' || name === '..') throw new Error(assetManagementInvalidName());
-  return name;
+  return normalizeAssetName(value);
+}
+
+function assetNameFromRelative(
+  workflowRoot: string,
+  project: string,
+  category: RmmvAssetCategory,
+  relativePath: string,
+): string {
+  const directory = projectAssetRelativeDirectory(workflowRoot, project, category);
+  const normalized = normalizeRelative(relativePath);
+  if (!normalized.startsWith(`${directory}/`)) throw new Error(assetManagementInvalidPath());
+  const fileName = normalized.slice(directory.length + 1);
+  return fileName.slice(0, -path.posix.extname(fileName).length);
 }
 
 function normalizeRelative(value: string): string {

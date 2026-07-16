@@ -222,6 +222,49 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal(applied.data[5 * layerSize + 2], 42);
   });
 
+  test('supports MV automatic placement and exact manual edits across all four tile layers', () => {
+    const dataDir = path.dirname(fixture.mapFile);
+    writeJson(path.join(dataDir, 'Tilesets.json'), [null, { id: 1, name: 'Outside', mode: 0, tilesetNames: ['Outside_A1'], flags: [] }]);
+    writeJson(fixture.mapFile, { width: 4, height: 2, tilesetId: 1, data: Array(48).fill(0), events: [null] });
+
+    postMapTiles(fixture.root, fixture.project, 1, [
+      { kind: 'tile', x: 0, y: 0, layer: 'auto', tileId: 1536 },
+      { kind: 'autotile', x: 1, y: 0, layer: 'auto', autotileKind: 5 },
+      { kind: 'autotile', x: 2, y: 0, layer: 'auto', autotileKind: 48 },
+      { kind: 'autotile', x: 3, y: 0, layer: 'auto', autotileKind: 88 },
+      { kind: 'autotile', x: 0, y: 1, layer: 'auto', autotileKind: 17 },
+      { kind: 'autotile', x: 0, y: 1, layer: 'auto', autotileKind: 20 },
+      { kind: 'tile', x: 1, y: 1, layer: 'auto', tileId: 1 },
+      { kind: 'tile', x: 1, y: 1, layer: 'auto', tileId: 2 },
+      { kind: 'tile', x: 1, y: 1, layer: 'auto', tileId: 3 },
+      { kind: 'tile', x: 2, y: 1, layer: 0, tileId: 1536 },
+      { kind: 'tile', x: 2, y: 1, layer: 1, tileId: 1537 },
+      { kind: 'tile', x: 2, y: 1, layer: 2, tileId: 4 },
+      { kind: 'tile', x: 2, y: 1, layer: 3, tileId: 5 },
+    ]);
+
+    const staged = readMapForTest(fixture.root, fixture.project, 1) as { width: number; height: number; data: number[] };
+    const layerSize = staged.width * staged.height;
+    const tileAt = (layer: number, x: number, y: number) => staged.data[layer * layerSize + y * staged.width + x];
+    const autotileKindAt = (layer: number, x: number, y: number) => Math.floor((tileAt(layer, x, y) - 2048) / 48);
+
+    assert.equal(tileAt(0, 0, 0), 1536);
+    assert.equal(autotileKindAt(0, 1, 0), 5);
+    assert.equal(autotileKindAt(0, 2, 0), 48);
+    assert.equal(autotileKindAt(0, 3, 0), 88);
+    assert.equal(autotileKindAt(0, 0, 1), 16);
+    assert.equal(autotileKindAt(1, 0, 1), 20);
+    assert.equal(tileAt(2, 1, 1), 2);
+    assert.equal(tileAt(3, 1, 1), 3);
+    assert.deepEqual([0, 1, 2, 3].map((layer) => tileAt(layer, 2, 1)), [1536, 1537, 4, 5]);
+    assert.equal((readJson(fixture.mapFile) as { data: number[] }).data.every((value) => value === 0), true);
+
+    postMapTiles(fixture.root, fixture.project, 1, [{ kind: 'tile', x: 1, y: 1, layer: 'auto', tileId: 0 }]);
+    const erased = readMapForTest(fixture.root, fixture.project, 1) as { width: number; height: number; data: number[] };
+    assert.equal(erased.data[2 * layerSize + erased.width + 1], 0);
+    assert.equal(erased.data[3 * layerSize + erased.width + 1], 0);
+  });
+
   test('writes MV waterfall and wall autotiles without touching metadata layers', () => {
     postMapTiles(fixture.root, fixture.project, 1, [
       { kind: 'autotile', x: 0, y: 0, layer: 0, autotileKind: 5 },
@@ -479,6 +522,41 @@ describe('desktop map services', { concurrency: false }, () => {
     const kept = readMapForTest(local.root, local.project, withEvents.mapId) as any;
     assert.equal(kept.events.filter(Boolean).length, 1);
     assert.equal(kept.events[1].name, 'Library NPC');
+  });
+
+  test('rejects cross-engine library event commands before staging any files', () => {
+    const local = createFixture();
+    const libraryMapPath = path.join(
+      local.root,
+      'data/assets/map-visual-library/assets/demo/maps/Map001.json',
+    );
+    writeJson(libraryMapPath, {
+      width: 2,
+      height: 2,
+      tilesetId: 2,
+      data: Array(24).fill(0),
+      events: [null, {
+        id: 1,
+        name: 'Plugin Event',
+        x: 0,
+        y: 0,
+        pages: [{
+          list: [
+            { code: 357, indent: 0, parameters: ['SamplePlugin', 'sampleCommand', 'Sample Command', {}] },
+            { code: 0, indent: 0, parameters: [] },
+          ],
+        }],
+      }],
+    });
+
+    assert.throws(
+      () => importMapDraftFromLibrary(local.root, local.project, 'demo-map', {
+        parentId: 0,
+        includeEvents: true,
+      }),
+      /357.*RPG Maker MV|RPG Maker MV.*357/i,
+    );
+    assert.equal(getProjectStagingStatus(local.root, local.project).staged, false);
   });
 
   test('lists library screenshots, persists selection projection and imports into project staging', () => withTestLanguage(() => {

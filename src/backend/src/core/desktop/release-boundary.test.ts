@@ -42,6 +42,9 @@ test("release manifest excludes local runtime, projects, credentials and private
     "game/Game.rpgproject",
     "game/www/data/System.json",
     "game/www/js/rpg_core.js",
+    "sample/game.rmmzproject",
+    "sample/data/System.json",
+    "sample/js/rmmz_core.js",
   ]);
 
   assert.deepEqual(manifest.files, [
@@ -71,6 +74,9 @@ test("release manifest excludes local runtime, projects, credentials and private
     "projects/private-game/data/System.json",
     "runtime/secrets/token.json",
     "runtime/sessions/a/session-meta.json",
+    "sample/data/System.json",
+    "sample/game.rmmzproject",
+    "sample/js/rmmz_core.js",
     "secrets/token.txt",
     "third_party/claude-code/dist/cli-node.js",
     "third_party/claude-code/node_modules/pkg/index.js",

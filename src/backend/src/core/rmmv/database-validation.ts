@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import {
   getRmmvDatabaseSchemaByKey,
   listRmmvDatabaseSchemas,
+  rpgMakerDatabaseEntryLimit,
   type RmmvDatabaseTableKey,
 } from "./database-schema.ts";
 import {
@@ -16,6 +17,7 @@ import {
   MV_WEAPON_EQUIP_TYPE_ID,
   standardEquipSlotTypeIds,
 } from "./equipment-slots.ts";
+import type { RpgMakerEngine } from "./rpg-maker-engine.ts";
 
 export type RmmvDatabaseSnapshot = Partial<Record<RmmvDatabaseTableKey, unknown>>;
 
@@ -45,6 +47,7 @@ export interface RmmvDatabaseSemanticValidationResult {
 export interface RmmvDatabaseValidationOptions {
   mapIds?: readonly number[];
   maps?: readonly RmmvDatabaseMapDocument[];
+  engine?: RpgMakerEngine;
 }
 
 export interface RmmvDatabaseTransitionValidationOptions extends RmmvDatabaseValidationOptions {
@@ -81,10 +84,12 @@ export function validateRmmvDatabaseTransition(
   const beforeOptions: RmmvDatabaseValidationOptions = {
     ...(options.mapIds ? { mapIds: options.mapIds } : {}),
     ...(options.beforeMaps || options.maps ? { maps: options.beforeMaps ?? options.maps } : {}),
+    ...(options.engine ? { engine: options.engine } : {}),
   };
   const afterOptions: RmmvDatabaseValidationOptions = {
     ...(options.mapIds ? { mapIds: options.mapIds } : {}),
     ...(options.maps ? { maps: options.maps } : {}),
+    ...(options.engine ? { engine: options.engine } : {}),
   };
   const beforeResult = validateRmmvDatabaseSnapshot(before, beforeOptions);
   const result = validateRmmvDatabaseSnapshot(after, afterOptions);
@@ -99,16 +104,18 @@ export function validateRmmvDatabaseTransition(
 
   for (const table of ARRAY_TABLE_KEYS) {
     const schema = getRmmvDatabaseSchemaByKey(table);
-    if (schema.maxEntries === null) continue;
+    const engine = options.engine ?? "rpg-maker-mv";
+    const entryLimit = rpgMakerDatabaseEntryLimit(schema.group, engine);
+    if (entryLimit === null) continue;
     const beforeRecords = asArray(before[table]);
     const afterRecords = asArray(after[table]);
-    for (let id = schema.maxEntries + 1; id < afterRecords.length; id += 1) {
+    for (let id = entryLimit + 1; id < afterRecords.length; id += 1) {
       if (!isRecord(afterRecords[id]) || isRecord(beforeRecords[id])) continue;
       issues.push({
         code: "DB_NEW_ENTRY_OVER_LIMIT",
         severity: "error",
         source: { table, id, path: `${table}[${id}]` },
-        message: `${schema.group} id ${id} exceeds the RPG Maker MV limit of ${schema.maxEntries}.`,
+        message: `${schema.group} id ${id} exceeds the RPG Maker ${engine === "rpg-maker-mz" ? "MZ" : "MV"} limit of ${entryLimit}.`,
       });
     }
   }
@@ -124,6 +131,9 @@ class SnapshotValidator {
   readonly #limitations = [PLUGIN_LIMITATION];
   readonly #mapIds: ReadonlySet<number> | null;
   readonly #maps: readonly RmmvDatabaseMapDocument[];
+  readonly #engine: RpgMakerEngine;
+  readonly #screenWidth: number;
+  readonly #screenHeight: number;
 
   constructor(
     snapshot: RmmvDatabaseSnapshot,
@@ -131,6 +141,15 @@ class SnapshotValidator {
   ) {
     this.snapshot = snapshot;
     this.#maps = options.maps ?? [];
+    this.#engine = options.engine ?? "rpg-maker-mv";
+    const system = isRecord(snapshot.system) ? snapshot.system : {};
+    const advanced = isRecord(system.advanced) ? system.advanced : {};
+    this.#screenWidth = this.#engine === "rpg-maker-mz" && positiveInteger(advanced.screenWidth)
+      ? Number(advanced.screenWidth)
+      : 816;
+    this.#screenHeight = this.#engine === "rpg-maker-mz" && positiveInteger(advanced.screenHeight)
+      ? Number(advanced.screenHeight)
+      : 624;
     this.#mapIds = options.mapIds || this.#maps.length
       ? new Set([...(options.mapIds ?? []), ...this.#maps.map((entry) => entry.mapId)])
       : null;
@@ -190,7 +209,7 @@ class SnapshotValidator {
             id,
           );
         }
-        const structural = schema.validate(entry);
+        const structural = schema.validate(entry, this.#engine);
         for (const issue of structural.issues) {
           const suffix = issue.path === "$" ? "" : `.${issue.path}`;
           this.add(
@@ -203,12 +222,13 @@ class SnapshotValidator {
         }
       }
 
-      if (schema.maxEntries !== null && highestId > schema.maxEntries) {
+      const entryLimit = rpgMakerDatabaseEntryLimit(schema.group, this.#engine);
+      if (entryLimit !== null && highestId > entryLimit) {
         this.add(
           "DB_LIMIT_EXCEEDED",
           table,
           table,
-          `${schema.group} contains id ${highestId}, above the RPG Maker MV limit of ${schema.maxEntries}. Existing data is readable but must not be extended.`,
+          `${schema.group} contains id ${highestId}, above the RPG Maker ${this.#engine === "rpg-maker-mz" ? "MZ" : "MV"} limit of ${entryLimit}. Existing data is readable but must not be extended.`,
           undefined,
           "warning",
         );
@@ -217,7 +237,7 @@ class SnapshotValidator {
 
     const system = this.system();
     if (system) {
-      const structural = getRmmvDatabaseSchemaByKey("system").validate(system);
+      const structural = getRmmvDatabaseSchemaByKey("system").validate(system, this.#engine);
       for (const issue of structural.issues) {
         const path = issue.path === "$" ? "system" : `system.${issue.path}`;
         this.add("DB_ENTRY_SHAPE", "system", path, issue.message);
@@ -299,6 +319,9 @@ class SnapshotValidator {
       this.fixedRange("DB_SKILL_TP_COST", "skills", id, `skills[${id}].tpCost`, skill.tpCost, 0, 100);
       this.validateDamage("skills", id, skill.damage, `skills[${id}].damage`);
       this.validateEffects("skills", id, skill.effects, `skills[${id}].effects`);
+      if (this.#engine === "rpg-maker-mz") {
+        this.fixedRange("DB_MZ_MESSAGE_TYPE", "skills", id, `skills[${id}].messageType`, skill.messageType, 0, 2);
+      }
     });
   }
 
@@ -391,8 +414,8 @@ class SnapshotValidator {
           "enemies",
           member.enemyId,
         );
-        this.fixedRange("DB_TROOP_MEMBER_POSITION", "troops", id, `${memberPath}.x`, member.x, 0, 816);
-        this.fixedRange("DB_TROOP_MEMBER_POSITION", "troops", id, `${memberPath}.y`, member.y, 0, 624);
+        this.fixedRange("DB_TROOP_MEMBER_POSITION", "troops", id, `${memberPath}.x`, member.x, 0, this.#screenWidth);
+        this.fixedRange("DB_TROOP_MEMBER_POSITION", "troops", id, `${memberPath}.y`, member.y, 0, this.#screenHeight);
       });
       forEachRecordValue(troop.pages, (page, pageIndex) => {
         this.fixedRange(
@@ -476,6 +499,12 @@ class SnapshotValidator {
         0,
         100,
       );
+      if (this.#engine === "rpg-maker-mz") {
+        this.fixedRange("DB_MZ_MESSAGE_TYPE", "states", id, `states[${id}].messageType`, state.messageType, 0, 2);
+        if (typeof state.releaseByDamage !== "boolean") {
+          this.add("DB_MZ_STATE_RELEASE_BY_DAMAGE", "states", `states[${id}].releaseByDamage`, "MZ state releaseByDamage must be boolean.", id);
+        }
+      }
       this.fixedRange(
         "DB_STATE_WALK_REMOVAL",
         "states",
@@ -491,6 +520,10 @@ class SnapshotValidator {
 
   private validateAnimations(): void {
     this.forEachRecord("animations", (animation, id) => {
+      if (this.#engine === "rpg-maker-mz" && ("effectName" in animation || "displayType" in animation)) {
+        this.validateMZAnimation(animation, id);
+        return;
+      }
       this.fixedRange("DB_ANIMATION_POSITION", "animations", id, `animations[${id}].position`, animation.position, 0, 3);
       this.fixedRange("DB_ANIMATION_HUE", "animations", id, `animations[${id}].animation1Hue`, animation.animation1Hue, 0, 360);
       this.fixedRange("DB_ANIMATION_HUE", "animations", id, `animations[${id}].animation2Hue`, animation.animation2Hue, 0, 360);
@@ -552,6 +585,73 @@ class SnapshotValidator {
     });
   }
 
+  private validateMZAnimation(animation: Record<string, unknown>, id: number): void {
+    const base = `animations[${id}]`;
+    this.fixedRange("DB_MZ_ANIMATION_DISPLAY_TYPE", "animations", id, `${base}.displayType`, animation.displayType, 0, 2);
+    if (typeof animation.effectName !== "string") {
+      this.add("DB_MZ_ANIMATION_EFFECT", "animations", `${base}.effectName`, "MZ particle animation effectName must be a string.", id);
+    }
+    this.fixedRange("DB_MZ_ANIMATION_SCALE", "animations", id, `${base}.scale`, animation.scale, 1, 1000);
+    this.fixedRange("DB_MZ_ANIMATION_SPEED", "animations", id, `${base}.speed`, animation.speed, 1, 1000);
+    if (typeof animation.alignBottom !== "boolean") {
+      this.add("DB_MZ_ANIMATION_ALIGN_BOTTOM", "animations", `${base}.alignBottom`, "MZ particle animation alignBottom must be boolean.", id);
+    }
+    this.fixedRange("DB_MZ_ANIMATION_OFFSET", "animations", id, `${base}.offsetX`, animation.offsetX, -this.#screenWidth, this.#screenWidth);
+    this.fixedRange("DB_MZ_ANIMATION_OFFSET", "animations", id, `${base}.offsetY`, animation.offsetY, -this.#screenHeight, this.#screenHeight);
+    const rotation = isRecord(animation.rotation) ? animation.rotation : null;
+    if (!rotation) {
+      this.add("DB_MZ_ANIMATION_ROTATION", "animations", `${base}.rotation`, "MZ particle animation rotation must be an object.", id);
+    } else {
+      for (const axis of ["x", "y", "z"] as const) {
+        this.fixedRange("DB_MZ_ANIMATION_ROTATION", "animations", id, `${base}.rotation.${axis}`, rotation[axis], -360, 360);
+      }
+    }
+    if (!Array.isArray(animation.flashTimings)) {
+      this.add("DB_MZ_ANIMATION_FLASH_TIMINGS", "animations", `${base}.flashTimings`, "MZ animation flashTimings must be an array.", id);
+    } else {
+      animation.flashTimings.forEach((value, timingIndex) => {
+        const timingPath = `${base}.flashTimings[${timingIndex}]`;
+        if (!isRecord(value)) {
+          this.add("DB_MZ_ANIMATION_FLASH_TIMING", "animations", timingPath, "MZ animation flash timing must be an object.", id);
+          return;
+        }
+        this.fixedRange("DB_MZ_ANIMATION_TIMING_FRAME", "animations", id, `${timingPath}.frame`, value.frame, 0, 99999);
+        this.fixedRange("DB_MZ_ANIMATION_FLASH_DURATION", "animations", id, `${timingPath}.duration`, value.duration, 1, 99999);
+        if (!Array.isArray(value.color)) {
+          this.add("DB_MZ_ANIMATION_FLASH_COLOR", "animations", `${timingPath}.color`, "MZ animation flash color must be an array.", id);
+          return;
+        }
+        this.fixedArrayLength("animations", id, `${timingPath}.color`, value.color, 4);
+        const color = value.color;
+        for (let colorIndex = 0; colorIndex < 4; colorIndex += 1) {
+          this.fixedRange(
+            "DB_MZ_ANIMATION_FLASH_COLOR",
+            "animations",
+            id,
+            `${timingPath}.color[${colorIndex}]`,
+            color[colorIndex],
+            0,
+            255,
+          );
+        }
+      });
+    }
+    if (!Array.isArray(animation.soundTimings)) {
+      this.add("DB_MZ_ANIMATION_SOUND_TIMINGS", "animations", `${base}.soundTimings`, "MZ animation soundTimings must be an array.", id);
+    } else {
+      animation.soundTimings.forEach((value, timingIndex) => {
+        const timingPath = `${base}.soundTimings[${timingIndex}]`;
+        if (!isRecord(value)) {
+          this.add("DB_MZ_ANIMATION_SOUND_TIMING", "animations", timingPath, "MZ animation sound timing must be an object.", id);
+          return;
+        }
+        this.fixedRange("DB_MZ_ANIMATION_TIMING_FRAME", "animations", id, `${timingPath}.frame`, value.frame, 0, 99999);
+        if (isRecord(value.se)) this.validateAudio(value.se, "animations", id, `${timingPath}.se`);
+        else this.add("DB_MZ_ANIMATION_SOUND", "animations", `${timingPath}.se`, "MZ animation sound timing must contain an SE object.", id);
+      });
+    }
+  }
+
   private validateTilesets(): void {
     this.forEachRecord("tilesets", (tileset, id) => {
       this.fixedRange("DB_TILESET_MODE", "tilesets", id, `tilesets[${id}].mode`, tileset.mode, 0, 1);
@@ -589,6 +689,69 @@ class SnapshotValidator {
   private validateSystem(): void {
     const system = this.system();
     if (!system) return;
+    if (this.#engine === "rpg-maker-mz") {
+      const advanced = isRecord(system.advanced) ? system.advanced : null;
+      if (!advanced) {
+        this.add("DB_MZ_SYSTEM_ADVANCED", "system", "system.advanced", "RPG Maker MZ System.advanced must be an object.");
+      } else {
+        this.fixedRange("DB_MZ_SCREEN_SIZE", "system", undefined, "system.advanced.screenWidth", advanced.screenWidth, 1, 16384);
+        this.fixedRange("DB_MZ_SCREEN_SIZE", "system", undefined, "system.advanced.screenHeight", advanced.screenHeight, 1, 16384);
+        this.fixedRange("DB_MZ_UI_AREA_SIZE", "system", undefined, "system.advanced.uiAreaWidth", advanced.uiAreaWidth, 1, 16384);
+        this.fixedRange("DB_MZ_UI_AREA_SIZE", "system", undefined, "system.advanced.uiAreaHeight", advanced.uiAreaHeight, 1, 16384);
+        for (const field of ["gameId", "mainFontFilename", "numberFontFilename", "fallbackFonts"] as const) {
+          if (advanced[field] !== undefined && typeof advanced[field] !== "string") {
+            this.add("DB_MZ_SYSTEM_TEXT", "system", `system.advanced.${field}`, `MZ advanced.${field} must be a string.`);
+          }
+        }
+        this.fixedRange("DB_MZ_FONT_SIZE", "system", undefined, "system.advanced.fontSize", advanced.fontSize, 1, 4096);
+        if (advanced.picturesUpperLimit !== undefined) {
+          const pictureLimit = asInteger(advanced.picturesUpperLimit);
+          if (pictureLimit === null || pictureLimit <= 0) {
+            this.add(
+              "DB_MZ_PICTURE_LIMIT",
+              "system",
+              "system.advanced.picturesUpperLimit",
+              "MZ advanced.picturesUpperLimit must be a positive integer.",
+            );
+          }
+        }
+        if (advanced.screenScale !== undefined) {
+          const screenScale = asFiniteNumber(advanced.screenScale);
+          if (screenScale === null || screenScale <= 0) {
+            this.add(
+              "DB_MZ_SCREEN_SCALE",
+              "system",
+              "system.advanced.screenScale",
+              "MZ advanced.screenScale must be a positive finite number.",
+            );
+          }
+        }
+        this.fixedRange("DB_MZ_WINDOW_OPACITY", "system", undefined, "system.advanced.windowOpacity", advanced.windowOpacity, 0, 255);
+      }
+      if (![16, 24, 32, 48].includes(Number(system.tileSize))) {
+        this.add("DB_MZ_TILE_SIZE", "system", "system.tileSize", "RPG Maker MZ tileSize must be 16, 24, 32, or 48.");
+      }
+      this.fixedRange("DB_MZ_FACE_SIZE", "system", undefined, "system.faceSize", system.faceSize, 1, 4096);
+      this.fixedRange("DB_MZ_ICON_SIZE", "system", undefined, "system.iconSize", system.iconSize, 1, 4096);
+      this.fixedRange("DB_MZ_BATTLE_SYSTEM", "system", undefined, "system.battleSystem", system.battleSystem, 0, 2);
+      const itemCategories = asArray(system.itemCategories);
+      if (itemCategories.length !== 4 || itemCategories.some((value) => typeof value !== "boolean")) {
+        this.add("DB_MZ_ITEM_CATEGORIES", "system", "system.itemCategories", "MZ itemCategories must contain four boolean values.");
+      }
+      const titleCommandWindow = isRecord(system.titleCommandWindow) ? system.titleCommandWindow : null;
+      if (!titleCommandWindow) {
+        this.add("DB_MZ_TITLE_COMMAND_WINDOW", "system", "system.titleCommandWindow", "MZ titleCommandWindow must be an object.");
+      } else {
+        this.fixedRange("DB_MZ_TITLE_COMMAND_WINDOW", "system", undefined, "system.titleCommandWindow.background", titleCommandWindow.background, 0, 2);
+        this.fixedRange("DB_MZ_TITLE_COMMAND_WINDOW", "system", undefined, "system.titleCommandWindow.offsetX", titleCommandWindow.offsetX, -16384, 16384);
+        this.fixedRange("DB_MZ_TITLE_COMMAND_WINDOW", "system", undefined, "system.titleCommandWindow.offsetY", titleCommandWindow.offsetY, -16384, 16384);
+      }
+      for (const field of ["optAutosave", "optKeyItemsNumber", "optSplashScreen", "optMessageSkip"] as const) {
+        if (system[field] !== undefined && typeof system[field] !== "boolean") {
+          this.add("DB_MZ_SYSTEM_OPTION", "system", `system.${field}`, `MZ ${field} must be boolean.`);
+        }
+      }
+    }
     forEachValue(system.partyMembers, (actorId, index) => {
       this.recordReference("system", undefined, `system.partyMembers[${index}]`, "actors", actorId);
     });
@@ -751,7 +914,7 @@ class SnapshotValidator {
   ): void {
     let references: RmmvEventCommandReference[];
     try {
-      references = collectEventCommandReferences(value, path);
+      references = collectEventCommandReferences(value, path, this.#engine);
     } catch (error) {
       this.add(
         "DB_EVENT_COMMAND_STRUCTURE",
@@ -1038,7 +1201,8 @@ class SnapshotValidator {
     id: number,
     entry: Record<string, unknown>,
   ): void {
-    this.fixedRange("DB_USABLE_SCOPE", table, id, `${table}[${id}].scope`, entry.scope, 0, 11);
+    const maximumScope = this.#engine === "rpg-maker-mz" ? 14 : 11;
+    this.fixedRange("DB_USABLE_SCOPE", table, id, `${table}[${id}].scope`, entry.scope, 0, maximumScope);
     this.fixedRange("DB_USABLE_OCCASION", table, id, `${table}[${id}].occasion`, entry.occasion, 0, 3);
     this.fixedRange("DB_USABLE_SPEED", table, id, `${table}[${id}].speed`, entry.speed, -2000, 2000);
     this.fixedRange("DB_USABLE_SUCCESS", table, id, `${table}[${id}].successRate`, entry.successRate, 0, 100);
@@ -1147,8 +1311,8 @@ class SnapshotValidator {
       return;
     }
     if (pattern === -1) return;
-    this.fixedRange("DB_ANIMATION_CELL_X", "animations", animationId, `${path}[1]`, value[1], -408, 408);
-    this.fixedRange("DB_ANIMATION_CELL_Y", "animations", animationId, `${path}[2]`, value[2], -312, 312);
+    this.fixedRange("DB_ANIMATION_CELL_X", "animations", animationId, `${path}[1]`, value[1], -Math.ceil(this.#screenWidth / 2), Math.ceil(this.#screenWidth / 2));
+    this.fixedRange("DB_ANIMATION_CELL_Y", "animations", animationId, `${path}[2]`, value[2], -Math.ceil(this.#screenHeight / 2), Math.ceil(this.#screenHeight / 2));
     this.fixedRange("DB_ANIMATION_CELL_SCALE", "animations", animationId, `${path}[3]`, value[3], 20, 800);
     this.fixedRange("DB_ANIMATION_CELL_ROTATION", "animations", animationId, `${path}[4]`, value[4], -360, 360);
     this.fixedRange("DB_ANIMATION_CELL_MIRROR", "animations", animationId, `${path}[5]`, value[5], 0, 1);
@@ -1551,6 +1715,10 @@ function readIssuePath(root: unknown, path: string, prefix: string): unknown {
 
 function asFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function positiveInteger(value: unknown): boolean {
+  return Number.isInteger(value) && Number(value) > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

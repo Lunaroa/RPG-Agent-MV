@@ -12,6 +12,7 @@ import {
   validateRmmvProjectDirectory,
 } from './project-service.ts';
 import { withTestLanguage } from '../i18n/with-test-language.ts';
+import { RPG_MAKER_MZ_ENGINE_FILES } from '../rmmv/rpg-maker-engine.ts';
 
 describe('desktop project service', () => {
   test('lists only strongly validated workspace projects', () => {
@@ -46,6 +47,27 @@ describe('desktop project service', () => {
       assert.equal(registered.source, 'registered');
       assert.equal(registered.layout, 'data');
       assert.deepEqual(refreshed.map((project) => project.path), [path.resolve(external)]);
+    } finally {
+      removeRoot(root);
+      removeRoot(external);
+    }
+  });
+
+  test('registers MZ 1.10.0 and exposes its engine canvas metadata', () => {
+    const root = tempRoot();
+    const external = tempRoot();
+    try {
+      writeMZProject(external, 'MZ Sample');
+
+      const registered = registerExternalProject(root, external);
+      const refreshed = refreshProjects(root);
+
+      assert.equal(registered.engine, 'rpg-maker-mz');
+      assert.equal(registered.engineVersion, '1.10.0');
+      assert.equal(registered.tileSize, 32);
+      assert.equal(registered.screenWidth, 960);
+      assert.equal(registered.screenHeight, 540);
+      assert.equal(refreshed[0]?.engine, 'rpg-maker-mz');
     } finally {
       removeRoot(root);
       removeRoot(external);
@@ -168,6 +190,35 @@ function writeRmmvProject(projectRoot: string, layout: 'www-data' | 'data', game
     tilesetId: 1,
     events: [null],
     data: [],
+  }), 'utf8');
+}
+
+function writeMZProject(projectRoot: string, gameTitle: string): void {
+  writeRmmvProject(projectRoot, 'data', gameTitle);
+  fs.writeFileSync(path.join(projectRoot, 'game.rmmzproject'), 'RPGMZ', 'utf8');
+  for (const relative of RPG_MAKER_MZ_ENGINE_FILES) {
+    const file = path.join(projectRoot, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const content = relative === 'js/rmmz_core.js'
+      ? 'Utils.RPGMAKER_NAME = "MZ";\nUtils.RPGMAKER_VERSION = "1.10.0";\n'
+      : relative === 'package.json'
+        ? '{"main":"index.html"}'
+        : relative === 'js/plugins.js'
+          ? 'var $plugins = [];'
+          : '';
+    fs.writeFileSync(file, content, 'utf8');
+  }
+  for (const directory of ['audio', 'fonts', 'img', 'movies', 'effects', 'js/plugins']) {
+    fs.mkdirSync(path.join(projectRoot, directory), { recursive: true });
+  }
+  const systemFile = path.join(projectRoot, 'data', 'System.json');
+  const system = JSON.parse(fs.readFileSync(systemFile, 'utf8')) as Record<string, unknown>;
+  fs.writeFileSync(systemFile, JSON.stringify({
+    ...system,
+    tileSize: 32,
+    faceSize: 144,
+    iconSize: 32,
+    advanced: { screenWidth: 960, screenHeight: 540 },
   }), 'utf8');
 }
 

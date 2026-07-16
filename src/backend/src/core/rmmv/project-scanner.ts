@@ -3,7 +3,8 @@ import { exists, readJson } from "./json.ts";
 import { summarizePage } from "./event-summary.ts";
 import { listRmmvDatabaseSchemas } from "./database-schema.ts";
 import { projectScannerPreviewLabels } from "./projectScannerLocalization.ts";
-import { resolveRmmvDataDir } from "./rmmv-layout.ts";
+import { inspectRmmvProject, resolveRmmvDataDir } from "./rmmv-layout.ts";
+import type { RpgMakerEngine } from "./rpg-maker-engine.ts";
 
 const PROJECT_SCANNER_PREVIEW_LABELS = projectScannerPreviewLabels();
 
@@ -107,7 +108,13 @@ interface ScanResult {
   generatedAt: string;
   projectRoot: string;
   dataDir: string;
-  engine: string;
+  engine: RpgMakerEngine;
+  engineVersion: string | null;
+  tileSize: number;
+  screenWidth: number;
+  screenHeight: number;
+  faceSize: number;
+  iconSize: number;
   database: Record<string, DatabaseEntry>;
   switches: { id: number; name: string }[];
   variables: { id: number; name: string }[];
@@ -120,16 +127,37 @@ export type ProjectJsonReader = (fileName: string) => unknown | undefined;
 
 export interface ScanProjectOptions {
   includeUnnamedEntries?: boolean;
+  engineContext?: {
+    engine: RpgMakerEngine;
+    engineVersion: string | null;
+    tileSize: number;
+    screenWidth: number;
+    screenHeight: number;
+    faceSize: number;
+    iconSize: number;
+  };
 }
 
 export function scanProject(projectRoot: string, options?: ScanProjectOptions): ScanResult {
   const root = path.resolve(projectRoot);
-  const dataDir = resolveDataDir(root);
+  const manifest = inspectRmmvProject(root);
+  const dataDir = manifest.dataDir;
   return scanProjectWithReader(root, (fileName) => {
     const filePath = path.join(dataDir, fileName);
     if (!exists(filePath)) return undefined;
     return readJson(filePath);
-  }, options);
+  }, {
+    ...options,
+    engineContext: {
+      engine: manifest.engine,
+      engineVersion: manifest.engineVersion,
+      tileSize: manifest.tileSize,
+      screenWidth: manifest.screenWidth,
+      screenHeight: manifest.screenHeight,
+      faceSize: manifest.faceSize,
+      iconSize: manifest.iconSize,
+    },
+  });
 }
 
 export function scanProjectWithReader(
@@ -139,6 +167,18 @@ export function scanProjectWithReader(
 ): ScanResult {
   const root = path.resolve(projectRoot);
   const dataDir = resolveDataDir(root);
+  const engineContext = options.engineContext ?? (() => {
+    const manifest = inspectRmmvProject(root);
+    return {
+      engine: manifest.engine,
+      engineVersion: manifest.engineVersion,
+      tileSize: manifest.tileSize,
+      screenWidth: manifest.screenWidth,
+      screenHeight: manifest.screenHeight,
+      faceSize: manifest.faceSize,
+      iconSize: manifest.iconSize,
+    };
+  })();
   const includeUnnamed = Boolean(options.includeUnnamedEntries);
   const readOptionalFromReader = <T>(fileName: string, fallback: T): T => {
     const value = readFile(fileName);
@@ -157,7 +197,7 @@ export function scanProjectWithReader(
     generatedAt: new Date().toISOString(),
     projectRoot: root,
     dataDir,
-    engine: "rpg-maker-mv",
+    ...engineContext,
     database,
     switches: summarizeNamedList((system as { switches?: string[] }).switches || [], includeUnnamed),
     variables: summarizeNamedList((system as { variables?: string[] }).variables || [], includeUnnamed),

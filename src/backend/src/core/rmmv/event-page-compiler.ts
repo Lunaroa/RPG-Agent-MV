@@ -11,9 +11,10 @@ import {
   silentCorrection,
 } from "./eventPageCompilerLocalization.ts";
 import {
+  eventCommandBlockPairings,
   validateEventCommandBasic,
-  EVENT_COMMAND_BLOCK_PAIRINGS
 } from "./event-command-registry.ts";
+import type { RpgMakerEngine } from "./rpg-maker-engine.ts";
 
 const log = toolLogger("event-page-compiler");
 
@@ -79,7 +80,8 @@ export const KNOWN_COMMAND_KINDS: ReadonlySet<string> = new Set([
   "shop",
   "break-loop",
   "raw-command",
-  "mv-command"
+  "mv-command",
+  "mz-command"
 ]);
 
 /**
@@ -135,6 +137,7 @@ const SELF_SWITCH_NAMES = new Set(["A", "B", "C", "D"]);
 export function validateCommandSemantics(
   kind: string,
   command: Record<string, unknown>,
+  engine: RpgMakerEngine = "rpg-maker-mv",
 ): CommandSemanticIssue[] {
   const issues: CommandSemanticIssue[] = [];
   const integerAtLeast = (field: string, value: unknown, minimum: number, label: string): void => {
@@ -163,6 +166,40 @@ export function validateCommandSemantics(
       issues.push({ field: "name", message: 'self-switch.name must be "A" / "B" / "C" / "D".' });
     }
     optionalBoolean("value", command.value, "self-switch.value");
+    return issues;
+  }
+  if (kind === "text") {
+    if (command.speakerName !== undefined && typeof command.speakerName !== "string") {
+      issues.push({ field: "speakerName", message: "text.speakerName, if present, must be a string." });
+    } else if (engine === "rpg-maker-mv" && command.speakerName) {
+      issues.push({ field: "speakerName", message: "text.speakerName is only available in RPG Maker MZ." });
+    }
+    return issues;
+  }
+  if (kind === "plugin") {
+    if (engine === "rpg-maker-mv") {
+      if (typeof command.command !== "string" || command.command.trim() === "") {
+        issues.push({ field: "command", message: "plugin.command must be a non-empty string for RPG Maker MV." });
+      }
+      if (command.pluginName !== undefined || command.commandName !== undefined || command.args !== undefined) {
+        issues.push({ field: "pluginName", message: "Structured plugin commands are only available in RPG Maker MZ." });
+      }
+    } else {
+      if (command.command !== undefined) {
+        issues.push({ field: "command", message: "RPG Maker MZ plugin commands must use pluginName, commandName, and args." });
+      }
+      for (const field of ["pluginName", "commandName"] as const) {
+        if (typeof command[field] !== "string" || command[field].trim() === "") {
+          issues.push({ field, message: `plugin.${field} must be a non-empty string for RPG Maker MZ.` });
+        }
+      }
+      if (command.displayName !== undefined && typeof command.displayName !== "string") {
+        issues.push({ field: "displayName", message: "plugin.displayName, if present, must be a string." });
+      }
+      if (!isStringRecord(command.args)) {
+        issues.push({ field: "args", message: "plugin.args must be an object with string values for RPG Maker MZ." });
+      }
+    }
     return issues;
   }
   if (kind !== "conditional-branch") return issues;
@@ -566,7 +603,7 @@ interface CommandSpec {
 }
 
 interface RawCommandSpec extends CommandSpec {
-  kind: "raw-command" | "mv-command";
+  kind: "raw-command" | "mv-command" | "mz-command";
   code: number;
   indent: number;
   parameters: unknown[];
@@ -589,8 +626,9 @@ interface MoveRouteRawStep {
   parameters: unknown[];
 }
 
-interface PatchContext {
+export interface PatchContext {
   plannedMaps?: Map<number, unknown>;
+  engine?: RpgMakerEngine;
 }
 
 export function compilePage(page: PageSpec, system: unknown, dataDir: string, context?: PatchContext): CompiledPage {
@@ -712,6 +750,7 @@ export function compileCommands(commands: CommandSpec[], system: unknown, dataDi
 
 export interface DecompileOptions {
   onUnsupportedReason?: (reason: string) => void;
+  engine?: RpgMakerEngine;
 }
 
 function emitUnsupportedReason(reason: string, options?: DecompileOptions): void {
@@ -753,8 +792,10 @@ function decompileCommand(rawCommands: unknown[], index: number, hardEnd: number
     };
   }
   try {
+    const engine = options.engine ?? "rpg-maker-mv";
+    validateEventCommandBasic(current, `rawCommands[${index}]`, engine);
     const range = resolveBlockRange(rawCommands, index, hardEnd, options);
-    if (requiresTerminator(current.code) && !rangeHasTerminator(rawCommands, range, current.code)) {
+    if (requiresTerminator(current.code, engine) && !rangeHasTerminator(rawCommands, range, current.code, engine)) {
       const reason = `Command code ${String(current.code)} at index ${index} is missing its terminator.`;
       return { command: toRawNode(current, options, reason), nextIndex: index + 1 };
     }
@@ -771,6 +812,8 @@ function decompileCommand(rawCommands: unknown[], index: number, hardEnd: number
         case 205:
           return { command: decompileMoveRoute(current, rawCommands, range), nextIndex: range.end + 1 };
         case 356:
+          return { command: decompilePlugin(current, options), nextIndex: range.end + 1 };
+        case 357:
           return { command: decompilePlugin(current, options), nextIndex: range.end + 1 };
         case 111:
         case 112:
@@ -802,6 +845,8 @@ function decompileCommand(rawCommands: unknown[], index: number, hardEnd: number
       case 205:
         return { command: decompileMoveRoute(current, rawCommands, range), nextIndex: range.end + 1 };
       case 356:
+        return { command: decompilePlugin(current, options), nextIndex: range.end + 1 };
+      case 357:
         return { command: decompilePlugin(current, options), nextIndex: range.end + 1 };
       default:
         return { command: toRawNode(current, options, `Unsupported command code ${String(current.code)} at index ${index} inside block range.`), nextIndex: index + 1 };
@@ -846,7 +891,8 @@ function decompileShowText(command: RawCommand, rawCommands: unknown[], range: D
     faceName: command.parameters[0],
     faceIndex: command.parameters[1],
     background: command.parameters[2],
-    position: command.parameters[3]
+    position: command.parameters[3],
+    ...(options.engine === "rpg-maker-mz" ? { speakerName: command.parameters[4] } : {})
   };
 }
 
@@ -884,10 +930,19 @@ function decompileCommonEvent(command: RawCommand, options: DecompileOptions): C
 }
 
 function decompilePlugin(command: RawCommand, options: DecompileOptions): CommandSpec {
-  if (typeof command.parameters[0] !== "string") {
-    emitUnsupportedReason(`plugin.command must be a string, got ${typeof command.parameters[0]}.`, options);
+  if (command.code === 356) {
+    if (typeof command.parameters[0] !== "string") {
+      emitUnsupportedReason(`plugin.command must be a string, got ${typeof command.parameters[0]}.`, options);
+    }
+    return { kind: "plugin", command: command.parameters[0] };
   }
-  return { kind: "plugin", command: command.parameters[0] };
+  return {
+    kind: "plugin",
+    pluginName: command.parameters[0],
+    commandName: command.parameters[1],
+    displayName: command.parameters[2],
+    args: cloneRawParameters(command.parameters[3])
+  };
 }
 
 function decompileConditionalBranch(command: RawCommand, rawCommands: unknown[], range: DecompiledRange, options: DecompileOptions): CommandSpec {
@@ -1260,7 +1315,7 @@ function toRawNode(command: RawCommand, options: DecompileOptions = {}, reason?:
 function resolveBlockRange(rawCommands: unknown[], start: number, hardEnd: number, options: DecompileOptions): DecompiledRange {
   const current = asRawCommand(rawCommands[start]);
   if (!current) return { start, end: start };
-  const pairing = EVENT_COMMAND_BLOCK_PAIRINGS[current.code];
+  const pairing = eventCommandBlockPairings(options.engine ?? "rpg-maker-mv")[current.code];
   if (!pairing) return { start, end: start };
   const headIndent: number = current.indent;
   let end = start;
@@ -1286,13 +1341,13 @@ function resolveBlockRange(rawCommands: unknown[], start: number, hardEnd: numbe
   return { start, end };
 }
 
-function requiresTerminator(code: number): boolean {
-  const pairing = EVENT_COMMAND_BLOCK_PAIRINGS[code];
+function requiresTerminator(code: number, engine: RpgMakerEngine): boolean {
+  const pairing = eventCommandBlockPairings(engine)[code];
   return pairing?.terminator !== undefined;
 }
 
-function rangeHasTerminator(rawCommands: unknown[], range: DecompiledRange, code: number): boolean {
-  const pairing = EVENT_COMMAND_BLOCK_PAIRINGS[code];
+function rangeHasTerminator(rawCommands: unknown[], range: DecompiledRange, code: number, engine: RpgMakerEngine): boolean {
+  const pairing = eventCommandBlockPairings(engine)[code];
   if (pairing?.terminator === undefined) return true;
   const head = asRawCommand(rawCommands[range.start]);
   if (!head) return false;
@@ -1333,18 +1388,20 @@ function appendCommand(list: CompiledCommand[], command: CommandSpec, system: un
   // 防御性 kind 归一：兜底未经注册归一化的编译路径（如 patch 直接编译）。
   const canonicalKind = COMMAND_KIND_ALIASES[command.kind];
   if (canonicalKind && canonicalKind !== command.kind) command = { ...command, kind: canonicalKind };
-  const semanticIssues = validateCommandSemantics(command.kind, command as unknown as Record<string, unknown>);
+  const engine = context?.engine ?? "rpg-maker-mv";
+  const semanticIssues = validateCommandSemantics(command.kind, command as unknown as Record<string, unknown>, engine);
   if (semanticIssues.length > 0) throw new Error(semanticIssues[0].message);
   switch (command.kind) {
     case "raw-command":
     case "mv-command":
-      appendRawCommand(list, command as RawCommandSpec);
+    case "mz-command":
+      appendRawCommand(list, command as RawCommandSpec, engine);
       return;
     case "comment":
       appendComment(list, command.text as string, indent);
       return;
     case "text":
-      appendText(list, command as unknown as TextCommand, indent);
+      appendText(list, command as unknown as TextCommand, indent, engine);
       return;
     case "switch":
       assertInteger(command.id as number, "switch.id", 1);
@@ -1404,8 +1461,7 @@ function appendCommand(list: CompiledCommand[], command: CommandSpec, system: un
       list.push({ code: 117, indent, parameters: [command.id] });
       return;
     case "plugin":
-      if (!command.command || typeof command.command !== "string") throw new Error("plugin.command must be a non-empty string");
-      list.push({ code: 356, indent, parameters: [command.command] });
+      appendPluginCommand(list, command, indent, engine);
       return;
     case "conditional-branch":
       appendConditionalBranch(list, command as unknown as ConditionalBranchCommand, system, dataDir, indent, context);
@@ -1430,13 +1486,19 @@ function appendCommand(list: CompiledCommand[], command: CommandSpec, system: un
   }
 }
 
-function appendRawCommand(list: CompiledCommand[], command: RawCommandSpec): void {
+function appendRawCommand(list: CompiledCommand[], command: RawCommandSpec, engine: RpgMakerEngine): void {
+  if (command.kind === "mv-command" && engine !== "rpg-maker-mv") {
+    throw new Error("mv-command cannot be compiled for an RPG Maker MZ project");
+  }
+  if (command.kind === "mz-command" && engine !== "rpg-maker-mz") {
+    throw new Error("mz-command cannot be compiled for an RPG Maker MV project");
+  }
   const raw = {
     code: command.code,
     indent: command.indent,
     parameters: command.parameters
   };
-  validateEventCommandBasic(raw, command.kind);
+  validateEventCommandBasic(raw, command.kind, engine);
   list.push({
     code: raw.code,
     indent: raw.indent,
@@ -1551,22 +1613,47 @@ interface TextCommand extends CommandSpec {
   faceIndex?: number;
   background?: number;
   position?: number;
+  speakerName?: string;
 }
 
-function appendText(list: CompiledCommand[], command: TextCommand, indent: number): void {
+function appendText(list: CompiledCommand[], command: TextCommand, indent: number, engine: RpgMakerEngine): void {
   const lines: string[] = splitLines(command.text || "", "text.text");
+  const parameters: unknown[] = [
+    command.faceName || "",
+    command.faceIndex || 0,
+    command.background === undefined ? 0 : command.background,
+    command.position === undefined ? 2 : command.position
+  ];
+  if (engine === "rpg-maker-mz") parameters.push(command.speakerName || "");
   list.push({
     code: 101,
     indent,
-    parameters: [
-      command.faceName || "",
-      command.faceIndex || 0,
-      command.background === undefined ? 0 : command.background,
-      command.position === undefined ? 2 : command.position
-    ]
+    parameters
   });
   for (const line of lines) {
     list.push({ code: 401, indent, parameters: [line] });
+  }
+}
+
+function appendPluginCommand(
+  list: CompiledCommand[],
+  command: CommandSpec,
+  indent: number,
+  engine: RpgMakerEngine
+): void {
+  if (engine === "rpg-maker-mv") {
+    list.push({ code: 356, indent, parameters: [command.command] });
+    return;
+  }
+  const pluginName = command.pluginName as string;
+  const commandName = command.commandName as string;
+  const displayName = typeof command.displayName === "string" && command.displayName
+    ? command.displayName
+    : commandName;
+  const args = cloneRawParameters(command.args as Record<string, string>);
+  list.push({ code: 357, indent, parameters: [pluginName, commandName, displayName, args] });
+  for (const [name, value] of Object.entries(args)) {
+    list.push({ code: 657, indent, parameters: [`${name} = ${value}`] });
   }
 }
 
@@ -1977,6 +2064,15 @@ function toZeroOneFlag(value: unknown, label: string, defaultValue: boolean): bo
   if (value === 0) return false;
   if (value === 1) return true;
   throw new Error(`${label} must be boolean or 0/1.`);
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.values(value).every((item) => typeof item === "string")
+  );
 }
 
 function boundedInteger(value: number, label: string, min: number, max: number): number {

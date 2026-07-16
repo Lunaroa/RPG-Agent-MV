@@ -12,6 +12,7 @@ import {
   type InteractivePlaytestSpawnOptions,
 } from './interactive-playtest-service.ts';
 import type { BattleTestProjectPreparation } from './battle-test-preparation.ts';
+import type { ParticleAnimationPreviewPreparation } from './particle-animation-preview-preparation.ts';
 
 describe('interactive desktop playtest lifecycle', { concurrency: false }, () => {
   let root: string;
@@ -86,6 +87,51 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(result.run, undefined);
     assert.equal(result.confirmationRequired, false);
     assert.match(String(result.error), /Game\.exe/);
+  });
+
+  test('requires a complete project-local MZ runtime before launch', async () => {
+    const service = createService(root, {
+      child: new FakeChild(),
+      inspectProject: () => ({ engine: 'rpg-maker-mz', editable: true, missingRequired: [] }),
+      resolveMZRuntime: () => { throw new Error('The project-local RPG Maker MZ runtime is incomplete: nw.dll is missing.'); },
+    });
+    const result = await service.start(project);
+    assert.equal(result.run, undefined);
+    assert.match(String(result.error), /project-local.*nw\.dll/i);
+  });
+
+  test('launches MZ normal playtest with the validated project-local Game.exe', async () => {
+    const child = new FakeChild();
+    const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
+    const localRuntime = path.join(project, 'Game.exe');
+    const service = createService(root, {
+      child,
+      spawnCalls,
+      inspectProject: () => ({ engine: 'rpg-maker-mz', editable: true, missingRequired: [] }),
+      resolveMZRuntime: () => ({ executable: localRuntime, projectRoot: project, engineVersion: '1.10.0' }),
+    });
+
+    const starting = service.start(project);
+    queueMicrotask(() => child.emitSpawn());
+    const running = await starting;
+    assert.equal(running.run?.engine, 'rpg-maker-mz');
+    assert.equal(spawnCalls[0].executable, localRuntime);
+    assert.deepEqual(spawnCalls[0].args, [project]);
+    assert.equal(running.run?.executable, 'project-local-rpg-maker-mz-nwjs');
+
+    const emittedPath = localRuntime.replaceAll('\\', '/');
+    const splitAt = Math.floor(emittedPath.length / 2);
+    child.stdout.emit('data', Buffer.from(`runtime=${emittedPath.slice(0, splitAt)}`, 'utf8'));
+    child.stdout.emit('data', Buffer.from(`${emittedPath.slice(splitAt)}\n`, 'utf8'));
+    child.stderr.emit('data', Buffer.from(`project-runtime=${path.dirname(localRuntime)}\n`, 'utf8'));
+    child.emitExit(0, null);
+
+    const finished = service.current().run!;
+    const stdout = fs.readFileSync(finished.stdoutPath, 'utf8');
+    const stderr = fs.readFileSync(finished.stderrPath, 'utf8');
+    const log = fs.readFileSync(finished.logPath, 'utf8');
+    assert.doesNotMatch(`${stdout}\n${stderr}\n${log}`, new RegExp(escapeRegex(project), 'i'));
+    assert.match(`${stdout}\n${stderr}\n${log}`, /project-local RPG Maker MZ runtime/);
   });
 
   test('records an early launch error as failed evidence', async () => {
@@ -269,6 +315,100 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(fs.existsSync(isolated.temporaryProject), false);
   });
 
+  test('launches MZ Battle Test from the isolated copy through the source project Game.exe', async () => {
+    const child = new FakeChild();
+    const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
+    const isolated = createBattlePreparation(root, project);
+    isolated.engine = 'rpg-maker-mz';
+    delete isolated.executable;
+    const localRuntime = path.join(project, 'Game.exe');
+    const service = createService(root, {
+      child,
+      spawnCalls,
+      inspectProject: () => ({ engine: 'rpg-maker-mz', editable: true, missingRequired: [] }),
+      resolveMZRuntime: () => ({ executable: localRuntime, projectRoot: project, engineVersion: '1.10.0' }),
+      prepareBattleTest: () => isolated,
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      cleanupIsolated: (preparation) => fs.rmSync(preparation.temporaryProject, { recursive: true, force: true }),
+    });
+
+    const starting = service.start(project, {
+      mode: 'battle_test',
+      troopId: 3,
+      battlers: [{ actorId: 1, level: 8, equips: [1, 0] }],
+      battleback1Name: '',
+      battleback2Name: '',
+    });
+    queueMicrotask(() => child.emitSpawn());
+    const running = await starting;
+    assert.equal(running.run?.engine, 'rpg-maker-mz');
+    assert.equal(spawnCalls[0].executable, localRuntime);
+    assert.deepEqual(spawnCalls[0].args, [isolated.temporaryProject, 'test&btest']);
+    assert.equal(spawnCalls[0].options.cwd, isolated.temporaryProject);
+  });
+
+  test('launches MZ particle preview from its stripped isolated app without persisting the private source path', async () => {
+    const child = new FakeChild();
+    const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
+    const isolated = createParticlePreparation(project);
+    const localRuntime = path.join(project, 'Game.exe');
+    let cleanupCalls = 0;
+    const service = createService(root, {
+      child,
+      spawnCalls,
+      inspectProject: () => ({ engine: 'rpg-maker-mz', editable: true, missingRequired: [] }),
+      resolveMZRuntime: () => ({ executable: localRuntime, projectRoot: project, engineVersion: '1.10.0' }),
+      prepareParticlePreview: () => isolated,
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      cleanupIsolated: (preparation) => {
+        cleanupCalls += 1;
+        fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
+      },
+    });
+
+    const starting = service.start(project, {
+      mode: 'particle_preview',
+      animationPreview: particleAnimation(),
+    });
+    queueMicrotask(() => child.emitSpawn());
+    const running = await starting;
+    assert.equal(running.run?.mode, 'particle_preview');
+    assert.equal(running.run?.effectName, 'fx/Spark');
+    assert.equal(running.run?.project, '[current RPG Maker MZ project]');
+    assert.equal(running.run?.cwd, '[isolated particle preview]');
+    assert.equal(running.run?.temporaryProject, true);
+    assert.equal(running.run?.sourceSaveRisk, false);
+    assert.equal(running.run?.stagingIncluded, true);
+    assert.equal(spawnCalls[0].executable, localRuntime);
+    assert.deepEqual(spawnCalls[0].args, [isolated.appDirectory]);
+    assert.equal(spawnCalls[0].options.cwd, isolated.appDirectory);
+    assert.doesNotMatch(fs.readFileSync(running.run!.artifactPath, 'utf8'), new RegExp(escapeRegex(project), 'i'));
+
+    child.emitExit(0, null);
+    assert.equal(service.current().run?.status, 'exited');
+    assert.equal(service.current().run?.sourceUnchanged, true);
+    assert.equal(service.current().run?.temporaryProjectCleaned, true);
+    assert.equal(cleanupCalls, 1);
+  });
+
+  test('redacts the project-local MZ executable path from launch failures and logs', async () => {
+    const child = new FakeChild();
+    const localRuntime = path.join(project, 'Game.exe');
+    const service = createService(root, {
+      child,
+      spawnError: new Error(`spawn ${localRuntime} ENOENT`),
+      inspectProject: () => ({ engine: 'rpg-maker-mz', editable: true, missingRequired: [] }),
+      resolveMZRuntime: () => ({ executable: localRuntime, projectRoot: project, engineVersion: '1.10.0' }),
+    });
+
+    const result = await service.start(project, { mode: 'project' });
+    assert.equal(result.run?.status, 'failed');
+    assert.equal(String(result.run?.error).includes(localRuntime), false);
+    assert.match(String(result.run?.error), /project-local RPG Maker MZ runtime/);
+    const log = fs.readFileSync(result.run!.logPath, 'utf8');
+    assert.equal(log.includes(localRuntime), false);
+  });
+
   test('does not report Battle Test success when isolated cleanup fails', async () => {
     const child = new FakeChild();
     const isolated = createBattlePreparation(root, project);
@@ -301,7 +441,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.match(String(service.current().run?.error), /cleanup failure/i);
 
     const blocked = await service.start(project, { mode: 'project' });
-    assert.match(String(blocked.error), /previous Battle Test temporary project/i);
+    assert.match(String(blocked.error), /previous isolated playtest project/i);
     assert.equal(prepareCalls, 1);
 
     cleanupShouldFail = false;
@@ -343,20 +483,28 @@ function createService(workflowRoot: string, options: {
   spawnCalls?: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }>;
   forceKill?: InteractivePlaytestDependencies['forceKillProcessTree'];
   prepareBattleTest?: InteractivePlaytestDependencies['prepareBattleTest'];
+  prepareParticlePreview?: InteractivePlaytestDependencies['prepareParticlePreview'];
   verifyIsolatedSource?: InteractivePlaytestDependencies['verifyIsolatedSource'];
   cleanupIsolated?: InteractivePlaytestDependencies['cleanupIsolated'];
+  inspectProject?: InteractivePlaytestDependencies['inspectProject'];
+  resolveMZRuntime?: InteractivePlaytestDependencies['resolveMZRuntime'];
+  spawnError?: Error;
 }): InteractivePlaytestService {
   return new InteractivePlaytestService(workflowRoot, {
     spawnProcess: (executable, args, spawnOptions) => {
+      if (options.spawnError) throw options.spawnError;
       options.spawnCalls?.push({ executable, args, options: spawnOptions });
       return options.child;
     },
     getStagingStatus: options.stagingStatus || (() => ({ staged: false, files: [], operations: [] })),
+    inspectProject: options.inspectProject || (() => ({ engine: 'rpg-maker-mv', editable: true, missingRequired: [] })),
+    ...(options.resolveMZRuntime ? { resolveMZRuntime: options.resolveMZRuntime } : {}),
     requestGracefulStop: (child) => ({
       ok: child.kill(),
     }),
     forceKillProcessTree: options.forceKill || (async () => ({ ok: true })),
     ...(options.prepareBattleTest ? { prepareBattleTest: options.prepareBattleTest } : {}),
+    ...(options.prepareParticlePreview ? { prepareParticlePreview: options.prepareParticlePreview } : {}),
     ...(options.verifyIsolatedSource ? { verifyIsolatedSource: options.verifyIsolatedSource } : {}),
     ...(options.cleanupIsolated ? { cleanupIsolated: options.cleanupIsolated } : {}),
     randomUUID: () => '00000000-0000-4000-8000-000000000001',
@@ -377,12 +525,45 @@ function createBattlePreparation(_root: string, sourceProject: string): BattleTe
     saveFingerprint: 'save-hash',
     staging: { files: [{ relativePath: 'data/Troops.json', delete: false, draftHash: 'draft-hash' }], digest: 'staging-hash' },
     savesExcluded: true,
+    engine: 'rpg-maker-mv',
     executable,
     troopId: 3,
     troopName: 'Sample Troop',
     battlers: [{ actorId: 1, level: 8, equips: [1, 0] }],
     battleback1Name: 'Field',
     battleback2Name: 'Forest',
+  };
+}
+
+function createParticlePreparation(sourceProject: string): ParticleAnimationPreviewPreparation {
+  const temporaryProject = fs.mkdtempSync(path.join(os.tmpdir(), 'particle-preview-copy-'));
+  const appDirectory = path.join(temporaryProject, 'particle-preview');
+  fs.mkdirSync(appDirectory, { recursive: true });
+  return {
+    sourceProject,
+    temporaryProject,
+    sourceFingerprint: 'source-hash',
+    saveFingerprint: 'save-hash',
+    staging: { files: [], digest: 'staging-hash' },
+    savesExcluded: true,
+    engine: 'rpg-maker-mz',
+    appDirectory,
+    effectName: 'fx/Spark',
+  };
+}
+
+function particleAnimation() {
+  return {
+    displayType: 0,
+    effectName: 'fx/Spark',
+    scale: 100,
+    speed: 100,
+    offsetX: 0,
+    offsetY: 0,
+    rotation: { x: 0, y: 0, z: 0 },
+    alignBottom: false,
+    flashTimings: [],
+    soundTimings: [],
   };
 }
 
@@ -402,4 +583,8 @@ function stagedStatus(draftHash: string): unknown {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

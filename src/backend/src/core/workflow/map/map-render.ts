@@ -4,9 +4,8 @@ import zlib from "zlib";
 
 import { readJson, writeJson } from "../../rmmv/json.ts";
 import { resolveDataDir } from "../../rmmv/project-scanner.ts";
+import { inspectRmmvProject } from "../../rmmv/rmmv-layout.ts";
 import { resolveCliOutRoot, resolveWorkflowRoot } from "../../workspace-paths.ts";
-
-const TILE_SIZE = 48;
 
 interface PngHeader {
   width: number;
@@ -95,6 +94,8 @@ function runMapRender(projectRoot: string, options: MapRenderOptions = {}): MapR
   if (scale < 1 || scale > 8) throw new Error("--scale must be an integer from 1 to 8.");
 
   const dataDir = resolveDataDir(project);
+  const manifest = inspectRmmvProject(project);
+  const tileSize = manifest.tileSize;
   const mapFile = path.join(dataDir, `Map${String(mapId).padStart(3, "0")}.json`);
   if (!fs.existsSync(mapFile)) throw new Error(`Map file not found: ${mapFile}`);
 
@@ -107,7 +108,7 @@ function runMapRender(projectRoot: string, options: MapRenderOptions = {}): MapR
   const warnings: string[] = [];
   const imageDir = resolveTilesetImageDir(project, dataDir);
   const bitmaps = loadTilesetBitmaps(tileset, imageDir, warnings);
-  const rendered = renderMapToPng(map, bitmaps, scale as number);
+  const rendered = renderMapToPng(map, bitmaps, scale as number, tileSize);
 
   const outDir = path.resolve(
     options.outDir
@@ -130,7 +131,7 @@ function runMapRender(projectRoot: string, options: MapRenderOptions = {}): MapR
     size: {
       width: map.width,
       height: map.height,
-      tileSize: TILE_SIZE
+      tileSize
     },
     output: {
       png: renderPng,
@@ -141,7 +142,7 @@ function runMapRender(projectRoot: string, options: MapRenderOptions = {}): MapR
     renderedTiles: rendered.drawnTiles,
     warnings,
     limitations: [
-      "This is an offline tile-layer render, not a live RPG Maker MV runtime screenshot.",
+      `This is an offline tile-layer render, not a live RPG Maker ${manifest.engine === "rpg-maker-mz" ? "MZ" : "MV"} runtime screenshot.`,
       "It renders map tile layers 0..3 and does not render events, player, plugins, weather, screen tint, animations, or runtime effects.",
       "Use map-screenshot when runtime proof is required."
     ]
@@ -170,12 +171,17 @@ function loadTilesetBitmaps(tileset: Tileset, imageDir: string, warnings: string
   });
 }
 
-function renderMapToPng(map: MapData, bitmaps: (DecodedPng | null)[], scale: number): { png: Buffer; width: number; height: number; drawnTiles: number } {
+function renderMapToPng(
+  map: MapData,
+  bitmaps: (DecodedPng | null)[],
+  scale: number,
+  tileSize = 48,
+): { png: Buffer; width: number; height: number; drawnTiles: number } {
   const width = map.width;
   const height = map.height;
   const layerSize = width * height;
-  const outputWidth = width * TILE_SIZE;
-  const outputHeight = height * TILE_SIZE;
+  const outputWidth = width * tileSize;
+  const outputHeight = height * tileSize;
   const canvas = Buffer.alloc(outputWidth * outputHeight * 4);
   for (let index = 0; index < outputWidth * outputHeight; index += 1) {
     canvas[index * 4 + 3] = 255;
@@ -189,8 +195,8 @@ function renderMapToPng(map: MapData, bitmaps: (DecodedPng | null)[], scale: num
       for (let x = 0; x < width; x += 1) {
         const tileId = map.data[z * layerSize + y * width + x];
         if (!tileId || tileId <= 0) continue;
-        if (tileId >= 2048) drawAutotile(tileId, x * TILE_SIZE, y * TILE_SIZE, bitmaps, blit);
-        else drawNormalTile(tileId, x * TILE_SIZE, y * TILE_SIZE, bitmaps, blit);
+        if (tileId >= 2048) drawAutotile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
+        else drawNormalTile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
         drawnTiles += 1;
       }
     }
@@ -205,15 +211,15 @@ function renderMapToPng(map: MapData, bitmaps: (DecodedPng | null)[], scale: num
   };
 }
 
-function drawNormalTile(tileId: number, dx: number, dy: number, bitmaps: (DecodedPng | null)[], blit: (src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number) => void): void {
+function drawNormalTile(tileId: number, dx: number, dy: number, bitmaps: (DecodedPng | null)[], blit: (src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number) => void, tileSize: number): void {
   const setNumber = tileId >= 1536 && tileId < 2048 ? 4 : 5 + Math.floor(tileId / 256);
   const src = bitmaps[setNumber];
-  const sx = (Math.floor(tileId / 128) % 2 * 8 + tileId % 8) * TILE_SIZE;
-  const sy = (Math.floor((tileId % 256) / 8) % 16) * TILE_SIZE;
-  blit(src, sx, sy, TILE_SIZE, TILE_SIZE, dx, dy);
+  const sx = (Math.floor(tileId / 128) % 2 * 8 + tileId % 8) * tileSize;
+  const sy = (Math.floor((tileId % 256) / 8) % 16) * tileSize;
+  blit(src, sx, sy, tileSize, tileSize, dx, dy);
 }
 
-function drawAutotile(tileId: number, dx: number, dy: number, bitmaps: (DecodedPng | null)[], blit: (src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number) => void): void {
+function drawAutotile(tileId: number, dx: number, dy: number, bitmaps: (DecodedPng | null)[], blit: (src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number) => void, tileSize: number): void {
   let table = FLOOR_TABLE;
   const kind = Math.floor((tileId - 2048) / 48);
   const shape = (tileId - 2048) % 48;
@@ -266,10 +272,11 @@ function drawAutotile(tileId: number, dx: number, dy: number, bitmaps: (DecodedP
   const quarters = table[shape];
   const src = bitmaps[setNumber];
   if (!quarters || !src) return;
+  const halfTile = tileSize / 2;
   for (let index = 0; index < 4; index += 1) {
-    const sx = (bx * 2 + quarters[index][0]) * 24;
-    const sy = (by * 2 + quarters[index][1]) * 24;
-    blit(src, sx, sy, 24, 24, dx + (index % 2) * 24, dy + Math.floor(index / 2) * 24);
+    const sx = (bx * 2 + quarters[index][0]) * halfTile;
+    const sy = (by * 2 + quarters[index][1]) * halfTile;
+    blit(src, sx, sy, halfTile, halfTile, dx + (index % 2) * halfTile, dy + Math.floor(index / 2) * halfTile);
   }
 }
 
@@ -504,6 +511,7 @@ function renderMarkdown(report: MapRenderReport): string {
 
 export {
   runMapRender,
+  renderMapToPng,
   decodePng,
   encodePng
 };

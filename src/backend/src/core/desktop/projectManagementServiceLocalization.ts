@@ -98,8 +98,8 @@ export function projectManagedEntryLimitReached(
   language?: ProductLanguage | null,
 ): string {
   return pickByLocale(resolveLanguage(language), {
-    'zh-CN': `${group} 已达到 RPG Maker MV 的 ID 上限 ${maxEntries}`,
-    'en-US': `${group} has reached the RPG Maker MV id limit of ${maxEntries}`,
+    'zh-CN': `${group} 已达到当前 RPG Maker 引擎的 ID 上限 ${maxEntries}`,
+    'en-US': `${group} has reached the current RPG Maker engine id limit of ${maxEntries}`,
   });
 }
 

@@ -18,6 +18,10 @@ import {
   runIsolatedRmmvPlaytestProbe,
   type IsolatedProbeWorkerRequest,
 } from './isolated-playtest-probe.ts';
+import {
+  RPG_MAKER_MZ_REQUIRED_PROJECT_RUNTIME_FILES,
+  RPG_MAKER_MZ_REQUIRED_WEB_RUNTIME_FILES,
+} from './rpg-maker-mz-runtime.ts';
 
 describe('isolated staged-project playtest probe', { concurrency: false }, () => {
   let root: string;
@@ -215,6 +219,27 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
     assert.equal(result.blockers.some((item) => /runtime is incomplete.*plugins\.js/i.test(item)), true);
   });
 
+  test('runs an MZ probe with the source project runtime without copying it into isolation', async () => {
+    project = convertProjectToMZ(project);
+    let observedRuntime = '';
+
+    const result = await runIsolatedRmmvPlaytestProbe(root, project, {
+      timeoutMs: 5_000,
+    }, {
+      executeWorker: async (request) => {
+        assert.equal(request.engine, 'rpg-maker-mz');
+        observedRuntime = String(request.runtimeExecutable || '');
+        assert.equal(fs.existsSync(path.join(request.temporaryProject, 'Game.exe')), false);
+        assert.equal(fs.existsSync(path.join(request.temporaryProject, 'nw.dll')), false);
+        assert.equal(fs.existsSync(path.join(request.temporaryProject, 'locales')), false);
+        return strictWorkerResponse(request, { mapId: 1, x: 1, y: 1 });
+      },
+    });
+
+    assert.equal(result.status, 'verified');
+    assert.equal(observedRuntime, path.join(project, 'Game.exe'));
+  });
+
   test('starts the probe worker hidden with the copied project as its working directory', async () => {
     const artifactDir = path.join(root, 'runtime', 'out', 'worker-boundary');
     const responsePath = path.join(artifactDir, 'worker-response.json');
@@ -230,6 +255,8 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
       mapId: 1,
       x: 1,
       y: 1,
+      engine: 'rpg-maker-mv',
+      runtimeExecutable: path.join(project, 'Game.exe'),
     }, {
       spawnProcess: (nextExecutable, nextArgs, nextOptions) => {
         executable = nextExecutable;
@@ -258,6 +285,55 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
     assert.equal(spawnOptions?.windowsHide, true);
     assert.equal(spawnOptions?.shell, false);
     assert.equal((spawnOptions?.env as NodeJS.ProcessEnv | undefined)?.ELECTRON_RUN_AS_NODE, '1');
+  });
+
+  test('keeps the project-local MZ runtime path out of worker logs, requests, and responses', async () => {
+    const artifactDir = path.join(root, 'runtime', 'out', 'mz-worker-boundary');
+    const responsePath = path.join(artifactDir, 'worker-response.json');
+    const runtime = path.join(root, 'private-runtime-root', 'Game.exe');
+    const normalized = runtime.replaceAll('\\', '/');
+    const splitAt = Math.floor(normalized.length / 2);
+
+    const response = await executeIsolatedProbeWorker({
+      temporaryProject: project,
+      artifactDir,
+      generatedAt: '2026-01-01T00:00:00.000Z-mz-probe',
+      timeoutMs: 5_000,
+      mapId: 1,
+      x: 1,
+      y: 1,
+      engine: 'rpg-maker-mz',
+      runtimeExecutable: runtime,
+    }, {
+      spawnProcess: (_nextExecutable, _nextArgs, nextOptions) => {
+        assert.equal(
+          (nextOptions.env as NodeJS.ProcessEnv | undefined)?.RPG_AGENT_MZ_NWJS_EXECUTABLE,
+          runtime,
+        );
+        const child = Object.assign(new EventEmitter(), {
+          stdout: new EventEmitter(),
+          stderr: new EventEmitter(),
+          kill: () => true,
+          pid: 1234,
+        }) as unknown as childProcess.ChildProcess;
+        queueMicrotask(() => {
+          child.stdout?.emit('data', Buffer.from(`runtime=${normalized.slice(0, splitAt)}`, 'utf8'));
+          child.stdout?.emit('data', Buffer.from(`${normalized.slice(splitAt)}\n`, 'utf8'));
+          child.stderr?.emit('data', Buffer.from(`runtime-root=${path.dirname(runtime)}\n`, 'utf8'));
+          writeJson(responsePath, { ok: false, error: `failed at ${runtime}` });
+          child.emit('exit', 1, null);
+        });
+        return child;
+      },
+    });
+
+    const persistedRequest = fs.readFileSync(path.join(artifactDir, 'worker-request.json'), 'utf8');
+    const persistedResponse = fs.readFileSync(responsePath, 'utf8');
+    const stdout = fs.readFileSync(path.join(artifactDir, 'worker.stdout.log'), 'utf8');
+    const stderr = fs.readFileSync(path.join(artifactDir, 'worker.stderr.log'), 'utf8');
+    const evidence = [JSON.stringify(response), persistedRequest, persistedResponse, stdout, stderr].join('\n');
+    assert.doesNotMatch(evidence, /private-runtime-root/);
+    assert.match(evidence, /project-local RPG Maker MZ runtime/);
   });
 });
 
@@ -295,6 +371,57 @@ function createProject(root: string): string {
   writeJson(path.join(dataDir, 'Actors.json'), [null, { id: 1, name: 'Source Actor' }]);
   writeJson(path.join(dataDir, 'obsolete.json'), { remove: true });
   return project;
+}
+
+function convertProjectToMZ(project: string): string {
+  fs.rmSync(path.join(project, 'Game.exe'));
+  fs.writeFileSync(path.join(project, 'game.rmmzproject'), 'RPGMZ 1.10.0', 'utf8');
+  for (const fileName of [
+    'rpg_core.js',
+    'rpg_managers.js',
+    'rpg_objects.js',
+    'rpg_scenes.js',
+    'rpg_sprites.js',
+    'rpg_windows.js',
+  ]) {
+    fs.rmSync(path.join(project, 'js', fileName));
+  }
+  for (const fileName of [
+    'rmmz_core.js',
+    'rmmz_managers.js',
+    'rmmz_objects.js',
+    'rmmz_scenes.js',
+    'rmmz_sprites.js',
+    'rmmz_windows.js',
+  ]) {
+    const source = fileName === 'rmmz_core.js'
+      ? 'Utils.RPGMAKER_NAME = "MZ";\nUtils.RPGMAKER_VERSION = "1.10.0";\n'
+      : '// runtime fixture\n';
+    fs.writeFileSync(path.join(project, 'js', fileName), source, 'utf8');
+  }
+  const system = readJson(path.join(project, 'data', 'System.json'));
+  system.tileSize = 48;
+  system.faceSize = 144;
+  system.iconSize = 32;
+  system.advanced = { screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624 };
+  system.hasEncryptedImages = false;
+  system.hasEncryptedAudio = false;
+  writeJson(path.join(project, 'data', 'System.json'), system);
+  writeProjectLocalMZRuntime(project);
+  return project;
+}
+
+function writeProjectLocalMZRuntime(project: string): void {
+  fs.mkdirSync(path.join(project, 'locales'), { recursive: true });
+  for (const relative of [
+    ...RPG_MAKER_MZ_REQUIRED_PROJECT_RUNTIME_FILES,
+    ...RPG_MAKER_MZ_REQUIRED_WEB_RUNTIME_FILES,
+  ]) {
+    const file = path.join(project, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, relative === 'Game.exe' ? Buffer.from([0x4d, 0x5a, 0, 0]) : 'runtime fixture');
+  }
+  fs.writeFileSync(path.join(project, 'locales', 'en-US.pak'), 'locale fixture', 'utf8');
 }
 
 function mapData(width: number, height: number): Record<string, unknown> {

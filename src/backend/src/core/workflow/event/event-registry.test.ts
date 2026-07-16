@@ -27,7 +27,7 @@ import {
 import { eventContentFingerprint } from "./event-fingerprint.ts";
 
 interface EventContract {
-  engine: string;
+  engine: "rpg-maker-mv" | "rpg-maker-mz";
   kind: string;
   id: string;
   purpose: string;
@@ -105,7 +105,7 @@ test("validateContract accepts a well-formed contract", () => {
 });
 
 test("validateContract rejects wrong engine", () => {
-  const errors = validateContract(baseContract({ engine: "godot" }));
+  const errors = validateContract(baseContract({ engine: "godot" as EventContract["engine"] }));
   assert.ok(errors.some((e) => e.field === "engine"));
 });
 
@@ -418,7 +418,7 @@ test("detectConflicts ignores self-update (same id)", () => {
 
 test("registerContract rejects invalid schema with status=rejected reason=schema", async () => {
   const project = tmpProject();
-  const result = await registerContract(project, baseContract({ engine: "godot" }), {
+  const result = await registerContract(project, baseContract({ engine: "godot" as EventContract["engine"] }), {
     runtimeRoot: path.join(project, "runtime"),
   });
   assert.equal(result.status, "rejected");

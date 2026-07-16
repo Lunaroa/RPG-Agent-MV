@@ -433,11 +433,11 @@ function buildEventRegistryArgv(action: string, input: RmmvHandlerInput): string
     case "list":
       return ["list", "--project", project()];
     case "validate":
-      return ["validate", "--contract", need("contract")];
+      return ["validate", "--project", project(), "--contract", need("contract")];
     case "register":
       return ["register", "--project", project(), "--contract", need("contract")];
     case "scaffold": {
-      const argv = ["scaffold", "--id", need("id"), "--map-id", need("mapId"), "--purpose", need("purpose"), "--out", need("out")];
+      const argv = ["scaffold", "--project", project(), "--id", need("id"), "--map-id", need("mapId"), "--purpose", need("purpose"), "--out", need("out")];
       pushOpt(argv, "--event-name", "eventName");
       pushOpt(argv, "--trigger", "trigger");
       pushOpt(argv, "--text", "text");

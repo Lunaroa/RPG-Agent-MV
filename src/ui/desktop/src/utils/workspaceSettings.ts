@@ -144,6 +144,7 @@ export function normalizeWorkspaceSettings(raw: unknown): WorkspaceSettings {
     return { layout: normalizeWorkspaceLayout(undefined) }
   }
   const source = raw as WorkspaceSettings
+  const legacy = source as WorkspaceSettings & { suppressUnsupportedMZVersionWarnings?: unknown }
   const projects: Record<string, WorkspaceEditorProjectState> = {}
   if (source.projects && typeof source.projects === 'object') {
     for (const [projectPath, value] of Object.entries(source.projects)) {
@@ -163,6 +164,10 @@ export function normalizeWorkspaceSettings(raw: unknown): WorkspaceSettings {
     lastProjectPath: typeof source.lastProjectPath === 'string' && source.lastProjectPath.trim()
       ? source.lastProjectPath.trim()
       : undefined,
+    suppressProjectCompatibilityWarnings: bool(
+      source.suppressProjectCompatibilityWarnings ?? legacy.suppressUnsupportedMZVersionWarnings,
+      false,
+    ),
     window: source.window && typeof source.window === 'object'
       ? {
           x: finiteNumber(source.window.x),
@@ -190,6 +195,10 @@ export function normalizeWorkspacePatch(raw: unknown): WorkspaceSettings {
     patch.lastProjectPath = typeof source.lastProjectPath === 'string' && source.lastProjectPath.trim()
       ? source.lastProjectPath.trim()
       : ''
+  }
+
+  if (typeof source.suppressProjectCompatibilityWarnings === 'boolean') {
+    patch.suppressProjectCompatibilityWarnings = source.suppressProjectCompatibilityWarnings
   }
 
   if (source.window && typeof source.window === 'object') {
@@ -286,6 +295,9 @@ export function mergeWorkspaceSettings(
   if (Object.prototype.hasOwnProperty.call(next, 'lastProjectPath')) {
     if (next.lastProjectPath) merged.lastProjectPath = next.lastProjectPath
     else delete merged.lastProjectPath
+  }
+  if (typeof next.suppressProjectCompatibilityWarnings === 'boolean') {
+    merged.suppressProjectCompatibilityWarnings = next.suppressProjectCompatibilityWarnings
   }
   if (next.window) merged.window = { ...base.window, ...next.window }
   if (next.layout) merged.layout = { ...base.layout, ...next.layout }

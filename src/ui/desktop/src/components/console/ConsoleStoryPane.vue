@@ -125,10 +125,11 @@ async function applyProjectStaging() {
     const status = await mapsApi.projectStaging(projectStore.currentProject);
     const summary = parseProjectStagingSummary(status);
     if (!await confirmAgentOperations(summary)) return;
-    await mapsApi.applyProjectStaging(
+    const result = await mapsApi.applyProjectStaging(
       projectStore.currentProject,
       summary.operations.map((operation) => operation.operationId),
-    );
+    ) as { canceled?: boolean };
+    if (result?.canceled) return;
     await refreshStagingStatus();
     await loadData();
   } catch (applyError) {

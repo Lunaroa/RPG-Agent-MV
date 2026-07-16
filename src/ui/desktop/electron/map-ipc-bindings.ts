@@ -14,6 +14,20 @@ export interface ProjectIpcOptions {
   selectAssetFile?: (event: unknown, category: string, extensions: string[]) => Promise<string | null>;
   productLanguage?: () => ProductLanguage;
   withProductLanguage: <T>(language: ProductLanguage, fn: () => T) => T;
+  shouldSuppressProjectCompatibilityWarnings?: () => boolean;
+  suppressProjectCompatibilityWarnings?: () => void;
+  confirmProjectCompatibility?: (
+    event: unknown,
+    warning: {
+      detectedVersion: string;
+      supportedVersion: string;
+      versionMismatch: boolean;
+      encryptedResources: boolean;
+      encryptedImages: boolean;
+      encryptedAudio: boolean;
+    },
+    action: 'import' | 'write',
+  ) => Promise<{ confirmed: boolean; suppressFutureWarnings: boolean }>;
 }
 
 export const MAP_IPC_CHANNELS = [
@@ -127,18 +141,51 @@ export function registerMapIpcHandlers(
     ipc.handle(channel, (...args) => runInLanguage(() => listener(...args)));
   };
 
+  const confirmProjectCompatibility = async (
+    event: unknown,
+    projectPath: string,
+    action: 'import' | 'write',
+  ): Promise<boolean> => {
+    const warning = desktop.project.getProjectCompatibilityWarning(projectPath);
+    const relevantWarning = action === 'import'
+      ? warning
+      : warning?.versionMismatch ? warning : null;
+    if (!relevantWarning || options.shouldSuppressProjectCompatibilityWarnings?.()) return true;
+    if (!options.confirmProjectCompatibility) {
+      throw new Error('RPG Maker project compatibility confirmation is unavailable.');
+    }
+    const result = await options.confirmProjectCompatibility(event, relevantWarning, action);
+    if (result.confirmed && result.suppressFutureWarnings) {
+      options.suppressProjectCompatibilityWarnings?.();
+    }
+    return result.confirmed;
+  };
+
   handle('projects:list', () => desktop.project.listProjects(workflowRoot));
   handle('projects:refresh', () => desktop.project.refreshProjects(workflowRoot));
-  handle('projects:add', (_event, projectPath: string, addOptions?: Record<string, unknown>) => ({
-    project: desktop.project.registerExternalProject(workflowRoot, projectPath, addOptions || {}),
-    projects: desktop.project.listProjects(workflowRoot),
-  }));
+  handle('projects:add', async (event, projectPath: string, addOptions?: Record<string, unknown>) => {
+    if (!await confirmProjectCompatibility(event, projectPath, 'import')) {
+      return { canceled: true, project: null, projects: desktop.project.listProjects(workflowRoot) };
+    }
+    return {
+      canceled: false,
+      project: desktop.project.registerExternalProject(workflowRoot, projectPath, addOptions || {}),
+      projects: desktop.project.listProjects(workflowRoot),
+    };
+  });
   handle('projects:browseAndAdd', async (event, addOptions?: Record<string, unknown>) => {
     if (!options.selectProjectDirectory) {
       throw new Error(electronText(options.productLanguage?.(), 'projects.selectDirectoryUnsupported'));
     }
     const selectedPath = await options.selectProjectDirectory(event);
     if (!selectedPath) {
+      return {
+        canceled: true,
+        project: null,
+        projects: desktop.project.listProjects(workflowRoot),
+      };
+    }
+    if (!await confirmProjectCompatibility(event, selectedPath, 'import')) {
       return {
         canceled: true,
         project: null,
@@ -317,8 +364,9 @@ export function registerMapIpcHandlers(
     desktop.assetLibrary.importAssetLibraryEntry(workflowRoot, project(value), assetId));
 
   handle('staging:projectStatus', (_event, value?: string) => desktop.staging.getProjectStagingStatus(workflowRoot, project(value)));
-  handle('staging:applyProject', (_event, value?: string, expectedOperationIds?: string[]) => {
+  handle('staging:applyProject', async (event, value?: string, expectedOperationIds?: string[]) => {
     const resolved = project(value);
+    if (!await confirmProjectCompatibility(event, resolved, 'write')) return { canceled: true };
     return desktop.staging.applyProjectStaging(workflowRoot, resolved, {
       expectedOperationIds: expectedOperationIds || [],
       validate: () => desktop.projectManagement.preflightProjectManagedStagingApply(workflowRoot, resolved),
@@ -326,7 +374,11 @@ export function registerMapIpcHandlers(
   });
   handle('staging:discardProject', (_event, value?: string) => desktop.staging.discardProjectStaging(workflowRoot, project(value)));
   handle('staging:mapStatus', (_event, mapId: number, value?: string) => desktop.staging.getStagingStatus(workflowRoot, project(value), mapId));
-  handle('staging:applyMap', (_event, mapId: number, value?: string) => desktop.staging.applyStagedMap(workflowRoot, project(value), mapId));
+  handle('staging:applyMap', async (event, mapId: number, value?: string) => {
+    const resolved = project(value);
+    if (!await confirmProjectCompatibility(event, resolved, 'write')) return { canceled: true };
+    return desktop.staging.applyStagedMap(workflowRoot, resolved, mapId);
+  });
   handle('staging:discardMap', (_event, mapId: number, value?: string) => desktop.staging.discardStagedMap(workflowRoot, project(value), mapId));
 
   handle('placementQueue:get', (_event, value?: string) =>

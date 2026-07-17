@@ -11,6 +11,7 @@ import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
 import { withAssetCanvasCors } from './asset-protocol-policy.js';
+import { WorkspaceSettingsSession } from './workspace-settings-session.js';
 import {
   DEFAULT_AGENT_EXECUTION_ENGINE,
   type InteractivePlaytestResult,
@@ -24,7 +25,6 @@ import {
   DEFAULT_WINDOW_WIDTH,
   isLikelyMaximizedWindowBounds,
   isValidWindowBounds,
-  mergeWorkspaceSettings,
   normalizeWorkspaceSettings,
 } from '../src/utils/workspaceSettings.ts';
 
@@ -32,6 +32,7 @@ export interface AppRoots {
   installRoot: string;
   userDataRoot: string;
   layoutMigrated?: string[];
+  inMemoryWorkspaceSettings?: boolean;
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,16 +56,23 @@ let interactivePlaytestService: any;
 let assetProtocolRegistered = false;
 let backendCoreUrl: URL | null = null;
 let backendWithProductLanguage: (<T>(language: ProductLanguage, fn: () => T) => T) | null = null;
+let workspaceSettingsSession = new WorkspaceSettingsSession(false);
 
-export function getWorkspaceSettings(): WorkspaceSettings {
+function readPersistedWorkspaceSettings(): WorkspaceSettings {
   if (!ConsoleSettingsDao) return normalizeWorkspaceSettings({});
   return normalizeWorkspaceSettings(ConsoleSettingsDao.get('workspace') || {});
 }
 
+function writePersistedWorkspaceSettings(value: WorkspaceSettings): void {
+  ConsoleSettingsDao.set('workspace', value);
+}
+
+export function getWorkspaceSettings(): WorkspaceSettings {
+  return workspaceSettingsSession.read(readPersistedWorkspaceSettings);
+}
+
 export function patchWorkspaceSettings(patch: WorkspaceSettings): WorkspaceSettings {
-  const merged = mergeWorkspaceSettings(getWorkspaceSettings(), patch);
-  ConsoleSettingsDao.set('workspace', merged);
-  return merged;
+  return workspaceSettingsSession.patch(patch, readPersistedWorkspaceSettings, writePersistedWorkspaceSettings);
 }
 
 export function currentProductLanguage(): ProductLanguage {
@@ -356,6 +364,8 @@ async function loadBackendModules(roots: AppRoots) {
 
   const bootstrapModule = await import(new URL('db/bootstrap.ts', coreUrl).href);
   await bootstrapModule.bootstrapDatabase(roots.userDataRoot);
+  workspaceSettingsSession = new WorkspaceSettingsSession(Boolean(roots.inMemoryWorkspaceSettings));
+  workspaceSettingsSession.initialize(readPersistedWorkspaceSettings());
   await llm.ensureProviderSeedsInitialized(roots.userDataRoot);
   await llm.refreshProviderSeedCatalogFields(roots.userDataRoot);
 
@@ -1117,8 +1127,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
 
   ipcMain.handle('workspace:put', (_event, body: Record<string, unknown>) => {
     const plain = normalizeWorkspaceSettings(toIpcPayload(body));
-    ConsoleSettingsDao.set('workspace', plain);
-    return toIpcPayload(plain);
+    return toIpcPayload(workspaceSettingsSession.replace(plain, writePersistedWorkspaceSettings));
   });
 
   ipcMain.handle('workspace:patch', (_event, body: Record<string, unknown>) => {
@@ -1549,6 +1558,7 @@ export function cleanupIpcHandlers(): void {
   cleanupSessionIpcHandlers(ipcMain);
   cleanupMapIpcHandlers(ipcMain);
   cleanupInteractivePlaytestIpcHandlers(ipcMain);
+  workspaceSettingsSession = new WorkspaceSettingsSession(false);
   ipcMain.removeHandler('window:minimize');
   ipcMain.removeHandler('window:toggleMaximize');
   ipcMain.removeHandler('window:close');

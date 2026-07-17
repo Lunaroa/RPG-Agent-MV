@@ -144,6 +144,12 @@ After dependencies are installed, run:
 npm --prefix src/ui/desktop run dev
 ```
 
+For automated Electron UI checks and screenshots, start the dedicated hidden validator instead. It uses the primary display's work area for maximized-layout coverage, stays non-focusable and hidden, and never controls the normal desktop window:
+
+```powershell
+npm --prefix src/ui/desktop run dev:ui-control
+```
+
 ## Repository Layout
 
 ```text

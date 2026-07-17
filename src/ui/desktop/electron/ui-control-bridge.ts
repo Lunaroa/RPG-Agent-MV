@@ -1,8 +1,11 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, screen } from 'electron';
 import crypto from 'crypto';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
+import { assertBackgroundWindowState, captureBackgroundPage } from './ui-control-background.js';
+import { UI_CONTROL_WINDOW_MODE, isBackgroundUiControlMode } from './ui-control-mode.js';
+import { acquireUiControlServerLock, prepareUiControlServerInfo } from './ui-control-server-state.js';
 
 type UiControlCommandType =
   | 'capture-current'
@@ -40,6 +43,7 @@ interface UiControlServerInfo {
   port: number;
   token: string;
   pid: number;
+  windowMode: typeof UI_CONTROL_WINDOW_MODE;
   startedAt: string;
   commandUrl: string;
 }
@@ -106,41 +110,60 @@ let serverInfo: UiControlServerInfo | null = null;
 let workflowRoot = '';
 let resolveWindow: (() => BrowserWindow | null) | null = null;
 let rendererResultListenerRegistered = false;
+let releaseServerLock: (() => void) | null = null;
 const pendingRendererCommands = new Map<string, PendingRendererCommand>();
 
 export async function startUiControlBridge(root: string, getWindow: () => BrowserWindow | null): Promise<void> {
+  if (!isBackgroundUiControlMode()) return;
   workflowRoot = root;
   resolveWindow = getWindow;
-  if (!isUiControlEnabled()) return;
   if (server) return;
-  registerRendererResultListener();
+  const win = resolveWindow() || null;
+  if (!win) throw new Error('Electron background validation window is not available.');
+  assertBackgroundWindowState(win);
+  prepareUiControlServerInfo(serverInfoPath());
+  releaseServerLock = acquireUiControlServerLock(serverLockPath());
+  try {
+    registerRendererResultListener();
 
-  const token = crypto.randomBytes(24).toString('hex');
-  server = http.createServer((request, response) => {
-    void handleHttpRequest(request, response, token);
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server!.once('error', reject);
-    server!.listen(0, '127.0.0.1', () => {
-      server!.off('error', reject);
-      resolve();
+    const token = crypto.randomBytes(24).toString('hex');
+    server = http.createServer((request, response) => {
+      void handleHttpRequest(request, response, token);
     });
-  });
 
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('UI control bridge did not bind a local port.');
-  serverInfo = {
-    host: '127.0.0.1',
-    port: address.port,
-    token,
-    pid: process.pid,
-    startedAt: new Date().toISOString(),
-    commandUrl: `http://127.0.0.1:${address.port}/command`,
-  };
-  fs.mkdirSync(uiControlDir(), { recursive: true });
-  fs.writeFileSync(serverInfoPath(), JSON.stringify(serverInfo, null, 2) + '\n', 'utf8');
-  console.log(`[ui-control] local bridge listening on ${serverInfo.commandUrl}`);
+    await new Promise<void>((resolve, reject) => {
+      server!.once('error', reject);
+      server!.listen(0, '127.0.0.1', () => {
+        server!.off('error', reject);
+        resolve();
+      });
+    });
+
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('UI control bridge did not bind a local port.');
+    serverInfo = {
+      host: '127.0.0.1',
+      port: address.port,
+      token,
+      pid: process.pid,
+      windowMode: UI_CONTROL_WINDOW_MODE,
+      startedAt: new Date().toISOString(),
+      commandUrl: `http://127.0.0.1:${address.port}/command`,
+    };
+    fs.mkdirSync(uiControlDir(), { recursive: true });
+    fs.writeFileSync(serverInfoPath(), JSON.stringify(serverInfo, null, 2) + '\n', 'utf8');
+    console.log(`[ui-control] local bridge listening on ${serverInfo.commandUrl}`);
+  } catch (error) {
+    server?.close();
+    server = null;
+    if (rendererResultListenerRegistered) {
+      ipcMain.removeListener('ui-control:renderer-result', onRendererResult);
+      rendererResultListenerRegistered = false;
+    }
+    releaseServerLock?.();
+    releaseServerLock = null;
+    throw error;
+  }
 }
 
 export function stopUiControlBridge(): void {
@@ -165,12 +188,8 @@ export function stopUiControlBridge(): void {
       // Stale bridge metadata is non-critical during shutdown.
     }
   }
-}
-
-function isUiControlEnabled(): boolean {
-  if (process.env.AGENT_RPG_UI_CONTROL === '0') return false;
-  if (process.env.AGENT_RPG_UI_CONTROL === '1') return true;
-  return Boolean(process.env.VITE_DEV_SERVER_URL);
+  releaseServerLock?.();
+  releaseServerLock = null;
 }
 
 async function handleHttpRequest(request: http.IncomingMessage, response: http.ServerResponse, token: string): Promise<void> {
@@ -199,9 +218,9 @@ async function handleHttpRequest(request: http.IncomingMessage, response: http.S
 async function runUiControlCommand(command: UiControlCommand): Promise<Record<string, unknown>> {
   const win = resolveWindow?.() || null;
   if (!win || win.isDestroyed()) throw new Error('Electron window is not available.');
+  assertBackgroundWindowState(win);
 
   const shouldCapture = command.capture ?? command.type !== 'state';
-  if (shouldCapture) await ensureWindowVisible(win);
 
   let rendererResult: unknown = null;
   let commandError: string | null = null;
@@ -211,6 +230,7 @@ async function runUiControlCommand(command: UiControlCommand): Promise<Record<st
     if (error instanceof RendererCommandError) rendererResult = error.result;
     commandError = error instanceof Error ? error.message : String(error);
   }
+  assertBackgroundWindowState(win);
 
   let snapshot: Record<string, unknown> | null = null;
   if (shouldCapture) {
@@ -266,13 +286,11 @@ async function captureSnapshot(
   rendererResult: unknown,
   commandError: string | null,
 ): Promise<Record<string, unknown>> {
-  await ensureWindowVisible(win);
+  assertBackgroundWindowState(win);
   const waitMs = clampNumber(command.waitMs, 150, 0, 5000);
   if (waitMs > 0) await delay(waitMs);
 
-  const image = await win.capturePage();
-  const png = image.toPNG();
-  if (!png.length) throw new Error('Electron window capture produced an empty image.');
+  const { image, png } = await captureBackgroundPage(win);
 
   const label = sanitizeSnapshotLabel(command.label || command.target || command.type);
   const stamp = timestampForFileName();
@@ -283,6 +301,9 @@ async function captureSnapshot(
   fs.writeFileSync(pngPath, png);
 
   const bounds = win.getBounds();
+  const [contentWidth, contentHeight] = win.getContentSize();
+  const captureSize = image.getSize();
+  const display = screen.getDisplayMatching(bounds);
   const metadata = {
     ok: !commandError,
     error: commandError,
@@ -291,25 +312,27 @@ async function captureSnapshot(
     screenshotPath: pngPath,
     metadataPath: jsonPath,
     window: {
-      width: bounds.width,
-      height: bounds.height,
+      width: contentWidth,
+      height: contentHeight,
       x: bounds.x,
       y: bounds.y,
+      outerWidth: bounds.width,
+      outerHeight: bounds.height,
       maximized: win.isMaximized(),
       minimized: win.isMinimized(),
+      visible: win.isVisible(),
+      focused: win.isFocused(),
+      mode: UI_CONTROL_WINDOW_MODE,
+      layout: 'primary-work-area',
+      workArea: display.workArea,
+      deviceScaleFactor: display.scaleFactor,
+      captureWidth: captureSize.width,
+      captureHeight: captureSize.height,
     },
     capturedAt: new Date().toISOString(),
   };
   fs.writeFileSync(jsonPath, JSON.stringify(metadata, null, 2) + '\n', 'utf8');
   return metadata;
-}
-
-async function ensureWindowVisible(win: BrowserWindow): Promise<void> {
-  if (win.isDestroyed()) throw new Error('Electron window is not available.');
-  if (win.isMinimized()) win.restore();
-  if (!win.isVisible()) win.show();
-  win.focus();
-  await delay(80);
 }
 
 function normalizeCommand(raw: unknown): UiControlCommand {
@@ -431,6 +454,10 @@ function uiSnapshotDir(): string {
 
 function serverInfoPath(): string {
   return path.join(uiControlDir(), 'server.json');
+}
+
+function serverLockPath(): string {
+  return path.join(uiControlDir(), 'server.lock');
 }
 
 function sanitizeSnapshotLabel(value: string): string {

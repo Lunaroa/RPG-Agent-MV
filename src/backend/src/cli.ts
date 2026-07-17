@@ -11,6 +11,7 @@ import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage, type ProductLanguag
 import { parseArgs } from "./cli/args.ts";
 import { printHelp } from "./cli/help.ts";
 import { buildReleaseManifest, checkReleasePackages, createReleaseSourceTree } from "./core/desktop/release-boundary.ts";
+import { validateBackgroundUiControlServerInfo } from "./core/desktop/ui-control-client.ts";
 import {
   prepareRmmvDeployCandidate,
   prepareRmmvPlaytestPlan,
@@ -357,10 +358,9 @@ function addUiControlElementTarget(command: Record<string, unknown>, args: Parse
 async function sendUiControlCommand(workflowRoot: string, command: Record<string, unknown>): Promise<Record<string, unknown>> {
   const infoPath = path.join(workflowRoot, "runtime", "out", "ui-control", "server.json");
   if (!fs.existsSync(infoPath)) {
-    throw new Error("UI control bridge is not running. Start the Electron desktop app first.");
+    throw new Error("Background UI control bridge is not running. Start npm --prefix src/ui/desktop run dev:ui-control first.");
   }
-  const info = JSON.parse(fs.readFileSync(infoPath, "utf8")) as { commandUrl?: string; token?: string };
-  if (!info.commandUrl || !info.token) throw new Error("UI control bridge metadata is invalid.");
+  const info = validateBackgroundUiControlServerInfo(JSON.parse(fs.readFileSync(infoPath, "utf8")));
   const response = await fetch(info.commandUrl, {
     method: "POST",
     headers: {

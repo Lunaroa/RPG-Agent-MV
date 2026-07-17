@@ -21,6 +21,7 @@ Dev tools:
   npm run release:electron  # packages current desktop build as Windows win-unpacked under runtime/out/release/electron
   npm --prefix src/backend run cli -- release-check [--format json]  # source + Web dist + Electron package proof
   npm --prefix src/backend run cli -- release-source [--apply] [--format json]  # source tree only; does not package Electron/Web artifacts
+  npm --prefix src/ui/desktop run dev:ui-control  # starts the dedicated hidden Electron validator; normal npm run dev is never targeted
   npm --prefix src/backend run cli -- ui-control --command capture-current [--label current] [--format json]
   npm --prefix src/backend run cli -- ui-control --command navigate --target console-settings [--format json]
   npm --prefix src/backend run cli -- ui-control --command open-event-editor --map-id 1 --event-id 3 [--format json]

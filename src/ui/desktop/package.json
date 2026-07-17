@@ -6,6 +6,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "dev:ui-control": "node scripts/start-ui-control.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:node": "node scripts/run-tests.mjs node",
     "test:vitest": "node scripts/run-tests.mjs vitest",

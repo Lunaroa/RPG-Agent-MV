@@ -62,7 +62,9 @@ export interface DrawOptions {
   showRegions?: boolean;
   showTileFlags?: boolean;
   activeLayer?: number | null;
+  eventOpacity?: number;
   selectedEventId?: number | null;
+  hoveredEventId?: number | null;
   activePageIndex?: (event: MvEvent) => number;
   defaultPage?: () => MvEventPage;
   getCharacterImage?: (name: string) => HTMLImageElement | null;
@@ -344,39 +346,60 @@ function drawEvents(context: CanvasRenderingContext2D, events: (MvEvent | null)[
   const activePageIndex = options.activePageIndex || (() => 0);
   const defaultPage = options.defaultPage || (() => ({ image: {} }));
   const getCharacterImage = options.getCharacterImage || (() => null);
-  for (const event of events.filter(Boolean) as MvEvent[]) {
-    const x = event.x * tileSize;
-    const y = event.y * tileSize;
-    const selected = event.id === options.selectedEventId;
-    const page = (event.pages && event.pages[activePageIndex(event)]) || defaultPage();
-    const image: MvEventImage = page.image || {};
-    let drawn = false;
-    if (Number(image.tileId) > 0) {
-      drawTile(context, options.tilesetImages, Number(image.tileId), x, y, tileSize);
-      drawn = true;
-    } else if (image.characterName) {
-      drawn = drawEventCharacter(context, image, x, y, getCharacterImage, tileSize);
+  context.save();
+  context.globalAlpha *= normalizedOpacity(options.eventOpacity);
+  try {
+    for (const event of events.filter(Boolean) as MvEvent[]) {
+      const x = event.x * tileSize;
+      const y = event.y * tileSize;
+      const state: EventFrameState = event.id === options.selectedEventId
+        ? 'selected'
+        : event.id === options.hoveredEventId
+          ? 'hovered'
+          : 'default';
+      const page = (event.pages && event.pages[activePageIndex(event)]) || defaultPage();
+      const image: MvEventImage = page.image || {};
+      drawEventShadow(context, x, y, tileSize);
+      if (Number(image.tileId) > 0) {
+        drawTile(context, options.tilesetImages, Number(image.tileId), x, y, tileSize);
+      } else if (image.characterName) {
+        drawEventCharacter(context, image, x, y, getCharacterImage, tileSize);
+      }
+      drawEventFrame(context, x, y, state, tileSize);
     }
-    drawEventFrame(context, x, y, selected, drawn, tileSize);
+  } finally {
+    context.restore();
   }
 }
 
-function drawEventFrame(context: CanvasRenderingContext2D, x: number, y: number, selected: boolean, hasGraphic: boolean, tileSize: number): void {
+type EventFrameState = 'default' | 'hovered' | 'selected';
+
+const EVENT_FRAME_INSET_RATIO = 1 / 12;
+
+function eventFrameInset(tileSize: number): number {
+  return tileSize * EVENT_FRAME_INSET_RATIO;
+}
+
+function drawEventShadow(context: CanvasRenderingContext2D, x: number, y: number, tileSize: number): void {
+  const inset = eventFrameInset(tileSize) + 1;
+  context.fillStyle = 'rgba(0, 0, 0, .5)';
+  context.fillRect(x + inset, y + inset, tileSize - inset * 2, tileSize - inset * 2);
+}
+
+function drawEventFrame(context: CanvasRenderingContext2D, x: number, y: number, state: EventFrameState, tileSize: number): void {
   context.save();
-  context.lineWidth = selected ? 3 : 2;
-  context.strokeStyle = selected ? 'rgba(255, 255, 255, .96)' : 'rgba(0, 0, 0, .72)';
-  const inset = Math.min(5.5, tileSize / 5);
-  context.strokeRect(x + inset, y + inset, tileSize - inset * 2, tileSize - inset * 2);
-  if (selected) {
-    context.lineWidth = 1;
-    context.strokeStyle = 'rgba(255, 222, 78, .98)';
-    context.strokeRect(x + 2.5, y + 2.5, tileSize - 5, tileSize - 5);
-  } else if (hasGraphic) {
-    context.lineWidth = 1;
-    context.strokeStyle = 'rgba(255, 255, 255, .48)';
-    const inner = Math.min(6.5, tileSize / 4);
-    context.strokeRect(x + inner, y + inner, tileSize - inner * 2, tileSize - inner * 2);
-  }
+  const lineWidth = state === 'selected' ? 2 : 1;
+  const outerInset = eventFrameInset(tileSize);
+  const strokeInset = lineWidth / 2;
+  context.lineWidth = lineWidth;
+  context.strokeStyle = '#fff';
+  context.setLineDash(state === 'hovered' ? [4, 3] : []);
+  context.strokeRect(
+    x + outerInset + strokeInset,
+    y + outerInset + strokeInset,
+    tileSize - outerInset * 2 - lineWidth,
+    tileSize - outerInset * 2 - lineWidth,
+  );
   context.restore();
 }
 
@@ -417,6 +440,13 @@ export function isBigCharacterName(name: string): boolean {
 
 function normalizedTileSize(value: number | undefined): number {
   return value === 16 || value === 24 || value === 32 || value === 48 ? value : TILE_SIZE;
+}
+
+function normalizedOpacity(value: number | undefined): number {
+  if (value == null) return 1;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 1;
+  return Math.max(0, Math.min(1, number));
 }
 
 function clampInt(value: number | undefined, min: number, max: number): number {

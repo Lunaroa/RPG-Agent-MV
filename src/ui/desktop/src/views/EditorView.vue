@@ -44,10 +44,12 @@
         :event-search-hits="eventSearchHits"
         :event-search-loading="eventSearchLoading"
         :event-search-truncated="eventSearchTruncated"
+        :event-search-all-maps="eventSearchScope === 'all'"
         @palette-ready="setPaletteCanvas"
         @palette-mousedown="onPaletteMouseDown"
         @palette-mousemove="onPaletteMouseMove"
         @palette-mouseup="onPaletteMouseUp"
+        @palette-mouseleave="onPaletteMouseLeave"
         @select-tile-tab="selectTileTab"
         @node-click="handleNodeClick"
         @node-expand="onTreeNodeExpand"
@@ -55,7 +57,9 @@
         @node-contextmenu="onTreeContextMenu"
         @node-drop="moveMapFromTree"
         @update:event-search-query="eventSearchQuery = $event"
+        @search-all-maps="searchAllMaps"
         @select-event="selectEvent"
+        @hover-event="hoveredEventId = $event"
         @open-event="openEventEditor"
         @open-search-hit="openEventSearchHit"
       />
@@ -134,6 +138,7 @@
       :tileset-images="currentTilesetImages"
       :load-image="loadImage"
       :overview="eventOverview"
+      :current-events="currentEvents"
       @close="closeEventEditor"
       @save="saveEvent"
     />
@@ -271,8 +276,7 @@ const paintMode = ref<MapPaintMode>('tile');
 const regionId = ref(1);
 const shadowBits = ref(15);
 const layer = ref<MapLayerSelection>(0);
-const showGrid = ref(true);
-const showEvents = ref(true);
+const showGrid = ref(false);
 const showRegions = ref(false);
 const showTileFlags = ref(false);
 const busy = ref(false);
@@ -281,8 +285,10 @@ const statusKind = ref<EditorStatusKind>('');
 const stagingDirty = ref(false);
 const stagedMapIds = ref(new Set<number>());
 const selectedEventId = ref<number | null>(null);
+const hoveredEventId = ref<number | null>(null);
 const currentEvents = ref<EditorEventListItem[]>([]);
 const eventSearchQuery = ref('');
+const eventSearchScope = ref<'current' | 'all'>('current');
 const eventSearchHits = ref<EditorEventSearchHit[]>([]);
 const eventSearchLoading = ref(false);
 const eventSearchTruncated = ref(false);
@@ -347,11 +353,11 @@ const canvasEditor = useMapCanvasEditor({
   shadowBits,
   layer,
   showGrid,
-  showEvents,
   showRegions,
   showTileFlags,
   tileFlags: tilesetFlags,
   selectedEventId,
+  hoveredEventId,
   busy,
   placementActive,
   placementDirection,
@@ -378,7 +384,7 @@ const {
   canvasWidth, canvasHeight, zoom, cursorText, tilesetReady, tileTab, tileTabs,
   brushInfo, brushSet, undoLen, redoLen, isPanning,
   setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setScrollElement, selectTileTab, canvasCell, eventAtCell,
-  onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp,
+  onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
   onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel,
   renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell,
 } = canvasEditor;
@@ -435,6 +441,10 @@ onUnmounted(() => {
   if (eventSearchTimer) clearTimeout(eventSearchTimer);
 });
 watch(mode, persistWorkspaceSelection);
+watch(mode, (value) => {
+  hoveredEventId.value = null;
+  if (value !== 'event') eventSearchScope.value = 'current';
+});
 watch(tileTab, persistWorkspaceSelection);
 watch(zoom, (value) => {
   workbenchUi.setEditorZoom(value);
@@ -459,6 +469,16 @@ watch(tileFlagsAvailable, (available) => {
   if (!available) showTileFlags.value = false;
 });
 watch(eventSearchQuery, (query) => {
+  if (!query.trim()) eventSearchScope.value = 'current';
+  scheduleEventSearch(query);
+});
+watch(selectedMapId, () => {
+  hoveredEventId.value = null;
+  eventSearchScope.value = 'current';
+  if (eventSearchQuery.value.trim()) scheduleEventSearch(eventSearchQuery.value);
+});
+
+function scheduleEventSearch(query: string) {
   if (eventSearchTimer) clearTimeout(eventSearchTimer);
   const sequence = ++eventSearchSequence;
   const trimmed = query.trim();
@@ -471,7 +491,15 @@ watch(eventSearchQuery, (query) => {
   eventSearchLoading.value = true;
   eventSearchTimer = setTimeout(async () => {
     try {
-      const result = await eventsApi.search(trimmed, projectStore.currentProject);
+      const options = eventSearchScope.value === 'current'
+        ? { mapId: selectedMapId.value ?? undefined, limit: 200 }
+        : { limit: 200 };
+      if (eventSearchScope.value === 'current' && options.mapId == null) {
+        eventSearchHits.value = [];
+        eventSearchTruncated.value = false;
+        return;
+      }
+      const result = await eventsApi.search(trimmed, projectStore.currentProject, options);
       if (sequence !== eventSearchSequence) return;
       eventSearchHits.value = result.hits;
       eventSearchTruncated.value = result.truncated;
@@ -484,7 +512,13 @@ watch(eventSearchQuery, (query) => {
       if (sequence === eventSearchSequence) eventSearchLoading.value = false;
     }
   }, 180);
-});
+}
+
+function searchAllMaps() {
+  if (!eventSearchQuery.value.trim() || eventSearchScope.value === 'all') return;
+  eventSearchScope.value = 'all';
+  scheduleEventSearch(eventSearchQuery.value);
+}
 
 /* ---- Sync status bar data to global store ---- */
 watch(selectedMapLabel, (v) => { workbenchUi.sbMapLabel = v; });
@@ -573,6 +607,8 @@ async function moveMapFromTree(source: TreeNode, target: TreeNode, position: 'be
 async function openEventSearchHit(hit: EditorEventSearchHit) {
   mode.value = 'event';
   if (selectedMapId.value !== hit.mapId && !(await loadMap(hit.mapId, { quiet: true }))) return;
+  eventSearchQuery.value = '';
+  eventSearchScope.value = 'current';
   selectedEventId.value = hit.eventId;
   expandedMapIds.value = [...new Set([...expandedMapIds.value, ...ancestorMapIdsFor(mapTree.value, hit.mapId)])];
   renderMap();
@@ -872,7 +908,7 @@ async function preloadOptionalImage(url?: string | null): Promise<HTMLImageEleme
 function syncCurrentEvents(map: MvMap | null) {
   currentEvents.value = (map?.events || [])
     .filter((event): event is MvEvent => Boolean(event && Number.isInteger(event.id) && event.id > 0))
-    .map((event) => ({ id: event.id, name: event.name || `EV${String(event.id).padStart(3, '0')}`, x: event.x, y: event.y }))
+    .map((event) => ({ id: event.id, name: event.name || `EV${String(event.id).padStart(3, '0')}`, note: String(event.note || '').replace(/\s+/g, ' ').trim(), x: event.x, y: event.y }))
     .sort((left, right) => left.id - right.id);
 }
 async function preloadEventCharacters(map: MvMap) {
@@ -1422,9 +1458,9 @@ function clearCurrentMap() {
 .editor-stage { position:relative; min-width: 380px; min-height: 0; display: flex; flex-direction: column; flex: 1; overflow: hidden; border-radius:12px; background-color:var(--app-bg-sunken); background-image:linear-gradient(rgba(120,110,90,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(120,110,90,.05) 1px,transparent 1px);background-size:24px 24px;box-shadow:inset 0 1px 3px rgba(60,50,30,.08); }
 .empty-state { width: 100%; display: flex; align-items: center; justify-content: center; }
 .empty-actions { display: flex; justify-content: center; gap: 8px; }
-.canvas-scroll { flex: 1; overflow: auto; padding: 18px; }
+.canvas-scroll { flex: 1; overflow: auto; padding: 0; }
 .canvas-scroll.panning { cursor: grabbing; user-select: none; }
-.canvas-stack { position: relative; margin:auto; border-radius:6px; box-shadow:0 10px 36px rgba(60,50,30,.22); overflow:hidden; }
+.canvas-stack { position: relative; margin:0; border-radius:0 0 6px 0; box-shadow:0 10px 36px rgba(60,50,30,.22); overflow:hidden; }
 .map-canvas, .overlay-canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
 .map-canvas { background: #203b20; cursor: crosshair; }
 .overlay-canvas { pointer-events: none; }
@@ -1440,5 +1476,4 @@ function clearCurrentMap() {
 .ctx-arrow { float: right; margin-left: 16px; color: var(--app-ink-muted); }
 .ctx-has-sub { position: relative; }
 .ctx-submenu { position: absolute; top: -4px; left: 100%; min-width: 126px; margin: 0; padding: 4px 0; border: 1px solid var(--app-border); border-radius: var(--app-radius-md); background: var(--el-bg-color-overlay); box-shadow: var(--app-shadow-overlay); list-style: none; }
-@media (max-width: 820px) { .canvas-scroll { padding: 10px; } }
 </style>

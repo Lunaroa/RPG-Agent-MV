@@ -1250,6 +1250,7 @@ const zhCN = {
     'eventcmd.closeEditor': '关闭指令编辑器',
     'eventcmd.close': '关闭',
     'eventcmd.pages': '事件指令页签',
+    'eventcmd.pageN': '第 {{n}} 页',
     'eventcmd.searchLabel': '搜索事件指令',
     'eventcmd.searchPlaceholder': '输入指令名称或分类',
     'eventcmd.commandList': '事件指令目录',

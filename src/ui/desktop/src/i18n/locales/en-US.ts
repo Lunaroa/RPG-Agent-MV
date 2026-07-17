@@ -1250,6 +1250,7 @@ const enUS = {
     'eventcmd.closeEditor': 'Close command editor',
     'eventcmd.close': 'Close',
     'eventcmd.pages': 'Event command pages',
+    'eventcmd.pageN': 'Tab {{n}}',
     'eventcmd.searchLabel': 'Search event commands',
     'eventcmd.searchPlaceholder': 'Enter a command or category',
     'eventcmd.commandList': 'Event command catalog',

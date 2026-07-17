@@ -6,11 +6,16 @@ const dialogSource = readFileSync(new URL('./EventCommandDialog.vue', import.met
 const fieldsSource = readFileSync(new URL('./EventCommandFields.vue', import.meta.url), 'utf8');
 
 describe('event command catalog controls', () => {
-  test('uses one searchable categorized catalog instead of numbered pages', () => {
-    assert.doesNotMatch(dialogSource, /command-page-tabs|pickerPage/);
-    assert.match(dialogSource, /commandPages\(currentEngine\.value\)\.flat\(\)/);
+  test('keeps the original three command pages and adds search without replacing them', () => {
+    assert.match(dialogSource, /class="command-page-tabs editor-tab-strip"/);
+    assert.match(dialogSource, /v-for="page in 3"/);
+    assert.match(dialogSource, /pickerPage=ref\(1\)/);
+    assert.match(dialogSource, /commandPages\(currentEngine\.value\)\.map/);
+    assert.match(dialogSource, /commandPageCategories\.value\[pickerPage\.value-1\]/);
     assert.match(dialogSource, /type="search"/);
     assert.match(dialogSource, /role="combobox"/);
+    assert.match(dialogSource, /commandPageCategories\.value\.flat\(\)/);
+    assert.match(dialogSource, /eventcmd\.pageN/);
     assert.match(dialogSource, /category\.group\.toLocaleLowerCase/);
     assert.match(dialogSource, /item\.label\.toLocaleLowerCase/);
     assert.match(dialogSource, /eventcmd\.noSearchResults/);

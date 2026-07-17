@@ -45,7 +45,17 @@
               </fieldset>
               <fieldset class="ev-group image-group" :disabled="currentPageLocked">
                 <legend>{{ t('eventEditorDialog.image') }}</legend>
-                <button type="button" class="image-preview" :aria-label="t('eventEditorDialog.imagePicker')" :title="t('eventEditorDialog.imagePicker')" @click="imagePicker?.open(currentPage.image)"><canvas ref="previewCanvas" width="78" height="108" /></button>
+                <button
+                  type="button"
+                  class="image-preview"
+                  :aria-label="t('eventEditorDialog.imagePicker')"
+                  :title="t('eventEditorDialog.imagePicker')"
+                  @dblclick="openImagePicker"
+                  @keydown.enter.prevent="openImagePicker"
+                  @keydown.space.prevent="openImagePicker"
+                >
+                  <canvas ref="previewCanvas" width="78" height="108" />
+                </button>
                 <span class="image-caption">{{ localizedImageSummary(currentPage.image) }}</span>
               </fieldset>
               <fieldset class="ev-group move-group" :disabled="currentPageLocked">
@@ -325,6 +335,7 @@ function isCommandShortcutTarget(target: EventTarget | null) {
   return !['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(element.tagName);
 }
 function setImage(image: MvEventImage) { if (currentPage.value && !currentPageLocked.value) { currentPage.value.image = image; markDirty(); } }
+function openImagePicker() { if (currentPage.value && !currentPageLocked.value) imagePicker.value?.open(currentPage.value.image); }
 function setPageRoute(route: MvMoveRoute) { if (currentPage.value && !currentPageLocked.value) { currentPage.value.moveRoute = route; markDirty(); } }
 async function paintPreview() { const canvas = previewCanvas.value, image = currentPage.value?.image; if (!canvas || !image) return; const context = canvas.getContext('2d')!; context.clearRect(0,0,canvas.width,canvas.height); if (image.tileId) return drawTile(context, props.tilesetImages, image.tileId, 14, 10); const asset = props.catalog?.assets.characters.find((item) => item.name === image.characterName); if (!asset) return; const bitmap = await props.loadImage(asset.url); const frame = bitmap && eventCharacterFrame(bitmap, image); if (!bitmap || !frame) return; const scale = Math.min(1, 64 / frame.sw, 88 / frame.sh); context.imageSmoothingEnabled = false; context.drawImage(bitmap, frame.sx, frame.sy, frame.sw, frame.sh, Math.round((canvas.width-frame.sw*scale)/2), Math.round((canvas.height-frame.sh*scale)/2), frame.sw*scale, frame.sh*scale); }
 function localizedImageSummary(image: MvEventImage): string {

@@ -7,19 +7,44 @@
           <button type="button" class="editor-modal-close" :aria-label="t('eventcmd.closeEditor')" :title="t('eventcmd.close')" @click="close">×</button>
         </header>
 
-        <template v-if="pickerOpen">
-          <nav class="command-page-tabs editor-tab-strip" :aria-label="t('eventcmd.pages')">
-            <button v-for="page in 3" :key="page" type="button" :class="{ active: pickerPage === page }" @click="pickerPage = page">{{ page }}</button>
-          </nav>
-          <div class="picker">
-            <section v-for="category in currentCategories" :key="category.group" class="picker-group">
+        <div v-if="pickerOpen" class="picker-shell" @keydown="onPickerKeyDown">
+          <label class="picker-search">
+            <span>{{ t('eventcmd.searchLabel') }}</span>
+            <input
+              ref="pickerSearchRef"
+              v-model="pickerQuery"
+              type="search"
+              role="combobox"
+              autocomplete="off"
+              :placeholder="t('eventcmd.searchPlaceholder')"
+              :aria-controls="pickerListId"
+              :aria-expanded="true"
+              :aria-activedescendant="activePickerOptionId || undefined"
+            />
+          </label>
+          <div :id="pickerListId" ref="pickerListRef" class="picker" role="listbox" :aria-label="t('eventcmd.commandList')">
+            <section v-for="category in currentCategories" :key="category.group" class="picker-group" role="group" :aria-label="category.group">
               <h4>{{ category.group }}</h4>
               <div>
-                <button v-for="item in category.items" :key="item.code" type="button" @click="pick(item.kind)">{{ item.label }}...</button>
+                <button
+                  v-for="item in category.items"
+                  :id="pickerOptionId(item.code)"
+                  :key="item.code"
+                  type="button"
+                  role="option"
+                  :aria-selected="activePickerCode === item.code"
+                  :class="{ active: activePickerCode === item.code }"
+                  @mouseenter="activatePickerItem(item.code)"
+                  @focus="activatePickerItem(item.code)"
+                  @click="pick(item.kind)"
+                >
+                  {{ item.label }}...
+                </button>
               </div>
             </section>
+            <p v-if="!currentCategories.length" class="picker-empty" role="status">{{ t('eventcmd.noSearchResults') }}</p>
           </div>
-        </template>
+        </div>
 
         <div v-else-if="draft" class="editor-body">
           <div class="editor-heading">
@@ -52,7 +77,7 @@
             </template>
             <label v-else-if="draft.code === 108" class="full">{{ t('eventcmd.comment') }}<textarea v-model="multiText" rows="7" /></label>
             <template v-else-if="draft.code === 205">
-              <label>{{ t('eventcmd.target') }}<input :value="numberParam(0)" type="number" @input="setParam(0,numberValue($event))" /></label>
+              <EventCommandFields :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" @change="touchCommand" />
               <div class="route-field"><span>{{ routeSummary }}</span><button type="button" class="editor-btn" @click="routeDialog?.open(routeParam)">{{ t('eventcmd.editRoute') }}</button></div>
             </template>
             <label v-else-if="draft.code === 355" class="full">{{ t('eventcmd.script') }}<textarea v-model="multiText" rows="11" spellcheck="false" /></label>
@@ -112,7 +137,7 @@
                 </div>
               </div>
             </template>
-            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" @change="touchCommand" />
+            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" @change="touchCommand" />
             <p v-else class="form-note unsupported-command">
               {{ t('eventcmd.unsupportedEditor') }}
             </p>
@@ -131,7 +156,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { RpgMakerEngine } from '@contract/types';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
@@ -146,20 +171,36 @@ import EventCommandFields from './EventCommandFields.vue';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
 import PluginParameterInput from './PluginParameterInput.vue';
-const props = withDefaults(defineProps<{ mapId:number|null; catalog:EditorProjectCatalog|null; loadImage:(url:string)=>Promise<HTMLImageElement|null>; eventX?:number; eventY?:number }>(), { eventX: 0, eventY: 0 });
+import type { EditorEventListItem } from './editorTypes';
+const props = withDefaults(defineProps<{ mapId:number|null; catalog:EditorProjectCatalog|null; loadImage:(url:string)=>Promise<HTMLImageElement|null>; eventX?:number; eventY?:number; currentEvents?:EditorEventListItem[] }>(), { eventX: 0, eventY: 0 });
 const emit = defineEmits<{ commit:[payload:{commands:MvCommand[];editSpan:number|null;insertSpan:number|null}] }>();
 const projectStore = useProjectStore();
 const { language, t } = useI18n();
 const commandDialogZ = String(LAYER_Z.commandDialog);
-const visible=ref(false),pickerOpen=ref(false),pickerPage=ref(1),draft=ref<MvCommand|null>(null),draftSpan=ref<MvCommand[]>([]),editSpan=ref<number|null>(null),insertSpan=ref<number|null>(null),insertIndent=ref(0),multiText=ref('');
+const visible=ref(false),pickerOpen=ref(false),draft=ref<MvCommand|null>(null),draftSpan=ref<MvCommand[]>([]),editSpan=ref<number|null>(null),insertSpan=ref<number|null>(null),insertIndent=ref(0),multiText=ref('');
 const imagePicker=ref<InstanceType<typeof ImageAssetPickerDialog>>(),routeDialog=ref<InstanceType<typeof MoveRouteDialog>>(),facePreviewRef=ref<HTMLCanvasElement>();
+const pickerSearchRef=ref<HTMLInputElement>(),pickerListRef=ref<HTMLElement>(),pickerQuery=ref(''),activePickerIndex=ref(0);
+const pickerListId='event-command-picker-list';
 const pluginCommandPlugins = ref<ManagedPluginEntry[]>([]);
 const pluginCommandPlugin = ref('');
 const pluginCommandError = ref('');
 const pluginCommandLoading = ref(false);
 const currentEngine=computed<RpgMakerEngine>(()=>projectStore.currentProjectInfo?.engine||'rpg-maker-mv');
 const faceSize=computed(()=>Math.max(1,Number(props.catalog?.faceSize)||144));
-const currentCategories=computed(()=>localizeCommandGroups(commandPages(currentEngine.value)[pickerPage.value-1]||[], language.value));
+const allCategories=computed(()=>localizeCommandGroups(commandPages(currentEngine.value).flat(), language.value));
+const currentCategories=computed(()=>{
+  const query=pickerQuery.value.trim().toLocaleLowerCase(language.value);
+  if(!query)return allCategories.value;
+  return allCategories.value.flatMap((category)=>{
+    const groupMatches=category.group.toLocaleLowerCase(language.value).includes(query);
+    const items=groupMatches?category.items:category.items.filter((item)=>item.label.toLocaleLowerCase(language.value).includes(query));
+    return items.length?[{...category,items}]:[];
+  });
+});
+const currentPickerItems=computed(()=>currentCategories.value.flatMap((category)=>category.items));
+const activePickerItem=computed(()=>currentPickerItems.value[activePickerIndex.value]||null);
+const activePickerCode=computed(()=>activePickerItem.value?.code??null);
+const activePickerOptionId=computed(()=>activePickerItem.value?pickerOptionId(activePickerItem.value.code):'');
 const dialogTitle=computed(()=>pickerOpen.value?t('eventcmd.title'):editSpan.value!=null?t('eventcmd.editTitle'):t('eventcmd.newTitle'));
 const commandTitle=computed(()=>{
   if (!draft.value) return '';
@@ -198,6 +239,7 @@ const pluginCommandPreview=computed(()=>{
   if (enabled) return t('eventcmd.pluginNoBranch', { name: enabled.name });
   return t('eventcmd.pluginNoMatch', { token });
 });
+watch(currentPickerItems,()=>{activePickerIndex.value=currentPickerItems.value.length?0:-1;});
 
 function onKeyDown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(LAYER_Z.commandDialog)) return;
@@ -207,10 +249,33 @@ function onKeyDown(event: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
-function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void loadPluginCommandMetadata();}
+function openPicker(at:number, indent=0){pickerOpen.value=true;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());void loadPluginCommandMetadata();}
 function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;syncMultiText();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
 function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;syncMultiText();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
-function close(){visible.value=false;pickerOpen.value=false;draft.value=null;draftSpan.value=[];}
+function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];}
+function pickerOptionId(code:number){return `event-command-option-${code}`;}
+function activatePickerItem(code:number){const index=currentPickerItems.value.findIndex((item)=>item.code===code);if(index>=0)activePickerIndex.value=index;}
+function movePickerSelection(step:number,focusButton:boolean){
+  const count=currentPickerItems.value.length;
+  if(!count)return;
+  activePickerIndex.value=(Math.max(0,activePickerIndex.value)+step+count)%count;
+  void nextTick(()=>{
+    const active=pickerListRef.value?.querySelector<HTMLElement>(`#${activePickerOptionId.value}`);
+    active?.scrollIntoView({block:'nearest'});
+    if(focusButton)active?.focus();
+  });
+}
+function onPickerKeyDown(event:KeyboardEvent){
+  if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+    event.preventDefault();
+    movePickerSelection(event.key==='ArrowDown'?1:-1,event.target!==pickerSearchRef.value);
+    return;
+  }
+  if(event.key==='Enter'&&event.target===pickerSearchRef.value&&activePickerItem.value){
+    event.preventDefault();
+    pick(activePickerItem.value.kind);
+  }
+}
 function commit(){if(!draft.value)return;emit('commit',{commands:buildSpan(),editSpan:editSpan.value,insertSpan:insertSpan.value});close();}
 function buildSpan(){
   if(!draft.value)return[];
@@ -326,7 +391,7 @@ defineExpose({openPicker,openEditor});
 </script>
 
 <style scoped>
-.ev-modal-overlay{z-index:v-bind(commandDialogZ);background:transparent}.cmd-dialog{width:min(520px,calc(100vw - 32px));height:auto;max-height:min(500px,calc(100vh - 32px))}.command-page-tabs{padding:8px 12px 0}.command-page-tabs button{min-width:36px}.picker{min-height:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:8px 12px 12px;overflow:auto}.picker-group{padding:7px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}.picker h4{margin:0 0 5px;color:var(--app-ink);font-size:12px}.picker-group div{display:grid;gap:3px}.picker button{min-height:24px;padding:0 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:center}.picker button:hover{border-color:var(--app-accent);background:var(--app-accent-soft)}.editor-body{min-height:0;padding:12px;overflow:auto}.editor-heading{display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--app-border)}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
+.ev-modal-overlay{z-index:v-bind(commandDialogZ);background:transparent}.cmd-dialog{width:min(620px,calc(100vw - 32px));height:auto;max-height:min(560px,calc(100vh - 32px))}.picker-shell{min-height:0;display:flex;flex-direction:column}.picker-search{display:grid;gap:5px;padding:10px 12px 8px;color:var(--app-ink-soft);font-size:12px}.picker-search input{width:100%;min-height:32px}.picker{min-height:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:8px;padding:0 12px 12px;overflow:auto}.picker-group{padding:7px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}.picker h4{margin:0 0 5px;color:var(--app-ink);font-size:12px}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{min-height:0;padding:12px;overflow:auto}.editor-heading{display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--app-border)}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
 .plugin-command-editor{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.plugin-command-editor label{min-width:0;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.plugin-command-editor .full{grid-column:1 / -1}.plugin-command-editor textarea{min-height:96px}.plugin-command-warning{grid-column:1 / -1;padding:8px 10px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:12px;line-height:1.45}.plugin-command-hints{grid-column:1 / -1;display:grid;gap:5px}.plugin-command-hints button{display:grid;gap:3px;padding:7px 9px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft);color:var(--app-ink);font:inherit;text-align:left;cursor:pointer}.plugin-command-hints button:hover{border-color:var(--app-accent);background:var(--app-accent-soft)}.plugin-command-hints strong{font-size:12px}.plugin-command-hints small{overflow:hidden;color:var(--app-ink-muted);font-family:var(--app-font-mono);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
 .plugin-command-argument small{color:var(--app-ink-muted);font-size:11px;line-height:1.35}
 .text-cmd-layout{width:100%;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}.text-cmd-face{display:flex;flex-direction:column;align-items:center;gap:6px}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background:#e0ddd6}.text-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-text textarea{min-height:144px}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px}

@@ -49,6 +49,11 @@ export interface MapIndex {
 
 export type MapMovePosition = 'before' | 'after' | 'inside';
 
+export interface EventSearchOptions {
+  mapId?: number;
+  limit?: number;
+}
+
 export interface EventSearchHit {
   mapId: number;
   mapName: string;
@@ -1037,6 +1042,7 @@ export interface WorkspaceLayoutState {
   agentPanelOpen?: boolean;
   bottomPanelOpen?: boolean;
   leftDockTilesOpen?: boolean;
+  leftDockWidth?: number;
   leftDockPaletteHeight?: number;
   agentPanelWidth?: number;
   chatHistoryWidth?: number;

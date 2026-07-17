@@ -1,3 +1,5 @@
+import type { EventSearchOptions } from '../../../contract/types.ts';
+
 const { contextBridge, ipcRenderer } = require('electron');
 
 // 暴露 IPC API 给渲染层（由 vite-plugin-electron 构建为 dist-electron/preload.js）
@@ -122,7 +124,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('events:remove', mapId, eventId, project),
     duplicate: (mapId: number, eventId: number, project?: string) =>
       ipcRenderer.invoke('events:duplicate', mapId, eventId, project),
-    search: (query: string, project?: string) => ipcRenderer.invoke('events:search', query, project),
+    search: (query: string, project?: string, options?: EventSearchOptions) =>
+      ipcRenderer.invoke('events:search', query, project, options),
   },
 
   eventRegistry: {

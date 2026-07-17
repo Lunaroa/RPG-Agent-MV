@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type {
+  EventSearchOptions,
   EventSearchResult,
   MapIndex,
   MapMovePosition,
@@ -246,12 +247,27 @@ export function searchProjectEvents(
   workflowRoot: string,
   project: string,
   rawQuery: string,
-  limit = 200,
+  options: EventSearchOptions = {},
 ): EventSearchResult {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    throw new Error('Event search options must be an object');
+  }
+  const limit = options.limit ?? 200;
+  const mapId = options.mapId;
+  if (mapId !== undefined && (!Number.isInteger(mapId) || mapId <= 0)) {
+    throw new Error(mapIdInvalid());
+  }
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error('Event search limit must be an integer from 1 to 1000');
+
+  const mapIndex = buildMapIndex(workflowRoot, project);
+  const maps = mapId === undefined
+    ? mapIndex.maps
+    : mapIndex.maps.filter((mapInfo) => mapInfo.id === mapId);
+  if (mapId !== undefined && maps.length === 0) throw new Error(mapInfoNotFound(mapId));
+
   const query = String(rawQuery || '').trim();
   if (!query) return { project: path.resolve(project), query: '', hits: [], truncated: false };
   if (query.length > 200) throw new Error('Event search query must be 200 characters or fewer');
-  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error('Event search limit must be an integer from 1 to 1000');
   const needle = query.toLocaleLowerCase();
   const idMatch = /^#?0*(\d+)$/.exec(query);
   const eventIdQuery = idMatch ? Number(idMatch[1]) : null;
@@ -265,10 +281,13 @@ export function searchProjectEvents(
     hits.push(hit);
   };
 
-  for (const mapInfo of buildMapIndex(workflowRoot, project).maps) {
+  for (const mapInfo of maps) {
     if (truncated) break;
     const mapFile = getMapFileForRead(workflowRoot, project, mapInfo.id);
-    if (!mapFile || !fs.existsSync(mapFile)) continue;
+    if (!mapFile || !fs.existsSync(mapFile)) {
+      if (mapId !== undefined) throw new Error(mapNotFound(mapInfo.id));
+      continue;
+    }
     const map = readJson(mapFile) as { events?: unknown[] };
     for (const rawEvent of Array.isArray(map.events) ? map.events : []) {
       if (truncated) break;

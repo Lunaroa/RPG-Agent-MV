@@ -51,7 +51,11 @@ describe('editor semantic controls', () => {
   test('makes event conditions and image selection explicit and keyboard reachable', () => {
     assert.match(eventEditorSource, /class="comparison-operator"[^>]*>≥<\/span>/);
     assert.match(eventConditionSource, /flex:\s*0 0 68px/);
-    assert.match(eventEditorSource, /<button type="button" class="image-preview"[^>]+:aria-label="t\('eventEditorDialog\.imagePicker'\)"/);
+    assert.match(eventEditorSource, /<button[^>]+type="button"[^>]+class="image-preview"[^>]+:aria-label="t\('eventEditorDialog\.imagePicker'\)"/);
+    assert.match(eventEditorSource, /@dblclick="openImagePicker"/);
+    assert.match(eventEditorSource, /@keydown\.enter\.prevent="openImagePicker"/);
+    assert.match(eventEditorSource, /@keydown\.space\.prevent="openImagePicker"/);
+    assert.doesNotMatch(eventEditorSource, /class="image-preview"[^>]+@click=/);
     assert.doesNotMatch(eventEditorSource, /class="ev-tool-btn block"[^>]+imagePicker/);
     assert.match(eventImagePickerSource, /paintTileSheet\(\);/);
     assert.match(eventImagePickerSource, /strokeStyle = 'rgba\(0,0,0,\.9\)'/);
@@ -69,6 +73,8 @@ describe('editor semantic controls', () => {
     assert.match(leftDockSource, /v-if="event\.note" class="event-row-note"/);
     assert.match(leftDockSource, /@mouseenter="\$emit\('hover-event', event\.id\)"/);
     assert.match(leftDockSource, /\$emit\('search-all-maps'\)/);
+    assert.match(leftDockSource, /@dblclick="\$emit\('open-search-hit', hit\)"/);
+    assert.doesNotMatch(leftDockSource, /@click="\$emit\('open-search-hit', hit\)"/);
     assert.match(editorViewSource, /eventsApi\.search\(trimmed, projectStore\.currentProject, options\)/);
     assert.match(editorViewSource, /eventSearchScope\.value === 'current'/);
     assert.match(mapRendererSource, /hoveredEventId\?: number \| null/);

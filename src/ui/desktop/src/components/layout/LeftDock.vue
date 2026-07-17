@@ -49,7 +49,7 @@
             :key="`${hit.mapId}:${hit.eventId}:${hit.pageIndex}:${hit.commandIndex}:${hit.matchKind}`"
             type="button"
             class="event-row search-hit"
-            @click="$emit('open-search-hit', hit)"
+            @dblclick="$emit('open-search-hit', hit)"
           >
             <span class="event-row-main"><strong>#{{ hit.eventId }} {{ hit.eventName }}</strong><small>{{ hit.mapName }} · {{ searchHitLocation(hit) }}</small></span>
             <span class="event-row-text">{{ hit.text }}</span>

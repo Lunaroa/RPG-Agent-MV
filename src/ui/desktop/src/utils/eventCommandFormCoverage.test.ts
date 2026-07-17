@@ -101,4 +101,24 @@ describe('event command form coverage', () => {
     assert.equal(codes.includes(356), false);
     assert.equal(codes.includes(357), true);
   });
+
+  test('limits named map-event targets to the four supported command families', () => {
+    const targetFields = COMMAND_DEFINITIONS.flatMap((definition) => definition.fields
+      .filter((field) => field.kind === 'eventTarget')
+      .map((field) => ({ code: definition.code, path: field.path, policy: field.eventTarget })));
+
+    assert.deepEqual([...new Set(targetFields.map((entry) => entry.code))], [203, 205, 212, 213]);
+    assert.deepEqual(targetFields.filter((entry) => entry.code === 203).map((entry) => entry.path), [[0], [2]]);
+    assert.deepEqual(commandDefinition(205)?.fields[0]?.eventTarget, {
+      allowThisEvent: true,
+      allowPlayer: true,
+      allowMapEvents: true,
+    });
+    assert.equal(commandDefinition(203)?.fields[0]?.eventTarget?.allowPlayer, false);
+    assert.equal(commandDefinition(203, 'rpg-maker-mz')?.fields[0]?.kind, 'eventTarget');
+    assert.deepEqual(commandTemplate('eventLocation')[0]?.parameters, [0, 0, 0, 0, 0]);
+    assert.deepEqual(commandTemplate('moveRoute')[0]?.parameters[0], 0);
+    assert.deepEqual(commandTemplate('animation')[0]?.parameters, [0, 1, true]);
+    assert.deepEqual(commandTemplate('balloon')[0]?.parameters, [0, 1, true]);
+  });
 });

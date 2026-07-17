@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
+import { withProductLanguage } from "../i18n/request-language.ts";
 import { readJson, writeJson } from "../rmmv/json.ts";
 import { RPG_MAKER_MZ_ENGINE_FILES } from "../rmmv/rpg-maker-engine.ts";
 import { buildMapIndex, moveMapDraft, searchProjectEvents } from "./map-service.ts";
@@ -36,6 +37,17 @@ describe("MZ map ordering and event search", { concurrency: false }, () => {
       [4, 0, 3],
       [2, 0, 4],
     ]);
+
+    moveMapDraft(root, project, 4, 2, "after");
+    maps = buildMapIndex(root, project).maps;
+    assert.deepEqual(maps.map((entry) => [entry.id, entry.parentId, entry.order]), [
+      [1, 0, 1],
+      [3, 1, 2],
+      [2, 0, 3],
+      [4, 0, 4],
+    ]);
+
+    moveMapDraft(root, project, 4, 2, "before");
 
     moveMapDraft(root, project, 1, 2, "inside");
     maps = buildMapIndex(root, project).maps;
@@ -71,6 +83,26 @@ describe("MZ map ordering and event search", { concurrency: false }, () => {
     assert.equal(searchProjectEvents(root, project, "sample note").hits.some((hit) => hit.matchKind === "note"), true);
     assert.equal(searchProjectEvents(root, project, "#2").hits.some((hit) => hit.mapId === 2 && hit.eventId === 2 && hit.matchKind === "id"), true);
     assert.doesNotMatch(JSON.stringify(readJson(path.join(project, "data", "Map002.json"))), /Staged marker/);
+  });
+
+  test("scopes event search to one map and rejects invalid map ids", () => {
+    const global = searchProjectEvents(root, project, "text");
+    assert.deepEqual(global.hits.map((hit) => hit.mapId), [2, 3, 4]);
+
+    const scoped = searchProjectEvents(root, project, "text", { mapId: 3 });
+    assert.deepEqual(scoped.hits.map((hit) => [hit.mapId, hit.eventId]), [[3, 3]]);
+    assert.deepEqual(searchProjectEvents(root, project, "Greeter", { mapId: 2 }).hits, []);
+
+    const limited = searchProjectEvents(root, project, "Event", { limit: 1 });
+    assert.equal(limited.hits.length, 1);
+    assert.equal(limited.truncated, true);
+
+    withProductLanguage("en-US", () => {
+      assert.throws(() => searchProjectEvents(root, project, "Event", { mapId: 0 }), /Invalid map ID/);
+      assert.throws(() => searchProjectEvents(root, project, "Event", { mapId: 999 }), /MapInfo not found: 999/);
+      fs.rmSync(path.join(project, "data", "Map004.json"));
+      assert.throws(() => searchProjectEvents(root, project, "Event", { mapId: 4 }), /Map not found: 4/);
+    });
   });
 });
 

@@ -14,13 +14,20 @@ export interface CommandFieldVisibility {
   equals: unknown | readonly unknown[];
 }
 
+export interface CommandEventTargetOptions {
+  allowThisEvent: boolean;
+  allowPlayer: boolean;
+  allowMapEvents: boolean;
+}
+
 export interface CommandField {
   label: string;
   path: CommandFieldPath;
-  kind: 'text' | 'multiline' | 'number' | 'boolean' | 'select' | 'database' | 'asset';
+  kind: 'text' | 'multiline' | 'number' | 'boolean' | 'select' | 'database' | 'asset' | 'eventTarget';
   options?: [unknown, string][];
   catalog?: CommandCatalogKey;
   asset?: CommandAssetKey;
+  eventTarget?: CommandEventTargetOptions;
   min?: number;
   max?: number;
   visibleWhen?: CommandFieldVisibility | CommandFieldVisibility[];
@@ -141,15 +148,15 @@ const PAGE_2: { group: string; items: Def[] }[] = [
     { code: 202, kind: 'vehicleLocation', label: '设置交通工具位置', fields: vehicleLocationFields() },
     { code: 203, kind: 'eventLocation', label: '设置事件位置', fields: eventLocationFields() },
     { code: 204, kind: 'scrollMap', label: '滚动地图', fields: [{ label: '方向', path: [0], kind: 'select', options: direction.filter(([value]) => value !== 0) }, { label: '距离', path: [1], kind: 'number', min: 1 }, { label: '速度', path: [2], kind: 'number', min: 1, max: 6 }, { label: '等待结束', path: [3], kind: 'boolean' }] },
-    { code: 205, kind: 'moveRoute', label: '设置移动路线', fields: [] },
+    { code: 205, kind: 'moveRoute', label: '设置移动路线', fields: [{ label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true } }] },
     { code: 206, kind: 'vehicle', label: '上下交通工具', fields: [] },
   ] },
   { group: '人物', items: [
     { code: 211, kind: 'transparency', label: '更改透明状态', fields: [{ label: '透明', path: [0], kind: 'select', options: onOff }] },
     { code: 216, kind: 'followers', label: '更改队列行进', fields: [{ label: '队列行进', path: [0], kind: 'select', options: onOff }] },
     { code: 217, kind: 'gatherFollowers', label: '集合队列成员', fields: [] },
-    { code: 212, kind: 'animation', label: '显示动画', fields: [{ label: '目标 ID', path: [0], kind: 'number', min: -1 }, { label: '动画', path: [1], kind: 'database', catalog: 'animations' }, { label: '等待结束', path: [2], kind: 'boolean' }] },
-    { code: 213, kind: 'balloon', label: '显示气泡图标', fields: [{ label: '目标 ID', path: [0], kind: 'number', min: -1 }, { label: '气泡', path: [1], kind: 'select', options: [[1, '惊叹'], [2, '问号'], [3, '音符'], [4, '爱心'], [5, '愤怒'], [6, '汗'], [7, '纠结'], [8, '沉默'], [9, '灯泡'], [10, 'Zzz']] }, { label: '等待结束', path: [2], kind: 'boolean' }] },
+    { code: 212, kind: 'animation', label: '显示动画', fields: [{ label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true } }, { label: '动画', path: [1], kind: 'database', catalog: 'animations' }, { label: '等待结束', path: [2], kind: 'boolean' }] },
+    { code: 213, kind: 'balloon', label: '显示气泡图标', fields: [{ label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true } }, { label: '气泡', path: [1], kind: 'select', options: [[1, '惊叹'], [2, '问号'], [3, '音符'], [4, '爱心'], [5, '愤怒'], [6, '汗'], [7, '纠结'], [8, '沉默'], [9, '灯泡'], [10, 'Zzz']] }, { label: '等待结束', path: [2], kind: 'boolean' }] },
     { code: 214, kind: 'eraseEvent', label: '暂时消除事件', fields: [] },
   ] },
   { group: '图片', items: [
@@ -301,13 +308,13 @@ function vehicleLocationFields(): CommandField[] {
 
 function eventLocationFields(): CommandField[] {
   return [
-    { label: '目标 ID', path: [0], kind: 'number', min: -1 },
+    { label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: false, allowMapEvents: true } },
     { label: '位置指定', path: [1], kind: 'select', options: [[0, '直接指定'], [1, '变量指定'], [2, '与角色/事件交换']] },
     { label: 'X', path: [2], kind: 'number', min: 0, visibleWhen: when([1], 0) },
     { label: 'Y', path: [3], kind: 'number', min: 0, visibleWhen: when([1], 0) },
     { label: 'X 变量', path: [2], kind: 'database', catalog: 'variables', visibleWhen: when([1], 1) },
     { label: 'Y 变量', path: [3], kind: 'database', catalog: 'variables', visibleWhen: when([1], 1) },
-    { label: '交换目标 ID', path: [2], kind: 'number', min: -1, visibleWhen: when([1], 2) },
+    { label: '交换目标 ID', path: [2], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true }, visibleWhen: when([1], 2) },
     { label: '朝向', path: [4], kind: 'select', options: direction },
   ];
 }

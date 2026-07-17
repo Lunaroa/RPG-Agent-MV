@@ -38,15 +38,14 @@
                 <legend>{{ t('eventEditorDialog.conditions') }}</legend>
                 <ConditionSelect v-model:valid="currentPage.conditions.switch1Valid" v-model:value="currentPage.conditions.switch1Id" :label="t('mapPreview.switch')" :options="catalog?.switches || []" @change="markDirty" />
                 <ConditionSelect v-model:valid="currentPage.conditions.switch2Valid" v-model:value="currentPage.conditions.switch2Id" :label="t('mapPreview.switch')" :options="catalog?.switches || []" @change="markDirty" />
-                <ConditionSelect v-model:valid="currentPage.conditions.variableValid" v-model:value="currentPage.conditions.variableId" :label="t('mapPreview.variable')" :options="catalog?.variables || []" @change="markDirty"><input :value="currentPage.conditions.variableValid ? currentPage.conditions.variableValue : ''" class="mini-input" type="number" :disabled="!currentPage.conditions.variableValid" @input="setVariableConditionValue" /></ConditionSelect>
+                <ConditionSelect v-model:valid="currentPage.conditions.variableValid" v-model:value="currentPage.conditions.variableId" :label="t('mapPreview.variable')" :options="catalog?.variables || []" @change="markDirty"><span class="comparison-operator" aria-hidden="true">≥</span><input :value="currentPage.conditions.variableValid ? currentPage.conditions.variableValue : ''" class="mini-input" type="number" :disabled="!currentPage.conditions.variableValid" @input="setVariableConditionValue" /></ConditionSelect>
                 <label class="ev-cond-row"><input v-model="currentPage.conditions.selfSwitchValid" type="checkbox" @change="markDirty" /><span>{{ t('mapPreview.selfSwitch') }}</span><select :value="currentPage.conditions.selfSwitchValid ? currentPage.conditions.selfSwitchCh : ''" :disabled="!currentPage.conditions.selfSwitchValid" @change="setSelfSwitchCondition"><option value="" disabled>...</option><option v-for="ch in SELF_SWITCH_CHANNELS" :key="ch">{{ ch }}</option></select></label>
                 <ConditionSelect v-model:valid="currentPage.conditions.actorValid" v-model:value="currentPage.conditions.actorId" :label="t('mapPreview.actor')" :options="catalog?.actors || []" @change="markDirty" />
                 <ConditionSelect v-model:valid="currentPage.conditions.itemValid" v-model:value="currentPage.conditions.itemId" :label="t('mapPreview.item')" :options="catalog?.items || []" @change="markDirty" />
               </fieldset>
               <fieldset class="ev-group image-group" :disabled="currentPageLocked">
                 <legend>{{ t('eventEditorDialog.image') }}</legend>
-                <div class="image-preview"><canvas ref="previewCanvas" width="78" height="108" /></div>
-                <button type="button" class="ev-tool-btn block" @click="imagePicker?.open(currentPage.image)">{{ t('eventEditorDialog.imagePicker') }}</button>
+                <button type="button" class="image-preview" :aria-label="t('eventEditorDialog.imagePicker')" :title="t('eventEditorDialog.imagePicker')" @click="imagePicker?.open(currentPage.image)"><canvas ref="previewCanvas" width="78" height="108" /></button>
                 <span class="image-caption">{{ localizedImageSummary(currentPage.image) }}</span>
               </fieldset>
               <fieldset class="ev-group move-group" :disabled="currentPageLocked">
@@ -123,7 +122,7 @@
   </teleport>
   <EventImagePickerDialog ref="imagePicker" :catalog="catalog" :tileset-images="tilesetImages" :load-image="loadImage" @commit="setImage" />
   <MoveRouteDialog ref="routeDialog" :preview-x="draft?.x" :preview-y="draft?.y" @commit="setPageRoute" />
-  <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="loadImage" :event-x="draft?.x" :event-y="draft?.y" @commit="commitCommand" />
+  <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="loadImage" :event-x="draft?.x" :event-y="draft?.y" :current-events="currentEvents" @commit="commitCommand" />
 </template>
 
 <script setup lang="ts">
@@ -141,7 +140,8 @@ import MoveRouteDialog from './MoveRouteDialog.vue';
 import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, editableCommandSpans, ensureTerminator, imageSummary, type MvCommand, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
 import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
-const props = defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null }>();
+import type { EditorEventListItem } from './editorTypes';
+const props = withDefaults(defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null; currentEvents?: EditorEventListItem[] }>(), { currentEvents: () => [] });
 const emit = defineEmits<{ close: []; save: [closeAfterSave: boolean] }>();
 const { language, t } = useI18n();
 const eventEditorZ = String(LAYER_Z.eventEditor);
@@ -600,6 +600,24 @@ defineExpose({ markSaved });
   font-size: var(--text-xs);
 }
 
+.ev-cond-row {
+  min-height: 26px;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.ev-cond-row > span {
+  flex: 0 0 68px;
+  line-height: 1.25;
+}
+
+.ev-cond-row select {
+  min-width: 0;
+  flex: 1;
+  height: 26px;
+}
+
 .ev-select-row {
   justify-content: space-between;
 }
@@ -613,8 +631,16 @@ defineExpose({ markSaved });
 }
 
 .mini-input {
-  width: 42px;
-  flex: 0 0 42px;
+  width: 54px;
+  flex: 0 0 54px;
+  height: 26px;
+}
+
+.comparison-operator {
+  flex: 0 0 auto !important;
+  color: var(--app-ink-soft);
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .mini-grid {
@@ -626,6 +652,7 @@ defineExpose({ markSaved });
 .image-preview {
   width: 82px;
   height: 112px;
+  padding: 0;
   display: grid;
   place-items: center;
   border: 1px solid var(--app-border);
@@ -638,6 +665,24 @@ defineExpose({ markSaved });
   background-color: var(--app-bg);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color var(--app-dur) var(--app-ease), box-shadow var(--app-dur) var(--app-ease);
+}
+
+.image-preview:hover:not(:disabled) {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 2px var(--app-accent-soft);
+}
+
+.image-preview:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.image-preview:disabled {
+  cursor: not-allowed;
+  opacity: .55;
 }
 
 .image-preview canvas {

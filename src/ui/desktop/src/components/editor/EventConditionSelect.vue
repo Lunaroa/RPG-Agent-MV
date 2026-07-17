@@ -34,25 +34,27 @@ function onValueChange(event: Event) {
 .row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 3px;
+  gap: 6px;
+  min-height: 26px;
+  margin-bottom: 4px;
   color: var(--app-ink);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .row span {
-  flex: 0 0 34px;
+  flex: 0 0 68px;
+  line-height: 1.25;
 }
 
 .row select {
   min-width: 0;
   flex: 1;
-  height: 22px;
+  height: 26px;
   padding: 0 3px;
   border: 1px solid var(--app-border-strong);
   border-radius: var(--app-radius-sm);
   background: var(--app-bg);
   color: var(--app-ink);
-  font-size: 11px;
+  font-size: 12px;
 }
 </style>

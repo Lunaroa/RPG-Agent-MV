@@ -112,7 +112,7 @@ declare global {
         update(mapId: number, eventId: number, event: Record<string, unknown>, project?: string): Promise<unknown>;
         remove(mapId: number, eventId: number, project?: string): Promise<unknown>;
         duplicate(mapId: number, eventId: number, project?: string): Promise<unknown>;
-        search(query: string, project?: string): Promise<unknown>;
+        search(query: string, project?: string, options?: EventSearchOptions): Promise<unknown>;
       };
       eventRegistry: {
         contracts(project?: string, filters?: Record<string, unknown>): Promise<unknown>;
@@ -251,7 +251,7 @@ function desktopApi(): Window['api'] {
 
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
-  MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
@@ -274,7 +274,7 @@ import type {
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
-  MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
@@ -829,8 +829,8 @@ export const events = {
   duplicate(mapId: number, eventId: number, project: string = DEFAULT_PROJECT) {
     return desktopApi().events.duplicate(mapId, eventId, project) as Promise<EventReport>;
   },
-  search(query: string, project: string = DEFAULT_PROJECT) {
-    return desktopApi().events.search(query, project) as Promise<EventSearchResult>;
+  search(query: string, project: string = DEFAULT_PROJECT, options: EventSearchOptions = {}) {
+    return desktopApi().events.search(query, project, options) as Promise<EventSearchResult>;
   },
 };
 

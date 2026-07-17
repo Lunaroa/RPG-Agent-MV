@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { normalizeProductLanguage, type ProductLanguage } from '../../../contract/i18n.ts';
+import type { EventSearchOptions } from '../../../contract/types.ts';
 import { electronText } from './electronLocalization.ts';
 import { invokeDesktop } from './ipc-desktop-error.ts';
 
@@ -236,8 +237,8 @@ export function registerMapIpcHandlers(
     invokeDesktop(() => desktop.events.removeEvent(workflowRoot, project(value), mapId, eventId)));
   handle('events:duplicate', (_event, mapId: number, eventId: number, value?: string) =>
     invokeDesktop(() => desktop.events.duplicateEvent(workflowRoot, project(value), mapId, eventId)));
-  handle('events:search', (_event, query: string, value?: string) =>
-    invokeDesktop(() => desktop.maps.searchProjectEvents(workflowRoot, project(value), query)));
+  handle('events:search', (_event, query: string, value?: string, options?: EventSearchOptions) =>
+    invokeDesktop(() => desktop.maps.searchProjectEvents(workflowRoot, project(value), query, options)));
   const registryOptions = (relProject?: string) => ({
     runtimeRoot: path.join(workflowRoot, 'runtime'),
     projectPath: project(relProject),

@@ -61,7 +61,13 @@ function onKeyDown(event: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
-function open(image: MvEventImage) { draft.value = clone(image || defaultImage()); tab.value = draft.value.tileId ? 'tile' : 'character'; visible.value = true; void nextTick(paint); }
+function open(image: MvEventImage) {
+  draft.value = clone(image || defaultImage());
+  tab.value = draft.value.tileId ? 'tile' : 'character';
+  if (draft.value.tileId) tileTab.value = tileTabForId(Number(draft.value.tileId));
+  visible.value = true;
+  void nextTick(paint);
+}
 function close() { visible.value = false; }
 async function selectCharacter(name: string) {
   Object.assign(draft.value, { tileId: 0, characterName: name, characterIndex: 0, pattern: 1, direction: 2 });
@@ -93,7 +99,9 @@ async function paintCharacterSheet() {
   for (let x = 0; x <= cols; x++) { context.beginPath(); context.moveTo(dx + x * cw, dy); context.lineTo(dx + x * cw, dy + dh); context.stroke(); }
   for (let y = 0; y <= rows; y++) { context.beginPath(); context.moveTo(dx, dy + y * ch); context.lineTo(dx + dw, dy + y * ch); context.stroke(); }
   const frame = eventCharacterFrame(image, draft.value)!;
-  context.strokeStyle = '#fff'; context.lineWidth = 3; context.strokeRect(dx + frame.sx * scale, dy + frame.sy * scale, frame.sw * scale, frame.sh * scale);
+  const sx = dx + frame.sx * scale, sy = dy + frame.sy * scale, sw = frame.sw * scale, sh = frame.sh * scale;
+  context.strokeStyle = 'rgba(0,0,0,.88)'; context.lineWidth = 5; context.strokeRect(sx, sy, sw, sh);
+  context.strokeStyle = '#fff'; context.lineWidth = 2; context.strokeRect(sx, sy, sw, sh);
 }
 async function pickCharacterCell(event: MouseEvent) {
   const canvas = characterCanvas.value, image = draft.value.characterName ? await characterBitmap(draft.value.characterName) : null;
@@ -113,6 +121,12 @@ function paintTileSheet() {
   context.strokeStyle = 'rgba(255,255,255,.4)';
   for (let x = 0; x <= canvas.width / tileSize.value; x++) { context.beginPath(); context.moveTo(x * tileSize.value + .5, 0); context.lineTo(x * tileSize.value + .5, canvas.height); context.stroke(); }
   for (let y = 0; y <= canvas.height / tileSize.value; y++) { context.beginPath(); context.moveTo(0, y * tileSize.value + .5); context.lineTo(canvas.width, y * tileSize.value + .5); context.stroke(); }
+  const selected = selectedTileCell(entry.label, entry.base, Number(draft.value.tileId || 0));
+  if (selected) {
+    const x = selected.col * tileSize.value, y = selected.row * tileSize.value;
+    context.strokeStyle = 'rgba(0,0,0,.9)'; context.lineWidth = 5; context.strokeRect(x + 2.5, y + 2.5, tileSize.value - 5, tileSize.value - 5);
+    context.strokeStyle = '#fff'; context.lineWidth = 2; context.strokeRect(x + 2.5, y + 2.5, tileSize.value - 5, tileSize.value - 5);
+  }
 }
 function pickTileCell(event: MouseEvent) {
   const canvas = tileCanvas.value, entry = tileTabs.value.find((item) => item.label === tileTab.value);
@@ -120,6 +134,20 @@ function pickTileCell(event: MouseEvent) {
   const rect = canvas.getBoundingClientRect(), col = Math.floor((event.clientX - rect.left) * canvas.width / rect.width / tileSize.value), row = Math.floor((event.clientY - rect.top) * canvas.height / rect.height / tileSize.value);
   const tileId = entry.label === 'A5' ? entry.base + row * 8 + col : entry.base + (col < 8 ? 0 : 128) + row * 8 + col % 8;
   Object.assign(draft.value, { tileId, characterName: '', characterIndex: 0, pattern: 1, direction: 2 });
+  paintTileSheet();
+}
+function tileTabForId(tileId: number): string {
+  if (tileId >= TILE_ID_A5) return 'A5';
+  if (tileId >= 768) return 'E';
+  if (tileId >= 512) return 'D';
+  if (tileId >= 256) return 'C';
+  return 'B';
+}
+function selectedTileCell(label: string, base: number, tileId: number): { col: number; row: number } | null {
+  if (!tileId || tileTabForId(tileId) !== label) return null;
+  const local = tileId - base;
+  if (label === 'A5') return { col: local % 8, row: Math.floor(local / 8) };
+  return { col: local < 128 ? local % 8 : 8 + (local % 8), row: Math.floor((local % 128) / 8) };
 }
 function commit() { emit('commit', clone(draft.value)); close(); }
 defineExpose({ open });

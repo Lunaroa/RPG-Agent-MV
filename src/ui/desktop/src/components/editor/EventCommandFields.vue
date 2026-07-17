@@ -9,6 +9,9 @@
       <select v-else-if="field.kind === 'select'" :value="displayValue(field)" @change="setField(field, optionValue(field, inputValue($event)))">
         <option v-for="[value, label] in field.options || []" :key="String(value)" :value="String(value)">{{ label }}</option>
       </select>
+      <select v-else-if="field.kind === 'eventTarget'" :value="displayValue(field)" @change="setField(field, numberValue($event))">
+        <option v-for="[value, label] in eventTargetOptions(field)" :key="value" :value="value">{{ label }}</option>
+      </select>
       <select v-else-if="field.kind === 'database'" :value="displayValue(field)" @change="setField(field, numberValue($event))">
         <option v-for="entry in databaseOptions(field)" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4, '0') }} {{ entry.name }}</option>
       </select>
@@ -38,6 +41,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { RpgMakerEngine } from '@contract/types';
 import type { EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry } from '../../api/client';
+import type { EditorEventListItem } from './editorTypes';
 import { useI18n } from '../../i18n';
 import { commandDefinition, type CommandAssetKey, type CommandField, type CommandFieldVisibility } from '../../composables/eventCommandCatalog';
 import { localizeCommandField } from '../../utils/eventCommandLocalization';
@@ -45,7 +49,14 @@ import type { MvCommand } from '../../composables/useEventEditor';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 import CoordinatePickerDialog from './CoordinatePickerDialog.vue';
 
-const props = defineProps<{ command: MvCommand; engine: RpgMakerEngine; catalog: EditorProjectCatalog | null; loadImage: (url: string) => Promise<HTMLImageElement | null>; mapId?: number | null }>();
+const props = defineProps<{
+  command: MvCommand;
+  engine: RpgMakerEngine;
+  catalog: EditorProjectCatalog | null;
+  loadImage: (url: string) => Promise<HTMLImageElement | null>;
+  mapId?: number | null;
+  currentEvents?: EditorEventListItem[];
+}>();
 const emit = defineEmits<{ change: [] }>();
 const { language, t } = useI18n();
 const definition = computed(() => commandDefinition(props.command.code, props.engine));
@@ -136,6 +147,29 @@ function setField(field: CommandField, value: unknown) {
 }
 function optionValue(field: CommandField, value: string) {
   return field.options?.find(([entry]) => String(entry) === value)?.[0] ?? value;
+}
+function eventTargetOptions(field: CommandField): [number, string][] {
+  const config = field.eventTarget;
+  if (!config) throw new Error(`Event target field is missing its target policy: ${field.label}`);
+  const options: [number, string][] = [];
+  if (config.allowThisEvent) options.push([0, t('cmdFields.thisEvent')]);
+  if (config.allowPlayer) options.push([-1, t('cmdFields.player')]);
+  if (config.allowMapEvents) {
+    const seen = new Set<number>();
+    for (const event of [...(props.currentEvents || [])].sort((left, right) => left.id - right.id)) {
+      if (!Number.isInteger(event.id) || event.id <= 0 || seen.has(event.id)) continue;
+      seen.add(event.id);
+      options.push([event.id, t('cmdFields.mapEvent', { id: String(event.id).padStart(3, '0'), name: event.name })]);
+    }
+  }
+  const current = Number(fieldValue(field));
+  if (Number.isFinite(current) && !options.some(([value]) => value === current)) {
+    const label = current > 0
+      ? t(props.currentEvents ? 'cmdFields.missingEvent' : 'cmdFields.eventReference', { id: String(current).padStart(3, '0') })
+      : t('cmdFields.unavailableTarget', { id: String(current) });
+    options.unshift([current, label]);
+  }
+  return options;
 }
 function databaseOptions(field: CommandField): NamedCatalogEntry[] {
   if (!field.catalog || !props.catalog) return [];
@@ -263,7 +297,7 @@ function checkedValue(event: Event) { return (event.target as HTMLInputElement).
 </script>
 
 <style scoped>
-.command-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.command-fields { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 label { min-width: 0; display: grid; gap: 4px; color: var(--app-ink-soft); font-size: 12px; }
 input:not([type="checkbox"]), select, textarea { min-width: 0; padding: 5px 6px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-bg); color: var(--app-ink); font-size: 13px; }
 .asset-picker-button { min-width: 0; min-height: 30px; overflow: hidden; padding: 5px 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-bg); color: var(--app-ink); font-size: 13px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }

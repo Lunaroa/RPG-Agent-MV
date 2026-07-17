@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildWorkspaceMigrationPatch,
+  clampLeftDockWidth,
   computeMaxPaletteHeight,
+  DEFAULT_LEFT_DOCK_WIDTH,
   filterLegacyWorkspaceMigrationPatch,
   isLikelyMaximizedWindowBounds,
   isValidWindowBounds,
@@ -15,6 +17,7 @@ describe('workspaceSettings', () => {
     const settings = normalizeWorkspaceSettings({})
     expect(settings.layout?.appRailOpen).toBe(true)
     expect(settings.layout?.leftDockTilesOpen).toBe(true)
+    expect(settings.layout?.leftDockWidth).toBeUndefined()
     expect(settings.layout?.leftDockPaletteHeight).toBeUndefined()
     expect(settings.layout?.agentPanelWidth).toBe(480)
     expect(settings.suppressProjectCompatibilityWarnings).toBe(false)
@@ -37,6 +40,29 @@ describe('workspaceSettings', () => {
 
   it('computes max palette height from workbench height', () => {
     expect(computeMaxPaletteHeight(600)).toBe(600 - 190 - 8)
+  })
+
+  it('normalizes and clamps a persisted left dock width', () => {
+    expect(DEFAULT_LEFT_DOCK_WIDTH).toBe(320)
+    expect(clampLeftDockWidth(120)).toBe(214)
+    expect(clampLeftDockWidth(640)).toBe(520)
+
+    expect(normalizeWorkspaceSettings({
+      layout: { leftDockWidth: 412.6 },
+    }).layout?.leftDockWidth).toBe(413)
+    expect(normalizeWorkspaceSettings({
+      layout: { leftDockWidth: Number.NaN },
+    }).layout?.leftDockWidth).toBeUndefined()
+  })
+
+  it('persists left dock width in partial layout patches', () => {
+    const merged = mergeWorkspaceSettings(
+      { layout: { leftDockWidth: 320, leftDockPaletteHeight: 240 } },
+      { layout: { leftDockWidth: 480 } },
+    )
+
+    expect(merged.layout?.leftDockWidth).toBe(480)
+    expect(merged.layout?.leftDockPaletteHeight).toBe(240)
   })
 
   it('merges nested project editor state', () => {

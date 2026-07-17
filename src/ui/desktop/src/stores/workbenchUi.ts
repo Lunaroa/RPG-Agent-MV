@@ -14,6 +14,7 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
   const sidePanel = ref<SidePanelKind>(null);
   const bottomPanelOpen = ref(false);
   const leftDockTilesOpen = ref(true);
+  const leftDockWidth = ref(320);
   const leftDockPaletteHeight = ref(214);
   const editorZoom = ref(1);
   const editorZoomIn = ref<(() => void) | null>(null);
@@ -71,6 +72,10 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
 
   function setLeftDockTilesOpen(open: boolean) {
     leftDockTilesOpen.value = open;
+  }
+
+  function setLeftDockWidth(width: number) {
+    leftDockWidth.value = Math.max(214, Math.min(520, Math.round(width)));
   }
 
   function setLeftDockPaletteHeight(height: number) {
@@ -136,6 +141,7 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
     toggleSidePanel,
     bottomPanelOpen,
     leftDockTilesOpen,
+    leftDockWidth,
     leftDockPaletteHeight,
     editorZoom,
     zoomPercent,
@@ -145,6 +151,7 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
     toggleBottomPanel,
     setBottomPanelOpen,
     setLeftDockTilesOpen,
+    setLeftDockWidth,
     setLeftDockPaletteHeight,
     setEditorZoom,
     bindEditorZoomControls,

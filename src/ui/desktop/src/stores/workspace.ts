@@ -24,6 +24,7 @@ import { useWorkbenchUiStore } from './workbenchUi'
 export const useWorkspaceStore = defineStore('workspace', () => {
   const settings = ref<WorkspaceSettings>(normalizeWorkspaceSettings({}))
   const hydrated = ref(false)
+  const leftDockWidthPersisted = ref(false)
   const paletteHeightPersisted = ref(false)
   let persistTimer: ReturnType<typeof setTimeout> | null = null
   let pendingPatch: WorkspaceSettings | null = null
@@ -32,6 +33,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function load(): Promise<WorkspaceSettings> {
     const payload = await workspaceApi.get()
+    leftDockWidthPersisted.value = typeof payload?.layout?.leftDockWidth === 'number'
     paletteHeightPersisted.value = typeof payload?.layout?.leftDockPaletteHeight === 'number'
     settings.value = normalizeWorkspaceSettings(payload)
     hydrated.value = true
@@ -166,6 +168,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     ui.agentPanelOpen = layout.agentPanelOpen ?? true
     ui.bottomPanelOpen = layout.bottomPanelOpen ?? false
     ui.leftDockTilesOpen = layout.leftDockTilesOpen ?? true
+    if (leftDockWidthPersisted.value && layout.leftDockWidth != null) {
+      ui.setLeftDockWidth(layout.leftDockWidth)
+    }
     if (paletteHeightPersisted.value && layout.leftDockPaletteHeight != null) {
       ui.setLeftDockPaletteHeight(layout.leftDockPaletteHeight)
     }
@@ -174,6 +179,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function markPaletteHeightPersisted(height: number): void {
     paletteHeightPersisted.value = true
     useWorkbenchUiStore().setLeftDockPaletteHeight(height)
+  }
+
+  function markLeftDockWidthPersisted(width: number): void {
+    leftDockWidthPersisted.value = true
+    const ui = useWorkbenchUiStore()
+    ui.setLeftDockWidth(width)
+    patchLayout({ leftDockWidth: ui.leftDockWidth })
   }
 
   function bindWorkbenchLayoutPersistence(): void {
@@ -186,6 +198,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         ui.agentPanelOpen,
         ui.bottomPanelOpen,
         ui.leftDockTilesOpen,
+        ui.leftDockWidth,
         ui.leftDockPaletteHeight,
       ],
       () => {
@@ -194,6 +207,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           agentPanelOpen: ui.agentPanelOpen,
           bottomPanelOpen: ui.bottomPanelOpen,
           leftDockTilesOpen: ui.leftDockTilesOpen,
+        }
+        if (leftDockWidthPersisted.value) {
+          layoutPatch.leftDockWidth = ui.leftDockWidth
         }
         if (paletteHeightPersisted.value) {
           layoutPatch.leftDockPaletteHeight = ui.leftDockPaletteHeight
@@ -278,6 +294,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     hydrateWorkbenchLayout,
     bindWorkbenchLayoutPersistence,
     migrateFromBrowserStorage,
+    leftDockWidthPersisted,
+    markLeftDockWidthPersisted,
     paletteHeightPersisted,
     markPaletteHeightPersisted,
   }

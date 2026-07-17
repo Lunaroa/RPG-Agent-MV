@@ -20,6 +20,9 @@ export const LEGACY_CHAT_COMPOSER_KEY = 'rmmv.chat.selection'
 const OPENCODE_ENGINE_KEY = 'opencode'
 
 export const DEFAULT_LEFT_DOCK_PALETTE_HEIGHT = 214
+export const DEFAULT_LEFT_DOCK_WIDTH = 320
+export const LEFT_DOCK_MIN_WIDTH = 214
+export const LEFT_DOCK_MAX_WIDTH = 520
 export const PALETTE_MIN_OPEN_HEIGHT = 120
 export const PALETTE_MIN_TREE_HEIGHT = 190
 export const PALETTE_PANE_RESIZER_HEIGHT = 8
@@ -52,6 +55,7 @@ export const DEFAULT_WORKSPACE_LAYOUT: Required<WorkspaceLayoutState> = {
   agentPanelOpen: true,
   bottomPanelOpen: false,
   leftDockTilesOpen: true,
+  leftDockWidth: DEFAULT_LEFT_DOCK_WIDTH,
   leftDockPaletteHeight: DEFAULT_LEFT_DOCK_PALETTE_HEIGHT,
   agentPanelWidth: AGENT_PANEL_DEFAULT_WIDTH,
   chatHistoryWidth: CHAT_HISTORY_DEFAULT_WIDTH,
@@ -67,6 +71,10 @@ function bool(value: unknown, fallback: boolean): boolean {
 
 export function clampPaletteHeight(height: number): number {
   return Math.max(110, Math.min(520, Math.round(height)))
+}
+
+export function clampLeftDockWidth(width: number): number {
+  return Math.max(LEFT_DOCK_MIN_WIDTH, Math.min(LEFT_DOCK_MAX_WIDTH, Math.round(width)))
 }
 
 export function isValidWindowBounds(state: WorkspaceWindowState): boolean {
@@ -100,6 +108,7 @@ export function normalizeWorkspaceLayout(
   layout: WorkspaceLayoutState | undefined,
 ): WorkspaceLayoutState {
   const source = layout || {}
+  const leftDockWidth = finiteNumber(source.leftDockWidth)
   const paletteHeight = finiteNumber(source.leftDockPaletteHeight)
   const agentWidth = finiteNumber(source.agentPanelWidth)
   const historyWidth = finiteNumber(source.chatHistoryWidth)
@@ -108,6 +117,9 @@ export function normalizeWorkspaceLayout(
     agentPanelOpen: bool(source.agentPanelOpen, DEFAULT_WORKSPACE_LAYOUT.agentPanelOpen),
     bottomPanelOpen: bool(source.bottomPanelOpen, DEFAULT_WORKSPACE_LAYOUT.bottomPanelOpen),
     leftDockTilesOpen: bool(source.leftDockTilesOpen, DEFAULT_WORKSPACE_LAYOUT.leftDockTilesOpen),
+    leftDockWidth: leftDockWidth == null
+      ? undefined
+      : clampLeftDockWidth(leftDockWidth),
     leftDockPaletteHeight: paletteHeight == null
       ? undefined
       : clampPaletteHeight(paletteHeight),
@@ -222,9 +234,11 @@ export function normalizeWorkspacePatch(raw: unknown): WorkspaceSettings {
     if (typeof source.layout.agentPanelOpen === 'boolean') layout.agentPanelOpen = source.layout.agentPanelOpen
     if (typeof source.layout.bottomPanelOpen === 'boolean') layout.bottomPanelOpen = source.layout.bottomPanelOpen
     if (typeof source.layout.leftDockTilesOpen === 'boolean') layout.leftDockTilesOpen = source.layout.leftDockTilesOpen
+    const leftDockWidth = finiteNumber(source.layout.leftDockWidth)
     const paletteHeight = finiteNumber(source.layout.leftDockPaletteHeight)
     const agentWidth = finiteNumber(source.layout.agentPanelWidth)
     const historyWidth = finiteNumber(source.layout.chatHistoryWidth)
+    if (leftDockWidth != null) layout.leftDockWidth = clampLeftDockWidth(leftDockWidth)
     if (paletteHeight != null) layout.leftDockPaletteHeight = clampPaletteHeight(paletteHeight)
     if (agentWidth != null) layout.agentPanelWidth = agentWidth
     if (historyWidth != null) layout.chatHistoryWidth = historyWidth

@@ -26,8 +26,11 @@ import {
 } from '../utils/mvTilePalette';
 import { normalizeProductLanguage, translate, type MessageKey } from '../i18n/messages.ts'
 
+const MAP_MODE_EVENT_OPACITY = 0.35;
+
 type TileChange = TileEdit & { before?: number; after?: number };
 type BrushCell = { dx: number; dy: number; tileId?: number; autotileKind?: number; layerTiles?: number[] };
+type PaletteCell = { col: number; row: number };
 type PaintLayer = 0 | 1 | 2 | 3;
 type LayerStackEdit = TileEdit & { kind: 'tile'; layer: PaintLayer; tileId: number };
 type Brush =
@@ -107,11 +110,11 @@ interface CanvasEditorOptions {
   regionId: Ref<number>;
   shadowBits: Ref<number>;
   showGrid: Ref<boolean>;
-  showEvents: Ref<boolean>;
   showRegions: Ref<boolean>;
   showTileFlags: Ref<boolean>;
   tileFlags: Ref<number[]>;
   selectedEventId: Ref<number | null>;
+  hoveredEventId?: Ref<number | null>;
   busy: Ref<boolean>;
   postTiles: (edits: TileEdit[]) => Promise<{ changedCells: number; changes: TileEdit[] }>;
   reloadMap: () => Promise<void>;
@@ -162,8 +165,10 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   let shadowStrokeQuadrants = new Set<string>();
   let undoStack: TileChange[][] = [];
   let redoStack: TileChange[][] = [];
-  let paletteDragStart: { col: number; row: number } | null = null;
-  let paletteDragEnd: { col: number; row: number } | null = null;
+  let paletteHoverCell: PaletteCell | null = null;
+  let paletteDragStart: PaletteCell | null = null;
+  let paletteDragEnd: PaletteCell | null = null;
+  let paletteRenderFrame: number | null = null;
   let draggingEvent: { event: MvEvent; originalX: number; originalY: number; moved: boolean } | null = null;
   let panStart: { x: number; y: number; left: number; top: number } | null = null;
   let spacePressed = false;
@@ -189,11 +194,11 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   watch([
     options.mode,
     options.showGrid,
-    options.showEvents,
     options.showRegions,
     options.showTileFlags,
     options.tileFlags,
     options.selectedEventId,
+    options.hoveredEventId,
     options.paintMode,
     options.regionId,
     options.shadowBits,
@@ -209,6 +214,10 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     renderOverlay();
   });
   watch([options.paintMode, options.regionId, options.shadowBits, productLanguage], updateBrushInfo);
+  watch([options.mode, options.paintMode], () => {
+    clearPaletteInteraction();
+    schedulePaletteRender();
+  });
 
   onMounted(() => {
     window.addEventListener('keydown', onWindowKeyDown);
@@ -219,10 +228,12 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     window.removeEventListener('keydown', onWindowKeyDown);
     window.removeEventListener('keyup', onWindowKeyUp);
     window.removeEventListener('mouseup', finishPointerInteraction);
+    cancelScheduledPaletteRender();
   });
 
   async function setMap(nextMap: MvMap, _names: string[], images: (HTMLImageElement | null)[], resetHistory = true) {
     map = nextMap;
+    clearPaletteInteraction();
     tilesetImages = images;
     tilesetReady.value = images.some(Boolean);
     canvasWidth.value = nextMap.width * tileSize.value;
@@ -251,6 +262,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   }
   function clearMap() {
     map = null;
+    clearPaletteInteraction();
     canvasWidth.value = 0;
     canvasHeight.value = 0;
     renderMap();
@@ -273,19 +285,21 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       context.clearRect(0, 0, canvas.width, canvas.height);
       return;
     }
-    const view: MvMap = { ...map, events: options.mode.value === 'event' || options.showEvents.value ? map.events : [] };
-    drawMapContent(context, view, {
+    const eventMode = options.mode.value === 'event';
+    drawMapContent(context, map, {
       tilesetImages,
       parallaxImage: options.parallaxImage.value,
       tileSize: tileSize.value,
       tilesetFlags: options.tileFlags.value,
-      showGrid: options.mode.value === 'event' || options.showGrid.value,
+      showGrid: eventMode || options.showGrid.value,
       showRegions: options.showRegions.value || (options.mode.value === 'map' && options.paintMode.value === 'region'),
       showTileFlags: options.showTileFlags.value,
       activeLayer: options.mode.value === 'map' && options.paintMode.value === 'tile' && options.layer.value !== 'auto'
         ? options.layer.value
         : null,
-      selectedEventId: options.selectedEventId.value,
+      eventOpacity: eventMode ? 1 : MAP_MODE_EVENT_OPACITY,
+      selectedEventId: eventMode ? options.selectedEventId.value : null,
+      hoveredEventId: eventMode ? options.hoveredEventId?.value : null,
       getCharacterImage: options.getCharacterImage,
     });
   }
@@ -399,6 +413,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     context.fillText('EV', px + tileSize.value / 2, py + tileSize.value / 2 + 1);
   }
   function renderPalette() {
+    cancelScheduledPaletteRender();
     const canvas = paletteCanvas;
     if (!canvas) return;
     const context = canvas.getContext('2d');
@@ -421,7 +436,39 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       }
     }
     drawGrid(context, MV_PALETTE_COLS, rows, tileSize.value);
+    highlightPaletteHover(context);
+    highlightPaletteDrag(context);
     highlightPaletteSelection(context);
+  }
+  function highlightPaletteHover(context: CanvasRenderingContext2D) {
+    if (!paletteHoverCell || paletteDragStart) return;
+    const size = tileSize.value;
+    const x = paletteHoverCell.col * size;
+    const y = paletteHoverCell.row * size;
+    context.save();
+    context.fillStyle = 'rgba(255, 230, 89, .14)';
+    context.strokeStyle = 'rgba(255, 230, 89, .98)';
+    context.lineWidth = 2;
+    context.fillRect(x, y, size, size);
+    context.strokeRect(x + 1, y + 1, Math.max(1, size - 2), Math.max(1, size - 2));
+    context.restore();
+  }
+  function highlightPaletteDrag(context: CanvasRenderingContext2D) {
+    if (!paletteDragStart || !paletteDragEnd) return;
+    const range = normalizePaletteRange(paletteDragStart, paletteDragEnd);
+    const size = tileSize.value;
+    const x = range.minCol * size;
+    const y = range.minRow * size;
+    const width = (range.maxCol - range.minCol + 1) * size;
+    const height = (range.maxRow - range.minRow + 1) * size;
+    context.save();
+    context.fillStyle = 'rgba(79, 70, 229, .18)';
+    context.strokeStyle = 'rgba(255, 255, 255, .98)';
+    context.lineWidth = 2;
+    context.setLineDash([6, 3]);
+    context.fillRect(x, y, width, height);
+    context.strokeRect(x + 1, y + 1, Math.max(1, width - 2), Math.max(1, height - 2));
+    context.restore();
   }
   function highlightPaletteSelection(context: CanvasRenderingContext2D) {
     if (!brush) return;
@@ -449,30 +496,54 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   function selectTileTab(tab: TileTab) {
     if (!tileTabs.value.some((entry) => entry.tab === tab && entry.available)) return;
     tileTab.value = tab;
+    clearPaletteInteraction();
     renderPalette();
   }
   function onPaletteMouseDown(event: MouseEvent) {
-    if (options.mode.value !== 'map' || options.paintMode.value !== 'tile') return;
+    if (event.button !== 0 || options.mode.value !== 'map' || options.paintMode.value !== 'tile') return;
     const cell = paletteCell(event);
     if (!cell) return;
+    paletteHoverCell = cell;
     paletteDragStart = cell;
     paletteDragEnd = cell;
+    schedulePaletteRender();
   }
   function onPaletteMouseMove(event: MouseEvent) {
-    if (!paletteDragStart) return;
-    const cell = paletteCell(event);
-    if (cell) paletteDragEnd = cell;
+    if (options.mode.value !== 'map' || options.paintMode.value !== 'tile') {
+      if (paletteHoverCell || paletteDragStart || paletteDragEnd) {
+        clearPaletteInteraction();
+        schedulePaletteRender();
+      }
+      return;
+    }
+    const cell = paletteCell(event, Boolean(paletteDragStart));
+    if (paletteDragStart) {
+      if (cell && !samePaletteCell(paletteDragEnd, cell)) {
+        paletteDragEnd = cell;
+        paletteHoverCell = cell;
+        schedulePaletteRender();
+      }
+      return;
+    }
+    if (!samePaletteCell(paletteHoverCell, cell)) {
+      paletteHoverCell = cell;
+      schedulePaletteRender();
+    }
   }
   function onPaletteMouseUp() {
-    if (!paletteDragStart) return;
-    finishPaletteSelection();
+    paletteHoverCell = null;
+    if (paletteDragStart) {
+      finishPaletteSelection();
+      return;
+    }
+    schedulePaletteRender();
+  }
+  function onPaletteMouseLeave() {
+    onPaletteMouseUp();
   }
   function finishPaletteSelection() {
     if (!paletteDragStart || !paletteDragEnd) return;
-    const minCol = Math.min(paletteDragStart.col, paletteDragEnd.col);
-    const maxCol = Math.max(paletteDragStart.col, paletteDragEnd.col);
-    const minRow = Math.min(paletteDragStart.row, paletteDragEnd.row);
-    const maxRow = Math.max(paletteDragStart.row, paletteDragEnd.row);
+    const { minCol, maxCol, minRow, maxRow } = normalizePaletteRange(paletteDragStart, paletteDragEnd);
     const cells: BrushCell[] = [];
     for (let row = minRow; row <= maxRow; row += 1) {
       for (let col = minCol; col <= maxCol; col += 1) {
@@ -496,13 +567,52 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     updateBrushInfo();
     renderPalette();
   }
-  function paletteCell(event: MouseEvent) {
+  function paletteCell(event: MouseEvent, clampToBounds = false): PaletteCell | null {
     if (!paletteCanvas || !paletteCanvas.width || !paletteCanvas.height) return null;
     const rect = paletteCanvas.getBoundingClientRect();
-    const col = Math.floor((event.clientX - rect.left) * paletteCanvas.width / rect.width / tileSize.value);
-    const row = Math.floor((event.clientY - rect.top) * paletteCanvas.height / rect.height / tileSize.value);
-    if (col < 0 || row < 0 || col * tileSize.value >= paletteCanvas.width || row * tileSize.value >= paletteCanvas.height) return null;
-    return { col, row };
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const rawCol = Math.floor((event.clientX - rect.left) * paletteCanvas.width / rect.width / tileSize.value);
+    const rawRow = Math.floor((event.clientY - rect.top) * paletteCanvas.height / rect.height / tileSize.value);
+    const maxCol = Math.max(0, Math.floor(paletteCanvas.width / tileSize.value) - 1);
+    const maxRow = Math.max(0, Math.floor(paletteCanvas.height / tileSize.value) - 1);
+    if (!clampToBounds && (rawCol < 0 || rawRow < 0 || rawCol > maxCol || rawRow > maxRow)) return null;
+    return {
+      col: Math.max(0, Math.min(maxCol, rawCol)),
+      row: Math.max(0, Math.min(maxRow, rawRow)),
+    };
+  }
+
+  function normalizePaletteRange(start: PaletteCell, end: PaletteCell) {
+    return {
+      minCol: Math.min(start.col, end.col),
+      maxCol: Math.max(start.col, end.col),
+      minRow: Math.min(start.row, end.row),
+      maxRow: Math.max(start.row, end.row),
+    };
+  }
+
+  function samePaletteCell(left: PaletteCell | null, right: PaletteCell | null): boolean {
+    return left?.col === right?.col && left?.row === right?.row;
+  }
+
+  function clearPaletteInteraction() {
+    paletteHoverCell = null;
+    paletteDragStart = null;
+    paletteDragEnd = null;
+  }
+
+  function schedulePaletteRender() {
+    if (paletteRenderFrame != null) return;
+    paletteRenderFrame = window.requestAnimationFrame(() => {
+      paletteRenderFrame = null;
+      renderPalette();
+    });
+  }
+
+  function cancelScheduledPaletteRender() {
+    if (paletteRenderFrame == null) return;
+    window.cancelAnimationFrame(paletteRenderFrame);
+    paletteRenderFrame = null;
   }
 
   function canvasCell(event: MouseEvent) {
@@ -927,7 +1037,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     canvasRef, overlayRef, scrollRef, canvasWidth, canvasHeight, zoom, cursorText, tilesetReady, tileTab, tileTabs,
     brushInfo, brushSet, undoLen, redoLen, isPanning,
     setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setScrollElement, selectTileTab, canvasCell, eventAtCell,
-    onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp,
+    onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
     onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel,
     renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell,
   };

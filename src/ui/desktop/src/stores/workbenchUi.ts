@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import { clampPaletteHeight } from '../utils/workspaceSettings';
 
 export type ConsolePage = 'home' | 'assets' | 'story' | 'plugins' | 'logs' | 'settings';
 
@@ -79,7 +80,7 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
   }
 
   function setLeftDockPaletteHeight(height: number) {
-    leftDockPaletteHeight.value = Math.max(110, Math.min(520, Math.round(height)));
+    leftDockPaletteHeight.value = clampPaletteHeight(height);
   }
 
   function setEditorZoom(value: number) {

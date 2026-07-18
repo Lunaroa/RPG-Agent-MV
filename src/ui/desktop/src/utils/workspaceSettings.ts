@@ -24,8 +24,9 @@ export const DEFAULT_LEFT_DOCK_WIDTH = 320
 export const LEFT_DOCK_MIN_WIDTH = 214
 export const LEFT_DOCK_MAX_WIDTH = 520
 export const PALETTE_MIN_OPEN_HEIGHT = 120
-export const PALETTE_MIN_TREE_HEIGHT = 190
+export const PALETTE_MIN_TREE_HEIGHT = 64
 export const PALETTE_PANE_RESIZER_HEIGHT = 8
+export const PALETTE_MAX_PERSISTED_HEIGHT = 4096
 export const PALETTE_RESET_HEIGHT = DEFAULT_LEFT_DOCK_PALETTE_HEIGHT
 
 export function computeMaxPaletteHeight(availableHeight: number): number {
@@ -70,7 +71,7 @@ function bool(value: unknown, fallback: boolean): boolean {
 }
 
 export function clampPaletteHeight(height: number): number {
-  return Math.max(110, Math.min(520, Math.round(height)))
+  return Math.max(110, Math.min(PALETTE_MAX_PERSISTED_HEIGHT, Math.round(height)))
 }
 
 export function clampLeftDockWidth(width: number): number {

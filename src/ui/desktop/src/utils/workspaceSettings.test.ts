@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildWorkspaceMigrationPatch,
+  clampPaletteHeight,
   clampLeftDockWidth,
   computeMaxPaletteHeight,
   DEFAULT_LEFT_DOCK_WIDTH,
@@ -9,6 +10,9 @@ import {
   isValidWindowBounds,
   mergeWorkspaceSettings,
   normalizeWorkspaceSettings,
+  PALETTE_MAX_PERSISTED_HEIGHT,
+  PALETTE_MIN_TREE_HEIGHT,
+  PALETTE_PANE_RESIZER_HEIGHT,
   resolveStoredProjectPath,
 } from './workspaceSettings'
 
@@ -39,7 +43,15 @@ describe('workspaceSettings', () => {
   })
 
   it('computes max palette height from workbench height', () => {
-    expect(computeMaxPaletteHeight(600)).toBe(600 - 190 - 8)
+    expect(PALETTE_MIN_TREE_HEIGHT).toBe(64)
+    expect(computeMaxPaletteHeight(600)).toBe(600 - PALETTE_MIN_TREE_HEIGHT - PALETTE_PANE_RESIZER_HEIGHT)
+    expect(computeMaxPaletteHeight(800)).toBe(800 - PALETTE_MIN_TREE_HEIGHT - PALETTE_PANE_RESIZER_HEIGHT)
+    expect(computeMaxPaletteHeight(900)).toBe(900 - PALETTE_MIN_TREE_HEIGHT - PALETTE_PANE_RESIZER_HEIGHT)
+  })
+
+  it('keeps a large persisted preference while leaving viewport clamping to the dock', () => {
+    expect(clampPaletteHeight(720)).toBe(720)
+    expect(clampPaletteHeight(PALETTE_MAX_PERSISTED_HEIGHT + 500)).toBe(PALETTE_MAX_PERSISTED_HEIGHT)
   })
 
   it('normalizes and clamps a persisted left dock width', () => {

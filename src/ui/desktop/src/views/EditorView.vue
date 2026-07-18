@@ -67,7 +67,7 @@
       <div class="center-col">
         <main class="editor-stage">
           <div v-if="selectedMapId == null" class="empty-state">
-            <el-empty :description="t('editor.view.noMapsDescription')">
+            <el-empty :description="mapTree.length ? t('editor.error.noLoadableMaps') : t('editor.view.noMapsDescription')">
               <div class="empty-actions">
                 <el-button type="primary" @click="openCreateProperties(0)">{{ t('editor.view.createMap') }}</el-button>
               </div>
@@ -225,6 +225,7 @@ import { placementValidityHint, validatePlacementCell } from '../utils/placement
 import { registerEditorUiControlHandler, type EditorUiControlState } from '../utils/uiControl';
 import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
 import { loadImageElement } from '../utils/imageLoading.ts';
+import { projectMapTreeMove } from '../utils/mapTreeDragPreview';
 import { useI18n, type MessageKey } from '../i18n';
 
 interface ApiError extends Error { status?: number }
@@ -586,7 +587,13 @@ function findTreeNode(mapId: number): TreeNode | undefined {
 async function handleNodeClick(node: TreeNode) { await loadMap(node.id); }
 async function moveMapFromTree(source: TreeNode, target: TreeNode, position: 'before' | 'after' | 'inside') {
   if (busy.value) return;
+  const projection = projectMapTreeMove(mapTree.value, source.id, target.id, position);
+  if (!projection.valid) return;
   busy.value = true;
+  mapTree.value = projection.tree;
+  if (position === 'inside') {
+    expandedMapIds.value = [...new Set([...expandedMapIds.value, target.id])];
+  }
   setStatus(t('editor.map.reordering'), 'busy');
   try {
     await mapsApi.move(source.id, target.id, position, projectStore.currentProject);
@@ -841,6 +848,13 @@ async function loadEditorCatalog() {
   }
 }
 async function loadMap(mapId: number, options: { quiet?: boolean } = {}) {
+  const treeNode = findTreeNode(mapId);
+  if (treeNode && !treeNode.mapFileExists) {
+    const message = t('editor.error.mapFileMissing', { mapId: String(mapId).padStart(3, '0') });
+    setStatus(message, 'error');
+    if (!options.quiet) ElMessage.warning(message);
+    return false;
+  }
   busy.value = true;
   setStatus(t('editor.map.loading'), 'busy');
   try {
@@ -869,6 +883,7 @@ async function loadMap(mapId: number, options: { quiet?: boolean } = {}) {
     await refreshStagingStatus();
     persistWorkspaceSelection();
     setStatus(t('editor.map.loaded'), 'saved');
+    for (const warning of payload.resourceWarnings || []) ElMessage.warning(warning);
     return true;
   } catch (error) {
     setStatus(t('editor.map.loadFailedStatus', { message: (error as Error).message }), 'error');
@@ -890,6 +905,7 @@ async function reloadCurrentMap() {
   await preloadEventCharacters(currentMap);
   renderMap();
   await refreshStagingStatus();
+  for (const warning of payload.resourceWarnings || []) ElMessage.warning(warning);
 }
 function payloadToMap(payload: { width: number; height: number; tilesetId: number; data: number[]; events: unknown[]; [key: string]: unknown }): EditableMap {
   return { ...payload, width: payload.width, height: payload.height, tilesetId: payload.tilesetId, data: payload.data, events: payload.events as (MvEvent | null)[] };
@@ -1462,7 +1478,13 @@ function clearCurrentMap() {
 .canvas-scroll.panning { cursor: grabbing; user-select: none; }
 .canvas-stack { position: relative; margin:0; border-radius:0 0 6px 0; box-shadow:0 10px 36px rgba(60,50,30,.22); overflow:hidden; }
 .map-canvas, .overlay-canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
-.map-canvas { background: #203b20; cursor: crosshair; }
+.map-canvas {
+  background-color: #fff;
+  background-image: linear-gradient(45deg, #e5e5e5 25%, transparent 25%), linear-gradient(-45deg, #e5e5e5 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e5e5e5 75%), linear-gradient(-45deg, transparent 75%, #e5e5e5 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+  cursor: default;
+}
 .overlay-canvas { pointer-events: none; }
 .canvas-zoom{position:absolute;left:14px;bottom:14px;z-index:3;display:flex;gap:2px;padding:3px;border-radius:var(--app-radius-md);background:var(--app-bg-elevated);box-shadow:var(--app-shadow-2)}.canvas-zoom button{height:26px;min-width:28px;padding:0 7px;border:0;border-radius:var(--app-radius-sm);background:transparent;color:var(--app-ink-soft);font:600 11px var(--app-font-mono);cursor:pointer}.canvas-zoom button:hover{background:var(--app-bg-soft);color:var(--app-ink)}.canvas-mode-chip{position:absolute;right:14px;top:14px;z-index:3;padding:5px 9px;border-radius:var(--app-radius-pill);background:rgba(255,255,255,.78);backdrop-filter:blur(8px);box-shadow:var(--app-shadow-1);color:var(--app-ink-soft);font-size:11px;font-weight:600}
 .ctx-mask { position: fixed; inset: 0; z-index: v-bind(contextMenuZ); }

@@ -67,7 +67,7 @@ describe('RMMV layout resolver', () => {
     }
   });
 
-  test('inspectRmmvProject fails editable when MapInfos references missing map file', () => {
+  test('inspectRmmvProject keeps the project editable when MapInfos references a missing map file', () => {
     const root = tempRoot();
     try {
       writeProject(root, 'data');
@@ -75,8 +75,9 @@ describe('RMMV layout resolver', () => {
 
       const manifest = inspectRmmvProject(root);
 
-      assert.equal(manifest.editable, false);
-      assert(manifest.missingRequired.includes('data/Map001.json'));
+      assert.equal(manifest.editable, true);
+      assert.equal(manifest.mapFiles[0].exists, false);
+      assert.equal(manifest.missingRequired.includes('data/Map001.json'), false);
     } finally {
       removeRoot(root);
     }

@@ -176,6 +176,10 @@ onBeforeUnmount(() => {
           @click="toggleDropdown"
         >
           <span class="project-trigger-name">
+            <span class="project-icon" aria-hidden="true">
+              <img v-if="projectStore.currentProjectInfo?.iconUrl" :src="projectStore.currentProjectInfo.iconUrl" alt="" />
+              <span v-else class="project-icon-placeholder"></span>
+            </span>
             <span class="project-trigger-label">{{ selectedProjectLabel }}</span>
             <span v-if="selectedEngineLabel" class="engine-badge">{{ selectedEngineLabel }}</span>
           </span>
@@ -196,7 +200,11 @@ onBeforeUnmount(() => {
             @click="onSwitch(project.path)"
             @contextmenu.prevent.stop="openProjectContext($event, project)"
           >
-            {{ project.name }}
+            <span class="project-icon" aria-hidden="true">
+              <img v-if="project.iconUrl" :src="project.iconUrl" alt="" />
+              <span v-else class="project-icon-placeholder"></span>
+            </span>
+            <span class="project-option-label">{{ project.name }}</span>
           </button>
         </div>
 
@@ -286,6 +294,34 @@ label {
   white-space: nowrap;
 }
 
+.project-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 5px;
+  background: #eeeae3;
+}
+
+.project-icon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.project-icon-placeholder {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #aaa39a;
+  border-radius: 2px;
+  background: #d7d2ca;
+  transform: rotate(45deg);
+}
+
 .engine-badge {
   flex: 0 0 auto;
   padding: 1px 4px;
@@ -336,7 +372,9 @@ label {
 .project-option {
   width: 100%;
   min-height: 32px;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -345,10 +383,14 @@ label {
   font: inherit;
   font-size: 13px;
   text-align: left;
+  cursor: pointer;
+}
+
+.project-option-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
 }
 
 .project-option:hover,

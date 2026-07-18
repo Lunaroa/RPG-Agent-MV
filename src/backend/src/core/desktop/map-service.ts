@@ -81,6 +81,7 @@ export function buildMapIndex(workflowRoot: string, project: string): MapIndex {
       parentId: Number(info.parentId || 0),
       order: Number(info.order || 0),
       expanded: Boolean(info.expanded),
+      mapFileExists: fs.existsSync(getMapFileForRead(workflowRoot, project, Number(info.id))),
     }))
     .sort((a, b) => a.order - b.order || a.id - b.id);
   return { project, blocks: maps.filter((map) => map.parentId === 0), maps };
@@ -117,6 +118,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
   const info = infos[mapId] || { id: mapId, name: `Map${String(mapId).padStart(3, '0')}` };
   const tileset = tilesets[map.tilesetId] || null;
   const names = tileset && Array.isArray(tileset.tilesetNames) ? tileset.tilesetNames : [];
+  const parallax = resolveProjectParallaxImage(workflowRoot, project, map);
   return {
     project,
     engine: manifest.engine,
@@ -135,9 +137,8 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
       data: Array.isArray(map.data) ? map.data : [],
       events: Array.isArray(map.events) ? map.events : [],
     },
-    parallaxImageUrl: map.parallaxName && map.parallaxShow
-      ? projectParallaxImageUrl(workflowRoot, project, String(map.parallaxName))
-      : null,
+    parallaxImageUrl: parallax.url,
+    resourceWarnings: parallax.warnings,
     tileset: tileset ? {
       id: Number(tileset.id),
       name: String(tileset.name || ''),
@@ -886,10 +887,16 @@ function projectTilesetImageUrl(workflowRoot: string, project: string, name: str
   return projectAssetUrl(project, relative);
 }
 
-function projectParallaxImageUrl(workflowRoot: string, project: string, name: string): string {
+function resolveProjectParallaxImage(
+  workflowRoot: string,
+  project: string,
+  map: Record<string, unknown>,
+): { url: string | null; warnings: string[] } {
+  const name = typeof map.parallaxName === 'string' ? map.parallaxName.trim() : '';
+  if (!name || !map.parallaxShow) return { url: null, warnings: [] };
   const relative = projectImageRelativePath(workflowRoot, project, 'parallaxes', name);
-  if (!relative) throw new Error(mapProjectParallaxImageMissing(name));
-  return projectAssetUrl(project, relative);
+  if (!relative) return { url: null, warnings: [mapProjectParallaxImageMissing(name)] };
+  return { url: projectAssetUrl(project, relative), warnings: [] };
 }
 
 function projectImageRelativePath(

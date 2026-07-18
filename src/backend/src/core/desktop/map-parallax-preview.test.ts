@@ -9,7 +9,7 @@ import { closeDatabase } from '../db/pool.ts';
 import { withTestLanguage } from '../i18n/with-test-language.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
 import { resolveAssetRequest } from './asset-service.ts';
-import { buildMapPayload, updateMapPropertiesDraft } from './map-service.ts';
+import { buildMapIndex, buildMapPayload, updateMapPropertiesDraft } from './map-service.ts';
 import { mapProjectParallaxImageMissing } from './mapServiceLocalization.ts';
 import { applyProjectStaging, getMapFileForRead } from './staging-service.ts';
 
@@ -49,8 +49,11 @@ describe('map parallax preview payload', { concurrency: false }, () => {
     assert.equal(resolveAssetRequest(root, payload.parallaxImageUrl!), imageFile);
   });
 
-  test('fails clearly in both product languages when the preview image is missing', () => {
-    assert.throws(() => withTestLanguage(() => buildMapPayload(root, project, 1)), /Clouds\.png/);
+  test('returns a non-blocking warning and preserves the configured name when the preview image is missing', () => {
+    const payload = withTestLanguage(() => buildMapPayload(root, project, 1));
+    assert.equal(payload.parallaxImageUrl, null);
+    assert.equal(payload.map.parallaxName, 'Clouds');
+    assert.match(payload.resourceWarnings[0], /Clouds\.png/);
     assert.match(mapProjectParallaxImageMissing('Clouds', 'zh-CN'), /img\/parallaxes/);
     assert.match(mapProjectParallaxImageMissing('Clouds', 'en-US'), /Show in editor/);
   });
@@ -59,6 +62,19 @@ describe('map parallax preview payload', { concurrency: false }, () => {
     writeMap({ parallaxName: 'Clouds', parallaxShow: false });
 
     assert.equal(buildMapPayload(root, project, 1).parallaxImageUrl, null);
+    assert.deepEqual(buildMapPayload(root, project, 1).resourceWarnings, []);
+  });
+
+  test('keeps missing maps in the tree with an explicit availability flag', () => {
+    writeJson(path.join(project, 'www', 'data', 'MapInfos.json'), [
+      null,
+      { id: 1, name: 'Available Map', parentId: 0, order: 1 },
+      { id: 2, name: 'Missing Map', parentId: 0, order: 2 },
+    ]);
+
+    const index = buildMapIndex(root, project);
+
+    assert.deepEqual(index.maps.map((map) => [map.id, map.mapFileExists]), [[1, true], [2, false]]);
   });
 
   test('preserves multiline notes and complete encounter regions through staging and apply', () => {

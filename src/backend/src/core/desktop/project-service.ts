@@ -20,7 +20,6 @@ import {
   projectMapInfosEmpty,
   projectMapInfosMissing,
   projectMapInfosNotArray,
-  projectMissingMapFile,
   projectNotEditable,
   projectNotRegistered,
   projectNotRunnable,
@@ -38,6 +37,7 @@ import {
   projectVersionSavedCurrent,
   projectWorkspaceRemoveForbidden,
 } from './projectServiceLocalization.ts';
+import { projectAssetUrl } from './asset-service.ts';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_GIT_READ_TIMEOUT_MS = 30_000;
@@ -201,6 +201,7 @@ function listWorkspaceProjects(workflowRoot: string): ProjectInfo[] {
     }
     projects.push({
       name: validation.gameTitle || entry.name,
+      iconUrl: projectIconUrl(validation),
       path: `projects/${entry.name}`,
       isDefault: entry.name === 'Project',
       source: 'workspace',
@@ -253,6 +254,7 @@ function toProjectInfo(input: {
 }): ProjectInfo {
   return {
     name: input.name,
+    iconUrl: projectIconUrl(input.validation),
     path: input.publicPath,
     isDefault: input.isDefault,
     source: input.source,
@@ -327,10 +329,6 @@ function validateDataDir(projectRoot: string, manifest: RmmvProjectManifest): Pr
     const mapId = Number(entry.id);
     if (!Number.isInteger(mapId) || mapId <= 0) {
       throw new Error(projectInvalidMapId(mapInfosPath));
-    }
-    const mapFile = path.join(dataDir, `Map${String(mapId).padStart(3, '0')}.json`);
-    if (!fs.existsSync(mapFile)) {
-      throw new Error(projectMissingMapFile(mapFile));
     }
   }
 
@@ -599,6 +597,13 @@ function gitCommandTimeoutMs(args: readonly string[]): number {
   return args[0] === 'add' || args[0] === 'commit'
     ? DEFAULT_GIT_WRITE_TIMEOUT_MS
     : DEFAULT_GIT_READ_TIMEOUT_MS;
+}
+
+function projectIconUrl(validation: ProjectValidation): string | null {
+  const iconPath = path.join(validation.resourceRoot, 'icon', 'icon.png');
+  if (!fs.existsSync(iconPath) || !fs.statSync(iconPath).isFile()) return null;
+  const relative = path.relative(validation.projectPath, iconPath).replace(/\\/g, '/');
+  return projectAssetUrl(validation.projectPath, relative);
 }
 
 function gitInvocation(args: string[]): { command: string; args: string[] } {

@@ -172,7 +172,7 @@ describe('desktop project service', () => {
     }
   });
 
-  test('rejects MapInfos entries that point at missing map files', () => {
+  test('accepts MapInfos entries that point at missing map files', () => {
     const root = tempRoot();
     try {
       const dataDir = path.join(root, 'data');
@@ -180,10 +180,29 @@ describe('desktop project service', () => {
       fs.writeFileSync(path.join(dataDir, 'System.json'), JSON.stringify({ switches: [], variables: [] }), 'utf8');
       fs.writeFileSync(path.join(dataDir, 'MapInfos.json'), JSON.stringify([null, { id: 1, name: 'Start' }]), 'utf8');
 
-      assert.throws(
-        () => withTestLanguage(() => validateRmmvProjectDirectory(root)),
-        /Map001\.json/,
-      );
+      const validation = validateRmmvProjectDirectory(root);
+      assert.equal(validation.mapCount, 1);
+      assert.equal(validation.manifest.mapFiles[0].exists, false);
+    } finally {
+      removeRoot(root);
+    }
+  });
+
+  test('exposes only the project resource icon and returns null when it is absent', () => {
+    const root = tempRoot();
+    try {
+      const project = path.join(root, 'projects', 'Sample');
+      writeRmmvProject(project, 'www-data', 'Workspace Game');
+      const icon = path.join(project, 'www', 'icon', 'icon.png');
+      fs.mkdirSync(path.dirname(icon), { recursive: true });
+      fs.writeFileSync(icon, Buffer.from('png'));
+
+      const listed = listProjects(root)[0];
+      assert.match(listed.iconUrl!, /^rmmv-asset:\/\/project\//);
+      assert.equal(listed.iconUrl!.includes('Game.exe'), false);
+
+      fs.rmSync(icon);
+      assert.equal(listProjects(root)[0].iconUrl, null);
     } finally {
       removeRoot(root);
     }

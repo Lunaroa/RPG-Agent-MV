@@ -261,7 +261,6 @@ function inspectMapFiles(layout: RmmvProjectLayout, missingRequired: string[]): 
     }
     const fileName = `Map${String(id).padStart(3, '0')}.json`;
     const exists = fileExists(path.join(layout.dataDir, fileName));
-    if (!exists) missingRequired.push(`${layout.dataRootRelative}/${fileName}`);
     result.push({ id, fileName, exists });
   }
   if (!result.length) missingRequired.push(`${layout.dataRootRelative}/MapInfos.json: no maps`);

@@ -12,6 +12,7 @@ export type RpgMakerEngine = 'rpg-maker-mv' | 'rpg-maker-mz';
 
 export interface ProjectInfo {
   name: string;
+  iconUrl: string | null;
   path: string;
   isDefault: boolean;
   source?: 'workspace' | 'registered';
@@ -39,6 +40,7 @@ export interface MapTreeNode {
   parentId: number;
   order: number;
   expanded: boolean;
+  mapFileExists: boolean;
 }
 
 export interface MapIndex {
@@ -143,6 +145,7 @@ export interface MapPayload {
     [key: string]: unknown;
   };
   parallaxImageUrl?: string | null;
+  resourceWarnings: string[];
   tileset: {
     id: number;
     name: string;

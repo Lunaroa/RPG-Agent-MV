@@ -8,6 +8,7 @@ import {
   REGION_LAYER,
   SHADOW_LAYER,
   TILE_ID_A1,
+  drawCheckerboard,
   drawGrid,
   drawMapContent,
   drawTile,
@@ -218,6 +219,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     clearPaletteInteraction();
     schedulePaletteRender();
   });
+  const activeTileTabAvailable = computed(() => tileTabs.value.some((entry) => entry.tab === tileTab.value && entry.available));
 
   onMounted(() => {
     window.addEventListener('keydown', onWindowKeyDown);
@@ -293,6 +295,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       tilesetFlags: options.tileFlags.value,
       showGrid: eventMode || options.showGrid.value,
       showRegions: options.showRegions.value || (options.mode.value === 'map' && options.paintMode.value === 'region'),
+      regionOnly: options.mode.value === 'map' && options.paintMode.value === 'region',
       showTileFlags: options.showTileFlags.value,
       activeLayer: options.mode.value === 'map' && options.paintMode.value === 'tile' && options.layer.value !== 'auto'
         ? options.layer.value
@@ -418,16 +421,27 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (!canvas) return;
     const context = canvas.getContext('2d');
     if (!context) return;
-    if (!map || !tilesetImages.some(Boolean)) {
+    if (!map) {
       canvas.width = 0;
       canvas.height = 0;
       return;
     }
-    const rows = paletteRowsForTab(tileTab.value);
+    const available = activeTileTabAvailable.value;
+    const rows = available ? paletteRowsForTab(tileTab.value) : 4;
     canvas.width = MV_PALETTE_COLS * tileSize.value;
     canvas.height = rows * tileSize.value;
-    context.fillStyle = '#20262b';
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    drawCheckerboard(context, canvas.width, canvas.height);
+    if (!available) {
+      drawGrid(context, MV_PALETTE_COLS, rows, tileSize.value);
+      context.save();
+      context.fillStyle = 'rgba(49, 46, 43, .78)';
+      context.font = '600 13px sans-serif';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(t('mapcanvas.palette.unconfigured'), canvas.width / 2, canvas.height / 2);
+      context.restore();
+      return;
+    }
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < MV_PALETTE_COLS; col += 1) {
         const pick = palettePickForCell(tileTab.value, col, row, tileSlotLoaded);
@@ -494,13 +508,13 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   }
 
   function selectTileTab(tab: TileTab) {
-    if (!tileTabs.value.some((entry) => entry.tab === tab && entry.available)) return;
     tileTab.value = tab;
     clearPaletteInteraction();
+    updateBrushInfo();
     renderPalette();
   }
   function onPaletteMouseDown(event: MouseEvent) {
-    if (event.button !== 0 || options.mode.value !== 'map' || options.paintMode.value !== 'tile') return;
+    if (event.button !== 0 || options.mode.value !== 'map' || options.paintMode.value !== 'tile' || !activeTileTabAvailable.value) return;
     const cell = paletteCell(event);
     if (!cell) return;
     paletteHoverCell = cell;
@@ -509,7 +523,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     schedulePaletteRender();
   }
   function onPaletteMouseMove(event: MouseEvent) {
-    if (options.mode.value !== 'map' || options.paintMode.value !== 'tile') {
+    if (options.mode.value !== 'map' || options.paintMode.value !== 'tile' || !activeTileTabAvailable.value) {
       if (paletteHoverCell || paletteDragStart || paletteDragEnd) {
         clearPaletteInteraction();
         schedulePaletteRender();
@@ -645,6 +659,10 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       return;
     }
     if (event.button !== 0) return;
+    if (options.mode.value === 'map' && options.paintMode.value === 'tile' && !activeTileTabAvailable.value) {
+      options.setStatus(t('mapcanvas.status.tilePageUnavailable'), 'error');
+      return;
+    }
     if (options.placementActive?.value) {
       const validity = options.getPlacementCellValidity?.(cell.x, cell.y);
       if (validity?.valid) options.onPlacementClick?.(cell);
@@ -937,7 +955,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     } finally { options.busy.value = false; }
   }
 
-  function toolReady() { return options.paintMode.value !== 'tile' || options.tool.value === 'eraser' || Boolean(brush); }
+  function toolReady() { return options.paintMode.value !== 'tile' || (activeTileTabAvailable.value && (options.tool.value === 'eraser' || Boolean(brush))); }
   function activeEditLayer() {
     if (options.paintMode.value === 'shadow') return SHADOW_LAYER;
     if (options.paintMode.value === 'region') return REGION_LAYER;
@@ -995,6 +1013,9 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       const value = clampInt(options.regionId.value, 0, 255);
       brushInfo.value = t('mapcanvas.brush.region', { value });
       brushSet.value = true;
+    } else if (!activeTileTabAvailable.value) {
+      brushInfo.value = '';
+      brushSet.value = false;
     } else if (!brush) {
       brushInfo.value = t('mapcanvas.brush.none');
       brushSet.value = false;

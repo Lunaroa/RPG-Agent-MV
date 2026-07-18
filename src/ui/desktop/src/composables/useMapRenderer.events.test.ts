@@ -10,6 +10,7 @@ interface RecordedCall {
   lineWidth?: number;
   lineDash?: number[];
   fillStyle?: string;
+  strokeStyle?: string;
   shadowBlur?: number;
   x?: number;
   y?: number;
@@ -50,7 +51,7 @@ describe('map event-layer rendering', () => {
     assert.equal(rendered.context.globalAlpha, 1);
   });
 
-  test('uses full opacity by default and distinguishes hover and selection without color-only styling', () => {
+  test('uses a translucent fill and high-contrast double outline for hover', () => {
     const rendered = recordingContext();
 
     drawMapContent(rendered.context, createMap({ data: Array(3 * 6).fill(0) }), {
@@ -60,33 +61,42 @@ describe('map event-layer rendering', () => {
     });
 
     const frames = rendered.calls.filter((call) => call.kind === 'strokeRect');
-    assert.deepEqual(frames.map((call) => call.alpha), [1, 1, 1]);
-    assert.deepEqual(frames.map((call) => call.lineWidth), [2, 1, 1]);
-    assert.deepEqual(frames.map((call) => call.lineDash), [[], [4, 3], []]);
-    assert.deepEqual(frames.map((call) => call.shadowBlur), [0, 0, 0]);
+    assert.deepEqual(frames.map((call) => call.alpha), [1, 1, 1, 1, 1]);
+    assert.deepEqual(frames.map((call) => call.lineWidth), [2, 5, 3, 1, 1]);
+    assert.deepEqual(frames.map((call) => call.lineDash), [[], [], [], [], []]);
+    assert.deepEqual(frames.map((call) => call.strokeStyle), [
+      '#fff',
+      'rgba(0, 0, 0, .86)',
+      '#f59e0b',
+      '#fff',
+      '#fff',
+    ]);
+    const hoverFill = rendered.calls.find((call) => call.kind === 'fillRect' && call.fillStyle === 'rgba(245, 158, 11, .28)');
+    assert.deepEqual(hoverFill && [hoverFill.x, hoverFill.y, hoverFill.width, hoverFill.height], [48, 0, 48, 48]);
     assert.deepEqual(frames.map(({ x, y, width, height }) => [x, y, width, height]), [
       [5, 5, 38, 38],
+      [50.5, 2.5, 43, 43],
+      [52.5, 4.5, 39, 39],
       [52.5, 4.5, 39, 39],
       [100.5, 4.5, 39, 39],
     ]);
-
-    const outerBounds = frames.map((frame) => {
-      const halfLineWidth = Number(frame.lineWidth) / 2;
-      return {
-        left: Number(frame.x) - halfLineWidth,
-        top: Number(frame.y) - halfLineWidth,
-        right: Number(frame.x) + Number(frame.width) + halfLineWidth,
-        bottom: Number(frame.y) + Number(frame.height) + halfLineWidth,
-      };
-    });
-    assert.deepEqual(outerBounds, [
-      { left: 4, top: 4, right: 44, bottom: 44 },
-      { left: 52, top: 4, right: 92, bottom: 44 },
-      { left: 100, top: 4, right: 140, bottom: 44 },
-    ]);
-    assert.equal(outerBounds[1].left - outerBounds[0].right, 8);
-    assert.equal(outerBounds[2].left - outerBounds[1].right, 8);
     assert.equal(rendered.context.globalAlpha, 1);
+  });
+
+  test('keeps the selected frame visible when the selected event is also hovered', () => {
+    const rendered = recordingContext();
+    drawMapContent(rendered.context, createMap({ data: Array(3 * 6).fill(0) }), {
+      tilesetImages: [],
+      selectedEventId: 1,
+      hoveredEventId: 1,
+    });
+
+    const firstCellFrames = rendered.calls.filter((call) => call.kind === 'strokeRect' && Number(call.x) < 48);
+    assert.deepEqual(firstCellFrames.map((call) => [call.lineWidth, call.strokeStyle]), [
+      [5, 'rgba(0, 0, 0, .86)'],
+      [3, '#f59e0b'],
+      [2, '#fff'],
+    ]);
   });
 
   test('clamps explicit event opacity and treats invalid values as full opacity', () => {
@@ -128,7 +138,7 @@ function image(naturalWidth: number, naturalHeight: number): HTMLImageElement {
 
 function recordingContext(): { context: CanvasRenderingContext2D; calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
-  const stack: Array<{ globalAlpha: number; lineWidth: number; lineDash: number[] }> = [];
+  const stack: Array<{ globalAlpha: number; lineWidth: number; lineDash: number[]; fillStyle: string; strokeStyle: string }> = [];
   let lineDash: number[] = [];
   const context = {
     globalAlpha: 1,
@@ -153,13 +163,21 @@ function recordingContext(): { context: CanvasRenderingContext2D; calls: Recorde
     moveTo() {},
     lineTo() {},
     save() {
-      stack.push({ globalAlpha: this.globalAlpha, lineWidth: this.lineWidth, lineDash: [...lineDash] });
+      stack.push({
+        globalAlpha: this.globalAlpha,
+        lineWidth: this.lineWidth,
+        lineDash: [...lineDash],
+        fillStyle: String(this.fillStyle),
+        strokeStyle: String(this.strokeStyle),
+      });
     },
     restore() {
       const state = stack.pop();
       if (!state) throw new Error('Canvas restore called without a matching save.');
       this.globalAlpha = state.globalAlpha;
       this.lineWidth = state.lineWidth;
+      this.fillStyle = state.fillStyle;
+      this.strokeStyle = state.strokeStyle;
       lineDash = state.lineDash;
     },
     setLineDash(value: number[]) { lineDash = [...value]; },
@@ -170,6 +188,7 @@ function recordingContext(): { context: CanvasRenderingContext2D; calls: Recorde
         alpha: this.globalAlpha,
         lineWidth: this.lineWidth,
         lineDash: [...lineDash],
+        strokeStyle: String(this.strokeStyle),
         shadowBlur: this.shadowBlur,
         x,
         y,

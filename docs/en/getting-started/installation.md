@@ -10,7 +10,7 @@ Before using RPG Agent MV, prepare:
 - A working model provider, API key, and default model.
 - A local project path that RPG Agent MV can read.
 - A Git worktree for the RMMV project is recommended, so changes can be reviewed and organized.
-- RPG Maker MZ does not need to be installed. Editing needs only the source project; playtest requires the complete `Game.exe` / NW.js runtime files in that project root.
+- Editing needs only an MV/MZ source project. The top-bar Play action prefers a project-local runtime, then a saved runtime or validated official install location. If none is available, the desktop app asks once for a complete Windows runtime folder for the same engine and remembers it. It never scans arbitrary game folders or downloads a runner.
 
 ## Get And Start
 
@@ -77,7 +77,7 @@ If any item fails, fix the environment or project setup before running complex e
 | Symptom | What to check |
 |---|---|
 | Project is not shown | Confirm the directory contains readable `data/System.json`, `MapInfos.json`, map files, and matching core scripts; an editor project marker is not required |
-| MZ playtest cannot start | Check that the source project root contains complete `Game.exe`, `nw.dll`, `icudtl.dat`, locale packs, and related NW.js files; the app does not run or download an unknown runner |
+| MV/MZ source project cannot start | Select a complete Windows runtime folder for the same engine containing `Game.exe` and the full NW.js payload. MZ 1.10.0 is the fully validated baseline; another recognizable MZ version may attempt a launch without receiving a complete compatibility guarantee. The selection is stored locally; the app does not scan private game folders or download a runner |
 | Model is unavailable | Check provider, API key, Base URL, and default model; see [Model And Runtime Checks](../faq/model-check.md) |
 | Map cannot open | Check map files, tilesets, and local assets |
 | App repeatedly crashes | Close the app, confirm backend processes have exited, then restart |

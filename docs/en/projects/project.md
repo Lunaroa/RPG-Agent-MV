@@ -44,9 +44,9 @@ After switching projects, confirm the MV/MZ badge beside the project name. If da
 
 ## MZ Playtest Runtime
 
-RPG Maker MZ does not need to be installed. Editing depends only on the source project. Normal playtest and isolated Battle Test statically validate the source project's `Game.exe`, `nw.dll`, `icudtl.dat`, locale packs, and other NW.js files. Project detection never executes `Game.exe`. Isolated runs keep the runner in the source project and pass it the temporary project path instead of copying it.
+Editing depends only on the source project. Normal playtest first validates a project-local runtime, then a saved runtime or validated official install location. If none is available, the desktop app asks once for a complete Windows runtime folder for the same engine. MZ 1.10.0 remains the fully validated baseline; another recognizable MZ core version may attempt a launch, but a successful run is evidence for that playtest rather than a complete compatibility guarantee for editing, plugins, or assets. Detection and selection never execute `Game.exe`, scan arbitrary game folders, or download a runner. Isolated Battle Test keeps the stricter project-local runtime boundary.
 
-If the local runtime is missing or incomplete, map, event, database, asset, plugin, and staging work remains available. Normal playtest and Battle Test fail before launch with the missing runtime file named explicitly.
+If the local runtime is missing or incomplete, map, event, database, asset, plugin, and staging work remains available. Normal playtest can use the saved selection flow above; isolated workflows that require a project-local runtime still fail before launch with the missing runtime file named explicitly.
 
 ## Game-Level Rules
 

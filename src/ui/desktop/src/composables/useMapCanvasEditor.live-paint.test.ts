@@ -49,6 +49,13 @@ describe('map canvas live paint wiring', () => {
     assert.doesNotMatch(source, /if \(eyedropStart\)[\s\S]{0,260}for \(const cell of cells\)/);
   });
 
+  test('locks exact autotile sampling on right press and still allows Shift while painting', () => {
+    assert.match(source, /eyedropPreserveAutotileShapes = event\.shiftKey \|\| shiftPressed/);
+    assert.match(source, /const preserveAutotileShapes = eyedropPreserveAutotileShapes;[\s\S]{0,220}pickMapRange\(from, to, preserveAutotileShapes\)/);
+    assert.match(source, /buildMapRangeBrush\(map, from, to, options\.layer\.value, preserveAutotileShapes\)/);
+    assert.match(source, /buildLayerStackEdits\(x, y, options\.layer\.value, cell\.layerStack, shiftPressed\)/);
+  });
+
   test('uses the same hotspot geometry for stamping and patterned shape previews', () => {
     assert.match(source, /const origin = brushOriginAt\(\{ x, y \}, activeBrushFootprint\(\)\)/);
     assert.match(source, /brushPathPatternPlacements\(pointers, anchor, footprint, map \? \{ width: map\.width, height: map\.height \} : undefined\)/);

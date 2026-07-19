@@ -11,6 +11,7 @@ import type {
   InteractivePlaytestResult,
   InteractivePlaytestRun,
   InteractivePlaytestRunStatus,
+  InteractivePlaytestRuntimeInfo,
   InteractivePlaytestStagingSummary,
 } from '../../../../contract/types.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
@@ -161,6 +162,31 @@ export class InteractivePlaytestService {
     return {
       confirmationRequired: false,
       ...(this.#currentRun ? { run: cloneRun(this.#currentRun) } : {}),
+    };
+  }
+
+  runtimeInfo(projectRoot: string): InteractivePlaytestRuntimeInfo {
+    const project = fs.realpathSync.native(path.resolve(projectRoot));
+    const manifest = this.#dependencies.inspectProject(project);
+    if (!manifest.editable) {
+      throw new Error(`The RPG Maker project is not editable: ${manifest.missingRequired.join(', ')}`);
+    }
+    const resolution = this.#dependencies.resolveProjectRuntime(project, manifest.engine);
+    if (!resolution.runtime) {
+      return {
+        engine: manifest.engine,
+        source: 'unavailable',
+        executable: null,
+        configurable: true,
+        status: resolution.selectionRequired?.reason === 'invalid' ? 'invalid' : 'missing',
+      };
+    }
+    return {
+      engine: manifest.engine,
+      source: resolution.runtime.source,
+      executable: resolution.runtime.executable,
+      configurable: resolution.runtime.source !== 'project-local',
+      status: 'ready',
     };
   }
 
@@ -358,7 +384,9 @@ export class InteractivePlaytestService {
       let child: InteractivePlaytestChild;
       try {
         const args = mode === 'project'
-          ? projectRuntime?.launchStyle === 'external' ? [launchProject] : []
+          ? projectRuntime?.launchStyle === 'external'
+            ? engine === 'rpg-maker-mv' ? [launchProject, 'test'] : [launchProject]
+            : []
           : engine === 'rpg-maker-mz'
             ? [launchProject, ...(mode === 'battle_test' ? ['test&btest'] : [])]
             : mode === 'battle_test' ? ['test&btest'] : [];

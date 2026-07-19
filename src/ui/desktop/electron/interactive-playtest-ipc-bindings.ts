@@ -3,6 +3,7 @@ import type {
   InteractiveParticleAnimationPreview,
   InteractivePlaytestMode,
   InteractivePlaytestResult,
+  InteractivePlaytestRuntimeInfo,
   InteractivePlaytestRuntimeSelectionRequired,
   InteractivePlaytestRuntimeSelectionResult,
 } from '../../../contract/types.ts';
@@ -13,6 +14,7 @@ export const INTERACTIVE_PLAYTEST_IPC_CHANNELS = [
   'playtest:current',
   'playtest:stop',
   'playtest:reveal',
+  'playtest:runtimeInfo',
   'playtest:selectRuntime',
 ] as const;
 
@@ -36,6 +38,7 @@ interface InteractivePlaytestServiceLike {
     },
   ): Promise<InteractivePlaytestResult>;
   current(): InteractivePlaytestResult;
+  runtimeInfo(project: string): InteractivePlaytestRuntimeInfo;
   stop(): Promise<InteractivePlaytestResult>;
 }
 
@@ -93,6 +96,16 @@ export function registerInteractivePlaytestIpcHandlers(
     return toIpcPayload(await service.start(project, options));
   });
   ipc.handle('playtest:current', () => toIpcPayload(service.current()));
+  ipc.handle('playtest:runtimeInfo', (_event, request?: Record<string, unknown>) => {
+    const body = request && typeof request === 'object' && !Array.isArray(request) ? request : {};
+    const unknown = Object.keys(body).filter((key) => key !== 'project');
+    if (unknown.length) throw new Error(`playtest:runtimeInfo does not accept field(s): ${unknown.join(', ')}`);
+    const requestedProject = typeof body.project === 'string' && body.project.trim()
+      ? body.project.trim()
+      : dependencies.getLastProject().trim();
+    if (!requestedProject) throw new Error('Select an RMMV project before inspecting its playtest runtime.');
+    return toIpcPayload(service.runtimeInfo(dependencies.resolveProject(requestedProject)));
+  });
   ipc.handle('playtest:stop', async () => toIpcPayload(await service.stop()));
   ipc.handle('playtest:reveal', (_event, runId: string) => {
     dependencies.revealEvidence(String(runId || '').trim());
@@ -106,8 +119,8 @@ export function registerInteractivePlaytestIpcHandlers(
     if (body.engine !== 'rpg-maker-mv' && body.engine !== 'rpg-maker-mz') {
       throw new Error('playtest:selectRuntime engine must be rpg-maker-mv or rpg-maker-mz.');
     }
-    if (body.reason !== 'missing' && body.reason !== 'invalid') {
-      throw new Error('playtest:selectRuntime reason must be missing or invalid.');
+    if (body.reason !== 'missing' && body.reason !== 'invalid' && body.reason !== 'change') {
+      throw new Error('playtest:selectRuntime reason must be missing, invalid, or change.');
     }
     return dependencies.selectRuntime(event, {
       engine: body.engine,

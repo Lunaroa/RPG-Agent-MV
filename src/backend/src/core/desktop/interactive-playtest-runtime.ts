@@ -29,7 +29,7 @@ export interface InteractiveProjectRuntimeResolution {
 }
 
 export interface InteractiveProjectRuntimeOptions {
-  /** Accepts the legacy runtime-directory value and the current executable-file value. */
+  /** Only a validated executable-file value is accepted; legacy directory values require reselection. */
   configuredRuntimeRoot?: string;
   officialRuntimeRoots?: readonly string[];
   resolveMZRuntime?: (projectDirectory: string) => RpgMakerMZProjectRuntime;
@@ -37,6 +37,8 @@ export interface InteractiveProjectRuntimeOptions {
 
 export type InteractiveProjectRuntimeValidationReason =
   | 'missing'
+  | 'legacy-location'
+  | 'deployment-runtime'
   | 'wrong-file'
   | 'not-executable'
   | 'incomplete'
@@ -93,13 +95,13 @@ export function resolveInteractiveProjectRuntime(
 
   const configured = String(options.configuredRuntimeRoot || '').trim();
   if (configured) {
-    const runtime = tryResolveExternalRuntime(configured, engine, 'configured', resolveMZRuntime);
+    const runtime = tryResolveExternalRuntime(configured, engine, 'configured');
     if (runtime) return { runtime };
     return { selectionRequired: { engine, reason: 'invalid' } };
   }
 
   for (const candidate of options.officialRuntimeRoots || []) {
-    const runtime = tryResolveExternalRuntime(candidate, engine, 'official-install', resolveMZRuntime);
+    const runtime = tryResolveExternalRuntime(candidate, engine, 'official-install');
     if (runtime) return { runtime };
   }
   return { selectionRequired: { engine, reason: 'missing' } };
@@ -110,7 +112,7 @@ export function inspectSelectedInteractiveProjectRuntime(
   engine: RpgMakerEngine,
 ): InteractiveProjectRuntimeValidation {
   return engine === 'rpg-maker-mz'
-    ? inspectMZRuntimeLocation(selectedLocation, resolveInteractiveMZRuntime)
+    ? inspectMZRuntimeLocation(selectedLocation)
     : inspectMVRuntimeLocation(selectedLocation);
 }
 
@@ -167,10 +169,9 @@ function tryResolveExternalRuntime(
   selectedLocation: string,
   engine: RpgMakerEngine,
   source: Exclude<InteractiveProjectRuntimeSource, 'project-local'>,
-  resolveMZRuntime: (projectDirectory: string) => RpgMakerMZProjectRuntime,
 ): InteractiveProjectRuntime | null {
   const validation = engine === 'rpg-maker-mz'
-    ? inspectMZRuntimeLocation(selectedLocation, resolveMZRuntime)
+    ? inspectMZRuntimeLocation(selectedLocation)
     : inspectMVRuntimeLocation(selectedLocation);
   if (!validation.valid || !validation.executable || !validation.runtimeRoot) return null;
   return {
@@ -186,28 +187,12 @@ function tryResolveExternalRuntime(
 
 function inspectMZRuntimeLocation(
   selectedLocation: string,
-  resolveMZRuntime: (projectDirectory: string) => RpgMakerMZProjectRuntime,
 ): InteractiveProjectRuntimeValidation {
   const resolved = resolveRuntimeLocation(selectedLocation);
   if (!resolved) return { valid: false, reason: 'missing' };
+  if (resolved.kind !== 'file') return { valid: false, reason: 'legacy-location' };
 
-  if (resolved.kind === 'directory') {
-    try {
-      const legacy = resolveMZRuntime(resolved.path);
-      return {
-        valid: true,
-        executable: legacy.executable,
-        runtimeRoot: legacy.projectRoot,
-      };
-    } catch {
-      // Continue with the official nwjs-win runtime check.
-    }
-  }
-
-  const executable = resolved.kind === 'file'
-    ? resolved.path
-    : findCaseInsensitiveFile(resolved.path, 'nw.exe');
-  if (!executable) return { valid: false, reason: 'incomplete' };
+  const executable = resolved.path;
   if (path.basename(executable).toLowerCase() !== 'nw.exe') {
     return { valid: false, reason: 'wrong-file' };
   }
@@ -224,34 +209,24 @@ function inspectMZRuntimeLocation(
 function inspectMVRuntimeLocation(selectedLocation: string): InteractiveProjectRuntimeValidation {
   const resolved = resolveRuntimeLocation(selectedLocation);
   if (!resolved) return { valid: false, reason: 'missing' };
-  const executable = resolved.kind === 'file'
-    ? resolved.path
-    : findCaseInsensitiveFile(resolved.path, 'Game.exe');
-  if (!executable) return { valid: false, reason: 'incomplete' };
+  if (resolved.kind !== 'file') return { valid: false, reason: 'legacy-location' };
+
+  const executable = resolved.path;
   if (path.basename(executable).toLowerCase() !== 'game.exe') {
     return { valid: false, reason: 'wrong-file' };
   }
   if (!isPortableExecutable(executable)) return { valid: false, reason: 'not-executable' };
 
   const runtimeRoot = path.dirname(executable);
+  const runtimeRole = path.basename(runtimeRoot).toLowerCase();
+  if (runtimeRole === 'nwjs-win' || findCaseInsensitiveFile(runtimeRoot, 'package.json')) {
+    return { valid: false, reason: 'deployment-runtime' };
+  }
+  if (runtimeRole !== 'nwjs-win-test') return { valid: false, reason: 'unrecognized-install' };
   if (!hasCompleteMVRuntime(runtimeRoot)) return { valid: false, reason: 'incomplete' };
 
-  const projectCore = findCaseInsensitiveFile(runtimeRoot, path.join('js', 'rpg_core.js'));
-  if (projectCore) {
-    try {
-      const identity = readRpgMakerCoreIdentity(fs.readFileSync(projectCore, 'utf8'));
-      return identity.name && identity.name !== 'MV'
-        ? { valid: false, reason: 'wrong-engine' }
-        : { valid: true, executable, runtimeRoot };
-    } catch {
-      return { valid: false, reason: 'unrecognized-install' };
-    }
-  }
-
   const officialIdentity = readOfficialInstallIdentity(runtimeRoot, 'RPGMV.exe', path.join('newdata', 'js', 'rpg_core.js'));
-  if (officialIdentity === 'MV' || hasLegacyMVRuntimeSignature(runtimeRoot)) {
-    return { valid: true, executable, runtimeRoot };
-  }
+  if (officialIdentity === 'MV') return { valid: true, executable, runtimeRoot };
   if (officialIdentity === 'MZ') return { valid: false, reason: 'wrong-engine' };
   return { valid: false, reason: 'unrecognized-install' };
 }
@@ -279,12 +254,6 @@ function readCoreEngine(corePath: string): 'MV' | 'MZ' | undefined {
   } catch {
     return undefined;
   }
-}
-
-function hasLegacyMVRuntimeSignature(root: string): boolean {
-  return isDirectory(path.join(root, 'pnacl'))
-    && Boolean(findCaseInsensitiveFile(root, 'nacl_irt_x86_64.nexe'))
-    && Boolean(findCaseInsensitiveFile(root, 'nacl64.exe'));
 }
 
 function hasCompleteMZOfficialRuntime(root: string): boolean {

@@ -126,7 +126,46 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(running.run?.status, 'running');
     assert.equal(running.run?.executable, 'configured-rpg-maker-mv-nwjs');
     assert.equal(spawnCalls[0].executable, selectedExecutable);
-    assert.deepEqual(spawnCalls[0].args, [project]);
+    assert.deepEqual(spawnCalls[0].args, [project, 'test']);
+  });
+
+  test('reports the same effective runtime used by source-project launch', () => {
+    const selectedExecutable = path.join(root, 'runtime', 'game.exe');
+    const service = createService(root, {
+      resolveProjectRuntime: () => ({
+        runtime: {
+          engine: 'rpg-maker-mv',
+          executable: selectedExecutable,
+          runtimeRoot: path.dirname(selectedExecutable),
+          source: 'configured',
+          launchStyle: 'external',
+          evidenceExecutable: 'configured-rpg-maker-mv-nwjs',
+          privateExecutable: selectedExecutable,
+        },
+      }),
+    });
+    assert.deepEqual(service.runtimeInfo(project), {
+      engine: 'rpg-maker-mv',
+      source: 'configured',
+      executable: selectedExecutable,
+      configurable: true,
+      status: 'ready',
+    });
+  });
+
+  test('reports an invalid saved runtime without exposing a stale executable path', () => {
+    const service = createService(root, {
+      resolveProjectRuntime: () => ({
+        selectionRequired: { engine: 'rpg-maker-mv', reason: 'invalid' },
+      }),
+    });
+    assert.deepEqual(service.runtimeInfo(project), {
+      engine: 'rpg-maker-mv',
+      source: 'unavailable',
+      executable: null,
+      configurable: true,
+      status: 'invalid',
+    });
   });
 
   test('launches a source-only MZ project through a selected external nw.exe', async () => {

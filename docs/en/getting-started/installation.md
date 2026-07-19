@@ -10,7 +10,7 @@ Before using RPG Agent MV, prepare:
 - A working model provider, API key, and default model.
 - A local project path that RPG Agent MV can read.
 - A Git worktree for the RMMV project is recommended, so changes can be reviewed and organized.
-- Editing needs only an MV/MZ source project. The top-bar Play action prefers a project-local runtime. A source-only MZ project can use `nwjs-win/nw.exe` selected once from a local MZ installation; a source-only MV project first tries the standard installed `nwjs-win/Game.exe` and asks for it only when necessary. The app remembers each engine separately and never copies, downloads, or searches arbitrary game folders for a runner.
+- Editing needs only an MV/MZ source project. The top-bar Play action prefers a project-local runtime. A source-only MZ project can use `nwjs-win/nw.exe` from a local MZ installation; a source-only MV project uses the original editor playtest runner at `nwjs-win-test/Game.exe`. Right-click Play to inspect or change the current engine's runtime. The app remembers each engine separately and never copies, downloads, or searches arbitrary game folders for a runner.
 
 ## Get And Start
 
@@ -77,7 +77,7 @@ If any item fails, fix the environment or project setup before running complex e
 | Symptom | What to check |
 |---|---|
 | Project is not shown | Confirm the directory contains readable `data/System.json`, `MapInfos.json`, map files, and matching core scripts; an editor project marker is not required |
-| MV/MZ source project cannot start | For MZ, select `nwjs-win/nw.exe` from the MZ installation. For MV, select `nwjs-win/Game.exe`. Keep the complete NW.js payload beside that executable. MZ 1.10.0 is the fully validated baseline; another recognizable version may attempt a launch without receiving a complete compatibility guarantee. The selection is stored locally |
+| MV/MZ source project cannot start | For MZ, select `nwjs-win/nw.exe` from the MZ installation. For MV, select `nwjs-win-test/Game.exe`. Directory-only and MV deployment-runtime settings are rejected. Keep the complete NW.js payload beside that executable. MZ 1.10.0 is the fully validated baseline; another recognizable version may attempt a launch without receiving a complete compatibility guarantee. The selection is stored locally |
 | Model is unavailable | Check provider, API key, Base URL, and default model; see [Model And Runtime Checks](../faq/model-check.md) |
 | Map cannot open | Check map files, tilesets, and local assets |
 | App repeatedly crashes | Close the app, confirm backend processes have exited, then restart |

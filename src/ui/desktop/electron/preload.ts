@@ -174,6 +174,7 @@ contextBridge.exposeInMainWorld('api', {
     current: () => ipcRenderer.invoke('playtest:current'),
     stop: () => ipcRenderer.invoke('playtest:stop'),
     reveal: (runId: string) => ipcRenderer.invoke('playtest:reveal', runId),
+    selectRuntime: (engine: string) => ipcRenderer.invoke('playtest:selectRuntime', engine),
     onStatus: (callback: (payload: unknown) => void) => {
       const handler = (_event: unknown, payload: unknown) => callback(payload);
       ipcRenderer.on('playtest:status', handler);

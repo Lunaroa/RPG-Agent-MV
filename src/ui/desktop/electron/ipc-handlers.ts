@@ -16,6 +16,7 @@ import {
   DEFAULT_AGENT_EXECUTION_ENGINE,
   type InteractivePlaytestResult,
   type InteractivePlaytestRun,
+  type RpgMakerEngine,
   type WorkspaceSettings,
   type WorkspaceWindowState,
 } from '../../../contract/types.ts';
@@ -401,6 +402,7 @@ async function loadBackendModules(roots: AppRoots) {
     outline: await import(new URL('desktop/outline-service.ts', coreUrl).href),
     placementQueue: await import(new URL('desktop/placement-queue-service.ts', coreUrl).href),
     interactivePlaytest: await import(new URL('desktop/interactive-playtest-service.ts', coreUrl).href),
+    playtestRuntime: await import(new URL('desktop/interactive-playtest-runtime.ts', coreUrl).href),
   };
   const sessionRuntimeModule = await import(new URL('desktop/agent-session-runtime.ts', coreUrl).href);
   agentSessionRuntime = new sessionRuntimeModule.AgentSessionRuntime(roots.userDataRoot);
@@ -409,6 +411,12 @@ async function loadBackendModules(roots: AppRoots) {
     roots.userDataRoot,
     {
       onStatus: publishInteractivePlaytestStatus,
+      resolveProjectRuntime: (project: string, engine: RpgMakerEngine) => (
+        desktop.playtestRuntime.resolveInteractiveProjectRuntime(project, engine, {
+          configuredRuntimeRoot: getWorkspaceSettings().playtestRuntimes?.[engine],
+          officialRuntimeRoots: officialPlaytestRuntimeRoots(engine),
+        })
+      ),
     },
   );
 }
@@ -476,6 +484,20 @@ function sameResolvedPath(left: string, right: string): boolean {
     return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
   };
   return normalize(left) === normalize(right);
+}
+
+function officialPlaytestRuntimeRoots(engine: RpgMakerEngine): string[] {
+  const programRoots = [
+    process.env.ProgramFiles,
+    process.env['ProgramFiles(x86)'],
+  ].filter((value): value is string => Boolean(value && value.trim()));
+  const candidates = engine === 'rpg-maker-mv'
+    ? programRoots.map((root) => path.join(root, 'RPGMV', 'nwjs-win-test'))
+    : programRoots.flatMap((root) => [
+        path.join(root, 'KADOKAWA', 'RPGMZ', 'nwjs-win-test'),
+        path.join(root, 'Steam', 'steamapps', 'common', 'RPG Maker MZ', 'nwjs-win-test'),
+      ]);
+  return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
 }
 
 function requireInteractivePlaytestService(): any {
@@ -1076,6 +1098,24 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       const run = requireInteractivePlaytestService().getRun(runId) as InteractivePlaytestRun | null;
       if (!run || !fs.existsSync(run.artifactPath)) throw new Error('Interactive playtest evidence was not found.');
       shell.showItemInFolder(run.artifactPath);
+    },
+    selectRuntime: async (event, engine) => {
+      const parent = BrowserWindow.fromWebContents((event as Electron.IpcMainInvokeEvent).sender) || undefined;
+      const label = engine === 'rpg-maker-mv' ? 'MV' : 'MZ';
+      const result = await dialog.showOpenDialog(parent, {
+        title: electronText(currentProductLanguage(), 'playtest.selectRuntimeTitle', { engine: label }),
+        properties: ['openDirectory'],
+      });
+      if (result.canceled || !result.filePaths[0]) {
+        return { canceled: true, engine, configured: false };
+      }
+      if (!desktop.playtestRuntime.validateSelectedInteractiveProjectRuntime(result.filePaths[0], engine)) {
+        throw new Error(electronText(currentProductLanguage(), 'playtest.invalidRuntime', { engine: label }));
+      }
+      patchWorkspaceSettings({
+        playtestRuntimes: { [engine]: result.filePaths[0] },
+      });
+      return { canceled: false, engine, configured: true };
     },
   });
 

@@ -65,6 +65,16 @@ describe('map parallax preview payload', { concurrency: false }, () => {
     assert.deepEqual(buildMapPayload(root, project, 1).resourceWarnings, []);
   });
 
+  test('includes the tileset mode required by the live automatic-layer preview', () => {
+    writeJson(path.join(project, 'www', 'data', 'Tilesets.json'), [
+      null,
+      { id: 1, name: 'Outdoor', mode: 0, tilesetNames: [], flags: [] },
+    ]);
+    writeMap({ tilesetId: 1, parallaxName: '', parallaxShow: false });
+
+    assert.equal(buildMapPayload(root, project, 1).tileset?.mode, 0);
+  });
+
   test('keeps missing maps in the tree with an explicit availability flag', () => {
     writeJson(path.join(project, 'www', 'data', 'MapInfos.json'), [
       null,

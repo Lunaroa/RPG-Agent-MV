@@ -149,6 +149,7 @@ export interface MapPayload {
   tileset: {
     id: number;
     name: string;
+    mode: number | null;
     tilesetNames: string[];
     flags: number[];
     imageUrls: (string | null)[];
@@ -502,6 +503,17 @@ export interface InteractivePlaytestStartRequest {
   animationPreview?: InteractiveParticleAnimationPreview;
 }
 
+export interface InteractivePlaytestRuntimeSelectionRequired {
+  engine: RpgMakerEngine;
+  reason: 'missing' | 'invalid';
+}
+
+export interface InteractivePlaytestRuntimeSelectionResult {
+  canceled: boolean;
+  engine: RpgMakerEngine;
+  configured: boolean;
+}
+
 export interface InteractivePlaytestStagingSummary {
   fileCount: number;
   operationCount: number;
@@ -549,6 +561,7 @@ export interface InteractivePlaytestRun {
 
 export interface InteractivePlaytestResult {
   confirmationRequired: boolean;
+  runtimeSelectionRequired?: InteractivePlaytestRuntimeSelectionRequired;
   stagingSummary?: InteractivePlaytestStagingSummary;
   stagingSummaryHash?: string;
   run?: InteractivePlaytestRun;
@@ -1067,6 +1080,7 @@ export interface WorkspaceEditorProjectState {
 export interface WorkspaceSettings {
   lastProjectPath?: string;
   suppressProjectCompatibilityWarnings?: boolean;
+  playtestRuntimes?: Partial<Record<RpgMakerEngine, string>>;
   window?: WorkspaceWindowState;
   layout?: WorkspaceLayoutState;
   composer?: WorkspaceComposerState;

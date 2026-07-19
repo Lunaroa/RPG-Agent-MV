@@ -142,6 +142,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
     tileset: tileset ? {
       id: Number(tileset.id),
       name: String(tileset.name || ''),
+      mode: Number.isInteger(Number(tileset.mode)) ? Number(tileset.mode) : null,
       tilesetNames: names,
       flags: Array.isArray(tileset.flags) ? tileset.flags : [],
       imageUrls: names.map((name: string) => name ? projectTilesetImageUrl(workflowRoot, project, name) : null),

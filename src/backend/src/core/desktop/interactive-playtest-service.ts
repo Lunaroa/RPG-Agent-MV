@@ -33,6 +33,11 @@ import {
   resolveRpgMakerMZProjectRuntime,
   type RpgMakerMZProjectRuntime,
 } from './rpg-maker-mz-runtime.ts';
+import {
+  resolveInteractiveProjectRuntime,
+  type InteractiveProjectRuntime,
+  type InteractiveProjectRuntimeResolution,
+} from './interactive-playtest-runtime.ts';
 
 export interface InteractivePlaytestStream extends EventEmitter {
   on(event: 'data', listener: (chunk: Buffer | string) => void): this;
@@ -67,6 +72,7 @@ export interface InteractivePlaytestDependencies {
   onStatus: (run: InteractivePlaytestRun) => void;
   inspectProject: (project: string) => { engine: RpgMakerEngine; editable: boolean; missingRequired: string[] };
   resolveMZRuntime: (projectDirectory: string) => RpgMakerMZProjectRuntime;
+  resolveProjectRuntime: (projectDirectory: string, engine: RpgMakerEngine) => InteractiveProjectRuntimeResolution;
   prepareBattleTest: (
     workflowRoot: string,
     project: string,
@@ -138,6 +144,7 @@ export class InteractivePlaytestService {
       onStatus: dependencies.onStatus || (() => undefined),
       inspectProject: dependencies.inspectProject || inspectRmmvProject,
       resolveMZRuntime: dependencies.resolveMZRuntime || resolveRpgMakerMZProjectRuntime,
+      resolveProjectRuntime: dependencies.resolveProjectRuntime || resolveInteractiveProjectRuntime,
       prepareBattleTest: dependencies.prepareBattleTest || prepareBattleTestProject,
       prepareParticlePreview: dependencies.prepareParticlePreview || prepareParticleAnimationPreview,
       verifyIsolatedSource: dependencies.verifyIsolatedSource || verifyIsolatedSourceState,
@@ -204,30 +211,26 @@ export class InteractivePlaytestService {
     }
 
     let mzRuntime: RpgMakerMZProjectRuntime | null = null;
-    if (engine === 'rpg-maker-mz') {
-      try {
-        mzRuntime = this.#dependencies.resolveMZRuntime(project);
-      } catch (error) {
-        return {
-          confirmationRequired: false,
-          error: errorMessage(error),
-        };
-      }
-    }
-
+    let projectRuntime: InteractiveProjectRuntime | null = null;
     let launchProject = project;
-    let executable = engine === 'rpg-maker-mz'
-      ? mzRuntime!.executable
-      : path.join(project, 'Game.exe');
-    let evidenceExecutable = engine === 'rpg-maker-mz'
-      ? 'project-local-rpg-maker-mz-nwjs'
-      : executable;
+    let executable = '';
+    let evidenceExecutable = '';
+    let privateExecutable = '';
     let battlePreparation: BattleTestProjectPreparation | null = null;
     let particlePreparation: ParticleAnimationPreviewPreparation | null = null;
     if (mode === 'project') {
-      if (engine === 'rpg-maker-mv' && !isFile(executable)) {
-        return { confirmationRequired: false, error: `Game.exe was not found in the current project root: ${executable}` };
+      const resolution = this.#dependencies.resolveProjectRuntime(project, engine);
+      if (resolution.selectionRequired) {
+        return {
+          confirmationRequired: false,
+          runtimeSelectionRequired: resolution.selectionRequired,
+        };
       }
+      if (!resolution.runtime) return { confirmationRequired: false, error: 'The RPG Maker playtest runtime could not be resolved.' };
+      projectRuntime = resolution.runtime;
+      executable = projectRuntime.executable;
+      evidenceExecutable = projectRuntime.evidenceExecutable;
+      privateExecutable = projectRuntime.privateExecutable || '';
       let staging: StagingConfirmation;
       try {
         staging = buildStagingConfirmation(this.#dependencies.getStagingStatus(this.#workflowRoot, project));
@@ -241,7 +244,22 @@ export class InteractivePlaytestService {
           stagingSummaryHash: staging.hash,
         };
       }
-    } else if (mode === 'battle_test') {
+    } else {
+      if (engine === 'rpg-maker-mz') {
+        try {
+          mzRuntime = this.#dependencies.resolveMZRuntime(project);
+          executable = mzRuntime.executable;
+          evidenceExecutable = 'project-local-rpg-maker-mz-nwjs';
+        } catch (error) {
+          return { confirmationRequired: false, error: errorMessage(error) };
+        }
+      } else {
+        executable = path.join(project, 'Game.exe');
+        evidenceExecutable = executable;
+      }
+    }
+
+    if (mode === 'battle_test') {
       try {
         battlePreparation = this.#dependencies.prepareBattleTest(this.#workflowRoot, project, {
           troopId: requirePositiveInteger(options.troopId, 'Battle Test troopId'),
@@ -283,7 +301,7 @@ export class InteractivePlaytestService {
         try { this.#dependencies.cleanupIsolated(particlePreparation); } catch { /* Report the engine mismatch first. */ }
         return { confirmationRequired: false, error: 'Particle preview project engine changed while preparing the isolated copy.' };
       }
-    } else {
+    } else if (mode !== 'project') {
       return { confirmationRequired: false, error: `Unsupported interactive playtest mode: ${String(mode)}` };
     }
 
@@ -339,9 +357,11 @@ export class InteractivePlaytestService {
 
       let child: InteractivePlaytestChild;
       try {
-        const args = engine === 'rpg-maker-mz'
-          ? [launchProject, ...(mode === 'battle_test' ? ['test&btest'] : [])]
-          : mode === 'battle_test' ? ['test&btest'] : [];
+        const args = mode === 'project'
+          ? projectRuntime?.launchStyle === 'external' ? [launchProject] : []
+          : engine === 'rpg-maker-mz'
+            ? [launchProject, ...(mode === 'battle_test' ? ['test&btest'] : [])]
+            : mode === 'battle_test' ? ['test&btest'] : [];
         child = this.#dependencies.spawnProcess(executable, args, {
           cwd: launchProject,
           windowsHide: false,
@@ -349,13 +369,14 @@ export class InteractivePlaytestService {
           stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (error) {
-        this.#finishWithIsolation('failed', { error: redactMZRuntimePath(errorMessage(error), mzRuntime) });
+        this.#finishWithIsolation('failed', { error: redactRuntimePath(errorMessage(error), privateExecutable || mzRuntime?.executable || '') });
         resolveStart();
         return;
       }
       this.#child = child;
-      const flushStdout = attachOutput(child.stdout, run.stdoutPath, run.logPath, mzRuntime);
-      const flushStderr = attachOutput(child.stderr, run.stderrPath, run.logPath, mzRuntime);
+      const outputRuntimeExecutable = privateExecutable || mzRuntime?.executable || '';
+      const flushStdout = attachOutput(child.stdout, run.stdoutPath, run.logPath, outputRuntimeExecutable);
+      const flushStderr = attachOutput(child.stderr, run.stderrPath, run.logPath, outputRuntimeExecutable);
       const flushOutput = () => {
         flushStdout();
         flushStderr();
@@ -370,7 +391,7 @@ export class InteractivePlaytestService {
         if (!this.#isCurrent(runId) || TERMINAL_STATUSES.has(this.#currentRun!.status)) return;
         flushOutput();
         this.#child = null;
-        this.#finishWithIsolation('failed', { error: redactMZRuntimePath(error.message, mzRuntime) });
+        this.#finishWithIsolation('failed', { error: redactRuntimePath(error.message, outputRuntimeExecutable) });
         resolveStart();
       });
       child.once('exit', (code: number | null, signal: NodeJS.Signals | null) => {
@@ -629,9 +650,9 @@ function attachOutput(
   stream: InteractivePlaytestStream | null,
   outputPath: string,
   logPath: string,
-  mzRuntime: RpgMakerMZProjectRuntime | null,
+  runtimeExecutable: string,
 ): () => void {
-  const sanitizer = createRpgMakerMZRuntimeOutputSanitizer(mzRuntime?.executable || '');
+  const sanitizer = createRpgMakerMZRuntimeOutputSanitizer(runtimeExecutable);
   const append = (value: string | Buffer) => {
     const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8');
     if (bytes.length === 0) return;
@@ -643,7 +664,7 @@ function attachOutput(
   };
   stream?.on('data', (chunk) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
-    if (!mzRuntime) {
+    if (!runtimeExecutable) {
       append(bytes);
       return;
     }
@@ -732,10 +753,6 @@ function cloneRun(run: InteractivePlaytestRun): InteractivePlaytestRun {
   return structuredClone(run);
 }
 
-function isFile(filePath: string): boolean {
-  return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
@@ -750,9 +767,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function redactMZRuntimePath(
-  message: string,
-  runtime: RpgMakerMZProjectRuntime | null,
-): string {
-  return redactRpgMakerMZRuntimePath(message, runtime?.executable || '');
+function redactRuntimePath(message: string, executable: string): string {
+  return redactRpgMakerMZRuntimePath(message, executable);
 }

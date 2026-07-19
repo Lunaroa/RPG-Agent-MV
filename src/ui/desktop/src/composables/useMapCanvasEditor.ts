@@ -2,7 +2,10 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from
 import type { TileEdit } from '../api/client';
 import type { EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapTool, PaletteTab, PaletteTabId, TileTab } from '../components/editor/editorTypes';
 import type { ProductLanguage, RpgMakerEngine } from '../../../../contract/types.ts';
-import { applyRmmvMapBrushEdits } from '../../../../contract/rmmv-map-brush.ts';
+import {
+  applyRmmvMapBrushEdits,
+  RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+} from '../../../../contract/rmmv-map-brush.ts';
 import { EDITOR_DEFAULT_ZOOM } from './useEditorWorkspaceState';
 import {
   AUTOTILE_KINDS,
@@ -1425,7 +1428,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     const result = applyRmmvMapBrushEdits(map, accepted, {
       engine: options.engine.value,
       tilesetMode: options.tilesetMode.value,
-      autotileResolution: 'affected',
+      autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
       mutate: true,
       collectChanges: false,
     });

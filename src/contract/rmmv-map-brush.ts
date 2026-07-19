@@ -13,6 +13,7 @@ export const RMMV_PAINT_LAYERS = 4;
 export const RMMV_SHADOW_LAYER = 4;
 export const RMMV_REGION_LAYER = 5;
 export const RMMV_MAP_LAYERS = 6;
+export const RMMV_INTERACTIVE_AUTOTILE_RESOLUTION = 'affected' as const;
 
 export interface RmmvBrushMap {
   width: number;

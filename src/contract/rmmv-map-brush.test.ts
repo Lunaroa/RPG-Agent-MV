@@ -4,6 +4,7 @@ import { describe, test } from 'node:test';
 import type { TileEdit } from './types.ts';
 import {
   applyRmmvMapBrushEdits,
+  RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
   RMMV_MAP_LAYERS,
   RMMV_TILE_ID_A1,
   type RmmvBrushMap,
@@ -16,6 +17,19 @@ function blankMap(width = 4, height = 4): RmmvBrushMap {
 function tileAt(map: RmmvBrushMap, layer: number, x: number, y: number): number {
   return map.data[layer * map.width * map.height + y * map.width + x] || 0;
 }
+
+function setTile(map: RmmvBrushMap, layer: number, x: number, y: number, tileId: number): void {
+  map.data[layer * map.width * map.height + y * map.width + x] = tileId;
+}
+
+const representativeAutotiles = [
+  { label: 'A1 floor', kind: 0, exactShape: 47 },
+  { label: 'A1 waterfall', kind: 5, exactShape: 3 },
+  { label: 'A2 floor', kind: 16, exactShape: 47 },
+  { label: 'A3 wall', kind: 48, exactShape: 15 },
+  { label: 'A4 floor', kind: 80, exactShape: 47 },
+  { label: 'A4 wall', kind: 88, exactShape: 15 },
+] as const;
 
 describe('shared RMMV map brush core', () => {
   test('previews automatic upper-layer stacking in the same order as the final batch', () => {
@@ -54,6 +68,124 @@ describe('shared RMMV map brush core', () => {
     assert.deepEqual(affected.data, full.data);
     assert.ok(affected.touchedIndices.length <= 18);
     assert.ok(affected.data.some((tileId) => tileId >= RMMV_TILE_ID_A1));
+  });
+
+  test('keeps affected-neighbour resolution identical to a full pass for canonical A1-A4 maps', () => {
+    for (const engine of ['rpg-maker-mv', 'rpg-maker-mz'] as const) {
+      for (const autotile of representativeAutotiles) {
+        const seed = blankMap(7, 5);
+        const initial = applyRmmvMapBrushEdits(seed, [
+          { kind: 'autotile', x: 1, y: 1, layer: 0, autotileKind: autotile.kind },
+          { kind: 'autotile', x: 2, y: 1, layer: 0, autotileKind: autotile.kind },
+          { kind: 'autotile', x: 1, y: 2, layer: 0, autotileKind: autotile.kind },
+        ], { engine, tilesetMode: 1, autotileResolution: 'full' });
+        const valid = { ...seed, data: initial.data };
+        const edits: TileEdit[] = [
+          { kind: 'autotile', x: 2, y: 2, layer: 0, autotileKind: autotile.kind },
+          { kind: 'autotile', x: 3, y: 2, layer: 0, autotileKind: autotile.kind },
+        ];
+
+        const full = applyRmmvMapBrushEdits(valid, edits, {
+          engine,
+          tilesetMode: 1,
+          autotileResolution: 'full',
+        });
+        const affected = applyRmmvMapBrushEdits(valid, edits, {
+          engine,
+          tilesetMode: 1,
+          autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+        });
+
+        assert.deepEqual(affected.data, full.data, `${engine} ${autotile.label}`);
+      }
+    }
+  });
+
+  test('does not rewrite distant exact A1-A4 shapes during an interactive stroke', () => {
+    for (const engine of ['rpg-maker-mv', 'rpg-maker-mz'] as const) {
+      for (const autotile of representativeAutotiles) {
+        const map = blankMap(9, 5);
+        const distantTileId = RMMV_TILE_ID_A1 + autotile.kind * 48 + autotile.exactShape;
+        setTile(map, 0, 7, 3, distantTileId);
+
+        const result = applyRmmvMapBrushEdits(map, [
+          { kind: 'autotile', x: 1, y: 1, layer: 0, autotileKind: autotile.kind },
+        ], {
+          engine,
+          tilesetMode: 1,
+          autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+        });
+        const rendered = { ...map, data: result.data };
+
+        assert.equal(tileAt(rendered, 0, 7, 3), distantTileId, `${engine} ${autotile.label}`);
+        assert.ok(
+          result.changes.every((change) => Math.abs(change.x - 1) <= 1 && Math.abs(change.y - 1) <= 1),
+          `${engine} ${autotile.label} changed a distant cell`,
+        );
+      }
+    }
+  });
+
+  test('produces the same final data for incremental preview and one persisted batch', () => {
+    const path: TileEdit[] = [
+      { kind: 'autotile', x: 1, y: 1, layer: 0, autotileKind: 16 },
+      { kind: 'autotile', x: 2, y: 1, layer: 0, autotileKind: 16 },
+      { kind: 'autotile', x: 3, y: 1, layer: 0, autotileKind: 16 },
+      { kind: 'autotile', x: 3, y: 2, layer: 0, autotileKind: 16 },
+      { kind: 'autotile', x: 3, y: 3, layer: 0, autotileKind: 16 },
+    ];
+    const seed = blankMap(7, 5);
+    const preview = { ...seed, data: seed.data.slice() };
+    for (const edit of path) {
+      applyRmmvMapBrushEdits(preview, [edit], {
+        engine: 'rpg-maker-mv',
+        tilesetMode: 1,
+        autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+        mutate: true,
+        collectChanges: false,
+      });
+    }
+    const persisted = applyRmmvMapBrushEdits(seed, path, {
+      engine: 'rpg-maker-mv',
+      tilesetMode: 1,
+      autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+    });
+
+    assert.deepEqual(preview.data, persisted.data);
+  });
+
+  test('keeps incremental erase preview identical to the persisted erase batch', () => {
+    const seed = blankMap(7, 5);
+    const painted = applyRmmvMapBrushEdits(seed, [
+      { kind: 'autotile', x: 1, y: 1, layer: 0, autotileKind: 16 },
+      { kind: 'autotile', x: 2, y: 1, layer: 0, autotileKind: 16 },
+      { kind: 'autotile', x: 3, y: 1, layer: 0, autotileKind: 16 },
+      { kind: 'autotile', x: 1, y: 2, layer: 0, autotileKind: 16 },
+      { kind: 'autotile', x: 2, y: 2, layer: 0, autotileKind: 16 },
+      { kind: 'autotile', x: 3, y: 2, layer: 0, autotileKind: 16 },
+    ], { engine: 'rpg-maker-mv', tilesetMode: 1, autotileResolution: 'full' });
+    const valid = { ...seed, data: painted.data };
+    const erases: TileEdit[] = [
+      { kind: 'tile', x: 2, y: 1, layer: 0, tileId: 0 },
+      { kind: 'tile', x: 2, y: 2, layer: 0, tileId: 0 },
+    ];
+    const preview = { ...valid, data: valid.data.slice() };
+    for (const edit of erases) {
+      applyRmmvMapBrushEdits(preview, [edit], {
+        engine: 'rpg-maker-mv',
+        tilesetMode: 1,
+        autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+        mutate: true,
+        collectChanges: false,
+      });
+    }
+    const persisted = applyRmmvMapBrushEdits(valid, erases, {
+      engine: 'rpg-maker-mv',
+      tilesetMode: 1,
+      autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+    });
+
+    assert.deepEqual(preview.data, persisted.data);
   });
 
   test('mutates only the current preview map and skips whole-map change collection', () => {

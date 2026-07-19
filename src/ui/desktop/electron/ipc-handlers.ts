@@ -493,10 +493,8 @@ function officialPlaytestRuntimeRoots(engine: RpgMakerEngine): string[] {
     process.env['ProgramFiles(x86)'],
   ].filter((value): value is string => Boolean(value && value.trim()));
   const candidates = programRoots.flatMap((root) => [
-    path.join(root, 'RPGMV', 'nwjs-win'),
-    path.join(root, 'RPGMV', 'nwjs-win-test'),
-    path.join(root, 'Steam', 'steamapps', 'common', 'RPG Maker MV', 'nwjs-win'),
-    path.join(root, 'Steam', 'steamapps', 'common', 'RPG Maker MV', 'nwjs-win-test'),
+    path.join(root, 'RPGMV', 'nwjs-win-test', 'Game.exe'),
+    path.join(root, 'Steam', 'steamapps', 'common', 'RPG Maker MV', 'nwjs-win-test', 'Game.exe'),
   ]);
   return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
 }
@@ -508,6 +506,10 @@ function invalidPlaytestRuntimeMessage(
 ): string {
   const params = { engine: engineLabel, file: fileName };
   switch (reason) {
+    case 'legacy-location':
+      return electronText(currentProductLanguage(), 'playtest.invalidRuntimeLegacyLocation', params);
+    case 'deployment-runtime':
+      return electronText(currentProductLanguage(), 'playtest.invalidRuntimeDeploymentRuntime', params);
     case 'wrong-file':
       return electronText(currentProductLanguage(), 'playtest.invalidRuntimeWrongFile', params);
     case 'not-executable':
@@ -1127,28 +1129,30 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       const { engine, reason } = request;
       const label = engine === 'rpg-maker-mv' ? 'MV' : 'MZ';
       const fileName = engine === 'rpg-maker-mz' ? 'nw.exe' : 'Game.exe';
-      const prompt = await dialog.showMessageBox(parent, {
-        type: reason === 'invalid' ? 'warning' : 'info',
-        title: electronText(currentProductLanguage(), 'playtest.selectRuntimePromptTitle', { engine: label }),
-        message: electronText(
-          currentProductLanguage(),
-          reason === 'invalid' ? 'playtest.selectRuntimeInvalidMessage' : 'playtest.selectRuntimeMissingMessage',
-          { engine: label },
-        ),
-        detail: electronText(
-          currentProductLanguage(),
-          engine === 'rpg-maker-mz' ? 'playtest.selectRuntimeMZDetail' : 'playtest.selectRuntimeMVDetail',
-        ),
-        buttons: [
-          electronText(currentProductLanguage(), 'playtest.selectRuntimeChoose', { file: fileName }),
-          electronText(currentProductLanguage(), 'playtest.selectRuntimeCancel'),
-        ],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-      });
-      if (prompt.response !== 0) {
-        return { canceled: true, engine, configured: false };
+      if (reason !== 'change') {
+        const prompt = await dialog.showMessageBox(parent, {
+          type: reason === 'invalid' ? 'warning' : 'info',
+          title: electronText(currentProductLanguage(), 'playtest.selectRuntimePromptTitle', { engine: label }),
+          message: electronText(
+            currentProductLanguage(),
+            reason === 'invalid' ? 'playtest.selectRuntimeInvalidMessage' : 'playtest.selectRuntimeMissingMessage',
+            { engine: label },
+          ),
+          detail: electronText(
+            currentProductLanguage(),
+            engine === 'rpg-maker-mz' ? 'playtest.selectRuntimeMZDetail' : 'playtest.selectRuntimeMVDetail',
+          ),
+          buttons: [
+            electronText(currentProductLanguage(), 'playtest.selectRuntimeChoose', { file: fileName }),
+            electronText(currentProductLanguage(), 'playtest.selectRuntimeCancel'),
+          ],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (prompt.response !== 0) {
+          return { canceled: true, engine, configured: false };
+        }
       }
 
       for (;;) {
@@ -1181,7 +1185,10 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
           message: invalidPlaytestRuntimeMessage(validation.reason, label, fileName),
           buttons: [
             electronText(currentProductLanguage(), 'playtest.selectRuntimeRetry'),
-            electronText(currentProductLanguage(), 'playtest.selectRuntimeCancel'),
+            electronText(
+              currentProductLanguage(),
+              reason === 'change' ? 'playtest.selectRuntimeCancelChange' : 'playtest.selectRuntimeCancel',
+            ),
           ],
           defaultId: 0,
           cancelId: 1,

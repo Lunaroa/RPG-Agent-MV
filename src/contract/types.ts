@@ -505,13 +505,21 @@ export interface InteractivePlaytestStartRequest {
 
 export interface InteractivePlaytestRuntimeSelectionRequired {
   engine: RpgMakerEngine;
-  reason: 'missing' | 'invalid';
+  reason: 'missing' | 'invalid' | 'change';
 }
 
 export interface InteractivePlaytestRuntimeSelectionResult {
   canceled: boolean;
   engine: RpgMakerEngine;
   configured: boolean;
+}
+
+export interface InteractivePlaytestRuntimeInfo {
+  engine: RpgMakerEngine;
+  source: 'project-local' | 'configured' | 'official-install' | 'unavailable';
+  executable: string | null;
+  configurable: boolean;
+  status: 'ready' | 'missing' | 'invalid';
 }
 
 export interface InteractivePlaytestStagingSummary {

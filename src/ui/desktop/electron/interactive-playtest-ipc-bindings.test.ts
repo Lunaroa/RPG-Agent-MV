@@ -24,6 +24,10 @@ describe('interactive playtest IPC bindings', () => {
         calls.push(['current']);
         return { confirmationRequired: false };
       },
+      runtimeInfo(project: string) {
+        calls.push(['runtimeInfo', project]);
+        return { engine: 'rpg-maker-mv' as const, source: 'official-install' as const, executable: 'runtime/Game.exe', configurable: true, status: 'ready' as const };
+      },
       async stop() {
         calls.push(['stop']);
         return { confirmationRequired: false };
@@ -48,9 +52,11 @@ describe('interactive playtest IPC bindings', () => {
       confirmedStagingHash: 'summary-hash',
     });
     await handlers.get('playtest:current')?.(null);
+    await handlers.get('playtest:runtimeInfo')?.(null, { project: 'projects/sample' });
     await handlers.get('playtest:stop')?.(null);
     await handlers.get('playtest:reveal')?.(null, 'run-1');
     await handlers.get('playtest:selectRuntime')?.(null, { engine: 'rpg-maker-mv', reason: 'missing' });
+    await handlers.get('playtest:selectRuntime')?.(null, { engine: 'rpg-maker-mz', reason: 'change' });
 
     assert.deepEqual(calls, [
       ['start', 'resolved:projects/sample', {
@@ -59,9 +65,11 @@ describe('interactive playtest IPC bindings', () => {
         confirmedStagingHash: 'summary-hash',
       }],
       ['current'],
+      ['runtimeInfo', 'resolved:projects/sample'],
       ['stop'],
       ['reveal', 'run-1'],
       ['selectRuntime', { engine: 'rpg-maker-mv', reason: 'missing' }],
+      ['selectRuntime', { engine: 'rpg-maker-mz', reason: 'change' }],
     ]);
 
     cleanupInteractivePlaytestIpcHandlers(ipc);
@@ -73,6 +81,7 @@ describe('interactive playtest IPC bindings', () => {
     const service = {
       start: async () => ({ confirmationRequired: false }),
       current: () => ({ confirmationRequired: false }),
+      runtimeInfo: () => ({ engine: 'rpg-maker-mv' as const, source: 'unavailable' as const, executable: null, configurable: true, status: 'missing' as const }),
       stop: async () => ({ confirmationRequired: false }),
     };
     registerInteractivePlaytestIpcHandlers({
@@ -92,7 +101,7 @@ describe('interactive playtest IPC bindings', () => {
     );
     await assert.rejects(
       () => handlers.get('playtest:selectRuntime')?.(null, { engine: 'rpg-maker-mz', reason: 'other' }) as Promise<unknown>,
-      /reason must be missing or invalid/i,
+      /reason must be missing, invalid, or change/i,
     );
   });
 
@@ -105,6 +114,7 @@ describe('interactive playtest IPC bindings', () => {
         return { confirmationRequired: false };
       },
       current: () => ({ confirmationRequired: false }),
+      runtimeInfo: () => ({ engine: 'rpg-maker-mv' as const, source: 'unavailable' as const, executable: null, configurable: true, status: 'missing' as const }),
       stop: async () => ({ confirmationRequired: false }),
     };
     registerInteractivePlaytestIpcHandlers({
@@ -155,6 +165,7 @@ describe('interactive playtest IPC bindings', () => {
         return { confirmationRequired: false };
       },
       current: () => ({ confirmationRequired: false }),
+      runtimeInfo: () => ({ engine: 'rpg-maker-mz' as const, source: 'unavailable' as const, executable: null, configurable: true, status: 'missing' as const }),
       stop: async () => ({ confirmationRequired: false }),
     };
     registerInteractivePlaytestIpcHandlers({

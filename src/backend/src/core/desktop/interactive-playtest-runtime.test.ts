@@ -5,10 +5,6 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import {
-  RPG_MAKER_MZ_REQUIRED_PROJECT_RUNTIME_FILES,
-  RPG_MAKER_MZ_REQUIRED_WEB_RUNTIME_FILES,
-} from './rpg-maker-mz-runtime.ts';
-import {
   inspectSelectedInteractiveProjectRuntime,
   RPG_MAKER_MZ_REQUIRED_OFFICIAL_RUNTIME_FILES,
   resolveInteractiveProjectRuntime,
@@ -38,20 +34,18 @@ describe('interactive project runtime resolution', () => {
   });
 
   test('uses a saved MV runtime for a source-only project', () => {
-    const configured = path.join(root, 'configured-runtime');
-    createMVRuntime(configured, false);
+    const configured = createMVOfficialTestRuntime(path.join(root, 'mv-install'));
     const result = resolveInteractiveProjectRuntime(source, 'rpg-maker-mv', {
       configuredRuntimeRoot: configured,
     });
     assert.equal(result.runtime?.source, 'configured');
     assert.equal(result.runtime?.launchStyle, 'external');
-    assert.equal(result.runtime?.privateExecutable, path.join(configured, 'game.exe'));
+    assert.equal(result.runtime?.privateExecutable, configured);
     assert.equal(result.runtime?.evidenceExecutable, 'configured-rpg-maker-mv-nwjs');
   });
 
   test('uses a complete saved MZ 1.10.0 runtime for a source-only project', () => {
-    const configured = path.join(root, 'configured-runtime');
-    createMZRuntime(configured);
+    const configured = createMZOfficialRuntime(path.join(root, 'mz-install'));
     const result = resolveInteractiveProjectRuntime(source, 'rpg-maker-mz', {
       configuredRuntimeRoot: configured,
     });
@@ -73,29 +67,67 @@ describe('interactive project runtime resolution', () => {
     assert.equal(validateSelectedInteractiveProjectRuntime(executable, 'rpg-maker-mz'), true);
   });
 
-  test('accepts the legacy saved-directory form for an official MZ nwjs-win runtime', () => {
+  test('rejects the legacy saved-directory form for an official MZ nwjs-win runtime', () => {
     const install = path.join(root, 'mz-install');
     const executable = createMZOfficialRuntime(install);
     const result = resolveInteractiveProjectRuntime(source, 'rpg-maker-mz', {
       configuredRuntimeRoot: path.dirname(executable),
     });
-    assert.equal(result.runtime?.privateExecutable, executable);
+    assert.deepEqual(result.selectionRequired, { engine: 'rpg-maker-mz', reason: 'invalid' });
+    assert.deepEqual(
+      inspectSelectedInteractiveProjectRuntime(path.dirname(executable), 'rpg-maker-mz'),
+      { valid: false, reason: 'legacy-location' },
+    );
   });
 
-  test('uses the standard official MV nwjs-win runtime without the old test-runtime signature', () => {
+  test('skips the MV deployment runtime and uses the official nwjs-win-test runtime', () => {
     const install = path.join(root, 'mv-install');
-    const executable = createMVOfficialRuntime(install);
+    const deploymentExecutable = createMVOfficialRuntime(install);
+    const executable = createMVOfficialTestRuntime(install);
     const result = resolveInteractiveProjectRuntime(source, 'rpg-maker-mv', {
-      officialRuntimeRoots: [path.dirname(executable)],
+      officialRuntimeRoots: [deploymentExecutable, executable],
     });
     assert.equal(result.runtime?.source, 'official-install');
     assert.equal(result.runtime?.privateExecutable, executable);
     assert.equal(validateSelectedInteractiveProjectRuntime(executable, 'rpg-maker-mv'), true);
+    assert.deepEqual(
+      inspectSelectedInteractiveProjectRuntime(deploymentExecutable, 'rpg-maker-mv'),
+      { valid: false, reason: 'deployment-runtime' },
+    );
+  });
+
+  test('does not launch a source-only MV project when only the deployment runtime exists', () => {
+    const deploymentExecutable = createMVOfficialRuntime(path.join(root, 'mv-install'));
+    const result = resolveInteractiveProjectRuntime(source, 'rpg-maker-mv', {
+      officialRuntimeRoots: [deploymentExecutable],
+    });
+    assert.deepEqual(result.selectionRequired, { engine: 'rpg-maker-mv', reason: 'missing' });
+
+    const configured = resolveInteractiveProjectRuntime(source, 'rpg-maker-mv', {
+      configuredRuntimeRoot: deploymentExecutable,
+    });
+    assert.deepEqual(configured.selectionRequired, { engine: 'rpg-maker-mv', reason: 'invalid' });
+  });
+
+  test('rejects an MV test runner when an adjacent deployment manifest can take over the entry point', () => {
+    const executable = createMVOfficialTestRuntime(path.join(root, 'mv-install'));
+    writeFixture(path.join(path.dirname(executable), 'package.json'), false, '{"main":"www/index.html"}');
+    assert.deepEqual(
+      inspectSelectedInteractiveProjectRuntime(executable, 'rpg-maker-mv'),
+      { valid: false, reason: 'deployment-runtime' },
+    );
+  });
+
+  test('rejects legacy MV directory settings instead of migrating them', () => {
+    const executable = createMVOfficialTestRuntime(path.join(root, 'mv-install'));
+    assert.deepEqual(
+      inspectSelectedInteractiveProjectRuntime(path.dirname(executable), 'rpg-maker-mv'),
+      { valid: false, reason: 'legacy-location' },
+    );
   });
 
   test('allows a complete older MZ runtime to be selected for a trial launch', () => {
-    const configured = path.join(root, 'configured-runtime');
-    createMZRuntime(configured, '1.9.0');
+    const configured = createMZOfficialRuntime(path.join(root, 'mz-install'), '1.9.0');
     const result = resolveInteractiveProjectRuntime(source, 'rpg-maker-mz', {
       configuredRuntimeRoot: configured,
     });
@@ -115,10 +147,8 @@ describe('interactive project runtime resolution', () => {
   });
 
   test('accepts only complete matching manual selections', () => {
-    const mv = path.join(root, 'mv-runtime');
-    const mz = path.join(root, 'mz-runtime');
-    createMVRuntime(mv, false);
-    createMZRuntime(mz);
+    const mv = createMVOfficialTestRuntime(path.join(root, 'mv-install'));
+    const mz = createMZOfficialRuntime(path.join(root, 'mz-install'));
     assert.equal(validateSelectedInteractiveProjectRuntime(mv, 'rpg-maker-mv'), true);
     assert.equal(validateSelectedInteractiveProjectRuntime(mv, 'rpg-maker-mz'), false);
     assert.equal(validateSelectedInteractiveProjectRuntime(mz, 'rpg-maker-mz'), true);
@@ -153,21 +183,6 @@ function createMVRuntime(root: string, includeCore: boolean): void {
   }
 }
 
-function createMZRuntime(root: string, version = '1.10.0'): void {
-  for (const relative of [
-    ...RPG_MAKER_MZ_REQUIRED_PROJECT_RUNTIME_FILES,
-    ...RPG_MAKER_MZ_REQUIRED_WEB_RUNTIME_FILES,
-  ]) {
-    writeFixture(path.join(root, ...relative.split('/')), relative === 'Game.exe');
-  }
-  writeFixture(
-    path.join(root, 'js', 'rmmz_core.js'),
-    false,
-    `Utils.RPGMAKER_NAME = "MZ";\nUtils.RPGMAKER_VERSION = "${version}";\n`,
-  );
-  writeFixture(path.join(root, 'locales', 'en-US.pak'));
-}
-
 function createMZOfficialRuntime(installRoot: string, version = '1.10.0'): string {
   const runtimeRoot = path.join(installRoot, 'nwjs-win');
   for (const relative of RPG_MAKER_MZ_REQUIRED_OFFICIAL_RUNTIME_FILES) {
@@ -189,6 +204,18 @@ function createMVOfficialRuntime(installRoot: string): string {
   fs.rmSync(path.join(runtimeRoot, 'pnacl'), { recursive: true, force: true });
   fs.rmSync(path.join(runtimeRoot, 'nacl_irt_x86_64.nexe'), { force: true });
   fs.rmSync(path.join(runtimeRoot, 'nacl64.exe'), { force: true });
+  writeFixture(path.join(installRoot, 'RPGMV.exe'), true);
+  writeFixture(
+    path.join(installRoot, 'newdata', 'js', 'rpg_core.js'),
+    false,
+    'Utils.RPGMAKER_NAME = "MV";\nUtils.RPGMAKER_VERSION = "1.6.1";\n',
+  );
+  return path.join(runtimeRoot, 'game.exe');
+}
+
+function createMVOfficialTestRuntime(installRoot: string): string {
+  const runtimeRoot = path.join(installRoot, 'nwjs-win-test');
+  createMVRuntime(runtimeRoot, false);
   writeFixture(path.join(installRoot, 'RPGMV.exe'), true);
   writeFixture(
     path.join(installRoot, 'newdata', 'js', 'rpg_core.js'),

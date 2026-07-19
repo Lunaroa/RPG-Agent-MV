@@ -37,6 +37,7 @@ declare global {
       playtest: {
         start(request: InteractivePlaytestStartRequest): Promise<InteractivePlaytestResult>;
         current(): Promise<InteractivePlaytestResult>;
+        runtimeInfo(request: { project: string }): Promise<InteractivePlaytestRuntimeInfo>;
         stop(): Promise<InteractivePlaytestResult>;
         reveal(runId: string): Promise<{ ok: boolean }>;
         selectRuntime(request: InteractivePlaytestRuntimeSelectionRequired): Promise<InteractivePlaytestRuntimeSelectionResult>;
@@ -271,7 +272,7 @@ import type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
@@ -294,7 +295,7 @@ export type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 };
 
@@ -1171,6 +1172,9 @@ export const playtest = {
   },
   current() {
     return desktopApi().playtest.current() as Promise<InteractivePlaytestResult>;
+  },
+  runtimeInfo(project: string) {
+    return desktopApi().playtest.runtimeInfo(toPlain({ project })) as Promise<InteractivePlaytestRuntimeInfo>;
   },
   stop() {
     return desktopApi().playtest.stop() as Promise<InteractivePlaytestResult>;

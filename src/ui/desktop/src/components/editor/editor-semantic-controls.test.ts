@@ -148,6 +148,13 @@ describe('editor semantic controls', () => {
     assert.match(topBarSource, /transform:\s*translate\(-50%, -50%\)/);
     assert.match(topBarSource, /text-overflow:\s*ellipsis/);
     assert.match(topBarSource, /playtest\.selectRuntime\(result\.runtimeSelectionRequired\)/);
+    assert.match(topBarSource, /@contextmenu="openPlaytestRuntimeMenu"/);
+    assert.match(topBarSource, /data-ui-id="topbar-playtest-runtime-menu"/);
+    assert.match(topBarSource, /playtest\.runtimeInfo\(project\)/);
+    assert.match(topBarSource, /reason: 'change'/);
+    assert.match(topBarSource, /playtestRuntimeInfo\?\.source === 'project-local'/);
+    assert.match(topBarSource, /playtestRuntimeSelecting\.value = true/);
+    assert.match(topBarSource, /window\.addEventListener\('blur', onWindowBlur\)/);
   });
 
   test('links event list navigation, notes, hover preview, and scoped search', () => {

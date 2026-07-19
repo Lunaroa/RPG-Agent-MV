@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Expand, Fold } from '@element-plus/icons-vue';
 import { PanelRightClose, PanelRightOpen, Minus, Play, Square, X as XIcon } from '@lucide/vue';
 import { resolveUserDocsEntry } from '@contract/docs-path';
-import type { InteractivePlaytestRun } from '@contract/types';
+import type { InteractivePlaytestRun, InteractivePlaytestRuntimeInfo } from '@contract/types';
 import { playtest, settings } from '../../api/client';
 import { useSession } from '../../composables/useSession';
 import { useI18n } from '../../i18n';
@@ -28,6 +28,11 @@ const openMenu = ref<string | null>(null);
 const maximized = ref(false);
 const playtestRun = ref<InteractivePlaytestRun | null>(null);
 const playtestBusy = ref(false);
+const playtestRuntimeMenuOpen = ref(false);
+const playtestRuntimeLoading = ref(false);
+const playtestRuntimeSelecting = ref(false);
+const playtestRuntimeInfo = ref<InteractivePlaytestRuntimeInfo | null>(null);
+const playtestRuntimeError = ref('');
 let unsubscribePlaytestStatus: (() => void) | null = null;
 
 const playtestLive = computed(() => (
@@ -40,6 +45,24 @@ const playtestTitle = computed(() => {
   if (!playtestLive.value && !projectStore.currentProject) return t('topbar.playtest.noProject');
   return playtestLive.value ? t('topbar.playtest.stop') : t('topbar.playtest.start');
 });
+const playtestRuntimeEngineLabel = computed(() => (
+  (playtestRuntimeInfo.value?.engine || projectStore.currentProjectInfo?.engine) === 'rpg-maker-mz' ? 'MZ' : 'MV'
+));
+const playtestRuntimePath = computed(() => {
+  if (playtestRuntimeLoading.value) return t('topbar.playtest.runtimeLoading');
+  if (playtestRuntimeError.value) return playtestRuntimeError.value;
+  if (playtestRuntimeInfo.value?.executable) return playtestRuntimeInfo.value.executable;
+  return playtestRuntimeInfo.value?.status === 'invalid'
+    ? t('topbar.playtest.runtimeInvalid')
+    : t('topbar.playtest.runtimeMissing');
+});
+const playtestRuntimeChangeDisabled = computed(() => (
+  playtestBusy.value
+  || playtestLive.value
+  || playtestRuntimeLoading.value
+  || playtestRuntimeSelecting.value
+  || !playtestRuntimeInfo.value?.configurable
+));
 
 type EditorCommand = 'undo' | 'redo' | 'save';
 type MenuAction = () => void | Promise<void>;
@@ -82,11 +105,21 @@ const menus = computed<{ key: string; label: string; items: { key: string; label
 ]);
 
 function toggleMenu(key: string) {
+  closePlaytestRuntimeMenu();
   openMenu.value = openMenu.value === key ? null : key;
 }
 
 function closeMenus() {
   openMenu.value = null;
+}
+
+function closePlaytestRuntimeMenu() {
+  playtestRuntimeMenuOpen.value = false;
+}
+
+function closeAllMenus() {
+  closeMenus();
+  closePlaytestRuntimeMenu();
 }
 
 function onMenuAction(action: MenuAction) {
@@ -95,10 +128,51 @@ function onMenuAction(action: MenuAction) {
 }
 
 function onDocumentPointerDown(event: PointerEvent) {
-  if (!openMenu.value) return;
+  if (!openMenu.value && !playtestRuntimeMenuOpen.value) return;
   const target = event.target as Element | null;
-  if (target?.closest('.menu-item')) return;
+  if (target?.closest('.menu-item, .playtest-control')) return;
+  closeAllMenus();
+}
+
+async function refreshPlaytestRuntimeInfo(project = projectStore.currentProject) {
+  if (!project) return;
+  playtestRuntimeLoading.value = true;
+  playtestRuntimeError.value = '';
+  try {
+    const info = await playtest.runtimeInfo(project);
+    if (projectStore.currentProject === project) playtestRuntimeInfo.value = info;
+  } catch (error) {
+    if (projectStore.currentProject === project) {
+      playtestRuntimeInfo.value = null;
+      playtestRuntimeError.value = t('topbar.playtest.runtimeLookupFailed');
+    }
+  } finally {
+    if (projectStore.currentProject === project) playtestRuntimeLoading.value = false;
+  }
+}
+
+function openPlaytestRuntimeMenu(event: MouseEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (!projectStore.currentProject) return;
   closeMenus();
+  playtestRuntimeMenuOpen.value = true;
+  void refreshPlaytestRuntimeInfo();
+}
+
+async function changePlaytestRuntime() {
+  const info = playtestRuntimeInfo.value;
+  if (!info || playtestRuntimeChangeDisabled.value) return;
+  playtestRuntimeSelecting.value = true;
+  try {
+    const selection = await playtest.selectRuntime({ engine: info.engine, reason: 'change' });
+    if (!selection.canceled) await refreshPlaytestRuntimeInfo();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ElMessage.error(t('topbar.playtest.runtimeChangeFailed', { message }));
+  } finally {
+    playtestRuntimeSelecting.value = false;
+  }
 }
 
 async function refreshWindowState() {
@@ -136,6 +210,7 @@ function applyPlaytestRun(run?: InteractivePlaytestRun): void {
 }
 
 async function togglePlaytest() {
+  closePlaytestRuntimeMenu();
   if (playtestBusy.value) return;
   if (playtestLive.value) {
     await stopPlaytest();
@@ -221,8 +296,8 @@ async function stopPlaytest() {
 
 /* ---------- Keyboard shortcut ---------- */
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && openMenu.value) {
-    closeMenus();
+  if (e.key === 'Escape' && (openMenu.value || playtestRuntimeMenuOpen.value)) {
+    closeAllMenus();
   } else if (e.ctrlKey && e.key === 'l') {
     e.preventDefault();
     ui.toggleAgentPanel();
@@ -231,11 +306,20 @@ function onKeyDown(e: KeyboardEvent) {
     emitEditorCommand('save');
   }
 }
+function onWindowBlur() {
+  closeAllMenus();
+}
+watch(() => projectStore.currentProject, () => {
+  closePlaytestRuntimeMenu();
+  playtestRuntimeInfo.value = null;
+  playtestRuntimeError.value = '';
+});
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown);
   document.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', refreshWindowState);
   window.addEventListener('focus', refreshWindowState);
+  window.addEventListener('blur', onWindowBlur);
   unsubscribePlaytestStatus = playtest.onStatus(applyPlaytestRun);
   void refreshWindowState();
   void playtest.current().then((result) => applyPlaytestRun(result.run)).catch(() => undefined);
@@ -245,6 +329,7 @@ onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown);
   window.removeEventListener('resize', refreshWindowState);
   window.removeEventListener('focus', refreshWindowState);
+  window.removeEventListener('blur', onWindowBlur);
   unsubscribePlaytestStatus?.();
   unsubscribePlaytestStatus = null;
 });
@@ -254,7 +339,7 @@ onUnmounted(() => {
   <header class="top-bar">
     <!-- Transparent backdrop: the title bar is a window drag region that swallows
          pointer events, so a no-drag overlay is needed to catch outside clicks. -->
-    <div v-if="openMenu" class="menu-backdrop" aria-hidden="true" @pointerdown="closeMenus" />
+    <div v-if="openMenu || playtestRuntimeMenuOpen" class="menu-backdrop" aria-hidden="true" @pointerdown="closeAllMenus" />
 
     <button
       type="button"
@@ -307,20 +392,48 @@ onUnmounted(() => {
 
     <div class="topbar-fill" />
 
-    <button
-      type="button"
-      class="playtest-toggle"
-      :class="{ live: playtestLive }"
-      data-ui-id="topbar-playtest-toggle"
-      :disabled="playtestBusy || (!playtestLive && !projectStore.currentProject)"
-      :title="playtestTitle"
-      :aria-label="playtestTitle"
-      :aria-pressed="playtestLive"
-      @click="togglePlaytest"
-    >
-      <Square v-if="playtestLive" :size="13" :stroke-width="1.8" />
-      <Play v-else :size="14" :stroke-width="1.8" />
-    </button>
+    <div class="playtest-control" @contextmenu="openPlaytestRuntimeMenu">
+      <button
+        type="button"
+        class="playtest-toggle"
+        :class="{ live: playtestLive }"
+        data-ui-id="topbar-playtest-toggle"
+        :disabled="playtestBusy || (!playtestLive && !projectStore.currentProject)"
+        :title="playtestTitle"
+        :aria-label="playtestTitle"
+        :aria-pressed="playtestLive"
+        @click="togglePlaytest"
+      >
+        <Square v-if="playtestLive" :size="13" :stroke-width="1.8" />
+        <Play v-else :size="14" :stroke-width="1.8" />
+      </button>
+      <div
+        v-if="playtestRuntimeMenuOpen"
+        class="playtest-runtime-menu"
+        data-ui-id="topbar-playtest-runtime-menu"
+        role="menu"
+        @pointerdown.stop
+        @contextmenu.prevent.stop
+      >
+        <div class="playtest-runtime-heading">
+          {{ t('topbar.playtest.runtimeTitle', { engine: playtestRuntimeEngineLabel }) }}
+        </div>
+        <div class="playtest-runtime-path" :title="playtestRuntimePath">{{ playtestRuntimePath }}</div>
+        <div v-if="playtestRuntimeInfo?.source === 'project-local'" class="playtest-runtime-note">
+          {{ t('topbar.playtest.projectRuntimePreferred') }}
+        </div>
+        <button
+          type="button"
+          class="playtest-runtime-change"
+          data-ui-id="topbar-playtest-runtime-change"
+          role="menuitem"
+          :disabled="playtestRuntimeChangeDisabled"
+          @click="changePlaytestRuntime"
+        >
+          {{ t('topbar.playtest.changeRuntime') }}
+        </button>
+      </div>
+    </div>
 
     <!-- Toggle auxiliary sidebar -->
     <button
@@ -366,6 +479,7 @@ onUnmounted(() => {
 
 .menu-item,
 .topbar-btn,
+.playtest-control,
 .playtest-toggle,
 .sidebar-toggle,
 .window-controls,
@@ -466,6 +580,11 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.playtest-control {
+  position: relative;
+  z-index: 60;
+}
+
 .playtest-toggle {
   width: 28px;
   height: 28px;
@@ -497,6 +616,67 @@ onUnmounted(() => {
 .playtest-toggle:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+.playtest-runtime-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  width: min(440px, calc(100vw - 24px));
+  padding: 6px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg);
+  box-shadow: var(--app-shadow-3);
+  color: var(--app-ink);
+  z-index: 300;
+}
+
+.playtest-runtime-heading {
+  padding: 4px 8px 2px;
+  color: var(--app-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.playtest-runtime-path {
+  margin: 0 8px 4px;
+  overflow: hidden;
+  color: var(--app-ink-muted);
+  font-family: var(--app-font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playtest-runtime-note {
+  margin: 0 8px 4px;
+  color: var(--app-ink-muted);
+  font-size: 10px;
+}
+
+.playtest-runtime-change {
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.playtest-runtime-change:hover:not(:disabled) {
+  background: var(--app-bg-soft);
+}
+
+.playtest-runtime-change:disabled {
+  color: var(--app-ink-muted);
+  cursor: default;
+  opacity: 0.58;
 }
 
 /* ---------- Dropdown ---------- */

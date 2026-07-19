@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
@@ -15,6 +15,7 @@ import { useWorkspaceStore } from './stores/workspace'
 import { applyUiTheme } from './utils/applyUiTheme'
 import { useI18n, pickByLocale } from './i18n'
 import { needsLanguageSelection } from './utils/language-selection'
+import { projectWindowTitle } from './utils/projectWindowTitle'
 import {
   collectUiControlPageState,
   getEditorUiControlState,
@@ -46,6 +47,14 @@ const showLanguagePicker = computed(() =>
 )
 
 const START_TOUR_EVENT = 'agent-rpg:onboarding-tour:start'
+
+watch(
+  () => projectStore.currentProjectInfo?.name,
+  (projectName) => {
+    document.title = projectWindowTitle(projectName)
+  },
+  { immediate: true },
+)
 
 function onLanguageChosen() {
   void nextTick(() => {

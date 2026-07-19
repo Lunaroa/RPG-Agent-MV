@@ -9,7 +9,11 @@ import {
 export interface RpgMakerMZProjectRuntime {
   executable: string;
   projectRoot: string;
-  engineVersion: typeof SUPPORTED_RPG_MAKER_MZ_VERSION;
+  engineVersion: string;
+}
+
+export interface ResolveRpgMakerMZProjectRuntimeOptions {
+  allowUnsupportedVersion?: boolean;
 }
 
 export class RpgMakerMZRuntimeError extends Error {}
@@ -111,6 +115,7 @@ export function createRpgMakerMZRuntimeOutputSanitizer(
  */
 export function resolveRpgMakerMZProjectRuntime(
   projectDirectory: string,
+  options: ResolveRpgMakerMZProjectRuntimeOptions = {},
 ): RpgMakerMZProjectRuntime {
   const selected = String(projectDirectory || '').trim();
   if (!selected) {
@@ -131,7 +136,12 @@ export function resolveRpgMakerMZProjectRuntime(
     throw new RpgMakerMZRuntimeError('The RPG Maker MZ project is missing js/rmmz_core.js.');
   }
   const identity = readRpgMakerCoreIdentity(fs.readFileSync(corePath, 'utf8'));
-  if (identity.name !== 'MZ' || identity.version !== SUPPORTED_RPG_MAKER_MZ_VERSION) {
+  if (identity.name !== 'MZ' || !identity.version) {
+    throw new RpgMakerMZRuntimeError(
+      'The project-local runtime requires a recognizable RPG Maker MZ core version.',
+    );
+  }
+  if (identity.version !== SUPPORTED_RPG_MAKER_MZ_VERSION && !options.allowUnsupportedVersion) {
     throw new RpgMakerMZRuntimeError(
       `The project-local runtime requires an RPG Maker MZ ${SUPPORTED_RPG_MAKER_MZ_VERSION} project.`,
     );
@@ -158,7 +168,7 @@ export function resolveRpgMakerMZProjectRuntime(
   return {
     executable,
     projectRoot: root,
-    engineVersion: SUPPORTED_RPG_MAKER_MZ_VERSION,
+    engineVersion: identity.version,
   };
 }
 

@@ -80,16 +80,16 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(fs.existsSync(service.current().run!.artifactPath), true);
   });
 
-  test('reports missing Game.exe without searching for another runner', async () => {
+  test('requests runtime selection when a source-only MV project has no saved runner', async () => {
     fs.rmSync(path.join(project, 'Game.exe'));
     const service = createService(root, { child: new FakeChild() });
     const result = await service.start(project);
     assert.equal(result.run, undefined);
     assert.equal(result.confirmationRequired, false);
-    assert.match(String(result.error), /Game\.exe/);
+    assert.deepEqual(result.runtimeSelectionRequired, { engine: 'rpg-maker-mv', reason: 'missing' });
   });
 
-  test('requires a complete project-local MZ runtime before launch', async () => {
+  test('requests runtime selection when the project-local MZ runtime is incomplete', async () => {
     const service = createService(root, {
       child: new FakeChild(),
       inspectProject: () => ({ engine: 'rpg-maker-mz', editable: true, missingRequired: [] }),
@@ -97,7 +97,36 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     });
     const result = await service.start(project);
     assert.equal(result.run, undefined);
-    assert.match(String(result.error), /project-local.*nw\.dll/i);
+    assert.deepEqual(result.runtimeSelectionRequired, { engine: 'rpg-maker-mz', reason: 'missing' });
+  });
+
+  test('launches a source-only MV project through a saved external runtime', async () => {
+    fs.rmSync(path.join(project, 'Game.exe'));
+    const child = new FakeChild();
+    const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
+    const selectedExecutable = path.join(root, 'runtime', 'game.exe');
+    const service = createService(root, {
+      child,
+      spawnCalls,
+      resolveProjectRuntime: () => ({
+        runtime: {
+          engine: 'rpg-maker-mv',
+          executable: selectedExecutable,
+          runtimeRoot: path.dirname(selectedExecutable),
+          source: 'configured',
+          launchStyle: 'external',
+          evidenceExecutable: 'configured-rpg-maker-mv-nwjs',
+          privateExecutable: selectedExecutable,
+        },
+      }),
+    });
+    const starting = service.start(project);
+    queueMicrotask(() => child.emitSpawn());
+    const running = await starting;
+    assert.equal(running.run?.status, 'running');
+    assert.equal(running.run?.executable, 'configured-rpg-maker-mv-nwjs');
+    assert.equal(spawnCalls[0].executable, selectedExecutable);
+    assert.deepEqual(spawnCalls[0].args, [project]);
   });
 
   test('launches MZ normal playtest with the validated project-local Game.exe', async () => {
@@ -488,6 +517,7 @@ function createService(workflowRoot: string, options: {
   cleanupIsolated?: InteractivePlaytestDependencies['cleanupIsolated'];
   inspectProject?: InteractivePlaytestDependencies['inspectProject'];
   resolveMZRuntime?: InteractivePlaytestDependencies['resolveMZRuntime'];
+  resolveProjectRuntime?: InteractivePlaytestDependencies['resolveProjectRuntime'];
   spawnError?: Error;
 }): InteractivePlaytestService {
   return new InteractivePlaytestService(workflowRoot, {
@@ -499,6 +529,40 @@ function createService(workflowRoot: string, options: {
     getStagingStatus: options.stagingStatus || (() => ({ staged: false, files: [], operations: [] })),
     inspectProject: options.inspectProject || (() => ({ engine: 'rpg-maker-mv', editable: true, missingRequired: [] })),
     ...(options.resolveMZRuntime ? { resolveMZRuntime: options.resolveMZRuntime } : {}),
+    resolveProjectRuntime: options.resolveProjectRuntime || ((sourceProject, engine) => {
+      if (engine === 'rpg-maker-mz') {
+        try {
+          const runtime = options.resolveMZRuntime?.(sourceProject);
+          if (!runtime) return { selectionRequired: { engine, reason: 'missing' } };
+          return {
+            runtime: {
+              engine,
+              executable: runtime.executable,
+              runtimeRoot: runtime.projectRoot,
+              source: 'project-local',
+              launchStyle: 'external',
+              evidenceExecutable: 'project-local-rpg-maker-mz-nwjs',
+              privateExecutable: runtime.executable,
+            },
+          };
+        } catch {
+          return { selectionRequired: { engine, reason: 'missing' } };
+        }
+      }
+      const executable = path.join(sourceProject, 'Game.exe');
+      return fs.existsSync(executable)
+        ? {
+            runtime: {
+              engine,
+              executable,
+              runtimeRoot: sourceProject,
+              source: 'project-local',
+              launchStyle: 'embedded',
+              evidenceExecutable: executable,
+            },
+          }
+        : { selectionRequired: { engine, reason: 'missing' } };
+    }),
     requestGracefulStop: (child) => ({
       ok: child.kill(),
     }),

@@ -34,6 +34,10 @@ describe('interactive playtest IPC bindings', () => {
       resolveProject: (project) => `resolved:${project}`,
       resolveSession: (_project, requested) => requested || 'session-latest',
       revealEvidence: (runId) => calls.push(['reveal', runId]),
+      selectRuntime: async (_event, engine) => {
+        calls.push(['selectRuntime', engine]);
+        return { canceled: false, engine, configured: true };
+      },
     });
 
     assert.deepEqual([...handlers.keys()].sort(), [...INTERACTIVE_PLAYTEST_IPC_CHANNELS].sort());
@@ -46,6 +50,7 @@ describe('interactive playtest IPC bindings', () => {
     await handlers.get('playtest:current')?.(null);
     await handlers.get('playtest:stop')?.(null);
     await handlers.get('playtest:reveal')?.(null, 'run-1');
+    await handlers.get('playtest:selectRuntime')?.(null, 'rpg-maker-mv');
 
     assert.deepEqual(calls, [
       ['start', 'resolved:projects/sample', {
@@ -56,6 +61,7 @@ describe('interactive playtest IPC bindings', () => {
       ['current'],
       ['stop'],
       ['reveal', 'run-1'],
+      ['selectRuntime', 'rpg-maker-mv'],
     ]);
 
     cleanupInteractivePlaytestIpcHandlers(ipc);
@@ -81,6 +87,7 @@ describe('interactive playtest IPC bindings', () => {
       resolveProject: (project) => project,
       resolveSession: () => undefined,
       revealEvidence: () => undefined,
+      selectRuntime: async (_event, engine) => ({ canceled: true, engine, configured: false }),
     });
 
     await handlers.get('playtest:start')?.(null, {
@@ -130,6 +137,7 @@ describe('interactive playtest IPC bindings', () => {
       resolveProject: (project) => project,
       resolveSession: () => undefined,
       revealEvidence: () => undefined,
+      selectRuntime: async (_event, engine) => ({ canceled: true, engine, configured: false }),
     });
     const animationPreview = {
       displayType: 0,

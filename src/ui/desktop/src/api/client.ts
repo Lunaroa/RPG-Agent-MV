@@ -39,6 +39,7 @@ declare global {
         current(): Promise<InteractivePlaytestResult>;
         stop(): Promise<InteractivePlaytestResult>;
         reveal(runId: string): Promise<{ ok: boolean }>;
+        selectRuntime(engine: RpgMakerEngine): Promise<InteractivePlaytestRuntimeSelectionResult>;
         onStatus(callback: (run: InteractivePlaytestRun) => void): () => void;
       };
       projects: {
@@ -270,7 +271,7 @@ import type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
@@ -293,7 +294,7 @@ export type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 };
 
@@ -1176,6 +1177,9 @@ export const playtest = {
   },
   reveal(runId: string) {
     return desktopApi().playtest.reveal(runId);
+  },
+  selectRuntime(engine: RpgMakerEngine) {
+    return desktopApi().playtest.selectRuntime(engine) as Promise<InteractivePlaytestRuntimeSelectionResult>;
   },
   onStatus(callback: (run: InteractivePlaytestRun) => void) {
     return desktopApi().playtest.onStatus(callback);

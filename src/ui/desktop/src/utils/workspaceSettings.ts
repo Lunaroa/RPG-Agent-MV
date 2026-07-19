@@ -1,5 +1,6 @@
 import type {
   EngineProviderBinding,
+  RpgMakerEngine,
   WorkspaceEditorProjectState,
   WorkspaceLayoutState,
   WorkspaceSettings,
@@ -181,6 +182,7 @@ export function normalizeWorkspaceSettings(raw: unknown): WorkspaceSettings {
       source.suppressProjectCompatibilityWarnings ?? legacy.suppressUnsupportedMZVersionWarnings,
       false,
     ),
+    playtestRuntimes: normalizePlaytestRuntimes(source.playtestRuntimes),
     window: source.window && typeof source.window === 'object'
       ? {
           x: finiteNumber(source.window.x),
@@ -212,6 +214,11 @@ export function normalizeWorkspacePatch(raw: unknown): WorkspaceSettings {
 
   if (typeof source.suppressProjectCompatibilityWarnings === 'boolean') {
     patch.suppressProjectCompatibilityWarnings = source.suppressProjectCompatibilityWarnings
+  }
+
+  if (source.playtestRuntimes && typeof source.playtestRuntimes === 'object') {
+    const playtestRuntimes = normalizePlaytestRuntimes(source.playtestRuntimes)
+    if (playtestRuntimes) patch.playtestRuntimes = playtestRuntimes
   }
 
   if (source.window && typeof source.window === 'object') {
@@ -286,6 +293,19 @@ function normalizeModelsByEngine(
   return Object.keys(result).length ? result : undefined
 }
 
+function normalizePlaytestRuntimes(
+  value: unknown,
+): Partial<Record<RpgMakerEngine, string>> | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const source = value as Record<string, unknown>
+  const result: Partial<Record<RpgMakerEngine, string>> = {}
+  for (const engine of ['rpg-maker-mv', 'rpg-maker-mz'] as const) {
+    const runtimeRoot = typeof source[engine] === 'string' ? source[engine].trim() : ''
+    if (runtimeRoot) result[engine] = runtimeRoot
+  }
+  return Object.keys(result).length ? result : undefined
+}
+
 function normalizeComposerEngineKey(engine: string): string | null {
   return engine === OPENCODE_ENGINE_KEY ? OPENCODE_ENGINE_KEY : null
 }
@@ -313,6 +333,12 @@ export function mergeWorkspaceSettings(
   }
   if (typeof next.suppressProjectCompatibilityWarnings === 'boolean') {
     merged.suppressProjectCompatibilityWarnings = next.suppressProjectCompatibilityWarnings
+  }
+  if (next.playtestRuntimes) {
+    merged.playtestRuntimes = {
+      ...(base.playtestRuntimes || {}),
+      ...next.playtestRuntimes,
+    }
   }
   if (next.window) merged.window = { ...base.window, ...next.window }
   if (next.layout) merged.layout = { ...base.layout, ...next.layout }

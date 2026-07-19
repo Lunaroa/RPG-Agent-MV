@@ -64,6 +64,17 @@ describe('RPG Maker MZ project-local runtime validation', () => {
     );
   });
 
+  test('allows another recognizable MZ core version only for an explicit trial launch', () => {
+    fs.writeFileSync(
+      path.join(root, 'js', 'rmmz_core.js'),
+      'Utils.RPGMAKER_NAME = "MZ";\nUtils.RPGMAKER_VERSION = "1.9.0";\n',
+      'utf8',
+    );
+    const runtime = resolveRpgMakerMZProjectRuntime(root, { allowUnsupportedVersion: true });
+    assert.equal(runtime.engineVersion, '1.9.0');
+    assert.equal(runtime.executable, path.join(root, 'Game.exe'));
+  });
+
   test('rejects an incomplete project-local NW.js runtime', () => {
     fs.rmSync(path.join(root, 'nw.dll'));
     assert.throws(() => resolveRpgMakerMZProjectRuntime(root), /nw\.dll/);

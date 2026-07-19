@@ -3,6 +3,8 @@ import type {
   InteractiveParticleAnimationPreview,
   InteractivePlaytestMode,
   InteractivePlaytestResult,
+  InteractivePlaytestRuntimeSelectionResult,
+  RpgMakerEngine,
 } from '../../../contract/types.ts';
 import { toIpcPayload } from './ipc-serialize.ts';
 
@@ -11,6 +13,7 @@ export const INTERACTIVE_PLAYTEST_IPC_CHANNELS = [
   'playtest:current',
   'playtest:stop',
   'playtest:reveal',
+  'playtest:selectRuntime',
 ] as const;
 
 interface IpcMainLike {
@@ -41,6 +44,7 @@ export interface InteractivePlaytestIpcDependencies {
   resolveProject(project: string): string;
   resolveSession(project: string, requestedSessionId?: string): string | undefined;
   revealEvidence(runId: string): void;
+  selectRuntime(event: unknown, engine: RpgMakerEngine): Promise<InteractivePlaytestRuntimeSelectionResult>;
 }
 
 export function registerInteractivePlaytestIpcHandlers(
@@ -90,6 +94,12 @@ export function registerInteractivePlaytestIpcHandlers(
   ipc.handle('playtest:reveal', (_event, runId: string) => {
     dependencies.revealEvidence(String(runId || '').trim());
     return { ok: true };
+  });
+  ipc.handle('playtest:selectRuntime', (event, engine: unknown) => {
+    if (engine !== 'rpg-maker-mv' && engine !== 'rpg-maker-mz') {
+      throw new Error('playtest:selectRuntime engine must be rpg-maker-mv or rpg-maker-mz.');
+    }
+    return dependencies.selectRuntime(event, engine);
   });
 }
 

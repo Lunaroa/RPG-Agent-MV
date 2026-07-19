@@ -37,6 +37,25 @@ describe('workspaceSettings', () => {
     expect(merged.suppressProjectCompatibilityWarnings).toBe(true)
   })
 
+  it('normalizes and independently preserves MV and MZ playtest runtime selections', () => {
+    const normalized = normalizeWorkspaceSettings({
+      playtestRuntimes: {
+        'rpg-maker-mv': '  runtime/mv  ',
+        'rpg-maker-mz': '',
+      },
+    })
+    expect(normalized.playtestRuntimes).toEqual({ 'rpg-maker-mv': 'runtime/mv' })
+
+    const merged = mergeWorkspaceSettings(
+      { playtestRuntimes: { 'rpg-maker-mv': 'runtime/mv' } },
+      { playtestRuntimes: { 'rpg-maker-mz': 'runtime/mz' } },
+    )
+    expect(merged.playtestRuntimes).toEqual({
+      'rpg-maker-mv': 'runtime/mv',
+      'rpg-maker-mz': 'runtime/mz',
+    })
+  })
+
   it('migrates the previous version-warning preference to compatibility warnings', () => {
     const settings = normalizeWorkspaceSettings({ suppressUnsupportedMZVersionWarnings: true })
     expect(settings.suppressProjectCompatibilityWarnings).toBe(true)

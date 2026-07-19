@@ -178,6 +178,11 @@ async function startPlaytest() {
         confirmedStagingHash = result.stagingSummaryHash;
         continue;
       }
+      if (result.runtimeSelectionRequired) {
+        const selection = await playtest.selectRuntime(result.runtimeSelectionRequired.engine);
+        if (selection.canceled) return;
+        continue;
+      }
       if (result.error) throw new Error(result.error);
       if (!result.run) throw new Error(t('topbar.playtest.invalidResponse'));
       applyPlaytestRun(result.run);
@@ -284,6 +289,20 @@ onUnmounted(() => {
           <span v-if="item.shortcut" class="dd-shortcut">{{ item.shortcut }}</span>
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="projectStore.currentProjectInfo"
+      class="project-identity"
+      data-ui-id="topbar-project-identity"
+      :title="projectStore.currentProjectInfo.name"
+      :aria-label="projectStore.currentProjectInfo.name"
+    >
+      <span class="project-identity-icon" aria-hidden="true">
+        <img v-if="projectStore.currentProjectInfo.iconUrl" :src="projectStore.currentProjectInfo.iconUrl" alt="" />
+        <span v-else class="project-identity-placeholder" />
+      </span>
+      <span class="project-identity-name">{{ projectStore.currentProjectInfo.name }}</span>
     </div>
 
     <div class="topbar-fill" />
@@ -394,6 +413,57 @@ onUnmounted(() => {
 
 .topbar-fill {
   flex: 1;
+}
+
+.project-identity {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: clamp(140px, 34vw, 380px);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--app-ink-soft);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  user-select: none;
+}
+
+.project-identity-icon {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--app-ink) 16%, transparent);
+  border-radius: 4px;
+  background: var(--app-bg-soft);
+}
+
+.project-identity-icon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.project-identity-placeholder {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--app-ink-muted);
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.project-identity-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .playtest-toggle {

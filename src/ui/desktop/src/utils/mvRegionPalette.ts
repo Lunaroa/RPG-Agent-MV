@@ -1,4 +1,4 @@
-import type { MapPaintMode, PaletteTabId, TileTab } from '../components/editor/editorTypes.ts';
+import type { EditorMode, MapPaintMode, PaletteTabId, TileTab } from '../components/editor/editorTypes.ts';
 
 export const MV_REGION_PALETTE_COLS = 8;
 export const MV_REGION_PALETTE_ROWS = 32;
@@ -101,6 +101,15 @@ export function paintModeForPaletteTab(tab: PaletteTabId): Extract<MapPaintMode,
 
 export function tileTabForShadow(tab: PaletteTabId, lastTileTab: TileTab): TileTab {
   return tab === 'R' ? lastTileTab : tab;
+}
+
+export function shouldShowRegionOverlay(
+  mode: EditorMode,
+  paintMode: MapPaintMode,
+  tab: PaletteTabId,
+  showRegions: boolean,
+): boolean {
+  return mode === 'map' && (showRegions || (paintMode === 'region' && tab === 'R'));
 }
 
 export function drawMvRegionFill(

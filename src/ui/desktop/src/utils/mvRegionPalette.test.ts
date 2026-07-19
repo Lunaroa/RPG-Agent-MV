@@ -12,6 +12,7 @@ import {
   regionPaletteLayout,
   regionPaletteCellForId,
   regionSourceColor,
+  shouldShowRegionOverlay,
   tileTabForShadow,
   visibleRegionViewport,
 } from './mvRegionPalette.ts';
@@ -56,6 +57,14 @@ describe('MV region palette mapping', () => {
     assert.equal(paintModeForPaletteTab('R'), 'region');
     assert.equal(tileTabForShadow('R', 'C'), 'C');
     assert.equal(tileTabForShadow('B', 'C'), 'B');
+  });
+
+  test('keeps region preview independent while R always shows its editing overlay', () => {
+    assert.equal(shouldShowRegionOverlay('map', 'tile', 'A', false), false);
+    assert.equal(shouldShowRegionOverlay('map', 'tile', 'A', true), true);
+    assert.equal(shouldShowRegionOverlay('map', 'shadow', 'C', true), true);
+    assert.equal(shouldShowRegionOverlay('map', 'region', 'R', false), true);
+    assert.equal(shouldShowRegionOverlay('event', 'region', 'R', true), false);
   });
 
   test('renders the R palette at its final CSS size and device pixel ratio', () => {

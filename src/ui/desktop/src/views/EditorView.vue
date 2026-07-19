@@ -5,7 +5,7 @@
       :tool="tool"
       :paint-mode="paintMode"
       v-model:layer="layer"
-      v-model:shadow-bits="shadowBits"
+      v-model:show-regions="showRegions"
       v-model:show-tile-flags="showTileFlags"
       :tile-flags-available="tileFlagsAvailable"
       :supports-layer-selection="Boolean(editorCatalog)"
@@ -15,6 +15,7 @@
       :busy="busy"
       :staging-dirty="stagingDirty"
       @select-tool="selectMapTool"
+      @select-tile="selectTileMode"
       @select-shadow="selectShadowMode"
       @undo="undo"
       @redo="redo"
@@ -278,9 +279,9 @@ const mode = ref<EditorMode>('map');
 const tool = ref<MapTool>('pencil');
 const paintMode = ref<MapPaintMode>('tile');
 const regionId = ref(1);
-const shadowBits = ref(15);
 const layer = ref<MapLayerSelection>(0);
 const showGrid = ref(false);
+const showRegions = ref(false);
 const showTileFlags = ref(false);
 const busy = ref(false);
 const statusText = ref('');
@@ -358,9 +359,9 @@ const canvasEditor = useMapCanvasEditor({
   tool,
   paintMode,
   regionId,
-  shadowBits,
   layer,
   showGrid,
+  showRegions,
   showTileFlags,
   tileFlags: tilesetFlags,
   selectedEventId,
@@ -390,7 +391,7 @@ const canvasEditor = useMapCanvasEditor({
 const {
   canvasWidth, canvasHeight, zoom, cursorText, tilesetReady, tileTab, tileTabs,
   brushInfo, brushSet, undoLen, redoLen, isPanning,
-  setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectShadowMode, canvasCell, eventAtCell,
+  setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectTileMode, selectShadowMode, canvasCell, eventAtCell,
   onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
   onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel, onCanvasScroll,
   renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell,
@@ -408,7 +409,7 @@ const selectedMapLabel = computed(() => selectedMapId.value == null ? t('editor.
 const propertiesParentLabel = computed(() => properties.parentId ? `MAP ${properties.parentId} · ${findTreeNode(properties.parentId)?.name || t('editor.status.unnamedMap')}` : t('editor.status.rootDirectory'));
 const tileFlagsAvailable = computed(() => tilesetFlags.value.some((flag) => Number.isInteger(flag)));
 const mapPaintModeLabel = computed(() => {
-  if (paintMode.value === 'shadow') return t('editor.status.shadowMode', { value: shadowBits.value });
+  if (paintMode.value === 'shadow') return t('editor.status.shadowMode');
   if (paintMode.value === 'region') return t('editor.status.regionMode', { value: regionId.value });
   return t('editor.status.tileMode');
 });

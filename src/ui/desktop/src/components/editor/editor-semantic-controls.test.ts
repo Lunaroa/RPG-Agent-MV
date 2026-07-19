@@ -74,8 +74,22 @@ describe('editor semantic controls', () => {
     assert.match(editorToolbarSource, /<template v-if="mode === 'map'">/);
     assert.doesNotMatch(editorToolbarSource, /:disabled="mode !== 'map'/);
     assert.match(editorToolbarSource, /\.mode-group button\.active\{[^}]*background:var\(--app-accent\)[^}]*color:#fff/s);
-    assert.match(editorToolbarSource, /data-ui-id="editor-tool-shadow"/);
-    assert.doesNotMatch(editorToolbarSource, /paint-mode-group/);
+    assert.match(editorToolbarSource, /class="paint-mode-group"/);
+    assert.match(editorToolbarSource, /data-ui-id="editor-paint-tile"[^>]*><Brush \/>\{\{ t\('editor\.toolbar\.tile'\) \}\}<\/button>/);
+    assert.match(editorToolbarSource, /data-ui-id="editor-paint-shadow"[^>]*><Sunny \/>\{\{ t\('editor\.toolbar\.shadow'\) \}\}<\/button>/);
+    assert.match(editorToolbarSource, /:class="\{ active: paintMode !== 'shadow' && tool === entry\.id \}"/);
+    assert.doesNotMatch(editorToolbarSource, /shadow-picker|shadowBitsList|update:shadowBits|shadowQuadrants/);
+  });
+
+  test('uses one original-style white frame throughout palette interaction', () => {
+    assert.match(mapCanvasEditorSource, /function drawPaletteFrame\(/);
+    assert.match(mapCanvasEditorSource, /strokeStyle = 'rgba\(17, 17, 17, \.92\)'/);
+    assert.match(mapCanvasEditorSource, /strokeStyle = 'rgba\(255, 255, 255, \.99\)'/);
+    assert.match(mapCanvasEditorSource, /highlightPaletteHover[\s\S]{0,260}drawPaletteFrame\(/);
+    assert.match(mapCanvasEditorSource, /highlightPaletteDrag[\s\S]{0,360}drawPaletteFrame\(/);
+    assert.match(mapCanvasEditorSource, /highlightPaletteSelection[\s\S]{0,260}drawPaletteFrame\(/);
+    assert.doesNotMatch(mapCanvasEditorSource, /function highlightPaletteHover[\s\S]{0,500}rgba\(255, 230, 89/);
+    assert.doesNotMatch(mapCanvasEditorSource, /function highlightPaletteDrag[\s\S]{0,500}rgba\(79, 70, 229, \.18\)|setLineDash\(\[6, 3\]\)/);
   });
 
   test('keeps confirmed 0718 resource and empty-state interactions explicit', () => {
@@ -95,11 +109,21 @@ describe('editor semantic controls', () => {
     assert.doesNotMatch(leftDockSource, /\.palette-canvas[^}]+cursor:\s*crosshair/s);
   });
 
+  test('supports right-drag tile selection without opening a palette context menu', () => {
+    assert.match(leftDockSource, /@mouseup="\$emit\('palette-mouseup', \$event\)"/);
+    assert.match(leftDockSource, /@contextmenu\.prevent/);
+    assert.match(leftDockSource, /'palette-mouseup': \[event: MouseEvent\]/);
+    assert.match(mapCanvasEditorSource, /paletteSelectionButton\(event\.button, tileTab\.value === 'R'\)/);
+    assert.match(mapCanvasEditorSource, /if \(selectionButton === 2\) event\.preventDefault\(\)/);
+    assert.match(mapCanvasEditorSource, /paletteSelectionReleaseMatches\(paletteDragButton, event\.button\)/);
+    assert.match(mapCanvasEditorSource, /buildPaletteRectSelection\(/);
+  });
+
   test('replicates the MV R palette as the only region-editing entry point', () => {
     assert.match(mapCanvasEditorSource, /\{ tab: 'R' as const, label: 'R', available: true \}/);
     assert.match(leftDockSource, /tileTab !== 'R'/);
     assert.match(mapCanvasEditorSource, /regionIdForPaletteCell\(cell\.col, cell\.row\)/);
-    assert.match(mapCanvasEditorSource, /showRegions: options\.mode\.value === 'map' && options\.paintMode\.value === 'region' && tileTab\.value === 'R'/);
+    assert.match(mapCanvasEditorSource, /showRegions: shouldShowRegionOverlay\(options\.mode\.value, options\.paintMode\.value, tileTab\.value, options\.showRegions\.value\)/);
     assert.match(mapCanvasEditorSource, /showRegionLabels: false/);
     assert.doesNotMatch(mapCanvasEditorSource, /drawGrid/);
     assert.match(mapRendererSource, /if \(options\.showGrid\) drawGrid/);
@@ -108,9 +132,10 @@ describe('editor semantic controls', () => {
     assert.match(editorViewSource, /\.region-label-canvas\s*\{[^}]*pointer-events:none;/s);
     assert.doesNotMatch(mapCanvasEditorSource, /regionOnly:/);
     assert.doesNotMatch(mapRendererSource, /regionOnly/);
-    assert.doesNotMatch(editorToolbarSource, /editor-paint-region|editor-region-id|editor-overlay-regions/);
-    assert.doesNotMatch(editorToolbarSource, /update:paintMode|update:regionId|update:showRegions/);
-    assert.match(editorToolbarSource, /v-if="paintMode === 'tile'" class="overlay-group"/);
+    assert.doesNotMatch(editorToolbarSource, /editor-paint-region|editor-region-id|update:paintMode|update:regionId/);
+    assert.match(editorToolbarSource, /v-if="paintMode !== 'region'"[^>]+data-ui-id="editor-overlay-regions"/);
+    assert.match(editorToolbarSource, /'update:showRegions':\[boolean\]/);
+    assert.match(editorToolbarSource, /class="overlay-group"/);
   });
 
   test('keeps the plugin search compact and identifies the active project at the top-bar center', () => {

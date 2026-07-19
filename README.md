@@ -82,8 +82,8 @@ It is meant to reduce repetitive production work: placing production goals into 
 - RPG Maker MZ 1.10.0 is the fully validated baseline. Recognizable older MZ projects may be imported and edited after an explicit compatibility warning; the warning appears again before staged changes are written unless the user chooses not to see future compatibility warnings.
 - Project markers are optional. Core scripts, data layout, tile size, canvas size, and encryption state are detected automatically. Encrypted projects may be loaded after a warning, while encrypted asset listing, preview, replacement, and validation can remain limited.
 - Mixed MV/MZ files, conflicting data layouts, missing required project data, and unrecognizable core versions are rejected before writes.
-- Imported older MZ cores remain outside the validated playtest boundary. Update the project core to MZ 1.10.0 before using MZ playtest or isolated runtime validation.
-- RPG Maker MZ does not need to be installed. Editing works from the source project alone; playtest and isolated Battle Test statically validate and use the NW.js runtime beside that project's `Game.exe`. Detection never executes it, and isolated runs do not copy the runtime.
+- MZ 1.10.0 remains the fully validated playtest baseline. The top-bar Play action allows another recognizable MZ core version to attempt a launch with a complete MZ runtime, but the result is compatibility evidence for that run rather than a support guarantee. Isolated runtime validation remains on the strict baseline.
+- Editing works from a source-only RPG Maker MV/MZ project. The top-bar Play action first uses a complete runtime beside the project, then a previously selected runtime or a validated official install location; if none is available, the desktop app asks once for a complete runtime folder for the same engine and remembers it. It never searches arbitrary game folders or downloads a runner. Isolated Battle Test keeps its stricter project-local runtime boundary.
 
 ## Quick Start
 

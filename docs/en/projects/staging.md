@@ -12,7 +12,7 @@ Discarding removes the staged draft and leaves the source project unchanged. Dat
 
 Source drift, draft drift, or ownership conflicts block apply. RPG Agent MV does not automatically merge or repair these conflicts.
 
-The global **Play** action runs only the source project from the configured `System.json` start location and excludes staging. MV and MZ both use the project-local runtime; MZ first validates `Game.exe` and its adjacent NW.js files and does not require the editor. The game may write to `save/`. When staging exists, its summary must be confirmed again whenever it changes.
+The global **Play** action runs only the source project from the configured `System.json` start location and excludes staging. It checks the project-local runtime first, then a saved runtime or validated official install location. If none is available, it asks once for a complete Windows runtime for the same engine. MZ 1.10.0 remains the fully validated baseline; another recognizable MZ version is only allowed to attempt a normal playtest launch. It does not scan arbitrary game folders or download a runner. The game may write to `save/`. When staging exists, its summary must be confirmed again whenever it changes.
 
 Agent verification instead uses an isolated system-temporary copy, excludes saves and the MZ runtime, overlays all current staging, and launches that temporary app with the validated `Game.exe` that remains in the source project. It returns verified only when its screenshot, map, coordinate, ready, idle, JavaScript-error, source-integrity, save-integrity, and cleanup evidence all pass. Interactive playtest cards prove process lifecycle only, not story or playability quality.
 

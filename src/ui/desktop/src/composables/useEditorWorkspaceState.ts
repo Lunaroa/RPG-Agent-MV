@@ -1,5 +1,5 @@
 import type { EditorMode } from '../components/editor/editorTypes';
-import type { TileTab } from '../components/editor/editorTypes';
+import type { PaletteTabId } from '../components/editor/editorTypes';
 import { useWorkspaceStore } from '../stores/workspace';
 
 export const EDITOR_DEFAULT_ZOOM = 0.75;
@@ -9,7 +9,7 @@ export interface EditorWorkspaceSelection {
   mode: EditorMode;
   zoom?: number;
   expandedMapIds?: number[];
-  tileTab?: TileTab;
+  tileTab?: PaletteTabId;
 }
 
 export function clampEditorZoom(value: number): number {
@@ -29,6 +29,10 @@ function normalizeExpandedMapIds(value: unknown): number[] | undefined {
   return ids.length ? [...new Set(ids)] : undefined;
 }
 
+function normalizePaletteTab(value: unknown): PaletteTabId | undefined {
+  return ['A', 'B', 'C', 'D', 'E', 'R'].includes(String(value)) ? value as PaletteTabId : undefined;
+}
+
 export function readEditorWorkspaceSelection(project: string): EditorWorkspaceSelection | null {
   const workspace = useWorkspaceStore();
   const value = workspace.readProjectEditor(project);
@@ -38,7 +42,7 @@ export function readEditorWorkspaceSelection(project: string): EditorWorkspaceSe
     mode: value.mode,
     zoom: value.zoom == null ? undefined : readEditorZoom(value.zoom),
     expandedMapIds: normalizeExpandedMapIds(value.expandedMapIds),
-    tileTab: value.tileTab as TileTab | undefined,
+    tileTab: normalizePaletteTab(value.tileTab),
   };
 }
 

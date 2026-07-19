@@ -7,6 +7,7 @@ export type UiControlCommandType =
   | 'open-event-editor'
   | 'state'
   | 'click'
+  | 'pointer'
   | 'input'
   | 'key'
   | 'read'
@@ -30,6 +31,10 @@ export interface UiControlCommand {
   condition?: UiControlWaitCondition;
   expect?: string;
   modifiers?: string[];
+  phase?: 'down' | 'move' | 'up';
+  offsetX?: number;
+  offsetY?: number;
+  button?: number;
 }
 
 export interface UiControlEnvelope {
@@ -109,11 +114,50 @@ export function collectUiControlPageState(): Record<string, unknown> {
 
 export async function runDomUiControlCommand(command: UiControlCommand, language: ProductLanguage): Promise<Record<string, unknown>> {
   if (command.type === 'click') return clickUiElement(command, language);
+  if (command.type === 'pointer') return pointerUiElement(command, language);
   if (command.type === 'input') return inputUiElement(command, language);
   if (command.type === 'key') return keyUiElement(command, language);
   if (command.type === 'read') return readUiElement(command, language);
   if (command.type === 'wait') return waitForUiElement(command, language);
   throw new Error(translate('app.uiControl.error.unsupportedDomCommand', language, { type: command.type }));
+}
+
+function pointerUiElement(command: UiControlCommand, language: ProductLanguage): Record<string, unknown> {
+  const element = requireTargetElement(command, language);
+  ensureActionableElement(element, language);
+  const phase = command.phase;
+  if (!phase || !['down', 'move', 'up'].includes(phase)) {
+    throw new Error(translate('app.uiControl.error.pointerPhaseMissing', language));
+  }
+  if (!Number.isFinite(command.offsetX) || !Number.isFinite(command.offsetY)) {
+    throw new Error(translate('app.uiControl.error.pointerCoordinatesMissing', language));
+  }
+
+  scrollElementIntoView(element);
+  focusElement(element);
+  const rect = element.getBoundingClientRect();
+  const offsetX = Number(command.offsetX);
+  const offsetY = Number(command.offsetY);
+  if (offsetX < 0 || offsetY < 0 || offsetX > rect.width || offsetY > rect.height) {
+    throw new Error(translate('app.uiControl.error.pointerOutsideTarget', language, {
+      x: offsetX,
+      y: offsetY,
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    }));
+  }
+  const type = phase === 'down' ? 'mousedown' : phase === 'move' ? 'mousemove' : 'mouseup';
+  const button = Number.isInteger(command.button) ? Number(command.button) : 0;
+  const buttons = phase === 'up' ? 0 : 1 << button;
+  element.dispatchEvent(new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: rect.left + offsetX,
+    clientY: rect.top + offsetY,
+    button,
+    buttons,
+  }));
+  return { action: 'pointer', phase, offsetX, offsetY, target: elementState(element) };
 }
 
 function clickUiElement(command: UiControlCommand, language: ProductLanguage): Record<string, unknown> {

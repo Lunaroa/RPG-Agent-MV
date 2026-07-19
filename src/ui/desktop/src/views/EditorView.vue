@@ -2,12 +2,10 @@
   <div class="editor-view">
     <EditorToolbar
       v-model:mode="mode"
-      v-model:tool="tool"
-      v-model:paint-mode="paintMode"
+      :tool="tool"
+      :paint-mode="paintMode"
       v-model:layer="layer"
-      v-model:region-id="regionId"
       v-model:shadow-bits="shadowBits"
-      v-model:show-regions="showRegions"
       v-model:show-tile-flags="showTileFlags"
       :tile-flags-available="tileFlagsAvailable"
       :supports-layer-selection="Boolean(editorCatalog)"
@@ -16,6 +14,8 @@
       :redo-len="redoLen"
       :busy="busy"
       :staging-dirty="stagingDirty"
+      @select-tool="selectMapTool"
+      @select-shadow="selectShadowMode"
       @undo="undo"
       @redo="redo"
       @zoom-in="zoomIn"
@@ -28,7 +28,6 @@
     <div class="editor-body" :style="editorBodyStyle">
       <LeftDock
         :mode="mode"
-        :paint-mode="paintMode"
         :tile-tabs="tileTabs"
         :tile-tab="tileTab"
         :tileset-ready="tilesetReady"
@@ -79,10 +78,12 @@
             class="canvas-scroll"
             :class="{ panning: isPanning }"
             @wheel="onCanvasWheel"
+            @scroll="onCanvasScroll"
           >
             <div class="canvas-stack" :style="{ width: `${canvasWidth * zoom}px`, height: `${canvasHeight * zoom}px` }">
               <canvas
                 :ref="setCanvasElement"
+                data-ui-id="map-canvas"
                 class="map-canvas"
                 :width="canvasWidth"
                 :height="canvasHeight"
@@ -94,6 +95,7 @@
               />
               <canvas :ref="setOverlayElement" class="overlay-canvas" :width="canvasWidth" :height="canvasHeight" />
             </div>
+            <canvas :ref="setRegionLabelElement" class="region-label-canvas" aria-hidden="true" />
           </div>
             <div v-if="selectedMapId != null" class="canvas-zoom">
               <button type="button" :title="t('editor.view.zoomOut')" @click="zoomOut">−</button>
@@ -227,6 +229,7 @@ import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils
 import { loadImageElement } from '../utils/imageLoading.ts';
 import { projectMapTreeMove } from '../utils/mapTreeDragPreview';
 import { useI18n, type MessageKey } from '../i18n';
+import type { RpgMakerEngine } from '@contract/types';
 
 interface ApiError extends Error { status?: number }
 type EditableMap = MvMap & Partial<RmmvMapProperties> & Record<string, unknown>;
@@ -278,7 +281,6 @@ const regionId = ref(1);
 const shadowBits = ref(15);
 const layer = ref<MapLayerSelection>(0);
 const showGrid = ref(false);
-const showRegions = ref(false);
 const showTileFlags = ref(false);
 const busy = ref(false);
 const statusText = ref('');
@@ -295,6 +297,8 @@ const eventSearchLoading = ref(false);
 const eventSearchTruncated = ref(false);
 const currentMapName = ref('');
 const currentTileSize = ref(48);
+const currentEngine = ref<RpgMakerEngine>('rpg-maker-mv');
+const currentTilesetMode = ref<number | null>(null);
 const propertiesDialogOpen = ref(false);
 const propertiesDialogMode = ref<'create' | 'edit'>('edit');
 const properties = reactive<MapPropertiesForm>(defaultMapPropertiesForm());
@@ -318,6 +322,7 @@ let currentMap: EditableMap | null = null;
 let unregisterUiControlHandler: (() => void) | null = null;
 let eventSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let eventSearchSequence = 0;
+let clickedMapLoadingId: number | null = null;
 const characterImages = new Map<string, HTMLImageElement | null>();
 const characterAssetUrls = new Map<string, string>();
 
@@ -347,6 +352,8 @@ function rotatePlacementDirection(deltaY: number) {
 const canvasEditor = useMapCanvasEditor({
   tileSize: currentTileSize,
   parallaxImage: currentParallaxImage,
+  engine: currentEngine,
+  tilesetMode: currentTilesetMode,
   mode,
   tool,
   paintMode,
@@ -354,7 +361,6 @@ const canvasEditor = useMapCanvasEditor({
   shadowBits,
   layer,
   showGrid,
-  showRegions,
   showTileFlags,
   tileFlags: tilesetFlags,
   selectedEventId,
@@ -384,9 +390,9 @@ const canvasEditor = useMapCanvasEditor({
 const {
   canvasWidth, canvasHeight, zoom, cursorText, tilesetReady, tileTab, tileTabs,
   brushInfo, brushSet, undoLen, redoLen, isPanning,
-  setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setScrollElement, selectTileTab, canvasCell, eventAtCell,
+  setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectShadowMode, canvasCell, eventAtCell,
   onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
-  onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel,
+  onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel, onCanvasScroll,
   renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell,
 } = canvasEditor;
 
@@ -584,7 +590,15 @@ function findTreeNode(mapId: number): TreeNode | undefined {
   };
   return visit(mapTree.value);
 }
-async function handleNodeClick(node: TreeNode) { await loadMap(node.id); }
+async function handleNodeClick(node: TreeNode) {
+  if (clickedMapLoadingId === node.id) return;
+  clickedMapLoadingId = node.id;
+  try {
+    await loadMap(node.id);
+  } finally {
+    if (clickedMapLoadingId === node.id) clickedMapLoadingId = null;
+  }
+}
 async function moveMapFromTree(source: TreeNode, target: TreeNode, position: 'before' | 'after' | 'inside') {
   if (busy.value) return;
   const projection = projectMapTreeMove(mapTree.value, source.id, target.id, position);
@@ -867,6 +881,8 @@ async function loadMap(mapId: number, options: { quiet?: boolean } = {}) {
     ]);
     selectedMapId.value = mapId;
     currentTileSize.value = payload.tileSize;
+    currentEngine.value = payload.engine;
+    currentTilesetMode.value = payload.tileset?.mode ?? null;
     currentMap = nextMap;
     syncCurrentEvents(nextMap);
     selectedEventId.value = null;
@@ -898,6 +914,8 @@ async function reloadCurrentMap() {
   currentMap = payloadToMap(payload.map);
   syncCurrentEvents(currentMap);
   currentTileSize.value = payload.tileSize;
+  currentEngine.value = payload.engine;
+  currentTilesetMode.value = payload.tileset?.mode ?? null;
   systemData.value = payload.system || null;
   stagingDirty.value = isStagingDirty(payload.staging);
   currentParallaxImage.value = parallaxImage;
@@ -1474,10 +1492,16 @@ function clearCurrentMap() {
 .editor-stage { position:relative; min-width: 380px; min-height: 0; display: flex; flex-direction: column; flex: 1; overflow: hidden; border-radius:12px; background-color:var(--app-bg-sunken); background-image:linear-gradient(rgba(120,110,90,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(120,110,90,.05) 1px,transparent 1px);background-size:24px 24px;box-shadow:inset 0 1px 3px rgba(60,50,30,.08); }
 .empty-state { width: 100%; display: flex; align-items: center; justify-content: center; }
 .empty-actions { display: flex; justify-content: center; gap: 8px; }
-.canvas-scroll { flex: 1; overflow: auto; padding: 0; }
+.canvas-scroll { position:relative; flex: 1; overflow: auto; padding: 0; scrollbar-width:auto; scrollbar-color:var(--app-border-strong) transparent; }
+.canvas-scroll::-webkit-scrollbar { width:12px; height:12px; }
+.canvas-scroll::-webkit-scrollbar-thumb { border:1px solid transparent; border-radius:var(--app-radius-pill); background:var(--app-border-strong); background-clip:padding-box; }
+.canvas-scroll::-webkit-scrollbar-thumb:hover { border:1px solid transparent; background:var(--app-ink-muted); background-clip:padding-box; }
+.canvas-scroll::-webkit-scrollbar-track { background:transparent; }
+.canvas-scroll::-webkit-scrollbar-corner { background:var(--app-bg-sunken); }
 .canvas-scroll.panning { cursor: grabbing; user-select: none; }
 .canvas-stack { position: relative; margin:0; border-radius:0 0 6px 0; box-shadow:0 10px 36px rgba(60,50,30,.22); overflow:hidden; }
 .map-canvas, .overlay-canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.region-label-canvas { position:absolute; z-index:2; pointer-events:none; }
 .map-canvas {
   background-color: #fff;
   background-image: linear-gradient(45deg, #e5e5e5 25%, transparent 25%), linear-gradient(-45deg, #e5e5e5 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e5e5e5 75%), linear-gradient(-45deg, transparent 75%, #e5e5e5 75%);

@@ -963,7 +963,7 @@ function pluginFileStatus(file: ManagedPluginFile): string {
 .summary strong { font-size: 18px; line-height: 1; }
 .summary span { color: var(--console-text-muted,#9a8e7e); font-size: 10px; }
 .summary .bad strong { color: var(--app-danger); }
-.plugin-list-panel :deep(.console-search) { margin: 10px; }
+.plugin-list-panel :deep(.console-search-input) { width:calc(100% - 20px); height:30px; flex:0 0 30px; margin:10px; box-sizing:border-box; }
 .plugin-list,.file-list { min-height: 0; flex: 1; overflow: auto; padding: 8px; }
 .plugin-row { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px; border: 0; border-radius: 10px; background: transparent; color: var(--console-text,#211d17); font: inherit; text-align: left; cursor: pointer; }
 .plugin-row:hover,.plugin-row.active { background: #fbf1e9; }

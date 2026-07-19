@@ -5,6 +5,7 @@ export type MapTool = 'pencil' | 'rect' | 'ellipse' | 'fill' | 'eraser';
 export type MapPaintMode = 'tile' | 'shadow' | 'region';
 export type MapLayerSelection = 'auto' | 0 | 1 | 2 | 3;
 export type TileTab = 'A' | 'B' | 'C' | 'D' | 'E';
+export type PaletteTabId = TileTab | 'R';
 export type EditorStatusKind = '' | 'busy' | 'saved' | 'error';
 
 export interface TreeNode extends MapTreeNode {
@@ -22,7 +23,7 @@ export interface EditorEventListItem {
 export type EditorEventSearchHit = EventSearchHit;
 
 export interface PaletteTab {
-  tab: TileTab;
+  tab: PaletteTabId;
   label: string;
   available: boolean;
 }

@@ -12,6 +12,8 @@ const editorViewSource = readFileSync(new URL('../../views/EditorView.vue', impo
 const mapRendererSource = readFileSync(new URL('../../composables/useMapRenderer.ts', import.meta.url), 'utf8');
 const mapCanvasEditorSource = readFileSync(new URL('../../composables/useMapCanvasEditor.ts', import.meta.url), 'utf8');
 const projectAccessSource = readFileSync(new URL('../console/ProjectAccessControl.vue', import.meta.url), 'utf8');
+const pluginPaneSource = readFileSync(new URL('../console/ConsolePluginsPane.vue', import.meta.url), 'utf8');
+const topBarSource = readFileSync(new URL('../layout/TopBar.vue', import.meta.url), 'utf8');
 
 describe('editor semantic controls', () => {
   test('uses multiline resizable controls for map and event notes', () => {
@@ -69,6 +71,11 @@ describe('editor semantic controls', () => {
     assert.match(editorToolbarSource, /id: 'rect'[^\n]+icon: Crop/);
     assert.match(editorToolbarSource, /id: 'ellipse'[^\n]+icon: EllipseToolIcon/);
     assert.match(editorToolbarSource, /class="staging-actions"/);
+    assert.match(editorToolbarSource, /<template v-if="mode === 'map'">/);
+    assert.doesNotMatch(editorToolbarSource, /:disabled="mode !== 'map'/);
+    assert.match(editorToolbarSource, /\.mode-group button\.active\{[^}]*background:var\(--app-accent\)[^}]*color:#fff/s);
+    assert.match(editorToolbarSource, /data-ui-id="editor-tool-shadow"/);
+    assert.doesNotMatch(editorToolbarSource, /paint-mode-group/);
   });
 
   test('keeps confirmed 0718 resource and empty-state interactions explicit', () => {
@@ -79,10 +86,43 @@ describe('editor semantic controls', () => {
     assert.doesNotMatch(leftDockSource, /:disabled="!entry\.available/);
     assert.match(leftDockSource, /:class="treeNodeDragClasses\(data\.id\)"/);
     assert.match(leftDockSource, /v-if="!data\.mapFileExists" class="node-missing"/);
-    assert.match(mapCanvasEditorSource, /const rows = available \? paletteRowsForTab\(tileTab\.value\) : 4/);
+    assert.match(mapCanvasEditorSource, /const regionPalette = tileTab\.value === 'R'/);
+    assert.match(mapCanvasEditorSource, /MV_REGION_PALETTE_ROWS/);
     assert.match(mapCanvasEditorSource, /mapcanvas\.palette\.unconfigured/);
     assert.match(editorViewSource, /cursor:\s*default/);
     assert.doesNotMatch(editorViewSource, /\.map-canvas[^}]+cursor:\s*crosshair/s);
+    assert.match(leftDockSource, /\.palette-canvas[^}]+cursor:\s*default/s);
+    assert.doesNotMatch(leftDockSource, /\.palette-canvas[^}]+cursor:\s*crosshair/s);
+  });
+
+  test('replicates the MV R palette as the only region-editing entry point', () => {
+    assert.match(mapCanvasEditorSource, /\{ tab: 'R' as const, label: 'R', available: true \}/);
+    assert.match(leftDockSource, /tileTab !== 'R'/);
+    assert.match(mapCanvasEditorSource, /regionIdForPaletteCell\(cell\.col, cell\.row\)/);
+    assert.match(mapCanvasEditorSource, /showRegions: options\.mode\.value === 'map' && options\.paintMode\.value === 'region' && tileTab\.value === 'R'/);
+    assert.match(mapCanvasEditorSource, /showRegionLabels: false/);
+    assert.doesNotMatch(mapCanvasEditorSource, /drawGrid/);
+    assert.match(mapRendererSource, /if \(options\.showGrid\) drawGrid/);
+    assert.match(editorViewSource, /class="region-label-canvas"/);
+    assert.match(editorViewSource, /\.canvas-scroll::-webkit-scrollbar\s*\{[^}]*width:12px;[^}]*height:12px;/s);
+    assert.match(editorViewSource, /\.region-label-canvas\s*\{[^}]*pointer-events:none;/s);
+    assert.doesNotMatch(mapCanvasEditorSource, /regionOnly:/);
+    assert.doesNotMatch(mapRendererSource, /regionOnly/);
+    assert.doesNotMatch(editorToolbarSource, /editor-paint-region|editor-region-id|editor-overlay-regions/);
+    assert.doesNotMatch(editorToolbarSource, /update:paintMode|update:regionId|update:showRegions/);
+    assert.match(editorToolbarSource, /v-if="paintMode === 'tile'" class="overlay-group"/);
+  });
+
+  test('keeps the plugin search compact and identifies the active project at the top-bar center', () => {
+    assert.match(pluginPaneSource, /\.plugin-list-panel :deep\(\.console-search-input\)[^}]+flex:\s*0 0 30px/s);
+    assert.match(pluginPaneSource, /\.plugin-list-panel :deep\(\.console-search-input\)[^}]+height:\s*30px/s);
+    assert.match(topBarSource, /data-ui-id="topbar-project-identity"/);
+    assert.match(topBarSource, /projectStore\.currentProjectInfo\.iconUrl/);
+    assert.match(topBarSource, /projectStore\.currentProjectInfo\.name/);
+    assert.match(topBarSource, /\.project-identity[^}]+position:\s*absolute[^}]+left:\s*50%/s);
+    assert.match(topBarSource, /transform:\s*translate\(-50%, -50%\)/);
+    assert.match(topBarSource, /text-overflow:\s*ellipsis/);
+    assert.match(topBarSource, /playtest\.selectRuntime\(result\.runtimeSelectionRequired\.engine\)/);
   });
 
   test('links event list navigation, notes, hover preview, and scoped search', () => {
@@ -115,6 +155,14 @@ describe('editor semantic controls', () => {
     assert.match(leftDockSource, /class="map-tree"[\s\S]*@drop\.prevent\.stop="dropTreeNode"/);
     assert.match(leftDockSource, /@dragend\.stop="finishTreeDrag"/);
     assert.doesNotMatch(leftDockSource, /\sdraggable\s*\n\s*highlight-current/);
+  });
+
+  test('selects map rows without expanding them and reserves expansion for caret or double click', () => {
+    assert.match(leftDockSource, /:expand-on-click-node="false"/);
+    assert.match(leftDockSource, /@node-click="handleTreeNodeClick"/);
+    assert.match(leftDockSource, /@dblclick\.stop="toggleMapTreeNodeExpansion\(node\)"/);
+    assert.match(leftDockSource, /isPrimaryMapTreeNodeClick\(event\?\.detail\)/);
+    assert.match(editorViewSource, /if \(clickedMapLoadingId === node\.id\) return;/);
   });
 
   test('matches MV event-layer and grid semantics across editor modes', () => {

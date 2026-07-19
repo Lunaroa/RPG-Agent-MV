@@ -6,6 +6,7 @@
 // reactive —— 响应式代理会拦截每次像素读写，把绘制拖死。
 
 import { flagSummaryTokens, summarizeTileStackFlags, type MvTileFlagStackSummary } from '../utils/mvTileFlags.ts';
+import { drawMvRegionFill, drawMvRegionMarker } from '../utils/mvRegionPalette.ts';
 
 export const TILE_SIZE = 48;
 export const TILE_ID_A5 = 1536;
@@ -19,11 +20,6 @@ export const REGION_LAYER = 5;
 export const CHECKER_SIZE = 16;
 export const CHECKER_DARK = '#e5e5e5';
 export const CHECKER_LIGHT = '#ffffff';
-
-const MV_REGION_COLORS = [
-  '#b46868', '#b48e68', '#b4b468', '#8eb468', '#68b468', '#68b48e',
-  '#68b4b4', '#688eb4', '#6868b4', '#8e68b4', '#b468b4', '#b4688e',
-] as const;
 
 type Quad = [number, number];
 type ShapeTable = Quad[][];
@@ -68,7 +64,7 @@ export interface DrawOptions {
   tilesetFlags?: number[];
   showGrid?: boolean;
   showRegions?: boolean;
-  regionOnly?: boolean;
+  showRegionLabels?: boolean;
   showTileFlags?: boolean;
   activeLayer?: number | null;
   eventOpacity?: number;
@@ -113,22 +109,20 @@ export function drawMapContent(context: CanvasRenderingContext2D, map: MvMap, op
   const tileSize = normalizedTileSize(options.tileSize);
   context.clearRect(0, 0, map.width * tileSize, map.height * tileSize);
   drawCheckerboard(context, map.width * tileSize, map.height * tileSize);
-  if (!options.regionOnly) {
-    drawParallax(context, map, options.parallaxImage || null, tileSize);
-    for (let z = 0; z < PAINT_LAYERS; z += 1) {
-      context.save();
-      if (Number.isInteger(options.activeLayer) && z !== options.activeLayer) context.globalAlpha = 0.24;
-      for (let y = 0; y < map.height; y += 1) {
-        for (let x = 0; x < map.width; x += 1) {
-          const tileId = map.data[(z * map.height + y) * map.width + x] || 0;
-          drawTile(context, options.tilesetImages, tileId, x * tileSize, y * tileSize, tileSize);
-        }
+  drawParallax(context, map, options.parallaxImage || null, tileSize);
+  for (let z = 0; z < PAINT_LAYERS; z += 1) {
+    context.save();
+    if (Number.isInteger(options.activeLayer) && z !== options.activeLayer) context.globalAlpha = 0.24;
+    for (let y = 0; y < map.height; y += 1) {
+      for (let x = 0; x < map.width; x += 1) {
+        const tileId = map.data[(z * map.height + y) * map.width + x] || 0;
+        drawTile(context, options.tilesetImages, tileId, x * tileSize, y * tileSize, tileSize);
       }
-      context.restore();
     }
-    drawShadowLayer(context, map, tileSize);
+    context.restore();
   }
-  if (options.showRegions) drawRegionLayer(context, map, tileSize, Boolean(options.regionOnly));
+  drawShadowLayer(context, map, tileSize);
+  if (options.showRegions) drawRegionLayer(context, map, tileSize, options.showRegionLabels !== false);
   if (options.showTileFlags) drawTileFlagLayer(context, map, options.tilesetFlags || [], tileSize);
   if (options.showGrid) drawGrid(context, map.width, map.height, tileSize);
   drawEvents(context, map.events || [], options, tileSize);
@@ -295,45 +289,19 @@ function drawShadowLayer(context: CanvasRenderingContext2D, map: MvMap, tileSize
   context.restore();
 }
 
-function drawRegionLayer(context: CanvasRenderingContext2D, map: MvMap, tileSize: number, isolated: boolean): void {
+function drawRegionLayer(context: CanvasRenderingContext2D, map: MvMap, tileSize: number, showLabels: boolean): void {
   const base = REGION_LAYER * map.width * map.height;
   if (!Array.isArray(map.data) || map.data.length <= base) return;
-  context.save();
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.font = '700 14px Arial, sans-serif';
   for (let y = 0; y < map.height; y += 1) {
     for (let x = 0; x < map.width; x += 1) {
       const id = map.data[base + y * map.width + x] || 0;
       if (!id) continue;
       const px = x * tileSize;
       const py = y * tileSize;
-      const dark = MV_REGION_COLORS[(id - 1) % MV_REGION_COLORS.length];
-      if (isolated) {
-        const light = lightenRegionColor(dark);
-        for (let sy = 0; sy < tileSize; sy += CHECKER_SIZE) {
-          for (let sx = 0; sx < tileSize; sx += CHECKER_SIZE) {
-            const checkerDark = (Math.floor((px + sx) / CHECKER_SIZE) + Math.floor((py + sy) / CHECKER_SIZE)) % 2 === 0;
-            context.fillStyle = checkerDark ? dark : light;
-            context.fillRect(px + sx, py + sy, Math.min(CHECKER_SIZE, tileSize - sx), Math.min(CHECKER_SIZE, tileSize - sy));
-          }
-        }
-      } else {
-        context.save();
-        context.globalAlpha = .56;
-        context.fillStyle = dark;
-        context.fillRect(px, py, tileSize, tileSize);
-        context.restore();
-      }
-      context.fillStyle = '#fff';
-      context.shadowColor = 'rgba(0, 0, 0, .72)';
-      context.shadowBlur = 1;
-      context.shadowOffsetX = 1;
-      context.shadowOffsetY = 1;
-      context.fillText(String(id), px + tileSize / 2, py + tileSize / 2);
+      if (showLabels) drawMvRegionMarker(context, id, px, py, tileSize);
+      else drawMvRegionFill(context, id, px, py, tileSize);
     }
   }
-  context.restore();
 }
 
 function drawTileFlagLayer(context: CanvasRenderingContext2D, map: MvMap, flags: number[], tileSize: number): void {
@@ -411,13 +379,6 @@ function drawEvents(context: CanvasRenderingContext2D, events: (MvEvent | null)[
   } finally {
     context.restore();
   }
-}
-
-function lightenRegionColor(hex: string): string {
-  const value = Number.parseInt(hex.slice(1), 16);
-  const channels = [value >> 16, (value >> 8) & 0xff, value & 0xff]
-    .map((channel) => Math.min(255, channel + 13));
-  return `rgb(${channels[0]}, ${channels[1]}, ${channels[2]})`;
 }
 
 const EVENT_FRAME_INSET_RATIO = 1 / 12;

@@ -308,8 +308,8 @@ const commandRunners: Record<string, (rest: string[]) => unknown> = {
 
 function buildUiControlCommand(args: ParsedArgs): Record<string, unknown> {
   const type = String(args.command || "capture-current");
-  if (!["capture-current", "navigate", "open-event-editor", "state", "click", "input", "key", "read", "wait"].includes(type)) {
-    throw new Error("--command must be capture-current, navigate, open-event-editor, state, click, input, key, read, or wait");
+  if (!["capture-current", "navigate", "open-event-editor", "state", "click", "pointer", "input", "key", "read", "wait"].includes(type)) {
+    throw new Error("--command must be capture-current, navigate, open-event-editor, state, click, pointer, input, key, read, or wait");
   }
   const command: Record<string, unknown> = {
     type,
@@ -328,8 +328,19 @@ function buildUiControlCommand(args: ParsedArgs): Record<string, unknown> {
     command.mapId = args.mapId;
     command.eventId = args.eventId;
   }
-  if (["click", "input", "read", "wait"].includes(type)) {
+  if (["click", "pointer", "input", "read", "wait"].includes(type)) {
     addUiControlElementTarget(command, args, type);
+  }
+  if (type === "pointer") {
+    if (!["down", "move", "up"].includes(String(args.phase || ""))) {
+      throw new Error("--phase down, move, or up is required for ui-control --command pointer");
+    }
+    if (!Number.isFinite(args.x) || !Number.isFinite(args.y)) {
+      throw new Error("--x and --y are required for ui-control --command pointer");
+    }
+    command.phase = args.phase;
+    command.offsetX = args.x;
+    command.offsetY = args.y;
   }
   if (type === "input") {
     if (args.text === undefined) throw new Error("--text is required for ui-control --command input");

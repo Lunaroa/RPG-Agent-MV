@@ -1,7 +1,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from 'vue';
 import type { TileEdit } from '../api/client';
-import type { EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapTool, PaletteTab, TileTab } from '../components/editor/editorTypes';
-import type { ProductLanguage } from '@contract/types';
+import type { EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapTool, PaletteTab, PaletteTabId, TileTab } from '../components/editor/editorTypes';
+import type { ProductLanguage, RpgMakerEngine } from '../../../../contract/types.ts';
+import { applyRmmvMapBrushEdits } from '../../../../contract/rmmv-map-brush.ts';
 import { EDITOR_DEFAULT_ZOOM } from './useEditorWorkspaceState';
 import {
   AUTOTILE_KINDS,
@@ -9,7 +10,6 @@ import {
   SHADOW_LAYER,
   TILE_ID_A1,
   drawCheckerboard,
-  drawGrid,
   drawMapContent,
   drawTile,
   eventCharacterFrame,
@@ -25,6 +25,18 @@ import {
   tileIdToPaletteCell,
   tileTabAvailable,
 } from '../utils/mvTilePalette';
+import {
+  drawMvRegionLabel,
+  drawMvRegionMarker,
+  MV_REGION_PALETTE_COLS,
+  MV_REGION_PALETTE_ROWS,
+  paintModeForPaletteTab,
+  regionIdForPaletteCell,
+  regionPaletteLayout,
+  regionPaletteCellForId,
+  tileTabForShadow,
+  visibleRegionViewport,
+} from '../utils/mvRegionPalette';
 import { normalizeProductLanguage, translate, type MessageKey } from '../i18n/messages.ts'
 
 const MAP_MODE_EVENT_OPACITY = 0.35;
@@ -104,6 +116,8 @@ export function buildStackFloodFillEdits(
 interface CanvasEditorOptions {
   tileSize: Ref<number>;
   parallaxImage: Ref<HTMLImageElement | null>;
+  engine: Ref<RpgMakerEngine>;
+  tilesetMode: Ref<number | null>;
   mode: Ref<EditorMode>;
   tool: Ref<MapTool>;
   paintMode: Ref<MapPaintMode>;
@@ -111,7 +125,6 @@ interface CanvasEditorOptions {
   regionId: Ref<number>;
   shadowBits: Ref<number>;
   showGrid: Ref<boolean>;
-  showRegions: Ref<boolean>;
   showTileFlags: Ref<boolean>;
   tileFlags: Ref<number[]>;
   selectedEventId: Ref<number | null>;
@@ -139,13 +152,15 @@ interface CanvasEditorOptions {
 export function useMapCanvasEditor(options: CanvasEditorOptions) {
   const canvasRef = ref<HTMLCanvasElement>();
   const overlayRef = ref<HTMLCanvasElement>();
+  const regionLabelRef = ref<HTMLCanvasElement>();
   const scrollRef = ref<HTMLDivElement>();
   const canvasWidth = ref(0);
   const canvasHeight = ref(0);
   const zoom = ref(EDITOR_DEFAULT_ZOOM);
   const cursorText = ref('x -, y -');
   const tilesetReady = ref(false);
-  const tileTab = ref<TileTab>('A');
+  const tileTab = ref<PaletteTabId>('A');
+  let lastTileTab: TileTab = 'A';
   const productLanguage = computed(() => normalizeProductLanguage(options.language?.value));
   const tileSize = computed(() => [16, 24, 32, 48].includes(options.tileSize.value) ? options.tileSize.value : 48);
   const t = (key: MessageKey, params: Record<string, string | number> = {}) => translate(key, productLanguage.value, params)
@@ -163,6 +178,10 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   let dragStart: { x: number; y: number } | null = null;
   let painting = false;
   let strokeEdits = new Map<string, TileEdit>();
+  let strokeSnapshot: number[] | null = null;
+  let lastStrokeCell: { x: number; y: number } | null = null;
+  let shapePreviewTouched = new Set<number>();
+  let mapRenderFrame: number | null = null;
   let shadowStrokeQuadrants = new Set<string>();
   let undoStack: TileChange[][] = [];
   let redoStack: TileChange[][] = [];
@@ -170,6 +189,9 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   let paletteDragStart: PaletteCell | null = null;
   let paletteDragEnd: PaletteCell | null = null;
   let paletteRenderFrame: number | null = null;
+  let regionLabelRenderFrame: number | null = null;
+  let paletteResizeObserver: ResizeObserver | null = null;
+  let scrollResizeObserver: ResizeObserver | null = null;
   let draggingEvent: { event: MvEvent; originalX: number; originalY: number; moved: boolean } | null = null;
   let panStart: { x: number; y: number; left: number; top: number } | null = null;
   let spacePressed = false;
@@ -185,17 +207,19 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     // tilesetReady 是响应式 ref，读取它以建立依赖追踪；
     // 当 setMap 更新 tilesetImages 并修改 tilesetReady 时，此 computed 会自动重新计算
     void tilesetReady.value;
-    return (['A', 'B', 'C', 'D', 'E'] as const).map((tab) => ({
-      tab,
-      label: tab,
-      available: tileTabAvailable(tab, tileSlotLoaded),
-    }));
+    return [
+      ...(['A', 'B', 'C', 'D', 'E'] as const).map((tab) => ({
+        tab,
+        label: tab,
+        available: tileTabAvailable(tab, tileSlotLoaded),
+      })),
+      { tab: 'R' as const, label: 'R', available: true },
+    ];
   });
 
   watch([
     options.mode,
     options.showGrid,
-    options.showRegions,
     options.showTileFlags,
     options.tileFlags,
     options.selectedEventId,
@@ -209,39 +233,56 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     options.placementFlash,
     options.tileSize,
     options.parallaxImage,
+    tileTab,
     productLanguage,
   ], () => {
     renderMap();
     renderOverlay();
   });
   watch([options.paintMode, options.regionId, options.shadowBits, productLanguage], updateBrushInfo);
+  watch(options.mode, () => cancelStrokePreview());
   watch([options.mode, options.paintMode], () => {
     clearPaletteInteraction();
     schedulePaletteRender();
   });
-  const activeTileTabAvailable = computed(() => tileTabs.value.some((entry) => entry.tab === tileTab.value && entry.available));
+  watch(zoom, scheduleRegionLabelRender);
+  const activeTileTabAvailable = computed(() => (
+    tileTab.value !== 'R'
+    && tileTabs.value.some((entry) => entry.tab === tileTab.value && entry.available)
+  ));
 
   onMounted(() => {
     window.addEventListener('keydown', onWindowKeyDown);
     window.addEventListener('keyup', onWindowKeyUp);
     window.addEventListener('mouseup', finishPointerInteraction);
+    window.addEventListener('blur', cancelStrokePreview);
+    window.addEventListener('resize', onWindowResize);
   });
   onUnmounted(() => {
     window.removeEventListener('keydown', onWindowKeyDown);
     window.removeEventListener('keyup', onWindowKeyUp);
     window.removeEventListener('mouseup', finishPointerInteraction);
+    window.removeEventListener('blur', cancelStrokePreview);
+    window.removeEventListener('resize', onWindowResize);
+    cancelScheduledMapRender();
     cancelScheduledPaletteRender();
+    cancelScheduledRegionLabelRender();
+    paletteResizeObserver?.disconnect();
+    scrollResizeObserver?.disconnect();
   });
 
   async function setMap(nextMap: MvMap, _names: string[], images: (HTMLImageElement | null)[], resetHistory = true) {
+    cancelStrokePreview();
     map = nextMap;
     clearPaletteInteraction();
     tilesetImages = images;
     tilesetReady.value = images.some(Boolean);
     canvasWidth.value = nextMap.width * tileSize.value;
     canvasHeight.value = nextMap.height * tileSize.value;
-    if (!tileTabs.value.some((entry) => entry.tab === tileTab.value && entry.available)) {
-      tileTab.value = tileTabs.value.find((entry) => entry.available)?.tab || 'A';
+    if (tileTab.value !== 'R' && !activeTileTabAvailable.value) {
+      const availableTileTab = tileTabs.value.find((entry) => entry.tab !== 'R' && entry.available)?.tab;
+      tileTab.value = availableTileTab && availableTileTab !== 'R' ? availableTileTab : 'A';
+      lastTileTab = tileTab.value;
     }
     if (!brush) brush = { type: 'autotile', autotileKind: AUTOTILE_KINDS[0], cells: [{ dx: 0, dy: 0, autotileKind: AUTOTILE_KINDS[0] }] };
     updateBrushInfo();
@@ -256,6 +297,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     renderOverlay();
   }
   function replaceMap(nextMap: MvMap) {
+    cancelStrokePreview();
     map = nextMap;
     canvasWidth.value = nextMap.width * tileSize.value;
     canvasHeight.value = nextMap.height * tileSize.value;
@@ -263,6 +305,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     renderOverlay();
   }
   function clearMap() {
+    cancelStrokePreview();
     map = null;
     clearPaletteInteraction();
     canvasWidth.value = 0;
@@ -272,11 +315,27 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   }
   function setPaletteCanvas(canvas: HTMLCanvasElement) {
     paletteCanvas = canvas;
+    paletteResizeObserver?.disconnect();
+    paletteResizeObserver = new ResizeObserver(() => schedulePaletteRender());
+    if (canvas.parentElement) paletteResizeObserver.observe(canvas.parentElement);
     renderPalette();
   }
   function setCanvasElement(element: unknown) { canvasRef.value = element as HTMLCanvasElement | undefined; }
   function setOverlayElement(element: unknown) { overlayRef.value = element as HTMLCanvasElement | undefined; }
-  function setScrollElement(element: unknown) { scrollRef.value = element as HTMLDivElement | undefined; }
+  function setRegionLabelElement(element: unknown) {
+    regionLabelRef.value = element as HTMLCanvasElement | undefined;
+    scheduleRegionLabelRender();
+  }
+  function setScrollElement(element: unknown) {
+    scrollRef.value = element as HTMLDivElement | undefined;
+    scrollResizeObserver?.disconnect();
+    scrollResizeObserver = null;
+    if (scrollRef.value) {
+      scrollResizeObserver = new ResizeObserver(() => scheduleRegionLabelRender());
+      scrollResizeObserver.observe(scrollRef.value);
+    }
+    scheduleRegionLabelRender();
+  }
 
   function renderMap() {
     const canvas = canvasRef.value;
@@ -285,6 +344,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (!context) return;
     if (!map) {
       context.clearRect(0, 0, canvas.width, canvas.height);
+      scheduleRegionLabelRender();
       return;
     }
     const eventMode = options.mode.value === 'event';
@@ -294,9 +354,9 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       tileSize: tileSize.value,
       tilesetFlags: options.tileFlags.value,
       showGrid: eventMode || options.showGrid.value,
-      showRegions: options.showRegions.value || (options.mode.value === 'map' && options.paintMode.value === 'region'),
-      regionOnly: options.mode.value === 'map' && options.paintMode.value === 'region',
-      showTileFlags: options.showTileFlags.value,
+      showRegions: options.mode.value === 'map' && options.paintMode.value === 'region' && tileTab.value === 'R',
+      showRegionLabels: false,
+      showTileFlags: options.showTileFlags.value && options.paintMode.value === 'tile',
       activeLayer: options.mode.value === 'map' && options.paintMode.value === 'tile' && options.layer.value !== 'auto'
         ? options.layer.value
         : null,
@@ -305,6 +365,73 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       hoveredEventId: eventMode ? options.hoveredEventId?.value : null,
       getCharacterImage: options.getCharacterImage,
     });
+    scheduleRegionLabelRender();
+  }
+  function scheduleRegionLabelRender() {
+    if (regionLabelRenderFrame != null) return;
+    regionLabelRenderFrame = window.requestAnimationFrame(() => {
+      regionLabelRenderFrame = null;
+      renderRegionLabels();
+    });
+  }
+  function cancelScheduledRegionLabelRender() {
+    if (regionLabelRenderFrame == null) return;
+    window.cancelAnimationFrame(regionLabelRenderFrame);
+    regionLabelRenderFrame = null;
+  }
+  function onCanvasScroll() {
+    scheduleRegionLabelRender();
+  }
+  function onWindowResize() {
+    schedulePaletteRender();
+    scheduleRegionLabelRender();
+  }
+  function renderRegionLabels() {
+    const canvas = regionLabelRef.value;
+    const scroll = scrollRef.value;
+    if (!canvas || !scroll) return;
+    const cssWidth = Math.max(1, scroll.clientWidth);
+    const cssHeight = Math.max(1, scroll.clientHeight);
+    const ratio = Math.max(1, window.devicePixelRatio || 1);
+    const pixelWidth = Math.max(1, Math.round(cssWidth * ratio));
+    const pixelHeight = Math.max(1, Math.round(cssHeight * ratio));
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
+    canvas.style.left = `${scroll.scrollLeft}px`;
+    canvas.style.top = `${scroll.scrollTop}px`;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (!map || options.mode.value !== 'map' || options.paintMode.value !== 'region' || tileTab.value !== 'R') return;
+    context.setTransform(pixelWidth / cssWidth, 0, 0, pixelHeight / cssHeight, 0, 0);
+    const viewport = visibleRegionViewport({
+      mapWidth: map.width,
+      mapHeight: map.height,
+      tileSize: tileSize.value,
+      zoom: zoom.value,
+      scrollLeft: scroll.scrollLeft,
+      scrollTop: scroll.scrollTop,
+      viewportWidth: cssWidth,
+      viewportHeight: cssHeight,
+      overscan: 1,
+    });
+    const layerSize = map.width * map.height;
+    for (let row = viewport.startRow; row < viewport.endRow; row += 1) {
+      for (let col = viewport.startCol; col < viewport.endCol; col += 1) {
+        const regionId = Number(map.data[REGION_LAYER * layerSize + row * map.width + col] || 0);
+        if (!regionId) continue;
+        drawMvRegionLabel(
+          context,
+          regionId,
+          col * viewport.displayTileSize - scroll.scrollLeft,
+          row * viewport.displayTileSize - scroll.scrollTop,
+          viewport.displayTileSize,
+        );
+      }
+    }
   }
   function renderOverlay() {
     const canvas = overlayRef.value;
@@ -424,15 +551,43 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (!map) {
       canvas.width = 0;
       canvas.height = 0;
+      canvas.style.removeProperty('width');
+      canvas.style.removeProperty('height');
       return;
     }
-    const available = activeTileTabAvailable.value;
-    const rows = available ? paletteRowsForTab(tileTab.value) : 4;
+    const regionPalette = tileTab.value === 'R';
+    const available = regionPalette || activeTileTabAvailable.value;
+    const rows = regionPalette ? MV_REGION_PALETTE_ROWS : available ? paletteRowsForTab(tileTab.value as TileTab) : 4;
+    if (regionPalette) {
+      const layout = regionPaletteLayout(
+        canvas.parentElement?.clientWidth || MV_REGION_PALETTE_COLS * tileSize.value,
+        window.devicePixelRatio,
+      );
+      canvas.width = layout.pixelWidth;
+      canvas.height = layout.pixelHeight;
+      canvas.style.width = `${layout.cssWidth}px`;
+      canvas.style.height = `${layout.cssHeight}px`;
+      context.setTransform(layout.scaleX, 0, 0, layout.scaleY, 0, 0);
+      context.fillStyle = '#fff';
+      context.fillRect(0, 0, layout.cssWidth, layout.cssHeight);
+      for (let row = 0; row < MV_REGION_PALETTE_ROWS; row += 1) {
+        for (let col = 0; col < MV_REGION_PALETTE_COLS; col += 1) {
+          const region = regionIdForPaletteCell(col, row);
+          if (region == null || region === 0) continue;
+          drawMvRegionMarker(context, region, col * layout.cellSize, row * layout.cellSize, layout.cellSize);
+        }
+      }
+      highlightPaletteHover(context, layout.cellSize);
+      highlightPaletteSelection(context, layout.cellSize);
+      return;
+    }
+    canvas.style.removeProperty('width');
+    canvas.style.removeProperty('height');
     canvas.width = MV_PALETTE_COLS * tileSize.value;
     canvas.height = rows * tileSize.value;
+    context.setTransform(1, 0, 0, 1, 0, 0);
     drawCheckerboard(context, canvas.width, canvas.height);
     if (!available) {
-      drawGrid(context, MV_PALETTE_COLS, rows, tileSize.value);
       context.save();
       context.fillStyle = 'rgba(49, 46, 43, .78)';
       context.font = '600 13px sans-serif';
@@ -444,19 +599,17 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     }
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < MV_PALETTE_COLS; col += 1) {
-        const pick = palettePickForCell(tileTab.value, col, row, tileSlotLoaded);
+        const pick = palettePickForCell(tileTab.value as TileTab, col, row, tileSlotLoaded);
         if (!pick) continue;
         drawTile(context, tilesetImages, tileIdForPalettePreview(pick), col * tileSize.value, row * tileSize.value, tileSize.value);
       }
     }
-    drawGrid(context, MV_PALETTE_COLS, rows, tileSize.value);
     highlightPaletteHover(context);
     highlightPaletteDrag(context);
     highlightPaletteSelection(context);
   }
-  function highlightPaletteHover(context: CanvasRenderingContext2D) {
+  function highlightPaletteHover(context: CanvasRenderingContext2D, size = tileSize.value) {
     if (!paletteHoverCell || paletteDragStart) return;
-    const size = tileSize.value;
     const x = paletteHoverCell.col * size;
     const y = paletteHoverCell.row * size;
     context.save();
@@ -484,13 +637,28 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     context.strokeRect(x + 1, y + 1, Math.max(1, width - 2), Math.max(1, height - 2));
     context.restore();
   }
-  function highlightPaletteSelection(context: CanvasRenderingContext2D) {
+  function highlightPaletteSelection(context: CanvasRenderingContext2D, size = tileSize.value) {
+    if (tileTab.value === 'R') {
+      const selected = regionPaletteCellForId(options.regionId.value);
+      if (!selected) return;
+      const x = selected.col * size;
+      const y = selected.row * size;
+      context.save();
+      context.strokeStyle = '#fff';
+      context.lineWidth = 3;
+      context.strokeRect(x + 1.5, y + 1.5, size - 3, size - 3);
+      context.strokeStyle = '#111';
+      context.lineWidth = 1;
+      context.strokeRect(x + 4.5, y + 4.5, Math.max(1, size - 9), Math.max(1, size - 9));
+      context.restore();
+      return;
+    }
     if (!brush) return;
     const places = brush.cells.map((cell) => {
       if (cell.autotileKind != null && tileTab.value === 'A') {
-        return tileIdToPaletteCell(TILE_ID_A1 + cell.autotileKind * 48, tileTab.value);
+        return tileIdToPaletteCell(TILE_ID_A1 + cell.autotileKind * 48, tileTab.value as TileTab);
       }
-      return cell.tileId == null ? null : tileIdToPaletteCell(cell.tileId, tileTab.value);
+      return cell.tileId == null ? null : tileIdToPaletteCell(cell.tileId, tileTab.value as TileTab);
     }).filter(Boolean) as { col: number; row: number }[];
     if (!places.length) return;
     const minCol = Math.min(...places.map((place) => place.col));
@@ -507,23 +675,63 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     context.restore();
   }
 
-  function selectTileTab(tab: TileTab) {
+  function selectTileTab(tab: PaletteTabId) {
     tileTab.value = tab;
+    if (tab === 'R') {
+      if (options.paintMode.value === 'shadow') options.tool.value = 'pencil';
+      options.paintMode.value = paintModeForPaletteTab(tab);
+    } else {
+      lastTileTab = tab;
+      if (options.paintMode.value === 'shadow') options.tool.value = 'pencil';
+      options.paintMode.value = paintModeForPaletteTab(tab);
+    }
     clearPaletteInteraction();
     updateBrushInfo();
+    renderMap();
     renderPalette();
   }
+  function selectMapTool(nextTool: MapTool) {
+    options.tool.value = nextTool;
+    if (options.paintMode.value === 'shadow') {
+      options.paintMode.value = paintModeForPaletteTab(tileTab.value);
+    }
+    updateBrushInfo();
+    renderMap();
+    renderOverlay();
+  }
+  function selectShadowMode() {
+    tileTab.value = tileTabForShadow(tileTab.value, lastTileTab);
+    options.tool.value = 'pencil';
+    options.paintMode.value = 'shadow';
+    clearPaletteInteraction();
+    updateBrushInfo();
+    renderMap();
+    renderPalette();
+    renderOverlay();
+  }
   function onPaletteMouseDown(event: MouseEvent) {
-    if (event.button !== 0 || options.mode.value !== 'map' || options.paintMode.value !== 'tile' || !activeTileTabAvailable.value) return;
+    if (event.button !== 0 || options.mode.value !== 'map') return;
+    if (tileTab.value !== 'R' && (options.paintMode.value !== 'tile' || !activeTileTabAvailable.value)) return;
     const cell = paletteCell(event);
     if (!cell) return;
     paletteHoverCell = cell;
+    if (tileTab.value === 'R') {
+      const selectedRegionId = regionIdForPaletteCell(cell.col, cell.row);
+      if (selectedRegionId == null) return;
+      options.regionId.value = selectedRegionId;
+      if (options.paintMode.value === 'shadow') options.tool.value = 'pencil';
+      options.paintMode.value = 'region';
+      updateBrushInfo();
+      renderMap();
+      schedulePaletteRender();
+      return;
+    }
     paletteDragStart = cell;
     paletteDragEnd = cell;
     schedulePaletteRender();
   }
   function onPaletteMouseMove(event: MouseEvent) {
-    if (options.mode.value !== 'map' || options.paintMode.value !== 'tile' || !activeTileTabAvailable.value) {
+    if (options.mode.value !== 'map' || (tileTab.value !== 'R' && (options.paintMode.value !== 'tile' || !activeTileTabAvailable.value))) {
       if (paletteHoverCell || paletteDragStart || paletteDragEnd) {
         clearPaletteInteraction();
         schedulePaletteRender();
@@ -531,7 +739,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       return;
     }
     const cell = paletteCell(event, Boolean(paletteDragStart));
-    if (paletteDragStart) {
+    if (tileTab.value !== 'R' && paletteDragStart) {
       if (cell && !samePaletteCell(paletteDragEnd, cell)) {
         paletteDragEnd = cell;
         paletteHoverCell = cell;
@@ -561,7 +769,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     const cells: BrushCell[] = [];
     for (let row = minRow; row <= maxRow; row += 1) {
       for (let col = minCol; col <= maxCol; col += 1) {
-        const pick = palettePickForCell(tileTab.value, col, row, tileSlotLoaded);
+        const pick = palettePickForCell(tileTab.value as TileTab, col, row, tileSlotLoaded);
         if (pick) cells.push({ dx: col - minCol, dy: row - minRow, ...pick });
       }
     }
@@ -585,6 +793,18 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (!paletteCanvas || !paletteCanvas.width || !paletteCanvas.height) return null;
     const rect = paletteCanvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
+    if (tileTab.value === 'R') {
+      const rawCol = Math.floor((event.clientX - rect.left) / rect.width * MV_REGION_PALETTE_COLS);
+      const rawRow = Math.floor((event.clientY - rect.top) / rect.height * MV_REGION_PALETTE_ROWS);
+      if (!clampToBounds && (
+        rawCol < 0 || rawRow < 0
+        || rawCol >= MV_REGION_PALETTE_COLS || rawRow >= MV_REGION_PALETTE_ROWS
+      )) return null;
+      return {
+        col: Math.max(0, Math.min(MV_REGION_PALETTE_COLS - 1, rawCol)),
+        row: Math.max(0, Math.min(MV_REGION_PALETTE_ROWS - 1, rawRow)),
+      };
+    }
     const rawCol = Math.floor((event.clientX - rect.left) * paletteCanvas.width / rect.width / tileSize.value);
     const rawRow = Math.floor((event.clientY - rect.top) * paletteCanvas.height / rect.height / tileSize.value);
     const maxCol = Math.max(0, Math.floor(paletteCanvas.width / tileSize.value) - 1);
@@ -627,6 +847,20 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (paletteRenderFrame == null) return;
     window.cancelAnimationFrame(paletteRenderFrame);
     paletteRenderFrame = null;
+  }
+
+  function scheduleMapRender() {
+    if (mapRenderFrame != null) return;
+    mapRenderFrame = window.requestAnimationFrame(() => {
+      mapRenderFrame = null;
+      renderMap();
+    });
+  }
+
+  function cancelScheduledMapRender() {
+    if (mapRenderFrame == null) return;
+    window.cancelAnimationFrame(mapRenderFrame);
+    mapRenderFrame = null;
   }
 
   function canvasCell(event: MouseEvent) {
@@ -676,20 +910,22 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       renderOverlay();
       return;
     }
-    if (options.tool.value === 'fill' && options.paintMode.value === 'tile') {
+    if (options.tool.value === 'fill' && options.paintMode.value !== 'shadow') {
       const edits = floodFillEdits(cell);
-      if (edits.length) void commitEdits(edits);
+      if (edits.length) {
+        beginStroke(cell);
+        applyPreviewEdits(edits, true);
+        void finishPointerInteraction();
+      }
       return;
     }
     if (!toolReady()) {
       options.setStatus(t('mapcanvas.status.selectBrushFirst'), 'error');
       return;
     }
-    painting = true;
-    dragStart = cell;
-    strokeEdits = new Map();
-    shadowStrokeQuadrants = new Set();
-    if (options.tool.value !== 'rect' && options.tool.value !== 'ellipse') applyToolAt(cell.x, cell.y, event);
+    beginStroke(cell);
+    if (options.tool.value === 'rect' || options.tool.value === 'ellipse') previewShape(cell, true);
+    else applyToolAt(cell.x, cell.y, event, true);
     renderOverlay();
   }
   function onCanvasMouseMove(event: MouseEvent) {
@@ -714,7 +950,15 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
         draggingEvent.moved = true;
         renderMap();
       }
-    } else if (painting && cell && options.mode.value === 'map' && options.tool.value !== 'rect' && options.tool.value !== 'ellipse') applyToolAt(cell.x, cell.y, event);
+    } else if (painting && cell && options.mode.value === 'map') {
+      if (options.tool.value === 'rect' || options.tool.value === 'ellipse') previewShape(cell);
+      else {
+        const edits = rasterLineCells(lastStrokeCell || cell, cell)
+          .flatMap((point) => toolEditsAt(point.x, point.y, event));
+        applyPreviewEdits(edits);
+        lastStrokeCell = cell;
+      }
+    }
     renderOverlay();
   }
   function onCanvasMouseLeave() {
@@ -770,15 +1014,16 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       renderOverlay();
     }
     if (!painting) return;
+    const rollback = strokeSnapshot;
     painting = false;
-    if (dragStart && hoverCell && (options.tool.value === 'rect' || options.tool.value === 'ellipse')) {
-      for (const cell of regionCells(dragStart, hoverCell, options.tool.value)) applyToolAt(cell.x, cell.y);
-    }
     dragStart = null;
+    strokeSnapshot = null;
+    lastStrokeCell = null;
+    shapePreviewTouched = new Set();
     shadowStrokeQuadrants = new Set();
     const edits = [...strokeEdits.values()];
     strokeEdits = new Map();
-    if (edits.length) await commitEdits(edits);
+    if (edits.length) await commitEdits(edits, rollback);
     renderOverlay();
   }
 
@@ -803,23 +1048,35 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     for (let y = minY; y <= maxY; y += 1) for (let x = minX; x <= maxX; x += 1) if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1) cells.push({ x, y });
     return cells;
   }
-  function applyToolAt(x: number, y: number, event?: MouseEvent) {
-    if (options.mode.value !== 'map') return;
+  function beginStroke(cell: { x: number; y: number }) {
+    if (!map) return;
+    painting = true;
+    dragStart = cell;
+    strokeSnapshot = map.data.slice();
+    lastStrokeCell = cell;
+    strokeEdits = new Map();
+    shapePreviewTouched = new Set();
+    shadowStrokeQuadrants = new Set();
+  }
+
+  function toolEditsAt(x: number, y: number, event?: MouseEvent): TileEdit[] {
+    if (options.mode.value !== 'map') return [];
     if (options.paintMode.value === 'shadow') {
       const value = event && (options.tool.value === 'pencil' || options.tool.value === 'eraser')
         ? shadowValueFromPointer(x, y, event)
         : options.tool.value === 'eraser' ? 0 : clampInt(options.shadowBits.value, 0, 15);
-      return pushEdit(x, y, SHADOW_LAYER, { kind: 'shadow', shadowBits: value }, value);
+      return [{ kind: 'shadow', x, y, layer: SHADOW_LAYER, shadowBits: value }];
     }
     if (options.paintMode.value === 'region') {
       const value = options.tool.value === 'eraser' ? 0 : clampInt(options.regionId.value, 0, 255);
-      return pushEdit(x, y, REGION_LAYER, { kind: 'region', regionId: value }, value);
+      return [{ kind: 'region', x, y, layer: REGION_LAYER, regionId: value }];
     }
-    if (options.tool.value === 'eraser') return pushEdit(x, y, options.layer.value, { kind: 'tile', tileId: 0 }, 0);
+    if (options.tool.value === 'eraser') return [{ kind: 'tile', x, y, layer: options.layer.value, tileId: 0 }];
+    const edits: TileEdit[] = [];
     for (const cell of brush?.cells || []) {
       if (cell.layerTiles) {
         for (const edit of buildLayerStackEdits(x + cell.dx, y + cell.dy, options.layer.value, cell.layerTiles)) {
-          pushEdit(edit.x, edit.y, edit.layer, edit, edit.tileId);
+          edits.push(edit);
         }
         continue;
       }
@@ -827,19 +1084,104 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       const payload = cell.autotileKind != null && !exactAutotile
         ? { kind: 'autotile' as const, autotileKind: cell.autotileKind }
         : { kind: 'tile' as const, tileId: cell.tileId ?? (TILE_ID_A1 + (cell.autotileKind || 0) * 48), preserveAutotileShape: exactAutotile };
-      const optimistic = cell.autotileKind != null ? TILE_ID_A1 + cell.autotileKind * 48 : cell.tileId || 0;
-      pushEdit(x + cell.dx, y + cell.dy, options.layer.value, payload, optimistic);
+      edits.push({ x: x + cell.dx, y: y + cell.dy, layer: options.layer.value, ...payload });
+    }
+    return edits;
+  }
+
+  function applyToolAt(x: number, y: number, event?: MouseEvent, immediate = false) {
+    applyPreviewEdits(toolEditsAt(x, y, event), immediate);
+  }
+
+  function applyPreviewEdits(edits: readonly TileEdit[], immediate = false, shape = false) {
+    if (!map || !edits.length) return;
+    const accepted: TileEdit[] = [];
+    for (const edit of edits) {
+      if (!inMap(edit.x, edit.y)) continue;
+      const key = strokeEditKey(edit);
+      const previous = strokeEdits.get(key);
+      if (previous && sameTileEdit(previous, edit)) continue;
+      strokeEdits.set(key, edit);
+      accepted.push(edit);
+    }
+    if (!accepted.length) return;
+    const result = applyRmmvMapBrushEdits(map, accepted, {
+      engine: options.engine.value,
+      tilesetMode: options.tilesetMode.value,
+      autotileResolution: 'affected',
+      mutate: true,
+      collectChanges: false,
+    });
+    if (shape) for (const index of result.touchedIndices) shapePreviewTouched.add(index);
+    if (immediate) {
+      cancelScheduledMapRender();
+      renderMap();
+    } else {
+      scheduleMapRender();
     }
   }
-  function pushEdit(x: number, y: number, layer: MapLayerSelection | number, payload: Partial<TileEdit>, tileId: number) {
-    if (!map || !inMap(x, y)) return;
-    strokeEdits.set(`${x},${y},${layer}`, { x, y, layer, ...payload });
-    if (typeof layer === 'number') map.data[layer * map.width * map.height + y * map.width + x] = tileId;
-    renderMap();
+
+  function previewShape(end: { x: number; y: number }, immediate = false) {
+    if (!map || !strokeSnapshot || !dragStart) return;
+    for (const index of shapePreviewTouched) map.data[index] = strokeSnapshot[index];
+    shapePreviewTouched = new Set();
+    strokeEdits = new Map();
+    shadowStrokeQuadrants = new Set();
+    const edits: TileEdit[] = [];
+    for (const cell of regionCells(dragStart, end, options.tool.value)) edits.push(...toolEditsAt(cell.x, cell.y));
+    applyPreviewEdits(edits, immediate, true);
+  }
+
+  function rasterLineCells(from: { x: number; y: number }, to: { x: number; y: number }): { x: number; y: number }[] {
+    const cells: { x: number; y: number }[] = [];
+    let x = from.x;
+    let y = from.y;
+    const dx = Math.abs(to.x - from.x);
+    const sx = from.x < to.x ? 1 : -1;
+    const dy = -Math.abs(to.y - from.y);
+    const sy = from.y < to.y ? 1 : -1;
+    let error = dx + dy;
+    for (;;) {
+      cells.push({ x, y });
+      if (x === to.x && y === to.y) return cells;
+      const doubled = error * 2;
+      if (doubled >= dy) {
+        error += dy;
+        x += sx;
+      }
+      if (doubled <= dx) {
+        error += dx;
+        y += sy;
+      }
+    }
+  }
+
+  function strokeEditKey(edit: TileEdit): string {
+    return `${edit.x},${edit.y},${edit.layer ?? 'auto'}`;
+  }
+
+  function sameTileEdit(left: TileEdit, right: TileEdit): boolean {
+    return left.kind === right.kind
+      && left.x === right.x
+      && left.y === right.y
+      && left.layer === right.layer
+      && left.tileId === right.tileId
+      && left.autotileKind === right.autotileKind
+      && left.preserveAutotileShape === right.preserveAutotileShape
+      && left.shadowBits === right.shadowBits
+      && left.regionId === right.regionId;
   }
 
   function pickMapRange(from: { x: number; y: number }, to: { x: number; y: number }) {
     if (!map) return;
+    if (options.paintMode.value === 'region' && tileTab.value === 'R') {
+      const layerSize = map.width * map.height;
+      options.regionId.value = clampInt(map.data[REGION_LAYER * layerSize + from.y * map.width + from.x] || 0, 0, 255);
+      if (options.tool.value === 'eraser') options.tool.value = 'pencil';
+      updateBrushInfo();
+      renderPalette();
+      return;
+    }
     const minX = Math.min(from.x, to.x);
     const minY = Math.min(from.y, to.y);
     const maxX = Math.max(from.x, to.x);
@@ -862,6 +1204,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     else if (cells.length === 1 && cells[0].autotileKind != null) brush = { type: 'autotile', autotileKind: cells[0].autotileKind, cells };
     else if (cells.length === 1) brush = { type: 'tile', tileId: cells[0].tileId || 0, cells };
     else brush = { type: 'tileRect', cells, width, height };
+    if (tileTab.value === 'R') tileTab.value = lastTileTab;
     options.paintMode.value = 'tile';
     if (options.tool.value === 'eraser') options.tool.value = 'pencil';
     updateBrushInfo();
@@ -911,7 +1254,23 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     }
     return edits;
   }
-  async function commitEdits(edits: TileEdit[]) {
+
+  function cancelStrokePreview() {
+    if (!painting) return;
+    painting = false;
+    cancelScheduledMapRender();
+    if (map && strokeSnapshot) map.data = strokeSnapshot;
+    dragStart = null;
+    strokeSnapshot = null;
+    lastStrokeCell = null;
+    strokeEdits = new Map();
+    shapePreviewTouched = new Set();
+    shadowStrokeQuadrants = new Set();
+    renderMap();
+    renderOverlay();
+  }
+
+  async function commitEdits(edits: TileEdit[], rollback: number[] | null = null) {
     if (options.mode.value !== 'map') {
       options.setStatus(t('mapcanvas.status.eventModeNoTiles'), 'error');
       return;
@@ -930,6 +1289,10 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       options.setStatus(t('mapcanvas.status.stagedCells', { count: report.changedCells }), 'saved');
     } catch (error) {
       options.setStatus(t('mapcanvas.status.stageFailed', { message: (error as Error).message }), 'error');
+      if (map && rollback) {
+        map.data = rollback;
+        renderMap();
+      }
       await options.reloadMap();
     } finally { options.busy.value = false; }
   }
@@ -1039,6 +1402,11 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   function zoomOut() { setZoom(zoom.value - .25); }
   function resetZoom() { zoom.value = EDITOR_DEFAULT_ZOOM; }
   function onWindowKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && painting) {
+      event.preventDefault();
+      cancelStrokePreview();
+      return;
+    }
     if (event.code === 'Space' && !isFormTarget(event.target)) spacePressed = true;
     if (event.key === 'Shift') shiftPressed = true;
   }
@@ -1055,11 +1423,11 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   }
 
   return {
-    canvasRef, overlayRef, scrollRef, canvasWidth, canvasHeight, zoom, cursorText, tilesetReady, tileTab, tileTabs,
+    canvasRef, overlayRef, regionLabelRef, scrollRef, canvasWidth, canvasHeight, zoom, cursorText, tilesetReady, tileTab, tileTabs,
     brushInfo, brushSet, undoLen, redoLen, isPanning,
-    setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setScrollElement, selectTileTab, canvasCell, eventAtCell,
+    setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectShadowMode, canvasCell, eventAtCell,
     onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
-    onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel,
+    onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel, onCanvasScroll,
     renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell,
   };
 }

@@ -13,6 +13,7 @@ type UiControlCommandType =
   | 'open-event-editor'
   | 'state'
   | 'click'
+  | 'pointer'
   | 'input'
   | 'key'
   | 'read'
@@ -36,6 +37,9 @@ interface UiControlCommand {
   condition?: UiControlWaitCondition;
   expect?: string;
   modifiers?: string[];
+  phase?: 'down' | 'move' | 'up';
+  offsetX?: number;
+  offsetY?: number;
 }
 
 interface UiControlServerInfo {
@@ -87,6 +91,7 @@ const ALLOWED_COMMAND_TYPES = new Set<UiControlCommandType>([
   'open-event-editor',
   'state',
   'click',
+  'pointer',
   'input',
   'key',
   'read',
@@ -359,8 +364,19 @@ function normalizeCommand(raw: unknown): UiControlCommand {
     command.eventId = normalizePositiveInteger(value.eventId, 'eventId');
   }
 
-  if (['click', 'input', 'read', 'wait'].includes(type)) {
+  if (['click', 'pointer', 'input', 'read', 'wait'].includes(type)) {
     normalizeElementTarget(value, command);
+  }
+
+  if (type === 'pointer') {
+    const phase = String(value.phase || '') as 'down' | 'move' | 'up';
+    if (!['down', 'move', 'up'].includes(phase)) throw new Error('pointer command requires phase down, move, or up.');
+    const offsetX = Number(value.offsetX);
+    const offsetY = Number(value.offsetY);
+    if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) throw new Error('pointer command requires finite offsetX and offsetY.');
+    command.phase = phase;
+    command.offsetX = offsetX;
+    command.offsetY = offsetY;
   }
 
   if (type === 'input') {

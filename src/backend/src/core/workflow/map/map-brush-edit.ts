@@ -5,7 +5,10 @@ import { readJson, writeJson } from "../../rmmv/json.ts";
 import { resolveDataDir } from "../../rmmv/project-scanner.ts";
 import { inspectRmmvProject } from "../../rmmv/rmmv-layout.ts";
 import { LAYERS } from "../../rmmv/map-blocks.ts";
-import { applyRmmvMapBrushEdits } from "../../../../../contract/rmmv-map-brush.ts";
+import {
+  applyRmmvMapBrushEdits,
+  RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+} from "../../../../../contract/rmmv-map-brush.ts";
 
 interface BrushEditOptions {
   project?: string;
@@ -67,10 +70,10 @@ interface BrushEditReport {
  * Layer 4/5 writes must use explicit shadow/region kinds so callers cannot
  * accidentally treat MV metadata layers as ordinary tiles.
  *
- * After the batch, every touched layer that holds floor autotiles is
- * re-resolved, so erasing or painting next to a grass/water field keeps the
- * field's borders correct. Untouched layers are never rewritten, so editing
- * an object layer does not churn the ground layer's diff.
+ * After the batch, only edited cells and their one-cell neighbourhood are
+ * re-resolved. Autotile connectivity depends solely on the surrounding eight
+ * kinds, so this matches the interactive preview without rewriting unrelated
+ * exact shapes elsewhere on the same layer.
  *
  * Internal implementation for map-service brush writes. It is intentionally
  * not exposed as a public CLI command.
@@ -93,7 +96,11 @@ function applyBrushEdit(options: BrushEditOptions): BrushEditReport {
 
   const engine = inspectRmmvProject(project).engine;
   const tilesetMode = readTilesetMode(dataDir, map);
-  const result = applyRmmvMapBrushEdits(map, edits, { engine, tilesetMode, autotileResolution: 'full' });
+  const result = applyRmmvMapBrushEdits(map, edits, {
+    engine,
+    tilesetMode,
+    autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+  });
   map.data = result.data;
   const changes = result.changes;
   const resolvedLayers = result.resolvedLayers;

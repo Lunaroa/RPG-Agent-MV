@@ -12,7 +12,7 @@ describe('map canvas live paint wiring', () => {
   });
 
   test('uses affected-neighbour shared rules without collecting a whole-map diff during pointer movement', () => {
-    assert.match(source, /applyRmmvMapBrushEdits\(map, accepted, \{[\s\S]*autotileResolution: 'affected'/);
+    assert.match(source, /autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION/);
     assert.match(source, /mutate: true/);
     assert.match(source, /collectChanges: false/);
     assert.match(source, /scheduleMapRender\(\)/);

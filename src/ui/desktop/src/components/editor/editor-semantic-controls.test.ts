@@ -147,7 +147,7 @@ describe('editor semantic controls', () => {
     assert.match(topBarSource, /\.project-identity[^}]+position:\s*absolute[^}]+left:\s*50%/s);
     assert.match(topBarSource, /transform:\s*translate\(-50%, -50%\)/);
     assert.match(topBarSource, /text-overflow:\s*ellipsis/);
-    assert.match(topBarSource, /playtest\.selectRuntime\(result\.runtimeSelectionRequired\.engine\)/);
+    assert.match(topBarSource, /playtest\.selectRuntime\(result\.runtimeSelectionRequired\)/);
   });
 
   test('links event list navigation, notes, hover preview, and scoped search', () => {

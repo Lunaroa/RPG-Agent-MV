@@ -129,6 +129,36 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.deepEqual(spawnCalls[0].args, [project]);
   });
 
+  test('launches a source-only MZ project through a selected external nw.exe', async () => {
+    const child = new FakeChild();
+    const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
+    const selectedExecutable = path.join(root, 'runtime', 'nw.exe');
+    const service = createService(root, {
+      child,
+      spawnCalls,
+      inspectProject: () => ({ engine: 'rpg-maker-mz', editable: true, missingRequired: [] }),
+      resolveProjectRuntime: () => ({
+        runtime: {
+          engine: 'rpg-maker-mz',
+          executable: selectedExecutable,
+          runtimeRoot: path.dirname(selectedExecutable),
+          source: 'configured',
+          launchStyle: 'external',
+          evidenceExecutable: 'configured-rpg-maker-mz-nwjs',
+          privateExecutable: selectedExecutable,
+        },
+      }),
+    });
+    const starting = service.start(project);
+    queueMicrotask(() => child.emitSpawn());
+    const running = await starting;
+    assert.equal(running.run?.status, 'running');
+    assert.equal(running.run?.executable, 'configured-rpg-maker-mz-nwjs');
+    assert.equal(spawnCalls[0].executable, selectedExecutable);
+    assert.deepEqual(spawnCalls[0].args, [project]);
+    assert.equal(spawnCalls[0].options.cwd, project);
+  });
+
   test('launches MZ normal playtest with the validated project-local Game.exe', async () => {
     const child = new FakeChild();
     const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];

@@ -34,9 +34,9 @@ describe('interactive playtest IPC bindings', () => {
       resolveProject: (project) => `resolved:${project}`,
       resolveSession: (_project, requested) => requested || 'session-latest',
       revealEvidence: (runId) => calls.push(['reveal', runId]),
-      selectRuntime: async (_event, engine) => {
-        calls.push(['selectRuntime', engine]);
-        return { canceled: false, engine, configured: true };
+      selectRuntime: async (_event, request) => {
+        calls.push(['selectRuntime', request]);
+        return { canceled: false, engine: request.engine, configured: true };
       },
     });
 
@@ -50,7 +50,7 @@ describe('interactive playtest IPC bindings', () => {
     await handlers.get('playtest:current')?.(null);
     await handlers.get('playtest:stop')?.(null);
     await handlers.get('playtest:reveal')?.(null, 'run-1');
-    await handlers.get('playtest:selectRuntime')?.(null, 'rpg-maker-mv');
+    await handlers.get('playtest:selectRuntime')?.(null, { engine: 'rpg-maker-mv', reason: 'missing' });
 
     assert.deepEqual(calls, [
       ['start', 'resolved:projects/sample', {
@@ -61,11 +61,39 @@ describe('interactive playtest IPC bindings', () => {
       ['current'],
       ['stop'],
       ['reveal', 'run-1'],
-      ['selectRuntime', 'rpg-maker-mv'],
+      ['selectRuntime', { engine: 'rpg-maker-mv', reason: 'missing' }],
     ]);
 
     cleanupInteractivePlaytestIpcHandlers(ipc);
     assert.equal(handlers.size, 0);
+  });
+
+  test('requires engine and selection reason for the runtime picker', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const service = {
+      start: async () => ({ confirmationRequired: false }),
+      current: () => ({ confirmationRequired: false }),
+      stop: async () => ({ confirmationRequired: false }),
+    };
+    registerInteractivePlaytestIpcHandlers({
+      handle(channel, listener) { handlers.set(channel, listener); },
+      removeHandler(channel) { handlers.delete(channel); },
+    }, service, {
+      getLastProject: () => '',
+      resolveProject: (project) => project,
+      resolveSession: () => undefined,
+      revealEvidence: () => undefined,
+      selectRuntime: async (_event, request) => ({ canceled: true, engine: request.engine, configured: false }),
+    });
+
+    await assert.rejects(
+      () => handlers.get('playtest:selectRuntime')?.(null, 'rpg-maker-mz') as Promise<unknown>,
+      /request must be an object/i,
+    );
+    await assert.rejects(
+      () => handlers.get('playtest:selectRuntime')?.(null, { engine: 'rpg-maker-mz', reason: 'other' }) as Promise<unknown>,
+      /reason must be missing or invalid/i,
+    );
   });
 
   test('passes only structured Battle Test configuration and rejects arbitrary launch arguments', async () => {
@@ -87,7 +115,7 @@ describe('interactive playtest IPC bindings', () => {
       resolveProject: (project) => project,
       resolveSession: () => undefined,
       revealEvidence: () => undefined,
-      selectRuntime: async (_event, engine) => ({ canceled: true, engine, configured: false }),
+      selectRuntime: async (_event, request) => ({ canceled: true, engine: request.engine, configured: false }),
     });
 
     await handlers.get('playtest:start')?.(null, {
@@ -137,7 +165,7 @@ describe('interactive playtest IPC bindings', () => {
       resolveProject: (project) => project,
       resolveSession: () => undefined,
       revealEvidence: () => undefined,
-      selectRuntime: async (_event, engine) => ({ canceled: true, engine, configured: false }),
+      selectRuntime: async (_event, request) => ({ canceled: true, engine: request.engine, configured: false }),
     });
     const animationPreview = {
       displayType: 0,

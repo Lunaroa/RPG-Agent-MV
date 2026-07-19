@@ -7,7 +7,7 @@ This page maps official RPG Maker requirements to implementation areas and focus
 - MZ project directories with complete readable data, core scripts, and a recognizable core version are accepted without requiring `game.rmmzproject`. MZ 1.10.0 is the fully validated baseline; older cores and encrypted resources require compatibility confirmation.
 - Maps use the official **Auto plus Layers 1–4**, together with the format's shadow and region planes. Infinite layers and private map formats are not added.
 - Character generation, dungeon generation, DLC, tutorials, deployment tooling, and an MZ-editor replica are outside scope.
-- MZ installation is not required. Playtest, Battle Test, and particle preview use the statically validated NW.js runtime shipped beside the project's `Game.exe`.
+- Editing does not require an MZ installation. Normal playtest prefers the statically validated runtime beside the project's `Game.exe`, then a user-selected `nwjs-win/nw.exe` from a local MZ installation. Battle Test and particle preview retain their stricter project-local runtime boundary.
 
 ## Evidence Matrix
 

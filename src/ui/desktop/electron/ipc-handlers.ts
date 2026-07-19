@@ -487,17 +487,40 @@ function sameResolvedPath(left: string, right: string): boolean {
 }
 
 function officialPlaytestRuntimeRoots(engine: RpgMakerEngine): string[] {
+  if (engine === 'rpg-maker-mz') return [];
   const programRoots = [
     process.env.ProgramFiles,
     process.env['ProgramFiles(x86)'],
   ].filter((value): value is string => Boolean(value && value.trim()));
-  const candidates = engine === 'rpg-maker-mv'
-    ? programRoots.map((root) => path.join(root, 'RPGMV', 'nwjs-win-test'))
-    : programRoots.flatMap((root) => [
-        path.join(root, 'KADOKAWA', 'RPGMZ', 'nwjs-win-test'),
-        path.join(root, 'Steam', 'steamapps', 'common', 'RPG Maker MZ', 'nwjs-win-test'),
-      ]);
+  const candidates = programRoots.flatMap((root) => [
+    path.join(root, 'RPGMV', 'nwjs-win'),
+    path.join(root, 'RPGMV', 'nwjs-win-test'),
+    path.join(root, 'Steam', 'steamapps', 'common', 'RPG Maker MV', 'nwjs-win'),
+    path.join(root, 'Steam', 'steamapps', 'common', 'RPG Maker MV', 'nwjs-win-test'),
+  ]);
   return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
+}
+
+function invalidPlaytestRuntimeMessage(
+  reason: string | undefined,
+  engineLabel: string,
+  fileName: string,
+): string {
+  const params = { engine: engineLabel, file: fileName };
+  switch (reason) {
+    case 'wrong-file':
+      return electronText(currentProductLanguage(), 'playtest.invalidRuntimeWrongFile', params);
+    case 'not-executable':
+      return electronText(currentProductLanguage(), 'playtest.invalidRuntimeNotExecutable', params);
+    case 'wrong-engine':
+      return electronText(currentProductLanguage(), 'playtest.invalidRuntimeWrongEngine', params);
+    case 'unrecognized-install':
+      return electronText(currentProductLanguage(), 'playtest.invalidRuntimeUnrecognizedInstall', params);
+    case 'missing':
+    case 'incomplete':
+    default:
+      return electronText(currentProductLanguage(), 'playtest.invalidRuntimeIncomplete', params);
+  }
 }
 
 function requireInteractivePlaytestService(): any {
@@ -1099,23 +1122,75 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       if (!run || !fs.existsSync(run.artifactPath)) throw new Error('Interactive playtest evidence was not found.');
       shell.showItemInFolder(run.artifactPath);
     },
-    selectRuntime: async (event, engine) => {
+    selectRuntime: async (event, request) => {
       const parent = BrowserWindow.fromWebContents((event as Electron.IpcMainInvokeEvent).sender) || undefined;
+      const { engine, reason } = request;
       const label = engine === 'rpg-maker-mv' ? 'MV' : 'MZ';
-      const result = await dialog.showOpenDialog(parent, {
-        title: electronText(currentProductLanguage(), 'playtest.selectRuntimeTitle', { engine: label }),
-        properties: ['openDirectory'],
+      const fileName = engine === 'rpg-maker-mz' ? 'nw.exe' : 'Game.exe';
+      const prompt = await dialog.showMessageBox(parent, {
+        type: reason === 'invalid' ? 'warning' : 'info',
+        title: electronText(currentProductLanguage(), 'playtest.selectRuntimePromptTitle', { engine: label }),
+        message: electronText(
+          currentProductLanguage(),
+          reason === 'invalid' ? 'playtest.selectRuntimeInvalidMessage' : 'playtest.selectRuntimeMissingMessage',
+          { engine: label },
+        ),
+        detail: electronText(
+          currentProductLanguage(),
+          engine === 'rpg-maker-mz' ? 'playtest.selectRuntimeMZDetail' : 'playtest.selectRuntimeMVDetail',
+        ),
+        buttons: [
+          electronText(currentProductLanguage(), 'playtest.selectRuntimeChoose', { file: fileName }),
+          electronText(currentProductLanguage(), 'playtest.selectRuntimeCancel'),
+        ],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
       });
-      if (result.canceled || !result.filePaths[0]) {
+      if (prompt.response !== 0) {
         return { canceled: true, engine, configured: false };
       }
-      if (!desktop.playtestRuntime.validateSelectedInteractiveProjectRuntime(result.filePaths[0], engine)) {
-        throw new Error(electronText(currentProductLanguage(), 'playtest.invalidRuntime', { engine: label }));
+
+      for (;;) {
+        const result = await dialog.showOpenDialog(parent, {
+          title: electronText(currentProductLanguage(), 'playtest.selectRuntimeTitle', {
+            engine: label,
+            file: fileName,
+          }),
+          properties: ['openFile'],
+          filters: [{ name: fileName, extensions: ['exe'] }],
+        });
+        if (result.canceled || !result.filePaths[0]) {
+          return { canceled: true, engine, configured: false };
+        }
+
+        const validation = desktop.playtestRuntime.inspectSelectedInteractiveProjectRuntime(
+          result.filePaths[0],
+          engine,
+        );
+        if (validation.valid && validation.executable) {
+          patchWorkspaceSettings({
+            playtestRuntimes: { [engine]: validation.executable },
+          });
+          return { canceled: false, engine, configured: true };
+        }
+
+        const retry = await dialog.showMessageBox(parent, {
+          type: 'error',
+          title: electronText(currentProductLanguage(), 'playtest.selectRuntimePromptTitle', { engine: label }),
+          message: invalidPlaytestRuntimeMessage(validation.reason, label, fileName),
+          buttons: [
+            electronText(currentProductLanguage(), 'playtest.selectRuntimeRetry'),
+            electronText(currentProductLanguage(), 'playtest.selectRuntimeCancel'),
+          ],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (retry.response !== 0) {
+          return { canceled: true, engine, configured: false };
+        }
       }
-      patchWorkspaceSettings({
-        playtestRuntimes: { [engine]: result.filePaths[0] },
-      });
-      return { canceled: false, engine, configured: true };
     },
   });
 

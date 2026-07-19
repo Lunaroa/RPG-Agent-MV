@@ -7,7 +7,7 @@
         <span class="pane-chevron">{{ tilesOpen ? '▾' : '▸' }}</span>
       </header>
       <div v-show="tilesOpen" class="palette-scroll">
-        <canvas ref="paletteRef" class="palette-canvas" @mousedown="$emit('palette-mousedown', $event)" @mousemove="$emit('palette-mousemove', $event)" @mouseup="$emit('palette-mouseup')" @mouseleave="$emit('palette-mouseleave')" />
+        <canvas ref="paletteRef" class="palette-canvas" @mousedown="$emit('palette-mousedown', $event)" @mousemove="$emit('palette-mousemove', $event)" @mouseup="$emit('palette-mouseup', $event)" @mouseleave="$emit('palette-mouseleave')" @contextmenu.prevent />
         <div v-if="!tilesetReady && tileTab !== 'R'" class="pane-empty">{{ t('editor.left.tilesetMissing') }}</div>
       </div>
       <nav v-show="tilesOpen" class="tile-tabs" :aria-label="t('editor.left.tileTabs')">
@@ -200,7 +200,7 @@ const emit = defineEmits<{
   'palette-ready': [canvas: HTMLCanvasElement];
   'palette-mousedown': [event: MouseEvent];
   'palette-mousemove': [event: MouseEvent];
-  'palette-mouseup': [];
+  'palette-mouseup': [event: MouseEvent];
   'palette-mouseleave': [];
   'select-tile-tab': [tab: PaletteTabId];
   'node-click': [node: TreeNode];

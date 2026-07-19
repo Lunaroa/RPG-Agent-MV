@@ -40,6 +40,7 @@ interface UiControlCommand {
   phase?: 'down' | 'move' | 'up';
   offsetX?: number;
   offsetY?: number;
+  button?: number;
 }
 
 interface UiControlServerInfo {
@@ -377,6 +378,9 @@ function normalizeCommand(raw: unknown): UiControlCommand {
     command.phase = phase;
     command.offsetX = offsetX;
     command.offsetY = offsetY;
+    const button = value.button == null ? 0 : Number(value.button);
+    if (!Number.isInteger(button) || button < 0 || button > 2) throw new Error('pointer command button must be 0, 1, or 2.');
+    command.button = button;
   }
 
   if (type === 'input') {

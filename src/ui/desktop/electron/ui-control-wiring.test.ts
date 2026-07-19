@@ -36,6 +36,8 @@ describe('background UI control wiring', () => {
     assert.match(bridgeSource, /pointer command requires phase down, move, or up/);
     assert.match(bridgeSource, /command\.offsetX = offsetX/);
     assert.match(bridgeSource, /command\.offsetY = offsetY/);
+    assert.match(bridgeSource, /pointer command button must be 0, 1, or 2/);
+    assert.match(bridgeSource, /command\.button = button/);
     assert.doesNotMatch(mainSource, /pointer command requires phase/);
   });
 });

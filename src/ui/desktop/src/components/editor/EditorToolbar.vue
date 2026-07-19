@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, type Component } from 'vue';
 import { Brush, Crop, Delete, EditPen, Grid, Location, MagicStick, RefreshLeft, RefreshRight, Sunny } from '@element-plus/icons-vue';
 import type { EditorMode, MapLayerSelection, MapPaintMode, MapTool } from './editorTypes';
 import EllipseToolIcon from './EllipseToolIcon.vue';
@@ -51,7 +51,7 @@ import { useI18n } from '../../i18n';
 defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean}>();
 defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[]}>();
 const { t } = useI18n();
-const tools = computed<{ id: MapTool; label: string; icon: typeof EditPen }[]>(() => [
+const tools = computed<{ id: MapTool; label: string; icon: Component }[]>(() => [
   { id: 'pencil', label: t('editor.toolbar.tool.pencil'), icon: EditPen },
   { id: 'rect', label: t('editor.toolbar.tool.rect'), icon: Crop },
   { id: 'ellipse', label: t('editor.toolbar.tool.ellipse'), icon: EllipseToolIcon },

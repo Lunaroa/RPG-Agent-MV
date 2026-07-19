@@ -1181,7 +1181,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       renderOverlay();
       return;
     }
-    if (options.tool.value === 'fill' && options.paintMode.value !== 'shadow') {
+    if (options.tool.value === 'fill') {
       const edits = floodFillEdits(cell);
       if (edits.length) {
         beginStroke(cell);

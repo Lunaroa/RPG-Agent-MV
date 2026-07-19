@@ -30,4 +30,12 @@ describe('background UI control wiring', () => {
     assert.match(bridgeSource, /layout: 'primary-work-area'/);
     assert.doesNotMatch(bridgeSource, /win\.(?:show|showInactive|restore|focus)\s*\(/);
   });
+
+  test('keeps pointer phases available only through the background validator bridge', () => {
+    assert.match(bridgeSource, /'pointer'/);
+    assert.match(bridgeSource, /pointer command requires phase down, move, or up/);
+    assert.match(bridgeSource, /command\.offsetX = offsetX/);
+    assert.match(bridgeSource, /command\.offsetY = offsetY/);
+    assert.doesNotMatch(mainSource, /pointer command requires phase/);
+  });
 });

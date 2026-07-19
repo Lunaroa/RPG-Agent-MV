@@ -137,7 +137,7 @@ async function handleUiControlCommand(command: UiControlCommand) {
     return uiControlState({ editor })
   }
   if (command.type === 'capture-current') return uiControlState()
-  if (['click', 'input', 'key', 'read', 'wait'].includes(command.type)) {
+  if (['click', 'pointer', 'input', 'key', 'read', 'wait'].includes(command.type)) {
     const action = await runDomUiControlCommand(command, language.value)
     await settleUiControlView()
     return uiControlState({ action })

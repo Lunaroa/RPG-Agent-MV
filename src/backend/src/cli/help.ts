@@ -31,6 +31,7 @@ Dev tools:
   npm --prefix src/backend run cli -- ui-control --command input --test-id chat-input --text "test message" [--format json]
   npm --prefix src/backend run cli -- ui-control --command key --test-id chat-input --key Enter [--format json]
   npm --prefix src/backend run cli -- ui-control --command click --test-id chat-send [--format json]
+  npm --prefix src/backend run cli -- ui-control --command pointer --test-id map-canvas --phase down --x 24 --y 24 [--format json]
   npm --prefix src/backend run cli -- workspace-prune-legacy [--dry-run]
 `);
 }

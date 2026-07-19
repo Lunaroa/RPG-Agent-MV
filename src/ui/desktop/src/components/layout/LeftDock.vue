@@ -8,10 +8,10 @@
       </header>
       <div v-show="tilesOpen" class="palette-scroll">
         <canvas ref="paletteRef" class="palette-canvas" @mousedown="$emit('palette-mousedown', $event)" @mousemove="$emit('palette-mousemove', $event)" @mouseup="$emit('palette-mouseup')" @mouseleave="$emit('palette-mouseleave')" />
-        <div v-if="!tilesetReady" class="pane-empty">{{ t('editor.left.tilesetMissing') }}</div>
+        <div v-if="!tilesetReady && tileTab !== 'R'" class="pane-empty">{{ t('editor.left.tilesetMissing') }}</div>
       </div>
       <nav v-show="tilesOpen" class="tile-tabs" :aria-label="t('editor.left.tileTabs')">
-        <button v-for="entry in tileTabs" :key="entry.tab" :class="{ active: entry.tab === tileTab, unavailable: !entry.available }" :disabled="mode === 'event' || paintMode !== 'tile'" @click="$emit('select-tile-tab', entry.tab)">{{ entry.label }}</button>
+        <button v-for="entry in tileTabs" :key="entry.tab" :class="{ active: entry.tab === tileTab, unavailable: !entry.available }" :disabled="mode === 'event'" @click="$emit('select-tile-tab', entry.tab)">{{ entry.label }}</button>
       </nav>
     </section>
     <div
@@ -104,9 +104,10 @@
           :props="{ children: 'children', label: 'name' }"
           node-key="id"
           highlight-current
+          :expand-on-click-node="false"
           :default-expanded-keys="displayedExpandedMapIds"
           :current-node-key="selectedMapId ?? undefined"
-          @node-click="$emit('node-click', $event)"
+          @node-click="handleTreeNodeClick"
           @node-expand="(data: TreeNode) => $emit('node-expand', data)"
           @node-collapse="(data: TreeNode) => $emit('node-collapse', data)"
           @node-contextmenu="(event: MouseEvent, data: TreeNode) => $emit('node-contextmenu', event, data)"
@@ -121,6 +122,7 @@
               @dragover.prevent.stop="previewTreeDrag(data, $event)"
               @drop.prevent.stop="dropTreeNode"
               @dragend.stop="finishTreeDrag"
+              @dblclick.stop="toggleMapTreeNodeExpansion(node)"
             >
               <span class="node-label">{{ node.label }}</span>
               <span v-if="!data.mapFileExists" class="node-missing" :title="t('editor.left.mapFileMissing')">{{ t('editor.left.missing') }}</span>
@@ -150,7 +152,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import type { EditorEventListItem, EditorEventSearchHit, EditorMode, MapPaintMode, PaletteTab, TileTab, TreeNode } from '../editor/editorTypes';
+import type { EditorEventListItem, EditorEventSearchHit, EditorMode, PaletteTab, PaletteTabId, TreeNode } from '../editor/editorTypes';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
 import { useI18n } from '../../i18n';
@@ -160,6 +162,7 @@ import {
   resolveMapTreeDropPosition,
   type MapTreeDropPosition,
 } from '../../utils/mapTreeDragPreview';
+import { isPrimaryMapTreeNodeClick, toggleMapTreeNodeExpansion } from '../../utils/mapTreeNodeInteraction';
 import {
   clampPaletteHeight,
   DEFAULT_LEFT_DOCK_WIDTH,
@@ -172,9 +175,8 @@ import {
 
 const props = defineProps<{
   mode: EditorMode;
-  paintMode: MapPaintMode;
   tileTabs: PaletteTab[];
-  tileTab: TileTab;
+  tileTab: PaletteTabId;
   tilesetReady: boolean;
   brushInfo: string;
   brushSet: boolean;
@@ -200,7 +202,7 @@ const emit = defineEmits<{
   'palette-mousemove': [event: MouseEvent];
   'palette-mouseup': [];
   'palette-mouseleave': [];
-  'select-tile-tab': [tab: TileTab];
+  'select-tile-tab': [tab: PaletteTabId];
   'node-click': [node: TreeNode];
   'node-expand': [node: TreeNode];
   'node-collapse': [node: TreeNode];
@@ -256,6 +258,11 @@ const workbenchStyle = computed(() => ({
 
 function toggleTiles() {
   workbenchUi.setLeftDockTilesOpen(!workbenchUi.leftDockTilesOpen);
+}
+
+function handleTreeNodeClick(data: TreeNode, _node: unknown, _component: unknown, event?: MouseEvent): void {
+  if (!isPrimaryMapTreeNodeClick(event?.detail)) return;
+  emit('node-click', data);
 }
 
 function startTreeDrag(source: TreeNode, event: DragEvent): void {
@@ -583,7 +590,7 @@ onMounted(() => {
 .tile-tabs button.unavailable::after { content:'·'; margin-left:2px; color:var(--app-warn); }
 .tile-tabs button:disabled { cursor: not-allowed; opacity: .48; }
 .palette-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; margin:0; background: var(--app-bg-sunken); }
-.palette-canvas { display: block; width:auto; max-width:100%; height:auto; cursor: crosshair; image-rendering: pixelated; }
+.palette-canvas { display: block; width:auto; max-width:100%; height:auto; cursor: default; image-rendering: pixelated; }
 .map-tree { flex: 1; overflow: auto; padding: 2px 3px 6px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 22px, var(--app-bg-soft) 22px, var(--app-bg-soft) 44px); background-attachment: local; background-origin: content-box; }
 .tree-node { position:relative; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 5px; overflow: hidden; cursor:grab; }
 .tree-node:active { cursor:grabbing; }

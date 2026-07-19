@@ -3,8 +3,8 @@ import type {
   InteractiveParticleAnimationPreview,
   InteractivePlaytestMode,
   InteractivePlaytestResult,
+  InteractivePlaytestRuntimeSelectionRequired,
   InteractivePlaytestRuntimeSelectionResult,
-  RpgMakerEngine,
 } from '../../../contract/types.ts';
 import { toIpcPayload } from './ipc-serialize.ts';
 
@@ -44,7 +44,10 @@ export interface InteractivePlaytestIpcDependencies {
   resolveProject(project: string): string;
   resolveSession(project: string, requestedSessionId?: string): string | undefined;
   revealEvidence(runId: string): void;
-  selectRuntime(event: unknown, engine: RpgMakerEngine): Promise<InteractivePlaytestRuntimeSelectionResult>;
+  selectRuntime(
+    event: unknown,
+    request: InteractivePlaytestRuntimeSelectionRequired,
+  ): Promise<InteractivePlaytestRuntimeSelectionResult>;
 }
 
 export function registerInteractivePlaytestIpcHandlers(
@@ -95,11 +98,21 @@ export function registerInteractivePlaytestIpcHandlers(
     dependencies.revealEvidence(String(runId || '').trim());
     return { ok: true };
   });
-  ipc.handle('playtest:selectRuntime', (event, engine: unknown) => {
-    if (engine !== 'rpg-maker-mv' && engine !== 'rpg-maker-mz') {
+  ipc.handle('playtest:selectRuntime', (event, request: unknown) => {
+    if (!request || typeof request !== 'object' || Array.isArray(request)) {
+      throw new Error('playtest:selectRuntime request must be an object.');
+    }
+    const body = request as Record<string, unknown>;
+    if (body.engine !== 'rpg-maker-mv' && body.engine !== 'rpg-maker-mz') {
       throw new Error('playtest:selectRuntime engine must be rpg-maker-mv or rpg-maker-mz.');
     }
-    return dependencies.selectRuntime(event, engine);
+    if (body.reason !== 'missing' && body.reason !== 'invalid') {
+      throw new Error('playtest:selectRuntime reason must be missing or invalid.');
+    }
+    return dependencies.selectRuntime(event, {
+      engine: body.engine,
+      reason: body.reason,
+    });
   });
 }
 

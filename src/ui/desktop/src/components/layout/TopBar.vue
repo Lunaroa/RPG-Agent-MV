@@ -179,7 +179,7 @@ async function startPlaytest() {
         continue;
       }
       if (result.runtimeSelectionRequired) {
-        const selection = await playtest.selectRuntime(result.runtimeSelectionRequired.engine);
+        const selection = await playtest.selectRuntime(result.runtimeSelectionRequired);
         if (selection.canceled) return;
         continue;
       }

@@ -10,7 +10,7 @@ The Agent panel is where production requests are entered, clarified, and continu
 
 The console and detail panels expose project facts, staged changes, asset information, database entries, plugin diagnostics, and session status. Use them to inspect what the Agent read or changed before applying anything to the game project.
 
-The global **Play / Stop** control launches the current source project. Play prefers a project-local runtime, then a saved runtime or validated official install location; if none is available, it asks once for a matching folder and remembers it. The app does not scan arbitrary game folders or download a runner. Interactive playtesting excludes staged changes, and the game may write to its own `save/` directory.
+The global **Play / Stop** control launches the current source project. Play prefers a project-local runtime. Source-only MZ projects can borrow a selected `nwjs-win/nw.exe`; source-only MV projects first try the standard installed `nwjs-win/Game.exe`. The app remembers each engine separately and does not copy or download the runtime. Interactive playtesting excludes staged changes, and the game may write to its own `save/` directory.
 
 Project management exposes all 15 database areas and common events for the current engine. Database and common-event drafts support undo and redo until they are saved to staging. Plugins can be installed from a native `.js` picker, while assets can be imported by category, renamed only when every known reference can be rewritten, and deleted only when unreferenced.
 

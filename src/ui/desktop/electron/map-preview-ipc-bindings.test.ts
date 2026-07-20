@@ -66,7 +66,7 @@ test('routes validated map preview commands to the isolated runtime service', as
 
   await handlers.get('mapPreview:start')?.({}, { mapId: 2, overrides: { switches: { '7': true }, variables: { '8': 42 } } });
   await handlers.get('mapPreview:suspend')?.({});
-  await handlers.get('mapPreview:resume')?.({}, { mapId: 2, mapRevision: 'a'.repeat(64), overrides: { switches: { '7': true }, variables: {} } });
+  await handlers.get('mapPreview:resume')?.({}, { mapId: 2, mapRevision: 'a'.repeat(64), forceReload: true, overrides: { switches: { '7': true }, variables: {} } });
   handlers.get('mapPreview:selectMap')?.({}, { mapId: 3, overrides: { switches: {}, variables: {} } });
   handlers.get('mapPreview:panCamera')?.({}, { deltaX: 12.5, deltaY: -4 });
   handlers.get('mapPreview:setSwitch')?.({}, { id: 7, value: true });
@@ -79,7 +79,7 @@ test('routes validated map preview commands to the isolated runtime service', as
   assert.deepEqual(calls, [
     ['start', 'resolved/projects/sample', 2, { switches: { '7': true }, variables: { '8': 42 } }],
     ['suspend'],
-    ['resume', { project: 'resolved/projects/sample', mapId: 2, mapRevision: 'a'.repeat(64), overrides: { switches: { '7': true }, variables: {} } }],
+    ['resume', { project: 'resolved/projects/sample', mapId: 2, mapRevision: 'a'.repeat(64), forceReload: true, overrides: { switches: { '7': true }, variables: {} } }],
     ['select-map', 3, { switches: {}, variables: {} }],
     ['pan', 12.5, -4],
     ['switch', 7, true],
@@ -90,6 +90,10 @@ test('routes validated map preview commands to the isolated runtime service', as
     ['view', { x: 10, y: 20, width: 816, height: 624, scale: 1.5 }],
   ]);
   assert.throws(() => handlers.get('mapPreview:setVariable')?.({}, { id: 1, value: Number.NaN }), /finite number/);
+  await assert.rejects(
+    async () => handlers.get('mapPreview:resume')?.({}, { mapId: 1, forceReload: 'yes' }),
+    /forceReload must be boolean/,
+  );
   await assert.rejects(
     async () => handlers.get('mapPreview:start')?.({}, { mapId: 1, extra: true }),
     /does not accept field/,

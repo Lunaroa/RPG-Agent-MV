@@ -2,7 +2,7 @@ import type { MapPreviewFrame, MapPreviewSession } from '../api/client';
 
 export type EditorPreviewIntent =
   | { active: false; project: string }
-  | { active: true; project: string; mapId: number; mapRevision: string };
+  | { active: true; project: string; mapId: number; mapRevision: string; forceReload?: boolean };
 
 export function previewSessionMatchesIntent(session: MapPreviewSession, intent: EditorPreviewIntent): boolean {
   return intent.active

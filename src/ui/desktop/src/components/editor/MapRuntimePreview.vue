@@ -34,13 +34,13 @@
         <button type="button" @click="$emit('copy-diagnostic')">{{ t('editor.preview.copyDiagnostic') }}</button>
       </div>
     </div>
-    <div v-else-if="!hasDisplayableFrame" class="preview-state" aria-live="polite">
+    <div v-if="!error && !hasDisplayableFrame" class="preview-state" aria-live="polite">
       <span class="preview-spinner" aria-hidden="true" />
       <strong>{{ statusLabel }}</strong>
       <p>{{ t('editor.preview.loadingHint') }}</p>
     </div>
     <div
-      v-else
+      v-show="!error && hasDisplayableFrame"
       ref="viewportRef"
       class="runtime-viewport"
       @pointerdown="startDrag"
@@ -51,22 +51,8 @@
       @wheel.prevent="adjustScale"
     >
       <div class="runtime-map-layer" :style="layerStyle">
-        <img
-          class="runtime-map-frame"
-          :src="frameUrl"
-          :alt="t('editor.preview.frameAlt')"
-          draggable="false"
-          @load="onFramePresented(frameSequence)"
-        />
-        <img
-          v-if="tileFrameUrl"
-          class="runtime-map-frame runtime-map-tile"
-          :src="tileFrameUrl"
-          :alt="t('editor.preview.frameAlt')"
-          :style="tileStyle"
-          draggable="false"
-          @load="onFramePresented(tileFrameSequence)"
-        />
+        <canvas ref="baseCanvasRef" class="runtime-map-frame" :aria-label="t('editor.preview.frameAlt')" />
+        <canvas ref="tileCanvasRef" class="runtime-map-frame runtime-map-tile" :style="tileStyle" aria-hidden="true" />
       </div>
     </div>
     <div v-if="hasDisplayableFrame" class="preview-scale" :aria-label="t('editor.preview.displayScale')">
@@ -79,38 +65,37 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue';
 import { WarningFilled } from '@element-plus/icons-vue';
-import type { MapPreviewStatus, MapPreviewViewRequest } from '@contract/types';
+import type { MapPreviewFrame, MapPreviewStatus, MapPreviewViewRequest } from '@contract/types';
 import { useI18n } from '../../i18n';
 import type { MapPreviewDiagnostic } from '../../utils/mapPreviewDiagnostics';
 import { clampPreviewPan, previewVisibleRegion } from '../../utils/mapPreviewViewport';
 
 const props = defineProps<{
   status: MapPreviewStatus;
-  frameUrl: string;
-  frameSequence: number;
-  mapPixelWidth: number;
-  mapPixelHeight: number;
-  tileFrameUrl?: string;
-  tileFrameSequence?: number;
-  tileX?: number;
-  tileY?: number;
-  tileWidth?: number;
-  tileHeight?: number;
+  frame?: MapPreviewFrame | null;
+  tileFrame?: MapPreviewFrame | null;
   error?: string;
   diagnostic?: MapPreviewDiagnostic | null;
+  refreshing?: boolean;
 }>();
 const emit = defineEmits<{
   retry: [];
   presented: [sequence: number];
+  'presentation-failed': [sequence: number, message: string];
   viewChanged: [view: MapPreviewViewRequest];
   'copy-diagnostic': [];
 }>();
 const { t } = useI18n();
 const viewportRef = ref<HTMLElement>();
+const baseCanvasRef = ref<HTMLCanvasElement>();
+const tileCanvasRef = ref<HTMLCanvasElement>();
 const viewportWidth = ref(0);
 const viewportHeight = ref(0);
+const presentedMapWidth = ref(0);
+const presentedMapHeight = ref(0);
+const basePresented = ref(false);
 const displayScale = ref(1);
 const offsetX = ref(0);
 const offsetY = ref(0);
@@ -120,17 +105,22 @@ let pointerId: number | null = null;
 let lastPoint = { x: 0, y: 0 };
 let resizeObserver: ResizeObserver | null = null;
 let viewFrame = 0;
+let baseDecodeGeneration = 0;
+let tileDecodeGeneration = 0;
+
+const mapPixelWidth = computed(() => props.frame?.mapPixelWidth || presentedMapWidth.value);
+const mapPixelHeight = computed(() => props.frame?.mapPixelHeight || presentedMapHeight.value);
 
 const fitScale = computed(() => {
-  if (viewportWidth.value <= 0 || viewportHeight.value <= 0 || props.mapPixelWidth <= 0 || props.mapPixelHeight <= 0) return 1;
+  if (viewportWidth.value <= 0 || viewportHeight.value <= 0 || mapPixelWidth.value <= 0 || mapPixelHeight.value <= 0) return 1;
   return Math.min(
     1,
-    Math.max(1, viewportWidth.value - 40) / props.mapPixelWidth,
-    Math.max(1, viewportHeight.value - 40) / props.mapPixelHeight,
+    Math.max(1, viewportWidth.value - 40) / mapPixelWidth.value,
+    Math.max(1, viewportHeight.value - 40) / mapPixelHeight.value,
   );
 });
 const actualScale = computed(() => fitScale.value * displayScale.value);
-const hasDisplayableFrame = computed(() => Boolean(props.frameUrl) && (props.status === 'running' || props.status === 'resuming'));
+const hasDisplayableFrame = computed(() => basePresented.value && (props.status === 'running' || props.status === 'resuming'));
 const diagnosticRows = computed(() => {
   const diagnostic = props.diagnostic;
   if (!diagnostic) return [];
@@ -150,17 +140,19 @@ const diagnosticRows = computed(() => {
   return rows.filter((row) => row.value !== '');
 });
 const layerStyle = computed(() => ({
-  width: props.mapPixelWidth > 0 ? `${props.mapPixelWidth}px` : undefined,
-  height: props.mapPixelHeight > 0 ? `${props.mapPixelHeight}px` : undefined,
+  width: mapPixelWidth.value > 0 ? `${mapPixelWidth.value}px` : undefined,
+  height: mapPixelHeight.value > 0 ? `${mapPixelHeight.value}px` : undefined,
   transform: `translate3d(calc(-50% + ${offsetX.value}px), calc(-50% + ${offsetY.value}px), 0) scale(${actualScale.value})`,
 }));
-const tileStyle = computed(() => ({
-  left: `${props.tileX || 0}px`,
-  top: `${props.tileY || 0}px`,
-  width: `${props.tileWidth || 1}px`,
-  height: `${props.tileHeight || 1}px`,
+const tileStyle = computed<CSSProperties>(() => ({
+  left: `${props.tileFrame?.x || 0}px`,
+  top: `${props.tileFrame?.y || 0}px`,
+  width: `${props.tileFrame?.width || 1}px`,
+  height: `${props.tileFrame?.height || 1}px`,
+  visibility: props.tileFrame ? 'visible' : 'hidden',
 }));
 const statusLabel = computed(() => {
+  if (props.refreshing) return t('editor.preview.refreshing');
   if (props.status === 'preparing') return t('editor.preview.preparing');
   if (props.status === 'stopping') return t('editor.preview.stopping');
   if (props.status === 'suspending') return t('editor.preview.suspending');
@@ -194,11 +186,6 @@ function adjustScale(event: WheelEvent) {
   else zoomOut();
 }
 
-function onFramePresented(sequence = 0) {
-  if (sequence > 0) emit('presented', sequence);
-  queueViewUpdate();
-}
-
 function startDrag(event: PointerEvent) {
   if ((event.button !== 0 && event.button !== 1) || pointerId !== null) return;
   event.preventDefault();
@@ -222,8 +209,8 @@ function clampOffsets() {
     y: offsetY.value,
     viewportWidth: viewportWidth.value,
     viewportHeight: viewportHeight.value,
-    renderedWidth: props.mapPixelWidth * actualScale.value,
-    renderedHeight: props.mapPixelHeight * actualScale.value,
+    renderedWidth: mapPixelWidth.value * actualScale.value,
+    renderedHeight: mapPixelHeight.value * actualScale.value,
   });
   offsetX.value = clamped.x;
   offsetY.value = clamped.y;
@@ -250,8 +237,8 @@ function queueViewUpdate() {
       y: offsetY.value,
       viewportWidth: viewport.clientWidth,
       viewportHeight: viewport.clientHeight,
-      mapWidth: props.mapPixelWidth,
-      mapHeight: props.mapPixelHeight,
+      mapWidth: mapPixelWidth.value,
+      mapHeight: mapPixelHeight.value,
       scale,
     });
     if (view) emit('viewChanged', view);
@@ -259,7 +246,7 @@ function queueViewUpdate() {
 }
 
 watch(
-  () => [props.mapPixelWidth, props.mapPixelHeight, viewportWidth.value, viewportHeight.value, displayScale.value, offsetX.value, offsetY.value],
+  () => [mapPixelWidth.value, mapPixelHeight.value, viewportWidth.value, viewportHeight.value, displayScale.value, offsetX.value, offsetY.value],
   queueViewUpdate,
 );
 watch(viewportRef, (next, previous) => {
@@ -277,8 +264,115 @@ function updateViewportSize() {
   queueViewUpdate();
 }
 
-watch(() => [props.mapPixelWidth, props.mapPixelHeight], clampOffsets);
+watch(() => [mapPixelWidth.value, mapPixelHeight.value], clampOffsets);
 watch(() => [props.error, props.diagnostic], () => { detailsOpen.value = false; });
+
+watch(() => props.frame, (frame) => { void presentBaseFrame(frame || null); }, { immediate: true });
+watch(() => props.tileFrame, (frame) => { void presentTileFrame(frame || null); }, { immediate: true });
+
+async function decodeFrame(frame: MapPreviewFrame): Promise<ImageBitmap> {
+  if (typeof createImageBitmap !== 'function') throw new Error('The desktop renderer does not support asynchronous PNG decoding.');
+  if (!(frame.data.buffer instanceof ArrayBuffer)) throw new Error('The preview frame is not backed by transferable binary data.');
+  const bytes = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
+  return createImageBitmap(new Blob([bytes], { type: frame.mime }));
+}
+
+async function presentBaseFrame(frame: MapPreviewFrame | null) {
+  const generation = ++baseDecodeGeneration;
+  if (!frame) {
+    basePresented.value = false;
+    presentedMapWidth.value = 0;
+    presentedMapHeight.value = 0;
+    clearCanvas(baseCanvasRef.value);
+    clearTileFrame();
+    return;
+  }
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await decodeFrame(frame);
+    if (generation !== baseDecodeGeneration || props.frame?.sequence !== frame.sequence) {
+      bitmap.close();
+      emit('presented', frame.sequence);
+      return;
+    }
+    await nextTick();
+    const canvas = baseCanvasRef.value;
+    const context = prepareCanvas(canvas, frame.outputWidth, frame.outputHeight);
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    bitmap = null;
+    presentedMapWidth.value = frame.mapPixelWidth;
+    presentedMapHeight.value = frame.mapPixelHeight;
+    basePresented.value = true;
+    clearTileFrame();
+    await nextAnimationFrame();
+    if (generation === baseDecodeGeneration) {
+      emit('presented', frame.sequence);
+      queueViewUpdate();
+    }
+  } catch (error) {
+    bitmap?.close();
+    if (generation === baseDecodeGeneration) emit('presentation-failed', frame.sequence, errorMessage(error));
+    else emit('presented', frame.sequence);
+  }
+}
+
+async function presentTileFrame(frame: MapPreviewFrame | null) {
+  const generation = ++tileDecodeGeneration;
+  if (!frame) {
+    clearTileFrame();
+    return;
+  }
+  let bitmap: ImageBitmap | null = null;
+  try {
+    bitmap = await decodeFrame(frame);
+    if (generation !== tileDecodeGeneration || props.tileFrame?.sequence !== frame.sequence) {
+      bitmap.close();
+      emit('presented', frame.sequence);
+      return;
+    }
+    await nextTick();
+    const context = prepareCanvas(tileCanvasRef.value, frame.outputWidth, frame.outputHeight);
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    bitmap = null;
+    await nextAnimationFrame();
+    if (generation === tileDecodeGeneration) emit('presented', frame.sequence);
+  } catch (error) {
+    bitmap?.close();
+    if (generation === tileDecodeGeneration) emit('presentation-failed', frame.sequence, errorMessage(error));
+    else emit('presented', frame.sequence);
+  }
+}
+
+function prepareCanvas(canvas: HTMLCanvasElement | undefined, width: number, height: number): CanvasRenderingContext2D {
+  if (!canvas) throw new Error('The preview canvas is unavailable.');
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('The preview canvas context is unavailable.');
+  context.imageSmoothingEnabled = false;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  return context;
+}
+
+function clearCanvas(canvas: HTMLCanvasElement | undefined) {
+  const context = canvas?.getContext('2d');
+  if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function clearTileFrame() {
+  tileDecodeGeneration += 1;
+  clearCanvas(tileCanvasRef.value);
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function booleanDiagnostic(value: boolean | undefined): string {
   if (value === undefined) return '';
@@ -292,6 +386,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  baseDecodeGeneration += 1;
+  tileDecodeGeneration += 1;
   resizeObserver?.disconnect();
   if (viewFrame) cancelAnimationFrame(viewFrame);
 });

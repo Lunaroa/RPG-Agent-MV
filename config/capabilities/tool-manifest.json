@@ -4,6 +4,7 @@
     {
       "id": "read",
       "kind": "builtin",
+      "scope": "project",
       "layer": "core",
       "title": "Read",
       "description": "读取工作区文件",
@@ -14,6 +15,7 @@
     {
       "id": "edit",
       "kind": "builtin",
+      "scope": "project",
       "layer": "core",
       "title": "Edit",
       "description": "编辑已有文件",
@@ -24,6 +26,7 @@
     {
       "id": "write",
       "kind": "builtin",
+      "scope": "project",
       "layer": "core",
       "title": "Write",
       "description": "写入新文件或覆盖文件",
@@ -34,6 +37,7 @@
     {
       "id": "bash",
       "kind": "builtin",
+      "scope": "project",
       "layer": "core",
       "title": "Bash",
       "description": "执行工程维护命令与版本控制命令",
@@ -44,6 +48,7 @@
     {
       "id": "grep",
       "kind": "builtin",
+      "scope": "project",
       "layer": "core",
       "title": "Grep",
       "description": "按模式搜索文件内容",
@@ -54,6 +59,7 @@
     {
       "id": "glob",
       "kind": "builtin",
+      "scope": "project",
       "layer": "core",
       "title": "Glob",
       "description": "按 glob 查找文件",
@@ -64,6 +70,7 @@
     {
       "id": "skill",
       "kind": "builtin",
+      "scope": "general",
       "layer": "core",
       "title": "Skill",
       "description": "加载 config/opencode/skills 中的 OpenCode skill",
@@ -74,6 +81,7 @@
     {
       "id": "question",
       "kind": "builtin",
+      "scope": "general",
       "layer": "plan",
       "title": "Question",
       "description": "通过 opencode question 工具向用户提问",
@@ -84,6 +92,7 @@
     {
       "id": "task",
       "kind": "builtin",
+      "scope": "project",
       "layer": "subagent",
       "title": "Subagent",
       "description": "启动 opencode 原生 subagent，不属于 TASK/todo-list",
@@ -94,6 +103,7 @@
     {
       "id": "todoread",
       "kind": "builtin",
+      "scope": "general",
       "layer": "task",
       "title": "Todo Read",
       "description": "读取 opencode 会话待办",
@@ -104,6 +114,7 @@
     {
       "id": "todowrite",
       "kind": "builtin",
+      "scope": "general",
       "layer": "task",
       "title": "Todo Write",
       "description": "维护 opencode 会话待办",
@@ -114,6 +125,7 @@
     {
       "id": "webfetch",
       "kind": "builtin",
+      "scope": "general",
       "layer": "network",
       "title": "Web Fetch",
       "description": "读取公开 URL 内容",
@@ -124,6 +136,7 @@
     {
       "id": "rmmv_RmmvReadContext",
       "kind": "mcp",
+      "scope": "project",
       "layer": "rmmv",
       "title": "RMMV 读取上下文",
       "description": "读取事件上下文、地图索引、素材清点、插件清点、状态槽位和数据库目录",
@@ -134,6 +147,7 @@
     {
       "id": "rmmv_RmmvDatabase",
       "kind": "mcp",
+      "scope": "project",
       "layer": "rmmv",
       "title": "RMMV 数据库暂存",
       "description": "校验、预演、暂存或放弃数据库批量修改；不会直接写入源工程",
@@ -144,6 +158,7 @@
     {
       "id": "rmmv_RmmvDatabaseApply",
       "kind": "mcp",
+      "scope": "project",
       "layer": "rmmv",
       "title": "RMMV 数据库应用",
       "description": "在原生审批后仅按 operationId 应用一项已暂存数据库操作",
@@ -154,6 +169,7 @@
     {
       "id": "rmmv_RmmvMap",
       "kind": "mcp",
+      "scope": "project",
       "layer": "rmmv",
       "title": "RMMV 地图编辑",
       "description": "通过 MCP 调用地图创建、属性更新、复制、删除、绘制和 staging 操作",
@@ -164,6 +180,7 @@
     {
       "id": "rmmv_RmmvVerify",
       "kind": "mcp",
+      "scope": "runtime",
       "layer": "rmmv",
       "title": "RMMV 隔离试玩验证",
       "description": "仅主 Agent 可用：在排除存档的隔离副本中覆盖当前全部暂存并执行严格、有界的试玩探针",
@@ -174,6 +191,7 @@
     {
       "id": "rmmv_RmmvEvent",
       "kind": "mcp",
+      "scope": "project",
       "layer": "rmmv",
       "title": "RMMV 事件编辑",
       "description": "事件注册与待放置工作流（register → 预览审批 → 桌面端拖放）；已有事件的补丁、反馈与 editor.update/move（禁止用于新事件落点）",
@@ -184,6 +202,7 @@
     {
       "id": "rmmv_RmmvMemory",
       "kind": "mcp",
+      "scope": "project",
       "layer": "rmmv",
       "title": "RMMV 记忆",
       "description": "跨会话的项目长期记忆：读取/写入/删除软知识笔记（路径锁定在项目记忆目录内）",
@@ -194,6 +213,7 @@
     {
       "id": "rmmv_RmmvWorkflow",
       "kind": "mcp",
+      "scope": "project",
       "layer": "rmmv",
       "title": "RMMV 工作流发起",
       "description": "让 agent 现写一段只读多 agent 编排脚本、提交给用户在桌面批准后才后台运行；只提交提议不直接运行。默认关闭，需在设置里手动打开。标记为会写工具，因此只读子 agent 拿不到它，工作流不会套娃。",
@@ -204,6 +224,7 @@
     {
       "id": "rmmv_RmmvStage",
       "kind": "mcp",
+      "scope": "project",
       "layer": "rmmv",
       "title": "RMMV 待放置事件登记",
       "description": "只读工作流子 agent 专用：登记待放置事件（生成待用户拖放落地的事件草稿，绝不直接改工程、绝不自动放置）。普通会话不暴露此工具（普通 agent 走完整事件工具）；它只在工作流的只读子 agent 里开启，是「只读会话」唯一的受控写入口。",

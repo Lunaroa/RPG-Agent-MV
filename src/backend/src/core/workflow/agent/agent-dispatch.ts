@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { createHash } from "node:crypto";
 
 import { writeJson } from "../../rmmv/json.ts";
 import { inspectRmmvProject } from "../../rmmv/rmmv-layout.ts";
@@ -43,6 +44,8 @@ import { runOpencodeSession, type OpencodeImageAttachment } from "./opencode/run
 import type { ProductLanguage } from "../../../../../contract/types.ts";
 import { normalizeProductLanguage } from "../../../../../contract/i18n.ts";
 import { backendText } from "../../i18n/messages.ts";
+import type { AgentProjectBindingSnapshot } from "../../desktop/agent-project-binding.ts";
+import { buildOpencodeToolPolicyFromAgentAllow } from "./agent-capabilities.ts";
 
 const DEFAULT_AGENT_TIMEOUT_MS: number = 30 * 60 * 1000;
 
@@ -90,6 +93,14 @@ interface DispatchOptions {
   /** Internal-only: expose the exact opencode run context to the desktop session runtime. */
   onOpencodeRunContext?: (context: OpencodeRunContext) => void;
   imageAttachments?: OpencodeImageAttachment[];
+  projectBinding?: AgentProjectBindingSnapshot;
+  projectPromptKind?: "fresh" | "changed" | "none";
+  diagnosticSummary?: {
+    agentConfigHash: string | null;
+    enabledTools: string[];
+    command: string | null;
+    files: Record<string, string | null>;
+  };
 }
 
 export interface OpencodeRunContext {
@@ -244,6 +255,8 @@ interface DispatchResult {
   surfacedMemorySlugs?: string[];
   /** Restrict the opencode runtime to non-mutating tools; isolated workflow subagents set this. */
   readOnlyTools?: boolean;
+  projectBinding?: AgentProjectBindingSnapshot;
+  projectPromptKind?: "fresh" | "changed" | "none";
 }
 
 interface PathResult {
@@ -392,7 +405,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
   // (profile + index + bodies); continuations get only the newly-surfaced bodies, excluding
   // topics already surfaced earlier in this conversation (passed in via options.alreadySurfaced).
   const isFreshSession = !options.opencodeSessionId?.trim() && !task.conversationHistory?.trim();
-  const memory = await resolveMemoryPreamble({
+  const memory = options.projectBinding?.status === "bound" ? await resolveMemoryPreamble({
     workflowRoot,
     projectPath: task.project,
     taskIntent: task.intent || "",
@@ -403,7 +416,7 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     // (i.e. execute true/undefined) keeps the default recall behavior.
     runRecall: options.execute !== false,
     signal: options.signal,
-  });
+  }) : { preamble: "", surfacedSlugs: [] };
   const memoryPreamble = memory.preamble;
   const surfacedMemorySlugs = memory.surfacedSlugs;
   const projectEngine = readAgentProjectEngineContext(task.project);
@@ -419,6 +432,8 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     currentProgressPreamble: options.currentProgressPreamble ?? null,
     memoryPreamble,
     projectEngine,
+    projectBinding: options.projectBinding,
+    projectPromptKind: options.projectPromptKind,
   });
   const runtimeCommand: RuntimeCommand | null = profile
     ? buildRuntimeCommand(profile, executionEngine, {
@@ -472,6 +487,8 @@ async function buildAgentDispatch(options: DispatchOptions): Promise<DispatchRes
     planFilePath: options.planFilePath || null,
     surfacedMemorySlugs,
     readOnlyTools: Boolean(options.readOnlyTools),
+    projectBinding: options.projectBinding,
+    projectPromptKind: options.projectPromptKind,
     nextActions: options.execute
       ? []
       : ["This was prepared without execution. Start a desktop opencode session to execute it."]
@@ -514,7 +531,8 @@ async function executeAgentDispatch(dispatch: DispatchResult, options: DispatchO
     ...buildAgentScopeEnv(dispatch, agentCwd),
     ...buildTaskListEnv(dispatch),
     AIWF_AGENT_ID: (dispatch.agent && dispatch.agent.id) || process.env.AIWF_AGENT_ID || "",
-    AIWF_SESSION_ID: dispatch.sessionId || process.env.AIWF_SESSION_ID || ""
+    AIWF_SESSION_ID: dispatch.sessionId || process.env.AIWF_SESSION_ID || "",
+    ...(options.outDir ? { AIWF_SESSION_LOG_DIR: path.resolve(options.outDir) } : {}),
   };
   if (command.streamFormat === "opencode-sse") {
     const executable = resolveExecutable(command.command, spawnEnv);
@@ -629,6 +647,14 @@ async function resolveOpencodeConfig(
     memoryEnabled: readMemorySettings().enabled,
     readOnlyTools: dispatch.readOnlyTools === true,
     imageInputRequired,
+    projectState: dispatch.projectBinding?.status || "none",
+    projectDirectory: dispatch.projectBinding?.status === "bound"
+      ? dispatch.projectBinding.canonicalPath
+      : null,
+    projectBindingVersion: dispatch.projectBinding?.version || 0,
+    privateRuntime: dispatch.projectBinding?.runtime,
+    runtimeReason: dispatch.projectBinding?.runtimeReason || null,
+    sessionId: dispatch.sessionId,
   });
 }
 
@@ -678,6 +704,7 @@ function startOpencodeDispatchProcess(
       ...buildTaskListEnv(dispatch),
       AIWF_AGENT_ID: (dispatch.agent && dispatch.agent.id) || process.env.AIWF_AGENT_ID || "",
       AIWF_SESSION_ID: dispatch.sessionId || process.env.AIWF_SESSION_ID || "",
+      ...(options.outDir ? { AIWF_SESSION_LOG_DIR: path.resolve(options.outDir) } : {}),
     };
 
     try {
@@ -801,27 +828,30 @@ function startAgentDispatchProcess(dispatch: DispatchResult, options: DispatchOp
 // Agent 运行目录隔离：cwd 设为 RMMV 游戏工程，让 agent 把“项目”识别为游戏本身。
 // 无有效项目目录时回退产品根，保持原行为。
 function resolveAgentCwd(dispatch: DispatchResult): string {
-  const projectPath: string | null = dispatch.task ? dispatch.task.project : null;
-  try {
-    if (projectPath && fs.statSync(projectPath).isDirectory()) return projectPath;
-  } catch {
-    // 项目路径不存在/不可读时回退。
-  }
+  const projectPath = dispatch.projectBinding?.status === "bound"
+    ? dispatch.projectBinding.canonicalPath
+    : null;
+  if (projectPath) return projectPath;
   return dispatch.workflowRoot;
 }
 
 // opencode 与 MCP server 需要定位 workflowRoot；cwd 改到游戏目录后，
 // 通过环境变量把工作流根与游戏目录告知 agent。正斜杠归一，Node 接受正斜杠路径。
-function buildAgentScopeEnv(dispatch: DispatchResult, agentCwd: string): Record<string, string> {
+function buildAgentScopeEnv(dispatch: DispatchResult, _agentCwd: string): Record<string, string> {
   const productRoot = dispatch.workflowRoot.replace(/\\/g, "/");
   const installRoot = resolveShippedPath(dispatch.workflowRoot, ".").replace(/\\/g, "/");
   const env: Record<string, string> = {
     AGENT_RPG_ROOT: productRoot,
     AGENT_RPG_INSTALL_ROOT: installRoot,
     AIWF_WORKFLOW_ROOT: productRoot,
-    AIWF_PROJECT_DIR: agentCwd.replace(/\\/g, "/"),
+    AIWF_PROJECT_BINDING_STATUS: dispatch.projectBinding?.status || "none",
+    AIWF_PROJECT_BINDING_VERSION: String(dispatch.projectBinding?.version || 0),
     ...buildAgentOutputEnv(dispatch.workflowRoot),
   };
+  if (dispatch.projectBinding?.status === "bound" && dispatch.projectBinding.canonicalPath) {
+    env.AIWF_PROJECT_DIR = dispatch.projectBinding.canonicalPath.replace(/\\/g, "/");
+    env.AIWF_PROJECT_ID = dispatch.projectBinding.projectId || "";
+  }
   const planFilePath = String(dispatch.planFilePath || "").trim();
   if (planFilePath) env.AGENT_RPG_SESSION_PLAN_PATH = planFilePath;
   const projectEngine = readAgentProjectEngineContext(dispatch.task?.project || null);
@@ -908,7 +938,6 @@ function writeAgentDispatchOutputs(dispatch: DispatchResult, outDir: string): Pa
   if (dispatch.backendOutput) {
     fs.writeFileSync(path.join(outDir, "stdout.txt"), dispatch.backendOutput.stdout || "", "utf8");
     fs.writeFileSync(path.join(outDir, "stderr.txt"), dispatch.backendOutput.stderr || "", "utf8");
-    if (dispatch.backendOutput.rawStdout) fs.writeFileSync(path.join(outDir, "raw-stdout.txt"), dispatch.backendOutput.rawStdout, "utf8");
   }
   fs.writeFileSync(path.join(outDir, "prompt.txt"), `${dispatch.prompt && dispatch.prompt.system || ""}\n\n${dispatch.prompt && dispatch.prompt.user || ""}`, "utf8");
   return { jsonPath, mdPath };
@@ -970,6 +999,8 @@ interface OpencodeUserPromptContext extends UserPromptContext {
   currentProgressPreamble?: string | null;
   /** Pre-resolved durable-memory preamble (async + DB-backed); "" ⇒ nothing to inject. */
   memoryPreamble?: string | null;
+  projectBinding?: AgentProjectBindingSnapshot;
+  projectPromptKind?: "fresh" | "changed" | "none";
 }
 
 function isOpencodeContinuation(context: OpencodeUserPromptContext): boolean {
@@ -1000,10 +1031,19 @@ export function renderOpencodeUserPrompt(context: OpencodeUserPromptContext): st
     lines.push(memoryPreamble);
     lines.push("");
   }
-  if (!isOpencodeContinuation(context)) {
-    if (context.task.project) {
-      lines.push(`${backendText('prompt.projectLabel', AGENT_PROMPT_LANGUAGE)}: ${context.task.project}`);
+  const projectPromptKind = context.projectPromptKind
+    ?? (isOpencodeContinuation(context) ? "none" : "fresh");
+  if (!context.projectBinding && projectPromptKind === "fresh" && context.task.project) {
+    lines.push(`${backendText('prompt.projectLabel', AGENT_PROMPT_LANGUAGE)}: ${context.task.project}`);
+  } else if (projectPromptKind !== "none") {
+    lines.push(projectPromptKind === "changed" ? "## Current Project Changed" : "## Current Project");
+    lines.push(...renderProjectBindingPrompt(context.projectBinding));
+    if (projectPromptKind === "changed") {
+      lines.push("Facts about the previous project are historical context only. All subsequent project tools must operate on the project bound below.");
     }
+    lines.push("");
+  }
+  if (!isOpencodeContinuation(context)) {
     if (context.task.mapId) {
       lines.push(`${backendText('prompt.mapIdLabel', AGENT_PROMPT_LANGUAGE)}: ${context.task.mapId}`);
     }
@@ -1023,6 +1063,35 @@ export function renderOpencodeUserPrompt(context: OpencodeUserPromptContext): st
   lines.push(`${backendText('prompt.taskLabel', AGENT_PROMPT_LANGUAGE)}:`);
   lines.push(intent);
   return lines.join("\n");
+}
+
+function renderProjectBindingPrompt(binding: AgentProjectBindingSnapshot | undefined): string[] {
+  if (!binding || binding.status === "none") {
+    return [
+      "No RPG Maker project is currently selected.",
+      "Only safe conversation tools are available; project files, commands, subagents, project memory, and RPG Maker tools are disabled for this turn.",
+    ];
+  }
+  if (binding.status === "invalid") {
+    return [
+      `The selected project is invalid or unreadable: ${binding.canonicalPath || "(unknown)"}.`,
+      "Project files and RPG Maker tools are disabled for this turn. Do not treat the product source directory as the game project.",
+    ];
+  }
+  const engine = binding.engine === "rpg-maker-mz" ? "MZ" : "MV";
+  const structure = binding.runtimeSource === "project-local"
+    ? "complete runtime project"
+    : "source-only editable project";
+  const runtime = binding.runtimeAvailable
+    ? "real-device validation is available"
+    : "real-device validation requires selecting a compatible runtime";
+  return [
+    `Bound project: ${binding.displayName || "(unnamed)"}`,
+    `Project path: ${binding.canonicalPath}`,
+    `Engine: RPG Maker ${engine}${binding.engineVersion ? ` ${binding.engineVersion}` : ""}`,
+    `Capability: ${structure}; ${runtime}.`,
+    "All project-scoped tools must operate only on this bound project.",
+  ];
 }
 
 function renderDispatchMarkdown(dispatch: DispatchResult): string {
@@ -1088,10 +1157,42 @@ function stripLargeRuntimeText(dispatch: DispatchResult): DispatchResult {
     copy.backendOutput = {
       stdout: "stdout.txt",
       stderr: "stderr.txt",
-      rawStdout: copy.backendOutput.rawStdout ? "raw-stdout.txt" : ""
+      rawStdout: ""
     };
   }
+  if (copy.agent) {
+    copy.agent = {
+      id: copy.agent.id,
+      role: copy.agent.role,
+      description: copy.agent.description,
+      configHash: cryptoHash(copy.agent),
+    };
+  }
+  if (copy.projectBinding) {
+    const { runtime: _runtime, ...safeBinding } = copy.projectBinding;
+    copy.projectBinding = safeBinding as AgentProjectBindingSnapshot;
+  }
+  const toolPolicy = buildOpencodeToolPolicyFromAgentAllow(copy.workflowRoot, {
+    readOnly: copy.readOnlyTools === true,
+    projectState: copy.projectBinding?.status || "none",
+  });
+  copy.diagnosticSummary = {
+    agentConfigHash: copy.agent?.configHash ? String(copy.agent.configHash) : null,
+    enabledTools: Object.entries(toolPolicy).filter(([, enabled]) => enabled).map(([id]) => id),
+    command: copy.execution?.command?.display || null,
+    files: {
+      prompt: "prompt.txt",
+      stdout: copy.backendOutput ? "stdout.txt" : null,
+      stderr: copy.backendOutput ? "stderr.txt" : null,
+      events: "events.jsonl.gz",
+      diagnosticIndex: "diagnostic-index.json",
+    },
+  };
   return copy;
+}
+
+function cryptoHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16);
 }
 
 function summarizeText(text: string): string {

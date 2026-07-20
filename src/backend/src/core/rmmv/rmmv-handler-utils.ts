@@ -1,7 +1,18 @@
 import path from "node:path";
+import fs from "node:fs";
 
 import { resolveCliOutRoot, resolveWorkflowRoot } from "../workspace-paths.ts";
 import type { RmmvHandlerInput } from "./rmmv-handler-types.ts";
+
+export class RmmvProjectBindingError extends Error {
+  constructor(
+    public readonly code: "project-not-bound" | "project-invalid" | "project-binding-mismatch",
+    message: string,
+  ) {
+    super(message);
+    this.name = "RmmvProjectBindingError";
+  }
+}
 
 export function resolveWorkflowRootFromInput(input: RmmvHandlerInput): string {
   const raw = input.workflowRoot;
@@ -10,8 +21,48 @@ export function resolveWorkflowRootFromInput(input: RmmvHandlerInput): string {
 }
 
 export function resolveProjectRoot(input: RmmvHandlerInput): string {
-  if (typeof input.project === "string" && input.project.trim()) return path.resolve(input.project);
+  const bindingStatus = String(process.env.AIWF_PROJECT_BINDING_STATUS || "").trim();
+  const boundProject = String(process.env.AIWF_PROJECT_DIR || "").trim();
+  const explicitProject = typeof input.project === "string" && input.project.trim()
+    ? path.resolve(input.project)
+    : null;
+  if (bindingStatus === "none") {
+    throw new RmmvProjectBindingError("project-not-bound", "No RPG Maker project is bound to this session.");
+  }
+  if (bindingStatus === "invalid") {
+    throw new RmmvProjectBindingError("project-invalid", "The bound RPG Maker project is invalid or unreadable.");
+  }
+  if (bindingStatus === "bound") {
+    if (!boundProject) {
+      throw new RmmvProjectBindingError("project-invalid", "The project binding does not contain a project directory.");
+    }
+    const canonicalBound = canonicalProjectPath(boundProject);
+    if (explicitProject && projectIdentity(canonicalProjectPath(explicitProject)) !== projectIdentity(canonicalBound)) {
+      throw new RmmvProjectBindingError(
+        "project-binding-mismatch",
+        "The requested project does not match the project bound to this session.",
+      );
+    }
+    return canonicalBound;
+  }
+  if (explicitProject) return explicitProject;
   return path.resolve(".");
+}
+
+function canonicalProjectPath(value: string): string {
+  const resolved = path.resolve(value);
+  let canonical = resolved;
+  try {
+    canonical = fs.realpathSync.native(resolved);
+  } catch {
+    throw new RmmvProjectBindingError("project-invalid", "The bound RPG Maker project cannot be read.");
+  }
+  const normalized = path.normalize(canonical).replace(/[\\/]+$/, "");
+  return normalized;
+}
+
+function projectIdentity(value: string): string {
+  return process.platform === "win32" ? value.toLowerCase() : value;
 }
 
 export function resolveDefaultOut(workflowRoot: string, ...segments: string[]): string {

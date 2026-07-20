@@ -16,6 +16,7 @@ import { loadAgentRegistry } from "./agent-registry.ts";
 export interface ToolManifestEntry {
   id: string;
   kind: string;
+  scope: ToolScope;
   layer: string;
   title: string;
   description: string;
@@ -32,6 +33,9 @@ export interface ToolManifestEntry {
   userToggleable?: boolean;
   requires?: ToolAvailabilityRequirement[];
 }
+
+export type ToolScope = "general" | "project" | "runtime";
+export type AgentProjectToolState = "bound" | "none" | "invalid";
 
 export type ToolRiskLevel = "normal" | "high" | "experimental";
 export type ToolRiskBadge = Exclude<ToolRiskLevel, "normal">;
@@ -158,7 +162,13 @@ export function loadToolManifest(workflowRoot: string): ToolManifest {
   if (!fs.existsSync(manifestPath)) {
     return { version: 1, tools: [], mcpServers: [] };
   }
-  return readJsonFile<ToolManifest>(manifestPath);
+  const manifest = readJsonFile<ToolManifest>(manifestPath);
+  for (const tool of manifest.tools) {
+    if (tool.scope !== "general" && tool.scope !== "project" && tool.scope !== "runtime") {
+      throw new Error(`Tool ${tool.id} must declare scope as general, project, or runtime.`);
+    }
+  }
+  return manifest;
 }
 
 export function summarizeSkillMarkdown(
@@ -386,7 +396,13 @@ export function resolveEnabledAgentRuntimeBuiltinTools(
     .map((tool) => tool.id);
 }
 
-export type ToolPolicyEntry = { id: string; kind: string; readOnly?: boolean; stagingSafe?: boolean };
+export type ToolPolicyEntry = {
+  id: string;
+  kind: string;
+  scope?: ToolScope;
+  readOnly?: boolean;
+  stagingSafe?: boolean;
+};
 export type ToolAvailability = (tool: ToolPolicyEntry) => boolean;
 
 /**
@@ -404,12 +420,19 @@ export function resolveToolPolicy<T extends ToolPolicyEntry>(
   tools: T[],
   allow: string[],
   deny: string[],
-  options: { readOnly?: boolean; isAvailable: (tool: T) => boolean },
+  options: {
+    readOnly?: boolean;
+    projectState?: AgentProjectToolState;
+    isAvailable: (tool: T) => boolean;
+  },
 ): Record<string, boolean> {
   const policy: Record<string, boolean> = {};
   for (const tool of tools) {
     if (tool.kind !== "builtin" && tool.kind !== "mcp") continue;
-    const available = options.isAvailable(tool);
+    const projectAllowed = options.projectState === undefined
+      || tool.scope === "general"
+      || options.projectState === "bound";
+    const available = projectAllowed && options.isAvailable(tool);
     const allowed = available && isAllowed(allow, deny, tool.id);
     if (options.readOnly) {
       policy[tool.id] =
@@ -423,7 +446,11 @@ export function resolveToolPolicy<T extends ToolPolicyEntry>(
 
 export function buildOpencodeToolPolicyFromAgentAllow(
   workflowRootInput?: string,
-  options?: { env?: EnvironmentLike; readOnly?: boolean },
+  options?: {
+    env?: EnvironmentLike;
+    readOnly?: boolean;
+    projectState?: AgentProjectToolState;
+  },
 ): Record<string, boolean> {
   const workflowRoot = workflowRootInput
     ? path.resolve(workflowRootInput)
@@ -435,6 +462,7 @@ export function buildOpencodeToolPolicyFromAgentAllow(
   const deny: string[] = (agent?.tools?.deny as string[]) || [];
   return resolveToolPolicy(manifest.tools, allow, deny, {
     readOnly: options?.readOnly,
+    projectState: options?.projectState,
     isAvailable: (tool) => evaluateToolAvailability(tool, workflowRoot, options?.env).available,
   });
 }

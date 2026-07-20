@@ -76,7 +76,9 @@ async function buildOpencodeActionInput(
   );
   return {
     workflowRoot: runtime.workflowRoot,
-    cwd: resolveProjectPath(runtime.workflowRoot, session.project),
+    cwd: session.project?.trim()
+      ? resolveProjectPath(runtime.workflowRoot, session.project)
+      : runtime.workflowRoot,
     opencodeSessionId,
     providerId: session.providerId,
     modelId: session.modelId,

@@ -179,7 +179,6 @@ export const useSettingsStore = defineStore('settings', () => {
       profileId,
       intent: translate('settings.intent.previewDispatch', normalizeProductLanguage(ui.value.language)),
       productLanguage: normalizeProductLanguage(ui.value.language),
-      project: 'projects/Project',
     }) as Promise<Record<string, unknown>>;
   }
 

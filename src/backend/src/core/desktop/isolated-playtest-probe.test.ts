@@ -240,6 +240,58 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
     assert.equal(observedRuntime, path.join(project, 'Game.exe'));
   });
 
+  test('runs a source-only MV probe with a validated external runtime', async () => {
+    fs.rmSync(path.join(project, 'Game.exe'));
+    const executable = path.join(root, 'external-runtime', 'Game.exe');
+    let observedRequest: IsolatedProbeWorkerRequest | undefined;
+    const result = await runIsolatedRmmvPlaytestProbe(root, project, {
+      runtime: {
+        engine: 'rpg-maker-mv',
+        executable,
+        runtimeRoot: path.dirname(executable),
+        source: 'configured',
+        launchStyle: 'external',
+        evidenceExecutable: 'validated-configured-rpg-maker-mv-nwjs',
+      },
+    }, {
+      executeWorker: async (request) => {
+        observedRequest = request;
+        assert.equal(fs.existsSync(path.join(request.temporaryProject, 'Game.exe')), false);
+        return strictWorkerResponse(request, { mapId: 1, x: 1, y: 1 });
+      },
+    });
+    assert.equal(result.status, 'verified');
+    assert.equal(observedRequest?.runtimeExecutable, executable);
+    assert.equal(observedRequest?.runtimeLaunchStyle, 'external');
+  });
+
+  test('runs a source-only MZ probe with a validated external runtime', async () => {
+    project = convertProjectToMZ(project);
+    fs.rmSync(path.join(project, 'Game.exe'));
+    fs.rmSync(path.join(project, 'nw.dll'));
+    fs.rmSync(path.join(project, 'locales'), { recursive: true });
+    const executable = path.join(root, 'external-mz-runtime', 'nw.exe');
+    let observedRequest: IsolatedProbeWorkerRequest | undefined;
+    const result = await runIsolatedRmmvPlaytestProbe(root, project, {
+      runtime: {
+        engine: 'rpg-maker-mz',
+        executable,
+        runtimeRoot: path.dirname(executable),
+        source: 'official-install',
+        launchStyle: 'external',
+        evidenceExecutable: 'validated-official-rpg-maker-mz-nwjs',
+      },
+    }, {
+      executeWorker: async (request) => {
+        observedRequest = request;
+        return strictWorkerResponse(request, { mapId: 1, x: 1, y: 1 });
+      },
+    });
+    assert.equal(result.status, 'verified');
+    assert.equal(observedRequest?.runtimeExecutable, executable);
+    assert.equal(observedRequest?.runtimeLaunchStyle, 'external');
+  });
+
   test('starts the probe worker hidden with the copied project as its working directory', async () => {
     const artifactDir = path.join(root, 'runtime', 'out', 'worker-boundary');
     const responsePath = path.join(artifactDir, 'worker-response.json');

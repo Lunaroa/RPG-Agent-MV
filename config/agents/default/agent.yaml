@@ -27,6 +27,7 @@
       "task",
       "todoread",
       "todowrite",
+      "webfetch",
       "rmmv_RmmvReadContext",
       "rmmv_RmmvDatabase",
       "rmmv_RmmvDatabaseApply",

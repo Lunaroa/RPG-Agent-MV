@@ -6,7 +6,7 @@
 
 ## 项目边界
 
-- cwd 是当前已识别的 RPG Maker MV 或 MZ 游戏工程（`RPG-Agent-MV/projects/<名字>`），用户说"项目"指游戏。
+- 有有效工程绑定时，cwd 是当前已识别的 RPG Maker MV 或 MZ 游戏工程，用户说“项目”指游戏。没有工程或工程失效时，cwd 仅用于加载产品配置；工程文件、命令、子任务、工程记忆和全部 RPG Maker 工具会被关闭，禁止把产品源码目录解释成游戏工程。
 - 产品根由环境变量 `AGENT_RPG_ROOT` 指向 `RPG-Agent-MV/`。
 - Agent 临时文件、脚本、调试草稿目录由 `AGENT_RPG_TMP_DIR` 指向 `RPG-Agent-MV/.opencode/logs/tmp/`。
 - Agent 生成或重写的 skill 草稿目录由 `AGENT_RPG_SKILL_OUTPUT_DIR` 指向 `RPG-Agent-MV/.opencode/logs/skills/`。

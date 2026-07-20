@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { MapPreviewStateCatalog, NamedCatalogEntry } from '../../../../contract/types.ts';
+import type { MapPreviewStateCatalog, MapPreviewStateEntry } from '../../../../contract/types.ts';
 import { collectRawEventCommandReferences, type RmmvEventCommandReference } from '../rmmv/event-command-references.ts';
 import { readJson } from '../rmmv/json.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
@@ -44,8 +44,8 @@ export function buildMapPreviewStateCatalog(
   }
 
   return {
-    switches: namedEntries(switchIds, switchNames),
-    variables: namedEntries(variableIds, variableNames),
+    switches: catalogEntries(switchNames, switchIds),
+    variables: catalogEntries(variableNames, variableIds),
   };
 }
 
@@ -82,11 +82,11 @@ function addReferenceRange(target: Set<number>, reference: RmmvEventCommandRefer
   for (let id = lower; id <= upper; id += 1) target.add(id);
 }
 
-function namedEntries(ids: Set<number>, names: string[]): NamedCatalogEntry[] {
-  return [...ids]
-    .filter((id) => id < names.length)
-    .sort((left, right) => left - right)
-    .map((id) => ({ id, name: names[id] || '' }));
+function catalogEntries(names: string[], reachableIds: Set<number>): MapPreviewStateEntry[] {
+  return names
+    .map((name, id) => ({ id, name, mapReachable: reachableIds.has(id) }))
+    .filter((entry) => entry.id > 0 && (entry.mapReachable || entry.name.trim().length > 0))
+    .sort((left, right) => Number(right.mapReachable) - Number(left.mapReachable) || left.id - right.id);
 }
 
 function readEffectiveProjectJson(workflowRoot: string, project: string, sourceFile: string): unknown {

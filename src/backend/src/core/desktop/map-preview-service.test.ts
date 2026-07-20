@@ -15,8 +15,13 @@ import {
   describeMapPreviewStartupTimeout,
   injectPreviewHarness,
   isCurrentMapPreviewFrame,
+  MAP_PREVIEW_DEBUG_MARKER,
+  MapPreviewService,
+  MapPreviewPacketDecoder,
+  mapPreviewDebugMarkerBootstrapSource,
   mapPreviewRuntimeFailureDetail,
   mapPreviewLoadPurpose,
+  mapPreviewRequiresReload,
   sanitizeMapPreviewDiagnosticText,
 } from './map-preview-service.ts';
 
@@ -81,7 +86,10 @@ test('injects the preview harness only into an isolated RPG Maker app root', () 
     assert.doesNotThrow(() => new vm.Script(harness));
     assert.match(harness, /Game_Interpreter\.prototype\.update/);
     assert.match(harness, /renderer\.render\(SceneManager\._scene\)/);
-    assert.match(harness, /toDataURL\('image\/png'\)/);
+    assert.match(harness, /canvas\.toBlob\(function \(blob\)/);
+    assert.match(harness, /reader\.readAsArrayBuffer\(blob\)/);
+    assert.doesNotMatch(harness, /toDataURL\(/);
+    assert.doesNotMatch(harness, /setTimeout\([\s\S]{0,120}, 67\)/);
     assert.match(harness, /pixels <= 67108864 \? 'full' : 'tiled'/);
     assert.match(harness, /phase: 'frame-meta'/);
     assert.match(harness, /command\.type === 'ack-frame'/);
@@ -90,6 +98,12 @@ test('injects the preview harness only into an isolated RPG Maker app root', () 
     assert.match(harness, /failedResources\.add\(resource\)/);
     assert.match(harness, /resources: Array\.from\(failedResources\)/);
     assert.match(harness, /command\.type === 'resume'/);
+    assert.match(harness, /command\.type === 'toggle-devtools'/);
+    assert.match(harness, /runtimeWindow\.showDevTools/);
+    assert.match(harness, /runtimeWindow\.closeDevTools/);
+    assert.match(harness, /phase: 'devtools'/);
+    assert.match(harness, /preview-debug-marker-conflict/);
+    assert.ok(harness.indexOf(MAP_PREVIEW_DEBUG_MARKER) < harness.indexOf('__rpgAgentMapPreviewInstalled'));
     assert.match(harness, /SceneManager\.stop\(\)/);
     assert.match(harness, /SceneManager\.resume\(\)/);
     assert.match(harness, /mapRevision: currentMapRevision/);
@@ -110,13 +124,13 @@ test('injects the preview harness only into an isolated RPG Maker app root', () 
     assert.match(harness, /phase: 'state'/);
     assert.match(harness, /baselineSwitchValues\[id\]/);
     assert.match(harness, /DataManager\.loadGlobalInfo/);
-    assert.match(harness, /reserveTransfer\(targetMapId/);
+    assert.match(harness, /Utils\.RPGMAKER_NAME === 'MZ'[\s\S]{0,180}Scene_Map\.prototype\.createMenuButton = function \(\) \{ this\._menuButton = null; \}/);
+    assert.match(harness, /reserveTransfer\(targetMapId, 0, 0, 2, 2\)/);
+    assert.doesNotMatch(harness, /reserveTransfer\(targetMapId, 0, 0, 2, 0\)/);
     assert.match(harness, /Game_Event\.prototype\.update = function \(\) \{\}/);
     assert.match(harness, /preview-session-token/);
-    assert.match(
-      harness,
-      /send\(PACKET_HANDSHAKE, \{ token: config\.token \}\);\s+loadMap\('fresh', currentMapId, currentGeometry, config\.overrides, false, currentMapRevision, currentOperationId\)\.catch\(reportError\);/,
-    );
+    assert.ok(harness.indexOf('send(PACKET_HANDSHAKE, { token: config.token });')
+      < harness.indexOf("loadMap('fresh', currentMapId, currentGeometry"));
     assert.equal((harness.match(/DataManager\.setupNewGame\(\)/g) || []).length, 1);
 
     for (const packagePath of [path.join(root, 'package.json'), path.join(resources, 'package.json')]) {
@@ -132,6 +146,102 @@ test('injects the preview harness only into an isolated RPG Maker app root', () 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('installs the stable preview debug marker as an immutable non-enumerable property', () => {
+  const result = evaluatePreviewDebugMarker();
+  assert.equal(result.value, true);
+  assert.equal(result.conflict, '');
+  assert.equal(result.descriptor?.value, true);
+  assert.equal(result.descriptor?.writable, false);
+  assert.equal(result.descriptor?.enumerable, false);
+  assert.equal(result.descriptor?.configurable, false);
+  assert.equal(Reflect.set(result.window, MAP_PREVIEW_DEBUG_MARKER, false), false);
+  assert.equal(Reflect.deleteProperty(result.window, MAP_PREVIEW_DEBUG_MARKER), false);
+});
+
+test('accepts the identical preview marker and reports incompatible project definitions without overwriting them', () => {
+  const compatible = evaluatePreviewDebugMarker({
+    value: true,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+  assert.equal(compatible.conflict, '');
+
+  const incompatible = evaluatePreviewDebugMarker({
+    value: false,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+  assert.match(incompatible.conflict, /incompatible/);
+  assert.equal(incompatible.value, false);
+});
+
+test('reports unavailable developer tools without starting a preview runtime', async () => {
+  let runtimeResolutionCalls = 0;
+  const service = new MapPreviewService(os.tmpdir(), {
+    resolveProjectRuntime() {
+      runtimeResolutionCalls += 1;
+      throw new Error('runtime resolution must not run');
+    },
+  });
+  assert.deepEqual(await service.toggleDevTools(), {
+    code: 'preview-runtime-unavailable',
+    error: 'Start a map preview before opening its developer tools.',
+  });
+  assert.equal(runtimeResolutionCalls, 0);
+});
+
+test('decodes fragmented and combined preview packets without whole-buffer concatenation', () => {
+  const packets: Array<{ type: number; payload: string }> = [];
+  const decoder = new MapPreviewPacketDecoder((type, payload) => {
+    packets.push({ type, payload: payload.toString('utf8') });
+  }, 64);
+  const first = testPacket(1, Buffer.from('abc'));
+  const second = testPacket(2, Buffer.from('0123456789'));
+  const combined = Buffer.concat([first, second]);
+  decoder.push(combined.subarray(0, 2));
+  decoder.push(combined.subarray(2, 7));
+  decoder.push(combined.subarray(7, 13));
+  decoder.push(combined.subarray(13));
+  assert.deepEqual(packets, [
+    { type: 1, payload: 'abc' },
+    { type: 2, payload: '0123456789' },
+  ]);
+});
+
+test('rejects preview packet payloads above the configured limit', () => {
+  const decoder = new MapPreviewPacketDecoder(() => undefined, 4);
+  assert.throws(() => decoder.push(testPacket(3, Buffer.from('12345')).subarray(0, 5)), /size limit/);
+});
+
+function testPacket(type: number, payload: Buffer): Buffer {
+  const packet = Buffer.allocUnsafe(5 + payload.length);
+  packet.writeUInt8(type, 0);
+  packet.writeUInt32BE(payload.length, 1);
+  payload.copy(packet, 5);
+  return packet;
+}
+
+function evaluatePreviewDebugMarker(descriptor?: PropertyDescriptor): {
+  window: Record<string, unknown>;
+  value: unknown;
+  descriptor: PropertyDescriptor | undefined;
+  conflict: string;
+} {
+  const window: Record<string, unknown> = {};
+  if (descriptor) Object.defineProperty(window, MAP_PREVIEW_DEBUG_MARKER, descriptor);
+  const script = new vm.Script(`(function () {
+${mapPreviewDebugMarkerBootstrapSource()}
+return {
+  value: window[${JSON.stringify(MAP_PREVIEW_DEBUG_MARKER)}],
+  descriptor: Object.getOwnPropertyDescriptor(window, ${JSON.stringify(MAP_PREVIEW_DEBUG_MARKER)}),
+  conflict: previewDebugMarkerConflict
+};
+}())`);
+  return { window, ...script.runInNewContext({ window }) };
+}
 
 test('rejects a nonstandard app entry instead of silently falling back', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-entry-'));
@@ -159,6 +269,14 @@ test('distinguishes warm resume, same-map reload, and cross-map switch', () => {
   assert.equal(mapPreviewLoadPurpose(6, 6, false), null);
   assert.equal(mapPreviewLoadPurpose(6, 6, true), 'reload');
   assert.equal(mapPreviewLoadPurpose(6, 3, true), 'switch');
+});
+
+test('forces a same-map reload without requiring a revision change', () => {
+  assert.equal(mapPreviewRequiresReload(6, 'revision-a', 6, 'revision-a', false, false), false);
+  assert.equal(mapPreviewRequiresReload(6, 'revision-a', 6, 'revision-a', false, true), true);
+  assert.equal(mapPreviewRequiresReload(6, 'revision-a', 6, 'revision-b', false, false), true);
+  assert.equal(mapPreviewRequiresReload(6, 'revision-a', 3, 'revision-a', false, false), true);
+  assert.equal(mapPreviewRequiresReload(6, 'revision-a', 6, 'revision-a', true, false), true);
 });
 
 test('rejects frames from stale operations, maps, and revisions', () => {

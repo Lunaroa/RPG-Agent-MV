@@ -170,9 +170,13 @@ export interface NamedCatalogEntry {
   name: string;
 }
 
+export interface MapPreviewStateEntry extends NamedCatalogEntry {
+  mapReachable: boolean;
+}
+
 export interface MapPreviewStateCatalog {
-  switches: NamedCatalogEntry[];
-  variables: NamedCatalogEntry[];
+  switches: MapPreviewStateEntry[];
+  variables: MapPreviewStateEntry[];
 }
 
 export interface EditorEnemyCatalogEntry extends NamedCatalogEntry {
@@ -594,7 +598,12 @@ export type MapPreviewStatus =
   | 'stopped'
   | 'failed';
 
-export type MapPreviewFailureCode = 'runtime-handshake-timeout' | 'runtime-resume-failed' | 'map-render-failed';
+export type MapPreviewFailureCode =
+  | 'runtime-handshake-timeout'
+  | 'runtime-resume-failed'
+  | 'map-render-failed'
+  | 'isolation-preparation-failed'
+  | 'preview-debug-marker-conflict';
 
 export interface MapPreviewFailureDetail {
   stage: string;
@@ -622,6 +631,7 @@ export interface MapPreviewStartRequest {
 
 export interface MapPreviewResumeRequest extends MapPreviewStartRequest {
   mapRevision?: string;
+  forceReload?: boolean;
 }
 
 export interface MapPreviewViewRequest {
@@ -657,6 +667,16 @@ export interface MapPreviewSession {
 export interface MapPreviewResult {
   session?: MapPreviewSession;
   runtimeSelectionRequired?: InteractivePlaytestRuntimeSelectionRequired;
+  error?: string;
+}
+
+export type MapPreviewDevToolsFailureCode =
+  | 'preview-runtime-unavailable'
+  | 'preview-devtools-unsupported';
+
+export interface MapPreviewDevToolsResult {
+  status?: 'opened' | 'closed';
+  code?: MapPreviewDevToolsFailureCode;
   error?: string;
 }
 

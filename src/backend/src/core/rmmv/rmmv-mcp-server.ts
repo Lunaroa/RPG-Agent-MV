@@ -24,6 +24,7 @@
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 
@@ -33,7 +34,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { normalizeProductLanguage } from "../../../../contract/i18n.ts";
 import { bootstrapDatabase } from "../db/bootstrap.ts";
-import { initFileLogger, toolLogger } from "../file-log.ts";
+import { appendToolDiagnostic, initFileLogger, toolLogger } from "../file-log.ts";
 import { dispatchRmmvTool } from "./rmmv-tool-dispatch.ts";
 import { withProductLanguage } from "../i18n/request-language.ts";
 import type { RmmvHandlerInput } from "./rmmv-handler-types.ts";
@@ -523,6 +524,8 @@ async function main(): Promise<void> {
       inputSchema: Object.keys(spec.inputSchema).length > 0 ? spec.inputSchema : undefined,
       annotations: { readOnlyHint: spec.readOnly, destructiveHint: Boolean(spec.destructive) },
     }, async (input: unknown) => {
+      const diagnosticId = randomUUID();
+      const startedAt = Date.now();
       const args = (input as Record<string, unknown>) || {};
       const rawAction = spec.name === "RmmvDatabaseApply" ? "apply" : String(args.action ?? "");
       const command = spec.name === "RmmvDatabaseApply" ? "database-apply" : ACTION_TO_COMMAND[rawAction];
@@ -557,17 +560,62 @@ async function main(): Promise<void> {
       }
       const tmpDirs: string[] = [];
       try {
+        appendToolDiagnostic({
+          diagnosticId,
+          tool: spec.name,
+          action: rawAction,
+          phase: "started",
+          at: new Date(startedAt).toISOString(),
+          projectId: process.env.AIWF_PROJECT_ID || null,
+          bindingVersion: Number(process.env.AIWF_PROJECT_BINDING_VERSION || 0),
+          stage: "dispatch",
+        });
         materializeInlineJsonFields(handlerInput, tmpDirs);
         const productLanguage = normalizeProductLanguage(process.env.RMMV_PRODUCT_LANGUAGE);
         const result = await withProductLanguage(productLanguage, () => dispatchRmmvTool(command, handlerInput));
+        appendToolDiagnostic({
+          diagnosticId,
+          tool: spec.name,
+          action: rawAction,
+          phase: "completed",
+          at: new Date().toISOString(),
+          durationMs: Date.now() - startedAt,
+          projectId: process.env.AIWF_PROJECT_ID || null,
+          bindingVersion: Number(process.env.AIWF_PROJECT_BINDING_VERSION || 0),
+          stage: "dispatch",
+        });
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+          content: [{ type: "text" as const, text: JSON.stringify({ ...result, diagnosticId }) }],
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const errorRecord = error as { code?: unknown; stage?: unknown };
+        const errorCode = typeof errorRecord?.code === "string" ? errorRecord.code : "tool-execution-failed";
+        const stage = typeof errorRecord?.stage === "string" ? errorRecord.stage : "dispatch";
         log.error(`Tool execution failed [${command}/${rawAction}]: ${message}`);
+        appendToolDiagnostic({
+          diagnosticId,
+          tool: spec.name,
+          action: rawAction,
+          phase: "failed",
+          at: new Date().toISOString(),
+          durationMs: Date.now() - startedAt,
+          projectId: process.env.AIWF_PROJECT_ID || null,
+          bindingVersion: Number(process.env.AIWF_PROJECT_BINDING_VERSION || 0),
+          stage,
+          errorCode,
+          errorType: error instanceof Error ? error.name : typeof error,
+          error: message,
+          stack: error instanceof Error ? error.stack : undefined,
+        });
         return {
-          content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: message }) }],
+          content: [{ type: "text" as const, text: JSON.stringify({
+            ok: false,
+            code: errorCode,
+            stage,
+            error: message,
+            diagnosticId,
+          }) }],
           isError: true,
         };
       } finally {

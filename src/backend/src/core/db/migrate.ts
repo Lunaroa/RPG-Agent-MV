@@ -565,7 +565,7 @@ function getMigrations(): Migration[] {
       // 自进化闭环：人类评估反馈。作者对某个 EventContract 的裁决（接受/要改/拒）
       // + rubric 标签（固定枚举 + 自由标签混存于 JSON 数组）+ 原因，关联 contract 与会话 trace。
       // contract_id / session_id 为逻辑引用（不设硬 FK）：反馈是审美台账，被评事件即便后续改名/删除，
-      // 历史反馈仍应留存可追溯；session_id = opencode 会话 id，可定位 runtime/sessions/*/events.json。
+      // 历史反馈仍应留存可追溯；session_id 可定位 runtime/sessions/*/agent-console 的新旧事件日志。
       version: 9,
       name: 'event_feedback',
       up: `

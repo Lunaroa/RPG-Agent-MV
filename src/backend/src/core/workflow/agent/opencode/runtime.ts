@@ -663,6 +663,7 @@ export function normalizeOpencodeEvent(
             call_id: callId,
             tool,
             input,
+            status,
             title: asString(stateRecord.title),
             at,
           });
@@ -726,16 +727,6 @@ export function normalizeOpencodeEvent(
   } else if (type === "todo.updated") {
     const todos = Array.isArray(properties.todos) ? properties.todos : [];
     out.push({ type: "todo_updated", todos, at });
-    for (const [index, todo] of todos.map(asRecord).entries()) {
-      out.push({
-        type: "tool_result",
-        call_id: `todo:${asString(todo.id) || index + 1}`,
-        tool: "TaskUpdate",
-        output: JSON.stringify(todo),
-        success: true,
-        at,
-      });
-    }
   } else if (type === "permission.updated" || type === "permission.asked") {
     state.pendingPermissionRequest = true;
     out.push(buildPermissionRequest(properties, at, state.productLanguage));

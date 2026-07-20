@@ -2,7 +2,7 @@
 //
 // 自进化闭环的人类评估反馈：把作者对某个 EventContract 的裁决（接受/要改/拒）、
 // rubric 标签（固定枚举 + 自由标签混存于 JSON 数组）、原因落库，并关联到 contract 与会话 trace。
-// session_id = opencode 会话 id，可定位 `runtime/sessions/<sessionId>/agent-console/events.json`。
+// session_id = 桌面会话 id，可定位该轮 agent-console 下的新 events.jsonl(.gz) 或旧 events.json。
 import { getDatabase } from '../pool.ts';
 
 export type FeedbackVerdict = 'accept' | 'revise' | 'reject';

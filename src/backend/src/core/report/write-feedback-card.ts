@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { stripNativeTaskBlocks } from "../../../../contract/native-task-blocks.ts";
+import { readSessionEvents } from "../desktop/session-event-log.ts";
 import { EventContractDao } from "../db/dao/event-contract-dao.ts";
 import { EventFeedbackDao, type EventFeedback } from "../db/dao/event-feedback-dao.ts";
 import {
@@ -33,8 +34,12 @@ function verdictLabel(verdict: string): string {
 }
 
 function findSessionEvents(workflowRoot: string, sessionId: string): string | null {
-  const candidate = path.join(workflowRoot, "runtime", "sessions", sessionId, "agent-console", "events.json");
-  return fs.existsSync(candidate) ? candidate : null;
+  const root = path.join(workflowRoot, "runtime", "sessions", sessionId, "agent-console");
+  for (const name of ["events.jsonl.gz", "events.jsonl", "events.json"]) {
+    const candidate = path.join(root, name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 function briefInput(input: unknown): string {
@@ -52,13 +57,7 @@ function digestSession(workflowRoot: string, sessionId: string): SessionDigest {
   const digest: SessionDigest = { sessionId, eventsPath, thinking: [], toolCalls: [], assistantText: [] };
   if (!eventsPath) return digest;
 
-  let events: Array<Record<string, unknown>> = [];
-  try {
-    const payload = JSON.parse(fs.readFileSync(eventsPath, "utf8"));
-    events = Array.isArray(payload.events) ? payload.events : [];
-  } catch {
-    return digest;
-  }
+  const events = readSessionEvents(path.dirname(eventsPath), 5_000) as Array<Record<string, unknown>>;
 
   const textByMessage = new Map<string, string[]>();
   const reasoningByMessage = new Map<string, string[]>();

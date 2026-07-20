@@ -272,7 +272,7 @@ function desktopApi(): Window['api'] {
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
   MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
-  EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -295,7 +295,7 @@ import type {
 } from '@contract/types';
 export type {
   MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
-  EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -1224,8 +1224,8 @@ export const mapPreview = {
   suspend() {
     return desktopApi().mapPreview.suspend() as Promise<MapPreviewResult>;
   },
-  resume(project: string, mapId: number, overrides?: MapPreviewOverrides, mapRevision?: string) {
-    return desktopApi().mapPreview.resume(toPlain({ project, mapId, overrides, mapRevision })) as Promise<MapPreviewResult>;
+  resume(project: string, mapId: number, overrides?: MapPreviewOverrides, mapRevision?: string, forceReload?: boolean) {
+    return desktopApi().mapPreview.resume(toPlain({ project, mapId, overrides, mapRevision, forceReload })) as Promise<MapPreviewResult>;
   },
   selectMap(mapId: number, overrides?: MapPreviewOverrides) {
     return desktopApi().mapPreview.selectMap(toPlain({ mapId, overrides })) as Promise<MapPreviewResult>;

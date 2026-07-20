@@ -85,17 +85,21 @@ export function registerMapPreviewIpcHandlers(
   ipc.handle('mapPreview:suspend', async () => toIpcPayload(await service.suspend()));
   ipc.handle('mapPreview:resume', async (_event, request?: unknown) => {
     const body = record(request, 'mapPreview:resume request');
-    assertFields(body, ['project', 'mapId', 'overrides', 'mapRevision'], 'mapPreview:resume');
+    assertFields(body, ['project', 'mapId', 'overrides', 'mapRevision', 'forceReload'], 'mapPreview:resume');
     const requestedProject = typeof body.project === 'string' && body.project.trim()
       ? body.project.trim()
       : dependencies.getLastProject().trim();
     if (!requestedProject) throw new Error('Select an RPG Maker project before resuming map preview.');
     const project = dependencies.resolveProject(requestedProject);
+    if (body.forceReload !== undefined && typeof body.forceReload !== 'boolean') {
+      throw new Error('mapPreview:resume forceReload must be boolean.');
+    }
     return toIpcPayload(await service.resume({
       project,
       mapId: positiveInteger(body.mapId, 'mapPreview:resume mapId'),
       overrides: previewOverrides(body.overrides),
       ...(typeof body.mapRevision === 'string' && body.mapRevision.trim() ? { mapRevision: body.mapRevision.trim() } : {}),
+      ...(body.forceReload === true ? { forceReload: true } : {}),
     }));
   });
   ipc.handle('mapPreview:selectMap', (_event, request?: unknown) => {

@@ -17,6 +17,7 @@ test('shows structured fields and copies only the prepared diagnostic payload', 
   assert.match(previewSource, /diagnostic\.detail\.runtimeOutput/);
   assert.match(previewSource, /\$emit\('copy-diagnostic'\)/);
   assert.match(editorSource, /clipboardApi\.writeText\(serializeMapPreviewDiagnostic\(diagnostic\)\)/);
+  assert.match(editorSource, /failureCode === 'preview-debug-marker-conflict'[\s\S]{0,120}editor\.preview\.debugMarkerConflict/);
   assert.match(editorSource, /return t\('editor\.preview\.unknownError'\)/);
   assert.match(editorSource, /previewError\.value = t\('editor\.preview\.unknownError'\)/);
   assert.doesNotMatch(editorSource, /previewError\.value = diagnostic\.detail\.message/);

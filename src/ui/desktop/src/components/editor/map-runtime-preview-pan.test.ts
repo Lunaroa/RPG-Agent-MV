@@ -7,8 +7,8 @@ const previewSource = readFileSync(new URL('./MapRuntimePreview.vue', import.met
 test('uses the shared bounded pan calculation at every preview scale', () => {
   assert.match(previewSource, /import \{ clampPreviewPan, previewVisibleRegion \} from '\.\.\/\.\.\/utils\/mapPreviewViewport'/);
   assert.match(previewSource, /const clamped = clampPreviewPan\(\{/);
-  assert.match(previewSource, /renderedWidth: props\.mapPixelWidth \* actualScale\.value/);
-  assert.match(previewSource, /renderedHeight: props\.mapPixelHeight \* actualScale\.value/);
+  assert.match(previewSource, /renderedWidth: mapPixelWidth\.value \* actualScale\.value/);
+  assert.match(previewSource, /renderedHeight: mapPixelHeight\.value \* actualScale\.value/);
   assert.match(previewSource, /const view = previewVisibleRegion\(\{/);
   assert.match(previewSource, /if \(view\) emit\('viewChanged', view\)/);
 });

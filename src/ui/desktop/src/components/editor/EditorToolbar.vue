@@ -5,6 +5,18 @@
       <button type="button" data-ui-id="editor-mode-event" :class="{ active: mode === 'event' }" :aria-pressed="mode === 'event'" @click="$emit('update:mode', 'event')"><Location />{{ t('editor.toolbar.eventMode') }}</button>
       <button type="button" data-ui-id="editor-mode-preview" :class="{ active: mode === 'preview' }" :aria-pressed="mode === 'preview'" @click="$emit('update:mode', 'preview')"><View />{{ t('editor.toolbar.previewMode') }}</button>
     </div>
+    <template v-if="mode === 'preview'">
+      <span class="toolbar-separator" />
+      <button
+        type="button"
+        class="tool-button"
+        data-ui-id="editor-preview-refresh"
+        :disabled="!previewRefreshEnabled"
+        :title="t('editor.preview.refreshCurrentMap')"
+        :aria-label="t('editor.preview.refreshCurrentMap')"
+        @click="$emit('refresh-preview')"
+      ><RefreshRight /></button>
+    </template>
     <template v-if="mode === 'map'">
       <span class="toolbar-separator" />
       <button v-for="entry in tools" :key="entry.id" type="button" class="tool-button" :data-ui-id="`editor-tool-${entry.id}`" :class="{ active: paintMode !== 'shadow' && tool === entry.id }" :disabled="busy" :title="entry.label" @click="$emit('select-tool', entry.id)">
@@ -49,8 +61,8 @@ import { Brush, Crop, Delete, EditPen, Grid, Location, MagicStick, RefreshLeft, 
 import type { EditorMode, MapLayerSelection, MapPaintMode, MapTool } from './editorTypes';
 import EllipseToolIcon from './EllipseToolIcon.vue';
 import { useI18n } from '../../i18n';
-defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean}>();
-defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[]}>();
+defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean;previewRefreshEnabled:boolean}>();
+defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[];'refresh-preview':[]}>();
 const { t } = useI18n();
 const tools = computed<{ id: MapTool; label: string; icon: Component }[]>(() => [
   { id: 'pencil', label: t('editor.toolbar.tool.pencil'), icon: EditPen },

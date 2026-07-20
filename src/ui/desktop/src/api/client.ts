@@ -43,6 +43,23 @@ declare global {
         selectRuntime(request: InteractivePlaytestRuntimeSelectionRequired): Promise<InteractivePlaytestRuntimeSelectionResult>;
         onStatus(callback: (run: InteractivePlaytestRun) => void): () => void;
       };
+      mapPreview: {
+        start(request: MapPreviewStartRequest): Promise<MapPreviewResult>;
+        current(): Promise<MapPreviewResult>;
+        stop(): Promise<MapPreviewResult>;
+        suspend(): Promise<MapPreviewResult>;
+        resume(request: MapPreviewResumeRequest): Promise<MapPreviewResult>;
+        selectMap(request: { mapId: number; overrides?: MapPreviewOverrides }): Promise<MapPreviewResult>;
+        panCamera(request: { deltaX: number; deltaY: number }): Promise<MapPreviewResult>;
+        setSwitch(request: { id: number; value: boolean }): Promise<MapPreviewResult>;
+        setVariable(request: { id: number; value: number }): Promise<MapPreviewResult>;
+        resetOverrides(): Promise<MapPreviewResult>;
+        replaceOverrides(request: MapPreviewOverrides): Promise<MapPreviewResult>;
+        ackFrame(request: { sequence: number }): Promise<MapPreviewResult>;
+        setView(request: MapPreviewViewRequest): Promise<MapPreviewResult>;
+        onStatus(callback: (session: MapPreviewSession) => void): () => void;
+        onFrame(callback: (frame: MapPreviewFrame) => void): () => void;
+      };
       projects: {
         list(): Promise<ProjectInfo[]>;
         refresh(): Promise<ProjectInfo[]>;
@@ -272,7 +289,7 @@ import type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
@@ -295,7 +312,7 @@ export type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 };
 
@@ -552,7 +569,7 @@ export const maps = {
     return desktopApi().maps.remove(mapId, project);
   },
   postTiles(mapId: number, edits: TileEdit[], project: string = DEFAULT_PROJECT) {
-    return desktopApi().maps.postTiles(mapId, edits, project) as Promise<{ changedCells: number; changes: TileEdit[]; staging: unknown }>;
+    return desktopApi().maps.postTiles(mapId, edits, project) as Promise<{ changedCells: number; changes: TileEdit[]; effectiveMapRevision: string; staging: unknown }>;
   },
   setStartPosition(mapId: number, x: number, y: number, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.setStartPosition(mapId, x, y, project) as Promise<{
@@ -1190,6 +1207,54 @@ export const playtest = {
   },
 };
 
+export const mapPreview = {
+  start(project: string, mapId: number, overrides?: MapPreviewOverrides) {
+    return desktopApi().mapPreview.start(toPlain({ project, mapId, overrides })) as Promise<MapPreviewResult>;
+  },
+  current() {
+    return desktopApi().mapPreview.current() as Promise<MapPreviewResult>;
+  },
+  stop() {
+    return desktopApi().mapPreview.stop() as Promise<MapPreviewResult>;
+  },
+  suspend() {
+    return desktopApi().mapPreview.suspend() as Promise<MapPreviewResult>;
+  },
+  resume(project: string, mapId: number, overrides?: MapPreviewOverrides, mapRevision?: string) {
+    return desktopApi().mapPreview.resume(toPlain({ project, mapId, overrides, mapRevision })) as Promise<MapPreviewResult>;
+  },
+  selectMap(mapId: number, overrides?: MapPreviewOverrides) {
+    return desktopApi().mapPreview.selectMap(toPlain({ mapId, overrides })) as Promise<MapPreviewResult>;
+  },
+  panCamera(deltaX: number, deltaY: number) {
+    return desktopApi().mapPreview.panCamera(toPlain({ deltaX, deltaY })) as Promise<MapPreviewResult>;
+  },
+  setSwitch(id: number, value: boolean) {
+    return desktopApi().mapPreview.setSwitch(toPlain({ id, value })) as Promise<MapPreviewResult>;
+  },
+  setVariable(id: number, value: number) {
+    return desktopApi().mapPreview.setVariable(toPlain({ id, value })) as Promise<MapPreviewResult>;
+  },
+  resetOverrides() {
+    return desktopApi().mapPreview.resetOverrides() as Promise<MapPreviewResult>;
+  },
+  replaceOverrides(overrides: MapPreviewOverrides) {
+    return desktopApi().mapPreview.replaceOverrides(toPlain(overrides)) as Promise<MapPreviewResult>;
+  },
+  ackFrame(sequence: number) {
+    return desktopApi().mapPreview.ackFrame(toPlain({ sequence })) as Promise<MapPreviewResult>;
+  },
+  setView(request: MapPreviewViewRequest) {
+    return desktopApi().mapPreview.setView(toPlain(request)) as Promise<MapPreviewResult>;
+  },
+  onStatus(callback: (session: MapPreviewSession) => void) {
+    return desktopApi().mapPreview.onStatus(callback);
+  },
+  onFrame(callback: (frame: MapPreviewFrame) => void) {
+    return desktopApi().mapPreview.onFrame(callback);
+  },
+};
+
 export const commonEvents = {
   list(project: string = DEFAULT_PROJECT) {
     return desktopApi().commonEvents.list(project) as Promise<CommonEventListResult>;
@@ -1314,4 +1379,4 @@ export function openSessionEventStream(
   };
 }
 
-export const api = { bootstrap, projects, eventRegistry, sessions, playtest, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, resolveAssetUrl, openSessionEventStream };
+export const api = { bootstrap, projects, eventRegistry, sessions, playtest, mapPreview, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, resolveAssetUrl, openSessionEventStream };

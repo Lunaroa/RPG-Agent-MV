@@ -183,6 +183,32 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+  mapPreview: {
+    start: (request: unknown) => ipcRenderer.invoke('mapPreview:start', request),
+    current: () => ipcRenderer.invoke('mapPreview:current'),
+    stop: () => ipcRenderer.invoke('mapPreview:stop'),
+    suspend: () => ipcRenderer.invoke('mapPreview:suspend'),
+    resume: (request: unknown) => ipcRenderer.invoke('mapPreview:resume', request),
+    selectMap: (request: unknown) => ipcRenderer.invoke('mapPreview:selectMap', request),
+    panCamera: (request: unknown) => ipcRenderer.invoke('mapPreview:panCamera', request),
+    setSwitch: (request: unknown) => ipcRenderer.invoke('mapPreview:setSwitch', request),
+    setVariable: (request: unknown) => ipcRenderer.invoke('mapPreview:setVariable', request),
+    resetOverrides: () => ipcRenderer.invoke('mapPreview:resetOverrides'),
+    replaceOverrides: (request: unknown) => ipcRenderer.invoke('mapPreview:replaceOverrides', request),
+    ackFrame: (request: unknown) => ipcRenderer.invoke('mapPreview:ackFrame', request),
+    setView: (request: unknown) => ipcRenderer.invoke('mapPreview:setView', request),
+    onStatus: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('mapPreview:status', handler);
+      return () => ipcRenderer.removeListener('mapPreview:status', handler);
+    },
+    onFrame: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('mapPreview:frame', handler);
+      return () => ipcRenderer.removeListener('mapPreview:frame', handler);
+    },
+  },
+
   commonEvents: {
     list: (project?: string) => ipcRenderer.invoke('commonEvents:list', project),
     get: (id: number, project?: string) => ipcRenderer.invoke('commonEvents:get', id, project),

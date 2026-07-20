@@ -43,6 +43,7 @@ interface InteractivePlaytestServiceLike {
 }
 
 export interface InteractivePlaytestIpcDependencies {
+  beforeStart?(): void | Promise<void>;
   getLastProject(): string;
   resolveProject(project: string): string;
   resolveSession(project: string, requestedSessionId?: string): string | undefined;
@@ -59,6 +60,7 @@ export function registerInteractivePlaytestIpcHandlers(
   dependencies: InteractivePlaytestIpcDependencies,
 ): void {
   ipc.handle('playtest:start', async (event, request?: Record<string, unknown>) => {
+    await dependencies.beforeStart?.();
     const body = request && typeof request === 'object' ? request : {};
     assertKnownStartFields(body);
     const mode = body.mode === 'project' || body.mode === 'battle_test' || body.mode === 'particle_preview' ? body.mode : null;
@@ -111,7 +113,7 @@ export function registerInteractivePlaytestIpcHandlers(
     dependencies.revealEvidence(String(runId || '').trim());
     return { ok: true };
   });
-  ipc.handle('playtest:selectRuntime', (event, request: unknown) => {
+  ipc.handle('playtest:selectRuntime', async (event, request: unknown) => {
     if (!request || typeof request !== 'object' || Array.isArray(request)) {
       throw new Error('playtest:selectRuntime request must be an object.');
     }
@@ -122,7 +124,7 @@ export function registerInteractivePlaytestIpcHandlers(
     if (body.reason !== 'missing' && body.reason !== 'invalid' && body.reason !== 'change') {
       throw new Error('playtest:selectRuntime reason must be missing, invalid, or change.');
     }
-    return dependencies.selectRuntime(event, {
+    return await dependencies.selectRuntime(event, {
       engine: body.engine,
       reason: body.reason,
     });

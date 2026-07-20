@@ -7,6 +7,11 @@ import {
   cleanupInteractivePlaytestIpcHandlers,
   registerInteractivePlaytestIpcHandlers,
 } from './interactive-playtest-ipc-bindings.js';
+import {
+  cleanupMapPreviewIpcHandlers,
+  mapPreviewFrameIpcPayload,
+  registerMapPreviewIpcHandlers,
+} from './map-preview-ipc-bindings.js';
 import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
@@ -16,6 +21,9 @@ import {
   DEFAULT_AGENT_EXECUTION_ENGINE,
   type InteractivePlaytestResult,
   type InteractivePlaytestRun,
+  type MapPreviewFrame,
+  type MapPreviewResult,
+  type MapPreviewSession,
   type RpgMakerEngine,
   type WorkspaceSettings,
   type WorkspaceWindowState,
@@ -54,6 +62,7 @@ let exists: any;
 let desktop: any;
 let agentSessionRuntime: any;
 let interactivePlaytestService: any;
+let mapPreviewService: any;
 let assetProtocolRegistered = false;
 let backendCoreUrl: URL | null = null;
 let backendWithProductLanguage: (<T>(language: ProductLanguage, fn: () => T) => T) | null = null;
@@ -402,6 +411,7 @@ async function loadBackendModules(roots: AppRoots) {
     outline: await import(new URL('desktop/outline-service.ts', coreUrl).href),
     placementQueue: await import(new URL('desktop/placement-queue-service.ts', coreUrl).href),
     interactivePlaytest: await import(new URL('desktop/interactive-playtest-service.ts', coreUrl).href),
+    mapPreview: await import(new URL('desktop/map-preview-service.ts', coreUrl).href),
     playtestRuntime: await import(new URL('desktop/interactive-playtest-runtime.ts', coreUrl).href),
   };
   const sessionRuntimeModule = await import(new URL('desktop/agent-session-runtime.ts', coreUrl).href);
@@ -419,6 +429,37 @@ async function loadBackendModules(roots: AppRoots) {
       ),
     },
   );
+  mapPreviewService = new desktop.mapPreview.MapPreviewService(
+    roots.userDataRoot,
+    {
+      isPlaytestActive: () => {
+        const run = interactivePlaytestService?.current?.()?.run as InteractivePlaytestRun | undefined;
+        return Boolean(run && ['starting', 'running', 'stopping'].includes(run.status));
+      },
+      onStatus: publishMapPreviewStatus,
+      onFrame: publishMapPreviewFrame,
+      resolveProjectRuntime: (project: string, engine: RpgMakerEngine) => (
+        desktop.playtestRuntime.resolveInteractiveProjectRuntime(project, engine, {
+          configuredRuntimeRoot: getWorkspaceSettings().playtestRuntimes?.[engine],
+          officialRuntimeRoots: officialPlaytestRuntimeRoots(engine),
+        })
+      ),
+    },
+  );
+}
+
+function publishMapPreviewStatus(session: MapPreviewSession): void {
+  const payload = toIpcPayload(session);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('mapPreview:status', payload);
+  }
+}
+
+function publishMapPreviewFrame(frame: MapPreviewFrame): void {
+  const payload = mapPreviewFrameIpcPayload(frame);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('mapPreview:frame', payload);
+  }
 }
 
 function publishInteractivePlaytestStatus(run: InteractivePlaytestRun): void {
@@ -530,6 +571,11 @@ function requireInteractivePlaytestService(): any {
   return interactivePlaytestService;
 }
 
+function requireMapPreviewService(): any {
+  if (!mapPreviewService) throw new Error('Map preview service is not initialized.');
+  return mapPreviewService;
+}
+
 export async function shutdownInteractivePlaytest(): Promise<InteractivePlaytestResult> {
   if (!interactivePlaytestService) return { confirmationRequired: false };
   const result = await interactivePlaytestService.shutdown() as InteractivePlaytestResult;
@@ -537,6 +583,11 @@ export async function shutdownInteractivePlaytest(): Promise<InteractivePlaytest
     throw new Error(result.run.error || 'Game runtime process-tree cleanup failed.');
   }
   return result;
+}
+
+export async function shutdownMapPreview(): Promise<MapPreviewResult> {
+  if (!mapPreviewService) return {};
+  return await mapPreviewService.shutdown() as MapPreviewResult;
 }
 
 // 类型定义
@@ -1116,6 +1167,9 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   });
 
   registerInteractivePlaytestIpcHandlers(ipcMain, requireInteractivePlaytestService(), {
+    beforeStart: async () => {
+      if (requireMapPreviewService().isActive()) await requireMapPreviewService().stop();
+    },
     getLastProject: () => String(getWorkspaceSettings().lastProjectPath || ''),
     resolveProject: (project) => desktop.project.resolveProjectPath(workflowRoot, project),
     resolveSession: resolveInteractivePlaytestSession,
@@ -1199,6 +1253,11 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
         }
       }
     },
+  });
+
+  registerMapPreviewIpcHandlers(ipcMain, requireMapPreviewService(), {
+    getLastProject: () => String(getWorkspaceSettings().lastProjectPath || ''),
+    resolveProject: (project) => desktop.project.resolveProjectPath(workflowRoot, project),
   });
 
   ipcMain.handle('window:minimize', (event) => {
@@ -1673,6 +1732,10 @@ function registerAssetProtocol(): void {
  * 清理 IPC 处理器
  */
 export function cleanupIpcHandlers(): void {
+  if (mapPreviewService) {
+    mapPreviewService.shutdownSync();
+    mapPreviewService = null;
+  }
   if (interactivePlaytestService) {
     interactivePlaytestService.shutdownSync();
     interactivePlaytestService = null;
@@ -1680,6 +1743,7 @@ export function cleanupIpcHandlers(): void {
   cleanupSessionIpcHandlers(ipcMain);
   cleanupMapIpcHandlers(ipcMain);
   cleanupInteractivePlaytestIpcHandlers(ipcMain);
+  cleanupMapPreviewIpcHandlers(ipcMain);
   workspaceSettingsSession = new WorkspaceSettingsSession(false);
   ipcMain.removeHandler('window:minimize');
   ipcMain.removeHandler('window:toggleMaximize');

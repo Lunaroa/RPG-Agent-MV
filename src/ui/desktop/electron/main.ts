@@ -14,6 +14,7 @@ import {
   patchWorkspaceSettings,
   readWorkspaceWindowOptions,
   saveWorkspaceWindowState,
+  shutdownMapPreview,
   shutdownInteractivePlaytest,
 } from './ipc-handlers.js';
 import { electronText } from './electronLocalization.js';
@@ -124,6 +125,7 @@ async function createWindow() {
           return;
         }
         await shutdownInteractivePlaytest();
+        await shutdownMapPreview();
         closeGuardRunning = false;
         allowWindowClose = true;
         mainWindow.close();

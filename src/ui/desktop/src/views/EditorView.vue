@@ -245,7 +245,7 @@ import BottomPanel from '../components/editor/BottomPanel.vue';
 import MapRuntimePreview from '../components/editor/MapRuntimePreview.vue';
 import MapPreviewInspector from '../components/editor/MapPreviewInspector.vue';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapPropertiesForm, MapTool, TreeNode } from '../components/editor/editorTypes';
-import { clipboard as clipboardApi, eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapPreviewFrame, type MapPreviewOverrides, type MapPreviewSession, type MapPreviewStateCatalog, type MapPreviewStatus, type MapPreviewViewRequest, type MapTreeNode, type NamedCatalogEntry, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
+import { clipboard as clipboardApi, eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapPreviewFrame, type MapPreviewOverrides, type MapPreviewSession, type MapPreviewStatus, type MapPreviewViewRequest, type MapTreeNode, type NamedCatalogEntry, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
 import { useMapCanvasEditor, type PlacementFlashCell } from '../composables/useMapCanvasEditor';
 import { clone, defaultEvent, quickEventTemplate, quickObtainEventTemplate, type MvEditorEvent, type MvEventImage, type QuickEventType, type QuickObtainKind } from '../composables/useEventEditor';
 import {
@@ -274,7 +274,7 @@ import { LatestAsyncCoordinator, type LatestAsyncToken } from '../utils/latestAs
 import { previewFrameMatchesIntent, previewSessionMatchesIntent, type EditorPreviewIntent } from '../utils/editorPreviewIntent';
 import { mapPreviewDiagnosticFromError, mapPreviewDiagnosticFromSession, serializeMapPreviewDiagnostic, type MapPreviewDiagnostic } from '../utils/mapPreviewDiagnostics';
 import { useI18n, type MessageKey } from '../i18n';
-import type { RpgMakerEngine } from '@contract/types';
+import type { MapPreviewStateCatalog, RpgMakerEngine } from '@contract/types';
 
 interface ApiError extends Error { status?: number }
 type EditableMap = MvMap & Partial<RmmvMapProperties> & Record<string, unknown>;

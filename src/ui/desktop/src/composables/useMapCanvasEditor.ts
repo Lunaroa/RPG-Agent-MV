@@ -440,8 +440,16 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (canvas.parentElement) paletteResizeObserver.observe(canvas.parentElement);
     renderPalette();
   }
-  function setCanvasElement(element: unknown) { canvasRef.value = element as HTMLCanvasElement | undefined; }
-  function setOverlayElement(element: unknown) { overlayRef.value = element as HTMLCanvasElement | undefined; }
+  function setCanvasElement(element: unknown) {
+    const canvas = element as HTMLCanvasElement | undefined;
+    canvasRef.value = canvas;
+    if (canvas) renderMap();
+  }
+  function setOverlayElement(element: unknown) {
+    const canvas = element as HTMLCanvasElement | undefined;
+    overlayRef.value = canvas;
+    if (canvas) renderOverlay();
+  }
   function setRegionLabelElement(element: unknown) {
     regionLabelRef.value = element as HTMLCanvasElement | undefined;
     scheduleRegionLabelRender();

@@ -50,6 +50,19 @@ export interface EditorUiControlState {
   mode: string;
   statusText: string;
   statusKind: string;
+  preview?: {
+    sessionId: string;
+    operationId: number;
+    sessionMapId: number;
+    status: string;
+    mapRevision: string;
+    frameRevision: string;
+    frameOperationId: number;
+    frameMapId: number;
+    frameSequence: number;
+    failureCode: string;
+    error: string;
+  };
 }
 
 export interface EditorUiControlHandler {
@@ -146,10 +159,10 @@ function pointerUiElement(command: UiControlCommand, language: ProductLanguage):
       height: Math.round(rect.height),
     }));
   }
-  const type = phase === 'down' ? 'mousedown' : phase === 'move' ? 'mousemove' : 'mouseup';
+  const type = phase === 'down' ? 'pointerdown' : phase === 'move' ? 'pointermove' : 'pointerup';
   const button = Number.isInteger(command.button) ? Number(command.button) : 0;
   const buttons = phase === 'up' ? 0 : 1 << button;
-  element.dispatchEvent(new MouseEvent(type, {
+  element.dispatchEvent(new PointerEvent(type, {
     bubbles: true,
     cancelable: true,
     clientX: rect.left + offsetX,

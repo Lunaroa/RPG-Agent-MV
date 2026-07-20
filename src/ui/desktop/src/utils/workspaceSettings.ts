@@ -1,6 +1,7 @@
 import type {
   EngineProviderBinding,
   RpgMakerEngine,
+  MapPreviewOverrides,
   WorkspaceEditorProjectState,
   WorkspaceLayoutState,
   WorkspaceSettings,
@@ -138,7 +139,7 @@ function normalizeEditorProjectState(
   const mapId = Number(record.mapId)
   const mode = record.mode
   if (!Number.isInteger(mapId) || mapId <= 0) return null
-  if (mode !== 'map' && mode !== 'event') return null
+  if (mode !== 'map' && mode !== 'event' && mode !== 'preview') return null
   const expanded = Array.isArray(record.expandedMapIds)
     ? [...new Set(record.expandedMapIds.map((item) => Number(item)).filter((id) => Number.isInteger(id) && id > 0))]
     : undefined
@@ -150,7 +151,35 @@ function normalizeEditorProjectState(
   if (zoom != null) state.zoom = zoom
   if (expanded?.length) state.expandedMapIds = expanded
   if (tileTab) state.tileTab = tileTab
+  const previewOverrides = normalizeMapPreviewOverrides(record.previewOverrides)
+  if (previewOverrides) state.previewOverrides = previewOverrides
   return state
+}
+
+export function normalizeMapPreviewOverrides(value: unknown): MapPreviewOverrides | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const switches: Record<string, boolean> = {}
+  const variables: Record<string, number> = {}
+  if (source.switches && typeof source.switches === 'object' && !Array.isArray(source.switches)) {
+    for (const [rawId, rawValue] of Object.entries(source.switches as Record<string, unknown>)) {
+      const id = positiveStateId(rawId)
+      if (id != null && typeof rawValue === 'boolean') switches[String(id)] = rawValue
+    }
+  }
+  if (source.variables && typeof source.variables === 'object' && !Array.isArray(source.variables)) {
+    for (const [rawId, rawValue] of Object.entries(source.variables as Record<string, unknown>)) {
+      const id = positiveStateId(rawId)
+      if (id != null && typeof rawValue === 'number' && Number.isFinite(rawValue)) variables[String(id)] = rawValue
+    }
+  }
+  return { switches, variables }
+}
+
+function positiveStateId(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null
+  const id = Number(value)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
 }
 
 export function normalizeWorkspaceSettings(raw: unknown): WorkspaceSettings {

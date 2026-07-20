@@ -31,7 +31,7 @@ const emit = defineEmits<{
 
 const props = defineProps<{
 
-  mode: 'map' | 'event';
+  mode: 'map' | 'event' | 'preview';
 
   catalog: EditorProjectCatalog | null;
 

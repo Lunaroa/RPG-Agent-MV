@@ -1,5 +1,5 @@
 <template>
-  <aside ref="workbenchRef" class="editor-workbench" :class="{ resizing, 'width-resizing': widthResizing }" :style="workbenchStyle">
+  <aside ref="workbenchRef" class="editor-workbench" :class="{ resizing, 'width-resizing': widthResizing, 'preview-mode': mode === 'preview' }" :style="workbenchStyle">
     <section v-show="mode === 'map'" class="workbench-pane palette-pane" :class="{ collapsed: !tilesOpen }" :style="palettePaneStyle">
       <header class="pane-header clickable" @click="toggleTiles">
         <strong>{{ t('editor.left.tiles') }}</strong>
@@ -110,13 +110,14 @@
           @node-click="handleTreeNodeClick"
           @node-expand="(data: TreeNode) => $emit('node-expand', data)"
           @node-collapse="(data: TreeNode) => $emit('node-collapse', data)"
-          @node-contextmenu="(event: MouseEvent, data: TreeNode) => $emit('node-contextmenu', event, data)"
+          @node-contextmenu="(event: MouseEvent, data: TreeNode) => mode !== 'preview' && $emit('node-contextmenu', event, data)"
         >
           <template #default="{ node, data }">
             <span
               class="tree-node"
+              :data-ui-id="`map-tree-node-${data.id}`"
               :class="treeNodeDragClasses(data.id)"
-              draggable="true"
+              :draggable="mode !== 'preview'"
               :aria-grabbed="dragSourceId === data.id"
               @dragstart.stop="startTreeDrag(data, $event)"
               @dragover.prevent.stop="previewTreeDrag(data, $event)"
@@ -266,6 +267,10 @@ function handleTreeNodeClick(data: TreeNode, _node: unknown, _component: unknown
 }
 
 function startTreeDrag(source: TreeNode, event: DragEvent): void {
+  if (props.mode === 'preview') {
+    event.preventDefault();
+    return;
+  }
   dragSourceId.value = source.id;
   dragCandidate.value = null;
   dragInvalidTargetId.value = null;
@@ -593,6 +598,7 @@ onMounted(() => {
 .palette-canvas { display: block; width:auto; max-width:100%; height:auto; cursor: default; image-rendering: pixelated; }
 .map-tree { flex: 1; overflow: auto; padding: 2px 3px 6px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 22px, var(--app-bg-soft) 22px, var(--app-bg-soft) 44px); background-attachment: local; background-origin: content-box; }
 .tree-node { position:relative; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 5px; overflow: hidden; cursor:grab; }
+.preview-mode .tree-node{cursor:pointer}
 .tree-node:active { cursor:grabbing; }
 .tree-node.drag-source { opacity:.42; }
 .tree-node.drop-preview-target { overflow:visible; outline:2px solid var(--app-accent); outline-offset:-1px; background:var(--app-accent-soft); }

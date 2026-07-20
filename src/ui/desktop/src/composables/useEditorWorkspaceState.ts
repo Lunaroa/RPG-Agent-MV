@@ -1,5 +1,6 @@
 import type { EditorMode } from '../components/editor/editorTypes';
 import type { PaletteTabId } from '../components/editor/editorTypes';
+import type { MapPreviewOverrides } from '@contract/types';
 import { useWorkspaceStore } from '../stores/workspace';
 
 export const EDITOR_DEFAULT_ZOOM = 0.75;
@@ -54,5 +55,17 @@ export function writeEditorWorkspaceSelection(project: string, selection: Editor
     zoom: readEditorZoom(selection.zoom),
     expandedMapIds: normalizeExpandedMapIds(selection.expandedMapIds) ?? [],
     tileTab: selection.tileTab,
+    previewOverrides: workspace.readProjectEditor(project)?.previewOverrides,
   });
+}
+
+export function readEditorPreviewOverrides(project: string): MapPreviewOverrides {
+  return useWorkspaceStore().readProjectEditor(project)?.previewOverrides || { switches: {}, variables: {} };
+}
+
+export function writeEditorPreviewOverrides(project: string, overrides: MapPreviewOverrides): void {
+  const workspace = useWorkspaceStore();
+  const current = workspace.readProjectEditor(project);
+  if (!current) throw new Error('Editor workspace state must be initialized before preview overrides are saved.');
+  workspace.patchProjectEditor(project, { ...current, previewOverrides: overrides });
 }

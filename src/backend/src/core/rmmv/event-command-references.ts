@@ -32,6 +32,21 @@ export function collectEventCommandReferences(
   return references;
 }
 
+export function collectRawEventCommandReferences(
+  commandList: unknown,
+  pathPrefix = "eventCommandList",
+): RmmvEventCommandReference[] {
+  if (!Array.isArray(commandList)) return [];
+  const references: RmmvEventCommandReference[] = [];
+  commandList.forEach((value, commandIndex) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const command = value as Partial<RawEventCommand>;
+    if (!Number.isInteger(command.code) || !Array.isArray(command.parameters)) return;
+    collectCommandReferences(command as RawEventCommand, commandIndex, pathPrefix, references);
+  });
+  return references;
+}
+
 function collectCommandReferences(
   command: RawEventCommand,
   commandIndex: number,

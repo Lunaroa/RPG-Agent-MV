@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -52,6 +53,7 @@ import {
 } from './mapServiceLocalization.ts';
 import { resolveLocalSourcePath } from './local-assets-service.ts';
 import { prepareRmmvPlaytestPlan } from './runtime-deploy-service.ts';
+import { buildMapPreviewStateCatalog } from './map-preview-state-references.ts';
 
 interface LibraryImportContext {
   engine: RpgMakerEngine;
@@ -109,6 +111,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
     || path.join(dataDir, 'Tilesets.json');
   const mapFile = getMapFileForRead(workflowRoot, project, mapId);
   if (!fs.existsSync(mapFile)) throw new Error(mapNotFound(mapId));
+  const effectiveMapRevision = fileRevision(mapFile);
   const infos = fs.existsSync(mapInfosFile) ? readJson(mapInfosFile) as any[] : [];
   const map = readJson(mapFile) as any;
   const tilesets = fs.existsSync(tilesetsFile) ? readJson(tilesetsFile) as any[] : [];
@@ -121,6 +124,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
   const parallax = resolveProjectParallaxImage(workflowRoot, project, map);
   return {
     project,
+    effectiveMapRevision,
     engine: manifest.engine,
     engineVersion: manifest.engineVersion,
     tileSize: manifest.tileSize,
@@ -157,6 +161,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
         airship: systemPosition(system, 'airship'),
       },
     },
+    previewState: buildMapPreviewStateCatalog(workflowRoot, project, mapId),
     staging: getStagingStatus(workflowRoot, project, mapId),
   };
 }
@@ -350,7 +355,15 @@ export function postMapTiles(workflowRoot: string, project: string, mapId: numbe
     mapId,
     (target) => applyBrushEdit({ project: target.project, mapId, edits }),
   );
-  return { ...staged.result, staging: staged.staging };
+  return {
+    ...staged.result,
+    effectiveMapRevision: fileRevision(getMapFileForRead(workflowRoot, project, mapId)),
+    staging: staged.staging,
+  };
+}
+
+function fileRevision(file: string): string {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
 export function setStartPositionDraft(workflowRoot: string, project: string, mapId: number, x: number, y: number) {

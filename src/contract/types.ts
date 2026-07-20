@@ -128,6 +128,7 @@ export interface RmmvSystemPosition {
 
 export interface MapPayload {
   project: string;
+  effectiveMapRevision: string;
   engine: RpgMakerEngine;
   engineVersion: string | null;
   tileSize: number;
@@ -160,12 +161,18 @@ export interface MapPayload {
     startPosition: RmmvSystemPosition;
     vehiclePositions: Record<Exclude<RmmvSystemPositionTarget, 'player'>, RmmvSystemPosition>;
   };
+  previewState: MapPreviewStateCatalog;
   staging: unknown;
 }
 
 export interface NamedCatalogEntry {
   id: number;
   name: string;
+}
+
+export interface MapPreviewStateCatalog {
+  switches: NamedCatalogEntry[];
+  variables: NamedCatalogEntry[];
 }
 
 export interface EditorEnemyCatalogEntry extends NamedCatalogEntry {
@@ -574,6 +581,89 @@ export interface InteractivePlaytestResult {
   stagingSummaryHash?: string;
   run?: InteractivePlaytestRun;
   error?: string;
+}
+
+export type MapPreviewStatus =
+  | 'preparing'
+  | 'starting'
+  | 'running'
+  | 'suspending'
+  | 'suspended'
+  | 'resuming'
+  | 'stopping'
+  | 'stopped'
+  | 'failed';
+
+export type MapPreviewFailureCode = 'runtime-handshake-timeout' | 'runtime-resume-failed' | 'map-render-failed';
+
+export interface MapPreviewOverrides {
+  switches: Record<string, boolean>;
+  variables: Record<string, number>;
+}
+
+export interface MapPreviewStartRequest {
+  project: string;
+  mapId: number;
+  overrides?: MapPreviewOverrides;
+}
+
+export interface MapPreviewResumeRequest extends MapPreviewStartRequest {
+  mapRevision?: string;
+}
+
+export interface MapPreviewViewRequest {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale: number;
+}
+
+export interface MapPreviewSession {
+  sessionId: string;
+  operationId?: number;
+  status: MapPreviewStatus;
+  engine: RpgMakerEngine;
+  mapId: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  mapPixelWidth?: number;
+  mapPixelHeight?: number;
+  renderMode?: 'full' | 'tiled';
+  mapRevision?: string;
+  resumeKind?: 'warm' | 'map-sync' | 'reisolated';
+  switchValues?: Record<string, boolean>;
+  variableValues?: Record<string, number>;
+  startedAt: string;
+  updatedAt: string;
+  failureCode?: MapPreviewFailureCode;
+  error?: string;
+}
+
+export interface MapPreviewResult {
+  session?: MapPreviewSession;
+  runtimeSelectionRequired?: InteractivePlaytestRuntimeSelectionRequired;
+  error?: string;
+}
+
+export interface MapPreviewFrame {
+  sessionId: string;
+  operationId: number;
+  mapId: number;
+  sequence: number;
+  generation: number;
+  mapRevision: string;
+  kind: 'full' | 'overview' | 'tile';
+  mime: 'image/png';
+  mapPixelWidth: number;
+  mapPixelHeight: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  outputWidth: number;
+  outputHeight: number;
+  data: Uint8Array;
 }
 
 export type RmmvVerifyStatus = 'verified' | 'blocked' | 'review' | 'failed';
@@ -1079,10 +1169,11 @@ export interface WorkspaceComposerState {
 
 export interface WorkspaceEditorProjectState {
   mapId: number;
-  mode: 'map' | 'event';
+  mode: 'map' | 'event' | 'preview';
   zoom?: number;
   expandedMapIds?: number[];
   tileTab?: string;
+  previewOverrides?: MapPreviewOverrides;
 }
 
 export interface WorkspaceSettings {

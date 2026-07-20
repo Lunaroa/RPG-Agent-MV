@@ -10,7 +10,7 @@ const { t } = useI18n();
   <footer class="statusbar">
     <span class="sb-item sb-map"><span class="sb-dot" />{{ ui.sbMapLabel || 'RPG Agent MV' }}</span>
     <span v-if="ui.sbMode" class="sb-item sb-mode" :class="ui.sbMode">
-      {{ ui.sbMode === 'map' ? t('status.mode.map') : t('status.mode.event') }}
+      {{ ui.sbMode === 'map' ? t('status.mode.map') : ui.sbMode === 'preview' ? t('status.mode.preview') : t('status.mode.event') }}
     </span>
     <span v-if="ui.sbCursor" class="sb-item">{{ ui.sbCursor }}</span>
     <span class="sb-fill" />

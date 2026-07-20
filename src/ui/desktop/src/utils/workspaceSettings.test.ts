@@ -10,6 +10,7 @@ import {
   isValidWindowBounds,
   mergeWorkspaceSettings,
   normalizeWorkspaceSettings,
+  normalizeMapPreviewOverrides,
   PALETTE_MAX_PERSISTED_HEIGHT,
   PALETTE_MIN_TREE_HEIGHT,
   PALETTE_PANE_RESIZER_HEIGHT,
@@ -114,6 +115,37 @@ describe('workspaceSettings', () => {
       mode: 'event',
       zoom: 1,
       tileTab: 'B',
+    })
+  })
+
+  it('preserves the read-only map preview mode in project editor state', () => {
+    const settings = normalizeWorkspaceSettings({
+      projects: {
+        'projects/sample': { mapId: 4, mode: 'preview' },
+      },
+    })
+    expect(settings.projects?.['projects/sample']).toEqual({ mapId: 4, mode: 'preview' })
+  })
+
+  it('normalizes project-wide map preview switch and variable overrides', () => {
+    expect(normalizeMapPreviewOverrides({
+      switches: { '1': true, '02': false, bad: true, '3': 1 },
+      variables: { '4': 12, '5': Number.NaN, '-1': 2, '6': '7' },
+    })).toEqual({
+      switches: { '1': true, '2': false },
+      variables: { '4': 12 },
+    })
+  })
+
+  it('merges shared preview overrides without resetting editor selection', () => {
+    const merged = mergeWorkspaceSettings(
+      { projects: { 'projects/sample': { mapId: 1, mode: 'preview', previewOverrides: { switches: { '7': true }, variables: {} } } } },
+      { projects: { 'projects/sample': { mapId: 2, mode: 'preview', previewOverrides: { switches: { '7': true }, variables: { '8': 42 } } } } },
+    )
+    expect(merged.projects?.['projects/sample']).toEqual({
+      mapId: 2,
+      mode: 'preview',
+      previewOverrides: { switches: { '7': true }, variables: { '8': 42 } },
     })
   })
 

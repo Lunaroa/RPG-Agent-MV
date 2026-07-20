@@ -1,6 +1,6 @@
 import type { EventSearchHit, MapTreeNode, RmmvAudioSettings, RmmvMapEncounter } from '../../api/client';
 
-export type EditorMode = 'map' | 'event';
+export type EditorMode = 'map' | 'event' | 'preview';
 export type MapTool = 'pencil' | 'rect' | 'ellipse' | 'fill' | 'eraser';
 export type MapPaintMode = 'tile' | 'shadow' | 'region';
 export type MapLayerSelection = 'auto' | 0 | 1 | 2 | 3;

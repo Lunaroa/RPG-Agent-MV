@@ -3,6 +3,7 @@
     <div class="mode-group">
       <button type="button" data-ui-id="editor-mode-map" :class="{ active: mode === 'map' }" :aria-pressed="mode === 'map'" @click="$emit('update:mode', 'map')"><Grid />{{ t('editor.toolbar.mapMode') }}</button>
       <button type="button" data-ui-id="editor-mode-event" :class="{ active: mode === 'event' }" :aria-pressed="mode === 'event'" @click="$emit('update:mode', 'event')"><Location />{{ t('editor.toolbar.eventMode') }}</button>
+      <button type="button" data-ui-id="editor-mode-preview" :class="{ active: mode === 'preview' }" :aria-pressed="mode === 'preview'" @click="$emit('update:mode', 'preview')"><View />{{ t('editor.toolbar.previewMode') }}</button>
     </div>
     <template v-if="mode === 'map'">
       <span class="toolbar-separator" />
@@ -44,7 +45,7 @@
 
 <script setup lang="ts">
 import { computed, type Component } from 'vue';
-import { Brush, Crop, Delete, EditPen, Grid, Location, MagicStick, RefreshLeft, RefreshRight, Sunny } from '@element-plus/icons-vue';
+import { Brush, Crop, Delete, EditPen, Grid, Location, MagicStick, RefreshLeft, RefreshRight, Sunny, View } from '@element-plus/icons-vue';
 import type { EditorMode, MapLayerSelection, MapPaintMode, MapTool } from './editorTypes';
 import EllipseToolIcon from './EllipseToolIcon.vue';
 import { useI18n } from '../../i18n';

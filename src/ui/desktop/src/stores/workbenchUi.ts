@@ -24,7 +24,7 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
 
   /* Status bar data (synced from EditorView) */
   const sbMapLabel = ref('');
-  const sbMode = ref<'map' | 'event' | ''>('');
+  const sbMode = ref<'map' | 'event' | 'preview' | ''>('');
   const sbCursor = ref('');
   const sbZoom = ref(100);
   const sbStagingDirty = ref(false);

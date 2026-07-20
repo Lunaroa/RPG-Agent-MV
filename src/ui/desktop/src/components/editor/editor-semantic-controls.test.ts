@@ -207,4 +207,18 @@ describe('editor semantic controls', () => {
     assert.match(mapCanvasEditorSource, /selectedEventId: eventMode \? options\.selectedEventId\.value : null/);
     assert.match(mapCanvasEditorSource, /hoveredEventId: eventMode \? options\.hoveredEventId\?\.value : null/);
   });
+
+  test('keeps editor and preview surfaces mounted while suspending the warm runtime', () => {
+    assert.match(editorViewSource, /<MapRuntimePreview[\s\S]*v-show="mode === 'preview'"/);
+    assert.match(editorViewSource, /:key="previewSession\?\.sessionId \|\| 'pending'"/);
+    assert.doesNotMatch(editorViewSource, /:key="[^\"]*selectedMapId/);
+    assert.match(editorViewSource, /v-show="mode !== 'preview'" class="editor-canvas-layer"/);
+    assert.doesNotMatch(editorViewSource, /<MapRuntimePreview[\s\S]{0,120}v-if="mode === 'preview'"/);
+    assert.match(editorViewSource, /else if \(previous === 'preview'\) void suspendPreviewSession\(\)/);
+    assert.match(editorViewSource, /mapPreview\.resume\([\s\S]{0,220}currentMapRevision\.value/);
+    assert.match(editorViewSource, /frame\.operationId !== previewSession\.value\.operationId/);
+    assert.match(editorViewSource, /frame\.mapId !== selectedMapId\.value/);
+    assert.match(mapCanvasEditorSource, /function setCanvasElement[\s\S]{0,180}if \(canvas\) renderMap\(\)/);
+    assert.match(mapCanvasEditorSource, /function setOverlayElement[\s\S]{0,180}if \(canvas\) renderOverlay\(\)/);
+  });
 });

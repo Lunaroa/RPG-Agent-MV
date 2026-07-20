@@ -13,7 +13,7 @@
       :undo-len="undoLen"
       :redo-len="redoLen"
       :busy="busy"
-      :staging-dirty="stagingDirty"
+      :staging-dirty="stagingDirty && mode !== 'preview'"
       @select-tool="selectMapTool"
       @select-tile="selectTileMode"
       @select-shadow="selectShadowMode"
@@ -65,7 +65,27 @@
       />
 
       <div class="center-col">
-        <main class="editor-stage">
+        <main class="editor-stage" :class="{ 'preview-stage': mode === 'preview' }">
+          <MapRuntimePreview
+            v-show="mode === 'preview'"
+            :key="previewSession?.sessionId || 'pending'"
+            :status="previewStatus"
+            :frame-url="visiblePreviewFrameUrl"
+            :frame-sequence="previewFrameSequence"
+            :map-pixel-width="previewFrameMapWidth"
+            :map-pixel-height="previewFrameMapHeight"
+            :tile-frame-url="previewTileFrameUrl"
+            :tile-frame-sequence="previewTileFrameSequence"
+            :tile-x="previewTileX"
+            :tile-y="previewTileY"
+            :tile-width="previewTileWidth"
+            :tile-height="previewTileHeight"
+            :error="previewError"
+            @retry="restartPreview"
+            @presented="ackPreviewFrame"
+            @view-changed="updatePreviewView"
+          />
+          <div v-show="mode !== 'preview'" class="editor-canvas-layer">
           <div v-if="selectedMapId == null" class="empty-state">
             <el-empty :description="mapTree.length ? t('editor.error.noLoadableMaps') : t('editor.view.noMapsDescription')">
               <div class="empty-actions">
@@ -104,9 +124,11 @@
               <button type="button" :title="t('editor.view.zoomIn')" @click="zoomIn">+</button>
             </div>
             <span v-if="selectedMapId != null" class="canvas-mode-chip">{{ mode === 'map' ? mapPaintModeLabel : t('editor.view.eventMode') }}</span>
+          </div>
         </main>
 
         <BottomPanel
+          v-if="mode !== 'preview'"
           :mode="mode"
           :catalog="editorCatalog"
           :current-map-id="selectedMapId"
@@ -116,6 +138,18 @@
           @back-chat="goBackToChatPlacement"
         />
       </div>
+      <MapPreviewInspector
+        v-if="mode === 'preview'"
+        :switches="previewSwitches"
+        :variables="previewVariables"
+        :switch-overrides="previewSwitchOverrides"
+        :variable-overrides="previewVariableOverrides"
+        :switch-values="previewSwitchValues"
+        :variable-values="previewVariableValues"
+        @set-switch="setPreviewSwitch"
+        @set-variable="setPreviewVariable"
+        @reset="resetPreviewOverrides"
+      />
     </div>
 
     <MapPropertiesDialog
@@ -148,7 +182,7 @@
     <QuickObtainEventDialog ref="quickObtainDialog" :catalog="editorCatalog" @commit="createObtainEvent" />
 
     <teleport to="body">
-      <div v-if="treeContext.visible" class="ctx-mask" @mousedown.self="closeTreeContext" @contextmenu.prevent="closeTreeContext">
+      <div v-if="mode !== 'preview' && treeContext.visible" class="ctx-mask" @mousedown.self="closeTreeContext" @contextmenu.prevent="closeTreeContext">
         <ul class="ctx-menu" :style="{ left: `${treeContext.x}px`, top: `${treeContext.y}px` }">
           <li @click="ctxEditProperties">{{ t('editor.ctx.editProperties') }}</li>
           <li @click="ctxNewMapUnder">{{ t('editor.ctx.newMapUnder') }}</li>
@@ -164,7 +198,7 @@
     </teleport>
 
     <teleport to="body">
-      <div v-if="canvasContext.visible" class="ctx-mask" @mousedown.self="closeCanvasContext" @contextmenu.prevent="closeCanvasContext">
+      <div v-if="mode !== 'preview' && canvasContext.visible" class="ctx-mask" @mousedown.self="closeCanvasContext" @contextmenu.prevent="closeCanvasContext">
         <ul class="ctx-menu canvas-menu" :style="{ left: `${canvasContext.x}px`, top: `${canvasContext.y}px` }">
           <li :class="{ disabled: canvasContext.eventId == null }" @click="ctxEditEvent">{{ t('editor.ctx.edit') }}<span class="ctx-shortcut">Enter</span></li>
           <li :class="{ disabled: canvasContext.eventId != null }" @click="ctxNewEvent">{{ t('editor.ctx.new') }}</li>
@@ -206,14 +240,18 @@ import EventEditorDialog from '../components/editor/EventEditorDialog.vue';
 import QuickObtainEventDialog from '../components/editor/QuickObtainEventDialog.vue';
 import MapPropertiesDialog from '../components/editor/MapPropertiesDialog.vue';
 import BottomPanel from '../components/editor/BottomPanel.vue';
+import MapRuntimePreview from '../components/editor/MapRuntimePreview.vue';
+import MapPreviewInspector from '../components/editor/MapPreviewInspector.vue';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapPropertiesForm, MapTool, TreeNode } from '../components/editor/editorTypes';
-import { eventRegistry, events as eventsApi, maps as mapsApi, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapTreeNode, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
+import { eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapPreviewFrame, type MapPreviewOverrides, type MapPreviewSession, type MapPreviewStateCatalog, type MapPreviewStatus, type MapPreviewViewRequest, type MapTreeNode, type NamedCatalogEntry, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
 import { useMapCanvasEditor, type PlacementFlashCell } from '../composables/useMapCanvasEditor';
 import { clone, defaultEvent, quickEventTemplate, quickObtainEventTemplate, type MvEditorEvent, type MvEventImage, type QuickEventType, type QuickObtainKind } from '../composables/useEventEditor';
 import {
   EDITOR_DEFAULT_ZOOM,
   readEditorWorkspaceSelection,
+  readEditorPreviewOverrides,
   readEditorZoom,
+  writeEditorPreviewOverrides,
   writeEditorWorkspaceSelection,
 } from '../composables/useEditorWorkspaceState';
 import { useSessionStream } from '../composables/useSessionStream';
@@ -229,6 +267,7 @@ import { registerEditorUiControlHandler, type EditorUiControlState } from '../ut
 import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
 import { loadImageElement } from '../utils/imageLoading.ts';
 import { projectMapTreeMove } from '../utils/mapTreeDragPreview';
+import { filterMapPreviewOverrides, removeMapPreviewOverrides } from '../utils/mapPreviewOverrides';
 import { useI18n, type MessageKey } from '../i18n';
 import type { RpgMakerEngine } from '@contract/types';
 
@@ -318,12 +357,38 @@ const systemData = ref<{ switches: string[]; variables: string[] } | null>(null)
 const editorCatalog = ref<EditorProjectCatalog | null>(null);
 const currentTilesetImages = shallowRef<(HTMLImageElement | null)[]>([]);
 const currentParallaxImage = shallowRef<HTMLImageElement | null>(null);
+const currentMapRevision = ref('');
+const previewSession = ref<MapPreviewSession | null>(null);
+const previewStatus = ref<MapPreviewStatus>('stopped');
+const previewError = ref('');
+const previewFrameUrl = ref('');
+const previewFrameRevision = ref('');
+const previewFrameOperationId = ref(0);
+const previewFrameMapId = ref(0);
+const previewFrameSequence = ref(0);
+const previewFrameMapWidth = ref(0);
+const previewFrameMapHeight = ref(0);
+const previewPreviousFrameUrl = ref('');
+const previewTileFrameUrl = ref('');
+const previewTileFrameSequence = ref(0);
+const previewTilePreviousFrameUrl = ref('');
+const previewTileX = ref(0);
+const previewTileY = ref(0);
+const previewTileWidth = ref(0);
+const previewTileHeight = ref(0);
+const previewStateCatalog = ref<MapPreviewStateCatalog>({ switches: [], variables: [] });
+const previewSwitchOverrides = shallowRef(new Map<number, boolean>());
+const previewVariableOverrides = shallowRef(new Map<number, number>());
+const previewRequestedMapId = ref<number | null>(null);
 
 let currentMap: EditableMap | null = null;
 let unregisterUiControlHandler: (() => void) | null = null;
+let unregisterPreviewStatus: (() => void) | null = null;
+let unregisterPreviewFrame: (() => void) | null = null;
 let eventSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let eventSearchSequence = 0;
 let clickedMapLoadingId: number | null = null;
+let previewStarting = false;
 const characterImages = new Map<string, HTMLImageElement | null>();
 const characterAssetUrls = new Map<string, string>();
 
@@ -377,7 +442,9 @@ const canvasEditor = useMapCanvasEditor({
   postTiles: async (edits) => {
     if (mode.value !== 'map') throw new Error(t('editor.error.eventModeCannotEditTiles'));
     if (selectedMapId.value == null) throw new Error(t('editor.error.noSelectedMap'));
-    return mapsApi.postTiles(selectedMapId.value, edits, projectStore.currentProject);
+    const result = await mapsApi.postTiles(selectedMapId.value, edits, projectStore.currentProject);
+    currentMapRevision.value = result.effectiveMapRevision;
+    return result;
   },
   reloadMap: reloadCurrentMap,
   selectEvent,
@@ -408,15 +475,278 @@ const placementStatusHint = computed(() => {
 const selectedMapLabel = computed(() => selectedMapId.value == null ? t('editor.status.noMapSelected') : `MAP ${String(selectedMapId.value).padStart(3, '0')} · ${currentMapName.value || t('editor.status.unnamedMap')}`);
 const propertiesParentLabel = computed(() => properties.parentId ? `MAP ${properties.parentId} · ${findTreeNode(properties.parentId)?.name || t('editor.status.unnamedMap')}` : t('editor.status.rootDirectory'));
 const tileFlagsAvailable = computed(() => tilesetFlags.value.some((flag) => Number.isInteger(flag)));
+const previewSwitches = computed<NamedCatalogEntry[]>(() => previewStateCatalog.value.switches);
+const previewVariables = computed<NamedCatalogEntry[]>(() => previewStateCatalog.value.variables);
+const previewSwitchValues = computed(() => stateRecordMap(previewSession.value?.switchValues));
+const previewVariableValues = computed(() => stateRecordMap(previewSession.value?.variableValues));
+const visiblePreviewFrameUrl = computed(() => (
+  previewFrameUrl.value
+  && previewFrameOperationId.value === previewSession.value?.operationId
+  && previewFrameMapId.value === selectedMapId.value
+  && previewFrameMapId.value === previewSession.value?.mapId
+  && previewFrameRevision.value === currentMapRevision.value
+  && previewFrameRevision.value === previewSession.value?.mapRevision
+    ? previewFrameUrl.value
+    : ''
+));
 const mapPaintModeLabel = computed(() => {
   if (paintMode.value === 'shadow') return t('editor.status.shadowMode');
   if (paintMode.value === 'region') return t('editor.status.regionMode', { value: regionId.value });
   return t('editor.status.tileMode');
 });
 
+function stateRecordMap<T extends boolean | number>(record?: Record<string, T>): Map<number, T> {
+  return new Map(Object.entries(record || {}).map(([id, value]) => [Number(id), value]));
+}
+
+function onPreviewStatus(session: MapPreviewSession) {
+  if (previewSession.value && previewSession.value.sessionId !== session.sessionId && mode.value !== 'preview') return;
+  previewSession.value = session;
+  previewStatus.value = session.status;
+  previewError.value = session.status === 'failed' ? previewFailureMessage(session) : '';
+  if (session.status === 'running') previewRequestedMapId.value = session.mapId;
+}
+
+function previewFailureMessage(session: MapPreviewSession): string {
+  if (session.failureCode === 'runtime-handshake-timeout') {
+    return t('editor.preview.runtimeHandshakeTimeout');
+  }
+  if (session.failureCode === 'map-render-failed') return t('editor.preview.mapRenderFailed');
+  if (session.failureCode === 'runtime-resume-failed') return t('editor.preview.runtimeResumeFailed');
+  return session.error || t('editor.preview.unknownError');
+}
+
+function onPreviewFrame(frame: MapPreviewFrame) {
+  if (mode.value !== 'preview' || !previewSession.value || frame.sessionId !== previewSession.value.sessionId) return;
+  if (frame.operationId !== previewSession.value.operationId || frame.mapId !== previewSession.value.mapId || frame.mapId !== selectedMapId.value) {
+    void mapPreview.ackFrame(frame.sequence).catch(() => undefined);
+    return;
+  }
+  if (frame.mapRevision !== previewSession.value.mapRevision || frame.mapRevision !== currentMapRevision.value) {
+    void mapPreview.ackFrame(frame.sequence).catch(() => undefined);
+    return;
+  }
+  const bytes = new Uint8Array(frame.data).slice();
+  const nextUrl = URL.createObjectURL(new Blob([bytes.buffer], { type: frame.mime }));
+  previewFrameMapWidth.value = frame.mapPixelWidth;
+  previewFrameMapHeight.value = frame.mapPixelHeight;
+  previewFrameOperationId.value = frame.operationId;
+  previewFrameMapId.value = frame.mapId;
+  previewFrameRevision.value = frame.mapRevision;
+  if (frame.kind === 'tile') {
+    if (previewTilePreviousFrameUrl.value) URL.revokeObjectURL(previewTilePreviousFrameUrl.value);
+    previewTilePreviousFrameUrl.value = previewTileFrameUrl.value;
+    previewTileFrameUrl.value = nextUrl;
+    previewTileFrameSequence.value = frame.sequence;
+    previewTileX.value = frame.x;
+    previewTileY.value = frame.y;
+    previewTileWidth.value = frame.width;
+    previewTileHeight.value = frame.height;
+    return;
+  }
+  if (previewPreviousFrameUrl.value) URL.revokeObjectURL(previewPreviousFrameUrl.value);
+  previewPreviousFrameUrl.value = previewFrameUrl.value;
+  previewFrameUrl.value = nextUrl;
+  previewFrameSequence.value = frame.sequence;
+  revokePreviewTileFrame();
+}
+
+async function ackPreviewFrame(sequence: number) {
+  if (sequence === previewFrameSequence.value) {
+    if (previewPreviousFrameUrl.value) URL.revokeObjectURL(previewPreviousFrameUrl.value);
+    previewPreviousFrameUrl.value = '';
+  } else if (sequence === previewTileFrameSequence.value) {
+    if (previewTilePreviousFrameUrl.value) URL.revokeObjectURL(previewTilePreviousFrameUrl.value);
+    previewTilePreviousFrameUrl.value = '';
+  } else return;
+  try { await mapPreview.ackFrame(sequence); } catch (error) {
+    if (mode.value === 'preview') previewError.value = (error as Error).message;
+  }
+}
+
+function updatePreviewView(view: MapPreviewViewRequest) {
+  if (previewStatus.value !== 'running') return;
+  void mapPreview.setView(view).catch((error) => {
+    if (mode.value === 'preview' && previewStatus.value === 'running') previewError.value = (error as Error).message;
+  });
+}
+
+function revokePreviewTileFrame() {
+  if (previewTileFrameUrl.value) URL.revokeObjectURL(previewTileFrameUrl.value);
+  if (previewTilePreviousFrameUrl.value) URL.revokeObjectURL(previewTilePreviousFrameUrl.value);
+  previewTileFrameUrl.value = '';
+  previewTilePreviousFrameUrl.value = '';
+  previewTileFrameSequence.value = 0;
+  previewTileX.value = 0;
+  previewTileY.value = 0;
+  previewTileWidth.value = 0;
+  previewTileHeight.value = 0;
+}
+
+function revokePreviewFrame() {
+  if (previewFrameUrl.value) URL.revokeObjectURL(previewFrameUrl.value);
+  if (previewPreviousFrameUrl.value) URL.revokeObjectURL(previewPreviousFrameUrl.value);
+  previewFrameUrl.value = '';
+  previewPreviousFrameUrl.value = '';
+  previewFrameSequence.value = 0;
+  previewFrameMapWidth.value = 0;
+  previewFrameMapHeight.value = 0;
+  previewFrameOperationId.value = 0;
+  previewFrameMapId.value = 0;
+  previewFrameRevision.value = '';
+  revokePreviewTileFrame();
+}
+
+function overridesForCurrentMap(): MapPreviewOverrides {
+  return filterMapPreviewOverrides(readEditorPreviewOverrides(projectStore.currentProject), previewStateCatalog.value);
+}
+
+function syncPreviewOverridesFromWorkspace() {
+  const overrides = overridesForCurrentMap();
+  previewSwitchOverrides.value = stateRecordMap(overrides.switches);
+  previewVariableOverrides.value = stateRecordMap(overrides.variables);
+}
+
+async function ensurePreviewForSelectedMap() {
+  const mapId = selectedMapId.value;
+  if (mode.value !== 'preview' || mapId == null || previewStarting) return;
+  const current = previewSession.value;
+  if (current && !['stopped', 'failed'].includes(current.status)) {
+    previewRequestedMapId.value = mapId;
+    try {
+      syncPreviewOverridesFromWorkspace();
+      const result = await mapPreview.resume(
+        projectStore.currentProject,
+        mapId,
+        overridesForCurrentMap(),
+        currentMapRevision.value,
+      );
+      if (result.session) onPreviewStatus(result.session);
+    } catch (error) {
+      previewError.value = (error as Error).message;
+      previewStatus.value = 'failed';
+    }
+    return;
+  }
+  previewStarting = true;
+  previewError.value = '';
+  previewStatus.value = 'preparing';
+  previewRequestedMapId.value = mapId;
+  revokePreviewFrame();
+  try {
+    syncPreviewOverridesFromWorkspace();
+    const result = await mapPreview.start(projectStore.currentProject, mapId, overridesForCurrentMap());
+    if (result.runtimeSelectionRequired) {
+      const selection = await playtest.selectRuntime(result.runtimeSelectionRequired);
+      if (!selection.configured || selection.canceled || mode.value !== 'preview') {
+        previewStatus.value = 'failed';
+        previewError.value = t('editor.preview.runtimeRequired');
+        return;
+      }
+      const retried = await mapPreview.start(projectStore.currentProject, mapId, overridesForCurrentMap());
+      if (retried.session) onPreviewStatus(retried.session);
+      else if (retried.error) throw new Error(retried.error);
+      return;
+    }
+    if (result.session) onPreviewStatus(result.session);
+    else if (result.error) throw new Error(result.error);
+  } catch (error) {
+    previewStatus.value = 'failed';
+    previewError.value = (error as Error).message;
+  } finally {
+    previewStarting = false;
+  }
+}
+
+async function stopPreviewSession() {
+  previewRequestedMapId.value = null;
+  revokePreviewFrame();
+  previewSwitchOverrides.value = new Map();
+  previewVariableOverrides.value = new Map();
+  const session = previewSession.value;
+  previewSession.value = null;
+  previewStatus.value = 'stopped';
+  previewError.value = '';
+  if (!session || ['stopped', 'failed'].includes(session.status)) return;
+  try {
+    await mapPreview.stop();
+  } catch (error) {
+    ElMessage.error(t('editor.preview.stopFailed', { message: (error as Error).message }));
+  }
+}
+
+async function suspendPreviewSession() {
+  const session = previewSession.value;
+  if (!session || ['suspended', 'stopped', 'failed'].includes(session.status)) return;
+  try {
+    const result = await mapPreview.suspend();
+    if (result.session) onPreviewStatus(result.session);
+  } catch (error) {
+    ElMessage.error(t('editor.preview.stopFailed', { message: (error as Error).message }));
+  }
+}
+
+async function restartPreview() {
+  await stopPreviewSession();
+  if (mode.value === 'preview') await ensurePreviewForSelectedMap();
+}
+
+async function setPreviewSwitch(id: number, value: boolean) {
+  try {
+    await mapPreview.setSwitch(id, value);
+    const next = new Map(previewSwitchOverrides.value);
+    next.set(id, value);
+    previewSwitchOverrides.value = next;
+    const saved = readEditorPreviewOverrides(projectStore.currentProject);
+    writeEditorPreviewOverrides(projectStore.currentProject, {
+      switches: { ...saved.switches, [String(id)]: value },
+      variables: saved.variables,
+    });
+  } catch (error) {
+    ElMessage.error(t('editor.preview.stateFailed', { message: (error as Error).message }));
+  }
+}
+
+async function setPreviewVariable(id: number, value: number) {
+  try {
+    await mapPreview.setVariable(id, value);
+    const next = new Map(previewVariableOverrides.value);
+    next.set(id, value);
+    previewVariableOverrides.value = next;
+    const saved = readEditorPreviewOverrides(projectStore.currentProject);
+    writeEditorPreviewOverrides(projectStore.currentProject, {
+      switches: saved.switches,
+      variables: { ...saved.variables, [String(id)]: value },
+    });
+  } catch (error) {
+    ElMessage.error(t('editor.preview.stateFailed', { message: (error as Error).message }));
+  }
+}
+
+async function resetPreviewOverrides() {
+  try {
+    await mapPreview.resetOverrides();
+    const saved = readEditorPreviewOverrides(projectStore.currentProject);
+    writeEditorPreviewOverrides(
+      projectStore.currentProject,
+      removeMapPreviewOverrides(saved, previewStateCatalog.value),
+    );
+    previewSwitchOverrides.value = new Map();
+    previewVariableOverrides.value = new Map();
+  } catch (error) {
+    ElMessage.error(t('editor.preview.stateFailed', { message: (error as Error).message }));
+  }
+}
+
 const zoomControls = { zoomIn, zoomOut, resetZoom };
 
 onMounted(async () => {
+  unregisterPreviewStatus = mapPreview.onStatus(onPreviewStatus);
+  unregisterPreviewFrame = mapPreview.onFrame(onPreviewFrame);
+  try {
+    const current = await mapPreview.current();
+    if (current.session && !['stopped', 'failed'].includes(current.session.status)) onPreviewStatus(current.session);
+  } catch { /* A stale preview is not allowed to block opening the editor. */ }
   unregisterUiControlHandler = registerEditorUiControlHandler({
     openEventEditor: openEventEditorByUiControl,
     getState: getUiControlState,
@@ -440,6 +770,14 @@ onMounted(async () => {
   window.addEventListener(EDITOR_COMMAND_EVENT, onEditorCommand as EventListener);
 });
 onUnmounted(() => {
+  unregisterPreviewStatus?.();
+  unregisterPreviewStatus = null;
+  unregisterPreviewFrame?.();
+  unregisterPreviewFrame = null;
+  revokePreviewFrame();
+  if (previewSession.value && !['suspended', 'stopped', 'failed'].includes(previewSession.value.status)) {
+    void mapPreview.suspend();
+  }
   unregisterUiControlHandler?.();
   unregisterUiControlHandler = null;
   workbenchUi.clearEditorZoomControls(zoomControls);
@@ -448,7 +786,14 @@ onUnmounted(() => {
   window.removeEventListener(EDITOR_COMMAND_EVENT, onEditorCommand as EventListener);
   if (eventSearchTimer) clearTimeout(eventSearchTimer);
 });
-watch(mode, persistWorkspaceSelection);
+watch(mode, (value, previous) => {
+  persistWorkspaceSelection();
+  if (value === 'preview') void ensurePreviewForSelectedMap();
+  else if (previous === 'preview') void suspendPreviewSession();
+});
+watch(selectedMapId, (mapId) => {
+  if (mode.value === 'preview' && mapId != null) void ensurePreviewForSelectedMap();
+});
 watch(mode, (value) => {
   hoveredEventId.value = null;
   if (value !== 'event') eventSearchScope.value = 'current';
@@ -540,6 +885,7 @@ watch(statusText, (v) => { workbenchUi.sbStatusText = v; });
 watch(statusKind, (v) => { workbenchUi.sbStatusKind = v; });
 
 watch(() => projectStore.currentProject, async () => {
+  await stopPreviewSession();
   selectedMapId.value = null;
   mapTree.value = [];
   tilesets.value = [];
@@ -885,9 +1231,12 @@ async function loadMap(mapId: number, options: { quiet?: boolean } = {}) {
     currentEngine.value = payload.engine;
     currentTilesetMode.value = payload.tileset?.mode ?? null;
     currentMap = nextMap;
+    currentMapRevision.value = payload.effectiveMapRevision;
     syncCurrentEvents(nextMap);
     selectedEventId.value = null;
     systemData.value = payload.system || null;
+    previewStateCatalog.value = payload.previewState || { switches: [], variables: [] };
+    syncPreviewOverridesFromWorkspace();
     currentMapName.value = String(payload.info.name || '');
     tilesetFlags.value = Array.isArray(payload.tileset?.flags) ? payload.tileset.flags : [];
     setPropertiesFromMap(currentMapName.value, nextMap, Number(payload.info.parentId || 0));
@@ -913,11 +1262,14 @@ async function reloadCurrentMap() {
   const payload = await mapsApi.get(selectedMapId.value, projectStore.currentProject);
   const parallaxImage = await preloadOptionalImage(payload.parallaxImageUrl);
   currentMap = payloadToMap(payload.map);
+  currentMapRevision.value = payload.effectiveMapRevision;
   syncCurrentEvents(currentMap);
   currentTileSize.value = payload.tileSize;
   currentEngine.value = payload.engine;
   currentTilesetMode.value = payload.tileset?.mode ?? null;
   systemData.value = payload.system || null;
+  previewStateCatalog.value = payload.previewState || { switches: [], variables: [] };
+  syncPreviewOverridesFromWorkspace();
   stagingDirty.value = isStagingDirty(payload.staging);
   currentParallaxImage.value = parallaxImage;
   replaceMap(currentMap);
@@ -1299,6 +1651,19 @@ function getUiControlState(): EditorUiControlState {
     mode: mode.value,
     statusText: statusText.value,
     statusKind: statusKind.value,
+    preview: previewSession.value ? {
+      sessionId: previewSession.value.sessionId,
+      operationId: previewSession.value.operationId || 0,
+      sessionMapId: previewSession.value.mapId,
+      status: previewSession.value.status,
+      mapRevision: currentMapRevision.value,
+      frameRevision: previewFrameRevision.value,
+      frameOperationId: previewFrameOperationId.value,
+      frameMapId: previewFrameMapId.value,
+      frameSequence: previewFrameSequence.value,
+      failureCode: previewSession.value.failureCode || '',
+      error: previewSession.value.error || '',
+    } : undefined,
   };
 }
 
@@ -1445,6 +1810,7 @@ async function saveCurrentEditorWork() {
 
 function onEditorKeyDown(event: KeyboardEvent) {
   if (isFormTarget(event.target) || eventDialogOpen.value || selectedMapId.value == null) return;
+  if (mode.value === 'preview') return;
   // Ctrl+Z 优先撤回上一次拒绝（仅在有待撤回的拒绝且处于放置批次时），单次生效后让位给图块撤销。
   if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z'
     && placementSession.value && rejectUndoStack.value.length) {
@@ -1481,6 +1847,7 @@ function clearCurrentMap() {
   currentTileSize.value = 48;
   currentTilesetImages.value = [];
   currentParallaxImage.value = null;
+  currentMapRevision.value = '';
   syncCurrentEvents(null);
   clearMap();
 }
@@ -1491,6 +1858,8 @@ function clearCurrentMap() {
 .editor-body { min-height: 0; display: flex; flex: 1; overflow: hidden; gap:10px; }
 .center-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .editor-stage { position:relative; min-width: 380px; min-height: 0; display: flex; flex-direction: column; flex: 1; overflow: hidden; border-radius:12px; background-color:var(--app-bg-sunken); background-image:linear-gradient(rgba(120,110,90,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(120,110,90,.05) 1px,transparent 1px);background-size:24px 24px;box-shadow:inset 0 1px 3px rgba(60,50,30,.08); }
+.editor-stage.preview-stage{border-radius:8px;background:#12161b;background-image:none;box-shadow:none}
+.editor-canvas-layer { position:relative; min-width:0; min-height:0; display:flex; flex:1; flex-direction:column; overflow:hidden; }
 .empty-state { width: 100%; display: flex; align-items: center; justify-content: center; }
 .empty-actions { display: flex; justify-content: center; gap: 8px; }
 .canvas-scroll { position:relative; flex: 1; overflow: auto; padding: 0; scrollbar-width:auto; scrollbar-color:var(--app-border-strong) transparent; }

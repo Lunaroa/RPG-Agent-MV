@@ -31,12 +31,14 @@ import {
   resolveRpgMakerMZProjectRuntime,
   RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS,
 } from './rpg-maker-mz-runtime.ts';
+import type { InteractiveProjectRuntime } from './interactive-playtest-runtime.ts';
 
 export interface IsolatedPlaytestProbeOptions {
   mapId?: number;
   x?: number;
   y?: number;
   timeoutMs?: number;
+  runtime?: InteractiveProjectRuntime;
 }
 
 export interface IsolatedProbeWorkerRequest {
@@ -49,6 +51,7 @@ export interface IsolatedProbeWorkerRequest {
   y: number;
   engine: RpgMakerEngine;
   runtimeExecutable?: string;
+  runtimeLaunchStyle?: 'embedded' | 'external';
 }
 
 export interface IsolatedProbeWorkerResponse {
@@ -111,14 +114,22 @@ export async function runIsolatedRmmvPlaytestProbe(
   const blockers: string[] = [];
   const review: string[] = [];
   let engine: RpgMakerEngine = 'rpg-maker-mv';
-  let mzRuntimeExecutable = '';
+  let runtimeExecutable = '';
+  let runtimeLaunchStyle: 'embedded' | 'external' = 'embedded';
 
   try {
     timeoutMs = normalizeTimeout(options.timeoutMs);
     const sourceManifest = inspectRmmvProject(project);
     engine = sourceManifest.engine;
-    if (engine === 'rpg-maker-mz') {
-      mzRuntimeExecutable = resolveRpgMakerMZProjectRuntime(project).executable;
+    if (options.runtime && options.runtime.engine !== engine) {
+      throw new ProbePreflightError('The selected runtime does not match the project engine.');
+    }
+    if (options.runtime) {
+      runtimeExecutable = options.runtime.executable;
+      runtimeLaunchStyle = options.runtime.launchStyle;
+    } else if (engine === 'rpg-maker-mz') {
+      runtimeExecutable = resolveRpgMakerMZProjectRuntime(project).executable;
+      runtimeLaunchStyle = 'external';
     }
     preparation = prepareIsolatedStagedProject(workflowRoot, project, {
       temporaryPrefix: 'rmmv-agent-verify-',
@@ -132,7 +143,7 @@ export async function runIsolatedRmmvPlaytestProbe(
     temporaryProject = preparation.temporaryProject;
     savesExcluded = preparation.savesExcluded;
     requestedStart = configureTemporaryStart(temporaryProject, options);
-    assertProbeRuntime(temporaryProject, engine);
+    assertProbeRuntime(temporaryProject, engine, runtimeLaunchStyle);
 
     const request: IsolatedProbeWorkerRequest = {
       temporaryProject,
@@ -143,9 +154,8 @@ export async function runIsolatedRmmvPlaytestProbe(
       x: requestedStart.x,
       y: requestedStart.y,
       engine,
-      runtimeExecutable: engine === 'rpg-maker-mz'
-        ? mzRuntimeExecutable
-        : path.join(temporaryProject, 'Game.exe'),
+      runtimeExecutable: runtimeExecutable || path.join(temporaryProject, 'Game.exe'),
+      runtimeLaunchStyle,
     };
     workerStarted = true;
     workerResponse = await (dependencies.executeWorker || executeIsolatedProbeWorker)(request);
@@ -390,12 +400,16 @@ function readRawProbe(run: NwjsPlayableProbeResult | undefined): Record<string, 
   }
 }
 
-function assertProbeRuntime(project: string, expectedEngine: RpgMakerEngine): void {
+function assertProbeRuntime(
+  project: string,
+  expectedEngine: RpgMakerEngine,
+  launchStyle: 'embedded' | 'external' = 'embedded',
+): void {
   const manifest = inspectRmmvProject(project);
   if (manifest.engine !== expectedEngine) {
     throw new ProbePreflightError('The isolated project engine does not match the source project engine.');
   }
-  if (expectedEngine === 'rpg-maker-mv') {
+  if (expectedEngine === 'rpg-maker-mv' && launchStyle === 'embedded') {
     const gameExe = path.join(project, 'Game.exe');
     if (!isFile(gameExe)) throw new ProbePreflightError(`RPG Maker MV probe runner was not found: ${gameExe}`);
   }
@@ -446,12 +460,18 @@ export async function executeIsolatedProbeWorker(
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
-      ...(request.engine === 'rpg-maker-mz' && request.runtimeExecutable
-        ? { RPG_AGENT_MZ_NWJS_EXECUTABLE: request.runtimeExecutable }
+      ...(request.runtimeExecutable
+        ? {
+          RPG_AGENT_NWJS_EXECUTABLE: request.runtimeExecutable,
+          ...(request.engine === 'rpg-maker-mz'
+            ? { RPG_AGENT_MZ_NWJS_EXECUTABLE: request.runtimeExecutable }
+            : {}),
+        }
         : {}),
+      RPG_AGENT_NWJS_LAUNCH_STYLE: request.runtimeLaunchStyle || 'embedded',
     },
   });
-  const privateRuntime = request.engine === 'rpg-maker-mz' ? request.runtimeExecutable || '' : '';
+  const privateRuntime = request.runtimeExecutable || '';
   const flushStdout = attachWorkerOutput(child.stdout, stdoutPath, privateRuntime);
   const flushStderr = attachWorkerOutput(child.stderr, stderrPath, privateRuntime);
   const response = await awaitWorkerResponse(child, responsePath, request.timeoutMs + WORKER_EXIT_OVERHEAD_MS);

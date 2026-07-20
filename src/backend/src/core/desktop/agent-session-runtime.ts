@@ -77,12 +77,24 @@ import {
   storeSessionImageAttachments,
   type StoredSessionImageAttachment,
 } from "./session-image-attachments.ts";
+import {
+  resolveAgentProjectBinding,
+  sameAgentProjectIdentity,
+  serializableAgentProjectBinding,
+  type AgentProjectBindingSnapshot,
+  type ResolveAgentProjectRuntime,
+} from "./agent-project-binding.ts";
+import {
+  appendSessionEvent,
+  finalizeSessionEventLog,
+  readSessionEvents,
+  updateConversationTurnIndex,
+} from "./session-event-log.ts";
 
 const MAX_EVENTS = 5000;
 const TERMINAL = new Set(["pass", "blocked", "failed", "error", "stopped", "interrupted", "timeout"]);
 const PENDING_SUBAGENT_STATUSES = new Set(["running", "not_ready", "unknown"]);
 const DEFAULT_AGENT_ID = "default";
-const EVENTS_FILE = "events.json";
 const LEGACY_ASK_MCP_DISABLED_REASON = "legacy ASK MCP is disabled; use opencode AskUserQuestion or ExitPlanMode";
 /** 桌面「正在读取工程」阶段上限；超时后 abort 并推送 error。可用 RMMV_PREPARATION_TIMEOUT_MS 覆盖。 */
 const DEFAULT_PREPARATION_TIMEOUT_MS = Number(process.env.RMMV_PREPARATION_TIMEOUT_MS || 120_000);
@@ -129,7 +141,8 @@ export interface AgentSession {
   displayText: string;
   imageAttachments: StoredSessionImageAttachment[];
   productLanguage: ProductLanguage;
-  project: string;
+  project: string | null;
+  projectBinding: AgentProjectBindingSnapshot;
   parentSessionId: string | null;
   planFilePath: string | null;
   opencodeSessionId: string | null;
@@ -213,6 +226,7 @@ interface RuntimeDependencies {
   replyQuestion?: typeof replyOpencodeQuestion;
   approveWorkflowProposal?: typeof executeApprovedWorkflowProposal;
   readWorkflowProposal?: typeof readWorkflowProposal;
+  resolveProjectRuntime?: ResolveAgentProjectRuntime;
 }
 
 export class AgentSessionRuntime {
@@ -233,6 +247,7 @@ export class AgentSessionRuntime {
   private readonly approveWorkflowProposalFn: typeof executeApprovedWorkflowProposal;
   private readonly readWorkflowProposalFn: typeof readWorkflowProposal;
   private readonly slashCommandService: SlashCommandService;
+  private projectBindingVersion = 0;
 
   constructor(workflowRoot: string, deps: RuntimeDependencies = {}) {
     this.workflowRoot = workflowRoot;
@@ -255,7 +270,7 @@ export class AgentSessionRuntime {
         return {
           id: session.id,
           status: session.status,
-          project: session.project,
+          project: session.project || "",
           opencodeSessionId: session.opencodeSessionId,
           productLanguage: session.productLanguage,
           opencodeRunContext: session.opencodeRunContext,
@@ -274,6 +289,25 @@ export class AgentSessionRuntime {
     await this.refreshSecrets();
     this.sessions = this.loadPersistedSessions();
     this.failRestoredWorkflowProposals();
+    for (const session of this.sessions.values()) {
+      if (session.status !== "interrupted") continue;
+      const conversationRootId = this.conversationRootId(session);
+      finalizeSessionEventLog({
+        outDir: session.outDir,
+        sessionId: session.id,
+        conversationRootId,
+        opencodeSessionId: session.opencodeSessionId,
+        binding: session.projectBinding,
+      }, session.status, session.blocker);
+      updateConversationTurnIndex(this.workflowRoot, conversationRootId, {
+        sessionId: session.id,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        status: session.status,
+        binding: session.projectBinding,
+      });
+      this.persistMeta(session);
+    }
   }
 
   async close(): Promise<void> {
@@ -345,6 +379,15 @@ export class AgentSessionRuntime {
       (id) => this.sessions.get(id),
     );
     const productLanguage = normalizeProductLanguage(input.productLanguage);
+    const requestedBinding = resolveAgentProjectBinding(input.project, {
+      version: this.projectBindingVersion + 1,
+      resolveRuntime: this.deps.resolveProjectRuntime,
+      baseDirectory: this.workflowRoot,
+    });
+    const projectBinding = parent && sameAgentProjectIdentity(parent.projectBinding, requestedBinding)
+      ? { ...requestedBinding, version: parent.projectBinding.version }
+      : requestedBinding;
+    this.projectBindingVersion = Math.max(this.projectBindingVersion, projectBinding.version);
     await this.assertImageInputSupported(input, productLanguage);
     const outDir = path.join(this.workflowRoot, "runtime", "sessions", sessionId, "agent-console");
     let imageAttachments: StoredSessionImageAttachment[] = [];
@@ -375,7 +418,8 @@ export class AgentSessionRuntime {
         || (imageAttachments.length ? backendText('session.imageMessage', productLanguage) : ''),
       imageAttachments,
       productLanguage,
-      project: input.project || "projects/Project",
+      project: projectBinding.status === "bound" ? projectBinding.canonicalPath : null,
+      projectBinding,
       parentSessionId: input.continuationOf || null,
       planFilePath,
       opencodeSessionId: parent?.opencodeSessionId || null,
@@ -400,7 +444,9 @@ export class AgentSessionRuntime {
       startedWorkflowApprovals: new Set(),
     };
     try {
-      ensurePlanDirectory(this.workflowRoot, session.project, planFilePath);
+      if (session.projectBinding.status === "bound") {
+        ensurePlanDirectory(this.workflowRoot, session.project || undefined, planFilePath);
+      }
       this.sessions.set(session.id, session);
       this.push(session, { type: "status", status: session.status, blocker: session.blocker, at: generatedAt });
       this.persistMeta(session);
@@ -419,6 +465,15 @@ export class AgentSessionRuntime {
     const sessionBinding = this.resolveInputSessionBinding(input);
     await this.activateForSession(this.workflowRoot, executionEngine, sessionBinding);
     const parent = input.continuationOf ? this.sessions.get(input.continuationOf) : undefined;
+    const requestedBinding = resolveAgentProjectBinding(input.project, {
+      version: this.projectBindingVersion + 1,
+      resolveRuntime: this.deps.resolveProjectRuntime,
+      baseDirectory: this.workflowRoot,
+    });
+    const projectBinding = parent && sameAgentProjectIdentity(parent.projectBinding, requestedBinding)
+      ? { ...requestedBinding, version: parent.projectBinding.version }
+      : requestedBinding;
+    this.projectBindingVersion = Math.max(this.projectBindingVersion, projectBinding.version);
     const conversationHistory = this.resolveConversationHistory(
       input.continuationOf,
       executionEngine,
@@ -435,7 +490,11 @@ export class AgentSessionRuntime {
       agentExecutionSettings: await this.getAgentExecutionSettingsForDispatch(),
       intent: input.intent || "",
       productLanguage: normalizeProductLanguage(input.productLanguage),
-      project: input.project || "projects/Project",
+      project: projectBinding.status === "bound" ? projectBinding.canonicalPath || undefined : undefined,
+      projectBinding,
+      projectPromptKind: parent
+        ? (sameAgentProjectIdentity(parent.projectBinding, projectBinding) ? "none" : "changed")
+        : "fresh",
       mapId: input.mapId ? String(input.mapId) : undefined,
       files: input.files || [],
       execute: false,
@@ -577,7 +636,7 @@ export class AgentSessionRuntime {
       ...derived,
       filePath: allocatedPath,
     };
-    return hydrateSessionPlanFromFile(this.workflowRoot, session.project, snapshot);
+    return hydrateSessionPlanFromFile(this.workflowRoot, session.project || undefined, snapshot);
   }
 
   listSubagents(sessionId: string): SessionSubagentSnapshot {
@@ -985,6 +1044,10 @@ export class AgentSessionRuntime {
       intent: session.intent,
       productLanguage: session.productLanguage,
       project: session.project,
+      projectBinding: session.projectBinding,
+      projectPromptKind: parent
+        ? (sameAgentProjectIdentity(parent.projectBinding, session.projectBinding) ? "none" : "changed")
+        : "fresh",
       mapId: input.mapId ? String(input.mapId) : undefined,
       taskId: input.taskId,
       files: input.files || [],
@@ -996,7 +1059,9 @@ export class AgentSessionRuntime {
       conversationHistory,
       currentProgressPreamble: this.resolveCurrentProgressPreamble(input, parent, conversationHistory),
       readOnlyTools: input.readOnlyTools,
-      planFilePath: session.planFilePath || undefined,
+      planFilePath: session.projectBinding.status === "bound"
+        ? session.planFilePath || undefined
+        : undefined,
       signal: controller.signal,
       askMcpGatewayPort: null,
     });
@@ -1135,6 +1200,7 @@ export class AgentSessionRuntime {
       at: session.updatedAt,
     });
     if (!wasStopped) this.pushSummary(session);
+    else this.finalizeSessionJournal(session);
     this.maybeRunMemoryScribe(session, wasStopped);
     this.askGateway.destroySession(session.id).catch(() => {});
   }
@@ -1249,6 +1315,37 @@ export class AgentSessionRuntime {
       outDir: session.outDir,
       at: session.updatedAt,
     });
+    if (TERMINAL.has(session.status)) this.finalizeSessionJournal(session);
+  }
+
+  private finalizeSessionJournal(session: AgentSession): void {
+    const conversationRootId = this.conversationRootId(session);
+    finalizeSessionEventLog({
+      outDir: session.outDir,
+      sessionId: session.id,
+      conversationRootId,
+      opencodeSessionId: session.opencodeSessionId,
+      binding: session.projectBinding,
+    }, session.status, session.blocker);
+    updateConversationTurnIndex(this.workflowRoot, conversationRootId, {
+      sessionId: session.id,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      status: session.status,
+      binding: session.projectBinding,
+    });
+  }
+
+  private conversationRootId(session: AgentSession): string {
+    let current = session;
+    const visited = new Set<string>();
+    while (current.parentSessionId && !visited.has(current.id)) {
+      visited.add(current.id);
+      const parent = this.sessions.get(current.parentSessionId);
+      if (!parent) break;
+      current = parent;
+    }
+    return current.id;
   }
 
   private reserveExternalWork(session: AgentSession, workId: string): ExternalWorkState {
@@ -1312,7 +1409,7 @@ export class AgentSessionRuntime {
   private maybeRunMemoryScribe(session: AgentSession, wasStopped: boolean): void {
     const context = session.opencodeRunContext;
     session.opencodeRunContext = null;
-    if (wasStopped || session.status !== "pass") return;
+    if (wasStopped || session.status !== "pass" || session.projectBinding.status !== "bound") return;
     if (!session.opencodeSessionId?.trim() || !context) return;
     if (!context.providerId?.trim() || !context.modelId?.trim()) return;
 
@@ -1346,7 +1443,13 @@ export class AgentSessionRuntime {
     event.sequence = ++session.seq;
     session.events.push(event);
     if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS);
-    this.persistEvents(session);
+    appendSessionEvent({
+      outDir: session.outDir,
+      sessionId: session.id,
+      conversationRootId: this.conversationRootId(session),
+      opencodeSessionId: session.opencodeSessionId,
+      binding: session.projectBinding,
+    }, event);
     for (const subscriber of this.subscribers.get(session.id)?.values() || []) subscriber.write(event);
   }
 
@@ -1358,6 +1461,7 @@ export class AgentSessionRuntime {
       providerId: session.providerId,
       modelId: session.modelId,
       project: session.project,
+      projectBinding: serializableAgentProjectBinding(session.projectBinding),
       productLanguage: session.productLanguage,
       intent: session.intent.slice(0, 240),
       displayText: session.displayText,
@@ -1380,6 +1484,7 @@ export class AgentSessionRuntime {
       ...this.summarize(session),
       opencodeSessionId: session.opencodeSessionId,
       planFilePath: session.planFilePath,
+      projectBinding: serializableAgentProjectBinding(session.projectBinding),
     }, null, 2) + "\n", "utf8");
   }
 
@@ -1414,6 +1519,8 @@ export class AgentSessionRuntime {
     const productLanguage = normalizeProductLanguage(meta.productLanguage);
     const events = this.loadPersistedEvents(outDir);
     const seq = events.reduce((max, event) => Math.max(max, finiteNumber(event.sequence)), 0);
+    const storedBindingVersion = Math.max(1, Math.trunc(finiteNumber(meta.projectBinding?.version) || this.projectBindingVersion + 1));
+    this.projectBindingVersion = Math.max(this.projectBindingVersion, storedBindingVersion);
     return {
       id: String(meta.id),
       status,
@@ -1428,7 +1535,12 @@ export class AgentSessionRuntime {
       displayText: String(meta.displayText || meta.intent || "Interrupted session"),
       imageAttachments: restoreSessionImageAttachments(outDir, meta.imageAttachments),
       productLanguage,
-      project: String(meta.project || "projects/Project"),
+      project: typeof meta.project === "string" && meta.project.trim() ? meta.project : null,
+      projectBinding: resolveAgentProjectBinding(meta.project || meta.projectBinding?.canonicalPath, {
+        version: storedBindingVersion,
+        resolveRuntime: this.deps.resolveProjectRuntime,
+        baseDirectory: this.workflowRoot,
+      }),
       parentSessionId: meta.parentSessionId || null,
       planFilePath: typeof meta.planFilePath === "string"
         ? meta.planFilePath
@@ -1460,25 +1572,8 @@ export class AgentSessionRuntime {
     };
   }
 
-  private persistEvents(session: AgentSession): void {
-    fs.mkdirSync(session.outDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(session.outDir, EVENTS_FILE),
-      JSON.stringify({ sessionId: session.id, events: session.events }, null, 2) + "\n",
-      "utf8",
-    );
-  }
-
   private loadPersistedEvents(outDir: string): AgentRuntimeEvent[] {
-    try {
-      const payload = JSON.parse(fs.readFileSync(path.join(outDir, EVENTS_FILE), "utf8"));
-      const events = Array.isArray(payload.events) ? payload.events : [];
-      return events
-        .filter((event: unknown): event is AgentRuntimeEvent => Boolean(event) && typeof event === "object")
-        .slice(-MAX_EVENTS);
-    } catch {
-      return [];
-    }
+    return readSessionEvents(outDir, MAX_EVENTS);
   }
 
   private resolveInputSessionBinding(input: SessionCreateInput): EngineProviderBinding | null {
@@ -1701,12 +1796,14 @@ function proposalIdFromWorkflowToolResult(event: AgentRuntimeEvent): string | nu
 }
 
 function resolveSessionProjectDirectory(session: AgentSession, workflowRoot: string): string {
-  try {
-    if (session.project && fs.statSync(session.project).isDirectory()) return session.project;
-  } catch {
-    // Fall back to workflow root.
+  void workflowRoot;
+  if (session.projectBinding.status === "none") {
+    throw new Error("project-not-bound: no RPG Maker project is bound to this session");
   }
-  return workflowRoot;
+  if (session.projectBinding.status !== "bound" || !session.project) {
+    throw new Error("project-invalid: the bound RPG Maker project is invalid or unreadable");
+  }
+  return session.project;
 }
 
 function normalizeTaskStatus(value: string): string {

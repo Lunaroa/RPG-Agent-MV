@@ -14,52 +14,54 @@ async function main(): Promise<void> {
   const responsePath = process.argv[3];
   if (!requestPath || !responsePath) throw new Error('Isolated probe worker requires request and response paths.');
   const request = JSON.parse(fs.readFileSync(requestPath, 'utf8')) as IsolatedProbeWorkerRequest;
-  const suppliedMZRuntime = String(process.env.RPG_AGENT_MZ_NWJS_EXECUTABLE || '');
+  const suppliedRuntime = String(
+    process.env.RPG_AGENT_NWJS_EXECUTABLE
+    || process.env.RPG_AGENT_MZ_NWJS_EXECUTABLE
+    || '',
+  );
+  const launchStyle = process.env.RPG_AGENT_NWJS_LAUNCH_STYLE === 'external' ? 'external' : 'embedded';
   const stdoutPath = path.join(request.artifactDir, 'probe.stdout.log');
   const stderrPath = path.join(request.artifactDir, 'probe.stderr.log');
   let response: IsolatedProbeWorkerResponse;
   try {
     delete process.env.ELECTRON_RUN_AS_NODE;
-    const mzRuntime = request.engine === 'rpg-maker-mz'
-      ? suppliedMZRuntime
-      : '';
-    if (request.engine === 'rpg-maker-mz' && !mzRuntime) {
-      throw new Error('The validated project-local RPG Maker MZ NW.js runtime was not supplied to the isolated probe worker.');
+    const runtimeExecutable = suppliedRuntime || (request.engine === 'rpg-maker-mv' && launchStyle === 'embedded'
+      ? path.join(request.temporaryProject, 'Game.exe')
+      : '');
+    if (!runtimeExecutable) {
+      throw new Error('The validated RPG Maker runtime was not supplied to the isolated probe worker.');
     }
+    delete process.env.RPG_AGENT_NWJS_EXECUTABLE;
     delete process.env.RPG_AGENT_MZ_NWJS_EXECUTABLE;
-    const executable = request.engine === 'rpg-maker-mz'
-      ? mzRuntime
-      : path.join(request.temporaryProject, 'Game.exe');
+    delete process.env.RPG_AGENT_NWJS_LAUNCH_STYLE;
+    const executable = runtimeExecutable;
+    const externalArgs = request.engine === 'rpg-maker-mv'
+      ? [request.temporaryProject, 'test', '--disable-audio']
+      : [request.temporaryProject, '--disable-audio'];
     const run = runNwjsPlayableProbe(request.temporaryProject, {
       timeoutMs: request.timeoutMs,
       artifactDir: request.artifactDir,
       command: {
         executable,
-        args: request.engine === 'rpg-maker-mz'
-          ? [request.temporaryProject, '--disable-audio']
-          : ['--disable-audio'],
+        args: launchStyle === 'external' ? externalArgs : ['--disable-audio'],
         cwd: request.temporaryProject,
       },
       stdoutPath,
       stderrPath,
     });
-    if (request.engine === 'rpg-maker-mz') {
-      run.gameExe = 'project-local-rpg-maker-mz-nwjs';
-    }
-    response = sanitizeWorkerResponse({ ok: true, run }, mzRuntime);
+    run.gameExe = `validated-${request.engine}-nwjs`;
+    response = sanitizeWorkerResponse({ ok: true, run }, suppliedRuntime);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     response = {
       ok: false,
-      error: redactRpgMakerMZRuntimePath(message, suppliedMZRuntime),
+      error: redactRpgMakerMZRuntimePath(message, suppliedRuntime),
     };
     process.exitCode = 1;
   }
-  if (request.engine === 'rpg-maker-mz') {
-    redactOutputFile(stdoutPath, suppliedMZRuntime);
-    redactOutputFile(stderrPath, suppliedMZRuntime);
-    response = sanitizeWorkerResponse(response, suppliedMZRuntime);
-  }
+  redactOutputFile(stdoutPath, suppliedRuntime);
+  redactOutputFile(stderrPath, suppliedRuntime);
+  response = sanitizeWorkerResponse(response, suppliedRuntime);
   writeJsonAtomic(responsePath, response);
 }
 

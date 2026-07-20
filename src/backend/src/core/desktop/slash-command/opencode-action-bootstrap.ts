@@ -13,6 +13,7 @@ export interface OpencodeActionBootstrapSession {
   providerId: string;
   modelId: string;
   productLanguage: ProductLanguage;
+  project?: string;
   opencodeRunContext?: {
     env?: Record<string, string>;
     config?: Record<string, unknown>;
@@ -72,6 +73,8 @@ export async function resolveOpencodeActionBootstrap(
     productLanguage: session.productLanguage,
     memoryEnabled: readMemory().enabled,
     readOnlyTools: true,
+    projectState: session.project?.trim() ? "bound" : "none",
+    projectDirectory: session.project?.trim() || null,
   });
 
   return {

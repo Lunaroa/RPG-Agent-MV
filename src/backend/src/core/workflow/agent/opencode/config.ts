@@ -6,7 +6,7 @@ import { normalizeProductLanguage } from "../../../../../../contract/i18n.ts";
 import { backendText } from "../../../i18n/messages.ts";
 import {
   buildOpencodeToolPolicyFromAgentAllow,
-  hasEnabledRmmvMcpTools,
+  type AgentProjectToolState,
 } from "../agent-capabilities.ts";
 import {
   resolveAgentNodeCommand,
@@ -63,6 +63,18 @@ export interface OpencodeRuntimeConfigInput {
    */
   readOnlyTools?: boolean;
   imageInputRequired?: boolean;
+  projectState?: AgentProjectToolState;
+  projectDirectory?: string | null;
+  projectBindingVersion?: number;
+  privateRuntime?: {
+    engine: string;
+    executable: string;
+    runtimeRoot: string;
+    source: string;
+    launchStyle: string;
+  };
+  runtimeReason?: "missing" | "invalid" | null;
+  sessionId?: string | null;
 }
 
 function normalizeProviderId(providerId: string): string {
@@ -177,6 +189,14 @@ export function buildOpencodeRmmvMcpConfig(
   workflowRoot: string,
   enabled = true,
   productLanguage?: ProductLanguage | null,
+  project?: {
+    state?: AgentProjectToolState;
+    directory?: string | null;
+    bindingVersion?: number;
+    privateRuntime?: OpencodeRuntimeConfigInput["privateRuntime"];
+    runtimeReason?: OpencodeRuntimeConfigInput["runtimeReason"];
+    sessionId?: string | null;
+  },
 ): Record<string, unknown> {
   const rmmvServerPath = resolveShippedPath(workflowRoot, RMMV_MCP_SERVER_PATH);
   const installRoot = resolveShippedRoot(workflowRoot);
@@ -192,6 +212,24 @@ export function buildOpencodeRmmvMcpConfig(
       AGENT_RPG_INSTALL_ROOT: installRoot,
       AIWF_WORKFLOW_ROOT: workflowRoot,
       RMMV_PRODUCT_LANGUAGE: normalizeProductLanguage(productLanguage),
+      ...(project?.sessionId ? {
+        AIWF_SESSION_ID: project.sessionId,
+        AIWF_SESSION_LOG_DIR: path.join(workflowRoot, "runtime", "sessions", project.sessionId, "agent-console"),
+      } : {}),
+      AIWF_PROJECT_BINDING_STATUS: project?.state || "none",
+      AIWF_PROJECT_BINDING_VERSION: String(project?.bindingVersion || 0),
+      ...(project?.state === "bound" && project.directory
+        ? { AIWF_PROJECT_DIR: path.resolve(project.directory) }
+        : {}),
+      ...(project?.privateRuntime ? {
+        AIWF_PROJECT_RUNTIME_ENGINE: project.privateRuntime.engine,
+        AIWF_PROJECT_RUNTIME_EXECUTABLE: project.privateRuntime.executable,
+        AIWF_PROJECT_RUNTIME_ROOT: project.privateRuntime.runtimeRoot,
+        AIWF_PROJECT_RUNTIME_SOURCE: project.privateRuntime.source,
+        AIWF_PROJECT_RUNTIME_LAUNCH_STYLE: project.privateRuntime.launchStyle,
+      } : project?.state === "bound" ? {
+        AIWF_PROJECT_RUNTIME_REASON: project.runtimeReason || "missing",
+      } : {}),
       // command[0] 是宿主进程的 process.execPath；桌面端运行时它是 Electron 可执行文件，
       // 必须置位此变量才能让它以内置 Node 方式执行 MCP server，否则会当成应用启动而不连 stdio。
       ELECTRON_RUN_AS_NODE: "1",
@@ -218,8 +256,11 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
     throw new Error(backendText('dispatch.providerMissingBaseUrl', input.productLanguage));
   }
   const readOnly = input.readOnlyTools === true;
-  const rmmvMcpEnabled = hasEnabledRmmvMcpTools(workflowRoot);
-  const tools = buildOpencodeToolPolicyFromAgentAllow(workflowRoot, { readOnly });
+  const tools = buildOpencodeToolPolicyFromAgentAllow(workflowRoot, {
+    readOnly,
+    projectState: input.projectState,
+  });
+  const rmmvMcpEnabled = Object.entries(tools).some(([id, enabled]) => id.startsWith("rmmv_") && enabled);
   // Master memory switch OFF ⇒ hard-remove the memory write tool (true off, not just hidden text).
   if (input.memoryEnabled === false) {
     tools[RMMV_MEMORY_TOOL_ID] = false;
@@ -235,7 +276,14 @@ export function buildOpencodeRuntimeConfig(input: OpencodeRuntimeConfigInput): R
       [MEMORY_SCRIBE_AGENT]: buildMemoryScribeAgentConfig(Object.keys(tools)),
     },
     mcp: {
-      rmmv: buildOpencodeRmmvMcpConfig(workflowRoot, rmmvMcpEnabled, input.productLanguage),
+      rmmv: buildOpencodeRmmvMcpConfig(workflowRoot, rmmvMcpEnabled, input.productLanguage, {
+        state: input.projectState,
+        directory: input.projectDirectory,
+        bindingVersion: input.projectBindingVersion,
+        privateRuntime: input.privateRuntime,
+        runtimeReason: input.runtimeReason,
+        sessionId: input.sessionId,
+      }),
     },
   };
 

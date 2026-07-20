@@ -416,7 +416,14 @@ async function loadBackendModules(roots: AppRoots) {
     playtestRuntime: await import(new URL('desktop/interactive-playtest-runtime.ts', coreUrl).href),
   };
   const sessionRuntimeModule = await import(new URL('desktop/agent-session-runtime.ts', coreUrl).href);
-  agentSessionRuntime = new sessionRuntimeModule.AgentSessionRuntime(roots.userDataRoot);
+  agentSessionRuntime = new sessionRuntimeModule.AgentSessionRuntime(roots.userDataRoot, {
+    resolveProjectRuntime: (project: string, engine: RpgMakerEngine) => (
+      desktop.playtestRuntime.resolveInteractiveProjectRuntime(project, engine, {
+        configuredRuntimeRoot: getWorkspaceSettings().playtestRuntimes?.[engine],
+        officialRuntimeRoots: officialPlaytestRuntimeRoots(engine),
+      })
+    ),
+  });
   await agentSessionRuntime.initialize();
   interactivePlaytestService = new desktop.interactivePlaytest.InteractivePlaytestService(
     roots.userDataRoot,

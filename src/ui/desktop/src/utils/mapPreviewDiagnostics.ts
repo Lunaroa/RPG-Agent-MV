@@ -54,7 +54,10 @@ export function sanitizeClientPreviewError(message: string, project?: string): s
   let value = String(message || 'Map preview failed.').slice(0, 8_192);
   const projectPath = project?.replace(/\\/g, '/').replace(/\/$/, '');
   const fileUrl = projectPath && /^[a-z]:\//i.test(projectPath) ? `file:///${projectPath}` : '';
-  const roots = project ? [project, projectPath, fileUrl, fileUrl ? encodeURI(fileUrl) : ''].filter(Boolean) : [];
+  const roots = project
+    ? [project, projectPath, fileUrl, fileUrl ? encodeURI(fileUrl) : '']
+      .filter((root): root is string => Boolean(root))
+    : [];
   for (const root of roots.sort((left, right) => right.length - left.length)) {
     value = value.replace(new RegExp(`${escapeRegExp(root)}(?=$|[\\\\/])`, 'gi'), '[project]');
   }

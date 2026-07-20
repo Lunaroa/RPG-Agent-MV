@@ -105,7 +105,7 @@ const emit = defineEmits<{
   retry: [];
   presented: [sequence: number];
   viewChanged: [view: MapPreviewViewRequest];
-  copyDiagnostic: [];
+  'copy-diagnostic': [];
 }>();
 const { t } = useI18n();
 const viewportRef = ref<HTMLElement>();

@@ -596,6 +596,19 @@ export type MapPreviewStatus =
 
 export type MapPreviewFailureCode = 'runtime-handshake-timeout' | 'runtime-resume-failed' | 'map-render-failed';
 
+export interface MapPreviewFailureDetail {
+  stage: string;
+  operationId?: number;
+  sourceMapId?: number;
+  targetMapId?: number;
+  scene?: string | null;
+  transferring?: boolean;
+  resourcesReady?: boolean;
+  resources?: string[];
+  message: string;
+  runtimeOutput?: string;
+}
+
 export interface MapPreviewOverrides {
   switches: Record<string, boolean>;
   variables: Record<string, number>;
@@ -637,6 +650,7 @@ export interface MapPreviewSession {
   startedAt: string;
   updatedAt: string;
   failureCode?: MapPreviewFailureCode;
+  failureDetail?: MapPreviewFailureDetail;
   error?: string;
 }
 

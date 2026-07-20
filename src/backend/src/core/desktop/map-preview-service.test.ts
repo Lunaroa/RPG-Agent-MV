@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import { pathToFileURL } from 'node:url';
 
 import type { IsolatedProjectPreparation } from './isolated-project-preparation.ts';
 import type { InteractiveProjectRuntime } from './interactive-playtest-runtime.ts';
@@ -14,7 +15,9 @@ import {
   describeMapPreviewStartupTimeout,
   injectPreviewHarness,
   isCurrentMapPreviewFrame,
+  mapPreviewRuntimeFailureDetail,
   mapPreviewLoadPurpose,
+  sanitizeMapPreviewDiagnosticText,
 } from './map-preview-service.ts';
 
 function preparation(sourceProject: string, temporaryProject: string): IsolatedProjectPreparation {
@@ -83,6 +86,9 @@ test('injects the preview harness only into an isolated RPG Maker app root', () 
     assert.match(harness, /phase: 'frame-meta'/);
     assert.match(harness, /command\.type === 'ack-frame'/);
     assert.match(harness, /command\.type === 'suspend'/);
+    assert.match(harness, /const originalOnError = prototype\._onError/);
+    assert.match(harness, /failedResources\.add\(resource\)/);
+    assert.match(harness, /resources: Array\.from\(failedResources\)/);
     assert.match(harness, /command\.type === 'resume'/);
     assert.match(harness, /SceneManager\.stop\(\)/);
     assert.match(harness, /SceneManager\.resume\(\)/);
@@ -218,6 +224,77 @@ test('classifies a process-started timeout without exposing Chromium output', ()
   assert.equal(failure.message, 'Map preview runtime startup timed out during runtime-process-started.');
   assert.doesNotMatch(failure.message, /Runtime output|Unable to decode PNG/);
 });
+
+test('returns structured runtime failure details with project-relative resources', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-diagnostic-'));
+  try {
+    const source = path.join(root, 'source');
+    const isolated = path.join(root, 'isolated');
+    fs.mkdirSync(source);
+    fs.mkdirSync(isolated);
+    const snapshot = preparation(source, isolated);
+    const missingFromIsolated = path.join(isolated, 'www', 'img', 'characters', 'Missing Actor.png');
+    const missingFromSource = path.join(source, 'www', 'img', 'tilesets', 'Example.png');
+    const external = path.join(os.tmpdir(), 'outside-preview', 'private.png');
+    const detail = mapPreviewRuntimeFailureDetail({
+      stage: 'renderer-resources',
+      operationId: 4,
+      sourceMapId: 2,
+      targetMapId: 3,
+      scene: 'Scene_Map',
+      transferring: false,
+      resourcesReady: false,
+      resources: [pathToFileURL(missingFromIsolated).href, missingFromSource, external],
+      message: `Failed at ${missingFromIsolated}`,
+    }, snapshot);
+
+    assert.equal(detail.stage, 'renderer-resources');
+    assert.equal(detail.operationId, 4);
+    assert.equal(detail.sourceMapId, 2);
+    assert.equal(detail.targetMapId, 3);
+    assert.deepEqual(detail.resources, [
+      'img/characters/Missing Actor.png',
+      'img/tilesets/Example.png',
+      '[external-path]',
+    ]);
+    assert.equal(detail.message, 'Failed at img/characters/Missing Actor.png');
+    assert.doesNotMatch(JSON.stringify(detail), new RegExp(escapeForTest(root), 'i'));
+
+    const partialDetail = mapPreviewRuntimeFailureDetail({
+      stage: 'runtime-process-started',
+      targetMapId: 3,
+      message: 'Runtime stopped',
+    }, snapshot);
+    assert.equal('transferring' in partialDetail, false);
+    assert.equal('resourcesReady' in partialDetail, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('redacts browser profiles and encoded project paths from diagnostic text', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-redact-'));
+  try {
+    const source = path.join(root, 'source project');
+    const isolated = path.join(root, 'isolated project');
+    fs.mkdirSync(source);
+    fs.mkdirSync(isolated);
+    const snapshot = preparation(source, isolated);
+    const profile = path.join(isolated, '.rpg-agent-preview-profile-session', 'Cache', 'entry');
+    const encodedAsset = pathToFileURL(path.join(source, 'www', 'img', 'pictures', 'Example File.png')).href;
+    const result = sanitizeMapPreviewDiagnosticText(`${profile}\n${encodedAsset}`, snapshot);
+
+    assert.match(result, /\[preview-profile\]\/Cache\/entry/);
+    assert.match(result, /img\/pictures\/Example%20File\.png/);
+    assert.doesNotMatch(result, /source project|isolated project|[A-Z]:\\/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function escapeForTest(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 test('allows only map data and MapInfos changes to reuse a warm preview', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-classify-'));

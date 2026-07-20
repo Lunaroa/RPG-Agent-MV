@@ -3,9 +3,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import type {
   MapPreviewFailureCode,
+  MapPreviewFailureDetail,
   MapPreviewFrame,
   MapPreviewOverrides,
   MapPreviewResumeRequest,
@@ -42,6 +44,9 @@ const PACKET_COMMAND = 10;
 const HEADER_BYTES = 5;
 const STARTUP_TIMEOUT_MS = 20_000;
 const MAX_PACKET_BYTES = 128 * 1024 * 1024;
+const MAX_DIAGNOSTIC_TEXT_LENGTH = 8_192;
+const MAX_RUNTIME_OUTPUT_LENGTH = 4_096;
+const MAX_FAILED_RESOURCES = 50;
 
 interface PreviewMapGeometry {
   mapId: number;
@@ -130,6 +135,7 @@ export class MapPreviewService {
   #resumePromise: Promise<MapPreviewResult> | null = null;
   #nextOperationId = 0;
   #activeOperationId = 0;
+  #bridgeConnected = false;
 
   constructor(workflowRoot: string, dependencies: MapPreviewServiceDependencies) {
     this.#workflowRoot = path.resolve(workflowRoot);
@@ -186,6 +192,7 @@ export class MapPreviewService {
     this.#publish();
     this.#startupStage = 'preparing-isolated-project';
     this.#runtimeOutput = '';
+    this.#bridgeConnected = false;
 
     try {
       this.#preparation = prepareIsolatedStagedProject(this.#workflowRoot, project, {
@@ -218,7 +225,12 @@ export class MapPreviewService {
       this.#armStartupTimeout();
       return this.current();
     } catch (error) {
-      await this.#fail(errorMessage(error));
+      await this.#fail(errorMessage(error), undefined, {
+        stage: this.#startupStage,
+        operationId: this.#activeOperationId,
+        targetMapId: mapId,
+        message: errorMessage(error),
+      });
       return this.current();
     }
   }
@@ -443,14 +455,26 @@ export class MapPreviewService {
     this.#child.stdout.on('data', (chunk) => this.#appendRuntimeOutput(chunk));
     this.#child.stderr.on('data', (chunk) => this.#appendRuntimeOutput(chunk));
     this.#child.once('spawn', () => { this.#startupStage = 'runtime-process-started'; });
-    this.#child.once('error', (error) => void this.#fail(errorMessage(error)));
+    this.#child.once('error', (error) => void this.#fail(errorMessage(error), undefined, {
+      stage: this.#startupStage,
+      operationId: this.#activeOperationId,
+      targetMapId: this.#session?.mapId,
+      message: errorMessage(error),
+    }));
     this.#child.once('exit', (code, signal) => {
       if (!this.#session || this.#cleanupInProgress || ['stopping', 'stopped', 'failed'].includes(this.#session.status)) return;
       const output = this.#runtimeOutput.trim();
       if (output) {
         console.warn(`[map-preview] Runtime exited unexpectedly: ${redactPreviewError(output, this.#preparation)}`);
       }
-      void this.#fail(`Map preview runtime exited unexpectedly (${code ?? signal ?? 'unknown'}).`);
+      const message = `Map preview runtime exited unexpectedly (${code ?? signal ?? 'unknown'}).`;
+      void this.#fail(message, undefined, {
+        stage: this.#startupStage,
+        operationId: this.#activeOperationId,
+        targetMapId: this.#session.mapId,
+        message,
+        ...(!this.#bridgeConnected && output ? { runtimeOutput: output.slice(-MAX_RUNTIME_OUTPUT_LENGTH) } : {}),
+      });
     });
   }
 
@@ -495,6 +519,7 @@ export class MapPreviewService {
           }
           authenticated = true;
           this.#socket = socket;
+          this.#bridgeConnected = true;
           this.#startupStage = 'preview-bridge-connected';
           continue;
         }
@@ -577,9 +602,11 @@ export class MapPreviewService {
         mapId: positiveInteger(status.mapId, 'runtime mapId'),
       });
     } else if (status.phase === 'error') {
+      const failureDetail = mapPreviewRuntimeFailureDetail(status, this.#preparation);
       void this.#fail(
-        describeRuntimeMapFailure(status),
+        failureDetail.message,
         status.failureCode === 'map-render-failed' ? 'map-render-failed' : undefined,
+        failureDetail,
       );
     }
   }
@@ -603,7 +630,12 @@ export class MapPreviewService {
         console.warn(`[map-preview] Runtime startup timed out during ${this.#startupStage}: ${redactPreviewError(output, this.#preparation)}`);
       }
       const failure = describeMapPreviewStartupTimeout(this.#startupStage);
-      void this.#fail(failure.message, failure.failureCode);
+      void this.#fail(failure.message, failure.failureCode, {
+        stage: this.#startupStage,
+        operationId: this.#activeOperationId,
+        targetMapId: this.#session?.mapId,
+        message: failure.message,
+      });
     }, STARTUP_TIMEOUT_MS);
   }
 
@@ -611,7 +643,13 @@ export class MapPreviewService {
     this.#clearStartupTimeout();
     this.#startupStage = stage;
     this.#startupTimer = setTimeout(() => {
-      void this.#fail(`Map preview runtime did not complete ${stage}.`, 'runtime-resume-failed');
+      const message = `Map preview runtime did not complete ${stage}.`;
+      void this.#fail(message, 'runtime-resume-failed', {
+        stage,
+        operationId: this.#activeOperationId,
+        targetMapId: this.#session?.mapId,
+        message,
+      });
     }, STARTUP_TIMEOUT_MS);
   }
 
@@ -620,17 +658,29 @@ export class MapPreviewService {
     this.#startupTimer = null;
   }
 
-  async #fail(message: string, failureCode?: MapPreviewFailureCode): Promise<void> {
+  async #fail(
+    message: string,
+    failureCode?: MapPreviewFailureCode,
+    failureDetail?: MapPreviewFailureDetail,
+  ): Promise<void> {
     if (!this.#session || this.#session.status === 'failed' || this.#cleanupInProgress) return;
     this.#cleanupInProgress = true;
     const preparation = this.#preparation;
     const diagnostic = redactPreviewError(message, preparation);
+    const detail = normalizeMapPreviewFailureDetail({
+      stage: failureDetail?.stage || this.#startupStage,
+      operationId: failureDetail?.operationId ?? this.#activeOperationId,
+      targetMapId: failureDetail?.targetMapId ?? this.#session.mapId,
+      ...failureDetail,
+      message: failureDetail?.message || diagnostic,
+    }, preparation);
     console.warn(`[map-preview] Runtime failed${failureCode ? ` (${failureCode})` : ''}: ${diagnostic}`);
     const cleanupError = await this.#cleanupRuntime();
     this.#finish(
       'failed',
-      [diagnostic, cleanupError].filter(Boolean).join(' '),
+      sanitizeMapPreviewDiagnosticText([diagnostic, cleanupError].filter(Boolean).join(' '), preparation),
       failureCode,
+      detail,
     );
     this.#cleanupInProgress = false;
   }
@@ -688,6 +738,7 @@ export class MapPreviewService {
     this.#pendingResume = null;
     this.#nextOperationId = 0;
     this.#activeOperationId = 0;
+    this.#bridgeConnected = false;
     return [processResult.error, isolationError].filter(Boolean).join(' ');
   }
 
@@ -697,13 +748,19 @@ export class MapPreviewService {
     this.#publish();
   }
 
-  #finish(status: 'stopped' | 'failed', error?: string, failureCode?: MapPreviewFailureCode): void {
+  #finish(
+    status: 'stopped' | 'failed',
+    error?: string,
+    failureCode?: MapPreviewFailureCode,
+    failureDetail?: MapPreviewFailureDetail,
+  ): void {
     if (!this.#session) return;
     this.#session = {
       ...this.#session,
       status,
       updatedAt: new Date().toISOString(),
       ...(failureCode ? { failureCode } : {}),
+      ...(failureDetail ? { failureDetail } : {}),
       ...(error ? { error } : {}),
     };
     this.#publish();
@@ -806,6 +863,7 @@ function previewHarnessSource(options: HarnessOptions): string {
   let runtimeStage = 'boot';
   let runtimeSourceMapId = 0;
   let runtimeTargetMapId = currentMapId;
+  const failedResources = new Set();
 
   replaceObject(switchOverrides, config.overrides && config.overrides.switches);
   replaceObject(variableOverrides, config.overrides && config.overrides.variables);
@@ -839,8 +897,20 @@ function previewHarnessSource(options: HarnessOptions): string {
       scene: scene && scene.constructor ? scene.constructor.name : null,
       transferring: Boolean(window.$gamePlayer && $gamePlayer.isTransferring && $gamePlayer.isTransferring()),
       resourcesReady: resourcesReady,
+      resources: Array.from(failedResources).slice(0, ${MAX_FAILED_RESOURCES}),
       message: message.slice(0, 3000)
     });
+  }
+  function installResourceErrorTracking() {
+    if (!window.Bitmap || !Bitmap.prototype || Bitmap.prototype.__rpgAgentPreviewErrorTracking) return;
+    const prototype = Bitmap.prototype;
+    const originalOnError = prototype._onError;
+    prototype._onError = function () {
+      const resource = String(this && this._url || '');
+      if (resource) failedResources.add(resource);
+      if (typeof originalOnError === 'function') return originalOnError.apply(this, arguments);
+    };
+    Object.defineProperty(prototype, '__rpgAgentPreviewErrorTracking', { value: true, configurable: true });
   }
   window.addEventListener('error', function (event) {
     reportError(event && (event.error || event.message));
@@ -1108,6 +1178,7 @@ function previewHarnessSource(options: HarnessOptions): string {
     if (captureTimer) clearTimeout(captureTimer);
     captureTimer = null;
     tiledOverviewDelivered = false;
+    failedResources.clear();
     send(PACKET_STATUS, {
       phase: 'loading-map',
       operationId: targetOperationId,
@@ -1121,6 +1192,7 @@ function previewHarnessSource(options: HarnessOptions): string {
         return window.DataManager && window.SceneManager && window.Scene_Map && DataManager.isDatabaseLoaded && DataManager.isDatabaseLoaded();
       }, 'RPG Maker database');
       installFreezeRules();
+      installResourceErrorTracking();
       resumeSceneManager();
       if (purpose === 'fresh' && window.Scene_Boot) {
         runtimeStage = 'boot-sequence';
@@ -1192,6 +1264,7 @@ function previewHarnessSource(options: HarnessOptions): string {
       });
       runtimeStage = 'renderer-resources';
       await waitFor(function () {
+        if (failedResources.size) throw new Error('One or more map resources failed to load.');
         return (!window.ImageManager || !ImageManager.isReady || ImageManager.isReady())
           && (!SceneManager._scene.isReady || SceneManager._scene.isReady());
       }, 'map renderer resources');
@@ -1566,17 +1639,21 @@ function parseJson(payload: Buffer): Record<string, any> {
   return value as Record<string, any>;
 }
 
-function describeRuntimeMapFailure(value: Record<string, unknown>): string {
-  const detail = {
+export function mapPreviewRuntimeFailureDetail(
+  value: Record<string, unknown>,
+  preparation: IsolatedProjectPreparation | null,
+): MapPreviewFailureDetail {
+  return normalizeMapPreviewFailureDetail({
     stage: String(value.stage || 'unknown'),
-    operationId: Number(value.operationId) || 0,
-    sourceMapId: Number(value.sourceMapId) || 0,
-    targetMapId: Number(value.targetMapId) || 0,
+    operationId: Number(value.operationId) || undefined,
+    sourceMapId: Number(value.sourceMapId) || undefined,
+    targetMapId: Number(value.targetMapId) || undefined,
     scene: value.scene == null ? null : String(value.scene),
-    transferring: Boolean(value.transferring),
-    resourcesReady: Boolean(value.resourcesReady),
-  };
-  return `Map preview runtime failed during map loading ${JSON.stringify(detail)}: ${String(value.message || 'Unknown runtime error')}`;
+    ...(typeof value.transferring === 'boolean' ? { transferring: value.transferring } : {}),
+    ...(typeof value.resourcesReady === 'boolean' ? { resourcesReady: value.resourcesReady } : {}),
+    resources: Array.isArray(value.resources) ? value.resources.map(String) : [],
+    message: String(value.message || 'Unknown runtime error'),
+  }, preparation);
 }
 
 function frameMeta(value: Record<string, unknown>): PreviewFrameMeta {
@@ -1899,12 +1976,101 @@ function waitForProcessExitSync(pid: number, timeoutMs: number): boolean {
   return !isProcessAlive(pid);
 }
 
-function redactPreviewError(message: string, preparation: IsolatedProjectPreparation | null): string {
-  let redacted = String(message || 'Map preview failed.');
-  for (const privatePath of [preparation?.sourceProject, preparation?.temporaryProject].filter(Boolean) as string[]) {
-    redacted = redacted.split(privatePath).join('[project]');
+export function normalizeMapPreviewFailureDetail(
+  detail: MapPreviewFailureDetail,
+  preparation: IsolatedProjectPreparation | null,
+): MapPreviewFailureDetail {
+  const resources = [...new Set((detail.resources || [])
+    .map((resource) => sanitizeMapPreviewResource(resource, preparation))
+    .filter(Boolean))]
+    .slice(0, MAX_FAILED_RESOURCES);
+  const operationId = positiveOptionalInteger(detail.operationId);
+  const sourceMapId = positiveOptionalInteger(detail.sourceMapId);
+  const targetMapId = positiveOptionalInteger(detail.targetMapId);
+  return {
+    stage: boundedText(detail.stage || 'unknown', 128),
+    ...(operationId ? { operationId } : {}),
+    ...(sourceMapId ? { sourceMapId } : {}),
+    ...(targetMapId ? { targetMapId } : {}),
+    ...(detail.scene === null ? { scene: null } : detail.scene ? { scene: boundedText(detail.scene, 128) } : {}),
+    ...(typeof detail.transferring === 'boolean' ? { transferring: detail.transferring } : {}),
+    ...(typeof detail.resourcesReady === 'boolean' ? { resourcesReady: detail.resourcesReady } : {}),
+    ...(resources.length ? { resources } : {}),
+    message: sanitizeMapPreviewDiagnosticText(detail.message || 'Map preview failed.', preparation),
+    ...(detail.runtimeOutput ? {
+      runtimeOutput: sanitizeMapPreviewDiagnosticText(
+        detail.runtimeOutput.slice(-MAX_RUNTIME_OUTPUT_LENGTH),
+        preparation,
+      ),
+    } : {}),
+  };
+}
+
+export function sanitizeMapPreviewDiagnosticText(
+  message: string,
+  preparation: IsolatedProjectPreparation | null,
+): string {
+  let sanitized = String(message || 'Map preview failed.').slice(0, MAX_DIAGNOSTIC_TEXT_LENGTH);
+  const roots = [preparation?.sourceProject, preparation?.temporaryProject]
+    .filter(Boolean)
+    .flatMap((root) => previewPathVariants(root as string))
+    .sort((left, right) => right.length - left.length);
+  for (const root of roots) {
+    sanitized = sanitized.replace(new RegExp(`${escapeRegExp(root)}(?=$|[\\\\/])`, 'gi'), '[project]');
   }
-  return redacted;
+  sanitized = sanitized
+    .replace(/\[project\][\\/]\.rpg-agent-preview-profile-[^\\/\s:)]*/gi, '[preview-profile]')
+    .replace(/\[project\][\\/](?:www[\\/])?/gi, '')
+    .replace(/file:\/\/\/[a-z]:\/[^\s"'<>]+/gi, '[external-path]')
+    .replace(/(["'])[a-z]:[\\/][^"'\r\n<>]+\1/gi, '$1[external-path]$1')
+    .replace(/(?:\\\\|\/\/)[^\\/\s"'<>]+[\\/][^\s"'<> ,;)\]}]+/g, '[external-path]')
+    .replace(/[a-z]:[\\/][^\s"'<> ,;)\]}]+/gi, '[external-path]')
+    .replace(/\/(?:Users|home|tmp|var|opt|usr|etc|mnt)\/[^\s"'<> ,;)\]}]+/g, '[external-path]')
+    .replace(/\\/g, '/');
+  return sanitized.slice(0, MAX_DIAGNOSTIC_TEXT_LENGTH);
+}
+
+function sanitizeMapPreviewResource(
+  resource: string,
+  preparation: IsolatedProjectPreparation | null,
+): string {
+  let value = decodeUriSafely(String(resource || '').trim()).replace(/\\/g, '/');
+  if (!value) return '';
+  value = sanitizeMapPreviewDiagnosticText(value, preparation)
+    .replace(/^\[project\]\/?/i, '')
+    .replace(/^\.\//, '')
+    .replace(/^www\//i, '')
+    .replace(/[?#].*$/, '');
+  if (/^\.\.\//.test(value)) return '[external-path]';
+  return boundedText(value, 512);
+}
+
+function previewPathVariants(root: string): string[] {
+  const resolved = path.resolve(root);
+  const fileUrl = pathToFileURL(resolved).href.replace(/\/$/, '');
+  return [...new Set([
+    resolved,
+    resolved.replace(/\\/g, '/'),
+    fileUrl,
+    decodeUriSafely(fileUrl),
+  ].map((value) => value.replace(/[\\/]$/, '')))];
+}
+
+function decodeUriSafely(value: string): string {
+  try { return decodeURI(value); } catch { return value; }
+}
+
+function boundedText(value: string, maximum: number): string {
+  return String(value || '').slice(0, maximum);
+}
+
+function positiveOptionalInteger(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function redactPreviewError(message: string, preparation: IsolatedProjectPreparation | null): string {
+  return sanitizeMapPreviewDiagnosticText(message, preparation);
 }
 
 function isLoopback(address?: string): boolean {

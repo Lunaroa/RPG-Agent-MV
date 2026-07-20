@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   clipboard: {
+    writeText: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
     readImage: () => ipcRenderer.invoke('clipboard:readImage'),
   },
 

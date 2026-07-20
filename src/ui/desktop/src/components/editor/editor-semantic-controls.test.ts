@@ -194,7 +194,8 @@ describe('editor semantic controls', () => {
     assert.match(leftDockSource, /@node-click="handleTreeNodeClick"/);
     assert.match(leftDockSource, /@dblclick\.stop="toggleMapTreeNodeExpansion\(node\)"/);
     assert.match(leftDockSource, /isPrimaryMapTreeNodeClick\(event\?\.detail\)/);
-    assert.match(editorViewSource, /if \(clickedMapLoadingId === node\.id\) return;/);
+    assert.match(editorViewSource, /mapLoadCoordinator\.begin\(\{ project, mapId \}\)/);
+    assert.match(editorViewSource, /:selected-map-id="requestedMapId \?\? selectedMapId"/);
   });
 
   test('matches MV event-layer and grid semantics across editor modes', () => {
@@ -214,8 +215,9 @@ describe('editor semantic controls', () => {
     assert.doesNotMatch(editorViewSource, /:key="[^\"]*selectedMapId/);
     assert.match(editorViewSource, /v-show="mode !== 'preview'" class="editor-canvas-layer"/);
     assert.doesNotMatch(editorViewSource, /<MapRuntimePreview[\s\S]{0,120}v-if="mode === 'preview'"/);
-    assert.match(editorViewSource, /else if \(previous === 'preview'\) void suspendPreviewSession\(\)/);
-    assert.match(editorViewSource, /mapPreview\.resume\([\s\S]{0,220}currentMapRevision\.value/);
+    assert.match(editorViewSource, /if \(value === 'preview' \|\| previous === 'preview'\) schedulePreviewIntentReconcile\(\)/);
+    assert.match(editorViewSource, /previewIntentCoordinator\.runExclusive\(token,/);
+    assert.match(editorViewSource, /mapPreview\.resume\([\s\S]{0,220}intent\.mapRevision/);
     assert.match(editorViewSource, /frame\.operationId !== previewSession\.value\.operationId/);
     assert.match(editorViewSource, /frame\.mapId !== selectedMapId\.value/);
     assert.match(mapCanvasEditorSource, /function setCanvasElement[\s\S]{0,180}if \(canvas\) renderMap\(\)/);

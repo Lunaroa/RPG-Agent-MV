@@ -3,8 +3,36 @@
     <div v-if="error" class="preview-state error" role="alert">
       <WarningFilled />
       <strong>{{ t('editor.preview.failed') }}</strong>
-      <p>{{ error }}</p>
-      <button type="button" @click="$emit('retry')">{{ t('editor.preview.retry') }}</button>
+      <p class="error-summary">{{ error }}</p>
+      <div class="error-actions">
+        <button v-if="diagnostic" type="button" @click="detailsOpen = !detailsOpen">
+          {{ detailsOpen ? t('editor.preview.hideDetails') : t('editor.preview.showDetails') }}
+        </button>
+        <button type="button" @click="$emit('retry')">{{ t('editor.preview.retry') }}</button>
+      </div>
+      <div v-if="diagnostic && detailsOpen" class="error-details">
+        <dl>
+          <template v-for="row in diagnosticRows" :key="row.label">
+            <dt>{{ row.label }}</dt>
+            <dd>{{ row.value }}</dd>
+          </template>
+        </dl>
+        <div v-if="diagnostic.detail.resources?.length" class="diagnostic-section">
+          <b>{{ t('editor.preview.diagnosticResources') }}</b>
+          <ul>
+            <li v-for="resource in diagnostic.detail.resources" :key="resource">{{ resource }}</li>
+          </ul>
+        </div>
+        <div class="diagnostic-section">
+          <b>{{ t('editor.preview.diagnosticMessage') }}</b>
+          <pre>{{ diagnostic.detail.message }}</pre>
+        </div>
+        <div v-if="diagnostic.detail.runtimeOutput" class="diagnostic-section">
+          <b>{{ t('editor.preview.diagnosticRuntimeOutput') }}</b>
+          <pre>{{ diagnostic.detail.runtimeOutput }}</pre>
+        </div>
+        <button type="button" @click="$emit('copy-diagnostic')">{{ t('editor.preview.copyDiagnostic') }}</button>
+      </div>
     </div>
     <div v-else-if="!hasDisplayableFrame" class="preview-state" aria-live="polite">
       <span class="preview-spinner" aria-hidden="true" />
@@ -55,6 +83,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { WarningFilled } from '@element-plus/icons-vue';
 import type { MapPreviewStatus, MapPreviewViewRequest } from '@contract/types';
 import { useI18n } from '../../i18n';
+import type { MapPreviewDiagnostic } from '../../utils/mapPreviewDiagnostics';
+import { clampPreviewPan, previewVisibleRegion } from '../../utils/mapPreviewViewport';
 
 const props = defineProps<{
   status: MapPreviewStatus;
@@ -69,11 +99,13 @@ const props = defineProps<{
   tileWidth?: number;
   tileHeight?: number;
   error?: string;
+  diagnostic?: MapPreviewDiagnostic | null;
 }>();
 const emit = defineEmits<{
   retry: [];
   presented: [sequence: number];
   viewChanged: [view: MapPreviewViewRequest];
+  copyDiagnostic: [];
 }>();
 const { t } = useI18n();
 const viewportRef = ref<HTMLElement>();
@@ -83,6 +115,7 @@ const displayScale = ref(1);
 const offsetX = ref(0);
 const offsetY = ref(0);
 const dragging = ref(false);
+const detailsOpen = ref(false);
 let pointerId: number | null = null;
 let lastPoint = { x: 0, y: 0 };
 let resizeObserver: ResizeObserver | null = null;
@@ -98,6 +131,24 @@ const fitScale = computed(() => {
 });
 const actualScale = computed(() => fitScale.value * displayScale.value);
 const hasDisplayableFrame = computed(() => Boolean(props.frameUrl) && (props.status === 'running' || props.status === 'resuming'));
+const diagnosticRows = computed(() => {
+  const diagnostic = props.diagnostic;
+  if (!diagnostic) return [];
+  const detail = diagnostic.detail;
+  const rows = [
+    { label: t('editor.preview.diagnosticCode'), value: diagnostic.failureCode || t('editor.preview.diagnosticUnknown') },
+    { label: t('editor.preview.diagnosticStage'), value: detail.stage },
+    { label: t('editor.preview.diagnosticEngine'), value: diagnostic.engine },
+    { label: t('editor.preview.diagnosticMapId'), value: String(diagnostic.mapId) },
+    { label: t('editor.preview.diagnosticOperationId'), value: String(detail.operationId || diagnostic.operationId || '') },
+    { label: t('editor.preview.diagnosticSourceMapId'), value: detail.sourceMapId ? String(detail.sourceMapId) : '' },
+    { label: t('editor.preview.diagnosticTargetMapId'), value: detail.targetMapId ? String(detail.targetMapId) : '' },
+    { label: t('editor.preview.diagnosticScene'), value: detail.scene || '' },
+    { label: t('editor.preview.diagnosticTransferring'), value: booleanDiagnostic(detail.transferring) },
+    { label: t('editor.preview.diagnosticResourcesReady'), value: booleanDiagnostic(detail.resourcesReady) },
+  ];
+  return rows.filter((row) => row.value !== '');
+});
 const layerStyle = computed(() => ({
   width: props.mapPixelWidth > 0 ? `${props.mapPixelWidth}px` : undefined,
   height: props.mapPixelHeight > 0 ? `${props.mapPixelHeight}px` : undefined,
@@ -166,12 +217,16 @@ function moveDrag(event: PointerEvent) {
 }
 
 function clampOffsets() {
-  const renderedWidth = Math.max(0, props.mapPixelWidth * actualScale.value);
-  const renderedHeight = Math.max(0, props.mapPixelHeight * actualScale.value);
-  const maximumX = Math.max(0, (renderedWidth - viewportWidth.value) / 2);
-  const maximumY = Math.max(0, (renderedHeight - viewportHeight.value) / 2);
-  offsetX.value = Math.max(-maximumX, Math.min(maximumX, offsetX.value));
-  offsetY.value = Math.max(-maximumY, Math.min(maximumY, offsetY.value));
+  const clamped = clampPreviewPan({
+    x: offsetX.value,
+    y: offsetY.value,
+    viewportWidth: viewportWidth.value,
+    viewportHeight: viewportHeight.value,
+    renderedWidth: props.mapPixelWidth * actualScale.value,
+    renderedHeight: props.mapPixelHeight * actualScale.value,
+  });
+  offsetX.value = clamped.x;
+  offsetY.value = clamped.y;
 }
 
 function stopDrag(event: PointerEvent) {
@@ -189,16 +244,17 @@ function queueViewUpdate() {
     viewFrame = 0;
     const viewport = viewportRef.value;
     const scale = actualScale.value;
-    if (!viewport || props.mapPixelWidth <= 0 || props.mapPixelHeight <= 0 || scale <= 0) return;
-    const renderedWidth = props.mapPixelWidth * scale;
-    const renderedHeight = props.mapPixelHeight * scale;
-    const mapLeft = (viewport.clientWidth - renderedWidth) / 2 + offsetX.value;
-    const mapTop = (viewport.clientHeight - renderedHeight) / 2 + offsetY.value;
-    const x = Math.max(0, Math.min(props.mapPixelWidth - 1, -mapLeft / scale));
-    const y = Math.max(0, Math.min(props.mapPixelHeight - 1, -mapTop / scale));
-    const right = Math.max(x + 1, Math.min(props.mapPixelWidth, (viewport.clientWidth - mapLeft) / scale));
-    const bottom = Math.max(y + 1, Math.min(props.mapPixelHeight, (viewport.clientHeight - mapTop) / scale));
-    emit('viewChanged', { x, y, width: right - x, height: bottom - y, scale });
+    if (!viewport) return;
+    const view = previewVisibleRegion({
+      x: offsetX.value,
+      y: offsetY.value,
+      viewportWidth: viewport.clientWidth,
+      viewportHeight: viewport.clientHeight,
+      mapWidth: props.mapPixelWidth,
+      mapHeight: props.mapPixelHeight,
+      scale,
+    });
+    if (view) emit('viewChanged', view);
   });
 }
 
@@ -222,6 +278,12 @@ function updateViewportSize() {
 }
 
 watch(() => [props.mapPixelWidth, props.mapPixelHeight], clampOffsets);
+watch(() => [props.error, props.diagnostic], () => { detailsOpen.value = false; });
+
+function booleanDiagnostic(value: boolean | undefined): string {
+  if (value === undefined) return '';
+  return value ? t('editor.preview.diagnosticYes') : t('editor.preview.diagnosticNo');
+}
 
 onMounted(() => {
   resizeObserver = new ResizeObserver(updateViewportSize);
@@ -238,7 +300,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .runtime-preview{position:relative;min-width:0;min-height:0;flex:1;display:grid;place-items:center;overflow:hidden;border:1px solid #252a31;border-radius:10px;background:#12161b;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:24px 24px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02),inset 0 18px 60px rgba(0,0,0,.32)}
 .runtime-viewport{position:relative;width:100%;height:100%;overflow:hidden;cursor:grab;touch-action:none;user-select:none}.dragging .runtime-viewport{cursor:grabbing}.runtime-map-layer{position:absolute;left:50%;top:50%;transform-origin:center;will-change:transform;filter:drop-shadow(0 12px 30px rgba(0,0,0,.48));pointer-events:none}.runtime-map-frame{position:absolute;inset:0;display:block;width:100%;height:100%;image-rendering:pixelated}.runtime-map-tile{right:auto;bottom:auto}
-.preview-state{max-width:420px;padding:26px;display:grid;justify-items:center;gap:8px;color:#d7dde5;text-align:center}.preview-state strong{font-size:14px}.preview-state p{margin:0;color:#8f99a7;font-size:12px;line-height:1.6}.preview-state.error :deep(svg){width:24px;color:#ef8f78}.preview-state button{min-height:30px;padding:0 12px;border:1px solid #48515d;border-radius:4px;background:#20262d;color:#edf2f7;font:inherit;font-size:12px;cursor:pointer}.preview-state button:hover{background:#2a323b}.preview-state button:focus-visible{outline:2px solid var(--app-accent);outline-offset:2px}.preview-spinner{width:20px;height:20px;border:2px solid #3a424d;border-top-color:#d7dde5;border-radius:50%;animation:preview-spin .8s linear infinite}@keyframes preview-spin{to{transform:rotate(360deg)}}
+.preview-state{max-width:420px;padding:26px;display:grid;justify-items:center;gap:8px;color:#d7dde5;text-align:center}.preview-state.error{width:min(680px,calc(100% - 48px));max-width:680px}.preview-state strong{font-size:14px}.preview-state p{margin:0;color:#8f99a7;font-size:12px;line-height:1.6}.preview-state.error :deep(svg){width:24px;color:#ef8f78}.preview-state button{min-height:30px;padding:0 12px;border:1px solid #48515d;border-radius:4px;background:#20262d;color:#edf2f7;font:inherit;font-size:12px;cursor:pointer}.preview-state button:hover{background:#2a323b}.preview-state button:focus-visible{outline:2px solid var(--app-accent);outline-offset:2px}.error-actions{display:flex;gap:8px}.error-details{box-sizing:border-box;width:100%;max-height:min(52vh,520px);padding:14px;overflow:auto;border:1px solid #343b45;border-radius:6px;background:#0d1116;color:#cbd3dd;text-align:left}.error-details dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 14px;margin:0 0 12px;font-size:11px}.error-details dt{color:#7f8a98}.error-details dd{min-width:0;margin:0;overflow-wrap:anywhere;font-family:var(--app-font-mono)}.diagnostic-section{display:grid;gap:6px;margin-top:12px}.diagnostic-section b{color:#9aa6b4;font-size:11px}.diagnostic-section ul{margin:0;padding-left:20px;font:11px/1.55 var(--app-font-mono);overflow-wrap:anywhere}.diagnostic-section pre{max-height:180px;margin:0;padding:10px;overflow:auto;border-radius:4px;background:#080b0f;color:#cbd3dd;font:11px/1.5 var(--app-font-mono);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}.error-details>button{margin-top:12px}.preview-spinner{width:20px;height:20px;border:2px solid #3a424d;border-top-color:#d7dde5;border-radius:50%;animation:preview-spin .8s linear infinite}@keyframes preview-spin{to{transform:rotate(360deg)}}
 .runtime-badge{position:absolute;right:12px;top:12px;display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid rgba(117,203,151,.28);border-radius:4px;background:rgba(20,28,25,.84);color:#bce7cd;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;backdrop-filter:blur(8px)}.runtime-badge i{width:6px;height:6px;border-radius:50%;background:#72d399;box-shadow:0 0 8px rgba(114,211,153,.7)}
 .preview-scale{position:absolute;left:12px;bottom:12px;display:flex;gap:2px;padding:3px;border:1px solid rgba(255,255,255,.08);border-radius:5px;background:rgba(20,24,29,.86);backdrop-filter:blur(8px)}.preview-scale button{height:26px;min-width:30px;padding:0 7px;border:0;border-radius:3px;background:transparent;color:#b7c0cb;font:600 11px var(--app-font-mono);cursor:pointer}.preview-scale button:hover{background:#303741;color:#fff}.preview-scale button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}
 </style>

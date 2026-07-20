@@ -23,6 +23,7 @@ declare global {
         }>;
       };
       clipboard: {
+        writeText(text: string): Promise<{ ok: true }>;
         readImage(): Promise<{
           filename: string;
           mime: string;
@@ -289,7 +290,7 @@ import type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
@@ -312,7 +313,7 @@ export type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 };
 
@@ -442,6 +443,9 @@ export type GetContextUsageResult =
   };
 
 export const clipboard = {
+  writeText(text: string) {
+    return desktopApi().clipboard.writeText(text);
+  },
   readImage() {
     return desktopApi().clipboard.readImage();
   },

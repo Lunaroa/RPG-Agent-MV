@@ -2,6 +2,7 @@ import { BrowserWindow, clipboard, dialog, ipcMain, net, protocol, screen, shell
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { cleanupClipboardIpcHandlers, registerClipboardIpcHandlers } from './clipboard-ipc-bindings.js';
 import { cleanupMapIpcHandlers, registerMapIpcHandlers } from './map-ipc-bindings.js';
 import {
   cleanupInteractivePlaytestIpcHandlers,
@@ -1290,17 +1291,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   const { checkForUpdates, getAppVersion } = await import('./auto-updater.js');
   ipcMain.handle('app:getVersion', () => toIpcPayload({ version: getAppVersion() }));
   ipcMain.handle('app:checkForUpdates', async () => toIpcPayload(await checkForUpdates({ manual: true })));
-  ipcMain.handle('clipboard:readImage', () => {
-    const image = clipboard.readImage();
-    if (image.isEmpty()) return null;
-    const bytes = image.toPNG();
-    return toIpcPayload({
-      filename: 'pasted-image.png',
-      mime: 'image/png',
-      sizeBytes: bytes.byteLength,
-      dataBase64: bytes.toString('base64'),
-    });
-  });
+  registerClipboardIpcHandlers(ipcMain, clipboard);
 
   ipcMain.handle('workspace:get', () => {
     return toIpcPayload(getWorkspaceSettings());
@@ -1744,6 +1735,7 @@ export function cleanupIpcHandlers(): void {
   cleanupMapIpcHandlers(ipcMain);
   cleanupInteractivePlaytestIpcHandlers(ipcMain);
   cleanupMapPreviewIpcHandlers(ipcMain);
+  cleanupClipboardIpcHandlers(ipcMain);
   workspaceSettingsSession = new WorkspaceSettingsSession(false);
   ipcMain.removeHandler('window:minimize');
   ipcMain.removeHandler('window:toggleMaximize');
@@ -1752,7 +1744,6 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('window:openExternalUrl');
   ipcMain.removeHandler('app:getVersion');
   ipcMain.removeHandler('app:checkForUpdates');
-  ipcMain.removeHandler('clipboard:readImage');
   ipcMain.removeHandler('workspace:get');
   ipcMain.removeHandler('workspace:put');
   ipcMain.removeHandler('workspace:patch');

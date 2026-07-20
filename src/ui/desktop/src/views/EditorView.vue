@@ -35,7 +35,7 @@
         :brush-info="brushInfo"
         :brush-set="brushSet"
         :map-tree="mapTree"
-        :selected-map-id="selectedMapId"
+        :selected-map-id="requestedMapId ?? selectedMapId"
         :staged-map-ids="stagedMapIds"
         :expanded-map-ids="expandedMapIds"
         :current-events="currentEvents"
@@ -81,7 +81,9 @@
             :tile-width="previewTileWidth"
             :tile-height="previewTileHeight"
             :error="previewError"
+            :diagnostic="previewDiagnostic"
             @retry="restartPreview"
+            @copy-diagnostic="copyPreviewDiagnostic"
             @presented="ackPreviewFrame"
             @view-changed="updatePreviewView"
           />
@@ -243,7 +245,7 @@ import BottomPanel from '../components/editor/BottomPanel.vue';
 import MapRuntimePreview from '../components/editor/MapRuntimePreview.vue';
 import MapPreviewInspector from '../components/editor/MapPreviewInspector.vue';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapPropertiesForm, MapTool, TreeNode } from '../components/editor/editorTypes';
-import { eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapPreviewFrame, type MapPreviewOverrides, type MapPreviewSession, type MapPreviewStateCatalog, type MapPreviewStatus, type MapPreviewViewRequest, type MapTreeNode, type NamedCatalogEntry, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
+import { clipboard as clipboardApi, eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapPreviewFrame, type MapPreviewOverrides, type MapPreviewSession, type MapPreviewStateCatalog, type MapPreviewStatus, type MapPreviewViewRequest, type MapTreeNode, type NamedCatalogEntry, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
 import { useMapCanvasEditor, type PlacementFlashCell } from '../composables/useMapCanvasEditor';
 import { clone, defaultEvent, quickEventTemplate, quickObtainEventTemplate, type MvEditorEvent, type MvEventImage, type QuickEventType, type QuickObtainKind } from '../composables/useEventEditor';
 import {
@@ -268,6 +270,9 @@ import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils
 import { loadImageElement } from '../utils/imageLoading.ts';
 import { projectMapTreeMove } from '../utils/mapTreeDragPreview';
 import { filterMapPreviewOverrides, removeMapPreviewOverrides } from '../utils/mapPreviewOverrides';
+import { LatestAsyncCoordinator, type LatestAsyncToken } from '../utils/latestAsyncCoordinator';
+import { previewFrameMatchesIntent, previewSessionMatchesIntent, type EditorPreviewIntent } from '../utils/editorPreviewIntent';
+import { mapPreviewDiagnosticFromError, mapPreviewDiagnosticFromSession, serializeMapPreviewDiagnostic, type MapPreviewDiagnostic } from '../utils/mapPreviewDiagnostics';
 import { useI18n, type MessageKey } from '../i18n';
 import type { RpgMakerEngine } from '@contract/types';
 
@@ -314,6 +319,7 @@ const mapTree = ref<TreeNode[]>([]);
 const expandedMapIds = ref<number[]>([]);
 const tilesets = ref<TilesetSummary[]>([]);
 const selectedMapId = ref<number | null>(null);
+const requestedMapId = ref<number | null>(null);
 const mode = ref<EditorMode>('map');
 const tool = ref<MapTool>('pencil');
 const paintMode = ref<MapPaintMode>('tile');
@@ -361,6 +367,7 @@ const currentMapRevision = ref('');
 const previewSession = ref<MapPreviewSession | null>(null);
 const previewStatus = ref<MapPreviewStatus>('stopped');
 const previewError = ref('');
+const previewDiagnostic = shallowRef<MapPreviewDiagnostic | null>(null);
 const previewFrameUrl = ref('');
 const previewFrameRevision = ref('');
 const previewFrameOperationId = ref(0);
@@ -387,10 +394,12 @@ let unregisterPreviewStatus: (() => void) | null = null;
 let unregisterPreviewFrame: (() => void) | null = null;
 let eventSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let eventSearchSequence = 0;
-let clickedMapLoadingId: number | null = null;
-let previewStarting = false;
 const characterImages = new Map<string, HTMLImageElement | null>();
 const characterAssetUrls = new Map<string, string>();
+type MapLoadResult = 'committed' | 'failed' | 'superseded';
+interface MapLoadIntent { project: string; mapId: number }
+const mapLoadCoordinator = new LatestAsyncCoordinator<MapLoadIntent>();
+const previewIntentCoordinator = new LatestAsyncCoordinator<EditorPreviewIntent>();
 
 function getPlacementCellValidity(x: number, y: number) {
   return validatePlacementCell(currentMap, tilesetFlags.value, x, y, language.value);
@@ -446,7 +455,7 @@ const canvasEditor = useMapCanvasEditor({
     currentMapRevision.value = result.effectiveMapRevision;
     return result;
   },
-  reloadMap: reloadCurrentMap,
+  reloadMap: async () => { await reloadCurrentMap(); },
   selectEvent,
   moveEvent,
   openEvent: openEventEditor,
@@ -458,7 +467,7 @@ const canvasEditor = useMapCanvasEditor({
 const {
   canvasWidth, canvasHeight, zoom, cursorText, tilesetReady, tileTab, tileTabs,
   brushInfo, brushSet, undoLen, redoLen, isPanning,
-  setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectTileMode, selectShadowMode, canvasCell, eventAtCell,
+  setMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectTileMode, selectShadowMode, canvasCell, eventAtCell,
   onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
   onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel, onCanvasScroll,
   renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell,
@@ -481,6 +490,8 @@ const previewSwitchValues = computed(() => stateRecordMap(previewSession.value?.
 const previewVariableValues = computed(() => stateRecordMap(previewSession.value?.variableValues));
 const visiblePreviewFrameUrl = computed(() => (
   previewFrameUrl.value
+  && requestedMapId.value == null
+  && mode.value === 'preview'
   && previewFrameOperationId.value === previewSession.value?.operationId
   && previewFrameMapId.value === selectedMapId.value
   && previewFrameMapId.value === previewSession.value?.mapId
@@ -500,10 +511,20 @@ function stateRecordMap<T extends boolean | number>(record?: Record<string, T>):
 }
 
 function onPreviewStatus(session: MapPreviewSession) {
-  if (previewSession.value && previewSession.value.sessionId !== session.sessionId && mode.value !== 'preview') return;
+  const intent = previewIntentCoordinator.current()?.value;
+  if (!intent?.active) {
+    if (previewSession.value && previewSession.value.sessionId !== session.sessionId) return;
+    previewSession.value = session;
+    previewStatus.value = session.status;
+    previewError.value = '';
+    previewDiagnostic.value = null;
+    return;
+  }
+  if (!previewSessionMatchesIntent(session, intent)) return;
   previewSession.value = session;
   previewStatus.value = session.status;
   previewError.value = session.status === 'failed' ? previewFailureMessage(session) : '';
+  previewDiagnostic.value = session.status === 'failed' ? mapPreviewDiagnosticFromSession(session) : null;
   if (session.status === 'running') previewRequestedMapId.value = session.mapId;
 }
 
@@ -513,11 +534,15 @@ function previewFailureMessage(session: MapPreviewSession): string {
   }
   if (session.failureCode === 'map-render-failed') return t('editor.preview.mapRenderFailed');
   if (session.failureCode === 'runtime-resume-failed') return t('editor.preview.runtimeResumeFailed');
-  return session.error || t('editor.preview.unknownError');
+  return t('editor.preview.unknownError');
 }
 
 function onPreviewFrame(frame: MapPreviewFrame) {
-  if (mode.value !== 'preview' || !previewSession.value || frame.sessionId !== previewSession.value.sessionId) return;
+  const intent = previewIntentCoordinator.current()?.value;
+  if (!intent || !previewFrameMatchesIntent(frame, intent) || !previewSession.value || frame.sessionId !== previewSession.value.sessionId) {
+    void mapPreview.ackFrame(frame.sequence).catch(() => undefined);
+    return;
+  }
   if (frame.operationId !== previewSession.value.operationId || frame.mapId !== previewSession.value.mapId || frame.mapId !== selectedMapId.value) {
     void mapPreview.ackFrame(frame.sequence).catch(() => undefined);
     return;
@@ -560,14 +585,18 @@ async function ackPreviewFrame(sequence: number) {
     previewTilePreviousFrameUrl.value = '';
   } else return;
   try { await mapPreview.ackFrame(sequence); } catch (error) {
-    if (mode.value === 'preview') previewError.value = (error as Error).message;
+    const intent = previewIntentCoordinator.current()?.value;
+    if (intent?.active) setDirectPreviewFailure(error, 'frame-ack-ipc', intent);
   }
 }
 
 function updatePreviewView(view: MapPreviewViewRequest) {
-  if (previewStatus.value !== 'running') return;
+  const intent = previewIntentCoordinator.current()?.value;
+  if (!intent?.active || previewStatus.value !== 'running') return;
   void mapPreview.setView(view).catch((error) => {
-    if (mode.value === 'preview' && previewStatus.value === 'running') previewError.value = (error as Error).message;
+    if (previewIntentCoordinator.current()?.value === intent && previewStatus.value === 'running') {
+      setDirectPreviewFailure(error, 'view-update-ipc', intent);
+    }
   });
 }
 
@@ -607,43 +636,86 @@ function syncPreviewOverridesFromWorkspace() {
   previewVariableOverrides.value = stateRecordMap(overrides.variables);
 }
 
-async function ensurePreviewForSelectedMap() {
-  const mapId = selectedMapId.value;
-  if (mode.value !== 'preview' || mapId == null || previewStarting) return;
+function currentPreviewIntent(): EditorPreviewIntent {
+  const project = projectStore.currentProject;
+  if (mode.value !== 'preview' || !project || requestedMapId.value != null || selectedMapId.value == null || !currentMapRevision.value) {
+    return { active: false, project };
+  }
+  return { active: true, project, mapId: selectedMapId.value, mapRevision: currentMapRevision.value };
+}
+
+function schedulePreviewIntentReconcile(): LatestAsyncToken<EditorPreviewIntent> {
+  const token = previewIntentCoordinator.begin(currentPreviewIntent());
+  console.debug('[editor-preview-intent]', token.value.active
+    ? { sequence: token.sequence, active: true, mapId: token.value.mapId }
+    : { sequence: token.sequence, active: false });
+  if (!token.value.active) {
+    previewError.value = '';
+    previewDiagnostic.value = null;
+  }
+  void previewIntentCoordinator.runExclusive(token, async ({ isCurrent }) => {
+    if (!token.value.active) {
+      await suspendPreviewSession();
+      return;
+    }
+    await ensurePreviewForIntent(token, isCurrent);
+  });
+  return token;
+}
+
+async function ensurePreviewForIntent(
+  token: LatestAsyncToken<EditorPreviewIntent>,
+  isCurrent: () => boolean,
+) {
+  const intent = token.value;
+  if (!intent.active || !isCurrent()) return;
+  const mapId = intent.mapId;
   const current = previewSession.value;
   if (current && !['stopped', 'failed'].includes(current.status)) {
     previewRequestedMapId.value = mapId;
     try {
       syncPreviewOverridesFromWorkspace();
       const result = await mapPreview.resume(
-        projectStore.currentProject,
+        intent.project,
         mapId,
         overridesForCurrentMap(),
-        currentMapRevision.value,
+        intent.mapRevision,
       );
-      if (result.session) onPreviewStatus(result.session);
+      if (isCurrent() && result.session) onPreviewStatus(result.session);
     } catch (error) {
-      previewError.value = (error as Error).message;
+      if (!isCurrent()) return;
+      console.warn('[editor-preview-intent] failed', { sequence: token.sequence, mapId, stage: 'resume' });
+      setDirectPreviewFailure(error, 'resume-ipc', intent);
       previewStatus.value = 'failed';
     }
     return;
   }
-  previewStarting = true;
   previewError.value = '';
+  previewDiagnostic.value = null;
   previewStatus.value = 'preparing';
   previewRequestedMapId.value = mapId;
   revokePreviewFrame();
   try {
     syncPreviewOverridesFromWorkspace();
-    const result = await mapPreview.start(projectStore.currentProject, mapId, overridesForCurrentMap());
+    const result = await mapPreview.start(intent.project, mapId, overridesForCurrentMap());
+    if (!isCurrent()) return;
     if (result.runtimeSelectionRequired) {
       const selection = await playtest.selectRuntime(result.runtimeSelectionRequired);
-      if (!selection.configured || selection.canceled || mode.value !== 'preview') {
+      if (!isCurrent()) return;
+      if (!selection.configured || selection.canceled) {
         previewStatus.value = 'failed';
         previewError.value = t('editor.preview.runtimeRequired');
+        previewDiagnostic.value = mapPreviewDiagnosticFromError({
+          error: new Error(previewError.value),
+          stage: 'runtime-selection',
+          engine: currentEngine.value,
+          mapId,
+          project: intent.project,
+        });
         return;
       }
-      const retried = await mapPreview.start(projectStore.currentProject, mapId, overridesForCurrentMap());
+      const retried = await mapPreview.start(intent.project, mapId, overridesForCurrentMap());
+      if (!isCurrent()) return;
       if (retried.session) onPreviewStatus(retried.session);
       else if (retried.error) throw new Error(retried.error);
       return;
@@ -651,10 +723,10 @@ async function ensurePreviewForSelectedMap() {
     if (result.session) onPreviewStatus(result.session);
     else if (result.error) throw new Error(result.error);
   } catch (error) {
+    if (!isCurrent()) return;
+    console.warn('[editor-preview-intent] failed', { sequence: token.sequence, mapId, stage: 'start' });
     previewStatus.value = 'failed';
-    previewError.value = (error as Error).message;
-  } finally {
-    previewStarting = false;
+    setDirectPreviewFailure(error, 'start-ipc', intent);
   }
 }
 
@@ -667,6 +739,7 @@ async function stopPreviewSession() {
   previewSession.value = null;
   previewStatus.value = 'stopped';
   previewError.value = '';
+  previewDiagnostic.value = null;
   if (!session || ['stopped', 'failed'].includes(session.status)) return;
   try {
     await mapPreview.stop();
@@ -687,8 +760,36 @@ async function suspendPreviewSession() {
 }
 
 async function restartPreview() {
-  await stopPreviewSession();
-  if (mode.value === 'preview') await ensurePreviewForSelectedMap();
+  const token = previewIntentCoordinator.begin(currentPreviewIntent());
+  void previewIntentCoordinator.runExclusive(token, async ({ isCurrent }) => {
+    await stopPreviewSession();
+    if (!isCurrent() || !token.value.active) return;
+    await ensurePreviewForIntent(token, isCurrent);
+  });
+}
+
+function setDirectPreviewFailure(error: unknown, stage: string, intent: Extract<EditorPreviewIntent, { active: true }>) {
+  const diagnostic = mapPreviewDiagnosticFromError({
+    error,
+    stage,
+    engine: currentEngine.value,
+    mapId: intent.mapId,
+    operationId: previewSession.value?.operationId,
+    project: intent.project,
+  });
+  previewDiagnostic.value = diagnostic;
+  previewError.value = t('editor.preview.unknownError');
+}
+
+async function copyPreviewDiagnostic() {
+  const diagnostic = previewDiagnostic.value;
+  if (!diagnostic) return;
+  try {
+    await clipboardApi.writeText(serializeMapPreviewDiagnostic(diagnostic));
+    ElMessage.success(t('editor.preview.copyDiagnosticSuccess'));
+  } catch (error) {
+    ElMessage.error(t('editor.preview.copyDiagnosticFailed', { message: (error as Error).message }));
+  }
 }
 
 async function setPreviewSwitch(id: number, value: boolean) {
@@ -770,6 +871,8 @@ onMounted(async () => {
   window.addEventListener(EDITOR_COMMAND_EVENT, onEditorCommand as EventListener);
 });
 onUnmounted(() => {
+  previewIntentCoordinator.invalidate({ active: false, project: projectStore.currentProject });
+  mapLoadCoordinator.invalidate({ project: projectStore.currentProject, mapId: -1 });
   unregisterPreviewStatus?.();
   unregisterPreviewStatus = null;
   unregisterPreviewFrame?.();
@@ -788,11 +891,7 @@ onUnmounted(() => {
 });
 watch(mode, (value, previous) => {
   persistWorkspaceSelection();
-  if (value === 'preview') void ensurePreviewForSelectedMap();
-  else if (previous === 'preview') void suspendPreviewSession();
-});
-watch(selectedMapId, (mapId) => {
-  if (mode.value === 'preview' && mapId != null) void ensurePreviewForSelectedMap();
+  if (value === 'preview' || previous === 'preview') schedulePreviewIntentReconcile();
 });
 watch(mode, (value) => {
   hoveredEventId.value = null;
@@ -885,6 +984,9 @@ watch(statusText, (v) => { workbenchUi.sbStatusText = v; });
 watch(statusKind, (v) => { workbenchUi.sbStatusKind = v; });
 
 watch(() => projectStore.currentProject, async () => {
+  mapLoadCoordinator.invalidate({ project: projectStore.currentProject, mapId: -1 });
+  requestedMapId.value = null;
+  previewIntentCoordinator.invalidate({ active: false, project: projectStore.currentProject });
   await stopPreviewSession();
   selectedMapId.value = null;
   mapTree.value = [];
@@ -938,13 +1040,7 @@ function findTreeNode(mapId: number): TreeNode | undefined {
   return visit(mapTree.value);
 }
 async function handleNodeClick(node: TreeNode) {
-  if (clickedMapLoadingId === node.id) return;
-  clickedMapLoadingId = node.id;
-  try {
-    await loadMap(node.id);
-  } finally {
-    if (clickedMapLoadingId === node.id) clickedMapLoadingId = null;
-  }
+  await loadMap(node.id);
 }
 async function moveMapFromTree(source: TreeNode, target: TreeNode, position: 'before' | 'after' | 'inside') {
   if (busy.value) return;
@@ -974,7 +1070,7 @@ async function moveMapFromTree(source: TreeNode, target: TreeNode, position: 'be
 
 async function openEventSearchHit(hit: EditorEventSearchHit) {
   mode.value = 'event';
-  if (selectedMapId.value !== hit.mapId && !(await loadMap(hit.mapId, { quiet: true }))) return;
+  if (selectedMapId.value !== hit.mapId && await loadMap(hit.mapId, { quiet: true }) !== 'committed') return;
   eventSearchQuery.value = '';
   eventSearchScope.value = 'current';
   selectedEventId.value = hit.eventId;
@@ -989,7 +1085,11 @@ async function openPreferredMap(savedMapId?: number) {
     ...(savedMapId ? [savedMapId] : []),
     ...flattenTree(mapTree.value).map((node) => node.id),
   ])];
-  for (const mapId of candidates) if (await loadMap(mapId, { quiet: true })) return true;
+  for (const mapId of candidates) {
+    const result = await loadMap(mapId, { quiet: true });
+    if (result === 'committed') return true;
+    if (result === 'superseded') return false;
+  }
   if (mapTree.value.length) ElMessage.error(t('editor.error.noLoadableMaps'));
   return false;
 }
@@ -1006,7 +1106,7 @@ async function applyRouteEventFocus() {
   if (!Number.isInteger(routeEventId) || routeEventId <= 0) return;
   if (selectedMapId.value !== routeMapId) {
     const loaded = await loadMap(routeMapId, { quiet: true });
-    if (!loaded) return;
+    if (loaded !== 'committed') return;
   }
   const eventExists = currentMap?.events?.some((item) => item?.id === routeEventId);
   if (!eventExists) {
@@ -1208,75 +1308,86 @@ async function loadEditorCatalog() {
     ElMessage.warning(t('editor.assets.loadFailed', { message: (error as Error).message }));
   }
 }
-async function loadMap(mapId: number, options: { quiet?: boolean } = {}) {
+async function loadMap(
+  mapId: number,
+  options: { quiet?: boolean; resetHistory?: boolean; preserveEventSelection?: boolean } = {},
+): Promise<MapLoadResult> {
+  const project = projectStore.currentProject;
+  const token = mapLoadCoordinator.begin({ project, mapId });
+  console.debug('[editor-map-load] requested', { sequence: token.sequence, mapId });
+  requestedMapId.value = mapId;
+  if (mode.value === 'preview') schedulePreviewIntentReconcile();
+  busy.value = true;
+  setStatus(t('editor.map.loading'), 'busy');
   const treeNode = findTreeNode(mapId);
   if (treeNode && !treeNode.mapFileExists) {
+    if (!mapLoadCoordinator.isCurrent(token)) return 'superseded';
     const message = t('editor.error.mapFileMissing', { mapId: String(mapId).padStart(3, '0') });
     setStatus(message, 'error');
     if (!options.quiet) ElMessage.warning(message);
-    return false;
+    requestedMapId.value = null;
+    busy.value = false;
+    if (mode.value === 'preview') schedulePreviewIntentReconcile();
+    return 'failed';
   }
-  busy.value = true;
-  setStatus(t('editor.map.loading'), 'busy');
   try {
-    const payload = await mapsApi.get(mapId, projectStore.currentProject);
+    const payload = await mapsApi.get(mapId, project);
     const nextMap = payloadToMap(payload.map);
     const names = payload.tileset?.tilesetNames || [];
-    const [images, parallaxImage] = await Promise.all([
+    const [images, parallaxImage, eventCharacters] = await Promise.all([
       preloadTileset(payload.tileset?.imageUrls || []),
       preloadOptionalImage(payload.parallaxImageUrl),
+      prepareEventCharacters(nextMap),
     ]);
-    selectedMapId.value = mapId;
-    currentTileSize.value = payload.tileSize;
-    currentEngine.value = payload.engine;
-    currentTilesetMode.value = payload.tileset?.mode ?? null;
-    currentMap = nextMap;
-    currentMapRevision.value = payload.effectiveMapRevision;
-    syncCurrentEvents(nextMap);
-    selectedEventId.value = null;
-    systemData.value = payload.system || null;
-    previewStateCatalog.value = payload.previewState || { switches: [], variables: [] };
-    syncPreviewOverridesFromWorkspace();
-    currentMapName.value = String(payload.info.name || '');
-    tilesetFlags.value = Array.isArray(payload.tileset?.flags) ? payload.tileset.flags : [];
-    setPropertiesFromMap(currentMapName.value, nextMap, Number(payload.info.parentId || 0));
-    stagingDirty.value = isStagingDirty(payload.staging);
-    currentParallaxImage.value = parallaxImage;
-    await setMap(nextMap, names, images, true);
-    currentTilesetImages.value = images;
-    await preloadEventCharacters(nextMap);
-    renderMap();
-    await refreshStagingStatus();
-    persistWorkspaceSelection();
-    setStatus(t('editor.map.loaded'), 'saved');
-    for (const warning of payload.resourceWarnings || []) ElMessage.warning(warning);
-    return true;
+    if (!mapLoadCoordinator.isCurrent(token)) return 'superseded';
+    const outcome = await mapLoadCoordinator.runExclusive(token, async ({ isCurrent }) => {
+      if (!isCurrent()) return;
+      selectedMapId.value = mapId;
+      currentTileSize.value = payload.tileSize;
+      currentEngine.value = payload.engine;
+      currentTilesetMode.value = payload.tileset?.mode ?? null;
+      currentMap = nextMap;
+      currentMapRevision.value = payload.effectiveMapRevision;
+      syncCurrentEvents(nextMap);
+      if (!options.preserveEventSelection) selectedEventId.value = null;
+      systemData.value = payload.system || null;
+      previewStateCatalog.value = payload.previewState || { switches: [], variables: [] };
+      syncPreviewOverridesFromWorkspace();
+      currentMapName.value = String(payload.info.name || '');
+      tilesetFlags.value = Array.isArray(payload.tileset?.flags) ? payload.tileset.flags : [];
+      setPropertiesFromMap(currentMapName.value, nextMap, Number(payload.info.parentId || 0));
+      stagingDirty.value = isStagingDirty(payload.staging);
+      currentParallaxImage.value = parallaxImage;
+      for (const [name, image] of eventCharacters) characterImages.set(name, image);
+      await setMap(nextMap, names, images, options.resetHistory !== false);
+      if (!isCurrent()) return;
+      currentTilesetImages.value = images;
+      renderMap();
+      await refreshStagingStatus();
+      if (!isCurrent()) return;
+      requestedMapId.value = null;
+      persistWorkspaceSelection();
+      setStatus(t('editor.map.loaded'), 'saved');
+      console.debug('[editor-map-load] committed', { sequence: token.sequence, mapId });
+      for (const warning of payload.resourceWarnings || []) ElMessage.warning(warning);
+      schedulePreviewIntentReconcile();
+    });
+    return outcome === 'completed' ? 'committed' : 'superseded';
   } catch (error) {
+    if (!mapLoadCoordinator.isCurrent(token)) return 'superseded';
+    console.warn('[editor-map-load] failed', { sequence: token.sequence, mapId, stage: 'prepare-or-commit' });
     setStatus(t('editor.map.loadFailedStatus', { message: (error as Error).message }), 'error');
     if (!options.quiet) ElMessage.error(t('editor.map.loadFailed', { message: (error as Error).message }));
-    return false;
-  } finally { busy.value = false; }
+    requestedMapId.value = null;
+    if (mode.value === 'preview') schedulePreviewIntentReconcile();
+    return 'failed';
+  } finally {
+    if (mapLoadCoordinator.isCurrent(token)) busy.value = false;
+  }
 }
-async function reloadCurrentMap() {
-  if (selectedMapId.value == null) return;
-  const payload = await mapsApi.get(selectedMapId.value, projectStore.currentProject);
-  const parallaxImage = await preloadOptionalImage(payload.parallaxImageUrl);
-  currentMap = payloadToMap(payload.map);
-  currentMapRevision.value = payload.effectiveMapRevision;
-  syncCurrentEvents(currentMap);
-  currentTileSize.value = payload.tileSize;
-  currentEngine.value = payload.engine;
-  currentTilesetMode.value = payload.tileset?.mode ?? null;
-  systemData.value = payload.system || null;
-  previewStateCatalog.value = payload.previewState || { switches: [], variables: [] };
-  syncPreviewOverridesFromWorkspace();
-  stagingDirty.value = isStagingDirty(payload.staging);
-  currentParallaxImage.value = parallaxImage;
-  replaceMap(currentMap);
-  await preloadEventCharacters(currentMap);
-  renderMap();
-  await refreshStagingStatus();
-  for (const warning of payload.resourceWarnings || []) ElMessage.warning(warning);
+async function reloadCurrentMap(): Promise<MapLoadResult> {
+  if (selectedMapId.value == null) return 'failed';
+  return loadMap(selectedMapId.value, { quiet: true, resetHistory: false, preserveEventSelection: true });
 }
 function payloadToMap(payload: { width: number; height: number; tilesetId: number; data: number[]; events: unknown[]; [key: string]: unknown }): EditableMap {
   return { ...payload, width: payload.width, height: payload.height, tilesetId: payload.tilesetId, data: payload.data, events: payload.events as (MvEvent | null)[] };
@@ -1298,21 +1409,16 @@ function syncCurrentEvents(map: MvMap | null) {
     .map((event) => ({ id: event.id, name: event.name || `EV${String(event.id).padStart(3, '0')}`, note: String(event.note || '').replace(/\s+/g, ' ').trim(), x: event.x, y: event.y }))
     .sort((left, right) => left.id - right.id);
 }
-async function preloadEventCharacters(map: MvMap) {
+async function prepareEventCharacters(map: MvMap): Promise<Array<[string, HTMLImageElement | null]>> {
   const names = new Set<string>();
   for (const event of map.events || []) for (const page of event?.pages || []) if (page.image?.characterName) names.add(page.image.characterName);
-  await Promise.all([...names].map(loadCharacterImage));
-}
-async function loadCharacterImage(name: string) {
-  if (!name || characterImages.has(name)) return characterImages.get(name) || null;
-  const url = characterAssetUrls.get(name);
-  if (!url) {
-    characterImages.set(name, null);
-    return null;
-  }
-  const image = await loadImage(await resolveAssetUrl(url));
-  characterImages.set(name, image);
-  return image;
+  return Promise.all([...names].map(async (name) => {
+    const cached = characterImages.get(name);
+    if (cached !== undefined) return [name, cached] as [string, HTMLImageElement | null];
+    const url = characterAssetUrls.get(name);
+    if (!url) return [name, null] as [string, HTMLImageElement | null];
+    return [name, await loadImage(await resolveAssetUrl(url))] as [string, HTMLImageElement | null];
+  }));
 }
 function isStagingDirty(value: unknown) {
   if (!value || typeof value !== 'object') return false;
@@ -1458,7 +1564,7 @@ function openCreateProperties(parentId: number) {
 function closePropertiesDialog() { propertiesDialogOpen.value = false; }
 async function openEditProperties(mapId = selectedMapId.value) {
   if (mapId == null) return;
-  if (selectedMapId.value !== mapId) await loadMap(mapId);
+  if (selectedMapId.value !== mapId && await loadMap(mapId) !== 'committed') return;
   if (currentMap) setPropertiesFromMap(currentMapName.value, currentMap, Number(findTreeNode(mapId)?.parentId || 0));
   propertiesDialogMode.value = 'edit';
   propertiesDialogOpen.value = true;
@@ -1507,7 +1613,7 @@ async function discardStaging() {
   busy.value = true;
   try {
     await mapsApi.discardProjectStaging(projectStore.currentProject);
-    if (selectedMapId.value != null && !await loadMap(selectedMapId.value, { quiet: true })) {
+    if (selectedMapId.value != null && await loadMap(selectedMapId.value, { quiet: true }) === 'failed') {
       clearCurrentMap();
       await loadTree();
       await openPreferredMap();
@@ -1534,7 +1640,7 @@ async function discardOneMap(mapId: number) {
   busy.value = true;
   try {
     await mapsApi.discardMapStaging(mapId, projectStore.currentProject);
-    if (selectedMapId.value === mapId && !await loadMap(mapId, { quiet: true })) {
+    if (selectedMapId.value === mapId && await loadMap(mapId, { quiet: true }) === 'failed') {
       clearCurrentMap();
       await loadTree();
       await openPreferredMap();
@@ -1671,7 +1777,7 @@ async function openEventEditorByUiControl(mapId: number, eventId: number): Promi
   if (!projectStore.currentProject) throw new Error(t('editor.error.noProject'));
   if (selectedMapId.value !== mapId) {
     const loaded = await loadMap(mapId, { quiet: true });
-    if (!loaded) throw new Error(t('editor.error.mapNotFound', { mapId }));
+    if (loaded !== 'committed') throw new Error(t('editor.error.mapNotFound', { mapId }));
   }
   await openEventEditorStrict(eventId);
   return getUiControlState();
@@ -1841,6 +1947,8 @@ function onEditorKeyDown(event: KeyboardEvent) {
 function isFormTarget(target: EventTarget | null) { return ['INPUT', 'TEXTAREA', 'SELECT'].includes((target as HTMLElement | null)?.tagName || ''); }
 function setStatus(text: string, kind: EditorStatusKind) { statusText.value = text; statusKind.value = kind; }
 function clearCurrentMap() {
+  mapLoadCoordinator.invalidate({ project: projectStore.currentProject, mapId: -1 });
+  requestedMapId.value = null;
   selectedMapId.value = null;
   currentMap = null;
   currentMapName.value = '';
@@ -1850,6 +1958,7 @@ function clearCurrentMap() {
   currentMapRevision.value = '';
   syncCurrentEvents(null);
   clearMap();
+  schedulePreviewIntentReconcile();
 }
 </script>
 

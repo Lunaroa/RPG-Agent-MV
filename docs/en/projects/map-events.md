@@ -8,6 +8,12 @@ Existing events can be inspected and edited through controlled flows. The Agent 
 
 For MZ, map mode exposes Auto plus Layers 1–4 and uses the project's 16, 24, 32, or 48 pixel tile size consistently for painting, hit tests, event coordinates, and thumbnails. Auto mode handles A1–A4 autotiles, lower/upper placement, and autoshadows; a manual layer changes only that layer. Right-click samples a tile or range, and Shift preserves the sampled autotile shape. MZ remains the official four tile layers plus shadow and region planes—no infinite or private map layers are added. The map tree can be reordered while parent cycles are rejected.
 
+## Runtime Map Preview Debugging
+
+With the editor focused, `F12` toggles the RPG Agent MV editor developer tools in a detached window. Once a map preview is running or retained as a suspended warm instance, `Shift + F12` toggles that MV/MZ runtime's own detached developer tools. The shortcut never starts a preview runtime when no instance exists.
+
+Before engine core and project plugins execute, the isolated map preview exposes the stable read-only marker `window.__rpg_agent_debugger__` with the value `true`. Plugins may use it to skip UI or behavior intended only for normal gameplay. The property cannot be overwritten, deleted, or redefined, and is injected only into RPG Agent's isolated map preview. It is absent from top-bar playtest, normal games, and the source project.
+
 Event mode lists the current map's events and searches IDs, names, notes, and command text across maps. MZ event tools include a shared coordinate picker, pure movement-route simulation, project balloon preview, command 109 Skip blocks, and the Acquire quick event. Route preview never executes project scripts and stops at random, script, or unknown plugin steps.
 
 New events are handled as pending content. The Agent can draft the event, register it, and show a preview, but placement stays under user control. The user chooses the target map location on the map editor canvas, then the system writes the placed event and keeps it reviewable.

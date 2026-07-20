@@ -22,6 +22,7 @@ import {
   DEFAULT_AGENT_EXECUTION_ENGINE,
   type InteractivePlaytestResult,
   type InteractivePlaytestRun,
+  type MapPreviewDevToolsResult,
   type MapPreviewFrame,
   type MapPreviewResult,
   type MapPreviewSession,
@@ -596,6 +597,16 @@ export async function shutdownInteractivePlaytest(): Promise<InteractivePlaytest
 export async function shutdownMapPreview(): Promise<MapPreviewResult> {
   if (!mapPreviewService) return {};
   return await mapPreviewService.shutdown() as MapPreviewResult;
+}
+
+export async function toggleMapPreviewDevTools(): Promise<MapPreviewDevToolsResult> {
+  if (!mapPreviewService) {
+    return {
+      code: 'preview-runtime-unavailable',
+      error: 'Start a map preview before opening its developer tools.',
+    };
+  }
+  return await mapPreviewService.toggleDevTools() as MapPreviewDevToolsResult;
 }
 
 // 类型定义

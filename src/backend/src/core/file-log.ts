@@ -148,6 +148,62 @@ export function getLogSessionId(): string {
   return _sessionId;
 }
 
+export interface ToolDiagnosticRecord {
+  diagnosticId: string;
+  tool: string;
+  action: string;
+  phase: "started" | "completed" | "failed";
+  at: string;
+  durationMs?: number;
+  projectId?: string | null;
+  bindingVersion?: number;
+  stage?: string;
+  warning?: string;
+  errorCode?: string;
+  errorType?: string;
+  error?: string;
+  stack?: string;
+}
+
+/** Append a structured per-tool diagnostic beside the desktop turn artifacts. */
+export function appendToolDiagnostic(record: ToolDiagnosticRecord): void {
+  const sessionLogDir = String(process.env.AIWF_SESSION_LOG_DIR || "").trim();
+  if (!sessionLogDir) {
+    toolLogger("diagnostic")[record.phase === "failed" ? "error" : "warn"](JSON.stringify(redactDiagnostic(record)));
+    return;
+  }
+  try {
+    fs.mkdirSync(sessionLogDir, { recursive: true });
+    fs.appendFileSync(
+      path.join(sessionLogDir, "tool-internal.jsonl"),
+      `${JSON.stringify(redactDiagnostic(record))}\n`,
+      "utf8",
+    );
+  } catch {
+    // Diagnostics must never change tool behavior.
+  }
+}
+
+function redactDiagnostic<T>(value: T): T {
+  const walk = (input: unknown, key = ""): unknown => {
+    if (/token|secret|password|credential|api.?key|authorization/i.test(key)) return "[REDACTED]";
+    if (Array.isArray(input)) return input.map((item) => walk(item));
+    if (input && typeof input === "object") {
+      return Object.fromEntries(Object.entries(input as Record<string, unknown>).map(([childKey, child]) => [
+        childKey,
+        walk(child, childKey),
+      ]));
+    }
+    if (typeof input === "string") {
+      return input
+        .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+/gi, "$1[REDACTED]")
+        .replace(/((?:api[_-]?key|token|secret|password|credential)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED]");
+    }
+    return input;
+  };
+  return walk(value) as T;
+}
+
 // ── Logger ──
 
 export interface Logger {

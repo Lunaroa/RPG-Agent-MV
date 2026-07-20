@@ -438,10 +438,10 @@ test("subagent child todos do not become parent task board updates", () => {
   }, current);
 
   assert.equal(parentTodo.some((event) => event.type === "todo_updated"), true);
-  assert.equal(parentTodo.some((event) => event.tool === "TaskUpdate"), true);
+  assert.equal(parentTodo.some((event) => event.tool === "TaskUpdate"), false);
 });
 
-test("parent todo updates without ids still emit task update events", () => {
+test("parent todo updates remain one independent todo event", () => {
   const current = state();
   current.rootSessionId = "ses_parent";
 
@@ -457,10 +457,8 @@ test("parent todo updates without ids still emit task update events", () => {
   }, current);
 
   assert.equal(events[0]?.type, "todo_updated");
-  assert.deepEqual(events.filter((event) => event.tool === "TaskUpdate").map((event) => event.call_id), [
-    "todo:1",
-    "todo:2",
-  ]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.todos?.length, 2);
 });
 
 test("opencode question waits for complete input before emitting ASK", () => {

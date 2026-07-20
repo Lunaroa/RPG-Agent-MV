@@ -29,6 +29,22 @@ export interface IsolatedProjectPreparation {
   savesExcluded: boolean;
 }
 
+export interface IsolatedProjectSourceSnapshotEntry {
+  relativePath: string;
+  size: number;
+  mtimeMs: number;
+  hash: string;
+}
+
+export interface IsolatedMapPreviewPreparation extends IsolatedProjectPreparation {
+  sourceSnapshot: IsolatedProjectSourceSnapshotEntry[];
+}
+
+export interface IsolatedMapPreviewPreparationOptions {
+  excludeRelativePaths?: readonly string[];
+  onStage?(stage: string): void;
+}
+
 export interface IsolatedProjectStateEvidence {
   sourceUnchanged: boolean;
   savesUnchanged: boolean;
@@ -73,6 +89,63 @@ export function prepareIsolatedStagedProject(
       sourceProject,
       temporaryProject,
       sourceFingerprint,
+      saveFingerprint,
+      staging,
+      savesExcluded,
+    };
+  } catch (error) {
+    try { defaultRemoveTemporaryProject(temporaryProject); } catch { /* Report the preparation failure first. */ }
+    throw error;
+  }
+}
+
+export function prepareIsolatedMapPreviewProject(
+  workflowRootInput: string,
+  projectInput: string,
+  temporaryProjectInput: string,
+  options: IsolatedMapPreviewPreparationOptions = {},
+): IsolatedMapPreviewPreparation {
+  options.onStage?.('resolve-source-project');
+  const workflowRoot = fs.realpathSync.native(path.resolve(workflowRootInput));
+  let sourceProject: string;
+  try {
+    sourceProject = fs.realpathSync.native(path.resolve(projectInput));
+  } catch {
+    throw new IsolatedProjectPreparationError(`RMMV project directory does not exist: ${path.resolve(projectInput)}`);
+  }
+  if (!isDirectory(sourceProject)) {
+    throw new IsolatedProjectPreparationError(`RMMV project directory does not exist: ${sourceProject}`);
+  }
+  const temporaryProject = path.resolve(temporaryProjectInput);
+  options.onStage?.('snapshot-staging');
+  const staging = snapshotProjectStaging(workflowRoot, sourceProject);
+  options.onStage?.('fingerprint-save-state');
+  const saveFingerprint = fingerprintSaveState(sourceProject);
+  try {
+    options.onStage?.('copy-source-project');
+    const copied = copyProjectAndCaptureSnapshot(
+      sourceProject,
+      temporaryProject,
+      options.excludeRelativePaths || [],
+    );
+    options.onStage?.('overlay-staged-files');
+    overlayStagedProjectFiles(workflowRoot, sourceProject, temporaryProject, staging.files);
+    options.onStage?.('validate-staging-state');
+    if (snapshotProjectStaging(workflowRoot, sourceProject).digest !== staging.digest) {
+      throw new IsolatedProjectPreparationError('Project staging changed while preparing the isolated preview.');
+    }
+    options.onStage?.('validate-save-state');
+    if (fingerprintSaveState(sourceProject) !== saveFingerprint) {
+      throw new IsolatedProjectPreparationError('Project save data changed while preparing the isolated preview.');
+    }
+    options.onStage?.('validate-isolated-output');
+    const savesExcluded = candidateSavePaths(temporaryProject).every((candidate) => !fs.existsSync(candidate));
+    if (!savesExcluded) throw new IsolatedProjectPreparationError('Temporary project copy still contains a save directory.');
+    return {
+      sourceProject,
+      temporaryProject,
+      sourceFingerprint: copied.sourceFingerprint,
+      sourceSnapshot: copied.sourceSnapshot,
       saveFingerprint,
       staging,
       savesExcluded,
@@ -158,13 +231,22 @@ function overlayStagedProjectFiles(
     }
     const draft = getProjectFileForRead(workflowRoot, sourceProject, entry.relativePath);
     if (!draft || !isFile(draft)) throw new IsolatedProjectPreparationError(`Staged draft is missing: ${entry.relativePath}`);
-    if (!entry.draftHash || sha256(fs.readFileSync(draft)) !== entry.draftHash) {
+    const before = fs.lstatSync(draft);
+    const body = fs.readFileSync(draft);
+    const after = fs.lstatSync(draft);
+    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs
+      || !entry.draftHash || sha256(body) !== entry.draftHash) {
       throw new IsolatedProjectPreparationError(`Staged draft hash changed while preparing isolated project: ${entry.relativePath}`);
     }
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(draft, target);
-    if (sha256(fs.readFileSync(target)) !== entry.draftHash) {
-      throw new IsolatedProjectPreparationError(`Staged draft changed while copying isolated input: ${entry.relativePath}`);
+    const temporary = `${target}.rpg-agent-${crypto.randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(temporary, body, { flag: 'wx' });
+      fs.chmodSync(temporary, after.mode);
+      fs.utimesSync(temporary, after.atime, after.mtime);
+      fs.renameSync(temporary, target);
+    } finally {
+      if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
     }
   }
 }
@@ -194,6 +276,128 @@ function copyProjectExcludingSaves(
         && !lower.startsWith('www/save/');
     },
   });
+}
+
+interface SourceTreeMetadataEntry {
+  type: 'directory' | 'file' | 'link';
+  size: number;
+  mtimeMs: number;
+  linkTarget?: string;
+}
+
+function copyProjectAndCaptureSnapshot(
+  sourceProject: string,
+  temporaryProject: string,
+  excludedRelativePaths: readonly string[],
+): { sourceFingerprint: string; sourceSnapshot: IsolatedProjectSourceSnapshotEntry[] } {
+  const source = fs.realpathSync.native(path.resolve(sourceProject));
+  const exclusions = excludedRelativePaths.map((relative) => normalizeRelative(relative).toLowerCase());
+  const excluded = (relative: string) => {
+    const lower = normalizeRelative(relative).toLowerCase();
+    return exclusions.some((candidate) => lower === candidate || lower.startsWith(`${candidate}/`))
+      || lower === '.git'
+      || lower.startsWith('.git/')
+      || lower === 'save'
+      || lower.startsWith('save/')
+      || lower === 'www/save'
+      || lower.startsWith('www/save/');
+  };
+  fs.rmSync(temporaryProject, { recursive: true, force: true });
+  fs.mkdirSync(temporaryProject, { recursive: true });
+  const metadata = captureSourceTreeMetadata(source, excluded);
+  const sourceHash = crypto.createHash('sha256');
+  const sourceSnapshot: IsolatedProjectSourceSnapshotEntry[] = [];
+  const directoryTimes: Array<{ target: string; atime: Date; mtime: Date }> = [];
+  for (const [relative, entry] of metadata) {
+    const sourcePath = path.join(source, ...relative.split('/'));
+    const targetPath = path.join(temporaryProject, ...relative.split('/'));
+    if (entry.type === 'directory') {
+      fs.mkdirSync(targetPath, { recursive: true });
+      const stat = fs.lstatSync(sourcePath);
+      directoryTimes.push({ target: targetPath, atime: stat.atime, mtime: stat.mtime });
+      continue;
+    }
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    if (entry.type === 'link') {
+      const linkTarget = fs.readlinkSync(sourcePath);
+      if (linkTarget !== entry.linkTarget) {
+        throw new IsolatedProjectPreparationError(`Source link changed while preparing isolated preview: ${relative}`);
+      }
+      fs.symlinkSync(linkTarget, targetPath);
+      const body = Buffer.from(linkTarget, 'utf8');
+      sourceHash.update(`link:${relative}:${linkTarget}\n`);
+      sourceSnapshot.push({ relativePath: relative, size: entry.size, mtimeMs: entry.mtimeMs, hash: sha256(body) });
+      continue;
+    }
+    const before = fs.lstatSync(sourcePath);
+    const body = fs.readFileSync(sourcePath);
+    const after = fs.lstatSync(sourcePath);
+    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs
+      || before.size !== entry.size || before.mtimeMs !== entry.mtimeMs) {
+      throw new IsolatedProjectPreparationError(`Source file changed while preparing isolated preview: ${relative}`);
+    }
+    fs.writeFileSync(targetPath, body);
+    fs.chmodSync(targetPath, after.mode);
+    fs.utimesSync(targetPath, after.atime, after.mtime);
+    const hash = sha256(body);
+    sourceHash.update(`file:${relative}:${after.size}:`);
+    sourceHash.update(body);
+    sourceHash.update('\n');
+    sourceSnapshot.push({ relativePath: relative, size: after.size, mtimeMs: after.mtimeMs, hash });
+  }
+  for (const directory of directoryTimes.reverse()) {
+    fs.utimesSync(directory.target, directory.atime, directory.mtime);
+  }
+  const validated = captureSourceTreeMetadata(source, excluded);
+  if (!sameSourceTreeMetadata(metadata, validated)) {
+    throw new IsolatedProjectPreparationError('Project files changed while preparing the isolated preview.');
+  }
+  return { sourceFingerprint: sourceHash.digest('hex'), sourceSnapshot };
+}
+
+function captureSourceTreeMetadata(
+  root: string,
+  excluded: (relative: string) => boolean,
+): Map<string, SourceTreeMetadataEntry> {
+  const metadata = new Map<string, SourceTreeMetadataEntry>();
+  const visit = (directory: string) => {
+    const entries = fs.readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name));
+    for (const directoryEntry of entries) {
+      const absolute = path.join(directory, directoryEntry.name);
+      const relative = normalizeRelative(path.relative(root, absolute));
+      if (!relative || excluded(relative)) continue;
+      const stat = fs.lstatSync(absolute);
+      if (stat.isDirectory()) {
+        metadata.set(relative, { type: 'directory', size: stat.size, mtimeMs: stat.mtimeMs });
+        visit(absolute);
+      } else if (stat.isSymbolicLink()) {
+        metadata.set(relative, {
+          type: 'link',
+          size: stat.size,
+          mtimeMs: stat.mtimeMs,
+          linkTarget: fs.readlinkSync(absolute),
+        });
+      } else if (stat.isFile()) {
+        metadata.set(relative, { type: 'file', size: stat.size, mtimeMs: stat.mtimeMs });
+      }
+    }
+  };
+  visit(root);
+  return new Map([...metadata].sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function sameSourceTreeMetadata(
+  before: Map<string, SourceTreeMetadataEntry>,
+  after: Map<string, SourceTreeMetadataEntry>,
+): boolean {
+  if (before.size !== after.size) return false;
+  for (const [relative, entry] of before) {
+    const current = after.get(relative);
+    if (!current || current.type !== entry.type || current.size !== entry.size
+      || current.mtimeMs !== entry.mtimeMs || current.linkTarget !== entry.linkTarget) return false;
+  }
+  return true;
 }
 
 function fingerprintProjectSource(project: string): string {

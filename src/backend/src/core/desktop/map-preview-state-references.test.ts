@@ -9,7 +9,7 @@ import { closeDatabase } from '../db/pool.ts';
 import { buildMapPreviewStateCatalog } from './map-preview-state-references.ts';
 import { writeStagedProjectJson } from './staging-service.ts';
 
-test('collects only state structurally referenced by the effective map and its recursive common events', { concurrency: false }, async () => {
+test('lists every named state and marks references reachable through effective map common events', { concurrency: false }, async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-state-'));
   const project = path.join(workflowRoot, 'projects', 'sample');
   const dataDir = path.join(project, 'data');
@@ -17,8 +17,8 @@ test('collects only state structurally referenced by the effective map and its r
     await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
     fs.mkdirSync(dataDir, { recursive: true });
     writeJson(path.join(dataDir, 'System.json'), {
-      switches: catalog('Switch', 16),
-      variables: catalog('Variable', 16),
+      switches: [...catalog('Switch', 16), '   ', 'Named Switch', ''],
+      variables: [...catalog('Variable', 16), '', 'Named Variable', ''],
     });
     writeJson(path.join(dataDir, 'MapInfos.json'), [null, { id: 1, name: 'Map A', parentId: 0, order: 1 }]);
     writeJson(path.join(dataDir, 'Map001.json'), mapWithCommands([
@@ -37,6 +37,8 @@ test('collects only state structurally referenced by the effective map and its r
       command(111, [1, 8, 1, 9, 0]),
       command(412, []),
       command(205, [0, { list: [{ code: 27, parameters: [10] }, { code: 0, parameters: [] }], repeat: false, skippable: true, wait: false }]),
+      command(121, [17, 17, 0]),
+      command(122, [19, 19, 0, 0, 1]),
       command(117, [1]),
       command(0, []),
     ], {
@@ -56,9 +58,25 @@ test('collects only state structurally referenced by the effective map and its r
 
     const catalogResult = buildMapPreviewStateCatalog(workflowRoot, project, 1);
 
-    assert.deepEqual(catalogResult.switches, [1, 2, 3, 4, 10, 11].map((id) => ({ id, name: `Switch ${id}` })));
-    assert.deepEqual(catalogResult.variables, [3, 5, 6, 7, 8, 9, 12].map((id) => ({ id, name: `Variable ${id}` })));
-    assert.equal(catalogResult.switches.some((entry) => entry.id === 13 || entry.id === 15), false);
+    assert.deepEqual(
+      catalogResult.switches,
+      [1, 2, 3, 4, 10, 11].map((id) => ({ id, name: `Switch ${id}`, mapReachable: true })).concat(
+        [{ id: 17, name: '   ', mapReachable: true }],
+        [5, 6, 7, 8, 9, 12, 13, 14, 15, 16].map((id) => ({ id, name: `Switch ${id}`, mapReachable: false })),
+        [{ id: 18, name: 'Named Switch', mapReachable: false }],
+      ),
+    );
+    assert.deepEqual(
+      catalogResult.variables,
+      [3, 5, 6, 7, 8, 9, 12].map((id) => ({ id, name: `Variable ${id}`, mapReachable: true })).concat(
+        [{ id: 19, name: '', mapReachable: true }],
+        [1, 2, 4, 10, 11, 13, 14, 15, 16].map((id) => ({ id, name: `Variable ${id}`, mapReachable: false })),
+        [{ id: 18, name: 'Named Variable', mapReachable: false }],
+      ),
+    );
+    assert.equal(catalogResult.switches.find((entry) => entry.id === 13)?.mapReachable, false);
+    assert.equal(catalogResult.switches.some((entry) => entry.id === 19), false);
+    assert.equal(catalogResult.variables.some((entry) => entry.id === 17), false);
   } finally {
     closeDatabase();
     fs.rmSync(workflowRoot, { recursive: true, force: true });

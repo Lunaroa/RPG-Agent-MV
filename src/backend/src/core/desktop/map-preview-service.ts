@@ -6,6 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type {
+  MapPreviewDevToolsResult,
   MapPreviewFailureCode,
   MapPreviewFailureDetail,
   MapPreviewFrame,
@@ -20,12 +21,17 @@ import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import {
   cleanupIsolatedProject,
-  prepareIsolatedStagedProject,
   snapshotProjectStaging,
   verifyIsolatedSourceState,
   type IsolatedProjectPreparation,
   type IsolatedStagingSnapshot,
 } from './isolated-project-preparation.ts';
+import {
+  MapPreviewPreparationCancelledError,
+  MapPreviewPreparationFailedError,
+  startMapPreviewPreparation,
+  type MapPreviewPreparationTask,
+} from './map-preview-preparation.ts';
 import type {
   InteractiveProjectRuntime,
   InteractiveProjectRuntimeResolution,
@@ -47,6 +53,68 @@ const MAX_PACKET_BYTES = 128 * 1024 * 1024;
 const MAX_DIAGNOSTIC_TEXT_LENGTH = 8_192;
 const MAX_RUNTIME_OUTPUT_LENGTH = 4_096;
 const MAX_FAILED_RESOURCES = 50;
+const DEVTOOLS_RESPONSE_TIMEOUT_MS = 5_000;
+export const MAP_PREVIEW_DEBUG_MARKER = '__rpg_agent_debugger__';
+
+export class MapPreviewPacketDecoder {
+  readonly #maximumPayloadBytes: number;
+  readonly #onPacket: (type: number, payload: Buffer) => void;
+  #header = Buffer.allocUnsafe(HEADER_BYTES);
+  #headerOffset = 0;
+  #payload: Buffer | null = null;
+  #payloadOffset = 0;
+  #type = 0;
+
+  constructor(onPacket: (type: number, payload: Buffer) => void, maximumPayloadBytes = MAX_PACKET_BYTES) {
+    this.#onPacket = onPacket;
+    this.#maximumPayloadBytes = maximumPayloadBytes;
+  }
+
+  push(input: Buffer | Uint8Array): void {
+    const chunk = Buffer.isBuffer(input)
+      ? input
+      : Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+    let offset = 0;
+    while (offset < chunk.length) {
+      if (!this.#payload) {
+        const copied = Math.min(HEADER_BYTES - this.#headerOffset, chunk.length - offset);
+        chunk.copy(this.#header, this.#headerOffset, offset, offset + copied);
+        this.#headerOffset += copied;
+        offset += copied;
+        if (this.#headerOffset < HEADER_BYTES) continue;
+        this.#type = this.#header.readUInt8(0);
+        const length = this.#header.readUInt32BE(1);
+        if (length > this.#maximumPayloadBytes) {
+          this.#reset();
+          throw new Error('Map preview packet exceeded the size limit.');
+        }
+        this.#payload = Buffer.allocUnsafe(length);
+        this.#payloadOffset = 0;
+        if (length === 0) this.#emitPacket();
+        continue;
+      }
+      const copied = Math.min(this.#payload.length - this.#payloadOffset, chunk.length - offset);
+      chunk.copy(this.#payload, this.#payloadOffset, offset, offset + copied);
+      this.#payloadOffset += copied;
+      offset += copied;
+      if (this.#payloadOffset === this.#payload.length) this.#emitPacket();
+    }
+  }
+
+  #emitPacket(): void {
+    const type = this.#type;
+    const payload = this.#payload || Buffer.alloc(0);
+    this.#reset();
+    this.#onPacket(type, payload);
+  }
+
+  #reset(): void {
+    this.#headerOffset = 0;
+    this.#payload = null;
+    this.#payloadOffset = 0;
+    this.#type = 0;
+  }
+}
 
 interface PreviewMapGeometry {
   mapId: number;
@@ -84,11 +152,32 @@ type ProjectFileSnapshot = Map<string, ProjectFileSnapshotEntry>;
 
 type PreviewChild = childProcess.ChildProcessWithoutNullStreams;
 
+interface PendingDevToolsRequest {
+  id: number;
+  promise: Promise<MapPreviewDevToolsResult>;
+  resolve(result: MapPreviewDevToolsResult): void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export type MapPreviewLoadPurpose = 'fresh' | 'switch' | 'reload';
 
 export function mapPreviewLoadPurpose(currentMapId: number, targetMapId: number, requiresReload: boolean): MapPreviewLoadPurpose | null {
   if (!requiresReload) return null;
   return currentMapId === targetMapId ? 'reload' : 'switch';
+}
+
+export function mapPreviewRequiresReload(
+  currentMapId: number,
+  currentMapRevision: string | undefined,
+  targetMapId: number,
+  targetMapRevision: string,
+  pendingMapSync: boolean,
+  forceReload = false,
+): boolean {
+  return forceReload
+    || targetMapId !== currentMapId
+    || targetMapRevision !== currentMapRevision
+    || pendingMapSync;
 }
 
 export function isCurrentMapPreviewFrame(
@@ -136,6 +225,10 @@ export class MapPreviewService {
   #nextOperationId = 0;
   #activeOperationId = 0;
   #bridgeConnected = false;
+  #preparationTask: MapPreviewPreparationTask | null = null;
+  #preparationGeneration = 0;
+  #nextDevToolsRequestId = 0;
+  #pendingDevToolsRequest: PendingDevToolsRequest | null = null;
 
   constructor(workflowRoot: string, dependencies: MapPreviewServiceDependencies) {
     this.#workflowRoot = path.resolve(workflowRoot);
@@ -194,11 +287,24 @@ export class MapPreviewService {
     this.#runtimeOutput = '';
     this.#bridgeConnected = false;
 
+    const preparationGeneration = ++this.#preparationGeneration;
     try {
-      this.#preparation = prepareIsolatedStagedProject(this.#workflowRoot, project, {
-        temporaryPrefix: 'rmmv-agent-map-preview-',
+      const preparationTask = startMapPreviewPreparation(this.#workflowRoot, project, {
+        spawnProcess: this.#dependencies.spawnProcess,
       });
-      this.#sourceSnapshot = captureProjectSnapshot(project);
+      this.#preparationTask = preparationTask;
+      const prepared = await preparationTask.result;
+      if (this.#preparationTask === preparationTask) this.#preparationTask = null;
+      if (!this.#startIsCurrent(preparationGeneration)) {
+        cleanupIsolatedProject(prepared);
+        throw new MapPreviewPreparationCancelledError('Map preview preparation was superseded.');
+      }
+      this.#preparation = prepared;
+      this.#sourceSnapshot = new Map(prepared.sourceSnapshot.map((entry) => [entry.relativePath, {
+        size: entry.size,
+        mtimeMs: entry.mtimeMs,
+        hash: entry.hash,
+      }]));
       this.#stagingSnapshot = this.#preparation.staging;
       this.#pendingMapSyncIds.clear();
       this.#desiredRunning = true;
@@ -208,6 +314,9 @@ export class MapPreviewService {
       this.#update({ mapPixelWidth: geometry.pixelWidth, mapPixelHeight: geometry.pixelHeight });
       this.#token = crypto.randomBytes(32).toString('hex');
       const port = await this.#listen();
+      if (!this.#startIsCurrent(preparationGeneration)) {
+        throw new MapPreviewPreparationCancelledError('Map preview preparation was superseded.');
+      }
       injectPreviewHarness(this.#preparation.temporaryProject, copiedManifest.resourceRoot, {
         token: this.#token,
         port,
@@ -225,8 +334,13 @@ export class MapPreviewService {
       this.#armStartupTimeout();
       return this.current();
     } catch (error) {
-      await this.#fail(errorMessage(error), undefined, {
-        stage: this.#startupStage,
+      if (error instanceof MapPreviewPreparationCancelledError || !this.#startIsCurrent(preparationGeneration)) {
+        return this.current();
+      }
+      const isolationFailure = error instanceof MapPreviewPreparationFailedError
+        || this.#startupStage === 'preparing-isolated-project';
+      await this.#fail(errorMessage(error), isolationFailure ? 'isolation-preparation-failed' : undefined, {
+        stage: error instanceof MapPreviewPreparationFailedError ? error.stage : this.#startupStage,
         operationId: this.#activeOperationId,
         targetMapId: mapId,
         message: errorMessage(error),
@@ -299,10 +413,54 @@ export class MapPreviewService {
     return this.current();
   }
 
+  toggleDevTools(): Promise<MapPreviewDevToolsResult> {
+    if (this.#pendingDevToolsRequest) return this.#pendingDevToolsRequest.promise;
+    if (
+      !this.#session
+      || !['running', 'suspended'].includes(this.#session.status)
+      || !this.#socket
+      || this.#socket.destroyed
+    ) {
+      return Promise.resolve({
+        code: 'preview-runtime-unavailable',
+        error: 'Start a map preview before opening its developer tools.',
+      });
+    }
+
+    const id = ++this.#nextDevToolsRequestId;
+    let resolveRequest!: (result: MapPreviewDevToolsResult) => void;
+    const promise = new Promise<MapPreviewDevToolsResult>((resolve) => { resolveRequest = resolve; });
+    const timer = setTimeout(() => {
+      if (this.#pendingDevToolsRequest?.id !== id) return;
+      this.#pendingDevToolsRequest = null;
+      resolveRequest({
+        code: 'preview-devtools-unsupported',
+        error: 'The map preview runtime did not open its developer tools.',
+      });
+    }, DEVTOOLS_RESPONSE_TIMEOUT_MS);
+    this.#pendingDevToolsRequest = { id, promise, resolve: resolveRequest, timer };
+    try {
+      this.#sendCommand({ type: 'toggle-devtools', requestId: id });
+    } catch {
+      this.#resolvePendingDevTools({
+        code: 'preview-runtime-unavailable',
+        error: 'The map preview runtime is not connected.',
+      });
+    }
+    return promise;
+  }
+
   async suspend(): Promise<MapPreviewResult> {
     if (!this.#session || !this.isActive()) return this.current();
     this.#desiredRunning = false;
     this.#pendingResume = null;
+    if (this.#session.status === 'preparing') {
+      this.#cleanupInProgress = true;
+      const cleanupError = await this.#cleanupRuntime();
+      this.#finish(cleanupError ? 'failed' : 'stopped', cleanupError || undefined);
+      this.#cleanupInProgress = false;
+      return this.current();
+    }
     if (this.#session.status === 'running') this.#beginSuspend();
     return this.current();
   }
@@ -316,6 +474,7 @@ export class MapPreviewService {
       mapId,
       overrides,
       ...(typeof requestInput.mapRevision === 'string' && requestInput.mapRevision ? { mapRevision: requestInput.mapRevision } : {}),
+      ...(requestInput.forceReload === true ? { forceReload: true } : {}),
     };
     if (!this.#session || !this.isActive() || !this.#preparation) return this.start(project, mapId, overrides);
     if (fs.realpathSync.native(this.#preparation.sourceProject) !== project) {
@@ -390,9 +549,14 @@ export class MapPreviewService {
     if (changes.mapInfosChanged) syncEffectiveMapInfos(this.#workflowRoot, request.project, this.#preparation.temporaryProject);
 
     const revision = effectiveMapRevision(this.#workflowRoot, request.project, request.mapId);
-    const requiresReload = request.mapId !== this.#session.mapId
-      || revision !== this.#session.mapRevision
-      || this.#pendingMapSyncIds.has(request.mapId);
+    const requiresReload = mapPreviewRequiresReload(
+      this.#session.mapId,
+      this.#session.mapRevision,
+      request.mapId,
+      revision,
+      this.#pendingMapSyncIds.has(request.mapId),
+      request.forceReload,
+    );
     const purpose = mapPreviewLoadPurpose(this.#session.mapId, request.mapId, requiresReload);
     const manifest = inspectRmmvProject(this.#preparation.temporaryProject);
     let geometry = previewMapGeometry(this.#preparation.temporaryProject, this.#session.mapId, manifest.tileSize);
@@ -498,36 +662,36 @@ export class MapPreviewService {
       socket.destroy();
       return;
     }
-    let buffer = Buffer.alloc(0);
     let authenticated = false;
-    socket.on('data', (chunk) => {
-      buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
-      while (buffer.length >= HEADER_BYTES) {
-        const type = buffer.readUInt8(0);
-        const length = buffer.readUInt32BE(1);
-        if (length > MAX_PACKET_BYTES) {
-          socket.destroy(new Error('Map preview packet exceeded the size limit.'));
+    const decoder = new MapPreviewPacketDecoder((type, payload) => {
+      if (!authenticated) {
+        if (type !== PACKET_HANDSHAKE || parseJson(payload).token !== this.#token) {
+          socket.destroy(new Error('Map preview bridge authentication failed.'));
           return;
         }
-        if (buffer.length < HEADER_BYTES + length) break;
-        const payload = buffer.subarray(HEADER_BYTES, HEADER_BYTES + length);
-        buffer = buffer.subarray(HEADER_BYTES + length);
-        if (!authenticated) {
-          if (type !== PACKET_HANDSHAKE || parseJson(payload).token !== this.#token) {
-            socket.destroy(new Error('Map preview bridge authentication failed.'));
-            return;
-          }
-          authenticated = true;
-          this.#socket = socket;
-          this.#bridgeConnected = true;
-          this.#startupStage = 'preview-bridge-connected';
-          continue;
-        }
-        this.#handlePacket(type, payload);
+        authenticated = true;
+        this.#socket = socket;
+        this.#bridgeConnected = true;
+        this.#startupStage = 'preview-bridge-connected';
+        return;
+      }
+      this.#handlePacket(type, payload);
+    });
+    socket.on('data', (chunk) => {
+      try {
+        decoder.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk);
+      } catch (error) {
+        socket.destroy(error instanceof Error ? error : new Error(String(error)));
       }
     });
     socket.once('close', () => {
-      if (this.#socket === socket) this.#socket = null;
+      if (this.#socket === socket) {
+        this.#socket = null;
+        this.#resolvePendingDevTools({
+          code: 'preview-runtime-unavailable',
+          error: 'The map preview runtime disconnected.',
+        });
+      }
     });
     socket.once('error', () => undefined);
   }
@@ -546,12 +710,27 @@ export class MapPreviewService {
         sessionId: this.#session.sessionId,
         ...meta,
         mime: 'image/png',
-        data: new Uint8Array(payload),
+        data: new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength),
       });
       return;
     }
     if (type !== PACKET_STATUS) return;
     const status = parseJson(payload);
+    if (status.phase === 'devtools') {
+      const request = this.#pendingDevToolsRequest;
+      if (!request || positiveInteger(status.requestId, 'developer tools request id') !== request.id) return;
+      if (status.status === 'opened' || status.status === 'closed') {
+        this.#resolvePendingDevTools({ status: status.status });
+      } else {
+        const diagnostic = redactPreviewError(String(status.message || 'Developer tools are unavailable.'), this.#preparation);
+        console.warn(`[map-preview] Developer tools unavailable: ${diagnostic}`);
+        this.#resolvePendingDevTools({
+          code: 'preview-devtools-unsupported',
+          error: 'The map preview runtime does not support developer tools.',
+        });
+      }
+      return;
+    }
     if (status.phase === 'frame-meta') {
       this.#pendingFrameMeta = frameMeta(status);
       return;
@@ -603,9 +782,13 @@ export class MapPreviewService {
       });
     } else if (status.phase === 'error') {
       const failureDetail = mapPreviewRuntimeFailureDetail(status, this.#preparation);
+      const failureCode = status.failureCode === 'map-render-failed'
+        || status.failureCode === 'preview-debug-marker-conflict'
+        ? status.failureCode as MapPreviewFailureCode
+        : undefined;
       void this.#fail(
         failureDetail.message,
-        status.failureCode === 'map-render-failed' ? 'map-render-failed' : undefined,
+        failureCode,
         failureDetail,
       );
     }
@@ -614,6 +797,14 @@ export class MapPreviewService {
   #sendCommand(command: Record<string, unknown>): void {
     if (!this.#socket || this.#socket.destroyed) throw new Error('Map preview runtime is not connected.');
     this.#socket.write(encodePacket(PACKET_COMMAND, Buffer.from(JSON.stringify(command), 'utf8')));
+  }
+
+  #resolvePendingDevTools(result: MapPreviewDevToolsResult): void {
+    const request = this.#pendingDevToolsRequest;
+    if (!request) return;
+    this.#pendingDevToolsRequest = null;
+    clearTimeout(request.timer);
+    request.resolve(result);
   }
 
   #requireRunning(): void {
@@ -692,6 +883,11 @@ export class MapPreviewService {
 
   async #cleanupRuntime(): Promise<string> {
     this.#clearStartupTimeout();
+    await this.#cancelPreparation();
+    this.#resolvePendingDevTools({
+      code: 'preview-runtime-unavailable',
+      error: 'The map preview runtime stopped.',
+    });
     this.#socket?.destroy();
     this.#socket = null;
     this.#server?.close();
@@ -704,6 +900,11 @@ export class MapPreviewService {
 
   #cleanupRuntimeSync(): string {
     this.#clearStartupTimeout();
+    this.#cancelPreparationSync();
+    this.#resolvePendingDevTools({
+      code: 'preview-runtime-unavailable',
+      error: 'The map preview runtime stopped.',
+    });
     this.#socket?.destroy();
     this.#socket = null;
     this.#server?.close();
@@ -739,6 +940,7 @@ export class MapPreviewService {
     this.#nextOperationId = 0;
     this.#activeOperationId = 0;
     this.#bridgeConnected = false;
+    this.#nextDevToolsRequestId = 0;
     return [processResult.error, isolationError].filter(Boolean).join(' ');
   }
 
@@ -746,6 +948,26 @@ export class MapPreviewService {
     if (!this.#session) return;
     this.#session = { ...this.#session, ...patch, updatedAt: new Date().toISOString() };
     this.#publish();
+  }
+
+  #startIsCurrent(generation: number): boolean {
+    return generation === this.#preparationGeneration
+      && Boolean(this.#session)
+      && !['stopping', 'stopped', 'failed'].includes(this.#session!.status);
+  }
+
+  async #cancelPreparation(): Promise<void> {
+    this.#preparationGeneration += 1;
+    const task = this.#preparationTask;
+    this.#preparationTask = null;
+    if (task) await task.cancel();
+  }
+
+  #cancelPreparationSync(): void {
+    this.#preparationGeneration += 1;
+    const task = this.#preparationTask;
+    this.#preparationTask = null;
+    task?.cancelSync();
   }
 
   #finish(
@@ -825,14 +1047,36 @@ export function injectPreviewHarness(projectRoot: string, resourceRoot: string, 
   if (!packageUpdated) throw new Error('RPG Maker package.json was not found in the isolated preview project.');
 }
 
+export function mapPreviewDebugMarkerBootstrapSource(): string {
+  const marker = JSON.stringify(MAP_PREVIEW_DEBUG_MARKER);
+  return `  const previewDebugMarkerDescriptor = Object.getOwnPropertyDescriptor(window, ${marker});
+  let previewDebugMarkerConflict = '';
+  if (!previewDebugMarkerDescriptor) {
+    Object.defineProperty(window, ${marker}, {
+      value: true,
+      writable: false,
+      configurable: false,
+      enumerable: false
+    });
+  } else if (
+    previewDebugMarkerDescriptor.value !== true
+    || previewDebugMarkerDescriptor.writable !== false
+    || previewDebugMarkerDescriptor.configurable !== false
+    || previewDebugMarkerDescriptor.enumerable !== false
+  ) {
+    previewDebugMarkerConflict = 'The project defines an incompatible RPG Agent preview debug marker.';
+  }`;
+}
+
 function previewHarnessSource(options: HarnessOptions): string {
   const config = JSON.stringify(options).replace(/</g, '\\u003c');
   return `/* Generated only inside an isolated map-preview project. */
 (function () {
   'use strict';
+  const config = ${config};
+${mapPreviewDebugMarkerBootstrapSource()}
   if (window.__rpgAgentMapPreviewInstalled) return;
   window.__rpgAgentMapPreviewInstalled = true;
-  const config = ${config};
   const net = require('net');
   const HEADER_BYTES = 5;
   const PACKET_HANDSHAKE = 1;
@@ -848,6 +1092,9 @@ function previewHarnessSource(options: HarnessOptions): string {
   let captureStarted = false;
   let captureTimer = null;
   let awaitingFrameAck = false;
+  let encodingFrame = false;
+  let captureEpoch = 0;
+  let nextFrameDeadline = 0;
   let lastFrameSequence = 0;
   let frameGeneration = 0;
   let initializing = false;
@@ -863,7 +1110,12 @@ function previewHarnessSource(options: HarnessOptions): string {
   let runtimeStage = 'boot';
   let runtimeSourceMapId = 0;
   let runtimeTargetMapId = currentMapId;
+  let overviewCanvas = null;
+  let overviewContext = null;
+  let detailCanvas = null;
+  let detailContext = null;
   const failedResources = new Set();
+  const FRAME_INTERVAL_MS = 1000 / 15;
 
   replaceObject(switchOverrides, config.overrides && config.overrides.switches);
   replaceObject(variableOverrides, config.overrides && config.overrides.variables);
@@ -921,6 +1173,24 @@ function previewHarnessSource(options: HarnessOptions): string {
   function connect() {
     socket = net.connect({ host: '127.0.0.1', port: Number(config.port) }, function () {
       send(PACKET_HANDSHAKE, { token: config.token });
+      if (previewDebugMarkerConflict) {
+        send(PACKET_STATUS, {
+          phase: 'error',
+          operationId: currentOperationId,
+          mapId: currentMapId,
+          mapRevision: currentMapRevision,
+          failureCode: 'preview-debug-marker-conflict',
+          stage: 'preview-debug-marker',
+          sourceMapId: 0,
+          targetMapId: currentMapId,
+          scene: null,
+          transferring: false,
+          resourcesReady: false,
+          resources: [],
+          message: previewDebugMarkerConflict
+        });
+        return;
+      }
       loadMap('fresh', currentMapId, currentGeometry, config.overrides, false, currentMapRevision, currentOperationId).catch(reportError);
     });
     socket.on('data', function (chunk) {
@@ -985,6 +1255,9 @@ function previewHarnessSource(options: HarnessOptions): string {
     }
     if (window.Game_CommonEvent) Game_CommonEvent.prototype.update = function () {};
     if (window.Game_Interpreter) Game_Interpreter.prototype.update = function () {};
+    if (window.Utils && Utils.RPGMAKER_NAME === 'MZ' && window.Scene_Map && Scene_Map.prototype) {
+      Scene_Map.prototype.createMenuButton = function () { this._menuButton = null; };
+    }
     if (window.DataManager) {
       const isMZ = window.Utils && Utils.RPGMAKER_NAME === 'MZ';
       DataManager.saveGame = function () { return isMZ ? Promise.resolve(false) : false; };
@@ -1126,10 +1399,7 @@ function previewHarnessSource(options: HarnessOptions): string {
 
   function suspendRuntime(operationId) {
     if (Number(operationId) !== currentOperationId) return;
-    captureStarted = false;
-    awaitingFrameAck = false;
-    if (captureTimer) clearTimeout(captureTimer);
-    captureTimer = null;
+    invalidateCapture();
     frameGeneration += 1;
     if (window.SceneManager && typeof SceneManager.stop === 'function') SceneManager.stop();
     runtimeSuspended = true;
@@ -1173,10 +1443,7 @@ function previewHarnessSource(options: HarnessOptions): string {
     runtimeStage = 'prepare-' + purpose;
     let loaded = false;
     initializing = true;
-    captureStarted = false;
-    awaitingFrameAck = false;
-    if (captureTimer) clearTimeout(captureTimer);
-    captureTimer = null;
+    invalidateCapture();
     tiledOverviewDelivered = false;
     failedResources.clear();
     send(PACKET_STATUS, {
@@ -1239,7 +1506,7 @@ function previewHarnessSource(options: HarnessOptions): string {
       $gamePlayer.setTransparent(true);
       $gamePlayer.setThrough(true);
       runtimeStage = 'reserve-transfer';
-      $gamePlayer.reserveTransfer(targetMapId, 0, 0, 2, 0);
+      $gamePlayer.reserveTransfer(targetMapId, 0, 0, 2, 2);
       runtimeStage = 'rebuild-scene';
       SceneManager.goto(Scene_Map);
       await waitFor(function () {
@@ -1302,8 +1569,57 @@ function previewHarnessSource(options: HarnessOptions): string {
     }
   }
 
+  function sendDevToolsResult(requestId, status, message) {
+    send(PACKET_STATUS, {
+      phase: 'devtools',
+      requestId: Number(requestId),
+      status: status,
+      message: String(message || '')
+    });
+  }
+
+  function toggleRuntimeDevTools(requestId) {
+    try {
+      if (typeof nw !== 'object' || !nw.Window || typeof nw.Window.get !== 'function') {
+        sendDevToolsResult(requestId, 'unsupported', 'The NW.js window API is unavailable.');
+        return;
+      }
+      const runtimeWindow = nw.Window.get();
+      if (
+        !runtimeWindow
+        || typeof runtimeWindow.showDevTools !== 'function'
+        || typeof runtimeWindow.closeDevTools !== 'function'
+        || typeof runtimeWindow.isDevToolsOpen !== 'function'
+      ) {
+        sendDevToolsResult(requestId, 'unsupported', 'This NW.js runtime does not expose developer tools control.');
+        return;
+      }
+      if (runtimeWindow.isDevToolsOpen()) {
+        runtimeWindow.closeDevTools();
+        sendDevToolsResult(requestId, 'closed');
+        return;
+      }
+      let reported = false;
+      runtimeWindow.showDevTools(function () {
+        if (reported) return;
+        reported = true;
+        sendDevToolsResult(requestId, 'opened');
+      });
+    } catch (error) {
+      sendDevToolsResult(
+        requestId,
+        'unsupported',
+        String(error && (error.stack || error.message) || error || 'Developer tools failed to open.')
+      );
+    }
+  }
+
   function handleCommand(command) {
     if (!command || typeof command !== 'object') throw new Error('Invalid map preview command');
+    if (command.type === 'toggle-devtools') {
+      toggleRuntimeDevTools(command.requestId);
+      return;
+    }
     if (command.type === 'select-map') {
       loadMap('switch', Number(command.mapId), command.geometry, command.overrides, false, command.mapRevision, Number(command.operationId)).catch(reportError);
       return;
@@ -1389,27 +1705,48 @@ function previewHarnessSource(options: HarnessOptions): string {
   function startCapture() {
     if (captureStarted) return;
     captureStarted = true;
+    nextFrameDeadline = nowMilliseconds();
     scheduleCapture();
   }
 
-  function scheduleCapture() {
-    if (!captureStarted || awaitingFrameAck || captureTimer) return;
-    captureTimer = setTimeout(function () {
-      captureTimer = null;
-      captureNext();
-    }, 67);
+  function invalidateCapture() {
+    captureStarted = false;
+    awaitingFrameAck = false;
+    captureEpoch += 1;
+    nextFrameDeadline = 0;
+    if (captureTimer) clearTimeout(captureTimer);
+    captureTimer = null;
   }
 
-  function captureNext() {
-    if (!captureStarted || awaitingFrameAck || initializing) return;
+  function nowMilliseconds() {
+    return window.performance && typeof performance.now === 'function' ? performance.now() : Date.now();
+  }
+
+  function scheduleCapture() {
+    if (!captureStarted || awaitingFrameAck || encodingFrame || captureTimer) return;
+    const delay = Math.max(0, nextFrameDeadline - nowMilliseconds());
+    captureTimer = setTimeout(function () {
+      captureTimer = null;
+      captureNext().catch(reportError);
+    }, delay);
+  }
+
+  async function captureNext() {
+    if (!captureStarted || awaitingFrameAck || encodingFrame || initializing) return;
+    const epoch = captureEpoch;
+    encodingFrame = true;
+    nextFrameDeadline = nowMilliseconds() + FRAME_INTERVAL_MS;
     try {
       if (window.SceneManager && SceneManager._scene && typeof SceneManager._scene.update === 'function') {
         SceneManager._scene.update();
       }
-      if (currentRenderMode === 'full') captureFullFrame();
-      else if (!tiledOverviewDelivered || currentView.scale < 1) captureOverviewFrame();
-      else captureVisibleDetailFrame();
-    } catch (error) { reportError(error); }
+      if (currentRenderMode === 'full') await captureFullFrame(epoch);
+      else if (!tiledOverviewDelivered || currentView.scale < 1) await captureOverviewFrame(epoch);
+      else await captureVisibleDetailFrame(epoch);
+    } finally {
+      encodingFrame = false;
+      if (captureStarted && !awaitingFrameAck) scheduleCapture();
+    }
   }
 
   function renderCurrentScene() {
@@ -1418,9 +1755,10 @@ function previewHarnessSource(options: HarnessOptions): string {
     return state.canvas;
   }
 
-  function captureFullFrame() {
+  async function captureFullFrame(epoch) {
     const canvas = renderCurrentScene();
-    const bytes = encodeCanvas(canvas);
+    const bytes = await encodeCanvas(canvas);
+    if (!captureIsCurrent(epoch)) return;
     if (bytes.length > 134217728) {
       currentRenderMode = 'tiled';
       loadMap(
@@ -1434,20 +1772,19 @@ function previewHarnessSource(options: HarnessOptions): string {
       ).catch(reportError);
       return;
     }
-    emitCanvasFrame(canvas, bytes, 'full', 0, 0, Number(currentGeometry.pixelWidth), Number(currentGeometry.pixelHeight));
+    emitCanvasFrame(canvas, bytes, 'full', 0, 0, Number(currentGeometry.pixelWidth), Number(currentGeometry.pixelHeight), epoch);
   }
 
-  function captureOverviewFrame() {
+  async function captureOverviewFrame(epoch) {
     const mapWidth = Number(currentGeometry.pixelWidth);
     const mapHeight = Number(currentGeometry.pixelHeight);
     const viewportWidth = Number(config.viewportWidth);
     const viewportHeight = Number(config.viewportHeight);
     const overviewScale = Math.min(1, 4096 / mapWidth, 4096 / mapHeight, Math.sqrt(4000000 / (mapWidth * mapHeight)));
-    const overview = document.createElement('canvas');
-    overview.width = Math.max(1, Math.ceil(mapWidth * overviewScale));
-    overview.height = Math.max(1, Math.ceil(mapHeight * overviewScale));
-    const context = overview.getContext('2d');
-    if (!context) throw new Error('The map preview overview canvas is unavailable.');
+    const overviewState = reusableCanvas('overview', Math.max(1, Math.ceil(mapWidth * overviewScale)), Math.max(1, Math.ceil(mapHeight * overviewScale)));
+    const overview = overviewState.canvas;
+    const context = overviewState.context;
+    context.clearRect(0, 0, overview.width, overview.height);
     context.imageSmoothingEnabled = false;
     const tileWidth = Math.max(1, Number($gameMap.tileWidth && $gameMap.tileWidth()) || Number(currentGeometry.tileSize));
     const tileHeight = Math.max(1, Number($gameMap.tileHeight && $gameMap.tileHeight()) || tileWidth);
@@ -1476,13 +1813,14 @@ function previewHarnessSource(options: HarnessOptions): string {
       }
     }
     $gameMap.setDisplayPos(0, 0);
-    const bytes = encodeCanvas(overview);
+    const bytes = await encodeCanvas(overview);
+    if (!captureIsCurrent(epoch)) return;
     if (bytes.length > 134217728) throw new Error('The complete map preview overview exceeded 128 MiB.');
     tiledOverviewDelivered = true;
-    emitCanvasFrame(overview, bytes, 'overview', 0, 0, mapWidth, mapHeight);
+    emitCanvasFrame(overview, bytes, 'overview', 0, 0, mapWidth, mapHeight, epoch);
   }
 
-  function captureVisibleDetailFrame() {
+  async function captureVisibleDetailFrame(epoch) {
     const mapWidth = Number(currentGeometry.pixelWidth);
     const mapHeight = Number(currentGeometry.pixelHeight);
     const viewportWidth = Number(config.viewportWidth);
@@ -1491,11 +1829,10 @@ function previewHarnessSource(options: HarnessOptions): string {
     const y = Math.max(0, Math.min(Math.floor(currentView.y), mapHeight - 1));
     const width = Math.max(1, Math.min(Math.ceil(currentView.width), mapWidth - x));
     const height = Math.max(1, Math.min(Math.ceil(currentView.height), mapHeight - y));
-    const detail = document.createElement('canvas');
-    detail.width = width;
-    detail.height = height;
-    const context = detail.getContext('2d');
-    if (!context) throw new Error('The map preview detail canvas is unavailable.');
+    const detailState = reusableCanvas('detail', width, height);
+    const detail = detailState.canvas;
+    const context = detailState.context;
+    context.clearRect(0, 0, detail.width, detail.height);
     context.imageSmoothingEnabled = false;
     const tileWidth = Math.max(1, Number($gameMap.tileWidth && $gameMap.tileWidth()) || Number(currentGeometry.tileSize));
     const tileHeight = Math.max(1, Number($gameMap.tileHeight && $gameMap.tileHeight()) || tileWidth);
@@ -1523,18 +1860,58 @@ function previewHarnessSource(options: HarnessOptions): string {
         );
       }
     }
-    const bytes = encodeCanvas(detail);
+    const bytes = await encodeCanvas(detail);
+    if (!captureIsCurrent(epoch)) return;
     if (bytes.length > 134217728) throw new Error('The visible map preview detail exceeded 128 MiB.');
-    emitCanvasFrame(detail, bytes, 'tile', x, y, width, height);
+    emitCanvasFrame(detail, bytes, 'tile', x, y, width, height, epoch);
   }
 
   function encodeCanvas(canvas) {
-    const dataUrl = canvas && canvas.toDataURL && canvas.toDataURL('image/png');
-    if (!dataUrl || dataUrl.indexOf('base64,') < 0) throw new Error('The RPG Maker renderer returned an invalid preview frame.');
-    return Buffer.from(dataUrl.slice(dataUrl.indexOf('base64,') + 7), 'base64');
+    if (!canvas || typeof canvas.toBlob !== 'function' || typeof FileReader !== 'function') {
+      return Promise.reject(new Error('The RPG Maker runtime does not support asynchronous PNG capture.'));
+    }
+    return new Promise(function (resolve, reject) {
+      canvas.toBlob(function (blob) {
+        if (!blob) return reject(new Error('The RPG Maker renderer returned an invalid preview frame.'));
+        const reader = new FileReader();
+        reader.onerror = function () { reject(new Error('The RPG Maker runtime could not read the encoded preview frame.')); };
+        reader.onload = function () {
+          if (!(reader.result instanceof ArrayBuffer)) return reject(new Error('The encoded preview frame was not binary data.'));
+          resolve(Buffer.from(reader.result));
+        };
+        reader.readAsArrayBuffer(blob);
+      }, 'image/png');
+    });
   }
 
-  function emitCanvasFrame(canvas, bytes, kind, x, y, width, height) {
+  function reusableCanvas(kind, width, height) {
+    let canvas = kind === 'overview' ? overviewCanvas : detailCanvas;
+    let context = kind === 'overview' ? overviewContext : detailContext;
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      context = canvas.getContext('2d');
+      if (!context) throw new Error('The map preview ' + kind + ' canvas is unavailable.');
+      context.imageSmoothingEnabled = false;
+      if (kind === 'overview') {
+        overviewCanvas = canvas;
+        overviewContext = context;
+      } else {
+        detailCanvas = canvas;
+        detailContext = context;
+      }
+    }
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    context.imageSmoothingEnabled = false;
+    return { canvas: canvas, context: context };
+  }
+
+  function captureIsCurrent(epoch) {
+    return captureStarted && !initializing && epoch === captureEpoch;
+  }
+
+  function emitCanvasFrame(canvas, bytes, kind, x, y, width, height, epoch) {
+    if (!captureIsCurrent(epoch)) return;
     lastFrameSequence += 1;
     frameGeneration += 1;
     send(PACKET_STATUS, {

@@ -48,7 +48,7 @@
       @pointerdown="startDrag"
       @pointermove="moveDrag"
       @pointerup="stopDrag"
-      @pointercancel="stopDrag"
+      @pointercancel="cancelDrag"
       @auxclick.prevent
       @wheel.prevent="adjustScale"
     >
@@ -63,6 +63,9 @@
           tabindex="-1"
           @load="onIframeLoad"
         />
+        <div v-if="selectedEvent" class="preview-event-marker" :style="eventMarkerStyle" aria-hidden="true">
+          <span :style="eventMarkerLabelStyle">EV{{ String(selectedEvent.id).padStart(3, '0') }}</span>
+        </div>
       </div>
     </div>
 
@@ -87,12 +90,14 @@ import { WarningFilled } from '@element-plus/icons-vue';
 import type {
   MapPreviewRuntimeCommand,
   MapPreviewRuntimeEvent,
+  MapPreviewEventState,
   MapPreviewStatus,
   MapPreviewViewRequest,
 } from '@contract/types';
 import { useI18n } from '../../i18n';
 import type { MapPreviewDiagnostic } from '../../utils/mapPreviewDiagnostics';
-import { clampPreviewPan, previewVisibleRegion } from '../../utils/mapPreviewViewport';
+import { clampPreviewPan, previewPointerMovedBeyondClick, previewVisibleRegion } from '../../utils/mapPreviewViewport';
+import { selectionOutlineWidths } from '../../utils/selectionOutline';
 
 const props = defineProps<{
   status: MapPreviewStatus;
@@ -107,6 +112,9 @@ const props = defineProps<{
   error?: string;
   diagnostic?: MapPreviewDiagnostic | null;
   refreshing?: boolean;
+  selectedEvent?: MapPreviewEventState | null;
+  tileSize?: number;
+  eventFocusEpoch?: number;
 }>();
 
 const emit = defineEmits<{
@@ -114,6 +122,7 @@ const emit = defineEmits<{
   'runtime-event': [event: MapPreviewRuntimeEvent];
   viewChanged: [view: MapPreviewViewRequest];
   'copy-diagnostic': [];
+  'clear-event-selection': [];
 }>();
 
 const { t } = useI18n();
@@ -129,6 +138,9 @@ const detailsOpen = ref(false);
 const runtimeReady = ref(false);
 let pointerId: number | null = null;
 let lastPoint = { x: 0, y: 0 };
+let dragStartPoint = { x: 0, y: 0 };
+let dragStartOffset = { x: 0, y: 0 };
+let pointerButton = -1;
 let resizeObserver: ResizeObserver | null = null;
 let viewFrame = 0;
 
@@ -153,6 +165,20 @@ const layerStyle = computed(() => ({
   height: `${mapHeight.value}px`,
   transform: `translate3d(calc(-50% + ${offsetX.value}px), calc(-50% + ${offsetY.value}px), 0) scale(${actualScale.value})`,
 }));
+const eventMarkerStyle = computed(() => {
+  const event = props.selectedEvent;
+  const tile = Math.max(1, Number(props.tileSize) || 48);
+  const outline = selectionOutlineWidths(actualScale.value);
+  return event ? {
+    left: `${event.x * tile}px`,
+    top: `${event.y * tile}px`,
+    width: `${tile}px`,
+    height: `${tile}px`,
+    borderWidth: `${outline.white}px`,
+    boxShadow: `0 0 0 ${outline.black}px #101318`,
+  } : undefined;
+});
+const eventMarkerLabelStyle = computed(() => ({ transform: `scale(${1 / Math.max(.01, actualScale.value)})` }));
 const statusLabel = computed(() => {
   if (props.refreshing) return t('editor.preview.refreshing');
   if (props.status === 'preparing') return t('editor.preview.preparing');
@@ -193,6 +219,14 @@ function resetView() {
   offsetX.value = 0;
   offsetY.value = 0;
 }
+function focusSelectedEvent() {
+  const event = props.selectedEvent;
+  if (!event) return;
+  const tile = Math.max(1, Number(props.tileSize) || 48);
+  offsetX.value = (mapWidth.value / 2 - (event.x + .5) * tile) * actualScale.value;
+  offsetY.value = (mapHeight.value / 2 - (event.y + .5) * tile) * actualScale.value;
+  clampOffsets();
+}
 function adjustScale(event: WheelEvent) {
   if (event.deltaY < 0) zoomIn();
   else zoomOut();
@@ -203,21 +237,37 @@ function startDrag(event: PointerEvent) {
   event.preventDefault();
   pointerId = event.pointerId;
   lastPoint = { x: event.clientX, y: event.clientY };
-  dragging.value = true;
+  dragStartPoint = { ...lastPoint };
+  dragStartOffset = { x: offsetX.value, y: offsetY.value };
+  pointerButton = event.button;
+  dragging.value = false;
   viewportRef.value?.setPointerCapture(event.pointerId);
 }
 function moveDrag(event: PointerEvent) {
   if (pointerId !== event.pointerId) return;
-  offsetX.value += event.clientX - lastPoint.x;
-  offsetY.value += event.clientY - lastPoint.y;
+  const current = { x: event.clientX, y: event.clientY };
+  if (!dragging.value && previewPointerMovedBeyondClick(dragStartPoint, current)) dragging.value = true;
+  if (!dragging.value) return;
+  offsetX.value = dragStartOffset.x + current.x - dragStartPoint.x;
+  offsetY.value = dragStartOffset.y + current.y - dragStartPoint.y;
   clampOffsets();
-  lastPoint = { x: event.clientX, y: event.clientY };
+  lastPoint = current;
 }
 function stopDrag(event: PointerEvent) {
   if (pointerId !== event.pointerId) return;
+  const clearSelection = pointerButton === 0 && !dragging.value;
+  releasePointer(event.pointerId);
+  if (clearSelection) emit('clear-event-selection');
+}
+function cancelDrag(event: PointerEvent) {
+  if (pointerId !== event.pointerId) return;
+  releasePointer(event.pointerId);
+}
+function releasePointer(activePointerId: number) {
   pointerId = null;
+  pointerButton = -1;
   dragging.value = false;
-  if (viewportRef.value?.hasPointerCapture(event.pointerId)) viewportRef.value.releasePointerCapture(event.pointerId);
+  if (viewportRef.value?.hasPointerCapture(activePointerId)) viewportRef.value.releasePointerCapture(activePointerId);
 }
 function clampOffsets() {
   const clamped = clampPreviewPan({
@@ -286,7 +336,7 @@ function isRuntimeEvent(value: unknown): value is MapPreviewRuntimeEvent {
     && Number.isInteger(event.operationId)
     && Number.isInteger(event.mapId)
     && typeof event.mapRevision === 'string'
-    && ['ready', 'loading-map', 'suspended', 'state', 'fps', 'error'].includes(String(event.phase));
+    && ['ready', 'loading-map', 'suspended', 'state', 'fps', 'console', 'error'].includes(String(event.phase));
 }
 
 function matchesIframeOrigin(origin: string): boolean {
@@ -307,6 +357,7 @@ watch(() => props.runtimeCommand, sendRuntimeCommand, { deep: false });
 watch(() => [props.error, props.diagnostic], () => { detailsOpen.value = false; });
 watch(() => [mapWidth.value, mapHeight.value, viewportWidth.value, viewportHeight.value, displayScale.value, offsetX.value, offsetY.value], queueViewUpdate);
 watch(() => [mapWidth.value, mapHeight.value, viewportWidth.value, viewportHeight.value], clampOffsets);
+watch(() => props.eventFocusEpoch, focusSelectedEvent);
 watch(viewportRef, (next, previous) => {
   if (previous) resizeObserver?.unobserve(previous);
   if (next) {
@@ -331,6 +382,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .runtime-preview{position:relative;min-width:0;min-height:0;flex:1;display:grid;place-items:center;overflow:hidden;border:1px solid #252a31;border-radius:10px;background:#12161b;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:24px 24px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02),inset 0 18px 60px rgba(0,0,0,.32)}
 .runtime-viewport{position:relative;width:100%;height:100%;overflow:hidden;cursor:grab;touch-action:none;user-select:none}.dragging .runtime-viewport{cursor:grabbing}.runtime-map-layer{position:absolute;left:50%;top:50%;transform-origin:center;will-change:transform;filter:drop-shadow(0 12px 30px rgba(0,0,0,.48));pointer-events:none;background:#000}.runtime-map-frame{display:block;width:100%;height:100%;border:0;background:#000;pointer-events:none}
+.preview-event-marker{box-sizing:border-box;position:absolute;border-style:solid;border-color:#fff;z-index:2;pointer-events:none}.preview-event-marker span{position:absolute;left:50%;bottom:100%;transform-origin:bottom center;padding:2px 4px;border:1px solid #fff;border-radius:2px;background:#101318;color:#fff;font:700 10px var(--app-font-mono);white-space:nowrap}
 .preview-state{max-width:420px;padding:26px;display:grid;justify-items:center;gap:8px;color:#d7dde5;text-align:center;z-index:3}.preview-loading{position:absolute;inset:0;box-sizing:border-box;max-width:none;align-content:center;background:#12161b;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:24px 24px}.preview-state.error{width:min(680px,calc(100% - 48px));max-width:680px}.preview-state strong{font-size:14px}.preview-state p{margin:0;color:#8f99a7;font-size:12px;line-height:1.6}.preview-state.error :deep(svg){width:24px;color:#ef8f78}.preview-state button{min-height:30px;padding:0 12px;border:1px solid #48515d;border-radius:4px;background:#20262d;color:#edf2f7;font:inherit;font-size:12px;cursor:pointer}.preview-state button:hover{background:#2a323b}.preview-state button:focus-visible{outline:2px solid var(--app-accent);outline-offset:2px}.error-actions{display:flex;gap:8px}.error-details{box-sizing:border-box;width:100%;max-height:min(52vh,520px);padding:14px;overflow:auto;border:1px solid #343b45;border-radius:6px;background:#0d1116;color:#cbd3dd;text-align:left}.error-details dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 14px;margin:0 0 12px;font-size:11px}.error-details dt{color:#7f8a98}.error-details dd{min-width:0;margin:0;overflow-wrap:anywhere;font-family:var(--app-font-mono)}.diagnostic-section{display:grid;gap:6px;margin-top:12px}.diagnostic-section b{color:#9aa6b4;font-size:11px}.diagnostic-section ul{margin:0;padding-left:20px;font:11px/1.55 var(--app-font-mono);overflow-wrap:anywhere}.diagnostic-section pre{max-height:180px;margin:0;padding:10px;overflow:auto;border-radius:4px;background:#080b0f;color:#cbd3dd;font:11px/1.5 var(--app-font-mono);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}.error-details>button{margin-top:12px}.preview-spinner{width:20px;height:20px;border:2px solid #3a424d;border-top-color:#d7dde5;border-radius:50%;animation:preview-spin .8s linear infinite}@keyframes preview-spin{to{transform:rotate(360deg)}}
 .runtime-badge{position:absolute;right:12px;top:12px;display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid rgba(117,203,151,.28);border-radius:4px;background:rgba(20,28,25,.84);color:#bce7cd;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;backdrop-filter:blur(8px)}.runtime-badge i{width:6px;height:6px;border-radius:50%;background:#72d399;box-shadow:0 0 8px rgba(114,211,153,.7)}
 .preview-fps{position:absolute;left:12px;top:12px;padding:5px 8px;border:1px solid rgba(255,255,255,.1);border-radius:4px;background:rgba(16,20,25,.84);color:#d4dbe4;font:700 10px var(--app-font-mono);letter-spacing:.04em;pointer-events:none;backdrop-filter:blur(8px)}

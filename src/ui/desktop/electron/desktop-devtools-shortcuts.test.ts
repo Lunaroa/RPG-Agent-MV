@@ -31,13 +31,13 @@ test('toggles detached editor tools without invoking map preview', async () => {
   assert.deepEqual(harness.editorActions, [{ mode: 'detach', activate: true }, 'close']);
 });
 
-test('routes Shift+F12 to the warm preview without touching editor tools', async () => {
-  const harness = shortcutHarness({ status: 'opened' });
+test('leaves Shift+F12 to the renderer embedded console shortcut', async () => {
+  const harness = shortcutHarness();
   harness.dispatch(input({ shift: true }));
   await Promise.resolve();
-  assert.equal(harness.prevented, 1);
-  assert.equal(harness.previewCalls, 1);
-  assert.deepEqual(harness.previewResults, [{ status: 'opened' }]);
+  assert.equal(harness.prevented, 0);
+  assert.equal(harness.previewCalls, 0);
+  assert.deepEqual(harness.previewResults, []);
   assert.deepEqual(harness.editorActions, []);
 });
 
@@ -48,7 +48,7 @@ test('wires shortcuts only into the normal desktop window without a global accel
     mainSource,
     /if \(!backgroundUiControlMode\) \{[\s\S]{0,200}registerDesktopDevToolsShortcuts\(mainWindow\.webContents/,
   );
-  assert.match(mainSource, /toggleMapPreview: toggleMapPreviewDevTools/);
+  assert.doesNotMatch(mainSource, /toggleMapPreviewDevTools/);
   assert.doesNotMatch(mainSource, /globalShortcut/);
   assert.doesNotMatch(preloadSource, /toggleDevTools|openDevTools/);
 });
@@ -66,7 +66,7 @@ function input(patch: Partial<DesktopDevToolsInput> = {}): DesktopDevToolsInput 
   };
 }
 
-function shortcutHarness(previewResult: { status: 'opened' } = { status: 'opened' }) {
+function shortcutHarness() {
   let listener: ((event: { preventDefault(): void }, input: DesktopDevToolsInput) => void) | null = null;
   const state = {
     prevented: 0,
@@ -85,10 +85,6 @@ function shortcutHarness(previewResult: { status: 'opened' } = { status: 'opened
     isDevToolsOpened: () => state.devToolsOpened,
     openDevTools: (options) => { state.editorActions.push(options); },
     closeDevTools: () => { state.editorActions.push('close'); },
-  }, {
-    async toggleMapPreview() { state.previewCalls += 1; return previewResult; },
-    onMapPreviewResult(result) { state.previewResults.push(result); },
-    onMapPreviewError(error) { state.previewErrors.push(error); },
   });
   return state;
 }

@@ -24,12 +24,12 @@
       @mousedown.prevent="startResize"
     />
 
-    <section v-if="mode === 'event'" class="workbench-pane event-list-pane" :style="palettePaneStyle">
+    <section v-if="mode === 'event' || mode === 'preview'" class="workbench-pane event-list-pane" :style="palettePaneStyle">
       <header class="pane-header">
         <strong>{{ t('editor.left.events') }}</strong>
         <span class="pane-count">{{ currentEvents.length }}</span>
       </header>
-      <label class="event-search">
+      <label v-if="mode === 'event'" class="event-search">
         <span aria-hidden="true">⌕</span>
         <input
           :value="eventSearchQuery"
@@ -38,12 +38,12 @@
           @input="$emit('update:event-search-query', ($event.target as HTMLInputElement).value)"
         />
       </label>
-      <div v-if="eventSearchQuery.trim()" class="event-search-scope">
+      <div v-if="mode === 'event' && eventSearchQuery.trim()" class="event-search-scope">
         <span>{{ eventSearchAllMaps ? t('editor.left.searchScopeAll') : t('editor.left.searchScopeCurrent') }}</span>
         <button v-if="!eventSearchAllMaps" type="button" @click="$emit('search-all-maps')">{{ t('editor.left.searchAllMaps') }}</button>
       </div>
-      <div class="event-list" @mouseleave="$emit('hover-event', null)">
-        <template v-if="eventSearchQuery.trim()">
+      <div class="event-list" @click="clearPreviewSelectionFromBlank" @mouseleave="$emit('hover-event', null)">
+        <template v-if="mode === 'event' && eventSearchQuery.trim()">
           <button
             v-for="hit in eventSearchHits"
             :key="`${hit.mapId}:${hit.eventId}:${hit.pageIndex}:${hit.commandIndex}:${hit.matchKind}`"
@@ -65,21 +65,22 @@
             :ref="(element) => setEventRowRef(event.id, element)"
             type="button"
             class="event-row"
-            :class="{ active: event.id === selectedEventId }"
+            :class="{ active: event.id === selectedEventId, muted: mode === 'preview' && !previewEventState(event.id)?.visible }"
             @click="$emit('select-event', event.id)"
-            @dblclick="$emit('open-event', event.id)"
-            @mouseenter="$emit('hover-event', event.id)"
+            @dblclick="mode === 'event' && $emit('open-event', event.id)"
+            @mouseenter="mode === 'event' && $emit('hover-event', event.id)"
             @mouseleave="$emit('hover-event', null)"
           >
-            <span class="event-row-main"><strong>{{ formatEventId(event.id) }} {{ event.name }}</strong><small>{{ event.x }}, {{ event.y }}</small></span>
-            <span v-if="event.note" class="event-row-note" :title="event.note">{{ event.note }}</span>
+            <span class="event-row-main"><strong>{{ formatEventId(event.id) }} {{ event.name }}</strong><small>{{ previewEventCoordinates(event) }}</small></span>
+            <span v-if="mode === 'preview' && previewEventStatus(event.id)" class="event-row-note preview-status">{{ previewEventStatus(event.id) }}</span>
+            <span v-else-if="event.note" class="event-row-note" :title="event.note">{{ event.note }}</span>
           </button>
           <div v-if="!currentEvents.length" class="pane-empty">{{ t('editor.left.noEvents') }}</div>
         </template>
       </div>
     </section>
     <div
-      v-show="mode === 'event'"
+      v-show="mode === 'event' || mode === 'preview'"
       class="pane-resizer"
       role="separator"
       aria-orientation="horizontal"
@@ -154,6 +155,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, PaletteTab, PaletteTabId, TreeNode } from '../editor/editorTypes';
+import type { MapPreviewEventState } from '@contract/types';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
 import { useI18n } from '../../i18n';
@@ -192,6 +194,7 @@ const props = defineProps<{
   eventSearchLoading: boolean;
   eventSearchTruncated: boolean;
   eventSearchAllMaps: boolean;
+  previewEventStates: MapPreviewEventState[];
 }>();
 
 const workbenchUi = useWorkbenchUiStore();
@@ -211,7 +214,7 @@ const emit = defineEmits<{
   'node-drop': [source: TreeNode, target: TreeNode, position: 'before' | 'after' | 'inside'];
   'update:event-search-query': [query: string];
   'search-all-maps': [];
-  'select-event': [eventId: number];
+  'select-event': [eventId: number | null];
   'hover-event': [eventId: number | null];
   'open-event': [eventId: number];
   'open-search-hit': [hit: EditorEventSearchHit];
@@ -256,6 +259,22 @@ const workbenchStyle = computed(() => ({
   minWidth: `${displayedDockWidth.value}px`,
   flex: `0 0 ${displayedDockWidth.value}px`,
 }));
+const previewEventStateMap = computed(() => new Map(props.previewEventStates.map((state) => [state.id, state])));
+
+function previewEventState(eventId: number) { return previewEventStateMap.value.get(eventId); }
+function previewEventCoordinates(event: EditorEventListItem): string {
+  const state = props.mode === 'preview' ? previewEventState(event.id) : null;
+  return `${state?.x ?? event.x}, ${state?.y ?? event.y}`;
+}
+function previewEventStatus(eventId: number): string {
+  const state = previewEventState(eventId);
+  if (!state?.active) return t('editor.preview.eventInactive');
+  if (state.hiddenReason === 'erased') return t('editor.preview.eventErased');
+  if (state.hiddenReason === 'transparent') return t('editor.preview.eventTransparent');
+  if (state.hiddenReason === 'no-graphic') return t('editor.preview.eventNoGraphic');
+  if (!state.visible) return t('editor.preview.eventHidden');
+  return '';
+}
 
 function toggleTiles() {
   workbenchUi.setLeftDockTilesOpen(!workbenchUi.leftDockTilesOpen);
@@ -391,6 +410,12 @@ function formatEventId(eventId: number): string {
 function setEventRowRef(eventId: number, element: unknown): void {
   if (element instanceof HTMLElement) eventRowRefs.set(eventId, element);
   else eventRowRefs.delete(eventId);
+}
+
+function clearPreviewSelectionFromBlank(event: MouseEvent): void {
+  if (props.mode !== 'preview') return;
+  if ((event.target as Element | null)?.closest('.event-row')) return;
+  emit('select-event', null);
 }
 
 watch(() => [props.selectedEventId, props.currentEvents, props.eventSearchQuery] as const, async ([eventId, _events, query]) => {
@@ -577,7 +602,7 @@ onMounted(() => {
   font-weight: 700;
 }
 .pane-header.clickable{cursor:pointer}.pane-chevron{color:var(--app-ink-muted);font-size:12px}.tile-chip{margin-left:auto;max-width:104px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 6px;border-radius:4px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-size:10px;font-weight:600}
-.pane-count{min-width:20px;padding:1px 5px;border-radius:2px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-size:10px;text-align:center}.event-search{height:28px;margin:4px;display:flex;align-items:center;gap:5px;padding:0 6px;border:1px solid var(--app-border);border-radius:2px;background:var(--app-bg);color:var(--app-ink-muted)}.event-search:focus-within{border-color:var(--app-accent);box-shadow:0 0 0 1px var(--app-accent)}.event-search input{width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--app-ink);font:inherit;font-size:11px}.event-search-scope{min-height:24px;margin:0 4px 3px;display:flex;align-items:center;justify-content:space-between;gap:5px;color:var(--app-ink-muted);font-size:9px}.event-search-scope button{min-height:22px;padding:0 6px;border:1px solid var(--app-border);border-radius:2px;background:var(--app-bg);color:var(--app-accent);font:inherit;font-size:9px;cursor:pointer}.event-search-scope button:hover{background:var(--app-accent-soft)}.event-search-scope button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.event-list{min-height:0;flex:1;overflow:auto;padding:1px 3px 4px}.event-row{width:100%;min-height:25px;padding:3px 5px;display:flex;flex-direction:column;align-items:stretch;gap:1px;border:0;border-radius:1px;background:transparent;color:var(--app-ink);text-align:left;cursor:pointer}.event-row:hover,.event-row.active{background:var(--app-bg-sunken)}.event-row.active{box-shadow:inset 2px 0 0 var(--app-accent)}.event-row:focus-visible{outline:2px solid var(--app-accent);outline-offset:-2px}.event-row-main{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}.event-row-main strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600}.event-row-main small,.event-row-text,.event-row-note{color:var(--app-ink-muted);font-size:9px}.event-row-text,.event-row-note{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.event-row-note{display:block}.search-hit{min-height:34px;border-bottom:1px solid var(--app-border)}.pane-empty.compact{padding-top:4px;padding-bottom:4px}
+.pane-count{min-width:20px;padding:1px 5px;border-radius:2px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-size:10px;text-align:center}.event-search{height:28px;margin:4px;display:flex;align-items:center;gap:5px;padding:0 6px;border:1px solid var(--app-border);border-radius:2px;background:var(--app-bg);color:var(--app-ink-muted)}.event-search:focus-within{border-color:var(--app-accent);box-shadow:0 0 0 1px var(--app-accent)}.event-search input{width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--app-ink);font:inherit;font-size:11px}.event-search-scope{min-height:24px;margin:0 4px 3px;display:flex;align-items:center;justify-content:space-between;gap:5px;color:var(--app-ink-muted);font-size:9px}.event-search-scope button{min-height:22px;padding:0 6px;border:1px solid var(--app-border);border-radius:2px;background:var(--app-bg);color:var(--app-accent);font:inherit;font-size:9px;cursor:pointer}.event-search-scope button:hover{background:var(--app-accent-soft)}.event-search-scope button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.event-list{min-height:0;flex:1;overflow:auto;padding:1px 3px 4px}.event-row{width:100%;min-height:25px;padding:3px 5px;display:flex;flex-direction:column;align-items:stretch;gap:1px;border:0;border-radius:1px;background:transparent;color:var(--app-ink);text-align:left;cursor:pointer}.event-row:hover,.event-row.active{background:var(--app-bg-sunken)}.event-row.active{box-shadow:inset 2px 0 0 var(--app-accent)}.event-row.muted{opacity:.52}.event-row.muted.active{opacity:.82}.event-row:focus-visible{outline:2px solid var(--app-accent);outline-offset:-2px}.event-row-main{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}.event-row-main strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600}.event-row-main small,.event-row-text,.event-row-note{color:var(--app-ink-muted);font-size:9px}.event-row-text,.event-row-note{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.event-row-note{display:block}.preview-status{color:#b76858}.search-hit{min-height:34px;border-bottom:1px solid var(--app-border)}.pane-empty.compact{padding-top:4px;padding-bottom:4px}
 .tile-tabs { display: flex; gap: 1px; padding: 3px; border-top:1px solid var(--app-border); background: var(--app-bg); }
 .tile-tabs button {
   min-width: 0;

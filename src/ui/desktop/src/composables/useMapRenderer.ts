@@ -433,7 +433,7 @@ function drawEventCharacter(context: CanvasRenderingContext2D, image: MvEventIma
   const frame = eventCharacterFrame(bitmap, image);
   if (!frame) return false;
   const dx = Math.round(x + tileSize / 2 - frame.sw / 2);
-  const dy = Math.round(y + tileSize - frame.sh);
+  const dy = Math.round(y + tileSize - frame.sh - characterNameMarkers(image.characterName || '').shiftY);
   context.drawImage(bitmap, frame.sx, frame.sy, frame.sw, frame.sh, dx, dy, frame.sw, frame.sh);
   return true;
 }
@@ -458,8 +458,23 @@ export function eventCharacterFrame(bitmap: HTMLImageElement, image: MvEventImag
 }
 
 export function isBigCharacterName(name: string): boolean {
-  const sign = String(name || '').match(/^[!$]+/);
-  return Boolean(sign && sign[0].includes('$'));
+  return characterNameMarkers(name).big;
+}
+
+export interface CharacterNameMarkers {
+  big: boolean;
+  object: boolean;
+  shiftY: 0 | 6;
+}
+
+export function characterNameMarkers(name: string): CharacterNameMarkers {
+  const prefix = String(name || '').match(/^[!$]+/)?.[0] || '';
+  const object = prefix.includes('!');
+  return {
+    big: prefix.includes('$'),
+    object,
+    shiftY: object ? 0 : 6,
+  };
 }
 
 function normalizedTileSize(value: number | undefined): number {

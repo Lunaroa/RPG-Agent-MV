@@ -1,5 +1,3 @@
-import type { MapPreviewDevToolsResult } from '../../../contract/types.ts';
-
 export type DesktopDevToolsShortcut = 'editor' | 'map-preview';
 
 export interface DesktopDevToolsInput {
@@ -26,12 +24,6 @@ interface WebContentsLike {
   closeDevTools(): void;
 }
 
-export interface DesktopDevToolsShortcutDependencies {
-  toggleMapPreview(): Promise<MapPreviewDevToolsResult>;
-  onMapPreviewResult(result: MapPreviewDevToolsResult): void;
-  onMapPreviewError(error: unknown): void;
-}
-
 export function desktopDevToolsShortcut(input: DesktopDevToolsInput): DesktopDevToolsShortcut | null {
   if (
     input.type !== 'keyDown'
@@ -48,19 +40,16 @@ export function desktopDevToolsShortcut(input: DesktopDevToolsInput): DesktopDev
 
 export function registerDesktopDevToolsShortcuts(
   webContents: WebContentsLike,
-  dependencies: DesktopDevToolsShortcutDependencies,
 ): void {
   webContents.on('before-input-event', (event, input) => {
     const shortcut = desktopDevToolsShortcut(input);
     if (!shortcut) return;
+    if (shortcut === 'map-preview') return;
     event.preventDefault();
     if (shortcut === 'editor') {
       if (webContents.isDevToolsOpened()) webContents.closeDevTools();
       else webContents.openDevTools({ mode: 'detach', activate: true });
       return;
     }
-    void dependencies.toggleMapPreview()
-      .then((result) => dependencies.onMapPreviewResult(result))
-      .catch((error) => dependencies.onMapPreviewError(error));
   });
 }

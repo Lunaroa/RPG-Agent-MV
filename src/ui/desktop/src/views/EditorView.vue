@@ -47,6 +47,7 @@
         :event-search-loading="eventSearchLoading"
         :event-search-truncated="eventSearchTruncated"
         :event-search-all-maps="eventSearchScope === 'all'"
+        :preview-event-states="previewEventStates"
         @palette-ready="setPaletteCanvas"
         @palette-mousedown="onPaletteMouseDown"
         @palette-mousemove="onPaletteMouseMove"
@@ -60,7 +61,7 @@
         @node-drop="moveMapFromTree"
         @update:event-search-query="eventSearchQuery = $event"
         @search-all-maps="searchAllMaps"
-        @select-event="selectEvent"
+        @select-event="mode === 'preview' ? selectPreviewEventFromDock($event) : selectEvent($event)"
         @hover-event="hoveredEventId = $event"
         @open-event="openEventEditor"
         @open-search-hit="openEventSearchHit"
@@ -83,10 +84,14 @@
             :error="previewError"
             :diagnostic="previewDiagnostic"
             :refreshing="previewRefreshActive"
+            :selected-event="selectedPreviewEventState"
+            :tile-size="currentTileSize"
+            :event-focus-epoch="previewEventFocusEpoch"
             @retry="restartPreview"
             @copy-diagnostic="copyPreviewDiagnostic"
             @runtime-event="onPreviewRuntimeEvent"
             @view-changed="updatePreviewView"
+            @clear-event-selection="selectedEventId = null"
           />
           <div v-show="mode !== 'preview'" class="editor-canvas-layer">
           <div v-if="selectedMapId == null" class="empty-state">
@@ -140,17 +145,37 @@
           @reject="onPlacementReject"
           @back-chat="goBackToChatPlacement"
         />
+        <PreviewConsolePanel
+          v-if="mode === 'preview'"
+          :open="previewConsoleOpen"
+          :entries="previewConsoleEntries"
+          :session-id="previewSession?.sessionId"
+          @execute="executePreviewConsole"
+          @clear="previewConsoleEntries = []"
+          @toggle="togglePreviewConsole"
+        />
       </div>
       <MapPreviewInspector
         v-if="mode === 'preview'"
         :switches="previewSwitches"
         :variables="previewVariables"
+        :current-map-id="selectedMapId!"
+        :events="currentEvents"
+        :selected-event-id="selectedEventId"
         :switch-overrides="previewSwitchOverrides"
         :variable-overrides="previewVariableOverrides"
+        :self-switch-overrides="previewSelfSwitchOverrides"
         :switch-values="previewSwitchValues"
         :variable-values="previewVariableValues"
+        :self-switch-values="previewSelfSwitchValues"
+        :unsupported-variable-types="previewUnsupportedVariableTypes"
+        :variable-draft-scope="previewVariableDraftScope"
+        :variable-draft-reset-epoch="previewVariableDraftResetEpoch"
+        :event-reveal-epoch="previewInspectorRevealEpoch"
         @set-switch="setPreviewSwitch"
         @set-variable="setPreviewVariable"
+        @set-self-switch="setPreviewSelfSwitch"
+        @select-event="selectPreviewEvent"
         @reset="resetPreviewOverrides"
       />
     </div>
@@ -245,8 +270,11 @@ import MapPropertiesDialog from '../components/editor/MapPropertiesDialog.vue';
 import BottomPanel from '../components/editor/BottomPanel.vue';
 import MapRuntimePreview from '../components/editor/MapRuntimePreview.vue';
 import MapPreviewInspector from '../components/editor/MapPreviewInspector.vue';
+import PreviewConsolePanel from '../components/editor/PreviewConsolePanel.vue';
+import { appendPreviewTerminalEntry, type PreviewTerminalEntry } from '../components/editor/previewTerminal';
+import { previewEventSelectionChange } from '../components/editor/previewEventSelection';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapPropertiesForm, MapTool, TreeNode } from '../components/editor/editorTypes';
-import { clipboard as clipboardApi, eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapPreviewOverrides, type MapPreviewRuntimeCommand, type MapPreviewRuntimeEvent, type MapPreviewSession, type MapPreviewStateEntry, type MapPreviewStatus, type MapPreviewViewRequest, type MapTreeNode, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
+import { clipboard as clipboardApi, eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapPreviewConsoleEntry, type MapPreviewEventState, type MapPreviewOverrides, type MapPreviewRuntimeCommand, type MapPreviewRuntimeEvent, type MapPreviewSelfSwitchLetter, type MapPreviewSession, type MapPreviewStateEntry, type MapPreviewStatus, type MapPreviewVariableValue, type MapPreviewViewRequest, type MapTreeNode, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
 import { useMapCanvasEditor, type PlacementFlashCell } from '../composables/useMapCanvasEditor';
 import { clone, defaultEvent, quickEventTemplate, quickObtainEventTemplate, type MvEditorEvent, type MvEventImage, type QuickEventType, type QuickObtainKind } from '../composables/useEventEditor';
 import {
@@ -271,6 +299,7 @@ import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils
 import { loadImageElement } from '../utils/imageLoading.ts';
 import { projectMapTreeMove } from '../utils/mapTreeDragPreview';
 import { filterMapPreviewOverrides, removeMapPreviewOverrides } from '../utils/mapPreviewOverrides';
+import { mapPreviewSelfSwitchKey } from '@contract/map-preview-state';
 import { LatestAsyncCoordinator, type LatestAsyncToken } from '../utils/latestAsyncCoordinator';
 import { previewSessionMatchesIntent, type EditorPreviewIntent } from '../utils/editorPreviewIntent';
 import { mapPreviewDiagnosticFromError, mapPreviewDiagnosticFromSession, serializeMapPreviewDiagnostic, type MapPreviewDiagnostic } from '../utils/mapPreviewDiagnostics';
@@ -373,9 +402,17 @@ const previewRuntimeCommand = shallowRef<MapPreviewRuntimeCommand | null>(null);
 const previewPresentationEpoch = ref(0);
 const previewStateCatalog = ref<MapPreviewStateCatalog>({ switches: [], variables: [] });
 const previewSwitchOverrides = shallowRef(new Map<number, boolean>());
-const previewVariableOverrides = shallowRef(new Map<number, number>());
+const previewVariableOverrides = shallowRef(new Map<number, MapPreviewVariableValue>());
+const previewSelfSwitchOverrides = shallowRef(new Map<string, boolean>());
 const previewRequestedMapId = ref<number | null>(null);
 const previewRefreshActive = ref(false);
+const previewConsoleOpen = ref(false);
+const previewConsoleEntries = ref<PreviewTerminalEntry[]>([]);
+const previewVariableDraftResetEpoch = ref(0);
+const previewEventFocusEpoch = ref(0);
+const previewInspectorRevealEpoch = ref(0);
+let previewConsoleRequestSequence = 0;
+let previewConsoleEntrySequence = 0;
 
 let currentMap: EditableMap | null = null;
 let unregisterUiControlHandler: (() => void) | null = null;
@@ -477,6 +514,18 @@ const previewSwitches = computed<MapPreviewStateEntry[]>(() => previewStateCatal
 const previewVariables = computed<MapPreviewStateEntry[]>(() => previewStateCatalog.value.variables);
 const previewSwitchValues = computed(() => stateRecordMap(previewSession.value?.switchValues));
 const previewVariableValues = computed(() => stateRecordMap(previewSession.value?.variableValues));
+const previewSelfSwitchValues = computed(() => new Map(Object.entries(previewSession.value?.selfSwitchValues || {})));
+const previewUnsupportedVariableTypes = computed(() => stateRecordMap(previewSession.value?.unsupportedVariableTypes));
+const previewVariableDraftScope = computed(() => `${projectStore.currentProject || ''}:${previewSession.value?.sessionId || ''}`);
+const previewEventStates = computed(() => previewSession.value?.eventStates || []);
+const selectedPreviewEventState = computed<MapPreviewEventState | null>(() => {
+  const id = selectedEventId.value;
+  if (id == null) return null;
+  const runtime = previewEventStates.value.find((event) => event.id === id);
+  if (runtime) return runtime;
+  const staticEvent = currentEvents.value.find((event) => event.id === id);
+  return staticEvent ? { id, x: staticEvent.x, y: staticEvent.y, active: false, visible: false } : null;
+});
 const mapPaintModeLabel = computed(() => {
   if (paintMode.value === 'shadow') return t('editor.status.shadowMode');
   if (paintMode.value === 'region') return t('editor.status.regionMode', { value: regionId.value });
@@ -491,7 +540,7 @@ const previewRefreshEnabled = computed(() => (
   && !previewRefreshActive.value
 ));
 
-function stateRecordMap<T extends boolean | number>(record?: Record<string, T>): Map<number, T> {
+function stateRecordMap<T>(record?: Record<string, T>): Map<number, T> {
   return new Map(Object.entries(record || {}).map(([id, value]) => [Number(id), value]));
 }
 
@@ -538,12 +587,69 @@ async function onPreviewRuntimeEvent(event: MapPreviewRuntimeEvent) {
   if (!session) return;
   if (event.sessionId !== session.sessionId || event.operationId !== session.operationId) return;
   if (event.mapId !== session.mapId || event.mapRevision !== session.mapRevision) return;
+  if (event.phase === 'console') appendPreviewConsoleEntry(event.entry);
   try {
     const result = await mapPreview.runtimeEvent(event);
     if (result.session) onPreviewStatus(result.session);
   } catch (error) {
     if (intent?.active && previewIntentCoordinator.current()?.value === intent) setDirectPreviewFailure(error, 'iframe-runtime-event-ipc', intent);
   }
+}
+
+function appendPreviewConsoleEntry(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const entry = value as Partial<MapPreviewConsoleEntry>;
+  if (!Number.isSafeInteger(entry.id) || !Number.isFinite(entry.timestamp) || typeof entry.text !== 'string') return;
+  if (!['debug', 'log', 'info', 'warn', 'error', 'result'].includes(String(entry.level))) return;
+  if (!['console', 'evaluation', 'exception'].includes(String(entry.source))) return;
+  previewConsoleEntries.value = appendPreviewTerminalEntry(previewConsoleEntries.value, {
+    ...entry,
+    id: ++previewConsoleEntrySequence,
+  } as MapPreviewConsoleEntry);
+}
+
+async function executePreviewConsole(code: string) {
+  const session = previewSession.value;
+  if (!session || previewStatus.value !== 'running') return;
+  const requestId = `${session.operationId || 0}-${++previewConsoleRequestSequence}`;
+  previewConsoleEntries.value = appendPreviewTerminalEntry(previewConsoleEntries.value, {
+    id: ++previewConsoleEntrySequence,
+    level: 'command',
+    source: 'input',
+    timestamp: Date.now(),
+    requestId,
+    text: code,
+  });
+  try {
+    await mapPreview.evaluate(requestId, code);
+  } catch (error) {
+    appendPreviewConsoleEntry({
+      id: Date.now(),
+      level: 'error',
+      source: 'evaluation',
+      timestamp: Date.now(),
+      requestId,
+      text: (error as Error).message,
+    });
+  }
+}
+
+function togglePreviewConsole() { previewConsoleOpen.value = !previewConsoleOpen.value; }
+
+function selectPreviewEvent(eventId: number | null) {
+  const change = previewEventSelectionChange(
+    selectedEventId.value,
+    eventId,
+    new Set(currentEvents.value.map((event) => event.id)),
+  );
+  selectedEventId.value = change.selectedEventId;
+  if (change.focus) previewEventFocusEpoch.value += 1;
+  return change;
+}
+
+function selectPreviewEventFromDock(eventId: number | null) {
+  const change = selectPreviewEvent(eventId);
+  if (change.focus) previewInspectorRevealEpoch.value += 1;
 }
 
 function updatePreviewView(view: MapPreviewViewRequest) {
@@ -562,13 +668,14 @@ function revokePreviewFrame() {
 }
 
 function overridesForCurrentMap(): MapPreviewOverrides {
-  return filterMapPreviewOverrides(readEditorPreviewOverrides(projectStore.currentProject), previewStateCatalog.value);
+  return filterMapPreviewOverrides(readEditorPreviewOverrides(projectStore.currentProject), previewStateCatalog.value, selectedMapId.value);
 }
 
 function syncPreviewOverridesFromWorkspace() {
   const overrides = overridesForCurrentMap();
   previewSwitchOverrides.value = stateRecordMap(overrides.switches);
   previewVariableOverrides.value = stateRecordMap(overrides.variables);
+  previewSelfSwitchOverrides.value = new Map(Object.entries(overrides.selfSwitches));
 }
 
 function currentPreviewIntent(): EditorPreviewIntent {
@@ -676,6 +783,11 @@ async function stopPreviewSession() {
   revokePreviewFrame();
   previewSwitchOverrides.value = new Map();
   previewVariableOverrides.value = new Map();
+  previewSelfSwitchOverrides.value = new Map();
+  previewConsoleEntries.value = [];
+  previewVariableDraftResetEpoch.value += 1;
+  previewConsoleRequestSequence = 0;
+  previewConsoleEntrySequence = 0;
   const session = previewSession.value;
   previewSession.value = null;
   previewStatus.value = 'stopped';
@@ -779,13 +891,14 @@ async function setPreviewSwitch(id: number, value: boolean) {
     writeEditorPreviewOverrides(projectStore.currentProject, {
       switches: { ...saved.switches, [String(id)]: value },
       variables: saved.variables,
+      selfSwitches: saved.selfSwitches,
     });
   } catch (error) {
     ElMessage.error(t('editor.preview.stateFailed', { message: (error as Error).message }));
   }
 }
 
-async function setPreviewVariable(id: number, value: number) {
+async function setPreviewVariable(id: number, value: MapPreviewVariableValue) {
   try {
     await mapPreview.setVariable(id, value);
     const next = new Map(previewVariableOverrides.value);
@@ -795,6 +908,24 @@ async function setPreviewVariable(id: number, value: number) {
     writeEditorPreviewOverrides(projectStore.currentProject, {
       switches: saved.switches,
       variables: { ...saved.variables, [String(id)]: value },
+      selfSwitches: saved.selfSwitches,
+    });
+  } catch (error) {
+    ElMessage.error(t('editor.preview.stateFailed', { message: (error as Error).message }));
+  }
+}
+
+async function setPreviewSelfSwitch(eventId: number, letter: MapPreviewSelfSwitchLetter, value: boolean) {
+  if (selectedMapId.value == null) return;
+  try {
+    const key = mapPreviewSelfSwitchKey(selectedMapId.value, eventId, letter);
+    await mapPreview.setSelfSwitch(selectedMapId.value, eventId, letter, value);
+    previewSelfSwitchOverrides.value = new Map(previewSelfSwitchOverrides.value).set(key, value);
+    const saved = readEditorPreviewOverrides(projectStore.currentProject);
+    writeEditorPreviewOverrides(projectStore.currentProject, {
+      switches: saved.switches,
+      variables: saved.variables,
+      selfSwitches: { ...saved.selfSwitches, [key]: value },
     });
   } catch (error) {
     ElMessage.error(t('editor.preview.stateFailed', { message: (error as Error).message }));
@@ -811,6 +942,8 @@ async function resetPreviewOverrides() {
     );
     previewSwitchOverrides.value = new Map();
     previewVariableOverrides.value = new Map();
+    previewSelfSwitchOverrides.value = new Map();
+    previewVariableDraftResetEpoch.value += 1;
   } catch (error) {
     ElMessage.error(t('editor.preview.stateFailed', { message: (error as Error).message }));
   }
@@ -905,6 +1038,13 @@ watch(selectedMapId, () => {
   hoveredEventId.value = null;
   eventSearchScope.value = 'current';
   if (eventSearchQuery.value.trim()) scheduleEventSearch(eventSearchQuery.value);
+});
+watch(currentEvents, () => {
+  if (selectedEventId.value != null && !currentEvents.value.some((event) => event.id === selectedEventId.value)) selectedEventId.value = null;
+});
+watch(previewEventStates, () => {
+  if (mode.value !== 'preview' || selectedEventId.value == null) return;
+  if (!currentEvents.value.some((event) => event.id === selectedEventId.value)) selectedEventId.value = null;
 });
 
 function scheduleEventSearch(query: string) {
@@ -1740,7 +1880,7 @@ function getUiControlState(): EditorUiControlState {
       sessionMapId: previewSession.value.mapId,
       status: previewSession.value.status,
       mapRevision: currentMapRevision.value,
-      frameRevision: previewSession.value.mapRevision,
+      frameRevision: previewSession.value.mapRevision || '',
       frameOperationId: previewSession.value.operationId || 0,
       frameMapId: previewSession.value.mapId,
       frameSequence: 0,
@@ -1892,6 +2032,11 @@ async function saveCurrentEditorWork() {
 }
 
 function onEditorKeyDown(event: KeyboardEvent) {
+  if (event.key === 'F12' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && mode.value === 'preview' && previewSession.value) {
+    event.preventDefault();
+    togglePreviewConsole();
+    return;
+  }
   if (isFormTarget(event.target) || eventDialogOpen.value || selectedMapId.value == null) return;
   if (mode.value === 'preview') return;
   // Ctrl+Z 优先撤回上一次拒绝（仅在有待撤回的拒绝且处于放置批次时），单次生效后让位给图块撤销。

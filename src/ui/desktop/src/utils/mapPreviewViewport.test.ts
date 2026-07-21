@@ -4,6 +4,7 @@ import {
   clampPreviewPan,
   clampPreviewPanOffset,
   PREVIEW_MIN_VISIBLE_EDGE,
+  previewPointerMovedBeyondClick,
   previewVisibleRegion,
 } from './mapPreviewViewport';
 
@@ -65,5 +66,11 @@ describe('map preview viewport panning', () => {
     expect(region!.y + region!.height).toBeLessThanOrEqual(1_200);
     expect(region!.width).toBeGreaterThan(0);
     expect(region!.height).toBeGreaterThan(0);
+  });
+
+  it('separates a blank click from a pan after four CSS pixels', () => {
+    expect(previewPointerMovedBeyondClick({ x: 10, y: 10 }, { x: 14, y: 10 })).toBe(false);
+    expect(previewPointerMovedBeyondClick({ x: 10, y: 10 }, { x: 14.01, y: 10 })).toBe(true);
+    expect(previewPointerMovedBeyondClick({ x: 0, y: 0 }, { x: 3, y: 3 })).toBe(true);
   });
 });

@@ -15,6 +15,7 @@ import {
   drawCheckerboard,
   drawMapContent,
   drawTile,
+  characterNameMarkers,
   eventCharacterFrame,
   type MvEvent,
   type MvEventImage,
@@ -67,9 +68,22 @@ import {
   type ShadowQuarterPoint,
   type ShadowStrokeAction,
 } from '../utils/shadowPen';
+import { selectionOutlineWidths } from '../utils/selectionOutline';
 import { normalizeProductLanguage, translate, type MessageKey } from '../i18n/messages.ts'
 
 const MAP_MODE_EVENT_OPACITY = 0.35;
+
+export function paletteFrameLineWidths(emphasis: 'hover' | 'selected', cssScaleInput: number): { outer: number; inner: number } {
+  const cssScale = Math.max(.01, Number(cssScaleInput) || 1);
+  if (emphasis === 'selected') {
+    const widths = selectionOutlineWidths(cssScale);
+    return { outer: widths.black, inner: widths.white };
+  }
+  return {
+    outer: 2 / cssScale,
+    inner: 1 / cssScale,
+  };
+}
 
 type TileChange = TileEdit & { before?: number; after?: number };
 type BrushCell = {
@@ -665,7 +679,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       const frame = bitmap ? eventCharacterFrame(bitmap, image) : null;
       if (bitmap && frame) {
         const dx = Math.round(px + tileSize.value / 2 - frame.sw / 2);
-        const dy = Math.round(py + tileSize.value - frame.sh);
+        const dy = Math.round(py + tileSize.value - frame.sh - characterNameMarkers(image.characterName || '').shiftY);
         context.drawImage(bitmap, frame.sx, frame.sy, frame.sw, frame.sh, dx, dy, frame.sw, frame.sh);
       } else {
         drawPlacementPlaceholder(context, px, py);
@@ -761,7 +775,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (!paletteHoverCell || paletteDragStart) return;
     const x = paletteHoverCell.col * size;
     const y = paletteHoverCell.row * size;
-    drawPaletteFrame(context, x, y, size, size);
+    drawPaletteFrame(context, x, y, size, size, 'hover');
   }
 
   function drawPaletteFrame(
@@ -770,6 +784,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     y: number,
     width: number,
     height: number,
+    emphasis: 'hover' | 'selected',
   ) {
     const canvas = context.canvas;
     const rect = canvas.getBoundingClientRect();
@@ -781,24 +796,28 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       ? Math.abs(transform.d) * rect.height / canvas.height
       : 1;
     const cssScale = Math.max(.01, Math.min(cssScaleX, cssScaleY));
-    const inset = 1 / cssScale;
+    const widths = paletteFrameLineWidths(emphasis, cssScale);
+    const outerInset = widths.outer / 2;
+    const innerInset = emphasis === 'selected'
+      ? widths.outer + widths.inner / 2
+      : outerInset;
     context.save();
     context.setLineDash([]);
     context.strokeStyle = 'rgba(17, 17, 17, .92)';
-    context.lineWidth = 2 / cssScale;
+    context.lineWidth = widths.outer;
     context.strokeRect(
-      x + inset,
-      y + inset,
-      Math.max(1, width - inset * 2),
-      Math.max(1, height - inset * 2),
+      x + outerInset,
+      y + outerInset,
+      Math.max(1, width - outerInset * 2),
+      Math.max(1, height - outerInset * 2),
     );
     context.strokeStyle = 'rgba(255, 255, 255, .99)';
-    context.lineWidth = 1 / cssScale;
+    context.lineWidth = widths.inner;
     context.strokeRect(
-      x + inset,
-      y + inset,
-      Math.max(1, width - inset * 2),
-      Math.max(1, height - inset * 2),
+      x + innerInset,
+      y + innerInset,
+      Math.max(1, width - innerInset * 2),
+      Math.max(1, height - innerInset * 2),
     );
     context.restore();
   }
@@ -863,7 +882,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     const y = range.minRow * size;
     const width = (range.maxCol - range.minCol + 1) * size;
     const height = (range.maxRow - range.minRow + 1) * size;
-    drawPaletteFrame(context, x, y, width, height);
+    drawPaletteFrame(context, x, y, width, height, 'selected');
   }
   function highlightPaletteSelection(context: CanvasRenderingContext2D, size = tileSize.value) {
     if (tileTab.value === 'R') {
@@ -871,7 +890,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       if (!selected) return;
       const x = selected.col * size;
       const y = selected.row * size;
-      drawPaletteFrame(context, x, y, size, size);
+      drawPaletteFrame(context, x, y, size, size, 'selected');
       return;
     }
     if (!brush) return;
@@ -892,6 +911,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       minRow * tileSize.value,
       (maxCol - minCol + 1) * tileSize.value,
       (maxRow - minRow + 1) * tileSize.value,
+      'selected',
     );
   }
 

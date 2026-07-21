@@ -742,6 +742,7 @@ const enUS = {
     'editor.preview.diagnosticNo': 'No',
     'editor.preview.diagnosticUnknown': 'Unclassified',
     'editor.preview.live': 'Real runtime',
+    'editor.preview.actualFps': 'Actual presentation frame rate',
     'editor.preview.frameAlt': 'Map rendered by the real game runtime',
     'editor.preview.displayScale': 'Preview display scale',
     'editor.preview.resetScale': 'Fit to window and center',

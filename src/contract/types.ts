@@ -653,6 +653,9 @@ export interface MapPreviewSession {
   mapPixelWidth?: number;
   mapPixelHeight?: number;
   renderMode?: 'full' | 'tiled';
+  transportMode?: MapPreviewTransportMode;
+  iframeUrl?: string;
+  actualFps?: number;
   mapRevision?: string;
   resumeKind?: 'warm' | 'map-sync' | 'reisolated';
   switchValues?: Record<string, boolean>;
@@ -698,6 +701,26 @@ export interface MapPreviewFrame {
   outputWidth: number;
   outputHeight: number;
   data: Uint8Array;
+}
+
+export type MapPreviewTransportMode = 'iframe';
+
+export interface MapPreviewRuntimeEvent {
+  kind: 'rpg-agent-map-preview';
+  sessionId: string;
+  channelToken: string;
+  operationId: number;
+  mapId: number;
+  mapRevision: string;
+  phase: 'ready' | 'loading-map' | 'suspended' | 'state' | 'fps' | 'error';
+  [key: string]: unknown;
+}
+
+export interface MapPreviewRuntimeCommand {
+  kind: 'rpg-agent-map-preview-command';
+  sessionId: string;
+  channelToken: string;
+  command: Record<string, unknown>;
 }
 
 export type RmmvVerifyStatus = 'verified' | 'blocked' | 'review' | 'failed';

@@ -23,6 +23,7 @@ import { registerDesktopDevToolsShortcuts } from './desktop-devtools-shortcuts.j
 import { startUiControlBridge, stopUiControlBridge } from './ui-control-bridge.js';
 import { initAutoUpdater } from './auto-updater.js';
 import { RMMV_ASSET_SCHEME } from './asset-protocol-policy.js';
+import { MAP_PREVIEW_SCHEME } from './map-preview-protocol.js';
 import {
   buildDesktopWindowPolicy,
   isBackgroundUiControlMode,
@@ -50,6 +51,7 @@ let devToolsNoticeOpen = false;
 
 protocol.registerSchemesAsPrivileged([
   RMMV_ASSET_SCHEME,
+  MAP_PREVIEW_SCHEME,
 ]);
 
 function scheduleWindowStateSave(): void {

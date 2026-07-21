@@ -21,6 +21,7 @@ test('refreshes the effective map before forcing a serialized runtime reload', (
   assert.match(editorSource, /reconcilePreview: false/);
   assert.match(editorSource, /previewIntentCoordinator\.begin\(\{ \.\.\.intent, forceReload: true \}\)/);
   assert.match(editorSource, /previewStatus\.value === 'running'/);
-  assert.match(editorSource, /previewRefreshActive\.value \|\| !intent \|\| !previewFrameMatchesIntent/);
+  assert.match(editorSource, /event\.operationId !== session\.operationId/);
+  assert.match(editorSource, /previewRuntimeCommand\.value = command/);
   assert.match(editorSource, /&& !previewRefreshActive\.value/);
 });

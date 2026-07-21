@@ -1,0 +1,124 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import vm from 'node:vm';
+
+import { injectMapPreviewIframeHarness } from './map-preview-iframe-harness.ts';
+
+const options = {
+  sessionId: 'preview-session',
+  channelToken: 'channel-token',
+  mapId: 3,
+  mapRevision: 'revision-a',
+  operationId: 1,
+  viewportWidth: 816,
+  viewportHeight: 624,
+  geometry: { pixelWidth: 960, pixelHeight: 720 },
+  overrides: { switches: { '2': true }, variables: { '4': 9 } },
+};
+
+test('injects the immutable preview marker before every project script', () => {
+  const root = fixture('mv');
+  try {
+    injectMapPreviewIframeHarness(root, options);
+    const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+    assert.ok(html.indexOf('rpg-agent-preview-marker.js') < html.indexOf('js/plugins.js'));
+    assert.ok(html.indexOf('rpg-agent-preview-iframe.js') < html.indexOf('js/main.js'));
+
+    const marker = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-marker.js'), 'utf8');
+    const context = vm.createContext({ window: {} });
+    vm.runInContext(marker, context);
+    const descriptor = Object.getOwnPropertyDescriptor((context as any).window, '__rpg_agent_debugger__');
+    assert.deepEqual(
+      descriptor && { value: descriptor.value, writable: descriptor.writable, enumerable: descriptor.enumerable, configurable: descriptor.configurable },
+      { value: true, writable: false, enumerable: false, configurable: false },
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('adds the iframe harness to the MZ dynamic loader after plugins', () => {
+  const root = fixture('mz');
+  try {
+    injectMapPreviewIframeHarness(root, options);
+    const main = fs.readFileSync(path.join(root, 'js', 'main.js'), 'utf8');
+    assert.match(main, /"js\/plugins\.js",\s*"js\/rpg-agent-preview-iframe\.js"/);
+    const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+    assert.equal((html.match(/rpg-agent-preview-iframe\.js/g) || []).length, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('keeps native visual animation while freezing game logic and frame transport', () => {
+  const root = fixture('mv');
+  try {
+    injectMapPreviewIframeHarness(root, options);
+    const harness = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
+    assert.match(harness, /Game_CharacterBase\.prototype\.updateAnimation\.call\(this\)/);
+    assert.match(harness, /Game_Event\.prototype\.start = function \(\) \{\}/);
+    assert.match(harness, /Game_Event\.prototype\.updateSelfMovement = function \(\) \{\}/);
+    assert.match(harness, /Game_Interpreter\.prototype\.update = function \(\) \{\}/);
+    assert.match(harness, /Game_Player\.prototype\.canMove = function \(\) \{ return false; \}/);
+    assert.match(harness, /requestAnimationFrame\(fpsLoop\)/);
+    assert.match(harness, /suspended \|\| loading \|\| !initialized \|\| runtimeStage !== 'ready'/);
+    assert.match(harness, /runtimeStage = 'ready';\s*resetFpsSample\(\);\s*post\('ready'/);
+    assert.doesNotMatch(harness, /SceneManager\._scene instanceof Scene_Map/);
+    assert.doesNotMatch(harness, /RTCPeerConnection|captureStream|toDataURL|toBlob|WebCodecs/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('authenticates parent commands with both session and channel token', () => {
+  const root = fixture('mv');
+  try {
+    injectMapPreviewIframeHarness(root, options);
+    const harness = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
+    assert.match(harness, /event\.source !== window\.parent/);
+    assert.match(harness, /command\.sessionId !== config\.sessionId/);
+    assert.match(harness, /command\.channelToken !== config\.channelToken/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('upgrades only oversized MV WebGL tile layers to 32-bit indices', () => {
+  const root = fixture('mv');
+  try {
+    injectMapPreviewIframeHarness(root, options);
+    const harness = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
+    assert.match(harness, /Utils\.RPGMAKER_NAME !== 'MV'/);
+    assert.match(harness, /count \* 4 > 65535/);
+    assert.match(harness, /this\.indices instanceof Uint32Array/);
+    assert.match(harness, /var IndexArray = requiresUint32 \? Uint32Array : Uint16Array/);
+    assert.match(harness, /gl\.getExtension\('OES_element_index_uint'\)/);
+    assert.match(harness, /gl\.UNSIGNED_INT : gl\.UNSIGNED_SHORT/);
+    assert.match(harness, /render-full-map-tilemap/);
+    assert.match(harness, /installMvFullMapTilemapSupport\(\)/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function fixture(engine: 'mv' | 'mz'): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-iframe-'));
+  fs.mkdirSync(path.join(root, 'js'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'index.html'),
+    '<!doctype html><script src="js/plugins.js"></script><script src="js/main.js"></script>',
+    'utf8',
+  );
+  fs.writeFileSync(path.join(root, 'js', 'plugins.js'), '', 'utf8');
+  fs.writeFileSync(
+    path.join(root, 'js', 'main.js'),
+    engine === 'mz'
+      ? 'const scriptUrls = ["js/libs/effekseer.min.js", "js/plugins.js"];'
+      : 'PluginManager.setup($plugins); SceneManager.run(Scene_Boot);',
+    'utf8',
+  );
+  return root;
+}

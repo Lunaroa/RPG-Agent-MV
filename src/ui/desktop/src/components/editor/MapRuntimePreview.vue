@@ -34,13 +34,15 @@
         <button type="button" @click="$emit('copy-diagnostic')">{{ t('editor.preview.copyDiagnostic') }}</button>
       </div>
     </div>
-    <div v-if="!error && !hasDisplayableFrame" class="preview-state" aria-live="polite">
+
+    <div v-if="!error && !hasDisplayablePreview" class="preview-state preview-loading" aria-live="polite">
       <span class="preview-spinner" aria-hidden="true" />
       <strong>{{ statusLabel }}</strong>
       <p>{{ t('editor.preview.loadingHint') }}</p>
     </div>
+
     <div
-      v-show="!error && hasDisplayableFrame"
+      v-show="!error && Boolean(iframeUrl)"
       ref="viewportRef"
       class="runtime-viewport"
       @pointerdown="startDrag"
@@ -51,105 +53,105 @@
       @wheel.prevent="adjustScale"
     >
       <div class="runtime-map-layer" :style="layerStyle">
-        <canvas ref="baseCanvasRef" class="runtime-map-frame" :aria-label="t('editor.preview.frameAlt')" />
-        <canvas ref="tileCanvasRef" class="runtime-map-frame runtime-map-tile" :style="tileStyle" aria-hidden="true" />
+        <iframe
+          v-if="iframeUrl"
+          ref="iframeRef"
+          class="runtime-map-frame"
+          :src="iframeUrl"
+          :title="t('editor.preview.frameAlt')"
+          sandbox="allow-scripts allow-same-origin"
+          tabindex="-1"
+          @load="onIframeLoad"
+        />
       </div>
     </div>
-    <div v-if="hasDisplayableFrame" class="preview-scale" :aria-label="t('editor.preview.displayScale')">
+
+    <div v-if="hasDisplayablePreview" class="preview-scale" :aria-label="t('editor.preview.displayScale')">
       <button type="button" data-ui-id="preview-zoom-out" :title="t('editor.view.zoomOut')" @click="zoomOut">−</button>
       <button type="button" data-ui-id="preview-zoom-reset" :title="t('editor.preview.resetScale')" @click="resetView">{{ Math.round(displayScale * 100) }}%</button>
       <button type="button" data-ui-id="preview-zoom-in" :title="t('editor.view.zoomIn')" @click="zoomIn">+</button>
     </div>
+    <span
+      v-if="hasDisplayablePreview"
+      class="preview-fps"
+      data-ui-id="preview-actual-fps"
+      :title="t('editor.preview.actualFps')"
+    >FPS {{ actualFps ?? '--' }}</span>
     <span v-if="status === 'running'" class="runtime-badge"><i />{{ t('editor.preview.live') }}</span>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { WarningFilled } from '@element-plus/icons-vue';
-import type { MapPreviewFrame, MapPreviewStatus, MapPreviewViewRequest } from '@contract/types';
+import type {
+  MapPreviewRuntimeCommand,
+  MapPreviewRuntimeEvent,
+  MapPreviewStatus,
+  MapPreviewViewRequest,
+} from '@contract/types';
 import { useI18n } from '../../i18n';
 import type { MapPreviewDiagnostic } from '../../utils/mapPreviewDiagnostics';
 import { clampPreviewPan, previewVisibleRegion } from '../../utils/mapPreviewViewport';
 
 const props = defineProps<{
   status: MapPreviewStatus;
-  frame?: MapPreviewFrame | null;
-  tileFrame?: MapPreviewFrame | null;
+  iframeUrl?: string;
+  operationId?: number;
+  mapRevision?: string;
+  mapPixelWidth?: number;
+  mapPixelHeight?: number;
+  actualFps?: number;
+  runtimeCommand?: MapPreviewRuntimeCommand | null;
+  presentationEpoch?: number;
   error?: string;
   diagnostic?: MapPreviewDiagnostic | null;
   refreshing?: boolean;
 }>();
+
 const emit = defineEmits<{
   retry: [];
-  presented: [sequence: number];
-  'presentation-failed': [sequence: number, message: string];
+  'runtime-event': [event: MapPreviewRuntimeEvent];
   viewChanged: [view: MapPreviewViewRequest];
   'copy-diagnostic': [];
 }>();
+
 const { t } = useI18n();
 const viewportRef = ref<HTMLElement>();
-const baseCanvasRef = ref<HTMLCanvasElement>();
-const tileCanvasRef = ref<HTMLCanvasElement>();
+const iframeRef = ref<HTMLIFrameElement>();
 const viewportWidth = ref(0);
 const viewportHeight = ref(0);
-const presentedMapWidth = ref(0);
-const presentedMapHeight = ref(0);
-const basePresented = ref(false);
 const displayScale = ref(1);
 const offsetX = ref(0);
 const offsetY = ref(0);
 const dragging = ref(false);
 const detailsOpen = ref(false);
+const runtimeReady = ref(false);
 let pointerId: number | null = null;
 let lastPoint = { x: 0, y: 0 };
 let resizeObserver: ResizeObserver | null = null;
 let viewFrame = 0;
-let baseDecodeGeneration = 0;
-let tileDecodeGeneration = 0;
 
-const mapPixelWidth = computed(() => props.frame?.mapPixelWidth || presentedMapWidth.value);
-const mapPixelHeight = computed(() => props.frame?.mapPixelHeight || presentedMapHeight.value);
-
+const mapWidth = computed(() => Math.max(1, Number(props.mapPixelWidth) || 1));
+const mapHeight = computed(() => Math.max(1, Number(props.mapPixelHeight) || 1));
 const fitScale = computed(() => {
-  if (viewportWidth.value <= 0 || viewportHeight.value <= 0 || mapPixelWidth.value <= 0 || mapPixelHeight.value <= 0) return 1;
+  if (viewportWidth.value <= 0 || viewportHeight.value <= 0) return 1;
   return Math.min(
     1,
-    Math.max(1, viewportWidth.value - 40) / mapPixelWidth.value,
-    Math.max(1, viewportHeight.value - 40) / mapPixelHeight.value,
+    Math.max(1, viewportWidth.value - 40) / mapWidth.value,
+    Math.max(1, viewportHeight.value - 40) / mapHeight.value,
   );
 });
 const actualScale = computed(() => fitScale.value * displayScale.value);
-const hasDisplayableFrame = computed(() => basePresented.value && (props.status === 'running' || props.status === 'resuming'));
-const diagnosticRows = computed(() => {
-  const diagnostic = props.diagnostic;
-  if (!diagnostic) return [];
-  const detail = diagnostic.detail;
-  const rows = [
-    { label: t('editor.preview.diagnosticCode'), value: diagnostic.failureCode || t('editor.preview.diagnosticUnknown') },
-    { label: t('editor.preview.diagnosticStage'), value: detail.stage },
-    { label: t('editor.preview.diagnosticEngine'), value: diagnostic.engine },
-    { label: t('editor.preview.diagnosticMapId'), value: String(diagnostic.mapId) },
-    { label: t('editor.preview.diagnosticOperationId'), value: String(detail.operationId || diagnostic.operationId || '') },
-    { label: t('editor.preview.diagnosticSourceMapId'), value: detail.sourceMapId ? String(detail.sourceMapId) : '' },
-    { label: t('editor.preview.diagnosticTargetMapId'), value: detail.targetMapId ? String(detail.targetMapId) : '' },
-    { label: t('editor.preview.diagnosticScene'), value: detail.scene || '' },
-    { label: t('editor.preview.diagnosticTransferring'), value: booleanDiagnostic(detail.transferring) },
-    { label: t('editor.preview.diagnosticResourcesReady'), value: booleanDiagnostic(detail.resourcesReady) },
-  ];
-  return rows.filter((row) => row.value !== '');
-});
+const hasDisplayablePreview = computed(() => Boolean(
+  props.iframeUrl
+  && runtimeReady.value
+  && ['running', 'resuming', 'suspended'].includes(props.status),
+));
 const layerStyle = computed(() => ({
-  width: mapPixelWidth.value > 0 ? `${mapPixelWidth.value}px` : undefined,
-  height: mapPixelHeight.value > 0 ? `${mapPixelHeight.value}px` : undefined,
+  width: `${mapWidth.value}px`,
+  height: `${mapHeight.value}px`,
   transform: `translate3d(calc(-50% + ${offsetX.value}px), calc(-50% + ${offsetY.value}px), 0) scale(${actualScale.value})`,
-}));
-const tileStyle = computed<CSSProperties>(() => ({
-  left: `${props.tileFrame?.x || 0}px`,
-  top: `${props.tileFrame?.y || 0}px`,
-  width: `${props.tileFrame?.width || 1}px`,
-  height: `${props.tileFrame?.height || 1}px`,
-  visibility: props.tileFrame ? 'visible' : 'hidden',
 }));
 const statusLabel = computed(() => {
   if (props.refreshing) return t('editor.preview.refreshing');
@@ -160,6 +162,23 @@ const statusLabel = computed(() => {
   if (props.status === 'resuming') return t('editor.preview.resuming');
   return t('editor.preview.starting');
 });
+const diagnosticRows = computed(() => {
+  const diagnostic = props.diagnostic;
+  if (!diagnostic) return [];
+  const detail = diagnostic.detail;
+  return [
+    { label: t('editor.preview.diagnosticCode'), value: diagnostic.failureCode || t('editor.preview.diagnosticUnknown') },
+    { label: t('editor.preview.diagnosticStage'), value: detail.stage },
+    { label: t('editor.preview.diagnosticEngine'), value: diagnostic.engine },
+    { label: t('editor.preview.diagnosticMapId'), value: String(diagnostic.mapId) },
+    { label: t('editor.preview.diagnosticOperationId'), value: String(detail.operationId || diagnostic.operationId || '') },
+    { label: t('editor.preview.diagnosticSourceMapId'), value: detail.sourceMapId ? String(detail.sourceMapId) : '' },
+    { label: t('editor.preview.diagnosticTargetMapId'), value: detail.targetMapId ? String(detail.targetMapId) : '' },
+    { label: t('editor.preview.diagnosticScene'), value: detail.scene || '' },
+    { label: t('editor.preview.diagnosticTransferring'), value: booleanDiagnostic(detail.transferring) },
+    { label: t('editor.preview.diagnosticResourcesReady'), value: booleanDiagnostic(detail.resourcesReady) },
+  ].filter((row) => row.value !== '');
+});
 
 function setScale(value: number) {
   const maximum = Math.max(2, 4 / Math.max(.01, fitScale.value));
@@ -167,20 +186,13 @@ function setScale(value: number) {
   clampOffsets();
 }
 
-function zoomIn() {
-  setScale(displayScale.value * 1.25);
-}
-
-function zoomOut() {
-  setScale(displayScale.value / 1.25);
-}
-
+function zoomIn() { setScale(displayScale.value * 1.25); }
+function zoomOut() { setScale(displayScale.value / 1.25); }
 function resetView() {
   displayScale.value = 1;
   offsetX.value = 0;
   offsetY.value = 0;
 }
-
 function adjustScale(event: WheelEvent) {
   if (event.deltaY < 0) zoomIn();
   else zoomOut();
@@ -194,7 +206,6 @@ function startDrag(event: PointerEvent) {
   dragging.value = true;
   viewportRef.value?.setPointerCapture(event.pointerId);
 }
-
 function moveDrag(event: PointerEvent) {
   if (pointerId !== event.pointerId) return;
   offsetX.value += event.clientX - lastPoint.x;
@@ -202,27 +213,23 @@ function moveDrag(event: PointerEvent) {
   clampOffsets();
   lastPoint = { x: event.clientX, y: event.clientY };
 }
-
+function stopDrag(event: PointerEvent) {
+  if (pointerId !== event.pointerId) return;
+  pointerId = null;
+  dragging.value = false;
+  if (viewportRef.value?.hasPointerCapture(event.pointerId)) viewportRef.value.releasePointerCapture(event.pointerId);
+}
 function clampOffsets() {
   const clamped = clampPreviewPan({
     x: offsetX.value,
     y: offsetY.value,
     viewportWidth: viewportWidth.value,
     viewportHeight: viewportHeight.value,
-    renderedWidth: mapPixelWidth.value * actualScale.value,
-    renderedHeight: mapPixelHeight.value * actualScale.value,
+    renderedWidth: mapWidth.value * actualScale.value,
+    renderedHeight: mapHeight.value * actualScale.value,
   });
   offsetX.value = clamped.x;
   offsetY.value = clamped.y;
-}
-
-function stopDrag(event: PointerEvent) {
-  if (pointerId !== event.pointerId) return;
-  pointerId = null;
-  dragging.value = false;
-  if (viewportRef.value?.hasPointerCapture(event.pointerId)) {
-    viewportRef.value.releasePointerCapture(event.pointerId);
-  }
 }
 
 function queueViewUpdate() {
@@ -230,32 +237,19 @@ function queueViewUpdate() {
   viewFrame = requestAnimationFrame(() => {
     viewFrame = 0;
     const viewport = viewportRef.value;
-    const scale = actualScale.value;
     if (!viewport) return;
     const view = previewVisibleRegion({
       x: offsetX.value,
       y: offsetY.value,
       viewportWidth: viewport.clientWidth,
       viewportHeight: viewport.clientHeight,
-      mapWidth: mapPixelWidth.value,
-      mapHeight: mapPixelHeight.value,
-      scale,
+      mapWidth: mapWidth.value,
+      mapHeight: mapHeight.value,
+      scale: actualScale.value,
     });
     if (view) emit('viewChanged', view);
   });
 }
-
-watch(
-  () => [mapPixelWidth.value, mapPixelHeight.value, viewportWidth.value, viewportHeight.value, displayScale.value, offsetX.value, offsetY.value],
-  queueViewUpdate,
-);
-watch(viewportRef, (next, previous) => {
-  if (previous) resizeObserver?.unobserve(previous);
-  if (next) {
-    resizeObserver?.observe(next);
-    updateViewportSize();
-  }
-});
 
 function updateViewportSize() {
   viewportWidth.value = viewportRef.value?.clientWidth || 0;
@@ -264,114 +258,40 @@ function updateViewportSize() {
   queueViewUpdate();
 }
 
-watch(() => [mapPixelWidth.value, mapPixelHeight.value], clampOffsets);
-watch(() => [props.error, props.diagnostic], () => { detailsOpen.value = false; });
-
-watch(() => props.frame, (frame) => { void presentBaseFrame(frame || null); }, { immediate: true });
-watch(() => props.tileFrame, (frame) => { void presentTileFrame(frame || null); }, { immediate: true });
-
-async function decodeFrame(frame: MapPreviewFrame): Promise<ImageBitmap> {
-  if (typeof createImageBitmap !== 'function') throw new Error('The desktop renderer does not support asynchronous PNG decoding.');
-  if (!(frame.data.buffer instanceof ArrayBuffer)) throw new Error('The preview frame is not backed by transferable binary data.');
-  const bytes = new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
-  return createImageBitmap(new Blob([bytes], { type: frame.mime }));
+function onIframeLoad() {
+  runtimeReady.value = false;
+  sendRuntimeCommand(props.runtimeCommand);
 }
 
-async function presentBaseFrame(frame: MapPreviewFrame | null) {
-  const generation = ++baseDecodeGeneration;
-  if (!frame) {
-    basePresented.value = false;
-    presentedMapWidth.value = 0;
-    presentedMapHeight.value = 0;
-    clearCanvas(baseCanvasRef.value);
-    clearTileFrame();
-    return;
-  }
-  let bitmap: ImageBitmap | null = null;
-  try {
-    bitmap = await decodeFrame(frame);
-    if (generation !== baseDecodeGeneration || props.frame?.sequence !== frame.sequence) {
-      bitmap.close();
-      emit('presented', frame.sequence);
-      return;
-    }
-    await nextTick();
-    const canvas = baseCanvasRef.value;
-    const context = prepareCanvas(canvas, frame.outputWidth, frame.outputHeight);
-    context.drawImage(bitmap, 0, 0);
-    bitmap.close();
-    bitmap = null;
-    presentedMapWidth.value = frame.mapPixelWidth;
-    presentedMapHeight.value = frame.mapPixelHeight;
-    basePresented.value = true;
-    clearTileFrame();
-    await nextAnimationFrame();
-    if (generation === baseDecodeGeneration) {
-      emit('presented', frame.sequence);
-      queueViewUpdate();
-    }
-  } catch (error) {
-    bitmap?.close();
-    if (generation === baseDecodeGeneration) emit('presentation-failed', frame.sequence, errorMessage(error));
-    else emit('presented', frame.sequence);
-  }
+function sendRuntimeCommand(command: MapPreviewRuntimeCommand | null | undefined) {
+  if (!command || !iframeRef.value?.contentWindow) return;
+  iframeRef.value.contentWindow.postMessage(command, '*');
 }
 
-async function presentTileFrame(frame: MapPreviewFrame | null) {
-  const generation = ++tileDecodeGeneration;
-  if (!frame) {
-    clearTileFrame();
-    return;
-  }
-  let bitmap: ImageBitmap | null = null;
-  try {
-    bitmap = await decodeFrame(frame);
-    if (generation !== tileDecodeGeneration || props.tileFrame?.sequence !== frame.sequence) {
-      bitmap.close();
-      emit('presented', frame.sequence);
-      return;
-    }
-    await nextTick();
-    const context = prepareCanvas(tileCanvasRef.value, frame.outputWidth, frame.outputHeight);
-    context.drawImage(bitmap, 0, 0);
-    bitmap.close();
-    bitmap = null;
-    await nextAnimationFrame();
-    if (generation === tileDecodeGeneration) emit('presented', frame.sequence);
-  } catch (error) {
-    bitmap?.close();
-    if (generation === tileDecodeGeneration) emit('presentation-failed', frame.sequence, errorMessage(error));
-    else emit('presented', frame.sequence);
-  }
+function onRuntimeMessage(event: MessageEvent) {
+  if (!iframeRef.value?.contentWindow || event.source !== iframeRef.value.contentWindow) return;
+  if (!isRuntimeEvent(event.data)) return;
+  if (!matchesIframeOrigin(event.origin)) return;
+  if (event.data.phase === 'ready') runtimeReady.value = true;
+  if (event.data.phase === 'loading-map') runtimeReady.value = false;
+  emit('runtime-event', event.data);
 }
 
-function prepareCanvas(canvas: HTMLCanvasElement | undefined, width: number, height: number): CanvasRenderingContext2D {
-  if (!canvas) throw new Error('The preview canvas is unavailable.');
-  if (canvas.width !== width) canvas.width = width;
-  if (canvas.height !== height) canvas.height = height;
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('The preview canvas context is unavailable.');
-  context.imageSmoothingEnabled = false;
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  return context;
+function isRuntimeEvent(value: unknown): value is MapPreviewRuntimeEvent {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as Partial<MapPreviewRuntimeEvent>;
+  return event.kind === 'rpg-agent-map-preview'
+    && typeof event.sessionId === 'string'
+    && typeof event.channelToken === 'string'
+    && Number.isInteger(event.operationId)
+    && Number.isInteger(event.mapId)
+    && typeof event.mapRevision === 'string'
+    && ['ready', 'loading-map', 'suspended', 'state', 'fps', 'error'].includes(String(event.phase));
 }
 
-function clearCanvas(canvas: HTMLCanvasElement | undefined) {
-  const context = canvas?.getContext('2d');
-  if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
-}
-
-function clearTileFrame() {
-  tileDecodeGeneration += 1;
-  clearCanvas(tileCanvasRef.value);
-}
-
-function nextAnimationFrame(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function matchesIframeOrigin(origin: string): boolean {
+  if (origin === 'null') return true;
+  try { return origin === new URL(props.iframeUrl || '').origin; } catch { return false; }
 }
 
 function booleanDiagnostic(value: boolean | undefined): string {
@@ -379,15 +299,30 @@ function booleanDiagnostic(value: boolean | undefined): string {
   return value ? t('editor.preview.diagnosticYes') : t('editor.preview.diagnosticNo');
 }
 
-onMounted(() => {
-  resizeObserver = new ResizeObserver(updateViewportSize);
-  if (viewportRef.value) resizeObserver.observe(viewportRef.value);
-  updateViewportSize();
+watch(
+  () => [props.iframeUrl, props.operationId, props.mapRevision, props.presentationEpoch],
+  () => { runtimeReady.value = false; },
+);
+watch(() => props.runtimeCommand, sendRuntimeCommand, { deep: false });
+watch(() => [props.error, props.diagnostic], () => { detailsOpen.value = false; });
+watch(() => [mapWidth.value, mapHeight.value, viewportWidth.value, viewportHeight.value, displayScale.value, offsetX.value, offsetY.value], queueViewUpdate);
+watch(() => [mapWidth.value, mapHeight.value, viewportWidth.value, viewportHeight.value], clampOffsets);
+watch(viewportRef, (next, previous) => {
+  if (previous) resizeObserver?.unobserve(previous);
+  if (next) {
+    resizeObserver?.observe(next);
+    updateViewportSize();
+  }
 });
 
+onMounted(() => {
+  window.addEventListener('message', onRuntimeMessage);
+  resizeObserver = new ResizeObserver(updateViewportSize);
+  if (viewportRef.value) resizeObserver.observe(viewportRef.value);
+  nextTick(updateViewportSize);
+});
 onBeforeUnmount(() => {
-  baseDecodeGeneration += 1;
-  tileDecodeGeneration += 1;
+  window.removeEventListener('message', onRuntimeMessage);
   resizeObserver?.disconnect();
   if (viewFrame) cancelAnimationFrame(viewFrame);
 });
@@ -395,8 +330,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .runtime-preview{position:relative;min-width:0;min-height:0;flex:1;display:grid;place-items:center;overflow:hidden;border:1px solid #252a31;border-radius:10px;background:#12161b;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:24px 24px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02),inset 0 18px 60px rgba(0,0,0,.32)}
-.runtime-viewport{position:relative;width:100%;height:100%;overflow:hidden;cursor:grab;touch-action:none;user-select:none}.dragging .runtime-viewport{cursor:grabbing}.runtime-map-layer{position:absolute;left:50%;top:50%;transform-origin:center;will-change:transform;filter:drop-shadow(0 12px 30px rgba(0,0,0,.48));pointer-events:none}.runtime-map-frame{position:absolute;inset:0;display:block;width:100%;height:100%;image-rendering:pixelated}.runtime-map-tile{right:auto;bottom:auto}
-.preview-state{max-width:420px;padding:26px;display:grid;justify-items:center;gap:8px;color:#d7dde5;text-align:center}.preview-state.error{width:min(680px,calc(100% - 48px));max-width:680px}.preview-state strong{font-size:14px}.preview-state p{margin:0;color:#8f99a7;font-size:12px;line-height:1.6}.preview-state.error :deep(svg){width:24px;color:#ef8f78}.preview-state button{min-height:30px;padding:0 12px;border:1px solid #48515d;border-radius:4px;background:#20262d;color:#edf2f7;font:inherit;font-size:12px;cursor:pointer}.preview-state button:hover{background:#2a323b}.preview-state button:focus-visible{outline:2px solid var(--app-accent);outline-offset:2px}.error-actions{display:flex;gap:8px}.error-details{box-sizing:border-box;width:100%;max-height:min(52vh,520px);padding:14px;overflow:auto;border:1px solid #343b45;border-radius:6px;background:#0d1116;color:#cbd3dd;text-align:left}.error-details dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 14px;margin:0 0 12px;font-size:11px}.error-details dt{color:#7f8a98}.error-details dd{min-width:0;margin:0;overflow-wrap:anywhere;font-family:var(--app-font-mono)}.diagnostic-section{display:grid;gap:6px;margin-top:12px}.diagnostic-section b{color:#9aa6b4;font-size:11px}.diagnostic-section ul{margin:0;padding-left:20px;font:11px/1.55 var(--app-font-mono);overflow-wrap:anywhere}.diagnostic-section pre{max-height:180px;margin:0;padding:10px;overflow:auto;border-radius:4px;background:#080b0f;color:#cbd3dd;font:11px/1.5 var(--app-font-mono);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}.error-details>button{margin-top:12px}.preview-spinner{width:20px;height:20px;border:2px solid #3a424d;border-top-color:#d7dde5;border-radius:50%;animation:preview-spin .8s linear infinite}@keyframes preview-spin{to{transform:rotate(360deg)}}
+.runtime-viewport{position:relative;width:100%;height:100%;overflow:hidden;cursor:grab;touch-action:none;user-select:none}.dragging .runtime-viewport{cursor:grabbing}.runtime-map-layer{position:absolute;left:50%;top:50%;transform-origin:center;will-change:transform;filter:drop-shadow(0 12px 30px rgba(0,0,0,.48));pointer-events:none;background:#000}.runtime-map-frame{display:block;width:100%;height:100%;border:0;background:#000;pointer-events:none}
+.preview-state{max-width:420px;padding:26px;display:grid;justify-items:center;gap:8px;color:#d7dde5;text-align:center;z-index:3}.preview-loading{position:absolute;inset:0;box-sizing:border-box;max-width:none;align-content:center;background:#12161b;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:24px 24px}.preview-state.error{width:min(680px,calc(100% - 48px));max-width:680px}.preview-state strong{font-size:14px}.preview-state p{margin:0;color:#8f99a7;font-size:12px;line-height:1.6}.preview-state.error :deep(svg){width:24px;color:#ef8f78}.preview-state button{min-height:30px;padding:0 12px;border:1px solid #48515d;border-radius:4px;background:#20262d;color:#edf2f7;font:inherit;font-size:12px;cursor:pointer}.preview-state button:hover{background:#2a323b}.preview-state button:focus-visible{outline:2px solid var(--app-accent);outline-offset:2px}.error-actions{display:flex;gap:8px}.error-details{box-sizing:border-box;width:100%;max-height:min(52vh,520px);padding:14px;overflow:auto;border:1px solid #343b45;border-radius:6px;background:#0d1116;color:#cbd3dd;text-align:left}.error-details dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 14px;margin:0 0 12px;font-size:11px}.error-details dt{color:#7f8a98}.error-details dd{min-width:0;margin:0;overflow-wrap:anywhere;font-family:var(--app-font-mono)}.diagnostic-section{display:grid;gap:6px;margin-top:12px}.diagnostic-section b{color:#9aa6b4;font-size:11px}.diagnostic-section ul{margin:0;padding-left:20px;font:11px/1.55 var(--app-font-mono);overflow-wrap:anywhere}.diagnostic-section pre{max-height:180px;margin:0;padding:10px;overflow:auto;border-radius:4px;background:#080b0f;color:#cbd3dd;font:11px/1.5 var(--app-font-mono);white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}.error-details>button{margin-top:12px}.preview-spinner{width:20px;height:20px;border:2px solid #3a424d;border-top-color:#d7dde5;border-radius:50%;animation:preview-spin .8s linear infinite}@keyframes preview-spin{to{transform:rotate(360deg)}}
 .runtime-badge{position:absolute;right:12px;top:12px;display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid rgba(117,203,151,.28);border-radius:4px;background:rgba(20,28,25,.84);color:#bce7cd;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;backdrop-filter:blur(8px)}.runtime-badge i{width:6px;height:6px;border-radius:50%;background:#72d399;box-shadow:0 0 8px rgba(114,211,153,.7)}
+.preview-fps{position:absolute;left:12px;top:12px;padding:5px 8px;border:1px solid rgba(255,255,255,.1);border-radius:4px;background:rgba(16,20,25,.84);color:#d4dbe4;font:700 10px var(--app-font-mono);letter-spacing:.04em;pointer-events:none;backdrop-filter:blur(8px)}
 .preview-scale{position:absolute;left:12px;bottom:12px;display:flex;gap:2px;padding:3px;border:1px solid rgba(255,255,255,.08);border-radius:5px;background:rgba(20,24,29,.86);backdrop-filter:blur(8px)}.preview-scale button{height:26px;min-width:30px;padding:0 7px;border:0;border-radius:3px;background:transparent;color:#b7c0cb;font:600 11px var(--app-font-mono);cursor:pointer}.preview-scale button:hover{background:#303741;color:#fff}.preview-scale button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}
 </style>

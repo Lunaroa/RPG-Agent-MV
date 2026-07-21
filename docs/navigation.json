@@ -1,0 +1,66 @@
+{
+  "zh-CN": [
+    { "title": "开始使用", "pages": [
+      { "title": "产品介绍", "path": "1-getting-started/1.1-introduction.md" },
+      { "title": "安装", "path": "1-getting-started/1.2-installation.md" },
+      { "title": "界面", "path": "1-getting-started/1.3-interface.md" },
+      { "title": "快速开始", "path": "1-getting-started/1.4-quickstart.md" },
+      { "title": "设置", "path": "1-getting-started/1.5-settings.md" }
+    ]},
+    { "title": "项目编辑", "pages": [
+      { "title": "项目", "path": "2-projects/2.1-project.md" },
+      { "title": "地图与事件", "path": "2-projects/2.2-map-events.md" },
+      { "title": "暂存与应用", "path": "2-projects/2.3-staging.md" }
+    ]},
+    { "title": "Agent 工作流", "pages": [
+      { "title": "提出需求", "path": "3-agent-workflow/3.1-request.md" },
+      { "title": "生成与修改", "path": "3-agent-workflow/3.2-generate.md" },
+      { "title": "会话", "path": "3-agent-workflow/3.3-sessions.md" },
+      { "title": "动态工作流", "path": "3-agent-workflow/3.4-dynamic-workflow.md" }
+    ]},
+    { "title": "Agent 系统", "pages": [
+      { "title": "MCP 工具", "path": "4-agent-system/4.1-mcp-tools.md" },
+      { "title": "技能", "path": "4-agent-system/4.2-skill.md" },
+      { "title": "子 Agent", "path": "4-agent-system/4.3-subagent.md" },
+      { "title": "规则", "path": "4-agent-system/4.4-rules.md" }
+    ]},
+    { "title": "常见问题", "pages": [
+      { "title": "常见问题", "path": "5-faq/5.1-questions.md" },
+      { "title": "项目检测", "path": "5-faq/5.2-project-detection.md" },
+      { "title": "模型检查", "path": "5-faq/5.3-model-check.md" },
+      { "title": "MZ 官方依据", "path": "5-faq/5.4-mz-official-evidence.md" }
+    ]}
+  ],
+  "en-US": [
+    { "title": "Getting Started", "pages": [
+      { "title": "Introduction", "path": "en/getting-started/introduction.md" },
+      { "title": "Installation", "path": "en/getting-started/installation.md" },
+      { "title": "Interface", "path": "en/getting-started/interface.md" },
+      { "title": "Quick Start", "path": "en/getting-started/quickstart.md" },
+      { "title": "Settings", "path": "en/getting-started/settings.md" }
+    ]},
+    { "title": "Projects", "pages": [
+      { "title": "Project", "path": "en/projects/project.md" },
+      { "title": "Maps and Events", "path": "en/projects/map-events.md" },
+      { "title": "Staging", "path": "en/projects/staging.md" }
+    ]},
+    { "title": "Agent Workflow", "pages": [
+      { "title": "Requests", "path": "en/agent-workflow/request.md" },
+      { "title": "Generation", "path": "en/agent-workflow/generate.md" },
+      { "title": "Sessions", "path": "en/agent-workflow/sessions.md" },
+      { "title": "Dynamic Workflow", "path": "en/agent-workflow/dynamic-workflow.md" }
+    ]},
+    { "title": "Agent System", "pages": [
+      { "title": "MCP Tools", "path": "en/agent-system/mcp-tools.md" },
+      { "title": "Skills", "path": "en/agent-system/skill.md" },
+      { "title": "Subagents", "path": "en/agent-system/subagent.md" },
+      { "title": "Rules", "path": "en/agent-system/rules.md" }
+    ]},
+    { "title": "FAQ", "pages": [
+      { "title": "Questions", "path": "en/faq/questions.md" },
+      { "title": "Project Detection", "path": "en/faq/project-detection.md" },
+      { "title": "Model Checks", "path": "en/faq/model-check.md" },
+      { "title": "MZ Official Evidence", "path": "en/faq/mz-official-evidence.md" }
+    ]}
+  ]
+}

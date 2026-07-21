@@ -12,6 +12,16 @@ declare global {
         isMaximized(): Promise<{ maximized: boolean }>;
         openExternalUrl(url: string): Promise<{ ok: boolean }>;
       };
+      documentation: {
+        open(language: 'zh-CN' | 'en-US'): Promise<{ ok: true }>;
+        bootstrap(language: 'zh-CN' | 'en-US', preferredPath?: string): Promise<{
+          navigation: Record<string, Array<{ title: string; pages: Array<{ title: string; path: string }> }>>;
+          page: { path: string; markdown: string };
+        }>;
+        navigation(): Promise<Record<string, Array<{ title: string; pages: Array<{ title: string; path: string }> }>>>;
+        read(relativePath: string): Promise<{ path: string; markdown: string }>;
+        onSetLanguage(callback: (language: string) => void): () => void;
+      };
       app: {
         getVersion(): Promise<{ version: string }>;
         checkForUpdates(): Promise<{
@@ -73,6 +83,7 @@ declare global {
         remove(projectPath: string): Promise<ProjectRemovalResult>;
         initializeGitBaseline(project?: string, options?: { commitMessage?: string }): Promise<unknown>;
         saveProjectVersion(project?: string, options?: { commitMessage?: string }): Promise<unknown>;
+        openFolder(project?: string): Promise<{ ok: true }>;
       };
       workspace: {
         get(): Promise<unknown>;
@@ -378,6 +389,9 @@ export const projects = {
   },
   saveProjectVersion(project: string = DEFAULT_PROJECT, options: ProjectVersionSaveOptions = {}) {
     return desktopApi().projects.saveProjectVersion(project, options) as Promise<ProjectGitBaselineResult>;
+  },
+  openFolder(project: string) {
+    return desktopApi().projects.openFolder(project);
   },
 };
 
@@ -920,6 +934,14 @@ export const system = {
   openExternalUrl(url: string) {
     return desktopApi().window.openExternalUrl(url) as Promise<{ ok: boolean }>;
   },
+};
+
+export const documentation = {
+  open(language: 'zh-CN' | 'en-US') { return desktopApi().documentation.open(language); },
+  bootstrap(language: 'zh-CN' | 'en-US', preferredPath?: string) { return desktopApi().documentation.bootstrap(language, preferredPath); },
+  navigation() { return desktopApi().documentation.navigation(); },
+  read(relativePath: string) { return desktopApi().documentation.read(relativePath); },
+  onSetLanguage(callback: (language: string) => void) { return desktopApi().documentation.onSetLanguage(callback); },
 };
 
 export async function resolveAssetUrl(relativeUrl: string): Promise<string> {

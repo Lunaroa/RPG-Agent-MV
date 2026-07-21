@@ -30,6 +30,9 @@ export default defineConfig({
           options.reload();
         },
       },
+      {
+        entry: 'electron/documentation-preload.ts',
+      },
     ]),
   ],
   resolve: {
@@ -41,6 +44,10 @@ export default defineConfig({
   // 构建配置
   build: {
     rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('index.html', import.meta.url)),
+        documentation: fileURLToPath(new URL('documentation.html', import.meta.url)),
+      },
       // 将后端模块标记为外部依赖
       external: [
         /..\/..\/backend\/src\/core\/.*/,

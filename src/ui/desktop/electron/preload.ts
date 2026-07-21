@@ -12,6 +12,18 @@ contextBridge.exposeInMainWorld('api', {
     openExternalUrl: (url: string) => ipcRenderer.invoke('window:openExternalUrl', url),
   },
 
+  documentation: {
+    open: (language: string) => ipcRenderer.invoke('documentation:open', language),
+    bootstrap: (language: string, preferredPath?: string) => ipcRenderer.invoke('documentation:bootstrap', language, preferredPath),
+    navigation: () => ipcRenderer.invoke('documentation:navigation'),
+    read: (relativePath: string) => ipcRenderer.invoke('documentation:read', relativePath),
+    onSetLanguage: (callback: (language: string) => void) => {
+      const handler = (_event: unknown, language: string) => callback(language);
+      ipcRenderer.on('documentation:setLanguage', handler);
+      return () => ipcRenderer.removeListener('documentation:setLanguage', handler);
+    },
+  },
+
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
@@ -41,6 +53,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('projects:initializeGitBaseline', project, options),
     saveProjectVersion: (project?: string, options?: unknown) =>
       ipcRenderer.invoke('projects:saveProjectVersion', project, options),
+    openFolder: (project?: string) => ipcRenderer.invoke('projects:openFolder', project),
   },
 
   workspace: {

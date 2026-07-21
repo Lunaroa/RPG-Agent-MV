@@ -5,6 +5,7 @@
   "asar": false,
   "electronDist": "node_modules/electron/dist",
   "npmRebuild": false,
+  "afterPack": "scripts/after-pack-documentation.cjs",
   "directories": {
     "app": "../../..",
     "output": "../../../runtime/out/release/electron"

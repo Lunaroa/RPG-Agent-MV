@@ -11,6 +11,48 @@
       </button>
     </div>
 
+    <div v-if="!loading && !error && conversations.length" class="conv-manage-bar">
+      <button
+        v-if="!managing"
+        type="button"
+        class="conv-manage-entry"
+        data-ui-id="conversation-manage"
+        @click="enterManagement"
+      >{{ t('conversation.manage') }}</button>
+      <template v-else>
+        <button
+          type="button"
+          class="conv-select-all"
+          data-ui-id="conversation-select-all"
+          :aria-pressed="allEligibleSelected"
+          :disabled="eligibleConversations.length === 0 || batchDeleting"
+          @click="toggleSelectAll"
+        >
+          <span
+            class="conv-checkbox"
+            :class="{ checked: allEligibleSelected, partial: partiallySelected }"
+            aria-hidden="true"
+          ><el-icon v-if="allEligibleSelected"><Check /></el-icon><el-icon v-else-if="partiallySelected"><Minus /></el-icon></span>
+          {{ t('conversation.selectAll') }}
+        </button>
+        <span class="conv-selected-count">{{ t('conversation.selectedCount', { count: selectedRootIds.size }) }}</span>
+        <button
+          type="button"
+          class="conv-manage-action is-danger"
+          data-ui-id="conversation-delete-selected"
+          :disabled="selectedRootIds.size === 0 || batchDeleting"
+          @click="requestBatchDelete"
+        >{{ t('conversation.deleteSelected') }}</button>
+        <button
+          type="button"
+          class="conv-manage-action"
+          data-ui-id="conversation-manage-done"
+          :disabled="batchDeleting"
+          @click="exitManagement"
+        >{{ t('conversation.done') }}</button>
+      </template>
+    </div>
+
     <div class="conv-scroll">
       <div v-if="loading" class="conv-hint">
         <el-icon class="is-loading"><Loading /></el-icon>
@@ -26,13 +68,28 @@
           :key="conv.rootId"
           type="button"
           class="conv-item"
-          :class="{ active: conv.rootId === activeRootId }"
-          @click="emit('select', conv.leafId)"
-          @contextmenu.prevent="emit('delete', conv)"
+          :class="{
+            active: !managing && conv.rootId === activeRootId,
+            managing,
+            selected: managing && selectedRootIds.has(conv.rootId),
+            protected: managing && !conv.batchDeletable,
+          }"
+          :aria-disabled="managing && !conv.batchDeletable"
+          :aria-pressed="managing ? selectedRootIds.has(conv.rootId) : undefined"
+          :title="managing && !conv.batchDeletable ? t('conversation.batchProtected') : undefined"
+          @click="handleConversationClick(conv)"
+          @contextmenu.prevent="handleConversationContextMenu(conv)"
         >
+          <span
+            v-if="managing"
+            class="conv-checkbox"
+            :class="{ checked: selectedRootIds.has(conv.rootId), disabled: !conv.batchDeletable }"
+            aria-hidden="true"
+          ><el-icon v-if="selectedRootIds.has(conv.rootId)"><Check /></el-icon></span>
           <span class="conv-title">{{ conv.title || t('conversation.untitled') }}</span>
           <span class="conv-time">{{ formatTime(conv.time) }}</span>
           <span
+            v-if="!managing"
             class="conv-delete"
             role="button"
             tabindex="0"
@@ -66,8 +123,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
-import { Delete, EditPen, Loading } from '@element-plus/icons-vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { Check, Delete, EditPen, Loading, Minus } from '@element-plus/icons-vue'
 import type { Session } from '../composables/useSession'
 import {
   activeConversationRootId,
@@ -91,6 +148,7 @@ const props = defineProps<{
   error?: string | null
   resizable?: boolean
   showNewButton?: boolean
+  batchDeleting?: boolean
 }>()
 
 const resizable = computed(() => props.resizable !== false)
@@ -100,6 +158,7 @@ const emit = defineEmits<{
   'new-conversation': []
   select: [leafId: string]
   delete: [conversation: Conversation]
+  'delete-many': [conversations: Conversation[]]
 }>()
 
 const DEFAULT_WIDTH = CHAT_HISTORY_DEFAULT_WIDTH
@@ -116,6 +175,8 @@ function loadSavedWidth(): number {
 
 const sidebarWidth = ref(loadSavedWidth())
 const resizing = ref(false)
+const managing = ref(false)
+const selectedRootIds = ref(new Set<string>())
 let resizeStartX = 0
 let resizeStartWidth = DEFAULT_WIDTH
 let previousCursor = ''
@@ -123,6 +184,14 @@ let previousUserSelect = ''
 
 const conversations = computed(() => groupSessionsIntoConversations(props.sessions, language.value))
 const activeRootId = computed(() => activeConversationRootId(props.sessions, props.activeId))
+const eligibleConversations = computed(() => conversations.value.filter((conversation) => conversation.batchDeletable))
+const allEligibleSelected = computed(() => (
+  eligibleConversations.value.length > 0
+  && eligibleConversations.value.every((conversation) => selectedRootIds.value.has(conversation.rootId))
+))
+const partiallySelected = computed(() => (
+  selectedRootIds.value.size > 0 && !allEligibleSelected.value
+))
 
 const groupedConversations = computed(() => {
   const today: Conversation[] = []
@@ -148,6 +217,50 @@ function formatTime(ts: string): string {
   }
   return date.toLocaleDateString(language.value, { month: 'numeric', day: 'numeric' })
 }
+
+function enterManagement(): void {
+  selectedRootIds.value = new Set()
+  managing.value = true
+}
+
+function exitManagement(): void {
+  managing.value = false
+  selectedRootIds.value = new Set()
+}
+
+function toggleConversation(conversation: Conversation): void {
+  if (!conversation.batchDeletable || props.batchDeleting) return
+  const next = new Set(selectedRootIds.value)
+  if (next.has(conversation.rootId)) next.delete(conversation.rootId)
+  else next.add(conversation.rootId)
+  selectedRootIds.value = next
+}
+
+function toggleSelectAll(): void {
+  if (props.batchDeleting) return
+  selectedRootIds.value = allEligibleSelected.value
+    ? new Set()
+    : new Set(eligibleConversations.value.map((conversation) => conversation.rootId))
+}
+
+function handleConversationClick(conversation: Conversation): void {
+  if (managing.value) toggleConversation(conversation)
+  else emit('select', conversation.leafId)
+}
+
+function handleConversationContextMenu(conversation: Conversation): void {
+  if (!managing.value) emit('delete', conversation)
+}
+
+function requestBatchDelete(): void {
+  const selected = conversations.value.filter((conversation) => selectedRootIds.value.has(conversation.rootId))
+  if (selected.length) emit('delete-many', selected)
+}
+
+watch(conversations, (nextConversations) => {
+  const available = new Set(nextConversations.map((conversation) => conversation.rootId))
+  selectedRootIds.value = new Set([...selectedRootIds.value].filter((rootId) => available.has(rootId)))
+})
 
 function saveWidth(): void {
   workspaceStore.patchLayout({ chatHistoryWidth: sidebarWidth.value })
@@ -198,7 +311,10 @@ function handleResizeKeydown(event: KeyboardEvent): void {
   }
 }
 
-onBeforeUnmount(finishResize)
+onBeforeUnmount(() => {
+  finishResize()
+  exitManagement()
+})
 </script>
 
 <style scoped>
@@ -253,6 +369,65 @@ onBeforeUnmount(finishResize)
 .conv-new-btn .el-icon {
   font-size: 18px;
   color: var(--app-ink-soft);
+}
+
+.conv-manage-bar {
+  min-height: 38px;
+  flex: 0 0 38px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--app-border);
+  color: var(--app-ink-muted);
+  font-size: 12px;
+}
+
+.conv-manage-entry,
+.conv-select-all,
+.conv-manage-action {
+  height: 26px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--app-ink-soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.conv-manage-entry:hover,
+.conv-select-all:hover:not(:disabled),
+.conv-manage-action:hover:not(:disabled) {
+  background: var(--app-bg-soft);
+  color: var(--app-ink);
+}
+
+.conv-manage-entry {
+  margin-left: auto;
+}
+
+.conv-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 0;
+}
+
+.conv-manage-action.is-danger {
+  color: var(--app-danger);
+}
+
+.conv-manage-action:disabled,
+.conv-select-all:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
+
+.conv-selected-count {
+  margin-right: auto;
+  white-space: nowrap;
 }
 
 .conv-scroll {
@@ -327,6 +502,43 @@ onBeforeUnmount(finishResize)
   background: var(--app-accent);
 }
 
+.conv-item.managing.selected {
+  background: var(--app-accent-soft);
+  color: var(--app-ink);
+}
+
+.conv-item.managing.protected {
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+.conv-checkbox {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 4px;
+  background: var(--app-bg);
+  color: #fff;
+}
+
+.conv-checkbox.checked,
+.conv-checkbox.partial {
+  border-color: var(--app-accent);
+  background: var(--app-accent);
+}
+
+.conv-checkbox.disabled {
+  border-color: var(--app-border);
+  background: var(--app-bg-soft);
+}
+
+.conv-checkbox .el-icon {
+  font-size: 12px;
+}
+
 .conv-title {
   flex: 1;
   min-width: 0;
@@ -358,11 +570,11 @@ onBeforeUnmount(finishResize)
   color: var(--app-ink-muted);
 }
 
-.conv-item:hover .conv-time {
+.conv-item:not(.managing):hover .conv-time {
   display: none;
 }
 
-.conv-item:hover .conv-delete {
+.conv-item:not(.managing):hover .conv-delete {
   display: inline-flex;
 }
 

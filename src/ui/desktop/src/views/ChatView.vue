@@ -7,11 +7,13 @@
       :active-id="activeSession?.id"
       :loading="historyLoading"
       :error="historyError"
+      :batch-deleting="historyBatchDeleting"
       :resizable="false"
       :show-new-button="false"
       @new-conversation="startNewConversation"
       @select="openConversation"
       @delete="deleteConversation"
+      @delete-many="deleteConversations"
     />
 
     <div
@@ -176,6 +178,8 @@ import {
 import {
   activeConversationRootId,
   groupSessionsIntoConversations,
+  nearestConversationAfterDeletion,
+  sessionIdsForConversations,
   titleForSession,
   type Conversation,
 } from '../utils/conversationGroups'
@@ -375,6 +379,7 @@ const thinkingLevel = ref(savedComposerPrefs.thinkingLevel || 'default')
 const planMode = ref(false)
 const historySessions = ref<Session[]>([])
 const historyLoading = ref(false)
+const historyBatchDeleting = ref(false)
 const historyError = ref('')
 const preflightBlocker = ref<string | null>(null)
 const availableProviders = ref<Array<{
@@ -1465,6 +1470,69 @@ async function deleteConversation(conv: Conversation) {
     console.error('Failed to delete conversation:', error)
     ElMessage.error(formatErrorText(error, t('chat.delete.failed')))
     await loadHistory()
+  }
+}
+
+async function deleteConversations(selectedConversations: Conversation[]) {
+  if (!selectedConversations.length || historyBatchDeleting.value) return
+  try {
+    await ElMessageBox.confirm(
+      t('chat.delete.batchConfirmBody', { count: selectedConversations.length }),
+      t('chat.delete.batchConfirmTitle'),
+      { type: 'warning', confirmButtonText: t('chat.delete.confirm'), cancelButtonText: t('chat.delete.cancel') },
+    )
+  } catch {
+    return
+  }
+
+  const conversationList = groupSessionsIntoConversations(historySessions.value, currentProductLanguage.value)
+  const selectedRootIds = new Set(selectedConversations.map((conversation) => conversation.rootId))
+  const activeRootId = activeConversationRootId(historySessions.value, activeSession.value?.id)
+  const activeLeafId = activeSession.value?.id || null
+  const activeConversationSelected = Boolean(activeRootId && selectedRootIds.has(activeRootId))
+  const fallback = activeRootId
+    ? nearestConversationAfterDeletion(conversationList, selectedRootIds, activeRootId)
+    : null
+  const requestedSessionIds = sessionIdsForConversations(selectedConversations)
+
+  if (activeConversationSelected) {
+    detachFromSession()
+    newConversation()
+    resetState()
+  }
+
+  historyBatchDeleting.value = true
+  try {
+    const result = await sessionsApi.deleteMany(requestedSessionIds)
+    const deletedIds = new Set(result.deletedIds)
+    const activeSessionDeleted = Boolean(activeLeafId && deletedIds.has(activeLeafId))
+    const deletedConversationCount = selectedConversations.filter((conversation) => (
+      conversation.sessionIds.every((sessionId) => deletedIds.has(sessionId))
+    )).length
+
+    await loadHistory()
+    if (activeConversationSelected) {
+      if (activeSessionDeleted && fallback) await selectConversation(fallback.leafId)
+      else if (!activeSessionDeleted && activeLeafId) await selectConversation(activeLeafId)
+    }
+
+    if (result.protectedIds.length) {
+      ElMessage.error(t('chat.delete.batchProtected'))
+    } else if (result.missingIds.length || result.failedIds.length || deletedConversationCount !== selectedConversations.length) {
+      ElMessage.error(t('chat.delete.batchPartial', {
+        deleted: deletedConversationCount,
+        total: selectedConversations.length,
+      }))
+    } else {
+      ElMessage.success(t('chat.delete.batchSuccess', { count: deletedConversationCount }))
+    }
+  } catch (error) {
+    console.error('Failed to delete conversations:', error)
+    ElMessage.error(formatErrorText(error, t('chat.delete.batchFailed')))
+    await loadHistory()
+    if (activeConversationSelected && activeLeafId) await selectConversation(activeLeafId)
+  } finally {
+    historyBatchDeleting.value = false
   }
 }
 

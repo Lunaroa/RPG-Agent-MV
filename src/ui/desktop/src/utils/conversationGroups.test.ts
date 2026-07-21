@@ -8,6 +8,8 @@ import { describe, test } from 'node:test'
 import {
   activeConversationRootId,
   groupSessionsIntoConversations,
+  nearestConversationAfterDeletion,
+  sessionIdsForConversations,
   titleForSession,
 } from './conversationGroups.ts'
 import type { Session } from '../composables/useSession.ts'
@@ -76,6 +78,36 @@ describe('groupSessionsIntoConversations', () => {
 
     assert.equal(conversations[0].title, '(Untitled)')
     assert.equal(titleForSession([], null, 'en-US'), 'New conversation')
+  })
+
+  test('protects a whole conversation while any turn is not terminal', () => {
+    const conversations = groupSessionsIntoConversations([
+      session('finished-root', { status: 'pass' }),
+      session('waiting-turn', { status: 'running', parentSessionId: 'finished-root' }),
+      session('finished-other', { status: 'timeout' }),
+    ])
+
+    assert.equal(conversations.find((conversation) => conversation.rootId === 'finished-root')?.batchDeletable, false)
+    assert.equal(conversations.find((conversation) => conversation.rootId === 'finished-other')?.batchDeletable, true)
+  })
+
+  test('deduplicates internal session ids and finds the nearest remaining conversation', () => {
+    const conversations = groupSessionsIntoConversations([
+      session('newest', { updatedAt: '2026-06-03T10:00:00.000Z' }),
+      session('middle', { updatedAt: '2026-06-02T10:00:00.000Z' }),
+      session('oldest', { updatedAt: '2026-06-01T10:00:00.000Z' }),
+    ])
+    const duplicate = { ...conversations[0], sessionIds: ['newest', 'newest'] }
+
+    assert.deepEqual(sessionIdsForConversations([duplicate, conversations[1]]), ['newest', 'middle'])
+    assert.equal(
+      nearestConversationAfterDeletion(conversations, new Set(['newest', 'middle']), 'newest')?.rootId,
+      'oldest',
+    )
+    assert.equal(
+      nearestConversationAfterDeletion(conversations, new Set(['middle', 'oldest']), 'middle')?.rootId,
+      'newest',
+    )
   })
 })
 

@@ -11,9 +11,19 @@ export interface Conversation {
   status: string
   project: string
   sessionIds: string[]
+  batchDeletable: boolean
 }
 
 const SIDEBAR_TITLE_MAX = 48
+const TERMINAL_SESSION_STATUSES = new Set([
+  'pass',
+  'blocked',
+  'failed',
+  'error',
+  'stopped',
+  'interrupted',
+  'timeout',
+])
 
 /** 续轮 ASK 回执等短 displayText，侧栏仍显示首轮用户意图 */
 const GENERIC_DISPLAY_TEXT = /^(批准计划|要求修改计划|拒绝计划|澄清已提交|回答澄清|大纲已确认|确认制作清单|事件已放置|拒绝新增地图|地图选择结果|Plan approved|Requested plan changes|Plan rejected|Clarification submitted|Clarification answered|Outline approved|Production board approved|Event placed|New map rejected|Map selection result)/
@@ -75,9 +85,30 @@ export function groupSessionsIntoConversations(sessions: Session[], language: Pr
       status: leaf.status,
       project: root?.project || leaf.project || '',
       sessionIds: arr.map((s) => s.id),
+      batchDeletable: arr.every((session) => TERMINAL_SESSION_STATUSES.has(session.status)),
     })
   }
   return result.sort((a, b) => (b.time || '').localeCompare(a.time || ''))
+}
+
+export function sessionIdsForConversations(conversations: readonly Conversation[]): string[] {
+  return [...new Set(conversations.flatMap((conversation) => conversation.sessionIds))]
+}
+
+export function nearestConversationAfterDeletion(
+  conversations: readonly Conversation[],
+  deletedRootIds: ReadonlySet<string>,
+  activeRootId: string,
+): Conversation | null {
+  const activeIndex = conversations.findIndex((conversation) => conversation.rootId === activeRootId)
+  if (activeIndex < 0) return conversations.find((conversation) => !deletedRootIds.has(conversation.rootId)) || null
+  for (let index = activeIndex + 1; index < conversations.length; index += 1) {
+    if (!deletedRootIds.has(conversations[index].rootId)) return conversations[index]
+  }
+  for (let index = activeIndex - 1; index >= 0; index -= 1) {
+    if (!deletedRootIds.has(conversations[index].rootId)) return conversations[index]
+  }
+  return null
 }
 
 export function titleForSession(sessions: Session[], activeId?: string | null, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {

@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import WorkbenchView from '../views/WorkbenchView.vue'
-import ConsoleView from '../views/ConsoleView.vue'
+
+const WorkbenchView = () => import('../views/WorkbenchView.vue')
+const ConsoleView = () => import('../views/ConsoleView.vue')
 
 const router = createRouter({
   history: createWebHashHistory(),

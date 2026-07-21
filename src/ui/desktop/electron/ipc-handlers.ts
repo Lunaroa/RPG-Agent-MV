@@ -1196,6 +1196,12 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       });
       return result.canceled ? null : result.filePaths[0] || null;
     },
+    openProjectDirectory: async (projectPath: string) => {
+      const stat = fs.statSync(projectPath);
+      if (!stat.isDirectory()) throw new Error('The selected project folder is not a directory.');
+      const error = await shell.openPath(projectPath);
+      if (error) throw new Error(error);
+    },
   });
 
   registerInteractivePlaytestIpcHandlers(ipcMain, requireInteractivePlaytestService(), {

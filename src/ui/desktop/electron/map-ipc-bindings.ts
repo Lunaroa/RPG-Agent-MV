@@ -13,6 +13,7 @@ export interface ProjectIpcOptions {
   selectProjectDirectory?: (event: unknown) => Promise<string | null>;
   selectPluginFile?: (event: unknown) => Promise<string | null>;
   selectAssetFile?: (event: unknown, category: string, extensions: string[]) => Promise<string | null>;
+  openProjectDirectory?: (projectPath: string) => Promise<void>;
   productLanguage?: () => ProductLanguage;
   withProductLanguage: <T>(language: ProductLanguage, fn: () => T) => T;
   shouldSuppressProjectCompatibilityWarnings?: () => boolean;
@@ -39,6 +40,7 @@ export const MAP_IPC_CHANNELS = [
   'projects:remove',
   'projects:initializeGitBaseline',
   'projects:saveProjectVersion',
+  'projects:openFolder',
   'maps:tree',
   'maps:tilesets',
   'maps:get',
@@ -206,6 +208,17 @@ export function registerMapIpcHandlers(
     desktop.project.initializeProjectGitBaseline(workflowRoot, value, options));
   handle('projects:saveProjectVersion', (_event, value?: string, options?: Record<string, unknown>) =>
     desktop.project.saveProjectVersion(workflowRoot, value, options));
+  handle('projects:openFolder', async (_event, value?: string) => {
+    if (!options.openProjectDirectory) throw new Error('Opening project folders is unavailable.');
+    const resolved = project(value);
+    const registered = desktop.project.listProjects(workflowRoot).some((entry: { path?: unknown }) => {
+      if (typeof entry.path !== 'string') return false;
+      return path.normalize(project(entry.path)).toLocaleLowerCase() === path.normalize(resolved).toLocaleLowerCase();
+    });
+    if (!registered) throw new Error('The requested project is not registered.');
+    await options.openProjectDirectory(resolved);
+    return { ok: true };
+  });
   handle('maps:tree', (_event, value?: string) => desktop.maps.buildMapIndex(workflowRoot, project(value)));
   handle('maps:tilesets', (_event, value?: string) => desktop.maps.buildTilesetIndex(workflowRoot, project(value)));
   handle('maps:get', (_event, mapId: number, value?: string) =>

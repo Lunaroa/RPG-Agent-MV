@@ -4,9 +4,8 @@ import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Expand, Fold } from '@element-plus/icons-vue';
 import { PanelRightClose, PanelRightOpen, Minus, Play, Square, X as XIcon } from '@lucide/vue';
-import { resolveUserDocsEntry } from '@contract/docs-path';
 import type { InteractivePlaytestRun, InteractivePlaytestRuntimeInfo } from '@contract/types';
-import { playtest, settings } from '../../api/client';
+import { documentation, playtest, projects } from '../../api/client';
 import { useSession } from '../../composables/useSession';
 import { useI18n } from '../../i18n';
 import { normalizeProductLanguage } from '../../i18n/messages';
@@ -77,12 +76,19 @@ function emitEditorCommand(command: EditorCommand) {
 
 async function openDocs() {
   try {
-    const snapshot = await settings.getAgentCapabilities();
     const language = normalizeProductLanguage(settingsStore.ui.language);
-    const docsEntry = resolveUserDocsEntry(snapshot.workflowRoot, language);
-    await settings.openCapabilityPath(docsEntry);
+    await documentation.open(language);
   } catch (error) {
     ElMessage.error(t('topbar.openDocsFailed', { message: (error as Error).message }));
+  }
+}
+
+async function openProjectFolder() {
+  if (!projectStore.currentProject) return;
+  try {
+    await projects.openFolder(projectStore.currentProject);
+  } catch (error) {
+    ElMessage.error(t('topbar.openProjectFolderFailed', { message: (error as Error).message }));
   }
 }
 
@@ -90,9 +96,10 @@ function openTutorial() {
   window.dispatchEvent(new Event('agent-rpg:onboarding-tour:start'));
 }
 
-const menus = computed<{ key: string; label: string; items: { key: string; label: string; shortcut?: string; action: MenuAction }[] }[]>(() => [
+const menus = computed<{ key: string; label: string; items: { key: string; label: string; shortcut?: string; disabled?: boolean; action: MenuAction }[] }[]>(() => [
   { key: 'file', label: t('topbar.menu.file'), items: [
     { key: 'save', label: t('topbar.menu.save'), shortcut: 'Ctrl+S', action: () => emitEditorCommand('save') },
+    { key: 'open-project-folder', label: t('topbar.menu.openProjectFolder'), disabled: !projectStore.currentProject, action: openProjectFolder },
   ]},
   { key: 'edit', label: t('topbar.menu.edit'), items: [
     { key: 'undo', label: t('topbar.menu.undo'), shortcut: 'Ctrl+Z', action: () => emitEditorCommand('undo') },
@@ -122,9 +129,10 @@ function closeAllMenus() {
   closePlaytestRuntimeMenu();
 }
 
-function onMenuAction(action: MenuAction) {
+function onMenuAction(item: { action: MenuAction; disabled?: boolean }) {
+  if (item.disabled) return;
   closeMenus();
-  void action();
+  void item.action();
 }
 
 function onDocumentPointerDown(event: PointerEvent) {
@@ -367,8 +375,9 @@ onUnmounted(() => {
           v-for="item in menu.items"
           :key="item.key"
           class="dd-item"
+          :class="{ disabled: item.disabled }"
           :data-ui-id="`topbar-menu-${menu.key}-${item.key}`"
-          @click.stop="onMenuAction(item.action)"
+          @click.stop="onMenuAction(item)"
         >
           <span>{{ item.label }}</span>
           <span v-if="item.shortcut" class="dd-shortcut">{{ item.shortcut }}</span>
@@ -708,6 +717,7 @@ onUnmounted(() => {
   background: var(--app-bg-soft);
   color: var(--app-ink);
 }
+.dd-item.disabled{opacity:.42;cursor:not-allowed}.dd-item.disabled:hover{background:transparent}
 
 .dd-shortcut {
   margin-left: auto;

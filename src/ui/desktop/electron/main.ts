@@ -23,6 +23,8 @@ import { startUiControlBridge, stopUiControlBridge } from './ui-control-bridge.j
 import { initAutoUpdater } from './auto-updater.js';
 import { RMMV_ASSET_SCHEME } from './asset-protocol-policy.js';
 import { MAP_PREVIEW_SCHEME } from './map-preview-protocol.js';
+import { cleanupDocumentationWindow, configureDocumentationWindow, DOCUMENTATION_SCHEME } from './documentation-window.js';
+import { resolveDocumentationRoot } from './documentation-policy.js';
 import {
   buildDesktopWindowPolicy,
   isBackgroundUiControlMode,
@@ -50,6 +52,7 @@ let installRoot = '';
 protocol.registerSchemesAsPrivileged([
   RMMV_ASSET_SCHEME,
   MAP_PREVIEW_SCHEME,
+  { scheme: DOCUMENTATION_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
 ]);
 
 function scheduleWindowStateSave(): void {
@@ -175,6 +178,14 @@ app.whenReady().then(() => {
   const layout = ensureUserDataLayout(installRoot, userDataRoot);
   layoutMigrated = layout.migrated;
 
+  configureDocumentationWindow({
+    documentationRoot: resolveDocumentationRoot({ packaged: app.isPackaged, appPath: app.getAppPath(), installRoot }),
+    preloadPath: path.join(__dirname, 'documentation-preload.js'),
+    rendererEntry: process.env.VITE_DEV_SERVER_URL
+      ? new URL('documentation.html', process.env.VITE_DEV_SERVER_URL).toString()
+      : path.join(__dirname, '../dist/documentation.html'),
+  });
+
   createWindow().catch((err) => {
     const message = err && err.message ? err.message : String(err);
     console.error('[main] failed to start:', err);
@@ -193,6 +204,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   stopUiControlBridge();
   cleanupIpcHandlers();
+  cleanupDocumentationWindow();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -202,6 +214,7 @@ app.on('before-quit', () => {
   if (!backgroundUiControlMode && mainWindow && !mainWindow.isDestroyed()) saveWorkspaceWindowState(mainWindow);
   stopUiControlBridge();
   cleanupIpcHandlers();
+  cleanupDocumentationWindow();
 });
 
 app.on('activate', () => {

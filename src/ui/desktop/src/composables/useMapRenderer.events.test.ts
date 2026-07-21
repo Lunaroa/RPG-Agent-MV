@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { drawMapContent, type MvMap } from './useMapRenderer.ts';
+import { characterNameMarkers, drawMapContent, eventCharacterFrame, type MvMap } from './useMapRenderer.ts';
 
 interface RecordedCall {
   kind: 'drawImage' | 'fillRect' | 'stroke' | 'strokeRect';
@@ -19,6 +19,36 @@ interface RecordedCall {
 }
 
 describe('map event-layer rendering', () => {
+  test('parses only a leading character marker run', () => {
+    assert.deepEqual(characterNameMarkers('Actor1'), { big: false, object: false, shiftY: 6 });
+    assert.deepEqual(characterNameMarkers('!Door1'), { big: false, object: true, shiftY: 0 });
+    assert.deepEqual(characterNameMarkers('$Actor1'), { big: true, object: false, shiftY: 6 });
+    assert.deepEqual(characterNameMarkers('!$Door1'), { big: true, object: true, shiftY: 0 });
+    assert.deepEqual(characterNameMarkers('$!Door1'), { big: true, object: true, shiftY: 0 });
+    assert.deepEqual(characterNameMarkers('Actor!'), { big: false, object: false, shiftY: 6 });
+    assert.deepEqual(characterNameMarkers('Actor$'), { big: false, object: false, shiftY: 6 });
+  });
+
+  test('keeps single-character slicing independent from the object shift marker', () => {
+    const bitmap = image(144, 192);
+    const normal = eventCharacterFrame(bitmap, { characterName: 'Actor1', characterIndex: 5, direction: 2, pattern: 1 });
+    const big = eventCharacterFrame(bitmap, { characterName: '$Actor1', characterIndex: 5, direction: 2, pattern: 1 });
+    const objectBig = eventCharacterFrame(bitmap, { characterName: '!$Door1', characterIndex: 5, direction: 2, pattern: 1 });
+    assert.deepEqual(normal && [normal.sw, normal.sh], [12, 24]);
+    assert.deepEqual(big && [big.sw, big.sh], [48, 48]);
+    assert.deepEqual(objectBig && [objectBig.sw, objectBig.sh], [48, 48]);
+  });
+
+  test('raises people six pixels but keeps object characters on the tile baseline', () => {
+    const character = image(144, 192);
+    const person = recordingContext();
+    drawMapContent(person.context, createCharacterMap('Actor1'), { tilesetImages: [], getCharacterImage: () => character });
+    const object = recordingContext();
+    drawMapContent(object.context, createCharacterMap('!Door1'), { tilesetImages: [], getCharacterImage: () => character });
+    assert.equal(person.calls.find((call) => call.kind === 'drawImage')?.y, 18);
+    assert.equal(object.calls.find((call) => call.kind === 'drawImage')?.y, 24);
+  });
+
   test('applies one opacity to tile, character, and empty events without affecting the map or grid', () => {
     const tileset = image(768, 768);
     const character = image(144, 192);
@@ -132,6 +162,15 @@ function createMap(overrides: Partial<MvMap> = {}): MvMap {
   };
 }
 
+function createCharacterMap(characterName: string): MvMap {
+  return {
+    width: 1,
+    height: 1,
+    data: Array(6).fill(0),
+    events: [null, { id: 1, x: 0, y: 0, pages: [{ image: { characterName, characterIndex: 0, direction: 2, pattern: 1 } }] }],
+  };
+}
+
 function image(naturalWidth: number, naturalHeight: number): HTMLImageElement {
   return { naturalWidth, naturalHeight } as HTMLImageElement;
 }
@@ -196,8 +235,16 @@ function recordingContext(): { context: CanvasRenderingContext2D; calls: Recorde
         height,
       });
     },
-    drawImage(imageValue: HTMLImageElement) {
-      calls.push({ kind: 'drawImage', alpha: this.globalAlpha, image: imageValue });
+    drawImage(imageValue: HTMLImageElement, ...args: number[]) {
+      calls.push({
+        kind: 'drawImage',
+        alpha: this.globalAlpha,
+        image: imageValue,
+        x: args.length >= 8 ? args[4] : args[0],
+        y: args.length >= 8 ? args[5] : args[1],
+        width: args.length >= 8 ? args[6] : args[2],
+        height: args.length >= 8 ? args[7] : args[3],
+      });
     },
   } as unknown as CanvasRenderingContext2D;
   return { context, calls };

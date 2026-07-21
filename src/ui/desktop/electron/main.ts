@@ -16,7 +16,6 @@ import {
   saveWorkspaceWindowState,
   shutdownMapPreview,
   shutdownInteractivePlaytest,
-  toggleMapPreviewDevTools,
 } from './ipc-handlers.js';
 import { electronText } from './electronLocalization.js';
 import { registerDesktopDevToolsShortcuts } from './desktop-devtools-shortcuts.js';
@@ -47,7 +46,6 @@ let allowWindowClose = false;
 let closeGuardRunning = false;
 let userDataRoot = '';
 let installRoot = '';
-let devToolsNoticeOpen = false;
 
 protocol.registerSchemesAsPrivileged([
   RMMV_ASSET_SCHEME,
@@ -62,29 +60,6 @@ function scheduleWindowStateSave(): void {
     windowSaveTimer = null;
     if (mainWindow && !mainWindow.isDestroyed()) saveWorkspaceWindowState(mainWindow);
   }, 250);
-}
-
-async function showMapPreviewDevToolsNotice(code: 'preview-runtime-unavailable' | 'preview-devtools-unsupported'): Promise<void> {
-  if (devToolsNoticeOpen || !mainWindow || mainWindow.isDestroyed()) return;
-  devToolsNoticeOpen = true;
-  try {
-    await dialog.showMessageBox(mainWindow, {
-      type: code === 'preview-runtime-unavailable' ? 'info' : 'warning',
-      buttons: [electronText(currentProductLanguage(), 'devtools.ok')],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      title: electronText(currentProductLanguage(), 'devtools.previewTitle'),
-      message: electronText(
-        currentProductLanguage(),
-        code === 'preview-runtime-unavailable'
-          ? 'devtools.previewUnavailable'
-          : 'devtools.previewUnsupported',
-      ),
-    });
-  } finally {
-    devToolsNoticeOpen = false;
-  }
 }
 
 async function createWindow() {
@@ -123,18 +98,7 @@ async function createWindow() {
   });
 
   if (!backgroundUiControlMode) {
-    registerDesktopDevToolsShortcuts(mainWindow.webContents, {
-      toggleMapPreview: toggleMapPreviewDevTools,
-      onMapPreviewResult: (result) => {
-        if (!result.code) return;
-        console.warn(`[main] Map preview developer tools unavailable (${result.code}).`);
-        void showMapPreviewDevToolsNotice(result.code);
-      },
-      onMapPreviewError: (error) => {
-        console.warn('[main] Failed to toggle map preview developer tools:', error);
-        void showMapPreviewDevToolsNotice('preview-devtools-unsupported');
-      },
-    });
+    registerDesktopDevToolsShortcuts(mainWindow.webContents);
   }
 
   if (windowPolicy.shouldMaximize) {

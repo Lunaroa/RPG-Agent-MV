@@ -60,7 +60,7 @@ export function writeEditorWorkspaceSelection(project: string, selection: Editor
 }
 
 export function readEditorPreviewOverrides(project: string): MapPreviewOverrides {
-  return useWorkspaceStore().readProjectEditor(project)?.previewOverrides || { switches: {}, variables: {} };
+  return useWorkspaceStore().readProjectEditor(project)?.previewOverrides || { switches: {}, variables: {}, selfSwitches: {} };
 }
 
 export function writeEditorPreviewOverrides(project: string, overrides: MapPreviewOverrides): void {

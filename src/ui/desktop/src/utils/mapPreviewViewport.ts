@@ -5,6 +5,14 @@ export interface PreviewPanOffset {
   y: number;
 }
 
+export function previewPointerMovedBeyondClick(
+  start: PreviewPanOffset,
+  current: PreviewPanOffset,
+  threshold = 4,
+): boolean {
+  return Math.hypot(current.x - start.x, current.y - start.y) > Math.max(0, threshold);
+}
+
 export interface PreviewPanBoundsInput extends PreviewPanOffset {
   viewportWidth: number;
   viewportHeight: number;

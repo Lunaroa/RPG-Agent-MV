@@ -31,6 +31,7 @@ describe('session IPC binding payload filter', () => {
       },
       stop() { return { id: 'session-id' }; },
       delete() { return true; },
+      deleteMany() { return { deletedIds: [], protectedIds: [], missingIds: [], failedIds: [] }; },
       saveChatLog() { return true; },
       submitAskResult() { return {}; },
       listTasks() { return []; },
@@ -84,5 +85,34 @@ describe('session IPC binding payload filter', () => {
       assert.equal('completeConversationHistory' in input, false);
       assert.equal('readOnlyTools' in input, false);
     }
+  });
+
+  test('normalizes one batch delete request before invoking the runtime', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const requests: string[][] = [];
+    const ipc = {
+      handle(channel: string, listener: (...args: unknown[]) => unknown) { handlers.set(channel, listener); },
+      removeHandler() {},
+    };
+    const runtime = {
+      getBootstrap() { return {}; }, list() { return []; }, get() { return {}; }, history() { return []; },
+      async create() { return {}; }, async preview() { return {}; }, stop() { return {}; }, delete() { return true; },
+      deleteMany(ids: string[]) {
+        requests.push(ids);
+        return { deletedIds: ids, protectedIds: [], missingIds: [], failedIds: [] };
+      },
+      saveChatLog() { return true; }, submitAskResult() { return {}; }, listTasks() { return []; }, updateTask() { return {}; },
+      getPlan() { return {}; }, listSubagents() { return []; }, stopSubagent() { return {}; }, listSlashCommands() { return []; },
+      async getContextUsage() { return { ok: false, message: 'n/a', messageKey: 'slash.tokens.noSession' }; },
+      async slashCommand() { return { ok: false, display: 'composer_hint', message: 'n/a' }; },
+      subscribe() { return []; }, unsubscribe() {},
+    };
+
+    registerSessionIpcHandlers(ipc, runtime);
+    const result = await handlers.get('sessions:deleteMany')?.({}, [' root ', 'turn', 'root']);
+
+    assert.deepEqual(requests, [['root', 'turn']]);
+    assert.deepEqual(result, { deletedIds: ['root', 'turn'], protectedIds: [], missingIds: [], failedIds: [] });
+    await assert.rejects(async () => handlers.get('sessions:deleteMany')?.({}, []));
   });
 });

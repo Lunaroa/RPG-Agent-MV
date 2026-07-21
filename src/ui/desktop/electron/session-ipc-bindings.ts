@@ -43,6 +43,7 @@ interface SessionRuntime {
   preview: (payload: Record<string, unknown>) => Promise<unknown>;
   stop: (id: string) => unknown | null;
   delete: (id: string) => boolean;
+  deleteMany: (ids: string[]) => unknown;
   saveChatLog: (id: string, data: Record<string, unknown>) => boolean;
   submitAskResult: (sessionId: string, askId: string, result: unknown) => unknown | Promise<unknown>;
   listTasks: (sessionId: string) => unknown[];
@@ -71,6 +72,7 @@ export const SESSION_IPC_CHANNELS = [
   'sessions:get',
   'sessions:create',
   'sessions:delete',
+  'sessions:deleteMany',
   'sessions:stop',
   'sessions:history',
   'sessions:saveChatLog',
@@ -99,6 +101,7 @@ export function registerSessionIpcHandlers(
   ipc.handle('sessions:get', (_event, id: string) => required(runtime.get(id)));
   ipc.handle('sessions:create', (_event, payload: Record<string, unknown>) => runtime.create(withoutInternalSystemPrompt(payload)));
   ipc.handle('sessions:delete', (_event, id: string) => ({ success: runtime.delete(id) }));
+  ipc.handle('sessions:deleteMany', (_event, ids: unknown) => runtime.deleteMany(requireSessionIds(ids)));
   ipc.handle('sessions:stop', (_event, id: string) => required(runtime.stop(id)));
   ipc.handle('sessions:history', (_event, id: string) => runtime.history(id));
   ipc.handle('sessions:saveChatLog', (_event, id: string, data: Record<string, unknown>) => ({
@@ -156,6 +159,13 @@ export function cleanupSessionIpcHandlers(ipc: IpcLike): void {
 function required<T>(value: T | null): T {
   if (value === null) throw new Error('session not found');
   return value;
+}
+
+function requireSessionIds(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.some((id) => typeof id !== 'string' || !id.trim())) {
+    throw new Error('session ids must be a non-empty string array');
+  }
+  return [...new Set(value.map((id) => id.trim()))];
 }
 
 function withoutInternalSystemPrompt(payload: Record<string, unknown>): Record<string, unknown> {

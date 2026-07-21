@@ -83,6 +83,7 @@ declare global {
         get(id: string): Promise<unknown>;
         create(payload: unknown): Promise<unknown>;
         delete(id: string): Promise<{ success: boolean }>;
+        deleteMany(ids: string[]): Promise<SessionBatchDeleteResult>;
         stop(id: string): Promise<unknown>;
         history(id: string): Promise<unknown[]>;
         saveChatLog(id: string, data: unknown): Promise<{ success: boolean }>;
@@ -283,7 +284,7 @@ import type {
   WorkspaceSettings,
   TestResult, FetchModelsResult, ThinkingVariantsResult,
   MapLibraryMapMeta, MapLibraryEntry, MapLibraryIndex, MapSelection,
-  BootstrapSnapshot, SessionDetail, SessionPlanSnapshot, SessionRuntimeEvent, SessionSubagentSnapshot, SessionSummary,
+  BootstrapSnapshot, SessionBatchDeleteResult, SessionDetail, SessionPlanSnapshot, SessionRuntimeEvent, SessionSubagentSnapshot, SessionSummary,
   StoryOutline, StoryEventOverview, StoryEventPageOverview, StoryPageOrigin, StoryProjectProfile, StoryProjectSyncResult,
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
@@ -306,7 +307,7 @@ export type {
   WorkspaceSettings,
   TestResult, FetchModelsResult, ThinkingVariantsResult,
   MapLibraryMapMeta, MapLibraryEntry, MapLibraryIndex, MapSelection,
-  BootstrapSnapshot, SessionDetail, SessionPlanSnapshot, SessionRuntimeEvent, SessionSubagentSnapshot, SessionSummary,
+  BootstrapSnapshot, SessionBatchDeleteResult, SessionDetail, SessionPlanSnapshot, SessionRuntimeEvent, SessionSubagentSnapshot, SessionSummary,
   StoryOutline, StoryEventOverview, StoryEventPageOverview, StoryPageOrigin, StoryProjectProfile, StoryProjectSyncResult,
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
@@ -490,6 +491,9 @@ export const sessions = {
   },
   delete(sessionId: string) {
     return desktopApi().sessions.delete(sessionId);
+  },
+  deleteMany(sessionIds: string[]) {
+    return desktopApi().sessions.deleteMany(sessionIds);
   },
   preview(payload: unknown) {
     return desktopApi().sessions.preview(payload);

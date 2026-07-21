@@ -71,6 +71,9 @@ describe('editor semantic controls', () => {
     assert.match(editorToolbarSource, /id: 'rect'[^\n]+icon: Crop/);
     assert.match(editorToolbarSource, /id: 'ellipse'[^\n]+icon: EllipseToolIcon/);
     assert.match(editorToolbarSource, /class="staging-actions"/);
+    assert.match(editorToolbarSource, /data-ui-id="editor-redo"[\s\S]{0,260}<\/template>\s*<div v-if="stagingDirty" class="staging-actions">/);
+    assert.doesNotMatch(editorToolbarSource, /\.staging-actions\{[^}]*margin-left:auto/);
+    assert.match(editorViewSource, /:staging-dirty="stagingDirty && mode !== 'preview'"/);
     assert.match(editorToolbarSource, /<template v-if="mode === 'map'">/);
     assert.doesNotMatch(editorToolbarSource, /:disabled="mode !== 'map'/);
     assert.match(editorToolbarSource, /\.mode-group button\.active\{[^}]*background:var\(--app-accent\)[^}]*color:#fff/s);

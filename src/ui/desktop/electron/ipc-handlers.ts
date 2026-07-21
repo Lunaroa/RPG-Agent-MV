@@ -10,21 +10,26 @@ import {
 } from './interactive-playtest-ipc-bindings.js';
 import {
   cleanupMapPreviewIpcHandlers,
-  mapPreviewFrameIpcPayload,
   registerMapPreviewIpcHandlers,
 } from './map-preview-ipc-bindings.js';
 import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
 import { withAssetCanvasCors } from './asset-protocol-policy.js';
+import {
+  clearMapPreviewProtocol,
+  registerMapPreviewProtocol,
+  registerMapPreviewRoot,
+  unregisterMapPreviewRoot,
+} from './map-preview-protocol.js';
 import { WorkspaceSettingsSession } from './workspace-settings-session.js';
 import {
   DEFAULT_AGENT_EXECUTION_ENGINE,
   type InteractivePlaytestResult,
   type InteractivePlaytestRun,
   type MapPreviewDevToolsResult,
-  type MapPreviewFrame,
   type MapPreviewResult,
+  type MapPreviewRuntimeCommand,
   type MapPreviewSession,
   type RpgMakerEngine,
   type WorkspaceSettings,
@@ -413,7 +418,7 @@ async function loadBackendModules(roots: AppRoots) {
     outline: await import(new URL('desktop/outline-service.ts', coreUrl).href),
     placementQueue: await import(new URL('desktop/placement-queue-service.ts', coreUrl).href),
     interactivePlaytest: await import(new URL('desktop/interactive-playtest-service.ts', coreUrl).href),
-    mapPreview: await import(new URL('desktop/map-preview-service.ts', coreUrl).href),
+    mapPreview: await import(new URL('desktop/map-preview-iframe-service.ts', coreUrl).href),
     playtestRuntime: await import(new URL('desktop/interactive-playtest-runtime.ts', coreUrl).href),
   };
   const sessionRuntimeModule = await import(new URL('desktop/agent-session-runtime.ts', coreUrl).href);
@@ -438,7 +443,7 @@ async function loadBackendModules(roots: AppRoots) {
       ),
     },
   );
-  mapPreviewService = new desktop.mapPreview.MapPreviewService(
+  mapPreviewService = new desktop.mapPreview.MapPreviewIframeService(
     roots.userDataRoot,
     {
       isPlaytestActive: () => {
@@ -446,13 +451,10 @@ async function loadBackendModules(roots: AppRoots) {
         return Boolean(run && ['starting', 'running', 'stopping'].includes(run.status));
       },
       onStatus: publishMapPreviewStatus,
-      onFrame: publishMapPreviewFrame,
-      resolveProjectRuntime: (project: string, engine: RpgMakerEngine) => (
-        desktop.playtestRuntime.resolveInteractiveProjectRuntime(project, engine, {
-          configuredRuntimeRoot: getWorkspaceSettings().playtestRuntimes?.[engine],
-          officialRuntimeRoots: officialPlaytestRuntimeRoots(engine),
-        })
-      ),
+      onCommand: publishMapPreviewRuntimeCommand,
+      registerPreviewRoot: registerMapPreviewRoot,
+      unregisterPreviewRoot: unregisterMapPreviewRoot,
+      verifyFrameIsolation: verifyMapPreviewFrameIsolation,
     },
   );
 }
@@ -464,11 +466,21 @@ function publishMapPreviewStatus(session: MapPreviewSession): void {
   }
 }
 
-function publishMapPreviewFrame(frame: MapPreviewFrame): void {
-  const payload = mapPreviewFrameIpcPayload(frame);
+function publishMapPreviewRuntimeCommand(command: MapPreviewRuntimeCommand): void {
+  const payload = toIpcPayload(command);
   for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('mapPreview:frame', payload);
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('mapPreview:runtimeCommand', payload);
   }
+}
+
+function verifyMapPreviewFrameIsolation(url: string): boolean {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue;
+    const mainProcessId = win.webContents.mainFrame.processId;
+    const frame = win.webContents.mainFrame.framesInSubtree.find((candidate) => candidate.url === url);
+    if (frame && frame.processId !== mainProcessId) return true;
+  }
+  return false;
 }
 
 function publishInteractivePlaytestStatus(run: InteractivePlaytestRun): void {
@@ -1119,6 +1131,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
 
   await loadBackendModules(roots);
   registerAssetProtocol();
+  registerMapPreviewProtocol();
   
   registerSessionIpcHandlers(ipcMain, agentSessionRuntime, {
     revealArtifacts: async (sessionId: string) => {
@@ -1798,6 +1811,7 @@ export function cleanupIpcHandlers(): void {
     protocol.unhandle('rmmv-asset');
     assetProtocolRegistered = false;
   }
+  clearMapPreviewProtocol();
   agentSessionRuntime?.close().catch((error: Error) => console.warn('[ipc] Agent runtime close failed:', error.message));
   agentSessionRuntime = null;
   backendWithProductLanguage = null;

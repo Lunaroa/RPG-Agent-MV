@@ -57,9 +57,11 @@ declare global {
         resetOverrides(): Promise<MapPreviewResult>;
         replaceOverrides(request: MapPreviewOverrides): Promise<MapPreviewResult>;
         ackFrame(request: { sequence: number }): Promise<MapPreviewResult>;
+        runtimeEvent(request: MapPreviewRuntimeEvent): Promise<MapPreviewResult>;
         setView(request: MapPreviewViewRequest): Promise<MapPreviewResult>;
         onStatus(callback: (session: MapPreviewSession) => void): () => void;
         onFrame(callback: (frame: MapPreviewFrame) => void): () => void;
+        onRuntimeCommand(callback: (command: MapPreviewRuntimeCommand) => void): () => void;
       };
       projects: {
         list(): Promise<ProjectInfo[]>;
@@ -291,7 +293,7 @@ import type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
@@ -314,7 +316,7 @@ export type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 };
 
@@ -1252,6 +1254,9 @@ export const mapPreview = {
   ackFrame(sequence: number) {
     return desktopApi().mapPreview.ackFrame(toPlain({ sequence })) as Promise<MapPreviewResult>;
   },
+  runtimeEvent(event: MapPreviewRuntimeEvent) {
+    return desktopApi().mapPreview.runtimeEvent(toPlain(event)) as Promise<MapPreviewResult>;
+  },
   setView(request: MapPreviewViewRequest) {
     return desktopApi().mapPreview.setView(toPlain(request)) as Promise<MapPreviewResult>;
   },
@@ -1260,6 +1265,9 @@ export const mapPreview = {
   },
   onFrame(callback: (frame: MapPreviewFrame) => void) {
     return desktopApi().mapPreview.onFrame(callback);
+  },
+  onRuntimeCommand(callback: (command: MapPreviewRuntimeCommand) => void) {
+    return desktopApi().mapPreview.onRuntimeCommand(callback);
   },
 };
 

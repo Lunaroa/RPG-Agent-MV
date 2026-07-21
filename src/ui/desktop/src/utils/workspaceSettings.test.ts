@@ -118,13 +118,13 @@ describe('workspaceSettings', () => {
     })
   })
 
-  it('preserves the read-only map preview mode in project editor state', () => {
+  it('restores a persisted preview selection as the same map in map editing mode', () => {
     const settings = normalizeWorkspaceSettings({
       projects: {
         'projects/sample': { mapId: 4, mode: 'preview' },
       },
     })
-    expect(settings.projects?.['projects/sample']).toEqual({ mapId: 4, mode: 'preview' })
+    expect(settings.projects?.['projects/sample']).toEqual({ mapId: 4, mode: 'map' })
   })
 
   it('normalizes project-wide map preview switch and variable overrides', () => {
@@ -144,7 +144,7 @@ describe('workspaceSettings', () => {
     )
     expect(merged.projects?.['projects/sample']).toEqual({
       mapId: 2,
-      mode: 'preview',
+      mode: 'map',
       previewOverrides: { switches: { '7': true }, variables: { '8': 42 } },
     })
   })

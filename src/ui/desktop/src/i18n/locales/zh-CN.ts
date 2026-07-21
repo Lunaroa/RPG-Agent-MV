@@ -742,6 +742,7 @@ const zhCN = {
     'editor.preview.diagnosticNo': '否',
     'editor.preview.diagnosticUnknown': '未分类',
     'editor.preview.live': '真实运行时',
+    'editor.preview.actualFps': '实际呈现帧率',
     'editor.preview.frameAlt': '真实游戏运行时渲染的地图预览',
     'editor.preview.displayScale': '预览显示比例',
     'editor.preview.resetScale': '适应窗口并居中',

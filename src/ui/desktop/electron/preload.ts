@@ -199,6 +199,7 @@ contextBridge.exposeInMainWorld('api', {
     replaceOverrides: (request: unknown) => ipcRenderer.invoke('mapPreview:replaceOverrides', request),
     ackFrame: (request: unknown) => ipcRenderer.invoke('mapPreview:ackFrame', request),
     setView: (request: unknown) => ipcRenderer.invoke('mapPreview:setView', request),
+    runtimeEvent: (request: unknown) => ipcRenderer.invoke('mapPreview:runtimeEvent', request),
     onStatus: (callback: (payload: unknown) => void) => {
       const handler = (_event: unknown, payload: unknown) => callback(payload);
       ipcRenderer.on('mapPreview:status', handler);
@@ -208,6 +209,11 @@ contextBridge.exposeInMainWorld('api', {
       const handler = (_event: unknown, payload: unknown) => callback(payload);
       ipcRenderer.on('mapPreview:frame', handler);
       return () => ipcRenderer.removeListener('mapPreview:frame', handler);
+    },
+    onRuntimeCommand: (callback: (payload: unknown) => void) => {
+      const handler = (_event: unknown, payload: unknown) => callback(payload);
+      ipcRenderer.on('mapPreview:runtimeCommand', handler);
+      return () => ipcRenderer.removeListener('mapPreview:runtimeCommand', handler);
     },
   },
 

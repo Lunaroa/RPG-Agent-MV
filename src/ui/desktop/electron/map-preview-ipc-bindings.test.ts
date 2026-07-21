@@ -58,6 +58,7 @@ test('routes validated map preview commands to the isolated runtime service', as
     resetOverrides() { calls.push(['reset']); return result; },
     replaceOverrides(overrides) { calls.push(['replace', overrides]); return result; },
     ackFrame(sequence) { calls.push(['ack', sequence]); return result; },
+    handleRuntimeEvent(event) { calls.push(['runtime-event', event]); return result; },
     setView(view) { calls.push(['view', view]); return result; },
   }, {
     getLastProject: () => 'projects/sample',
@@ -74,6 +75,16 @@ test('routes validated map preview commands to the isolated runtime service', as
   handlers.get('mapPreview:resetOverrides')?.({});
   handlers.get('mapPreview:replaceOverrides')?.({}, { switches: { '9': false }, variables: { '10': -2 } });
   handlers.get('mapPreview:ackFrame')?.({}, { sequence: 4 });
+  handlers.get('mapPreview:runtimeEvent')?.({}, {
+    kind: 'rpg-agent-map-preview',
+    sessionId: 'preview-session',
+    channelToken: 'channel-token',
+    operationId: 2,
+    mapId: 3,
+    mapRevision: 'revision',
+    phase: 'fps',
+    fps: 60,
+  });
   handlers.get('mapPreview:setView')?.({}, { x: 10, y: 20, width: 816, height: 624, scale: 1.5 });
 
   assert.deepEqual(calls, [
@@ -87,6 +98,16 @@ test('routes validated map preview commands to the isolated runtime service', as
     ['reset'],
     ['replace', { switches: { '9': false }, variables: { '10': -2 } }],
     ['ack', 4],
+    ['runtime-event', {
+      kind: 'rpg-agent-map-preview',
+      sessionId: 'preview-session',
+      channelToken: 'channel-token',
+      operationId: 2,
+      mapId: 3,
+      mapRevision: 'revision',
+      phase: 'fps',
+      fps: 60,
+    }],
     ['view', { x: 10, y: 20, width: 816, height: 624, scale: 1.5 }],
   ]);
   assert.throws(() => handlers.get('mapPreview:setVariable')?.({}, { id: 1, value: Number.NaN }), /finite number/);
@@ -102,7 +123,6 @@ test('routes validated map preview commands to the isolated runtime service', as
     () => handlers.get('mapPreview:replaceOverrides')?.({}, { switches: { invalid: true }, variables: {} }),
     /positive integer/,
   );
-
   cleanupMapPreviewIpcHandlers(ipc);
   assert.deepEqual(removed, [...MAP_PREVIEW_IPC_CHANNELS]);
 });

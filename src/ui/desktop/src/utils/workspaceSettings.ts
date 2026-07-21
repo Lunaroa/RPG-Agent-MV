@@ -137,9 +137,13 @@ function normalizeEditorProjectState(
   if (!value || typeof value !== 'object') return null
   const record = value as Record<string, unknown>
   const mapId = Number(record.mapId)
-  const mode = record.mode
+  const storedMode = record.mode
   if (!Number.isInteger(mapId) || mapId <= 0) return null
-  if (mode !== 'map' && mode !== 'event' && mode !== 'preview') return null
+  if (storedMode !== 'map' && storedMode !== 'event' && storedMode !== 'preview') return null
+  // Preview is a transient runtime state. Restoring it on the next editor mount can
+  // immediately restart a preview that previously stalled the UI. Keep the selected
+  // map, but always reopen persisted preview sessions in the safe map editor.
+  const mode = storedMode === 'preview' ? 'map' : storedMode
   const expanded = Array.isArray(record.expandedMapIds)
     ? [...new Set(record.expandedMapIds.map((item) => Number(item)).filter((id) => Number.isInteger(id) && id > 0))]
     : undefined

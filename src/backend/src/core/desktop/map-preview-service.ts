@@ -116,7 +116,7 @@ export class MapPreviewPacketDecoder {
   }
 }
 
-interface PreviewMapGeometry {
+export interface PreviewMapGeometry {
   mapId: number;
   widthTiles: number;
   heightTiles: number;
@@ -142,13 +142,13 @@ interface PreviewFrameMeta {
   mapRevision: string;
 }
 
-interface ProjectFileSnapshotEntry {
+export interface ProjectFileSnapshotEntry {
   size: number;
   mtimeMs: number;
   hash: string;
 }
 
-type ProjectFileSnapshot = Map<string, ProjectFileSnapshotEntry>;
+export type ProjectFileSnapshot = Map<string, ProjectFileSnapshotEntry>;
 
 type PreviewChild = childProcess.ChildProcessWithoutNullStreams;
 
@@ -1944,7 +1944,7 @@ ${mapPreviewDebugMarkerBootstrapSource()}
 `;
 }
 
-function assertNoStagingConflicts(workflowRoot: string, project: string): void {
+export function assertNoStagingConflicts(workflowRoot: string, project: string): void {
   const status = getProjectStagingStatus(workflowRoot, project) as { files?: Array<Record<string, unknown>> };
   const relativePaths = (status.files || []).map((entry) => String(entry.relativePath || '')).filter(Boolean);
   if (!relativePaths.length) return;
@@ -2083,7 +2083,7 @@ function normalizedView(value: MapPreviewViewRequest): MapPreviewViewRequest {
   };
 }
 
-interface WarmProjectChanges {
+export interface WarmProjectChanges {
   sourceSnapshot: ProjectFileSnapshot;
   stagingSnapshot: IsolatedStagingSnapshot;
   changedMapIds: Set<number>;
@@ -2091,7 +2091,7 @@ interface WarmProjectChanges {
   unsafePaths: string[];
 }
 
-function inspectWarmProjectChanges(
+export function inspectWarmProjectChanges(
   workflowRoot: string,
   project: string,
   previousSource: ProjectFileSnapshot | null,
@@ -2181,14 +2181,14 @@ function changedStagingPaths(previous: IsolatedStagingSnapshot | null, current: 
   return changed;
 }
 
-function syncEffectiveMap(workflowRoot: string, sourceProject: string, temporaryProject: string, mapId: number): void {
+export function syncEffectiveMap(workflowRoot: string, sourceProject: string, temporaryProject: string, mapId: number): void {
   const source = getMapFileForRead(workflowRoot, sourceProject, mapId);
   if (!source || !fs.existsSync(source)) throw new Error(`Map${String(mapId).padStart(3, '0')}.json no longer exists.`);
   const target = path.join(resolveDataDir(temporaryProject), `Map${String(mapId).padStart(3, '0')}.json`);
   atomicCopyJson(source, target, temporaryProject);
 }
 
-function syncEffectiveMapInfos(workflowRoot: string, sourceProject: string, temporaryProject: string): void {
+export function syncEffectiveMapInfos(workflowRoot: string, sourceProject: string, temporaryProject: string): void {
   const relative = normalizeRelativePath(path.relative(sourceProject, path.join(resolveDataDir(sourceProject), 'MapInfos.json')));
   const source = getProjectFileForRead(workflowRoot, sourceProject, relative)
     || path.join(sourceProject, relative.split('/').join(path.sep));
@@ -2212,7 +2212,7 @@ function atomicCopyJson(source: string, target: string, temporaryProject: string
   }
 }
 
-function effectiveMapRevision(workflowRoot: string, project: string, mapId: number): string {
+export function effectiveMapRevision(workflowRoot: string, project: string, mapId: number): string {
   const file = getMapFileForRead(workflowRoot, project, mapId);
   if (!file || !fs.existsSync(file)) throw new Error(`Map${String(mapId).padStart(3, '0')}.json does not exist.`);
   return sha256(fs.readFileSync(file));
@@ -2243,7 +2243,7 @@ function revisionString(value: unknown, label: string): string {
   return revision.toLowerCase();
 }
 
-function previewMapGeometry(project: string, mapId: number, tileSizeInput: number): PreviewMapGeometry {
+export function previewMapGeometry(project: string, mapId: number, tileSizeInput: number): PreviewMapGeometry {
   const tileSize = positiveInteger(tileSizeInput, 'tile size');
   const file = path.join(resolveDataDir(project), `Map${String(mapId).padStart(3, '0')}.json`);
   const map = readJson(file) as Record<string, unknown>;

@@ -1,4 +1,11 @@
-import type { MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewViewRequest } from '../../../contract/types.ts';
+import type {
+  MapPreviewFrame,
+  MapPreviewOverrides,
+  MapPreviewResult,
+  MapPreviewResumeRequest,
+  MapPreviewRuntimeEvent,
+  MapPreviewViewRequest,
+} from '../../../contract/types.ts';
 import { toIpcPayload } from './ipc-serialize.ts';
 
 export const MAP_PREVIEW_IPC_CHANNELS = [
@@ -15,6 +22,7 @@ export const MAP_PREVIEW_IPC_CHANNELS = [
   'mapPreview:replaceOverrides',
   'mapPreview:ackFrame',
   'mapPreview:setView',
+  'mapPreview:runtimeEvent',
 ] as const;
 
 export function mapPreviewFrameIpcPayload(frame: MapPreviewFrame): MapPreviewFrame {
@@ -58,6 +66,7 @@ interface MapPreviewServiceLike {
   replaceOverrides(overrides: MapPreviewOverrides): MapPreviewResult;
   ackFrame(sequence: number): MapPreviewResult;
   setView(request: MapPreviewViewRequest): MapPreviewResult;
+  handleRuntimeEvent(event: MapPreviewRuntimeEvent): MapPreviewResult;
 }
 
 export interface MapPreviewIpcDependencies {
@@ -142,6 +151,10 @@ export function registerMapPreviewIpcHandlers(
       height: positiveNumber(body.height, 'view height'),
       scale: positiveNumber(body.scale, 'view scale'),
     }));
+  });
+  ipc.handle('mapPreview:runtimeEvent', (_event, request?: unknown) => {
+    const body = record(request, 'mapPreview:runtimeEvent request');
+    return toIpcPayload(service.handleRuntimeEvent(body as unknown as MapPreviewRuntimeEvent));
   });
 }
 

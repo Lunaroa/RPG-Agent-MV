@@ -13,8 +13,9 @@ test('map loading separates the requested map from the committed map', () => {
 
 test('preview lifecycle is driven by one latest intent queue', () => {
   assert.match(source, /previewIntentCoordinator\.runExclusive\(token,/);
-  assert.match(source, /previewFrameMatchesIntent\(frame, intent\)/);
   assert.match(source, /previewSessionMatchesIntent\(session, intent\)/);
+  assert.match(source, /event\.sessionId !== session\.sessionId \|\| event\.operationId !== session\.operationId/);
+  assert.match(source, /event\.mapId !== session\.mapId \|\| event\.mapRevision !== session\.mapRevision/);
   assert.doesNotMatch(source, /ensurePreviewForSelectedMap/);
 });
 

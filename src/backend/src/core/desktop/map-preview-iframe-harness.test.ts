@@ -16,7 +16,7 @@ const options = {
   viewportWidth: 816,
   viewportHeight: 624,
   geometry: { pixelWidth: 960, pixelHeight: 720 },
-  overrides: { switches: { '2': true }, variables: { '4': 9 } },
+  overrides: { switches: { '2': true }, variables: { '4': 9 }, selfSwitches: {} },
 };
 
 test('injects the immutable preview marker before every project script', () => {
@@ -81,6 +81,41 @@ test('authenticates parent commands with both session and channel token', () => 
     assert.match(harness, /event\.source !== window\.parent/);
     assert.match(harness, /command\.sessionId !== config\.sessionId/);
     assert.match(harness, /command\.channelToken !== config\.channelToken/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('captures console output and evaluates code only through authenticated frame commands', () => {
+  const root = fixture('mv');
+  try {
+    injectMapPreviewIframeHarness(root, options);
+    const harness = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
+    assert.match(harness, /\['debug', 'log', 'info', 'warn', 'error'\]/);
+    assert.match(harness, /return original\.apply\(console, values\)/);
+    assert.match(harness, /seen\.indexOf\(value\) >= 0/);
+    assert.match(harness, /\u2026\[truncated\]/);
+    assert.match(harness, /var result = \(0, eval\)/);
+    assert.match(harness, /typeof result\.then === 'function'/);
+    assert.match(harness, /command\.type === 'evaluate'/);
+    assert.match(harness, /postConsole\('error', 'exception'/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reports event state and validates standard current-map self switches', () => {
+  const root = fixture('mv');
+  try {
+    injectMapPreviewIframeHarness(root, options);
+    const harness = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
+    assert.match(harness, /eventStates\.push/);
+    assert.match(harness, /active: active/);
+    assert.match(harness, /visible: Boolean\(active && !event\._erased/);
+    assert.match(harness, /\^\[1-9\]\\d\*,\[1-9\]\\d\*,\[ABCD\]\$/);
+    assert.match(harness, /\$gameSelfSwitches\.setValue\(key\.split\(','\)/);
+    assert.match(harness, /baselineUnsupportedVariableTypes/);
+    assert.match(harness, /hasOwnProperty\.call\(baselineUnsupportedVariableTypes, id\)\) return/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

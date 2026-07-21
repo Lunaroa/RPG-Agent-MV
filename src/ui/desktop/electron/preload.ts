@@ -195,6 +195,8 @@ contextBridge.exposeInMainWorld('api', {
     panCamera: (request: unknown) => ipcRenderer.invoke('mapPreview:panCamera', request),
     setSwitch: (request: unknown) => ipcRenderer.invoke('mapPreview:setSwitch', request),
     setVariable: (request: unknown) => ipcRenderer.invoke('mapPreview:setVariable', request),
+    setSelfSwitch: (request: unknown) => ipcRenderer.invoke('mapPreview:setSelfSwitch', request),
+    evaluate: (request: unknown) => ipcRenderer.invoke('mapPreview:evaluate', request),
     resetOverrides: () => ipcRenderer.invoke('mapPreview:resetOverrides'),
     replaceOverrides: (request: unknown) => ipcRenderer.invoke('mapPreview:replaceOverrides', request),
     ackFrame: (request: unknown) => ipcRenderer.invoke('mapPreview:ackFrame', request),

@@ -32,7 +32,7 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
 
   try {
     await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
-    const started = await service.start(project, 1, { switches: { '2': true }, variables: { '3': 8 } });
+    const started = await service.start(project, 1, { switches: { '2': true }, variables: { '3': 8 }, selfSwitches: {} });
     assert.equal(started.session?.status, 'starting');
     assert.equal(started.session?.transportMode, 'iframe');
     assert.equal(started.session?.iframeUrl, registeredUrl);
@@ -46,6 +46,16 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
     assert.equal(service.current().session?.status, 'running');
     assert.equal(service.current().session?.mapPixelWidth, 960);
     assert.equal(service.current().session?.mapPixelHeight, 720);
+    assert.equal(service.current().session?.variableValues?.['3'], 'preview text');
+    assert.deepEqual(service.current().session?.eventStates, [{ id: 4, x: 9, y: 6, active: false, visible: false }]);
+
+    service.setSelfSwitch(1, 4, 'A', true);
+    assert.deepEqual(commands.at(-1)?.command, { type: 'set-self-switch', operationId: 1, key: '1,4,A', value: true });
+    assert.throws(() => service.setSelfSwitch(2, 4, 'A', true), /current preview map/);
+    service.evaluate('request-1', '$gameMap.mapId()');
+    assert.deepEqual(commands.at(-1)?.command, { type: 'evaluate', operationId: 1, requestId: 'request-1', code: '$gameMap.mapId()' });
+    service.handleRuntimeEvent({ ...runtimeEvent(identity, started.session!, 'console'), entry: { id: 1 } });
+    assert.equal(service.current().session?.status, 'running');
 
     await service.suspend();
     assert.equal(commands.at(-1)?.command.type, 'suspend');
@@ -57,7 +67,7 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
       project,
       mapId: 1,
       mapRevision: service.current().session?.mapRevision,
-      overrides: { switches: { '2': false }, variables: { '3': 9 } },
+      overrides: { switches: { '2': false }, variables: { '3': 9 }, selfSwitches: {} },
     });
     const resumed = service.current().session!;
     assert.equal(resumed.status, 'resuming');
@@ -105,7 +115,10 @@ function runtimeEvent(
     mapPixelWidth: 960,
     mapPixelHeight: 720,
     switchValues: { '2': true },
-    variableValues: { '3': 8 },
+    variableValues: { '3': 'preview text' },
+    unsupportedVariableTypes: { '8': 'object' },
+    selfSwitchValues: { '3,4,A': true },
+    eventStates: [{ id: 4, x: 9, y: 6, active: false, visible: false }],
   };
 }
 

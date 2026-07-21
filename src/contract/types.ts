@@ -620,7 +620,31 @@ export interface MapPreviewFailureDetail {
 
 export interface MapPreviewOverrides {
   switches: Record<string, boolean>;
-  variables: Record<string, number>;
+  variables: Record<string, MapPreviewVariableValue>;
+  selfSwitches: Record<string, boolean>;
+}
+
+export type MapPreviewVariableValue = number | string;
+export type MapPreviewSelfSwitchLetter = 'A' | 'B' | 'C' | 'D';
+
+export interface MapPreviewEventState {
+  id: number;
+  x: number;
+  y: number;
+  active: boolean;
+  visible: boolean;
+  hiddenReason?: 'inactive' | 'erased' | 'transparent' | 'no-graphic';
+}
+
+export type MapPreviewConsoleLevel = 'debug' | 'log' | 'info' | 'warn' | 'error' | 'result';
+
+export interface MapPreviewConsoleEntry {
+  id: number;
+  level: MapPreviewConsoleLevel;
+  source: 'console' | 'evaluation' | 'exception';
+  timestamp: number;
+  text: string;
+  requestId?: string;
 }
 
 export interface MapPreviewStartRequest {
@@ -659,7 +683,10 @@ export interface MapPreviewSession {
   mapRevision?: string;
   resumeKind?: 'warm' | 'map-sync' | 'reisolated';
   switchValues?: Record<string, boolean>;
-  variableValues?: Record<string, number>;
+  variableValues?: Record<string, MapPreviewVariableValue>;
+  unsupportedVariableTypes?: Record<string, string>;
+  selfSwitchValues?: Record<string, boolean>;
+  eventStates?: MapPreviewEventState[];
   startedAt: string;
   updatedAt: string;
   failureCode?: MapPreviewFailureCode;
@@ -712,7 +739,7 @@ export interface MapPreviewRuntimeEvent {
   operationId: number;
   mapId: number;
   mapRevision: string;
-  phase: 'ready' | 'loading-map' | 'suspended' | 'state' | 'fps' | 'error';
+  phase: 'ready' | 'loading-map' | 'suspended' | 'state' | 'fps' | 'console' | 'error';
   [key: string]: unknown;
 }
 

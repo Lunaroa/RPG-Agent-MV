@@ -53,7 +53,9 @@ declare global {
         selectMap(request: { mapId: number; overrides?: MapPreviewOverrides }): Promise<MapPreviewResult>;
         panCamera(request: { deltaX: number; deltaY: number }): Promise<MapPreviewResult>;
         setSwitch(request: { id: number; value: boolean }): Promise<MapPreviewResult>;
-        setVariable(request: { id: number; value: number }): Promise<MapPreviewResult>;
+        setVariable(request: { id: number; value: MapPreviewVariableValue }): Promise<MapPreviewResult>;
+        setSelfSwitch(request: { mapId: number; eventId: number; letter: MapPreviewSelfSwitchLetter; value: boolean }): Promise<MapPreviewResult>;
+        evaluate(request: { requestId: string; code: string }): Promise<MapPreviewResult>;
         resetOverrides(): Promise<MapPreviewResult>;
         replaceOverrides(request: MapPreviewOverrides): Promise<MapPreviewResult>;
         ackFrame(request: { sequence: number }): Promise<MapPreviewResult>;
@@ -293,7 +295,7 @@ import type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewConsoleEntry, MapPreviewEventState, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSelfSwitchLetter, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewVariableValue, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 } from '@contract/types';
 export type {
@@ -316,7 +318,7 @@ export type {
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
-  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewViewRequest, RpgMakerEngine,
+  InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewConsoleEntry, MapPreviewEventState, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSelfSwitchLetter, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewVariableValue, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
 };
 
@@ -1242,8 +1244,14 @@ export const mapPreview = {
   setSwitch(id: number, value: boolean) {
     return desktopApi().mapPreview.setSwitch(toPlain({ id, value })) as Promise<MapPreviewResult>;
   },
-  setVariable(id: number, value: number) {
+  setVariable(id: number, value: MapPreviewVariableValue) {
     return desktopApi().mapPreview.setVariable(toPlain({ id, value })) as Promise<MapPreviewResult>;
+  },
+  setSelfSwitch(mapId: number, eventId: number, letter: MapPreviewSelfSwitchLetter, value: boolean) {
+    return desktopApi().mapPreview.setSelfSwitch(toPlain({ mapId, eventId, letter, value })) as Promise<MapPreviewResult>;
+  },
+  evaluate(requestId: string, code: string) {
+    return desktopApi().mapPreview.evaluate(toPlain({ requestId, code })) as Promise<MapPreviewResult>;
   },
   resetOverrides() {
     return desktopApi().mapPreview.resetOverrides() as Promise<MapPreviewResult>;

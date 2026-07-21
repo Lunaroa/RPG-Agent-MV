@@ -7,6 +7,7 @@ import type {
   WorkspaceSettings,
   WorkspaceWindowState,
 } from '@contract/types'
+import { isMapPreviewVariableValue, parseMapPreviewSelfSwitchKey } from '@contract/map-preview-state'
 import { AGENT_PANEL_DEFAULT_WIDTH } from './agentPanelWidth'
 import { CHAT_HISTORY_DEFAULT_WIDTH } from './chatHistoryWidth'
 import { readEditorZoom } from '../composables/useEditorWorkspaceState'
@@ -164,7 +165,8 @@ export function normalizeMapPreviewOverrides(value: unknown): MapPreviewOverride
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const source = value as Record<string, unknown>
   const switches: Record<string, boolean> = {}
-  const variables: Record<string, number> = {}
+  const variables: MapPreviewOverrides['variables'] = {}
+  const selfSwitches: Record<string, boolean> = {}
   if (source.switches && typeof source.switches === 'object' && !Array.isArray(source.switches)) {
     for (const [rawId, rawValue] of Object.entries(source.switches as Record<string, unknown>)) {
       const id = positiveStateId(rawId)
@@ -174,10 +176,15 @@ export function normalizeMapPreviewOverrides(value: unknown): MapPreviewOverride
   if (source.variables && typeof source.variables === 'object' && !Array.isArray(source.variables)) {
     for (const [rawId, rawValue] of Object.entries(source.variables as Record<string, unknown>)) {
       const id = positiveStateId(rawId)
-      if (id != null && typeof rawValue === 'number' && Number.isFinite(rawValue)) variables[String(id)] = rawValue
+      if (id != null && isMapPreviewVariableValue(rawValue)) variables[String(id)] = rawValue
     }
   }
-  return { switches, variables }
+  if (source.selfSwitches && typeof source.selfSwitches === 'object' && !Array.isArray(source.selfSwitches)) {
+    for (const [rawKey, rawValue] of Object.entries(source.selfSwitches as Record<string, unknown>)) {
+      if (parseMapPreviewSelfSwitchKey(rawKey) && typeof rawValue === 'boolean') selfSwitches[rawKey] = rawValue
+    }
+  }
+  return { switches, variables, selfSwitches }
 }
 
 function positiveStateId(value: string): number | null {

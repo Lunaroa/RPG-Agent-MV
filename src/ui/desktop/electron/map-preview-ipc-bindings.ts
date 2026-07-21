@@ -4,8 +4,11 @@ import type {
   MapPreviewResult,
   MapPreviewResumeRequest,
   MapPreviewRuntimeEvent,
+  MapPreviewSelfSwitchLetter,
+  MapPreviewVariableValue,
   MapPreviewViewRequest,
 } from '../../../contract/types.ts';
+import { isMapPreviewVariableValue, mapPreviewSelfSwitchKey } from '../../../contract/map-preview-state.ts';
 import { toIpcPayload } from './ipc-serialize.ts';
 
 export const MAP_PREVIEW_IPC_CHANNELS = [
@@ -18,6 +21,8 @@ export const MAP_PREVIEW_IPC_CHANNELS = [
   'mapPreview:panCamera',
   'mapPreview:setSwitch',
   'mapPreview:setVariable',
+  'mapPreview:setSelfSwitch',
+  'mapPreview:evaluate',
   'mapPreview:resetOverrides',
   'mapPreview:replaceOverrides',
   'mapPreview:ackFrame',
@@ -61,7 +66,9 @@ interface MapPreviewServiceLike {
   selectMap(mapId: number, overrides?: MapPreviewOverrides): MapPreviewResult;
   panCamera(deltaX: number, deltaY: number): MapPreviewResult;
   setSwitch(id: number, value: boolean): MapPreviewResult;
-  setVariable(id: number, value: number): MapPreviewResult;
+  setVariable(id: number, value: MapPreviewVariableValue): MapPreviewResult;
+  setSelfSwitch(mapId: number, eventId: number, letter: MapPreviewSelfSwitchLetter, value: boolean): MapPreviewResult;
+  evaluate(requestId: string, code: string): MapPreviewResult;
   resetOverrides(): MapPreviewResult;
   replaceOverrides(overrides: MapPreviewOverrides): MapPreviewResult;
   ackFrame(sequence: number): MapPreviewResult;
@@ -130,7 +137,28 @@ export function registerMapPreviewIpcHandlers(
   ipc.handle('mapPreview:setVariable', (_event, request?: unknown) => {
     const body = record(request, 'mapPreview:setVariable request');
     assertFields(body, ['id', 'value'], 'mapPreview:setVariable');
-    return toIpcPayload(service.setVariable(positiveInteger(body.id, 'variable id'), finiteNumber(body.value, 'variable value')));
+    if (!isMapPreviewVariableValue(body.value)) throw new Error('mapPreview:setVariable value must be a finite number or string.');
+    return toIpcPayload(service.setVariable(positiveInteger(body.id, 'variable id'), body.value));
+  });
+  ipc.handle('mapPreview:setSelfSwitch', (_event, request?: unknown) => {
+    const body = record(request, 'mapPreview:setSelfSwitch request');
+    assertFields(body, ['mapId', 'eventId', 'letter', 'value'], 'mapPreview:setSelfSwitch');
+    if (typeof body.value !== 'boolean') throw new Error('mapPreview:setSelfSwitch value must be boolean.');
+    const mapId = strictPositiveInteger(body.mapId, 'self switch map id');
+    const eventId = strictPositiveInteger(body.eventId, 'self switch event id');
+    const letter = selfSwitchLetter(body.letter);
+    mapPreviewSelfSwitchKey(mapId, eventId, letter);
+    return toIpcPayload(service.setSelfSwitch(mapId, eventId, letter, body.value));
+  });
+  ipc.handle('mapPreview:evaluate', (_event, request?: unknown) => {
+    const body = record(request, 'mapPreview:evaluate request');
+    assertFields(body, ['requestId', 'code'], 'mapPreview:evaluate');
+    const requestId = String(body.requestId || '');
+    const code = typeof body.code === 'string' ? body.code : '';
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) throw new Error('mapPreview:evaluate requestId is invalid.');
+    if (!code.trim()) throw new Error('mapPreview:evaluate code must not be empty.');
+    if (code.length > 65_536) throw new Error('mapPreview:evaluate code is too long.');
+    return toIpcPayload(service.evaluate(requestId, code));
   });
   ipc.handle('mapPreview:resetOverrides', () => toIpcPayload(service.resetOverrides()));
   ipc.handle('mapPreview:replaceOverrides', (_event, request?: unknown) => (
@@ -191,12 +219,43 @@ function positiveNumber(value: unknown, label: string): number {
 }
 
 function previewOverrides(value: unknown): MapPreviewOverrides {
-  if (value == null) return { switches: {}, variables: {} };
+  if (value == null) return { switches: {}, variables: {}, selfSwitches: {} };
   const body = record(value, 'map preview overrides');
-  assertFields(body, ['switches', 'variables'], 'map preview overrides');
+  assertFields(body, ['switches', 'variables', 'selfSwitches'], 'map preview overrides');
   const switches = stateRecord(body.switches, 'switches', (entry) => typeof entry === 'boolean');
-  const variables = stateRecord(body.variables, 'variables', (entry) => typeof entry === 'number' && Number.isFinite(entry));
-  return { switches: switches as Record<string, boolean>, variables: variables as Record<string, number> };
+  const variables = stateRecord(body.variables, 'variables', isMapPreviewVariableValue);
+  const selfSwitches: Record<string, boolean> = {};
+  const source = body.selfSwitches == null ? {} : record(body.selfSwitches, 'map preview selfSwitches');
+  for (const [key, entry] of Object.entries(source)) {
+    if (!mapPreviewSelfSwitchKeyFromString(key)) throw new Error(`map preview selfSwitches key is invalid: ${key}`);
+    if (typeof entry !== 'boolean') throw new Error(`map preview selfSwitches value for ${key} is invalid.`);
+    selfSwitches[key] = entry;
+  }
+  return {
+    switches: switches as Record<string, boolean>,
+    variables: variables as Record<string, MapPreviewVariableValue>,
+    selfSwitches,
+  };
+}
+function strictPositiveInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) throw new Error(`${label} must be a positive integer.`);
+  return value;
+}
+
+function selfSwitchLetter(value: unknown): MapPreviewSelfSwitchLetter {
+  const letter = String(value || '');
+  if (!['A', 'B', 'C', 'D'].includes(letter)) throw new Error('self switch letter must be A, B, C, or D.');
+  return letter as MapPreviewSelfSwitchLetter;
+}
+
+function mapPreviewSelfSwitchKeyFromString(value: string): boolean {
+  const match = /^([1-9]\d*),([1-9]\d*),([ABCD])$/.exec(value);
+  if (!match) return false;
+  try {
+    return mapPreviewSelfSwitchKey(Number(match[1]), Number(match[2]), selfSwitchLetter(match[3])) === value;
+  } catch {
+    return false;
+  }
 }
 
 function stateRecord(

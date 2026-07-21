@@ -7,13 +7,21 @@ import type {
   MapPreviewFailureCode,
   MapPreviewFailureDetail,
   MapPreviewOverrides,
+  MapPreviewEventState,
   MapPreviewResult,
   MapPreviewResumeRequest,
   MapPreviewRuntimeCommand,
   MapPreviewRuntimeEvent,
+  MapPreviewSelfSwitchLetter,
   MapPreviewSession,
+  MapPreviewVariableValue,
   MapPreviewViewRequest,
 } from '../../../../contract/types.ts';
+import {
+  isMapPreviewVariableValue,
+  mapPreviewSelfSwitchKey,
+  parseMapPreviewSelfSwitchKey,
+} from '../../../../contract/map-preview-state.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import {
   cleanupIsolatedProject,
@@ -92,6 +100,7 @@ export class MapPreviewIframeService {
     const project = fs.realpathSync.native(path.resolve(projectInput));
     const mapId = positiveInteger(mapIdInput, 'mapId');
     const overrides = normalizedOverrides(overridesInput);
+    assertSelfSwitchMap(overrides, mapId);
     const manifest = inspectRmmvProject(project);
     if (!manifest.editable || !manifest.runnableStructure) {
       throw new Error(`The RPG Maker project is not runnable: ${manifest.missingRequired.join(', ')}`);
@@ -197,7 +206,10 @@ export class MapPreviewIframeService {
         mapPixelWidth: positiveInteger(event.mapPixelWidth, 'runtime map pixel width'),
         mapPixelHeight: positiveInteger(event.mapPixelHeight, 'runtime map pixel height'),
         switchValues: booleanRecord(event.switchValues),
-        variableValues: numberRecord(event.variableValues),
+        variableValues: variableRecord(event.variableValues),
+        unsupportedVariableTypes: stringRecord(event.unsupportedVariableTypes),
+        selfSwitchValues: selfSwitchRecord(event.selfSwitchValues),
+        eventStates: eventStateArray(event.eventStates),
       });
       if (!this.#desiredRunning) this.#sendCommand({ type: 'suspend', operationId: this.#activeOperationId });
     } else if (event.phase === 'loading-map') {
@@ -207,7 +219,13 @@ export class MapPreviewIframeService {
       this.#update({ status: 'suspended', actualFps: undefined });
       if (this.#desiredRunning && this.#pendingResume) void this.#resumeSuspended();
     } else if (event.phase === 'state') {
-      this.#update({ switchValues: booleanRecord(event.switchValues), variableValues: numberRecord(event.variableValues) });
+      this.#update({
+        switchValues: booleanRecord(event.switchValues),
+        variableValues: variableRecord(event.variableValues),
+        unsupportedVariableTypes: stringRecord(event.unsupportedVariableTypes),
+        selfSwitchValues: selfSwitchRecord(event.selfSwitchValues),
+        eventStates: eventStateArray(event.eventStates),
+      });
     } else if (event.phase === 'fps') {
       const fps = Number(event.fps);
       if (this.#session.status === 'running' && Number.isFinite(fps)) this.#update({ actualFps: Math.max(0, Math.min(60, Math.round(fps))) });
@@ -259,6 +277,7 @@ export class MapPreviewIframeService {
       ...(requestInput.mapRevision ? { mapRevision: requestInput.mapRevision } : {}),
       ...(requestInput.forceReload === true ? { forceReload: true } : {}),
     };
+    assertSelfSwitchMap(request.overrides, request.mapId);
     if (!this.#session || !this.isActive() || !this.#preparation) return this.start(project, request.mapId, request.overrides);
     if (fs.realpathSync.native(this.#preparation.sourceProject) !== project) {
       await this.stop();
@@ -284,11 +303,32 @@ export class MapPreviewIframeService {
     return this.current();
   }
 
-  setVariable(idInput: number, valueInput: number): MapPreviewResult {
+  setVariable(idInput: number, valueInput: MapPreviewVariableValue): MapPreviewResult {
     this.#requireRuntime();
-    const value = Number(valueInput);
-    if (!Number.isFinite(value)) throw new Error('Variable value must be finite.');
-    this.#sendCommand({ type: 'set-variable', operationId: this.#activeOperationId, id: positiveInteger(idInput, 'variable id'), value });
+    if (!isMapPreviewVariableValue(valueInput)) throw new Error('Variable value must be a finite number or string.');
+    this.#sendCommand({ type: 'set-variable', operationId: this.#activeOperationId, id: positiveInteger(idInput, 'variable id'), value: valueInput });
+    return this.current();
+  }
+
+  setSelfSwitch(mapIdInput: number, eventIdInput: number, letter: MapPreviewSelfSwitchLetter, value: boolean): MapPreviewResult {
+    this.#requireRuntime();
+    const mapId = strictPositiveInteger(mapIdInput, 'self switch map id');
+    const eventId = strictPositiveInteger(eventIdInput, 'self switch event id');
+    if (mapId !== this.#session?.mapId) throw new Error('Self switches can only be changed for the current preview map.');
+    this.#sendCommand({
+      type: 'set-self-switch',
+      operationId: this.#activeOperationId,
+      key: mapPreviewSelfSwitchKey(mapId, eventId, letter),
+      value: Boolean(value),
+    });
+    return this.current();
+  }
+
+  evaluate(requestId: string, code: string): MapPreviewResult {
+    this.#requireRuntime();
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) throw new Error('Console request id is invalid.');
+    if (!code.trim() || code.length > 65_536) throw new Error('Console code is invalid.');
+    this.#sendCommand({ type: 'evaluate', operationId: this.#activeOperationId, requestId, code });
     return this.current();
   }
 
@@ -522,7 +562,7 @@ export class MapPreviewIframeService {
 
 function runtimeEvent(value: MapPreviewRuntimeEvent): MapPreviewRuntimeEvent {
   if (!value || value.kind !== 'rpg-agent-map-preview') throw new Error('Invalid map preview runtime event.');
-  if (!['ready', 'loading-map', 'suspended', 'state', 'fps', 'error'].includes(String(value.phase))) {
+  if (!['ready', 'loading-map', 'suspended', 'state', 'fps', 'console', 'error'].includes(String(value.phase))) {
     throw new Error('Invalid map preview runtime event phase.');
   }
   return {
@@ -536,7 +576,11 @@ function runtimeEvent(value: MapPreviewRuntimeEvent): MapPreviewRuntimeEvent {
 }
 
 function normalizedOverrides(value?: MapPreviewOverrides): MapPreviewOverrides {
-  return { switches: booleanRecord(value?.switches), variables: numberRecord(value?.variables) };
+  return {
+    switches: booleanRecord(value?.switches),
+    variables: variableRecord(value?.variables),
+    selfSwitches: selfSwitchRecord(value?.selfSwitches),
+  };
 }
 function booleanRecord(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -544,16 +588,59 @@ function booleanRecord(value: unknown): Record<string, boolean> {
   for (const [id, entry] of Object.entries(value)) if (/^[1-9]\d*$/.test(id) && typeof entry === 'boolean') out[id] = entry;
   return out;
 }
-function numberRecord(value: unknown): Record<string, number> {
+function variableRecord(value: unknown): Record<string, MapPreviewVariableValue> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const out: Record<string, number> = {};
-  for (const [id, entry] of Object.entries(value)) if (/^[1-9]\d*$/.test(id) && Number.isFinite(Number(entry))) out[id] = Number(entry);
+  const out: Record<string, MapPreviewVariableValue> = {};
+  for (const [id, entry] of Object.entries(value)) if (/^[1-9]\d*$/.test(id) && isMapPreviewVariableValue(entry)) out[id] = entry;
   return out;
+}
+function selfSwitchRecord(value: unknown): Record<string, boolean> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, boolean> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (parseMapPreviewSelfSwitchKey(key) && typeof entry === 'boolean') out[key] = entry;
+  }
+  return out;
+}
+function assertSelfSwitchMap(overrides: MapPreviewOverrides | undefined, mapId: number): void {
+  for (const key of Object.keys(overrides?.selfSwitches || {})) {
+    if (parseMapPreviewSelfSwitchKey(key)?.mapId !== mapId) throw new Error('Self switch override belongs to another map.');
+  }
+}
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, string> = {};
+  for (const [id, entry] of Object.entries(value)) if (/^[1-9]\d*$/.test(id) && typeof entry === 'string') out[id] = entry;
+  return out;
+}
+function eventStateArray(value: unknown): MapPreviewEventState[] {
+  if (!Array.isArray(value)) return [];
+  const states: MapPreviewEventState[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    const id = record.id;
+    const x = record.x;
+    const y = record.y;
+    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) continue;
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (typeof record.active !== 'boolean' || typeof record.visible !== 'boolean') continue;
+    const reason = String(record.hiddenReason || '');
+    const hiddenReason = ['inactive', 'erased', 'transparent', 'no-graphic'].includes(reason)
+      ? reason as MapPreviewEventState['hiddenReason']
+      : undefined;
+    states.push({ id, x, y, active: record.active, visible: record.visible, ...(hiddenReason ? { hiddenReason } : {}) });
+  }
+  return states;
 }
 function positiveInteger(value: unknown, label: string): number {
   const number = Number(value);
   if (!Number.isInteger(number) || number <= 0) throw new Error(`${label} must be a positive integer.`);
   return number;
+}
+function strictPositiveInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) throw new Error(`${label} must be a positive integer.`);
+  return value;
 }
 function optionalPositiveInteger(value: unknown): number | undefined {
   const number = Number(value);

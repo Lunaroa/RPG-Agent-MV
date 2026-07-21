@@ -77,7 +77,7 @@ test('injects the preview harness only into an isolated RPG Maker app root', () 
       },
       mapRevision: 'a'.repeat(64),
       operationId: 1,
-      overrides: { switches: { '2': true }, variables: { '4': 9 } },
+      overrides: { switches: { '2': true }, variables: { '4': 9 }, selfSwitches: {} },
     });
 
     const html = fs.readFileSync(path.join(resources, 'index.html'), 'utf8');
@@ -258,7 +258,7 @@ test('rejects a nonstandard app entry instead of silently falling back', () => {
       geometry: { mapId: 1, widthTiles: 1, heightTiles: 1, tileSize: 48, pixelWidth: 48, pixelHeight: 48 },
       mapRevision: 'b'.repeat(64),
       operationId: 1,
-      overrides: { switches: {}, variables: {} },
+      overrides: { switches: {}, variables: {}, selfSwitches: {} },
     }), /standard js\/main\.js entry/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

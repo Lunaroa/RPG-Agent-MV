@@ -74,8 +74,11 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
   window.__rpgAgentIframePreviewInstalled = true;
   var switchOverrides = Object.create(null);
   var variableOverrides = Object.create(null);
+  var selfSwitchOverrides = Object.create(null);
   var baselineSwitchValues = Object.create(null);
   var baselineVariableValues = Object.create(null);
+  var baselineUnsupportedVariableTypes = Object.create(null);
+  var baselineSelfSwitchValues = Object.create(null);
   var failedResources = [];
   var currentMapId = Number(config.mapId);
   var currentMapRevision = String(config.mapRevision || '');
@@ -91,9 +94,11 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
   var fpsFrames = 0;
   var fpsStartedAt = performance.now();
   var styleElement = null;
+  var consoleEntryId = 0;
 
   replaceObject(switchOverrides, config.overrides && config.overrides.switches);
   replaceObject(variableOverrides, config.overrides && config.overrides.variables);
+  replaceObject(selfSwitchOverrides, config.overrides && config.overrides.selfSwitches);
 
   function post(phase, value) {
     window.parent.postMessage(Object.assign({
@@ -123,14 +128,93 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       message: message.slice(0, 3000)
     });
   }
+  function valueType(value) {
+    if (value === null) return 'null';
+    if (Array.isArray(value)) return 'array';
+    return typeof value;
+  }
+  function serializeConsoleValue(value, depth, seen) {
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean' || value == null) return String(value);
+    if (typeof value === 'undefined') return 'undefined';
+    if (typeof value === 'bigint') return String(value) + 'n';
+    if (typeof value === 'symbol') return String(value);
+    if (typeof value === 'function') return '[Function ' + String(value.name || 'anonymous') + ']';
+    if (value instanceof Error) return String(value.stack || value.message || value);
+    if (depth >= 4) return '[Max Depth]';
+    if (seen.indexOf(value) >= 0) return '[Circular]';
+    seen.push(value);
+    try {
+      if (Array.isArray(value)) {
+        var arrayItems = value.slice(0, 50).map(function (entry) { return serializeConsoleValue(entry, depth + 1, seen); });
+        if (value.length > 50) arrayItems.push('… ' + String(value.length - 50) + ' more');
+        return '[' + arrayItems.join(', ') + ']';
+      }
+      var keys = Object.keys(value).sort();
+      var objectItems = keys.slice(0, 50).map(function (key) {
+        var rendered;
+        try { rendered = serializeConsoleValue(value[key], depth + 1, seen); }
+        catch (error) { rendered = '[Thrown: ' + String(error && error.message || error) + ']'; }
+        return key + ': ' + rendered;
+      });
+      if (keys.length > 50) objectItems.push('… ' + String(keys.length - 50) + ' more');
+      return '{' + objectItems.join(', ') + '}';
+    } finally {
+      seen.pop();
+    }
+  }
+  function consoleText(values) {
+    var text = values.map(function (value) { return serializeConsoleValue(value, 0, []); }).join(' ');
+    return text.length > 16000 ? text.slice(0, 16000) + ' …[truncated]' : text;
+  }
+  function postConsole(level, source, values, requestId) {
+    post('console', {
+      entry: {
+        id: ++consoleEntryId,
+        level: level,
+        source: source,
+        timestamp: Date.now(),
+        text: consoleText(values),
+        requestId: requestId || undefined
+      }
+    });
+  }
+  function installConsoleCapture() {
+    ['debug', 'log', 'info', 'warn', 'error'].forEach(function (level) {
+      var original = window.console && console[level];
+      if (typeof original !== 'function') return;
+      console[level] = function () {
+        var values = Array.prototype.slice.call(arguments);
+        try { postConsole(level, 'console', values); } catch (_) {}
+        return original.apply(console, values);
+      };
+    });
+  }
+  async function evaluateCode(command) {
+    var requestId = String(command.requestId || '');
+    try {
+      var result = (0, eval)(String(command.code || ''));
+      if (result && typeof result.then === 'function') result = await result;
+      postConsole('result', 'evaluation', [result], requestId);
+    } catch (error) {
+      postConsole('error', 'evaluation', [error], requestId);
+    }
+  }
   function previewFailure(message, code, stage) {
     var error = new Error(message);
     error.previewFailureCode = code;
     error.previewFailureStage = stage;
     return error;
   }
-  window.addEventListener('error', function (event) { reportError(event && (event.error || event.message)); });
-  window.addEventListener('unhandledrejection', function (event) { reportError(event && event.reason); });
+  installConsoleCapture();
+  window.addEventListener('error', function (event) {
+    postConsole('error', 'exception', [event && (event.error || event.message)]);
+    reportError(event && (event.error || event.message));
+  });
+  window.addEventListener('unhandledrejection', function (event) {
+    postConsole('error', 'exception', [event && event.reason]);
+    reportError(event && event.reason);
+  });
 
   function waitFor(predicate, label, timeout) {
     var deadline = Date.now() + (timeout || 15000);
@@ -328,28 +412,78 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
   function currentState() {
     var switches = Object.create(null);
     var variables = Object.create(null);
+    var unsupportedVariableTypes = Object.create(null);
+    var selfSwitches = Object.create(null);
     ($gameSwitches._data || []).forEach(function (value, id) { if (id > 0) switches[id] = Boolean(value); });
     ($gameVariables._data || []).forEach(function (value, id) {
-      if (id > 0 && Number.isFinite(Number(value))) variables[id] = Number(value);
+      if (id <= 0) return;
+      if (typeof value === 'string' || typeof value === 'number' && Number.isFinite(value)) variables[id] = value;
+      else if (value !== undefined) unsupportedVariableTypes[id] = valueType(value);
     });
-    return { switchValues: switches, variableValues: variables };
+    Object.keys($gameSelfSwitches && $gameSelfSwitches._data || {}).forEach(function (key) {
+      selfSwitches[key] = Boolean($gameSelfSwitches._data[key]);
+    });
+    Object.keys(baselineUnsupportedVariableTypes).forEach(function (id) {
+      unsupportedVariableTypes[id] = baselineUnsupportedVariableTypes[id];
+      delete variables[id];
+    });
+    var eventStates = [];
+    if (window.$gameMap && $gameMap.events) {
+      $gameMap.events().forEach(function (event) {
+        if (!event) return;
+        var active = Number(event._pageIndex) >= 0;
+        var transparent = event.isTransparent && event.isTransparent();
+        var hasGraphic = Number(event.tileId && event.tileId() || 0) > 0 || Boolean(event.characterName && event.characterName());
+        var hiddenReason = !active ? 'inactive' : event._erased ? 'erased' : transparent ? 'transparent' : !hasGraphic ? 'no-graphic' : undefined;
+        eventStates.push({
+          id: Number(event.eventId && event.eventId() || event._eventId),
+          x: Number(event.x || 0),
+          y: Number(event.y || 0),
+          active: active,
+          visible: Boolean(active && !event._erased && !transparent && hasGraphic),
+          hiddenReason: hiddenReason
+        });
+      });
+    }
+    return {
+      switchValues: switches,
+      variableValues: variables,
+      unsupportedVariableTypes: unsupportedVariableTypes,
+      selfSwitchValues: selfSwitches,
+      eventStates: eventStates
+    };
   }
   function captureBaseline() {
-    replaceObject(baselineSwitchValues, currentState().switchValues);
-    replaceObject(baselineVariableValues, currentState().variableValues);
+    var state = currentState();
+    replaceObject(baselineSwitchValues, state.switchValues);
+    replaceObject(baselineVariableValues, state.variableValues);
+    replaceObject(baselineUnsupportedVariableTypes, state.unsupportedVariableTypes);
+    replaceObject(baselineSelfSwitchValues, state.selfSwitchValues);
   }
   function restoreBaseline() {
     Object.keys(switchOverrides).forEach(function (id) { $gameSwitches.setValue(Number(id), Boolean(baselineSwitchValues[id])); });
-    Object.keys(variableOverrides).forEach(function (id) { $gameVariables.setValue(Number(id), Number(baselineVariableValues[id] || 0)); });
+    Object.keys(variableOverrides).forEach(function (id) {
+      if (Object.prototype.hasOwnProperty.call(baselineUnsupportedVariableTypes, id)) return;
+      $gameVariables.setValue(Number(id), Object.prototype.hasOwnProperty.call(baselineVariableValues, id) ? baselineVariableValues[id] : 0);
+    });
+    Object.keys(selfSwitchOverrides).forEach(function (key) {
+      $gameSelfSwitches.setValue(key.split(','), Boolean(baselineSelfSwitchValues[key]));
+    });
     replaceObject(switchOverrides, null);
     replaceObject(variableOverrides, null);
+    replaceObject(selfSwitchOverrides, null);
     refreshEvents();
   }
   function applyOverrides(overrides) {
     replaceObject(switchOverrides, overrides && overrides.switches);
     replaceObject(variableOverrides, overrides && overrides.variables);
+    replaceObject(selfSwitchOverrides, overrides && overrides.selfSwitches);
     Object.keys(switchOverrides).forEach(function (id) { $gameSwitches.setValue(Number(id), Boolean(switchOverrides[id])); });
-    Object.keys(variableOverrides).forEach(function (id) { $gameVariables.setValue(Number(id), Number(variableOverrides[id])); });
+    Object.keys(variableOverrides).forEach(function (id) {
+      if (Object.prototype.hasOwnProperty.call(baselineUnsupportedVariableTypes, id)) return;
+      $gameVariables.setValue(Number(id), variableOverrides[id]);
+    });
+    Object.keys(selfSwitchOverrides).forEach(function (key) { $gameSelfSwitches.setValue(key.split(','), Boolean(selfSwitchOverrides[key])); });
     refreshEvents();
   }
   function sendState() { post('state', currentState()); }
@@ -478,13 +612,27 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       return;
     }
     if (command.type === 'set-variable') {
-      var value = Number(command.value);
-      if (!Number.isFinite(value)) throw new Error('Variable override must be finite.');
+      var value = command.value;
+      if (!(typeof value === 'string' || typeof value === 'number' && Number.isFinite(value))) {
+        throw new Error('Variable override must be a finite number or string.');
+      }
       variableOverrides[Number(command.id)] = value;
       $gameVariables.setValue(Number(command.id), value);
       refreshEvents();
       sendState();
       return;
+    }
+    if (command.type === 'set-self-switch') {
+      var key = String(command.key || '');
+      if (!/^[1-9]\\d*,[1-9]\\d*,[ABCD]$/.test(key)) throw new Error('Self switch key is invalid.');
+      selfSwitchOverrides[key] = Boolean(command.value);
+      $gameSelfSwitches.setValue(key.split(','), Boolean(command.value));
+      refreshEvents();
+      sendState();
+      return;
+    }
+    if (command.type === 'evaluate') {
+      return evaluateCode(command);
     }
     if (command.type === 'reset-overrides') {
       restoreBaseline();

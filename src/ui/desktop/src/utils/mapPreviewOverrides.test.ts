@@ -7,6 +7,7 @@ describe('map preview project overrides', () => {
   const saved = {
     switches: { '12': true, '20': false, '30': true },
     variables: { '8': 4, '9': 7, '10': 11 },
+    selfSwitches: { '1,3,A': true },
   };
   const firstMap: MapPreviewStateCatalog = {
     switches: [
@@ -31,11 +32,12 @@ describe('map preview project overrides', () => {
   };
 
   test('applies every named project value regardless of current-map reachability', () => {
-    expect(filterMapPreviewOverrides(saved, firstMap)).toEqual({ switches: { '12': true, '20': false, '30': true }, variables: { '8': 4, '9': 7 } });
-    expect(filterMapPreviewOverrides(saved, secondMap)).toEqual({ switches: { '12': true, '20': false }, variables: { '8': 4, '9': 7 } });
+    expect(filterMapPreviewOverrides(saved, firstMap)).toEqual({ switches: { '12': true, '20': false, '30': true }, variables: { '8': 4, '9': 7 }, selfSwitches: { '1,3,A': true } });
+    expect(filterMapPreviewOverrides(saved, secondMap)).toEqual({ switches: { '12': true, '20': false }, variables: { '8': 4, '9': 7 }, selfSwitches: { '1,3,A': true } });
+    expect(filterMapPreviewOverrides(saved, firstMap, 2).selfSwitches).toEqual({});
   });
 
   test('reset removes named ids and current-map reachable unnamed ids', () => {
-    expect(removeMapPreviewOverrides(saved, firstMap)).toEqual({ switches: {}, variables: { '10': 11 } });
+    expect(removeMapPreviewOverrides(saved, firstMap)).toEqual({ switches: {}, variables: { '10': 11 }, selfSwitches: {} });
   });
 });

@@ -14,8 +14,10 @@ import type {
   MapPreviewResumeRequest,
   MapPreviewResult,
   MapPreviewSession,
+  MapPreviewVariableValue,
   MapPreviewViewRequest,
 } from '../../../../contract/types.ts';
+import { isMapPreviewVariableValue, parseMapPreviewSelfSwitchKey } from '../../../../contract/map-preview-state.ts';
 import { readJson } from '../rmmv/json.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
@@ -378,12 +380,11 @@ export class MapPreviewService {
     return this.current();
   }
 
-  setVariable(idInput: number, valueInput: number): MapPreviewResult {
+  setVariable(idInput: number, valueInput: MapPreviewVariableValue): MapPreviewResult {
     this.#requireRunning();
     const id = positiveInteger(idInput, 'variable id');
-    const value = Number(valueInput);
-    if (!Number.isFinite(value)) throw new Error('Variable value must be a finite number.');
-    this.#sendCommand({ type: 'set-variable', id, value });
+    if (!isMapPreviewVariableValue(valueInput)) throw new Error('Variable value must be a finite number or string.');
+    this.#sendCommand({ type: 'set-variable', id, value: valueInput });
     return this.current();
   }
 
@@ -2058,7 +2059,8 @@ function frameMeta(value: Record<string, unknown>): PreviewFrameMeta {
 
 function normalizedOverrides(value?: MapPreviewOverrides): MapPreviewOverrides {
   const switches: Record<string, boolean> = {};
-  const variables: Record<string, number> = {};
+  const variables: Record<string, MapPreviewVariableValue> = {};
+  const selfSwitches: Record<string, boolean> = {};
   for (const [rawId, rawValue] of Object.entries(value?.switches || {})) {
     const id = positiveInteger(rawId, 'switch id');
     if (typeof rawValue !== 'boolean') throw new Error(`Switch override ${id} must be boolean.`);
@@ -2066,11 +2068,14 @@ function normalizedOverrides(value?: MapPreviewOverrides): MapPreviewOverrides {
   }
   for (const [rawId, rawValue] of Object.entries(value?.variables || {})) {
     const id = positiveInteger(rawId, 'variable id');
-    const number = Number(rawValue);
-    if (!Number.isFinite(number)) throw new Error(`Variable override ${id} must be finite.`);
-    variables[String(id)] = number;
+    if (!isMapPreviewVariableValue(rawValue)) throw new Error(`Variable override ${id} must be a finite number or string.`);
+    variables[String(id)] = rawValue;
   }
-  return { switches, variables };
+  for (const [key, rawValue] of Object.entries(value?.selfSwitches || {})) {
+    if (!parseMapPreviewSelfSwitchKey(key) || typeof rawValue !== 'boolean') throw new Error(`Self switch override ${key} is invalid.`);
+    selfSwitches[key] = rawValue;
+  }
+  return { switches, variables, selfSwitches };
 }
 
 function normalizedView(value: MapPreviewViewRequest): MapPreviewViewRequest {

@@ -131,9 +131,11 @@ describe('workspaceSettings', () => {
     expect(normalizeMapPreviewOverrides({
       switches: { '1': true, '02': false, bad: true, '3': 1 },
       variables: { '4': 12, '5': Number.NaN, '-1': 2, '6': '7' },
+      selfSwitches: { '1,2,A': true, '0,2,A': true, '1,2,E': false },
     })).toEqual({
       switches: { '1': true, '2': false },
-      variables: { '4': 12 },
+      variables: { '4': 12, '6': '7' },
+      selfSwitches: { '1,2,A': true },
     })
   })
 
@@ -145,7 +147,7 @@ describe('workspaceSettings', () => {
     expect(merged.projects?.['projects/sample']).toEqual({
       mapId: 2,
       mode: 'map',
-      previewOverrides: { switches: { '7': true }, variables: { '8': 42 } },
+      previewOverrides: { switches: { '7': true }, variables: { '8': 42 }, selfSwitches: {} },
     })
   })
 

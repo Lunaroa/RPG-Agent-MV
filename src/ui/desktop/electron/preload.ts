@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('api', {
     get: (id: string) => ipcRenderer.invoke('sessions:get', id),
     create: (payload: unknown) => ipcRenderer.invoke('sessions:create', payload),
     delete: (id: string) => ipcRenderer.invoke('sessions:delete', id),
+    deleteMany: (ids: string[]) => ipcRenderer.invoke('sessions:deleteMany', ids),
     stop: (id: string) => ipcRenderer.invoke('sessions:stop', id),
     history: (id: string) => ipcRenderer.invoke('sessions:history', id),
     saveChatLog: (id: string, data: unknown) => ipcRenderer.invoke('sessions:saveChatLog', id, data),

@@ -40,6 +40,7 @@ import type {
 } from "./slash-command/types.ts";
 import type {
   ProductLanguage,
+  SessionBatchDeleteResult,
   SessionImageAttachmentInput,
   SessionPlanSnapshot,
   SessionSubagentSnapshot,
@@ -52,6 +53,7 @@ import {
   deriveSessionPlan,
   deriveSessionSubagents,
 } from "./session-derived-state.ts";
+import { executeBatchSessionDeletion, planBatchSessionDeletion } from "./session-batch-deletion.ts";
 import { DEFAULT_PRODUCT_LANGUAGE } from "../../../../contract/i18n.ts";
 import {
   ensurePlanDirectory,
@@ -555,6 +557,11 @@ export class AgentSessionRuntime {
     this.subscribers.delete(id);
     fs.rmSync(path.join(this.workflowRoot, "runtime", "sessions", id), { recursive: true, force: true });
     return true;
+  }
+
+  deleteMany(ids: string[]): SessionBatchDeleteResult {
+    const plan = planBatchSessionDeletion(this.sessions, ids);
+    return executeBatchSessionDeletion(plan, (id) => this.delete(id));
   }
 
   saveChatLog(id: string, data: Record<string, unknown>): boolean {

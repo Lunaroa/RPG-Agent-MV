@@ -1337,6 +1337,13 @@ export interface SessionSummary {
   lastSequence?: number;
 }
 
+export interface SessionBatchDeleteResult {
+  deletedIds: string[];
+  protectedIds: string[];
+  missingIds: string[];
+  failedIds: string[];
+}
+
 export interface SessionDetail extends SessionSummary {
   chatLog?: { segments?: unknown[] } | null;
   events?: SessionRuntimeEvent[];

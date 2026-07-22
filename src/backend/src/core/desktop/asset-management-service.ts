@@ -16,6 +16,8 @@ import type {
 } from '../../../../contract/types.ts';
 import { buildAssetInventory } from '../rmmv/asset-inventory.ts';
 import { readJson } from '../rmmv/json.ts';
+import type { ProjectReadIssue } from '../rmmv/project-scanner.ts';
+import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { projectAssetUrl } from './asset-service.ts';
 import {
   assetManagementAssetMissing,
@@ -113,12 +115,59 @@ export function buildStagedAwareAssetInventory(workflowRoot: string, project: st
   const inventory = buildAssetInventory(project);
   const graph = buildAssetReferenceGraph(workflowRoot, project);
   for (const category of INVENTORY_AUDIO_CATEGORIES) {
-    inventory.audio[category] = effectiveInventoryBucket(graph.assets, category, inventory.audio[category]?.dir || '');
+    inventory.audio[category] = effectiveInventoryBucketFromGraph(
+      graph.assets,
+      category,
+      inventory.audio[category]?.dir || '',
+    );
   }
   for (const [bucket, category] of Object.entries(INVENTORY_IMAGE_CATEGORIES)) {
-    inventory.images[bucket] = effectiveInventoryBucket(graph.assets, category as RmmvAssetCategory, inventory.images[bucket]?.dir || '');
+    inventory.images[bucket] = effectiveInventoryBucketFromGraph(
+      graph.assets,
+      category as RmmvAssetCategory,
+      inventory.images[bucket]?.dir || '',
+    );
   }
-  inventory.effects = effectiveInventoryBucket(graph.assets, 'effects', inventory.effects?.dir || '');
+  inventory.effects = effectiveInventoryBucketFromGraph(graph.assets, 'effects', inventory.effects?.dir || '');
+  return refreshAssetInventorySummary(inventory);
+}
+
+function buildReadOnlyStagedAwareAssetInventory(
+  workflowRoot: string,
+  project: string,
+  options: { tolerateAnimationReadFailure?: boolean } = {},
+) {
+  const inventory = buildAssetInventory(project, options);
+  const stagedFiles = getProjectStagingStatus(workflowRoot, project).files;
+  for (const category of INVENTORY_AUDIO_CATEGORIES) {
+    inventory.audio[category] = effectiveInventoryBucketFromStaging(
+      workflowRoot,
+      project,
+      category,
+      inventory.audio[category],
+      stagedFiles,
+    );
+  }
+  for (const [bucket, category] of Object.entries(INVENTORY_IMAGE_CATEGORIES)) {
+    inventory.images[bucket] = effectiveInventoryBucketFromStaging(
+      workflowRoot,
+      project,
+      category as RmmvAssetCategory,
+      inventory.images[bucket],
+      stagedFiles,
+    );
+  }
+  inventory.effects = effectiveInventoryBucketFromStaging(
+    workflowRoot,
+    project,
+    'effects',
+    inventory.effects,
+    stagedFiles,
+  );
+  return refreshAssetInventorySummary(inventory);
+}
+
+function refreshAssetInventorySummary(inventory: ReturnType<typeof buildAssetInventory>) {
   inventory.summary.audio = Object.fromEntries(INVENTORY_AUDIO_CATEGORIES.map((category) => [category, {
     exists: inventory.audio[category].exists,
     count: inventory.audio[category].count,
@@ -145,6 +194,30 @@ export function buildStagedAwareAssetInventory(workflowRoot: string, project: st
     withMissingEffects: inventory.animations.filter((animation) => animation.missingEffects.length > 0).length,
   };
   return inventory;
+}
+
+export function buildProjectManagementAssetInventory(
+  workflowRoot: string,
+  project: string,
+): { assets: ReturnType<typeof buildStagedAwareAssetInventory> | null; readIssues: ProjectReadIssue[] } {
+  try {
+    return {
+      assets: buildReadOnlyStagedAwareAssetInventory(workflowRoot, project, { tolerateAnimationReadFailure: true }),
+      readIssues: [],
+    };
+  } catch (error) {
+    const manifest = inspectRmmvProject(project);
+    return {
+      assets: null,
+      readIssues: [{
+        scope: 'assets',
+        relativePath: projectRelativeErrorPath(project, error)
+          || `${manifest.dataRootRelative}/Animations.json`,
+        code: error instanceof SyntaxError ? 'invalid-structure' : 'read-failed',
+        message: safeAssetInventoryError(error),
+      }],
+    };
+  }
 }
 
 export function buildProjectAssetReferenceGraph(workflowRoot: string, project: string): ProjectAssetReferenceGraph {
@@ -346,7 +419,7 @@ function findProjectAssetReferences(workflowRoot: string, project: string, categ
     .map((reference) => ({ file: reference.file, path: reference.path }));
 }
 
-function effectiveInventoryBucket(assets: RmmvProjectAsset[], category: RmmvAssetCategory, dir: string) {
+function effectiveInventoryBucketFromGraph(assets: RmmvProjectAsset[], category: RmmvAssetCategory, dir: string) {
   const matching = assets
     .filter((asset) => asset.category === category)
     .sort((left, right) => left.fileName.localeCompare(right.fileName));
@@ -355,6 +428,39 @@ function effectiveInventoryBucket(assets: RmmvProjectAsset[], category: RmmvAsse
   return {
     dir,
     exists: matching.length > 0 || Boolean(dir && fs.existsSync(dir)),
+    count: names.length,
+    names,
+    files,
+  };
+}
+
+function effectiveInventoryBucketFromStaging(
+  workflowRoot: string,
+  project: string,
+  category: RmmvAssetCategory,
+  source: { dir: string; exists: boolean; files: string[] },
+  stagedFiles: Array<{ relativePath: string; delete?: boolean }>,
+) {
+  const definition = RMMV_ASSET_CATEGORIES.find((item) => item.id === category);
+  if (!definition) throw new Error(unsupportedAssetCategory(category));
+  const relativeDir = projectAssetRelativeDirectory(workflowRoot, project, category);
+  const relativePrefix = `${relativeDir}/`;
+  const extensions = new Set(definition.extensions.map((extension) => extension.toLowerCase()));
+  const effectiveFiles = new Set(source.files);
+  for (const staged of stagedFiles) {
+    const normalized = staged.relativePath.replace(/\\/g, '/');
+    if (!normalized.startsWith(relativePrefix)) continue;
+    const fileName = normalized.slice(relativePrefix.length);
+    if (!fileName || !extensions.has(path.extname(fileName).toLowerCase())) continue;
+    if (staged.delete) effectiveFiles.delete(fileName);
+    else effectiveFiles.add(fileName);
+  }
+  const files = [...effectiveFiles].sort((left, right) => left.localeCompare(right));
+  const names = [...new Set(files.map((fileName) => fileName.slice(0, -path.extname(fileName).length)))]
+    .sort((left, right) => left.localeCompare(right));
+  return {
+    dir: source.dir,
+    exists: source.exists || files.length > 0,
     count: names.length,
     names,
     files,
@@ -512,6 +618,27 @@ function rewriteAssetReferenceValue(
     changed ||= result.changed;
   }
   return changed ? next : undefined;
+}
+
+function projectRelativeErrorPath(project: string, error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const candidate = (error as { path?: unknown }).path;
+  if (typeof candidate !== 'string' || !path.isAbsolute(candidate)) return null;
+  const root = path.resolve(project);
+  const resolved = path.resolve(candidate);
+  if (!isInside(root, resolved)) return null;
+  return path.relative(root, resolved).replace(/\\/g, '/');
+}
+
+function safeAssetInventoryError(error: unknown): string {
+  if (error instanceof SyntaxError) return error.message;
+  if (error && typeof error === 'object') {
+    const record = error as { code?: unknown; syscall?: unknown };
+    if (typeof record.code === 'string') {
+      return `${record.code}${typeof record.syscall === 'string' ? ` (${record.syscall})` : ''}`;
+    }
+  }
+  return 'Unable to read project assets.';
 }
 
 function replaceEmbeddedPath(value: string, before: string, after: string): { value: string; changed: boolean } {

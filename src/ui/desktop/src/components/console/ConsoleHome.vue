@@ -14,16 +14,20 @@ const props = defineProps<{
   databaseCount: number;
   audioCount: number;
   projectStatsError: string | null;
+  projectStatsLoading: boolean;
+  projectIssueCount: number;
+  assetsLoading: boolean;
+  logsLoading: boolean;
 }>();
 const emit = defineEmits<{ navigate: [page: ConsolePage] }>();
 const projectStore = useProjectStore();
 const { t } = useI18n();
 
 const kpis = computed(() => [
-  { label: 'STATIC ASSETS', caption: t('console.home.kpiStaticAssets'), value: props.assetCount },
-  { label: 'PROJECT DATA', caption: props.projectStatsError ? t('console.home.kpiReadFailed') : t('console.home.kpiProjectData'), value: props.projectStatsError ? '!' : props.projectItemCount },
-  { label: 'SESSIONS', caption: t('console.home.kpiSessions'), value: props.sessionCount },
-  { label: 'AUDIO', caption: props.projectStatsError ? t('console.home.kpiReadFailed') : t('console.home.kpiAudio'), value: props.projectStatsError ? '!' : props.audioCount },
+  { label: 'STATIC ASSETS', caption: props.assetsLoading ? t('console.home.kpiReading') : t('console.home.kpiStaticAssets'), value: props.assetsLoading ? '…' : props.assetCount },
+  { label: 'PROJECT DATA', caption: props.projectStatsLoading ? t('console.home.kpiReading') : props.projectStatsError ? t('console.home.kpiReadFailed') : t('console.home.kpiProjectData'), value: props.projectStatsLoading ? '…' : props.projectStatsError ? '!' : props.projectItemCount },
+  { label: 'SESSIONS', caption: props.logsLoading ? t('console.home.kpiReading') : t('console.home.kpiSessions'), value: props.logsLoading ? '…' : props.sessionCount },
+  { label: 'AUDIO', caption: props.projectStatsLoading ? t('console.home.kpiReading') : props.projectStatsError ? t('console.home.kpiReadFailed') : t('console.home.kpiAudio'), value: props.projectStatsLoading ? '…' : props.projectStatsError ? '!' : props.audioCount },
 ]);
 
 const cards = [
@@ -53,7 +57,7 @@ const cards = [
       <span>{{ t('console.home.onboardingBody') }}</span>
     </div>
 
-    <div class="kpi-strip" :aria-label="t('console.home.kpiAria')">
+    <div class="kpi-strip" :aria-label="t('console.home.kpiAria')" :aria-busy="assetsLoading || logsLoading || projectStatsLoading">
       <div v-for="item in kpis" :key="item.label" class="kpi-item">
         <span>{{ item.label }}</span>
         <strong>{{ item.value }}</strong>
@@ -76,10 +80,14 @@ const cards = [
         </span>
         <span class="card-body">
           <strong>{{ t(card.titleKey) }}</strong><small>{{ t(card.descKey) }}</small>
-          <span class="stats" v-if="card.page === 'assets'"><b>{{ assetCount }}</b> {{ t('console.home.statsStaticAssets') }}</span>
+          <span class="stats" v-if="card.page === 'assets' && assetsLoading">{{ t('console.home.statsReading') }}</span>
+          <span class="stats" v-else-if="card.page === 'assets'"><b>{{ assetCount }}</b> {{ t('console.home.statsStaticAssets') }}</span>
+          <span class="stats" v-else-if="card.page === 'story' && projectStatsLoading">{{ t('console.home.statsReading') }}</span>
           <span class="stats error" v-else-if="card.page === 'story' && projectStatsError">{{ t('console.home.statsProjectFailed') }}</span>
+          <span class="stats error" v-else-if="card.page === 'story' && projectIssueCount">{{ t('console.home.statsReadIssues', { count: projectIssueCount }) }}</span>
           <span class="stats" v-else-if="card.page === 'story'"><b>{{ databaseCount }}</b> {{ t('console.home.statsDatabase') }} · <b>{{ audioCount }}</b> {{ t('console.home.statsAudio') }}</span>
           <span class="stats" v-else-if="card.page === 'plugins'">{{ t('console.home.statsPlugins') }}</span>
+          <span class="stats" v-else-if="card.page === 'logs' && logsLoading">{{ t('console.home.statsReading') }}</span>
           <span class="stats" v-else-if="card.page === 'logs'"><b>{{ sessionCount }}</b> {{ t('console.home.statsSessions') }}</span>
           <span class="stats" v-else>{{ t('console.home.statsSettings') }}</span>
         </span>

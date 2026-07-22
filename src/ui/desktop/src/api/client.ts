@@ -68,6 +68,8 @@ declare global {
         evaluate(request: { requestId: string; code: string }): Promise<MapPreviewResult>;
         resetOverrides(): Promise<MapPreviewResult>;
         replaceOverrides(request: MapPreviewOverrides): Promise<MapPreviewResult>;
+        setEventExecution(request: { enabled: boolean }): Promise<MapPreviewResult>;
+        sendInput(request: { key: 'up' | 'down' | 'left' | 'right' | 'ok' | 'cancel' }): Promise<MapPreviewResult>;
         ackFrame(request: { sequence: number }): Promise<MapPreviewResult>;
         runtimeEvent(request: MapPreviewRuntimeEvent): Promise<MapPreviewResult>;
         setView(request: MapPreviewViewRequest): Promise<MapPreviewResult>;
@@ -1280,6 +1282,12 @@ export const mapPreview = {
   },
   replaceOverrides(overrides: MapPreviewOverrides) {
     return desktopApi().mapPreview.replaceOverrides(toPlain(overrides)) as Promise<MapPreviewResult>;
+  },
+  setEventExecution(enabled: boolean) {
+    return desktopApi().mapPreview.setEventExecution(toPlain({ enabled })) as Promise<MapPreviewResult>;
+  },
+  sendInput(key: 'up' | 'down' | 'left' | 'right' | 'ok' | 'cancel') {
+    return desktopApi().mapPreview.sendInput(toPlain({ key })) as Promise<MapPreviewResult>;
   },
   ackFrame(sequence: number) {
     return desktopApi().mapPreview.ackFrame(toPlain({ sequence })) as Promise<MapPreviewResult>;

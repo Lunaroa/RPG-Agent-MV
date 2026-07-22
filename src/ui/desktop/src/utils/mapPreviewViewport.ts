@@ -36,6 +36,27 @@ export interface PreviewVisibleRegion {
   scale: number;
 }
 
+export interface PreviewZoomAnchorInput extends PreviewPanOffset {
+  anchorX: number;
+  anchorY: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  oldScale: number;
+  newScale: number;
+}
+
+export function previewZoomAtAnchor(input: PreviewZoomAnchorInput): PreviewPanOffset {
+  if (input.oldScale <= 0 || input.newScale <= 0) return { x: input.x, y: input.y };
+  const centerX = input.viewportWidth / 2;
+  const centerY = input.viewportHeight / 2;
+  const mapDeltaX = (input.anchorX - centerX - input.x) / input.oldScale;
+  const mapDeltaY = (input.anchorY - centerY - input.y) / input.oldScale;
+  return {
+    x: input.anchorX - centerX - mapDeltaX * input.newScale,
+    y: input.anchorY - centerY - mapDeltaY * input.newScale,
+  };
+}
+
 export function clampPreviewPanOffset(
   offset: number,
   viewportSize: number,

@@ -25,6 +25,8 @@ export const MAP_PREVIEW_IPC_CHANNELS = [
   'mapPreview:evaluate',
   'mapPreview:resetOverrides',
   'mapPreview:replaceOverrides',
+  'mapPreview:setEventExecution',
+  'mapPreview:sendInput',
   'mapPreview:ackFrame',
   'mapPreview:setView',
   'mapPreview:runtimeEvent',
@@ -71,6 +73,8 @@ interface MapPreviewServiceLike {
   evaluate(requestId: string, code: string): MapPreviewResult;
   resetOverrides(): MapPreviewResult;
   replaceOverrides(overrides: MapPreviewOverrides): MapPreviewResult;
+  setEventExecution(enabled: boolean): MapPreviewResult;
+  sendInput(key: 'up' | 'down' | 'left' | 'right' | 'ok' | 'cancel'): MapPreviewResult;
   ackFrame(sequence: number): MapPreviewResult;
   setView(request: MapPreviewViewRequest): MapPreviewResult;
   handleRuntimeEvent(event: MapPreviewRuntimeEvent): MapPreviewResult;
@@ -164,6 +168,19 @@ export function registerMapPreviewIpcHandlers(
   ipc.handle('mapPreview:replaceOverrides', (_event, request?: unknown) => (
     toIpcPayload(service.replaceOverrides(previewOverrides(request)))
   ));
+  ipc.handle('mapPreview:setEventExecution', (_event, request?: unknown) => {
+    const body = record(request, 'mapPreview:setEventExecution request');
+    assertFields(body, ['enabled'], 'mapPreview:setEventExecution');
+    if (typeof body.enabled !== 'boolean') throw new Error('mapPreview:setEventExecution enabled must be boolean.');
+    return toIpcPayload(service.setEventExecution(body.enabled));
+  });
+  ipc.handle('mapPreview:sendInput', (_event, request?: unknown) => {
+    const body = record(request, 'mapPreview:sendInput request');
+    assertFields(body, ['key'], 'mapPreview:sendInput');
+    const key = String(body.key || '');
+    if (!['up', 'down', 'left', 'right', 'ok', 'cancel'].includes(key)) throw new Error('mapPreview:sendInput key is invalid.');
+    return toIpcPayload(service.sendInput(key as 'up' | 'down' | 'left' | 'right' | 'ok' | 'cancel'));
+  });
   ipc.handle('mapPreview:ackFrame', (_event, request?: unknown) => {
     const body = record(request, 'mapPreview:ackFrame request');
     assertFields(body, ['sequence'], 'mapPreview:ackFrame');

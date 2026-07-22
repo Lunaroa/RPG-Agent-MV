@@ -6,6 +6,7 @@ import {
   computeMapOverviewCircularRadius,
   DEFAULT_MAP_OVERVIEW_LAYOUT_ID,
   isMapOverviewLayoutId,
+  isMapOverviewLibraryLayoutId,
   MAP_OVERVIEW_GRID_SORT_BY_EXPR,
   MAP_OVERVIEW_LAYOUT_CONFIRM_I18N,
   MAP_OVERVIEW_LAYOUT_IDS,
@@ -28,17 +29,19 @@ const sampleCtx = {
 }
 
 describe('mapOverviewLayouts', () => {
-  it('registers exactly the five G6 layout ids with i18n stubs', () => {
+  it('registers layered grid and the five library layout ids with i18n stubs', () => {
     expect(MAP_OVERVIEW_LAYOUT_IDS).toEqual([
+      'layered-grid',
       'force-atlas2',
       'd3-force',
       'antv-dagre',
       'grid',
       'circular',
     ])
-    expect(DEFAULT_MAP_OVERVIEW_LAYOUT_ID).toBe('force-atlas2')
+    expect(DEFAULT_MAP_OVERVIEW_LAYOUT_ID).toBe('layered-grid')
     expect(MAP_OVERVIEW_LAYOUTS.map((item) => item.id)).toEqual([...MAP_OVERVIEW_LAYOUT_IDS])
     expect(MAP_OVERVIEW_LAYOUTS.map((item) => item.labelKey)).toEqual([
+      'mapOverview.layout.layeredGrid',
       'mapOverview.layout.forceAtlas2',
       'mapOverview.layout.d3Force',
       'mapOverview.layout.antvDagre',
@@ -51,18 +54,21 @@ describe('mapOverviewLayouts', () => {
 
   it('validates layout ids strictly', () => {
     expect(isMapOverviewLayoutId('force-atlas2')).toBe(true)
+    expect(isMapOverviewLayoutId('layered-grid')).toBe(true)
+    expect(isMapOverviewLibraryLayoutId('layered-grid')).toBe(false)
+    expect(isMapOverviewLibraryLayoutId('force-atlas2')).toBe(true)
     expect(isMapOverviewLayoutId('dagre')).toBe(false)
     expect(isMapOverviewLayoutId('elk')).toBe(false)
     expect(isMapOverviewLayoutId(null)).toBe(false)
     expect(parseMapOverviewLayoutId('circular')).toBe('circular')
-    expect(parseMapOverviewLayoutId('nope')).toBe('force-atlas2')
+    expect(parseMapOverviewLayoutId('nope')).toBe('layered-grid')
   })
 
-  it('builds worker-enabled options for all five layouts', () => {
-    for (const id of MAP_OVERVIEW_LAYOUT_IDS) {
+  it('builds nested-worker-disabled options for the five library layouts', () => {
+    for (const id of MAP_OVERVIEW_LAYOUT_IDS.filter(isMapOverviewLibraryLayoutId)) {
       const options = buildMapOverviewLayoutOptions(id, sampleCtx)
       expect(options.type).toBe(id)
-      expect(options.enableWorker).toBe(true)
+      expect(options.enableWorker).toBe(false)
       expect(options.nodeSize).toBe(MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR)
       expect(options.width).toBe(1600)
       expect(options.height).toBe(900)

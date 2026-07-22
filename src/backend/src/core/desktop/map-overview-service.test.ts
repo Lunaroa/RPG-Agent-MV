@@ -1,22 +1,24 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
+import type { MapOverviewScanProgress, MapOverviewSnapshot } from '../../../../contract/types.ts';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJson } from '../rmmv/json.ts';
 import { decodePng, encodePng } from '../workflow/map/map-render.ts';
 import {
-  buildMapOverviewChunk,
   buildMapOverviewSnapshot,
-  cancelMapOverviewChunkSession,
-  requestMapOverviewChunk,
-  resolveMapOverviewChunkFile,
+  buildMapOverviewThumbnail,
+  cancelMapOverviewThumbnailSession,
+  finalizeMapOverviewThumbnailCache,
+  mapOverviewThumbnailWorkerConcurrency,
+  requestMapOverviewThumbnail,
 } from './map-overview-service.ts';
 import { writeStagedProjectJson, discardStagedMap } from './staging-service.ts';
-import { resolveAssetRequest } from './asset-service.ts';
 
 describe('map overview snapshot', () => {
   let root: string;
@@ -152,75 +154,34 @@ describe('map overview snapshot', () => {
     assert.equal(new Set(snapshot.edges.map((edge) => edge.id)).size, 998);
   });
 
-  test('renders tile-only chunks and ignores parallax or characters in version and pixels', () => {
+  test('renders a complete one-quarter Base64 PNG and reuses the persistent cache', () => {
     writeInfos(1);
     writeJson(path.join(dataDir, 'Tilesets.json'), [
       null,
       { id: 1, tilesetNames: ['', '', '', '', '', 'Ground'] },
     ]);
     writeSolidPng(path.join(project, 'www', 'img', 'tilesets', 'Ground.png'), 768, 768, [30, 180, 70, 255]);
-    writeSolidPng(path.join(project, 'www', 'img', 'parallaxes', 'Sky.png'), 24, 24, [30, 80, 190, 255]);
-    writeSolidPng(path.join(project, 'www', 'img', 'characters', '$Guide.png'), 144, 192, [210, 50, 60, 255]);
     writeJson(path.join(dataDir, 'Map001.json'), {
-      width: 2,
+      width: 3,
       height: 2,
       tilesetId: 1,
-      parallaxName: 'Sky',
-      parallaxShow: true,
-      data: [1, 0, 0, 0, ...Array(20).fill(0)],
-      events: [null, {
-        id: 1,
-        name: 'Guide',
-        x: 1,
-        y: 1,
-        pages: [{ image: { tileId: 0, characterName: '$Guide', characterIndex: 0, direction: 2, pattern: 1 }, list: [] }],
-      }],
-    });
-
-    const version = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
-    const first = buildMapOverviewChunk(root, project, 1, version, 0, 0, 1);
-    const second = buildMapOverviewChunk(root, project, 1, version, 0, 0, 1);
-    const file = resolveMapOverviewChunkFile(root, project, 1, version, 0, 0, 1);
-    const decoded = decodePng(fs.readFileSync(file));
-
-    assert.equal(first.logicalWidth, 96);
-    assert.equal(first.logicalHeight, 96);
-    assert.equal(first.outputWidth, 96);
-    assert.equal(first.outputHeight, 96);
-    assert.equal(first.level, 1);
-    assert.equal(first.cacheHit, false);
-    assert.equal(second.cacheHit, true);
-    assert.equal(second.resourceUrl, first.resourceUrl);
-    assert.equal(resolveAssetRequest(root, first.resourceUrl), file);
-    assert.throws(() => resolveAssetRequest(root, first.resourceUrl.replace('/0/0/1.png', '/../0/1.png')));
-    assert.ok(hasColor(decoded.rgba, [30, 180, 70]));
-    assert.equal(hasColor(decoded.rgba, [30, 80, 190]), false);
-    assert.equal(hasColor(decoded.rgba, [210, 50, 60]), false);
-
-    writeSolidPng(path.join(project, 'www', 'img', 'parallaxes', 'Sky.png'), 24, 24, [1, 2, 3, 255]);
-    writeSolidPng(path.join(project, 'www', 'img', 'characters', '$Guide.png'), 144, 192, [4, 5, 6, 255]);
-    const afterCosmetic = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
-    assert.equal(afterCosmetic, version);
-  });
-
-  test('rejects cross-project overview chunk URL access', () => {
-    writeInfos(1);
-    writeJson(path.join(dataDir, 'Tilesets.json'), [null, { id: 1, tilesetNames: [] }]);
-    writeJson(path.join(dataDir, 'Map001.json'), {
-      width: 2,
-      height: 2,
-      tilesetId: 1,
-      data: Array(24).fill(0),
+      data: [1, 0, 0, 0, 0, 0, ...Array(30).fill(0)],
       events: [null],
     });
+
     const version = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
-    const chunk = buildMapOverviewChunk(root, project, 1, version, 0, 0, 2);
-    const outsideProject = path.join(root, 'outside-sample');
-    const forged = chunk.resourceUrl.replace(
-      Buffer.from(path.resolve(project), 'utf8').toString('base64url'),
-      Buffer.from(path.resolve(outsideProject), 'utf8').toString('base64url'),
-    );
-    assert.throws(() => resolveAssetRequest(root, forged), /outside the workspace/);
+    const first = buildMapOverviewThumbnail(root, project, 1, version);
+    const second = buildMapOverviewThumbnail(root, project, 1, version);
+    const decoded = decodePng(Buffer.from(first.dataUrl.slice('data:image/png;base64,'.length), 'base64'));
+
+    assert.equal(first.scaleDivisor, 4);
+    assert.deepEqual([first.width, first.height], [36, 24]);
+    assert.deepEqual([decoded.width, decoded.height], [36, 24]);
+    assert.equal(first.mime, 'image/png');
+    assert.equal(first.cacheHit, false);
+    assert.equal(second.cacheHit, true);
+    assert.equal(second.dataUrl, first.dataUrl);
+    assert.ok(hasColor(decoded.rgba, [30, 180, 70]));
   });
 
   test('persists a validated snapshot and rebuilds it after source or staged map changes', () => {
@@ -229,7 +190,7 @@ describe('map overview snapshot', () => {
     writeMap(2, []);
 
     const first = buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v3.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v4.json');
     const cacheMtime = fs.statSync(cacheFile).mtimeMs;
     const second = buildMapOverviewSnapshot(root, project);
     assert.equal(second.generatedAt, first.generatedAt);
@@ -251,11 +212,37 @@ describe('map overview snapshot', () => {
     assert.deepEqual(discarded.edges.map((edge) => edge.id), ['1:0,0->2:1,1']);
   });
 
+  test('reports real progress for map reading, relationship scanning, image versioning, and cache checks', () => {
+    writeInfos(2);
+    writeMap(1, [event(1, 'Gate', 0, 0, [page({}, [transfer(2, 1, 1)])])]);
+    writeMap(2, []);
+    const freshProgress: MapOverviewScanProgress[] = [];
+
+    buildMapOverviewSnapshot(root, project, progress => freshProgress.push(progress));
+
+    for (const phase of ['reading-maps', 'scanning-relations', 'preparing-images'] as const) {
+      assert.deepEqual(
+        freshProgress.filter(progress => progress.phase === phase).map(progress => progress.completed),
+        [0, 1, 2],
+      );
+    }
+    const verification = freshProgress.filter(progress => progress.phase === 'verifying-project');
+    assert.ok(verification.length > 1);
+    assert.equal(verification.at(-1)?.completed, verification.at(-1)?.total);
+
+    const cachedProgress: MapOverviewScanProgress[] = [];
+    buildMapOverviewSnapshot(root, project, progress => cachedProgress.push(progress));
+    const cacheChecks = cachedProgress.filter(progress => progress.phase === 'checking-cache');
+    assert.ok(cacheChecks.length > 1);
+    assert.equal(cacheChecks.at(-1)?.completed, cacheChecks.at(-1)?.total);
+    assert.equal(cachedProgress.some(progress => progress.phase === 'reading-maps'), false);
+  });
+
   test('recovers from a corrupt snapshot cache without serving stale data', () => {
     writeInfos(1);
     writeMap(1, []);
     const first = buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v3.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v4.json');
     fs.writeFileSync(cacheFile, '{', 'utf8');
     writeJson(path.join(dataDir, 'Map001.json'), {
       width: 3,
@@ -271,6 +258,27 @@ describe('map overview snapshot', () => {
     assert.doesNotThrow(() => JSON.parse(fs.readFileSync(cacheFile, 'utf8')));
   });
 
+  test('rebuilds a snapshot whose thumbnail renderer metadata is stale', () => {
+    writeInfos(1);
+    writeMap(1, []);
+    buildMapOverviewSnapshot(root, project);
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v4.json');
+    const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8')) as {
+      thumbnailRendererVersion: number;
+      snapshot: MapOverviewSnapshot;
+    };
+    cached.thumbnailRendererVersion = 0;
+    cached.snapshot.nodes[0].thumbnailVersion = 'stale-thumbnail-version';
+    fs.writeFileSync(cacheFile, `${JSON.stringify(cached, null, 2)}\n`, 'utf8');
+
+    const rebuilt = buildMapOverviewSnapshot(root, project);
+    const persisted = JSON.parse(fs.readFileSync(cacheFile, 'utf8')) as {
+      thumbnailRendererVersion: number;
+    };
+    assert.notEqual(rebuilt.nodes[0].thumbnailVersion, 'stale-thumbnail-version');
+    assert.notEqual(persisted.thumbnailRendererVersion, 0);
+  });
+
   test('invalidates the snapshot for map list, tileset, and referenced image changes', () => {
     writeInfos(1);
     const tilesetFile = path.join(dataDir, 'Tilesets.json');
@@ -281,7 +289,7 @@ describe('map overview snapshot', () => {
       width: 1,
       height: 1,
       tilesetId: 1,
-      data: Array(6).fill(0),
+      data: [1, 0, 0, 0, 0, 0],
       events: [null],
     });
     const first = buildMapOverviewSnapshot(root, project);
@@ -302,7 +310,32 @@ describe('map overview snapshot', () => {
     assert.notEqual(resourceChanged.nodes[0].thumbnailVersion, tilesetChanged.nodes[0].thumbnailVersion);
   });
 
-  test('keeps only the current content version in the chunk cache and supports levels', () => {
+  test('invalidates only maps that use the changed tileset image slot', () => {
+    writeInfos(2);
+    const tilesetFile = path.join(dataDir, 'Tilesets.json');
+    const groundFile = path.join(project, 'www', 'img', 'tilesets', 'Ground.png');
+    const decorFile = path.join(project, 'www', 'img', 'tilesets', 'Decor.png');
+    writeJson(tilesetFile, [null, { id: 1, tilesetNames: ['', '', '', '', '', 'Ground', 'Decor'] }]);
+    writeSolidPng(groundFile, 768, 768, [10, 20, 30, 255]);
+    writeSolidPng(decorFile, 768, 768, [40, 50, 60, 255]);
+    writeJson(path.join(dataDir, 'Map001.json'), {
+      width: 1, height: 1, tilesetId: 1, data: [1, 0, 0, 0, 0, 0], events: [null],
+    });
+    writeJson(path.join(dataDir, 'Map002.json'), {
+      width: 1, height: 1, tilesetId: 1, data: [256, 0, 0, 0, 0, 0], events: [null],
+    });
+    const before = buildMapOverviewSnapshot(root, project);
+
+    writeSolidPng(groundFile, 768, 768, [70, 80, 90, 255]);
+    const future = new Date(Date.now() + 2_000);
+    fs.utimesSync(groundFile, future, future);
+    const after = buildMapOverviewSnapshot(root, project);
+
+    assert.notEqual(after.nodes[0].thumbnailVersion, before.nodes[0].thumbnailVersion);
+    assert.equal(after.nodes[1].thumbnailVersion, before.nodes[1].thumbnailVersion);
+  });
+
+  test('keeps only the current thumbnail version and rebuilds a corrupt cache atomically', () => {
     writeInfos(1);
     writeJson(path.join(dataDir, 'Tilesets.json'), [null, { id: 1, tilesetNames: [] }]);
     writeJson(path.join(dataDir, 'Map001.json'), {
@@ -313,15 +346,11 @@ describe('map overview snapshot', () => {
       events: [null],
     });
     const version = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
-
-    const native = buildMapOverviewChunk(root, project, 1, version, 0, 0, 1);
-    const coarse = buildMapOverviewChunk(root, project, 1, version, 1, 0, 8);
-    assert.deepEqual([native.logicalWidth, native.logicalHeight], [768, 768]);
-    assert.deepEqual([native.outputWidth, native.outputHeight], [768, 768]);
-    assert.deepEqual([coarse.logicalWidth, coarse.logicalHeight], [192, 768]);
-    assert.deepEqual([coarse.outputWidth, coarse.outputHeight], [24, 96]);
-    const cacheRoot = path.dirname(path.dirname(resolveMapOverviewChunkFile(root, project, 1, version, 0, 0, 1)));
-    assert.equal(fs.readdirSync(path.join(cacheRoot, version)).length, 2);
+    buildMapOverviewThumbnail(root, project, 1, version);
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-thumbnails'), `${version}.json`);
+    fs.writeFileSync(cacheFile, '{', 'utf8');
+    assert.equal(buildMapOverviewThumbnail(root, project, 1, version).cacheHit, false);
+    assert.doesNotThrow(() => JSON.parse(fs.readFileSync(cacheFile, 'utf8')));
 
     writeJson(path.join(dataDir, 'Map001.json'), {
       width: 21,
@@ -331,14 +360,24 @@ describe('map overview snapshot', () => {
       events: [null],
     });
     const nextVersion = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
-    buildMapOverviewChunk(root, project, 1, nextVersion, 0, 0, 1);
-    const mapCacheDir = path.dirname(path.dirname(resolveMapOverviewChunkFile(root, project, 1, nextVersion, 0, 0, 1)));
-    assert.equal(fs.existsSync(path.join(mapCacheDir, version)), false);
-    assert.equal(fs.existsSync(path.join(mapCacheDir, nextVersion)), true);
-    assert.equal(fs.existsSync(path.join(root, 'runtime', 'map-overview-thumbnails')), false);
+    buildMapOverviewThumbnail(root, project, 1, nextVersion);
+    const mapDir = path.dirname(findFile(path.join(root, 'runtime', 'map-overview-thumbnails'), `${nextVersion}.json`));
+    assert.deepEqual(fs.readdirSync(mapDir), [`${nextVersion}.json`]);
   });
 
-  test('generates chunks in a cancellable worker without blocking the caller', async () => {
+  test('removes the project legacy chunk cache only after thumbnail collection finalization', () => {
+    const legacy = path.join(root, 'runtime', 'map-overview-chunks', projectCacheKeyForTest(project), 'Map001');
+    fs.mkdirSync(legacy, { recursive: true });
+    fs.writeFileSync(path.join(legacy, 'old.png'), 'cache', 'utf8');
+    assert.equal(fs.existsSync(legacy), true);
+    finalizeMapOverviewThumbnailCache(root, project);
+    assert.equal(fs.existsSync(path.join(root, 'runtime', 'map-overview-chunks', projectCacheKeyForTest(project))), false);
+  });
+
+  test('uses the bounded worker pool, coalesces matching versions, and cancels by session', async () => {
+    assert.equal(mapOverviewThumbnailWorkerConcurrency(1), 1);
+    assert.equal(mapOverviewThumbnailWorkerConcurrency(3), 2);
+    assert.equal(mapOverviewThumbnailWorkerConcurrency(16), 4);
     writeInfos(1);
     writeJson(path.join(dataDir, 'Tilesets.json'), [null, { id: 1, tilesetNames: [] }]);
     writeJson(path.join(dataDir, 'Map001.json'), {
@@ -350,18 +389,26 @@ describe('map overview snapshot', () => {
     });
     const version = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
     let settled = false;
-    const request = requestMapOverviewChunk(root, project, 1, version, 0, 0, 4, 'worker-session')
+    const request = requestMapOverviewThumbnail(root, project, 1, version, 'worker-session')
       .finally(() => { settled = true; });
-    const coalesced = requestMapOverviewChunk(root, project, 1, version, 0, 0, 4, 'coalesced-session');
+    const coalesced = requestMapOverviewThumbnail(root, project, 1, version, 'coalesced-session');
 
     await new Promise<void>(resolve => setImmediate(resolve));
     assert.equal(settled, false);
-    const chunk = await request;
-    assert.strictEqual(await coalesced, chunk);
-    assert.deepEqual([chunk.outputWidth, chunk.outputHeight, chunk.cacheHit], [24, 24, false]);
+    const thumbnail = await request;
+    assert.equal((await coalesced).dataUrl, thumbnail.dataUrl);
+    assert.deepEqual([thumbnail.width, thumbnail.height, thumbnail.cacheHit], [24, 24, false]);
 
-    const canceled = requestMapOverviewChunk(root, project, 1, version, 0, 0, 2, 'cancel-session');
-    cancelMapOverviewChunkSession('cancel-session');
+    writeJson(path.join(dataDir, 'Map001.json'), {
+      width: 80,
+      height: 80,
+      tilesetId: 1,
+      data: Array(80 * 80 * 6).fill(0),
+      events: [null],
+    });
+    const changedVersion = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
+    const canceled = requestMapOverviewThumbnail(root, project, 1, changedVersion, 'cancel-session');
+    cancelMapOverviewThumbnailSession('cancel-session');
     await assert.rejects(canceled, (error: Error) => error.name === 'AbortError');
   });
 
@@ -388,6 +435,10 @@ describe('map overview snapshot', () => {
     });
   }
 });
+
+function projectCacheKeyForTest(project: string): string {
+  return crypto.createHash('sha256').update(path.resolve(project).toLocaleLowerCase()).digest('hex').slice(0, 20);
+}
 
 function findFile(root: string, fileName: string): string {
   const found = findFileOrNull(root, fileName);

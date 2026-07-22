@@ -216,6 +216,9 @@ test("electron package proof accepts a real unpacked Electron directory package"
   assert.equal(result.files.includes("resources/app/node_modules/@opencode-ai/sdk/package.json"), true);
   assert.equal(result.files.includes("resources/app/node_modules/cross-spawn/package.json"), true);
   assert.equal(result.files.includes("resources/app/src/backend/node_modules/@modelcontextprotocol/sdk/package.json"), true);
+  assert.equal(result.files.includes("resources/app/src/backend/node_modules/sharp/package.json"), true);
+  assert.equal(result.files.includes("resources/app/src/backend/node_modules/@img/sharp-win32-x64/lib/libvips-42.dll"), true);
+  assert.equal(result.files.includes("resources/app/src/backend/node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.3.node"), true);
   assert.equal(result.files.includes("resources/app/src/backend/node_modules/zod/package.json"), true);
   assert.equal(result.issues.some((issue) => issue.severity === "blocker"), false);
   assert.equal(result.issues.some((issue) => issue.code === "electron-dir-package-only"), true);
@@ -245,6 +248,19 @@ test("electron package proof blocks missing bundled ripgrep", () => {
   assert.equal(result.status, "blocked");
   assert.equal(result.issues.some((issue) => issue.code === "electron-required-file-missing"), true);
   assert.equal(result.issues.some((issue) => issue.evidence?.includes("resources/opencode/rg.exe")), true);
+});
+
+test("electron package proof blocks missing Sharp native runtime", () => {
+  const root = makeTempRoot();
+  writeElectronBuilderMetadata(root);
+  const packageRoot = createElectronPackageArtifact(root);
+  const nativeModule = path.join(packageRoot, "resources", "app", "src", "backend", "node_modules", "@img", "sharp-win32-x64", "lib", "sharp-win32-x64-0.35.3.node");
+  fs.rmSync(nativeModule, { force: true });
+
+  const result = inspectElectronPackageArtifact(root);
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.issues.some((issue) => issue.evidence?.includes("resources/app/src/backend/node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.3.node")), true);
 });
 
 test("electron package proof blocks missing provider seed database", () => {
@@ -513,6 +529,19 @@ function createElectronPackageArtifact(root: string): string {
     name: "@modelcontextprotocol/sdk",
     version: "1.29.0",
   }), "utf8");
+  fs.mkdirSync(path.join(appRoot, "src", "backend", "node_modules", "sharp"), { recursive: true });
+  fs.writeFileSync(path.join(appRoot, "src", "backend", "node_modules", "sharp", "package.json"), JSON.stringify({
+    name: "sharp",
+    version: "0.35.3",
+  }), "utf8");
+  const sharpNativeRoot = path.join(appRoot, "src", "backend", "node_modules", "@img", "sharp-win32-x64");
+  fs.mkdirSync(path.join(sharpNativeRoot, "lib"), { recursive: true });
+  fs.writeFileSync(path.join(sharpNativeRoot, "package.json"), JSON.stringify({
+    name: "@img/sharp-win32-x64",
+    version: "0.35.3",
+  }), "utf8");
+  fs.writeFileSync(path.join(sharpNativeRoot, "lib", "libvips-42.dll"), "native", "utf8");
+  fs.writeFileSync(path.join(sharpNativeRoot, "lib", "sharp-win32-x64-0.35.3.node"), "native", "utf8");
   fs.writeFileSync(path.join(appRoot, "src", "backend", "node_modules", "zod", "package.json"), JSON.stringify({
     name: "zod",
     version: "4.4.3",

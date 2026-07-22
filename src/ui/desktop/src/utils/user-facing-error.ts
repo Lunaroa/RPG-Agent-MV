@@ -6,10 +6,17 @@ const IPC_REMOTE_PREFIX = /^Error invoking remote method '[^']+':\s*/i;
 const WRAPPED_ERROR_PREFIX = /^Error:\s*/i;
 
 const DEVELOPER_TERMS = /\b(remote|origin|push|pull|fetch|upstream|downstream)\b/i;
+const SESSION_PLAN_DIRECTORY_ERROR_PATTERN = /\[(SESSION_PLAN_DIRECTORY_(?:NOT_WRITABLE|PATH_CONFLICT|CREATE_FAILED))\]\s*([^\r\n]*)/i;
+
+export type UserFacingErrorCode =
+  | 'session-plan-directory-not-writable'
+  | 'session-plan-directory-path-conflict'
+  | 'session-plan-directory-create-failed';
 
 export interface UserFacingError {
   message: string;
   detail?: string;
+  code?: UserFacingErrorCode;
 }
 
 export function formatUserFacingError(
@@ -46,6 +53,30 @@ function mapKnownError(message: string, _context: 'version' | 'general', languag
   if (/\[CONTROLLED_EDITING_DISABLED\]/i.test(message)) {
     return { message: translate('error.enableVersionFirst', language) };
   }
+  const planDirectoryError = message.match(SESSION_PLAN_DIRECTORY_ERROR_PATTERN);
+  if (planDirectoryError) {
+    const marker = planDirectoryError[1].toUpperCase();
+    const detail = String(planDirectoryError[2] || '').trim() || undefined;
+    if (marker.endsWith('NOT_WRITABLE')) {
+      return {
+        code: 'session-plan-directory-not-writable',
+        message: translate('error.sessionPlanDirectoryNotWritable', language),
+        detail,
+      };
+    }
+    if (marker.endsWith('PATH_CONFLICT')) {
+      return {
+        code: 'session-plan-directory-path-conflict',
+        message: translate('error.sessionPlanDirectoryPathConflict', language),
+        detail,
+      };
+    }
+    return {
+      code: 'session-plan-directory-create-failed',
+      message: translate('error.sessionPlanDirectoryCreateFailed', language),
+      detail,
+    };
+  }
   return { message };
 }
 
@@ -55,6 +86,7 @@ function sanitizeDeveloperTerms(result: UserFacingError, language: ProductLangua
     return result;
   }
   return {
+    ...result,
     message: result.message.includes('失败') || result.message.includes('failed') ? result.message : translate('error.operationFailedRetry', language),
     detail: result.detail || combined,
   };

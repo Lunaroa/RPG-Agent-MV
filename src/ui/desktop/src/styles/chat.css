@@ -383,58 +383,34 @@
 }
 
 .turn-artifact {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
-  width: 100%;
-  padding: 14px 16px;
-  border: 1px solid var(--app-border);
-  border-radius: 14px;
-  background: var(--app-bg);
-  color: var(--app-ink);
+  align-self: flex-start;
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-ink-muted);
   font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.5;
   text-align: left;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
   cursor: pointer;
-  transition: background var(--app-dur) var(--app-ease), border-color var(--app-dur) var(--app-ease);
+  transition: color var(--app-dur) var(--app-ease), text-decoration-color var(--app-dur) var(--app-ease);
 }
 
 .turn-artifact:hover {
-  background: var(--app-bg-soft);
-  border-color: var(--app-border-strong);
+  color: var(--app-accent);
+  text-decoration-color: currentColor;
 }
 
-.turn-artifact-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  background: var(--app-bg-sunken);
-  color: var(--app-ink-soft);
-}
-
-.turn-artifact-copy {
-  min-width: 0;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.turn-artifact-copy strong {
-  font-size: var(--text-md);
-  font-weight: 600;
-}
-
-.turn-artifact-copy small,
-.turn-artifact-action {
-  color: var(--app-ink-muted);
-  font-size: var(--text-xs);
-}
-
-.turn-artifact-action {
-  flex-shrink: 0;
+.turn-artifact:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
 }
 
 /* 流式输出：纯文本，避免每 token 跑 markdown 解析 */

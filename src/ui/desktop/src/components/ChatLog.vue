@@ -53,12 +53,7 @@
             class="turn-artifact"
             @click="emit('reveal-artifacts', artifactSessionId(turn))"
           >
-            <span class="turn-artifact-icon"><el-icon><FolderOpened /></el-icon></span>
-            <span class="turn-artifact-copy">
-              <strong>{{ t('chat.artifacts.title') }}</strong>
-              <small>{{ t('chat.artifacts.subtitle') }}</small>
-            </span>
-            <span class="turn-artifact-action">{{ t('chat.artifacts.action') }}</span>
+            {{ t('chat.artifacts.logAction') }}
           </button>
         </div>
       </article>
@@ -83,7 +78,6 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, toRef, watch } from 'vue'
-import { FolderOpened } from '@element-plus/icons-vue'
 import type { ChatSegment } from '../composables/useSessionStream'
 import { buildChatTurns, type ChatTurn, type ExecutionGroup as ExecutionGroupItem } from '../utils/chatTurns'
 import { isNearScrollBottom } from '../utils/chatScrollFollow'

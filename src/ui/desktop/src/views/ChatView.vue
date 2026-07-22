@@ -102,6 +102,10 @@
           v-if="effectiveComposerHint"
           :text="effectiveComposerHint"
           :variant="effectiveComposerHintVariant"
+          :primary-action-label="showPlanDirectoryRecoveryActions ? t('chat.planDirectory.openProjectFolder') : undefined"
+          :secondary-action-label="showPlanDirectoryRecoveryActions ? t('chat.planDirectory.retry') : undefined"
+          @primary-action="handleOpenProjectFolder"
+          @secondary-action="handlePlanDirectoryRetry"
         />
 
         <ChatComposer
@@ -171,6 +175,7 @@ import { isAskResultLocked, type Ask, type AskResult } from '../utils/askParser'
 import {
   eventRegistry,
   clipboard as clipboardApi,
+  projects as projectsApi,
   sessions as sessionsApi,
   type ContextUsageSnapshot,
   type SlashCommandListItem,
@@ -216,7 +221,11 @@ import AskCard from '../components/AskCard.vue'
 import ConversationList from '../components/ConversationList.vue'
 import { useWorkbenchUiStore } from '../stores/workbenchUi'
 import { normalizeProductLanguage, useI18n } from '../i18n'
-import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
+import {
+  formatUserFacingError,
+  formatUserFacingErrorMessage,
+  type UserFacingErrorCode,
+} from '../utils/user-facing-error'
 import {
   ChatImageValidationError,
   nativeClipboardImageToFile,
@@ -299,6 +308,10 @@ const inputMsg = ref('')
 const slashCommands = ref<SlashCommandListItem[]>([])
 const composerHint = ref('')
 const composerHintVariant = ref<'info' | 'error'>('info')
+const composerRecovery = ref<{
+  code: UserFacingErrorCode
+  relativePath: string
+} | null>(null)
 const imagePasteError = ref('')
 const draftImages = ref<DraftChatImage[]>([])
 const contextUsage = ref<ContextUsageSnapshot | null>(null)
@@ -402,6 +415,18 @@ const effectiveComposerHint = computed(() => imageCompatibilityHint.value || ima
 const effectiveComposerHintVariant = computed<'info' | 'error'>(() => (
   imageCompatibilityHint.value || imagePasteError.value ? 'error' : composerHintVariant.value
 ))
+const showPlanDirectoryRecoveryActions = computed(() => Boolean(
+  composerRecovery.value
+  && !imageCompatibilityHint.value
+  && !imagePasteError.value,
+))
+
+watch(
+  () => projectStore.currentProject,
+  () => {
+    if (composerRecovery.value) clearComposerRecovery()
+  },
+)
 
 const headerTitle = computed(() => titleForSession(historySessions.value, activeSession.value?.id, currentProductLanguage.value))
 
@@ -609,6 +634,7 @@ async function sendMessage() {
   const planModePrefix = buildPlanModePrefixForSend()
 
   try {
+    clearComposerRecovery()
     const imageAttachments = await serializeDraftChatImages(draftImages.value)
     const sent = await runIntent(`${planModePrefix}${intent}`, intent || t('chat.image.message'), {
       userText: intent,
@@ -617,9 +643,55 @@ async function sendMessage() {
     if (sent) clearDraftImages()
   } catch (error) {
     console.error('Failed to create session:', error)
-    composerHintVariant.value = 'error'
-    composerHint.value = formatErrorText(error)
+    showComposerError(error)
   }
+}
+
+function showComposerError(error: unknown): void {
+  const formatted = formatUserFacingError(error, 'general', currentProductLanguage.value)
+  composerHintVariant.value = 'error'
+  if (!formatted.code?.startsWith('session-plan-directory-')) {
+    composerRecovery.value = null
+    composerHint.value = formatted.message
+    return
+  }
+
+  const relativePath = formatted.code === 'session-plan-directory-path-conflict'
+    ? formatted.detail || '.opencode'
+    : '.opencode/plans/conversations'
+  composerRecovery.value = { code: formatted.code, relativePath }
+  const key = formatted.code === 'session-plan-directory-not-writable'
+    ? 'chat.planDirectory.notWritable'
+    : formatted.code === 'session-plan-directory-path-conflict'
+      ? 'chat.planDirectory.pathConflict'
+      : 'chat.planDirectory.createFailed'
+  composerHint.value = t(key, { path: projectDisplayPath(relativePath) })
+}
+
+function projectDisplayPath(relativePath: string): string {
+  const project = String(projectStore.currentProject || '').replace(/[\\/]+$/, '')
+  const segments = String(relativePath || '').split(/[\\/]+/).filter(Boolean)
+  const separator = project.includes('\\') ? '\\' : '/'
+  return [project, ...segments].filter(Boolean).join(separator)
+}
+
+function clearComposerRecovery(): void {
+  composerRecovery.value = null
+  composerHint.value = ''
+}
+
+async function handleOpenProjectFolder(): Promise<void> {
+  if (!projectStore.currentProject) return
+  try {
+    await projectsApi.openFolder(projectStore.currentProject)
+  } catch (error) {
+    ElMessage.error(t('topbar.openProjectFolderFailed', { message: formatErrorText(error) }))
+  }
+}
+
+async function handlePlanDirectoryRetry(): Promise<void> {
+  if (!composerRecovery.value) return
+  await sendMessage()
 }
 
 async function handlePastedFiles(files: File[]): Promise<void> {

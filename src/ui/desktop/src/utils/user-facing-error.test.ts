@@ -31,6 +31,29 @@ describe('formatUserFacingError', () => {
     );
   });
 
+  test('maps plan directory permission errors without exposing native details', () => {
+    const result = formatUserFacingError(
+      new Error("Error invoking remote method 'sessions:create': Error: [SESSION_PLAN_DIRECTORY_NOT_WRITABLE] .opencode/plans/conversations"),
+      'general',
+      'zh-CN',
+    );
+    assert.equal(result.code, 'session-plan-directory-not-writable');
+    assert.equal(result.message, '无法创建对话计划目录，请检查项目写入权限');
+    assert.equal(result.detail, '.opencode/plans/conversations');
+    assert.doesNotMatch(result.message, /EPERM|mkdir/i);
+  });
+
+  test('distinguishes a plan directory path conflict', () => {
+    const result = formatUserFacingError(
+      new Error('[SESSION_PLAN_DIRECTORY_PATH_CONFLICT] .opencode'),
+      'general',
+      'en-US',
+    );
+    assert.equal(result.code, 'session-plan-directory-path-conflict');
+    assert.equal(result.detail, '.opencode');
+    assert.equal(result.message, 'A file conflicts with the conversation plan directory');
+  });
+
   test('sanitizes developer git terms from user-visible message', () => {
     const result = formatUserFacingError(new Error('Git command failed: fatal: No configured push default.'), 'version', 'en-US');
     assert.equal(result.message, 'Git command failed: fatal: No configured push default.');

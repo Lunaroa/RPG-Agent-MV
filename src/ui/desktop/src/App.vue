@@ -48,6 +48,10 @@ const showLanguagePicker = computed(() =>
 
 const START_TOUR_EVENT = 'agent-rpg:onboarding-tour:start'
 
+function workspaceCacheKey(currentRoute: { name?: string | symbol | null }): string {
+  return String(currentRoute.name || 'workspace')
+}
+
 watch(
   () => projectStore.currentProjectInfo?.name,
   (projectName) => {
@@ -91,7 +95,7 @@ function uiControlState(extra: Record<string, unknown> = {}) {
       query: { ...route.query },
       fullPath: route.fullPath,
     },
-    page: route.path === '/console' ? 'console' : route.path === '/workbench' ? 'workbench' : 'other',
+    page: route.path === '/console' ? 'console' : route.path === '/workbench' ? 'workbench' : route.path === '/map-overview' ? 'map-overview' : 'other',
     consolePage: consolePage.value,
     project: projectStore.currentProject || '',
     language: language.value,
@@ -108,6 +112,7 @@ function uiControlState(extra: Record<string, unknown> = {}) {
 async function navigateUiControlTarget(target: string) {
   const routes: Record<string, { path: string; query?: Record<string, string> }> = {
     workbench: { path: '/workbench' },
+    'map-overview': { path: '/map-overview' },
     'console-home': { path: '/console', query: { page: 'home' } },
     'console-assets': { path: '/console', query: { page: 'assets' } },
     'console-story': { path: '/console', query: { page: 'story' } },
@@ -205,7 +210,11 @@ onUnmounted(() => {
         <main class="main-content" data-ui-id="app-main">
           <div v-if="booting" class="app-state-card">{{ t('app.loadingProject') }}</div>
           <div v-else-if="bootError" class="app-state-card error">{{ bootError }}</div>
-          <router-view v-else />
+          <router-view v-else v-slot="{ Component, route: currentRoute }">
+            <KeepAlive :max="3">
+              <component :is="Component" :key="workspaceCacheKey(currentRoute)" />
+            </KeepAlive>
+          </router-view>
         </main>
       </div>
       <StatusBar />

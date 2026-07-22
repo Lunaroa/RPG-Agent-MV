@@ -548,6 +548,14 @@ const previewRefreshEnabled = computed(() => (
   && !busy.value
   && !previewRefreshActive.value
 ));
+const previewExecutionEnabled = computed(() => Boolean(previewSession.value?.eventExecutionEnabled));
+const previewExecutionAvailable = computed(() => (
+  mode.value === 'preview'
+  && previewStatus.value === 'running'
+  && !busy.value
+  && !previewRefreshActive.value
+  && previewSession.value?.inputWait?.kind !== 'unsupported'
+));
 
 function stateRecordMap<T>(record?: Record<string, T>): Map<number, T> {
   return new Map(Object.entries(record || {}).map(([id, value]) => [Number(id), value]));

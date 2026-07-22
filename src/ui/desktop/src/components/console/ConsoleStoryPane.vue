@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onActivated, onDeactivated, ref, watch } from 'vue';
 import { ArrowRight } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useProjectStore } from '../../stores/project';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import {
   commonEvents as commonEventsApi,
   maps as mapsApi,
   projectAssets,
   projectManagement,
+  workspaceSurfaces,
   playtest,
   type InteractiveBattleTestBattler,
   type InteractiveParticleAnimationPreview,
@@ -47,6 +48,8 @@ import {
 } from '../../utils/consoleStoryLocalization';
 import { databaseFieldLabel, databaseGroupLabel } from '../../utils/rmmvDatabaseLocalization';
 import { parseProjectStagingSummary, type ProjectStagingSummary } from '../../utils/projectStaging';
+import { LatestAsyncCoordinator } from '../../utils/latestAsyncCoordinator';
+import { normalizeProjectManagementSection } from '../../utils/projectManagementRoute';
 
 type PmDetail =
   | { kind: 'managed'; entry: ProjectManagedEntry }
@@ -71,8 +74,10 @@ type DatabaseGridItem = {
 
 const projectStore = useProjectStore();
 const workbenchUi = useWorkbenchUiStore();
+const route = useRoute();
 const router = useRouter();
 const { language, t } = useI18n();
+const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 
 const stagingDirty = ref(false);
 const stagingBusy = ref(false);
@@ -118,7 +123,7 @@ async function refreshStagingStatus() {
 }
 
 async function applyProjectStaging() {
-  if (!projectStore.currentProject || stagingBusy.value) return;
+  if (!projectStore.currentProject || stagingBusy.value || surfaceWriteLocked.value) return;
   stagingBusy.value = true;
   detailError.value = '';
   try {
@@ -192,25 +197,56 @@ function formatErrorText(errorValue: unknown): string {
 }
 
 const loading = ref(false);
+const validating = ref(false);
+const refreshing = ref(false);
 const error = ref<string | null>(null);
 const overview = ref<ProjectOverview | null>(null);
+const overviewCoordinator = new LatestAsyncCoordinator<{ project: string }>();
+let surfaceActive = false;
+let surfaceVersion = '';
+let activationSequence = 0;
+const draftConflict = ref(false);
 
-async function loadData() {
-  if (!projectStore.currentProject) {
+const surfaceInteractionLocked = computed(() => refreshing.value || Boolean(error.value && overview.value));
+const surfaceWriteLocked = computed(() => surfaceInteractionLocked.value || draftConflict.value);
+
+async function loadData(startVersion?: string) {
+  const project = projectStore.currentProject;
+  if (!project) {
+    overviewCoordinator.invalidate({ project: '' });
     overview.value = null;
     error.value = null;
     loading.value = false;
     return;
   }
-  loading.value = true;
+  const token = overviewCoordinator.begin({ project });
+  const preserveOverview = Boolean(overview.value);
+  loading.value = !preserveOverview;
+  refreshing.value = preserveOverview;
+  validating.value = false;
   error.value = null;
   try {
-    overview.value = await projectManagement.overview(projectStore.currentProject);
+    const version = startVersion || (await workspaceSurfaces.validate({ surface: 'projectManagement' }, project)).version;
+    const nextOverview = await projectManagement.overview(project);
+    if (!overviewCoordinator.isCurrent(token) || projectStore.currentProject !== project) return;
+    const settled = await workspaceSurfaces.validate({
+      surface: 'projectManagement',
+      loadedVersion: version,
+    }, project);
+    if (!settled.unchanged) throw new Error(t('story.workspaceChangedDuringLoad'));
+    surfaceVersion = settled.version;
     await refreshStagingStatus();
+    if (!overviewCoordinator.isCurrent(token) || projectStore.currentProject !== project) return;
+    overview.value = nextOverview;
   } catch (e) {
+    if (!overviewCoordinator.isCurrent(token) || projectStore.currentProject !== project) return;
     error.value = (e as Error).message;
   } finally {
-    loading.value = false;
+    if (overviewCoordinator.isCurrent(token)) {
+      loading.value = false;
+      refreshing.value = false;
+      validating.value = false;
+    }
   }
 }
 
@@ -325,6 +361,7 @@ function syncDraftHistoryCounts(): void {
 function resetDetailDraft(value: unknown): void {
   activeDraftMergeKey = null;
   activeDraftTextControl = null;
+  draftConflict.value = false;
   detailDraft.value = draftHistory.reset(value);
   syncDraftHistoryCounts();
 }
@@ -399,10 +436,12 @@ function handleDraftHistoryShortcut(event: KeyboardEvent): void {
   }
 }
 
-watch(() => projectStore.currentProject, () => {
+watch(() => projectStore.currentProject, (project) => {
+  activationSequence += 1;
+  overviewCoordinator.invalidate({ project });
   selectedMapId.value = null;
   selectedEventId.value = null;
-  selected.value = 'overview';
+  selected.value = normalizeProjectManagementSection(route.query.section);
   closeDetail();
   closeEventEditor();
   resetCatalog();
@@ -411,7 +450,14 @@ watch(() => projectStore.currentProject, () => {
   temporaryBattleback1Name.value = '';
   temporaryBattleback2Name.value = '';
   battleContextProject = '';
-  if (projectStore.currentProject) void loadData();
+  surfaceVersion = '';
+  overview.value = null;
+  error.value = null;
+  loading.value = false;
+  validating.value = false;
+  refreshing.value = false;
+  draftConflict.value = false;
+  if (project && surfaceActive) void activateProjectManagement();
   else workbenchUi.sbStagingDirty = false;
 });
 
@@ -422,9 +468,63 @@ watch(editorCatalog, (catalog) => {
   temporaryBattleback2Name.value = catalog.battle.battleback2Name;
 });
 
-onMounted(() => {
-  if (projectStore.currentProject) void loadData();
+watch(() => props.active, (active) => {
+  setProjectManagementActive(active);
+}, { immediate: true });
+
+onActivated(() => {
+  setProjectManagementActive(props.active);
 });
+
+onDeactivated(() => {
+  setProjectManagementActive(false);
+});
+
+function setProjectManagementActive(active: boolean): void {
+  if (surfaceActive === active) return;
+  surfaceActive = active;
+  activationSequence += 1;
+  if (!active) {
+    validating.value = false;
+    return;
+  }
+  const routeSection = normalizeProjectManagementSection(route.query.section);
+  if (selected.value !== routeSection) selectCategory(routeSection);
+  void activateProjectManagement();
+}
+
+async function activateProjectManagement(): Promise<void> {
+  const project = projectStore.currentProject;
+  if (!project || !surfaceActive) return;
+  const sequence = ++activationSequence;
+  const hasCachedOverview = Boolean(overview.value);
+  loading.value = !hasCachedOverview;
+  validating.value = hasCachedOverview;
+  error.value = null;
+  try {
+    const validation = await workspaceSurfaces.validate({
+      surface: 'projectManagement',
+      loadedVersion: surfaceVersion || undefined,
+    }, project);
+    if (!surfaceActive || projectStore.currentProject !== project || sequence !== activationSequence) return;
+    if (overview.value && validation.unchanged) {
+      surfaceVersion = validation.version;
+      loading.value = false;
+      validating.value = false;
+      return;
+    }
+    if (hasUnsavedDraft.value) {
+      draftConflict.value = true;
+      detailError.value = t('story.workspaceDraftConflict');
+    }
+    await loadData(validation.version);
+  } catch (activationError) {
+    if (!surfaceActive || projectStore.currentProject !== project || sequence !== activationSequence) return;
+    error.value = (activationError as Error).message;
+    loading.value = false;
+    validating.value = false;
+  }
+}
 
 watch(selected, (name) => {
   searchQuery.value = '';
@@ -432,6 +532,12 @@ watch(selected, (name) => {
   if (name === 'database') syncSelectedDbGroup();
   if (name === 'audio') syncSelectedAudioBucket();
   if (name === 'images') syncSelectedImageBucket();
+  if (surfaceActive && route.path === '/console' && route.query.section !== name) {
+    void router.replace({
+      path: route.path,
+      query: { ...route.query, page: 'story', section: name },
+    });
+  }
 });
 
 watch(searchQuery, () => {
@@ -1725,11 +1831,23 @@ function detailTitle(): string {
 </script>
 
 <template>
-  <div class="console-subpage">
+  <div class="console-subpage" :aria-busy="validating || refreshing">
     <div v-if="!projectStore.currentProject" class="state">{{ t('story.addProjectFirst') }}</div>
-    <div v-else-if="error" class="state error">{{ formatErrorText(error) }}</div>
-    <div v-else-if="loading" class="state">{{ t('story.loadingOverview') }}</div>
-    <div v-else class="console-split pm-split">
+    <div v-else-if="error && !overview" class="state error">{{ formatErrorText(error) }}</div>
+    <div v-else-if="loading && !overview" class="state">{{ t('story.loadingOverview') }}</div>
+    <div v-if="overview && (refreshing || error)" class="workspace-refresh-state" :class="{ error }" :role="error ? 'alert' : 'status'">
+      <template v-if="error">
+        <span>{{ formatErrorText(error) }}</span>
+        <button type="button" class="secondary-button" @click="loadData()">{{ t('story.retryOverview') }}</button>
+      </template>
+      <span v-else>{{ t('story.loadingOverview') }}</span>
+    </div>
+    <div
+      v-if="overview"
+      class="console-split pm-split"
+      :inert="surfaceInteractionLocked"
+      :aria-disabled="surfaceInteractionLocked"
+    >
       <!-- Sidebar -->
       <aside class="console-panel pm-categories">
         <div class="console-panel-title">{{ t('story.projectMgmt') }}</div>
@@ -2409,6 +2527,23 @@ function detailTitle(): string {
           <li @click="copyDbEntry(dbContextMenu.entryId)">{{ t('editor.ctx.copy') }}</li>
           <li
             :class="{ disabled: !canPasteDbEntry() }"
+.console-subpage { position: relative; }
+.workspace-refresh-state {
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 38px;
+  margin: 0 40px 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  background: var(--app-bg);
+  color: var(--app-ink-muted);
+  font-size: 12px;
+}
+.workspace-refresh-state.error { color: var(--app-danger); }
             @click="pasteDbEntry(dbContextMenu.entryId)"
           >{{ t('editor.ctx.paste') }}</li>
           <li class="ctx-sep"></li>

@@ -1,5 +1,6 @@
 <template>
-  <div class="editor-view">
+  <div class="editor-view" :class="{ 'surface-checking': surfaceChecking }">
+    <div v-if="surfaceChecking" class="surface-checking-overlay" role="status">{{ t('app.loadingProject') }}</div>
     <EditorToolbar
       v-model:mode="mode"
       :tool="tool"
@@ -40,6 +41,9 @@
         :brush-info="brushInfo"
         :brush-set="brushSet"
         :map-tree="mapTree"
+        :map-tree-loading="mapTreeLoading"
+        :map-tree-error="mapTreeError"
+        :map-tree-draggable="!busy && mode !== 'preview'"
         :selected-map-id="requestedMapId ?? selectedMapId"
         :staged-map-ids="stagedMapIds"
         :expanded-map-ids="expandedMapIds"
@@ -62,6 +66,7 @@
         @node-collapse="onTreeNodeCollapse"
         @node-contextmenu="onTreeContextMenu"
         @node-drop="moveMapFromTree"
+        @retry-map-tree="loadTree"
         @update:event-search-query="eventSearchQuery = $event"
         @search-all-maps="searchAllMaps"
         @select-event="mode === 'preview' ? selectPreviewEventFromDock($event) : selectEvent($event)"
@@ -100,8 +105,11 @@
           />
           <div v-show="mode !== 'preview'" class="editor-canvas-layer">
           <div v-if="selectedMapId == null" class="empty-state">
-            <el-empty :description="mapTree.length ? t('editor.error.noLoadableMaps') : t('editor.view.noMapsDescription')">
-              <div class="empty-actions">
+            <el-empty :description="mapTreeLoading ? t('editor.left.loadingMaps') : mapTreeError || (mapTree.length ? t('editor.error.noLoadableMaps') : t('editor.view.noMapsDescription'))">
+              <div v-if="mapTreeError" class="empty-actions">
+                <el-button @click="loadTree">{{ t('editor.left.retryMaps') }}</el-button>
+              </div>
+              <div v-else-if="!mapTreeLoading" class="empty-actions">
                 <el-button type="primary" @click="openCreateProperties(0)">{{ t('editor.view.createMap') }}</el-button>
               </div>
             </el-empty>
@@ -263,7 +271,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { LAYER_Z } from '../constants/layerZIndex';
 import { useRoute, useRouter } from 'vue-router';
@@ -279,7 +287,7 @@ import PreviewConsolePanel from '../components/editor/PreviewConsolePanel.vue';
 import { appendPreviewTerminalEntry, type PreviewTerminalEntry } from '../components/editor/previewTerminal';
 import { previewEventSelectionChange } from '../components/editor/previewEventSelection';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapPropertiesForm, MapTool, TreeNode } from '../components/editor/editorTypes';
-import { clipboard as clipboardApi, eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, type EditorProjectCatalog, type MapPreviewConsoleEntry, type MapPreviewEventState, type MapPreviewOverrides, type MapPreviewRuntimeCommand, type MapPreviewRuntimeEvent, type MapPreviewSelfSwitchLetter, type MapPreviewSession, type MapPreviewStateEntry, type MapPreviewStatus, type MapPreviewVariableValue, type MapPreviewViewRequest, type MapTreeNode, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
+import { clipboard as clipboardApi, eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, workspaceSurfaces, type EditorProjectCatalog, type MapPreviewConsoleEntry, type MapPreviewEventState, type MapPreviewOverrides, type MapPreviewRuntimeCommand, type MapPreviewRuntimeEvent, type MapPreviewSelfSwitchLetter, type MapPreviewSession, type MapPreviewStateEntry, type MapPreviewStatus, type MapPreviewVariableValue, type MapPreviewViewRequest, type MapTreeNode, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
 import { useMapCanvasEditor, type PlacementFlashCell } from '../composables/useMapCanvasEditor';
 import { clone, defaultEvent, quickEventTemplate, quickObtainEventTemplate, type MvEditorEvent, type MvEventImage, type QuickEventType, type QuickObtainKind } from '../composables/useEventEditor';
 import {
@@ -302,7 +310,6 @@ import { placementValidityHint, validatePlacementCell } from '../utils/placement
 import { registerEditorUiControlHandler, type EditorUiControlState } from '../utils/uiControl';
 import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
 import { loadImageElement } from '../utils/imageLoading.ts';
-import { projectMapTreeMove } from '../utils/mapTreeDragPreview';
 import { filterMapPreviewOverrides, removeMapPreviewOverrides } from '../utils/mapPreviewOverrides';
 import { mapPreviewSelfSwitchKey } from '@contract/map-preview-state';
 import { LatestAsyncCoordinator, type LatestAsyncToken } from '../utils/latestAsyncCoordinator';
@@ -351,6 +358,8 @@ const placementFlash = ref<PlacementFlashCell | null>(null);
 const tilesetFlags = ref<number[]>([]);
 const contextMenuZ = String(LAYER_Z.contextMenu);
 const mapTree = ref<TreeNode[]>([]);
+const mapTreeLoading = ref(false);
+const mapTreeError = ref('');
 const expandedMapIds = ref<number[]>([]);
 const tilesets = ref<TilesetSummary[]>([]);
 const selectedMapId = ref<number | null>(null);
@@ -431,10 +440,15 @@ const characterAssetUrls = new Map<string, string>();
 type MapLoadResult = 'committed' | 'failed' | 'superseded';
 interface MapLoadIntent { project: string; mapId: number }
 const mapLoadCoordinator = new LatestAsyncCoordinator<MapLoadIntent>();
+const mapTreeLoadCoordinator = new LatestAsyncCoordinator<{ project: string }>();
 const previewIntentCoordinator = new LatestAsyncCoordinator<EditorPreviewIntent>();
 let routeEventFocusSequence = 0;
 let routeEventFocusActiveKey = '';
 let routeEventFocusHandledKey = '';
+const surfaceChecking = ref(false);
+let surfaceActive = false;
+let surfaceVersion = '';
+let surfaceVersionMapId: number | undefined;
 
 function getPlacementCellValidity(x: number, y: number) {
   return validatePlacementCell(currentMap, tilesetFlags.value, x, y, language.value);
@@ -1019,36 +1033,41 @@ async function resetPreviewOverrides() {
 
 const zoomControls = { zoomIn, zoomOut, resetZoom };
 
-onMounted(async () => {
+onMounted(() => {
+  /* Data loading is driven by KeepAlive activation. */
+});
+
+onActivated(() => {
+  surfaceActive = true;
+  bindEditorSurface();
+  void activateEditorSurface();
+});
+
+onDeactivated(() => {
+  surfaceActive = false;
+  surfaceChecking.value = false;
+  unbindEditorSurface();
+});
+
+function bindEditorSurface(): void {
+  if (unregisterPreviewStatus) return;
   unregisterPreviewStatus = mapPreview.onStatus(onPreviewStatus);
   unregisterPreviewRuntimeCommand = mapPreview.onRuntimeCommand(onPreviewRuntimeCommand);
-  try {
-    const current = await mapPreview.current();
-    if (current.session && !['stopped', 'failed'].includes(current.session.status)) onPreviewStatus(current.session);
-  } catch { /* A stale preview is not allowed to block opening the editor. */ }
   unregisterUiControlHandler = registerEditorUiControlHandler({
     openEventEditor: openEventEditorByUiControl,
     getState: getUiControlState,
   });
   workbenchUi.bindEditorZoomControls(zoomControls);
   workbenchUi.setEditorZoom(zoom.value);
-  if (projectStore.currentProject) {
-    const saved = readEditorWorkspaceSelection(projectStore.currentProject);
-    if (saved) mode.value = saved.mode;
-    setZoom(saved?.zoom ?? EDITOR_DEFAULT_ZOOM);
-    if (saved?.expandedMapIds?.length) expandedMapIds.value = [...saved.expandedMapIds];
-    await refreshPlacementQueueFromRegistry();
-    await Promise.all([loadTree(), loadEditorCatalog()]);
-    await openPreferredMap(saved?.mapId);
-    if (saved?.tileTab) selectTileTab(saved.tileTab);
-    ensureTreeExpandedForSelection();
-    await applyPlacementFocusFromRoute();
-    await applyRouteEventFocus();
-  }
   window.addEventListener('keydown', onEditorKeyDown);
   window.addEventListener(EDITOR_COMMAND_EVENT, onEditorCommand as EventListener);
-});
-onUnmounted(() => {
+  void mapPreview.current().then((current) => {
+    if (surfaceActive && current.session && !['stopped', 'failed'].includes(current.session.status)) onPreviewStatus(current.session);
+  }).catch(() => undefined);
+}
+
+function unbindEditorSurface(): void {
+  resetRouteEventFocusGate();
   previewIntentCoordinator.invalidate({ active: false, project: projectStore.currentProject });
   mapLoadCoordinator.invalidate({ project: projectStore.currentProject, mapId: -1 });
   unregisterPreviewStatus?.();
@@ -1066,6 +1085,71 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onEditorKeyDown);
   window.removeEventListener(EDITOR_COMMAND_EVENT, onEditorCommand as EventListener);
   if (eventSearchTimer) clearTimeout(eventSearchTimer);
+  eventSearchTimer = null;
+}
+
+async function activateEditorSurface(): Promise<void> {
+  const project = projectStore.currentProject;
+  if (!project || !surfaceActive) return;
+  surfaceChecking.value = true;
+  try {
+    const mapId = selectedMapId.value || readEditorWorkspaceSelection(project)?.mapId;
+    const validation = await workspaceSurfaces.validate({
+      surface: 'editor',
+      loadedVersion: surfaceVersionMapId === mapId ? surfaceVersion || undefined : undefined,
+      mapId,
+    }, project);
+    if (!surfaceActive || projectStore.currentProject !== project) return;
+    if (mapTree.value.length && validation.unchanged) {
+      surfaceChecking.value = false;
+      return;
+    }
+    await loadEditorProject(validation.version, mapId);
+  } catch (error) {
+    if (surfaceActive && projectStore.currentProject === project) {
+      mapTreeError.value = t('editor.error.loadTreeFailed', { message: (error as Error).message });
+      surfaceChecking.value = false;
+    }
+  }
+}
+
+async function captureEditorSurfaceVersion(project: string, mapId: number): Promise<void> {
+  try {
+    const validation = await workspaceSurfaces.validate({ surface: 'editor', mapId }, project);
+    if (projectStore.currentProject !== project || selectedMapId.value !== mapId) return;
+    surfaceVersion = validation.version;
+    surfaceVersionMapId = mapId;
+  } catch {
+    surfaceVersion = '';
+    surfaceVersionMapId = undefined;
+  }
+}
+
+async function loadEditorProject(startVersion: string, versionMapId?: number): Promise<void> {
+  const project = projectStore.currentProject;
+  if (!project) return;
+  const saved = readEditorWorkspaceSelection(project);
+  if (saved) mode.value = saved.mode;
+  setZoom(saved?.zoom ?? EDITOR_DEFAULT_ZOOM);
+  if (saved?.expandedMapIds?.length) expandedMapIds.value = [...saved.expandedMapIds];
+  await refreshPlacementQueueFromRegistry();
+  const [treeLoaded] = await Promise.all([loadTree(), loadEditorCatalog()]);
+  if (!treeLoaded || !surfaceActive || projectStore.currentProject !== project) return;
+  await openPreferredMap(versionMapId || saved?.mapId);
+  if (saved?.tileTab) selectTileTab(saved.tileTab);
+  ensureTreeExpandedForSelection();
+  await applyPlacementFocusFromRoute();
+  await applyRouteEventFocus();
+  const settledMapId = versionMapId || selectedMapId.value || undefined;
+  const settled = await workspaceSurfaces.validate({ surface: 'editor', loadedVersion: startVersion, mapId: settledMapId }, project);
+  if (!settled.unchanged) throw new Error(t('story.workspaceChangedDuringLoad'));
+  surfaceVersion = settled.version;
+  surfaceVersionMapId = settledMapId;
+  surfaceChecking.value = false;
+}
+
+onUnmounted(() => {
+  unbindEditorSurface();
 });
 watch(mode, (value, previous) => {
   persistWorkspaceSelection();
@@ -1080,8 +1164,8 @@ watch(zoom, (value) => {
   workbenchUi.setEditorZoom(value);
   persistWorkspaceSelection();
 });
-watch(() => route.query.mapId, () => { void applyPlacementFocusFromRoute(); });
-watch(() => [route.query.mapId, route.query.eventId], () => { void applyRouteEventFocus(); });
+watch(() => route.query.mapId, () => { if (surfaceActive) void applyPlacementFocusFromRoute(); });
+watch(() => [route.query.mapId, route.query.eventId], () => { if (surfaceActive) void applyRouteEventFocus(); });
 watch(placementFocus, (focus) => {
   if (!focus) return;
   mode.value = 'event';
@@ -1168,39 +1252,56 @@ watch(placementStatusHint, (v) => { workbenchUi.sbPlacementHint = v; });
 watch(statusText, (v) => { workbenchUi.sbStatusText = v; });
 watch(statusKind, (v) => { workbenchUi.sbStatusKind = v; });
 
-watch(() => projectStore.currentProject, async () => {
-  mapLoadCoordinator.invalidate({ project: projectStore.currentProject, mapId: -1 });
+watch(() => projectStore.currentProject, async (project) => {
+  resetRouteEventFocusGate();
+  mapLoadCoordinator.invalidate({ project, mapId: -1 });
+  mapTreeLoadCoordinator.invalidate({ project });
   requestedMapId.value = null;
-  previewIntentCoordinator.invalidate({ active: false, project: projectStore.currentProject });
+  previewIntentCoordinator.invalidate({ active: false, project });
   await stopPreviewSession();
   selectedMapId.value = null;
   mapTree.value = [];
+  mapTreeLoading.value = false;
+  mapTreeError.value = '';
   tilesets.value = [];
   editorCatalog.value = null;
-  if (!projectStore.currentProject) {
+  surfaceVersion = '';
+  surfaceVersionMapId = undefined;
+  if (!project) {
     expandedMapIds.value = [];
     setZoom(EDITOR_DEFAULT_ZOOM);
     return;
   }
-  const saved = readEditorWorkspaceSelection(projectStore.currentProject);
-  if (saved) mode.value = saved.mode;
-  setZoom(saved?.zoom ?? EDITOR_DEFAULT_ZOOM);
-  if (saved?.expandedMapIds?.length) expandedMapIds.value = [...saved.expandedMapIds];
-  await refreshPlacementQueueFromRegistry();
-  await Promise.all([loadTree(), loadEditorCatalog()]);
-  await openPreferredMap(saved?.mapId);
-  if (saved?.tileTab) selectTileTab(saved.tileTab);
-  ensureTreeExpandedForSelection();
+  if (surfaceActive) await activateEditorSurface();
 });
 
 async function loadTree() {
+  const project = projectStore.currentProject;
+  if (!project) return false;
+  const token = mapTreeLoadCoordinator.begin({ project });
+  mapTreeLoading.value = true;
+  mapTreeError.value = '';
+  mapTree.value = [];
   try {
-    const [index, tilesetPayload] = await Promise.all([mapsApi.tree(projectStore.currentProject), mapsApi.tilesets(projectStore.currentProject)]);
+    const [indexResult, tilesetResult] = await Promise.allSettled([
+      mapsApi.tree(project),
+      mapsApi.tilesets(project),
+    ]);
+    if (!mapTreeLoadCoordinator.isCurrent(token) || projectStore.currentProject !== project) return false;
+    if (indexResult.status === 'rejected') throw indexResult.reason;
+    const index = indexResult.value;
     mapTree.value = buildTree(index.maps);
     if (editorCatalog.value) editorCatalog.value = { ...editorCatalog.value, maps: index.maps };
-    tilesets.value = tilesetPayload.tilesets;
+    tilesets.value = tilesetResult.status === 'fulfilled' ? tilesetResult.value.tilesets : [];
     await refreshStagingStatus();
-  } catch (error) { ElMessage.error(t('editor.error.loadTreeFailed', { message: (error as Error).message })); }
+    return true;
+  } catch (error) {
+    if (!mapTreeLoadCoordinator.isCurrent(token) || projectStore.currentProject !== project) return false;
+    mapTreeError.value = t('editor.error.loadTreeFailed', { message: (error as Error).message });
+    return false;
+  } finally {
+    if (mapTreeLoadCoordinator.isCurrent(token)) mapTreeLoading.value = false;
+  }
 }
 function buildTree(flat: MapTreeNode[]) {
   const nodes = new Map<number, TreeNode>();
@@ -1228,11 +1329,11 @@ async function handleNodeClick(node: TreeNode) {
   await loadMap(node.id);
 }
 async function moveMapFromTree(source: TreeNode, target: TreeNode, position: 'before' | 'after' | 'inside') {
-  if (busy.value) return;
-  const projection = projectMapTreeMove(mapTree.value, source.id, target.id, position);
-  if (!projection.valid) return;
+  if (busy.value) {
+    await loadTree();
+    return;
+  }
   busy.value = true;
-  mapTree.value = projection.tree;
   if (position === 'inside') {
     expandedMapIds.value = [...new Set([...expandedMapIds.value, target.id])];
   }
@@ -1641,6 +1742,7 @@ async function loadMap(
       for (const warning of payload.resourceWarnings || []) ElMessage.warning(warning);
       if (options.reconcilePreview !== false) schedulePreviewIntentReconcile();
     });
+    if (outcome === 'completed') void captureEditorSurfaceVersion(project, mapId);
     return outcome === 'completed' ? 'committed' : 'superseded';
   } catch (error) {
     if (!mapLoadCoordinator.isCurrent(token)) return 'superseded';
@@ -2257,6 +2359,8 @@ function clearCurrentMap() {
 
 <style scoped>
 .editor-view { width:100%;min-width:0;height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--app-bg-page); }
+.editor-view.surface-checking > :not(.surface-checking-overlay) { visibility: hidden; }
+.surface-checking-overlay { flex:1;display:flex;align-items:center;justify-content:center;color:var(--app-ink-muted);font-size:13px; }
 .editor-body { min-height: 0; display: flex; flex: 1; overflow: hidden; gap:10px; }
 .center-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .editor-stage { position:relative; min-width: 380px; min-height: 0; display: flex; flex-direction: column; flex: 1; overflow: hidden; border-radius:12px; background-color:var(--app-bg-sunken); background-image:linear-gradient(rgba(120,110,90,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(120,110,90,.05) 1px,transparent 1px);background-size:24px 24px;box-shadow:inset 0 1px 3px rgba(60,50,30,.08); }

@@ -2,16 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import type { TreeNode } from '../components/editor/editorTypes.ts';
-import { projectMapTreeMove, resolveMapTreeDropPosition } from './mapTreeDragPreview.ts';
+import { projectMapTreeMove } from './mapTreeDragPreview.ts';
 
 describe('map tree drag preview', () => {
-  test('resolves the fixed before, inside, and after drop zones', () => {
-    assert.equal(resolveMapTreeDropPosition(100, 100, 40), 'before');
-    assert.equal(resolveMapTreeDropPosition(111, 100, 40), 'inside');
-    assert.equal(resolveMapTreeDropPosition(129, 100, 40), 'inside');
-    assert.equal(resolveMapTreeDropPosition(140, 100, 40), 'after');
-  });
-
   test('projects root moves before and after without mutating the source tree', () => {
     const tree = fixture();
     const before = projectMapTreeMove(tree, 4, 2, 'before');

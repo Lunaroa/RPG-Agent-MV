@@ -93,47 +93,43 @@
       <header class="pane-header">
         <strong>{{ t('editor.left.mapTree') }}</strong>
       </header>
-      <div
-        ref="mapTreeRef"
-        class="map-tree"
-        @dragover.prevent
-        @dragleave="onMapTreeDragLeave"
-        @drop.prevent.stop="dropTreeNode"
-      >
+      <div class="map-tree">
         <el-tree
-          :data="displayedMapTree"
+          :data="mapTree"
           :props="{ children: 'children', label: 'name' }"
           node-key="id"
           highlight-current
+          :draggable="mapTreeDraggable"
+          :allow-drag="allowTreeDrag"
+          :allow-drop="allowTreeDrop"
           :expand-on-click-node="false"
-          :default-expanded-keys="displayedExpandedMapIds"
+          :default-expanded-keys="expandedMapIds"
           :current-node-key="selectedMapId ?? undefined"
           @node-click="handleTreeNodeClick"
           @node-expand="(data: TreeNode) => $emit('node-expand', data)"
           @node-collapse="(data: TreeNode) => $emit('node-collapse', data)"
           @node-contextmenu="(event: MouseEvent, data: TreeNode) => mode !== 'preview' && $emit('node-contextmenu', event, data)"
+          @node-drop="handleTreeNodeDrop"
         >
           <template #default="{ node, data }">
             <span
               class="tree-node"
               :data-ui-id="`map-tree-node-${data.id}`"
-              :class="treeNodeDragClasses(data.id)"
-              :draggable="mode !== 'preview'"
-              :aria-grabbed="dragSourceId === data.id"
-              @dragstart.stop="startTreeDrag(data, $event)"
-              @dragover.prevent.stop="previewTreeDrag(data, $event)"
-              @drop.prevent.stop="dropTreeNode"
-              @dragend.stop="finishTreeDrag"
+              :class="{ missing: !data.mapFileExists }"
               @dblclick.stop="toggleMapTreeNodeExpansion(node)"
             >
               <span class="node-label">{{ node.label }}</span>
               <span v-if="!data.mapFileExists" class="node-missing" :title="t('editor.left.mapFileMissing')">{{ t('editor.left.missing') }}</span>
               <span v-if="stagedMapIds.has(data.id)" class="node-staged" :title="t('editor.left.stagedTitle')">{{ t('editor.left.staged') }}</span>
-              <span v-if="treeDropLabel(data.id)" class="node-drop-preview">{{ treeDropLabel(data.id) }}</span>
             </span>
           </template>
         </el-tree>
-        <div v-if="!mapTree.length" class="pane-empty">{{ t('editor.left.noMaps') }}</div>
+        <div v-if="mapTreeLoading" class="pane-empty" role="status">{{ t('editor.left.loadingMaps') }}</div>
+        <div v-else-if="mapTreeError" class="pane-empty map-tree-error" role="alert">
+          <span>{{ mapTreeError }}</span>
+          <button type="button" @click="$emit('retry-map-tree')">{{ t('editor.left.retryMaps') }}</button>
+        </div>
+        <div v-else-if="!mapTree.length" class="pane-empty">{{ t('editor.left.noMaps') }}</div>
       </div>
     </section>
     <div
@@ -154,17 +150,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import type { AllowDropType, NodeDropType, RenderContentContext } from 'element-plus';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, PaletteTab, PaletteTabId, TreeNode } from '../editor/editorTypes';
 import type { MapPreviewEventState } from '@contract/types';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
 import { useI18n } from '../../i18n';
-import {
-  findTreeNode,
-  projectMapTreeMove,
-  resolveMapTreeDropPosition,
-  type MapTreeDropPosition,
-} from '../../utils/mapTreeDragPreview';
+import { projectMapTreeMove } from '../../utils/mapTreeDragPreview';
 import { isPrimaryMapTreeNodeClick, toggleMapTreeNodeExpansion } from '../../utils/mapTreeNodeInteraction';
 import {
   clampPaletteHeight,
@@ -184,6 +176,9 @@ const props = defineProps<{
   brushInfo: string;
   brushSet: boolean;
   mapTree: TreeNode[];
+  mapTreeLoading: boolean;
+  mapTreeError: string;
+  mapTreeDraggable: boolean;
   selectedMapId: number | null;
   stagedMapIds: Set<number>;
   expandedMapIds: number[];
@@ -212,6 +207,7 @@ const emit = defineEmits<{
   'node-collapse': [node: TreeNode];
   'node-contextmenu': [event: MouseEvent, node: TreeNode];
   'node-drop': [source: TreeNode, target: TreeNode, position: 'before' | 'after' | 'inside'];
+  'retry-map-tree': [];
   'update:event-search-query': [query: string];
   'search-all-maps': [];
   'select-event': [eventId: number | null];
@@ -221,17 +217,12 @@ const emit = defineEmits<{
 }>();
 
 const workbenchRef = ref<HTMLElement>();
-const mapTreeRef = ref<HTMLElement>();
 const paletteRef = ref<HTMLCanvasElement>();
 const eventRowRefs = new Map<number, HTMLElement>();
 const resizing = ref(false);
 const widthResizing = ref(false);
 const dockViewportLimit = ref(LEFT_DOCK_MAX_WIDTH);
 const workbenchHeight = ref(0);
-const dragSourceId = ref<number | null>(null);
-const dragCandidate = ref<{ targetId: number; position: MapTreeDropPosition } | null>(null);
-const dragInvalidTargetId = ref<number | null>(null);
-const previewMapTree = ref<TreeNode[] | null>(null);
 let resizeStart: { y: number; height: number } | null = null;
 let widthResizeStart: { x: number; width: number } | null = null;
 let workbenchResizeObserver: ResizeObserver | null = null;
@@ -246,13 +237,6 @@ const displayedPaletteHeight = computed(() => {
 const palettePaneStyle = computed(() => (
   props.mode === 'event' || tilesOpen.value ? { flex: `0 0 ${displayedPaletteHeight.value}px` } : undefined
 ));
-const displayedMapTree = computed(() => previewMapTree.value || props.mapTree);
-const displayedExpandedMapIds = computed(() => {
-  const targetId = dragCandidate.value?.position === 'inside' ? dragCandidate.value.targetId : null;
-  return targetId == null
-    ? props.expandedMapIds
-    : [...new Set([...props.expandedMapIds, targetId])];
-});
 const displayedDockWidth = computed(() => Math.min(workbenchUi.leftDockWidth, dockViewportLimit.value));
 const workbenchStyle = computed(() => ({
   width: `${displayedDockWidth.value}px`,
@@ -285,113 +269,44 @@ function handleTreeNodeClick(data: TreeNode, _node: unknown, _component: unknown
   emit('node-click', data);
 }
 
-function startTreeDrag(source: TreeNode, event: DragEvent): void {
-  if (props.mode === 'preview') {
-    event.preventDefault();
-    return;
-  }
-  dragSourceId.value = source.id;
-  dragCandidate.value = null;
-  dragInvalidTargetId.value = null;
-  previewMapTree.value = null;
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', String(source.id));
-  }
-  document.addEventListener('keydown', cancelTreeDragWithEscape);
+type ElementTreeNode = RenderContentContext['node'];
+type TreeMovePosition = 'before' | 'after' | 'inside';
+
+function allowTreeDrag(): boolean {
+  return props.mapTreeDraggable;
 }
 
-function previewTreeDrag(target: TreeNode, event: DragEvent): void {
-  if (dragSourceId.value == null) return;
-  // Re-projecting the tree can move the source node underneath a stationary
-  // pointer. Keep the last valid projection instead of treating that render
-  // feedback as a new self-drop target.
-  if (target.id === dragSourceId.value && dragCandidate.value) return;
-  const row = event.currentTarget as HTMLElement;
-  const bounds = row.getBoundingClientRect();
-  const position = resolveMapTreeDropPosition(event.clientY, bounds.top, bounds.height);
-  const projection = projectMapTreeMove(props.mapTree, dragSourceId.value, target.id, position);
-  if (event.dataTransfer) event.dataTransfer.dropEffect = projection.valid ? 'move' : 'none';
-  if (!projection.valid) {
-    dragCandidate.value = null;
-    dragInvalidTargetId.value = target.id;
-    previewMapTree.value = null;
-    return;
-  }
-  dragCandidate.value = { targetId: target.id, position };
-  dragInvalidTargetId.value = null;
-  previewMapTree.value = projection.tree;
+function allowTreeDrop(draggingNode: ElementTreeNode, dropNode: ElementTreeNode, type: AllowDropType): boolean {
+  if (!props.mapTreeDraggable) return false;
+  return projectMapTreeMove(
+    props.mapTree,
+    Number((draggingNode.data as TreeNode).id),
+    Number((dropNode.data as TreeNode).id),
+    allowDropTypeToPosition(type),
+  ).valid;
 }
 
-function dropTreeNode(): void {
-  const sourceId = dragSourceId.value;
-  const candidate = dragCandidate.value;
-  if (sourceId == null || !candidate) {
-    cancelTreeDrag();
-    return;
-  }
-  const source = findTreeNode(props.mapTree, sourceId);
-  const target = findTreeNode(props.mapTree, candidate.targetId);
-  if (source && target) emit('node-drop', source, target, candidate.position);
-  cancelTreeDrag();
+function handleTreeNodeDrop(
+  draggingNode: ElementTreeNode,
+  dropNode: ElementTreeNode,
+  type: Exclude<NodeDropType, 'none'>,
+): void {
+  emit(
+    'node-drop',
+    draggingNode.data as TreeNode,
+    dropNode.data as TreeNode,
+    nodeDropTypeToPosition(type),
+  );
 }
 
-function finishTreeDrag(): void {
-  if (dragCandidate.value) {
-    dropTreeNode();
-    return;
-  }
-  cancelTreeDrag();
+function allowDropTypeToPosition(type: AllowDropType): TreeMovePosition {
+  if (type === 'prev') return 'before';
+  if (type === 'next') return 'after';
+  return 'inside';
 }
 
-function clearTreeDropPreview(): void {
-  dragCandidate.value = null;
-  dragInvalidTargetId.value = null;
-  previewMapTree.value = null;
-}
-
-function cancelTreeDrag(): void {
-  dragSourceId.value = null;
-  clearTreeDropPreview();
-  document.removeEventListener('keydown', cancelTreeDragWithEscape);
-}
-
-function cancelTreeDragWithEscape(event: KeyboardEvent): void {
-  if (event.key === 'Escape') cancelTreeDrag();
-}
-
-function onMapTreeDragLeave(event: DragEvent): void {
-  const bounds = mapTreeRef.value?.getBoundingClientRect();
-  if (
-    bounds
-    && event.clientX >= bounds.left
-    && event.clientX <= bounds.right
-    && event.clientY >= bounds.top
-    && event.clientY <= bounds.bottom
-  ) return;
-  const next = event.relatedTarget;
-  if (next instanceof Node && mapTreeRef.value?.contains(next)) return;
-  clearTreeDropPreview();
-}
-
-function treeNodeDragClasses(mapId: number): Record<string, boolean> {
-  return {
-    missing: !findTreeNode(displayedMapTree.value, mapId)?.mapFileExists,
-    'drag-source': dragSourceId.value === mapId,
-    'drop-preview-target': dragCandidate.value?.targetId === mapId,
-    'drop-before': dragCandidate.value?.targetId === mapId && dragCandidate.value.position === 'before',
-    'drop-inside': dragCandidate.value?.targetId === mapId && dragCandidate.value.position === 'inside',
-    'drop-after': dragCandidate.value?.targetId === mapId && dragCandidate.value.position === 'after',
-    'drop-invalid': dragInvalidTargetId.value === mapId,
-  };
-}
-
-function treeDropLabel(mapId: number): string {
-  if (dragInvalidTargetId.value === mapId) return t('editor.left.dropInvalid');
-  if (dragCandidate.value?.targetId !== mapId) return '';
-  if (dragCandidate.value.position === 'before') return t('editor.left.dropBefore');
-  if (dragCandidate.value.position === 'inside') return t('editor.left.dropInside');
-  return t('editor.left.dropAfter');
+function nodeDropTypeToPosition(type: Exclude<NodeDropType, 'none'>): TreeMovePosition {
+  return type === 'inner' ? 'inside' : type;
 }
 
 function searchHitLocation(hit: EditorEventSearchHit): string {
@@ -514,7 +429,6 @@ function applyInitialPaletteHeightIfNeeded(): void {
 }
 
 onUnmounted(() => {
-  cancelTreeDrag();
   stopResize();
   stopWidthResize();
   workbenchResizeObserver?.disconnect();
@@ -625,19 +539,14 @@ onMounted(() => {
 .tree-node { position:relative; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 5px; overflow: hidden; cursor:grab; }
 .preview-mode .tree-node{cursor:pointer}
 .tree-node:active { cursor:grabbing; }
-.tree-node.drag-source { opacity:.42; }
-.tree-node.drop-preview-target { overflow:visible; outline:2px solid var(--app-accent); outline-offset:-1px; background:var(--app-accent-soft); }
-.tree-node.drop-before { border-top:3px solid var(--app-accent); }
-.tree-node.drop-after { border-bottom:3px solid var(--app-accent); }
-.tree-node.drop-inside { box-shadow:inset 3px 0 0 var(--app-accent); }
-.tree-node.drop-invalid { outline:2px dashed var(--app-danger); outline-offset:-1px; background:color-mix(in srgb,var(--app-danger) 10%,transparent); }
-.node-drop-preview { position:absolute; right:2px; z-index:2; padding:1px 4px; border:1px solid currentColor; border-radius:3px; background:var(--app-bg); color:var(--app-accent); font-size:9px; font-weight:700; line-height:14px; white-space:nowrap; }
-.tree-node.drop-invalid .node-drop-preview { color:var(--app-danger); }
 .node-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color:var(--app-ink); font-size: 12px; line-height:1; }
 .node-staged { flex:0 0 auto; padding: 1px 4px; border-radius: 4px; background: var(--app-warn-soft); color: var(--app-warn); font-size: 9px; font-weight:600; }
 .tree-node.missing .node-label { color: var(--app-danger); text-decoration: line-through; text-decoration-thickness: 1px; }
 .node-missing { flex:0 0 auto; padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--app-danger) 11%, transparent); color: var(--app-danger); font-size: 9px; font-weight:650; }
 .pane-empty { padding: 10px; color: var(--app-ink-muted); font-size: 12px; }
+.map-tree-error { display: grid; gap: 8px; color: var(--app-danger); }
+.map-tree-error button { justify-self: start; padding: 3px 8px; border: 1px solid var(--app-border); border-radius: 3px; background: var(--app-bg); color: var(--app-accent); font: inherit; cursor: pointer; }
+.map-tree-error button:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 1px; }
 .map-tree :deep(.el-tree) { background: transparent; color: var(--app-ink); --el-tree-node-hover-bg-color: var(--app-bg-soft); }
 /* 缩进改由嵌套 children 的 margin 累积承担（覆盖 el-tree 内联 padding-left），
    使每一层 children 都能画出一条引导竖线，深层嵌套可顺线回溯父级。 */

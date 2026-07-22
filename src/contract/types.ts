@@ -49,6 +49,95 @@ export interface MapIndex {
   maps: MapTreeNode[];
 }
 
+export type WorkspaceSurfaceId = 'editor' | 'projectManagement' | 'mapOverview';
+
+export interface WorkspaceSurfaceVersionRequest {
+  surface: WorkspaceSurfaceId;
+  loadedVersion?: string;
+  mapId?: number;
+}
+
+export interface WorkspaceSurfaceVersionResult {
+  project: string;
+  surface: WorkspaceSurfaceId;
+  version: string;
+  unchanged: boolean;
+}
+
+export type MapOverviewReadState = 'ready' | 'missing' | 'invalid';
+
+export interface MapOverviewIssue {
+  code: 'map-missing' | 'map-invalid' | 'invalid-target' | 'resource-missing' | 'thumbnail-failed';
+  message: string;
+  mapId: number;
+  targetMapId?: number;
+  relativePath?: string;
+}
+
+export interface MapOverviewNode {
+  id: number;
+  name: string;
+  parentId: number;
+  order: number;
+  readState: MapOverviewReadState;
+  width: number | null;
+  height: number | null;
+  thumbnailVersion: string | null;
+  incomingCount: number;
+  outgoingCount: number;
+  unresolvedCount: number;
+  issues: MapOverviewIssue[];
+}
+
+export interface MapOverviewTransferSource {
+  sourceMapId: number;
+  sourceMapName: string;
+  eventId: number;
+  eventName: string;
+  pageIndex: number;
+  pageConditions: Record<string, unknown>;
+  commandIndex: number;
+  targetMapId: number;
+  targetX: number;
+  targetY: number;
+  direction: number;
+  fadeType: number;
+}
+
+export interface MapOverviewEdge {
+  id: string;
+  sourceMapId: number;
+  targetMapId: number;
+  count: number;
+  sources: MapOverviewTransferSource[];
+}
+
+export interface MapOverviewSnapshot {
+  project: string;
+  snapshotVersion: string;
+  generatedAt: string;
+  nodes: MapOverviewNode[];
+  edges: MapOverviewEdge[];
+  unresolvedTransferCount: number;
+  invalidTargetCount: number;
+  issues: MapOverviewIssue[];
+}
+
+export type MapOverviewThumbnailQuality = 'standard' | 'high' | 'ultra';
+
+export interface MapOverviewThumbnail {
+  project: string;
+  mapId: number;
+  version: string;
+  quality: MapOverviewThumbnailQuality;
+  mime: 'image/png';
+  width: number;
+  height: number;
+  resourceUrl: string;
+  cacheHit: boolean;
+  warnings: string[];
+}
+
 export type MapMovePosition = 'before' | 'after' | 'inside';
 
 export interface EventSearchOptions {
@@ -1296,6 +1385,13 @@ export interface WorkspaceEditorProjectState {
   previewOverrides?: MapPreviewOverrides;
 }
 
+export interface WorkspaceMapOverviewProjectState {
+  positions: Record<string, { x: number; y: number }>;
+  thumbnailQuality: MapOverviewThumbnailQuality;
+  zoom?: number;
+  layoutVersion?: number;
+}
+
 export interface WorkspaceSettings {
   lastProjectPath?: string;
   suppressProjectCompatibilityWarnings?: boolean;
@@ -1304,6 +1400,7 @@ export interface WorkspaceSettings {
   layout?: WorkspaceLayoutState;
   composer?: WorkspaceComposerState;
   projects?: Record<string, WorkspaceEditorProjectState>;
+  mapOverviewProjects?: Record<string, WorkspaceMapOverviewProjectState>;
 }
 
 export interface ActivateInvocationResult {

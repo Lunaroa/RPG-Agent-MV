@@ -33,6 +33,19 @@ export default defineConfig({
       {
         entry: 'electron/documentation-preload.ts',
       },
+      {
+        entry: '../../backend/src/core/desktop/map-overview-thumbnail-worker.ts',
+        vite: {
+          build: {
+            rollupOptions: {
+              external: ['electron'],
+              output: {
+                entryFileNames: 'map-overview-thumbnail-worker.js',
+              },
+            },
+          },
+        },
+      },
     ]),
   ],
   resolve: {

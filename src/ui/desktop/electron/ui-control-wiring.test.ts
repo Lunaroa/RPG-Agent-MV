@@ -40,4 +40,8 @@ describe('background UI control wiring', () => {
     assert.match(bridgeSource, /command\.button = button/);
     assert.doesNotMatch(mainSource, /pointer command requires phase/);
   });
+
+  test('allows the standalone map overview route in the background validator', () => {
+    assert.match(bridgeSource, /'map-overview'/);
+  });
 });

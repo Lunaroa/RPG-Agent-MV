@@ -118,6 +118,48 @@ describe('workspaceSettings', () => {
     })
   })
 
+  it('normalizes map overview positions and keeps project layouts isolated', () => {
+    const normalized = normalizeWorkspaceSettings({
+      mapOverviewProjects: {
+        'projects/A': {
+          positions: {
+            '001': { x: 12.5, y: -3 },
+            bad: { x: 1, y: 2 },
+            '2': { x: Number.NaN, y: 4 },
+          },
+          zoom: 9,
+          layoutVersion: 2,
+        },
+      },
+    })
+    expect(normalized.mapOverviewProjects).toEqual({
+      'projects/A': {
+        positions: { '1': { x: 12.5, y: -3 } },
+        thumbnailQuality: 'high',
+        zoom: 6,
+        layoutVersion: 2,
+      },
+    })
+
+    const merged = mergeWorkspaceSettings(
+      normalized,
+      { mapOverviewProjects: { 'projects/B': { positions: { '2': { x: 80, y: 40 } }, thumbnailQuality: 'standard' } } },
+    )
+    expect(merged.mapOverviewProjects?.['projects/A']?.positions).toEqual({ '1': { x: 12.5, y: -3 } })
+    expect(merged.mapOverviewProjects?.['projects/B']?.positions).toEqual({ '2': { x: 80, y: 40 } })
+    expect(merged.mapOverviewProjects?.['projects/A']?.thumbnailQuality).toBe('high')
+    expect(merged.mapOverviewProjects?.['projects/A']?.zoom).toBe(6)
+    expect(merged.mapOverviewProjects?.['projects/A']?.layoutVersion).toBe(2)
+    expect(merged.mapOverviewProjects?.['projects/B']?.thumbnailQuality).toBe('standard')
+
+    const qualityOnly = mergeWorkspaceSettings(merged, {
+      mapOverviewProjects: {
+        'projects/A': { positions: {}, thumbnailQuality: 'ultra' },
+      },
+    })
+    expect(qualityOnly.mapOverviewProjects?.['projects/A']?.thumbnailQuality).toBe('ultra')
+  })
+
   it('restores a persisted preview selection as the same map in map editing mode', () => {
     const settings = normalizeWorkspaceSettings({
       projects: {

@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import type {
   EngineProviderBinding,
+  MapOverviewThumbnailQuality,
+  WorkspaceMapOverviewProjectState,
   WorkspaceEditorProjectState,
   WorkspaceLayoutState,
   WorkspaceSettings,
@@ -58,6 +60,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       projects: {
         ...(current.projects || {}),
         ...(patch.projects || {}),
+      },
+      mapOverviewProjects: {
+        ...(current.mapOverviewProjects || {}),
+        ...(patch.mapOverviewProjects || {}),
       },
     }
   }
@@ -155,6 +161,54 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   function readProjectEditor(projectPath: string): WorkspaceEditorProjectState | null {
     return settings.value.projects?.[projectPath] || null
+  }
+
+  function patchMapOverviewPositions(projectPath: string, positions: Record<string, { x: number; y: number }>): void {
+    patchMapOverviewProject(projectPath, { positions })
+  }
+
+  function readMapOverviewPositions(projectPath: string): Record<string, { x: number; y: number }> {
+    return settings.value.mapOverviewProjects?.[projectPath]?.positions || {}
+  }
+
+  function patchMapOverviewThumbnailQuality(projectPath: string, thumbnailQuality: MapOverviewThumbnailQuality): void {
+    patchMapOverviewProject(projectPath, { thumbnailQuality })
+  }
+
+  function readMapOverviewThumbnailQuality(projectPath: string): MapOverviewThumbnailQuality {
+    return settings.value.mapOverviewProjects?.[projectPath]?.thumbnailQuality || 'high'
+  }
+
+  function patchMapOverviewZoom(projectPath: string, zoom: number): void {
+    patchMapOverviewProject(projectPath, { zoom: Math.max(0.08, Math.min(6, zoom)) })
+  }
+
+  function readMapOverviewZoom(projectPath: string): number | null {
+    const zoom = settings.value.mapOverviewProjects?.[projectPath]?.zoom
+    return typeof zoom === 'number' && Number.isFinite(zoom) ? Math.max(0.08, Math.min(6, zoom)) : null
+  }
+
+  function patchMapOverviewLayoutVersion(projectPath: string, layoutVersion: number): void {
+    if (!Number.isInteger(layoutVersion) || layoutVersion <= 0) throw new Error('Map overview layout version must be a positive integer.')
+    patchMapOverviewProject(projectPath, { layoutVersion })
+  }
+
+  function readMapOverviewLayoutVersion(projectPath: string): number | null {
+    const layoutVersion = settings.value.mapOverviewProjects?.[projectPath]?.layoutVersion
+    return typeof layoutVersion === 'number' && Number.isInteger(layoutVersion) && layoutVersion > 0 ? layoutVersion : null
+  }
+
+  function patchMapOverviewProject(
+    projectPath: string,
+    partial: Partial<WorkspaceMapOverviewProjectState>,
+  ): void {
+    const current = settings.value.mapOverviewProjects?.[projectPath]
+    patchDebounced({ mapOverviewProjects: { [projectPath]: {
+      positions: current?.positions || {},
+      thumbnailQuality: current?.thumbnailQuality || 'high',
+      ...current,
+      ...partial,
+    } } })
   }
 
   function readComposerModel(engine: string): Partial<EngineProviderBinding> {
@@ -290,6 +344,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     patchComposer,
     patchProjectEditor,
     readProjectEditor,
+    patchMapOverviewPositions,
+    readMapOverviewPositions,
+    patchMapOverviewThumbnailQuality,
+    readMapOverviewThumbnailQuality,
+    patchMapOverviewZoom,
+    readMapOverviewZoom,
+    patchMapOverviewLayoutVersion,
+    readMapOverviewLayoutVersion,
     readComposerModel,
     hydrateWorkbenchLayout,
     bindWorkbenchLayoutPersistence,

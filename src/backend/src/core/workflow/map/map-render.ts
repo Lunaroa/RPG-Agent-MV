@@ -15,10 +15,18 @@ interface PngHeader {
   interlace: number;
 }
 
-interface DecodedPng {
+export interface DecodedPng {
   width: number;
   height: number;
   rgba: Buffer;
+}
+
+export interface FittedMapViewport {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  contentWidth: number;
+  contentHeight: number;
 }
 
 interface MapData {
@@ -176,6 +184,7 @@ function renderMapToPng(
   bitmaps: (DecodedPng | null)[],
   scale: number,
   tileSize = 48,
+  options: { transparent?: boolean } = {},
 ): { png: Buffer; width: number; height: number; drawnTiles: number } {
   const width = map.width;
   const height = map.height;
@@ -183,8 +192,8 @@ function renderMapToPng(
   const outputWidth = width * tileSize;
   const outputHeight = height * tileSize;
   const canvas = Buffer.alloc(outputWidth * outputHeight * 4);
-  for (let index = 0; index < outputWidth * outputHeight; index += 1) {
-    canvas[index * 4 + 3] = 255;
+  if (!options.transparent) {
+    for (let index = 0; index < outputWidth * outputHeight; index += 1) canvas[index * 4 + 3] = 255;
   }
 
   let drawnTiles = 0;
@@ -209,6 +218,142 @@ function renderMapToPng(
     height: scaled.height,
     drawnTiles
   };
+}
+
+/**
+ * Render the map layers directly into a fixed-size RGBA target. Unlike
+ * renderMapToPng, this never allocates a native-size full-map buffer, so its
+ * peak pixel memory is bounded by the requested output dimensions.
+ */
+function renderMapToFittedRgba(
+  map: MapData,
+  bitmaps: (DecodedPng | null)[],
+  targetWidth: number,
+  targetHeight: number,
+  target?: Buffer,
+): FittedMapViewport & { rgba: Buffer; drawnTiles: number } {
+  const viewport = fitMapToTarget(map.width, map.height, targetWidth, targetHeight);
+  const canvas = target || Buffer.alloc(targetWidth * targetHeight * 4);
+  if (canvas.length !== targetWidth * targetHeight * 4) {
+    throw new Error('Fitted map render target has an invalid RGBA buffer size.');
+  }
+  const layerSize = map.width * map.height;
+  const tileSize = 48;
+  const blit = (
+    src: DecodedPng | null,
+    sx: number,
+    sy: number,
+    sw: number,
+    sh: number,
+    dx: number,
+    dy: number,
+  ) => {
+    if (!src) return;
+    const left = viewport.offsetX + Math.round(dx * viewport.scale);
+    const top = viewport.offsetY + Math.round(dy * viewport.scale);
+    const right = viewport.offsetX + Math.round((dx + sw) * viewport.scale);
+    const bottom = viewport.offsetY + Math.round((dy + sh) * viewport.scale);
+    if (right <= left || bottom <= top) return;
+    blitImageScaled(
+      src.rgba,
+      src.width,
+      src.height,
+      sx,
+      sy,
+      sw,
+      sh,
+      canvas,
+      targetWidth,
+      targetHeight,
+      left,
+      top,
+      right - left,
+      bottom - top,
+    );
+  };
+
+  let drawnTiles = 0;
+  for (let z = 0; z < 4; z += 1) {
+    for (let y = 0; y < map.height; y += 1) {
+      for (let x = 0; x < map.width; x += 1) {
+        const tileId = map.data[z * layerSize + y * map.width + x];
+        if (!tileId || tileId <= 0) continue;
+        if (tileId >= 2048) drawAutotile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
+        else drawNormalTile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
+        drawnTiles += 1;
+      }
+    }
+  }
+  return { ...viewport, rgba: canvas, drawnTiles };
+}
+
+function fitMapToTarget(
+  mapWidth: number,
+  mapHeight: number,
+  targetWidth: number,
+  targetHeight: number,
+  tileSize = 48,
+): FittedMapViewport {
+  if (![mapWidth, mapHeight, targetWidth, targetHeight, tileSize].every(value => Number.isFinite(value) && value > 0)) {
+    throw new Error('Map and thumbnail dimensions must be positive finite numbers.');
+  }
+  const sourceWidth = mapWidth * tileSize;
+  const sourceHeight = mapHeight * tileSize;
+  const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
+  const contentWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const contentHeight = Math.max(1, Math.round(sourceHeight * scale));
+  return {
+    scale,
+    offsetX: Math.floor((targetWidth - contentWidth) / 2),
+    offsetY: Math.floor((targetHeight - contentHeight) / 2),
+    contentWidth,
+    contentHeight,
+  };
+}
+
+function blitImageScaled(
+  source: Buffer,
+  sourceWidth: number,
+  sourceHeight: number,
+  sourceX: number,
+  sourceY: number,
+  sourceCropWidth: number,
+  sourceCropHeight: number,
+  target: Buffer,
+  targetWidth: number,
+  targetHeight: number,
+  targetX: number,
+  targetY: number,
+  targetDrawWidth: number,
+  targetDrawHeight: number,
+): void {
+  if (sourceCropWidth <= 0 || sourceCropHeight <= 0 || targetDrawWidth <= 0 || targetDrawHeight <= 0) return;
+  for (let y = 0; y < targetDrawHeight; y += 1) {
+    const destinationY = targetY + y;
+    if (destinationY < 0 || destinationY >= targetHeight) continue;
+    const sampledY = sourceY + Math.min(sourceCropHeight - 1, Math.floor(y * sourceCropHeight / targetDrawHeight));
+    if (sampledY < 0 || sampledY >= sourceHeight) continue;
+    for (let x = 0; x < targetDrawWidth; x += 1) {
+      const destinationX = targetX + x;
+      if (destinationX < 0 || destinationX >= targetWidth) continue;
+      const sampledX = sourceX + Math.min(sourceCropWidth - 1, Math.floor(x * sourceCropWidth / targetDrawWidth));
+      if (sampledX < 0 || sampledX >= sourceWidth) continue;
+      const sourceIndex = (sampledY * sourceWidth + sampledX) * 4;
+      const sourceAlpha = source[sourceIndex + 3] / 255;
+      if (sourceAlpha <= 0) continue;
+      const targetIndex = (destinationY * targetWidth + destinationX) * 4;
+      const targetAlpha = target[targetIndex + 3] / 255;
+      const outputAlpha = sourceAlpha + targetAlpha * (1 - sourceAlpha);
+      for (let channel = 0; channel < 3; channel += 1) {
+        const blended = outputAlpha <= 0
+          ? 0
+          : (source[sourceIndex + channel] * sourceAlpha
+            + target[targetIndex + channel] * targetAlpha * (1 - sourceAlpha)) / outputAlpha;
+        target[targetIndex + channel] = Math.round(blended);
+      }
+      target[targetIndex + 3] = Math.round(outputAlpha * 255);
+    }
+  }
 }
 
 function drawNormalTile(tileId: number, dx: number, dy: number, bitmaps: (DecodedPng | null)[], blit: (src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number) => void, tileSize: number): void {
@@ -512,6 +657,9 @@ function renderMarkdown(report: MapRenderReport): string {
 export {
   runMapRender,
   renderMapToPng,
+  renderMapToFittedRgba,
+  fitMapToTarget,
+  blitImageScaled,
   decodePng,
   encodePng
 };

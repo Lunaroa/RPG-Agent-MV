@@ -62,6 +62,10 @@ contextBridge.exposeInMainWorld('api', {
     patch: (body: unknown) => ipcRenderer.invoke('workspace:patch', body),
   },
 
+  workspaceSurfaces: {
+    validate: (request: unknown, project?: string) => ipcRenderer.invoke('workspaceSurfaces:validate', request, project),
+  },
+
   bootstrap: {
     get: () => ipcRenderer.invoke('bootstrap:get'),
   },
@@ -104,6 +108,10 @@ contextBridge.exposeInMainWorld('api', {
     tree: (project?: string) => ipcRenderer.invoke('maps:tree', project),
     tilesets: (project?: string) => ipcRenderer.invoke('maps:tilesets', project),
     get: (mapId: number, project?: string) => ipcRenderer.invoke('maps:get', mapId, project),
+    overview: (project?: string) => ipcRenderer.invoke('maps:overview', project),
+    overviewThumbnail: (mapId: number, version: string | undefined, quality: 'standard' | 'high' | 'ultra', project: string | undefined, sessionId: string) =>
+      ipcRenderer.invoke('maps:overviewThumbnail', mapId, version, quality, project, sessionId),
+    cancelOverviewThumbnails: (sessionId: string) => ipcRenderer.invoke('maps:cancelOverviewThumbnails', sessionId),
     create: (properties: unknown, project?: string) => ipcRenderer.invoke('maps:create', properties, project),
     importFromLibrary: (assetId: string, parentMapId: number | null, properties: unknown, project?: string) =>
       ipcRenderer.invoke('maps:importFromLibrary', assetId, parentMapId, properties, project),

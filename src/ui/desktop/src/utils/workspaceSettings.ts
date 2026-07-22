@@ -3,6 +3,7 @@ import type {
   RpgMakerEngine,
   MapPreviewOverrides,
   WorkspaceEditorProjectState,
+  WorkspaceMapOverviewProjectState,
   WorkspaceLayoutState,
   WorkspaceSettings,
   WorkspaceWindowState,
@@ -187,6 +188,36 @@ export function normalizeMapPreviewOverrides(value: unknown): MapPreviewOverride
   return { switches, variables, selfSwitches }
 }
 
+function normalizeMapOverviewProjectState(value: unknown): WorkspaceMapOverviewProjectState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const rawPositions = (value as Record<string, unknown>).positions
+  const positions: WorkspaceMapOverviewProjectState['positions'] = {}
+  if (rawPositions && typeof rawPositions === 'object' && !Array.isArray(rawPositions)) {
+    for (const [rawMapId, rawPosition] of Object.entries(rawPositions as Record<string, unknown>)) {
+      if (!/^\d+$/.test(rawMapId) || !rawPosition || typeof rawPosition !== 'object' || Array.isArray(rawPosition)) continue
+      const position = rawPosition as Record<string, unknown>
+      const x = finiteNumber(position.x)
+      const y = finiteNumber(position.y)
+      if (x == null || y == null) continue
+      positions[String(Number(rawMapId))] = { x, y }
+    }
+  }
+  const rawQuality = (value as Record<string, unknown>).thumbnailQuality
+  const thumbnailQuality = rawQuality === 'standard' || rawQuality === 'ultra' ? rawQuality : 'high'
+  const rawZoom = finiteNumber((value as Record<string, unknown>).zoom)
+  const zoom = rawZoom == null ? undefined : Math.max(0.08, Math.min(6, rawZoom))
+  const rawLayoutVersion = finiteNumber((value as Record<string, unknown>).layoutVersion)
+  const layoutVersion = rawLayoutVersion != null && Number.isInteger(rawLayoutVersion) && rawLayoutVersion > 0
+    ? rawLayoutVersion
+    : undefined
+  return {
+    positions,
+    thumbnailQuality,
+    ...(zoom == null ? {} : { zoom }),
+    ...(layoutVersion == null ? {} : { layoutVersion }),
+  }
+}
+
 function positiveStateId(value: string): number | null {
   if (!/^\d+$/.test(value)) return null
   const id = Number(value)
@@ -204,6 +235,13 @@ export function normalizeWorkspaceSettings(raw: unknown): WorkspaceSettings {
     for (const [projectPath, value] of Object.entries(source.projects)) {
       const normalized = normalizeEditorProjectState(value)
       if (normalized) projects[projectPath] = normalized
+    }
+  }
+  const mapOverviewProjects: Record<string, WorkspaceMapOverviewProjectState> = {}
+  if (source.mapOverviewProjects && typeof source.mapOverviewProjects === 'object') {
+    for (const [projectPath, value] of Object.entries(source.mapOverviewProjects)) {
+      const normalized = normalizeMapOverviewProjectState(value)
+      if (normalized) mapOverviewProjects[projectPath] = normalized
     }
   }
   const composer = source.composer && typeof source.composer === 'object'
@@ -236,6 +274,7 @@ export function normalizeWorkspaceSettings(raw: unknown): WorkspaceSettings {
     layout: normalizeWorkspaceLayout(source.layout),
     composer,
     projects: Object.keys(projects).length ? projects : undefined,
+    mapOverviewProjects: Object.keys(mapOverviewProjects).length ? mapOverviewProjects : undefined,
   }
 }
 
@@ -312,6 +351,15 @@ export function normalizeWorkspacePatch(raw: unknown): WorkspaceSettings {
     if (Object.keys(projects).length) patch.projects = projects
   }
 
+  if (source.mapOverviewProjects && typeof source.mapOverviewProjects === 'object') {
+    const mapOverviewProjects: Record<string, WorkspaceMapOverviewProjectState> = {}
+    for (const [projectPath, value] of Object.entries(source.mapOverviewProjects)) {
+      const normalized = normalizeMapOverviewProjectState(value)
+      if (normalized) mapOverviewProjects[projectPath] = normalized
+    }
+    if (Object.keys(mapOverviewProjects).length) patch.mapOverviewProjects = mapOverviewProjects
+  }
+
   return patch
 }
 
@@ -366,6 +414,15 @@ export function mergeWorkspaceSettings(
       })!
     }
   }
+  const mergedMapOverviewProjects = { ...(base.mapOverviewProjects || {}) }
+  if (next.mapOverviewProjects) {
+    for (const [projectPath, value] of Object.entries(next.mapOverviewProjects)) {
+      mergedMapOverviewProjects[projectPath] = normalizeMapOverviewProjectState({
+        ...mergedMapOverviewProjects[projectPath],
+        ...value,
+      })!
+    }
+  }
   const merged: WorkspaceSettings = { ...base }
   if (Object.prototype.hasOwnProperty.call(next, 'lastProjectPath')) {
     if (next.lastProjectPath) merged.lastProjectPath = next.lastProjectPath
@@ -393,6 +450,7 @@ export function mergeWorkspaceSettings(
     }
   }
   merged.projects = Object.keys(mergedProjects).length ? mergedProjects : undefined
+  merged.mapOverviewProjects = Object.keys(mergedMapOverviewProjects).length ? mergedMapOverviewProjects : undefined
   return normalizeWorkspaceSettings(merged)
 }
 

@@ -69,6 +69,7 @@ import {
   type ShadowStrokeAction,
 } from '../utils/shadowPen';
 import { selectionOutlineWidths } from '../utils/selectionOutline';
+import { mapCellViewportTarget } from '../utils/mapCanvasViewport';
 import { normalizeProductLanguage, translate, type MessageKey } from '../i18n/messages.ts'
 
 const MAP_MODE_EVENT_OPACITY = 0.35;
@@ -477,6 +478,31 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       scrollResizeObserver.observe(scrollRef.value);
     }
     scheduleRegionLabelRender();
+  }
+
+  async function ensureMapCellVisible(x: number, y: number, safeMargin = 64) {
+    if (!map || !Number.isInteger(x) || !Number.isInteger(y) || !inMap(x, y)) return 'invalid-cell' as const;
+    await nextTick();
+    const scroll = scrollRef.value;
+    if (!scroll) return 'viewport-unavailable' as const;
+    const target = mapCellViewportTarget({
+      cellX: x,
+      cellY: y,
+      tileSize: tileSize.value,
+      zoom: zoom.value,
+      safeMargin,
+      scrollLeft: scroll.scrollLeft,
+      scrollTop: scroll.scrollTop,
+      viewportWidth: scroll.clientWidth,
+      viewportHeight: scroll.clientHeight,
+      contentWidth: canvasWidth.value * zoom.value,
+      contentHeight: canvasHeight.value * zoom.value,
+    });
+    if (!target.moved) return 'visible' as const;
+    scroll.scrollLeft = target.scrollLeft;
+    scroll.scrollTop = target.scrollTop;
+    scheduleRegionLabelRender();
+    return 'moved' as const;
   }
 
   function renderMap() {
@@ -1761,6 +1787,6 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectTileMode, selectShadowMode, canvasCell, eventAtCell,
     onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
     onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel, onCanvasScroll,
-    renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell,
+    renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell, ensureMapCellVisible,
   };
 }

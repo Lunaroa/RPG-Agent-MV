@@ -98,6 +98,12 @@ export interface StagedMapMutationTarget {
   ensureCompleteProjectContext: () => void;
 }
 
+export interface ProjectReadFileIndex {
+  project: string;
+  resolve: (relativePath: string) => string | null;
+  map: (mapId: number) => string | null;
+}
+
 interface MapEntry extends FileEntry {
   mapId: number;
   sourceMapFile: string;
@@ -1472,6 +1478,35 @@ function ensureDraftProjectDataFiles(
       );
     }
   }
+}
+
+/**
+ * Creates a staged-aware read index from one manifest snapshot. Callers that
+ * inspect many project files avoid reopening the staging manifest per file,
+ * while preserving the same draft/delete/source precedence as the scalar
+ * helpers above.
+ */
+export function createProjectReadFileIndex(workflowRoot: string, project: string): ProjectReadFileIndex {
+  const context = buildContext(workflowRoot, project);
+  const manifest = readManifest(context);
+  const resolve = (relativePath: string): string | null => {
+    const requestedRelative = normalizeRelativePath(relativePath);
+    const relative = resolveManifestRelativePath(manifest, requestedRelative);
+    const entry = manifest.files[relative];
+    if (entry?.delete) return null;
+    if (entry) {
+      const draftFile = draftFilePath(context, relative);
+      if (!fs.existsSync(draftFile)) throw new Error(`Staged project file is missing: ${relative}`);
+      return draftFile;
+    }
+    const sourceFile = sourceFilePath(context, relative);
+    return fs.existsSync(sourceFile) ? sourceFile : null;
+  };
+  return {
+    project: context.project,
+    resolve,
+    map: (mapId: number) => resolve(mapRelativePath(context.project, mapId)),
+  };
 }
 
 function copyDraftProjectFile(context: StagingContext, manifest: Manifest, sourcePath: string): void {

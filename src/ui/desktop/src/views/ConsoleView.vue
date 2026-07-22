@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onActivated, onDeactivated, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ArrowLeft } from '@element-plus/icons-vue';
 import {
@@ -28,10 +28,13 @@ const router = useRouter();
 const projectStore = useProjectStore();
 const { language, t } = useI18n();
 const allowedPages: ConsolePage[] = ['home', 'assets', 'story', 'plugins', 'logs', 'settings'];
-const currentPage = computed<ConsolePage>(() => {
-  const page = String(route.query.page || 'home') as ConsolePage;
-  return allowedPages.includes(page) ? page : 'home';
-});
+const retainedPage = ref<ConsolePage>('home');
+const currentPage = computed<ConsolePage>(() => retainedPage.value);
+watch(() => [route.path, route.query.page] as const, ([routePath, pageValue]) => {
+  if (routePath !== '/console') return;
+  const page = String(pageValue || 'home') as ConsolePage;
+  retainedPage.value = allowedPages.includes(page) ? page : 'home';
+}, { immediate: true });
 const titleKeys: Record<ConsolePage, MessageKey> = {
   home: 'settings.console.home',
   assets: 'settings.console.assets',
@@ -48,6 +51,7 @@ const logsLoading = ref(false);
 const logsError = ref<string | null>(null);
 const projectOverview = ref<ProjectOverview | null>(null);
 const projectStatsError = ref<string | null>(null);
+const consoleActive = ref(false);
 
 const currentProjectSessions = computed(() =>
   sessions.value.filter((session) => session.project === projectStore.currentProject),
@@ -61,7 +65,7 @@ function reloadProjectBoundData() {
   sessions.value = [];
   projectOverview.value = null;
   logsError.value = null;
-  if (!projectStore.currentProject) return;
+  if (!projectStore.currentProject || !consoleActive.value) return;
   void loadLogs();
   void loadProjectOverview();
 }
@@ -140,12 +144,24 @@ onMounted(async () => {
     await projectStore.load();
   }
 });
+
+onActivated(() => {
+  consoleActive.value = true;
+  if (!projectStore.currentProject) return;
+  if ((currentPage.value === 'home' || currentPage.value === 'assets') && !catalog.value && !assetsLoading.value) void loadAssets();
+  if ((currentPage.value === 'home' || currentPage.value === 'logs') && !sessions.value.length && !logsLoading.value) void loadLogs();
+  if (currentPage.value === 'home' && !projectOverview.value) void loadProjectOverview();
+});
+
+onDeactivated(() => {
+  consoleActive.value = false;
+});
 </script>
 
 <template>
   <div class="console-view" :data-ui-id="`console-view-${currentPage}`">
     <ConsoleHome
-      v-if="currentPage === 'home'"
+      v-show="currentPage === 'home'"
       :asset-count="assetCount"
       :session-count="currentProjectSessions.length"
       :project-item-count="projectItemCount"
@@ -154,7 +170,7 @@ onMounted(async () => {
       :project-stats-error="projectStatsError"
       @navigate="go"
     />
-    <section v-else class="console-page" :data-ui-id="`console-page-${currentPage}`">
+    <section v-show="currentPage !== 'home'" class="console-page" :data-ui-id="`console-page-${currentPage}`">
       <nav class="console-breadcrumb" :aria-label="t('settings.console.breadcrumb')">
         <button type="button" class="back-button" data-ui-id="console-back-home" @click="go('home')"><ArrowLeft /><span>{{ t('settings.console.home') }}</span></button>
         <span>/</span>
@@ -168,10 +184,13 @@ onMounted(async () => {
         </div>
       </header>
       <ConsoleAssetsPane v-if="currentPage === 'assets'" :catalog="catalog" :loading="assetsLoading" :error="assetsError" />
-      <ConsoleStoryPane v-else-if="currentPage === 'story'" />
-      <ConsolePluginsPane v-else-if="currentPage === 'plugins'" />
-      <ConsoleLogsPane v-else-if="currentPage === 'logs'" :sessions="sessions" :loading="logsLoading" :error="logsError" :current-project="projectStore.currentProject" />
-      <ConsoleSettingsPane v-else />
+      <ConsoleStoryPane
+        v-show="currentPage === 'story'"
+        :active="consoleActive && currentPage === 'story'"
+      />
+      <ConsolePluginsPane v-if="currentPage === 'plugins'" />
+      <ConsoleLogsPane v-if="currentPage === 'logs'" :sessions="sessions" :loading="logsLoading" :error="logsError" :current-project="projectStore.currentProject" />
+      <ConsoleSettingsPane v-if="currentPage === 'settings'" />
     </section>
   </div>
 </template>

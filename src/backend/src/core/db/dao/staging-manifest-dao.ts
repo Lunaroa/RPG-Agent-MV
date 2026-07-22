@@ -9,7 +9,20 @@ export interface StagingManifest {
   updated_at: string;
 }
 
+export interface StagingManifestMetadata {
+  id: number;
+  project_id: string;
+  updated_at: string;
+}
+
 export class StagingManifestDao {
+  static getLatestMetadataByProject(projectId: string): StagingManifestMetadata | null {
+    const db = getDatabase();
+    return db.prepare(
+      'SELECT id, project_id, updated_at FROM staging_manifests WHERE project_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1'
+    ).get(projectId) as StagingManifestMetadata | undefined || null;
+  }
+
   /**
    * 列出所有暂存清单，供项目身份迁移发现旧 project_id。
    */

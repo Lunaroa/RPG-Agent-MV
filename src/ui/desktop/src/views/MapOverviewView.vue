@@ -13,12 +13,19 @@ import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 import { findMapOverviewMatches } from '../utils/mapOverviewSearch'
 import { MapOverviewMoveHistory, type MapOverviewNodePosition } from '../utils/mapOverviewMoveHistory'
 import { MAP_OVERVIEW_LAYOUT_VERSION, mapOverviewNodeSize } from '../utils/mapOverviewNodeSize'
-import { MAP_OVERVIEW_WHEEL_SENSITIVITY } from '../utils/mapOverviewViewport'
+import {
+  clampMapOverviewZoom,
+  clampMapOverviewZoomPercent,
+  formatMapOverviewZoomPercent,
+  MAP_OVERVIEW_MAX_ZOOM,
+  MAP_OVERVIEW_MIN_ZOOM,
+  MAP_OVERVIEW_WHEEL_SENSITIVITY,
+  MAP_OVERVIEW_ZOOM_STEP,
+  mapOverviewZoomFromPercent,
+  parseMapOverviewZoomPercent,
+} from '../utils/mapOverviewViewport'
 import MapOverviewLayoutWorker from '../workers/mapOverviewLayout.worker.ts?worker'
 
-const MIN_GRAPH_ZOOM = 0.08
-const MAX_GRAPH_ZOOM = 6
-const GRAPH_ZOOM_STEP = 0.25
 const THUMBNAIL_IDLE_DELAY_MS = 500
 
 const projectStore = useProjectStore()
@@ -227,6 +234,7 @@ async function restoreGraphAfterActivation(): Promise<void> {
   await nextTick()
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   if (!surfaceActive || !graphHost.value) return
+  // Keep the existing Cytoscape instance when the canvas host DOM identity is unchanged.
   if (cy && cy.container() === graphHost.value) {
     cy.resize()
     restoreSelectionClasses()
@@ -279,8 +287,8 @@ function createGraph(next: MapOverviewSnapshot): void {
   if (!graphHost.value) return
   cy = cytoscape({
     container: graphHost.value,
-    minZoom: MIN_GRAPH_ZOOM,
-    maxZoom: MAX_GRAPH_ZOOM,
+    minZoom: MAP_OVERVIEW_MIN_ZOOM,
+    maxZoom: MAP_OVERVIEW_MAX_ZOOM,
     wheelSensitivity: MAP_OVERVIEW_WHEEL_SENSITIVITY,
     boxSelectionEnabled: false,
     autoungrabify: false,
@@ -553,14 +561,14 @@ function handleGraphZoom(): void {
 
 function syncZoomDisplay(): void {
   if (!cy) return
-  const percent = Math.round(cy.zoom() * 100)
-  zoomPercent.value = percent
-  if (document.activeElement !== zoomInput.value) zoomDraft.value = String(percent)
+  const zoom = clampMapOverviewZoom(cy.zoom())
+  zoomPercent.value = Math.round(zoom * 1000) / 10
+  if (document.activeElement !== zoomInput.value) zoomDraft.value = formatMapOverviewZoomPercent(zoom)
 }
 
 function setGraphZoom(value: number, persist = true): void {
   if (!cy || !graphHost.value) return
-  const level = Math.max(MIN_GRAPH_ZOOM, Math.min(MAX_GRAPH_ZOOM, value))
+  const level = clampMapOverviewZoom(value)
   cy.zoom({
     level,
     renderedPosition: {
@@ -573,28 +581,28 @@ function setGraphZoom(value: number, persist = true): void {
 }
 
 function zoomIn(): void {
-  if (cy) setGraphZoom(cy.zoom() + GRAPH_ZOOM_STEP)
+  if (cy) setGraphZoom(cy.zoom() + MAP_OVERVIEW_ZOOM_STEP)
 }
 
 function zoomOut(): void {
-  if (cy) setGraphZoom(cy.zoom() - GRAPH_ZOOM_STEP)
+  if (cy) setGraphZoom(cy.zoom() - MAP_OVERVIEW_ZOOM_STEP)
 }
 
 function applyZoomDraft(): void {
-  const value = Number(zoomDraft.value)
-  if (!Number.isFinite(value) || zoomDraft.value.trim() === '') {
-    zoomDraft.value = String(zoomPercent.value)
+  const parsed = parseMapOverviewZoomPercent(zoomDraft.value)
+  if (parsed == null) {
+    zoomDraft.value = formatMapOverviewZoomPercent(cy?.zoom() || mapOverviewZoomFromPercent(zoomPercent.value))
     zoomInput.value?.blur()
     return
   }
-  const clampedPercent = Math.max(8, Math.min(600, value))
-  setGraphZoom(clampedPercent / 100)
-  zoomDraft.value = String(Math.round(clampedPercent))
+  const zoom = mapOverviewZoomFromPercent(clampMapOverviewZoomPercent(parsed))
+  setGraphZoom(zoom)
+  zoomDraft.value = formatMapOverviewZoomPercent(zoom)
   zoomInput.value?.blur()
 }
 
 function cancelZoomDraft(): void {
-  zoomDraft.value = String(zoomPercent.value)
+  zoomDraft.value = formatMapOverviewZoomPercent(cy?.zoom() || mapOverviewZoomFromPercent(zoomPercent.value))
   zoomInput.value?.blur()
 }
 
@@ -942,10 +950,10 @@ function mapLabel(mapId: number): string {
       </header>
 
       <div v-if="loading && !snapshot" class="overview-state" role="status">{{ t('mapOverview.loading') }}</div>
-      <div v-else-if="loadError && !snapshot" class="overview-state error" role="alert">
+      <div v-else-if="loadError && !snapshot" class="overview-state error" role="alert" data-ui-id="map-overview-load-error">
         <strong>{{ t('mapOverview.loadFailed') }}</strong>
         <span>{{ loadError }}</span>
-        <button type="button" @click="loadOverview()">{{ t('common.retry') }}</button>
+        <button type="button" data-ui-id="map-overview-retry" @click="activateOverview()">{{ t('common.retry') }}</button>
       </div>
       <div v-else-if="snapshot" class="overview-body">
         <div
@@ -962,14 +970,14 @@ function mapLabel(mapId: number): string {
           <template v-if="loadError">
             <strong>{{ t('mapOverview.loadFailed') }}</strong>
             <span>{{ loadError }}</span>
-            <button type="button" @click="loadOverview()">{{ t('common.retry') }}</button>
+            <button type="button" data-ui-id="map-overview-retry" @click="activateOverview()">{{ t('common.retry') }}</button>
           </template>
           <span v-else>{{ t('mapOverview.loading') }}</span>
         </div>
         <div class="overview-zoom" data-ui-id="map-overview-zoom">
           <button
             type="button"
-            :disabled="zoomPercent <= 8"
+            :disabled="zoomPercent <= MAP_OVERVIEW_MIN_ZOOM * 100"
             :title="t('mapOverview.zoom.out')"
             :aria-label="t('mapOverview.zoom.out')"
             @click="zoomOut"
@@ -991,7 +999,7 @@ function mapLabel(mapId: number): string {
           </label>
           <button
             type="button"
-            :disabled="zoomPercent >= 600"
+            :disabled="zoomPercent >= MAP_OVERVIEW_MAX_ZOOM * 100"
             :title="t('mapOverview.zoom.in')"
             :aria-label="t('mapOverview.zoom.in')"
             @click="zoomIn"

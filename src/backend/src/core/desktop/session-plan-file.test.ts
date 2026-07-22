@@ -5,6 +5,10 @@ import path from "node:path";
 import { describe, test } from "node:test";
 
 import {
+  SESSION_PLAN_DIRECTORY_ERROR_CODES,
+  SessionPlanDirectoryError,
+  classifyPlanDirectoryError,
+  ensurePlanDirectory,
   hydrateSessionPlanFromFile,
   isOpencodePlanPath,
   planPathFromToolInput,
@@ -49,5 +53,41 @@ describe("session plan file helpers", () => {
 
     assert.match(hydrated.planMarkdown, /测试计划/);
     assert.equal(readPlanFile(root, "projects/Demo", planRelative), hydrated.planMarkdown);
+  });
+
+  test("creates the conversation plan directory recursively", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "rpg-plan-create-"));
+    const project = path.join(root, "projects", "Sample");
+    fs.mkdirSync(project, { recursive: true });
+
+    ensurePlanDirectory(root, "projects/Sample", ".opencode/plans/conversations/session.md");
+
+    assert.equal(fs.statSync(path.join(project, ".opencode", "plans", "conversations")).isDirectory(), true);
+  });
+
+  test("reports a relative path when a plan directory segment is a file", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "rpg-plan-conflict-"));
+    const project = path.join(root, "projects", "Sample");
+    fs.mkdirSync(project, { recursive: true });
+    fs.writeFileSync(path.join(project, ".opencode"), "conflict", "utf8");
+
+    assert.throws(
+      () => ensurePlanDirectory(root, "projects/Sample", ".opencode/plans/conversations/session.md"),
+      (error: unknown) => {
+        assert.ok(error instanceof SessionPlanDirectoryError);
+        assert.equal(error.code, SESSION_PLAN_DIRECTORY_ERROR_CODES.pathConflict);
+        assert.equal(error.relativePath, ".opencode");
+        assert.doesNotMatch(error.message, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        return true;
+      },
+    );
+  });
+
+  test("classifies permission failures without exposing the native error", () => {
+    const nativeError = Object.assign(new Error("private native detail"), { code: "EPERM" });
+    assert.equal(
+      classifyPlanDirectoryError(nativeError),
+      SESSION_PLAN_DIRECTORY_ERROR_CODES.notWritable,
+    );
   });
 });

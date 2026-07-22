@@ -1,15 +1,16 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { availableParallelism } from 'node:os';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 
 import type {
-  MapOverviewChunk,
-  MapOverviewChunkLevel,
   MapOverviewEdge,
   MapOverviewIssue,
   MapOverviewNode,
+  MapOverviewScanProgress,
   MapOverviewSnapshot,
+  MapOverviewThumbnail,
   MapOverviewTransferSource,
 } from '../../../../contract/types.ts';
 import { readJson, writeJsonAtomic } from '../rmmv/json.ts';
@@ -17,16 +18,17 @@ import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { getConfiguredDatabasePath } from '../db/pool.ts';
 import {
   decodePng,
-  renderMapChunkToPng,
+  encodePng,
+  renderMapToFittedRgba,
 } from '../workflow/map/map-render.ts';
 import { mapOverviewEdgeAggregateKey } from '../../../../contract/map-overview-edge-key.ts';
 import { createProjectReadFileIndex, type ProjectReadFileIndex } from './staging-service.ts';
 
-const SNAPSHOT_CACHE_SCHEMA_VERSION = 3;
-const CHUNK_RENDERER_VERSION = 1;
-const MAP_OVERVIEW_CHUNK_TILES = 16;
+const SNAPSHOT_CACHE_SCHEMA_VERSION = 4;
+const THUMBNAIL_CACHE_SCHEMA_VERSION = 1;
+const THUMBNAIL_RENDERER_VERSION = 2;
+const THUMBNAIL_SCALE_DIVISOR = 4 as const;
 const MAP_OVERVIEW_TILE_PX = 48;
-const MAP_OVERVIEW_CHUNK_LEVELS: readonly MapOverviewChunkLevel[] = [1, 2, 4, 8, 16, 32, 64, 128];
 
 interface SnapshotDependency {
   logicalPath: string;
@@ -38,6 +40,7 @@ interface SnapshotDependency {
 
 interface SnapshotCacheDocument {
   schemaVersion: number;
+  thumbnailRendererVersion: number;
   project: string;
   dependencies: SnapshotDependency[];
   snapshot: MapOverviewSnapshot;
@@ -73,68 +76,50 @@ interface MapSize {
   height: number;
 }
 
-export interface MapOverviewChunkWorkerRequest {
+export interface MapOverviewThumbnailWorkerRequest {
   requestId: number;
   workflowRoot: string;
   project: string;
   mapId: number;
   contentVersion: string;
-  chunkX: number;
-  chunkY: number;
-  level: MapOverviewChunkLevel;
   databasePath: string;
 }
 
-export type MapOverviewChunkWorkerResponse =
-  | { requestId: number; ok: true; chunk: MapOverviewChunk }
+export type MapOverviewThumbnailWorkerResponse =
+  | { requestId: number; ok: true; thumbnail: MapOverviewThumbnail }
   | { requestId: number; ok: false; error: string };
 
-export function isMapOverviewChunkLevel(value: unknown): value is MapOverviewChunkLevel {
-  return typeof value === 'number' && (MAP_OVERVIEW_CHUNK_LEVELS as readonly number[]).includes(value);
-}
-
-export function mapOverviewChunkTileRect(
-  mapWidth: number,
-  mapHeight: number,
-  chunkX: number,
-  chunkY: number,
-): { tileX: number; tileY: number; tileWidth: number; tileHeight: number } {
-  if (!Number.isInteger(mapWidth) || !Number.isInteger(mapHeight) || mapWidth <= 0 || mapHeight <= 0) {
-    throw new Error('Invalid map dimensions for overview chunk.');
-  }
-  if (!Number.isInteger(chunkX) || !Number.isInteger(chunkY) || chunkX < 0 || chunkY < 0) {
-    throw new Error('Invalid map overview chunk coordinates.');
-  }
-  const maxChunkX = Math.ceil(mapWidth / MAP_OVERVIEW_CHUNK_TILES) - 1;
-  const maxChunkY = Math.ceil(mapHeight / MAP_OVERVIEW_CHUNK_TILES) - 1;
-  if (chunkX > maxChunkX || chunkY > maxChunkY) throw new Error('Map overview chunk coordinates are out of range.');
-  const tileX = chunkX * MAP_OVERVIEW_CHUNK_TILES;
-  const tileY = chunkY * MAP_OVERVIEW_CHUNK_TILES;
-  const tileWidth = Math.min(MAP_OVERVIEW_CHUNK_TILES, mapWidth - tileX);
-  const tileHeight = Math.min(MAP_OVERVIEW_CHUNK_TILES, mapHeight - tileY);
-  if (tileWidth <= 0 || tileHeight <= 0) throw new Error('Map overview chunk has no tiles.');
-  return { tileX, tileY, tileWidth, tileHeight };
-}
-
-export function buildMapOverviewSnapshot(workflowRoot: string, project: string): MapOverviewSnapshot {
+export function buildMapOverviewSnapshot(
+  workflowRoot: string,
+  project: string,
+  reportProgress?: (progress: MapOverviewScanProgress) => void,
+): MapOverviewSnapshot {
   const resolvedWorkflowRoot = path.resolve(workflowRoot);
   const resolvedProject = path.resolve(project);
-  removeLegacyThumbnailCaches(resolvedWorkflowRoot);
   const cacheFile = snapshotCacheFile(resolvedWorkflowRoot, resolvedProject);
   removeLegacySnapshotCaches(cacheFile);
   const cached = readSnapshotCache(cacheFile, resolvedProject);
-  if (cached && dependenciesMatch(createProjectReadFileIndex(resolvedWorkflowRoot, resolvedProject), cached.dependencies)) {
+  if (cached && dependenciesMatch(
+    createProjectReadFileIndex(resolvedWorkflowRoot, resolvedProject),
+    cached.dependencies,
+    progress => reportProgress?.({ phase: 'checking-cache', ...progress }),
+  )) {
     return cached.snapshot;
   }
 
-  const result = buildMapOverviewSnapshotFresh(resolvedWorkflowRoot, resolvedProject);
+  const result = buildMapOverviewSnapshotFresh(resolvedWorkflowRoot, resolvedProject, reportProgress);
   const dependencies = [...result.context.dependencies.values()]
     .sort((left, right) => left.logicalPath.localeCompare(right.logicalPath));
-  if (!dependenciesMatch(createProjectReadFileIndex(resolvedWorkflowRoot, resolvedProject), dependencies)) {
+  if (!dependenciesMatch(
+    createProjectReadFileIndex(resolvedWorkflowRoot, resolvedProject),
+    dependencies,
+    progress => reportProgress?.({ phase: 'verifying-project', ...progress }),
+  )) {
     throw new Error('Project content changed while the map overview was loading. Retry the operation.');
   }
   writeSnapshotCache(cacheFile, {
     schemaVersion: SNAPSHOT_CACHE_SCHEMA_VERSION,
+    thumbnailRendererVersion: THUMBNAIL_RENDERER_VERSION,
     project: resolvedProject,
     dependencies,
     snapshot: result.snapshot,
@@ -145,6 +130,7 @@ export function buildMapOverviewSnapshot(workflowRoot: string, project: string):
 function buildMapOverviewSnapshotFresh(
   workflowRoot: string,
   project: string,
+  reportProgress?: (progress: MapOverviewScanProgress) => void,
 ): { snapshot: MapOverviewSnapshot; context: OverviewBuildContext } {
   const context = buildContext(workflowRoot, project);
   const knownMapIds = new Set<number>();
@@ -165,14 +151,21 @@ function buildMapOverviewSnapshotFresh(
     nodeUnresolved: number;
   }> = [];
 
-  for (const info of context.mapInfos.filter(Boolean)) {
+  const mapInfos = context.mapInfos.filter(Boolean);
+  for (const info of mapInfos) {
     const id = Number(info.id);
     if (Number.isInteger(id) && id > 0) knownMapIds.add(id);
   }
 
-  for (const info of context.mapInfos.filter(Boolean)) {
+  reportProgress?.({ phase: 'reading-maps', completed: 0, total: mapInfos.length });
+  let completedMaps = 0;
+  for (const info of mapInfos) {
     const mapId = Number(info.id);
-    if (!Number.isInteger(mapId) || mapId <= 0) continue;
+    if (!Number.isInteger(mapId) || mapId <= 0) {
+      completedMaps += 1;
+      reportProgress?.({ phase: 'reading-maps', completed: completedMaps, total: mapInfos.length });
+      continue;
+    }
     const name = String(info.name || `Map${String(mapId).padStart(3, '0')}`);
     const mapLogicalPath = mapRelativePath(context.dataRootRelative, mapId);
     const mapFile = resolveContextFile(context, mapLogicalPath);
@@ -223,126 +216,135 @@ function buildMapOverviewSnapshotFresh(
       nodeIssues,
       nodeUnresolved: 0,
     });
+    completedMaps += 1;
+    reportProgress?.({ phase: 'reading-maps', completed: completedMaps, total: mapInfos.length });
   }
 
+  reportProgress?.({ phase: 'scanning-relations', completed: 0, total: loadedMaps.length });
+  completedMaps = 0;
   for (const loaded of loadedMaps) {
     const { mapId, name, map } = loaded;
-    if (!map) continue;
-    const sourceSize = mapSizes.get(mapId);
-    for (const rawEvent of array(map.events)) {
-      if (!record(rawEvent)) continue;
-      const eventId = positiveInteger(rawEvent.id);
-      if (eventId == null) continue;
-      const eventName = String(rawEvent.name || `EV${String(eventId).padStart(3, '0')}`);
-      array(rawEvent.pages).forEach((rawPage, pageIndex) => {
-        if (!record(rawPage)) return;
-        array(rawPage.list).forEach((rawCommand, commandIndex) => {
-          if (!record(rawCommand) || Number(rawCommand.code) !== 201) return;
-          const parameters = array(rawCommand.parameters);
-          if (Number(parameters[0]) !== 0) {
-            unresolvedTransferCount += 1;
-            loaded.nodeUnresolved += 1;
-            return;
-          }
-          const targetMapId = positiveInteger(parameters[1]);
-          if (targetMapId == null) {
-            unresolvedTransferCount += 1;
-            loaded.nodeUnresolved += 1;
-            return;
-          }
-          if (!knownMapIds.has(targetMapId)) {
-            invalidTargetCount += 1;
-            loaded.nodeIssues.push({
-              code: 'invalid-target',
-              mapId,
-              targetMapId,
-              message: `Transfer targets missing map ${targetMapId}.`,
-            });
-            return;
-          }
+    if (map) {
+      const sourceSize = mapSizes.get(mapId);
+      for (const rawEvent of array(map.events)) {
+        if (!record(rawEvent)) continue;
+        const eventId = positiveInteger(rawEvent.id);
+        if (eventId == null) continue;
+        const eventName = String(rawEvent.name || `EV${String(eventId).padStart(3, '0')}`);
+        array(rawEvent.pages).forEach((rawPage, pageIndex) => {
+          if (!record(rawPage)) return;
+          array(rawPage.list).forEach((rawCommand, commandIndex) => {
+            if (!record(rawCommand) || Number(rawCommand.code) !== 201) return;
+            const parameters = array(rawCommand.parameters);
+            if (Number(parameters[0]) !== 0) {
+              unresolvedTransferCount += 1;
+              loaded.nodeUnresolved += 1;
+              return;
+            }
+            const targetMapId = positiveInteger(parameters[1]);
+            if (targetMapId == null) {
+              unresolvedTransferCount += 1;
+              loaded.nodeUnresolved += 1;
+              return;
+            }
+            if (!knownMapIds.has(targetMapId)) {
+              invalidTargetCount += 1;
+              loaded.nodeIssues.push({
+                code: 'invalid-target',
+                mapId,
+                targetMapId,
+                message: `Transfer targets missing map ${targetMapId}.`,
+              });
+              return;
+            }
 
-          const sourceX = integerCoord(rawEvent.x);
-          const sourceY = integerCoord(rawEvent.y);
-          const targetX = integerCoord(parameters[2]);
-          const targetY = integerCoord(parameters[3]);
-          const pushInvalidCoords = (partial: Partial<MapOverviewIssue> = {}) => {
-            loaded.nodeIssues.push({
-              code: 'invalid-coordinate',
-              mapId,
-              targetMapId,
+            const sourceX = integerCoord(rawEvent.x);
+            const sourceY = integerCoord(rawEvent.y);
+            const targetX = integerCoord(parameters[2]);
+            const targetY = integerCoord(parameters[3]);
+            const pushInvalidCoords = (partial: Partial<MapOverviewIssue> = {}) => {
+              loaded.nodeIssues.push({
+                code: 'invalid-coordinate',
+                mapId,
+                targetMapId,
+                eventId,
+                eventName,
+                pageIndex,
+                commandIndex,
+                ...(sourceX != null ? { sourceX } : {}),
+                ...(sourceY != null ? { sourceY } : {}),
+                ...(targetX != null ? { targetX } : {}),
+                ...(targetY != null ? { targetY } : {}),
+                ...partial,
+                message: `Transfer coordinates are invalid for event ${eventName} on map ${mapId}.`,
+              });
+            };
+
+            if (sourceX == null || sourceY == null || targetX == null || targetY == null) {
+              pushInvalidCoords();
+              return;
+            }
+            if (!sourceSize || !inMapBounds(sourceX, sourceY, sourceSize)) {
+              pushInvalidCoords({ sourceX, sourceY, targetX, targetY });
+              return;
+            }
+            const targetSize = mapSizes.get(targetMapId);
+            if (!targetSize || !inMapBounds(targetX, targetY, targetSize)) {
+              pushInvalidCoords({ sourceX, sourceY, targetX, targetY });
+              return;
+            }
+
+            const source: MapOverviewTransferSource = {
+              sourceMapId: mapId,
+              sourceMapName: name,
               eventId,
               eventName,
               pageIndex,
+              pageConditions: record(rawPage.conditions) ? structuredClone(rawPage.conditions) : {},
               commandIndex,
-              ...(sourceX != null ? { sourceX } : {}),
-              ...(sourceY != null ? { sourceY } : {}),
-              ...(targetX != null ? { targetX } : {}),
-              ...(targetY != null ? { targetY } : {}),
-              ...partial,
-              message: `Transfer coordinates are invalid for event ${eventName} on map ${mapId}.`,
+              sourceX,
+              sourceY,
+              targetMapId,
+              targetX,
+              targetY,
+              direction: integer(parameters[4], 0),
+              fadeType: integer(parameters[5], 0),
+            };
+            const edgeKey = mapOverviewEdgeAggregateKey({
+              sourceMapId: mapId,
+              sourceX,
+              sourceY,
+              targetMapId,
+              targetX,
+              targetY,
             });
-          };
-
-          if (sourceX == null || sourceY == null || targetX == null || targetY == null) {
-            pushInvalidCoords();
-            return;
-          }
-          if (!sourceSize || !inMapBounds(sourceX, sourceY, sourceSize)) {
-            pushInvalidCoords({ sourceX, sourceY, targetX, targetY });
-            return;
-          }
-          const targetSize = mapSizes.get(targetMapId);
-          if (!targetSize || !inMapBounds(targetX, targetY, targetSize)) {
-            pushInvalidCoords({ sourceX, sourceY, targetX, targetY });
-            return;
-          }
-
-          const source: MapOverviewTransferSource = {
-            sourceMapId: mapId,
-            sourceMapName: name,
-            eventId,
-            eventName,
-            pageIndex,
-            pageConditions: record(rawPage.conditions) ? structuredClone(rawPage.conditions) : {},
-            commandIndex,
-            sourceX,
-            sourceY,
-            targetMapId,
-            targetX,
-            targetY,
-            direction: integer(parameters[4], 0),
-            fadeType: integer(parameters[5], 0),
-          };
-          const edgeKey = mapOverviewEdgeAggregateKey({
-            sourceMapId: mapId,
-            sourceX,
-            sourceY,
-            targetMapId,
-            targetX,
-            targetY,
+            const edge = edgesByKey.get(edgeKey) || {
+              id: edgeKey,
+              sourceMapId: mapId,
+              sourceX,
+              sourceY,
+              targetMapId,
+              targetX,
+              targetY,
+              count: 0,
+              sources: [],
+            };
+            edge.count += 1;
+            edge.sources.push(source);
+            edgesByKey.set(edgeKey, edge);
           });
-          const edge = edgesByKey.get(edgeKey) || {
-            id: edgeKey,
-            sourceMapId: mapId,
-            sourceX,
-            sourceY,
-            targetMapId,
-            targetX,
-            targetY,
-            count: 0,
-            sources: [],
-          };
-          edge.count += 1;
-          edge.sources.push(source);
-          edgesByKey.set(edgeKey, edge);
         });
-      });
+      }
     }
+    completedMaps += 1;
+    reportProgress?.({ phase: 'scanning-relations', completed: completedMaps, total: loadedMaps.length });
   }
 
+  reportProgress?.({ phase: 'preparing-images', completed: 0, total: loadedMaps.length });
+  completedMaps = 0;
   for (const loaded of loadedMaps) {
     const thumbnailVersion = loaded.map && loaded.mapFile
-      ? buildChunkContentVersion(context, loaded.mapId, loaded.mapFile, loaded.map)
+      ? buildThumbnailContentVersion(context, loaded.mapId, loaded.mapFile, loaded.map)
       : null;
     issues.push(...loaded.nodeIssues);
     nodes.push({
@@ -359,6 +361,8 @@ function buildMapOverviewSnapshotFresh(
       unresolvedCount: loaded.nodeUnresolved,
       issues: loaded.nodeIssues,
     });
+    completedMaps += 1;
+    reportProgress?.({ phase: 'preparing-images', completed: completedMaps, total: loadedMaps.length });
   }
 
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -401,142 +405,125 @@ function buildMapOverviewSnapshotFresh(
   }, context };
 }
 
-export function buildMapOverviewChunk(
+interface ThumbnailCacheDocument {
+  schemaVersion: number;
+  project: string;
+  mapId: number;
+  version: string;
+  scaleDivisor: 4;
+  width: number;
+  height: number;
+  mime: 'image/png';
+  dataUrl: string;
+  warnings: string[];
+}
+
+export function buildMapOverviewThumbnail(
   workflowRoot: string,
   project: string,
   mapId: number,
   contentVersion: string,
-  chunkX: number,
-  chunkY: number,
-  level: MapOverviewChunkLevel,
-): MapOverviewChunk {
-  const cached = readCachedMapOverviewChunk(workflowRoot, project, mapId, contentVersion, chunkX, chunkY, level);
+): MapOverviewThumbnail {
+  const cached = readCachedMapOverviewThumbnail(workflowRoot, project, mapId, contentVersion);
   if (cached) return cached;
-  validateChunkRequest(mapId, contentVersion, chunkX, chunkY, level);
+  validateThumbnailRequest(mapId, contentVersion);
   const resolvedProject = path.resolve(project);
   const resolvedWorkflowRoot = path.resolve(workflowRoot);
-  removeLegacyThumbnailCaches(resolvedWorkflowRoot);
   const context = buildContext(resolvedWorkflowRoot, resolvedProject);
   const info = context.mapInfos.find((candidate) => Number(candidate?.id) === mapId);
   if (!info) throw new Error(`Map ${mapId} is not registered in MapInfos.json.`);
   const mapFile = resolveContextFile(context, mapRelativePath(context.dataRootRelative, mapId));
   if (!mapFile || !fs.existsSync(mapFile)) throw new Error(`Map file is missing for map ${mapId}.`);
   const map = readJson(mapFile) as MapDocument;
-  const version = buildChunkContentVersion(context, mapId, mapFile, map);
+  const version = buildThumbnailContentVersion(context, mapId, mapFile, map);
   if (contentVersion !== version) {
-    throw new Error('The map overview chunk version changed. Reload the map overview and try again.');
+    throw new Error('The map overview thumbnail version changed. Reload the map overview and try again.');
   }
   const width = positiveInteger(map.width);
   const height = positiveInteger(map.height);
   if (width == null || height == null || !Array.isArray(map.data)) {
     throw new Error(`Map ${mapId} has invalid dimensions or tile data.`);
   }
-  const rect = mapOverviewChunkTileRect(width, height, chunkX, chunkY);
-  const cacheDir = chunkCacheDir(resolvedWorkflowRoot, resolvedProject);
-  const cacheFile = chunkCacheFile(resolvedWorkflowRoot, resolvedProject, mapId, version, chunkX, chunkY, level);
-  const cacheHit = fs.existsSync(cacheFile);
-  if (!cacheHit) {
-    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-    removeStaleMapChunks(cacheDir, mapId, version);
-    const rendered = renderChunk(context, mapId, map, rect, level);
-    writeFileAtomic(cacheFile, rendered.png);
-  }
-  const logicalWidth = rect.tileWidth * MAP_OVERVIEW_TILE_PX;
-  const logicalHeight = rect.tileHeight * MAP_OVERVIEW_TILE_PX;
-  return {
+  const rendered = renderThumbnail(context, mapId, map);
+  const document: ThumbnailCacheDocument = {
+    schemaVersion: THUMBNAIL_CACHE_SCHEMA_VERSION,
     project: resolvedProject,
     mapId,
     version,
-    chunkX,
-    chunkY,
-    level,
-    logicalX: rect.tileX * MAP_OVERVIEW_TILE_PX,
-    logicalY: rect.tileY * MAP_OVERVIEW_TILE_PX,
-    logicalWidth,
-    logicalHeight,
-    outputWidth: Math.max(1, Math.ceil(logicalWidth / level)),
-    outputHeight: Math.max(1, Math.ceil(logicalHeight / level)),
+    scaleDivisor: THUMBNAIL_SCALE_DIVISOR,
+    width: rendered.width,
+    height: rendered.height,
     mime: 'image/png',
-    resourceUrl: mapOverviewChunkAssetUrl(resolvedProject, mapId, version, chunkX, chunkY, level),
-    cacheHit,
+    dataUrl: `data:image/png;base64,${rendered.png.toString('base64')}`,
     warnings: collectResourceWarnings(context, mapId, map),
   };
+  const cacheFile = thumbnailCacheFile(resolvedWorkflowRoot, resolvedProject, mapId, version);
+  fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+  writeThumbnailCacheAtomic(cacheFile, document);
+  removeStaleMapThumbnails(thumbnailMapCacheDir(resolvedWorkflowRoot, resolvedProject, mapId), version);
+  return thumbnailFromCacheDocument(document, false);
 }
 
-export function readCachedMapOverviewChunk(
+export function readCachedMapOverviewThumbnail(
   workflowRoot: string,
   project: string,
   mapId: number,
   contentVersion: string,
-  chunkX: number,
-  chunkY: number,
-  level: MapOverviewChunkLevel,
-): MapOverviewChunk | null {
-  validateChunkRequest(mapId, contentVersion, chunkX, chunkY, level);
+): MapOverviewThumbnail | null {
+  validateThumbnailRequest(mapId, contentVersion);
   const resolvedProject = path.resolve(project);
   const resolvedWorkflowRoot = path.resolve(workflowRoot);
-  const existing = chunkCacheFile(resolvedWorkflowRoot, resolvedProject, mapId, contentVersion, chunkX, chunkY, level);
+  const existing = thumbnailCacheFile(resolvedWorkflowRoot, resolvedProject, mapId, contentVersion);
   if (!fs.existsSync(existing) || !fs.statSync(existing).isFile()) return null;
-  // Logical geometry requires map size; cache-hit path still needs dimensions for the response contract.
-  const context = buildContext(resolvedWorkflowRoot, resolvedProject);
-  const mapFile = resolveContextFile(context, mapRelativePath(context.dataRootRelative, mapId));
-  if (!mapFile || !fs.existsSync(mapFile)) return null;
-  const map = readJson(mapFile) as MapDocument;
-  const width = positiveInteger(map.width);
-  const height = positiveInteger(map.height);
-  if (width == null || height == null) return null;
-  const rect = mapOverviewChunkTileRect(width, height, chunkX, chunkY);
-  const logicalWidth = rect.tileWidth * MAP_OVERVIEW_TILE_PX;
-  const logicalHeight = rect.tileHeight * MAP_OVERVIEW_TILE_PX;
-  return {
-    project: resolvedProject,
-    mapId,
-    version: contentVersion,
-    chunkX,
-    chunkY,
-    level,
-    logicalX: rect.tileX * MAP_OVERVIEW_TILE_PX,
-    logicalY: rect.tileY * MAP_OVERVIEW_TILE_PX,
-    logicalWidth,
-    logicalHeight,
-    outputWidth: Math.max(1, Math.ceil(logicalWidth / level)),
-    outputHeight: Math.max(1, Math.ceil(logicalHeight / level)),
-    mime: 'image/png',
-    resourceUrl: mapOverviewChunkAssetUrl(resolvedProject, mapId, contentVersion, chunkX, chunkY, level),
-    cacheHit: true,
-    warnings: [],
-  };
+  try {
+    const document = readJson(existing) as Partial<ThumbnailCacheDocument>;
+    if (!isThumbnailCacheDocument(document, resolvedProject, mapId, contentVersion)) {
+      fs.rmSync(existing, { force: true });
+      return null;
+    }
+    removeStaleMapThumbnails(thumbnailMapCacheDir(resolvedWorkflowRoot, resolvedProject, mapId), contentVersion);
+    return thumbnailFromCacheDocument(document as ThumbnailCacheDocument, true);
+  } catch {
+    fs.rmSync(existing, { force: true });
+    return null;
+  }
 }
 
-export async function requestMapOverviewChunk(
+export async function requestMapOverviewThumbnail(
   workflowRoot: string,
   project: string,
   mapId: number,
   contentVersion: string,
-  chunkX: number,
-  chunkY: number,
-  level: MapOverviewChunkLevel,
   sessionId: string,
-): Promise<MapOverviewChunk> {
-  validateChunkRequest(mapId, contentVersion, chunkX, chunkY, level);
-  const cached = readCachedMapOverviewChunk(workflowRoot, project, mapId, contentVersion, chunkX, chunkY, level);
+): Promise<MapOverviewThumbnail> {
+  validateThumbnailRequest(mapId, contentVersion);
+  const cached = readCachedMapOverviewThumbnail(workflowRoot, project, mapId, contentVersion);
   if (cached) return cached;
   const databasePath = getConfiguredDatabasePath();
-  if (!databasePath) throw new Error('Map overview chunk worker requires a configured workspace database.');
-  return chunkCoordinator.request({
+  if (!databasePath) throw new Error('Map overview thumbnail worker requires a configured workspace database.');
+  return thumbnailCoordinator.request({
     workflowRoot: path.resolve(workflowRoot),
     project: path.resolve(project),
     mapId,
     contentVersion,
-    chunkX,
-    chunkY,
-    level,
     databasePath,
-  }, validateChunkSessionId(sessionId));
+  }, validateThumbnailSessionId(sessionId));
 }
 
-export function cancelMapOverviewChunkSession(sessionId: string): void {
-  chunkCoordinator.cancel(validateChunkSessionId(sessionId));
+export function cancelMapOverviewThumbnailSession(sessionId: string): void {
+  thumbnailCoordinator.cancel(validateThumbnailSessionId(sessionId));
+}
+
+export function finalizeMapOverviewThumbnailCache(workflowRoot: string, project: string): void {
+  const legacy = path.join(path.resolve(workflowRoot), 'runtime', 'map-overview-chunks', projectCacheKey(project));
+  if (fs.existsSync(legacy)) {
+    fs.rmSync(legacy, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+  }
 }
 
 function buildContext(workflowRoot: string, project: string): OverviewBuildContext {
@@ -565,16 +552,16 @@ function buildContext(workflowRoot: string, project: string): OverviewBuildConte
   };
 }
 
-function buildChunkContentVersion(
+function buildThumbnailContentVersion(
   context: OverviewBuildContext,
   mapId: number,
   mapFile: string,
   map: MapDocument,
 ): string {
   const tileset = context.tilesets[integer(map.tilesetId, 0)] as TilesetDocument | undefined;
-  const resources = chunkResourcePaths(context, tileset);
+  const resources = thumbnailResourcePaths(context, map, tileset);
   return digest([
-    Buffer.from(`renderer:${CHUNK_RENDERER_VERSION}`),
+    Buffer.from(`renderer:${THUMBNAIL_RENDERER_VERSION}:scale:${THUMBNAIL_SCALE_DIVISOR}`),
     fs.readFileSync(mapFile),
     Buffer.from(JSON.stringify(tileset || null)),
     ...resources.map(fileVersion),
@@ -582,31 +569,50 @@ function buildChunkContentVersion(
   ]).slice(0, 20);
 }
 
-function chunkResourcePaths(
+function thumbnailResourcePaths(
   context: OverviewBuildContext,
+  map: MapDocument,
   tileset?: TilesetDocument,
 ): string[] {
   const paths: string[] = [];
-  for (const name of array(tileset?.tilesetNames).map(String).filter(Boolean)) {
+  const names = array(tileset?.tilesetNames).map(String);
+  for (const slot of usedTilesetSlots(map)) {
+    const name = names[slot];
+    if (!name) continue;
     paths.push(resolveResourceFile(context, 'img', 'tilesets', `${name}.png`));
   }
   return paths;
 }
 
+function usedTilesetSlots(map: MapDocument): number[] {
+  const width = positiveInteger(map.width) || 0;
+  const height = positiveInteger(map.height) || 0;
+  const tileCount = width * height * 4;
+  const slots = new Set<number>();
+  for (const rawTileId of array(map.data).slice(0, tileCount)) {
+    const tileId = integer(rawTileId, 0);
+    if (tileId <= 0) continue;
+    if (tileId < 2048) slots.add(tileId >= 1536 ? 4 : 5 + Math.floor(tileId / 256));
+    else if (tileId < 2816) slots.add(0);
+    else if (tileId < 4352) slots.add(1);
+    else if (tileId < 5888) slots.add(2);
+    else if (tileId < 8192) slots.add(3);
+  }
+  return [...slots].sort((left, right) => left - right);
+}
+
 function collectResourceWarnings(context: OverviewBuildContext, mapId: number, map: MapDocument): string[] {
   const tileset = context.tilesets[integer(map.tilesetId, 0)] as TilesetDocument | undefined;
-  return chunkResourcePaths(context, tileset)
+  return thumbnailResourcePaths(context, map, tileset)
     .filter((file) => !fs.existsSync(file))
     .map((file) => `Map ${mapId} resource is missing: ${path.relative(context.project, file).replaceAll('\\', '/')}`);
 }
 
-function renderChunk(
+function renderThumbnail(
   context: OverviewBuildContext,
   mapId: number,
   map: MapDocument,
-  rect: { tileX: number; tileY: number; tileWidth: number; tileHeight: number },
-  level: MapOverviewChunkLevel,
-): { png: Buffer } {
+): { png: Buffer; width: number; height: number } {
   const width = positiveInteger(map.width);
   const height = positiveInteger(map.height);
   if (width == null || height == null || !Array.isArray(map.data)) {
@@ -626,145 +632,174 @@ function renderChunk(
     tilesetId: integer(map.tilesetId, 0),
     data: map.data.map((value) => integer(value, 0)),
   };
-  return renderMapChunkToPng(mapData, bitmaps, rect.tileX, rect.tileY, rect.tileWidth, rect.tileHeight, level);
+  const outputWidth = width * (MAP_OVERVIEW_TILE_PX / THUMBNAIL_SCALE_DIVISOR);
+  const outputHeight = height * (MAP_OVERVIEW_TILE_PX / THUMBNAIL_SCALE_DIVISOR);
+  const rgba = Buffer.alloc(outputWidth * outputHeight * 4);
+  for (let offset = 3; offset < rgba.length; offset += 4) rgba[offset] = 255;
+  const rendered = renderMapToFittedRgba(mapData, bitmaps, outputWidth, outputHeight, rgba);
+  return {
+    png: encodePng(outputWidth, outputHeight, rendered.rgba),
+    width: outputWidth,
+    height: outputHeight,
+  };
 }
 
-function removeStaleMapChunks(cacheDir: string, mapId: number, currentVersion: string): void {
-  const mapDir = path.join(cacheDir, `Map${String(mapId).padStart(3, '0')}`);
+function removeStaleMapThumbnails(mapDir: string, currentVersion: string): void {
   if (!fs.existsSync(mapDir)) return;
   for (const entry of fs.readdirSync(mapDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) {
-      fs.rmSync(path.join(mapDir, entry.name), { force: true });
-      continue;
-    }
-    if (entry.name === currentVersion) continue;
-    fs.rmSync(path.join(mapDir, entry.name), { recursive: true, force: true });
+    if (entry.isFile() && entry.name === `${currentVersion}.json`) continue;
+    fs.rmSync(path.join(mapDir, entry.name), { recursive: entry.isDirectory(), force: true });
   }
 }
 
-function removeLegacyThumbnailCaches(workflowRoot: string): void {
-  const legacy = path.join(path.resolve(workflowRoot), 'runtime', 'map-overview-thumbnails');
-  if (fs.existsSync(legacy)) fs.rmSync(legacy, { recursive: true, force: true });
+function isThumbnailCacheDocument(
+  value: Partial<ThumbnailCacheDocument>,
+  project: string,
+  mapId: number,
+  version: string,
+): value is ThumbnailCacheDocument {
+  return value.schemaVersion === THUMBNAIL_CACHE_SCHEMA_VERSION
+    && path.resolve(String(value.project || '')).toLocaleLowerCase() === path.resolve(project).toLocaleLowerCase()
+    && value.mapId === mapId
+    && value.version === version
+    && value.scaleDivisor === THUMBNAIL_SCALE_DIVISOR
+    && Number.isInteger(value.width) && Number(value.width) > 0
+    && Number.isInteger(value.height) && Number(value.height) > 0
+    && value.mime === 'image/png'
+    && typeof value.dataUrl === 'string'
+    && value.dataUrl.startsWith('data:image/png;base64,')
+    && Array.isArray(value.warnings)
+    && value.warnings.every((warning) => typeof warning === 'string')
+    && isValidCachedThumbnailPng(value);
+}
+
+function thumbnailFromCacheDocument(document: ThumbnailCacheDocument, cacheHit: boolean): MapOverviewThumbnail {
+  return {
+    project: document.project,
+    mapId: document.mapId,
+    version: document.version,
+    scaleDivisor: document.scaleDivisor,
+    width: document.width,
+    height: document.height,
+    mime: document.mime,
+    dataUrl: document.dataUrl,
+    cacheHit,
+    warnings: document.warnings,
+  };
+}
+
+function isValidCachedThumbnailPng(value: Partial<ThumbnailCacheDocument>): boolean {
+  try {
+    const encoded = String(value.dataUrl).slice('data:image/png;base64,'.length);
+    const decoded = decodePng(Buffer.from(encoded, 'base64'));
+    return decoded.width === value.width && decoded.height === value.height;
+  } catch {
+    return false;
+  }
 }
 
 function projectCacheKey(project: string): string {
   return crypto.createHash('sha256').update(path.resolve(project).toLocaleLowerCase()).digest('hex').slice(0, 20);
 }
 
-export function mapOverviewChunkAssetUrl(
-  project: string,
-  mapId: number,
-  version: string,
-  chunkX: number,
-  chunkY: number,
-  level: MapOverviewChunkLevel,
-): string {
-  validateChunkRequest(mapId, version, chunkX, chunkY, level);
-  const token = Buffer.from(path.resolve(project), 'utf8').toString('base64url');
-  return `rmmv-asset://overview/${token}/${mapId}/${version}/${chunkX}/${chunkY}/${level}.png`;
+function validateThumbnailRequest(mapId: number, version: string): void {
+  if (!Number.isInteger(mapId) || mapId <= 0 || mapId > 999) throw new Error('Invalid map overview thumbnail map id.');
+  if (!/^[a-f0-9]{20}$/.test(version)) throw new Error('Invalid map overview thumbnail version.');
 }
 
-export function resolveMapOverviewChunkFile(
+function thumbnailCacheDir(workflowRoot: string, project: string): string {
+  return path.join(path.resolve(workflowRoot), 'runtime', 'map-overview-thumbnails', projectCacheKey(project));
+}
+
+function thumbnailMapCacheDir(workflowRoot: string, project: string, mapId: number): string {
+  return path.join(thumbnailCacheDir(workflowRoot, project), `Map${String(mapId).padStart(3, '0')}`);
+}
+
+function thumbnailCacheFile(
   workflowRoot: string,
   project: string,
   mapId: number,
   version: string,
-  chunkX: number,
-  chunkY: number,
-  level: MapOverviewChunkLevel,
 ): string {
-  validateChunkRequest(mapId, version, chunkX, chunkY, level);
-  const cacheDir = chunkCacheDir(workflowRoot, project);
-  const file = chunkCacheFile(workflowRoot, project, mapId, version, chunkX, chunkY, level);
-  const relative = path.relative(cacheDir, file);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error('Chunk path is outside allowed cache root.');
+  return path.join(thumbnailMapCacheDir(workflowRoot, project, mapId), `${version}.json`);
+}
+
+function writeThumbnailCacheAtomic(file: string, document: ThumbnailCacheDocument): void {
+  const nonce = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+  const temporary = `${file}.tmp.${nonce}`;
+  const previous = `${file}.previous.${nonce}`;
+  fs.writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+  let previousMoved = false;
+  try {
+    if (fs.existsSync(file)) {
+      fs.renameSync(file, previous);
+      previousMoved = true;
+    }
+    fs.renameSync(temporary, file);
+    if (previousMoved) fs.rmSync(previous, { force: true });
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    if (previousMoved && !fs.existsSync(file) && fs.existsSync(previous)) fs.renameSync(previous, file);
+    throw error;
   }
-  if (relative.split(path.sep).includes('..')) throw new Error('Chunk path is outside allowed cache root.');
-  if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw new Error('Map overview chunk not found.');
-  return file;
-}
-
-function validateChunkRequest(
-  mapId: number,
-  version: string,
-  chunkX: number,
-  chunkY: number,
-  level: MapOverviewChunkLevel,
-): void {
-  if (!Number.isInteger(mapId) || mapId <= 0 || mapId > 999) throw new Error('Invalid map overview chunk map id.');
-  if (!/^[a-f0-9]{20}$/.test(version)) throw new Error('Invalid map overview chunk version.');
-  if (!Number.isInteger(chunkX) || !Number.isInteger(chunkY) || chunkX < 0 || chunkY < 0) {
-    throw new Error('Invalid map overview chunk coordinates.');
-  }
-  if (!isMapOverviewChunkLevel(level)) throw new Error('Invalid map overview chunk level.');
-}
-
-function chunkCacheDir(workflowRoot: string, project: string): string {
-  return path.join(path.resolve(workflowRoot), 'runtime', 'map-overview-chunks', projectCacheKey(project));
-}
-
-function chunkCacheFile(
-  workflowRoot: string,
-  project: string,
-  mapId: number,
-  version: string,
-  chunkX: number,
-  chunkY: number,
-  level: MapOverviewChunkLevel,
-): string {
-  return path.join(
-    chunkCacheDir(workflowRoot, project),
-    `Map${String(mapId).padStart(3, '0')}`,
-    version,
-    `${chunkX}_${chunkY}_${level}.png`,
-  );
 }
 
 function snapshotCacheFile(workflowRoot: string, project: string): string {
-  return path.join(path.resolve(workflowRoot), 'runtime', 'map-overview-cache', projectCacheKey(project), 'snapshot-v3.json');
+  return path.join(
+    path.resolve(workflowRoot),
+    'runtime',
+    'map-overview-cache',
+    projectCacheKey(project),
+    `snapshot-v${SNAPSHOT_CACHE_SCHEMA_VERSION}.json`,
+  );
 }
 
-interface ChunkJobInput {
+interface ThumbnailJobInput {
   workflowRoot: string;
   project: string;
   mapId: number;
   contentVersion: string;
-  chunkX: number;
-  chunkY: number;
-  level: MapOverviewChunkLevel;
   databasePath: string;
 }
 
-interface ChunkSubscriber {
-  promise: Promise<MapOverviewChunk>;
-  resolve: (value: MapOverviewChunk) => void;
+interface ThumbnailSubscriber {
+  promise: Promise<MapOverviewThumbnail>;
+  resolve: (value: MapOverviewThumbnail) => void;
   reject: (error: Error) => void;
 }
 
-interface ChunkJob {
+interface ThumbnailJob {
   key: string;
   requestId: number;
-  input: ChunkJobInput;
-  subscribers: Map<string, ChunkSubscriber>;
+  input: ThumbnailJobInput;
+  subscribers: Map<string, ThumbnailSubscriber>;
 }
 
-const CHUNK_WORKER_FILE = import.meta.url.endsWith('.ts')
+const THUMBNAIL_WORKER_FILE = import.meta.url.endsWith('.ts')
   ? './map-overview-thumbnail-worker.ts'
   : './map-overview-thumbnail-worker.js';
-const CHUNK_WORKER_URL = new URL(CHUNK_WORKER_FILE, import.meta.url);
-const CHUNK_WORKER_EXEC_ARGV = ['--experimental-strip-types', '--experimental-transform-types'];
+const THUMBNAIL_WORKER_URL = new URL(THUMBNAIL_WORKER_FILE, import.meta.url);
+const THUMBNAIL_WORKER_EXEC_ARGV = ['--experimental-strip-types', '--experimental-transform-types'];
 
-class MapOverviewChunkCoordinator {
-  private worker: Worker | null = null;
+interface ThumbnailWorkerSlot {
+  worker: Worker;
+  job: ThumbnailJob | null;
+}
+
+export function mapOverviewThumbnailWorkerConcurrency(parallelism = availableParallelism()): number {
+  return Math.max(1, Math.min(4, parallelism - 1));
+}
+
+class MapOverviewThumbnailCoordinator {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
-  private current: ChunkJob | null = null;
-  private readonly queued: ChunkJob[] = [];
-  private readonly jobsByKey = new Map<string, ChunkJob>();
+  private readonly slots: ThumbnailWorkerSlot[] = [];
+  private readonly queued: ThumbnailJob[] = [];
+  private readonly jobsByKey = new Map<string, ThumbnailJob>();
   private nextRequestId = 1;
+  private readonly concurrency = mapOverviewThumbnailWorkerConcurrency();
 
-  request(input: ChunkJobInput, sessionId: string): Promise<MapOverviewChunk> {
-    const key = chunkJobKey(input);
+  request(input: ThumbnailJobInput, sessionId: string): Promise<MapOverviewThumbnail> {
+    const key = thumbnailJobKey(input);
     let job = this.jobsByKey.get(key);
     if (!job) {
       job = { key, requestId: this.nextRequestId++, input, subscribers: new Map() };
@@ -773,9 +808,9 @@ class MapOverviewChunkCoordinator {
     }
     const existing = job.subscribers.get(sessionId);
     if (existing) return existing.promise;
-    let resolve!: (value: MapOverviewChunk) => void;
+    let resolve!: (value: MapOverviewThumbnail) => void;
     let reject!: (error: Error) => void;
-    const promise = new Promise<MapOverviewChunk>((resolvePromise, rejectPromise) => {
+    const promise = new Promise<MapOverviewThumbnail>((resolvePromise, rejectPromise) => {
       resolve = resolvePromise;
       reject = rejectPromise;
     });
@@ -785,7 +820,7 @@ class MapOverviewChunkCoordinator {
   }
 
   cancel(sessionId: string): void {
-    const cancellation = chunkCancellationError();
+    const cancellation = thumbnailCancellationError();
     for (const job of [...this.jobsByKey.values()]) {
       const subscriber = job.subscribers.get(sessionId);
       if (!subscriber) continue;
@@ -795,43 +830,57 @@ class MapOverviewChunkCoordinator {
       this.jobsByKey.delete(job.key);
       const queueIndex = this.queued.indexOf(job);
       if (queueIndex >= 0) this.queued.splice(queueIndex, 1);
-      if (this.current === job) this.abortCurrentWorker();
+      const slot = this.slots.find(candidate => candidate.job === job);
+      if (slot) this.abortSlot(slot);
     }
+    this.pump();
+    this.scheduleIdleShutdown();
   }
 
   private pump(): void {
-    if (this.current) return;
-    let next = this.queued.shift() || null;
-    while (next && next.subscribers.size === 0) next = this.queued.shift() || null;
-    if (!next) return;
-    this.current = next;
-    this.ensureWorker().postMessage({ requestId: next.requestId, ...next.input } satisfies MapOverviewChunkWorkerRequest);
-  }
-
-  private ensureWorker(): Worker {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = null;
-    if (this.worker) return this.worker;
-    const worker = new Worker(CHUNK_WORKER_URL, { execArgv: CHUNK_WORKER_EXEC_ARGV });
-    worker.unref();
-    worker.on('message', (message: MapOverviewChunkWorkerResponse) => this.handleMessage(message));
-    worker.on('error', error => this.handleWorkerFailure(error));
-    worker.on('exit', code => {
-      if (this.worker !== worker) return;
-      this.worker = null;
-      if (code !== 0) this.handleWorkerFailure(new Error(`Map overview chunk worker exited with code ${code}.`));
-    });
-    this.worker = worker;
-    return worker;
+    while (true) {
+      let next = this.queued.shift() || null;
+      while (next && next.subscribers.size === 0) next = this.queued.shift() || null;
+      if (!next) return;
+      let slot = this.slots.find(candidate => candidate.job == null);
+      if (!slot && this.slots.length < this.concurrency) slot = this.createSlot();
+      if (!slot) {
+        this.queued.unshift(next);
+        return;
+      }
+      slot.job = next;
+      slot.worker.postMessage({ requestId: next.requestId, ...next.input } satisfies MapOverviewThumbnailWorkerRequest);
+    }
   }
 
-  private handleMessage(message: MapOverviewChunkWorkerResponse): void {
-    const job = this.current;
+  private createSlot(): ThumbnailWorkerSlot {
+    const worker = new Worker(THUMBNAIL_WORKER_URL, { execArgv: THUMBNAIL_WORKER_EXEC_ARGV });
+    worker.unref();
+    const slot: ThumbnailWorkerSlot = { worker, job: null };
+    worker.on('message', (message: MapOverviewThumbnailWorkerResponse) => this.handleMessage(slot, message));
+    worker.on('error', error => this.handleWorkerFailure(slot, error));
+    worker.on('exit', code => {
+      if (!this.slots.includes(slot)) return;
+      const job = slot.job;
+      this.removeSlot(slot);
+      if (job) {
+        this.rejectJob(job, new Error(`Map overview thumbnail worker exited before completing the request (code ${code}).`));
+      }
+      this.pump();
+    });
+    this.slots.push(slot);
+    return slot;
+  }
+
+  private handleMessage(slot: ThumbnailWorkerSlot, message: MapOverviewThumbnailWorkerResponse): void {
+    const job = slot.job;
     if (!job || message.requestId !== job.requestId) return;
-    this.current = null;
+    slot.job = null;
     this.jobsByKey.delete(job.key);
     if (message.ok) {
-      for (const subscriber of job.subscribers.values()) subscriber.resolve(message.chunk);
+      for (const subscriber of job.subscribers.values()) subscriber.resolve(message.thumbnail);
     } else {
       const error = new Error(message.error);
       for (const subscriber of job.subscribers.values()) subscriber.reject(error);
@@ -840,76 +889,61 @@ class MapOverviewChunkCoordinator {
     this.scheduleIdleShutdown();
   }
 
-  private handleWorkerFailure(error: Error): void {
-    const worker = this.worker;
-    if (worker) {
-      worker.removeAllListeners();
-      void worker.terminate();
-      this.worker = null;
-    }
-    const job = this.current;
-    this.current = null;
-    if (job) {
-      this.jobsByKey.delete(job.key);
-      for (const subscriber of job.subscribers.values()) subscriber.reject(error);
-    }
+  private handleWorkerFailure(slot: ThumbnailWorkerSlot, error: Error): void {
+    const job = slot.job;
+    this.abortSlot(slot);
+    if (job) this.rejectJob(job, error);
     this.pump();
     this.scheduleIdleShutdown();
   }
 
-  private abortCurrentWorker(): void {
-    const job = this.current;
-    if (job) {
-      this.current = null;
-      this.jobsByKey.delete(job.key);
-    }
-    const worker = this.worker;
-    if (worker) {
-      worker.removeAllListeners();
-      void worker.terminate();
-      this.worker = null;
-    }
-    this.pump();
-    this.scheduleIdleShutdown();
+  private rejectJob(job: ThumbnailJob, error: Error): void {
+    this.jobsByKey.delete(job.key);
+    for (const subscriber of job.subscribers.values()) subscriber.reject(error);
+  }
+
+  private abortSlot(slot: ThumbnailWorkerSlot): void {
+    this.removeSlot(slot);
+    slot.worker.removeAllListeners();
+    void slot.worker.terminate();
+  }
+
+  private removeSlot(slot: ThumbnailWorkerSlot): void {
+    const index = this.slots.indexOf(slot);
+    if (index >= 0) this.slots.splice(index, 1);
+    slot.job = null;
   }
 
   private scheduleIdleShutdown(): void {
-    if (this.current || this.queued.length || !this.worker || this.idleTimer) return;
+    if (this.slots.some(slot => slot.job) || this.queued.length || !this.slots.length || this.idleTimer) return;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      if (this.current || this.queued.length) return;
-      const worker = this.worker;
-      if (!worker) return;
-      worker.removeAllListeners();
-      void worker.terminate();
-      this.worker = null;
+      if (this.slots.some(slot => slot.job) || this.queued.length) return;
+      for (const slot of [...this.slots]) this.abortSlot(slot);
     }, 1_000);
   }
 }
 
-const chunkCoordinator = new MapOverviewChunkCoordinator();
+const thumbnailCoordinator = new MapOverviewThumbnailCoordinator();
 
-function chunkJobKey(input: ChunkJobInput): string {
+function thumbnailJobKey(input: ThumbnailJobInput): string {
   return [
     input.workflowRoot,
     input.project,
     String(input.mapId),
     input.contentVersion,
-    String(input.chunkX),
-    String(input.chunkY),
-    String(input.level),
   ].join('\0');
 }
 
-function validateChunkSessionId(value: string): string {
+function validateThumbnailSessionId(value: string): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) {
-    throw new Error('Invalid map overview chunk session id.');
+    throw new Error('Invalid map overview thumbnail session id.');
   }
   return value;
 }
 
-function chunkCancellationError(): Error {
-  const error = new Error('Map overview chunk request was canceled.');
+function thumbnailCancellationError(): Error {
+  const error = new Error('Map overview thumbnail request was canceled.');
   error.name = 'AbortError';
   return error;
 }
@@ -946,6 +980,7 @@ function removeLegacySnapshotCaches(currentCacheFile: string): void {
 function isSnapshotCacheDocument(value: Partial<SnapshotCacheDocument>, project: string): value is SnapshotCacheDocument {
   const snapshot = value.snapshot as Partial<MapOverviewSnapshot> | undefined;
   return value.schemaVersion === SNAPSHOT_CACHE_SCHEMA_VERSION
+    && value.thumbnailRendererVersion === THUMBNAIL_RENDERER_VERSION
     && path.resolve(String(value.project || '')).toLocaleLowerCase() === path.resolve(project).toLocaleLowerCase()
     && Array.isArray(value.dependencies)
     && value.dependencies.every((dependency) => Boolean(dependency)
@@ -976,16 +1011,25 @@ function writeSnapshotCache(cacheFile: string, document: SnapshotCacheDocument):
   writeJsonAtomic(cacheFile, document);
 }
 
-function dependenciesMatch(readIndex: ProjectReadFileIndex, dependencies: SnapshotDependency[]): boolean {
+function dependenciesMatch(
+  readIndex: ProjectReadFileIndex,
+  dependencies: SnapshotDependency[],
+  reportProgress?: (progress: Pick<MapOverviewScanProgress, 'completed' | 'total'>) => void,
+): boolean {
   try {
-    return dependencies.every((dependency) => {
+    reportProgress?.({ completed: 0, total: dependencies.length });
+    for (let index = 0; index < dependencies.length; index += 1) {
+      const dependency = dependencies[index];
       const currentFile = readIndex.resolve(dependency.logicalPath);
       const current = dependencyRecord(dependency.logicalPath, currentFile);
-      return pathIdentity(current.resolvedPath) === pathIdentity(dependency.resolvedPath)
+      const matches = pathIdentity(current.resolvedPath) === pathIdentity(dependency.resolvedPath)
         && current.exists === dependency.exists
         && current.size === dependency.size
         && current.mtimeMs === dependency.mtimeMs;
-    });
+      reportProgress?.({ completed: index + 1, total: dependencies.length });
+      if (!matches) return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -1031,22 +1075,6 @@ function normalizeLogicalPath(value: string): string {
 
 function pathIdentity(value: string | null): string | null {
   return value ? path.resolve(value).toLocaleLowerCase() : null;
-}
-
-function writeFileAtomic(file: string, content: Buffer): void {
-  const temporary = `${file}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
-  fs.writeFileSync(temporary, content);
-  try {
-    fs.renameSync(temporary, file);
-  } catch (error) {
-    try {
-      fs.copyFileSync(temporary, file);
-      fs.rmSync(temporary, { force: true });
-    } catch {
-      fs.rmSync(temporary, { force: true });
-      throw error;
-    }
-  }
 }
 
 function mapRelativePath(dataRootRelative: string, mapId: number): string {

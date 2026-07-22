@@ -220,91 +220,7 @@ function renderMapToPng(
   };
 }
 
-/**
- * Render one map overview chunk (tile layers 0-3 only) without allocating a full-map buffer.
- * `level` downsamples logical pixels (1 = native 48px tiles). Chunk tile origin is inclusive.
- */
-function renderMapChunkToPng(
-  map: MapData,
-  bitmaps: (DecodedPng | null)[],
-  tileX0: number,
-  tileY0: number,
-  tileWidth: number,
-  tileHeight: number,
-  level: number,
-): { png: Buffer; width: number; height: number; drawnTiles: number; logicalWidth: number; logicalHeight: number } {
-  if (![tileX0, tileY0, tileWidth, tileHeight, level].every((value) => Number.isInteger(value))) {
-    throw new Error('Map overview chunk coordinates and level must be integers.');
-  }
-  if (tileWidth <= 0 || tileHeight <= 0) throw new Error('Map overview chunk size must be positive.');
-  if (tileX0 < 0 || tileY0 < 0 || tileX0 + tileWidth > map.width || tileY0 + tileHeight > map.height) {
-    throw new Error('Map overview chunk is outside the map bounds.');
-  }
-  if (![1, 2, 4, 8, 16, 32, 64, 128].includes(level)) {
-    throw new Error('Map overview chunk level must be one of 1,2,4,8,16,32,64,128.');
-  }
-  const tileSize = 48;
-  const logicalWidth = tileWidth * tileSize;
-  const logicalHeight = tileHeight * tileSize;
-  const native = Buffer.alloc(logicalWidth * logicalHeight * 4);
-  for (let index = 0; index < logicalWidth * logicalHeight; index += 1) native[index * 4 + 3] = 255;
-  const layerSize = map.width * map.height;
-  const blit = (src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number) =>
-    blitImage(src, sx, sy, sw, sh, native, logicalWidth, logicalHeight, dx, dy);
-  let drawnTiles = 0;
-  for (let z = 0; z < 4; z += 1) {
-    for (let y = 0; y < tileHeight; y += 1) {
-      for (let x = 0; x < tileWidth; x += 1) {
-        const mapX = tileX0 + x;
-        const mapY = tileY0 + y;
-        const tileId = map.data[z * layerSize + mapY * map.width + mapX];
-        if (!tileId || tileId <= 0) continue;
-        if (tileId >= 2048) drawAutotile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
-        else drawNormalTile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
-        drawnTiles += 1;
-      }
-    }
-  }
-  const outputWidth = Math.max(1, Math.ceil(logicalWidth / level));
-  const outputHeight = Math.max(1, Math.ceil(logicalHeight / level));
-  if (level === 1) {
-    return {
-      png: encodePng(logicalWidth, logicalHeight, native),
-      width: logicalWidth,
-      height: logicalHeight,
-      drawnTiles,
-      logicalWidth,
-      logicalHeight,
-    };
-  }
-  const downsampled = Buffer.alloc(outputWidth * outputHeight * 4);
-  for (let y = 0; y < outputHeight; y += 1) {
-    for (let x = 0; x < outputWidth; x += 1) {
-      const srcX = Math.min(logicalWidth - 1, x * level);
-      const srcY = Math.min(logicalHeight - 1, y * level);
-      const srcIndex = (srcY * logicalWidth + srcX) * 4;
-      const destIndex = (y * outputWidth + x) * 4;
-      downsampled[destIndex] = native[srcIndex];
-      downsampled[destIndex + 1] = native[srcIndex + 1];
-      downsampled[destIndex + 2] = native[srcIndex + 2];
-      downsampled[destIndex + 3] = native[srcIndex + 3];
-    }
-  }
-  return {
-    png: encodePng(outputWidth, outputHeight, downsampled),
-    width: outputWidth,
-    height: outputHeight,
-    drawnTiles,
-    logicalWidth,
-    logicalHeight,
-  };
-}
-
-/**
- * Render the map layers directly into a fixed-size RGBA target. Unlike
- * renderMapToPng, this never allocates a native-size full-map buffer, so its
- * peak pixel memory is bounded by the requested output dimensions.
- */
+/** Render map layers directly into a fitted RGBA target without a native-size full-map buffer. */
 function renderMapToFittedRgba(
   map: MapData,
   bitmaps: (DecodedPng | null)[],
@@ -737,7 +653,6 @@ function renderMarkdown(report: MapRenderReport): string {
 export {
   runMapRender,
   renderMapToPng,
-  renderMapChunkToPng,
   renderMapToFittedRgba,
   fitMapToTarget,
   blitImageScaled,

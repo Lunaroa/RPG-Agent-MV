@@ -2,7 +2,9 @@ import type { MapOverviewLayoutId } from '@contract/types'
 
 export type { MapOverviewLayoutId }
 
-export const DEFAULT_MAP_OVERVIEW_LAYOUT_ID: MapOverviewLayoutId = 'force-atlas2'
+export type MapOverviewLibraryLayoutId = Exclude<MapOverviewLayoutId, 'layered-grid'>
+
+export const DEFAULT_MAP_OVERVIEW_LAYOUT_ID: MapOverviewLayoutId = 'layered-grid'
 
 /** Worker-safe Expr path: each G6 node must set `data.layoutSize = [width, collisionHeight]`. */
 export const MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR = 'node.data.layoutSize'
@@ -15,6 +17,7 @@ export const MAP_OVERVIEW_GRID_SORT_BY_EXPR =
   'nodeA.data.mapId < nodeB.data.mapId ? -1 : (nodeA.data.mapId > nodeB.data.mapId ? 1 : 0)'
 
 export const MAP_OVERVIEW_LAYOUT_IDS: readonly MapOverviewLayoutId[] = [
+  'layered-grid',
   'force-atlas2',
   'd3-force',
   'antv-dagre',
@@ -29,6 +32,7 @@ export interface MapOverviewLayoutDescriptor {
 }
 
 export const MAP_OVERVIEW_LAYOUTS: readonly MapOverviewLayoutDescriptor[] = [
+  { id: 'layered-grid', labelKey: 'mapOverview.layout.layeredGrid' },
   { id: 'force-atlas2', labelKey: 'mapOverview.layout.forceAtlas2' },
   { id: 'd3-force', labelKey: 'mapOverview.layout.d3Force' },
   { id: 'antv-dagre', labelKey: 'mapOverview.layout.antvDagre' },
@@ -45,9 +49,14 @@ export const MAP_OVERVIEW_LAYOUT_CONFIRM_I18N = {
 } as const
 
 const LAYOUT_ID_SET = new Set<string>(MAP_OVERVIEW_LAYOUT_IDS)
+const LIBRARY_LAYOUT_ID_SET = new Set<string>(MAP_OVERVIEW_LAYOUT_IDS.filter((id) => id !== 'layered-grid'))
 
 export function isMapOverviewLayoutId(value: unknown): value is MapOverviewLayoutId {
   return typeof value === 'string' && LAYOUT_ID_SET.has(value)
+}
+
+export function isMapOverviewLibraryLayoutId(value: unknown): value is MapOverviewLibraryLayoutId {
+  return typeof value === 'string' && LIBRARY_LAYOUT_ID_SET.has(value)
 }
 
 export function parseMapOverviewLayoutId(
@@ -93,11 +102,11 @@ export function sortMapOverviewLayoutNodesByMapId<T extends { mapId: number }>(n
 
 /**
  * Plain layout option bag shared by Electron main (settings) and renderer.
- * Intentionally has no runtime dependency on `@antv/g6` / `@antv/layout`.
+ * Intentionally has no runtime dependency on the SVG renderer or `@antv/layout`.
  */
-export type MapOverviewG6LayoutOptions = {
-  type: MapOverviewLayoutId
-  enableWorker: true
+export type MapOverviewLibraryLayoutOptions = {
+  type: MapOverviewLibraryLayoutId
+  enableWorker: false
   width?: number
   height?: number
   nodeSize?: string
@@ -124,8 +133,8 @@ function resolveSpacing(ctx: MapOverviewLayoutContext): number {
     : DEFAULT_NODE_SPACING
 }
 
-function viewportFields(ctx: MapOverviewLayoutContext): Pick<MapOverviewG6LayoutOptions, 'width' | 'height'> {
-  const out: Pick<MapOverviewG6LayoutOptions, 'width' | 'height'> = {}
+function viewportFields(ctx: MapOverviewLayoutContext): Pick<MapOverviewLibraryLayoutOptions, 'width' | 'height'> {
+  const out: Pick<MapOverviewLibraryLayoutOptions, 'width' | 'height'> = {}
   if (typeof ctx.width === 'number' && Number.isFinite(ctx.width) && ctx.width > 0) out.width = ctx.width
   if (typeof ctx.height === 'number' && Number.isFinite(ctx.height) && ctx.height > 0) out.height = ctx.height
   return out
@@ -166,10 +175,10 @@ export function computeMapOverviewCircularRadius(
 }
 
 export function buildMapOverviewLayoutOptions(
-  id: MapOverviewLayoutId,
+  id: MapOverviewLibraryLayoutId,
   ctx: MapOverviewLayoutContext,
-): MapOverviewG6LayoutOptions {
-  if (!isMapOverviewLayoutId(id)) {
+): MapOverviewLibraryLayoutOptions {
+  if (!isMapOverviewLibraryLayoutId(id)) {
     throw new Error(`Unknown map overview layout id: ${String(id)}`)
   }
   const spacing = resolveSpacing(ctx)
@@ -183,7 +192,7 @@ export function buildMapOverviewLayoutOptions(
     case 'force-atlas2':
       return {
         type: 'force-atlas2',
-        enableWorker: true,
+        enableWorker: false,
         preventOverlap: true,
         barnesHut: true,
         ...sizeAware,
@@ -192,7 +201,7 @@ export function buildMapOverviewLayoutOptions(
     case 'd3-force':
       return {
         type: 'd3-force',
-        enableWorker: true,
+        enableWorker: false,
         preventOverlap: true,
         collideStrength: 1,
         ...sizeAware,
@@ -203,7 +212,7 @@ export function buildMapOverviewLayoutOptions(
       const avg = averageNodeExtent(ctx.nodes)
       return {
         type: 'antv-dagre',
-        enableWorker: true,
+        enableWorker: false,
         rankdir: 'LR',
         nodeSize: MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR,
         nodesep: Math.max(spacing, Math.round(avg.height * 0.08)),
@@ -214,7 +223,7 @@ export function buildMapOverviewLayoutOptions(
     case 'grid':
       return {
         type: 'grid',
-        enableWorker: true,
+        enableWorker: false,
         preventOverlap: true,
         condense: true,
         sortBy: MAP_OVERVIEW_GRID_SORT_BY_EXPR,
@@ -224,7 +233,7 @@ export function buildMapOverviewLayoutOptions(
     case 'circular':
       return {
         type: 'circular',
-        enableWorker: true,
+        enableWorker: false,
         // Data order must already be mapId-sorted (see sortMapOverviewLayoutNodesByMapId).
         ordering: null,
         radius: computeMapOverviewCircularRadius(ctx.nodes, spacing),

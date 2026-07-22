@@ -589,6 +589,10 @@ function inspectElectronArtifactStructure(check: ReleaseArtifactCheck, artifactR
     "resources/app/node_modules/which/package.json",
     "resources/app/node_modules/isexe/package.json",
     "resources/app/src/backend/node_modules/@modelcontextprotocol/sdk/package.json",
+    "resources/app/src/backend/node_modules/sharp/package.json",
+    "resources/app/src/backend/node_modules/@img/sharp-win32-x64/package.json",
+    "resources/app/src/backend/node_modules/@img/sharp-win32-x64/lib/libvips-42.dll",
+    "resources/app/src/backend/node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.3.node",
     "resources/app/src/backend/node_modules/zod/package.json",
   ];
   for (const rel of requiredAppFiles) {

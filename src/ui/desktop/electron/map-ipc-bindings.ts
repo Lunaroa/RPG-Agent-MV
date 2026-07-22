@@ -1,6 +1,12 @@
 import path from 'node:path';
 import { normalizeProductLanguage, type ProductLanguage } from '../../../contract/i18n.ts';
-import type { EventSearchOptions, WorkspaceSurfaceVersionRequest } from '../../../contract/types.ts';
+import type {
+  EventSearchOptions,
+  MapOverviewPngExportScene,
+  MapOverviewPngExportStartResult,
+  MapOverviewScanProgressEvent,
+  WorkspaceSurfaceVersionRequest,
+} from '../../../contract/types.ts';
 import { electronText } from './electronLocalization.ts';
 import { invokeDesktop } from './ipc-desktop-error.ts';
 
@@ -13,6 +19,8 @@ export interface ProjectIpcOptions {
   selectProjectDirectory?: (event: unknown) => Promise<string | null>;
   selectPluginFile?: (event: unknown) => Promise<string | null>;
   selectAssetFile?: (event: unknown, category: string, extensions: string[]) => Promise<string | null>;
+  selectMapOverviewExportTarget?: (event: unknown, defaultName: string) => Promise<string | null>;
+  revealMapOverviewExport?: (outputPath: string) => void;
   openProjectDirectory?: (projectPath: string) => Promise<void>;
   productLanguage?: () => ProductLanguage;
   withProductLanguage: <T>(language: ProductLanguage, fn: () => T) => T;
@@ -46,8 +54,13 @@ export const MAP_IPC_CHANNELS = [
   'maps:tilesets',
   'maps:get',
   'maps:overview',
-  'maps:overviewChunk',
-  'maps:cancelOverviewChunks',
+  'maps:overviewThumbnail',
+  'maps:cancelOverviewThumbnails',
+  'maps:finalizeOverviewThumbnails',
+  'maps:overviewExportStart',
+  'maps:overviewExportStatus',
+  'maps:overviewExportCancel',
+  'maps:overviewExportReveal',
   'maps:create',
   'maps:importFromLibrary',
   'maps:importPackageFromLibrary',
@@ -134,6 +147,14 @@ export const MAP_IPC_CHANNELS = [
   'storyOutline:get',
   'storyOutline:set',
 ] as const;
+
+function sanitizeExportFileName(value: unknown): string {
+  const sanitized = String(value || 'project')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+    .replace(/[. ]+$/g, '')
+    .trim();
+  return sanitized || 'project';
+}
 
 export function registerMapIpcHandlers(
   ipc: IpcRegistrar,
@@ -232,16 +253,66 @@ export function registerMapIpcHandlers(
   handle('maps:tilesets', (_event, value?: string) => desktop.maps.buildTilesetIndex(workflowRoot, project(value)));
   handle('maps:get', (_event, mapId: number, value?: string) =>
     desktop.maps.buildMapPayload(workflowRoot, project(value), mapId));
-  handle('maps:overview', (_event, value?: string) =>
-    desktop.mapOverview.buildMapOverviewSnapshot(workflowRoot, project(value)));
-  handle('maps:overviewChunk', (_event, mapId: number, version: string, chunkX: number, chunkY: number, level: 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128, value: string | undefined, sessionId: string) => {
+  handle('maps:overview', (event, value?: string, sessionId?: string) => {
+    const progressSessionId = validateOverviewProgressSessionId(sessionId);
+    return desktop.mapOverview.buildMapOverviewSnapshot(
+      workflowRoot,
+      project(value),
+      progressSessionId
+        ? (progress: Omit<MapOverviewScanProgressEvent, 'sessionId'>) => {
+          const sender = event?.sender as { isDestroyed?: () => boolean; send?: (channel: string, payload: unknown) => void } | undefined;
+          if (!sender?.send || sender.isDestroyed?.()) return;
+          sender.send('maps:overviewProgress', { sessionId: progressSessionId, ...progress } satisfies MapOverviewScanProgressEvent);
+        }
+        : undefined,
+    );
+  });
+  handle('maps:overviewThumbnail', (_event, mapId: number, version: string, value: string | undefined, sessionId: string) => {
     const resolved = project(value);
     assertRegisteredProject(resolved);
-    return desktop.mapOverview.requestMapOverviewChunk(workflowRoot, resolved, mapId, version, chunkX, chunkY, level, sessionId);
+    return desktop.mapOverview.requestMapOverviewThumbnail(workflowRoot, resolved, mapId, version, sessionId);
   });
-  handle('maps:cancelOverviewChunks', (_event, sessionId: string) => {
-    desktop.mapOverview.cancelMapOverviewChunkSession(sessionId);
+  handle('maps:cancelOverviewThumbnails', (_event, sessionId: string) => {
+    desktop.mapOverview.cancelMapOverviewThumbnailSession(sessionId);
     return { canceled: true };
+  });
+  handle('maps:finalizeOverviewThumbnails', (_event, value?: string) => {
+    const resolved = project(value);
+    assertRegisteredProject(resolved);
+    desktop.mapOverview.finalizeMapOverviewThumbnailCache(workflowRoot, resolved);
+    return { finalized: true };
+  });
+  handle('maps:overviewExportStart', async (event, scene: MapOverviewPngExportScene): Promise<MapOverviewPngExportStartResult> => {
+    if (!scene || typeof scene !== 'object') throw new Error('Map overview export scene is required.');
+    const resolved = project(scene.project);
+    assertRegisteredProject(resolved);
+    if (!options.selectMapOverviewExportTarget) throw new Error('Map overview PNG export is unavailable.');
+    const target = await options.selectMapOverviewExportTarget(event, `${sanitizeExportFileName(scene.projectName)}-map-overview.png`);
+    if (!target) return { canceled: true, status: null };
+    const sender = event?.sender as { isDestroyed?: () => boolean; send?: (channel: string, payload: unknown) => void } | undefined;
+    const status = desktop.mapOverviewExport.startMapOverviewPngExport({
+      workflowRoot,
+      project: resolved,
+      outputPath: target,
+      scene: { ...scene, project: resolved },
+      onStatus: (nextStatus: unknown) => {
+        if (!sender?.send || sender.isDestroyed?.()) return;
+        sender.send('maps:overviewExportProgress', nextStatus);
+      },
+    });
+    return { canceled: false, status };
+  });
+  handle('maps:overviewExportStatus', () => desktop.mapOverviewExport.getMapOverviewPngExportStatus());
+  handle('maps:overviewExportCancel', (_event, requestId: string) =>
+    desktop.mapOverviewExport.cancelMapOverviewPngExport(requestId));
+  handle('maps:overviewExportReveal', (_event, requestId: string) => {
+    const status = desktop.mapOverviewExport.getMapOverviewPngExportStatus();
+    if (!status || status.requestId !== requestId || status.phase !== 'completed' || !status.outputPath) {
+      throw new Error('The completed map overview PNG export was not found.');
+    }
+    if (!options.revealMapOverviewExport) throw new Error('Showing exported files is unavailable.');
+    options.revealMapOverviewExport(status.outputPath);
+    return { revealed: true };
   });
   handle('maps:create', (_event, properties: Record<string, unknown>, value?: string) => desktop.maps.createMapDraft(workflowRoot, project(value), properties));
   handle('maps:importFromLibrary', (_event, assetId: string, parentMapId?: number | null, properties?: Record<string, unknown>, value?: string) => desktop.maps.importMapDraftFromLibrary(workflowRoot, project(value), assetId, { ...(properties || {}), parentId: parentMapId || 0 }));
@@ -448,6 +519,14 @@ export function registerMapIpcHandlers(
 
   handle('storyOutline:get', (_event, value?: string) => desktop.outline.getStoryOutline(workflowRoot, project(value)));
   handle('storyOutline:set', (_event, payload: Record<string, unknown>, value?: string) => desktop.outline.upsertStoryOutline(workflowRoot, project(value), payload));
+}
+
+function validateOverviewProgressSessionId(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) {
+    throw new Error('Invalid map overview progress session id.');
+  }
+  return value;
 }
 
 export function cleanupMapIpcHandlers(ipc: IpcRegistrar): void {

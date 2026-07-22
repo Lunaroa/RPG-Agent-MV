@@ -88,7 +88,6 @@ RPG Agent MV 用户手册
 | [5.1-questions.md](./5-faq/5.1-questions.md) | 高频问题 |
 | [5.2-project-detection.md](./5-faq/5.2-project-detection.md) | 项目无法识别时的排查步骤 |
 | [5.3-model-check.md](./5-faq/5.3-model-check.md) | 模型不可用、运行失败和本地状态冲突 |
-| [5.4-mz-official-evidence.md](./5-faq/5.4-mz-official-evidence.md) | MZ 1.10.0 官方要求、实现位置与定向测试证据 |
 
 ## 快速入口
 
@@ -98,7 +97,6 @@ RPG Agent MV 用户手册
 - 需求确认：[3.1 需求描述与确认](./3-agent-workflow/3.1-request.md)
 - 扩展与规则：[第 4 章 Agent 体系](./4-agent-system/4.1-mcp-tools.md)
 - 问题排查：[5.1 FAQ](./5-faq/5.1-questions.md)
-- MZ 兼容证据：[5.4 MZ 1.10.0 官方兼容证据](./5-faq/5.4-mz-official-evidence.md)
 
 ## 版本信息
 

@@ -63,7 +63,7 @@ export function buildProjectManagementScan(workflowRoot: string, project: string
     const file = getProjectFileForRead(workflowRoot, project, relative);
     if (!file || !exists(file)) return undefined;
     return readJson(file);
-  }, { includeUnnamedEntries: true });
+  }, { includeUnnamedEntries: true, readIssueMode: 'collect' });
 }
 
 export function getProjectManagedEntry(

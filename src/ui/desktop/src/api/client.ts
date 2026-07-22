@@ -346,7 +346,7 @@ export type {
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
   InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewConsoleEntry, MapPreviewEventState, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSelfSwitchLetter, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewVariableValue, MapPreviewViewRequest, RpgMakerEngine,
-  AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
+  AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot, WorkspaceSurfaceId, WorkspaceSurfaceVersionRequest, WorkspaceSurfaceVersionResult,
 };
 
 export interface ProjectRegistrationResult {
@@ -708,6 +708,17 @@ export interface PackageImportResult {
 
 // ──── 项目管理 overview 类型 ────
 
+export type ProjectOverviewReadState = 'ready' | 'missing' | 'invalid';
+
+export interface ProjectOverviewReadIssue {
+  scope: 'project' | 'map' | 'database' | 'assets';
+  relativePath: string;
+  code: 'read-failed' | 'invalid-structure' | 'missing-file';
+  message: string;
+  mapId?: number;
+  databaseGroup?: string;
+}
+
 export interface ProjectOverviewMapEvent {
   id: number;
   name: string;
@@ -726,6 +737,7 @@ export interface ProjectOverviewMap {
   order: number;
   fileName: string;
   exists: boolean;
+  readState: ProjectOverviewReadState;
   width: number;
   height: number;
   tilesetId: number;
@@ -824,6 +836,7 @@ export interface ProjectOverviewDbEntry {
 
 export interface ProjectOverviewDbGroup {
   exists: boolean;
+  readState: ProjectOverviewReadState;
   count: number;
   capacity?: number;
   maxEntries?: number;
@@ -847,6 +860,7 @@ export interface ProjectOverviewImageBucket {
 }
 
 export interface ProjectOverview {
+  readIssues: ProjectOverviewReadIssue[];
   scan: {
     generatedAt: string;
     projectRoot: string;
@@ -857,6 +871,7 @@ export interface ProjectOverview {
     variables: ProjectOverviewVariable[];
     commonEvents: ProjectOverviewCommonEvent[];
     database: Record<string, ProjectOverviewDbGroup>;
+    readIssues: ProjectOverviewReadIssue[];
     audit: {
       summary: { info: number; warn: number; error: number; total: number };
       findings: Array<{ severity: string; code: string; message: string; details: Record<string, unknown> }>;
@@ -887,7 +902,7 @@ export interface ProjectOverview {
       missingSheets: string[];
       missingEffects: string[];
     }>;
-  };
+  } | null;
 }
 
 export interface MapLibraryPackageValidation {

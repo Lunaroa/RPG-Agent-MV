@@ -45,14 +45,18 @@ interface AssetInventoryResult {
   animations: AnimationEntry[];
 }
 
-export function buildAssetInventory(projectRoot: string): AssetInventoryResult {
+export interface AssetInventoryOptions {
+  tolerateAnimationReadFailure?: boolean;
+}
+
+export function buildAssetInventory(projectRoot: string, options: AssetInventoryOptions = {}): AssetInventoryResult {
   const root: string = path.resolve(projectRoot);
   const dataDir: string = resolveDataDir(root);
   const wwwRoot: string = path.dirname(dataDir);
   const audioRoot: string = path.join(wwwRoot, "audio");
   const imageRoot: string = path.join(wwwRoot, "img");
   const effectRoot: string = path.join(wwwRoot, "effects");
-  const animations: AnimationEntry[] = readAnimations(dataDir);
+  const animations: AnimationEntry[] = readAnimations(dataDir, options.tolerateAnimationReadFailure === true);
   const audio: Record<string, AssetBucket> = {} as Record<string, AssetBucket>;
   const images: Record<string, AssetBucket> = {} as Record<string, AssetBucket>;
   for (const folder of AUDIO_DIRS) audio[folder] = listAssets(path.join(audioRoot, folder), AUDIO_EXTENSIONS);
@@ -100,10 +104,18 @@ interface RMMVAnimation {
   effectName?: string;
 }
 
-function readAnimations(dataDir: string): AnimationEntry[] {
+function readAnimations(dataDir: string, tolerateReadFailure: boolean): AnimationEntry[] {
   const filePath: string = path.join(dataDir, "Animations.json");
   if (!exists(filePath)) return [];
-  const records = (readJson(filePath) || []) as RMMVAnimation[];
+  let records: RMMVAnimation[];
+  try {
+    const value = readJson(filePath);
+    if (!Array.isArray(value)) throw new Error("Animations.json must contain an array.");
+    records = value as RMMVAnimation[];
+  } catch (error) {
+    if (!tolerateReadFailure) throw error;
+    return [];
+  }
   return records
     .filter(Boolean)
     .map((animation) => ({

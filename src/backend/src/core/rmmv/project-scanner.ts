@@ -29,6 +29,7 @@ interface MapEntry {
 
 interface MapSummary extends MapEntry {
   exists: boolean;
+  readState: ProjectReadState;
   width: number;
   height: number;
   tilesetId: number;
@@ -98,6 +99,7 @@ interface DatabaseEntryPreview {
 
 interface DatabaseEntry {
   exists: boolean;
+  readState: ProjectReadState;
   count: number;
   capacity?: number;
   maxEntries?: number;
@@ -120,13 +122,26 @@ interface ScanResult {
   variables: { id: number; name: string }[];
   commonEvents: CommonEventSummary[];
   maps: MapSummary[];
+  readIssues: ProjectReadIssue[];
   audit: { summary: FindingSummary; findings: Finding[] };
+}
+
+export type ProjectReadState = "ready" | "missing" | "invalid";
+
+export interface ProjectReadIssue {
+  scope: "project" | "map" | "database" | "assets";
+  relativePath: string;
+  code: "read-failed" | "invalid-structure" | "missing-file";
+  message: string;
+  mapId?: number;
+  databaseGroup?: string;
 }
 
 export type ProjectJsonReader = (fileName: string) => unknown | undefined;
 
 export interface ScanProjectOptions {
   includeUnnamedEntries?: boolean;
+  readIssueMode?: "strict" | "collect";
   engineContext?: {
     engine: RpgMakerEngine;
     engineVersion: string | null;
@@ -180,18 +195,31 @@ export function scanProjectWithReader(
     };
   })();
   const includeUnnamed = Boolean(options.includeUnnamedEntries);
-  const readOptionalFromReader = <T>(fileName: string, fallback: T): T => {
-    const value = readFile(fileName);
-    return value === undefined ? fallback : (value as T);
-  };
-  const system: Record<string, unknown> = readOptionalFromReader("System.json", {});
-  const mapInfos: unknown[] = readOptionalFromReader("MapInfos.json", []);
-  const commonEventsRaw: unknown[] = readOptionalFromReader("CommonEvents.json", []);
-  const names: NameIndex = buildNameIndex(system, commonEventsRaw);
-  const maps: MapSummary[] = scanMaps(readFile, mapInfos, names);
-  const commonEvents: CommonEventSummary[] = summarizeCommonEvents(commonEventsRaw, names);
-  const database: Record<string, DatabaseEntry> = summarizeDatabase(readFile, includeUnnamed);
-  const audit = auditProject({ root, dataDir, system, mapInfos, maps, commonEvents, names });
+  const readContext = createProjectReadContext(root, dataDir, readFile, options.readIssueMode ?? "strict");
+  const systemRead = readContext.read("System.json", { scope: "project", required: true });
+  const mapInfosRead = readContext.read("MapInfos.json", { scope: "project", required: true });
+  const commonEventsRead = readContext.read("CommonEvents.json", { scope: "database", databaseGroup: "CommonEvents" });
+  const system: Record<string, unknown> = readContext.expectRecord(systemRead, "System.json", {});
+  const mapInfos: unknown[] = readContext.expectArray(mapInfosRead, "MapInfos.json", []);
+  const commonEventsRaw: unknown[] = readContext.expectArray(
+    commonEventsRead,
+    "CommonEvents.json",
+    [],
+    { scope: "database", databaseGroup: "CommonEvents" },
+  );
+  const normalizedSystem = systemRead.state === "ready"
+    ? normalizeSystemNamedLists(readContext, system)
+    : system;
+  const names: NameIndex = buildNameIndex(normalizedSystem, commonEventsRaw);
+  const maps: MapSummary[] = scanMaps(readContext, mapInfos, names);
+  const commonEvents: CommonEventSummary[] = readContext.guard(
+    "CommonEvents.json",
+    { scope: "database", databaseGroup: "CommonEvents" },
+    () => summarizeCommonEvents(commonEventsRaw, names),
+    [],
+  );
+  const database: Record<string, DatabaseEntry> = summarizeDatabase(readContext, includeUnnamed);
+  const audit = auditProject({ root, dataDir, system: normalizedSystem, mapInfos, maps, commonEvents, names });
 
   return {
     generatedAt: new Date().toISOString(),
@@ -199,12 +227,137 @@ export function scanProjectWithReader(
     dataDir,
     ...engineContext,
     database,
-    switches: summarizeNamedList((system as { switches?: string[] }).switches || [], includeUnnamed),
-    variables: summarizeNamedList((system as { variables?: string[] }).variables || [], includeUnnamed),
+    switches: summarizeNamedList((normalizedSystem as { switches?: string[] }).switches || [], includeUnnamed),
+    variables: summarizeNamedList((normalizedSystem as { variables?: string[] }).variables || [], includeUnnamed),
     commonEvents,
     maps,
+    readIssues: readContext.issues,
     audit
   };
+}
+
+interface ProjectReadMetadata {
+  scope: ProjectReadIssue["scope"];
+  required?: boolean;
+  mapId?: number;
+  databaseGroup?: string;
+}
+
+interface ProjectFileReadResult {
+  state: ProjectReadState;
+  value?: unknown;
+  errorMessage?: string;
+}
+
+interface ProjectReadContext {
+  readonly issues: ProjectReadIssue[];
+  read(fileName: string, metadata: ProjectReadMetadata): ProjectFileReadResult;
+  expectArray<T>(result: ProjectFileReadResult, fileName: string, fallback: T[], metadata?: ProjectReadMetadata): T[];
+  expectRecord<T extends Record<string, unknown>>(result: ProjectFileReadResult, fileName: string, fallback: T, metadata?: ProjectReadMetadata): T;
+  missing(fileName: string, metadata: ProjectReadMetadata, message: string): void;
+  invalid(fileName: string, metadata: ProjectReadMetadata, message: string): void;
+  guard<T>(fileName: string, metadata: ProjectReadMetadata, run: () => T, fallback: T): T;
+}
+
+function createProjectReadContext(
+  projectRoot: string,
+  dataDir: string,
+  readFile: ProjectJsonReader,
+  mode: "strict" | "collect",
+): ProjectReadContext {
+  const issues: ProjectReadIssue[] = [];
+  const issueKeys = new Set<string>();
+  const reads = new Map<string, ProjectFileReadResult>();
+  const relativePath = (fileName: string) => path.relative(projectRoot, path.join(dataDir, fileName)).replace(/\\/g, "/");
+  const report = (fileName: string, metadata: ProjectReadMetadata, code: ProjectReadIssue["code"], message: string) => {
+    if (mode === "strict") throw new Error(message);
+    const issue: ProjectReadIssue = {
+      scope: metadata.scope,
+      relativePath: relativePath(fileName),
+      code,
+      message,
+      ...(metadata.mapId !== undefined ? { mapId: metadata.mapId } : {}),
+      ...(metadata.databaseGroup ? { databaseGroup: metadata.databaseGroup } : {}),
+    };
+    const key = `${issue.relativePath}:${issue.code}:${issue.mapId ?? ""}:${issue.databaseGroup ?? ""}`;
+    if (!issueKeys.has(key)) {
+      issueKeys.add(key);
+      issues.push(issue);
+    }
+  };
+  const invalid = (fileName: string, metadata: ProjectReadMetadata, message: string) => {
+    report(fileName, metadata, "invalid-structure", message);
+  };
+  const context: ProjectReadContext = {
+    issues,
+    read(fileName, metadata) {
+      const cached = reads.get(fileName);
+      if (cached) {
+        if (cached.state === "missing" && metadata.required) {
+          report(fileName, metadata, "missing-file", `Required project data is missing: ${relativePath(fileName)}`);
+        }
+        if (cached.state === "invalid") {
+          report(fileName, metadata, "read-failed", cached.errorMessage || "Unable to read project data.");
+        }
+        return cached;
+      }
+      try {
+        const value = readFile(fileName);
+        const result: ProjectFileReadResult = value === undefined
+          ? { state: "missing" }
+          : { state: "ready", value };
+        reads.set(fileName, result);
+        if (result.state === "missing" && metadata.required) {
+          report(fileName, metadata, "missing-file", `Required project data is missing: ${relativePath(fileName)}`);
+        }
+        return result;
+      } catch (error) {
+        const errorMessage = safeProjectReadError(error);
+        const result: ProjectFileReadResult = { state: "invalid", errorMessage };
+        reads.set(fileName, result);
+        report(fileName, metadata, "read-failed", errorMessage);
+        return result;
+      }
+    },
+    expectArray<T>(result: ProjectFileReadResult, fileName: string, fallback: T[], metadata = { scope: "project" }): T[] {
+      if (result.state !== "ready") return fallback;
+      if (Array.isArray(result.value)) return result.value as T[];
+      invalid(fileName, metadata, `Invalid project data structure: ${relativePath(fileName)} must contain an array.`);
+      return fallback;
+    },
+    expectRecord<T extends Record<string, unknown>>(result: ProjectFileReadResult, fileName: string, fallback: T, metadata = { scope: "project" }): T {
+      if (result.state !== "ready") return fallback;
+      if (isRecord(result.value)) return result.value as T;
+      invalid(fileName, metadata, `Invalid project data structure: ${relativePath(fileName)} must contain an object.`);
+      return fallback;
+    },
+    missing(fileName, metadata, message) {
+      if (mode === "collect") report(fileName, metadata, "missing-file", message);
+    },
+    invalid,
+    guard<T>(fileName: string, metadata: ProjectReadMetadata, run: () => T, fallback: T): T {
+      try {
+        return run();
+      } catch (error) {
+        report(fileName, metadata, "invalid-structure", safeProjectReadError(error));
+        return fallback;
+      }
+    },
+  };
+  return context;
+}
+
+function safeProjectReadError(error: unknown): string {
+  if (error instanceof SyntaxError) return error.message;
+  if (error && typeof error === "object") {
+    const record = error as { code?: unknown; syscall?: unknown };
+    if (typeof record.code === "string") {
+      return `${record.code}${typeof record.syscall === "string" ? ` (${record.syscall})` : ""}`;
+    }
+  }
+  return error instanceof Error && !/[A-Za-z]:[\\/]/.test(error.message)
+    ? error.message
+    : "Unable to read project data.";
 }
 
 export function resolveDataDir(root: string): string {
@@ -236,23 +389,33 @@ interface MapInfoEntry {
   order?: number;
 }
 
-function scanMaps(readFile: ProjectJsonReader, mapInfos: unknown[], names: NameIndex): MapSummary[] {
-  const mapEntries: MapEntry[] = ((mapInfos || []) as MapInfoEntry[])
-    .filter(Boolean)
-    .map((info) => ({
+function scanMaps(readContext: ProjectReadContext, mapInfos: unknown[], names: NameIndex): MapSummary[] {
+  const mapEntries: MapEntry[] = [];
+  for (const rawInfo of mapInfos || []) {
+    if (rawInfo == null) continue;
+    if (!isRecord(rawInfo) || !Number.isInteger(rawInfo.id) || Number(rawInfo.id) <= 0) {
+      readContext.invalid("MapInfos.json", { scope: "project" }, "Invalid map index structure: MapInfos.json contains an invalid map entry.");
+      continue;
+    }
+    const info = rawInfo as unknown as MapInfoEntry;
+    mapEntries.push({
       id: info.id,
       name: info.name || "",
       parentId: info.parentId || 0,
       order: info.order || 0,
-      fileName: `Map${String(info.id).padStart(3, "0")}.json`
-    }));
+      fileName: `Map${String(info.id).padStart(3, "0")}.json`,
+    });
+  }
 
   return mapEntries.map((entry) => {
-    const mapData = readFile(entry.fileName);
-    if (mapData === undefined) {
+    const metadata = { scope: "map" as const, mapId: entry.id };
+    const mapRead = readContext.read(entry.fileName, metadata);
+    if (mapRead.state === "missing") {
+      readContext.missing(entry.fileName, metadata, `Map data is missing: ${entry.fileName}`);
       return {
         ...entry,
         exists: false,
+        readState: "missing" as const,
         width: 0,
         height: 0,
         tilesetId: 0,
@@ -261,22 +424,67 @@ function scanMaps(readFile: ProjectJsonReader, mapInfos: unknown[], names: NameI
       };
     }
 
-    const map = mapData as { width: number; height: number; tilesetId: number; scrollType?: number; events: unknown[] };
-    const events: MapEventSummary[] = (map.events || [])
+    if (mapRead.state === "invalid") return invalidMapSummary(entry);
+    const map = mapRead.value;
+    if (!isRecord(map) || !Array.isArray(map.events)) {
+      readContext.invalid(entry.fileName, metadata, `Invalid map structure: ${entry.fileName} must contain an events array.`);
+      return invalidMapSummary(entry);
+    }
+    const events = readContext.guard(entry.fileName, metadata, () => map.events
       .filter(Boolean)
-      .map((event) => summarizeMapEvent(event, names));
+      .map((event) => {
+        if (!isRecord(event) || !Array.isArray(event.pages)) {
+          throw new Error(`Invalid map event structure in ${entry.fileName}.`);
+        }
+        return summarizeMapEvent(event, names);
+      }), null);
+    if (!events) return invalidMapSummary(entry);
 
     return {
       ...entry,
       exists: true,
-      width: map.width,
-      height: map.height,
-      tilesetId: map.tilesetId,
-      scrollType: map.scrollType,
+      readState: "ready",
+      width: Number(map.width || 0),
+      height: Number(map.height || 0),
+      tilesetId: Number(map.tilesetId || 0),
+      scrollType: map.scrollType === undefined ? undefined : Number(map.scrollType),
       eventCount: events.length,
       events
     };
   });
+}
+
+function invalidMapSummary(entry: MapEntry): MapSummary {
+  return {
+    ...entry,
+    exists: true,
+    readState: "invalid",
+    width: 0,
+    height: 0,
+    tilesetId: 0,
+    events: [],
+    eventCount: 0,
+  };
+}
+
+function normalizeSystemNamedLists(
+  readContext: ProjectReadContext,
+  system: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalize = (key: "switches" | "variables"): string[] => {
+    const value = system[key];
+    if (value == null) return [];
+    if (Array.isArray(value) && value.every((entry) => entry == null || typeof entry === "string")) {
+      return value.map((entry) => typeof entry === "string" ? entry : "");
+    }
+    readContext.invalid("System.json", { scope: "project" }, `Invalid project data structure: System.json ${key} must contain an array of names.`);
+    return [];
+  };
+  return {
+    ...system,
+    switches: normalize("switches"),
+    variables: normalize("variables"),
+  };
 }
 
 interface RMMVMapEvent {
@@ -488,45 +696,84 @@ function commonEventTrigger(code: number): string {
 }
 
 function summarizeDatabase(
-  readFile: ProjectJsonReader,
+  readContext: ProjectReadContext,
   includeUnnamed = false,
 ): Record<string, DatabaseEntry> {
   const result: Record<string, DatabaseEntry> = {};
-  const tables = new Map<string, unknown>();
+  const tables = new Map<string, ProjectFileReadResult>();
   for (const schema of listRmmvDatabaseSchemas()) {
-    tables.set(schema.group, readFile(schema.fileName) ?? null);
+    tables.set(schema.group, readContext.read(schema.fileName, {
+      scope: "database",
+      databaseGroup: schema.group,
+    }));
   }
+  const previewTables = new Map<string, unknown>(
+    [...tables.entries()].map(([group, read]) => [group, read.state === "ready" ? read.value : null]),
+  );
   for (const schema of listRmmvDatabaseSchemas()) {
-    const data = tables.get(schema.group);
-    if (data === null) {
+    const read = tables.get(schema.group)!;
+    const data = read.value;
+    if (read.state === "missing") {
+      readContext.missing(schema.fileName, {
+        scope: "database",
+        databaseGroup: schema.group,
+      }, `Database data is missing: ${schema.fileName}`);
       result[schema.group] = {
         exists: false,
+        readState: "missing",
         count: 0,
         ...(schema.maxEntries !== null ? { capacity: 0, maxEntries: schema.maxEntries } : {}),
         named: [],
       };
       continue;
     }
+    if (read.state === "invalid") {
+      result[schema.group] = invalidDatabaseEntry(schema.maxEntries !== null, schema.maxEntries);
+      continue;
+    }
     if (!schema.isArrayTable) {
+      if (!isRecord(data)) {
+        readContext.invalid(schema.fileName, { scope: "database", databaseGroup: schema.group }, `Invalid database structure: ${schema.fileName} must contain an object.`);
+        result[schema.group] = invalidDatabaseEntry(false, schema.maxEntries);
+        continue;
+      }
       result[schema.group] = {
         exists: true,
+        readState: "ready",
         count: 1,
-        named: [databaseNamedEntry(0, documentDatabaseName(schema.group, data), summarizeDatabasePreview(schema.group, data, tables))]
+        named: [databaseNamedEntry(0, documentDatabaseName(schema.group, data), summarizeDatabasePreview(schema.group, data, previewTables))]
       };
       continue;
     }
-    const entries = (Array.isArray(data) ? data.filter(Boolean) : []) as Record<string, unknown>[];
+    if (!Array.isArray(data) || data.some((entry) => entry != null && !isRecord(entry))) {
+      readContext.invalid(schema.fileName, { scope: "database", databaseGroup: schema.group }, `Invalid database structure: ${schema.fileName} must contain an array of objects.`);
+      result[schema.group] = invalidDatabaseEntry(true, schema.maxEntries);
+      continue;
+    }
+    const entries = data.filter(Boolean) as Record<string, unknown>[];
     result[schema.group] = {
       exists: true,
+      readState: "ready",
       count: entries.length,
-      capacity: Math.max(0, (Array.isArray(data) ? data.length : 1) - 1),
+      capacity: Math.max(0, data.length - 1),
       ...(schema.maxEntries !== null ? { maxEntries: schema.maxEntries } : {}),
       named: entries
         .filter((entry) => Number(entry.id) > 0 && (includeUnnamed || entry.name))
-        .map((entry) => databaseNamedEntry(Number(entry.id), String(entry.name || ""), summarizeDatabasePreview(schema.group, entry, tables)))
+        .map((entry) => databaseNamedEntry(Number(entry.id), String(entry.name || ""), summarizeDatabasePreview(schema.group, entry, previewTables)))
     };
   }
   return result;
+}
+
+function invalidDatabaseEntry(hasCapacity: boolean, maxEntries: number | null): DatabaseEntry {
+  return {
+    exists: true,
+    readState: "invalid",
+    count: 0,
+    ...(hasCapacity ? { capacity: 0 } : {}),
+    ...(maxEntries !== null ? { maxEntries } : {}),
+    named: [],
+  };
 }
 
 function databaseNamedEntry(id: number, name: string, preview?: DatabaseEntryPreview): { id: number; name: string; preview?: DatabaseEntryPreview } {
@@ -604,6 +851,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return asRecord(value) !== null;
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -632,13 +883,14 @@ interface AuditContext {
 
 function auditProject(context: AuditContext): { summary: FindingSummary; findings: Finding[] } {
   const findings: Finding[] = [];
-  const mapIds = new Set(context.maps.filter((map) => map.exists).map((map) => map.id));
+  const mapIds = new Set(context.maps.filter((map) => map.readState === "ready").map((map) => map.id));
 
   for (const map of context.maps) {
     if (!map.exists) {
       findings.push(finding("error", "missing-map-file", `Map info references missing ${map.fileName}`, { mapId: map.id }));
       continue;
     }
+    if (map.readState !== "ready") continue;
     auditMapCoordinates(map, findings);
     auditEventPages(map, context.names, mapIds, findings);
   }

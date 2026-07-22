@@ -23,6 +23,7 @@ import {
   type ProjectOverviewImageBucket,
   type ProjectOverviewMap,
   type ProjectOverviewMapEvent,
+  type ProjectOverviewReadIssue,
 } from '../../api/client';
 import { cloneDraft } from '../../utils/clone-draft';
 import { createDraftHistory } from '../../utils/draft-history';
@@ -145,7 +146,7 @@ async function applyProjectStaging() {
 }
 
 async function discardProjectStaging() {
-  if (!projectStore.currentProject || stagingBusy.value) return;
+  if (!projectStore.currentProject || stagingBusy.value || surfaceWriteLocked.value) return;
   stagingBusy.value = true;
   detailError.value = '';
   try {
@@ -162,7 +163,7 @@ async function discardProjectStaging() {
 }
 
 async function revertCurrentStagedEntry() {
-  if (pmDetail.value?.kind !== 'managed' || !projectStore.currentProject || detailBusy.value) return;
+  if (pmDetail.value?.kind !== 'managed' || !projectStore.currentProject || detailBusy.value || surfaceWriteLocked.value) return;
   const current = pmDetail.value.entry;
   detailBusy.value = true;
   detailError.value = '';
@@ -268,6 +269,11 @@ const {
   resetCatalog,
   bindEventDialogRef,
 } = usePmEventEditor(() => projectStore.currentProject, () => loadData());
+
+function saveEventIfUnlocked(...args: Parameters<typeof saveEvent>): ReturnType<typeof saveEvent> | undefined {
+  if (surfaceWriteLocked.value) return undefined;
+  return saveEvent(...args);
+}
 const selected = ref<StoryCategoryId>('overview');
 const searchQuery = ref('');
 const selectedDbGroup = ref('Actors');
@@ -563,6 +569,35 @@ const switches = computed(() => scan.value?.switches || []);
 const variables = computed(() => scan.value?.variables || []);
 const commonEvents = computed(() => scan.value?.commonEvents || []);
 const database = computed(() => scan.value?.database || {});
+const readIssues = computed(() => overview.value?.readIssues || []);
+const foundationalReadIssues = computed(() => readIssues.value.filter((issue) => issue.scope === 'project'));
+
+function mapReadIssue(mapId: number): ProjectOverviewReadIssue | null {
+  return readIssues.value.find((issue) => issue.scope === 'map' && issue.mapId === mapId) || null;
+}
+
+function databaseReadIssue(group: string): ProjectOverviewReadIssue | null {
+  return readIssues.value.find((issue) => issue.scope === 'database' && issue.databaseGroup === group) || null;
+}
+
+function formatReadIssue(issue: ProjectOverviewReadIssue): string {
+  return `${issue.relativePath} · ${issue.message}`;
+}
+
+function mapReadIssueText(mapId: number): string {
+  const issue = mapReadIssue(mapId);
+  return issue ? formatReadIssue(issue) : '';
+}
+
+function databaseReadIssueText(group: string): string {
+  const issue = databaseReadIssue(group);
+  return issue ? formatReadIssue(issue) : '';
+}
+
+const selectedMapReadIssue = computed(() => selectedMapId.value == null ? null : mapReadIssue(selectedMapId.value));
+const selectedDatabaseReadIssue = computed(() => databaseReadIssue(selectedDbGroup.value));
+const assetReadIssue = computed(() => readIssues.value.find((issue) => issue.scope === 'assets') || null);
+const commonEventsReadIssue = computed(() => databaseReadIssue('CommonEvents'));
 
 const audioTotal = computed(() => {
   if (!assets.value?.audio) return 0;
@@ -587,8 +622,8 @@ const categories = computed(() => [
   { id: 'switches' as const, count: switches.value.filter(s => s.name).length },
   { id: 'variables' as const, count: variables.value.filter(v => v.name).length },
   { id: 'commonEvents' as const, count: commonEvents.value.filter(e => e.name).length },
-  { id: 'audio' as const, count: audioTotal.value },
-  { id: 'images' as const, count: imageTotal.value },
+  { id: 'audio' as const, count: assetReadIssue.value ? '!' : audioTotal.value },
+  { id: 'images' as const, count: assetReadIssue.value ? '!' : imageTotal.value },
   { id: 'database' as const, count: dbTotal.value },
 ]);
 
@@ -728,7 +763,7 @@ const dbGroupOptions = computed(() =>
     const count = isDocumentSubFieldGroup(key)
       ? dbSubFieldOrder(key).length
       : (group?.named.length ?? group?.count ?? 0);
-    return { key, label: dbLabel(key), count };
+    return { key, label: dbLabel(key), count: group?.readState && group.readState !== 'ready' ? '!' : count, readState: group?.readState ?? 'missing' };
   }),
 );
 
@@ -749,11 +784,11 @@ const imageBucketOptions = computed(() =>
 );
 
 const activeDbGroup = computed((): ProjectOverviewDbGroup => {
-  return filteredDatabase.value[selectedDbGroup.value] ?? { exists: false, count: 0, named: [] };
+  return filteredDatabase.value[selectedDbGroup.value] ?? { exists: false, readState: 'missing', count: 0, named: [] };
 });
 
 const selectedDbGroupMetadata = computed((): ProjectOverviewDbGroup => {
-  return database.value[selectedDbGroup.value] ?? { exists: false, count: 0, named: [] };
+  return database.value[selectedDbGroup.value] ?? { exists: false, readState: 'missing', count: 0, named: [] };
 });
 
 const activeAudioBucket = computed((): ProjectOverviewAudioBucket => {
@@ -986,13 +1021,13 @@ function selectDbSubField(path: string): void {
   }
 }
 
-const canCreateSelectedDbGroup = computed(() => canCreateDatabaseGroup(selectedDbGroup.value));
+const canCreateSelectedDbGroup = computed(() => selectedDbGroupMetadata.value.readState === 'ready' && canCreateDatabaseGroup(selectedDbGroup.value));
 const selectedDbCapacity = computed(() => (
   selectedDbGroupMetadata.value.capacity
   ?? selectedDbGroupMetadata.value.named.reduce((highest, entry) => Math.max(highest, entry.id), 0)
 ));
 const selectedDbMaximumLimit = computed(() => selectedDbGroupMetadata.value.maxEntries ?? null);
-const canResizeSelectedDbGroup = computed(() => selectedDbMaximumLimit.value !== null);
+const canResizeSelectedDbGroup = computed(() => selectedDbGroupMetadata.value.readState === 'ready' && selectedDbMaximumLimit.value !== null);
 
 function dbSummary(): string {
   if (!scan.value?.database) return '';
@@ -1010,7 +1045,7 @@ function syncSelectedDbGroup(): void {
   if (!options.length) return;
   const valid = options.some((option) => option.key === selectedDbGroup.value);
   if (!valid) {
-    const withData = options.find((option) => option.count > 0);
+    const withData = options.find((option) => typeof option.count === 'number' && option.count > 0);
     selectedDbGroup.value = withData?.key ?? options[0].key;
   }
 }
@@ -1040,6 +1075,11 @@ function selectDbGroup(key: string): void {
   if (sameGroup && !isDocumentSubFieldGroup(key)) return;
   selectedDbGroup.value = key;
   resetGroupVisibleLimits();
+  if (database.value[key]?.readState !== 'ready') {
+    selectedDbSubField.value = '';
+    if (!sameGroup) closeDetail();
+    return;
+  }
   if (isDocumentSubFieldGroup(key)) {
     if (!sameGroup) closeDetail();
     void openDocumentSubFieldGroup(key);
@@ -1074,6 +1114,18 @@ function selectCategory(id: StoryCategoryId) {
   if (id === 'audio') syncSelectedAudioBucket();
   if (id === 'images') syncSelectedImageBucket();
 }
+
+watch(() => route.query.section, (section) => {
+  if (!surfaceActive || route.path !== '/console' || route.query.page !== 'story') return;
+  const next = normalizeProjectManagementSection(section);
+  if (selected.value !== next) selectCategory(next);
+  if (section !== next) {
+    void router.replace({
+      path: route.path,
+      query: { ...route.query, page: 'story', section: next },
+    });
+  }
+}, { immediate: true });
 
 function selectMap(mapId: number) {
   selectedMapId.value = mapId;
@@ -1178,7 +1230,7 @@ function canPasteDbEntry(): boolean {
 
 async function pasteDbEntry(id: number) {
   closeDbContextMenu();
-  if (!dbClipboard || dbClipboard.group !== selectedDbGroup.value) return;
+  if (surfaceWriteLocked.value || !dbClipboard || dbClipboard.group !== selectedDbGroup.value) return;
   detailBusy.value = true;
   detailError.value = '';
   try {
@@ -1203,6 +1255,7 @@ async function pasteDbEntry(id: number) {
 
 async function clearDbEntry(id: number) {
   closeDbContextMenu();
+  if (surfaceWriteLocked.value) return;
   detailBusy.value = true;
   detailError.value = '';
   try {
@@ -1223,6 +1276,7 @@ async function clearDbEntry(id: number) {
 }
 
 async function createDatabaseEntry(group: string) {
+  if (surfaceWriteLocked.value) return;
   selectedEventId.value = null;
   detailBusy.value = true;
   detailError.value = '';
@@ -1254,7 +1308,7 @@ async function createSelectedDatabaseEntry() {
 async function changeSelectedDatabaseMaximum() {
   const group = selectedDbGroup.value;
   const limit = selectedDbMaximumLimit.value;
-  if (!limit || !projectStore.currentProject || detailBusy.value || stagingBusy.value) return;
+  if (!limit || !projectStore.currentProject || detailBusy.value || stagingBusy.value || surfaceWriteLocked.value) return;
   try {
     const answer = await ElMessageBox.prompt(
       t('story.databaseMaximumPrompt', { current: selectedDbCapacity.value, limit }),
@@ -1291,6 +1345,7 @@ async function changeSelectedDatabaseMaximum() {
 }
 
 async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents') {
+  if (surfaceWriteLocked.value) return;
   selectedEventId.value = null;
   detailBusy.value = true;
   detailError.value = '';
@@ -1320,7 +1375,7 @@ async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents
 }
 
 async function duplicateCurrentCommonEvent() {
-  if (selectedCommonEventId.value == null) return;
+  if (selectedCommonEventId.value == null || surfaceWriteLocked.value) return;
   detailBusy.value = true;
   detailError.value = '';
   try {
@@ -1342,7 +1397,7 @@ async function duplicateCurrentCommonEvent() {
 }
 
 async function deleteCurrentCommonEvent() {
-  if (selectedCommonEventId.value == null) return;
+  if (selectedCommonEventId.value == null || surfaceWriteLocked.value) return;
   const id = selectedCommonEventId.value;
   if (!window.confirm(t('story.deleteCommonEventConfirm', { id: String(id).padStart(4, '0') }))) return;
   detailBusy.value = true;
@@ -1582,7 +1637,7 @@ function localFileParts(filePath: string): { fileName: string; name: string } {
 }
 
 async function importCurrentAssetCategory() {
-  if (!projectStore.currentProject || detailBusy.value || !['audio', 'images'].includes(selected.value)) return;
+  if (!projectStore.currentProject || detailBusy.value || surfaceWriteLocked.value || !['audio', 'images'].includes(selected.value)) return;
   const kind = selected.value === 'audio' ? 'audio' : 'image';
   const bucketKey = kind === 'audio' ? selectedAudioBucket.value : selectedImageBucket.value;
   const category = kind === 'image' ? imageDetailCategory(bucketKey) : bucketKey;
@@ -1622,7 +1677,7 @@ async function importCurrentAssetCategory() {
 async function renameCurrentAsset() {
   const detail = currentAssetDetail();
   const target = currentAssetTarget();
-  if (!detail || !target || !projectStore.currentProject || detailBusy.value) return;
+  if (!detail || !target || !projectStore.currentProject || detailBusy.value || surfaceWriteLocked.value) return;
   let nextName = '';
   try {
     const response = await ElMessageBox.prompt(
@@ -1663,7 +1718,7 @@ async function renameCurrentAsset() {
 async function deleteCurrentAsset() {
   const detail = currentAssetDetail();
   const target = currentAssetTarget();
-  if (!detail || !target || !projectStore.currentProject || detailBusy.value) return;
+  if (!detail || !target || !projectStore.currentProject || detailBusy.value || surfaceWriteLocked.value) return;
   detailBusy.value = true;
   detailError.value = '';
   try {
@@ -1690,7 +1745,7 @@ async function deleteCurrentAsset() {
 }
 
 async function saveDetail() {
-  if (!pmDetail.value) return;
+  if (!pmDetail.value || surfaceWriteLocked.value) return;
   detailBusy.value = true;
   detailError.value = '';
   try {
@@ -1726,6 +1781,7 @@ async function saveDetail() {
 }
 
 async function openBattleTestSetup(): Promise<void> {
+  if (surfaceWriteLocked.value) return;
   const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
   if (!entry || entry.kind !== 'database' || entry.group !== 'Troops') return;
   if (hasUnsavedDraft.value) {
@@ -1748,6 +1804,7 @@ async function startBattleTest(configuration: {
   battleback1Name: string;
   battleback2Name: string;
 }): Promise<void> {
+  if (surfaceWriteLocked.value) return;
   const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
   const project = projectStore.currentProject;
   if (!entry || entry.kind !== 'database' || entry.group !== 'Troops' || !project || battleTestBusy.value) return;
@@ -1781,6 +1838,7 @@ async function startBattleTest(configuration: {
 }
 
 async function startParticlePreview(): Promise<void> {
+  if (surfaceWriteLocked.value) return;
   const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
   const project = projectStore.currentProject;
   if (!entry || entry.kind !== 'database' || entry.group !== 'Animations' || !project || particlePreviewBusy.value) return;
@@ -1833,18 +1891,29 @@ function detailTitle(): string {
 <template>
   <div class="console-subpage" :aria-busy="validating || refreshing">
     <div v-if="!projectStore.currentProject" class="state">{{ t('story.addProjectFirst') }}</div>
-    <div v-else-if="error && !overview" class="state error">{{ formatErrorText(error) }}</div>
-    <div v-else-if="loading && !overview" class="state">{{ t('story.loadingOverview') }}</div>
-    <div v-if="overview && (refreshing || error)" class="workspace-refresh-state" :class="{ error }" :role="error ? 'alert' : 'status'">
+    <div v-else-if="error && !overview" class="state error" role="alert">
+      <span>{{ formatErrorText(error) }}</span>
+      <button type="button" class="secondary-button" @click="loadData()">{{ t('story.retryOverview') }}</button>
+    </div>
+    <div v-else-if="loading && !overview" class="state" role="status">{{ t('story.loadingOverview') }}</div>
+    <template v-else-if="overview">
+    <div v-if="refreshing || error" class="workspace-refresh-state" :class="{ error }" :role="error ? 'alert' : 'status'">
       <template v-if="error">
         <span>{{ formatErrorText(error) }}</span>
         <button type="button" class="secondary-button" @click="loadData()">{{ t('story.retryOverview') }}</button>
       </template>
       <span v-else>{{ t('story.loadingOverview') }}</span>
     </div>
+    <div v-if="readIssues.length" class="read-issue-summary" :role="foundationalReadIssues.length ? 'alert' : 'status'">
+      <span>{{ t('story.readIssues', { count: readIssues.length }) }}</span>
+      <template v-if="foundationalReadIssues.length">
+        <span v-for="issue in foundationalReadIssues" :key="`${issue.relativePath}:${issue.code}`">{{ formatReadIssue(issue) }}</span>
+        <button type="button" class="secondary-button" @click="loadData()">{{ t('story.retryOverview') }}</button>
+      </template>
+    </div>
     <div
-      v-if="overview"
       class="console-split pm-split"
+      :class="{ 'write-locked': surfaceInteractionLocked }"
       :inert="surfaceInteractionLocked"
       :aria-disabled="surfaceInteractionLocked"
     >
@@ -1894,7 +1963,8 @@ function detailTitle(): string {
               type="button"
               :data-ui-id="`story-database-group-${opt.key}`"
               class="sub-category-button"
-              :class="{ active: opt.key === selectedDbGroup }"
+              :class="{ active: opt.key === selectedDbGroup, error: opt.readState !== 'ready' }"
+              :title="opt.readState === 'ready' ? undefined : databaseReadIssueText(opt.key)"
               @click="selectDbGroup(opt.key)"
             >
               <span>{{ opt.label }}</span>
@@ -1992,7 +2062,7 @@ function detailTitle(): string {
                 <span class="asset-thumb">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                 </span>
-                <span><strong>{{ categoryLabel('audio') }}</strong><small>{{ itemCountLabel(audioTotal) }}</small></span>
+                <span><strong>{{ categoryLabel('audio') }}</strong><small>{{ assetReadIssue ? t('story.assetReadFailed') : itemCountLabel(audioTotal) }}</small></span>
                 <em>BGM / BGS / ME / SE</em>
               </button>
 
@@ -2000,7 +2070,7 @@ function detailTitle(): string {
                 <span class="asset-thumb">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z" /><path d="M8 13l2.2-2.2a1 1 0 011.4 0L17 16" /><path d="M14 10h.01" /></svg>
                 </span>
-                <span><strong>{{ categoryLabel('images') }}</strong><small>{{ itemCountLabel(imageTotal) }}</small></span>
+                <span><strong>{{ categoryLabel('images') }}</strong><small>{{ assetReadIssue ? t('story.assetReadFailed') : itemCountLabel(imageTotal) }}</small></span>
                 <em>{{ t('story.imgAssets') }}</em>
               </button>
 
@@ -2023,16 +2093,17 @@ function detailTitle(): string {
                   :key="m.id"
                   type="button"
                   class="map-item"
-                  :class="{ active: selectedMapId === m.id }"
+                  :class="{ active: selectedMapId === m.id, error: m.readState !== 'ready' }"
+                  :title="m.readState === 'ready' ? undefined : mapReadIssueText(m.id)"
                   @click="selectMap(m.id)"
                 >
                   <span class="map-name">{{ m.name }}</span>
-                  <span class="badge">{{ m.eventCount }}</span>
+                  <span class="badge">{{ m.readState === 'ready' ? m.eventCount : '!' }}</span>
                 </button>
                 <div v-if="!filteredMaps.length" class="empty-hint">{{ maps.length ? t('story.noMatchMaps') : t('story.noMapData') }}</div>
               </div>
               <div class="event-detail">
-                <div v-if="selectedMapId" class="map-toolbar">
+                <div v-if="selectedMapId && selectedMap?.readState === 'ready'" class="map-toolbar">
                   <button type="button" class="link-button" @click="openMapInEditor(selectedMapId)">{{ t('story.openInMapEditor') }}</button>
                   <button
                     v-if="eventDialogOpen && editorMapId === selectedMapId && eventDraft?.id"
@@ -2041,7 +2112,11 @@ function detailTitle(): string {
                     @click="openMapInEditor(selectedMapId, eventDraft!.id)"
                   >{{ t('story.viewLocation') }}</button>
                 </div>
-                <template v-if="selectedMapId && filteredMapEvents.length">
+                <div v-if="selectedMapReadIssue" class="read-issue-detail" role="alert">
+                  <strong>{{ t('story.mapReadFailed') }}</strong>
+                  <span>{{ formatReadIssue(selectedMapReadIssue) }}</span>
+                </div>
+                <template v-else-if="selectedMapId && filteredMapEvents.length">
                   <div class="event-row event-header">
                     <span class="ev-id">ID</span>
                     <span class="ev-name">{{ t('commonEvent.name') }}</span>
@@ -2102,12 +2177,16 @@ function detailTitle(): string {
             <div class="list-toolbar">
               <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
               <div class="toolbar-actions">
-                <button type="button" @click="createCommonEvent()">{{ t('story.new') }}</button>
+                <button type="button" :disabled="Boolean(commonEventsReadIssue)" @click="createCommonEvent()">{{ t('story.new') }}</button>
                 <button type="button" :disabled="selectedCommonEventId == null" @click="duplicateCurrentCommonEvent">{{ t('story.duplicate') }}</button>
                 <button type="button" class="danger" :disabled="selectedCommonEventId == null" @click="deleteCurrentCommonEvent">{{ t('cmdList.delete') }}</button>
               </div>
             </div>
-            <div class="id-list">
+            <div v-if="commonEventsReadIssue" class="read-issue-detail" role="alert">
+              <strong>{{ t('story.databaseReadFailed') }}</strong>
+              <span>{{ formatReadIssue(commonEventsReadIssue) }}</span>
+            </div>
+            <div v-else class="id-list">
               <button
                 v-for="ce in filteredCommonEvents"
                 :key="ce.id"
@@ -2127,9 +2206,13 @@ function detailTitle(): string {
           <template v-else-if="selected === 'audio'">
             <div class="list-toolbar asset-toolbar">
               <span>{{ selectedAudioBucket.toUpperCase() }}</span>
-              <button type="button" :disabled="detailBusy || stagingBusy" @click="importCurrentAssetCategory">{{ t('story.assetImport') }}</button>
+              <button type="button" :disabled="detailBusy || stagingBusy || Boolean(assetReadIssue)" @click="importCurrentAssetCategory">{{ t('story.assetImport') }}</button>
             </div>
-            <div class="id-list">
+            <div v-if="assetReadIssue" class="read-issue-detail" role="alert">
+              <strong>{{ t('story.assetReadFailed') }}</strong>
+              <span>{{ formatReadIssue(assetReadIssue) }}</span>
+            </div>
+            <div v-else class="id-list">
               <button
                 v-for="n in visibleAudioNames"
                 :key="n"
@@ -2157,9 +2240,13 @@ function detailTitle(): string {
           <template v-else-if="selected === 'images'">
             <div class="list-toolbar asset-toolbar">
               <span>{{ imageBucketLabel(selectedImageBucket) }}</span>
-              <button type="button" :disabled="detailBusy || stagingBusy" @click="importCurrentAssetCategory">{{ t('story.assetImport') }}</button>
+              <button type="button" :disabled="detailBusy || stagingBusy || Boolean(assetReadIssue)" @click="importCurrentAssetCategory">{{ t('story.assetImport') }}</button>
             </div>
-            <div class="image-grid">
+            <div v-if="assetReadIssue" class="read-issue-detail" role="alert">
+              <strong>{{ t('story.assetReadFailed') }}</strong>
+              <span>{{ formatReadIssue(assetReadIssue) }}</span>
+            </div>
+            <div v-else class="image-grid">
               <button
                 v-for="item in visibleImageGridItems"
                 :key="item.name"
@@ -2194,7 +2281,7 @@ function detailTitle(): string {
           <!-- ========== Database ========== -->
           <template v-else-if="selected === 'database'">
             <div class="list-toolbar database-toolbar">
-              <span>{{ dbLabel(selectedDbGroup) }} · {{ itemCountLabel(isDocumentSubFieldGroup(selectedDbGroup) ? dbSubFieldOrder(selectedDbGroup).length : activeDbGroup.named.length) }}</span>
+              <span>{{ dbLabel(selectedDbGroup) }} · {{ selectedDatabaseReadIssue ? t('story.databaseReadFailed') : itemCountLabel(isDocumentSubFieldGroup(selectedDbGroup) ? dbSubFieldOrder(selectedDbGroup).length : activeDbGroup.named.length) }}</span>
               <template v-if="!isDocumentSubFieldGroup(selectedDbGroup)">
                 <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
                 <button
@@ -2217,7 +2304,11 @@ function detailTitle(): string {
                 </button>
               </template>
             </div>
-            <div v-if="isDocumentSubFieldGroup(selectedDbGroup)" class="id-list db-subfield-list">
+            <div v-if="selectedDatabaseReadIssue" class="read-issue-detail" role="alert">
+              <strong>{{ t('story.databaseReadFailed') }}</strong>
+              <span>{{ formatReadIssue(selectedDatabaseReadIssue) }}</span>
+            </div>
+            <div v-else-if="isDocumentSubFieldGroup(selectedDbGroup)" class="id-list db-subfield-list">
               <button
                 v-for="path in dbSubFieldOrder(selectedDbGroup)"
                 :key="path"
@@ -2404,6 +2495,10 @@ function detailTitle(): string {
               <button type="button" class="secondary-button" @click="openMapInEditor(selectedMapId, selectedEvent.id)">{{ t('story.viewMapLocation') }}</button>
             </div>
           </div>
+          <div v-else-if="selected === 'maps' && selectedMap && selectedMapReadIssue" class="pm-detail-body read-issue-detail" role="alert">
+            <strong>{{ t('story.mapReadFailed') }}</strong>
+            <span>{{ formatReadIssue(selectedMapReadIssue) }}</span>
+          </div>
           <div v-else-if="selected === 'maps' && selectedMap" class="pm-detail-body event-inspector">
             <dl class="detail-facts">
               <dt>{{ t('story.mapId') }}</dt><dd>{{ String(selectedMap.id).padStart(3, '0') }}</dd>
@@ -2484,8 +2579,9 @@ function detailTitle(): string {
               </div>
             </template>
           </footer>
-        </aside>
+      </aside>
     </div>
+    </template>
 
     <EventEditorDialog
       :ref="bindEventDialogRef"
@@ -2499,7 +2595,7 @@ function detailTitle(): string {
       :load-image="loadImage"
       :overview="eventOverview"
       @close="closeEventEditor"
-      @save="saveEvent"
+      @save="saveEventIfUnlocked"
     />
 
     <BattleTestSetupDialog
@@ -2527,10 +2623,23 @@ function detailTitle(): string {
           <li @click="copyDbEntry(dbContextMenu.entryId)">{{ t('editor.ctx.copy') }}</li>
           <li
             :class="{ disabled: !canPasteDbEntry() }"
+            @click="pasteDbEntry(dbContextMenu.entryId)"
+          >{{ t('editor.ctx.paste') }}</li>
+          <li class="ctx-sep"></li>
+          <li class="ctx-danger" @click="clearDbEntry(dbContextMenu.entryId)">{{ t('db.clearEntry') }}</li>
+        </ul>
+      </div>
+    </teleport>
+  </div>
+</template>
+
+<style scoped>
+/* Layout */
 .console-subpage { position: relative; }
 .workspace-refresh-state {
   z-index: 5;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: 10px;
@@ -2544,18 +2653,7 @@ function detailTitle(): string {
   font-size: 12px;
 }
 .workspace-refresh-state.error { color: var(--app-danger); }
-            @click="pasteDbEntry(dbContextMenu.entryId)"
-          >{{ t('editor.ctx.paste') }}</li>
-          <li class="ctx-sep"></li>
-          <li class="ctx-danger" @click="clearDbEntry(dbContextMenu.entryId)">{{ t('db.clearEntry') }}</li>
-        </ul>
-      </div>
-    </teleport>
-  </div>
-</template>
-
-<style scoped>
-/* Layout */
+.write-locked { opacity: .72; }
 .pm-split {
   grid-template-columns: 230px minmax(0, 1fr) minmax(380px, 420px);
   padding: 14px 40px 34px;
@@ -3040,6 +3138,9 @@ function detailTitle(): string {
   text-align: center;
 }
 .detail-error{padding:12px;color:var(--app-danger);font-size:11px}
+.read-issue-summary{display:flex;align-items:center;gap:10px;flex:0 0 auto;margin:0 0 8px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--app-danger) 35%,var(--app-border));border-radius:6px;background:color-mix(in srgb,var(--app-danger) 7%,var(--app-bg));color:var(--app-danger);font-size:11px;overflow-wrap:anywhere}
+.read-issue-detail{display:grid;gap:6px;margin:12px;padding:12px;border:1px solid color-mix(in srgb,var(--app-danger) 35%,var(--app-border));border-radius:6px;background:color-mix(in srgb,var(--app-danger) 7%,var(--app-bg));color:var(--app-danger);font-size:11px;overflow-wrap:anywhere}
+.map-item.error,.sub-category-button.error{color:var(--app-danger)}
 
 @media (max-width: 1320px) {
   .pm-split {
@@ -3052,7 +3153,7 @@ function detailTitle(): string {
 
 /* States */
 .state { display: grid; place-items: center; flex: 1; color: var(--app-ink-muted); }
-.state.error { color: var(--app-danger); }
+.state.error { gap: 12px; color: var(--app-danger); }
 .empty-hint { color: var(--app-ink-muted); font-size: 12px; padding: 12px 0; text-align: center; }
 
 /* Context menu */

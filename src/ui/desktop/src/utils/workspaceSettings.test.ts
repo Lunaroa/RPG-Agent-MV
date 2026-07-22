@@ -9,6 +9,7 @@ import {
   isLikelyMaximizedWindowBounds,
   isValidWindowBounds,
   mergeWorkspaceSettings,
+  normalizeMapOverviewProjectState,
   normalizeWorkspaceSettings,
   normalizeMapPreviewOverrides,
   PALETTE_MAX_PERSISTED_HEIGHT,
@@ -129,35 +130,105 @@ describe('workspaceSettings', () => {
           },
           zoom: 9,
           layoutVersion: 2,
+          layout: 'circular',
         },
       },
     })
     expect(normalized.mapOverviewProjects).toEqual({
       'projects/A': {
         positions: { '1': { x: 12.5, y: -3 } },
-        thumbnailQuality: 'high',
         zoom: 6,
         layoutVersion: 2,
+        layout: 'circular',
       },
     })
 
     const merged = mergeWorkspaceSettings(
       normalized,
-      { mapOverviewProjects: { 'projects/B': { positions: { '2': { x: 80, y: 40 } }, thumbnailQuality: 'standard' } } },
+      {
+        mapOverviewProjects: {
+          'projects/B': { positions: { '2': { x: 80, y: 40 } }, layout: 'grid' },
+        },
+      },
     )
     expect(merged.mapOverviewProjects?.['projects/A']?.positions).toEqual({ '1': { x: 12.5, y: -3 } })
+    expect(merged.mapOverviewProjects?.['projects/A']?.layout).toBe('circular')
     expect(merged.mapOverviewProjects?.['projects/B']?.positions).toEqual({ '2': { x: 80, y: 40 } })
-    expect(merged.mapOverviewProjects?.['projects/A']?.thumbnailQuality).toBe('high')
+    expect(merged.mapOverviewProjects?.['projects/B']?.layout).toBe('grid')
     expect(merged.mapOverviewProjects?.['projects/A']?.zoom).toBe(6)
     expect(merged.mapOverviewProjects?.['projects/A']?.layoutVersion).toBe(2)
-    expect(merged.mapOverviewProjects?.['projects/B']?.thumbnailQuality).toBe('standard')
 
-    const qualityOnly = mergeWorkspaceSettings(merged, {
+    const layoutOnly = mergeWorkspaceSettings(merged, {
       mapOverviewProjects: {
-        'projects/A': { positions: {}, thumbnailQuality: 'ultra' },
+        'projects/A': { positions: {}, layout: 'd3-force' },
       },
     })
-    expect(qualityOnly.mapOverviewProjects?.['projects/A']?.thumbnailQuality).toBe('ultra')
+    expect(layoutOnly.mapOverviewProjects?.['projects/A']?.layout).toBe('d3-force')
+    expect(layoutOnly.mapOverviewProjects?.['projects/B']?.layout).toBe('grid')
+  })
+
+  it('persists map overview pan and selection per project', () => {
+    expect(normalizeMapOverviewProjectState({
+      positions: {},
+      pan: [12.5, -40],
+      selectedNodeId: 3,
+      selectedEdgeId: '1:2,3->4:5,6',
+    })).toEqual({
+      positions: {},
+      pan: [12.5, -40],
+      selectedNodeId: 3,
+      selectedEdgeId: '1:2,3->4:5,6',
+    })
+    expect(normalizeMapOverviewProjectState({
+      positions: {},
+      pan: [1],
+      selectedNodeId: 0,
+      selectedEdgeId: '  ',
+    })).toEqual({ positions: {} })
+  })
+
+  it('tolerates legacy thumbnailQuality on read but omits it after normalize', () => {
+    const withLegacy = normalizeMapOverviewProjectState({
+      positions: { '1': { x: 1, y: 2 } },
+      thumbnailQuality: 'ultra',
+      zoom: 0.0005,
+      layout: 'not-a-layout',
+    })
+    expect(withLegacy).toEqual({
+      positions: { '1': { x: 1, y: 2 } },
+      zoom: 0.001,
+    })
+    expect(withLegacy).not.toHaveProperty('thumbnailQuality')
+    expect(withLegacy).not.toHaveProperty('layout')
+
+    const settings = normalizeWorkspaceSettings({
+      mapOverviewProjects: {
+        'projects/legacy': {
+          positions: {},
+          thumbnailQuality: 'standard',
+          layout: 'force-atlas2',
+        },
+      },
+    })
+    expect(settings.mapOverviewProjects?.['projects/legacy']).toEqual({
+      positions: {},
+      layout: 'force-atlas2',
+    })
+  })
+
+  it('clamps map overview zoom to 0.1%–600% and rejects invalid layout ids', () => {
+    expect(normalizeMapOverviewProjectState({
+      positions: {},
+      zoom: 0.05,
+    })?.zoom).toBe(0.05)
+    expect(normalizeMapOverviewProjectState({
+      positions: {},
+      zoom: 7,
+    })?.zoom).toBe(6)
+    expect(normalizeMapOverviewProjectState({
+      positions: {},
+      layout: 'elk',
+    })?.layout).toBeUndefined()
   })
 
   it('restores a persisted preview selection as the same map in map editing mode', () => {

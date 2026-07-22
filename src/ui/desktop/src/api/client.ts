@@ -135,8 +135,16 @@ declare global {
         tilesets(project?: string): Promise<unknown>;
         get(mapId: number, project?: string): Promise<unknown>;
         overview(project?: string): Promise<unknown>;
-        overviewThumbnail(mapId: number, version: string | undefined, quality: MapOverviewThumbnailQuality, project: string | undefined, sessionId: string): Promise<unknown>;
-        cancelOverviewThumbnails(sessionId: string): Promise<unknown>;
+        overviewChunk(
+          mapId: number,
+          version: string,
+          chunkX: number,
+          chunkY: number,
+          level: MapOverviewChunkLevel,
+          project: string | undefined,
+          sessionId: string,
+        ): Promise<unknown>;
+        cancelOverviewChunks(sessionId: string): Promise<unknown>;
         create(properties: Record<string, unknown>, project?: string): Promise<unknown>;
         importFromLibrary(assetId: string, parentMapId?: number | null, properties?: Record<string, unknown>, project?: string): Promise<unknown>;
         importPackageFromLibrary(assetIds: string[], parentMapId?: number | null, properties?: Record<string, unknown>, project?: string): Promise<unknown>;
@@ -295,7 +303,7 @@ function desktopApi(): Window['api'] {
 
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
-  MapTreeNode, MapIndex, MapMovePosition, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewSnapshot, MapOverviewChunk, MapOverviewChunkLevel, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
@@ -318,7 +326,7 @@ import type {
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot, WorkspaceSurfaceId, WorkspaceSurfaceVersionRequest, WorkspaceSurfaceVersionResult,
 } from '@contract/types';
 export type {
-  MapTreeNode, MapIndex, MapMovePosition, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewSnapshot, MapOverviewChunk, MapOverviewChunkLevel, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
@@ -593,11 +601,19 @@ export const maps = {
   overview(project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.overview(project) as Promise<MapOverviewSnapshot>;
   },
-  overviewThumbnail(mapId: number, version: string | undefined, quality: MapOverviewThumbnailQuality, project: string, sessionId: string) {
-    return desktopApi().maps.overviewThumbnail(mapId, version, quality, project, sessionId) as Promise<MapOverviewThumbnail>;
+  overviewChunk(
+    mapId: number,
+    version: string,
+    chunkX: number,
+    chunkY: number,
+    level: MapOverviewChunkLevel,
+    project: string,
+    sessionId: string,
+  ) {
+    return desktopApi().maps.overviewChunk(mapId, version, chunkX, chunkY, level, project, sessionId) as Promise<MapOverviewChunk>;
   },
-  cancelOverviewThumbnails(sessionId: string) {
-    return desktopApi().maps.cancelOverviewThumbnails(sessionId) as Promise<{ canceled: boolean }>;
+  cancelOverviewChunks(sessionId: string) {
+    return desktopApi().maps.cancelOverviewChunks(sessionId) as Promise<{ canceled: boolean }>;
   },
   create(properties: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.create(properties, project);

@@ -109,9 +109,16 @@ contextBridge.exposeInMainWorld('api', {
     tilesets: (project?: string) => ipcRenderer.invoke('maps:tilesets', project),
     get: (mapId: number, project?: string) => ipcRenderer.invoke('maps:get', mapId, project),
     overview: (project?: string) => ipcRenderer.invoke('maps:overview', project),
-    overviewThumbnail: (mapId: number, version: string | undefined, quality: 'standard' | 'high' | 'ultra', project: string | undefined, sessionId: string) =>
-      ipcRenderer.invoke('maps:overviewThumbnail', mapId, version, quality, project, sessionId),
-    cancelOverviewThumbnails: (sessionId: string) => ipcRenderer.invoke('maps:cancelOverviewThumbnails', sessionId),
+    overviewChunk: (
+      mapId: number,
+      version: string,
+      chunkX: number,
+      chunkY: number,
+      level: 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128,
+      project: string | undefined,
+      sessionId: string,
+    ) => ipcRenderer.invoke('maps:overviewChunk', mapId, version, chunkX, chunkY, level, project, sessionId),
+    cancelOverviewChunks: (sessionId: string) => ipcRenderer.invoke('maps:cancelOverviewChunks', sessionId),
     create: (properties: unknown, project?: string) => ipcRenderer.invoke('maps:create', properties, project),
     importFromLibrary: (assetId: string, parentMapId: number | null, properties: unknown, project?: string) =>
       ipcRenderer.invoke('maps:importFromLibrary', assetId, parentMapId, properties, project),

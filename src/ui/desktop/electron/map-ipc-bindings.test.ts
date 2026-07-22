@@ -25,23 +25,42 @@ describe('map IPC project compatibility warnings', () => {
     assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, request]]);
   });
 
-  test('forwards thumbnail quality after the expected content version', async () => {
+  test('forwards overview chunk request after the expected content version', async () => {
     const handlers = new Map<string, (...args: any[]) => unknown>();
     const calls: unknown[][] = [];
     const canceled: string[] = [];
     registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
-      thumbnail: (...args: unknown[]) => {
+      chunk: (...args: unknown[]) => {
         calls.push(args);
         return { ok: true };
       },
-      cancelThumbnailSession: sessionId => canceled.push(sessionId),
+      cancelChunkSession: sessionId => canceled.push(sessionId),
+      listProjects: () => [{ path: PROJECT_PATH }],
     }), { withProductLanguage: (_language, fn) => fn() });
 
-    await handlers.get('maps:overviewThumbnail')!({}, 7, '0123456789abcdefabcd', 'ultra', PROJECT_PATH, 'session-1');
-    await handlers.get('maps:cancelOverviewThumbnails')!({}, 'session-1');
+    await handlers.get('maps:overviewChunk')!({}, 7, '0123456789abcdefabcd', 1, 2, 4, PROJECT_PATH, 'session-1');
+    await handlers.get('maps:cancelOverviewChunks')!({}, 'session-1');
 
-    assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, 7, '0123456789abcdefabcd', 'ultra', 'session-1']]);
+    assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, 7, '0123456789abcdefabcd', 1, 2, 4, 'session-1']]);
     assert.deepEqual(canceled, ['session-1']);
+  });
+
+  test('rejects overview chunk requests for unregistered project paths', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    let called = false;
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
+      chunk: () => {
+        called = true;
+        return { ok: true };
+      },
+      listProjects: () => [{ path: path.join(os.tmpdir(), 'rpg-agent-mv-other-project') }],
+    }), { withProductLanguage: (_language, fn) => fn() });
+
+    await assert.rejects(
+      async () => handlers.get('maps:overviewChunk')!({}, 7, '0123456789abcdefabcd', 1, 2, 4, PROJECT_PATH, 'session-1'),
+      /not registered/,
+    );
+    assert.equal(called, false);
   });
 
   test('confirms before importing an unsupported but recognizable MZ project', async () => {
@@ -126,23 +145,24 @@ function desktop(overrides: {
   warning?: ReturnType<typeof versionWarning>;
   register?: () => unknown;
   apply?: () => unknown;
-  thumbnail?: (...args: unknown[]) => unknown;
-  cancelThumbnailSession?: (sessionId: string) => unknown;
+  chunk?: (...args: unknown[]) => unknown;
+  cancelChunkSession?: (sessionId: string) => unknown;
   validateWorkspaceSurface?: (...args: unknown[]) => unknown;
+  listProjects?: () => Array<{ path: string }>;
 }) {
   return {
     project: {
       resolveProjectPath: (_root: string, value?: string) => value || PROJECT_PATH,
       getProjectCompatibilityWarning: () => overrides.warning || versionWarning(),
       registerExternalProject: () => overrides.register?.(),
-      listProjects: () => [],
+      listProjects: () => overrides.listProjects?.() || [],
     },
     staging: {
       applyProjectStaging: () => overrides.apply?.(),
     },
     mapOverview: {
-      requestMapOverviewThumbnail: (...args: unknown[]) => overrides.thumbnail?.(...args),
-      cancelMapOverviewThumbnailSession: (sessionId: string) => overrides.cancelThumbnailSession?.(sessionId),
+      requestMapOverviewChunk: (...args: unknown[]) => overrides.chunk?.(...args),
+      cancelMapOverviewChunkSession: (sessionId: string) => overrides.cancelChunkSession?.(sessionId),
     },
     workspaceSurfaces: {
       validateWorkspaceSurfaceVersion: (...args: unknown[]) => overrides.validateWorkspaceSurface?.(...args),

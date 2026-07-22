@@ -12,6 +12,8 @@ import { isMapPreviewVariableValue, parseMapPreviewSelfSwitchKey } from '@contra
 import { AGENT_PANEL_DEFAULT_WIDTH } from './agentPanelWidth'
 import { CHAT_HISTORY_DEFAULT_WIDTH } from './chatHistoryWidth'
 import { readEditorZoom } from '../composables/useEditorWorkspaceState'
+import { isMapOverviewLayoutId } from './mapOverviewLayouts'
+import { clampMapOverviewZoom } from './mapOverviewViewport'
 import { workspaceNoProjectsAvailable } from './workspaceSettingsLocalization'
 
 export const WORKSPACE_SETTINGS_DB_KEY = 'workspace'
@@ -188,9 +190,10 @@ export function normalizeMapPreviewOverrides(value: unknown): MapPreviewOverride
   return { switches, variables, selfSwitches }
 }
 
-function normalizeMapOverviewProjectState(value: unknown): WorkspaceMapOverviewProjectState | null {
+export function normalizeMapOverviewProjectState(value: unknown): WorkspaceMapOverviewProjectState | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const rawPositions = (value as Record<string, unknown>).positions
+  const record = value as Record<string, unknown>
+  const rawPositions = record.positions
   const positions: WorkspaceMapOverviewProjectState['positions'] = {}
   if (rawPositions && typeof rawPositions === 'object' && !Array.isArray(rawPositions)) {
     for (const [rawMapId, rawPosition] of Object.entries(rawPositions as Record<string, unknown>)) {
@@ -202,20 +205,33 @@ function normalizeMapOverviewProjectState(value: unknown): WorkspaceMapOverviewP
       positions[String(Number(rawMapId))] = { x, y }
     }
   }
-  const rawQuality = (value as Record<string, unknown>).thumbnailQuality
-  const thumbnailQuality = rawQuality === 'standard' || rawQuality === 'ultra' ? rawQuality : 'high'
-  const rawZoom = finiteNumber((value as Record<string, unknown>).zoom)
-  const zoom = rawZoom == null ? undefined : Math.max(0.08, Math.min(6, rawZoom))
-  const rawLayoutVersion = finiteNumber((value as Record<string, unknown>).layoutVersion)
+  // Legacy thumbnailQuality is tolerated on input but omitted after normalize/write.
+  const rawZoom = finiteNumber(record.zoom)
+  const zoom = rawZoom == null ? undefined : clampMapOverviewZoom(rawZoom)
+  const rawLayoutVersion = finiteNumber(record.layoutVersion)
   const layoutVersion = rawLayoutVersion != null && Number.isInteger(rawLayoutVersion) && rawLayoutVersion > 0
     ? rawLayoutVersion
     : undefined
-  return {
-    positions,
-    thumbnailQuality,
-    ...(zoom == null ? {} : { zoom }),
-    ...(layoutVersion == null ? {} : { layoutVersion }),
+  const layout = isMapOverviewLayoutId(record.layout) ? record.layout : undefined
+  const state: WorkspaceMapOverviewProjectState = { positions }
+  if (zoom != null) state.zoom = zoom
+  if (layoutVersion != null) state.layoutVersion = layoutVersion
+  if (layout != null) state.layout = layout
+  const panX = finiteNumber(Array.isArray(record.pan) ? record.pan[0] : undefined)
+  const panY = finiteNumber(Array.isArray(record.pan) ? record.pan[1] : undefined)
+  if (panX != null && panY != null) state.pan = [panX, panY]
+  if (record.selectedNodeId !== null) {
+    const selectedNodeId = finiteNumber(record.selectedNodeId)
+    if (selectedNodeId != null && Number.isInteger(selectedNodeId) && selectedNodeId > 0) {
+      state.selectedNodeId = selectedNodeId
+    }
   }
+  if (record.selectedEdgeId !== null) {
+    if (typeof record.selectedEdgeId === 'string' && record.selectedEdgeId.trim()) {
+      state.selectedEdgeId = record.selectedEdgeId.trim()
+    }
+  }
+  return state
 }
 
 function positiveStateId(value: string): number | null {

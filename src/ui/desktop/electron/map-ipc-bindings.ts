@@ -46,8 +46,8 @@ export const MAP_IPC_CHANNELS = [
   'maps:tilesets',
   'maps:get',
   'maps:overview',
-  'maps:overviewThumbnail',
-  'maps:cancelOverviewThumbnails',
+  'maps:overviewChunk',
+  'maps:cancelOverviewChunks',
   'maps:create',
   'maps:importFromLibrary',
   'maps:importPackageFromLibrary',
@@ -142,6 +142,13 @@ export function registerMapIpcHandlers(
   options: ProjectIpcOptions,
 ): void {
   const project = (value?: string) => desktop.project.resolveProjectPath(workflowRoot, value);
+  const assertRegisteredProject = (resolvedPath: string): void => {
+    const registered = desktop.project.listProjects(workflowRoot).some((entry: { path?: unknown }) => {
+      if (typeof entry.path !== 'string') return false;
+      return path.normalize(project(entry.path)).toLocaleLowerCase() === path.normalize(resolvedPath).toLocaleLowerCase();
+    });
+    if (!registered) throw new Error('The requested project is not registered.');
+  };
   const runInLanguage = <T>(fn: () => T): T =>
     options.withProductLanguage(normalizeProductLanguage(options.productLanguage?.()), fn);
   const handle = (channel: string, listener: (...args: any[]) => unknown) => {
@@ -215,11 +222,7 @@ export function registerMapIpcHandlers(
   handle('projects:openFolder', async (_event, value?: string) => {
     if (!options.openProjectDirectory) throw new Error('Opening project folders is unavailable.');
     const resolved = project(value);
-    const registered = desktop.project.listProjects(workflowRoot).some((entry: { path?: unknown }) => {
-      if (typeof entry.path !== 'string') return false;
-      return path.normalize(project(entry.path)).toLocaleLowerCase() === path.normalize(resolved).toLocaleLowerCase();
-    });
-    if (!registered) throw new Error('The requested project is not registered.');
+    assertRegisteredProject(resolved);
     await options.openProjectDirectory(resolved);
     return { ok: true };
   });
@@ -231,10 +234,13 @@ export function registerMapIpcHandlers(
     desktop.maps.buildMapPayload(workflowRoot, project(value), mapId));
   handle('maps:overview', (_event, value?: string) =>
     desktop.mapOverview.buildMapOverviewSnapshot(workflowRoot, project(value)));
-  handle('maps:overviewThumbnail', (_event, mapId: number, version: string | undefined, quality: 'standard' | 'high' | 'ultra', value: string | undefined, sessionId: string) =>
-    desktop.mapOverview.requestMapOverviewThumbnail(workflowRoot, project(value), mapId, version, quality, sessionId));
-  handle('maps:cancelOverviewThumbnails', (_event, sessionId: string) => {
-    desktop.mapOverview.cancelMapOverviewThumbnailSession(sessionId);
+  handle('maps:overviewChunk', (_event, mapId: number, version: string, chunkX: number, chunkY: number, level: 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128, value: string | undefined, sessionId: string) => {
+    const resolved = project(value);
+    assertRegisteredProject(resolved);
+    return desktop.mapOverview.requestMapOverviewChunk(workflowRoot, resolved, mapId, version, chunkX, chunkY, level, sessionId);
+  });
+  handle('maps:cancelOverviewChunks', (_event, sessionId: string) => {
+    desktop.mapOverview.cancelMapOverviewChunkSession(sessionId);
     return { canceled: true };
   });
   handle('maps:create', (_event, properties: Record<string, unknown>, value?: string) => desktop.maps.createMapDraft(workflowRoot, project(value), properties));

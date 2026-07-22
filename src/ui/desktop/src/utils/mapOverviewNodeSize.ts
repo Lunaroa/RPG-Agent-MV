@@ -1,35 +1,33 @@
 import type { MapOverviewNode } from '@contract/types'
 
-export const MAP_OVERVIEW_BASE_NODE_WIDTH = 360
-export const MAP_OVERVIEW_BASE_NODE_HEIGHT = 216
-export const MAP_OVERVIEW_LABEL_HEIGHT = 32
-export const MAP_OVERVIEW_LAYOUT_VERSION = 3
-
-const REFERENCE_MAP_AREA = 60 * 40
+export const MAP_OVERVIEW_TILE_PX = 48
+export const MAP_OVERVIEW_LABEL_HEIGHT = 36
+/** Bump once when node collision geometry changes; migrate positions per project. */
+export const MAP_OVERVIEW_LAYOUT_VERSION = 4
 
 export interface MapOverviewNodeSize {
-  scale: number
   width: number
   imageHeight: number
   collisionHeight: number
 }
 
+/** Native RPG Maker logical size: width/height in tiles × 48px. Label below is included in collision. */
 export function mapOverviewNodeSize(node: Pick<MapOverviewNode, 'width' | 'height'>): MapOverviewNodeSize {
-  const validDimensions = typeof node.width === 'number'
+  const valid = typeof node.width === 'number'
     && Number.isFinite(node.width)
     && node.width > 0
     && typeof node.height === 'number'
     && Number.isFinite(node.height)
     && node.height > 0
-  const scale = validDimensions
-    ? Math.max(1, Math.min(3, Math.sqrt((node.width! * node.height!) / REFERENCE_MAP_AREA)))
-    : 1
-  const width = Math.round(MAP_OVERVIEW_BASE_NODE_WIDTH * scale)
-  const imageHeight = Math.round(MAP_OVERVIEW_BASE_NODE_HEIGHT * scale)
+  const width = valid ? Math.round(node.width! * MAP_OVERVIEW_TILE_PX) : MAP_OVERVIEW_TILE_PX
+  const imageHeight = valid ? Math.round(node.height! * MAP_OVERVIEW_TILE_PX) : MAP_OVERVIEW_TILE_PX
   return {
-    scale,
     width,
     imageHeight,
     collisionHeight: imageHeight + MAP_OVERVIEW_LABEL_HEIGHT,
   }
+}
+
+export function mapOverviewNodeDiagonalHalf(size: MapOverviewNodeSize): number {
+  return Math.hypot(size.width, size.collisionHeight) / 2
 }

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import type {
   EngineProviderBinding,
+  MapOverviewLayoutId,
   MapOverviewThumbnailQuality,
   WorkspaceMapOverviewProjectState,
   WorkspaceEditorProjectState,
@@ -9,6 +10,12 @@ import type {
   WorkspaceSettings,
 } from '@contract/types'
 import { workspace as workspaceApi } from '../api/client'
+import {
+  DEFAULT_MAP_OVERVIEW_LAYOUT_ID,
+  isMapOverviewLayoutId,
+  parseMapOverviewLayoutId,
+} from '../utils/mapOverviewLayouts'
+import { clampMapOverviewZoom } from '../utils/mapOverviewViewport'
 import {
   buildWorkspaceMigrationPatch,
   filterLegacyWorkspaceMigrationPatch,
@@ -171,21 +178,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return settings.value.mapOverviewProjects?.[projectPath]?.positions || {}
   }
 
-  function patchMapOverviewThumbnailQuality(projectPath: string, thumbnailQuality: MapOverviewThumbnailQuality): void {
-    patchMapOverviewProject(projectPath, { thumbnailQuality })
+  /** Legacy quality is read-tolerant only; overview chunks no longer persist quality. */
+  function patchMapOverviewThumbnailQuality(_projectPath: string, _thumbnailQuality: MapOverviewThumbnailQuality): void {
+    // intentionally no-op: thumbnailQuality must not be written
   }
 
   function readMapOverviewThumbnailQuality(projectPath: string): MapOverviewThumbnailQuality {
-    return settings.value.mapOverviewProjects?.[projectPath]?.thumbnailQuality || 'high'
+    const quality = settings.value.mapOverviewProjects?.[projectPath]?.thumbnailQuality
+    return quality === 'standard' || quality === 'ultra' ? quality : 'high'
   }
 
   function patchMapOverviewZoom(projectPath: string, zoom: number): void {
-    patchMapOverviewProject(projectPath, { zoom: Math.max(0.08, Math.min(6, zoom)) })
+    patchMapOverviewProject(projectPath, { zoom: clampMapOverviewZoom(zoom) })
   }
 
   function readMapOverviewZoom(projectPath: string): number | null {
     const zoom = settings.value.mapOverviewProjects?.[projectPath]?.zoom
-    return typeof zoom === 'number' && Number.isFinite(zoom) ? Math.max(0.08, Math.min(6, zoom)) : null
+    return typeof zoom === 'number' && Number.isFinite(zoom) ? clampMapOverviewZoom(zoom) : null
   }
 
   function patchMapOverviewLayoutVersion(projectPath: string, layoutVersion: number): void {
@@ -198,6 +207,65 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return typeof layoutVersion === 'number' && Number.isInteger(layoutVersion) && layoutVersion > 0 ? layoutVersion : null
   }
 
+  function patchMapOverviewLayout(projectPath: string, layout: MapOverviewLayoutId): void {
+    if (!isMapOverviewLayoutId(layout)) {
+      throw new Error(`Unknown map overview layout id: ${String(layout)}`)
+    }
+    patchMapOverviewProject(projectPath, { layout })
+  }
+
+  function readMapOverviewLayout(projectPath: string): MapOverviewLayoutId {
+    return parseMapOverviewLayoutId(
+      settings.value.mapOverviewProjects?.[projectPath]?.layout,
+      DEFAULT_MAP_OVERVIEW_LAYOUT_ID,
+    )
+  }
+
+  function patchMapOverviewPan(projectPath: string, pan: [number, number]): void {
+    if (!Number.isFinite(pan[0]) || !Number.isFinite(pan[1])) {
+      throw new Error('Map overview pan must be finite coordinates.')
+    }
+    patchMapOverviewProject(projectPath, { pan: [pan[0], pan[1]] })
+  }
+
+  function readMapOverviewPan(projectPath: string): [number, number] | null {
+    const pan = settings.value.mapOverviewProjects?.[projectPath]?.pan
+    if (!pan || !Number.isFinite(pan[0]) || !Number.isFinite(pan[1])) return null
+    return [pan[0], pan[1]]
+  }
+
+  function patchMapOverviewSelection(
+    projectPath: string,
+    selection: { selectedNodeId?: number | null; selectedEdgeId?: string | null },
+  ): void {
+    const patch: Partial<WorkspaceMapOverviewProjectState> & {
+      selectedNodeId?: number | null
+      selectedEdgeId?: string | null
+    } = {}
+    if ('selectedNodeId' in selection) {
+      const id = selection.selectedNodeId
+      patch.selectedNodeId = id != null && Number.isInteger(id) && id > 0 ? id : null
+    }
+    if ('selectedEdgeId' in selection) {
+      const edgeId = selection.selectedEdgeId
+      patch.selectedEdgeId = typeof edgeId === 'string' && edgeId.trim() ? edgeId.trim() : null
+    }
+    patchMapOverviewProject(projectPath, patch as Partial<WorkspaceMapOverviewProjectState>)
+  }
+
+  function readMapOverviewSelection(projectPath: string): {
+    selectedNodeId: number | null
+    selectedEdgeId: string | null
+  } {
+    const state = settings.value.mapOverviewProjects?.[projectPath]
+    const nodeId = state?.selectedNodeId
+    const edgeId = state?.selectedEdgeId
+    return {
+      selectedNodeId: typeof nodeId === 'number' && Number.isInteger(nodeId) && nodeId > 0 ? nodeId : null,
+      selectedEdgeId: typeof edgeId === 'string' && edgeId.trim() ? edgeId.trim() : null,
+    }
+  }
+
   function patchMapOverviewProject(
     projectPath: string,
     partial: Partial<WorkspaceMapOverviewProjectState>,
@@ -205,7 +273,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const current = settings.value.mapOverviewProjects?.[projectPath]
     patchDebounced({ mapOverviewProjects: { [projectPath]: {
       positions: current?.positions || {},
-      thumbnailQuality: current?.thumbnailQuality || 'high',
       ...current,
       ...partial,
     } } })
@@ -352,6 +419,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     readMapOverviewZoom,
     patchMapOverviewLayoutVersion,
     readMapOverviewLayoutVersion,
+    patchMapOverviewLayout,
+    readMapOverviewLayout,
+    patchMapOverviewPan,
+    readMapOverviewPan,
+    patchMapOverviewSelection,
+    readMapOverviewSelection,
     readComposerModel,
     hydrateWorkbenchLayout,
     bindWorkbenchLayoutPersistence,

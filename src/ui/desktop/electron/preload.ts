@@ -1,4 +1,9 @@
-import type { EventSearchOptions } from '../../../contract/types.ts';
+import type {
+  EventSearchOptions,
+  MapOverviewPngExportProgressEvent,
+  MapOverviewPngExportScene,
+  MapOverviewScanProgressEvent,
+} from '../../../contract/types.ts';
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -108,17 +113,29 @@ contextBridge.exposeInMainWorld('api', {
     tree: (project?: string) => ipcRenderer.invoke('maps:tree', project),
     tilesets: (project?: string) => ipcRenderer.invoke('maps:tilesets', project),
     get: (mapId: number, project?: string) => ipcRenderer.invoke('maps:get', mapId, project),
-    overview: (project?: string) => ipcRenderer.invoke('maps:overview', project),
-    overviewChunk: (
+    overview: (project?: string, sessionId?: string) => ipcRenderer.invoke('maps:overview', project, sessionId),
+    onOverviewProgress: (callback: (progress: MapOverviewScanProgressEvent) => void) => {
+      const handler = (_event: unknown, progress: MapOverviewScanProgressEvent) => callback(progress);
+      ipcRenderer.on('maps:overviewProgress', handler);
+      return () => ipcRenderer.removeListener('maps:overviewProgress', handler);
+    },
+    overviewThumbnail: (
       mapId: number,
       version: string,
-      chunkX: number,
-      chunkY: number,
-      level: 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128,
       project: string | undefined,
       sessionId: string,
-    ) => ipcRenderer.invoke('maps:overviewChunk', mapId, version, chunkX, chunkY, level, project, sessionId),
-    cancelOverviewChunks: (sessionId: string) => ipcRenderer.invoke('maps:cancelOverviewChunks', sessionId),
+    ) => ipcRenderer.invoke('maps:overviewThumbnail', mapId, version, project, sessionId),
+    cancelOverviewThumbnails: (sessionId: string) => ipcRenderer.invoke('maps:cancelOverviewThumbnails', sessionId),
+    finalizeOverviewThumbnails: (project?: string) => ipcRenderer.invoke('maps:finalizeOverviewThumbnails', project),
+    startOverviewPngExport: (scene: MapOverviewPngExportScene) => ipcRenderer.invoke('maps:overviewExportStart', scene),
+    overviewPngExportStatus: () => ipcRenderer.invoke('maps:overviewExportStatus'),
+    cancelOverviewPngExport: (requestId: string) => ipcRenderer.invoke('maps:overviewExportCancel', requestId),
+    revealOverviewPngExport: (requestId: string) => ipcRenderer.invoke('maps:overviewExportReveal', requestId),
+    onOverviewPngExportProgress: (callback: (progress: MapOverviewPngExportProgressEvent) => void) => {
+      const handler = (_event: unknown, progress: MapOverviewPngExportProgressEvent) => callback(progress);
+      ipcRenderer.on('maps:overviewExportProgress', handler);
+      return () => ipcRenderer.removeListener('maps:overviewExportProgress', handler);
+    },
     create: (properties: unknown, project?: string) => ipcRenderer.invoke('maps:create', properties, project),
     importFromLibrary: (assetId: string, parentMapId: number | null, properties: unknown, project?: string) =>
       ipcRenderer.invoke('maps:importFromLibrary', assetId, parentMapId, properties, project),

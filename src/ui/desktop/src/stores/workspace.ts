@@ -178,7 +178,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return settings.value.mapOverviewProjects?.[projectPath]?.positions || {}
   }
 
-  /** Legacy quality is read-tolerant only; overview chunks no longer persist quality. */
+  /** Legacy quality is read-tolerant only; fixed one-quarter thumbnails no longer persist quality. */
   function patchMapOverviewThumbnailQuality(_projectPath: string, _thumbnailQuality: MapOverviewThumbnailQuality): void {
     // intentionally no-op: thumbnailQuality must not be written
   }

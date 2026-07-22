@@ -72,7 +72,6 @@ export type MapOverviewIssueCode =
   | 'invalid-target'
   | 'invalid-coordinate'
   | 'resource-missing'
-  | 'chunk-failed'
   | 'thumbnail-failed';
 
 export interface MapOverviewIssue {
@@ -99,7 +98,7 @@ export interface MapOverviewNode {
   readState: MapOverviewReadState;
   width: number | null;
   height: number | null;
-  /** Content version for chunk cache invalidation (map JSON + tilesets + used tileset images). */
+  /** Content version for thumbnail cache invalidation (map JSON + tileset metadata + used tileset images). */
   thumbnailVersion: string | null;
   incomingCount: number;
   outgoingCount: number;
@@ -148,45 +147,110 @@ export interface MapOverviewSnapshot {
   issues: MapOverviewIssue[];
 }
 
+export type MapOverviewScanProgressPhase =
+  | 'checking-cache'
+  | 'reading-maps'
+  | 'scanning-relations'
+  | 'preparing-images'
+  | 'verifying-project';
+
+export interface MapOverviewScanProgress {
+  phase: MapOverviewScanProgressPhase;
+  completed: number;
+  total: number;
+}
+
+export interface MapOverviewScanProgressEvent extends MapOverviewScanProgress {
+  sessionId: string;
+}
+
 /** Legacy thumbnail quality; read-tolerated in workspace state but no longer written. */
 export type MapOverviewThumbnailQuality = 'standard' | 'high' | 'ultra';
 
-export type MapOverviewChunkLevel = 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128;
-
-export interface MapOverviewChunk {
-  project: string;
-  mapId: number;
-  version: string;
-  chunkX: number;
-  chunkY: number;
-  level: MapOverviewChunkLevel;
-  logicalX: number;
-  logicalY: number;
-  logicalWidth: number;
-  logicalHeight: number;
-  outputWidth: number;
-  outputHeight: number;
-  mime: 'image/png';
-  resourceUrl: string;
-  cacheHit: boolean;
-  warnings: string[];
-}
-
-/** @deprecated Prefer MapOverviewChunk; retained for transitional references. */
 export interface MapOverviewThumbnail {
   project: string;
   mapId: number;
   version: string;
-  quality: MapOverviewThumbnailQuality;
+  scaleDivisor: 4;
   mime: 'image/png';
   width: number;
   height: number;
-  resourceUrl: string;
+  dataUrl: string;
   cacheHit: boolean;
   warnings: string[];
 }
 
+export interface MapOverviewPngExportNode {
+  id: number;
+  name: string;
+  readState: MapOverviewReadState;
+  mapWidth: number;
+  mapHeight: number;
+  thumbnailVersion: string | null;
+  position: { x: number; y: number };
+}
+
+export interface MapOverviewPngExportEdge {
+  id: string;
+  sourceMapId: number;
+  sourceX: number;
+  sourceY: number;
+  targetMapId: number;
+  targetX: number;
+  targetY: number;
+  count: number;
+}
+
+export interface MapOverviewPngExportScene {
+  requestId: string;
+  project: string;
+  projectName: string;
+  snapshotVersion: string;
+  nodes: MapOverviewPngExportNode[];
+  edges: MapOverviewPngExportEdge[];
+}
+
+export type MapOverviewPngExportPhase =
+  | 'preflight'
+  | 'rendering'
+  | 'encoding'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export type MapOverviewPngExportErrorCode =
+  | 'size-limit'
+  | 'disk-space'
+  | 'cache-changed'
+  | 'native-runtime'
+  | 'invalid-scene'
+  | 'export-failed';
+
+export interface MapOverviewPngExportStatus {
+  requestId: string;
+  project: string;
+  phase: MapOverviewPngExportPhase;
+  width: number | null;
+  height: number | null;
+  completed: number;
+  total: number;
+  startedAt: string;
+  finishedAt: string | null;
+  outputPath: string | null;
+  error: string | null;
+  errorCode: MapOverviewPngExportErrorCode | null;
+  canceled: boolean;
+}
+
+export interface MapOverviewPngExportStartResult {
+  canceled: boolean;
+  status: MapOverviewPngExportStatus | null;
+}
+
+export interface MapOverviewPngExportProgressEvent extends MapOverviewPngExportStatus {}
+
 export type MapOverviewLayoutId =
+  | 'layered-grid'
   | 'force-atlas2'
   | 'd3-force'
   | 'antv-dagre'
@@ -1447,8 +1511,8 @@ export interface WorkspaceMapOverviewProjectState {
   zoom?: number;
   /** Canvas pan as G6 translateTo position `[x, y]`. */
   pan?: [number, number];
-  selectedNodeId?: number;
-  selectedEdgeId?: string;
+  selectedNodeId?: number | null;
+  selectedEdgeId?: string | null;
   layoutVersion?: number;
   layout?: MapOverviewLayoutId;
 }

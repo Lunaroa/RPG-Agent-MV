@@ -399,6 +399,7 @@ async function loadBackendModules(roots: AppRoots) {
     project: await import(new URL('desktop/project-service.ts', coreUrl).href),
     maps: await import(new URL('desktop/map-service.ts', coreUrl).href),
     mapOverview: await import(new URL('desktop/map-overview-service.ts', coreUrl).href),
+    mapOverviewExport: await import(new URL('desktop/map-overview-png-export-service.ts', coreUrl).href),
     workspaceSurfaces: await import(new URL('desktop/workspace-surface-version-service.ts', coreUrl).href),
     events: await import(new URL('desktop/event-service.ts', coreUrl).href),
     eventRegistry: await import(new URL('workflow/event/event-registry.ts', coreUrl).href),
@@ -423,6 +424,7 @@ async function loadBackendModules(roots: AppRoots) {
     mapPreview: await import(new URL('desktop/map-preview-iframe-service.ts', coreUrl).href),
     playtestRuntime: await import(new URL('desktop/interactive-playtest-runtime.ts', coreUrl).href),
   };
+  desktop.mapOverviewExport.initializeMapOverviewPngExportService(roots.userDataRoot);
   const sessionRuntimeModule = await import(new URL('desktop/agent-session-runtime.ts', coreUrl).href);
   agentSessionRuntime = new sessionRuntimeModule.AgentSessionRuntime(roots.userDataRoot, {
     resolveProjectRuntime: (project: string, engine: RpgMakerEngine) => (
@@ -1197,6 +1199,22 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
         filters: [{ name: category, extensions }],
       });
       return result.canceled ? null : result.filePaths[0] || null;
+    },
+    selectMapOverviewExportTarget: async (event: Electron.IpcMainInvokeEvent, defaultName: string) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+      const result = await dialog.showSaveDialog(parent, {
+        title: electronText(currentProductLanguage(), 'mapOverview.export.dialogTitle'),
+        defaultPath: defaultName,
+        filters: [{ name: 'PNG', extensions: ['png'] }],
+        properties: ['showOverwriteConfirmation'],
+      });
+      return result.canceled ? null : result.filePath || null;
+    },
+    revealMapOverviewExport: (outputPath: string) => {
+      if (!path.isAbsolute(outputPath) || path.extname(outputPath).toLowerCase() !== '.png') {
+        throw new Error('Invalid map overview PNG export path.');
+      }
+      shell.showItemInFolder(outputPath);
     },
     openProjectDirectory: async (projectPath: string) => {
       const stat = fs.statSync(projectPath);

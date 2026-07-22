@@ -134,17 +134,21 @@ declare global {
         tree(project?: string): Promise<unknown>;
         tilesets(project?: string): Promise<unknown>;
         get(mapId: number, project?: string): Promise<unknown>;
-        overview(project?: string): Promise<unknown>;
-        overviewChunk(
+        overview(project?: string, sessionId?: string): Promise<unknown>;
+        onOverviewProgress(callback: (progress: MapOverviewScanProgressEvent) => void): () => void;
+        overviewThumbnail(
           mapId: number,
           version: string,
-          chunkX: number,
-          chunkY: number,
-          level: MapOverviewChunkLevel,
           project: string | undefined,
           sessionId: string,
         ): Promise<unknown>;
-        cancelOverviewChunks(sessionId: string): Promise<unknown>;
+        cancelOverviewThumbnails(sessionId: string): Promise<unknown>;
+        finalizeOverviewThumbnails(project?: string): Promise<unknown>;
+        startOverviewPngExport(scene: MapOverviewPngExportScene): Promise<unknown>;
+        overviewPngExportStatus(): Promise<unknown>;
+        cancelOverviewPngExport(requestId: string): Promise<unknown>;
+        revealOverviewPngExport(requestId: string): Promise<unknown>;
+        onOverviewPngExportProgress(callback: (progress: MapOverviewPngExportProgressEvent) => void): () => void;
         create(properties: Record<string, unknown>, project?: string): Promise<unknown>;
         importFromLibrary(assetId: string, parentMapId?: number | null, properties?: Record<string, unknown>, project?: string): Promise<unknown>;
         importPackageFromLibrary(assetIds: string[], parentMapId?: number | null, properties?: Record<string, unknown>, project?: string): Promise<unknown>;
@@ -303,7 +307,7 @@ function desktopApi(): Window['api'] {
 
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
-  MapTreeNode, MapIndex, MapMovePosition, MapOverviewSnapshot, MapOverviewChunk, MapOverviewChunkLevel, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
@@ -326,7 +330,7 @@ import type {
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot, WorkspaceSurfaceId, WorkspaceSurfaceVersionRequest, WorkspaceSurfaceVersionResult,
 } from '@contract/types';
 export type {
-  MapTreeNode, MapIndex, MapMovePosition, MapOverviewSnapshot, MapOverviewChunk, MapOverviewChunkLevel, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
@@ -598,22 +602,40 @@ export const maps = {
   get(mapId: number, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.get(mapId, project) as Promise<MapPayload>;
   },
-  overview(project: string = DEFAULT_PROJECT) {
-    return desktopApi().maps.overview(project) as Promise<MapOverviewSnapshot>;
+  overview(project: string = DEFAULT_PROJECT, sessionId?: string) {
+    return desktopApi().maps.overview(project, sessionId) as Promise<MapOverviewSnapshot>;
   },
-  overviewChunk(
+  onOverviewProgress(callback: (progress: MapOverviewScanProgressEvent) => void) {
+    return desktopApi().maps.onOverviewProgress(callback);
+  },
+  overviewThumbnail(
     mapId: number,
     version: string,
-    chunkX: number,
-    chunkY: number,
-    level: MapOverviewChunkLevel,
     project: string,
     sessionId: string,
   ) {
-    return desktopApi().maps.overviewChunk(mapId, version, chunkX, chunkY, level, project, sessionId) as Promise<MapOverviewChunk>;
+    return desktopApi().maps.overviewThumbnail(mapId, version, project, sessionId) as Promise<MapOverviewThumbnail>;
   },
-  cancelOverviewChunks(sessionId: string) {
-    return desktopApi().maps.cancelOverviewChunks(sessionId) as Promise<{ canceled: boolean }>;
+  cancelOverviewThumbnails(sessionId: string) {
+    return desktopApi().maps.cancelOverviewThumbnails(sessionId) as Promise<{ canceled: boolean }>;
+  },
+  finalizeOverviewThumbnails(project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.finalizeOverviewThumbnails(project) as Promise<{ finalized: boolean }>;
+  },
+  startOverviewPngExport(scene: MapOverviewPngExportScene) {
+    return desktopApi().maps.startOverviewPngExport(toPlain(scene)) as Promise<MapOverviewPngExportStartResult>;
+  },
+  overviewPngExportStatus() {
+    return desktopApi().maps.overviewPngExportStatus() as Promise<MapOverviewPngExportStatus | null>;
+  },
+  cancelOverviewPngExport(requestId: string) {
+    return desktopApi().maps.cancelOverviewPngExport(requestId) as Promise<MapOverviewPngExportStatus>;
+  },
+  revealOverviewPngExport(requestId: string) {
+    return desktopApi().maps.revealOverviewPngExport(requestId) as Promise<{ revealed: boolean }>;
+  },
+  onOverviewPngExportProgress(callback: (progress: MapOverviewPngExportProgressEvent) => void) {
+    return desktopApi().maps.onOverviewPngExportProgress(callback);
   },
   create(properties: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.create(properties, project);

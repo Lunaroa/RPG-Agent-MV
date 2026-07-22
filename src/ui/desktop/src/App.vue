@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
@@ -9,6 +10,7 @@ import StatusBar from './components/layout/StatusBar.vue'
 import LanguagePicker from './components/onboarding/LanguagePicker.vue'
 import OnboardingTour from './components/onboarding/OnboardingTour.vue'
 import { useProjectStore } from './stores/project'
+import { useMapOverviewExportStore } from './stores/mapOverviewExport'
 import { useSettingsStore } from './stores/settings'
 import { useWorkbenchUiStore } from './stores/workbenchUi'
 import { useWorkspaceStore } from './stores/workspace'
@@ -16,6 +18,7 @@ import { applyUiTheme } from './utils/applyUiTheme'
 import { useI18n, pickByLocale } from './i18n'
 import { needsLanguageSelection } from './utils/language-selection'
 import { projectWindowTitle } from './utils/projectWindowTitle'
+import { formatMapOverviewExportError } from './utils/mapOverviewExportError'
 import {
   collectUiControlPageState,
   getEditorUiControlState,
@@ -25,6 +28,7 @@ import {
   type UiControlEnvelope,
 } from './utils/uiControl'
 const projectStore = useProjectStore()
+const mapOverviewExportStore = useMapOverviewExportStore()
 const settingsStore = useSettingsStore()
 const workspaceStore = useWorkspaceStore()
 const workbenchUi = useWorkbenchUiStore()
@@ -34,6 +38,7 @@ const router = useRouter()
 const booting = ref(true)
 const bootError = ref('')
 let removeUiControlListener: (() => void) | null = null
+let announcedExportStatus = ''
 
 const consolePage = computed(() => {
   if (route.path !== '/console') return null
@@ -58,6 +63,19 @@ watch(
     document.title = projectWindowTitle(projectName)
   },
   { immediate: true },
+)
+
+watch(
+  () => mapOverviewExportStore.status,
+  (status) => {
+    if (!status || !['completed', 'failed', 'cancelled'].includes(status.phase)) return
+    const key = `${status.requestId}:${status.phase}`
+    if (announcedExportStatus === key) return
+    announcedExportStatus = key
+    if (status.phase === 'completed') ElMessage.success(t('mapOverview.export.completed'))
+    else if (status.phase === 'cancelled') ElMessage.info(t('mapOverview.export.cancelled'))
+    else ElMessage.error(formatMapOverviewExportError(status, t as Parameters<typeof formatMapOverviewExportError>[1]))
+  },
 )
 
 function onLanguageChosen() {
@@ -188,6 +206,11 @@ onMounted(async () => {
     workspaceStore.hydrateWorkbenchLayout()
     workspaceStore.bindWorkbenchLayoutPersistence()
     await projectStore.load()
+    try {
+      await mapOverviewExportStore.initialize()
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : t('mapOverview.export.unavailable'))
+    }
   } catch (error) {
     bootError.value = error instanceof Error ? error.message : t('app.startupFailed')
   } finally {
@@ -198,6 +221,7 @@ onMounted(async () => {
 onUnmounted(() => {
   removeUiControlListener?.()
   removeUiControlListener = null
+  mapOverviewExportStore.dispose()
 })
 </script>
 

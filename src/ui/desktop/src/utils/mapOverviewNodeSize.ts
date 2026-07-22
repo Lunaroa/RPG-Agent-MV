@@ -1,9 +1,9 @@
 import type { MapOverviewNode } from '@contract/types'
 
-export const MAP_OVERVIEW_TILE_PX = 48
+export const MAP_OVERVIEW_TILE_PX = 12
 export const MAP_OVERVIEW_LABEL_HEIGHT = 36
 /** Bump once when node collision geometry changes; migrate positions per project. */
-export const MAP_OVERVIEW_LAYOUT_VERSION = 4
+export const MAP_OVERVIEW_LAYOUT_VERSION = 5
 
 export interface MapOverviewNodeSize {
   width: number
@@ -11,7 +11,7 @@ export interface MapOverviewNodeSize {
   collisionHeight: number
 }
 
-/** Native RPG Maker logical size: width/height in tiles × 48px. Label below is included in collision. */
+/** Overview thumbnail size: width/height in tiles × 12px. Label below is included in collision. */
 export function mapOverviewNodeSize(node: Pick<MapOverviewNode, 'width' | 'height'>): MapOverviewNodeSize {
   const valid = typeof node.width === 'number'
     && Number.isFinite(node.width)

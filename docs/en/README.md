@@ -53,7 +53,6 @@ The app is not a replacement for the RPG Maker editor. MV and MZ projects share 
 | [FAQ](faq/questions.md) | Common questions and practical answers |
 | [Project Detection Failed](faq/project-detection.md) | What to check when the project cannot be read |
 | [Model And Runtime Checks](faq/model-check.md) | What to check when the model or runtime fails |
-| [MZ 1.10.0 Official Compatibility Evidence](faq/mz-official-evidence.md) | Official requirements, implementation areas, and focused tests |
 
 ## Quick Links
 
@@ -64,7 +63,6 @@ The app is not a replacement for the RPG Maker editor. MV and MZ projects share 
 - Extension and rules: [MCP Tools](agent-system/mcp-tools.md)
 - Project detection failures: [Project Detection Failed](faq/project-detection.md)
 - Model failures: [Model And Runtime Checks](faq/model-check.md)
-- MZ compatibility evidence: [MZ 1.10.0 Official Compatibility Evidence](faq/mz-official-evidence.md)
 
 ## Version
 

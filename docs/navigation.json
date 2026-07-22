@@ -27,8 +27,7 @@
     { "title": "常见问题", "pages": [
       { "title": "常见问题", "path": "5-faq/5.1-questions.md" },
       { "title": "项目检测", "path": "5-faq/5.2-project-detection.md" },
-      { "title": "模型检查", "path": "5-faq/5.3-model-check.md" },
-      { "title": "MZ 官方依据", "path": "5-faq/5.4-mz-official-evidence.md" }
+      { "title": "模型检查", "path": "5-faq/5.3-model-check.md" }
     ]}
   ],
   "en-US": [
@@ -59,8 +58,7 @@
     { "title": "FAQ", "pages": [
       { "title": "Questions", "path": "en/faq/questions.md" },
       { "title": "Project Detection", "path": "en/faq/project-detection.md" },
-      { "title": "Model Checks", "path": "en/faq/model-check.md" },
-      { "title": "MZ Official Evidence", "path": "en/faq/mz-official-evidence.md" }
+      { "title": "Model Checks", "path": "en/faq/model-check.md" }
     ]}
   ]
 }

@@ -212,6 +212,8 @@ contextBridge.exposeInMainWorld('api', {
     evaluate: (request: unknown) => ipcRenderer.invoke('mapPreview:evaluate', request),
     resetOverrides: () => ipcRenderer.invoke('mapPreview:resetOverrides'),
     replaceOverrides: (request: unknown) => ipcRenderer.invoke('mapPreview:replaceOverrides', request),
+    setEventExecution: (request: unknown) => ipcRenderer.invoke('mapPreview:setEventExecution', request),
+    sendInput: (request: unknown) => ipcRenderer.invoke('mapPreview:sendInput', request),
     ackFrame: (request: unknown) => ipcRenderer.invoke('mapPreview:ackFrame', request),
     setView: (request: unknown) => ipcRenderer.invoke('mapPreview:setView', request),
     runtimeEvent: (request: unknown) => ipcRenderer.invoke('mapPreview:runtimeEvent', request),

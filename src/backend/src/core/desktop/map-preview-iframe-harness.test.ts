@@ -15,6 +15,7 @@ const options = {
   operationId: 1,
   viewportWidth: 816,
   viewportHeight: 624,
+  tileSize: 48,
   geometry: { pixelWidth: 960, pixelHeight: 720 },
   overrides: { switches: { '2': true }, variables: { '4': 9 }, selfSwitches: {} },
 };
@@ -53,15 +54,16 @@ test('adds the iframe harness to the MZ dynamic loader after plugins', () => {
   }
 });
 
-test('keeps native visual animation while freezing game logic and frame transport', () => {
+test('keeps native event movement while gating interpreters and player triggers', () => {
   const root = fixture('mv');
   try {
     injectMapPreviewIframeHarness(root, options);
     const harness = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
-    assert.match(harness, /Game_CharacterBase\.prototype\.updateAnimation\.call\(this\)/);
-    assert.match(harness, /Game_Event\.prototype\.start = function \(\) \{\}/);
-    assert.match(harness, /Game_Event\.prototype\.updateSelfMovement = function \(\) \{\}/);
-    assert.match(harness, /Game_Interpreter\.prototype\.update = function \(\) \{\}/);
+    assert.doesNotMatch(harness, /Game_Event\.prototype\.update = function/);
+    assert.doesNotMatch(harness, /Game_Event\.prototype\.updateSelfMovement = function/);
+    assert.match(harness, /if \(canExecuteEvents\(\) && originalEventStart\)/);
+    assert.match(harness, /if \(canExecuteEvents\(\)\) return originalInterpreterUpdate/);
+    assert.match(harness, /if \(canExecuteEvents\(\)\) return originalUpdateParallel/);
     assert.match(harness, /Game_Player\.prototype\.canMove = function \(\) \{ return false; \}/);
     assert.match(harness, /requestAnimationFrame\(fpsLoop\)/);
     assert.match(harness, /suspended \|\| loading \|\| !initialized \|\| runtimeStage !== 'ready'/);
@@ -99,6 +101,27 @@ test('captures console output and evaluates code only through authenticated fram
     assert.match(harness, /typeof result\.then === 'function'/);
     assert.match(harness, /command\.type === 'evaluate'/);
     assert.match(harness, /postConsole\('error', 'exception'/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('supports checkpointed event execution, finite input, and runtime map transfer messages', () => {
+  const root = fixture('mz');
+  try {
+    injectMapPreviewIframeHarness(root, options);
+    const harness = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
+    assert.match(harness, /command\.type === 'set-event-execution'/);
+    assert.match(harness, /captureExecutionCheckpoint\(\)/);
+    assert.match(harness, /restoreExecutionCheckpoint\('execution-disabled'\)/);
+    assert.match(harness, /command\.type === 'input-key'/);
+    assert.match(harness, /message\.isNumberInput/);
+    assert.match(harness, /message\.isItemChoice/);
+    assert.match(harness, /scene instanceof Scene_Name/);
+    assert.match(harness, /post\('input-waiting'/);
+    assert.match(harness, /post\('runtime-map-changed'/);
+    assert.match(harness, /reason: 'event-transfer'/);
+    assert.match(harness, /recoverExecutionError/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

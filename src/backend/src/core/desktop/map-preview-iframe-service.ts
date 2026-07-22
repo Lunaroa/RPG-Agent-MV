@@ -11,6 +11,7 @@ import type {
   MapPreviewResult,
   MapPreviewResumeRequest,
   MapPreviewRuntimeCommand,
+  MapPreviewRuntimeCommandPayload,
   MapPreviewRuntimeEvent,
   MapPreviewSelfSwitchLetter,
   MapPreviewSession,
@@ -124,6 +125,9 @@ export class MapPreviewIframeService {
       viewportWidth: manifest.screenWidth,
       viewportHeight: manifest.screenHeight,
       transportMode: 'iframe',
+      eventExecutionEnabled: false,
+      inputWait: { kind: 'none' },
+      mapChangeSource: 'editor',
       startedAt: now,
       updatedAt: now,
     };
@@ -157,6 +161,7 @@ export class MapPreviewIframeService {
         operationId: this.#activeOperationId,
         viewportWidth: copied.screenWidth,
         viewportHeight: copied.screenHeight,
+        tileSize: copied.tileSize,
         geometry,
         overrides,
       });
@@ -210,6 +215,10 @@ export class MapPreviewIframeService {
         unsupportedVariableTypes: stringRecord(event.unsupportedVariableTypes),
         selfSwitchValues: selfSwitchRecord(event.selfSwitchValues),
         eventStates: eventStateArray(event.eventStates),
+        eventExecutionEnabled: Boolean(event.eventExecutionEnabled),
+        executionCheckpointMapId: optionalPositiveInteger(event.checkpointMapId),
+        inputWait: { kind: 'none' },
+        mapChangeSource: 'editor',
       });
       if (!this.#desiredRunning) this.#sendCommand({ type: 'suspend', operationId: this.#activeOperationId });
     } else if (event.phase === 'loading-map') {
@@ -225,6 +234,49 @@ export class MapPreviewIframeService {
         unsupportedVariableTypes: stringRecord(event.unsupportedVariableTypes),
         selfSwitchValues: selfSwitchRecord(event.selfSwitchValues),
         eventStates: eventStateArray(event.eventStates),
+        ...(typeof event.eventExecutionEnabled === 'boolean' ? { eventExecutionEnabled: event.eventExecutionEnabled } : {}),
+        ...(optionalPositiveInteger(event.checkpointMapId)
+          ? { executionCheckpointMapId: optionalPositiveInteger(event.checkpointMapId) }
+          : {}),
+      });
+    } else if (event.phase === 'input-waiting') {
+      this.#update({ inputWait: inputWaitState(event) });
+    } else if (event.phase === 'input-ended') {
+      this.#update({ inputWait: { kind: 'none' } });
+    } else if (event.phase === 'runtime-map-changed') {
+      const runtimeMapId = event.mapId;
+      let revision = this.#session.mapRevision || '';
+      try {
+        revision = effectiveMapRevision(this.#workflowRoot, this.#preparation.sourceProject, runtimeMapId);
+      } catch (error) {
+        this.#sendCommand({ type: 'set-event-execution', operationId: this.#activeOperationId, enabled: false });
+        this.#update({
+          eventExecutionEnabled: false,
+          inputWait: { kind: 'none' },
+          error: `Event transfer target could not be loaded: ${errorMessage(error)}`,
+        });
+        return this.current();
+      }
+      this.#update({
+        mapId: runtimeMapId,
+        mapRevision: revision,
+        mapPixelWidth: positiveInteger(event.mapPixelWidth, 'runtime map pixel width'),
+        mapPixelHeight: positiveInteger(event.mapPixelHeight, 'runtime map pixel height'),
+        switchValues: booleanRecord(event.switchValues),
+        variableValues: variableRecord(event.variableValues),
+        unsupportedVariableTypes: stringRecord(event.unsupportedVariableTypes),
+        selfSwitchValues: selfSwitchRecord(event.selfSwitchValues),
+        eventStates: eventStateArray(event.eventStates),
+        eventExecutionEnabled: Boolean(event.eventExecutionEnabled),
+        executionCheckpointMapId: optionalPositiveInteger(event.checkpointMapId),
+        inputWait: { kind: 'none' },
+        mapChangeSource: 'preview-runtime',
+      });
+    } else if (event.phase === 'execution-error') {
+      this.#update({
+        eventExecutionEnabled: false,
+        inputWait: { kind: 'none' },
+        error: String(event.message || 'Event execution stopped and the preview checkpoint was restored.'),
       });
     } else if (event.phase === 'fps') {
       const fps = Number(event.fps);
@@ -344,6 +396,29 @@ export class MapPreviewIframeService {
     return this.current();
   }
 
+  setEventExecution(enabled: boolean): MapPreviewResult {
+    this.#requireRuntime();
+    if (enabled && this.#session?.inputWait?.kind === 'unsupported') {
+      throw new Error('Unsupported preview input must be handled in a standalone playtest.');
+    }
+    this.#sendCommand({ type: 'set-event-execution', operationId: this.#activeOperationId, enabled: Boolean(enabled) });
+    this.#update({
+      eventExecutionEnabled: Boolean(enabled),
+      executionCheckpointMapId: enabled ? this.#session?.mapId : this.#session?.executionCheckpointMapId,
+      inputWait: enabled ? { kind: 'none' } : this.#session?.inputWait,
+    });
+    return this.current();
+  }
+
+  sendInput(key: 'up' | 'down' | 'left' | 'right' | 'ok' | 'cancel'): MapPreviewResult {
+    this.#requireRuntime();
+    if (!['message', 'choice'].includes(this.#session?.inputWait?.kind || 'none')) {
+      throw new Error('The preview runtime is not waiting for supported input.');
+    }
+    this.#sendCommand({ type: 'input-key', operationId: this.#activeOperationId, key });
+    return this.current();
+  }
+
   panCamera(_deltaX: number, _deltaY: number): MapPreviewResult { return this.current(); }
   ackFrame(_sequence: number): MapPreviewResult { return this.current(); }
   setView(_request: MapPreviewViewRequest): MapPreviewResult { return this.current(); }
@@ -437,7 +512,7 @@ export class MapPreviewIframeService {
     return this.current();
   }
 
-  #sendCommand(command: Record<string, unknown>): void {
+  #sendCommand(command: MapPreviewRuntimeCommandPayload): void {
     if (!this.#session || !this.#channelToken) throw new Error('Map preview iframe is not available.');
     this.#dependencies.onCommand?.({
       kind: 'rpg-agent-map-preview-command',
@@ -562,7 +637,10 @@ export class MapPreviewIframeService {
 
 function runtimeEvent(value: MapPreviewRuntimeEvent): MapPreviewRuntimeEvent {
   if (!value || value.kind !== 'rpg-agent-map-preview') throw new Error('Invalid map preview runtime event.');
-  if (!['ready', 'loading-map', 'suspended', 'state', 'fps', 'console', 'error'].includes(String(value.phase))) {
+  if (![
+    'ready', 'loading-map', 'suspended', 'state', 'fps', 'console', 'error',
+    'input-waiting', 'input-ended', 'runtime-map-changed', 'execution-error',
+  ].includes(String(value.phase))) {
     throw new Error('Invalid map preview runtime event phase.');
   }
   return {
@@ -632,6 +710,28 @@ function eventStateArray(value: unknown): MapPreviewEventState[] {
     states.push({ id, x, y, active: record.active, visible: record.visible, ...(hiddenReason ? { hiddenReason } : {}) });
   }
   return states;
+}
+function inputWaitState(value: MapPreviewRuntimeEvent): NonNullable<MapPreviewSession['inputWait']> {
+  const kind = String(value.input || 'none');
+  if (kind === 'message' || kind === 'choice') {
+    return {
+      kind,
+      sourceMapId: optionalPositiveInteger(value.sourceMapId),
+      eventId: optionalPositiveInteger(value.eventId),
+    };
+  }
+  if (kind === 'unsupported') {
+    const unsupportedType = String(value.unsupportedType || 'plugin');
+    return {
+      kind,
+      unsupportedType: ['number', 'item', 'name', 'plugin'].includes(unsupportedType)
+        ? unsupportedType as 'number' | 'item' | 'name' | 'plugin'
+        : 'plugin',
+      sourceMapId: optionalPositiveInteger(value.sourceMapId),
+      eventId: optionalPositiveInteger(value.eventId),
+    };
+  }
+  return { kind: 'none' };
 }
 function positiveInteger(value: unknown, label: string): number {
   const number = Number(value);

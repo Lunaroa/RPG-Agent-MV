@@ -35,6 +35,7 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
     const started = await service.start(project, 1, { switches: { '2': true }, variables: { '3': 8 }, selfSwitches: {} });
     assert.equal(started.session?.status, 'starting');
     assert.equal(started.session?.transportMode, 'iframe');
+    assert.equal(started.session?.eventExecutionEnabled, false);
     assert.equal(started.session?.iframeUrl, registeredUrl);
     assert.equal(roots.size, 1);
     assert.notEqual(path.resolve(isolatedRoot), path.resolve(project));
@@ -48,6 +49,46 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
     assert.equal(service.current().session?.mapPixelHeight, 720);
     assert.equal(service.current().session?.variableValues?.['3'], 'preview text');
     assert.deepEqual(service.current().session?.eventStates, [{ id: 4, x: 9, y: 6, active: false, visible: false }]);
+
+    service.setEventExecution(true);
+    assert.deepEqual(commands.at(-1)?.command, { type: 'set-event-execution', operationId: 1, enabled: true });
+    assert.equal(service.current().session?.eventExecutionEnabled, true);
+    assert.equal(service.current().session?.executionCheckpointMapId, 1);
+    service.handleRuntimeEvent({
+      ...runtimeEvent(identity, service.current().session!, 'input-waiting'),
+      input: 'choice',
+      sourceMapId: 1,
+      eventId: 4,
+    });
+    assert.equal(service.current().session?.inputWait?.kind, 'choice');
+    service.sendInput('ok');
+    assert.deepEqual(commands.at(-1)?.command, { type: 'input-key', operationId: 1, key: 'ok' });
+    service.handleRuntimeEvent(runtimeEvent(identity, service.current().session!, 'input-ended'));
+    assert.equal(service.current().session?.inputWait?.kind, 'none');
+
+    service.handleRuntimeEvent({
+      ...runtimeEvent(identity, service.current().session!, 'runtime-map-changed'),
+      mapId: 2,
+      mapPixelWidth: 720,
+      mapPixelHeight: 480,
+      eventExecutionEnabled: true,
+      checkpointMapId: 1,
+    });
+    assert.equal(service.current().session?.mapId, 2);
+    assert.equal(service.current().session?.mapPixelWidth, 720);
+    assert.equal(service.current().session?.mapChangeSource, 'preview-runtime');
+    assert.equal(service.current().session?.executionCheckpointMapId, 1);
+
+    service.setEventExecution(false);
+    assert.deepEqual(commands.at(-1)?.command, { type: 'set-event-execution', operationId: 1, enabled: false });
+    service.handleRuntimeEvent({
+      ...runtimeEvent(identity, service.current().session!, 'runtime-map-changed'),
+      mapId: 1,
+      eventExecutionEnabled: false,
+      checkpointMapId: 1,
+    });
+    assert.equal(service.current().session?.mapId, 1);
+    assert.equal(service.current().session?.mapChangeSource, 'preview-runtime');
 
     service.setSelfSwitch(1, 4, 'A', true);
     assert.deepEqual(commands.at(-1)?.command, { type: 'set-self-switch', operationId: 1, key: '1,4,A', value: true });
@@ -144,7 +185,12 @@ function createMZProject(workflowRoot: string): string {
     iconSize: 32,
     advanced: { screenWidth: 816, screenHeight: 624 },
   }), 'utf8');
-  fs.writeFileSync(path.join(data, 'MapInfos.json'), JSON.stringify([null, { id: 1, name: 'Sample', parentId: 0, order: 1, expanded: false, scrollX: 0, scrollY: 0 }]), 'utf8');
+  fs.writeFileSync(path.join(data, 'MapInfos.json'), JSON.stringify([
+    null,
+    { id: 1, name: 'Sample A', parentId: 0, order: 1, expanded: false, scrollX: 0, scrollY: 0 },
+    { id: 2, name: 'Sample B', parentId: 0, order: 2, expanded: false, scrollX: 0, scrollY: 0 },
+  ]), 'utf8');
   fs.writeFileSync(path.join(data, 'Map001.json'), JSON.stringify({ width: 20, height: 15, tilesetId: 1, events: [null], data: [] }), 'utf8');
+  fs.writeFileSync(path.join(data, 'Map002.json'), JSON.stringify({ width: 15, height: 10, tilesetId: 1, events: [null], data: [] }), 'utf8');
   return project;
 }

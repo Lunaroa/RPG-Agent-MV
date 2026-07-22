@@ -636,6 +636,15 @@ export interface MapPreviewEventState {
   hiddenReason?: 'inactive' | 'erased' | 'transparent' | 'no-graphic';
 }
 
+export type MapPreviewInputWaitKind = 'none' | 'message' | 'choice' | 'unsupported';
+
+export interface MapPreviewInputWaitState {
+  kind: MapPreviewInputWaitKind;
+  unsupportedType?: 'number' | 'item' | 'name' | 'plugin';
+  sourceMapId?: number;
+  eventId?: number;
+}
+
 export type MapPreviewConsoleLevel = 'debug' | 'log' | 'info' | 'warn' | 'error' | 'result';
 
 export interface MapPreviewConsoleEntry {
@@ -687,6 +696,10 @@ export interface MapPreviewSession {
   unsupportedVariableTypes?: Record<string, string>;
   selfSwitchValues?: Record<string, boolean>;
   eventStates?: MapPreviewEventState[];
+  eventExecutionEnabled?: boolean;
+  executionCheckpointMapId?: number;
+  inputWait?: MapPreviewInputWaitState;
+  mapChangeSource?: 'preview-runtime' | 'editor';
   startedAt: string;
   updatedAt: string;
   failureCode?: MapPreviewFailureCode;
@@ -739,15 +752,38 @@ export interface MapPreviewRuntimeEvent {
   operationId: number;
   mapId: number;
   mapRevision: string;
-  phase: 'ready' | 'loading-map' | 'suspended' | 'state' | 'fps' | 'console' | 'error';
+  phase:
+    | 'ready'
+    | 'loading-map'
+    | 'suspended'
+    | 'state'
+    | 'fps'
+    | 'console'
+    | 'error'
+    | 'input-waiting'
+    | 'input-ended'
+    | 'runtime-map-changed'
+    | 'execution-error';
   [key: string]: unknown;
 }
+
+export type MapPreviewRuntimeCommandPayload =
+  | { type: 'suspend'; operationId: number }
+  | { type: 'resume'; operationId: number; purpose: string; mapId: number; mapRevision: string; geometry: { pixelWidth: number; pixelHeight: number }; overrides: MapPreviewOverrides }
+  | { type: 'set-switch'; operationId: number; id: number; value: boolean }
+  | { type: 'set-variable'; operationId: number; id: number; value: MapPreviewVariableValue }
+  | { type: 'set-self-switch'; operationId: number; key: string; value: boolean }
+  | { type: 'evaluate'; operationId: number; requestId: string; code: string }
+  | { type: 'reset-overrides'; operationId: number }
+  | { type: 'replace-overrides'; operationId: number; overrides: MapPreviewOverrides }
+  | { type: 'set-event-execution'; operationId: number; enabled: boolean }
+  | { type: 'input-key'; operationId: number; key: 'up' | 'down' | 'left' | 'right' | 'ok' | 'cancel' };
 
 export interface MapPreviewRuntimeCommand {
   kind: 'rpg-agent-map-preview-command';
   sessionId: string;
   channelToken: string;
-  command: Record<string, unknown>;
+  command: MapPreviewRuntimeCommandPayload;
 }
 
 export type RmmvVerifyStatus = 'verified' | 'blocked' | 'review' | 'failed';

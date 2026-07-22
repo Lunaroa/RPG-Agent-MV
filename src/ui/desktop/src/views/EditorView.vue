@@ -15,6 +15,8 @@
       :busy="busy"
       :staging-dirty="stagingDirty && mode !== 'preview'"
       :preview-refresh-enabled="previewRefreshEnabled"
+      :preview-execution-enabled="previewExecutionEnabled"
+      :preview-execution-available="previewExecutionAvailable"
       @select-tool="selectMapTool"
       @select-tile="selectTileMode"
       @select-shadow="selectShadowMode"
@@ -26,6 +28,7 @@
       @apply="applyStaging"
       @discard="discardStaging"
       @refresh-preview="refreshPreview"
+      @update:preview-execution="setPreviewEventExecution"
     />
 
     <div class="editor-body" :style="editorBodyStyle">
@@ -87,11 +90,13 @@
             :selected-event="selectedPreviewEventState"
             :tile-size="currentTileSize"
             :event-focus-epoch="previewEventFocusEpoch"
+            :input-wait="previewSession?.inputWait"
             @retry="restartPreview"
             @copy-diagnostic="copyPreviewDiagnostic"
             @runtime-event="onPreviewRuntimeEvent"
             @view-changed="updatePreviewView"
             @clear-event-selection="selectedEventId = null"
+            @preview-input="sendPreviewInput"
           />
           <div v-show="mode !== 'preview'" class="editor-canvas-layer">
           <div v-if="selectedMapId == null" class="empty-state">
@@ -411,6 +416,7 @@ const previewConsoleEntries = ref<PreviewTerminalEntry[]>([]);
 const previewVariableDraftResetEpoch = ref(0);
 const previewEventFocusEpoch = ref(0);
 const previewInspectorRevealEpoch = ref(0);
+const previewRuntimeMapSyncId = ref<number | null>(null);
 let previewConsoleRequestSequence = 0;
 let previewConsoleEntrySequence = 0;
 
@@ -546,6 +552,20 @@ function stateRecordMap<T>(record?: Record<string, T>): Map<number, T> {
 
 function onPreviewStatus(session: MapPreviewSession) {
   const intent = previewIntentCoordinator.current()?.value;
+  if (
+    intent?.active
+    && session.status === 'running'
+    && session.mapChangeSource === 'preview-runtime'
+    && session.mapId !== selectedMapId.value
+  ) {
+    previewSession.value = session;
+    previewStatus.value = session.status;
+    previewError.value = '';
+    previewDiagnostic.value = null;
+    previewRequestedMapId.value = session.mapId;
+    if (previewRuntimeMapSyncId.value !== session.mapId) void syncPreviewRuntimeMapToEditor(session.mapId);
+    return;
+  }
   if (!intent?.active) {
     previewRefreshActive.value = false;
     if (previewSession.value && previewSession.value.sessionId !== session.sessionId) return;
@@ -586,13 +606,50 @@ async function onPreviewRuntimeEvent(event: MapPreviewRuntimeEvent) {
   const intent = previewIntentCoordinator.current()?.value;
   if (!session) return;
   if (event.sessionId !== session.sessionId || event.operationId !== session.operationId) return;
-  if (event.mapId !== session.mapId || event.mapRevision !== session.mapRevision) return;
+  if (event.phase !== 'runtime-map-changed' && (event.mapId !== session.mapId || event.mapRevision !== session.mapRevision)) return;
   if (event.phase === 'console') appendPreviewConsoleEntry(event.entry);
   try {
     const result = await mapPreview.runtimeEvent(event);
     if (result.session) onPreviewStatus(result.session);
   } catch (error) {
     if (intent?.active && previewIntentCoordinator.current()?.value === intent) setDirectPreviewFailure(error, 'iframe-runtime-event-ipc', intent);
+  }
+}
+
+async function syncPreviewRuntimeMapToEditor(mapId: number) {
+  previewRuntimeMapSyncId.value = mapId;
+  try {
+    const result = await loadMap(mapId, {
+      quiet: true,
+      resetHistory: false,
+      preserveEventSelection: false,
+      reconcilePreview: false,
+    });
+    if (result !== 'committed' || selectedMapId.value !== mapId) return;
+    previewRequestedMapId.value = mapId;
+    previewIntentCoordinator.begin(currentPreviewIntent());
+    ensureTreeExpandedForSelection();
+  } finally {
+    if (previewRuntimeMapSyncId.value === mapId) previewRuntimeMapSyncId.value = null;
+  }
+}
+
+async function setPreviewEventExecution(enabled: boolean) {
+  if (!previewExecutionAvailable.value && enabled) return;
+  try {
+    const result = await mapPreview.setEventExecution(enabled);
+    if (result.session) onPreviewStatus(result.session);
+  } catch (error) {
+    ElMessage.error(t('editor.preview.eventExecutionFailed', { message: (error as Error).message }));
+  }
+}
+
+async function sendPreviewInput(key: 'up' | 'down' | 'left' | 'right' | 'ok' | 'cancel') {
+  try {
+    const result = await mapPreview.sendInput(key);
+    if (result.session) onPreviewStatus(result.session);
+  } catch (error) {
+    ElMessage.error(t('editor.preview.inputFailed', { message: (error as Error).message }));
   }
 }
 

@@ -11,6 +11,7 @@ export interface MapPreviewIframeHarnessOptions {
   operationId: number;
   viewportWidth: number;
   viewportHeight: number;
+  tileSize: number;
   geometry: { pixelWidth: number; pixelHeight: number };
   overrides: MapPreviewOverrides;
 }
@@ -95,6 +96,15 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
   var fpsStartedAt = performance.now();
   var styleElement = null;
   var consoleEntryId = 0;
+  var eventExecutionEnabled = false;
+  var executionPausedForUnsupportedInput = false;
+  var executionCheckpoint = null;
+  var inputWaitKind = 'none';
+  var inputUnsupportedType = null;
+  var observedRuntimeMapId = currentMapId;
+  var originalInputKeyDown = null;
+  var originalInputKeyUp = null;
+  var runtimeMapChangeHandling = false;
 
   replaceObject(switchOverrides, config.overrides && config.overrides.switches);
   replaceObject(variableOverrides, config.overrides && config.overrides.variables);
@@ -209,10 +219,20 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
   installConsoleCapture();
   window.addEventListener('error', function (event) {
     postConsole('error', 'exception', [event && (event.error || event.message)]);
+    if (eventExecutionEnabled) {
+      if (event && event.preventDefault) event.preventDefault();
+      recoverExecutionError(event && (event.error || event.message));
+      return;
+    }
     reportError(event && (event.error || event.message));
   });
   window.addEventListener('unhandledrejection', function (event) {
     postConsole('error', 'exception', [event && event.reason]);
+    if (eventExecutionEnabled) {
+      if (event && event.preventDefault) event.preventDefault();
+      recoverExecutionError(event && event.reason);
+      return;
+    }
     reportError(event && event.reason);
   });
 
@@ -243,18 +263,40 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
     Bitmap.prototype.__rpgAgentIframeErrorTracking = true;
   }
   function installFreezeRules() {
+    if (window.__rpgAgentPreviewFreezeRulesInstalled) return;
+    window.__rpgAgentPreviewFreezeRulesInstalled = true;
     if (window.SceneManager) SceneManager.isGameActive = function () { return true; };
     if (window.Input) {
+      var originalInputUpdate = Input.update;
+      originalInputKeyDown = Input._onKeyDown;
+      originalInputKeyUp = Input._onKeyUp;
       if (Input.clear) Input.clear();
-      Input.update = function () { this._currentState = {}; this._latestButton = null; };
-      Input._onKeyDown = function () {};
-      Input._onKeyUp = function () {};
+      Input.update = function () {
+        if (inputWaitKind === 'message' || inputWaitKind === 'choice') return originalInputUpdate.apply(this, arguments);
+        if (this.clear) this.clear();
+      };
+      Input._onKeyDown = function (event) {
+        if ((inputWaitKind === 'message' || inputWaitKind === 'choice') && originalInputKeyDown) return originalInputKeyDown.call(this, event);
+      };
+      Input._onKeyUp = function (event) {
+        if ((inputWaitKind === 'message' || inputWaitKind === 'choice') && originalInputKeyUp) return originalInputKeyUp.call(this, event);
+      };
     }
     if (window.TouchInput) {
+      var originalTouchUpdate = TouchInput.update;
+      var originalMouseDown = TouchInput._onMouseDown;
+      var originalTouchStart = TouchInput._onTouchStart;
       if (TouchInput.clear) TouchInput.clear();
-      TouchInput.update = function () {};
-      TouchInput._onMouseDown = function () {};
-      TouchInput._onTouchStart = function () {};
+      TouchInput.update = function () {
+        if (inputWaitKind === 'message' || inputWaitKind === 'choice') return originalTouchUpdate.apply(this, arguments);
+        if (this.clear) this.clear();
+      };
+      TouchInput._onMouseDown = function (event) {
+        if ((inputWaitKind === 'message' || inputWaitKind === 'choice') && originalMouseDown) return originalMouseDown.call(this, event);
+      };
+      TouchInput._onTouchStart = function (event) {
+        if ((inputWaitKind === 'message' || inputWaitKind === 'choice') && originalTouchStart) return originalTouchStart.call(this, event);
+      };
     }
     if (window.Game_Player) {
       Game_Player.prototype.moveByInput = function () {};
@@ -266,19 +308,42 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       Game_Player.prototype.checkEventTriggerThere = function () {};
       Game_Player.prototype.checkEventTriggerTouch = function () {};
     }
-    if (window.Game_Event && window.Game_CharacterBase && typeof Game_CharacterBase.prototype.updateAnimation === 'function') {
-      Game_Event.prototype.update = function () { Game_CharacterBase.prototype.updateAnimation.call(this); };
-      Game_Event.prototype.start = function () {};
-      Game_Event.prototype.updateSelfMovement = function () {};
+    if (window.Game_Event && typeof Game_Event.prototype.update === 'function') {
+      var originalEventStart = Game_Event.prototype.start;
+      var originalUpdateParallel = Game_Event.prototype.updateParallel;
+      Game_Event.prototype.start = function () {
+        if (canExecuteEvents() && originalEventStart) return originalEventStart.apply(this, arguments);
+      };
+      if (typeof originalUpdateParallel === 'function') {
+        Game_Event.prototype.updateParallel = function () {
+          if (canExecuteEvents()) return originalUpdateParallel.apply(this, arguments);
+        };
+      }
     } else {
-      throw previewFailure('The RPG Maker character animation interface is unavailable.', 'map-render-failed', 'install-preview-freeze-rules');
+      throw previewFailure('The RPG Maker event update interface is unavailable.', 'map-render-failed', 'install-preview-freeze-rules');
     }
     if (window.Game_Map) {
-      Game_Map.prototype.updateInterpreter = function () {};
-      Game_Map.prototype.setupStartingEvent = function () { return false; };
+      var originalMapUpdateInterpreter = Game_Map.prototype.updateInterpreter;
+      var originalSetupStartingEvent = Game_Map.prototype.setupStartingEvent;
+      Game_Map.prototype.updateInterpreter = function () {
+        if (canExecuteEvents()) return originalMapUpdateInterpreter.apply(this, arguments);
+      };
+      Game_Map.prototype.setupStartingEvent = function () {
+        return canExecuteEvents() ? originalSetupStartingEvent.apply(this, arguments) : false;
+      };
     }
-    if (window.Game_CommonEvent) Game_CommonEvent.prototype.update = function () {};
-    if (window.Game_Interpreter) Game_Interpreter.prototype.update = function () {};
+    if (window.Game_CommonEvent) {
+      var originalCommonEventUpdate = Game_CommonEvent.prototype.update;
+      Game_CommonEvent.prototype.update = function () {
+        if (canExecuteEvents()) return originalCommonEventUpdate.apply(this, arguments);
+      };
+    }
+    if (window.Game_Interpreter) {
+      var originalInterpreterUpdate = Game_Interpreter.prototype.update;
+      Game_Interpreter.prototype.update = function () {
+        if (canExecuteEvents()) return originalInterpreterUpdate.apply(this, arguments);
+      };
+    }
     if (window.Utils && Utils.RPGMAKER_NAME === 'MZ' && window.Scene_Map) {
       Scene_Map.prototype.createMenuButton = function () { this._menuButton = null; };
     }
@@ -296,6 +361,9 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       AudioManager.playSe = function () {};
       AudioManager.playStaticSe = function () {};
     }
+  }
+  function canExecuteEvents() {
+    return eventExecutionEnabled && !executionPausedForUnsupportedInput;
   }
   function installMvFullMapTilemapSupport() {
     if (!window.Utils || Utils.RPGMAKER_NAME !== 'MV' || !window.Graphics || !Graphics.isWebGL || !Graphics.isWebGL()) return;
@@ -453,6 +521,180 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       eventStates: eventStates
     };
   }
+  function cloneRuntimeValue(value) {
+    if (value === undefined) return undefined;
+    return JSON.parse(JSON.stringify(value));
+  }
+  function captureExecutionCheckpoint() {
+    return {
+      mapId: Number($gameMap.mapId()),
+      switches: cloneRuntimeValue($gameSwitches._data || []),
+      variables: cloneRuntimeValue($gameVariables._data || []),
+      selfSwitches: cloneRuntimeValue($gameSelfSwitches._data || {})
+    };
+  }
+  function stopEventInterpreters() {
+    try {
+      if ($gameMap && $gameMap._interpreter && $gameMap._interpreter.clear) $gameMap._interpreter.clear();
+      if ($gameMap && $gameMap.events) $gameMap.events().forEach(function (event) {
+        if (event && event._interpreter && event._interpreter.clear) event._interpreter.clear();
+        if (event) event._starting = false;
+      });
+      if ($gameMap && $gameMap._commonEvents) $gameMap._commonEvents.forEach(function (commonEvent) {
+        if (commonEvent && commonEvent._interpreter && commonEvent._interpreter.clear) commonEvent._interpreter.clear();
+      });
+    } catch (_) {}
+  }
+  function setInputWait(kind, unsupportedType) {
+    if (inputWaitKind === kind && inputUnsupportedType === (unsupportedType || null)) return;
+    var previous = inputWaitKind;
+    inputWaitKind = kind;
+    inputUnsupportedType = unsupportedType || null;
+    if (kind === 'none') {
+      if (previous !== 'none') post('input-ended');
+      return;
+    }
+    post('input-waiting', {
+      input: kind,
+      unsupportedType: inputUnsupportedType || undefined,
+      sourceMapId: Number($gameMap && $gameMap.mapId && $gameMap.mapId() || currentMapId),
+      eventId: Number($gameMap && $gameMap._interpreter && $gameMap._interpreter._eventId || 0) || undefined
+    });
+  }
+  function detectInputWait() {
+    if (!eventExecutionEnabled) {
+      setInputWait('none');
+      return;
+    }
+    var message = window.$gameMessage;
+    var scene = window.SceneManager && SceneManager._scene;
+    var unsupported = null;
+    if (scene && window.Scene_Name && scene instanceof Scene_Name) unsupported = 'name';
+    else if (message && message.isNumberInput && message.isNumberInput()) unsupported = 'number';
+    else if (message && message.isItemChoice && message.isItemChoice()) unsupported = 'item';
+    if (unsupported) {
+      executionPausedForUnsupportedInput = true;
+      stopEventInterpreters();
+      setInputWait('unsupported', unsupported);
+      return;
+    }
+    if (executionPausedForUnsupportedInput) return;
+    if (message && message.isChoice && message.isChoice()) setInputWait('choice');
+    else if (message && message.isBusy && message.isBusy()) setInputWait('message');
+    else setInputWait('none');
+  }
+  function sendInputKey(key) {
+    if (inputWaitKind !== 'message' && inputWaitKind !== 'choice') return;
+    var codes = { left: 37, up: 38, right: 39, down: 40, ok: 13, cancel: 27 };
+    var keyCode = codes[String(key || '')];
+    if (!keyCode || !originalInputKeyDown || !originalInputKeyUp) return;
+    var inputEvent = { keyCode: keyCode, preventDefault: function () {} };
+    originalInputKeyDown.call(Input, inputEvent);
+    setTimeout(function () { originalInputKeyUp.call(Input, inputEvent); }, 34);
+  }
+  async function restoreExecutionCheckpoint(reason) {
+    if (!executionCheckpoint) return;
+    eventExecutionEnabled = false;
+    executionPausedForUnsupportedInput = false;
+    setInputWait('none');
+    stopEventInterpreters();
+    $gameSwitches._data = cloneRuntimeValue(executionCheckpoint.switches || []);
+    $gameVariables._data = cloneRuntimeValue(executionCheckpoint.variables || []);
+    $gameSelfSwitches._data = cloneRuntimeValue(executionCheckpoint.selfSwitches || {});
+    var targetMapId = Number(executionCheckpoint.mapId);
+    runtimeStage = 'restore-execution-checkpoint';
+    $gamePlayer.reserveTransfer(targetMapId, 0, 0, 2, 2);
+    SceneManager.goto(Scene_Map);
+    await waitFor(function () {
+      var scene = SceneManager._scene;
+      return scene && scene instanceof Scene_Map && scene._spriteset && SceneManager._sceneStarted !== false
+        && (!$gamePlayer.isTransferring || !$gamePlayer.isTransferring())
+        && $gameMap.mapId() === targetMapId;
+    }, 'execution checkpoint map', 15000);
+    currentMapId = targetMapId;
+    observedRuntimeMapId = targetMapId;
+    currentGeometry = {
+      pixelWidth: Number($dataMap.width) * Number(config.tileSize),
+      pixelHeight: Number($dataMap.height) * Number(config.tileSize)
+    };
+    resizeGraphics(currentGeometry);
+    $gamePlayer.setTransparent(true);
+    $gamePlayer.setThrough(true);
+    $gameMap.setDisplayPos(0, 0);
+    refreshEvents();
+    runtimeStage = 'ready';
+    post('runtime-map-changed', Object.assign({
+      reason: reason || 'execution-disabled',
+      mapId: currentMapId,
+      mapPixelWidth: Number(currentGeometry.pixelWidth),
+      mapPixelHeight: Number(currentGeometry.pixelHeight),
+      eventExecutionEnabled: false,
+      checkpointMapId: targetMapId
+    }, currentState()));
+  }
+  async function setEventExecution(enabled) {
+    if (enabled) {
+      executionCheckpoint = captureExecutionCheckpoint();
+      executionPausedForUnsupportedInput = false;
+      eventExecutionEnabled = true;
+      post('state', Object.assign({ eventExecutionEnabled: true, checkpointMapId: executionCheckpoint.mapId }, currentState()));
+      return;
+    }
+    await restoreExecutionCheckpoint('execution-disabled');
+  }
+  function recoverExecutionError(error) {
+    var message = String(error && (error.stack || error.message) || error || 'Unknown event execution error');
+    eventExecutionEnabled = false;
+    commandChain = commandChain.then(function () {
+      return restoreExecutionCheckpoint('execution-error');
+    }).then(function () {
+      post('execution-error', {
+        message: message.slice(0, 3000),
+        sourceMapId: currentSourceMapId || currentMapId,
+        checkpointMapId: executionCheckpoint && executionCheckpoint.mapId
+      });
+    }).catch(reportError);
+  }
+  async function handleRuntimeMapChange(mapId) {
+    if (runtimeMapChangeHandling || !eventExecutionEnabled) return;
+    runtimeMapChangeHandling = true;
+    try {
+      var width = Number(window.$dataMap && $dataMap.width);
+      var height = Number(window.$dataMap && $dataMap.height);
+      if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+        throw new Error('The transferred map has invalid dimensions.');
+      }
+      currentMapId = Number(mapId);
+      observedRuntimeMapId = currentMapId;
+      currentGeometry = {
+        pixelWidth: width * Number(config.tileSize),
+        pixelHeight: height * Number(config.tileSize)
+      };
+      resizeGraphics(currentGeometry);
+      $gamePlayer.setTransparent(true);
+      $gamePlayer.setThrough(true);
+      $gameMap.setDisplayPos(0, 0);
+      post('runtime-map-changed', Object.assign({
+        reason: 'event-transfer',
+        mapId: currentMapId,
+        mapPixelWidth: Number(currentGeometry.pixelWidth),
+        mapPixelHeight: Number(currentGeometry.pixelHeight),
+        eventExecutionEnabled: true,
+        checkpointMapId: executionCheckpoint && executionCheckpoint.mapId
+      }, currentState()));
+    } catch (error) {
+      recoverExecutionError(error);
+    } finally {
+      runtimeMapChangeHandling = false;
+    }
+  }
+  function resetEventExecution() {
+    eventExecutionEnabled = false;
+    executionPausedForUnsupportedInput = false;
+    executionCheckpoint = null;
+    setInputWait('none');
+    stopEventInterpreters();
+  }
   function captureBaseline() {
     var state = currentState();
     replaceObject(baselineSwitchValues, state.switchValues);
@@ -542,6 +784,7 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       } else {
         restoreBaseline();
       }
+      resetEventExecution();
       captureBaseline();
       applyOverrides(command.overrides || {});
       $gamePlayer.setTransparent(true);
@@ -562,6 +805,7 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
           && (!SceneManager._scene.isReady || SceneManager._scene.isReady());
       }, 'map resources', 15000);
       currentMapId = currentTargetMapId;
+      observedRuntimeMapId = currentMapId;
       currentSourceMapId = currentMapId;
       $gamePlayer.setTransparent(true);
       $gamePlayer.setThrough(true);
@@ -573,7 +817,10 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
         mapPixelWidth: Number(currentGeometry.pixelWidth),
         mapPixelHeight: Number(currentGeometry.pixelHeight),
         viewportWidth: Number(config.viewportWidth),
-        viewportHeight: Number(config.viewportHeight)
+        viewportHeight: Number(config.viewportHeight),
+        eventExecutionEnabled: false,
+        checkpointMapId: undefined,
+        input: 'none'
       }, currentState()));
     } finally {
       loading = false;
@@ -592,6 +839,7 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
         resumeLoop();
         return loadMap(command.purpose, command);
       }
+      resetEventExecution();
       restoreBaseline();
       applyOverrides(command.overrides || {});
       resumeLoop();
@@ -600,7 +848,10 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
         mapPixelWidth: Number(currentGeometry.pixelWidth),
         mapPixelHeight: Number(currentGeometry.pixelHeight),
         viewportWidth: Number(config.viewportWidth),
-        viewportHeight: Number(config.viewportHeight)
+        viewportHeight: Number(config.viewportHeight),
+        eventExecutionEnabled: false,
+        checkpointMapId: undefined,
+        input: 'none'
       }, currentState()));
       return;
     }
@@ -639,6 +890,13 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       sendState();
       return;
     }
+    if (command.type === 'set-event-execution') {
+      return setEventExecution(Boolean(command.enabled));
+    }
+    if (command.type === 'input-key') {
+      sendInputKey(command.key);
+      return;
+    }
     if (command.type === 'replace-overrides') {
       restoreBaseline();
       applyOverrides(command.overrides || {});
@@ -654,6 +912,11 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
   (function fpsLoop() {
     requestAnimationFrame(fpsLoop);
     if (suspended || loading || !initialized || runtimeStage !== 'ready') return;
+    detectInputWait();
+    if (eventExecutionEnabled && window.$gameMap && $gameMap.mapId && !$gamePlayer.isTransferring()) {
+      var runtimeMapId = Number($gameMap.mapId());
+      if (runtimeMapId > 0 && runtimeMapId !== observedRuntimeMapId) void handleRuntimeMapChange(runtimeMapId);
+    }
     fpsFrames += 1;
     var now = performance.now();
     if (now - fpsStartedAt < 1000) return;

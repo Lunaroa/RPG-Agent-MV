@@ -59,6 +59,8 @@ test('routes validated map preview commands to the isolated runtime service', as
     evaluate(requestId, code) { calls.push(['evaluate', requestId, code]); return result; },
     resetOverrides() { calls.push(['reset']); return result; },
     replaceOverrides(overrides) { calls.push(['replace', overrides]); return result; },
+    setEventExecution(enabled) { calls.push(['event-execution', enabled]); return result; },
+    sendInput(key) { calls.push(['input', key]); return result; },
     ackFrame(sequence) { calls.push(['ack', sequence]); return result; },
     handleRuntimeEvent(event) { calls.push(['runtime-event', event]); return result; },
     setView(view) { calls.push(['view', view]); return result; },
@@ -78,6 +80,8 @@ test('routes validated map preview commands to the isolated runtime service', as
   handlers.get('mapPreview:evaluate')?.({}, { requestId: 'request-1', code: '$gameMap.mapId()' });
   handlers.get('mapPreview:resetOverrides')?.({});
   handlers.get('mapPreview:replaceOverrides')?.({}, { switches: { '9': false }, variables: { '10': -2 }, selfSwitches: {} });
+  handlers.get('mapPreview:setEventExecution')?.({}, { enabled: true });
+  handlers.get('mapPreview:sendInput')?.({}, { key: 'ok' });
   handlers.get('mapPreview:ackFrame')?.({}, { sequence: 4 });
   handlers.get('mapPreview:runtimeEvent')?.({}, {
     kind: 'rpg-agent-map-preview',
@@ -103,6 +107,8 @@ test('routes validated map preview commands to the isolated runtime service', as
     ['evaluate', 'request-1', '$gameMap.mapId()'],
     ['reset'],
     ['replace', { switches: { '9': false }, variables: { '10': -2 }, selfSwitches: {} }],
+    ['event-execution', true],
+    ['input', 'ok'],
     ['ack', 4],
     ['runtime-event', {
       kind: 'rpg-agent-map-preview',

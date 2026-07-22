@@ -16,6 +16,16 @@
         :aria-label="t('editor.preview.refreshCurrentMap')"
         @click="$emit('refresh-preview')"
       ><RefreshRight /></button>
+      <button
+        type="button"
+        class="preview-execution-toggle"
+        data-ui-id="editor-preview-event-execution"
+        :class="{ active: previewExecutionEnabled }"
+        :disabled="!previewExecutionAvailable"
+        :aria-pressed="previewExecutionEnabled"
+        :title="t('editor.preview.executeEventsHint')"
+        @click="$emit('update:preview-execution', !previewExecutionEnabled)"
+      ><VideoPlay />{{ t('editor.preview.executeEvents') }}</button>
     </template>
     <template v-if="mode === 'map'">
       <span class="toolbar-separator" />
@@ -57,12 +67,12 @@
 
 <script setup lang="ts">
 import { computed, type Component } from 'vue';
-import { Brush, Crop, Delete, EditPen, Grid, Location, MagicStick, RefreshLeft, RefreshRight, Sunny, View } from '@element-plus/icons-vue';
+import { Brush, Crop, Delete, EditPen, Grid, Location, MagicStick, RefreshLeft, RefreshRight, Sunny, VideoPlay, View } from '@element-plus/icons-vue';
 import type { EditorMode, MapLayerSelection, MapPaintMode, MapTool } from './editorTypes';
 import EllipseToolIcon from './EllipseToolIcon.vue';
 import { useI18n } from '../../i18n';
-defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean;previewRefreshEnabled:boolean}>();
-defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[];'refresh-preview':[]}>();
+defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean;previewRefreshEnabled:boolean;previewExecutionEnabled:boolean;previewExecutionAvailable:boolean}>();
+defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'update:preview-execution':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[];'refresh-preview':[]}>();
 const { t } = useI18n();
 const tools = computed<{ id: MapTool; label: string; icon: Component }[]>(() => [
   { id: 'pencil', label: t('editor.toolbar.tool.pencil'), icon: EditPen },
@@ -80,4 +90,5 @@ const layerEntries = computed<Array<{ value: MapLayerSelection; label: string; t
 <style scoped>
 .editor-toolbar{height:42px;flex:0 0 42px;padding:0 8px;border-bottom:1px solid var(--app-border);background:var(--app-bg);display:flex;align-items:center;gap:3px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.editor-toolbar>*{flex-shrink:0}.editor-toolbar::-webkit-scrollbar{height:3px}.editor-toolbar::-webkit-scrollbar-thumb{background:var(--app-border);border-radius:999px}.toolbar-separator{width:1px;height:20px;margin:0 4px;background:var(--app-border)}.tool-button{width:28px;height:28px;display:grid;place-items:center;border:1px solid transparent;border-radius:2px;background:transparent;color:var(--app-ink-soft);cursor:pointer}.tool-button:hover:not(:disabled),.tool-button.active{border-color:var(--app-border-strong);background:var(--app-bg-sunken);color:var(--app-ink);box-shadow:inset 0 1px 0 rgba(255,255,255,.45)}.tool-button:disabled{opacity:.38;cursor:not-allowed}.tool-button :deep(svg){width:15px;height:15px}.mode-group,.paint-mode-group,.overlay-group,.layer-mode-group{display:flex;gap:1px;padding:0;background:transparent}.mode-group button,.paint-mode-group button,.overlay-group button,.layer-mode-group button{height:28px;padding:0 8px;display:flex;align-items:center;gap:5px;border:1px solid transparent;border-radius:2px;background:transparent;color:var(--app-ink-soft);font:inherit;font-size:11px;font-weight:600;cursor:pointer}.mode-group button :deep(svg),.paint-mode-group button :deep(svg){width:15px;height:15px}.layer-mode-group button{min-width:26px;padding:0 6px}.mode-group button:hover,.paint-mode-group button:hover,.overlay-group button:hover,.layer-mode-group button:hover,.paint-mode-group button.active,.overlay-group button.active,.layer-mode-group button.active{border-color:var(--app-border-strong);background:var(--app-bg-sunken);color:var(--app-ink);box-shadow:inset 0 1px 0 rgba(255,255,255,.45)}.mode-group button.active{border-color:var(--app-accent);background:var(--app-accent);color:#fff;box-shadow:none}.mode-group button.active:hover{border-color:var(--app-accent-hover);background:var(--app-accent-hover);color:#fff}.mode-group button:focus-visible,.paint-mode-group button:focus-visible,.overlay-group button:focus-visible,.layer-mode-group button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.mode-group button:disabled,.paint-mode-group button:disabled,.overlay-group button:disabled,.layer-mode-group button:disabled{cursor:not-allowed;opacity:.42}.overlay-group button :deep(svg){width:14px;height:14px}
 .staging-actions{display:flex;align-items:center;gap:4px;margin-left:4px;padding-left:8px;border-left:1px solid var(--app-border)}
+.preview-execution-toggle{height:28px;display:flex;align-items:center;gap:5px;padding:0 8px;border:1px solid var(--app-border);border-radius:4px;background:transparent;color:var(--app-ink-soft);font:inherit;font-size:11px;font-weight:600;cursor:pointer}.preview-execution-toggle :deep(svg){width:14px;height:14px}.preview-execution-toggle:hover:not(:disabled){background:var(--app-bg-sunken);color:var(--app-ink)}.preview-execution-toggle.active{border-color:var(--app-accent);background:var(--app-accent-soft);color:var(--app-accent)}.preview-execution-toggle:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.preview-execution-toggle:disabled{opacity:.4;cursor:not-allowed}
 </style>

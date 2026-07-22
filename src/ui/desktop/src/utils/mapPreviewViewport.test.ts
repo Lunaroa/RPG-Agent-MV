@@ -5,6 +5,7 @@ import {
   clampPreviewPanOffset,
   PREVIEW_MIN_VISIBLE_EDGE,
   previewPointerMovedBeyondClick,
+  previewZoomAtAnchor,
   previewVisibleRegion,
 } from './mapPreviewViewport';
 
@@ -72,5 +73,30 @@ describe('map preview viewport panning', () => {
     expect(previewPointerMovedBeyondClick({ x: 10, y: 10 }, { x: 14, y: 10 })).toBe(false);
     expect(previewPointerMovedBeyondClick({ x: 10, y: 10 }, { x: 14.01, y: 10 })).toBe(true);
     expect(previewPointerMovedBeyondClick({ x: 0, y: 0 }, { x: 3, y: 3 })).toBe(true);
+  });
+
+  it.each([
+    [500, 350],
+    [0, 0],
+    [1_000, 0],
+    [0, 700],
+    [1_000, 700],
+    [999, 350],
+  ])('keeps the map point under the zoom anchor at (%s, %s)', (anchorX, anchorY) => {
+    const before = { x: 137, y: -81, scale: .65 };
+    const mapX = (anchorX - 500 - before.x) / before.scale;
+    const mapY = (anchorY - 350 - before.y) / before.scale;
+    const after = previewZoomAtAnchor({
+      x: before.x,
+      y: before.y,
+      anchorX,
+      anchorY,
+      viewportWidth: 1_000,
+      viewportHeight: 700,
+      oldScale: before.scale,
+      newScale: 1.1,
+    });
+    expect((anchorX - 500 - after.x) / 1.1).toBeCloseTo(mapX, 8);
+    expect((anchorY - 350 - after.y) / 1.1).toBeCloseTo(mapY, 8);
   });
 });

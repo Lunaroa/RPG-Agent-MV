@@ -9,14 +9,6 @@ export interface MapTreeProjection {
   failure?: MapTreeProjectionFailure;
 }
 
-export function resolveMapTreeDropPosition(clientY: number, rowTop: number, rowHeight: number): MapTreeDropPosition {
-  const safeHeight = Math.max(1, rowHeight);
-  const ratio = Math.max(0, Math.min(1, (clientY - rowTop) / safeHeight));
-  if (ratio < .25) return 'before';
-  if (ratio > .75) return 'after';
-  return 'inside';
-}
-
 export function projectMapTreeMove(
   tree: TreeNode[],
   sourceId: number,

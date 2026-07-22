@@ -180,16 +180,18 @@ describe('editor semantic controls', () => {
     assert.doesNotMatch(mapRendererSource, /badgeSize/);
   });
 
-  test('shows a projected map tree before committing a custom drag', () => {
-    assert.match(leftDockSource, /:data="displayedMapTree"/);
-    assert.match(leftDockSource, /@dragstart\.stop="startTreeDrag\(data, \$event\)"/);
-    assert.match(leftDockSource, /@dragover\.prevent\.stop="previewTreeDrag\(data, \$event\)"/);
-    assert.match(leftDockSource, /projectMapTreeMove\(props\.mapTree, dragSourceId\.value, target\.id, position\)/);
-    assert.match(leftDockSource, /treeDropLabel\(data\.id\)/);
-    assert.match(leftDockSource, /target\.id === dragSourceId\.value && dragCandidate\.value/);
-    assert.match(leftDockSource, /class="map-tree"[\s\S]*@drop\.prevent\.stop="dropTreeNode"/);
-    assert.match(leftDockSource, /@dragend\.stop="finishTreeDrag"/);
-    assert.doesNotMatch(leftDockSource, /\sdraggable\s*\n\s*highlight-current/);
+  test('uses the Element Plus tree drag contract without custom pointer projection', () => {
+    assert.match(leftDockSource, /:data="mapTree"/);
+    assert.match(leftDockSource, /:draggable="mapTreeDraggable"/);
+    assert.match(leftDockSource, /:allow-drag="allowTreeDrag"/);
+    assert.match(leftDockSource, /:allow-drop="allowTreeDrop"/);
+    assert.match(leftDockSource, /@node-drop="handleTreeNodeDrop"/);
+    assert.match(leftDockSource, /projectMapTreeMove\([\s\S]*props\.mapTree/);
+    assert.match(leftDockSource, /type === 'prev'\) return 'before'/);
+    assert.match(leftDockSource, /type === 'next'\) return 'after'/);
+    assert.match(leftDockSource, /type === 'inner' \? 'inside' : type/);
+    assert.doesNotMatch(leftDockSource, /@dragstart|@dragover|@dragend|treeDropLabel|dragCandidate/);
+    assert.doesNotMatch(editorViewSource, /mapTree\.value = projection\.tree/);
   });
 
   test('selects map rows without expanding them and reserves expansion for caret or double click', () => {

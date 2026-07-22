@@ -16,10 +16,13 @@ describe('mapOverviewLayouts main-process boundary', () => {
     expect(source).not.toMatch(/require\(['"]@antv\//)
   })
 
-  it('keeps G6 execute behind a renderer-only module', () => {
+  it('keeps AntV execution inside the renderer worker boundary', () => {
     const here = path.dirname(fileURLToPath(import.meta.url))
     const executeSource = fs.readFileSync(path.join(here, 'mapOverviewLayoutExecute.ts'), 'utf8')
-    expect(executeSource).toMatch(/from\s+['"]@antv\/g6['"]/)
-    expect(executeSource).toMatch(/executeMapOverviewGraphLayout/)
+    const workerSource = fs.readFileSync(path.join(here, '..', 'workers', 'mapOverviewLayout.worker.ts'), 'utf8')
+    expect(executeSource).not.toMatch(/from\s+['"]@antv\/(g6|layout)['"]/)
+    expect(executeSource).toMatch(/executeMapOverviewLayout/)
+    expect(workerSource).toMatch(/from\s+['"]@antv\/layout['"]/)
+    expect(workerSource).toMatch(/enableWorker:\s*false/)
   })
 })

@@ -25,31 +25,114 @@ describe('map IPC project compatibility warnings', () => {
     assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, request]]);
   });
 
-  test('forwards overview chunk request after the expected content version', async () => {
+  test('forwards overview thumbnail requests, cancellation, and cache finalization', async () => {
     const handlers = new Map<string, (...args: any[]) => unknown>();
     const calls: unknown[][] = [];
     const canceled: string[] = [];
     registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
-      chunk: (...args: unknown[]) => {
+      thumbnail: (...args: unknown[]) => {
         calls.push(args);
         return { ok: true };
       },
-      cancelChunkSession: sessionId => canceled.push(sessionId),
+      cancelThumbnailSession: sessionId => canceled.push(sessionId),
       listProjects: () => [{ path: PROJECT_PATH }],
     }), { withProductLanguage: (_language, fn) => fn() });
 
-    await handlers.get('maps:overviewChunk')!({}, 7, '0123456789abcdefabcd', 1, 2, 4, PROJECT_PATH, 'session-1');
-    await handlers.get('maps:cancelOverviewChunks')!({}, 'session-1');
+    await handlers.get('maps:overviewThumbnail')!({}, 7, '0123456789abcdefabcd', PROJECT_PATH, 'session-1');
+    await handlers.get('maps:cancelOverviewThumbnails')!({}, 'session-1');
+    await handlers.get('maps:finalizeOverviewThumbnails')!({}, PROJECT_PATH);
 
-    assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, 7, '0123456789abcdefabcd', 1, 2, 4, 'session-1']]);
+    assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, 7, '0123456789abcdefabcd', 'session-1']]);
     assert.deepEqual(canceled, ['session-1']);
   });
 
-  test('rejects overview chunk requests for unregistered project paths', async () => {
+  test('forwards determinate overview scan progress to the requesting renderer session', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
+      overview: (...args: unknown[]) => {
+        const reportProgress = args[2] as ((progress: unknown) => void) | undefined;
+        reportProgress?.({ phase: 'reading-maps', completed: 2, total: 5 });
+        return { nodes: [] };
+      },
+    }), { withProductLanguage: (_language, fn) => fn() });
+
+    const result = await handlers.get('maps:overview')!({
+      sender: { send: (channel: string, payload: unknown) => events.push({ channel, payload }) },
+    }, PROJECT_PATH, 'overview-session');
+
+    assert.deepEqual(result, { nodes: [] });
+    assert.deepEqual(events, [{
+      channel: 'maps:overviewProgress',
+      payload: {
+        sessionId: 'overview-session',
+        phase: 'reading-maps',
+        completed: 2,
+        total: 5,
+      },
+    }]);
+  });
+
+  test('selects a PNG target in main and forwards export progress to the renderer', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    const outputPath = path.join(os.tmpdir(), 'sample-map-overview.png');
+    let defaultName = '';
+    let startOptions: any = null;
+    const scene = {
+      requestId: 'export-1',
+      project: PROJECT_PATH,
+      projectName: 'Sample: Project',
+      snapshotVersion: 'snapshot-v1',
+      nodes: [],
+      edges: [],
+    };
+    const status = {
+      requestId: scene.requestId,
+      project: PROJECT_PATH,
+      phase: 'preflight',
+      width: null,
+      height: null,
+      completed: 0,
+      total: 0,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      finishedAt: null,
+      outputPath: null,
+      error: null,
+      errorCode: null,
+      canceled: false,
+    };
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
+      listProjects: () => [{ path: PROJECT_PATH }],
+      startExport: (options) => {
+        startOptions = options;
+        options.onStatus?.(status);
+        return status;
+      },
+    }), {
+      withProductLanguage: (_language, fn) => fn(),
+      selectMapOverviewExportTarget: async (_event, name) => {
+        defaultName = name;
+        return outputPath;
+      },
+    });
+
+    const result = await handlers.get('maps:overviewExportStart')!({
+      sender: { send: (channel: string, payload: unknown) => events.push({ channel, payload }) },
+    }, scene);
+
+    assert.equal(defaultName, 'Sample- Project-map-overview.png');
+    assert.equal(startOptions.outputPath, outputPath);
+    assert.equal(startOptions.project, PROJECT_PATH);
+    assert.deepEqual(result, { canceled: false, status });
+    assert.deepEqual(events, [{ channel: 'maps:overviewExportProgress', payload: status }]);
+  });
+
+  test('rejects overview thumbnail requests for unregistered project paths', async () => {
     const handlers = new Map<string, (...args: any[]) => unknown>();
     let called = false;
     registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
-      chunk: () => {
+      thumbnail: () => {
         called = true;
         return { ok: true };
       },
@@ -57,7 +140,7 @@ describe('map IPC project compatibility warnings', () => {
     }), { withProductLanguage: (_language, fn) => fn() });
 
     await assert.rejects(
-      async () => handlers.get('maps:overviewChunk')!({}, 7, '0123456789abcdefabcd', 1, 2, 4, PROJECT_PATH, 'session-1'),
+      async () => handlers.get('maps:overviewThumbnail')!({}, 7, '0123456789abcdefabcd', PROJECT_PATH, 'session-1'),
       /not registered/,
     );
     assert.equal(called, false);
@@ -145,10 +228,12 @@ function desktop(overrides: {
   warning?: ReturnType<typeof versionWarning>;
   register?: () => unknown;
   apply?: () => unknown;
-  chunk?: (...args: unknown[]) => unknown;
-  cancelChunkSession?: (sessionId: string) => unknown;
+  thumbnail?: (...args: unknown[]) => unknown;
+  overview?: (...args: unknown[]) => unknown;
+  cancelThumbnailSession?: (sessionId: string) => unknown;
   validateWorkspaceSurface?: (...args: unknown[]) => unknown;
   listProjects?: () => Array<{ path: string }>;
+  startExport?: (options: any) => unknown;
 }) {
   return {
     project: {
@@ -161,8 +246,15 @@ function desktop(overrides: {
       applyProjectStaging: () => overrides.apply?.(),
     },
     mapOverview: {
-      requestMapOverviewChunk: (...args: unknown[]) => overrides.chunk?.(...args),
-      cancelMapOverviewChunkSession: (sessionId: string) => overrides.cancelChunkSession?.(sessionId),
+      buildMapOverviewSnapshot: (...args: unknown[]) => overrides.overview?.(...args),
+      requestMapOverviewThumbnail: (...args: unknown[]) => overrides.thumbnail?.(...args),
+      cancelMapOverviewThumbnailSession: (sessionId: string) => overrides.cancelThumbnailSession?.(sessionId),
+      finalizeMapOverviewThumbnailCache: () => undefined,
+    },
+    mapOverviewExport: {
+      startMapOverviewPngExport: (options: any) => overrides.startExport?.(options),
+      getMapOverviewPngExportStatus: () => null,
+      cancelMapOverviewPngExport: () => undefined,
     },
     workspaceSurfaces: {
       validateWorkspaceSurfaceVersion: (...args: unknown[]) => overrides.validateWorkspaceSurface?.(...args),

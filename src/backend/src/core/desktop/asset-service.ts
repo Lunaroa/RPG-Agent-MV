@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { findMapLibraryScreenshot } from './library-service.ts';
+import { isMapOverviewChunkLevel, resolveMapOverviewChunkFile } from './map-overview-service.ts';
 import { getProjectFileForRead, isInside } from './staging-service.ts';
 import { chatImageExtension, isChatImageMime } from '../../../../contract/chat-image-attachments.ts';
 
@@ -53,6 +54,38 @@ export function resolveAssetRequest(workflowRoot: string, requestUrl: string): s
     if (!filePath || (!isInside(project, filePath) && !isInside(stagingRoot, filePath))) throw new Error('Project asset path is outside allowed roots.');
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) throw new Error('Project asset not found.');
     return filePath;
+  }
+  if (url.hostname === 'overview') {
+    const parts = url.pathname.replace(/^\/+/, '').split('/').map(decodeURIComponent);
+    if (parts.length !== 6) throw new Error('Invalid map overview chunk URL.');
+    const [token, rawMapId, version, rawChunkX, rawChunkY, levelFile] = parts;
+    const levelRaw = Number(levelFile.replace(/\.png$/i, ''));
+    if (
+      !token
+      || !/^\d+$/.test(rawMapId)
+      || !/^[a-f0-9]{20}$/.test(version)
+      || !/^\d+$/.test(rawChunkX)
+      || !/^\d+$/.test(rawChunkY)
+      || !isMapOverviewChunkLevel(levelRaw)
+      || `${levelRaw}.png` !== levelFile
+      || parts.some((part) => part.includes('..'))
+    ) {
+      throw new Error('Invalid map overview chunk URL.');
+    }
+    const project = path.resolve(Buffer.from(token, 'base64url').toString('utf8'));
+    const projectsRoot = path.join(path.resolve(workflowRoot), 'projects');
+    if (!isInside(projectsRoot, project) && !isRegisteredProject(workflowRoot, project)) {
+      throw new Error('Map overview project is outside the workspace and not registered.');
+    }
+    return resolveMapOverviewChunkFile(
+      workflowRoot,
+      project,
+      Number(rawMapId),
+      version,
+      Number(rawChunkX),
+      Number(rawChunkY),
+      levelRaw,
+    );
   }
   if (url.hostname === 'session') {
     const [sessionId, attachmentId, ...extra] = url.pathname.replace(/^\/+/, '').split('/').map(decodeURIComponent);

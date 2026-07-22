@@ -9,6 +9,41 @@ const WORKSPACE_PATH = path.join(os.tmpdir(), 'rpg-agent-mv-workspace');
 const PROJECT_PATH = path.join(os.tmpdir(), 'rpg-agent-mv-project');
 
 describe('map IPC project compatibility warnings', () => {
+  test('forwards the restricted workspace surface validation request', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const calls: unknown[][] = [];
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
+      validateWorkspaceSurface: (...args: unknown[]) => {
+        calls.push(args);
+        return { version: 'version' };
+      },
+    }), { withProductLanguage: (_language, fn) => fn() });
+
+    const request = { surface: 'editor', loadedVersion: 'previous', mapId: 3 };
+    await handlers.get('workspaceSurfaces:validate')!({}, request, PROJECT_PATH);
+
+    assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, request]]);
+  });
+
+  test('forwards thumbnail quality after the expected content version', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const calls: unknown[][] = [];
+    const canceled: string[] = [];
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
+      thumbnail: (...args: unknown[]) => {
+        calls.push(args);
+        return { ok: true };
+      },
+      cancelThumbnailSession: sessionId => canceled.push(sessionId),
+    }), { withProductLanguage: (_language, fn) => fn() });
+
+    await handlers.get('maps:overviewThumbnail')!({}, 7, '0123456789abcdefabcd', 'ultra', PROJECT_PATH, 'session-1');
+    await handlers.get('maps:cancelOverviewThumbnails')!({}, 'session-1');
+
+    assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, 7, '0123456789abcdefabcd', 'ultra', 'session-1']]);
+    assert.deepEqual(canceled, ['session-1']);
+  });
+
   test('confirms before importing an unsupported but recognizable MZ project', async () => {
     const handlers = new Map<string, (...args: any[]) => unknown>();
     let registered = false;
@@ -87,7 +122,14 @@ function registrar(handlers: Map<string, (...args: any[]) => unknown>) {
   };
 }
 
-function desktop(overrides: { warning?: ReturnType<typeof versionWarning>; register?: () => unknown; apply?: () => unknown }) {
+function desktop(overrides: {
+  warning?: ReturnType<typeof versionWarning>;
+  register?: () => unknown;
+  apply?: () => unknown;
+  thumbnail?: (...args: unknown[]) => unknown;
+  cancelThumbnailSession?: (sessionId: string) => unknown;
+  validateWorkspaceSurface?: (...args: unknown[]) => unknown;
+}) {
   return {
     project: {
       resolveProjectPath: (_root: string, value?: string) => value || PROJECT_PATH,
@@ -97,6 +139,13 @@ function desktop(overrides: { warning?: ReturnType<typeof versionWarning>; regis
     },
     staging: {
       applyProjectStaging: () => overrides.apply?.(),
+    },
+    mapOverview: {
+      requestMapOverviewThumbnail: (...args: unknown[]) => overrides.thumbnail?.(...args),
+      cancelMapOverviewThumbnailSession: (sessionId: string) => overrides.cancelThumbnailSession?.(sessionId),
+    },
+    workspaceSurfaces: {
+      validateWorkspaceSurfaceVersion: (...args: unknown[]) => overrides.validateWorkspaceSurface?.(...args),
     },
   };
 }

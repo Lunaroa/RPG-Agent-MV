@@ -398,6 +398,8 @@ async function loadBackendModules(roots: AppRoots) {
   desktop = {
     project: await import(new URL('desktop/project-service.ts', coreUrl).href),
     maps: await import(new URL('desktop/map-service.ts', coreUrl).href),
+    mapOverview: await import(new URL('desktop/map-overview-service.ts', coreUrl).href),
+    workspaceSurfaces: await import(new URL('desktop/workspace-surface-version-service.ts', coreUrl).href),
     events: await import(new URL('desktop/event-service.ts', coreUrl).href),
     eventRegistry: await import(new URL('workflow/event/event-registry.ts', coreUrl).href),
     eventScript: await import(new URL('desktop/event-script-service.ts', coreUrl).href),

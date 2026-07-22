@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { decodePng, renderMapToPng } from "./map-render.ts";
+import { decodePng, renderMapToFittedRgba, renderMapToPng } from "./map-render.ts";
 
 describe("map renderer engine dimensions", () => {
   for (const tileSize of [16, 24, 32, 48] as const) {
@@ -38,6 +38,21 @@ describe("map renderer engine dimensions", () => {
       assert.deepEqual(Array.from(decoded.rgba.subarray(tileSize * 4, tileSize * 4 + 4)), [210, 120, 30, 255]);
     });
   }
+});
+
+test("renders a large map directly into the bounded thumbnail buffer", () => {
+  const rendered = renderMapToFittedRgba(
+    { width: 300, height: 200, tilesetId: 1, data: [] },
+    Array.from({ length: 9 }, () => null),
+    720,
+    432,
+  );
+
+  assert.equal(rendered.rgba.length, 720 * 432 * 4);
+  assert.equal(rendered.contentWidth, 648);
+  assert.equal(rendered.contentHeight, 432);
+  assert.equal(rendered.offsetX, 36);
+  assert.equal(rendered.offsetY, 0);
 });
 
 function solidBitmap(

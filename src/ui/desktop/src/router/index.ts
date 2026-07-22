@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
 const WorkbenchView = () => import('../views/WorkbenchView.vue')
+const MapOverviewView = () => import('../views/MapOverviewView.vue')
 const ConsoleView = () => import('../views/ConsoleView.vue')
 
 const router = createRouter({
@@ -14,6 +15,11 @@ const router = createRouter({
       path: '/workbench',
       name: 'workbench',
       component: WorkbenchView
+    },
+    {
+      path: '/map-overview',
+      name: 'map-overview',
+      component: MapOverviewView
     },
     {
       path: '/console',

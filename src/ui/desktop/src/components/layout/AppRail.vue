@@ -1,18 +1,27 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Grid, Monitor, Setting } from '@element-plus/icons-vue'
+import { Coin, Grid, MapLocation, Monitor, Setting } from '@element-plus/icons-vue'
 import { useI18n } from '../../i18n'
+import { resolveAppRailItem } from '../../utils/projectManagementRoute'
 
 const route = useRoute()
 const { t } = useI18n()
 
 const items = computed(() => [
-  { path: '/workbench', label: t('app.nav.editor'), icon: Grid, uiId: 'nav-workbench' },
-  { path: '/console', label: t('app.nav.console'), icon: Monitor, uiId: 'nav-console' },
+  { id: 'workbench', to: '/workbench', label: t('app.nav.editor'), icon: Grid, uiId: 'nav-workbench' },
+  {
+    id: 'database',
+    to: { path: '/console', query: { page: 'story', section: 'database' } },
+    label: t('app.nav.database'),
+    icon: Coin,
+    uiId: 'nav-database',
+  },
+  { id: 'map-overview', to: '/map-overview', label: t('app.nav.mapOverview'), icon: MapLocation, uiId: 'nav-map-overview' },
+  { id: 'console', to: '/console', label: t('app.nav.console'), icon: Monitor, uiId: 'nav-console' },
 ])
 
-const activePath = computed(() => route.path === '/console' ? '/console' : '/workbench')
+const activeItem = computed(() => resolveAppRailItem(route.path, route.query))
 </script>
 
 <template>
@@ -20,14 +29,14 @@ const activePath = computed(() => route.path === '/console' ? '/console' : '/wor
     <nav class="app-rail-primary">
       <router-link
         v-for="item in items"
-        :key="item.path"
-        :to="item.path"
+        :key="item.id"
+        :to="item.to"
         class="app-rail-item"
         :data-ui-id="item.uiId"
-        :class="{ active: activePath === item.path }"
+        :class="{ active: activeItem === item.id }"
         :title="item.label"
         :aria-label="item.label"
-        :aria-current="activePath === item.path ? 'page' : undefined"
+        :aria-current="activeItem === item.id ? 'page' : undefined"
       >
         <component :is="item.icon" />
         <span>{{ item.label }}</span>

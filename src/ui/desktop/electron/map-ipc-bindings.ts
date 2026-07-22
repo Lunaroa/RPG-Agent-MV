@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { normalizeProductLanguage, type ProductLanguage } from '../../../contract/i18n.ts';
-import type { EventSearchOptions } from '../../../contract/types.ts';
+import type { EventSearchOptions, WorkspaceSurfaceVersionRequest } from '../../../contract/types.ts';
 import { electronText } from './electronLocalization.ts';
 import { invokeDesktop } from './ipc-desktop-error.ts';
 
@@ -41,9 +41,13 @@ export const MAP_IPC_CHANNELS = [
   'projects:initializeGitBaseline',
   'projects:saveProjectVersion',
   'projects:openFolder',
+  'workspaceSurfaces:validate',
   'maps:tree',
   'maps:tilesets',
   'maps:get',
+  'maps:overview',
+  'maps:overviewThumbnail',
+  'maps:cancelOverviewThumbnails',
   'maps:create',
   'maps:importFromLibrary',
   'maps:importPackageFromLibrary',
@@ -219,10 +223,20 @@ export function registerMapIpcHandlers(
     await options.openProjectDirectory(resolved);
     return { ok: true };
   });
+  handle('workspaceSurfaces:validate', (_event, request: WorkspaceSurfaceVersionRequest, value?: string) =>
+    desktop.workspaceSurfaces.validateWorkspaceSurfaceVersion(workflowRoot, project(value), request));
   handle('maps:tree', (_event, value?: string) => desktop.maps.buildMapIndex(workflowRoot, project(value)));
   handle('maps:tilesets', (_event, value?: string) => desktop.maps.buildTilesetIndex(workflowRoot, project(value)));
   handle('maps:get', (_event, mapId: number, value?: string) =>
     desktop.maps.buildMapPayload(workflowRoot, project(value), mapId));
+  handle('maps:overview', (_event, value?: string) =>
+    desktop.mapOverview.buildMapOverviewSnapshot(workflowRoot, project(value)));
+  handle('maps:overviewThumbnail', (_event, mapId: number, version: string | undefined, quality: 'standard' | 'high' | 'ultra', value: string | undefined, sessionId: string) =>
+    desktop.mapOverview.requestMapOverviewThumbnail(workflowRoot, project(value), mapId, version, quality, sessionId));
+  handle('maps:cancelOverviewThumbnails', (_event, sessionId: string) => {
+    desktop.mapOverview.cancelMapOverviewThumbnailSession(sessionId);
+    return { canceled: true };
+  });
   handle('maps:create', (_event, properties: Record<string, unknown>, value?: string) => desktop.maps.createMapDraft(workflowRoot, project(value), properties));
   handle('maps:importFromLibrary', (_event, assetId: string, parentMapId?: number | null, properties?: Record<string, unknown>, value?: string) => desktop.maps.importMapDraftFromLibrary(workflowRoot, project(value), assetId, { ...(properties || {}), parentId: parentMapId || 0 }));
   handle('maps:importPackageFromLibrary', (_event, assetIds: string[], parentMapId?: number | null, properties?: Record<string, unknown>, value?: string) =>
@@ -312,8 +326,12 @@ export function registerMapIpcHandlers(
   handle('projectManagement:overview', (_event, value?: string) => {
     const resolved = project(value);
     const scan = desktop.projectManagement.buildProjectManagementScan(workflowRoot, resolved);
-    const assets = desktop.assetManagement.buildStagedAwareAssetInventory(workflowRoot, resolved);
-    return { scan, assets };
+    const assetOverview = desktop.assetManagement.buildProjectManagementAssetInventory(workflowRoot, resolved);
+    return {
+      scan,
+      assets: assetOverview.assets,
+      readIssues: [...scan.readIssues, ...assetOverview.readIssues],
+    };
   });
   handle('projectManagement:getEntry', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.projectManagement.getProjectManagedEntry(workflowRoot, project(value), request));

@@ -263,7 +263,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { LAYER_Z } from '../constants/layerZIndex';
 import { useRoute, useRouter } from 'vue-router';
@@ -432,6 +432,9 @@ type MapLoadResult = 'committed' | 'failed' | 'superseded';
 interface MapLoadIntent { project: string; mapId: number }
 const mapLoadCoordinator = new LatestAsyncCoordinator<MapLoadIntent>();
 const previewIntentCoordinator = new LatestAsyncCoordinator<EditorPreviewIntent>();
+let routeEventFocusSequence = 0;
+let routeEventFocusActiveKey = '';
+let routeEventFocusHandledKey = '';
 
 function getPlacementCellValidity(x: number, y: number) {
   return validatePlacementCell(currentMap, tilesetFlags.value, x, y, language.value);
@@ -502,7 +505,7 @@ const {
   setMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectTileMode, selectShadowMode, canvasCell, eventAtCell,
   onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
   onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel, onCanvasScroll,
-  renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell,
+  renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell, ensureMapCellVisible,
 } = canvasEditor;
 
 const placementStatusHint = computed(() => {
@@ -1243,14 +1246,11 @@ async function moveMapFromTree(source: TreeNode, target: TreeNode, position: 'be
 }
 
 async function openEventSearchHit(hit: EditorEventSearchHit) {
-  mode.value = 'event';
-  if (selectedMapId.value !== hit.mapId && await loadMap(hit.mapId, { quiet: true }) !== 'committed') return;
-  eventSearchQuery.value = '';
-  eventSearchScope.value = 'current';
-  selectedEventId.value = hit.eventId;
-  expandedMapIds.value = [...new Set([...expandedMapIds.value, ...ancestorMapIdsFor(mapTree.value, hit.mapId)])];
-  renderMap();
-  await openEventEditor(hit.eventId);
+  try {
+    await focusEventInEditor(hit.mapId, hit.eventId);
+  } catch (error) {
+    ElMessage.error((error as Error).message);
+  }
 }
 async function openPreferredMap(savedMapId?: number) {
   const routeMapId = Number(route.query.mapId);
@@ -1276,20 +1276,107 @@ async function applyPlacementFocusFromRoute() {
 async function applyRouteEventFocus() {
   const routeMapId = Number(route.query.mapId);
   const routeEventId = Number(route.query.eventId);
-  if (!Number.isInteger(routeMapId) || routeMapId <= 0) return;
-  if (!Number.isInteger(routeEventId) || routeEventId <= 0) return;
-  if (selectedMapId.value !== routeMapId) {
-    const loaded = await loadMap(routeMapId, { quiet: true });
-    if (loaded !== 'committed') return;
-  }
-  const eventExists = currentMap?.events?.some((item) => item?.id === routeEventId);
-  if (!eventExists) {
-    selectedEventId.value = null;
-    renderMap();
+  const project = projectStore.currentProject;
+  if (
+    !project
+    || !Number.isInteger(routeMapId)
+    || routeMapId <= 0
+    || !Number.isInteger(routeEventId)
+    || routeEventId <= 0
+  ) {
+    resetRouteEventFocusGate();
     return;
   }
-  selectedEventId.value = routeEventId;
+  const key = `${project}\u0000${routeMapId}\u0000${routeEventId}`;
+  if (routeEventFocusActiveKey === key || routeEventFocusHandledKey === key) return;
+  const sequence = ++routeEventFocusSequence;
+  routeEventFocusActiveKey = key;
+  try {
+    await focusEventInEditor(routeMapId, routeEventId, () => (
+      sequence === routeEventFocusSequence
+      && routeEventFocusActiveKey === key
+      && route.query.mapId != null
+      && Number(route.query.mapId) === routeMapId
+      && Number(route.query.eventId) === routeEventId
+    ));
+  } catch (error) {
+    if (sequence === routeEventFocusSequence) ElMessage.error((error as Error).message);
+  } finally {
+    if (sequence === routeEventFocusSequence) {
+      routeEventFocusActiveKey = '';
+      routeEventFocusHandledKey = key;
+    }
+  }
+}
+
+function resetRouteEventFocusGate() {
+  routeEventFocusSequence += 1;
+  routeEventFocusActiveKey = '';
+  routeEventFocusHandledKey = '';
+}
+
+function staleEventFocusError(mapId: number, eventId: number) {
+  return new Error(t('editor.error.eventFocusStale', { mapId, eventId }));
+}
+
+async function focusEventInEditor(mapId: number, eventId: number, isCurrent: () => boolean = () => true) {
+  mode.value = 'event';
+  closeEventEditor();
+  selectedEventId.value = null;
   renderMap();
+  if (selectedMapId.value !== mapId) {
+    const loaded = await loadMap(mapId, { quiet: true });
+    if (loaded !== 'committed') {
+      if (loaded === 'superseded' || !isCurrent()) return false;
+      throw staleEventFocusError(mapId, eventId);
+    }
+  }
+  if (!isCurrent()) return false;
+  const focusedMap = currentMap;
+  const event = focusedMap?.events?.find((item) => item?.id === eventId);
+  if (
+    selectedMapId.value !== mapId
+    || !focusedMap
+    || !event
+    || !Number.isInteger(event.x)
+    || !Number.isInteger(event.y)
+    || event.x < 0
+    || event.y < 0
+    || event.x >= focusedMap.width
+    || event.y >= focusedMap.height
+  ) throw staleEventFocusError(mapId, eventId);
+
+  eventSearchQuery.value = '';
+  eventSearchScope.value = 'current';
+  expandedMapIds.value = [...new Set([
+    ...expandedMapIds.value,
+    ...ancestorMapIdsFor(mapTree.value, mapId),
+  ])];
+  selectedEventId.value = eventId;
+  renderMap();
+  await nextTick();
+  if (!isCurrent()) return false;
+  const visibility = await ensureMapCellVisible(event.x, event.y, 64);
+  if (visibility === 'invalid-cell' || visibility === 'viewport-unavailable') {
+    throw staleEventFocusError(mapId, eventId);
+  }
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+  if (!isCurrent()) return false;
+  const currentEvent = currentMap?.events?.find((item) => item?.id === eventId);
+  if (
+    selectedMapId.value !== mapId
+    || !currentEvent
+    || currentEvent.x !== event.x
+    || currentEvent.y !== event.y
+  ) throw staleEventFocusError(mapId, eventId);
+  await openEventEditorStrict(eventId, {
+    mapId,
+    map: focusedMap,
+    x: event.x,
+    y: event.y,
+    isCurrent,
+  });
+  return true;
 }
 
 function patchPlacementEvent(
@@ -1949,27 +2036,46 @@ function getUiControlState(): EditorUiControlState {
 
 async function openEventEditorByUiControl(mapId: number, eventId: number): Promise<EditorUiControlState> {
   if (!projectStore.currentProject) throw new Error(t('editor.error.noProject'));
-  if (selectedMapId.value !== mapId) {
-    const loaded = await loadMap(mapId, { quiet: true });
-    if (loaded !== 'committed') throw new Error(t('editor.error.mapNotFound', { mapId }));
-  }
-  await openEventEditorStrict(eventId);
+  if (!await focusEventInEditor(mapId, eventId)) throw staleEventFocusError(mapId, eventId);
   return getUiControlState();
 }
 
 function selectEvent(eventId: number | null) { selectedEventId.value = eventId == null || selectedEventId.value === eventId ? null : eventId; renderMap(); }
 function openNewEventAt(x: number, y: number) { eventOverview.value = null; eventDraft.value = defaultEvent(0, x, y); eventDialogOpen.value = true; }
-async function openEventEditorStrict(eventId: number) {
-  const event = currentMap?.events?.find((item) => item?.id === eventId) as MvEditorEvent | undefined;
+async function openEventEditorStrict(
+  eventId: number,
+  expected?: { mapId: number; map: EditableMap; x: number; y: number; isCurrent?: () => boolean },
+) {
+  const openingMap = currentMap;
+  const openingMapId = selectedMapId.value;
+  if (expected && (
+    openingMapId !== expected.mapId
+    || openingMap !== expected.map
+    || (expected.isCurrent && !expected.isCurrent())
+  )) {
+    throw staleEventFocusError(expected.mapId, eventId);
+  }
+  const event = openingMap?.events?.find((item) => item?.id === eventId) as MvEditorEvent | undefined;
   if (!event) throw new Error(t('editor.error.eventNotFound', { eventId }));
-  if (selectedMapId.value != null) {
+  let nextOverview: StoryEventOverview | null = null;
+  if (openingMapId != null) {
     try {
-      eventOverview.value = await storyPages.inspectEvent(selectedMapId.value, eventId, projectStore.currentProject);
+      nextOverview = await storyPages.inspectEvent(openingMapId, eventId, projectStore.currentProject);
     } catch (error) {
-      eventOverview.value = null;
+      if (!expected) eventOverview.value = null;
       throw new Error(t('editor.error.eventPermissionFailed', { message: (error as Error).message }));
     }
   }
+  const currentEvent = openingMap?.events?.find((item) => item?.id === eventId);
+  if (
+    selectedMapId.value !== openingMapId
+    || currentMap !== openingMap
+    || (expected?.isCurrent && !expected.isCurrent())
+    || (expected && (!currentEvent || currentEvent.x !== expected.x || currentEvent.y !== expected.y))
+  ) {
+    throw staleEventFocusError(expected?.mapId ?? openingMapId ?? 0, eventId);
+  }
+  eventOverview.value = nextOverview;
   selectedEventId.value = eventId;
   eventDraft.value = clone(event);
   eventDialogOpen.value = true;

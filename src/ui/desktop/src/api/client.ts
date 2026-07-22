@@ -92,6 +92,9 @@ declare global {
         put(body: unknown): Promise<unknown>;
         patch(body: unknown): Promise<unknown>;
       };
+      workspaceSurfaces: {
+        validate(request: WorkspaceSurfaceVersionRequest, project?: string): Promise<WorkspaceSurfaceVersionResult>;
+      };
       bootstrap: {
         get(): Promise<unknown>;
       };
@@ -131,6 +134,9 @@ declare global {
         tree(project?: string): Promise<unknown>;
         tilesets(project?: string): Promise<unknown>;
         get(mapId: number, project?: string): Promise<unknown>;
+        overview(project?: string): Promise<unknown>;
+        overviewThumbnail(mapId: number, version: string | undefined, quality: MapOverviewThumbnailQuality, project: string | undefined, sessionId: string): Promise<unknown>;
+        cancelOverviewThumbnails(sessionId: string): Promise<unknown>;
         create(properties: Record<string, unknown>, project?: string): Promise<unknown>;
         importFromLibrary(assetId: string, parentMapId?: number | null, properties?: Record<string, unknown>, project?: string): Promise<unknown>;
         importPackageFromLibrary(assetIds: string[], parentMapId?: number | null, properties?: Record<string, unknown>, project?: string): Promise<unknown>;
@@ -289,7 +295,7 @@ function desktopApi(): Window['api'] {
 
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
-  MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
@@ -309,10 +315,10 @@ import type {
   ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
   InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewConsoleEntry, MapPreviewEventState, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSelfSwitchLetter, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewVariableValue, MapPreviewViewRequest, RpgMakerEngine,
-  AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot,
+  AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot, WorkspaceSurfaceId, WorkspaceSurfaceVersionRequest, WorkspaceSurfaceVersionResult,
 } from '@contract/types';
 export type {
-  MapTreeNode, MapIndex, MapMovePosition, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
@@ -394,6 +400,12 @@ export const projects = {
   },
   openFolder(project: string) {
     return desktopApi().projects.openFolder(project);
+  },
+};
+
+export const workspaceSurfaces = {
+  validate(request: WorkspaceSurfaceVersionRequest, project: string = DEFAULT_PROJECT) {
+    return desktopApi().workspaceSurfaces.validate(toPlain(request) as WorkspaceSurfaceVersionRequest, project);
   },
 };
 
@@ -577,6 +589,15 @@ export const maps = {
   },
   get(mapId: number, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.get(mapId, project) as Promise<MapPayload>;
+  },
+  overview(project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.overview(project) as Promise<MapOverviewSnapshot>;
+  },
+  overviewThumbnail(mapId: number, version: string | undefined, quality: MapOverviewThumbnailQuality, project: string, sessionId: string) {
+    return desktopApi().maps.overviewThumbnail(mapId, version, quality, project, sessionId) as Promise<MapOverviewThumbnail>;
+  },
+  cancelOverviewThumbnails(sessionId: string) {
+    return desktopApi().maps.cancelOverviewThumbnails(sessionId) as Promise<{ canceled: boolean }>;
   },
   create(properties: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.create(properties, project);
@@ -1433,4 +1454,4 @@ export function openSessionEventStream(
   };
 }
 
-export const api = { bootstrap, projects, eventRegistry, sessions, playtest, mapPreview, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, resolveAssetUrl, openSessionEventStream };
+export const api = { bootstrap, projects, workspaceSurfaces, eventRegistry, sessions, playtest, mapPreview, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, resolveAssetUrl, openSessionEventStream };

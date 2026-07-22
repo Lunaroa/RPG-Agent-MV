@@ -78,6 +78,7 @@ class RendererCommandError extends Error {
 
 const ALLOWED_TARGETS = new Set([
   'workbench',
+  'map-overview',
   'console-home',
   'console-assets',
   'console-story',

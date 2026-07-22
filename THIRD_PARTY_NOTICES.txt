@@ -69,7 +69,9 @@ Desktop runtime dependencies bundled into the renderer and main-process build:
 - @fontsource-variable/inter 5.2.8, OFL-1.1
 - @fontsource-variable/jetbrains-mono 5.2.8, OFL-1.1
 - @lucide/vue 1.18.0, ISC
+- cytoscape 3.34.0, MIT
 - electron-updater 6.8.9, MIT
+- elkjs 0.12.0, EPL-2.0 OR GPL-3.0-or-later
 - element-plus 2.14.0, MIT
 - js-yaml 4.3.0, MIT
 - pinia 3.0.4, MIT

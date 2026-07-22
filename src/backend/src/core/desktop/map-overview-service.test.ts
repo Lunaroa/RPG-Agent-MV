@@ -9,11 +9,11 @@ import { closeDatabase } from '../db/pool.ts';
 import { writeJson } from '../rmmv/json.ts';
 import { decodePng, encodePng } from '../workflow/map/map-render.ts';
 import {
+  buildMapOverviewChunk,
   buildMapOverviewSnapshot,
-  buildMapOverviewThumbnail,
-  cancelMapOverviewThumbnailSession,
-  requestMapOverviewThumbnail,
-  resolveMapOverviewThumbnailFile,
+  cancelMapOverviewChunkSession,
+  requestMapOverviewChunk,
+  resolveMapOverviewChunkFile,
 } from './map-overview-service.ts';
 import { writeStagedProjectJson, discardStagedMap } from './staging-service.ts';
 import { resolveAssetRequest } from './asset-service.ts';
@@ -40,40 +40,75 @@ describe('map overview snapshot', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('aggregates directional transfers while retaining page and command sources', () => {
+  test('aggregates transfers only when all six endpoint fields match', () => {
     writeInfos(3);
     writeMap(1, [
-      event(1, 'Door', [
-        page({ switch1Valid: true, switch1Id: 4 }, [transfer(2, 3, 4), transfer(2, 8, 9)]),
+      event(1, 'Door', 1, 2, [
+        page({ switch1Valid: true, switch1Id: 4 }, [transfer(2, 3, 4), transfer(2, 3, 4), transfer(2, 8, 9)]),
         page({ variableValid: true, variableId: 2, variableValue: 7 }, [transfer(1, 1, 1)]),
       ]),
-    ]);
-    writeMap(2, [event(1, 'Return', [page({}, [transfer(1, 5, 6)])])]);
-    writeMap(3, []);
+    ], 10, 10);
+    writeMap(2, [event(1, 'Return', 5, 6, [page({}, [transfer(1, 1, 2)])])], 10, 10);
+    writeMap(3, [], 10, 10);
 
     const snapshot = buildMapOverviewSnapshot(root, project);
 
     assert.deepEqual(snapshot.edges.map((edge) => [edge.id, edge.count]), [
-      ['1->1', 1],
-      ['1->2', 2],
-      ['2->1', 1],
+      ['1:1,2->1:1,1', 1],
+      ['1:1,2->2:3,4', 2],
+      ['1:1,2->2:8,9', 1],
+      ['2:5,6->1:1,2', 1],
     ]);
-    const repeated = snapshot.edges.find((edge) => edge.id === '1->2')!;
-    assert.deepEqual(repeated.sources.map((source) => [source.pageIndex, source.commandIndex, source.targetX, source.targetY]), [
-      [0, 0, 3, 4],
-      [0, 1, 8, 9],
+    const repeated = snapshot.edges.find((edge) => edge.id === '1:1,2->2:3,4')!;
+    assert.deepEqual(repeated.sources.map((source) => [source.pageIndex, source.commandIndex, source.sourceX, source.sourceY, source.targetX, source.targetY]), [
+      [0, 0, 1, 2, 3, 4],
+      [0, 1, 1, 2, 3, 4],
     ]);
     assert.equal(repeated.sources[0].pageConditions.switch1Id, 4);
     assert.deepEqual(snapshot.nodes.map((node) => [node.id, node.incomingCount, node.outgoingCount]), [
-      [1, 2, 3],
-      [2, 2, 1],
+      [1, 2, 4],
+      [2, 3, 1],
       [3, 0, 0],
     ]);
   });
 
+  test('keeps bidirectional and self-loop edges separate by exact coordinates', () => {
+    writeInfos(2);
+    writeMap(1, [event(1, 'Portal', 0, 0, [page({}, [transfer(2, 1, 1), transfer(1, 0, 0)])])], 4, 4);
+    writeMap(2, [event(1, 'Back', 1, 1, [page({}, [transfer(1, 0, 0)])])], 4, 4);
+
+    const snapshot = buildMapOverviewSnapshot(root, project);
+    assert.deepEqual(snapshot.edges.map((edge) => edge.id).sort(), [
+      '1:0,0->1:0,0',
+      '1:0,0->2:1,1',
+      '2:1,1->1:0,0',
+    ]);
+  });
+
+  test('emits invalid-coordinate without clamping or creating edges', () => {
+    writeInfos(2);
+    writeMap(1, [
+      event(1, 'BadTarget', 0, 0, [page({}, [transfer(2, 9, 9)])]),
+      event(2, 'BadSource', 9, 9, [page({}, [transfer(2, 0, 0)])]),
+    ], 2, 2);
+    writeMap(2, [], 2, 2);
+
+    const snapshot = buildMapOverviewSnapshot(root, project);
+    assert.deepEqual(snapshot.edges, []);
+    const codes = snapshot.issues.filter((issue) => issue.code === 'invalid-coordinate');
+    assert.equal(codes.length, 2);
+    assert.equal(codes[0].eventId, 1);
+    assert.equal(codes[0].targetX, 9);
+    assert.equal(codes[0].targetY, 9);
+    assert.equal(codes[0].targetMapId, 2);
+    assert.equal(codes[1].eventId, 2);
+    assert.equal(codes[1].sourceX, 9);
+    assert.equal(codes[1].sourceY, 9);
+  });
+
   test('counts variable transfers and reports invalid targets without creating fake nodes', () => {
     writeInfos(2);
-    writeMap(1, [event(1, 'Gate', [page({}, [dynamicTransfer(), transfer(99, 1, 2)])])]);
+    writeMap(1, [event(1, 'Gate', 0, 0, [page({}, [dynamicTransfer(), transfer(99, 1, 2)])])]);
     writeMap(2, []);
 
     const snapshot = buildMapOverviewSnapshot(root, project);
@@ -89,13 +124,14 @@ describe('map overview snapshot', () => {
 
   test('keeps missing and invalid map nodes and scans the remaining maps', () => {
     writeInfos(3);
-    writeMap(1, [event(1, 'Gate', [page({}, [transfer(2, 1, 1)])])]);
+    writeMap(1, [event(1, 'Gate', 0, 0, [page({}, [transfer(1, 1, 1)])])]);
     fs.mkdirSync(dataDir, { recursive: true });
     fs.writeFileSync(path.join(dataDir, 'Map003.json'), '{', 'utf8');
 
     const snapshot = buildMapOverviewSnapshot(root, project);
 
     assert.equal(snapshot.edges.length, 1);
+    assert.equal(snapshot.edges[0].id, '1:0,0->1:1,1');
     assert.equal(snapshot.nodes.find((node) => node.id === 2)?.readState, 'missing');
     assert.equal(snapshot.nodes.find((node) => node.id === 3)?.readState, 'invalid');
     assert.deepEqual(snapshot.issues.map((issue) => issue.code).sort(), ['map-invalid', 'map-missing']);
@@ -105,7 +141,7 @@ describe('map overview snapshot', () => {
     writeInfos(999);
     for (let mapId = 1; mapId <= 999; mapId += 1) {
       writeMap(mapId, mapId < 999
-        ? [event(1, 'Forward', [page({}, [transfer(mapId + 1, 0, 0)])])]
+        ? [event(1, 'Forward', 0, 0, [page({}, [transfer(mapId + 1, 0, 0)])])]
         : []);
     }
 
@@ -116,7 +152,7 @@ describe('map overview snapshot', () => {
     assert.equal(new Set(snapshot.edges.map((edge) => edge.id)).size, 998);
   });
 
-  test('renders and caches a fixed thumbnail with parallax, tiles, and first-page event graphics', () => {
+  test('renders tile-only chunks and ignores parallax or characters in version and pixels', () => {
     writeInfos(1);
     writeJson(path.join(dataDir, 'Tilesets.json'), [
       null,
@@ -142,30 +178,58 @@ describe('map overview snapshot', () => {
     });
 
     const version = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
-    const first = buildMapOverviewThumbnail(root, project, 1, version, 'standard');
-    const second = buildMapOverviewThumbnail(root, project, 1, version, 'standard');
-    const file = resolveMapOverviewThumbnailFile(root, project, 1, version, 'standard');
+    const first = buildMapOverviewChunk(root, project, 1, version, 0, 0, 1);
+    const second = buildMapOverviewChunk(root, project, 1, version, 0, 0, 1);
+    const file = resolveMapOverviewChunkFile(root, project, 1, version, 0, 0, 1);
     const decoded = decodePng(fs.readFileSync(file));
 
-    assert.equal(first.width, 240);
-    assert.equal(first.height, 144);
+    assert.equal(first.logicalWidth, 96);
+    assert.equal(first.logicalHeight, 96);
+    assert.equal(first.outputWidth, 96);
+    assert.equal(first.outputHeight, 96);
+    assert.equal(first.level, 1);
     assert.equal(first.cacheHit, false);
     assert.equal(second.cacheHit, true);
     assert.equal(second.resourceUrl, first.resourceUrl);
     assert.equal(resolveAssetRequest(root, first.resourceUrl), file);
-    assert.throws(() => resolveAssetRequest(root, first.resourceUrl.replace('/standard.png', '/../standard.png')));
-    assert.ok(hasColor(decoded.rgba, [30, 80, 190]));
+    assert.throws(() => resolveAssetRequest(root, first.resourceUrl.replace('/0/0/1.png', '/../0/1.png')));
     assert.ok(hasColor(decoded.rgba, [30, 180, 70]));
-    assert.ok(hasColor(decoded.rgba, [210, 50, 60]));
+    assert.equal(hasColor(decoded.rgba, [30, 80, 190]), false);
+    assert.equal(hasColor(decoded.rgba, [210, 50, 60]), false);
+
+    writeSolidPng(path.join(project, 'www', 'img', 'parallaxes', 'Sky.png'), 24, 24, [1, 2, 3, 255]);
+    writeSolidPng(path.join(project, 'www', 'img', 'characters', '$Guide.png'), 144, 192, [4, 5, 6, 255]);
+    const afterCosmetic = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
+    assert.equal(afterCosmetic, version);
+  });
+
+  test('rejects cross-project overview chunk URL access', () => {
+    writeInfos(1);
+    writeJson(path.join(dataDir, 'Tilesets.json'), [null, { id: 1, tilesetNames: [] }]);
+    writeJson(path.join(dataDir, 'Map001.json'), {
+      width: 2,
+      height: 2,
+      tilesetId: 1,
+      data: Array(24).fill(0),
+      events: [null],
+    });
+    const version = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
+    const chunk = buildMapOverviewChunk(root, project, 1, version, 0, 0, 2);
+    const outsideProject = path.join(root, 'outside-sample');
+    const forged = chunk.resourceUrl.replace(
+      Buffer.from(path.resolve(project), 'utf8').toString('base64url'),
+      Buffer.from(path.resolve(outsideProject), 'utf8').toString('base64url'),
+    );
+    assert.throws(() => resolveAssetRequest(root, forged), /outside the workspace/);
   });
 
   test('persists a validated snapshot and rebuilds it after source or staged map changes', () => {
     writeInfos(2);
-    writeMap(1, [event(1, 'Gate', [page({}, [transfer(2, 1, 1)])])]);
+    writeMap(1, [event(1, 'Gate', 0, 0, [page({}, [transfer(2, 1, 1)])])]);
     writeMap(2, []);
 
     const first = buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v2.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v3.json');
     const cacheMtime = fs.statSync(cacheFile).mtimeMs;
     const second = buildMapOverviewSnapshot(root, project);
     assert.equal(second.generatedAt, first.generatedAt);
@@ -176,22 +240,22 @@ describe('map overview snapshot', () => {
       height: 2,
       tilesetId: 0,
       data: Array(24).fill(0),
-      events: [null, event(1, 'Gate', [page({}, [transfer(1, 2, 2)])])],
+      events: [null, event(1, 'Gate', 0, 0, [page({}, [transfer(1, 1, 1)])])],
     };
     writeStagedProjectJson(root, project, 'www/data/Map001.json', stagedMap);
     const staged = buildMapOverviewSnapshot(root, project);
-    assert.deepEqual(staged.edges.map((edge) => edge.id), ['1->1']);
+    assert.deepEqual(staged.edges.map((edge) => edge.id), ['1:0,0->1:1,1']);
 
     discardStagedMap(root, project, 1);
     const discarded = buildMapOverviewSnapshot(root, project);
-    assert.deepEqual(discarded.edges.map((edge) => edge.id), ['1->2']);
+    assert.deepEqual(discarded.edges.map((edge) => edge.id), ['1:0,0->2:1,1']);
   });
 
   test('recovers from a corrupt snapshot cache without serving stale data', () => {
     writeInfos(1);
     writeMap(1, []);
     const first = buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v2.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v3.json');
     fs.writeFileSync(cacheFile, '{', 'utf8');
     writeJson(path.join(dataDir, 'Map001.json'), {
       width: 3,
@@ -238,67 +302,66 @@ describe('map overview snapshot', () => {
     assert.notEqual(resourceChanged.nodes[0].thumbnailVersion, tilesetChanged.nodes[0].thumbnailVersion);
   });
 
-  test('keeps three quality variants for the current content version and makes letterboxing transparent', () => {
+  test('keeps only the current content version in the chunk cache and supports levels', () => {
     writeInfos(1);
     writeJson(path.join(dataDir, 'Tilesets.json'), [null, { id: 1, tilesetNames: [] }]);
     writeJson(path.join(dataDir, 'Map001.json'), {
-      width: 4,
-      height: 1,
+      width: 20,
+      height: 20,
       tilesetId: 1,
-      data: Array(24).fill(0),
+      data: Array(20 * 20 * 6).fill(0),
       events: [null],
     });
     const version = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
 
-    const standard = buildMapOverviewThumbnail(root, project, 1, version, 'standard');
-    const high = buildMapOverviewThumbnail(root, project, 1, version, 'high');
-    const ultra = buildMapOverviewThumbnail(root, project, 1, version, 'ultra');
-    assert.deepEqual([standard.width, standard.height], [240, 144]);
-    assert.deepEqual([high.width, high.height], [480, 288]);
-    assert.deepEqual([ultra.width, ultra.height], [720, 432]);
-    const decoded = decodePng(fs.readFileSync(resolveMapOverviewThumbnailFile(root, project, 1, version, 'high')));
-    assert.equal(decoded.rgba[3], 0);
-    const cacheFiles = fs.readdirSync(path.dirname(resolveMapOverviewThumbnailFile(root, project, 1, version, 'high')));
-    assert.equal(cacheFiles.filter((name) => name.includes(version)).length, 3);
+    const native = buildMapOverviewChunk(root, project, 1, version, 0, 0, 1);
+    const coarse = buildMapOverviewChunk(root, project, 1, version, 1, 0, 8);
+    assert.deepEqual([native.logicalWidth, native.logicalHeight], [768, 768]);
+    assert.deepEqual([native.outputWidth, native.outputHeight], [768, 768]);
+    assert.deepEqual([coarse.logicalWidth, coarse.logicalHeight], [192, 768]);
+    assert.deepEqual([coarse.outputWidth, coarse.outputHeight], [24, 96]);
+    const cacheRoot = path.dirname(path.dirname(resolveMapOverviewChunkFile(root, project, 1, version, 0, 0, 1)));
+    assert.equal(fs.readdirSync(path.join(cacheRoot, version)).length, 2);
 
     writeJson(path.join(dataDir, 'Map001.json'), {
-      width: 5,
-      height: 1,
+      width: 21,
+      height: 20,
       tilesetId: 1,
-      data: Array(30).fill(0),
+      data: Array(21 * 20 * 6).fill(0),
       events: [null],
     });
     const nextVersion = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
-    buildMapOverviewThumbnail(root, project, 1, nextVersion, 'high');
-    const refreshedFiles = fs.readdirSync(path.dirname(resolveMapOverviewThumbnailFile(root, project, 1, nextVersion, 'high')));
-    assert.equal(refreshedFiles.some((name) => name.includes(version)), false);
-    assert.equal(refreshedFiles.some((name) => name.includes(nextVersion) && name.endsWith('-high.png')), true);
+    buildMapOverviewChunk(root, project, 1, nextVersion, 0, 0, 1);
+    const mapCacheDir = path.dirname(path.dirname(resolveMapOverviewChunkFile(root, project, 1, nextVersion, 0, 0, 1)));
+    assert.equal(fs.existsSync(path.join(mapCacheDir, version)), false);
+    assert.equal(fs.existsSync(path.join(mapCacheDir, nextVersion)), true);
+    assert.equal(fs.existsSync(path.join(root, 'runtime', 'map-overview-thumbnails')), false);
   });
 
-  test('generates ultra thumbnails in a cancellable worker without blocking the caller', async () => {
+  test('generates chunks in a cancellable worker without blocking the caller', async () => {
     writeInfos(1);
     writeJson(path.join(dataDir, 'Tilesets.json'), [null, { id: 1, tilesetNames: [] }]);
     writeJson(path.join(dataDir, 'Map001.json'), {
       width: 2,
       height: 2,
       tilesetId: 1,
-      data: [],
+      data: Array(24).fill(0),
       events: [null],
     });
     const version = buildMapOverviewSnapshot(root, project).nodes[0].thumbnailVersion!;
     let settled = false;
-    const request = requestMapOverviewThumbnail(root, project, 1, version, 'ultra', 'worker-session')
+    const request = requestMapOverviewChunk(root, project, 1, version, 0, 0, 4, 'worker-session')
       .finally(() => { settled = true; });
-    const coalesced = requestMapOverviewThumbnail(root, project, 1, version, 'ultra', 'coalesced-session');
+    const coalesced = requestMapOverviewChunk(root, project, 1, version, 0, 0, 4, 'coalesced-session');
 
     await new Promise<void>(resolve => setImmediate(resolve));
     assert.equal(settled, false);
-    const thumbnail = await request;
-    assert.strictEqual(await coalesced, thumbnail);
-    assert.deepEqual([thumbnail.width, thumbnail.height, thumbnail.cacheHit], [720, 432, false]);
+    const chunk = await request;
+    assert.strictEqual(await coalesced, chunk);
+    assert.deepEqual([chunk.outputWidth, chunk.outputHeight, chunk.cacheHit], [24, 24, false]);
 
-    const canceled = requestMapOverviewThumbnail(root, project, 1, version, 'standard', 'cancel-session');
-    cancelMapOverviewThumbnailSession('cancel-session');
+    const canceled = requestMapOverviewChunk(root, project, 1, version, 0, 0, 2, 'cancel-session');
+    cancelMapOverviewChunkSession('cancel-session');
     await assert.rejects(canceled, (error: Error) => error.name === 'AbortError');
   });
 
@@ -315,12 +378,12 @@ describe('map overview snapshot', () => {
     ]);
   }
 
-  function writeMap(mapId: number, events: unknown[]): void {
+  function writeMap(mapId: number, events: unknown[], width = 2, height = 2): void {
     writeJson(path.join(dataDir, `Map${String(mapId).padStart(3, '0')}.json`), {
-      width: 2,
-      height: 2,
+      width,
+      height,
       tilesetId: 0,
-      data: Array(24).fill(0),
+      data: Array(width * height * 6).fill(0),
       events: [null, ...events],
     });
   }
@@ -370,8 +433,8 @@ function hasColor(rgba: Buffer, color: readonly [number, number, number]): boole
   return false;
 }
 
-function event(id: number, name: string, pages: unknown[]): Record<string, unknown> {
-  return { id, name, x: 0, y: 0, pages };
+function event(id: number, name: string, x: number, y: number, pages: unknown[]): Record<string, unknown> {
+  return { id, name, x, y, pages };
 }
 
 function page(conditions: Record<string, unknown>, list: unknown[]): Record<string, unknown> {

@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import cytoscape, { type Core, type EventObject, type NodeSingular } from 'cytoscape'
+import { Graph, type IElementEvent, type NodeData } from '@antv/g6'
 import { ElMessageBox } from 'element-plus'
 import { Aim, Refresh, Search } from '@element-plus/icons-vue'
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { MapOverviewNode, MapOverviewSnapshot, MapOverviewThumbnailQuality } from '@contract/types'
+import type {
+  MapOverviewChunk,
+  MapOverviewEdge,
+  MapOverviewLayoutId,
+  MapOverviewNode,
+  MapOverviewSnapshot,
+} from '@contract/types'
 import { maps, workspaceSurfaces } from '../api/client'
 import { useI18n } from '../i18n'
 import { useProjectStore } from '../stores/project'
@@ -13,6 +19,29 @@ import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 import { findMapOverviewMatches } from '../utils/mapOverviewSearch'
 import { MapOverviewMoveHistory, type MapOverviewNodePosition } from '../utils/mapOverviewMoveHistory'
 import { MAP_OVERVIEW_LAYOUT_VERSION, mapOverviewNodeSize } from '../utils/mapOverviewNodeSize'
+import {
+  DEFAULT_MAP_OVERVIEW_LAYOUT_ID,
+  MAP_OVERVIEW_LAYOUTS,
+  MAP_OVERVIEW_LAYOUT_CONFIRM_I18N,
+  buildMapOverviewLayoutOptions,
+  mapOverviewLayoutSizePayload,
+  sortMapOverviewLayoutNodesByMapId,
+} from '../utils/mapOverviewLayouts'
+import {
+  executeMapOverviewGraphLayout,
+  type MapOverviewLayoutRunHandle,
+} from '../utils/mapOverviewLayoutExecute'
+import {
+  mapOverviewChunkCellKey,
+  mapOverviewChunkKey,
+  mapOverviewChunkKeyBelongsToMap,
+  prioritizeMapOverviewChunks,
+  shouldRetainStaleMapOverviewChunk,
+  type MapOverviewChunkRequest,
+  type MapOverviewViewportBox,
+} from '../utils/mapOverviewChunkScheduler'
+import { MapOverviewDecodedChunkCache } from '../utils/mapOverviewDecodedChunkCache'
+import { mapOverviewPortKey, mapOverviewPortRelative } from '../utils/mapOverviewPorts'
 import {
   clampMapOverviewZoom,
   clampMapOverviewZoomPercent,
@@ -24,15 +53,13 @@ import {
   mapOverviewZoomFromPercent,
   parseMapOverviewZoomPercent,
 } from '../utils/mapOverviewViewport'
-import MapOverviewLayoutWorker from '../workers/mapOverviewLayout.worker.ts?worker'
-
-const THUMBNAIL_IDLE_DELAY_MS = 500
 
 const projectStore = useProjectStore()
 const workspaceStore = useWorkspaceStore()
 const router = useRouter()
 const { language, t } = useI18n()
 const graphHost = ref<HTMLElement | null>(null)
+const chunkHost = ref<HTMLCanvasElement | null>(null)
 const snapshot = ref<MapOverviewSnapshot | null>(null)
 const loading = ref(false)
 const validating = ref(false)
@@ -40,25 +67,23 @@ const refreshing = ref(false)
 const loadError = ref('')
 const layoutError = ref('')
 const searchQuery = ref('')
-const thumbnailQuality = ref<MapOverviewThumbnailQuality>('high')
+const selectedLayoutId = ref<MapOverviewLayoutId>(DEFAULT_MAP_OVERVIEW_LAYOUT_ID)
 const zoomPercent = ref(100)
 const zoomDraft = ref('100')
 const zoomInput = ref<HTMLInputElement | null>(null)
 const selectedNodeId = ref<number | null>(null)
 const selectedEdgeId = ref<string | null>(null)
 const contextMenu = ref<{ mapId: number; x: number; y: number } | null>(null)
-const thumbnailErrors = ref<Record<number, string>>({})
-const thumbnailUrls = new Map<number, string>()
-const thumbnailLoadedQuality = new Map<number, MapOverviewThumbnailQuality>()
-const thumbnailPending = new Set<number>()
-let cy: Core | null = null
-let layoutWorker: Worker | null = null
+const chunkErrors = ref<Record<number, string>>({})
+
+let graph: Graph | null = null
+let graphBoundContainer: HTMLElement | null = null
 let layoutRequestId = 0
 let loadGeneration = 0
-let activeThumbnailLoads = 0
-let thumbnailScheduleTimer: ReturnType<typeof setTimeout> | null = null
-let thumbnailGeneration = 0
-let thumbnailSessionId = createThumbnailSessionId()
+let chunkGeneration = 0
+let chunkSessionId = createChunkSessionId()
+let activeChunkLoads = 0
+let chunkScheduleTimer: ReturnType<typeof setTimeout> | null = null
 let lastGraphInteractionAt = Date.now()
 let zoomPersistTimer: ReturnType<typeof setTimeout> | null = null
 let viewportReady = false
@@ -66,15 +91,17 @@ let layoutMigrationPending = false
 let surfaceActive = false
 let surfaceVersion = ''
 let surfaceValidated = false
-let savedViewport: { zoom: number; pan: { x: number; y: number } } | null = null
-let pendingLayout: {
-  snapshot: MapOverviewSnapshot
-  mode: 'layered' | 'incremental'
-  positions: Record<string, { x: number; y: number }>
-  restoreViewport: boolean
-} | null = null
+let savedViewport: { zoom: number; pan: [number, number] } | null = null
+let layoutRunning = false
+let activeLayoutHandle: MapOverviewLayoutRunHandle | null = null
 const grabbedPositions = new Map<string, MapOverviewNodePosition>()
 const moveHistory = new MapOverviewMoveHistory(100)
+const decodedChunks = new MapOverviewDecodedChunkCache()
+const displayedChunkKeys = new Map<string, MapOverviewChunkRequest & { url: string; logicalX: number; logicalY: number; logicalWidth: number; logicalHeight: number }>()
+const inflightChunkKeys = new Set<string>()
+const failedDecodeChunkKeys = new Set<string>()
+const preferredLevelByMap = new Map<number, number>()
+const paintFrame = { pending: false }
 
 const currentProject = computed(() => projectStore.currentProject || '')
 const selectedNode = computed(() => snapshot.value?.nodes.find((node) => node.id === selectedNodeId.value) || null)
@@ -92,61 +119,77 @@ const selectedNodeEdges = computed(() => {
 })
 
 onMounted(() => {
-  ensureLayoutWorker()
+  // Graph is created lazily when snapshot/host are ready.
 })
 
 onActivated(() => {
   surfaceActive = true
-  ensureLayoutWorker()
-  if (currentProject.value) thumbnailQuality.value = workspaceStore.readMapOverviewThumbnailQuality(currentProject.value)
-  void activateOverview()
+  if (currentProject.value) {
+    selectedLayoutId.value = workspaceStore.readMapOverviewLayout(currentProject.value)
+    const persisted = workspaceStore.readMapOverviewSelection(currentProject.value)
+    selectedNodeId.value = persisted.selectedNodeId
+    selectedEdgeId.value = persisted.selectedEdgeId
+    void activateOverview()
+  }
 })
 
 onDeactivated(() => {
   surfaceActive = false
   captureSessionViewport()
   loadGeneration += 1
-  thumbnailGeneration += 1
-  thumbnailPending.clear()
-  activeThumbnailLoads = 0
-  cancelThumbnailSession()
-  if (thumbnailScheduleTimer) clearTimeout(thumbnailScheduleTimer)
-  thumbnailScheduleTimer = null
+  chunkGeneration += 1
+  inflightChunkKeys.clear()
+  activeChunkLoads = 0
+  cancelChunkSession()
+  if (chunkScheduleTimer) clearTimeout(chunkScheduleTimer)
+  chunkScheduleTimer = null
   persistZoomNow()
+  persistViewportSelectionNow()
   layoutRequestId += 1
-  layoutWorker?.terminate()
-  layoutWorker = null
+  activeLayoutHandle?.stop()
+  activeLayoutHandle = null
+  if (graph && !graph.destroyed) graph.stopLayout()
+  // Keep graph instance / snapshot / selection / pan / zoom; only cancel layout+chunks.
 })
-
-function ensureLayoutWorker(): void {
-  if (layoutWorker) return
-  layoutWorker = new MapOverviewLayoutWorker()
-  layoutWorker.onmessage = handleLayoutResponse
-}
 
 onUnmounted(() => {
   loadGeneration += 1
-  cancelThumbnailSession()
-  if (thumbnailScheduleTimer) clearTimeout(thumbnailScheduleTimer)
-  thumbnailScheduleTimer = null
+  cancelChunkSession()
+  if (chunkScheduleTimer) clearTimeout(chunkScheduleTimer)
+  chunkScheduleTimer = null
   persistZoomNow()
-  layoutWorker?.terminate()
-  layoutWorker = null
+  persistViewportSelectionNow()
+  layoutRequestId += 1
+  activeLayoutHandle?.stop()
+  activeLayoutHandle = null
+  if (graph && !graph.destroyed) graph.stopLayout()
   moveHistory.clear()
-  cy?.destroy()
-  cy = null
+  decodedChunks.clear()
+  displayedChunkKeys.clear()
+  destroyGraph()
 })
 
 watch(currentProject, (next, previous) => {
   if (next === previous) return
   if (zoomPersistTimer) clearTimeout(zoomPersistTimer)
   zoomPersistTimer = null
-  if (previous && cy && viewportReady) workspaceStore.patchMapOverviewZoom(previous, cy.zoom())
-  resetGraph()
+  if (previous && graph && viewportReady) {
+    workspaceStore.patchMapOverviewZoom(previous, graph.getZoom())
+    const pan = graph.getPosition() as [number, number]
+    workspaceStore.patchMapOverviewPan(previous, pan)
+    workspaceStore.patchMapOverviewSelection(previous, {
+      selectedNodeId: selectedNodeId.value,
+      selectedEdgeId: selectedEdgeId.value,
+    })
+  }
+  resetGraphState()
   moveHistory.clear()
   surfaceVersion = ''
   if (next) {
-    thumbnailQuality.value = workspaceStore.readMapOverviewThumbnailQuality(next)
+    selectedLayoutId.value = workspaceStore.readMapOverviewLayout(next)
+    const persisted = workspaceStore.readMapOverviewSelection(next)
+    selectedNodeId.value = persisted.selectedNodeId
+    selectedEdgeId.value = persisted.selectedEdgeId
     if (surfaceActive) void activateOverview()
   }
 })
@@ -174,9 +217,8 @@ async function activateOverview(): Promise<void> {
       surfaceValidated = true
       validating.value = false
       await restoreGraphAfterActivation()
-      if (pendingLayout) resumePendingLayout()
-      else if (!viewportReady) requestInitialLayout(snapshot.value)
-      else scheduleThumbnails(0)
+      if (!viewportReady) void requestInitialLayout(snapshot.value)
+      else scheduleChunks(0)
       return
     }
     await loadOverview(validation.version)
@@ -209,13 +251,20 @@ async function loadOverview(startVersion?: string): Promise<void> {
     if (startVersion && !settled.unchanged) throw new Error(t('story.workspaceChangedDuringLoad'))
     surfaceVersion = settled.version
     surfaceValidated = true
-    snapshot.value = next
+    const previous = snapshot.value
+    const changed = !previous || previous.snapshotVersion !== next.snapshotVersion
+    if (changed) {
+      snapshot.value = next
+      await nextTick()
+      await ensureGraph(next, true)
+      void requestInitialLayout(next)
+    } else {
+      snapshot.value = next
+      await restoreGraphAfterActivation()
+      scheduleChunks(0)
+    }
     loading.value = false
     refreshing.value = false
-    await nextTick()
-    createGraph(next)
-    ensureLayoutWorker()
-    requestInitialLayout(next)
   } catch (error) {
     if (generation !== loadGeneration) return
     loadError.value = formatUserFacingErrorMessage(error, 'general', language.value)
@@ -234,323 +283,518 @@ async function restoreGraphAfterActivation(): Promise<void> {
   await nextTick()
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   if (!surfaceActive || !graphHost.value) return
-  // Keep the existing Cytoscape instance when the canvas host DOM identity is unchanged.
-  if (cy && cy.container() === graphHost.value) {
-    cy.resize()
-    restoreSelectionClasses()
+  if (graph && !graph.destroyed && graphBoundContainer === graphHost.value) {
+    const width = graphHost.value.clientWidth
+    const height = graphHost.value.clientHeight
+    if (width > 0 && height > 0) graph.setSize(width, height)
+    restoreSelectionVisuals()
     syncZoomDisplay()
+    paintChunksSoon()
     return
   }
-  createGraph(cachedSnapshot)
+  await ensureGraph(cachedSnapshot, false)
   const stored = workspaceStore.readMapOverviewPositions(currentProject.value)
   const hasCompleteStoredPositions = cachedSnapshot.nodes.every((node) => Boolean(stored[String(node.id)]))
-  if (Object.keys(stored).length && cy) {
-    cy.batch(() => {
-      for (const [id, position] of Object.entries(stored)) cy?.getElementById(id).position(position)
-    })
-  }
-  if (hasCompleteStoredPositions) {
-    restoreSavedViewport()
-  } else {
-    viewportReady = false
-  }
-  restoreSelectionClasses()
+  if (Object.keys(stored).length) applyPositions(stored)
+  if (hasCompleteStoredPositions) restoreSavedViewport()
+  else viewportReady = false
+  restoreSelectionVisuals()
 }
 
 function captureSessionViewport(): void {
-  if (!cy || !viewportReady) return
-  savedViewport = { zoom: cy.zoom(), pan: cy.pan() }
+  if (!graph || !viewportReady) return
+  savedViewport = { zoom: graph.getZoom(), pan: graph.getPosition() as [number, number] }
+  if (currentProject.value) {
+    workspaceStore.patchMapOverviewZoom(currentProject.value, savedViewport.zoom)
+    workspaceStore.patchMapOverviewPan(currentProject.value, savedViewport.pan)
+  }
 }
 
 function restoreSavedViewport(): void {
-  if (!cy) return
+  if (!graph) return
   if (savedViewport) {
-    cy.zoom(savedViewport.zoom)
-    cy.pan(savedViewport.pan)
+    void graph.zoomTo(savedViewport.zoom, false)
+    void graph.translateTo(savedViewport.pan, false)
     viewportReady = true
     syncZoomDisplay()
+    paintChunksSoon()
+    return
+  }
+  const project = currentProject.value
+  const persistedPan = project ? workspaceStore.readMapOverviewPan(project) : null
+  const persistedZoom = project ? workspaceStore.readMapOverviewZoom(project) : null
+  if (persistedPan) {
+    void graph.zoomTo(persistedZoom ?? clampMapOverviewZoom(graph.getZoom()), false)
+    void graph.translateTo(persistedPan, false)
+    viewportReady = true
+    syncZoomDisplay()
+    paintChunksSoon()
     return
   }
   restoreInitialViewport()
 }
 
-function restoreSelectionClasses(): void {
-  if (selectedNodeId.value != null) selectNode(selectedNodeId.value)
-  else if (selectedEdgeId.value) {
-    const edge = cy?.getElementById(selectedEdgeId.value)
-    if (edge?.length) applyFocus([edge.id(), edge.source().id(), edge.target().id()])
-  }
-}
-
-function createGraph(next: MapOverviewSnapshot): void {
-  cy?.destroy()
+async function ensureGraph(next: MapOverviewSnapshot, forceRebuild: boolean): Promise<void> {
   if (!graphHost.value) return
-  cy = cytoscape({
+  if (graph && !graph.destroyed && !forceRebuild && graphBoundContainer === graphHost.value) {
+    graph.setData(buildGraphData(next))
+    await graph.draw()
+    return
+  }
+  destroyGraph()
+  const width = Math.max(1, graphHost.value.clientWidth)
+  const height = Math.max(1, graphHost.value.clientHeight)
+  graphBoundContainer = graphHost.value
+  graph = new Graph({
     container: graphHost.value,
-    minZoom: MAP_OVERVIEW_MIN_ZOOM,
-    maxZoom: MAP_OVERVIEW_MAX_ZOOM,
-    wheelSensitivity: MAP_OVERVIEW_WHEEL_SENSITIVITY,
-    boxSelectionEnabled: false,
-    autoungrabify: false,
-    elements: [
-      ...next.nodes.map((node) => {
-        const size = mapOverviewNodeSize(node)
-        return {
-          group: 'nodes' as const,
-          data: {
-            id: String(node.id),
-            label: `${node.name}\nMAP${String(node.id).padStart(3, '0')}`,
-            readState: node.readState,
-            nodeWidth: size.width,
-            imageHeight: size.imageHeight,
-            textMaxWidth: Math.max(176, size.width - 4),
-          },
-        }
-      }),
-      ...next.edges.map((edge) => ({
-        group: 'edges' as const,
-        data: {
-          id: edge.id,
-          source: String(edge.sourceMapId),
-          target: String(edge.targetMapId),
-          countLabel: edge.count > 1 ? `×${edge.count}` : '',
+    width,
+    height,
+    animation: false,
+    autoFit: false,
+    padding: 42,
+    zoomRange: [MAP_OVERVIEW_MIN_ZOOM, MAP_OVERVIEW_MAX_ZOOM],
+    data: buildGraphData(next),
+    node: {
+      type: 'rect',
+      style: {
+        size: (datum: NodeData) => {
+          const size = datum.data?.size as { width: number; imageHeight: number } | undefined
+          return size ? [size.width, size.imageHeight] : [48, 48]
         },
-      })),
+        fill: '#f0efe8',
+        stroke: (datum: NodeData) => (datum.data?.readState === 'ready' ? 'transparent' : '#c2412d'),
+        lineWidth: (datum: NodeData) => (datum.data?.readState === 'ready' ? 0 : 2),
+        lineDash: (datum: NodeData) => (datum.data?.readState === 'ready' ? undefined : [6, 4]),
+        radius: 2,
+        labelText: (datum: NodeData) => String(datum.data?.label || ''),
+        labelPlacement: 'bottom',
+        labelOffsetY: 8,
+        labelFill: '#282923',
+        labelFontSize: 13,
+        labelFontWeight: 600,
+        labelWordWrap: true,
+        labelMaxWidth: '100%',
+        labelBackground: true,
+        labelBackgroundFill: '#f7f7f4',
+        labelBackgroundOpacity: 0.9,
+        labelPadding: [3, 6],
+        labelBackgroundRadius: 4,
+        badge: true,
+        badges: [],
+        ports: (datum: NodeData) => (datum.data?.ports as Array<{ key: string; placement: [number, number]; kind: string }>) || [],
+        port: true,
+        portR: 0,
+        portFill: 'transparent',
+        portStroke: 'transparent',
+        portLineWidth: 0,
+      },
+      state: {
+        selected: {
+          stroke: '#c65f3d',
+          lineWidth: 3,
+          lineDash: undefined,
+        },
+        dimmed: { opacity: 0.16 },
+        focused: {
+          stroke: '#c65f3d',
+          lineWidth: 3,
+        },
+      },
+    },
+    edge: {
+      type: 'quadratic',
+      style: {
+        stroke: '#8c8d86',
+        lineWidth: 3,
+        endArrow: true,
+        endArrowSize: 10,
+        labelText: (datum) => {
+          const count = Number(datum.data?.count || 0)
+          return count > 1 ? `×${count}` : ''
+        },
+        labelFill: '#5f605a',
+        labelFontSize: 11,
+        labelBackground: true,
+        labelBackgroundFill: '#f7f7f4',
+        labelBackgroundOpacity: 0.9,
+        labelPadding: 3,
+        halo: true,
+        haloStroke: '#8c8d86',
+        haloLineWidth: 11,
+        haloStrokeOpacity: 0,
+        haloPointerEvents: 'stroke',
+        sourcePort: (datum) => String(datum.data?.sourcePort || ''),
+        targetPort: (datum) => String(datum.data?.targetPort || ''),
+        loop: true,
+      },
+      state: {
+        selected: {
+          stroke: '#c65f3d',
+          lineWidth: 5,
+          haloLineWidth: 13,
+          haloStroke: '#c65f3d',
+          haloPointerEvents: 'stroke',
+        },
+        dimmed: { opacity: 0.16 },
+        focused: {
+          stroke: '#c65f3d',
+          lineWidth: 5,
+        },
+      },
+    },
+    behaviors: [
+      { type: 'drag-canvas' },
+      {
+        type: 'zoom-canvas',
+        sensitivity: MAP_OVERVIEW_WHEEL_SENSITIVITY,
+        preventDefault: true,
+      },
+      {
+        type: 'drag-element',
+        animation: false,
+        dropEffect: 'none',
+      },
+      {
+        type: 'click-select',
+        multiple: false,
+        state: 'selected',
+      },
     ],
-    style: [
-      {
-        selector: 'node',
-        style: {
-          width: 'data(nodeWidth)',
-          height: 'data(imageHeight)',
-          shape: 'rectangle',
-          'background-color': 'transparent',
-          'background-fit': 'contain',
-          'background-width': '100%',
-          'background-height': '100%',
-          'border-width': 0,
-          'border-color': 'transparent',
-          label: 'data(label)',
-          color: '#282923',
-          'font-size': 13,
-          'font-weight': 600,
-          'text-wrap': 'wrap',
-          'text-max-width': 'data(textMaxWidth)',
-          'text-valign': 'bottom',
-          'text-halign': 'center',
-          'text-margin-y': 24,
-          'text-background-color': '#f7f7f4',
-          'text-background-opacity': 0.9,
-          'text-background-padding': '3px',
-          'text-background-shape': 'roundrectangle',
-          'overlay-opacity': 0,
-        },
-      },
-      {
-        selector: 'node[readState != "ready"]',
-        style: {
-          'border-color': '#c2412d',
-          'border-style': 'dashed',
-          'border-width': 2,
-        },
-      },
-      {
-        selector: 'edge',
-        style: {
-          width: 2,
-          'curve-style': 'bezier',
-          'line-color': '#8c8d86',
-          'target-arrow-color': '#8c8d86',
-          'target-arrow-shape': 'triangle',
-          'arrow-scale': 0.9,
-          label: 'data(countLabel)',
-          color: '#5f605a',
-          'font-size': 11,
-          'text-background-color': '#f7f7f4',
-          'text-background-opacity': 0.9,
-          'text-background-padding': '3px',
-          'loop-direction': '-45deg',
-          'loop-sweep': '70deg',
-          'overlay-opacity': 0,
-        },
-      },
-      {
-        selector: '.focused',
-        style: {
-          'border-width': 3,
-          'border-color': '#c65f3d',
-          'line-color': '#c65f3d',
-          'target-arrow-color': '#c65f3d',
-          opacity: 1,
-        },
-      },
-      { selector: '.dimmed', style: { opacity: 0.16 } },
-    ],
   })
-  cy.on('tap', 'node', handleNodeTap)
-  cy.on('dbltap', 'node', (event) => openMap(Number(event.target.id())))
-  cy.on('tap', 'edge', handleEdgeTap)
-  cy.on('tap', (event) => {
-    if (event.target !== cy) return
-    clearSelection()
+  graph.on('node:click', (event: IElementEvent) => {
+    const id = Number(event.target.id)
+    if (Number.isFinite(id)) selectNode(id)
   })
-  cy.on('cxttap', 'node', (event) => {
-    const original = event.originalEvent as MouseEvent
-    contextMenu.value = { mapId: Number(event.target.id()), x: original.clientX, y: original.clientY }
+  graph.on('node:dblclick', (event: IElementEvent) => {
+    openMap(Number(event.target.id))
   })
-  cy.on('grab', 'node', (event) => {
-    grabbedPositions.set(event.target.id(), roundedPosition(event.target))
+  graph.on('edge:click', (event: IElementEvent) => {
+    selectEdge(String(event.target.id))
   })
-  cy.on('dragfree', 'node', (event) => {
-    const node = event.target as NodeSingular
-    const before = grabbedPositions.get(node.id())
-    const after = roundedPosition(node)
-    grabbedPositions.delete(node.id())
-    if (before) moveHistory.record({ nodeId: node.id(), before, after })
+  graph.on('canvas:click', () => clearSelection())
+  graph.on('node:contextmenu', (event: IElementEvent) => {
+    const original = (event as unknown as { nativeEvent?: MouseEvent }).nativeEvent
+      || (event as unknown as { originalEvent?: MouseEvent }).originalEvent
+    if (original && typeof original.preventDefault === 'function') original.preventDefault()
+    if (!original) return
+    contextMenu.value = { mapId: Number(event.target.id), x: original.clientX, y: original.clientY }
+  })
+  graph.on('node:pointerenter', (event: IElementEvent) => {
+    const mapId = Number(event.target.id)
+    if (!Number.isFinite(mapId)) return
+    if (selectedNodeId.value === mapId || selectedEdgeId.value) return
+    updatePortVisibility(mapId)
+  })
+  graph.on('node:pointerleave', () => {
+    if (selectedNodeId.value != null) updatePortVisibility(selectedNodeId.value)
+    else if (selectedEdgeId.value) {
+      const edge = snapshot.value?.edges.find((item) => item.id === selectedEdgeId.value)
+      if (edge) updatePortVisibility(null, edge)
+      else hideAllPorts()
+    } else {
+      hideAllPorts()
+      void graph?.draw()
+    }
+  })
+  graph.on('node:dragstart', (event: IElementEvent) => {
+    const id = String(event.target.id)
+    grabbedPositions.set(id, roundedPosition(id))
+  })
+  graph.on('node:dragend', (event: IElementEvent) => {
+    const id = String(event.target.id)
+    const before = grabbedPositions.get(id)
+    const after = roundedPosition(id)
+    grabbedPositions.delete(id)
+    if (before) moveHistory.record({ nodeId: id, before, after })
     persistGraphPositions()
+    scheduleChunks(0)
   })
-  cy.on('zoom', handleGraphZoom)
-  cy.on('pan zoom drag grab', markGraphInteraction)
-  cy.on('render', () => scheduleThumbnails(32))
+  graph.on('aftertransform', () => {
+    handleGraphZoom()
+    markGraphInteraction()
+  })
+  graph.on('afterelementtranslate', () => {
+    markGraphInteraction()
+    paintChunksSoon()
+  })
+  await graph.render()
 }
 
-function requestInitialLayout(next: MapOverviewSnapshot): void {
+function buildGraphData(next: MapOverviewSnapshot) {
+  const portsByMap = collectPorts(next)
+  const nodes = sortMapOverviewLayoutNodesByMapId(next.nodes).map((node) => {
+    const size = mapOverviewNodeSize(node)
+    return {
+      id: String(node.id),
+      data: {
+        mapId: node.id,
+        label: `${node.name} MAP${String(node.id).padStart(3, '0')}`,
+        readState: node.readState,
+        size: { width: size.width, imageHeight: size.imageHeight, collisionHeight: size.collisionHeight },
+        layoutSize: mapOverviewLayoutSizePayload(size),
+        ports: portsByMap.get(node.id) || [],
+      },
+      style: {
+        x: 0,
+        y: 0,
+        size: [size.width, size.imageHeight],
+        ports: (portsByMap.get(node.id) || []).map((port) => ({
+          key: port.key,
+          placement: port.placement,
+          r: 0,
+          fill: 'transparent',
+          stroke: 'transparent',
+        })),
+      },
+    }
+  })
+  const edges = next.edges.map((edge) => ({
+    id: edge.id,
+    source: String(edge.sourceMapId),
+    target: String(edge.targetMapId),
+    data: {
+      count: edge.count,
+      sourcePort: mapOverviewPortKey(edge.sourceX, edge.sourceY),
+      targetPort: mapOverviewPortKey(edge.targetX, edge.targetY),
+    },
+    style: {
+      sourcePort: mapOverviewPortKey(edge.sourceX, edge.sourceY),
+      targetPort: mapOverviewPortKey(edge.targetX, edge.targetY),
+    },
+  }))
+  return { nodes, edges }
+}
+
+function collectPorts(next: MapOverviewSnapshot): Map<number, Array<{ key: string; placement: [number, number]; kind: 'source' | 'target' | 'both' }>> {
+  const byMap = new Map<number, Map<string, { key: string; placement: [number, number]; kind: 'source' | 'target' | 'both' }>>()
+  const ensure = (mapId: number, x: number, y: number, kind: 'source' | 'target') => {
+    const node = next.nodes.find((item) => item.id === mapId)
+    if (!node?.width || !node.height) return
+    try {
+      const relative = mapOverviewPortRelative(x, y, node.width, node.height)
+      const key = mapOverviewPortKey(x, y)
+      let ports = byMap.get(mapId)
+      if (!ports) {
+        ports = new Map()
+        byMap.set(mapId, ports)
+      }
+      const existing = ports.get(key)
+      if (!existing) {
+        ports.set(key, { key, placement: [relative.x, relative.y], kind })
+        return
+      }
+      if (existing.kind !== kind) existing.kind = 'both'
+    } catch {
+      // Out-of-bounds coordinates never create ports or edges.
+    }
+  }
+  for (const edge of next.edges) {
+    ensure(edge.sourceMapId, edge.sourceX, edge.sourceY, 'source')
+    ensure(edge.targetMapId, edge.targetX, edge.targetY, 'target')
+  }
+  return new Map([...byMap.entries()].map(([mapId, ports]) => [mapId, [...ports.values()]]))
+}
+
+async function requestInitialLayout(next: MapOverviewSnapshot): Promise<void> {
   viewportReady = false
   const stored = workspaceStore.readMapOverviewPositions(currentProject.value)
   const validStored = Object.fromEntries(Object.entries(stored).filter(([id]) => next.nodes.some((node) => String(node.id) === id)))
   if (workspaceStore.readMapOverviewLayoutVersion(currentProject.value) !== MAP_OVERVIEW_LAYOUT_VERSION) {
     layoutMigrationPending = true
     moveHistory.clear()
-    if (Object.keys(validStored).length && cy) {
-      cy.batch(() => {
-        for (const [id, position] of Object.entries(validStored)) cy?.getElementById(id).position(position)
-      })
+    if (Object.keys(validStored).length) {
+      applyPositions(validStored)
       restoreSavedViewport()
     }
-    requestLayout(next, 'layered', {}, true)
+    try {
+      await runLayout(next, {}, true)
+    } catch {
+      // layoutError set; positions rolled back inside runLayout
+    }
     return
   }
   const hasNewNodes = next.nodes.some((node) => !validStored[String(node.id)])
-  if (Object.keys(validStored).length && !hasNewNodes && cy) {
-    cy.batch(() => {
-      for (const [id, position] of Object.entries(validStored)) cy?.getElementById(id).position(position)
-    })
+  if (Object.keys(validStored).length && !hasNewNodes) {
+    applyPositions(validStored)
     persistGraphPositions()
     restoreInitialViewport()
-    scheduleThumbnails()
+    scheduleChunks()
     return
   }
-  requestLayout(next, Object.keys(validStored).length ? 'incremental' : 'layered', validStored, true)
+  try {
+    await runLayout(next, validStored, true)
+  } catch {
+    // layoutError set; positions rolled back inside runLayout
+  }
 }
 
-let restoreViewportAfterLayout = false
-
-function requestLayout(
+async function runLayout(
   next: MapOverviewSnapshot,
-  mode: 'layered' | 'incremental',
-  positions: Record<string, { x: number; y: number }> = {},
+  seedPositions: Record<string, { x: number; y: number }> = {},
   restoreViewport = false,
-): void {
-  pendingLayout = { snapshot: next, mode, positions, restoreViewport }
+): Promise<void> {
+  if (!graph || graph.destroyed) return
   const requestId = ++layoutRequestId
-  restoreViewportAfterLayout = restoreViewport
-  layoutWorker?.postMessage({
-    requestId,
-    mode,
-    nodes: next.nodes.map((node) => {
+  const beforePositions = Object.fromEntries(
+    graph.getNodeData().map((node) => [String(node.id), roundedPosition(String(node.id))]),
+  )
+  layoutRunning = true
+  layoutError.value = ''
+  try {
+    if (Object.keys(seedPositions).length) applyPositions(seedPositions)
+    const layoutNodes = next.nodes.map((node) => {
       const size = mapOverviewNodeSize(node)
-      return {
-        id: node.id,
-        width: size.width,
-        height: size.collisionHeight,
-        position: positions[String(node.id)],
-      }
-    }),
-    edges: next.edges.map((edge) => ({ id: edge.id, sourceMapId: edge.sourceMapId, targetMapId: edge.targetMapId })),
-  })
-}
-
-function handleLayoutResponse(event: MessageEvent<{
-  requestId: number
-  positions?: Record<string, { x: number; y: number }>
-  error?: string
-}>): void {
-  if (event.data.requestId !== layoutRequestId || !cy) return
-  pendingLayout = null
-  if (event.data.error) {
-    layoutError.value = event.data.error
-    return
-  }
-  cy.batch(() => {
-    for (const [id, position] of Object.entries(event.data.positions || {})) {
-      cy?.getElementById(id).position(position)
+      return { mapId: node.id, width: size.width, collisionHeight: size.collisionHeight }
+    })
+    const options = buildMapOverviewLayoutOptions(selectedLayoutId.value, {
+      nodes: layoutNodes,
+      width: graphHost.value?.clientWidth,
+      height: graphHost.value?.clientHeight,
+    })
+    await executeMapOverviewGraphLayout(graph, options, {
+      isCancelled: () => requestId !== layoutRequestId,
+      onHandle: (handle) => { activeLayoutHandle = handle },
+    })
+    if (requestId !== layoutRequestId) {
+      applyPositions(beforePositions)
+      return
     }
-  })
-  persistGraphPositions()
-  if (layoutMigrationPending) {
-    workspaceStore.patchMapOverviewLayoutVersion(currentProject.value, MAP_OVERVIEW_LAYOUT_VERSION)
-    layoutMigrationPending = false
+    persistGraphPositions()
+    workspaceStore.patchMapOverviewLayout(currentProject.value, selectedLayoutId.value)
+    if (layoutMigrationPending) {
+      workspaceStore.patchMapOverviewLayoutVersion(currentProject.value, MAP_OVERVIEW_LAYOUT_VERSION)
+      layoutMigrationPending = false
+    }
+    if (restoreViewport) restoreInitialViewport()
+    else await fitGraph()
+    scheduleChunks()
+  } catch (error) {
+    if (requestId !== layoutRequestId) return
+    applyPositions(beforePositions)
+    layoutError.value = formatUserFacingErrorMessage(error, 'general', language.value)
+    throw error
+  } finally {
+    if (requestId === layoutRequestId) {
+      layoutRunning = false
+      activeLayoutHandle = null
+    }
   }
-  if (restoreViewportAfterLayout) restoreInitialViewport()
-  else fitGraph()
-  scheduleThumbnails()
 }
 
-function resumePendingLayout(): void {
-  const pending = pendingLayout
-  if (!pending || pending.snapshot !== snapshot.value) {
-    pendingLayout = null
-    return
-  }
-  ensureLayoutWorker()
-  requestLayout(pending.snapshot, pending.mode, pending.positions, pending.restoreViewport)
+function applyPositions(positions: Record<string, { x: number; y: number }>): void {
+  if (!graph) return
+  graph.updateNodeData(Object.entries(positions).map(([id, position]) => ({
+    id,
+    style: { x: position.x, y: position.y },
+  })))
+  void graph.draw()
 }
 
 function persistGraphPositions(): void {
-  if (!cy || !currentProject.value) return
-  const positions = Object.fromEntries(cy.nodes().map((node) => [node.id(), roundedPosition(node)]))
+  if (!graph || !currentProject.value) return
+  const positions = Object.fromEntries(
+    graph.getNodeData().map((node) => [String(node.id), roundedPosition(String(node.id))]),
+  )
   workspaceStore.patchMapOverviewPositions(currentProject.value, positions)
 }
 
-function roundedPosition(node: NodeSingular): { x: number; y: number } {
-  const position = node.position()
-  return { x: Math.round(position.x * 10) / 10, y: Math.round(position.y * 10) / 10 }
+function roundedPosition(nodeId: string): { x: number; y: number } {
+  const node = graph?.getNodeData(nodeId)
+  const x = Number(node?.style?.x || 0)
+  const y = Number(node?.style?.y || 0)
+  return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 }
+}
+
+async function confirmLayoutChange(nextId: MapOverviewLayoutId): Promise<void> {
+  const previous = selectedLayoutId.value
+  if (nextId === previous) return
+  selectedLayoutId.value = nextId
+  if (!snapshot.value) return
+  try {
+    await ElMessageBox.confirm(
+      t(MAP_OVERVIEW_LAYOUT_CONFIRM_I18N.body),
+      t(MAP_OVERVIEW_LAYOUT_CONFIRM_I18N.title),
+      {
+        confirmButtonText: t(MAP_OVERVIEW_LAYOUT_CONFIRM_I18N.apply),
+        cancelButtonText: t(MAP_OVERVIEW_LAYOUT_CONFIRM_I18N.cancel),
+        type: 'warning',
+      },
+    )
+  } catch {
+    selectedLayoutId.value = previous
+    return
+  }
+  moveHistory.clear()
+  const ok = await runLayoutSafe(snapshot.value, {}, !viewportReady)
+  if (!ok) selectedLayoutId.value = previous
 }
 
 async function confirmRelayout(): Promise<void> {
   if (!snapshot.value) return
-  await ElMessageBox.confirm(
-    t('mapOverview.relayout.confirmBody'),
-    t('mapOverview.relayout.confirmTitle'),
-    { confirmButtonText: t('mapOverview.relayout.confirm'), cancelButtonText: t('common.cancel'), type: 'warning' },
-  )
+  try {
+    await ElMessageBox.confirm(
+      t(MAP_OVERVIEW_LAYOUT_CONFIRM_I18N.body),
+      t('mapOverview.relayout.confirmTitle'),
+      {
+        confirmButtonText: t('mapOverview.relayout.confirm'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
   moveHistory.clear()
-  requestLayout(snapshot.value, 'layered')
+  await runLayoutSafe(snapshot.value, {}, false)
+}
+
+async function runLayoutSafe(
+  next: MapOverviewSnapshot,
+  seed: Record<string, { x: number; y: number }>,
+  restoreViewport: boolean,
+): Promise<boolean> {
+  const beforePositions = workspaceStore.readMapOverviewPositions(currentProject.value)
+  const beforeLayout = workspaceStore.readMapOverviewLayout(currentProject.value)
+  try {
+    await runLayout(next, seed, restoreViewport)
+    return !layoutError.value
+  } catch {
+    applyPositions(beforePositions)
+    selectedLayoutId.value = beforeLayout
+    return false
+  }
 }
 
 function retryLayout(): void {
   if (!snapshot.value) return
-  requestLayout(snapshot.value, 'layered', {}, !viewportReady)
+  void runLayout(snapshot.value, {}, !viewportReady).catch(() => undefined)
 }
 
-function fitGraph(): void {
-  if (!cy) return
-  cy.fit(undefined, 42)
+async function fitGraph(): Promise<void> {
+  if (!graph) return
+  await graph.fitView({ padding: 42 }, false)
+  const zoom = clampMapOverviewZoom(Math.max(graph.getZoom(), MAP_OVERVIEW_MIN_ZOOM))
+  if (zoom !== graph.getZoom()) await graph.zoomTo(zoom, false)
   syncZoomDisplay()
   if (viewportReady) persistZoomSoon()
+  paintChunksSoon()
 }
 
 function restoreInitialViewport(): void {
-  if (!cy) return
+  if (!graph) return
   const storedZoom = workspaceStore.readMapOverviewZoom(currentProject.value)
+  const storedPan = workspaceStore.readMapOverviewPan(currentProject.value)
   if (storedZoom == null) {
-    cy.fit(undefined, 42)
+    void fitGraph()
+  } else if (storedPan) {
+    void graph.zoomTo(storedZoom, false)
+    void graph.translateTo(storedPan, false)
   } else {
-    cy.center()
-    setGraphZoom(storedZoom, false)
+    void graph.fitCenter(false).then(() => setGraphZoom(storedZoom, false))
   }
   viewportReady = true
   syncZoomDisplay()
+  paintChunksSoon()
 }
 
 function handleGraphZoom(): void {
@@ -560,38 +804,34 @@ function handleGraphZoom(): void {
 }
 
 function syncZoomDisplay(): void {
-  if (!cy) return
-  const zoom = clampMapOverviewZoom(cy.zoom())
+  if (!graph) return
+  const zoom = clampMapOverviewZoom(graph.getZoom())
   zoomPercent.value = Math.round(zoom * 1000) / 10
   if (document.activeElement !== zoomInput.value) zoomDraft.value = formatMapOverviewZoomPercent(zoom)
 }
 
 function setGraphZoom(value: number, persist = true): void {
-  if (!cy || !graphHost.value) return
+  if (!graph || !graphHost.value) return
   const level = clampMapOverviewZoom(value)
-  cy.zoom({
-    level,
-    renderedPosition: {
-      x: graphHost.value.clientWidth / 2,
-      y: graphHost.value.clientHeight / 2,
-    },
-  })
+  const origin: [number, number] = [graphHost.value.clientWidth / 2, graphHost.value.clientHeight / 2]
+  void graph.zoomTo(level, false, origin)
   syncZoomDisplay()
   if (persist && viewportReady) persistZoomSoon()
+  paintChunksSoon()
 }
 
 function zoomIn(): void {
-  if (cy) setGraphZoom(cy.zoom() + MAP_OVERVIEW_ZOOM_STEP)
+  if (graph) setGraphZoom(graph.getZoom() + MAP_OVERVIEW_ZOOM_STEP)
 }
 
 function zoomOut(): void {
-  if (cy) setGraphZoom(cy.zoom() - MAP_OVERVIEW_ZOOM_STEP)
+  if (graph) setGraphZoom(graph.getZoom() - MAP_OVERVIEW_ZOOM_STEP)
 }
 
 function applyZoomDraft(): void {
   const parsed = parseMapOverviewZoomPercent(zoomDraft.value)
   if (parsed == null) {
-    zoomDraft.value = formatMapOverviewZoomPercent(cy?.zoom() || mapOverviewZoomFromPercent(zoomPercent.value))
+    zoomDraft.value = formatMapOverviewZoomPercent(graph?.getZoom() || mapOverviewZoomFromPercent(zoomPercent.value))
     zoomInput.value?.blur()
     return
   }
@@ -602,7 +842,7 @@ function applyZoomDraft(): void {
 }
 
 function cancelZoomDraft(): void {
-  zoomDraft.value = formatMapOverviewZoomPercent(cy?.zoom() || mapOverviewZoomFromPercent(zoomPercent.value))
+  zoomDraft.value = formatMapOverviewZoomPercent(graph?.getZoom() || mapOverviewZoomFromPercent(zoomPercent.value))
   zoomInput.value?.blur()
 }
 
@@ -611,7 +851,7 @@ function selectZoomInput(event: FocusEvent): void {
 }
 
 function persistZoomSoon(): void {
-  if (!cy || !currentProject.value || !viewportReady) return
+  if (!graph || !currentProject.value || !viewportReady) return
   if (zoomPersistTimer) clearTimeout(zoomPersistTimer)
   zoomPersistTimer = setTimeout(() => {
     zoomPersistTimer = null
@@ -622,54 +862,181 @@ function persistZoomSoon(): void {
 function persistZoomNow(): void {
   if (zoomPersistTimer) clearTimeout(zoomPersistTimer)
   zoomPersistTimer = null
-  if (!cy || !currentProject.value || !viewportReady) return
-  workspaceStore.patchMapOverviewZoom(currentProject.value, cy.zoom())
+  if (!graph || !currentProject.value || !viewportReady) return
+  workspaceStore.patchMapOverviewZoom(currentProject.value, graph.getZoom())
+  workspaceStore.patchMapOverviewPan(currentProject.value, graph.getPosition() as [number, number])
 }
 
-function handleNodeTap(event: EventObject): void {
-  selectNode(Number(event.target.id()))
-}
-
-function handleEdgeTap(event: EventObject): void {
-  selectedNodeId.value = null
-  selectedEdgeId.value = String(event.target.id())
-  contextMenu.value = null
-  applyFocus([event.target.id(), event.target.source().id(), event.target.target().id()])
+function persistViewportSelectionNow(): void {
+  if (!currentProject.value) return
+  workspaceStore.patchMapOverviewSelection(currentProject.value, {
+    selectedNodeId: selectedNodeId.value,
+    selectedEdgeId: selectedEdgeId.value,
+  })
 }
 
 function selectNode(mapId: number): void {
   selectedNodeId.value = mapId
   selectedEdgeId.value = null
   contextMenu.value = null
-  const node = cy?.getElementById(String(mapId))
-  if (!node?.length) return
-  const related = node.closedNeighborhood()
-  applyFocus(related.map((element) => element.id()))
+  persistViewportSelectionNow()
+  if (!graph || !snapshot.value) return
+  const related = new Set<string>([String(mapId)])
+  for (const edge of snapshot.value.edges) {
+    if (edge.sourceMapId === mapId || edge.targetMapId === mapId) {
+      related.add(edge.id)
+      related.add(String(edge.sourceMapId))
+      related.add(String(edge.targetMapId))
+    }
+  }
+  applyFocus(related)
+  updatePortVisibility(mapId)
+}
+
+function selectEdge(edgeId: string): void {
+  selectedNodeId.value = null
+  selectedEdgeId.value = edgeId
+  contextMenu.value = null
+  persistViewportSelectionNow()
+  const edge = snapshot.value?.edges.find((item) => item.id === edgeId)
+  if (!edge || !graph) return
+  applyFocus(new Set([edgeId, String(edge.sourceMapId), String(edge.targetMapId)]))
+  updatePortVisibility(null, edge)
 }
 
 function clearSelection(): void {
   selectedNodeId.value = null
   selectedEdgeId.value = null
   contextMenu.value = null
-  cy?.elements().removeClass('focused dimmed')
+  persistViewportSelectionNow()
+  if (!graph) return
+  const nodeIds = graph.getNodeData().map((node) => String(node.id))
+  const edgeIds = graph.getEdgeData().map((edge) => String(edge.id))
+  void graph.setElementState(Object.fromEntries([
+    ...nodeIds.map((id) => [id, []]),
+    ...edgeIds.map((id) => [id, []]),
+  ]))
+  hideAllPorts()
 }
 
-function applyFocus(ids: string[]): void {
-  if (!cy) return
-  const focused = new Set(ids)
-  cy.batch(() => {
-    cy?.elements().forEach((element) => {
-      element.toggleClass('focused', focused.has(element.id()))
-      element.toggleClass('dimmed', !focused.has(element.id()))
-    })
-  })
+function applyFocus(ids: Set<string>): void {
+  if (!graph) return
+  const states: Record<string, string[]> = {}
+  for (const node of graph.getNodeData()) {
+    const id = String(node.id)
+    states[id] = ids.has(id) ? ['focused', 'selected'] : ['dimmed']
+  }
+  for (const edge of graph.getEdgeData()) {
+    const id = String(edge.id)
+    states[id] = ids.has(id) ? ['focused', 'selected'] : ['dimmed']
+  }
+  void graph.setElementState(states)
+}
+
+function restoreSelectionVisuals(): void {
+  if (selectedNodeId.value != null) selectNode(selectedNodeId.value)
+  else if (selectedEdgeId.value) selectEdge(selectedEdgeId.value)
+  else clearSelection()
+}
+
+function updatePortVisibility(mapId: number | null, edge?: MapOverviewEdge): void {
+  if (!graph || !snapshot.value) return
+  const highlighted = new Map<number, Map<string, { x: number; y: number; role: 'source' | 'target' | 'both' }>>()
+  const mark = (nodeId: number, x: number, y: number, role: 'source' | 'target') => {
+    const key = mapOverviewPortKey(x, y)
+    let ports = highlighted.get(nodeId)
+    if (!ports) {
+      ports = new Map()
+      highlighted.set(nodeId, ports)
+    }
+    const existing = ports.get(key)
+    if (!existing) {
+      ports.set(key, { x, y, role })
+      return
+    }
+    if (existing.role !== role) existing.role = 'both'
+  }
+  if (edge) {
+    mark(edge.sourceMapId, edge.sourceX, edge.sourceY, 'source')
+    mark(edge.targetMapId, edge.targetX, edge.targetY, 'target')
+  } else if (mapId != null) {
+    for (const item of snapshot.value.edges) {
+      if (item.sourceMapId === mapId) mark(mapId, item.sourceX, item.sourceY, 'source')
+      if (item.targetMapId === mapId) mark(mapId, item.targetX, item.targetY, 'target')
+    }
+  }
+  const portsByMap = collectPorts(snapshot.value)
+  graph.updateNodeData(snapshot.value.nodes.map((node) => {
+    const size = mapOverviewNodeSize(node)
+    const allPorts = portsByMap.get(node.id) || []
+    const active = highlighted.get(node.id) || new Map()
+    return {
+      id: String(node.id),
+      style: {
+        ports: allPorts.map((port) => {
+          const activePort = active.get(port.key)
+          const hollow = !activePort || activePort.role === 'source'
+          return {
+            key: port.key,
+            placement: port.placement,
+            r: activePort ? 5 : 0,
+            fill: activePort ? (hollow ? 'transparent' : '#c65f3d') : 'transparent',
+            stroke: activePort ? '#c65f3d' : 'transparent',
+            lineWidth: activePort ? 2 : 0,
+          }
+        }),
+        badges: [...active.entries()].flatMap(([key, port]) => {
+          const meta = allPorts.find((item) => item.key === key)
+          if (!meta) return []
+          return [{
+            text: `${port.x},${port.y}`,
+            placement: 'left' as const,
+            offsetX: (meta.placement[0] - 0.5) * size.width,
+            offsetY: (meta.placement[1] - 0.5) * size.imageHeight - 12,
+            fontSize: 10,
+            fill: '#5f605a',
+            background: true,
+            backgroundFill: '#f7f7f4',
+            backgroundOpacity: 0.92,
+            padding: [2, 4],
+          }]
+        }),
+      },
+    }
+  }))
+  void graph.draw()
+}
+
+function hideAllPorts(): void {
+  if (!graph || !snapshot.value) return
+  const portsByMap = collectPorts(snapshot.value)
+  graph.updateNodeData(snapshot.value.nodes.map((node) => {
+    const ports = portsByMap.get(node.id) || []
+    return {
+      id: String(node.id),
+      style: {
+        ports: ports.map((port) => ({
+          key: port.key,
+          placement: port.placement,
+          r: 0,
+          fill: 'transparent',
+          stroke: 'transparent',
+          lineWidth: 0,
+        })),
+        badges: [],
+      },
+    }
+  }))
+  void graph.draw()
 }
 
 function focusSearchResult(node: MapOverviewNode): void {
   searchQuery.value = `${node.name} · MAP${String(node.id).padStart(3, '0')}`
   selectNode(node.id)
-  const target = cy?.getElementById(String(node.id))
-  if (target?.length) cy?.animate({ center: { eles: target }, zoom: Math.max(cy.zoom(), 0.7), duration: 220 })
+  if (!graph) return
+  void graph.focusElement(String(node.id), { duration: 220 })
+  const zoom = Math.max(graph.getZoom(), 0.7)
+  void graph.zoomTo(zoom, false)
 }
 
 function openMap(mapId: number): void {
@@ -682,7 +1049,7 @@ function openEvent(mapId: number, eventId: number): void {
 }
 
 function onGraphKeydown(event: KeyboardEvent): void {
-  if (!cy || !snapshot.value?.nodes.length) return
+  if (!graph || !snapshot.value?.nodes.length) return
   if (isTextControl(event.target)) return
   if (event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'z') {
     event.preventDefault()
@@ -708,148 +1075,324 @@ function onGraphKeydown(event: KeyboardEvent): void {
   if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
   event.preventDefault()
   if (event.altKey && selectedNodeId.value != null) {
-    const node = cy.getElementById(String(selectedNodeId.value))
-    const before = roundedPosition(node)
+    const nodeId = String(selectedNodeId.value)
+    const before = roundedPosition(nodeId)
     const step = event.shiftKey ? 32 : 8
-    node.shift({
-      x: event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0,
-      y: event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0,
-    })
-    moveHistory.record({ nodeId: node.id(), before, after: roundedPosition(node) })
+    const next = {
+      x: before.x + (event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0),
+      y: before.y + (event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0),
+    }
+    applyPositions({ [nodeId]: next })
+    moveHistory.record({ nodeId, before, after: next })
     persistGraphPositions()
+    paintChunksSoon()
     return
   }
   const delta = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1
   const nextId = ids[(index + delta + ids.length) % ids.length]
   selectNode(nextId)
-  const node = cy.getElementById(String(nextId))
-  cy.animate({ center: { eles: node }, duration: 160 })
+  void graph.focusElement(String(nextId), { duration: 160 })
 }
 
-function scheduleThumbnails(delayMs = 0): void {
-  if (!surfaceActive || !surfaceValidated || !cy || !snapshot.value || activeThumbnailLoads >= 1 || thumbnailScheduleTimer) return
-  thumbnailScheduleTimer = setTimeout(() => {
-    thumbnailScheduleTimer = null
-    if (!surfaceActive || !surfaceValidated || !cy || !snapshot.value || activeThumbnailLoads >= 1) return
-    const extent = cy.extent()
-    const center = { x: (extent.x1 + extent.x2) / 2, y: (extent.y1 + extent.y2) / 2 }
-    const candidates = snapshot.value.nodes
-      .filter((candidate) => candidate.thumbnailVersion
-        && thumbnailLoadedQuality.get(candidate.id) !== thumbnailQuality.value
-        && !thumbnailPending.has(candidate.id))
-    const nearViewport = candidates
-      .filter(candidate => isNearViewport(candidate.id, extent))
-      .sort((left, right) => distanceToCenter(left.id, center) - distanceToCenter(right.id, center))
-    let node = nearViewport[0]
-    if (!node) {
-      const idleFor = Date.now() - lastGraphInteractionAt
-      if (idleFor < THUMBNAIL_IDLE_DELAY_MS) {
-        scheduleThumbnails(THUMBNAIL_IDLE_DELAY_MS - idleFor)
-        return
-      }
-      node = candidates.sort((left, right) => distanceToCenter(left.id, center) - distanceToCenter(right.id, center))[0]
-    }
-    if (node) void loadThumbnail(node)
+function scheduleChunks(delayMs = 0): void {
+  if (!surfaceActive || !surfaceValidated || !graph || !snapshot.value) return
+  const cameraForUnload = readCameraBox()
+  if (cameraForUnload) {
+    const positionsForUnload = Object.fromEntries(
+      graph.getNodeData().map((node) => [String(node.id), {
+        x: Number(node.style?.x || 0),
+        y: Number(node.style?.y || 0),
+      }]),
+    )
+    unloadOffscreenChunks(cameraForUnload, positionsForUnload)
+  }
+  if (activeChunkLoads >= 1 || chunkScheduleTimer) return
+  chunkScheduleTimer = setTimeout(() => {
+    chunkScheduleTimer = null
+    if (!surfaceActive || !surfaceValidated || !graph || !snapshot.value || activeChunkLoads >= 1) return
+    const camera = readCameraBox()
+    if (!camera) return
+    const positions = Object.fromEntries(
+      graph.getNodeData().map((node) => [String(node.id), {
+        x: Number(node.style?.x || 0),
+        y: Number(node.style?.y || 0),
+      }]),
+    )
+    const requests = prioritizeMapOverviewChunks(
+      snapshot.value.nodes,
+      positions,
+      camera,
+      graph.getZoom(),
+      window.devicePixelRatio || 1,
+    )
+    for (const request of requests) preferredLevelByMap.set(request.mapId, request.level)
+    const next = requests.find((request) => {
+      const key = mapOverviewChunkKey(request.mapId, request.version, request.chunkX, request.chunkY, request.level)
+      return !displayedChunkKeys.has(key) && !inflightChunkKeys.has(key) && !failedDecodeChunkKeys.has(key)
+    })
+    if (next) void loadChunk(next)
+    else paintChunksSoon()
   }, Math.max(0, delayMs))
 }
 
-function isNearViewport(mapId: number, extent: { x1: number; y1: number; x2: number; y2: number; w: number; h: number }): boolean {
-  const bounds = cy?.getElementById(String(mapId)).boundingBox({ includeLabels: false })
-  if (!bounds) return false
-  return bounds.x2 >= extent.x1 - extent.w
-    && bounds.x1 <= extent.x2 + extent.w
-    && bounds.y2 >= extent.y1 - extent.h
-    && bounds.y1 <= extent.y2 + extent.h
+function readCameraBox(): MapOverviewViewportBox | null {
+  if (!graph || !graphHost.value) return null
+  const width = graphHost.value.clientWidth
+  const height = graphHost.value.clientHeight
+  if (width <= 0 || height <= 0) return null
+  const topLeft = graph.getCanvasByViewport([0, 0])
+  const bottomRight = graph.getCanvasByViewport([width, height])
+  return {
+    x: Math.min(topLeft[0], bottomRight[0]),
+    y: Math.min(topLeft[1], bottomRight[1]),
+    width: Math.abs(bottomRight[0] - topLeft[0]),
+    height: Math.abs(bottomRight[1] - topLeft[1]),
+  }
 }
 
-function markGraphInteraction(): void {
-  lastGraphInteractionAt = Date.now()
-  scheduleThumbnails(48)
-}
-
-function distanceToCenter(mapId: number, center: { x: number; y: number }): number {
-  const position = cy?.getElementById(String(mapId)).position() || { x: 0, y: 0 }
-  return (position.x - center.x) ** 2 + (position.y - center.y) ** 2
-}
-
-async function loadThumbnail(node: MapOverviewNode): Promise<void> {
+async function loadChunk(request: MapOverviewChunkRequest): Promise<void> {
+  const key = mapOverviewChunkKey(request.mapId, request.version, request.chunkX, request.chunkY, request.level)
   const generation = loadGeneration
-  const qualityGeneration = thumbnailGeneration
-  const quality = thumbnailQuality.value
-  thumbnailPending.add(node.id)
-  activeThumbnailLoads += 1
+  const qualityGeneration = chunkGeneration
+  inflightChunkKeys.add(key)
+  activeChunkLoads += 1
+  let failed = false
   try {
-    const result = await maps.overviewThumbnail(
-      node.id,
-      node.thumbnailVersion || undefined,
-      quality,
+    const result = await maps.overviewChunk(
+      request.mapId,
+      request.version,
+      request.chunkX,
+      request.chunkY,
+      request.level,
       currentProject.value,
-      thumbnailSessionId,
+      chunkSessionId,
     )
-    if (!surfaceActive || generation !== loadGeneration || qualityGeneration !== thumbnailGeneration || !cy) return
-    const url = result.resourceUrl
-    thumbnailUrls.set(node.id, url)
-    thumbnailLoadedQuality.set(node.id, quality)
-    if (thumbnailErrors.value[node.id]) {
-      const nextErrors = { ...thumbnailErrors.value }
-      delete nextErrors[node.id]
-      thumbnailErrors.value = nextErrors
+    if (!surfaceActive || generation !== loadGeneration || qualityGeneration !== chunkGeneration) return
+    await rememberChunk(key, request, result)
+    if (chunkErrors.value[request.mapId]) {
+      const nextErrors = { ...chunkErrors.value }
+      delete nextErrors[request.mapId]
+      chunkErrors.value = nextErrors
     }
-    cy.getElementById(String(node.id)).style('background-image', url)
+    paintChunksSoon()
   } catch (error) {
-    if (generation === loadGeneration && qualityGeneration === thumbnailGeneration) {
-      const issue = formatUserFacingErrorMessage(error, 'general', language.value)
-      thumbnailErrors.value = { ...thumbnailErrors.value, [node.id]: issue }
-      cy?.getElementById(String(node.id)).data('thumbnailError', issue)
+    failed = true
+    if (generation === loadGeneration && qualityGeneration === chunkGeneration) {
+      // IPC / resource / decode failure: park this chunk only; keep any older displayed level.
+      failedDecodeChunkKeys.add(key)
+      chunkErrors.value = {
+        ...chunkErrors.value,
+        [request.mapId]: formatUserFacingErrorMessage(error, 'general', language.value),
+      }
     }
   } finally {
-    if (generation === loadGeneration && qualityGeneration === thumbnailGeneration) {
-      thumbnailPending.delete(node.id)
-      activeThumbnailLoads -= 1
-      scheduleThumbnails(0)
+    if (generation === loadGeneration && qualityGeneration === chunkGeneration) {
+      inflightChunkKeys.delete(key)
+      activeChunkLoads = Math.max(0, activeChunkLoads - 1)
+      // Failed keys stay out of the queue until explicit retry; still drain other pending chunks.
+      if (failed) paintChunksSoon()
+      scheduleChunks(0)
     }
   }
 }
 
-function retryThumbnail(node: MapOverviewNode): void {
-  thumbnailUrls.delete(node.id)
-  thumbnailLoadedQuality.delete(node.id)
-  thumbnailPending.delete(node.id)
-  const nextErrors = { ...thumbnailErrors.value }
-  delete nextErrors[node.id]
-  thumbnailErrors.value = nextErrors
-  cy?.getElementById(String(node.id)).removeData('thumbnailError')
-  void loadThumbnail(node)
+async function rememberChunk(
+  key: string,
+  request: MapOverviewChunkRequest,
+  result: MapOverviewChunk,
+): Promise<void> {
+  try {
+    const response = await fetch(result.resourceUrl)
+    if (!response.ok) throw new Error(`Chunk fetch failed (${response.status}).`)
+    const blob = await response.blob()
+    const bitmap = await createImageBitmap(blob)
+    decodedChunks.set({
+      key,
+      bytes: Math.max(1, bitmap.width * bitmap.height * 4),
+      bitmap,
+    })
+    displayedChunkKeys.set(key, {
+      ...request,
+      url: result.resourceUrl,
+      logicalX: result.logicalX,
+      logicalY: result.logicalY,
+      logicalWidth: result.logicalWidth,
+      logicalHeight: result.logicalHeight,
+    })
+    failedDecodeChunkKeys.delete(key)
+  } catch (error) {
+    failedDecodeChunkKeys.add(key)
+    displayedChunkKeys.delete(key)
+    decodedChunks.delete(key)
+    throw error
+  }
 }
 
-function resetGraph(): void {
-  rotateThumbnailSession()
+function unloadOffscreenChunks(
+  camera: MapOverviewViewportBox,
+  positions: Record<string, { x: number; y: number }>,
+): void {
+  if (!snapshot.value || !graph) return
+  const preferredRequests = prioritizeMapOverviewChunks(
+    snapshot.value.nodes,
+    positions,
+    camera,
+    graph.getZoom(),
+    window.devicePixelRatio || 1,
+  )
+  const preferredKeys = new Set(
+    preferredRequests.map((request) => (
+      mapOverviewChunkKey(request.mapId, request.version, request.chunkX, request.chunkY, request.level)
+    )),
+  )
+  const preferredCells = new Set(
+    preferredRequests.map((request) => (
+      mapOverviewChunkCellKey(request.mapId, request.version, request.chunkX, request.chunkY)
+    )),
+  )
+
+  for (const [key, entry] of [...displayedChunkKeys.entries()]) {
+    const cell = mapOverviewChunkCellKey(entry.mapId, entry.version, entry.chunkX, entry.chunkY)
+    const preferredLevel = preferredLevelByMap.get(entry.mapId) as MapOverviewChunkRequest['level'] | undefined
+    const preferredKey = preferredLevel == null
+      ? null
+      : mapOverviewChunkKey(entry.mapId, entry.version, entry.chunkX, entry.chunkY, preferredLevel)
+    const preferredReady = Boolean(
+      preferredKey
+      && displayedChunkKeys.has(preferredKey)
+      && decodedChunks.get(preferredKey)?.bitmap,
+    )
+    const retain = shouldRetainStaleMapOverviewChunk({
+      entryKey: key,
+      entryLevel: entry.level,
+      preferredKeys,
+      preferredCells,
+      preferredLevel,
+      preferredReady,
+      cellKey: cell,
+    })
+    if (retain) continue
+    displayedChunkKeys.delete(key)
+    decodedChunks.delete(key)
+  }
+}
+
+function paintChunksSoon(): void {
+  if (paintFrame.pending) return
+  paintFrame.pending = true
+  requestAnimationFrame(() => {
+    paintFrame.pending = false
+    paintChunkOverlay()
+  })
+}
+
+function paintChunkOverlay(): void {
+  const canvas = chunkHost.value
+  const host = graphHost.value
+  if (!canvas || !host || !graph || !snapshot.value) return
+  const width = host.clientWidth
+  const height = host.clientHeight
+  if (width <= 0 || height <= 0) return
+  const dpr = window.devicePixelRatio || 1
+  if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+    canvas.width = Math.floor(width * dpr)
+    canvas.height = Math.floor(height * dpr)
+    canvas.style.width = `${width}px`
+    canvas.style.height = `${height}px`
+  }
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, width, height)
+  for (const entry of displayedChunkKeys.values()) {
+    const node = snapshot.value.nodes.find((item) => item.id === entry.mapId)
+    if (!node) continue
+    const position = roundedPosition(String(entry.mapId))
+    const size = mapOverviewNodeSize(node)
+    const left = position.x - size.width / 2 + entry.logicalX
+    const top = position.y - size.imageHeight / 2 + entry.logicalY
+    const topLeft = graph.getViewportByCanvas([left, top])
+    const bottomRight = graph.getViewportByCanvas([left + entry.logicalWidth, top + entry.logicalHeight])
+    const dx = Math.min(topLeft[0], bottomRight[0])
+    const dy = Math.min(topLeft[1], bottomRight[1])
+    const dw = Math.abs(bottomRight[0] - topLeft[0])
+    const dh = Math.abs(bottomRight[1] - topLeft[1])
+    const decoded = decodedChunks.get(mapOverviewChunkKey(entry.mapId, entry.version, entry.chunkX, entry.chunkY, entry.level))
+    if (decoded?.bitmap) {
+      ctx.drawImage(decoded.bitmap as CanvasImageSource, dx, dy, dw, dh)
+    }
+  }
+}
+
+function markGraphInteraction(): void {
+  lastGraphInteractionAt = Date.now()
+  scheduleChunks(48)
+  paintChunksSoon()
+}
+
+function retryChunks(node: MapOverviewNode): void {
+  for (const [key, entry] of [...displayedChunkKeys.entries()]) {
+    if (entry.mapId === node.id) {
+      displayedChunkKeys.delete(key)
+      decodedChunks.delete(key)
+    }
+  }
+  for (const key of [...failedDecodeChunkKeys]) {
+    if (mapOverviewChunkKeyBelongsToMap(key, node.id)) failedDecodeChunkKeys.delete(key)
+  }
+  const nextErrors = { ...chunkErrors.value }
+  delete nextErrors[node.id]
+  chunkErrors.value = nextErrors
+  scheduleChunks(0)
+}
+
+function resetGraphState(): void {
+  rotateChunkSession()
   loadGeneration += 1
-  thumbnailGeneration += 1
+  chunkGeneration += 1
   snapshot.value = null
-  clearSelection()
-  thumbnailUrls.clear()
-  thumbnailLoadedQuality.clear()
-  thumbnailPending.clear()
-  if (thumbnailScheduleTimer) clearTimeout(thumbnailScheduleTimer)
-  thumbnailScheduleTimer = null
-  thumbnailErrors.value = {}
-  activeThumbnailLoads = 0
+  selectedNodeId.value = null
+  selectedEdgeId.value = null
+  contextMenu.value = null
+  displayedChunkKeys.clear()
+  decodedChunks.clear()
+  inflightChunkKeys.clear()
+  failedDecodeChunkKeys.clear()
+  preferredLevelByMap.clear()
+  if (chunkScheduleTimer) clearTimeout(chunkScheduleTimer)
+  chunkScheduleTimer = null
+  chunkErrors.value = {}
+  activeChunkLoads = 0
   viewportReady = false
   layoutMigrationPending = false
-  pendingLayout = null
   savedViewport = null
   surfaceValidated = false
-  cy?.destroy()
-  cy = null
+  activeLayoutHandle?.stop()
+  activeLayoutHandle = null
+  destroyGraph()
+}
+
+function destroyGraph(): void {
+  activeLayoutHandle?.stop()
+  activeLayoutHandle = null
+  if (graph && !graph.destroyed) {
+    graph.stopLayout()
+    graph.destroy()
+  }
+  graph = null
+  graphBoundContainer = null
+  const canvas = chunkHost.value
+  if (canvas) {
+    const ctx = canvas.getContext('2d')
+    ctx?.clearRect(0, 0, canvas.width, canvas.height)
+  }
 }
 
 function applyHistoryMove(move: { nodeId: string; before: MapOverviewNodePosition; after: MapOverviewNodePosition } | null, redo: boolean): void {
-  if (!move || !cy) return
-  const node = cy.getElementById(move.nodeId)
-  if (!node.length) return
-  node.position(redo ? move.after : move.before)
+  if (!move || !graph) return
+  applyPositions({ [move.nodeId]: redo ? move.after : move.before })
   persistGraphPositions()
+  paintChunksSoon()
 }
 
 function isTextControl(target: EventTarget | null): boolean {
@@ -859,42 +1402,33 @@ function isTextControl(target: EventTarget | null): boolean {
     || (target instanceof HTMLElement && target.isContentEditable)
 }
 
-function changeThumbnailQuality(): void {
-  if (!currentProject.value || !cy) return
-  workspaceStore.patchMapOverviewThumbnailQuality(currentProject.value, thumbnailQuality.value)
-  rotateThumbnailSession()
-  thumbnailGeneration += 1
-  thumbnailPending.clear()
-  thumbnailErrors.value = {}
-  activeThumbnailLoads = 0
-  if (thumbnailScheduleTimer) clearTimeout(thumbnailScheduleTimer)
-  thumbnailScheduleTimer = null
-  lastGraphInteractionAt = Date.now()
-  scheduleThumbnails(0)
-}
-
-function createThumbnailSessionId(): string {
+function createChunkSessionId(): string {
   return crypto.randomUUID()
 }
 
-function cancelThumbnailSession(): void {
-  const sessionId = thumbnailSessionId
-  void maps.cancelOverviewThumbnails(sessionId).catch(() => undefined)
+function cancelChunkSession(): void {
+  const sessionId = chunkSessionId
+  void maps.cancelOverviewChunks(sessionId).catch(() => undefined)
 }
 
-function rotateThumbnailSession(): void {
-  cancelThumbnailSession()
-  thumbnailSessionId = createThumbnailSessionId()
+function rotateChunkSession(): void {
+  cancelChunkSession()
+  chunkSessionId = createChunkSessionId()
 }
 
 function mapLabel(mapId: number): string {
   const node = snapshot.value?.nodes.find((item) => item.id === mapId)
   return node ? `${node.name} · MAP${String(node.id).padStart(3, '0')}` : `MAP${String(mapId).padStart(3, '0')}`
 }
+
+function onLayoutSelect(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value as MapOverviewLayoutId
+  void confirmLayoutChange(value)
+}
 </script>
 
 <template>
-  <section class="map-overview" data-ui-id="map-overview-view" :aria-busy="validating || refreshing">
+  <section class="map-overview" data-ui-id="map-overview-view" :aria-busy="validating || refreshing || layoutRunning">
     <div v-if="!currentProject" class="overview-state" data-ui-id="map-overview-empty">
       <strong>{{ t('mapOverview.empty.title') }}</strong>
       <span>{{ t('mapOverview.empty.body') }}</span>
@@ -924,17 +1458,17 @@ function mapLabel(mapId: number): string {
             </button>
           </div>
         </div>
-        <label class="quality-control">
-          <span>{{ t('mapOverview.quality.label') }}</span>
+        <label class="layout-control">
+          <span>{{ t('mapOverview.layout.label') }}</span>
           <select
-            v-model="thumbnailQuality"
-            :aria-label="t('mapOverview.quality.label')"
-            data-ui-id="map-overview-quality"
-            @change="changeThumbnailQuality"
+            :value="selectedLayoutId"
+            :aria-label="t('mapOverview.layout.label')"
+            data-ui-id="map-overview-layout"
+            @change="onLayoutSelect"
           >
-            <option value="standard">{{ t('mapOverview.quality.standard') }}</option>
-            <option value="high">{{ t('mapOverview.quality.high') }}</option>
-            <option value="ultra">{{ t('mapOverview.quality.ultra') }}</option>
+            <option v-for="layout in MAP_OVERVIEW_LAYOUTS" :key="layout.id" :value="layout.id">
+              {{ t(layout.labelKey) }}
+            </option>
           </select>
         </label>
         <button type="button" class="toolbar-action" :aria-label="t('mapOverview.fit')" @click="fitGraph">
@@ -957,15 +1491,17 @@ function mapLabel(mapId: number): string {
       </div>
       <div v-else-if="snapshot" class="overview-body">
         <div
-          ref="graphHost"
-          class="overview-canvas"
+          class="overview-canvas-stack"
           tabindex="0"
           role="application"
           :aria-label="t('mapOverview.canvasAria')"
           data-ui-id="map-overview-canvas"
           @keydown="onGraphKeydown"
           @click.self="contextMenu = null"
-        />
+        >
+          <div ref="graphHost" class="overview-canvas" />
+          <canvas ref="chunkHost" class="overview-chunk-layer" aria-hidden="true" />
+        </div>
         <div v-if="refreshing || loadError" class="overview-refresh-state" :class="{ error: loadError }" :role="loadError ? 'alert' : 'status'">
           <template v-if="loadError">
             <strong>{{ t('mapOverview.loadFailed') }}</strong>
@@ -1019,20 +1555,20 @@ function mapLabel(mapId: number): string {
             </dl>
             <div v-if="selectedNode.issues.length" class="issue-list">
               <strong>{{ t('mapOverview.inspector.issues') }}</strong>
-              <p v-for="issue in selectedNode.issues" :key="`${issue.code}-${issue.targetMapId || ''}`">{{ issue.message }}</p>
+              <p v-for="issue in selectedNode.issues" :key="`${issue.code}-${issue.targetMapId || ''}-${issue.eventId || ''}-${issue.commandIndex || ''}`">{{ issue.message }}</p>
             </div>
-            <div v-if="thumbnailErrors[selectedNode.id]" class="issue-list thumbnail-failure" role="alert">
+            <div v-if="chunkErrors[selectedNode.id]" class="issue-list thumbnail-failure" role="alert">
               <strong>{{ t('mapOverview.thumbnail.failed') }}</strong>
-              <p>{{ thumbnailErrors[selectedNode.id] }}</p>
-              <button type="button" @click="retryThumbnail(selectedNode)">{{ t('common.retry') }}</button>
+              <p>{{ chunkErrors[selectedNode.id] }}</p>
+              <button type="button" @click="retryChunks(selectedNode)">{{ t('common.retry') }}</button>
             </div>
             <div class="relation-list">
               <strong>{{ t('mapOverview.inspector.outgoing') }}</strong>
-              <button v-for="edge in selectedNodeEdges.outgoing" :key="edge.id" type="button" @click="selectedEdgeId = edge.id; selectedNodeId = null">
+              <button v-for="edge in selectedNodeEdges.outgoing" :key="edge.id" type="button" @click="selectEdge(edge.id)">
                 {{ mapLabel(edge.targetMapId) }} <span>×{{ edge.count }}</span>
               </button>
               <strong>{{ t('mapOverview.inspector.incoming') }}</strong>
-              <button v-for="edge in selectedNodeEdges.incoming" :key="edge.id" type="button" @click="selectedEdgeId = edge.id; selectedNodeId = null">
+              <button v-for="edge in selectedNodeEdges.incoming" :key="edge.id" type="button" @click="selectEdge(edge.id)">
                 {{ mapLabel(edge.sourceMapId) }} <span>×{{ edge.count }}</span>
               </button>
             </div>
@@ -1047,7 +1583,7 @@ function mapLabel(mapId: number): string {
               <article v-for="source in selectedEdge.sources" :key="`${source.eventId}-${source.pageIndex}-${source.commandIndex}`">
                 <strong>{{ source.eventName }} · #{{ source.eventId }}</strong>
                 <span>{{ t('mapOverview.source.location', { page: source.pageIndex + 1, command: source.commandIndex + 1 }) }}</span>
-                <span>{{ t('mapOverview.source.target', { x: source.targetX, y: source.targetY }) }}</span>
+                <span>{{ source.sourceX }}, {{ source.sourceY }} → {{ source.targetX }}, {{ source.targetY }}</span>
                 <code>{{ JSON.stringify(source.pageConditions) }}</code>
                 <button type="button" @click="openEvent(source.sourceMapId, source.eventId)">{{ t('mapOverview.openEvent') }}</button>
               </article>
@@ -1080,9 +1616,9 @@ function mapLabel(mapId: number): string {
 .search-results button { width:100%; min-height:36px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 8px; border:0; border-radius:5px; background:transparent; color:var(--app-ink); text-align:left; cursor:pointer; }
 .search-results button:hover,.search-results button:focus-visible { background:var(--app-accent-soft); outline:none; }
 .search-results small { color:var(--app-ink-muted); font-variant-numeric:tabular-nums; }
-.quality-control { min-height:34px; display:inline-flex; align-items:center; gap:6px; padding:0 8px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink-muted); font-size:12px; }
-.quality-control select { border:0; outline:0; background:transparent; color:var(--app-ink); font:inherit; cursor:pointer; }
-.quality-control:focus-within { outline:2px solid var(--app-accent); outline-offset:2px; }
+.layout-control { min-height:34px; display:inline-flex; align-items:center; gap:6px; padding:0 8px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink-muted); font-size:12px; }
+.layout-control select { border:0; outline:0; background:transparent; color:var(--app-ink); font:inherit; cursor:pointer; }
+.layout-control:focus-within { outline:2px solid var(--app-accent); outline-offset:2px; }
 .toolbar-action { min-height:34px; display:inline-flex; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink-soft); font:inherit; font-size:12px; cursor:pointer; }
 .toolbar-action svg { width:15px; }
 .toolbar-action:hover { color:var(--app-ink); border-color:var(--app-border-strong); }
@@ -1107,8 +1643,10 @@ function mapLabel(mapId: number): string {
 }
 .overview-refresh-state.error { color:var(--app-danger); }
 .overview-refresh-state button { flex:none; }
-.overview-canvas { min-width:0; min-height:0; flex:1; background-image:radial-gradient(circle, color-mix(in srgb,var(--app-ink-muted) 22%,transparent) 1px, transparent 1px); background-size:18px 18px; outline:none; }
-.overview-canvas:focus-visible { box-shadow:inset 0 0 0 3px var(--app-accent); }
+.overview-canvas-stack { position:relative; min-width:0; min-height:0; flex:1; outline:none; background-image:radial-gradient(circle, color-mix(in srgb,var(--app-ink-muted) 22%,transparent) 1px, transparent 1px); background-size:18px 18px; }
+.overview-canvas-stack:focus-visible { box-shadow:inset 0 0 0 3px var(--app-accent); }
+.overview-canvas { position:absolute; inset:0; }
+.overview-chunk-layer { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:1; }
 .overview-zoom { position:absolute; left:14px; bottom:14px; z-index:3; display:flex; align-items:center; gap:2px; padding:3px; border-radius:var(--app-radius-md); background:var(--app-bg-elevated); box-shadow:var(--app-shadow-2); }
 .overview-zoom button { height:28px; min-width:30px; padding:0 7px; border:0; border-radius:var(--app-radius-sm); background:transparent; color:var(--app-ink-soft); font:600 11px var(--app-font-mono); cursor:pointer; }
 .overview-zoom button:hover:not(:disabled) { background:var(--app-bg-soft); color:var(--app-ink); }
@@ -1127,24 +1665,15 @@ function mapLabel(mapId: number): string {
 .overview-inspector dd { color:var(--app-ink); text-align:right; }
 .issue-list,.relation-list,.source-list { display:grid; gap:7px; margin-top:14px; }
 .issue-list>strong,.relation-list>strong { margin-top:5px; color:var(--app-ink); font-size:12px; }
-.issue-list p { margin:0; padding:7px; border-left:2px solid var(--app-danger); background:color-mix(in srgb,var(--app-danger) 7%,transparent); color:var(--app-danger); font-size:11.5px; line-height:1.45; }
-.thumbnail-failure button { justify-self:start; padding:0; border:0; background:transparent; color:var(--app-accent); font:inherit; font-size:12px; cursor:pointer; }
-.relation-list button { display:flex; justify-content:space-between; gap:10px; padding:6px; border:0; border-radius:5px; background:transparent; color:var(--app-ink-soft); font:inherit; font-size:11.5px; text-align:left; cursor:pointer; }
-.relation-list button:hover { background:var(--app-bg-soft); color:var(--app-ink); }
-.inspector-primary,.source-list button { min-height:32px; margin-top:14px; padding:0 10px; border:1px solid var(--app-border); border-radius:7px; background:var(--app-bg-elevated); color:var(--app-accent); font:inherit; font-size:12px; cursor:pointer; }
-.source-list article { display:grid; gap:5px; padding:10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); font-size:11.5px; }
-.source-list article strong { color:var(--app-ink); }
-.source-list code { max-height:64px; overflow:auto; color:var(--app-ink-muted); font-size:10px; white-space:pre-wrap; word-break:break-all; }
-.source-list button { justify-self:start; margin-top:3px; }
-.overview-state { min-height:0; flex:1; display:grid; place-content:center; justify-items:center; gap:10px; padding:28px; color:var(--app-ink-soft); text-align:center; }
-.overview-state strong { color:var(--app-ink); font-size:17px; }
-.overview-state a,.overview-state button { min-height:34px; display:inline-flex; align-items:center; padding:0 13px; border:0; border-radius:8px; background:var(--app-accent); color:var(--app-accent-ink); font:inherit; text-decoration:none; cursor:pointer; }
-.overview-state.error span { max-width:620px; color:var(--app-danger); }
-.layout-error { position:absolute; left:12px; bottom:12px; display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid var(--app-danger); border-radius:8px; background:var(--app-bg); color:var(--app-danger); font-size:12px; box-shadow:var(--app-shadow-2); }
-.layout-error button { border:0; background:transparent; color:var(--app-accent); cursor:pointer; }
-.overview-context-menu { position:fixed; z-index:40; min-width:160px; padding:4px; border:1px solid var(--app-border); border-radius:7px; background:var(--app-bg-elevated); box-shadow:var(--app-shadow-2); }
-.overview-context-menu button { width:100%; min-height:32px; padding:0 9px; border:0; border-radius:4px; background:transparent; color:var(--app-ink); text-align:left; cursor:pointer; }
-.overview-context-menu button:hover { background:var(--app-bg-soft); }
-@media (max-width:900px) { .overview-summary{display:none}.overview-inspector{width:260px;min-width:260px}.toolbar-action span,.quality-control>span{display:none}.overview-search{width:min(320px,55vw)} }
-@media (prefers-reduced-motion:reduce) { .toolbar-action,.search-results button{transition:none} }
+.issue-list p,.source-list span,.source-list code { margin:0; color:var(--app-ink-muted); font-size:12px; word-break:break-word; }
+.relation-list button,.source-list button,.inspector-primary,.overview-state button,.layout-error button,.overview-refresh-state button { min-height:32px; padding:0 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink); font:inherit; font-size:12px; text-align:left; cursor:pointer; }
+.relation-list button { display:flex; justify-content:space-between; gap:8px; }
+.inspector-primary { margin-top:16px; width:100%; text-align:center; background:var(--app-accent-soft); border-color:transparent; color:var(--app-accent-ink, var(--app-ink)); }
+.source-list article { display:grid; gap:5px; padding:10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); }
+.overview-state { min-height:0; flex:1; display:grid; place-content:center; gap:8px; padding:24px; text-align:center; color:var(--app-ink-muted); }
+.overview-state.error,.layout-error { color:var(--app-danger); }
+.layout-error { position:absolute; left:14px; top:14px; z-index:4; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg); }
+.overview-context-menu { position:fixed; z-index:20; min-width:160px; padding:4px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); box-shadow:var(--app-shadow-2); }
+.overview-context-menu button { width:100%; min-height:34px; border:0; border-radius:6px; background:transparent; color:var(--app-ink); font:inherit; text-align:left; padding:0 10px; cursor:pointer; }
+.overview-context-menu button:hover { background:var(--app-accent-soft); }
 </style>

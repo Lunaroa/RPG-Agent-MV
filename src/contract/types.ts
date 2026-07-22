@@ -66,12 +66,29 @@ export interface WorkspaceSurfaceVersionResult {
 
 export type MapOverviewReadState = 'ready' | 'missing' | 'invalid';
 
+export type MapOverviewIssueCode =
+  | 'map-missing'
+  | 'map-invalid'
+  | 'invalid-target'
+  | 'invalid-coordinate'
+  | 'resource-missing'
+  | 'chunk-failed'
+  | 'thumbnail-failed';
+
 export interface MapOverviewIssue {
-  code: 'map-missing' | 'map-invalid' | 'invalid-target' | 'resource-missing' | 'thumbnail-failed';
+  code: MapOverviewIssueCode;
   message: string;
   mapId: number;
   targetMapId?: number;
   relativePath?: string;
+  eventId?: number;
+  eventName?: string;
+  pageIndex?: number;
+  commandIndex?: number;
+  sourceX?: number;
+  sourceY?: number;
+  targetX?: number;
+  targetY?: number;
 }
 
 export interface MapOverviewNode {
@@ -82,6 +99,7 @@ export interface MapOverviewNode {
   readState: MapOverviewReadState;
   width: number | null;
   height: number | null;
+  /** Content version for chunk cache invalidation (map JSON + tilesets + used tileset images). */
   thumbnailVersion: string | null;
   incomingCount: number;
   outgoingCount: number;
@@ -97,6 +115,9 @@ export interface MapOverviewTransferSource {
   pageIndex: number;
   pageConditions: Record<string, unknown>;
   commandIndex: number;
+  /** Static initial event object coordinates (not runtime movement). */
+  sourceX: number;
+  sourceY: number;
   targetMapId: number;
   targetX: number;
   targetY: number;
@@ -107,7 +128,11 @@ export interface MapOverviewTransferSource {
 export interface MapOverviewEdge {
   id: string;
   sourceMapId: number;
+  sourceX: number;
+  sourceY: number;
   targetMapId: number;
+  targetX: number;
+  targetY: number;
   count: number;
   sources: MapOverviewTransferSource[];
 }
@@ -123,8 +148,31 @@ export interface MapOverviewSnapshot {
   issues: MapOverviewIssue[];
 }
 
+/** Legacy thumbnail quality; read-tolerated in workspace state but no longer written. */
 export type MapOverviewThumbnailQuality = 'standard' | 'high' | 'ultra';
 
+export type MapOverviewChunkLevel = 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128;
+
+export interface MapOverviewChunk {
+  project: string;
+  mapId: number;
+  version: string;
+  chunkX: number;
+  chunkY: number;
+  level: MapOverviewChunkLevel;
+  logicalX: number;
+  logicalY: number;
+  logicalWidth: number;
+  logicalHeight: number;
+  outputWidth: number;
+  outputHeight: number;
+  mime: 'image/png';
+  resourceUrl: string;
+  cacheHit: boolean;
+  warnings: string[];
+}
+
+/** @deprecated Prefer MapOverviewChunk; retained for transitional references. */
 export interface MapOverviewThumbnail {
   project: string;
   mapId: number;
@@ -137,6 +185,13 @@ export interface MapOverviewThumbnail {
   cacheHit: boolean;
   warnings: string[];
 }
+
+export type MapOverviewLayoutId =
+  | 'force-atlas2'
+  | 'd3-force'
+  | 'antv-dagre'
+  | 'grid'
+  | 'circular';
 
 export type MapMovePosition = 'before' | 'after' | 'inside';
 
@@ -1387,9 +1442,15 @@ export interface WorkspaceEditorProjectState {
 
 export interface WorkspaceMapOverviewProjectState {
   positions: Record<string, { x: number; y: number }>;
-  thumbnailQuality: MapOverviewThumbnailQuality;
+  /** Legacy; tolerated on read, omitted after normalize/write. */
+  thumbnailQuality?: MapOverviewThumbnailQuality;
   zoom?: number;
+  /** Canvas pan as G6 translateTo position `[x, y]`. */
+  pan?: [number, number];
+  selectedNodeId?: number;
+  selectedEdgeId?: string;
   layoutVersion?: number;
+  layout?: MapOverviewLayoutId;
 }
 
 export interface WorkspaceSettings {

@@ -223,8 +223,8 @@ function nodeSvg(node: MapOverviewSvgNodeGeometry, image?: string): string {
     `<rect x="${left}" y="${top}" width="${node.width}" height="${node.imageHeight}" rx="2" fill="#f7f7f4"/>`,
     image ? `<image x="${left}" y="${top}" width="${node.width}" height="${node.imageHeight}" preserveAspectRatio="none" href="${image}"/>` : '',
     invalidStyle ? `<rect x="${left}" y="${top}" width="${node.width}" height="${node.imageHeight}" rx="2" fill="none"${invalidStyle}/>` : '',
-    `<rect x="${node.position.x - labelWidth / 2}" y="${node.position.y + node.imageHeight / 2 + 8}" width="${labelWidth}" height="24" rx="4" fill="#f7f7f4" fill-opacity=".9"/>`,
-    `<text x="${node.position.x}" y="${node.position.y + node.imageHeight / 2 + 24}" text-anchor="middle" fill="#282923" font-family="sans-serif" font-size="13" font-weight="600" textLength="${Math.max(1, labelWidth - 12)}" lengthAdjust="spacingAndGlyphs">${escapeXml(label)}</text>`,
+    `<rect x="${node.position.x - labelWidth / 2}" y="${node.position.y + node.imageHeight / 2 + 6}" width="${labelWidth}" height="20" rx="3" fill="#f7f7f4" fill-opacity=".78"/>`,
+    `<text x="${node.position.x}" y="${node.position.y + node.imageHeight / 2 + 20}" text-anchor="middle" fill="#282923" font-family="sans-serif" font-size="12" font-weight="600" textLength="${Math.max(1, labelWidth - 10)}" lengthAdjust="spacingAndGlyphs">${escapeXml(label)}</text>`,
     '</g>',
   ].join('');
 }

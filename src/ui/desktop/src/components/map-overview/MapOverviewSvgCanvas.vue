@@ -27,8 +27,6 @@ import {
 } from '../../utils/mapOverviewSvgInteraction'
 import type { MapOverviewSvgCanvasApi } from './mapOverviewSvgCanvasApi'
 
-const TRANSPARENT_IMAGE_DATA_URL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='
-
 const emit = defineEmits<{
   nodeClick: [mapId: number]
   nodeDblclick: [mapId: number]
@@ -45,6 +43,7 @@ const svg = ref<SVGSVGElement | null>(null)
 const world = ref<SVGGElement | null>(null)
 const snapshot = shallowRef<MapOverviewSnapshot | null>(null)
 const images = new Map<number, string>()
+const thumbnailErrors = new Map<number, string>()
 const positions = new Map<number, MapOverviewSvgPosition>()
 const renderVersion = ref(0)
 const selectedNodeId = ref<number | null>(null)
@@ -229,12 +228,15 @@ async function setScene(
   next: MapOverviewSnapshot,
   imageUrls: ReadonlyMap<number, string>,
   initialPositions: Record<string, MapOverviewSvgPosition> = {},
+  nextThumbnailErrors: ReadonlyMap<number, string> = new Map(),
 ): Promise<void> {
   snapshot.value = next
   nodesById = new Map(next.nodes.map(node => [node.id, node]))
   incidentEdgesByMap = buildMapOverviewIncidentEdgeIndex(next.edges)
   images.clear()
   for (const [mapId, imageUrl] of imageUrls) images.set(mapId, imageUrl)
+  thumbnailErrors.clear()
+  for (const [mapId, error] of nextThumbnailErrors) thumbnailErrors.set(mapId, error)
   const validIds = new Set(next.nodes.map(node => node.id))
   for (const id of [...positions.keys()]) if (!validIds.has(id)) positions.delete(id)
   for (const node of next.nodes) {
@@ -246,8 +248,23 @@ async function setScene(
   bindNodeDrag()
 }
 
-function imageUrl(mapId: number): string {
-  return images.get(mapId) || TRANSPARENT_IMAGE_DATA_URL
+function imageUrl(mapId: number): string | undefined {
+  return images.get(mapId)
+}
+
+function thumbnailError(mapId: number): string | undefined {
+  return thumbnailErrors.get(mapId)
+}
+
+async function setThumbnailState(mapId: number, imageUrl: string | null, error: string | null): Promise<void> {
+  if (!nodesById.has(mapId)) return
+  if (imageUrl) images.set(mapId, imageUrl)
+  else images.delete(mapId)
+  if (error) thumbnailErrors.set(mapId, error)
+  else thumbnailErrors.delete(mapId)
+  renderVersion.value += 1
+  await nextTick()
+  bindNodeDrag()
 }
 
 function setSelection(nodeId: number | null, edgeId: string | null): void {
@@ -612,6 +629,7 @@ onBeforeUnmount(destroy)
 defineExpose<MapOverviewSvgCanvasApi>({
   get destroyed() { return destroyed },
   setScene,
+  setThumbnailState,
   setSize,
   setSelection,
   getZoom: () => currentTransform.value.k,
@@ -689,7 +707,11 @@ defineExpose<MapOverviewSvgCanvasApi>({
             v-for="node in geometryNodes"
             :key="node.id"
             class="map-overview-svg-node"
-            :class="{ selected: selectedNodeId === node.id, invalid: node.readState !== 'ready' }"
+            :class="{
+              selected: selectedNodeId === node.id,
+              invalid: node.readState !== 'ready',
+              'thumbnail-failed': Boolean(thumbnailError(node.id)),
+            }"
             :transform="nodeTransform(node)"
             :style="{ opacity: nodeOpacity(node.id) }"
             :data-map-id="node.id"
@@ -699,7 +721,17 @@ defineExpose<MapOverviewSvgCanvasApi>({
             @pointerenter="onNodePointerEnter(node.id)"
             @pointerleave="onNodePointerLeave"
           >
+            <title v-if="thumbnailError(node.id)">{{ thumbnailError(node.id) }}</title>
+            <rect
+              class="map-overview-svg-node-placeholder"
+              :x="-node.width / 2"
+              :y="-node.imageHeight / 2"
+              :width="node.width"
+              :height="node.imageHeight"
+              rx="2"
+            />
             <image
+              v-if="imageUrl(node.id)"
               :href="imageUrl(node.id)"
               :x="-node.width / 2"
               :y="-node.imageHeight / 2"
@@ -708,6 +740,10 @@ defineExpose<MapOverviewSvgCanvasApi>({
               preserveAspectRatio="none"
               draggable="false"
             />
+            <g v-if="thumbnailError(node.id)" class="map-overview-svg-node-error-mark" aria-hidden="true">
+              <circle cx="0" cy="0" r="14" />
+              <text x="0" y="5">!</text>
+            </g>
             <rect
               class="map-overview-svg-node-frame"
               :x="-node.width / 2"
@@ -719,16 +755,16 @@ defineExpose<MapOverviewSvgCanvasApi>({
             <rect
               class="map-overview-svg-node-label-bg"
               :x="-labelWidth(node) / 2"
-              :y="node.imageHeight / 2 + 8"
+              :y="node.imageHeight / 2 + 6"
               :width="labelWidth(node)"
-              height="24"
-              rx="4"
+              height="20"
+              rx="3"
             />
             <text
               class="map-overview-svg-node-label"
               x="0"
-              :y="node.imageHeight / 2 + 24"
-              :textLength="labelWidth(node) - 12"
+              :y="node.imageHeight / 2 + 20"
+              :textLength="labelWidth(node) - 10"
               lengthAdjust="spacingAndGlyphs"
             >{{ nodeLabel(node) }}</text>
           </g>
@@ -804,11 +840,15 @@ defineExpose<MapOverviewSvgCanvasApi>({
 .map-overview-svg-low-detail .map-overview-svg-edge-label { display:none; }
 .map-overview-svg-node { cursor:move; transition:opacity 120ms ease; }
 .map-overview-svg-root.gesture-node-drag .map-overview-svg-node { transition:none; }
+.map-overview-svg-node-placeholder { fill:#e9e8e3; pointer-events:none; }
 .map-overview-svg-node-frame { fill:transparent; stroke:transparent; stroke-width:0; vector-effect:non-scaling-stroke; pointer-events:none; }
 .map-overview-svg-node.invalid .map-overview-svg-node-frame { stroke:#c2412d; stroke-width:2; stroke-dasharray:6 4; }
+.map-overview-svg-node.thumbnail-failed .map-overview-svg-node-frame { stroke:#c2412d; stroke-width:2; stroke-dasharray:6 4; }
 .map-overview-svg-node.selected .map-overview-svg-node-frame { stroke:#c65f3d; stroke-width:3; stroke-dasharray:none; }
-.map-overview-svg-node-label-bg { fill:#f7f7f4; fill-opacity:.9; }
-.map-overview-svg-node-label { fill:#282923; text-anchor:middle; font:600 13px var(--app-font-sans); }
+.map-overview-svg-node-error-mark circle { fill:#f7f7f4; fill-opacity:.92; stroke:#c2412d; stroke-width:2; vector-effect:non-scaling-stroke; }
+.map-overview-svg-node-error-mark text { fill:#c2412d; text-anchor:middle; font:700 16px var(--app-font-sans); }
+.map-overview-svg-node-label-bg { fill:#f7f7f4; fill-opacity:.78; }
+.map-overview-svg-node-label { fill:#282923; text-anchor:middle; font:600 12px var(--app-font-sans); }
 .map-overview-svg-port { stroke:#c65f3d; stroke-width:2; vector-effect:non-scaling-stroke; }
 .map-overview-svg-port.source { fill:transparent; }
 .map-overview-svg-port.target,.map-overview-svg-port.both { fill:#c65f3d; }

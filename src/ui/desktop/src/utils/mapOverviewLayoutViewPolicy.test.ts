@@ -63,6 +63,26 @@ describe('Map Overview layout view policy', () => {
     expect(svgSource).toMatch(/@auxclick\.prevent/)
   })
 
+  it('keeps the graph usable when individual thumbnails fail and supports an in-place retry', () => {
+    expect(source).toMatch(/failures\.set\(node\.id, formatThumbnailFailure\(error\)\)/)
+    expect(source).toMatch(/thumbnailProgressCompleted\.value \+= 1/)
+    expect(source).not.toMatch(/if \(failures\.length\)[\s\S]{0,240}throw new Error/)
+    expect(source).toMatch(/await graph\?\.setThumbnailState\(mapId, image\.src, null\)/)
+    expect(source).toMatch(/data-ui-id="map-overview-thumbnail-retry"/)
+    expect(source).toMatch(/thumbnailFailures\.value\.size[\s\S]{0,160}mapOverview\.export\.thumbnailFailures/)
+    expect(svgSource).toMatch(/class="map-overview-svg-node-placeholder"/)
+    expect(svgSource).toMatch(/'thumbnail-failed': Boolean\(thumbnailError\(node\.id\)\)/)
+  })
+
+  it('uses compact labels and exposes transfer coordinates in the inspector', () => {
+    expect(svgSource).toMatch(/node\.imageHeight \/ 2 \+ 6/)
+    expect(svgSource).toMatch(/height="20"/)
+    expect(svgSource).toMatch(/font:600 12px/)
+    expect(source).toMatch(/edge\.sourceX/)
+    expect(source).toMatch(/edge\.targetX/)
+    expect(source).toMatch(/:disabled="!canOpenMap\(selectedNode\.id\)"/)
+  })
+
   it('keeps thin visual edges, wide transparent hit targets, and graded interaction emphasis', () => {
     expect(svgSource).toMatch(/map-overview-svg-edge \{[^}]*stroke-width:1;/)
     expect(svgSource).toMatch(/map-overview-svg-edge-hit \{[^}]*stroke-width:13;/)

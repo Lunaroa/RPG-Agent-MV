@@ -8,7 +8,7 @@ import {
 } from './mapOverviewPreparation'
 
 describe('map overview preparation gate', () => {
-  it('reports progress only from successfully decoded images', () => {
+  it('reports progress from completed thumbnail attempts', () => {
     expect(mapOverviewPreparationPercent(0, 4)).toBe(0)
     expect(mapOverviewPreparationPercent(1, 4)).toBe(25)
     expect(mapOverviewPreparationPercent(4, 4)).toBe(100)

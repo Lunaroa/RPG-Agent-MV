@@ -13,9 +13,12 @@ import {
   createDefaultPluginParameterValue,
   createPluginParameterForm,
   isPluginParameterSchemaFieldEditable,
+  isSpecialPluginParameterType,
+  normalizePluginParameterValue,
   pluginParameterPayloadsEqual,
   removePluginParameterArrayItem,
   replacePluginParameterChildValue,
+  serializePluginParameterValue,
   validatePluginParameterValue,
 } from './plugin-parameter-model';
 
@@ -309,6 +312,35 @@ describe('plugin parameter model', () => {
       { first: '1', nested: { second: 2, third: 3 } },
       { nested: { third: 3, second: 2 }, first: '1' },
     )).toBe(true);
+  });
+
+  test('strips and restores the MV note outer quote wrapper', () => {
+    const note = field('memo', 'multiline', { rawType: 'note' });
+    const plugin = pluginFixture();
+    // After plugins.js JSON.parse, note values look like "content" with outer quotes.
+    plugin.parameters.memo = '"line one\nline two"';
+    plugin.parameterSchema.fields = [
+      ...plugin.parameterSchema.fields,
+      note,
+    ];
+    plugin.parameterCount = plugin.parameterSchema.fields.length;
+
+    const form = createPluginParameterForm(plugin);
+    expect(form.memo).toBe('line one\nline two');
+
+    form.memo = 'edited note';
+    expect(buildPluginParameterPayload(plugin, form).memo).toBe('"edited note"');
+
+    const untouched = createPluginParameterForm(plugin);
+    expect(buildPluginParameterPayload(plugin, untouched).memo).toBe(
+      plugin.parameters.memo,
+    );
+    expect(isSpecialPluginParameterType(note)).toBe(true);
+    expect(isSpecialPluginParameterType(field('title', 'text'))).toBe(false);
+
+    const simple = field('title', 'multiline', { rawType: 'note' });
+    expect(normalizePluginParameterValue(simple, '"plain"')).toBe('plain');
+    expect(serializePluginParameterValue(simple, 'plain')).toBe('"plain"');
   });
 
   test('validates number bounds and decimals without rejecting an existing empty value', () => {

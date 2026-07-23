@@ -48,22 +48,16 @@ export function parsePluginParameterRawStrict(
   field: PluginParameterSchemaField,
   raw: string,
 ): PluginParameterRawParseResult {
-  if (field.kind !== 'struct' && field.kind !== 'array') {
-    return {
-      ok: false,
-      error: {
-        message: 'Only structured parameters have an RPG Maker JSON representation.',
-        path: field.key,
-        line: 1,
-        column: 1,
-        reason: 'root-type',
-      },
-    };
+  if (field.kind === 'struct' || field.kind === 'array' || field.kind === 'location') {
+    const root = parseJson(raw, field.key);
+    if (!root.ok) return root;
+    return decodeStoredValue(field, root.value, field.key, true);
   }
 
-  const root = parseJson(raw, field.key);
-  if (!root.ok) return root;
-  return decodeStoredValue(field, root.value, field.key, true);
+  return {
+    ok: true,
+    value: normalizePluginParameterValue(field, raw),
+  };
 }
 
 export function buildPluginParameterCollectionColumns(

@@ -182,6 +182,9 @@ export function createDefaultPluginParameterValue(
   if (field.kind === 'array') return [];
   if (field.kind === 'location') return { mapId: '0', x: '0', y: '0' };
   if (field.kind === 'boolean') return field.defaultValue ?? 'false';
+  if (isNotePluginParameterField(field)) {
+    return unwrapNotePluginParameterValue(field.defaultValue ?? '');
+  }
   return field.defaultValue ?? '';
 }
 
@@ -219,7 +222,13 @@ export function normalizePluginParameterValue(
   }
   if (value === undefined || value === null) {
     if (field.kind === 'boolean') return field.defaultValue ?? 'false';
+    if (isNotePluginParameterField(field)) {
+      return unwrapNotePluginParameterValue(field.defaultValue ?? '');
+    }
     return field.defaultValue ?? '';
+  }
+  if (isNotePluginParameterField(field)) {
+    return unwrapNotePluginParameterValue(value);
   }
   return value;
 }
@@ -439,15 +448,14 @@ function summarizeDatabaseReference(
 
 function summarizeMultiline(value: unknown, labels: PluginParameterSummaryLabels): string {
   const text = displayPluginParameterValue(value).trim();
-  if (!text) return labels.empty;
+  if (!text) return '';
   const lines = text.split(/\r?\n/);
   const first = lines.find((line) => line.trim())?.trim() || '';
   return lines.length > 1 ? `${first}…` : first;
 }
 
-function summarizeScalar(value: unknown, labels: PluginParameterSummaryLabels): string {
-  const text = displayPluginParameterValue(value).trim();
-  return text || labels.empty;
+function summarizeScalar(value: unknown, _labels: PluginParameterSummaryLabels): string {
+  return displayPluginParameterValue(value).trim();
 }
 
 function serializeScalarPluginParameterValue(
@@ -455,12 +463,46 @@ function serializeScalarPluginParameterValue(
   value: unknown,
 ): unknown {
   if (field.kind === 'boolean') return isBooleanParameterEnabled(value) ? 'true' : 'false';
+  if (isNotePluginParameterField(field)) {
+    return wrapNotePluginParameterValue(value);
+  }
   if (value === undefined || value === null) return '';
   return String(value);
 }
 
-function isBooleanParameterEnabled(value: unknown): boolean {
+export function isBooleanParameterEnabled(value: unknown): boolean {
   return value === true || ['true', 'on', '1'].includes(String(value).toLowerCase());
+}
+
+/** Plain string/text stays as text; all other schema kinds render as type tags. */
+export function isSpecialPluginParameterType(
+  field: Pick<PluginParameterSchemaField, 'kind'> | null | undefined,
+): boolean {
+  return Boolean(field && field.kind !== 'text');
+}
+
+export function isNotePluginParameterField(
+  field: Pick<PluginParameterSchemaField, 'rawType'> | null | undefined,
+): boolean {
+  return String(field?.rawType || '').trim().toLowerCase() === 'note';
+}
+
+/** MV note params store an extra JSON-string wrapper; strip it for editing. */
+export function unwrapNotePluginParameterValue(value: unknown): string {
+  const text = value == null ? '' : String(value);
+  if (text.length < 2 || !text.startsWith('"') || !text.endsWith('"')) return text;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (typeof parsed === 'string') return parsed;
+  } catch {
+    // MV may keep a literal outer quote pair around text that includes raw newlines.
+  }
+  return text.slice(1, -1);
+}
+
+/** Restore the MV note wrapper when writing back to plugins.js. */
+export function wrapNotePluginParameterValue(value: unknown): string {
+  return JSON.stringify(value == null ? '' : String(value));
 }
 
 function parseStructuredValue(value: unknown): unknown {

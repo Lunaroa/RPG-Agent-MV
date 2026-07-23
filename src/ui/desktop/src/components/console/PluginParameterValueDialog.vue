@@ -49,7 +49,7 @@ interface ChildEditorState {
 const { t } = useI18n();
 const editorBody = ref<HTMLElement | null>(null);
 const draft = ref<unknown>('');
-const activeTab = ref<'structure' | 'text'>('structure');
+const activeTab = ref<'editor' | 'text'>('editor');
 const rawText = ref('');
 const rawError = ref('');
 const collectionVersion = ref(0);
@@ -71,18 +71,30 @@ const isComplex = computed(() =>
 const dialogTitle = computed(() =>
   props.title || t('plugins.editParameterTitle', { name: props.field?.label || '' }),
 );
+const editorTabLabel = computed(() => {
+  const kind = props.field?.kind;
+  if (kind === 'struct' || kind === 'array') return t('plugins.parameterStructureTab');
+  if (kind === 'number') return t('plugins.parameterEditorTabNumber');
+  if (kind === 'boolean') return t('plugins.parameterEditorTabBoolean');
+  if (kind === 'database' || kind === 'map' || kind === 'select' || kind === 'combo') {
+    return t('plugins.parameterEditorTabSelect');
+  }
+  if (kind === 'location') return t('plugins.parameterEditorTabLocation');
+  if (kind === 'file') return t('plugins.parameterEditorTabFile');
+  return t('plugins.parameterEditorTab');
+});
 const baselineRaw = computed(() =>
-  props.field && isCompound.value
+  props.field
     ? serializePluginParameterRaw(props.field, props.value)
     : stableValue(props.value),
 );
 const currentRaw = computed(() =>
-  props.field && isCompound.value
+  props.field
     ? serializePluginParameterRaw(props.field, draft.value)
     : stableValue(draft.value),
 );
 const changed = computed(() =>
-  activeTab.value === 'text' && isCompound.value
+  activeTab.value === 'text'
     ? rawText.value !== baselineRaw.value
     : currentRaw.value !== baselineRaw.value,
 );
@@ -105,8 +117,8 @@ watch(
   ([open]) => {
     if (open) {
       draft.value = clonePluginParameterValue(props.value);
-      activeTab.value = 'structure';
-      rawText.value = props.field && isCompound.value
+      activeTab.value = 'editor';
+      rawText.value = props.field
         ? serializePluginParameterRaw(props.field, draft.value)
         : '';
       rawError.value = '';
@@ -121,7 +133,7 @@ watch(
 
 function commit(): void {
   if (!props.field) return;
-  if (activeTab.value === 'text' && isCompound.value && !applyRawText()) return;
+  if (activeTab.value === 'text' && !applyRawText()) return;
   if (validationIssue.value) return;
   if (
     !props.allowUnchangedCommit
@@ -133,13 +145,13 @@ function commit(): void {
 }
 
 function handleTabChange(name: string | number): void {
-  if (!props.field || !isCompound.value) return;
+  if (!props.field) return;
   if (name === 'text') {
     rawText.value = serializePluginParameterRaw(props.field, draft.value);
     rawError.value = '';
     return;
   }
-  if (name === 'structure' && !applyRawText()) {
+  if (name === 'editor' && !applyRawText()) {
     void nextTick(() => {
       activeTab.value = 'text';
       focusRawText();
@@ -149,7 +161,7 @@ function handleTabChange(name: string | number): void {
 
 function applyRawText(): boolean {
   const field = props.field;
-  if (!field || !isCompound.value) return true;
+  if (!field) return true;
   const parsed = parsePluginParameterRawStrict(field, rawText.value);
   if (!parsed.ok) {
     rawError.value = formatRawError(parsed.error);
@@ -293,7 +305,7 @@ function arrayValue(value: unknown): unknown[] {
       ? 'min(1040px, calc(100vw - 48px))'
       : isComplex
         ? 'min(720px, calc(100vw - 48px))'
-        : 'min(520px, calc(100vw - 48px))'"
+        : 'min(560px, calc(100vw - 48px))'"
     top="7vh"
     append-to-body
     destroy-on-close
@@ -307,26 +319,29 @@ function arrayValue(value: unknown): unknown[] {
       class="parameter-value-editor"
       :class="{ complex: isComplex }"
     >
-      <PluginParameterInput
-        v-if="!isCompound"
-        :field="field"
-        :model-value="draft"
-        :catalog="catalog"
-        @update:model-value="draft = $event"
-      />
+      <dl class="parameter-meta" aria-label="parameter identity">
+        <div>
+          <dt>{{ t('plugins.parameterMetaName') }}</dt>
+          <dd>{{ field.key }}</dd>
+        </div>
+        <div>
+          <dt>{{ t('plugins.parameterMetaText') }}</dt>
+          <dd>{{ field.label || field.key }}</dd>
+        </div>
+      </dl>
 
       <el-tabs
-        v-else
         v-model="activeTab"
         class="parameter-mode-tabs"
         type="card"
         @tab-change="handleTabChange"
       >
         <el-tab-pane
-          :label="t('plugins.parameterStructureTab')"
-          name="structure"
+          :label="editorTabLabel"
+          name="editor"
         >
           <PluginParameterCollectionEditor
+            v-if="isCompound"
             :key="collectionVersion"
             :field="field"
             :model-value="draft"
@@ -334,6 +349,13 @@ function arrayValue(value: unknown): unknown[] {
             @update:model-value="updateDraft"
             @edit="openChildEditor"
             @add="addArrayItem"
+          />
+          <PluginParameterInput
+            v-else
+            :field="field"
+            :model-value="draft"
+            :catalog="catalog"
+            @update:model-value="draft = $event"
           />
         </el-tab-pane>
         <el-tab-pane
@@ -347,7 +369,7 @@ function arrayValue(value: unknown): unknown[] {
               type="textarea"
               resize="none"
               spellcheck="false"
-              :autosize="{ minRows: 14, maxRows: 24 }"
+              :autosize="{ minRows: isCompound || isComplex ? 14 : 6, maxRows: 24 }"
               :aria-label="t('plugins.parameterRawTextLabel')"
               @input="rawError = ''"
             />
@@ -412,6 +434,37 @@ function arrayValue(value: unknown): unknown[] {
 .parameter-value-editor.complex {
   min-height: 180px;
 }
+.parameter-meta {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--console-border, #e4dcce);
+  border-radius: 8px;
+  background: var(--console-paper-soft, #faf5ec);
+}
+.parameter-meta > div {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+.parameter-meta dt {
+  margin: 0;
+  color: var(--console-text-muted, #756b5e);
+  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
+  font-size: 11px;
+  font-weight: 650;
+}
+.parameter-meta dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--console-text, #211d17);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .parameter-mode-tabs {
   min-height: 0;
 }
@@ -423,7 +476,7 @@ function arrayValue(value: unknown): unknown[] {
   gap: 8px;
 }
 .parameter-raw-input :deep(textarea) {
-  min-height: 320px !important;
+  min-height: 160px !important;
   padding: 12px;
   background: color-mix(in srgb, var(--console-paper-soft, #faf5ec) 82%, white);
   color: var(--console-text, #312d28);
@@ -431,6 +484,9 @@ function arrayValue(value: unknown): unknown[] {
   font-size: 13px;
   line-height: 1.6;
   tab-size: 2;
+}
+.parameter-value-editor.complex .parameter-raw-input :deep(textarea) {
+  min-height: 320px !important;
 }
 .raw-help,
 .raw-error {
@@ -445,29 +501,27 @@ function arrayValue(value: unknown): unknown[] {
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--el-color-danger) 38%, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--el-color-danger) 9%, transparent);
-  color: var(--el-color-danger-dark-2);
+  background: color-mix(in srgb, var(--el-color-danger) 8%, transparent);
+  color: var(--el-color-danger);
+}
+.parameter-description,
+.parameter-validation-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .parameter-description {
-  min-height: 36px;
-  margin: 0;
-  padding: 10px;
-  border: 1px solid var(--console-border, #e4dcce);
+  padding: 8px 10px;
   border-radius: 8px;
   background: var(--console-paper-soft, #faf5ec);
-  color: var(--console-text-muted, #756b5e);
-  font-size: 12px;
-  line-height: 1.55;
+  color: var(--console-text-soft, #5a5247);
   white-space: pre-wrap;
 }
 .parameter-validation-error {
-  margin: 0;
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--el-color-danger) 38%, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--el-color-danger) 9%, transparent);
-  color: var(--el-color-danger-dark-2);
-  font-size: 12px;
-  line-height: 1.5;
+  background: color-mix(in srgb, var(--el-color-danger) 8%, transparent);
+  color: var(--el-color-danger);
 }
 </style>

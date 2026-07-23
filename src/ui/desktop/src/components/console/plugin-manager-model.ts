@@ -105,14 +105,14 @@ export function resolvePluginReference(
   return file ? { kind: 'file', relativePath: file.relativePath } : null;
 }
 
-export function movePluginName(
-  names: string[],
-  pluginName: string,
+export function movePluginIndex(
+  indexes: number[],
+  pluginIndex: number,
   requestedIndex: number,
-): string[] {
-  const from = names.indexOf(pluginName);
-  if (from < 0 || requestedIndex < 0 || requestedIndex > names.length) return names;
-  const next = [...names];
+): number[] {
+  const from = indexes.indexOf(pluginIndex);
+  if (from < 0 || requestedIndex < 0 || requestedIndex > indexes.length) return indexes;
+  const next = [...indexes];
   const [moved] = next.splice(from, 1);
   const insertion = Math.max(0, Math.min(
     next.length,

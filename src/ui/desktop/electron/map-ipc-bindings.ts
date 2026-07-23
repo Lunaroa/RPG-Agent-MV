@@ -447,8 +447,8 @@ export function registerMapIpcHandlers(
     desktop.pluginManagement.removePluginConfigurationEntry(workflowRoot, project(value), pluginName));
   handle('plugins:setEnabled', (_event, pluginName: string, enabled: boolean, value?: string) =>
     desktop.pluginManagement.setPluginEnabled(workflowRoot, project(value), pluginName, enabled));
-  handle('plugins:reorder', (_event, pluginNames: string[], value?: string) =>
-    desktop.pluginManagement.reorderPlugins(workflowRoot, project(value), pluginNames || []));
+  handle('plugins:reorder', (_event, pluginIndexes: number[], value?: string) =>
+    desktop.pluginManagement.reorderPlugins(workflowRoot, project(value), pluginIndexes || []));
   handle('plugins:updateParameters', (_event, pluginName: string, parameters: Record<string, unknown>, value?: string) =>
     desktop.pluginManagement.updatePluginParameters(workflowRoot, project(value), pluginName, parameters || {}));
   handle('plugins:installFile', (_event, sourceFile: string, options?: Record<string, unknown>, value?: string) =>

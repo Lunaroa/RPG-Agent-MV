@@ -33,7 +33,7 @@ import PluginParameterDialog from './PluginParameterDialog.vue';
 import {
   buildPluginManagerGroups,
   isPluginReorderLocked,
-  movePluginName,
+  movePluginIndex,
   pluginHelpLanguageKey,
   pluginSupportsEngine,
   resolvePluginReference,
@@ -64,7 +64,7 @@ const parameterDialogError = ref('');
 const deleteDialogOpen = ref(false);
 const deleteTargetName = ref('');
 const activeHelpTab = ref('');
-const draggedName = ref('');
+const draggedIndex = ref<number | null>(null);
 const dropIndex = ref<number | null>(null);
 const layoutElement = ref<HTMLElement | null>(null);
 const pluginRowElements = new Map<string, HTMLElement>();
@@ -536,11 +536,11 @@ async function deleteUnconfiguredFile(file: ManagedPluginFile): Promise<void> {
   }
 }
 
-async function reorderPluginNames(names: string[], messageName: string): Promise<void> {
+async function reorderPluginIndexes(indexes: number[], messageName: string): Promise<void> {
   if (!projectStore.currentProject || reorderLocked.value) return;
   await runAction(
     `reorder:${messageName}`,
-    () => pluginApi.reorder(names, projectStore.currentProject),
+    () => pluginApi.reorder(indexes, projectStore.currentProject),
     t('plugins.adjustedOrder', { name: messageName }),
   );
 }
@@ -550,14 +550,14 @@ function startDrag(event: DragEvent, plugin: ManagedPluginEntry): void {
     event.preventDefault();
     return;
   }
-  draggedName.value = plugin.name;
+  draggedIndex.value = plugin.index;
   dropIndex.value = plugin.index;
-  event.dataTransfer?.setData('text/plain', plugin.name);
+  event.dataTransfer?.setData('text/plain', String(plugin.index));
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
 }
 
 function dragOver(event: DragEvent, index: number): void {
-  if (!draggedName.value || reorderLocked.value) return;
+  if (draggedIndex.value === null || reorderLocked.value) return;
   event.preventDefault();
   const target = event.currentTarget as HTMLElement;
   const bounds = target.getBoundingClientRect();
@@ -566,33 +566,34 @@ function dragOver(event: DragEvent, index: number): void {
 
 async function finishDrop(event: DragEvent): Promise<void> {
   event.preventDefault();
-  const movedName = draggedName.value;
-  const from = plugins.value.findIndex((plugin) => plugin.name === movedName);
+  const movedIndex = draggedIndex.value;
+  const movedPlugin = plugins.value.find((plugin) => plugin.index === movedIndex);
+  const from = plugins.value.findIndex((plugin) => plugin.index === movedIndex);
   const insertion = dropIndex.value ?? from;
   clearDrag();
-  if (from < 0 || insertion < 0 || insertion > plugins.value.length) return;
-  const names = movePluginName(
-    plugins.value.map((plugin) => plugin.name),
-    movedName,
+  if (!movedPlugin || from < 0 || insertion < 0 || insertion > plugins.value.length) return;
+  const indexes = movePluginIndex(
+    plugins.value.map((plugin) => plugin.index),
+    movedIndex,
     insertion,
   );
-  if (names.every((name, index) => name === plugins.value[index]?.name)) return;
-  await reorderPluginNames(names, movedName);
+  if (indexes.every((pluginIndex, index) => pluginIndex === plugins.value[index]?.index)) return;
+  await reorderPluginIndexes(indexes, movedPlugin.name);
 }
 
 function clearDrag(): void {
-  draggedName.value = '';
+  draggedIndex.value = null;
   dropIndex.value = null;
 }
 
 async function keyboardMove(plugin: ManagedPluginEntry, delta: -1 | 1): Promise<void> {
   if (reorderLocked.value) return;
-  const names = plugins.value.map((entry) => entry.name);
-  const index = names.indexOf(plugin.name);
+  const indexes = plugins.value.map((entry) => entry.index);
+  const index = indexes.indexOf(plugin.index);
   const target = index + delta;
-  if (index < 0 || target < 0 || target >= names.length) return;
-  [names[index], names[target]] = [names[target], names[index]];
-  await reorderPluginNames(names, plugin.name);
+  if (index < 0 || target < 0 || target >= indexes.length) return;
+  [indexes[index], indexes[target]] = [indexes[target], indexes[index]];
+  await reorderPluginIndexes(indexes, plugin.name);
 }
 
 function pluginKeydown(event: KeyboardEvent, plugin: ManagedPluginEntry): void {

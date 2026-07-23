@@ -38,6 +38,8 @@ describe('plugin manager structure', () => {
     assert.match(paneSource, /@dblclick\.stop/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowUp'/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowDown'/);
+    assert.match(paneSource, /draggedIndex\.value = plugin\.index/);
+    assert.match(paneSource, /pluginApi\.reorder\(indexes,/);
     assert.match(paneSource, /<PluginParameterDialog/);
     assert.match(paneSource, /v-model="parameterDialogOpen"/);
     assert.match(paneSource, /parameterDialogPluginName\.value = plugin\.name/);

@@ -286,7 +286,7 @@ declare global {
         addConfiguration(pluginName: string, project?: string): Promise<unknown>;
         removeConfiguration(pluginName: string, project?: string): Promise<unknown>;
         setEnabled(pluginName: string, enabled: boolean, project?: string): Promise<unknown>;
-        reorder(pluginNames: string[], project?: string): Promise<unknown>;
+        reorder(pluginIndexes: number[], project?: string): Promise<unknown>;
         updateParameters(pluginName: string, parameters: Record<string, unknown>, project?: string): Promise<unknown>;
         installFile(sourceFile: string, options?: unknown, project?: string): Promise<unknown>;
         selectInstallFile(): Promise<string | null>;
@@ -1436,8 +1436,8 @@ export const plugins = {
   setEnabled(pluginName: string, enabled: boolean, project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.setEnabled(pluginName, enabled, project) as Promise<PluginConfigurationResult>;
   },
-  reorder(pluginNames: string[], project: string = DEFAULT_PROJECT) {
-    return desktopApi().plugins.reorder(toPlain(pluginNames), project) as Promise<PluginConfigurationResult>;
+  reorder(pluginIndexes: number[], project: string = DEFAULT_PROJECT) {
+    return desktopApi().plugins.reorder(toPlain(pluginIndexes), project) as Promise<PluginConfigurationResult>;
   },
   updateParameters(pluginName: string, parameters: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.updateParameters(pluginName, toPlain(parameters), project) as Promise<PluginConfigurationResult>;

@@ -52,7 +52,8 @@ test('shows authoritative loading stages, determinate progress, and elapsed time
   assert.match(previewSource, /role="progressbar"/);
   assert.match(previewSource, /:aria-valuenow="progressPercent"/);
   assert.match(previewSource, /mapPreviewProgressRatio\(props\.loadProgress\)/);
-  assert.match(previewSource, /editor\.preview\.progress\.copying/);
+  assert.match(previewSource, /progress\.stage === 'copying-project'[\s\S]{0,260}editor\.preview\.progress\.files/);
+  assert.doesNotMatch(previewSource, /formatMapPreviewBytes|editor\.preview\.progress\.copying/);
   assert.match(previewSource, /editor\.preview\.elapsed/);
   assert.match(editorSource, /:load-progress="previewSession\?\.loadProgress"/);
   assert.match(editorSource, /:started-at="previewSession\?\.startedAt"/);

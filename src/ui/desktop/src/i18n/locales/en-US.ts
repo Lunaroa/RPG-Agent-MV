@@ -870,7 +870,6 @@ const enUS = {
     'editor.preview.stage.ready': 'Preview ready',
     'editor.preview.progress.scanned': '{{completed}} files scanned',
     'editor.preview.progress.files': '{{completed}} / {{total}} files',
-    'editor.preview.progress.copying': '{{files}} · {{completedBytes}} / {{totalBytes}} · {{percent}}%',
     'editor.preview.progress.staged': '{{completed}} / {{total}} staged files applied',
     'editor.preview.progress.verified': '{{completed}} / {{total}} files verified',
     'editor.preview.elapsed': 'Elapsed {{time}}',

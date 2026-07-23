@@ -121,7 +121,6 @@ import type {
 import { useI18n } from '../../i18n';
 import type { MapPreviewDiagnostic } from '../../utils/mapPreviewDiagnostics';
 import {
-  formatMapPreviewBytes,
   formatMapPreviewElapsed,
   mapPreviewProgressRatio,
 } from '../../utils/mapPreviewProgress';
@@ -262,19 +261,10 @@ const progressDetail = computed(() => {
     return t('editor.preview.progress.scanned', { completed: formatCount(completed) });
   }
   if (progress.stage === 'copying-project' && progress.total !== undefined) {
-    const fileCount = t('editor.preview.progress.files', {
+    return t('editor.preview.progress.files', {
       completed: formatCount(completed),
       total: formatCount(total),
     });
-    if (progress.completedBytes !== undefined && progress.totalBytes !== undefined) {
-      return t('editor.preview.progress.copying', {
-        files: fileCount,
-        completedBytes: formatMapPreviewBytes(progress.completedBytes, language.value),
-        totalBytes: formatMapPreviewBytes(progress.totalBytes, language.value),
-        percent: progressPercent.value,
-      });
-    }
-    return fileCount;
   }
   if (progress.stage === 'applying-staged-changes' && progress.total !== undefined) {
     return t('editor.preview.progress.staged', {

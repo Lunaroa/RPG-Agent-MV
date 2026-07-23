@@ -11,19 +11,6 @@ export function mapPreviewProgressRatio(progress?: MapPreviewLoadProgress): numb
   return null;
 }
 
-export function formatMapPreviewBytes(value: number, locale: string): string {
-  const bytes = Math.max(0, Number.isFinite(value) ? value : 0);
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let amount = bytes;
-  let unit = 0;
-  while (amount >= 1024 && unit < units.length - 1) {
-    amount /= 1024;
-    unit += 1;
-  }
-  const maximumFractionDigits = unit === 0 || amount >= 100 ? 0 : amount >= 10 ? 1 : 2;
-  return `${new Intl.NumberFormat(locale, { maximumFractionDigits }).format(amount)} ${units[unit]}`;
-}
-
 export function formatMapPreviewElapsed(secondsInput: number): string {
   const seconds = Math.max(0, Math.floor(Number.isFinite(secondsInput) ? secondsInput : 0));
   const minutes = Math.floor(seconds / 60);

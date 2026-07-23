@@ -1288,6 +1288,24 @@ export interface PluginDependencyMetadata {
   }>;
 }
 
+export interface PluginHelpSection {
+  language: string;
+  content: string;
+}
+
+export interface PluginHeaderMetadata {
+  target: string[];
+  plugindesc: string;
+  help: string;
+  helpSections: PluginHelpSection[];
+  author: string;
+  url: string;
+  urlHref?: string;
+  base: string[];
+  orderAfter: string[];
+  displayPath: string;
+}
+
 export interface ManagedPluginEntry {
   index: number;
   name: string;
@@ -1303,6 +1321,7 @@ export interface ManagedPluginEntry {
   commandHints: PluginCommandHint[];
   targets: string[];
   dependencies?: PluginDependencyMetadata;
+  header: PluginHeaderMetadata;
 }
 
 export interface ManagedPluginFile {
@@ -1313,6 +1332,7 @@ export interface ManagedPluginFile {
   staged: boolean;
   deleted: boolean;
   size: number | null;
+  header: PluginHeaderMetadata;
 }
 
 export interface PluginValidationIssue {

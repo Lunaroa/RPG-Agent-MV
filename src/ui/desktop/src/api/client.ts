@@ -283,6 +283,8 @@ declare global {
         read(project?: string): Promise<unknown>;
         validate(project?: string): Promise<unknown>;
         writeConfiguration(entries: unknown[], project?: string): Promise<unknown>;
+        addConfiguration(pluginName: string, project?: string): Promise<unknown>;
+        removeConfiguration(pluginName: string, project?: string): Promise<unknown>;
         setEnabled(pluginName: string, enabled: boolean, project?: string): Promise<unknown>;
         reorder(pluginNames: string[], project?: string): Promise<unknown>;
         updateParameters(pluginName: string, parameters: Record<string, unknown>, project?: string): Promise<unknown>;
@@ -323,7 +325,7 @@ import type {
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
-  ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
+  ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult, PluginHeaderMetadata, PluginHelpSection,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
   InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewConsoleEntry, MapPreviewEventState, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSelfSwitchLetter, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewVariableValue, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot, WorkspaceSurfaceId, WorkspaceSurfaceVersionRequest, WorkspaceSurfaceVersionResult,
@@ -346,7 +348,7 @@ export type {
   StoryProjectGitInitializeResult, ProjectGitBaselineResult, ProjectVersionSaveOptions,
   RmmvAudioSettings, RmmvMapEncounter, RmmvMapProperties, RmmvSystemPosition, RmmvSystemPositionTarget,
   RmmvDatabaseEntrySchema, RmmvDatabaseFieldKind, RmmvDatabaseFieldSchema, RmmvDatabaseReferenceField,
-  ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult,
+  ManagedPluginEntry, ManagedPluginFile, PluginCommandArgument, PluginCommandHint, PluginConfigurationResult, PluginHeaderMetadata, PluginHelpSection,
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
   InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewConsoleEntry, MapPreviewEventState, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSelfSwitchLetter, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewVariableValue, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot, WorkspaceSurfaceId, WorkspaceSurfaceVersionRequest, WorkspaceSurfaceVersionResult,
@@ -1424,6 +1426,12 @@ export const plugins = {
   },
   writeConfiguration(entries: Array<Partial<ManagedPluginEntry>>, project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.writeConfiguration(toPlain(entries), project) as Promise<PluginConfigurationResult>;
+  },
+  addConfiguration(pluginName: string, project: string = DEFAULT_PROJECT) {
+    return desktopApi().plugins.addConfiguration(pluginName, project) as Promise<PluginConfigurationResult>;
+  },
+  removeConfiguration(pluginName: string, project: string = DEFAULT_PROJECT) {
+    return desktopApi().plugins.removeConfiguration(pluginName, project) as Promise<PluginConfigurationResult>;
   },
   setEnabled(pluginName: string, enabled: boolean, project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.setEnabled(pluginName, enabled, project) as Promise<PluginConfigurationResult>;

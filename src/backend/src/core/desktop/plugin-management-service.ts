@@ -24,6 +24,11 @@ import {
   type StagedProjectFileMutation,
   writeStagedProjectBuffer,
 } from './staging-service.ts';
+import {
+  extractDefaultPluginHeaderBlock,
+  extractDefaultPluginHeaderBody,
+  parseDefaultPluginHeaderMetadata,
+} from './plugin-header-metadata.ts';
 
 interface PluginConfigEntry {
   name: string;
@@ -70,9 +75,17 @@ export function setPluginEnabled(
   pluginName: string,
   enabled: boolean,
 ): PluginConfigurationResult {
-  return updatePluginEntry(workflowRoot, project, pluginName, (entry) => {
-    entry.status = Boolean(enabled);
-  });
+  const parsed = requireReadablePlugins(workflowRoot, project);
+  const name = normalizeConfiguredPluginName(pluginName);
+  const next = clonePluginConfigEntries(parsed.entries);
+  const entry = requireUniquePluginEntry(next, name);
+  if (enabled && !resolveExistingPluginFileRelativePath(workflowRoot, project, name)) {
+    throw new Error(`[PLUGIN_FILE_MISSING] ${name}`);
+  }
+  entry.status = Boolean(enabled);
+  assertNoNewDependencyIssues(workflowRoot, project, parsed.entries, next);
+  writePluginsJs(workflowRoot, project, parsed.relativePath, next);
+  return readPluginConfiguration(workflowRoot, project);
 }
 
 export function reorderPlugins(
@@ -92,7 +105,47 @@ export function reorderPlugins(
     if (!requestedSet.has(name)) throw new Error(`Plugin ordering is missing: ${name}`);
   }
   const byName = new Map(parsed.entries.map((entry) => [normalizeConfiguredPluginName(entry.name), entry]));
-  writePluginsJs(workflowRoot, project, parsed.relativePath, requested.map((name) => byName.get(name)!));
+  const next = requested.map((name) => structuredClone(byName.get(name)!));
+  assertNoNewDependencyIssues(workflowRoot, project, parsed.entries, next);
+  writePluginsJs(workflowRoot, project, parsed.relativePath, next);
+  return readPluginConfiguration(workflowRoot, project);
+}
+
+export function addPluginConfigurationEntry(
+  workflowRoot: string,
+  project: string,
+  pluginName: string,
+): PluginConfigurationResult {
+  const parsed = requireReadablePlugins(workflowRoot, project);
+  const name = normalizeConfiguredPluginName(pluginName);
+  assertUniqueConfiguredNames(parsed.entries);
+  if (parsed.entries.some((entry) => entry.name === name)) {
+    throw new Error(`Plugin configuration already exists: ${name}`);
+  }
+  if (!resolveExistingPluginFileRelativePath(workflowRoot, project, name)) {
+    throw new Error(`[PLUGIN_FILE_MISSING] ${name}`);
+  }
+  writePluginsJs(workflowRoot, project, parsed.relativePath, [
+    ...parsed.entries,
+    { name, status: false, description: '', parameters: {} },
+  ]);
+  return readPluginConfiguration(workflowRoot, project);
+}
+
+export function removePluginConfigurationEntry(
+  workflowRoot: string,
+  project: string,
+  pluginName: string,
+): PluginConfigurationResult {
+  const parsed = requireReadablePlugins(workflowRoot, project);
+  const name = normalizeConfiguredPluginName(pluginName);
+  requireUniquePluginEntry(parsed.entries, name);
+  writePluginsJs(
+    workflowRoot,
+    project,
+    parsed.relativePath,
+    parsed.entries.filter((entry) => entry.name !== name),
+  );
   return readPluginConfiguration(workflowRoot, project);
 }
 
@@ -288,42 +341,7 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
     }
   });
 
-  parsed.entries.forEach((entry, index) => {
-    if (!entry.status || !entry.name) return;
-    const fileRelativePath = resolveExistingPluginFileRelativePath(workflowRoot, project, entry.name);
-    if (!fileRelativePath) return;
-    const dependencies = readPluginDependencies(workflowRoot, project, fileRelativePath);
-    for (const dependency of dependencies.base) {
-      const resolved = resolveConfiguredDependency(parsed.entries, dependency);
-      if (!resolved) {
-        issues.push({
-          severity: 'error',
-          code: 'plugin-base-missing',
-          message: `Plugin ${entry.name} requires missing base plugin ${dependency}`,
-          pluginName: entry.name,
-          index,
-        });
-      } else if (!resolved.entry.status) {
-        issues.push({
-          severity: 'error',
-          code: 'plugin-base-disabled',
-          message: `Plugin ${entry.name} requires enabled base plugin ${resolved.entry.name}`,
-          pluginName: entry.name,
-          index,
-        });
-      } else if (resolved.index >= index) {
-        issues.push({
-          severity: 'error',
-          code: 'plugin-base-order-invalid',
-          message: `Plugin ${entry.name} must be ordered after base plugin ${resolved.entry.name}`,
-          pluginName: entry.name,
-          index,
-        });
-      }
-    }
-    validatePluginOrderingHint(issues, parsed.entries, entry.name, index, dependencies.orderAfter, 'after');
-    validatePluginOrderingHint(issues, parsed.entries, entry.name, index, dependencies.orderBefore, 'before');
-  });
+  issues.push(...collectPluginDependencyIssues(workflowRoot, project, parsed.entries));
 
   return { ok: !issues.some((issue) => issue.severity === 'error'), issues };
 }
@@ -423,7 +441,7 @@ function toManagedEntry(
   index: number,
 ): ManagedPluginEntry {
   const fileRelativePath = resolveExistingPluginFileRelativePath(workflowRoot, project, entry.name) || '';
-  const metadata = entry.name
+  const metadata = entry.name && fileRelativePath
     ? parsePluginParameterSchema(workflowRoot, project, entry.name, fileRelativePath)
     : { schema: undefined, warnings: [] };
   const commandHints = entry.name && fileRelativePath
@@ -432,6 +450,10 @@ function toManagedEntry(
   const targets = fileRelativePath ? readPluginTargets(workflowRoot, project, fileRelativePath) : [];
   const dependencies = fileRelativePath ? readPluginDependencies(workflowRoot, project, fileRelativePath) : undefined;
   const fileName = entry.name ? `${entry.name}.js` : '';
+  const absolutePath = fileRelativePath ? getProjectFileForRead(workflowRoot, project, fileRelativePath) : null;
+  const header = absolutePath
+    ? parseDefaultPluginHeaderMetadata(fs.readFileSync(absolutePath, 'utf8'), fileRelativePath, entry.name)
+    : parseDefaultPluginHeaderMetadata('', fileRelativePath, entry.name);
   return {
     index,
     name: entry.name,
@@ -447,6 +469,7 @@ function toManagedEntry(
     commandHints,
     targets,
     dependencies,
+    header,
   };
 }
 
@@ -466,6 +489,11 @@ function listPluginFiles(workflowRoot: string, project: string): ManagedPluginFi
         staged: absolute.includes(path.join(path.resolve(workflowRoot), 'runtime', 'agent-console-staging')),
         deleted: false,
         size: fs.existsSync(absolute) ? fs.statSync(absolute).size : null,
+        header: parseDefaultPluginHeaderMetadata(
+          fs.existsSync(absolute) ? fs.readFileSync(absolute, 'utf8') : '',
+          relativePath,
+          fileName.slice(0, -3),
+        ),
       });
     }
   }
@@ -473,16 +501,20 @@ function listPluginFiles(workflowRoot: string, project: string): ManagedPluginFi
   for (const file of getProjectStagingStatus(workflowRoot, project).files) {
     if (!isPluginFileRelativePath(file.relativePath)) continue;
     const fileName = path.posix.basename(file.relativePath);
+    const pluginName = pluginNameFromRelativePath(file.relativePath);
     const existing = result.get(file.relativePath);
     const absolute = getProjectFileForRead(workflowRoot, project, file.relativePath);
     result.set(file.relativePath, {
-      name: path.posix.basename(fileName, '.js'),
+      name: pluginName,
       fileName,
       relativePath: file.relativePath,
       exists: !file.delete && Boolean(absolute),
       staged: true,
       deleted: Boolean(file.delete),
       size: absolute && fs.existsSync(absolute) ? fs.statSync(absolute).size : existing?.size ?? null,
+      header: absolute && fs.existsSync(absolute)
+        ? parseDefaultPluginHeaderMetadata(fs.readFileSync(absolute, 'utf8'), file.relativePath, pluginName)
+        : existing?.header || parseDefaultPluginHeaderMetadata('', file.relativePath, pluginName),
     });
   }
 
@@ -571,11 +603,10 @@ function listFilesRecursively(root: string): string[] {
 function readPluginTargets(workflowRoot: string, project: string, fileRelativePath: string): string[] {
   const absolutePath = fileRelativePath ? getProjectFileForRead(workflowRoot, project, fileRelativePath) : null;
   if (!absolutePath) return [];
-  const raw = fs.readFileSync(absolutePath, 'utf8');
-  return dedupeStrings([...raw.matchAll(/^[ \t*]*@target\s+([^\r\n*]+)/gim)]
-    .flatMap((match) => match[1].trim().split(/[\s,]+/))
-    .map((target) => target.toUpperCase())
-    .filter((target) => target === 'MV' || target === 'MZ'));
+  return parseDefaultPluginHeaderMetadata(
+    fs.readFileSync(absolutePath, 'utf8'),
+    fileRelativePath,
+  ).target.filter((target) => target === 'MV' || target === 'MZ');
 }
 
 function readPluginDependencies(
@@ -586,18 +617,27 @@ function readPluginDependencies(
   const absolutePath = getProjectFileForRead(workflowRoot, project, fileRelativePath);
   if (!absolutePath) return { base: [], orderAfter: [], orderBefore: [], requiredAssets: [], noteAssets: [] };
   const raw = fs.readFileSync(absolutePath, 'utf8');
-  const tags = (name: string): string[] => [...raw.matchAll(new RegExp(`^[ \\t*]*@${name}\\s+([^\\r\\n*]+)`, 'gim'))]
+  const defaultHeader = extractDefaultPluginHeaderBody(raw) || '';
+  const header = parseDefaultPluginHeaderMetadata(raw, fileRelativePath);
+  const tags = (name: string): string[] => [...defaultHeader.matchAll(new RegExp(`^[ \\t*]*@${name}\\s+([^\\r\\n*]+)`, 'gim'))]
     .flatMap((match) => name.toLowerCase() === 'requiredassets'
       ? [stripAnnotationQuotes(match[1].trim())]
       : match[1].trim().split(/[\s,]+/).map(stripAnnotationQuotes))
     .filter(Boolean);
   return {
-    base: dedupeStrings(tags('base')),
-    orderAfter: dedupeStrings(tags('orderAfter')),
+    base: header.base,
+    orderAfter: header.orderAfter,
     orderBefore: dedupeStrings(tags('orderBefore')),
     requiredAssets: dedupeStrings(tags('requiredAssets').map((value) => value.replace(/\\/g, '/'))),
-    noteAssets: readPluginNoteAssetDeclarations(raw),
+    noteAssets: readPluginNoteAssetDeclarations(defaultHeader),
   };
+}
+
+function pluginNameFromRelativePath(relativePath: string): string {
+  return relativePath
+    .replace(/\\/g, '/')
+    .replace(/^(?:www\/)?js\/plugins\//i, '')
+    .replace(/\.js$/i, '');
 }
 
 function readPluginNoteAssetDeclarations(raw: string): PluginDependencyMetadata['noteAssets'] {
@@ -663,6 +703,85 @@ function validatePluginOrderingHint(
       index: pluginIndex,
     });
   }
+}
+
+function collectPluginDependencyIssues(
+  workflowRoot: string,
+  project: string,
+  entries: PluginConfigEntry[],
+): PluginValidationIssue[] {
+  const issues: PluginValidationIssue[] = [];
+  entries.forEach((entry, index) => {
+    if (!entry.status || !entry.name) return;
+    const fileRelativePath = resolveExistingPluginFileRelativePath(workflowRoot, project, entry.name);
+    if (!fileRelativePath) return;
+    const dependencies = readPluginDependencies(workflowRoot, project, fileRelativePath);
+    for (const dependency of dependencies.base) {
+      const resolved = resolveConfiguredDependency(entries, dependency);
+      if (!resolved) {
+        issues.push({
+          severity: 'error',
+          code: 'plugin-base-missing',
+          message: `Plugin ${entry.name} requires missing base plugin ${dependency}`,
+          pluginName: entry.name,
+          index,
+        });
+      } else if (!resolved.entry.status) {
+        issues.push({
+          severity: 'error',
+          code: 'plugin-base-disabled',
+          message: `Plugin ${entry.name} requires enabled base plugin ${resolved.entry.name}`,
+          pluginName: entry.name,
+          index,
+        });
+      } else if (resolved.index >= index) {
+        issues.push({
+          severity: 'error',
+          code: 'plugin-base-order-invalid',
+          message: `Plugin ${entry.name} must be ordered after base plugin ${resolved.entry.name}`,
+          pluginName: entry.name,
+          index,
+        });
+      }
+    }
+    validatePluginOrderingHint(issues, entries, entry.name, index, dependencies.orderAfter, 'after');
+    validatePluginOrderingHint(issues, entries, entry.name, index, dependencies.orderBefore, 'before');
+  });
+  return issues;
+}
+
+function assertNoNewDependencyIssues(
+  workflowRoot: string,
+  project: string,
+  current: PluginConfigEntry[],
+  next: PluginConfigEntry[],
+): void {
+  const existing = new Set(collectPluginDependencyIssues(workflowRoot, project, current).map(pluginIssueIdentity));
+  const introduced = collectPluginDependencyIssues(workflowRoot, project, next)
+    .find((issue) => !existing.has(pluginIssueIdentity(issue)));
+  if (introduced) {
+    throw new Error(`[PLUGIN_DEPENDENCY_CONFLICT] ${introduced.message}`);
+  }
+}
+
+function pluginIssueIdentity(issue: PluginValidationIssue): string {
+  return `${issue.code}:${issue.pluginName || ''}:${issue.message}`;
+}
+
+function clonePluginConfigEntries(entries: PluginConfigEntry[]): PluginConfigEntry[] {
+  return entries.map((entry) => ({
+    name: entry.name,
+    status: entry.status,
+    description: entry.description,
+    parameters: structuredClone(entry.parameters),
+  }));
+}
+
+function requireUniquePluginEntry(entries: PluginConfigEntry[], name: string): PluginConfigEntry {
+  const matches = entries.filter((entry) => entry.name === name);
+  if (!matches.length) throw new Error(`Plugin does not exist: ${name}`);
+  if (matches.length > 1) throw new Error(`Duplicate plugin configuration cannot be modified safely: ${name}`);
+  return matches[0];
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1022,16 +1141,17 @@ function flushCurrentParameter(
 }
 
 function extractPlugindescHeader(raw: string): string | null {
-  const blocks = raw.match(/\/\*[:\s]?[^\n]*[\s\S]*?\*\//g);
-  if (!blocks?.length) return null;
-  return blocks.find((block) => /@plugindesc\b/i.test(block)) || null;
+  const body = extractDefaultPluginHeaderBody(raw);
+  if (!body || !/@plugindesc\b/i.test(body)) return null;
+  return `/*:\n${body}\n*/`;
 }
 
 function extractStructDefinitionBlocks(raw: string, warnings: string[]): Map<string, string> {
   const structs = new Map<string, string>();
   const blocks = raw.match(/\/\*~struct~[^\n]*[\s\S]*?\*\//g) || [];
   for (const block of blocks) {
-    const match = block.match(/^\/\*~struct~([^:\r\n]+)\s*:/i);
+    const match = block.match(/^\/\*~struct~([^:\r\n]+)\s*:\s*(?:\r?\n|$)/i);
+    if (!match) continue;
     const rawName = match?.[1]?.trim();
     if (!rawName) {
       warnings.push('Found a struct comment block without a struct name');
@@ -1142,7 +1262,7 @@ function mapArrayItemType(
 
 function mapScalarParameterKind(
   raw: string,
-): Pick<PluginParameterSchemaField, 'kind' | 'rawType' | 'databaseTable'> | null {
+): Pick<PluginParameterSchemaField, 'kind' | 'rawType' | 'databaseTable'> | { unsupportedReason: string } | null {
   const value = raw.toLowerCase().trim();
   if (!value) return { kind: 'text' };
   if (/\[\]$/.test(value) || /^struct\s*</.test(value)) return null;
@@ -1151,8 +1271,12 @@ function mapScalarParameterKind(
   if (['boolean', 'bool', 'onoff', 'on/off'].includes(value)) return { kind: 'boolean', rawType };
   if (['select', 'dropdown'].includes(value)) return { kind: 'select', rawType };
   if (value === 'combo') return { kind: 'combo', rawType };
-  if (['json', 'object', 'note'].includes(value)) return { kind: 'json', rawType };
-  if (['multiline_string', 'multiline string', 'multiline'].includes(value)) return { kind: 'multiline', rawType };
+  if (value === 'note' || ['multiline_string', 'multiline string', 'multiline'].includes(value)) {
+    return { kind: 'multiline', rawType };
+  }
+  if (value === 'json' || value === 'object') {
+    return { unsupportedReason: 'raw JSON editing is intentionally unavailable' };
+  }
   if (['string', 'text'].includes(value)) return { kind: 'text', rawType };
   if (value === 'file' || value.startsWith('file ')) return { kind: 'file', rawType };
   if (value === 'map') return { kind: 'map', rawType };
@@ -1332,11 +1456,11 @@ function parseMZPluginCommands(raw: string): ParsedMZPluginCommand[] {
   const result: ParsedMZPluginCommand[] = [];
   const metadataWarnings: string[] = [];
   const context = createSchemaParseContext(raw, metadataWarnings).context;
-  for (const blockMatch of raw.matchAll(/\/\*:(?:[a-z][a-z0-9_-]*)?\s*([\s\S]*?)\*\//gi)) {
-    const block = blockMatch[1] || '';
-    const lines = parseHeaderLines(block);
+  const defaultHeader = extractDefaultPluginHeaderBlock(raw);
+  for (const block of defaultHeader ? [defaultHeader] : []) {
+    const lines = defaultHeaderLinesWithOffsets(block.body);
     const target = lines
-      .map((line) => line.match(/^@target\s+(.+)$/i)?.[1]?.trim())
+      .map(({ line }) => line.match(/^@target\s+(.+)$/i)?.[1]?.trim())
       .find(Boolean);
     if (target && !target.split(/\s+/).some((value) => value.toUpperCase() === 'MZ')) continue;
 
@@ -1363,7 +1487,7 @@ function parseMZPluginCommands(raw: string): ParsedMZPluginCommand[] {
       current = null;
     };
 
-    for (const line of lines) {
+    for (const { line, offset } of lines) {
       const tag = line.match(/^@([A-Za-z][A-Za-z0-9_-]*)\b\s*(.*)$/);
       if (!tag) continue;
       const name = tag[1].toLowerCase();
@@ -1374,7 +1498,7 @@ function parseMZPluginCommands(raw: string): ParsedMZPluginCommand[] {
           command: value,
           displayName: value,
           arguments: [],
-          offset: (blockMatch.index || 0) + block.indexOf(line),
+          offset: block.bodyOffset + offset,
         };
         continue;
       }
@@ -1470,6 +1594,22 @@ function parseMZPluginCommands(raw: string): ParsedMZPluginCommand[] {
       }
     }
     flushCommand();
+  }
+  return result;
+}
+
+function defaultHeaderLinesWithOffsets(body: string): Array<{ line: string; offset: number }> {
+  const result: Array<{ line: string; offset: number }> = [];
+  for (const match of String(body || '').matchAll(/[^\r\n]*(?:\r\n|\n|$)/g)) {
+    const rawLine = match[0].replace(/\r?\n$/, '');
+    if (!rawLine && match[0] === '') continue;
+    const prefix = rawLine.match(/^\s*\*?\s?/)?.[0] || '';
+    const line = rawLine.slice(prefix.length);
+    if (!line.trim()) continue;
+    result.push({
+      line,
+      offset: (match.index || 0) + prefix.length,
+    });
   }
   return result;
 }

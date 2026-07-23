@@ -14,9 +14,11 @@ import {
   stageProjectFilesAtomically,
 } from './staging-service.ts';
 import {
+  addPluginConfigurationEntry,
   deletePluginFile,
   installPluginFile,
   readPluginConfiguration,
+  removePluginConfigurationEntry,
   reorderPlugins,
   setPluginEnabled,
   updatePluginParameters,
@@ -57,6 +59,54 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.equal(config.validation.ok, true);
   });
 
+  test('reads display metadata only from the default plugin header', () => {
+    fs.writeFileSync(path.join(fixture.project, 'www', 'js', 'plugins', 'Documentation.js'), `/*:ja
+ * @plugindesc Localized description must not be selected.
+ * @target MZ
+ * @base LocalizedOnly
+ * @param localized
+ * @type string
+ * @help
+ * Localized help must not be selected.
+ */
+/*:
+ * @target MV
+ * @plugindesc Default description.
+ * @author Sample Author
+ * @url javascript:alert(1)
+ * @base CoreFix
+ * @orderAfter CoreFix
+ * @help
+ * First help line.
+ *
+ * Second help line.
+ * @param ignored
+ * @type string
+ */
+`, 'utf8');
+    writePluginsJs(fixture.project, [
+      { name: 'Documentation', status: false, description: 'Configuration fallback', parameters: {} },
+    ]);
+
+    const plugin = readPluginConfiguration(fixture.root, fixture.project).plugins[0];
+    assert.deepEqual(plugin.header.target, ['MV']);
+    assert.equal(plugin.header.plugindesc, 'Default description.');
+    assert.equal(plugin.header.author, 'Sample Author');
+    assert.equal(plugin.header.url, 'javascript:alert(1)');
+    assert.equal(plugin.header.urlHref, undefined);
+    assert.deepEqual(plugin.header.base, ['CoreFix']);
+    assert.deepEqual(plugin.header.orderAfter, ['CoreFix']);
+    assert.deepEqual(plugin.targets, ['MV']);
+    assert.deepEqual(plugin.dependencies?.base, ['CoreFix']);
+    assert.deepEqual(plugin.parameterSchema?.fields.map((field) => field.key), ['ignored']);
+    assert.equal(plugin.header.help, 'First help line.\n\nSecond help line.');
+    assert.deepEqual(plugin.header.helpSections, [
+      { language: '', content: 'First help line.\n\nSecond help line.' },
+      { language: 'ja', content: 'Localized help must not be selected.' },
+    ]);
+    assert.equal(plugin.header.displayPath, 'js/plugins/Documentation.js');
+  });
+
   test('parses common RMMV plugin parameter schema and plugin command hints', () => {
     const config = readPluginConfiguration(fixture.root, fixture.project);
     const coreFix = config.plugins.find((plugin) => plugin.name === 'CoreFix');
@@ -84,19 +134,77 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.equal(enabled?.kind, 'boolean');
     assert.deepEqual(enabled?.options, [{ label: 'Enabled', value: 'true' }, { label: 'Disabled', value: 'false' }]);
     const picture = coreFix.parameterSchema.fields.find((field) => field.key === 'Picture Name');
-    assert.equal(picture?.kind, 'text');
+    assert.equal(picture?.kind, 'file');
     assert.equal(picture?.rawType, 'file');
     assert.equal(picture?.directory, 'img/pictures');
     const actor = coreFix.parameterSchema.fields.find((field) => field.key === 'actorId');
-    assert.equal(actor?.kind, 'number');
+    assert.equal(actor?.kind, 'database');
     assert.equal(actor?.rawType, 'actor');
+    assert.equal(actor?.databaseTable, 'Actors');
     assert.deepEqual(coreFix.commandHints.map((hint) => `${hint.source}:${hint.command}`), [
       'command-comparison:CoreFix',
       'switch-command-case:CoreReset',
     ]);
   });
 
-  test('warns about unsupported parameter types without inventing schema fields', () => {
+  test('treats note as multiline while preserving raw JSON and object parameters as readonly', () => {
+    fs.writeFileSync(path.join(fixture.project, 'www', 'js', 'plugins', 'ParameterKinds.js'), `/*:
+ * @plugindesc Parameter kind fixture.
+ * @param notes
+ * @type note
+ * @default First line
+ *
+ * @param rawJson
+ * @type json
+ * @default {"enabled":true}
+ *
+ * @param rawObject
+ * @type object
+ * @default {"mode":"safe"}
+ */
+`, 'utf8');
+    writePluginsJs(fixture.project, [
+      {
+        name: 'ParameterKinds',
+        status: true,
+        description: '',
+        parameters: {
+          notes: 'First line\nSecond line',
+          rawJson: '{"enabled":true}',
+          rawObject: '{"mode":"safe"}',
+        },
+      },
+    ]);
+
+    const plugin = readPluginConfiguration(fixture.root, fixture.project).plugins[0];
+    const fields = Object.fromEntries(
+      (plugin.parameterSchema?.fields || []).map((entry) => [entry.key, entry]),
+    );
+    assert.equal(fields.notes.kind, 'multiline');
+    assert.equal(fields.notes.editable, undefined);
+    assert.equal(fields.rawJson.editable, false);
+    assert.equal(fields.rawJson.rawType, 'json');
+    assert.equal(fields.rawObject.editable, false);
+    assert.equal(fields.rawObject.rawType, 'object');
+
+    assert.throws(() => updatePluginParameters(
+      fixture.root,
+      fixture.project,
+      'ParameterKinds',
+      {
+        notes: 'Changed',
+        rawJson: '{"enabled":false}',
+        rawObject: '{"mode":"safe"}',
+      },
+    ), /must be preserved unchanged/);
+    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.equal(
+      sourcePluginArray(fixture.project)[0].parameters.rawJson,
+      '{"enabled":true}',
+    );
+  });
+
+  test('warns about unsupported parameter types and exposes them as readonly', () => {
     fs.writeFileSync(path.join(fixture.project, 'www', 'js', 'plugins', 'Unsupported.js'), `/*:
  * @plugindesc Unsupported schema fixture.
  * @param title
@@ -114,8 +222,11 @@ describe('plugin management service', { concurrency: false }, () => {
 
     const config = readPluginConfiguration(fixture.root, fixture.project);
     const plugin = config.plugins[0];
-    assert.deepEqual(plugin.parameterSchema?.fields.map((field) => field.key), ['title']);
-    assert.ok(!plugin.parameterSchema?.fields.some((field) => field.key === 'Complex Settings'));
+    assert.deepEqual(plugin.parameterSchema?.fields.map((field) => field.key), ['title', 'Complex Settings']);
+    assert.equal(
+      plugin.parameterSchema?.fields.find((field) => field.key === 'Complex Settings')?.editable,
+      false,
+    );
     assert.ok(plugin.parameterSchemaWarnings.some((warning) => warning.includes('Complex Settings')));
     assert.ok(config.validation.issues.some((issue) =>
       issue.code === 'plugin-parameter-schema-unparsed'
@@ -296,6 +407,67 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'OldPlugin.js')), false);
     assert.equal(sourcePluginStatus(fixture.project, 'NewPlugin'), false);
     assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'OldPlugin'), false);
+  });
+
+  test('adds and removes configuration entries without copying or deleting plugin files', () => {
+    const looseFile = path.join(fixture.project, 'www', 'js', 'plugins', 'LoosePlugin.js');
+    fs.writeFileSync(looseFile, '/* loose plugin */', 'utf8');
+    const sourceBefore = fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js'), 'utf8');
+
+    const added = addPluginConfigurationEntry(fixture.root, fixture.project, 'LoosePlugin');
+    assert.equal(added.plugins.at(-1)?.name, 'LoosePlugin');
+    assert.equal(added.plugins.at(-1)?.status, false);
+    assert.equal(fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js'), 'utf8'), sourceBefore);
+    assert.equal(fs.existsSync(looseFile), true);
+
+    const removed = removePluginConfigurationEntry(fixture.root, fixture.project, 'LoosePlugin');
+    assert.equal(removed.plugins.some((plugin) => plugin.name === 'LoosePlugin'), false);
+    assert.equal(removed.pluginFiles.some((file) => file.name === 'LoosePlugin' && file.exists), true);
+    assert.equal(fs.existsSync(looseFile), true);
+    assert.equal(fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js'), 'utf8'), sourceBefore);
+  });
+
+  test('rejects newly introduced dependency conflicts before staging', () => {
+    fs.writeFileSync(path.join(fixture.project, 'www', 'js', 'plugins', 'BasePlugin.js'), `/*:
+ * @plugindesc Base.
+ */`, 'utf8');
+    fs.writeFileSync(path.join(fixture.project, 'www', 'js', 'plugins', 'DependentPlugin.js'), `/*:
+ * @plugindesc Dependent.
+ * @base BasePlugin
+ * @orderAfter BasePlugin
+ */`, 'utf8');
+    writePluginsJs(fixture.project, [
+      { name: 'BasePlugin', status: false, description: '', parameters: {} },
+      { name: 'DependentPlugin', status: false, description: '', parameters: {} },
+    ]);
+
+    assert.throws(
+      () => setPluginEnabled(fixture.root, fixture.project, 'DependentPlugin', true),
+      /PLUGIN_DEPENDENCY_CONFLICT.*requires enabled base plugin BasePlugin/,
+    );
+    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+
+    setPluginEnabled(fixture.root, fixture.project, 'BasePlugin', true);
+    setPluginEnabled(fixture.root, fixture.project, 'DependentPlugin', true);
+    applyProjectStaging(fixture.root, fixture.project);
+    assert.throws(
+      () => reorderPlugins(fixture.root, fixture.project, ['DependentPlugin', 'BasePlugin']),
+      /PLUGIN_DEPENDENCY_CONFLICT.*must be ordered after base plugin BasePlugin/,
+    );
+    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+  });
+
+  test('allows disabling a missing plugin but rejects enabling it without staging', () => {
+    fs.rmSync(path.join(fixture.project, 'www', 'js', 'plugins', 'OldPlugin.js'));
+    setPluginEnabled(fixture.root, fixture.project, 'OldPlugin', false);
+    applyProjectStaging(fixture.root, fixture.project);
+
+    assert.throws(
+      () => setPluginEnabled(fixture.root, fixture.project, 'OldPlugin', true),
+      /PLUGIN_FILE_MISSING.*OldPlugin/,
+    );
+    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.equal(sourcePluginStatus(fixture.project, 'OldPlugin'), false);
   });
 
   test('preserves enabled state, description, and parameters when overwriting a plugin file', () => {

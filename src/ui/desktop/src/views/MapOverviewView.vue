@@ -11,6 +11,13 @@ import type {
   MapOverviewScanProgressPhase,
   MapOverviewSnapshot,
 } from '@contract/types'
+import {
+  classifyMapOverviewEdgeConditions,
+  classifyMapOverviewTransferConditions,
+  summarizeMapOverviewTransferConditions,
+  type MapOverviewTransferConditionCategory,
+  type MapOverviewTransferConditionType,
+} from '@contract/map-overview-transfer-condition'
 import { maps, workspaceSurfaces } from '../api/client'
 import MapOverviewSvgCanvas from '../components/map-overview/MapOverviewSvgCanvas.vue'
 import type { MapOverviewSvgCanvasApi } from '../components/map-overview/mapOverviewSvgCanvasApi'
@@ -1133,6 +1140,43 @@ function mapLabel(mapId: number): string {
   return node ? `${node.name} · MAP${String(node.id).padStart(3, '0')}` : `MAP${String(mapId).padStart(3, '0')}`
 }
 
+function conditionCategoryLabel(category: MapOverviewTransferConditionCategory): string {
+  return t(`mapOverview.condition.category.${category}` as Parameters<typeof t>[0])
+}
+
+function conditionTypeLabel(type: MapOverviewTransferConditionType): string {
+  return t(`mapOverview.condition.type.${type}` as Parameters<typeof t>[0])
+}
+
+function sourceConditionPresentation(pageConditions: Record<string, unknown>): {
+  category: MapOverviewTransferConditionCategory
+  badges: string[]
+  details: string[]
+} {
+  const summary = summarizeMapOverviewTransferConditions(pageConditions)
+  const details = summary.switchIds.map(id => t('mapOverview.condition.switchDetail', { id }))
+  if (summary.variable) {
+    details.push(t('mapOverview.condition.variableDetail', {
+      id: summary.variable.id,
+      operator: summary.variable.operator,
+      value: summary.variable.value,
+    }))
+  }
+  if (summary.selfSwitch) {
+    details.push(t('mapOverview.condition.selfSwitchDetail', { channel: summary.selfSwitch }))
+  }
+  if (!summary.types.length) {
+    details.push(summary.hasOtherPageConditions
+      ? t('mapOverview.condition.noneRelevantWithOther')
+      : t('mapOverview.condition.noneRelevant'))
+  }
+  return {
+    category: classifyMapOverviewTransferConditions(pageConditions),
+    badges: summary.types.map(conditionTypeLabel),
+    details,
+  }
+}
+
 function restoreStoredLayoutPreference(project: string): void {
   const layoutId = workspaceStore.readMapOverviewLayout(project)
   appliedLayoutId.value = layoutId
@@ -1259,6 +1303,7 @@ async function exportOverviewPng(): Promise<void> {
         targetX: edge.targetX,
         targetY: edge.targetY,
         count: edge.count,
+        conditionCategory: classifyMapOverviewEdgeConditions(edge.sources),
       })),
     })
   } catch (error) {
@@ -1278,15 +1323,6 @@ async function cancelOverviewExport(): Promise<void> {
   }
 }
 
-async function revealOverviewExport(): Promise<void> {
-  try {
-    await mapOverviewExportStore.reveal()
-  } catch (error) {
-    ElMessage.error(t('mapOverview.export.revealFailed', {
-      message: formatUserFacingErrorMessage(error, 'general', language.value),
-    }))
-  }
-}
 </script>
 
 <template>
@@ -1500,13 +1536,6 @@ async function revealOverviewExport(): Promise<void> {
             {{ t('mapOverview.export.retry') }}
           </button>
         </div>
-        <button
-          v-if="exportStatus?.phase === 'completed' && !mapOverviewExportStore.running"
-          type="button"
-          class="toolbar-action"
-          data-ui-id="map-overview-export-reveal"
-          @click="revealOverviewExport"
-        >{{ t('mapOverview.export.reveal') }}</button>
         <div v-if="layoutRunning" class="layout-running" role="status" aria-live="polite">
           <span>{{ layoutRunningLabel }}</span>
           <button
@@ -1704,13 +1733,29 @@ async function revealOverviewExport(): Promise<void> {
             <header>
               <strong>{{ mapLabel(selectedEdge.sourceMapId) }}</strong>
               <span>→ {{ mapLabel(selectedEdge.targetMapId) }} · ×{{ selectedEdge.count }}</span>
+              <span
+                class="condition-badge"
+                :data-condition="classifyMapOverviewEdgeConditions(selectedEdge.sources)"
+              >{{ conditionCategoryLabel(classifyMapOverviewEdgeConditions(selectedEdge.sources)) }}</span>
             </header>
             <div class="source-list">
               <article v-for="source in selectedEdge.sources" :key="`${source.eventId}-${source.pageIndex}-${source.commandIndex}`">
                 <strong>{{ source.eventName }} · #{{ source.eventId }}</strong>
                 <span>{{ t('mapOverview.source.location', { page: source.pageIndex + 1, command: source.commandIndex + 1 }) }}</span>
                 <span>{{ source.sourceX }}, {{ source.sourceY }} → {{ source.targetX }}, {{ source.targetY }}</span>
-                <code>{{ JSON.stringify(source.pageConditions) }}</code>
+                <div v-if="sourceConditionPresentation(source.pageConditions).badges.length" class="condition-badges">
+                  <span
+                    v-for="badge in sourceConditionPresentation(source.pageConditions).badges"
+                    :key="badge"
+                    class="condition-badge"
+                    :data-condition="sourceConditionPresentation(source.pageConditions).category"
+                  >{{ badge }}</span>
+                </div>
+                <span
+                  v-for="detail in sourceConditionPresentation(source.pageConditions).details"
+                  :key="detail"
+                  class="condition-detail"
+                >{{ detail }}</span>
                 <button type="button" @click="openEvent(source.sourceMapId, source.eventId)">{{ t('mapOverview.openEvent') }}</button>
               </article>
             </div>
@@ -1838,6 +1883,13 @@ async function revealOverviewExport(): Promise<void> {
 .inspector-primary:disabled,.thumbnail-issue button:disabled,.overview-context-menu button:disabled { opacity:.48; cursor:not-allowed; }
 .open-editor-reason { margin:6px 0 0; color:var(--app-ink-muted); font-size:11px; text-align:center; }
 .source-list article { display:grid; gap:5px; padding:10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); }
+.condition-badges { display:flex; flex-wrap:wrap; gap:5px; }
+.condition-badge { width:max-content; display:inline-flex; align-items:center; min-height:19px; padding:0 6px; border:1px solid currentColor; border-radius:999px; color:#6f706a; font-size:10px; font-weight:600; line-height:1; }
+.condition-badge[data-condition="switch"] { color:#3f6fb5; }
+.condition-badge[data-condition="variable"] { color:#9a5b0e; }
+.condition-badge[data-condition="self-switch"] { color:#7b4bb3; }
+.condition-badge[data-condition="combined"] { border-style:dashed; color:#b64b3b; }
+.condition-detail { color:var(--app-ink-soft)!important; font-variant-numeric:tabular-nums; }
 .overview-state { min-height:0; flex:1; display:grid; place-content:center; gap:8px; padding:24px; text-align:center; color:var(--app-ink-muted); }
 .overview-state.error,.layout-error { color:var(--app-danger); }
 .layout-error { position:absolute; left:14px; top:14px; z-index:4; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg); }

@@ -103,6 +103,20 @@ describe('Map Overview layout view policy', () => {
     expect(source).toMatch(/:disabled="!canOpenMap\(selectedNode\.id\)"/)
   })
 
+  it('uses shared transfer-condition visuals and readable inspector details', () => {
+    expect(svgSource).toMatch(/classifyMapOverviewEdgeConditions\(edge\.sources\)/)
+    expect(svgSource).toMatch(/mapOverviewTransferConditionVisual\(category\)/)
+    expect(svgSource).toMatch(/:aria-label="edgeAriaLabel\(item\.edge, item\.condition\)"/)
+    expect(source).toMatch(/summarizeMapOverviewTransferConditions\(pageConditions\)/)
+    expect(source).not.toMatch(/JSON\.stringify\(source\.pageConditions\)/)
+  })
+
+  it('keeps PNG export but removes the completed-file reveal action', () => {
+    expect(source).toMatch(/data-ui-id="map-overview-export"/)
+    expect(source).not.toMatch(/map-overview-export-reveal/)
+    expect(source).not.toMatch(/revealOverviewExport/)
+  })
+
   it('keeps thin visual edges, wide transparent hit targets, and graded interaction emphasis', () => {
     expect(svgSource).toMatch(/map-overview-svg-edge \{[^}]*stroke-width:1;/)
     expect(svgSource).toMatch(/map-overview-svg-edge-hit \{[^}]*stroke-width:13;/)

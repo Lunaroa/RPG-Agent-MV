@@ -199,6 +199,7 @@ export interface MapOverviewPngExportEdge {
   targetX: number;
   targetY: number;
   count: number;
+  conditionCategory: import('./map-overview-transfer-condition.ts').MapOverviewTransferConditionCategory;
 }
 
 export interface MapOverviewPngExportScene {

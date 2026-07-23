@@ -130,7 +130,6 @@ contextBridge.exposeInMainWorld('api', {
     startOverviewPngExport: (scene: MapOverviewPngExportScene) => ipcRenderer.invoke('maps:overviewExportStart', scene),
     overviewPngExportStatus: () => ipcRenderer.invoke('maps:overviewExportStatus'),
     cancelOverviewPngExport: (requestId: string) => ipcRenderer.invoke('maps:overviewExportCancel', requestId),
-    revealOverviewPngExport: (requestId: string) => ipcRenderer.invoke('maps:overviewExportReveal', requestId),
     onOverviewPngExportProgress: (callback: (progress: MapOverviewPngExportProgressEvent) => void) => {
       const handler = (_event: unknown, progress: MapOverviewPngExportProgressEvent) => callback(progress);
       ipcRenderer.on('maps:overviewExportProgress', handler);

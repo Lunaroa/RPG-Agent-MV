@@ -2,6 +2,7 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Aim, Download, Refresh, Search } from '@element-plus/icons-vue'
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 import { useRouter } from 'vue-router'
 import type {
   MapOverviewLayoutId,
@@ -22,7 +23,6 @@ import { findMapOverviewMatches } from '../utils/mapOverviewSearch'
 import { MapOverviewMoveHistory, type MapOverviewNodePosition } from '../utils/mapOverviewMoveHistory'
 import { MAP_OVERVIEW_LAYOUT_VERSION } from '../utils/mapOverviewNodeSize'
 import {
-  firstMapOverviewThumbnailFailure,
   isMapOverviewThumbnailVersionChanged,
   mapOverviewPreparationPercent,
   validateMapOverviewLayoutPositions,
@@ -75,7 +75,8 @@ const selectedEdgeId = ref<string | null>(null)
 const contextMenu = ref<{ mapId: number; x: number; y: number } | null>(null)
 const thumbnailProgressCompleted = ref(0)
 const thumbnailProgressTotal = ref(0)
-const failedThumbnailCount = ref(0)
+const thumbnailFailures = ref<ReadonlyMap<number, string>>(new Map())
+const retryingThumbnailIds = ref<ReadonlySet<number>>(new Set())
 const overviewProgressPhase = ref<MapOverviewScanProgressPhase | 'starting'>('starting')
 const overviewProgressCompleted = ref(0)
 const overviewProgressTotal = ref(0)
@@ -100,10 +101,15 @@ let activeLayoutHandle: MapOverviewLayoutRunHandle | null = null
 const grabbedPositions = new Map<string, MapOverviewNodePosition>()
 const moveHistory = new MapOverviewMoveHistory(100)
 const thumbnailImages = new Map<number, HTMLImageElement>()
+const thumbnailRetrySessions = new Map<number, string>()
 
 const currentProject = computed(() => projectStore.currentProject || '')
 const selectedNode = computed(() => snapshot.value?.nodes.find((node) => node.id === selectedNodeId.value) || null)
 const selectedEdge = computed(() => snapshot.value?.edges.find((edge) => edge.id === selectedEdgeId.value) || null)
+const selectedThumbnailFailure = computed(() => selectedNode.value
+  ? thumbnailFailures.value.get(selectedNode.value.id) || ''
+  : '')
+const failedThumbnailCount = computed(() => thumbnailFailures.value.size)
 const searchMatches = computed(() => {
   if (!snapshot.value) return []
   return findMapOverviewMatches(snapshot.value.nodes, searchQuery.value)
@@ -273,7 +279,6 @@ async function loadOverview(startVersion?: string): Promise<void> {
   validating.value = false
   loadError.value = ''
   layoutError.value = ''
-  failedThumbnailCount.value = 0
   overviewProgressSessionId = createOverviewSessionId()
   overviewProgressPhase.value = 'starting'
   overviewProgressCompleted.value = 0
@@ -380,44 +385,49 @@ async function prepareThumbnails(next: MapOverviewSnapshot, project: string, gen
   thumbnailProgressTotal.value = renderable.length
   thumbnailProgressCompleted.value = 0
   const prepared = new Map<number, HTMLImageElement>()
-  const failures: Array<{ mapId: number; error: unknown }> = []
+  const failures = new Map<number, string>()
   await Promise.all(renderable.map(async (node) => {
     try {
-      const result = await maps.overviewThumbnail(node.id, node.thumbnailVersion!, project, sessionId)
+      const image = await requestThumbnailImage(node, project, sessionId)
       if (generation !== loadGeneration || sessionId !== thumbnailSessionId) throw thumbnailAbortError()
-      if (node.width == null || node.height == null) throw new Error(`Map ${node.id} has no valid overview dimensions.`)
-      if (result.scaleDivisor !== 4 || result.width !== node.width * 12 || result.height !== node.height * 12) {
-        throw new Error(`Map ${node.id} returned an invalid overview thumbnail size.`)
-      }
-      const image = new Image()
-      image.src = result.dataUrl
-      await image.decode()
-      if (image.naturalWidth !== result.width || image.naturalHeight !== result.height) {
-        throw new Error(`Map ${node.id} overview thumbnail decoded with an unexpected size.`)
-      }
       prepared.set(node.id, image)
-      thumbnailProgressCompleted.value += 1
     } catch (error) {
       if ((error as Error)?.name === 'AbortError') throw error
-      failures.push({ mapId: node.id, error })
+      failures.set(node.id, formatThumbnailFailure(error))
+    } finally {
+      if (generation === loadGeneration && sessionId === thumbnailSessionId) {
+        thumbnailProgressCompleted.value += 1
+      }
     }
   }))
-  if (failures.length) {
-    failedThumbnailCount.value = failures.length
-    const firstFailure = firstMapOverviewThumbnailFailure(failures)
-    const reason = firstFailure && isMapOverviewThumbnailVersionChanged(firstFailure.error)
-      ? t('mapOverview.preparing.versionChanged')
-      : formatUserFacingErrorMessage(firstFailure?.error, 'general', language.value)
-    const detail = firstFailure
-      ? t('mapOverview.preparing.failedDetail', {
-        mapId: String(firstFailure.mapId).padStart(3, '0'),
-        reason,
-      })
-      : ''
-    throw new Error(`${t('mapOverview.preparing.failedBody', { count: failures.length })} ${detail}`.trim())
-  }
   thumbnailImages.clear()
   for (const [mapId, image] of prepared) thumbnailImages.set(mapId, image)
+  thumbnailFailures.value = failures
+}
+
+async function requestThumbnailImage(
+  node: MapOverviewNode,
+  project: string,
+  sessionId: string,
+): Promise<HTMLImageElement> {
+  const result = await maps.overviewThumbnail(node.id, node.thumbnailVersion!, project, sessionId)
+  if (node.width == null || node.height == null) throw new Error(`Map ${node.id} has no valid overview dimensions.`)
+  if (result.scaleDivisor !== 4 || result.width !== node.width * 12 || result.height !== node.height * 12) {
+    throw new Error(`Map ${node.id} returned an invalid overview thumbnail size.`)
+  }
+  const image = new Image()
+  image.src = result.dataUrl
+  await image.decode()
+  if (image.naturalWidth !== result.width || image.naturalHeight !== result.height) {
+    throw new Error(`Map ${node.id} overview thumbnail decoded with an unexpected size.`)
+  }
+  return image
+}
+
+function formatThumbnailFailure(error: unknown): string {
+  return isMapOverviewThumbnailVersionChanged(error)
+    ? t('mapOverview.preparing.versionChanged')
+    : formatUserFacingErrorMessage(error, 'general', language.value)
 }
 
 function thumbnailAbortError(): Error {
@@ -487,9 +497,14 @@ async function ensureGraph(
 ): Promise<void> {
   if (!graphHost.value || !graph) return
   if (forceRebuild) {
-    await graph.setScene(next, thumbnailImageUrls(), initialPositions)
+    await graph.setScene(next, thumbnailImageUrls(), initialPositions, thumbnailFailures.value)
   } else {
-    await graph.setScene(next, thumbnailImageUrls(), Object.keys(initialPositions).length ? initialPositions : graph.getPositions())
+    await graph.setScene(
+      next,
+      thumbnailImageUrls(),
+      Object.keys(initialPositions).length ? initialPositions : graph.getPositions(),
+      thumbnailFailures.value,
+    )
   }
   graphBoundContainer = graphHost.value
   graph.setSize(Math.max(1, graphHost.value.clientWidth), Math.max(1, graphHost.value.clientHeight))
@@ -500,8 +515,8 @@ function thumbnailImageUrls(): Map<number, string> {
   return new Map([...thumbnailImages.entries()].map(([mapId, image]) => [mapId, image.src]))
 }
 
-function setGraphRef(value: MapOverviewSvgCanvasApi | null): void {
-  graph = value
+function setGraphRef(value: Element | ComponentPublicInstance | null): void {
+  graph = value as MapOverviewSvgCanvasApi | null
 }
 
 function onSvgNodeDragStart(payload: { mapId: number; position: MapOverviewNodePosition }): void {
@@ -873,7 +888,16 @@ function focusSearchResult(node: MapOverviewNode): void {
 
 function openMap(mapId: number): void {
   contextMenu.value = null
+  const node = snapshot.value?.nodes.find((item) => item.id === mapId)
+  if (!node || node.readState !== 'ready') {
+    ElMessage.warning(t('mapOverview.openEditorUnavailable'))
+    return
+  }
   void router.push({ path: '/workbench', query: { mapId: String(mapId) } })
+}
+
+function canOpenMap(mapId: number): boolean {
+  return snapshot.value?.nodes.find((node) => node.id === mapId)?.readState === 'ready'
 }
 
 function openEvent(mapId: number, eventId: number): void {
@@ -936,9 +960,10 @@ function resetGraphState(): void {
   selectedEdgeId.value = null
   contextMenu.value = null
   thumbnailImages.clear()
+  thumbnailFailures.value = new Map()
+  retryingThumbnailIds.value = new Set()
   thumbnailProgressCompleted.value = 0
   thumbnailProgressTotal.value = 0
-  failedThumbnailCount.value = 0
   overviewProgressSessionId = createOverviewSessionId()
   overviewProgressPhase.value = 'starting'
   overviewProgressCompleted.value = 0
@@ -985,11 +1010,69 @@ function createOverviewSessionId(): string {
 function cancelThumbnailSession(): void {
   const sessionId = thumbnailSessionId
   void maps.cancelOverviewThumbnails(sessionId).catch(() => undefined)
+  cancelThumbnailRetries()
 }
 
 function rotateThumbnailSession(): void {
   cancelThumbnailSession()
   thumbnailSessionId = createThumbnailSessionId()
+}
+
+function cancelThumbnailRetries(): void {
+  for (const sessionId of thumbnailRetrySessions.values()) {
+    void maps.cancelOverviewThumbnails(sessionId).catch(() => undefined)
+  }
+  thumbnailRetrySessions.clear()
+  retryingThumbnailIds.value = new Set()
+}
+
+async function retryMapThumbnail(mapId: number): Promise<void> {
+  const node = snapshot.value?.nodes.find((item) => item.id === mapId)
+  const project = currentProject.value
+  if (!node || node.readState !== 'ready' || !node.thumbnailVersion || !project) return
+  const previousSession = thumbnailRetrySessions.get(mapId)
+  if (previousSession) await maps.cancelOverviewThumbnails(previousSession).catch(() => undefined)
+  const sessionId = createThumbnailSessionId()
+  const generation = loadGeneration
+  thumbnailRetrySessions.set(mapId, sessionId)
+  retryingThumbnailIds.value = new Set([...retryingThumbnailIds.value, mapId])
+  try {
+    const image = await requestThumbnailImage(node, project, sessionId)
+    if (
+      thumbnailRetrySessions.get(mapId) !== sessionId
+      || generation !== loadGeneration
+      || !surfaceActive
+      || currentProject.value !== project
+    ) return
+    thumbnailImages.set(mapId, image)
+    const failures = new Map(thumbnailFailures.value)
+    failures.delete(mapId)
+    thumbnailFailures.value = failures
+    await graph?.setThumbnailState(mapId, image.src, null)
+    ElMessage.success(t('mapOverview.thumbnailRetrySucceeded', {
+      mapId: String(mapId).padStart(3, '0'),
+    }))
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') return
+    if (
+      thumbnailRetrySessions.get(mapId) !== sessionId
+      || generation !== loadGeneration
+      || !surfaceActive
+      || currentProject.value !== project
+    ) return
+    const reason = formatThumbnailFailure(error)
+    const failures = new Map(thumbnailFailures.value)
+    failures.set(mapId, reason)
+    thumbnailFailures.value = failures
+    await graph?.setThumbnailState(mapId, null, reason)
+  } finally {
+    if (thumbnailRetrySessions.get(mapId) === sessionId) {
+      thumbnailRetrySessions.delete(mapId)
+      const retrying = new Set(retryingThumbnailIds.value)
+      retrying.delete(mapId)
+      retryingThumbnailIds.value = retrying
+    }
+  }
 }
 
 function mapLabel(mapId: number): string {
@@ -1022,6 +1105,10 @@ function retryPreparation(): void {
 async function exportOverviewPng(): Promise<void> {
   if (!graph || !snapshot.value || !currentProject.value) return
   if (mapOverviewExportStore.running) return
+  if (thumbnailFailures.value.size) {
+    ElMessage.error(t('mapOverview.export.thumbnailFailures', { count: thumbnailFailures.value.size }))
+    return
+  }
   const positions = graph.getPositions()
   const missing = snapshot.value.nodes.find(node => !positions[String(node.id)])
   if (missing) {
@@ -1237,7 +1324,11 @@ async function revealOverviewExport(): Promise<void> {
           </template>
           <template v-else-if="preparationPhase === 'layout'">
             <strong>{{ t('mapOverview.preparing.arranging') }}</strong>
-            <span>{{ t('mapOverview.preparing.imagesReady') }}</span>
+            <span>
+              {{ failedThumbnailCount
+                ? t('mapOverview.preparing.imagesAttemptedWithFailures', { count: failedThumbnailCount })
+                : t('mapOverview.preparing.imagesReady') }}
+            </span>
           </template>
           <template v-else>
             <strong>{{ t('mapOverview.preparing.images') }}</strong>
@@ -1309,17 +1400,48 @@ async function revealOverviewExport(): Promise<void> {
               <strong>{{ t('mapOverview.inspector.issues') }}</strong>
               <p v-for="issue in selectedNode.issues" :key="`${issue.code}-${issue.targetMapId || ''}-${issue.eventId || ''}-${issue.commandIndex || ''}`">{{ issue.message }}</p>
             </div>
+            <div v-if="selectedThumbnailFailure" class="thumbnail-issue" role="alert">
+              <strong>{{ t('mapOverview.thumbnailFailed') }}</strong>
+              <p>{{ selectedThumbnailFailure }}</p>
+              <button
+                type="button"
+                :disabled="retryingThumbnailIds.has(selectedNode.id)"
+                data-ui-id="map-overview-thumbnail-retry"
+                @click="retryMapThumbnail(selectedNode.id)"
+              >
+                {{ retryingThumbnailIds.has(selectedNode.id)
+                  ? t('mapOverview.thumbnailRetrying')
+                  : t('mapOverview.thumbnailRetry') }}
+              </button>
+            </div>
             <div class="relation-list">
               <strong>{{ t('mapOverview.inspector.outgoing') }}</strong>
               <button v-for="edge in selectedNodeEdges.outgoing" :key="edge.id" type="button" @click="selectEdge(edge.id)">
-                {{ mapLabel(edge.targetMapId) }} <span>×{{ edge.count }}</span>
+                <span class="relation-route">
+                  <small>{{ mapLabel(edge.sourceMapId) }} ({{ edge.sourceX }}, {{ edge.sourceY }})</small>
+                  <span>→ {{ mapLabel(edge.targetMapId) }} ({{ edge.targetX }}, {{ edge.targetY }})</span>
+                </span>
+                <span>×{{ edge.count }}</span>
               </button>
               <strong>{{ t('mapOverview.inspector.incoming') }}</strong>
               <button v-for="edge in selectedNodeEdges.incoming" :key="edge.id" type="button" @click="selectEdge(edge.id)">
-                {{ mapLabel(edge.sourceMapId) }} <span>×{{ edge.count }}</span>
+                <span class="relation-route">
+                  <small>{{ mapLabel(edge.sourceMapId) }} ({{ edge.sourceX }}, {{ edge.sourceY }})</small>
+                  <span>→ {{ mapLabel(edge.targetMapId) }} ({{ edge.targetX }}, {{ edge.targetY }})</span>
+                </span>
+                <span>×{{ edge.count }}</span>
               </button>
             </div>
-            <button type="button" class="inspector-primary" @click="openMap(selectedNode.id)">{{ t('mapOverview.openEditor') }}</button>
+            <button
+              type="button"
+              class="inspector-primary"
+              :disabled="!canOpenMap(selectedNode.id)"
+              :title="canOpenMap(selectedNode.id) ? t('mapOverview.openEditor') : t('mapOverview.openEditorUnavailable')"
+              @click="openMap(selectedNode.id)"
+            >{{ t('mapOverview.openEditor') }}</button>
+            <p v-if="!canOpenMap(selectedNode.id)" class="open-editor-reason">
+              {{ t('mapOverview.openEditorUnavailable') }}
+            </p>
           </template>
           <template v-else-if="selectedEdge">
             <header>
@@ -1346,7 +1468,12 @@ async function revealOverviewExport(): Promise<void> {
           class="overview-context-menu"
           :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         >
-          <button type="button" @click="openMap(contextMenu.mapId)">{{ t('mapOverview.openEditor') }}</button>
+          <button
+            type="button"
+            :disabled="!canOpenMap(contextMenu.mapId)"
+            :title="canOpenMap(contextMenu.mapId) ? t('mapOverview.openEditor') : t('mapOverview.openEditorUnavailable')"
+            @click="openMap(contextMenu.mapId)"
+          >{{ t('mapOverview.openEditor') }}</button>
         </div>
       </div>
     </template>
@@ -1421,17 +1548,25 @@ async function revealOverviewExport(): Promise<void> {
 .overview-inspector dl div { display:flex; justify-content:space-between; gap:12px; }
 .overview-inspector dt,.overview-inspector dd { margin:0; font-size:12px; }
 .overview-inspector dd { color:var(--app-ink); text-align:right; }
-.issue-list,.relation-list,.source-list { display:grid; gap:7px; margin-top:14px; }
-.issue-list>strong,.relation-list>strong { margin-top:5px; color:var(--app-ink); font-size:12px; }
-.issue-list p,.source-list span,.source-list code { margin:0; color:var(--app-ink-muted); font-size:12px; word-break:break-word; }
-.relation-list button,.source-list button,.inspector-primary,.overview-state button,.layout-error button,.overview-refresh-state button { min-height:32px; padding:0 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink); font:inherit; font-size:12px; text-align:left; cursor:pointer; }
-.relation-list button { display:flex; justify-content:space-between; gap:8px; }
-.inspector-primary { margin-top:16px; width:100%; text-align:center; background:var(--app-accent-soft); border-color:transparent; color:var(--app-accent-ink, var(--app-ink)); }
+.issue-list,.thumbnail-issue,.relation-list,.source-list { display:grid; gap:7px; margin-top:14px; }
+.issue-list>strong,.thumbnail-issue>strong,.relation-list>strong { margin-top:5px; color:var(--app-ink); font-size:12px; }
+.issue-list p,.thumbnail-issue p,.source-list span,.source-list code { margin:0; color:var(--app-ink-muted); font-size:12px; word-break:break-word; }
+.thumbnail-issue { padding:10px; border:1px dashed var(--app-danger); border-radius:8px; background:color-mix(in srgb,var(--app-danger) 6%,var(--app-bg)); }
+.relation-list button,.thumbnail-issue button,.source-list button,.inspector-primary,.overview-state button,.layout-error button,.overview-refresh-state button { min-height:32px; padding:0 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink); font:inherit; font-size:12px; text-align:left; cursor:pointer; }
+.relation-list button { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.relation-route { min-width:0; display:grid; gap:2px; }
+.relation-route small { overflow:hidden; color:var(--app-ink-muted); font-size:10.5px; text-overflow:ellipsis; white-space:nowrap; }
+.relation-route>span { word-break:break-word; }
+.inspector-primary { margin-top:16px; width:100%; text-align:center; background:var(--app-accent); border-color:var(--app-accent); color:#fff; font-weight:600; }
+.inspector-primary:hover:not(:disabled) { filter:brightness(.95); }
+.inspector-primary:focus-visible { outline:2px solid var(--app-accent); outline-offset:2px; }
+.inspector-primary:disabled,.thumbnail-issue button:disabled,.overview-context-menu button:disabled { opacity:.48; cursor:not-allowed; }
+.open-editor-reason { margin:6px 0 0; color:var(--app-ink-muted); font-size:11px; text-align:center; }
 .source-list article { display:grid; gap:5px; padding:10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); }
 .overview-state { min-height:0; flex:1; display:grid; place-content:center; gap:8px; padding:24px; text-align:center; color:var(--app-ink-muted); }
 .overview-state.error,.layout-error { color:var(--app-danger); }
 .layout-error { position:absolute; left:14px; top:14px; z-index:4; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg); }
 .overview-context-menu { position:fixed; z-index:20; min-width:160px; padding:4px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); box-shadow:var(--app-shadow-2); }
 .overview-context-menu button { width:100%; min-height:34px; border:0; border-radius:6px; background:transparent; color:var(--app-ink); font:inherit; text-align:left; padding:0 10px; cursor:pointer; }
-.overview-context-menu button:hover { background:var(--app-accent-soft); }
+.overview-context-menu button:hover:not(:disabled) { background:var(--app-accent-soft); }
 </style>

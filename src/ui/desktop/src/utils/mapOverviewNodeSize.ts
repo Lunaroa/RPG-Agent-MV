@@ -1,9 +1,9 @@
 import type { MapOverviewNode } from '@contract/types'
 
 export const MAP_OVERVIEW_TILE_PX = 12
-export const MAP_OVERVIEW_LABEL_HEIGHT = 36
+export const MAP_OVERVIEW_LABEL_HEIGHT = 30
 /** Bump once when node collision geometry changes; migrate positions per project. */
-export const MAP_OVERVIEW_LAYOUT_VERSION = 5
+export const MAP_OVERVIEW_LAYOUT_VERSION = 6
 
 export interface MapOverviewNodeSize {
   width: number

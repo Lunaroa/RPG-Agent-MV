@@ -1,7 +1,7 @@
 import type { MapOverviewEdge, MapOverviewNode } from './types.ts';
 
 export const MAP_OVERVIEW_SVG_TILE_PX = 12;
-export const MAP_OVERVIEW_SVG_LABEL_HEIGHT = 36;
+export const MAP_OVERVIEW_SVG_LABEL_HEIGHT = 30;
 export const MAP_OVERVIEW_EXPORT_PADDING = 48;
 
 export interface MapOverviewSvgPosition {
@@ -70,7 +70,7 @@ export function mapOverviewSvgNodeGeometry(
   const width = Math.round(mapWidth * MAP_OVERVIEW_SVG_TILE_PX);
   const imageHeight = Math.round(mapHeight * MAP_OVERVIEW_SVG_TILE_PX);
   const label = `${node.name} MAP${String(node.id).padStart(3, '0')}`;
-  const labelWidth = Math.min(width, Math.max(72, label.length * 7.2 + 12));
+  const labelWidth = Math.min(width, Math.max(72, label.length * 6.7 + 10));
   return {
     id: node.id,
     name: node.name,

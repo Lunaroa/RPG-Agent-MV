@@ -61,6 +61,9 @@ describe('plugin manager structure', () => {
     assert.match(deleteDialogSource, /removeConfigOnlyDescription/);
     assert.match(deleteDialogSource, /deleteFileAndConfigDescription/);
     assert.match(deleteDialogSource, /deleteStagingNotice/);
+    assert.equal((deleteDialogSource.match(/<el-button/g) || []).length, 3);
+    assert.match(deleteDialogSource, /<el-button type="danger" :disabled="busy" @click="\$emit\('deleteFile'\)">/);
+    assert.doesNotMatch(deleteDialogSource, /<button|button\.danger/);
     assert.match(paneSource, /class="primary-action"/);
     assert.match(paneSource, /class="danger-action"/);
   });
@@ -95,11 +98,32 @@ describe('plugin manager structure', () => {
   test('uses an original-style guarded parameter table and a typed value editor', () => {
     assert.match(dialogSource, /v-model="visible"/);
     assert.match(dialogSource, /:before-close="confirmClose"/);
+    assert.match(dialogSource, /:close-on-click-modal="!busy"/);
     assert.match(dialogSource, /unsavedParametersConfirm/);
     assert.match(dialogSource, /:disabled="busy \|\| !parametersDirty"/);
-    assert.match(dialogSource, /parameterBasicSettings/);
     assert.match(dialogSource, /parameterNameColumn/);
     assert.match(dialogSource, /parameterValueColumn/);
+    assert.match(dialogSource, /@dblclick="openParameterEditor\(row\.key\)"/);
+    assert.match(dialogSource, /@click\.stop="openParameterEditor\(row\.key\)"/);
+    assert.match(dialogSource, /function parameterRowKeydown[\s\S]+event\.target !== event\.currentTarget/);
+    assert.match(dialogSource, /class="parameter-row-edit"[\s\S]+@dblclick\.stop/);
+    assert.match(dialogSource, /<el-tag[\s\S]+class="parameter-key-tag"[\s\S]+\{\{ row\.key \}\}/);
+    assert.match(
+      dialogSource,
+      /\.parameter-key-tag \{[\s\S]+animation: none[\s\S]+transition: none/,
+    );
+    assert.match(dialogSource, /td:last-child \{[\s\S]+background: color-mix\([\s\S]+color: var\(--console-text/);
+    assert.match(
+      dialogSource,
+      /\.parameter-row-edit \{[\s\S]+visibility: hidden[\s\S]+color: #2f80ed[\s\S]+opacity: 0/,
+    );
+    assert.match(dialogSource, /tbody tr:hover \.parameter-row-edit,[\s\S]+tbody tr:focus-within \.parameter-row-edit/);
+    assert.match(dialogSource, /<el-button[\s\S]+link[\s\S]+class="parameter-row-edit"/);
+    assert.match(dialogSource, /<div v-if="selectedRow" class="parameter-detail" aria-live="polite">[\s\S]+selectedRow\.description/);
+    assert.doesNotMatch(dialogSource, /selectedRow\.readonlyReason|selectedRow\.fullValue/);
+    assert.doesNotMatch(dialogSource, /plugin-information|parameterBasicSettings|class="plugin-help"/);
+    assert.match(dialogSource, /<el-button :disabled="busy" @click="confirmClose\(\)">/);
+    assert.match(dialogSource, /<el-button[\s\S]+type="primary"[\s\S]+:loading="busy"[\s\S]+@click="save"/);
     assert.match(dialogSource, /<PluginParameterValueDialog/);
     assert.match(valueDialogSource, /<PluginParameterInput/);
     assert.doesNotMatch(dialogSource, /parameter-json|parametersJson|unknownParamsJson|<textarea/);

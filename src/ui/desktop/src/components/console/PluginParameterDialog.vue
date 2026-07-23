@@ -2,7 +2,6 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessageBox } from 'element-plus';
 import {
-  system,
   type EditorProjectCatalog,
   type ManagedPluginEntry,
   type PluginParameterSchemaField,
@@ -148,6 +147,11 @@ function selectParameter(key: string): void {
   selectedParameterKey.value = key;
 }
 
+function openParameterEditor(key: string): void {
+  selectedParameterKey.value = key;
+  openSelectedParameterEditor();
+}
+
 function openSelectedParameterEditor(): void {
   const row = selectedRow.value;
   if (props.busy || !row?.editable || !row.field) return;
@@ -165,6 +169,7 @@ function commitParameterValue(value: unknown): void {
 }
 
 function parameterRowKeydown(event: KeyboardEvent, index: number): void {
+  if (event.target !== event.currentTarget) return;
   if (event.key === 'Enter') {
     event.preventDefault();
     selectedParameterKey.value = parameterRows.value[index]?.key || selectedParameterKey.value;
@@ -188,12 +193,6 @@ function parameterRowKeydown(event: KeyboardEvent, index: number): void {
   });
 }
 
-async function openPluginUrl(): Promise<void> {
-  if (props.plugin?.header.urlHref) {
-    await system.openExternalUrl(props.plugin.header.urlHref);
-  }
-}
-
 async function focusInitialParameter(): Promise<void> {
   await nextTick();
   parameterTable.value?.querySelector<HTMLElement>('tbody tr')?.focus();
@@ -206,9 +205,9 @@ async function focusInitialParameter(): Promise<void> {
     class="plugin-parameter-dialog"
     data-ui-id="plugin-parameter-dialog"
     :title="t('plugins.parameterDialogTitle', { name: plugin?.name || '' })"
-    width="min(1120px, calc(100vw - 48px))"
+    width="min(860px, calc(100vw - 48px))"
     top="3vh"
-    :close-on-click-modal="false"
+    :close-on-click-modal="!busy"
     :close-on-press-escape="!busy"
     :show-close="!busy"
     :before-close="confirmClose"
@@ -216,44 +215,6 @@ async function focusInitialParameter(): Promise<void> {
     @closed="emit('closed')"
   >
     <div v-if="plugin" class="parameter-dialog-body">
-      <aside class="plugin-information">
-        <section class="basic-settings">
-          <h3>{{ t('plugins.parameterBasicSettings') }}</h3>
-          <dl>
-            <div>
-              <dt>{{ t('plugins.name') }}</dt>
-              <dd>{{ plugin.name }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('plugins.status') }}</dt>
-              <dd>{{ plugin.status ? t('plugins.statusEnabled') : t('plugins.statusDisabled') }}</dd>
-            </div>
-            <div>
-              <dt>{{ t('plugins.metadataAuthor') }}</dt>
-              <dd>{{ plugin.header.author || '—' }}</dd>
-            </div>
-          </dl>
-          <p class="plugin-description">
-            {{ plugin.header.plugindesc || plugin.description || t('plugins.noDescription') }}
-          </p>
-          <button
-            v-if="plugin.header.urlHref"
-            type="button"
-            class="plugin-url"
-            @click="openPluginUrl"
-          >
-            {{ plugin.header.url }}
-          </button>
-          <p v-else-if="plugin.header.url" class="plugin-url-text">{{ plugin.header.url }}</p>
-        </section>
-
-        <section class="plugin-help">
-          <h3>{{ t('plugins.helpTitle') }}</h3>
-          <pre v-if="plugin.header.help">{{ plugin.header.help }}</pre>
-          <div v-else class="help-empty">{{ t('plugins.noHelp') }}</div>
-        </section>
-      </aside>
-
       <section class="plugin-parameters">
         <h3>{{ t('plugins.parameters') }}</h3>
         <div v-if="parameterRows.length" ref="parameterTable" class="parameter-table-wrap">
@@ -273,50 +234,65 @@ async function focusInitialParameter(): Promise<void> {
                 tabindex="0"
                 :aria-selected="selectedRow?.key === row.key"
                 @click="selectParameter(row.key)"
-                @dblclick="selectParameter(row.key); openSelectedParameterEditor()"
+                @dblclick="openParameterEditor(row.key)"
                 @keydown="parameterRowKeydown($event, index)"
               >
                 <td>
-                  <span>{{ row.label }}</span>
+                  <div class="parameter-name-cell">
+                    <span>{{ row.label }}</span>
+                    <el-tag
+                      size="small"
+                      type="info"
+                      effect="plain"
+                      class="parameter-key-tag"
+                    >
+                      {{ row.key }}
+                    </el-tag>
+                  </div>
                   <small v-if="!row.editable">{{ t('plugins.parameterReadonly') }}</small>
                 </td>
-                <td :title="row.fullValue">{{ row.summary }}</td>
+                <td :title="row.fullValue">
+                  <div class="parameter-value-cell">
+                    <span>{{ row.summary }}</span>
+                    <el-button
+                      v-if="row.editable"
+                      link
+                      type="primary"
+                      size="small"
+                      :disabled="busy"
+                      class="parameter-row-edit"
+                      @click.stop="openParameterEditor(row.key)"
+                      @dblclick.stop
+                    >
+                      {{ t('plugins.editParameter') }}
+                    </el-button>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
         <div v-else class="parameter-empty">{{ t('plugins.noParameters') }}</div>
 
-        <div v-if="selectedRow" class="parameter-detail">
+        <div v-if="selectedRow" class="parameter-detail" aria-live="polite">
           <p v-if="selectedRow.description">{{ selectedRow.description }}</p>
-          <p v-if="!selectedRow.editable" class="readonly-message">
-            {{ selectedRow.readonlyReason }}
-          </p>
-          <pre v-if="!selectedRow.editable && selectedRow.fullValue">{{ selectedRow.fullValue }}</pre>
-          <button
-            type="button"
-            :disabled="busy || !selectedRow.editable"
-            @click="openSelectedParameterEditor"
-          >
-            {{ t('plugins.editParameter') }}
-          </button>
         </div>
         <p v-if="errorMessage" class="parameter-error" role="alert">{{ errorMessage }}</p>
       </section>
     </div>
 
     <template #footer>
-      <button type="button" :disabled="busy" @click="confirmClose()">
+      <el-button :disabled="busy" @click="confirmClose()">
         {{ t('editor.mapProperties.cancel') }}
-      </button>
-      <button
-        type="button"
-        class="primary"
+      </el-button>
+      <el-button
+        type="primary"
+        :loading="busy"
         :disabled="busy || !parametersDirty"
         @click="save"
       >
         {{ busy ? t('plugins.savingParams') : t('plugins.saveParams') }}
-      </button>
+      </el-button>
     </template>
   </el-dialog>
 
@@ -354,23 +330,9 @@ async function focusInitialParameter(): Promise<void> {
 .parameter-dialog-body {
   min-height: 0;
   width: 100%;
-  display: grid;
-  grid-template-columns: minmax(280px, 0.82fr) minmax(420px, 1.35fr);
-  gap: 12px;
 }
-.plugin-information,
-.plugin-parameters,
-.plugin-help {
-  min-height: 0;
-}
-.plugin-information {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
-}
-.basic-settings,
-.plugin-help,
 .plugin-parameters {
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--console-border, #e4dcce);
   border-radius: 10px;
@@ -383,83 +345,6 @@ h3 {
   color: var(--console-text-soft, #5a5247);
   font-size: 12px;
   font-weight: 700;
-}
-.basic-settings dl {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(100px, .7fr);
-  gap: 8px;
-  margin: 0;
-  padding: 10px 12px 0;
-}
-.basic-settings dl > div {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-.basic-settings dl > div:last-child {
-  grid-column: 1 / -1;
-}
-.basic-settings dt {
-  color: var(--console-text-muted, #756b5e);
-  font-size: 10px;
-}
-.basic-settings dd {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--console-text, #211d17);
-  font-size: 12px;
-}
-.plugin-description,
-.plugin-url-text {
-  margin: 10px 12px 0;
-  padding: 8px 10px;
-  border: 1px solid var(--console-border, #e4dcce);
-  border-radius: 7px;
-  color: var(--console-text-soft, #5a5247);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-.plugin-url,
-.plugin-url-text {
-  margin-bottom: 10px;
-}
-.plugin-url {
-  max-width: calc(100% - 24px);
-  margin: 10px 12px;
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  background: transparent;
-  color: var(--console-accent, #be5630);
-  font-size: 11px;
-  text-align: left;
-  text-decoration: underline;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.plugin-help {
-  display: flex;
-  flex-direction: column;
-}
-.plugin-help pre,
-.help-empty {
-  min-height: 0;
-  margin: 0;
-  padding: 12px;
-  overflow: auto;
-  color: var(--console-text-soft, #5a5247);
-  font: 11px/1.6 var(--app-font);
-  user-select: text;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.plugin-help pre {
-  flex: 1;
-}
-.help-empty {
-  color: var(--console-text-muted, #756b5e);
 }
 .plugin-parameters {
   display: flex;
@@ -490,6 +375,22 @@ td:first-child {
   width: 42%;
   border-right: 1px solid var(--console-border, #e4dcce);
 }
+th:last-child {
+  background: color-mix(
+    in srgb,
+    var(--console-paper-soft, #faf5ec) 76%,
+    var(--console-border, #e4dcce)
+  );
+}
+td:last-child {
+  background: color-mix(
+    in srgb,
+    var(--console-paper-soft, #faf5ec) 58%,
+    var(--console-paper, #fffdfa)
+  );
+  color: var(--console-text, #211d17);
+  font-weight: 520;
+}
 th {
   position: sticky;
   z-index: 1;
@@ -505,6 +406,14 @@ tbody tr:hover,
 tbody tr.selected {
   background: var(--console-accent-soft, #f8e9df);
 }
+tbody tr:hover td:last-child,
+tbody tr.selected td:last-child {
+  background: color-mix(
+    in srgb,
+    var(--console-accent-soft, #f8e9df) 72%,
+    var(--console-paper-soft, #faf5ec)
+  );
+}
 tbody tr.readonly {
   color: var(--console-text-muted, #756b5e);
 }
@@ -512,6 +421,61 @@ tbody tr:focus-visible {
   position: relative;
   outline: 2px solid var(--console-accent, #be5630);
   outline-offset: -2px;
+}
+.parameter-name-cell {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.parameter-name-cell > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.parameter-key-tag {
+  min-width: 0;
+  max-width: 48%;
+  flex: 0 1 auto;
+  animation: none;
+  transition: none;
+}
+.parameter-key-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.parameter-value-cell {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.parameter-value-cell > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.parameter-row-edit {
+  flex: 0 0 auto;
+  visibility: hidden;
+  color: #2f80ed;
+  font-weight: 700;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.parameter-row-edit:hover,
+.parameter-row-edit:focus-visible {
+  color: #1769d2;
+}
+tbody tr:hover .parameter-row-edit,
+tbody tr:focus-within .parameter-row-edit {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 td small {
   display: block;
@@ -529,34 +493,17 @@ td small {
 }
 .parameter-detail {
   flex: 0 0 auto;
-  display: grid;
-  gap: 6px;
+  min-height: 64px;
   padding: 10px;
   border-top: 1px solid var(--console-border, #e4dcce);
   background: var(--console-paper-soft, #faf5ec);
 }
-.parameter-detail p,
-.parameter-detail pre {
+.parameter-detail p {
   margin: 0;
   color: var(--console-text-soft, #5a5247);
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
-}
-.parameter-detail .readonly-message {
-  color: var(--app-warn);
-}
-.parameter-detail pre {
-  max-height: 84px;
-  padding: 7px;
-  overflow: auto;
-  border: 1px solid var(--console-border, #e4dcce);
-  border-radius: 6px;
-  background: var(--console-paper, #fffdfa);
-  user-select: text;
-}
-.parameter-detail button {
-  justify-self: end;
 }
 .parameter-error {
   margin: 0;
@@ -565,24 +512,9 @@ td small {
   color: var(--app-danger);
   font-size: 11px;
 }
-button.primary {
-  border-color: var(--console-accent, #be5630);
-  background: var(--console-accent, #be5630);
-  color: #fff;
-}
-button:focus-visible {
-  outline: 2px solid var(--console-accent, #be5630);
-  outline-offset: 2px;
-}
 @media (max-width: 820px) {
   :global(.plugin-parameter-dialog .el-dialog__body) {
     overflow: auto;
-  }
-  .parameter-dialog-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .plugin-information {
-    grid-template-rows: auto minmax(220px, 36vh);
   }
   .plugin-parameters {
     min-height: 420px;

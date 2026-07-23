@@ -796,6 +796,8 @@ const zhCN = {
     'editor.left.resizeEvents': '调整事件列表高度',
     'editor.left.resizeDock': '调整左侧工作区宽度',
     'editor.left.mapTree': '地图树',
+    'editor.left.searchMaps': '搜索地图名称或编号',
+    'editor.left.noMapMatches': '没有匹配的地图。',
     'editor.left.events': '事件列表',
     'editor.left.searchEvents': '搜索当前地图事件',
     'editor.left.searchScopeCurrent': '当前地图',

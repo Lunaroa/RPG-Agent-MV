@@ -59,7 +59,14 @@
       <button type="button" class="tool-button" data-ui-id="editor-redo" :disabled="busy || !redoLen" :title="t('editor.toolbar.redo')" @click="$emit('redo')"><RefreshRight /></button>
     </template>
     <div v-if="stagingDirty" class="staging-actions">
-      <button type="button" class="workbench-button primary" data-ui-id="editor-staging-apply" :disabled="busy" @click="$emit('apply')">{{ t('editor.toolbar.applyStaging') }}</button>
+      <button
+        type="button"
+        class="workbench-button primary"
+        data-ui-id="editor-staging-apply"
+        :disabled="busy || stagingConflicted"
+        :title="stagingConflicted ? t('editor.staging.conflictApplyDisabled') : t('editor.toolbar.applyStaging')"
+        @click="$emit('apply')"
+      >{{ t('editor.toolbar.applyStaging') }}</button>
       <button type="button" class="workbench-button" data-ui-id="editor-staging-discard" :disabled="busy" @click="$emit('discard')">{{ t('editor.toolbar.discard') }}</button>
     </div>
   </header>
@@ -71,7 +78,7 @@ import { Brush, Crop, Delete, EditPen, Grid, Location, MagicStick, RefreshLeft, 
 import type { EditorMode, MapLayerSelection, MapPaintMode, MapTool } from './editorTypes';
 import EllipseToolIcon from './EllipseToolIcon.vue';
 import { useI18n } from '../../i18n';
-defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean;previewRefreshEnabled:boolean;previewExecutionEnabled:boolean;previewExecutionAvailable:boolean}>();
+defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean;stagingConflicted:boolean;previewRefreshEnabled:boolean;previewExecutionEnabled:boolean;previewExecutionAvailable:boolean}>();
 defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'update:preview-execution':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[];'refresh-preview':[]}>();
 const { t } = useI18n();
 const tools = computed<{ id: MapTool; label: string; icon: Component }[]>(() => [

@@ -6,7 +6,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { IsolatedMapPreviewPreparation } from './isolated-project-preparation.ts';
-import type { MapPreviewLoadProgress } from '../../../../contract/types.ts';
+import type {
+  MapPreviewLoadProgress,
+  MapPreviewPreflightFailure,
+} from '../../../../contract/types.ts';
 import type {
   MapPreviewPreparationWorkerRequest,
   MapPreviewPreparationWorkerMessage,
@@ -19,11 +22,18 @@ export class MapPreviewPreparationCancelledError extends Error {}
 export class MapPreviewPreparationFailedError extends Error {
   readonly stage: string;
   readonly runtimeOutput?: string;
+  readonly preflightFailure?: MapPreviewPreflightFailure;
 
-  constructor(stage: string, message: string, runtimeOutput?: string) {
+  constructor(
+    stage: string,
+    message: string,
+    runtimeOutput?: string,
+    preflightFailure?: MapPreviewPreflightFailure,
+  ) {
     super(message);
     this.stage = stage;
     this.runtimeOutput = runtimeOutput;
+    this.preflightFailure = preflightFailure;
   }
 }
 
@@ -122,7 +132,12 @@ export function startMapPreviewPreparation(
     try {
       const response = JSON.parse(fs.readFileSync(responsePath, 'utf8')) as MapPreviewPreparationWorkerResponse;
       if (response.ok === false) {
-        finish(new MapPreviewPreparationFailedError(response.stage, response.error, runtimeOutput));
+        finish(new MapPreviewPreparationFailedError(
+          response.stage,
+          response.error,
+          runtimeOutput,
+          response.preflightFailure,
+        ));
         return;
       }
       if (path.resolve(response.preparation.temporaryProject) !== path.resolve(temporaryProject)) {
@@ -182,7 +197,12 @@ function appendCleanupError(error: Error | undefined, cleanupError: Error): Erro
   const message = [error?.message, cleanupError.message].filter(Boolean).join(' ');
   if (error instanceof MapPreviewPreparationCancelledError) return new MapPreviewPreparationCancelledError(message);
   if (error instanceof MapPreviewPreparationFailedError) {
-    return new MapPreviewPreparationFailedError(error.stage, message, error.runtimeOutput);
+    return new MapPreviewPreparationFailedError(
+      error.stage,
+      message,
+      error.runtimeOutput,
+      error.preflightFailure,
+    );
   }
   return new Error(message);
 }
@@ -191,7 +211,12 @@ function attachRuntimeOutput(error: Error, runtimeOutput: string): Error {
   const output = runtimeOutput.trim();
   if (!output || error instanceof MapPreviewPreparationCancelledError) return error;
   if (error instanceof MapPreviewPreparationFailedError) {
-    return new MapPreviewPreparationFailedError(error.stage, error.message, error.runtimeOutput || output);
+    return new MapPreviewPreparationFailedError(
+      error.stage,
+      error.message,
+      error.runtimeOutput || output,
+      error.preflightFailure,
+    );
   }
   return new MapPreviewPreparationFailedError('preparation-worker', error.message, output);
 }

@@ -1,6 +1,7 @@
 import type {
   MapPreviewFailureCode,
   MapPreviewFailureDetail,
+  MapPreviewPreflightFailure,
   MapPreviewSession,
   RpgMakerEngine,
 } from '@contract/types';
@@ -25,6 +26,40 @@ export function mapPreviewDiagnosticFromSession(session: MapPreviewSession): Map
       targetMapId: session.mapId,
       message: sanitizeClientPreviewError(session.error || 'Map preview failed.'),
     },
+  };
+}
+
+export function mapPreviewDiagnosticFromPreflightFailure(input: {
+  failure: MapPreviewPreflightFailure;
+  engine: RpgMakerEngine;
+  mapId: number;
+  operationId?: number;
+}): MapPreviewDiagnostic {
+  return {
+    failureCode: 'staging-conflict',
+    engine: input.engine,
+    mapId: input.mapId,
+    ...(input.operationId ? { operationId: input.operationId } : {}),
+    detail: {
+      stage: input.failure.stage,
+      ...(input.operationId ? { operationId: input.operationId } : {}),
+      targetMapId: input.mapId,
+      message: `Staging preflight found ${input.failure.conflictCount} conflicted file(s).`,
+      stagingConflicts: input.failure.conflicts,
+    },
+  };
+}
+
+export function mapPreviewPreflightFailureFromSession(
+  session: MapPreviewSession,
+): MapPreviewPreflightFailure | undefined {
+  const conflicts = session.failureDetail?.stagingConflicts;
+  if (session.failureCode !== 'staging-conflict' || !conflicts?.length) return undefined;
+  return {
+    code: 'staging-conflict',
+    stage: 'staging-preflight',
+    conflictCount: conflicts.length,
+    conflicts,
   };
 }
 
@@ -75,6 +110,10 @@ export function sanitizeClientPreviewError(message: string, project?: string): s
 export function serializeMapPreviewDiagnostic(diagnostic: MapPreviewDiagnostic): string {
   const value = structuredClone(diagnostic) as MapPreviewDiagnostic;
   let serialized = JSON.stringify(value, null, 2);
+  while (serialized.length > 30_000 && value.detail.stagingConflicts?.length) {
+    value.detail.stagingConflicts.pop();
+    serialized = JSON.stringify(value, null, 2);
+  }
   while (serialized.length > 30_000 && value.detail.resources?.length) {
     value.detail.resources.pop();
     serialized = JSON.stringify(value, null, 2);

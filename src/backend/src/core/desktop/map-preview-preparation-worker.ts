@@ -1,10 +1,17 @@
 import fs from 'node:fs';
 
-import type { MapPreviewLoadProgress } from '../../../../contract/types.ts';
+import type {
+  MapPreviewLoadProgress,
+  MapPreviewPreflightFailure,
+} from '../../../../contract/types.ts';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
 import { prepareIsolatedMapPreviewProject } from './isolated-project-preparation.ts';
+import {
+  inspectMapPreviewStagingConflict,
+  mapPreviewStagingConflictFromError,
+} from './map-preview-staging-conflict.ts';
 
 export interface MapPreviewPreparationWorkerRequest {
   taskId: string;
@@ -14,8 +21,13 @@ export interface MapPreviewPreparationWorkerRequest {
 }
 
 export type MapPreviewPreparationWorkerResponse =
-  | { ok: true; preparation: ReturnType<typeof prepareIsolatedMapPreviewProject> }
-  | { ok: false; stage: string; error: string };
+  | { ok: true; preparation: Awaited<ReturnType<typeof prepareIsolatedMapPreviewProject>> }
+  | {
+    ok: false;
+    stage: string;
+    error: string;
+    preflightFailure?: MapPreviewPreflightFailure;
+  };
 
 export type MapPreviewPreparationWorkerMessage =
   | { type: 'progress'; progress: MapPreviewLoadProgress };
@@ -30,11 +42,24 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function writeFailure(responsePath: string, error: unknown): void {
+function writeFailure(
+  responsePath: string,
+  error: unknown,
+  request?: MapPreviewPreparationWorkerRequest,
+): void {
+  let preflightFailure = mapPreviewStagingConflictFromError(error);
+  if (!preflightFailure && request) {
+    try {
+      preflightFailure = inspectMapPreviewStagingConflict(request.workflowRoot, request.project);
+    } catch {
+      // Preserve the original preparation failure when staging cannot be inspected.
+    }
+  }
   writeJsonAtomic(responsePath, {
     ok: false,
     stage: currentStage,
     error: errorMessage(error),
+    ...(preflightFailure ? { preflightFailure } : {}),
   } satisfies MapPreviewPreparationWorkerResponse);
 }
 
@@ -51,7 +76,7 @@ async function main(): Promise<void> {
       skipWorkspaceLegacyCleanup: true,
       skipRuntimeLegacyCleanup: true,
     });
-    const preparation = prepareIsolatedMapPreviewProject(
+    const preparation = await prepareIsolatedMapPreviewProject(
       request.workflowRoot,
       request.project,
       request.temporaryProject,
@@ -63,7 +88,7 @@ async function main(): Promise<void> {
     currentStage = 'write-worker-response';
     writeJsonAtomic(responsePath, { ok: true, preparation } satisfies MapPreviewPreparationWorkerResponse);
   } catch (error) {
-    writeFailure(responsePath, error);
+    writeFailure(responsePath, error, request);
     process.exitCode = 1;
   } finally {
     closeDatabase();

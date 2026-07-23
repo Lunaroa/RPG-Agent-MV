@@ -44,7 +44,18 @@ test('routes validated map preview commands to the isolated runtime service', as
     handle(channel: string, listener: (...args: any[]) => unknown) { handlers.set(channel, listener); },
     removeHandler(channel: string) { removed.push(channel); },
   };
-  const result = { session: { sessionId: 'preview-session', status: 'running' } } as any;
+  const result = {
+    session: { sessionId: 'preview-session', status: 'running' },
+    preflightFailure: {
+      code: 'staging-conflict',
+      stage: 'staging-preflight',
+      conflictCount: 1,
+      conflicts: [{
+        relativePath: 'data/Map001.json',
+        reasons: ['SOURCE_HASH_CHANGED'],
+      }],
+    },
+  } as any;
   registerMapPreviewIpcHandlers(ipc, {
     async start(project, mapId, overrides) { calls.push(['start', project, mapId, overrides]); return result; },
     current() { return result; },
@@ -69,7 +80,8 @@ test('routes validated map preview commands to the isolated runtime service', as
     resolveProject: (project) => `resolved/${project}`,
   });
 
-  await handlers.get('mapPreview:start')?.({}, { mapId: 2, overrides: { switches: { '7': true }, variables: { '8': 'text' }, selfSwitches: { '2,3,A': true } } });
+  const startResult = await handlers.get('mapPreview:start')?.({}, { mapId: 2, overrides: { switches: { '7': true }, variables: { '8': 'text' }, selfSwitches: { '2,3,A': true } } });
+  assert.deepEqual((startResult as typeof result).preflightFailure, result.preflightFailure);
   await handlers.get('mapPreview:suspend')?.({});
   await handlers.get('mapPreview:resume')?.({}, { mapId: 2, mapRevision: 'a'.repeat(64), forceReload: true, overrides: { switches: { '7': true }, variables: {}, selfSwitches: {} } });
   handlers.get('mapPreview:selectMap')?.({}, { mapId: 3, overrides: { switches: {}, variables: {}, selfSwitches: {} } });

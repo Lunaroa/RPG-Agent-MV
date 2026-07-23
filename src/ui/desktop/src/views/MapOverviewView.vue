@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Aim, Download, Refresh, Search } from '@element-plus/icons-vue'
+import { Aim, Download, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { useRouter } from 'vue-router'
 import type {
   MapOverviewLayoutId,
+  MapOverviewLayoutParameters,
   MapOverviewNode,
   MapOverviewScanProgressPhase,
   MapOverviewSnapshot,
@@ -21,10 +22,11 @@ import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 import { formatMapOverviewExportError } from '../utils/mapOverviewExportError'
 import { findMapOverviewMatches } from '../utils/mapOverviewSearch'
 import { MapOverviewMoveHistory, type MapOverviewNodePosition } from '../utils/mapOverviewMoveHistory'
-import { MAP_OVERVIEW_LAYOUT_VERSION } from '../utils/mapOverviewNodeSize'
+import { MAP_OVERVIEW_LAYOUT_VERSION, mapOverviewNodeSize } from '../utils/mapOverviewNodeSize'
 import {
   isMapOverviewThumbnailVersionChanged,
   mapOverviewPreparationPercent,
+  validateMapOverviewLayoutNoOverlap,
   validateMapOverviewLayoutPositions,
 } from '../utils/mapOverviewPreparation'
 import {
@@ -32,6 +34,12 @@ import {
   MAP_OVERVIEW_LAYOUTS,
   MAP_OVERVIEW_LAYOUT_CONFIRM_I18N,
 } from '../utils/mapOverviewLayouts'
+import {
+  defaultMapOverviewLayoutParameters,
+  MapOverviewLayoutParameterError,
+  type MapOverviewLayoutParameterField,
+  parseMapOverviewLayoutParameters,
+} from '../utils/mapOverviewLayoutParameters'
 import {
   executeMapOverviewLayout,
   type MapOverviewLayoutRunHandle,
@@ -83,6 +91,9 @@ const overviewProgressTotal = ref(0)
 const preparationPhase = ref<'images' | 'layout' | 'ready' | 'error'>('images')
 const layoutRunning = ref(false)
 const hasPresentedGraph = ref(false)
+const layoutParametersOpen = ref(false)
+const layoutParameterDraft = ref<Record<string, unknown>>({})
+const layoutParameterErrors = ref<Partial<Record<MapOverviewLayoutParameterField, string>>>({})
 
 let graph: MapOverviewSvgCanvasApi | null = null
 let graphBoundContainer: HTMLElement | null = null
@@ -98,6 +109,7 @@ let surfaceActive = false
 let surfaceVersion = ''
 let savedViewport: { zoom: number; pan: [number, number] } | null = null
 let activeLayoutHandle: MapOverviewLayoutRunHandle | null = null
+let failedLayoutParameters: MapOverviewLayoutParameters | null = null
 const grabbedPositions = new Map<string, MapOverviewNodePosition>()
 const moveHistory = new MapOverviewMoveHistory(100)
 const thumbnailImages = new Map<number, HTMLImageElement>()
@@ -319,6 +331,11 @@ async function loadOverview(startVersion?: string): Promise<void> {
         persistGraphPositions()
         workspaceStore.patchMapOverviewLayout(project, preparedPositions.layoutId)
         workspaceStore.patchMapOverviewLayoutVersion(project, MAP_OVERVIEW_LAYOUT_VERSION)
+        workspaceStore.patchMapOverviewLayoutParameters(
+          project,
+          preparedPositions.layoutId,
+          workspaceStore.readMapOverviewLayoutParameters(project, preparedPositions.layoutId),
+        )
       }
       await restoreInitialViewport()
       await maps.finalizeOverviewThumbnails(project)
@@ -558,6 +575,7 @@ async function runLayout(
   layoutId: MapOverviewLayoutId,
   seedPositions: MapOverviewLayoutPositions = {},
   restoreViewport = false,
+  inputParameters?: MapOverviewLayoutParameters,
 ): Promise<void> {
   if (!graph || graph.destroyed) return
   cancelActiveLayout(false)
@@ -566,6 +584,11 @@ async function runLayout(
   layoutRunning.value = true
   layoutError.value = ''
   failedLayoutId.value = null
+  failedLayoutParameters = null
+  const parameters = parseMapOverviewLayoutParameters(
+    layoutId,
+    inputParameters ?? workspaceStore.readMapOverviewLayoutParameters(currentProject.value, layoutId),
+  )
   startLayoutClock()
   try {
     const positions = await executeMapOverviewLayout(next, layoutId, {
@@ -575,6 +598,7 @@ async function runLayout(
       height: graphHost.value?.clientHeight,
       isCancelled: () => requestId !== layoutRequestId,
       onHandle: (handle) => { activeLayoutHandle = handle },
+      parameters,
     })
     if (requestId !== layoutRequestId) return
     validateLayoutPositions(next, positions)
@@ -583,6 +607,7 @@ async function runLayout(
     persistGraphPositions()
     workspaceStore.patchMapOverviewLayout(currentProject.value, layoutId)
     workspaceStore.patchMapOverviewLayoutVersion(currentProject.value, MAP_OVERVIEW_LAYOUT_VERSION)
+    workspaceStore.patchMapOverviewLayoutParameters(currentProject.value, layoutId, parameters)
     appliedLayoutId.value = layoutId
     selectedLayoutId.value = layoutId
     moveHistory.clear()
@@ -591,6 +616,7 @@ async function runLayout(
   } catch (error) {
     if (requestId !== layoutRequestId) return
     failedLayoutId.value = layoutId
+    failedLayoutParameters = parameters
     selectedLayoutId.value = appliedLayoutId.value
     layoutError.value = formatLayoutError(error)
     throw error
@@ -607,6 +633,17 @@ function validateLayoutPositions(next: MapOverviewSnapshot, positions: MapOvervi
   validateMapOverviewLayoutPositions(
     next.nodes.map((node) => String(node.id)),
     Object.entries(positions).map(([id, position]) => ({ id, x: position.x, y: position.y })),
+  )
+  validateMapOverviewLayoutNoOverlap(
+    next.nodes.map((node) => {
+      const size = mapOverviewNodeSize(node)
+      return {
+        id: String(node.id),
+        width: size.width,
+        height: size.collisionHeight,
+      }
+    }),
+    positions,
   )
 }
 
@@ -636,10 +673,19 @@ function rounded(position: { x: number; y: number }): { x: number; y: number } {
 }
 
 async function confirmLayoutChange(nextId: MapOverviewLayoutId): Promise<void> {
+  layoutParametersOpen.value = false
   if (layoutRunning.value) {
     cancelActiveLayout(false)
     selectedLayoutId.value = nextId
-    if (snapshot.value) await runLayoutSafe(snapshot.value, nextId, {}, !viewportReady)
+    if (snapshot.value) {
+      await runLayoutSafe(
+        snapshot.value,
+        nextId,
+        {},
+        !viewportReady,
+        workspaceStore.readMapOverviewLayoutParameters(currentProject.value, nextId),
+      )
+    }
     return
   }
   const previous = appliedLayoutId.value
@@ -689,9 +735,10 @@ async function runLayoutSafe(
   layoutId: MapOverviewLayoutId,
   seed: MapOverviewLayoutPositions,
   restoreViewport: boolean,
+  parameters?: MapOverviewLayoutParameters,
 ): Promise<boolean> {
   try {
-    await runLayout(next, layoutId, seed, restoreViewport)
+    await runLayout(next, layoutId, seed, restoreViewport, parameters)
     return !layoutError.value
   } catch {
     selectedLayoutId.value = appliedLayoutId.value
@@ -702,7 +749,13 @@ async function runLayoutSafe(
 function retryLayout(): void {
   if (!snapshot.value) return
   const layoutId = failedLayoutId.value || appliedLayoutId.value
-  void runLayout(snapshot.value, layoutId, {}, !viewportReady).catch(() => undefined)
+  void runLayout(
+    snapshot.value,
+    layoutId,
+    {},
+    !viewportReady,
+    failedLayoutParameters ?? workspaceStore.readMapOverviewLayoutParameters(currentProject.value, layoutId),
+  ).catch(() => undefined)
 }
 
 function stopLayout(): void {
@@ -1084,6 +1137,7 @@ function restoreStoredLayoutPreference(project: string): void {
   const layoutId = workspaceStore.readMapOverviewLayout(project)
   appliedLayoutId.value = layoutId
   selectedLayoutId.value = layoutId
+  loadLayoutParameterDraft(layoutId)
 }
 
 function layoutName(layoutId: MapOverviewLayoutId): string {
@@ -1096,6 +1150,72 @@ function layoutName(layoutId: MapOverviewLayoutId): string {
 function onLayoutSelect(event: Event): void {
   const value = (event.target as HTMLSelectElement).value as MapOverviewLayoutId
   void confirmLayoutChange(value)
+}
+
+function loadLayoutParameterDraft(layoutId: MapOverviewLayoutId): void {
+  if (!currentProject.value) {
+    layoutParameterDraft.value = { ...defaultMapOverviewLayoutParameters(layoutId) }
+  } else {
+    layoutParameterDraft.value = {
+      ...workspaceStore.readMapOverviewLayoutParameters(currentProject.value, layoutId),
+    }
+  }
+  layoutParameterErrors.value = {}
+}
+
+function toggleLayoutParameters(): void {
+  if (!layoutParametersOpen.value) loadLayoutParameterDraft(selectedLayoutId.value)
+  layoutParametersOpen.value = !layoutParametersOpen.value
+}
+
+async function applyLayoutParameterDraft(): Promise<void> {
+  if (!snapshot.value) return
+  try {
+    const parameters = parseMapOverviewLayoutParameters(selectedLayoutId.value, layoutParameterDraft.value)
+    layoutParameterErrors.value = {}
+    if (!layoutRunning.value) {
+      try {
+        await ElMessageBox.confirm(
+          t(MAP_OVERVIEW_LAYOUT_CONFIRM_I18N.body),
+          t('mapOverview.relayout.confirmTitle'),
+          {
+            confirmButtonText: t('mapOverview.layout.parameters.apply'),
+            cancelButtonText: t('common.cancel'),
+            type: 'warning',
+          },
+        )
+      } catch {
+        return
+      }
+    }
+    layoutParametersOpen.value = false
+    if (layoutRunning.value) cancelActiveLayout(false)
+    const ok = await runLayoutSafe(snapshot.value, selectedLayoutId.value, {}, false, parameters)
+    if (!ok) loadLayoutParameterDraft(selectedLayoutId.value)
+  } catch (error) {
+    if (!(error instanceof MapOverviewLayoutParameterError)) throw error
+    layoutParameterErrors.value = {
+      [error.field]: formatLayoutParameterError(error),
+    }
+  }
+}
+
+async function restoreDefaultLayoutParameters(): Promise<void> {
+  layoutParameterDraft.value = { ...defaultMapOverviewLayoutParameters(selectedLayoutId.value) }
+  layoutParameterErrors.value = {}
+  await applyLayoutParameterDraft()
+}
+
+function formatLayoutParameterError(error: MapOverviewLayoutParameterError): string {
+  if (error.code === 'range') {
+    return t('mapOverview.layout.parameters.range', {
+      min: String(error.min ?? ''),
+      max: String(error.max ?? ''),
+    })
+  }
+  if (error.code === 'integer') return t('mapOverview.layout.parameters.integer')
+  if (error.code === 'choice') return t('mapOverview.layout.parameters.choice')
+  return t('mapOverview.layout.parameters.number')
 }
 
 function retryPreparation(): void {
@@ -1200,19 +1320,156 @@ async function revealOverviewExport(): Promise<void> {
             </button>
           </div>
         </div>
-        <label class="layout-control">
-          <span>{{ t('mapOverview.layout.label') }}</span>
-          <select
-            :value="selectedLayoutId"
-            :aria-label="t('mapOverview.layout.label')"
-            data-ui-id="map-overview-layout"
-            @change="onLayoutSelect"
+        <div class="layout-settings">
+          <label class="layout-control">
+            <span>{{ t('mapOverview.layout.label') }}</span>
+            <select
+              :value="selectedLayoutId"
+              :aria-label="t('mapOverview.layout.label')"
+              data-ui-id="map-overview-layout"
+              @change="onLayoutSelect"
+            >
+              <option v-for="layout in MAP_OVERVIEW_LAYOUTS" :key="layout.id" :value="layout.id">
+                {{ t(layout.labelKey as Parameters<typeof t>[0]) }}
+              </option>
+            </select>
+          </label>
+          <button
+            type="button"
+            class="layout-parameters-trigger"
+            :aria-label="t('mapOverview.layout.parameters.action')"
+            :aria-expanded="layoutParametersOpen"
+            data-ui-id="map-overview-layout-parameters"
+            @click="toggleLayoutParameters"
+          ><Setting aria-hidden="true" /></button>
+          <div
+            v-if="layoutParametersOpen"
+            class="layout-parameters-popover"
+            role="dialog"
+            :aria-label="t('mapOverview.layout.parameters.title', { layout: layoutName(selectedLayoutId) })"
+            @click.stop
           >
-            <option v-for="layout in MAP_OVERVIEW_LAYOUTS" :key="layout.id" :value="layout.id">
-              {{ t(layout.labelKey as Parameters<typeof t>[0]) }}
-            </option>
-          </select>
-        </label>
+            <header>
+              <strong>{{ layoutName(selectedLayoutId) }}</strong>
+              <span>{{ t('mapOverview.layout.parameters.titleShort') }}</span>
+            </header>
+            <div class="layout-parameter-fields">
+              <template v-if="selectedLayoutId === 'layered-grid'">
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.horizontalSpacing') }}</span>
+                  <input v-model="layoutParameterDraft.horizontalSpacing" type="number" min="8" max="256">
+                  <small v-if="layoutParameterErrors.horizontalSpacing">{{ layoutParameterErrors.horizontalSpacing }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.layerSpacing') }}</span>
+                  <input v-model="layoutParameterDraft.layerSpacing" type="number" min="8" max="256">
+                  <small v-if="layoutParameterErrors.layerSpacing">{{ layoutParameterErrors.layerSpacing }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.groupSpacing') }}</span>
+                  <input v-model="layoutParameterDraft.groupSpacing" type="number" min="32" max="512">
+                  <small v-if="layoutParameterErrors.groupSpacing">{{ layoutParameterErrors.groupSpacing }}</small>
+                </label>
+              </template>
+              <template v-else-if="selectedLayoutId === 'force-atlas2'">
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.nodeSpacing') }}</span>
+                  <input v-model="layoutParameterDraft.nodeSpacing" type="number" min="8" max="256">
+                  <small v-if="layoutParameterErrors.nodeSpacing">{{ layoutParameterErrors.nodeSpacing }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.repulsion') }}</span>
+                  <input v-model="layoutParameterDraft.repulsion" type="number" min="0.1" max="100" step="0.1">
+                  <small v-if="layoutParameterErrors.repulsion">{{ layoutParameterErrors.repulsion }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.centerGravity') }}</span>
+                  <input v-model="layoutParameterDraft.centerGravity" type="number" min="0" max="20" step="0.1">
+                  <small v-if="layoutParameterErrors.centerGravity">{{ layoutParameterErrors.centerGravity }}</small>
+                </label>
+              </template>
+              <template v-else-if="selectedLayoutId === 'd3-force'">
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.nodeSpacing') }}</span>
+                  <input v-model="layoutParameterDraft.nodeSpacing" type="number" min="8" max="256">
+                  <small v-if="layoutParameterErrors.nodeSpacing">{{ layoutParameterErrors.nodeSpacing }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.linkDistance') }}</span>
+                  <input v-model="layoutParameterDraft.linkDistance" type="number" min="20" max="2000">
+                  <small v-if="layoutParameterErrors.linkDistance">{{ layoutParameterErrors.linkDistance }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.nodeRepulsion') }}</span>
+                  <input v-model="layoutParameterDraft.nodeRepulsion" type="number" min="1" max="500">
+                  <small v-if="layoutParameterErrors.nodeRepulsion">{{ layoutParameterErrors.nodeRepulsion }}</small>
+                </label>
+              </template>
+              <template v-else-if="selectedLayoutId === 'antv-dagre'">
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.direction') }}</span>
+                  <select v-model="layoutParameterDraft.direction">
+                    <option value="LR">{{ t('mapOverview.layout.parameters.directionLR') }}</option>
+                    <option value="RL">{{ t('mapOverview.layout.parameters.directionRL') }}</option>
+                    <option value="TB">{{ t('mapOverview.layout.parameters.directionTB') }}</option>
+                    <option value="BT">{{ t('mapOverview.layout.parameters.directionBT') }}</option>
+                  </select>
+                  <small v-if="layoutParameterErrors.direction">{{ layoutParameterErrors.direction }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.nodeSpacingAuto') }}</span>
+                  <input v-model="layoutParameterDraft.nodeSpacing" type="number" min="8" max="512" :placeholder="t('mapOverview.layout.parameters.auto')">
+                  <small v-if="layoutParameterErrors.nodeSpacing">{{ layoutParameterErrors.nodeSpacing }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.layerSpacingAuto') }}</span>
+                  <input v-model="layoutParameterDraft.layerSpacing" type="number" min="8" max="512" :placeholder="t('mapOverview.layout.parameters.auto')">
+                  <small v-if="layoutParameterErrors.layerSpacing">{{ layoutParameterErrors.layerSpacing }}</small>
+                </label>
+              </template>
+              <template v-else-if="selectedLayoutId === 'grid'">
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.columns') }}</span>
+                  <input v-model="layoutParameterDraft.columns" type="number" min="1" max="100" :placeholder="t('mapOverview.layout.parameters.auto')">
+                  <small v-if="layoutParameterErrors.columns">{{ layoutParameterErrors.columns }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.nodeSpacing') }}</span>
+                  <input v-model="layoutParameterDraft.nodeSpacing" type="number" min="8" max="256">
+                  <small v-if="layoutParameterErrors.nodeSpacing">{{ layoutParameterErrors.nodeSpacing }}</small>
+                </label>
+              </template>
+              <template v-else>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.radius') }}</span>
+                  <input v-model="layoutParameterDraft.radius" type="number" min="100" max="100000" :placeholder="t('mapOverview.layout.parameters.auto')">
+                  <small v-if="layoutParameterErrors.radius">{{ layoutParameterErrors.radius }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.direction') }}</span>
+                  <select v-model="layoutParameterDraft.clockwise">
+                    <option :value="true">{{ t('mapOverview.layout.parameters.clockwise') }}</option>
+                    <option :value="false">{{ t('mapOverview.layout.parameters.counterclockwise') }}</option>
+                  </select>
+                  <small v-if="layoutParameterErrors.clockwise">{{ layoutParameterErrors.clockwise }}</small>
+                </label>
+                <label>
+                  <span>{{ t('mapOverview.layout.parameters.startAngle') }}</span>
+                  <input v-model="layoutParameterDraft.startAngle" type="number" min="0" max="359">
+                  <small v-if="layoutParameterErrors.startAngle">{{ layoutParameterErrors.startAngle }}</small>
+                </label>
+              </template>
+            </div>
+            <footer>
+              <button type="button" class="secondary" @click="restoreDefaultLayoutParameters">
+                {{ t('mapOverview.layout.parameters.restore') }}
+              </button>
+              <button type="button" class="primary" data-ui-id="map-overview-layout-parameters-apply" @click="applyLayoutParameterDraft">
+                {{ t('mapOverview.layout.parameters.apply') }}
+              </button>
+            </footer>
+          </div>
+        </div>
         <button type="button" class="toolbar-action" :aria-label="t('mapOverview.fit')" @click="fitGraph">
           <Aim /><span>{{ t('mapOverview.fit') }}</span>
         </button>
@@ -1493,6 +1750,24 @@ async function revealOverviewExport(): Promise<void> {
 .layout-control { min-height:34px; display:inline-flex; align-items:center; gap:6px; padding:0 8px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink-muted); font-size:12px; }
 .layout-control select { border:0; outline:0; background:transparent; color:var(--app-ink); font:inherit; cursor:pointer; }
 .layout-control:focus-within { outline:2px solid var(--app-accent); outline-offset:2px; }
+.layout-settings { position:relative; display:inline-flex; align-items:center; gap:4px; }
+.layout-parameters-trigger { width:34px; height:34px; display:grid; place-items:center; padding:0; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink-soft); cursor:pointer; }
+.layout-parameters-trigger svg { width:15px; }
+.layout-parameters-trigger:hover { border-color:var(--app-border-strong); color:var(--app-ink); }
+.layout-parameters-trigger:focus-visible { outline:2px solid var(--app-accent); outline-offset:2px; }
+.layout-parameters-popover { position:absolute; z-index:12; top:40px; left:0; width:290px; display:grid; gap:12px; padding:12px; border:1px solid var(--app-border); border-radius:10px; background:var(--app-bg-elevated); box-shadow:var(--app-shadow-2); }
+.layout-parameters-popover header { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+.layout-parameters-popover header strong { color:var(--app-ink); font-size:13px; }
+.layout-parameters-popover header span { color:var(--app-ink-muted); font-size:11px; }
+.layout-parameter-fields { display:grid; gap:9px; }
+.layout-parameter-fields label { display:grid; grid-template-columns:minmax(0,1fr) 92px; align-items:center; gap:4px 10px; color:var(--app-ink-soft); font-size:12px; }
+.layout-parameter-fields input,.layout-parameter-fields select { width:100%; height:30px; min-width:0; box-sizing:border-box; padding:0 7px; border:1px solid var(--app-border); border-radius:6px; outline:0; background:var(--app-bg); color:var(--app-ink); font:inherit; font-variant-numeric:tabular-nums; }
+.layout-parameter-fields input:focus,.layout-parameter-fields select:focus { border-color:var(--app-accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--app-accent) 18%,transparent); }
+.layout-parameter-fields small { grid-column:1 / -1; color:var(--app-danger); font-size:10.5px; }
+.layout-parameters-popover footer { display:flex; justify-content:flex-end; gap:7px; padding-top:2px; }
+.layout-parameters-popover footer button { min-height:31px; padding:0 10px; border:1px solid var(--app-border); border-radius:7px; background:var(--app-bg); color:var(--app-ink); font:inherit; font-size:11.5px; cursor:pointer; }
+.layout-parameters-popover footer .primary { border-color:var(--app-accent); background:var(--app-accent); color:#fff; }
+.layout-parameters-popover footer button:focus-visible { outline:2px solid var(--app-accent); outline-offset:1px; }
 .toolbar-action { min-height:34px; display:inline-flex; align-items:center; gap:6px; padding:0 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink-soft); font:inherit; font-size:12px; cursor:pointer; }
 .toolbar-action svg { width:15px; }
 .toolbar-action:hover { color:var(--app-ink); border-color:var(--app-border-strong); }

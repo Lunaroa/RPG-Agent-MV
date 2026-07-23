@@ -58,7 +58,7 @@ let zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> | null = null
 let resizeObserver: ResizeObserver | null = null
 let destroyed = false
 let spacePressed = false
-let pointerInsideCanvas = false
+let pointerInsideCanvas: boolean = false
 let suppressClickUntil = 0
 let suppressClickMapId: number | null = null
 let panStartTransform: ZoomTransform | null = null
@@ -587,6 +587,10 @@ function clearSpacePanState(): void {
   root.value?.classList.remove('space-pan-ready')
 }
 
+function setPointerInsideCanvas(value: boolean): void {
+  pointerInsideCanvas = value
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement
     || target instanceof HTMLTextAreaElement
@@ -650,8 +654,8 @@ defineExpose<MapOverviewSvgCanvasApi>({
   <div
     ref="root"
     class="map-overview-svg-root"
-    @pointerenter="pointerInsideCanvas = true"
-    @pointerleave="pointerInsideCanvas = false"
+    @pointerenter="setPointerInsideCanvas(true)"
+    @pointerleave="setPointerInsideCanvas(false)"
   >
     <svg
       ref="svg"

@@ -7,8 +7,21 @@ import { describe, expect, it } from 'vitest'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const source = fs.readFileSync(path.join(here, '..', 'views', 'MapOverviewView.vue'), 'utf8')
 const svgSource = fs.readFileSync(path.join(here, '..', 'components', 'map-overview', 'MapOverviewSvgCanvas.vue'), 'utf8')
+const workerSource = fs.readFileSync(path.join(here, '..', 'workers', 'mapOverviewLayout.worker.ts'), 'utf8')
 
 describe('Map Overview layout view policy', () => {
+  it('compiles the map overview view', () => {
+    const parsed = parse(source, { filename: 'MapOverviewView.vue' })
+    expect(parsed.errors).toEqual([])
+    compileScript(parsed.descriptor, { id: 'map-overview-view' })
+    const template = compileTemplate({
+      id: 'map-overview-view',
+      filename: 'MapOverviewView.vue',
+      source: parsed.descriptor.template?.content || '',
+    })
+    expect(template.errors).toEqual([])
+  })
+
   it('compiles the SVG canvas component', () => {
     const parsed = parse(svgSource, { filename: 'MapOverviewSvgCanvas.vue' })
     expect(parsed.errors).toEqual([])
@@ -31,6 +44,13 @@ describe('Map Overview layout view policy', () => {
     expect(source).toMatch(/if \(layoutRunning\.value\) \{\s*cancelActiveLayout\(false\)/)
     expect(source).toMatch(/data-ui-id="map-overview-layout-stop"/)
     expect(source).not.toMatch(/data-ui-id="map-overview-layout"[^>]*:disabled=/)
+  })
+
+  it('validates layout parameter drafts before work and validates the worker protocol again', () => {
+    expect(source).toMatch(/parseMapOverviewLayoutParameters\(selectedLayoutId\.value, layoutParameterDraft\.value\)/)
+    expect(source).toMatch(/data-ui-id="map-overview-layout-parameters-apply"/)
+    expect(source).toMatch(/patchMapOverviewLayoutParameters/)
+    expect(workerSource).toMatch(/parseMapOverviewLayoutParameters\(request\.layoutId, request\.parameters\)/)
   })
 
   it('cancels background layout work when manual movement begins', () => {

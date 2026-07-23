@@ -3,6 +3,8 @@ import { ref, watch } from 'vue'
 import type {
   EngineProviderBinding,
   MapOverviewLayoutId,
+  MapOverviewLayoutParametersById,
+  MapOverviewLayoutParametersState,
   MapOverviewThumbnailQuality,
   WorkspaceMapOverviewProjectState,
   WorkspaceEditorProjectState,
@@ -15,6 +17,10 @@ import {
   isMapOverviewLayoutId,
   parseMapOverviewLayoutId,
 } from '../utils/mapOverviewLayouts'
+import {
+  defaultMapOverviewLayoutParameters,
+  parseMapOverviewLayoutParameters,
+} from '../utils/mapOverviewLayoutParameters'
 import { clampMapOverviewZoom } from '../utils/mapOverviewViewport'
 import {
   buildWorkspaceMigrationPatch,
@@ -221,6 +227,29 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     )
   }
 
+  function patchMapOverviewLayoutParameters<K extends MapOverviewLayoutId>(
+    projectPath: string,
+    layoutId: K,
+    parameters: MapOverviewLayoutParametersById[K],
+  ): void {
+    const validated = parseMapOverviewLayoutParameters(layoutId, parameters)
+    const current = settings.value.mapOverviewProjects?.[projectPath]?.layoutParameters || {}
+    const next: MapOverviewLayoutParametersState = { ...current }
+    next[layoutId] = validated as MapOverviewLayoutParametersState[K]
+    patchMapOverviewProject(projectPath, { layoutParameters: next })
+  }
+
+  function readMapOverviewLayoutParameters<K extends MapOverviewLayoutId>(
+    projectPath: string,
+    layoutId: K,
+  ): MapOverviewLayoutParametersById[K] {
+    const saved = settings.value.mapOverviewProjects?.[projectPath]?.layoutParameters?.[layoutId]
+    return parseMapOverviewLayoutParameters(
+      layoutId,
+      saved ?? defaultMapOverviewLayoutParameters(layoutId),
+    )
+  }
+
   function patchMapOverviewPan(projectPath: string, pan: [number, number]): void {
     if (!Number.isFinite(pan[0]) || !Number.isFinite(pan[1])) {
       throw new Error('Map overview pan must be finite coordinates.')
@@ -421,6 +450,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     readMapOverviewLayoutVersion,
     patchMapOverviewLayout,
     readMapOverviewLayout,
+    patchMapOverviewLayoutParameters,
+    readMapOverviewLayoutParameters,
     patchMapOverviewPan,
     readMapOverviewPan,
     patchMapOverviewSelection,

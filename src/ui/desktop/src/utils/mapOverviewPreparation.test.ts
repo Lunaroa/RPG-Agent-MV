@@ -4,6 +4,7 @@ import {
   firstMapOverviewThumbnailFailure,
   isMapOverviewThumbnailVersionChanged,
   mapOverviewPreparationPercent,
+  validateMapOverviewLayoutNoOverlap,
   validateMapOverviewLayoutPositions,
 } from './mapOverviewPreparation'
 
@@ -44,5 +45,20 @@ describe('map overview preparation gate', () => {
       { id: '1', x: 10, y: 20 },
       { id: '2', x: 10, y: 20 },
     ])).toThrow(/same position/)
+  })
+
+  it('rejects overlapping node rectangles but accepts touching boundaries', () => {
+    const nodes = [
+      { id: '1', width: 100, height: 80 },
+      { id: '2', width: 120, height: 60 },
+    ]
+    expect(() => validateMapOverviewLayoutNoOverlap(nodes, {
+      '1': { x: 0, y: 0 },
+      '2': { x: 109, y: 0 },
+    })).toThrow(/overlaps/)
+    expect(() => validateMapOverviewLayoutNoOverlap(nodes, {
+      '1': { x: 0, y: 0 },
+      '2': { x: 110, y: 0 },
+    })).not.toThrow()
   })
 })

@@ -1,3 +1,4 @@
+import type { MapOverviewLayoutParametersById } from '@contract/types'
 import type { MapOverviewLibraryLayoutId } from './mapOverviewLayouts'
 import type {
   MapOverviewLayoutEdgeInput,
@@ -12,6 +13,7 @@ export interface MapOverviewLayoutWorkerRequest {
   edges: MapOverviewLayoutEdgeInput[]
   width?: number
   height?: number
+  parameters: MapOverviewLayoutParametersById[MapOverviewLibraryLayoutId]
 }
 
 export interface MapOverviewLayoutWorkerComplete {

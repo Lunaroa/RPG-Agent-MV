@@ -81,10 +81,14 @@ describe('mapOverviewLayouts', () => {
     const atlas = buildMapOverviewLayoutOptions('force-atlas2', sampleCtx)
     expect(atlas.preventOverlap).toBe(true)
     expect(atlas.barnesHut).toBe(true)
+    expect(atlas.kr).toBe(5)
+    expect(atlas.kg).toBe(1)
 
     const d3 = buildMapOverviewLayoutOptions('d3-force', sampleCtx)
     expect(d3.preventOverlap).toBe(true)
     expect(d3.collideStrength).toBe(1)
+    expect(d3.linkDistance).toBe(50)
+    expect(d3.nodeStrength).toBe(-30)
 
     const dagre = buildMapOverviewLayoutOptions('antv-dagre', sampleCtx)
     expect(dagre.rankdir).toBe('LR')
@@ -104,6 +108,41 @@ describe('mapOverviewLayouts', () => {
     expect(circular.radius).toBe(computeMapOverviewCircularRadius(sampleCtx.nodes, 24))
     expect(typeof circular.radius).toBe('number')
     expect(circular.radius).toBeGreaterThan(100)
+    expect(circular.clockwise).toBe(true)
+    expect(circular.startAngle).toBe(0)
+    expect(circular.endAngle).toBe(2 * Math.PI)
+  })
+
+  it('maps validated controls to the locked layout library options', () => {
+    expect(buildMapOverviewLayoutOptions('force-atlas2', sampleCtx, {
+      nodeSpacing: 40,
+      repulsion: 12,
+      centerGravity: 2,
+    })).toMatchObject({ nodeSpacing: 40, kr: 12, kg: 2 })
+    expect(buildMapOverviewLayoutOptions('d3-force', sampleCtx, {
+      nodeSpacing: 36,
+      linkDistance: 240,
+      nodeRepulsion: 75,
+    })).toMatchObject({ nodeSpacing: 36, linkDistance: 240, nodeStrength: -75 })
+    expect(buildMapOverviewLayoutOptions('antv-dagre', sampleCtx, {
+      direction: 'BT',
+      nodeSpacing: 60,
+      layerSpacing: 90,
+    })).toMatchObject({ rankdir: 'BT', nodesep: 60, ranksep: 90 })
+    expect(buildMapOverviewLayoutOptions('grid', sampleCtx, {
+      columns: 7,
+      nodeSpacing: 28,
+    })).toMatchObject({ cols: 7, nodeSpacing: 28 })
+    expect(buildMapOverviewLayoutOptions('circular', sampleCtx, {
+      radius: 2_000,
+      clockwise: false,
+      startAngle: 90,
+    })).toMatchObject({
+      radius: 2_000,
+      clockwise: false,
+      startAngle: Math.PI / 2,
+      endAngle: Math.PI / 2 + 2 * Math.PI,
+    })
   })
 
   it('payload and mapId helpers support graph wiring', () => {

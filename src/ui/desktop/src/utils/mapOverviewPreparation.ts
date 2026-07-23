@@ -4,6 +4,12 @@ export interface MapOverviewPreparedPosition {
   y: number
 }
 
+export interface MapOverviewPreparedNodeRect {
+  id: string
+  width: number
+  height: number
+}
+
 export interface MapOverviewThumbnailFailure {
   mapId: number
   error: unknown
@@ -41,5 +47,26 @@ export function validateMapOverviewLayoutPositions(
   if (positions.length > 1) {
     const unique = new Set(positions.map((position) => `${position.x.toFixed(4)}:${position.y.toFixed(4)}`))
     if (unique.size === 1) throw new Error('Map overview layout placed every map at the same position.')
+  }
+}
+
+export function validateMapOverviewLayoutNoOverlap(
+  nodes: readonly MapOverviewPreparedNodeRect[],
+  positions: Readonly<Record<string, { x: number; y: number }>>,
+): void {
+  for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+    const left = nodes[leftIndex]
+    const leftPosition = positions[left.id]
+    if (!leftPosition) throw new Error(`Map overview layout is missing node ${left.id}.`)
+    for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+      const right = nodes[rightIndex]
+      const rightPosition = positions[right.id]
+      if (!rightPosition) throw new Error(`Map overview layout is missing node ${right.id}.`)
+      const separatedX = Math.abs(leftPosition.x - rightPosition.x) >= (left.width + right.width) / 2
+      const separatedY = Math.abs(leftPosition.y - rightPosition.y) >= (left.height + right.height) / 2
+      if (!separatedX && !separatedY) {
+        throw new Error(`Map overview layout overlaps nodes ${left.id} and ${right.id}.`)
+      }
+    }
   }
 }

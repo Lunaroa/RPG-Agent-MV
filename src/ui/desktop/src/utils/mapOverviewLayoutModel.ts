@@ -52,7 +52,7 @@ export function buildMapOverviewLayoutNodes(
 }
 
 /**
- * Layout algorithms only need map-to-map topology. Coordinate-level transfer edges stay in G6.
+ * Layout algorithms only need map-to-map topology. Coordinate-level transfer edges stay in the SVG display layer.
  * Dagre keeps direction; every other layout uses one canonical undirected edge per map pair.
  */
 export function buildMapOverviewLayoutEdges(

@@ -1,4 +1,11 @@
-import type { MapOverviewLayoutId } from '@contract/types'
+import type {
+  MapOverviewLayoutId,
+  MapOverviewLayoutParametersById,
+} from '@contract/types'
+import {
+  defaultMapOverviewLayoutParameters,
+  parseMapOverviewLayoutParameters,
+} from './mapOverviewLayoutParameters'
 
 export type { MapOverviewLayoutId }
 
@@ -6,7 +13,7 @@ export type MapOverviewLibraryLayoutId = Exclude<MapOverviewLayoutId, 'layered-g
 
 export const DEFAULT_MAP_OVERVIEW_LAYOUT_ID: MapOverviewLayoutId = 'layered-grid'
 
-/** Worker-safe Expr path: each G6 node must set `data.layoutSize = [width, collisionHeight]`. */
+/** Worker-safe Expr path: each layout node must set `data.layoutSize = [width, collisionHeight]`. */
 export const MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR = 'node.data.layoutSize'
 
 /**
@@ -81,7 +88,7 @@ export interface MapOverviewLayoutContext {
   nodeSpacing?: number
 }
 
-/** Payload stored on each G6 node as `data.layoutSize` for worker-safe Expr sizing. */
+/** Payload stored on each layout node as `data.layoutSize` for worker-safe Expr sizing. */
 export function mapOverviewLayoutSizePayload(
   size: Pick<MapOverviewLayoutNodeRef, 'width' | 'collisionHeight'>,
 ): [number, number] {
@@ -121,6 +128,14 @@ export type MapOverviewLibraryLayoutOptions = {
   sortBy?: string
   ordering?: null
   radius?: number
+  kr?: number
+  kg?: number
+  linkDistance?: number
+  nodeStrength?: number
+  cols?: number
+  clockwise?: boolean
+  startAngle?: number
+  endAngle?: number
   [key: string]: unknown
 }
 
@@ -177,69 +192,90 @@ export function computeMapOverviewCircularRadius(
 export function buildMapOverviewLayoutOptions(
   id: MapOverviewLibraryLayoutId,
   ctx: MapOverviewLayoutContext,
+  inputParameters: MapOverviewLayoutParametersById[MapOverviewLibraryLayoutId] = defaultMapOverviewLayoutParameters(id),
 ): MapOverviewLibraryLayoutOptions {
   if (!isMapOverviewLibraryLayoutId(id)) {
     throw new Error(`Unknown map overview layout id: ${String(id)}`)
   }
-  const spacing = resolveSpacing(ctx)
+  const contextSpacing = resolveSpacing(ctx)
   const viewport = viewportFields(ctx)
-  const sizeAware = {
-    nodeSize: MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR,
-    nodeSpacing: spacing,
-  } as const
 
   switch (id) {
-    case 'force-atlas2':
+    case 'force-atlas2': {
+      const parameters = parseMapOverviewLayoutParameters('force-atlas2', inputParameters)
       return {
         type: 'force-atlas2',
         enableWorker: false,
         preventOverlap: true,
         barnesHut: true,
-        ...sizeAware,
+        kr: parameters.repulsion,
+        kg: parameters.centerGravity,
+        nodeSize: MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR,
+        nodeSpacing: parameters.nodeSpacing,
         ...viewport,
       }
-    case 'd3-force':
+    }
+    case 'd3-force': {
+      const parameters = parseMapOverviewLayoutParameters('d3-force', inputParameters)
       return {
         type: 'd3-force',
         enableWorker: false,
         preventOverlap: true,
         collideStrength: 1,
-        ...sizeAware,
+        linkDistance: parameters.linkDistance,
+        nodeStrength: -parameters.nodeRepulsion,
+        nodeSize: MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR,
+        nodeSpacing: parameters.nodeSpacing,
         ...viewport,
       }
+    }
     case 'antv-dagre': {
+      const parameters = parseMapOverviewLayoutParameters('antv-dagre', inputParameters)
       // antv-dagre uses nodesep/ranksep (not nodeSpacing). LR: nodesep = vertical, ranksep = horizontal.
       const avg = averageNodeExtent(ctx.nodes)
       return {
         type: 'antv-dagre',
         enableWorker: false,
-        rankdir: 'LR',
+        rankdir: parameters.direction,
         nodeSize: MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR,
-        nodesep: Math.max(spacing, Math.round(avg.height * 0.08)),
-        ranksep: Math.max(spacing + DAGRE_LABEL_GAP, Math.round(avg.width * 0.12) + DAGRE_LABEL_GAP),
+        nodesep: parameters.nodeSpacing ?? Math.max(DEFAULT_NODE_SPACING, Math.round(avg.height * 0.08)),
+        ranksep: parameters.layerSpacing ?? Math.max(
+          DEFAULT_NODE_SPACING + DAGRE_LABEL_GAP,
+          Math.round(avg.width * 0.12) + DAGRE_LABEL_GAP,
+        ),
         ...viewport,
       }
     }
-    case 'grid':
+    case 'grid': {
+      const parameters = parseMapOverviewLayoutParameters('grid', inputParameters)
       return {
         type: 'grid',
         enableWorker: false,
         preventOverlap: true,
         condense: true,
         sortBy: MAP_OVERVIEW_GRID_SORT_BY_EXPR,
-        ...sizeAware,
+        ...(parameters.columns == null ? {} : { cols: parameters.columns }),
+        nodeSize: MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR,
+        nodeSpacing: parameters.nodeSpacing,
         ...viewport,
       }
-    case 'circular':
+    }
+    case 'circular': {
+      const parameters = parseMapOverviewLayoutParameters('circular', inputParameters)
       return {
         type: 'circular',
         enableWorker: false,
         // Data order must already be mapId-sorted (see sortMapOverviewLayoutNodesByMapId).
         ordering: null,
-        radius: computeMapOverviewCircularRadius(ctx.nodes, spacing),
-        ...sizeAware,
+        radius: parameters.radius ?? computeMapOverviewCircularRadius(ctx.nodes, contextSpacing),
+        clockwise: parameters.clockwise,
+        startAngle: parameters.startAngle * Math.PI / 180,
+        endAngle: parameters.startAngle * Math.PI / 180 + 2 * Math.PI,
+        nodeSize: MAP_OVERVIEW_LAYOUT_NODE_SIZE_EXPR,
+        nodeSpacing: contextSpacing,
         ...viewport,
       }
+    }
     default: {
       const _exhaustive: never = id
       throw new Error(`Unhandled map overview layout id: ${String(_exhaustive)}`)

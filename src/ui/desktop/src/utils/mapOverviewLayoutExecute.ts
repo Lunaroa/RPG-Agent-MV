@@ -1,5 +1,6 @@
 import type {
   MapOverviewLayoutId,
+  MapOverviewLayoutParametersById,
   MapOverviewSnapshot,
 } from '@contract/types'
 
@@ -10,6 +11,10 @@ import {
   type MapOverviewLayoutPositions,
 } from './mapOverviewLayoutModel'
 import { isMapOverviewLibraryLayoutId } from './mapOverviewLayouts'
+import {
+  defaultMapOverviewLayoutParameters,
+  parseMapOverviewLayoutParameters,
+} from './mapOverviewLayoutParameters'
 import { runMapOverviewLayoutWorker } from './mapOverviewLayoutWorkerClient'
 
 export interface MapOverviewLayoutRunHandle {
@@ -26,19 +31,31 @@ export async function executeMapOverviewLayout(
     height?: number
     isCancelled?: () => boolean
     onHandle?: (handle: MapOverviewLayoutRunHandle | null) => void
+    parameters?: MapOverviewLayoutParametersById[MapOverviewLayoutId]
   },
 ): Promise<MapOverviewLayoutPositions> {
   const nodes = buildMapOverviewLayoutNodes(snapshot.nodes, options.seedPositions)
   const edges = buildMapOverviewLayoutEdges(snapshot.edges, layoutId)
   if (layoutId === 'layered-grid') {
+    const parameters = parseMapOverviewLayoutParameters(
+      'layered-grid',
+      options.parameters ?? defaultMapOverviewLayoutParameters('layered-grid'),
+    )
     return computeMapOverviewLayeredGrid(nodes, edges, {
       width: options.width,
       height: options.height,
+      horizontalSpacing: parameters.horizontalSpacing,
+      layerSpacing: parameters.layerSpacing,
+      groupSpacing: parameters.groupSpacing,
     })
   }
   if (!isMapOverviewLibraryLayoutId(layoutId)) {
     throw new Error(`Unknown map overview layout id: ${String(layoutId)}`)
   }
+  const parameters = parseMapOverviewLayoutParameters(
+    layoutId,
+    options.parameters ?? defaultMapOverviewLayoutParameters(layoutId),
+  )
   const run = runMapOverviewLayoutWorker({
     requestId: options.requestId,
     layoutId,
@@ -46,6 +63,7 @@ export async function executeMapOverviewLayout(
     edges,
     width: options.width,
     height: options.height,
+    parameters,
   })
   options.onHandle?.({ stop: run.stop })
   try {

@@ -44,6 +44,25 @@ function expectNoOverlap(
 }
 
 describe('map overview layered grid', () => {
+  it('uses custom horizontal, layer, and component spacing', () => {
+    const nodes = [
+      node(1, 0, 1, 100, 80),
+      node(2, 1, 2, 120, 60),
+      node(3, 0, 3, 90, 70),
+    ]
+    const positions = computeMapOverviewLayeredGrid(nodes, [edge(1, 2)], {
+      horizontalSpacing: 32,
+      layerSpacing: 64,
+      groupSpacing: 128,
+    })
+    const firstBottom = positions['1'].y + 40
+    const secondTop = positions['2'].y - 30
+    expect(secondTop - firstBottom).toBe(64)
+    const mainBottom = positions['2'].y + 30
+    const isolatedTop = positions['3'].y - 35
+    expect(isolatedTop - mainBottom).toBe(128)
+  })
+
   it('separates connected components and lays each component out by local parent depth', () => {
     const nodes = [
       node(1, 0, 1, 120, 80),

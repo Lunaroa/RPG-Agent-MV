@@ -30,6 +30,9 @@ export const DEFAULT_LEFT_DOCK_PALETTE_HEIGHT = 214
 export const DEFAULT_LEFT_DOCK_WIDTH = 320
 export const LEFT_DOCK_MIN_WIDTH = 214
 export const LEFT_DOCK_MAX_WIDTH = 520
+export const DEFAULT_PLUGIN_LIST_WIDTH = 380
+export const PLUGIN_LIST_MIN_WIDTH = 300
+export const PLUGIN_LIST_MAX_WIDTH = 560
 export const PALETTE_MIN_OPEN_HEIGHT = 120
 export const PALETTE_MIN_TREE_HEIGHT = 64
 export const PALETTE_PANE_RESIZER_HEIGHT = 8
@@ -64,6 +67,7 @@ export const DEFAULT_WORKSPACE_LAYOUT: Required<WorkspaceLayoutState> = {
   bottomPanelOpen: false,
   leftDockTilesOpen: true,
   leftDockWidth: DEFAULT_LEFT_DOCK_WIDTH,
+  pluginListWidth: DEFAULT_PLUGIN_LIST_WIDTH,
   leftDockPaletteHeight: DEFAULT_LEFT_DOCK_PALETTE_HEIGHT,
   agentPanelWidth: AGENT_PANEL_DEFAULT_WIDTH,
   chatHistoryWidth: CHAT_HISTORY_DEFAULT_WIDTH,
@@ -83,6 +87,10 @@ export function clampPaletteHeight(height: number): number {
 
 export function clampLeftDockWidth(width: number): number {
   return Math.max(LEFT_DOCK_MIN_WIDTH, Math.min(LEFT_DOCK_MAX_WIDTH, Math.round(width)))
+}
+
+export function clampPluginListWidth(width: number): number {
+  return Math.max(PLUGIN_LIST_MIN_WIDTH, Math.min(PLUGIN_LIST_MAX_WIDTH, Math.round(width)))
 }
 
 export function isValidWindowBounds(state: WorkspaceWindowState): boolean {
@@ -117,6 +125,7 @@ export function normalizeWorkspaceLayout(
 ): WorkspaceLayoutState {
   const source = layout || {}
   const leftDockWidth = finiteNumber(source.leftDockWidth)
+  const pluginListWidth = finiteNumber(source.pluginListWidth)
   const paletteHeight = finiteNumber(source.leftDockPaletteHeight)
   const agentWidth = finiteNumber(source.agentPanelWidth)
   const historyWidth = finiteNumber(source.chatHistoryWidth)
@@ -128,6 +137,9 @@ export function normalizeWorkspaceLayout(
     leftDockWidth: leftDockWidth == null
       ? undefined
       : clampLeftDockWidth(leftDockWidth),
+    pluginListWidth: pluginListWidth == null
+      ? DEFAULT_WORKSPACE_LAYOUT.pluginListWidth
+      : clampPluginListWidth(pluginListWidth),
     leftDockPaletteHeight: paletteHeight == null
       ? undefined
       : clampPaletteHeight(paletteHeight),
@@ -341,10 +353,12 @@ export function normalizeWorkspacePatch(raw: unknown): WorkspaceSettings {
     if (typeof source.layout.bottomPanelOpen === 'boolean') layout.bottomPanelOpen = source.layout.bottomPanelOpen
     if (typeof source.layout.leftDockTilesOpen === 'boolean') layout.leftDockTilesOpen = source.layout.leftDockTilesOpen
     const leftDockWidth = finiteNumber(source.layout.leftDockWidth)
+    const pluginListWidth = finiteNumber(source.layout.pluginListWidth)
     const paletteHeight = finiteNumber(source.layout.leftDockPaletteHeight)
     const agentWidth = finiteNumber(source.layout.agentPanelWidth)
     const historyWidth = finiteNumber(source.layout.chatHistoryWidth)
     if (leftDockWidth != null) layout.leftDockWidth = clampLeftDockWidth(leftDockWidth)
+    if (pluginListWidth != null) layout.pluginListWidth = clampPluginListWidth(pluginListWidth)
     if (paletteHeight != null) layout.leftDockPaletteHeight = clampPaletteHeight(paletteHeight)
     if (agentWidth != null) layout.agentPanelWidth = agentWidth
     if (historyWidth != null) layout.chatHistoryWidth = historyWidth

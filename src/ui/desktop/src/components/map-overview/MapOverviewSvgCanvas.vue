@@ -4,9 +4,12 @@ import {
   classifyMapOverviewEdgeConditions,
   MAP_OVERVIEW_TRANSFER_CONDITION_CATEGORIES,
   mapOverviewTransferConditionVisual,
-  summarizeMapOverviewTransferConditions,
   type MapOverviewTransferConditionCategory,
 } from '@contract/map-overview-transfer-condition'
+import {
+  buildMapOverviewConditionNameMaps,
+  formatMapOverviewEdgeConditionLabel,
+} from '../../utils/mapOverviewConditionLabels'
 import {
   buildMapOverviewSvgEdgeRoutes,
   mapOverviewSvgEdgeGeometry,
@@ -153,24 +156,13 @@ const tooltipCondition = computed(() => {
   const edge = tooltipEdge.value
   return edge ? edgeConditionLabel(edge) : ''
 })
+const conditionNameMaps = computed(() => buildMapOverviewConditionNameMaps(
+  snapshot.value?.switches,
+  snapshot.value?.variables,
+))
 
 function edgeConditionLabel(edge: MapOverviewEdge): string {
-  const types = new Set<string>()
-  let hasOtherPageConditions = false
-  for (const source of edge.sources) {
-    const summary = summarizeMapOverviewTransferConditions(source.pageConditions)
-    for (const type of summary.types) types.add(type)
-    hasOtherPageConditions ||= summary.hasOtherPageConditions
-  }
-  let label = types.size > 1
-    ? t('mapOverview.tooltip.combinedCondition')
-    : types.size === 1
-      ? t('mapOverview.tooltip.singleCondition')
-      : t('mapOverview.tooltip.noTrackedCondition')
-  if (hasOtherPageConditions) {
-    label += t('mapOverview.tooltip.otherConditionSuffix')
-  }
-  return label
+  return formatMapOverviewEdgeConditionLabel(edge, t, conditionNameMaps.value)
 }
 
 function nodeTransform(node: MapOverviewSvgNodeGeometry): string {

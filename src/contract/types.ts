@@ -142,6 +142,10 @@ export interface MapOverviewSnapshot {
   generatedAt: string;
   nodes: MapOverviewNode[];
   edges: MapOverviewEdge[];
+  /** Non-empty switch remarks from System.json (index = id). */
+  switches: NamedCatalogEntry[];
+  /** Non-empty variable remarks from System.json (index = id). */
+  variables: NamedCatalogEntry[];
   unresolvedTransferCount: number;
   invalidTargetCount: number;
   issues: MapOverviewIssue[];

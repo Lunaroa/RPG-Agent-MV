@@ -12,6 +12,7 @@ import type {
   MapOverviewSnapshot,
   MapOverviewThumbnail,
   MapOverviewTransferSource,
+  NamedCatalogEntry,
 } from '../../../../contract/types.ts';
 import { readJson, writeJsonAtomic } from '../rmmv/json.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
@@ -24,7 +25,7 @@ import {
 import { mapOverviewEdgeAggregateKey } from '../../../../contract/map-overview-edge-key.ts';
 import { createProjectReadFileIndex, type ProjectReadFileIndex } from './staging-service.ts';
 
-const SNAPSHOT_CACHE_SCHEMA_VERSION = 4;
+const SNAPSHOT_CACHE_SCHEMA_VERSION = 5;
 const THUMBNAIL_CACHE_SCHEMA_VERSION = 1;
 const THUMBNAIL_RENDERER_VERSION = 2;
 const THUMBNAIL_SCALE_DIVISOR = 4 as const;
@@ -68,6 +69,8 @@ interface OverviewBuildContext {
   readIndex: ProjectReadFileIndex;
   mapInfos: any[];
   tilesets: any[];
+  switches: NamedCatalogEntry[];
+  variables: NamedCatalogEntry[];
   dependencies: Map<string, SnapshotDependency>;
 }
 
@@ -391,6 +394,8 @@ function buildMapOverviewSnapshotFresh(
       issues: node.issues,
     }))),
     JSON.stringify(edges),
+    JSON.stringify(context.switches),
+    JSON.stringify(context.variables),
     String(unresolvedTransferCount),
   ]);
   return { snapshot: {
@@ -399,6 +404,8 @@ function buildMapOverviewSnapshotFresh(
     generatedAt: new Date().toISOString(),
     nodes,
     edges,
+    switches: context.switches,
+    variables: context.variables,
     unresolvedTransferCount,
     invalidTargetCount,
     issues,
@@ -542,14 +549,29 @@ function buildContext(workflowRoot: string, project: string): OverviewBuildConte
     || path.join(manifest.dataDir, 'MapInfos.json');
   const tilesetsFile = resolveContextFile(baseContext, `${manifest.dataRootRelative}/Tilesets.json`)
     || path.join(manifest.dataDir, 'Tilesets.json');
+  const systemFile = resolveContextFile(baseContext, `${manifest.dataRootRelative}/System.json`)
+    || path.join(manifest.dataDir, 'System.json');
   const mapInfos = readJson(mapInfosFile) as any[];
   if (!Array.isArray(mapInfos)) throw new Error('MapInfos.json must contain an array.');
   const tilesets = fs.existsSync(tilesetsFile) ? readJson(tilesetsFile) as any[] : [];
+  const system = fs.existsSync(systemFile) ? readJson(systemFile) as Record<string, unknown> : {};
   return {
     ...baseContext,
     mapInfos,
     tilesets: Array.isArray(tilesets) ? tilesets : [],
+    switches: namedRemarkList(system.switches),
+    variables: namedRemarkList(system.variables),
   };
+}
+
+function namedRemarkList(value: unknown): NamedCatalogEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((name, id) => {
+    if (id <= 0 || typeof name !== 'string') return [];
+    const trimmed = name.trim();
+    if (!trimmed) return [];
+    return [{ id, name: trimmed }];
+  });
 }
 
 function buildThumbnailContentVersion(
@@ -995,6 +1017,8 @@ function isSnapshotCacheDocument(value: Partial<SnapshotCacheDocument>, project:
     && typeof snapshot.generatedAt === 'string'
     && Array.isArray(snapshot.nodes)
     && Array.isArray(snapshot.edges)
+    && Array.isArray(snapshot.switches)
+    && Array.isArray(snapshot.variables)
     && snapshot.edges.every((edge) => Boolean(edge)
       && typeof edge.sourceMapId === 'number'
       && typeof edge.sourceX === 'number'

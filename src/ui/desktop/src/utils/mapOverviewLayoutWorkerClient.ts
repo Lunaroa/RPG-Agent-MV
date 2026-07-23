@@ -27,6 +27,7 @@ export class MapOverviewLayoutTaskError extends Error {
 
 export interface MapOverviewLayoutWorkerLike {
   onmessage: ((event: MessageEvent<MapOverviewLayoutWorkerResponse>) => void) | null
+  onmessageerror: ((event: MessageEvent<unknown>) => void) | null
   onerror: ((event: ErrorEvent) => void) | null
   postMessage: (message: MapOverviewLayoutWorkerRequest) => void
   terminate: () => void
@@ -86,6 +87,13 @@ export function runMapOverviewLayoutWorker(
 
     worker.onmessage = (event) => {
       const response = event.data
+      if (!response || typeof response !== 'object' || typeof response.requestId !== 'string') {
+        fail(new MapOverviewLayoutTaskError(
+          'worker-error',
+          'Map overview layout worker returned an invalid response.',
+        ))
+        return
+      }
       if (settled || response.requestId !== request.requestId) return
       if (response.type === 'error') {
         fail(new MapOverviewLayoutTaskError('worker-error', response.message))
@@ -94,6 +102,12 @@ export function runMapOverviewLayoutWorker(
       settled = true
       cleanup()
       resolve(response.positions)
+    }
+    worker.onmessageerror = () => {
+      fail(new MapOverviewLayoutTaskError(
+        'worker-error',
+        'Map overview layout worker response could not be read.',
+      ))
     }
     worker.onerror = (event) => {
       event.preventDefault?.()

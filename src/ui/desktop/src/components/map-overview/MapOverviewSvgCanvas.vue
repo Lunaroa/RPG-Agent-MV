@@ -4,6 +4,7 @@ import {
   classifyMapOverviewEdgeConditions,
   MAP_OVERVIEW_TRANSFER_CONDITION_CATEGORIES,
   mapOverviewTransferConditionVisual,
+  summarizeMapOverviewTransferConditions,
   type MapOverviewTransferConditionCategory,
 } from '@contract/map-overview-transfer-condition'
 import {
@@ -11,7 +12,6 @@ import {
   mapOverviewSvgEdgeGeometry,
   mapOverviewSvgExportBounds,
   mapOverviewSvgNodeGeometry,
-  mapOverviewSvgPortPoint,
   type MapOverviewSvgEdgeGeometry,
   type MapOverviewSvgNodeGeometry,
   type MapOverviewSvgPosition,
@@ -27,19 +27,14 @@ import {
   MAP_OVERVIEW_WHEEL_SENSITIVITY,
 } from '../../utils/mapOverviewViewport'
 import {
-  MAP_OVERVIEW_PORT_LABEL_OFFSET_Y,
-  MAP_OVERVIEW_PORT_MARKER_RADIUS,
-  mapOverviewPortLabelGeometry,
-  placeMapOverviewPortLabels,
-  type MapOverviewPortLabelGeometry,
-} from '../../utils/mapOverviewPorts'
-import {
   buildMapOverviewFocusedNodeIds,
   buildMapOverviewIncidentEdgeIndex,
   isMapOverviewNodeDragAllowed,
   shouldStartMapOverviewNodeDrag,
   shouldStartMapOverviewPan,
 } from '../../utils/mapOverviewSvgInteraction'
+import { placeMapOverviewTooltip } from '../../utils/mapOverviewTooltipPosition'
+import { useI18n } from '../../i18n'
 import type { MapOverviewSvgCanvasApi } from './mapOverviewSvgCanvasApi'
 
 const emit = defineEmits<{
@@ -54,6 +49,7 @@ const emit = defineEmits<{
 }>()
 
 const root = ref<HTMLDivElement | null>(null)
+const edgeTooltipElement = ref<HTMLDivElement | null>(null)
 const svg = ref<SVGSVGElement | null>(null)
 const world = ref<SVGGElement | null>(null)
 const snapshot = shallowRef<MapOverviewSnapshot | null>(null)
@@ -69,6 +65,8 @@ const explicitWidth = ref(0)
 const explicitHeight = ref(0)
 const currentTransform = ref<ZoomTransform>(zoomIdentity)
 const gestureState = ref<'idle' | 'node-drag' | 'pan'>('idle')
+const edgeTooltip = ref<{ edgeId: string; x: number; y: number } | null>(null)
+const { t } = useI18n()
 let zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> | null = null
 let resizeObserver: ResizeObserver | null = null
 let destroyed = false
@@ -82,6 +80,8 @@ let incidentEdgesByMap: ReadonlyMap<number, readonly MapOverviewEdge[]> = new Ma
 let nodesById = new Map<number, MapOverviewNode>()
 let pendingIncidentMapId: number | null = null
 let incidentAnimationFrame = 0
+let tooltipAnimationFrame = 0
+let pendingTooltipClientPosition: { x: number; y: number } | null = null
 
 const geometryNodes = computed(() => {
   void renderVersion.value
@@ -132,55 +132,34 @@ const focusedNodeIds = computed(() => buildMapOverviewFocusedNodeIds(
   selectedEdgeId.value,
 ))
 
-const activePorts = computed(() => {
-  const ports = new Map<string, {
-    key: string
-    mapId: number
-    x: number
-    y: number
-    role: 'source' | 'target' | 'both'
-    point: MapOverviewSvgPosition
-    label: MapOverviewPortLabelGeometry
-  }>()
-  const mark = (mapId: number, x: number, y: number, role: 'source' | 'target') => {
-    const node = geometryNodeMap.value.get(mapId)
-    if (!node) return
-    try {
-      const key = `${mapId}:${x}:${y}`
-      const existing = ports.get(key)
-      if (existing) {
-        if (existing.role !== role) existing.role = 'both'
-        return
-      }
-      ports.set(key, {
-        key,
-        mapId,
-        x,
-        y,
-        role,
-        point: mapOverviewSvgPortPoint(node, x, y),
-        label: mapOverviewPortLabelGeometry(x, y),
-      })
-    } catch {
-      // Invalid coordinates remain represented by the snapshot issue node, not an SVG port.
-    }
-  }
-  for (const edge of snapshot.value?.edges || []) {
-    if (!activeEdgeIds.value.has(edge.id)) continue
-    mark(edge.sourceMapId, edge.sourceX, edge.sourceY, 'source')
-    mark(edge.targetMapId, edge.targetX, edge.targetY, 'target')
-  }
-  const values = [...ports.values()]
-  const placements = placeMapOverviewPortLabels(values.map(port => ({
-    key: port.key,
-    point: port.point,
-    label: port.label,
-  })))
-  return values.map(port => ({
-    ...port,
-    placement: placements.get(port.key)!,
-  }))
+const tooltipEdge = computed(() => (
+  edgeTooltip.value
+    ? snapshot.value?.edges.find((edge) => edge.id === edgeTooltip.value?.edgeId) || null
+    : null
+))
+const tooltipCondition = computed(() => {
+  const edge = tooltipEdge.value
+  return edge ? edgeConditionLabel(edge) : ''
 })
+
+function edgeConditionLabel(edge: MapOverviewEdge): string {
+  const types = new Set<string>()
+  let hasOtherPageConditions = false
+  for (const source of edge.sources) {
+    const summary = summarizeMapOverviewTransferConditions(source.pageConditions)
+    for (const type of summary.types) types.add(type)
+    hasOtherPageConditions ||= summary.hasOtherPageConditions
+  }
+  let label = types.size > 1
+    ? t('mapOverview.tooltip.combinedCondition')
+    : types.size === 1
+      ? t('mapOverview.tooltip.singleCondition')
+      : t('mapOverview.tooltip.noTrackedCondition')
+  if (hasOtherPageConditions) {
+    label += t('mapOverview.tooltip.otherConditionSuffix')
+  }
+  return label
+}
 
 function nodeTransform(node: MapOverviewSvgNodeGeometry): string {
   return `translate(${node.position.x} ${node.position.y})`
@@ -222,8 +201,8 @@ function edgeMarkerId(category: MapOverviewTransferConditionCategory, active = f
   return `map-overview-arrow-${category}${active ? '-active' : ''}`
 }
 
-function edgeAriaLabel(edge: MapOverviewEdge, category: MapOverviewTransferConditionCategory): string {
-  return `MAP${String(edge.sourceMapId).padStart(3, '0')} (${edge.sourceX}, ${edge.sourceY}) → MAP${String(edge.targetMapId).padStart(3, '0')} (${edge.targetX}, ${edge.targetY}); ${category}`
+function edgeAriaLabel(edge: MapOverviewEdge): string {
+  return `MAP${String(edge.sourceMapId).padStart(3, '0')} (${edge.sourceX}, ${edge.sourceY}) → MAP${String(edge.targetMapId).padStart(3, '0')} (${edge.targetX}, ${edge.targetY}); ${edgeConditionLabel(edge)}`
 }
 
 function edgeVisualStyle(category: MapOverviewTransferConditionCategory): Record<string, string> {
@@ -237,9 +216,13 @@ function edgeVisualStyle(category: MapOverviewTransferConditionCategory): Record
 function foregroundEdgeVisualStyle(category: MapOverviewTransferConditionCategory): Record<string, string> {
   const visual = mapOverviewTransferConditionVisual(category)
   return {
-    stroke: 'var(--map-overview-active-color)',
+    stroke: visual.stroke,
     ...(visual.dashArray ? { strokeDasharray: visual.dashArray } : {}),
   }
+}
+
+function foregroundEdgeLabelStyle(category: MapOverviewTransferConditionCategory): Record<string, string> {
+  return { fill: mapOverviewTransferConditionVisual(category).stroke }
 }
 
 function foregroundEdgeState(edge: MapOverviewEdge): string {
@@ -290,14 +273,74 @@ function onNodePointerLeave(): void {
   hoveredNodeId.value = null
 }
 
-function onEdgePointerEnter(edgeId: string): void {
+function positionEdgeTooltip(): void {
+  tooltipAnimationFrame = 0
+  const host = root.value
+  const tooltip = edgeTooltipElement.value
+  const pointer = pendingTooltipClientPosition
+  if (!host || !tooltip || !pointer || !edgeTooltip.value) return
+  const bounds = host.getBoundingClientRect()
+  const width = tooltip.offsetWidth
+  const height = tooltip.offsetHeight
+  const placement = placeMapOverviewTooltip({
+    viewportWidth: bounds.width,
+    viewportHeight: bounds.height,
+    tooltipWidth: width,
+    tooltipHeight: height,
+    pointerX: pointer.x - bounds.left,
+    pointerY: pointer.y - bounds.top,
+  })
+  edgeTooltip.value = {
+    ...edgeTooltip.value,
+    ...placement,
+  }
+}
+
+function queueEdgeTooltipPosition(clientX: number, clientY: number): void {
+  pendingTooltipClientPosition = { x: clientX, y: clientY }
+  if (tooltipAnimationFrame) return
+  tooltipAnimationFrame = requestAnimationFrame(positionEdgeTooltip)
+}
+
+function showEdgeTooltip(edgeId: string, clientX: number, clientY: number): void {
+  edgeTooltip.value = { edgeId, x: 0, y: 0 }
+  queueEdgeTooltipPosition(clientX, clientY)
+  void nextTick(() => queueEdgeTooltipPosition(clientX, clientY))
+}
+
+function hideEdgeTooltip(): void {
+  if (tooltipAnimationFrame) cancelAnimationFrame(tooltipAnimationFrame)
+  tooltipAnimationFrame = 0
+  pendingTooltipClientPosition = null
+  edgeTooltip.value = null
+}
+
+function onEdgePointerEnter(event: PointerEvent, edgeId: string): void {
   if (gestureState.value !== 'idle') return
   hoveredEdgeId.value = selectedNodeId.value == null && !selectedEdgeId.value ? edgeId : null
+  showEdgeTooltip(edgeId, event.clientX, event.clientY)
+}
+
+function onEdgePointerMove(event: PointerEvent): void {
+  if (!edgeTooltip.value || gestureState.value !== 'idle') return
+  queueEdgeTooltipPosition(event.clientX, event.clientY)
 }
 
 function onEdgePointerLeave(): void {
-  if (gestureState.value !== 'idle') return
   hoveredEdgeId.value = null
+  hideEdgeTooltip()
+}
+
+function onEdgeFocus(event: FocusEvent, edgeId: string): void {
+  if (!(event.currentTarget instanceof SVGGraphicsElement)) return
+  const bounds = event.currentTarget.getBoundingClientRect()
+  hoveredEdgeId.value = selectedNodeId.value == null && !selectedEdgeId.value ? edgeId : null
+  showEdgeTooltip(edgeId, bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
+}
+
+function onEdgeBlur(): void {
+  hoveredEdgeId.value = null
+  hideEdgeTooltip()
 }
 
 async function setScene(
@@ -344,6 +387,7 @@ async function setThumbnailState(mapId: number, imageUrl: string | null, error: 
 }
 
 function setSelection(nodeId: number | null, edgeId: string | null): void {
+  hideEdgeTooltip()
   selectedNodeId.value = nodeId
   selectedEdgeId.value = edgeId
   if (nodeId != null || edgeId) {
@@ -476,6 +520,7 @@ function bindNodeDrag(): void {
       this.dataset.dragMoved = 'false'
       hoveredNodeId.value = null
       hoveredEdgeId.value = null
+      hideEdgeTooltip()
       setGestureState('node-drag')
       emit('nodeDragStart', { mapId, position: { ...position } })
     })
@@ -569,38 +614,6 @@ function updateIncidentGeometry(mapId: number): void {
     element.setAttribute('x', String(geometry.label.x))
     element.setAttribute('y', String(geometry.label.y))
   })
-  rootSvg.querySelectorAll<SVGGraphicsElement>(`[data-port-map="${mapId}"]`).forEach(element => {
-    const x = Number(element.dataset.portX)
-    const y = Number(element.dataset.portY)
-    const node = resolveNodeGeometry(mapId)
-    if (!node) return
-    try {
-      const point = mapOverviewSvgPortPoint(node, x, y)
-      if (element instanceof SVGCircleElement) {
-        element.setAttribute('cx', String(point.x))
-        element.setAttribute('cy', String(point.y))
-      } else if (element instanceof SVGLineElement) {
-        const labelOffsetY = Number(element.dataset.portLabelOffsetY)
-        const resolvedOffsetY = Number.isFinite(labelOffsetY)
-          ? labelOffsetY
-          : MAP_OVERVIEW_PORT_LABEL_OFFSET_Y
-        element.setAttribute('x1', String(point.x))
-        element.setAttribute('y1', String(point.y - MAP_OVERVIEW_PORT_MARKER_RADIUS))
-        element.setAttribute('x2', String(point.x))
-        element.setAttribute('y2', String(
-          point.y + resolvedOffsetY + Number(element.dataset.portLabelBottom || 0),
-        ))
-      } else {
-        const labelOffsetY = Number(element.dataset.portLabelOffsetY)
-        const resolvedOffsetY = Number.isFinite(labelOffsetY)
-          ? labelOffsetY
-          : MAP_OVERVIEW_PORT_LABEL_OFFSET_Y
-        element.setAttribute('transform', `translate(${point.x} ${point.y + resolvedOffsetY})`)
-      }
-    } catch {
-      // Ignore invalid active ports.
-    }
-  })
 }
 
 function setGestureState(state: 'idle' | 'node-drag' | 'pan'): void {
@@ -637,6 +650,7 @@ function initializeZoom(): void {
       panMoved = false
       hoveredNodeId.value = null
       hoveredEdgeId.value = null
+      hideEdgeTooltip()
       setGestureState('pan')
     })
     .on('zoom', event => {
@@ -708,6 +722,7 @@ function destroy(): void {
   resizeObserver?.disconnect()
   resizeObserver = null
   flushPendingIncidentGeometry()
+  hideEdgeTooltip()
   window.removeEventListener('keydown', onWindowKeydown)
   window.removeEventListener('keyup', onWindowKeyup)
   window.removeEventListener('blur', onWindowBlur)
@@ -775,7 +790,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
             <path d="M0,0 L0,4 L6,2 z" :fill="mapOverviewTransferConditionVisual(category).stroke" />
           </marker>
           <marker :id="edgeMarkerId(category, true)" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
-            <path d="M0,0 L0,6 L8,3 z" fill="var(--map-overview-active-color)" />
+            <path d="M0,0 L0,6 L8,3 z" :fill="mapOverviewTransferConditionVisual(category).stroke" />
           </marker>
         </template>
       </defs>
@@ -791,7 +806,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :marker-end="`url(#${edgeMarkerId(item.condition)})`"
               :style="edgeVisualStyle(item.condition)"
               role="img"
-              :aria-label="edgeAriaLabel(item.edge, item.condition)"
+              :aria-label="edgeAriaLabel(item.edge)"
             />
             <path
               class="map-overview-svg-edge-hit"
@@ -799,10 +814,16 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-id="item.edge.id"
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
-              aria-hidden="true"
+              tabindex="0"
+              role="button"
+              :aria-label="edgeAriaLabel(item.edge)"
+              :aria-describedby="edgeTooltip?.edgeId === item.edge.id ? 'map-overview-edge-tooltip' : undefined"
               @click="onEdgeClick($event, item.edge.id)"
-              @pointerenter="onEdgePointerEnter(item.edge.id)"
+              @pointerenter="onEdgePointerEnter($event, item.edge.id)"
+              @pointermove="onEdgePointerMove"
               @pointerleave="onEdgePointerLeave"
+              @focus="onEdgeFocus($event, item.edge.id)"
+              @blur="onEdgeBlur"
             />
             <text
               v-if="item.edge.count > 1"
@@ -907,52 +928,33 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-id="item.edge.id"
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
+              :style="foregroundEdgeLabelStyle(item.condition)"
             >×{{ item.edge.count }}</text>
-          </template>
-          <template v-for="port in activePorts" :key="port.key">
-            <line
-              v-if="port.placement.shifted"
-              class="map-overview-svg-port-label-leader"
-              :x1="port.point.x"
-              :y1="port.point.y - MAP_OVERVIEW_PORT_MARKER_RADIUS"
-              :x2="port.placement.x"
-              :y2="port.placement.y + port.label.rectY + port.label.height"
-              :data-port-map="port.mapId"
-              :data-port-x="port.x"
-              :data-port-y="port.y"
-              :data-port-label-offset-y="port.placement.offsetY"
-              :data-port-label-bottom="port.label.rectY + port.label.height"
-            />
-            <circle
-              :class="['map-overview-svg-port', port.role]"
-              :cx="port.point.x"
-              :cy="port.point.y"
-              :r="MAP_OVERVIEW_PORT_MARKER_RADIUS"
-              :data-port-map="port.mapId"
-              :data-port-x="port.x"
-              :data-port-y="port.y"
-            />
-            <g
-              class="map-overview-svg-port-label"
-              :transform="`translate(${port.placement.x} ${port.placement.y})`"
-              :data-port-map="port.mapId"
-              :data-port-x="port.x"
-              :data-port-y="port.y"
-              :data-port-label-offset-y="port.placement.offsetY"
-            >
-              <rect
-                :x="-port.label.width / 2"
-                :y="port.label.rectY"
-                :width="port.label.width"
-                :height="port.label.height"
-                rx="3"
-              />
-              <text x="0" :y="port.label.textY">{{ port.label.text }}</text>
-            </g>
           </template>
         </g>
       </g>
     </svg>
+    <div
+      v-if="edgeTooltip && tooltipEdge"
+      id="map-overview-edge-tooltip"
+      ref="edgeTooltipElement"
+      class="map-overview-edge-tooltip"
+      role="tooltip"
+      :style="{ transform: `translate(${edgeTooltip.x}px, ${edgeTooltip.y}px)` }"
+    >
+      <strong>
+        MAP{{ String(tooltipEdge.sourceMapId).padStart(3, '0') }}
+        ({{ tooltipEdge.sourceX }}, {{ tooltipEdge.sourceY }})
+        →
+        MAP{{ String(tooltipEdge.targetMapId).padStart(3, '0') }}
+        ({{ tooltipEdge.targetX }}, {{ tooltipEdge.targetY }})
+      </strong>
+      <span>{{ tooltipCondition }}</span>
+      <small>{{ t('mapOverview.tooltip.transferCount', { count: tooltipEdge.count }) }}</small>
+      <small v-if="tooltipEdge.sources.length > 1">
+        {{ t('mapOverview.tooltip.multipleSources') }}
+      </small>
+    </div>
   </div>
 </template>
 
@@ -966,14 +968,14 @@ defineExpose<MapOverviewSvgCanvasApi>({
 .map-overview-svg-root.gesture-pan .map-overview-svg-node { cursor:grabbing; }
 .map-overview-svg-world { transform-origin:0 0; }
 .map-overview-svg-edge { fill:none; stroke:#8c8d86; stroke-width:1; stroke-linecap:round; stroke-linejoin:round; opacity:.22; vector-effect:non-scaling-stroke; }
-.map-overview-svg-edge.active { stroke:var(--map-overview-active-color); opacity:.65; }
+.map-overview-svg-edge.active { opacity:.65; }
 .map-overview-svg-edge.active.node-hovered { stroke-width:1.25; opacity:.65; }
 .map-overview-svg-edge.active.node-selected { stroke-width:1.5; opacity:.8; }
 .map-overview-svg-edge.active.edge-hovered { stroke-width:2; opacity:.9; }
 .map-overview-svg-edge.active.edge-selected { stroke-width:2.5; opacity:1; }
 .map-overview-svg-edge-hit { fill:none; stroke:transparent; stroke-width:13; pointer-events:stroke; cursor:pointer; vector-effect:non-scaling-stroke; }
 .map-overview-svg-edge-label { fill:#5f605a; stroke:#f7f7f4; stroke-width:2.5; opacity:.55; paint-order:stroke; text-anchor:middle; dominant-baseline:middle; font:600 10px var(--app-font-mono); pointer-events:none; }
-.map-overview-svg-edge-label.active { fill:var(--map-overview-active-color); opacity:.8; }
+.map-overview-svg-edge-label.active { opacity:.8; }
 .map-overview-svg-edge-label.active.edge-selected { opacity:1; }
 .map-overview-svg-low-detail .map-overview-svg-edge-label { display:none; }
 .map-overview-svg-node { cursor:move; transition:opacity 120ms ease; }
@@ -988,10 +990,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
 .map-overview-svg-node-error-mark text { fill:#c2412d; text-anchor:middle; font:700 16px var(--app-font-sans); }
 .map-overview-svg-node-label-bg { fill:#f7f7f4; fill-opacity:.78; }
 .map-overview-svg-node-label { fill:#282923; text-anchor:middle; font:600 12px var(--app-font-sans); }
-.map-overview-svg-port { stroke:var(--map-overview-active-color); stroke-width:2; vector-effect:non-scaling-stroke; }
-.map-overview-svg-port.source { fill:transparent; }
-.map-overview-svg-port.target,.map-overview-svg-port.both { fill:var(--map-overview-active-color); }
-.map-overview-svg-port-label-leader { stroke:var(--map-overview-active-color); stroke-width:.75; opacity:.6; vector-effect:non-scaling-stroke; }
-.map-overview-svg-port-label rect { fill:#f7f7f4; fill-opacity:.92; }
-.map-overview-svg-port-label text { fill:#5f605a; text-anchor:middle; font:600 9px var(--app-font-mono); }
+.map-overview-edge-tooltip { position:absolute; left:0; top:0; z-index:5; display:grid; gap:4px; width:max-content; max-width:280px; padding:8px 10px; border:1px solid color-mix(in srgb, var(--app-border) 82%, transparent); border-radius:8px; background:color-mix(in srgb, var(--app-bg-elevated) 96%, transparent); color:var(--app-ink); box-shadow:0 8px 24px rgba(30,31,28,.16); pointer-events:none; font-size:11px; line-height:1.4; }
+.map-overview-edge-tooltip strong { font-weight:650; }
+.map-overview-edge-tooltip span,.map-overview-edge-tooltip small { color:var(--app-ink-muted); }
 </style>

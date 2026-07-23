@@ -44,6 +44,43 @@ test('PNG export worker writes a transparent 1:1 overview through Sharp', async 
   assert.equal(fs.existsSync(path.join(root, 'runtime', 'map-overview-exports', `${scene.requestId}.json`)), false);
 });
 
+test('PNG export worker uses the shared transfer-condition color', async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-map-export-condition-'));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const project = path.join(root, 'projects', 'sample');
+  fs.mkdirSync(project, { recursive: true });
+  const outputPath = path.join(root, 'condition-map-overview.png');
+  const thumbnailVersion = 'b'.repeat(20);
+  await writeThumbnailCache(root, project, thumbnailVersion);
+  const scene = makeScene(project, 2, 2, thumbnailVersion);
+  scene.edges.push({
+    id: 'condition-edge',
+    sourceMapId: 1,
+    sourceX: 0,
+    sourceY: 0,
+    targetMapId: 1,
+    targetX: 0,
+    targetY: 0,
+    count: 1,
+    conditionCategory: 'variable',
+  });
+
+  const status = await runWorker(root, outputPath, scene);
+  assert.equal(status.phase, 'completed');
+  const { data, info } = await sharp(outputPath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let foundVariableColor = false;
+  for (let offset = 0; offset < data.length; offset += info.channels) {
+    const distance = Math.abs(data[offset] - 0xb3)
+      + Math.abs(data[offset + 1] - 0x6a)
+      + Math.abs(data[offset + 2] - 0x12);
+    if (data[offset + 3] > 0 && distance <= 36) {
+      foundVariableColor = true;
+      break;
+    }
+  }
+  assert.equal(foundVariableColor, true);
+});
+
 test('PNG export worker rejects oversized output without replacing an existing target', async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-map-export-limit-'));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));

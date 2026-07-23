@@ -1210,12 +1210,6 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       });
       return result.canceled ? null : result.filePath || null;
     },
-    revealMapOverviewExport: (outputPath: string) => {
-      if (!path.isAbsolute(outputPath) || path.extname(outputPath).toLowerCase() !== '.png') {
-        throw new Error('Invalid map overview PNG export path.');
-      }
-      shell.showItemInFolder(outputPath);
-    },
     openProjectDirectory: async (projectPath: string) => {
       const stat = fs.statSync(projectPath);
       if (!stat.isDirectory()) throw new Error('The selected project folder is not a directory.');

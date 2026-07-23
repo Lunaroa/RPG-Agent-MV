@@ -147,7 +147,6 @@ declare global {
         startOverviewPngExport(scene: MapOverviewPngExportScene): Promise<unknown>;
         overviewPngExportStatus(): Promise<unknown>;
         cancelOverviewPngExport(requestId: string): Promise<unknown>;
-        revealOverviewPngExport(requestId: string): Promise<unknown>;
         onOverviewPngExportProgress(callback: (progress: MapOverviewPngExportProgressEvent) => void): () => void;
         create(properties: Record<string, unknown>, project?: string): Promise<unknown>;
         importFromLibrary(assetId: string, parentMapId?: number | null, properties?: Record<string, unknown>, project?: string): Promise<unknown>;
@@ -630,9 +629,6 @@ export const maps = {
   },
   cancelOverviewPngExport(requestId: string) {
     return desktopApi().maps.cancelOverviewPngExport(requestId) as Promise<MapOverviewPngExportStatus>;
-  },
-  revealOverviewPngExport(requestId: string) {
-    return desktopApi().maps.revealOverviewPngExport(requestId) as Promise<{ revealed: boolean }>;
   },
   onOverviewPngExportProgress(callback: (progress: MapOverviewPngExportProgressEvent) => void) {
     return desktopApi().maps.onOverviewPngExportProgress(callback);

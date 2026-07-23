@@ -126,6 +126,7 @@ describe('map IPC project compatibility warnings', () => {
     assert.equal(startOptions.project, PROJECT_PATH);
     assert.deepEqual(result, { canceled: false, status });
     assert.deepEqual(events, [{ channel: 'maps:overviewExportProgress', payload: status }]);
+    assert.equal(handlers.has('maps:overviewExportReveal'), false);
   });
 
   test('rejects overview thumbnail requests for unregistered project paths', async () => {

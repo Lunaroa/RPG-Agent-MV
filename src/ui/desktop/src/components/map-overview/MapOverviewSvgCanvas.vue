@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import type { MapOverviewEdge, MapOverviewNode, MapOverviewSnapshot } from '@contract/types'
 import {
+  classifyMapOverviewEdgeConditions,
+  MAP_OVERVIEW_TRANSFER_CONDITION_CATEGORIES,
+  mapOverviewTransferConditionVisual,
+  type MapOverviewTransferConditionCategory,
+} from '@contract/map-overview-transfer-condition'
+import {
   buildMapOverviewSvgEdgeRoutes,
   mapOverviewSvgEdgeGeometry,
   mapOverviewSvgExportBounds,
@@ -85,7 +91,12 @@ const geometryEdges = computed(() => {
   if (!next) return []
   return next.edges.flatMap(edge => {
     try {
-      return [{ edge, geometry: mapOverviewSvgEdgeGeometry(edge, geometryNodeMap.value, routes.value.get(edge.id)) }]
+      const condition = classifyMapOverviewEdgeConditions(edge.sources)
+      return [{
+        edge,
+        condition,
+        geometry: mapOverviewSvgEdgeGeometry(edge, geometryNodeMap.value, routes.value.get(edge.id)),
+      }]
     } catch {
       return []
     }
@@ -164,6 +175,22 @@ function edgeOpacity(edgeId: string): number {
   if (activeEdgeIds.value.has(edgeId)) return 0
   if (!hasFocus.value) return 1
   return 0.16
+}
+
+function edgeMarkerId(category: MapOverviewTransferConditionCategory, active = false): string {
+  return `map-overview-arrow-${category}${active ? '-active' : ''}`
+}
+
+function edgeAriaLabel(edge: MapOverviewEdge, category: MapOverviewTransferConditionCategory): string {
+  return `MAP${String(edge.sourceMapId).padStart(3, '0')} (${edge.sourceX}, ${edge.sourceY}) → MAP${String(edge.targetMapId).padStart(3, '0')} (${edge.targetX}, ${edge.targetY}); ${category}`
+}
+
+function edgeVisualStyle(category: MapOverviewTransferConditionCategory): Record<string, string> {
+  const visual = mapOverviewTransferConditionVisual(category)
+  return {
+    stroke: visual.stroke,
+    ...(visual.dashArray ? { strokeDasharray: visual.dashArray } : {}),
+  }
 }
 
 function foregroundEdgeState(edge: MapOverviewEdge): string {
@@ -666,12 +693,14 @@ defineExpose<MapOverviewSvgCanvasApi>({
       @auxclick.prevent
     >
       <defs>
-        <marker id="map-overview-arrow" markerWidth="7" markerHeight="7" refX="6" refY="2" orient="auto" markerUnits="userSpaceOnUse">
-          <path d="M0,0 L0,4 L6,2 z" fill="#8c8d86" />
-        </marker>
-        <marker id="map-overview-arrow-active" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
-          <path d="M0,0 L0,6 L8,3 z" fill="#c65f3d" />
-        </marker>
+        <template v-for="category in MAP_OVERVIEW_TRANSFER_CONDITION_CATEGORIES" :key="category">
+          <marker :id="edgeMarkerId(category)" markerWidth="7" markerHeight="7" refX="6" refY="2" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M0,0 L0,4 L6,2 z" :fill="mapOverviewTransferConditionVisual(category).stroke" />
+          </marker>
+          <marker :id="edgeMarkerId(category, true)" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M0,0 L0,6 L8,3 z" :fill="mapOverviewTransferConditionVisual(category).stroke" />
+          </marker>
+        </template>
       </defs>
       <g ref="world" class="map-overview-svg-world">
         <g class="map-overview-svg-edges">
@@ -682,7 +711,10 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-id="item.edge.id"
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
-              marker-end="url(#map-overview-arrow)"
+              :marker-end="`url(#${edgeMarkerId(item.condition)})`"
+              :style="edgeVisualStyle(item.condition)"
+              role="img"
+              :aria-label="edgeAriaLabel(item.edge, item.condition)"
             />
             <path
               class="map-overview-svg-edge-hit"
@@ -690,6 +722,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-id="item.edge.id"
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
+              aria-hidden="true"
               @click="onEdgeClick($event, item.edge.id)"
               @pointerenter="onEdgePointerEnter(item.edge.id)"
               @pointerleave="onEdgePointerLeave"
@@ -783,7 +816,8 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-id="item.edge.id"
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
-              marker-end="url(#map-overview-arrow-active)"
+              :marker-end="`url(#${edgeMarkerId(item.condition, true)})`"
+              :style="edgeVisualStyle(item.condition)"
             />
             <text
               v-if="activeEdgeIds.has(item.edge.id) && item.edge.count > 1"

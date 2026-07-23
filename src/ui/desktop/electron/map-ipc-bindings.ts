@@ -20,7 +20,6 @@ export interface ProjectIpcOptions {
   selectPluginFile?: (event: unknown) => Promise<string | null>;
   selectAssetFile?: (event: unknown, category: string, extensions: string[]) => Promise<string | null>;
   selectMapOverviewExportTarget?: (event: unknown, defaultName: string) => Promise<string | null>;
-  revealMapOverviewExport?: (outputPath: string) => void;
   openProjectDirectory?: (projectPath: string) => Promise<void>;
   productLanguage?: () => ProductLanguage;
   withProductLanguage: <T>(language: ProductLanguage, fn: () => T) => T;
@@ -60,7 +59,6 @@ export const MAP_IPC_CHANNELS = [
   'maps:overviewExportStart',
   'maps:overviewExportStatus',
   'maps:overviewExportCancel',
-  'maps:overviewExportReveal',
   'maps:create',
   'maps:importFromLibrary',
   'maps:importPackageFromLibrary',
@@ -305,15 +303,6 @@ export function registerMapIpcHandlers(
   handle('maps:overviewExportStatus', () => desktop.mapOverviewExport.getMapOverviewPngExportStatus());
   handle('maps:overviewExportCancel', (_event, requestId: string) =>
     desktop.mapOverviewExport.cancelMapOverviewPngExport(requestId));
-  handle('maps:overviewExportReveal', (_event, requestId: string) => {
-    const status = desktop.mapOverviewExport.getMapOverviewPngExportStatus();
-    if (!status || status.requestId !== requestId || status.phase !== 'completed' || !status.outputPath) {
-      throw new Error('The completed map overview PNG export was not found.');
-    }
-    if (!options.revealMapOverviewExport) throw new Error('Showing exported files is unavailable.');
-    options.revealMapOverviewExport(status.outputPath);
-    return { revealed: true };
-  });
   handle('maps:create', (_event, properties: Record<string, unknown>, value?: string) => desktop.maps.createMapDraft(workflowRoot, project(value), properties));
   handle('maps:importFromLibrary', (_event, assetId: string, parentMapId?: number | null, properties?: Record<string, unknown>, value?: string) => desktop.maps.importMapDraftFromLibrary(workflowRoot, project(value), assetId, { ...(properties || {}), parentId: parentMapId || 0 }));
   handle('maps:importPackageFromLibrary', (_event, assetIds: string[], parentMapId?: number | null, properties?: Record<string, unknown>, value?: string) =>

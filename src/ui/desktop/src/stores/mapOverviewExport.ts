@@ -43,11 +43,6 @@ export const useMapOverviewExportStore = defineStore('mapOverviewExport', () => 
     updateElapsed()
   }
 
-  async function reveal(): Promise<void> {
-    if (!status.value || status.value.phase !== 'completed') return
-    await maps.revealOverviewPngExport(status.value.requestId)
-  }
-
   function dispose(): void {
     removeListener?.()
     removeListener = null
@@ -63,5 +58,5 @@ export const useMapOverviewExportStore = defineStore('mapOverviewExport', () => 
       : 0
   }
 
-  return { status, initialized, running, elapsedSeconds, initialize, start, cancel, reveal, dispose }
+  return { status, initialized, running, elapsedSeconds, initialize, start, cancel, dispose }
 })

@@ -21,6 +21,11 @@ import {
   type MapOverviewSvgEdgeGeometry,
   type MapOverviewSvgNodeGeometry,
 } from '../../../../contract/map-overview-svg-geometry.ts';
+import {
+  MAP_OVERVIEW_TRANSFER_CONDITION_CATEGORIES,
+  isMapOverviewTransferConditionCategory,
+  mapOverviewTransferConditionVisual,
+} from '../../../../contract/map-overview-transfer-condition.ts';
 import { readCachedMapOverviewThumbnail } from './map-overview-service.ts';
 
 export const MAP_OVERVIEW_EXPORT_MAX_DIMENSION = 32_767;
@@ -161,10 +166,15 @@ function prepareScene(request: MapOverviewPngExportWorkerRequest): PreparedScene
   });
   const nodeMap = new Map(nodes.map(node => [node.id, node]));
   const routes = buildMapOverviewSvgEdgeRoutes(request.scene.edges);
-  const edges = request.scene.edges.map(edge => ({
-    edge,
-    geometry: mapOverviewSvgEdgeGeometry(edge, nodeMap, routes.get(edge.id)),
-  }));
+  const edges = request.scene.edges.map(edge => {
+    if (!isMapOverviewTransferConditionCategory(edge.conditionCategory)) {
+      throw new Error(`Map overview edge ${edge.id} has an invalid transfer condition category.`);
+    }
+    return {
+      edge,
+      geometry: mapOverviewSvgEdgeGeometry(edge, nodeMap, routes.get(edge.id)),
+    };
+  });
   const images = new Map<number, string>();
   for (const node of request.scene.nodes) {
     if (node.readState !== 'ready') continue;
@@ -198,9 +208,18 @@ function buildStripSvg(prepared: PreparedScene, outputTop: number, outputHeight:
   const nodes = prepared.nodes.filter(node => mapOverviewSvgBoundsIntersect(mapOverviewSvgNodeBounds(node), stripBounds));
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${prepared.bounds.width}" height="${outputHeight}" viewBox="${prepared.bounds.minX} ${worldTop} ${prepared.bounds.width} ${outputHeight}">`,
-    '<defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L0,4 L6,2 z" fill="#8c8d86"/></marker></defs>',
-    '<g fill="none" stroke="#8c8d86" stroke-width="1" stroke-opacity=".48" stroke-linecap="round" stroke-linejoin="round">',
-    ...edges.map(item => `<path d="${item.geometry.path}" marker-end="url(#arrow)"/>`),
+    '<defs>',
+    ...MAP_OVERVIEW_TRANSFER_CONDITION_CATEGORIES.map(category => {
+      const visual = mapOverviewTransferConditionVisual(category);
+      return `<marker id="arrow-${category}" markerWidth="7" markerHeight="7" refX="6" refY="2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L0,4 L6,2 z" fill="${visual.stroke}"/></marker>`;
+    }),
+    '</defs>',
+    '<g fill="none" stroke-width="1" stroke-opacity=".48" stroke-linecap="round" stroke-linejoin="round">',
+    ...edges.map(item => {
+      const visual = mapOverviewTransferConditionVisual(item.edge.conditionCategory);
+      const dash = visual.dashArray ? ` stroke-dasharray="${visual.dashArray}"` : '';
+      return `<path d="${item.geometry.path}" stroke="${visual.stroke}"${dash} marker-end="url(#arrow-${item.edge.conditionCategory})"/>`;
+    }),
     '</g>',
     ...edges.filter(item => item.edge.count > 1).map(item => (
       `<text x="${item.geometry.label.x}" y="${item.geometry.label.y}" fill="#5f605a" fill-opacity=".7" stroke="#f7f7f4" stroke-width="2.5" paint-order="stroke" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="10" font-weight="600">×${item.edge.count}</text>`

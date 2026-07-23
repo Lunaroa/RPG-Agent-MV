@@ -1,4 +1,14 @@
 import { mapOverviewEdgeAggregateKey as sharedMapOverviewEdgeAggregateKey } from '@contract/map-overview-edge-key'
+import {
+  classifyMapOverviewEdgeConditions,
+  type MapOverviewTransferConditionCategory,
+} from '@contract/map-overview-transfer-condition'
+import {
+  mapOverviewSvgPortPoint,
+  type MapOverviewSvgNodeGeometry,
+  type MapOverviewSvgPosition,
+} from '@contract/map-overview-svg-geometry'
+import type { MapOverviewEdge } from '@contract/types'
 
 export const MAP_OVERVIEW_PORT_LABEL_HEIGHT = 14
 export const MAP_OVERVIEW_PORT_LABEL_MIN_WIDTH = 26
@@ -33,12 +43,68 @@ export interface MapOverviewPortLabelPlacement {
   shifted: boolean
 }
 
+export interface MapOverviewActivePort {
+  key: string
+  mapId: number
+  x: number
+  y: number
+  role: 'source' | 'target' | 'both'
+  category: MapOverviewTransferConditionCategory
+  point: MapOverviewSvgPosition
+}
+
 interface MapOverviewPortLabelRect {
   key: string
   left: number
   right: number
   top: number
   bottom: number
+}
+
+export function buildMapOverviewActivePorts(
+  edges: readonly MapOverviewEdge[],
+  activeEdgeIds: ReadonlySet<string>,
+  nodes: ReadonlyMap<number, MapOverviewSvgNodeGeometry>,
+): MapOverviewActivePort[] {
+  const ports = new Map<string, MapOverviewActivePort>()
+  const mark = (
+    mapId: number,
+    x: number,
+    y: number,
+    role: 'source' | 'target',
+    category: MapOverviewTransferConditionCategory,
+  ) => {
+    const node = nodes.get(mapId)
+    if (!node) return
+    const key = `${mapId}:${x}:${y}`
+    const existing = ports.get(key)
+    if (existing) {
+      if (existing.role !== role) existing.role = 'both'
+      if (existing.category !== category) existing.category = 'combined'
+      return
+    }
+    try {
+      ports.set(key, {
+        key,
+        mapId,
+        x,
+        y,
+        role,
+        category,
+        point: mapOverviewSvgPortPoint(node, x, y),
+      })
+    } catch {
+      // Invalid coordinates remain represented by the snapshot issue node, not an SVG port.
+    }
+  }
+
+  for (const edge of edges) {
+    if (!activeEdgeIds.has(edge.id)) continue
+    const category = classifyMapOverviewEdgeConditions(edge.sources)
+    mark(edge.sourceMapId, edge.sourceX, edge.sourceY, 'source', category)
+    mark(edge.targetMapId, edge.targetX, edge.targetY, 'target', category)
+  }
+  return [...ports.values()]
 }
 
 export function mapOverviewPortLabelGeometry(x: number, y: number): MapOverviewPortLabelGeometry {

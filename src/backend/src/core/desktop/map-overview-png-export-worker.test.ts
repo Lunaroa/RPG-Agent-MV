@@ -8,8 +8,10 @@ import { Worker } from 'node:worker_threads';
 
 import sharp from 'sharp';
 
+import { mapOverviewTransferConditionVisual } from '../../../../contract/map-overview-transfer-condition.ts';
 import type { MapOverviewPngExportScene, MapOverviewPngExportStatus } from '../../../../contract/types.ts';
 import {
+  mapOverviewSvgEdgeGeometry,
   mapOverviewSvgExportBounds,
   mapOverviewSvgNodeGeometry,
 } from '../../../../contract/map-overview-svg-geometry.ts';
@@ -68,17 +70,66 @@ test('PNG export worker uses the shared transfer-condition color', async (contex
   const status = await runWorker(root, outputPath, scene);
   assert.equal(status.phase, 'completed');
   const { data, info } = await sharp(outputPath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const expectedColor = hexToRgb(mapOverviewTransferConditionVisual('variable').stroke);
   let foundVariableColor = false;
   for (let offset = 0; offset < data.length; offset += info.channels) {
-    const distance = Math.abs(data[offset] - 0xb3)
-      + Math.abs(data[offset + 1] - 0x6a)
-      + Math.abs(data[offset + 2] - 0x12);
+    const distance = Math.abs(data[offset] - expectedColor.red)
+      + Math.abs(data[offset + 1] - expectedColor.green)
+      + Math.abs(data[offset + 2] - expectedColor.blue);
     if (data[offset + 3] > 0 && distance <= 36) {
       foundVariableColor = true;
       break;
     }
   }
   assert.equal(foundVariableColor, true);
+});
+
+test('PNG export worker draws visible relationships above map thumbnails', async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-map-export-layer-'));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const project = path.join(root, 'projects', 'sample');
+  fs.mkdirSync(project, { recursive: true });
+  const outputPath = path.join(root, 'layered-map-overview.png');
+  const thumbnailVersion = 'c'.repeat(20);
+  await writeThumbnailCache(root, project, thumbnailVersion, 36, 36);
+  const scene = makeScene(project, 3, 3, thumbnailVersion);
+  scene.edges.push({
+    id: 'visible-over-map',
+    sourceMapId: 1,
+    sourceX: 0,
+    sourceY: 0,
+    targetMapId: 1,
+    targetX: 2,
+    targetY: 2,
+    count: 1,
+    conditionCategory: 'none',
+  });
+
+  const status = await runWorker(root, outputPath, scene);
+  assert.equal(status.phase, 'completed');
+  const node = mapOverviewSvgNodeGeometry(
+    { id: 1, name: 'Sample', readState: 'ready', width: 3, height: 3 },
+    { x: 0, y: 0 },
+  );
+  const geometry = mapOverviewSvgEdgeGeometry(scene.edges[0], new Map([[node.id, node]]));
+  const bounds = mapOverviewSvgExportBounds([node], [geometry]);
+  const sourceX = Math.round(geometry.source.x + bounds.translateX);
+  const sourceY = Math.round(geometry.source.y + bounds.translateY);
+  const { data, info } = await sharp(outputPath)
+    .extract({ left: sourceX - 2, top: sourceY - 2, width: 5, height: 5 })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  let foundRelationshipPixel = false;
+  let foundWhiteEndpointOutline = false;
+  for (let offset = 0; offset < data.length; offset += info.channels) {
+    if (data[offset] !== 255 || data[offset + 1] !== 0 || data[offset + 2] !== 0) {
+      foundRelationshipPixel = true;
+    }
+    foundWhiteEndpointOutline ||= data[offset] > 240 && data[offset + 1] > 240 && data[offset + 2] > 240
+  }
+  assert.equal(foundRelationshipPixel, true);
+  assert.equal(foundWhiteEndpointOutline, false);
 });
 
 test('PNG export worker rejects oversized output without replacing an existing target', async (context) => {
@@ -121,7 +172,13 @@ function makeScene(
   };
 }
 
-async function writeThumbnailCache(workflowRoot: string, project: string, version: string): Promise<void> {
+async function writeThumbnailCache(
+  workflowRoot: string,
+  project: string,
+  version: string,
+  width = 24,
+  height = 24,
+): Promise<void> {
   const projectKey = crypto.createHash('sha256').update(path.resolve(project).toLocaleLowerCase()).digest('hex').slice(0, 20);
   const cacheFile = path.join(
     workflowRoot,
@@ -134,8 +191,8 @@ async function writeThumbnailCache(workflowRoot: string, project: string, versio
   fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
   const png = await sharp({
     create: {
-      width: 24,
-      height: 24,
+      width,
+      height,
       channels: 4,
       background: { r: 255, g: 0, b: 0, alpha: 1 },
     },
@@ -146,8 +203,8 @@ async function writeThumbnailCache(workflowRoot: string, project: string, versio
     mapId: 1,
     version,
     scaleDivisor: 4,
-    width: 24,
-    height: 24,
+    width,
+    height,
     mime: 'image/png',
     dataUrl: `data:image/png;base64,${png.toString('base64')}`,
     warnings: [],
@@ -176,4 +233,13 @@ function runWorker(
     });
     worker.postMessage({ workflowRoot, project: scene.project, outputPath, scene });
   });
+}
+
+function hexToRgb(hex: string): { red: number; green: number; blue: number } {
+  assert.match(hex, /^#[0-9a-f]{6}$/i);
+  return {
+    red: Number.parseInt(hex.slice(1, 3), 16),
+    green: Number.parseInt(hex.slice(3, 5), 16),
+    blue: Number.parseInt(hex.slice(5, 7), 16),
+  };
 }

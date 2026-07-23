@@ -214,6 +214,7 @@ function buildStripSvg(prepared: PreparedScene, outputTop: number, outputHeight:
       return `<marker id="arrow-${category}" markerWidth="7" markerHeight="7" refX="6" refY="2" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L0,4 L6,2 z" fill="${visual.stroke}"/></marker>`;
     }),
     '</defs>',
+    ...nodes.map(node => nodeSvg(node, prepared.images.get(node.id))),
     '<g fill="none" stroke-width="1" stroke-opacity=".48" stroke-linecap="round" stroke-linejoin="round">',
     ...edges.map(item => {
       const visual = mapOverviewTransferConditionVisual(item.edge.conditionCategory);
@@ -224,7 +225,6 @@ function buildStripSvg(prepared: PreparedScene, outputTop: number, outputHeight:
     ...edges.filter(item => item.edge.count > 1).map(item => (
       `<text x="${item.geometry.label.x}" y="${item.geometry.label.y}" fill="#5f605a" fill-opacity=".7" stroke="#f7f7f4" stroke-width="2.5" paint-order="stroke" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif" font-size="10" font-weight="600">×${item.edge.count}</text>`
     )),
-    ...nodes.map(node => nodeSvg(node, prepared.images.get(node.id))),
     '</svg>',
   ].join('');
 }

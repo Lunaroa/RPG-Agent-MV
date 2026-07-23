@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import type { MapPreviewLoadStage } from '../../../../contract/types.ts';
 import {
@@ -109,12 +111,12 @@ export function prepareIsolatedStagedProject(
   }
 }
 
-export function prepareIsolatedMapPreviewProject(
+export async function prepareIsolatedMapPreviewProject(
   workflowRootInput: string,
   projectInput: string,
   temporaryProjectInput: string,
   options: IsolatedMapPreviewPreparationOptions = {},
-): IsolatedMapPreviewPreparation {
+): Promise<IsolatedMapPreviewPreparation> {
   options.onStage?.('resolve-source-project');
   const workflowRoot = fs.realpathSync.native(path.resolve(workflowRootInput));
   let sourceProject: string;
@@ -134,7 +136,7 @@ export function prepareIsolatedMapPreviewProject(
   const saveFingerprint = fingerprintSaveState(sourceProject);
   try {
     options.onStage?.('copy-source-project');
-    const copied = copyProjectAndCaptureSnapshot(
+    const copied = await copyProjectAndCaptureSnapshot(
       sourceProject,
       temporaryProject,
       options.excludeRelativePaths || [],
@@ -336,17 +338,17 @@ interface SourceTreeMetadataEntry {
   linkTarget?: string;
 }
 
-function copyProjectAndCaptureSnapshot(
+async function copyProjectAndCaptureSnapshot(
   sourceProject: string,
   temporaryProject: string,
   excludedRelativePaths: readonly string[],
   onProgress?: (progress: IsolatedMapPreviewPreparationProgress) => void,
-): {
+): Promise<{
   sourceFingerprint: string;
   sourceSnapshot: IsolatedProjectSourceSnapshotEntry[];
   sourceMetadata: Map<string, SourceTreeMetadataEntry>;
   sourceFileCount: number;
-} {
+}> {
   const source = fs.realpathSync.native(path.resolve(sourceProject));
   const exclusions = excludedRelativePaths.map((relative) => normalizeRelative(relative).toLowerCase());
   const excluded = (relative: string) => {
@@ -378,58 +380,13 @@ function copyProjectAndCaptureSnapshot(
     completedBytes: 0,
     totalBytes,
   });
-  const sourceHash = crypto.createHash('sha256');
-  const sourceSnapshot: IsolatedProjectSourceSnapshotEntry[] = [];
+  const sourceSnapshot = new Map<string, IsolatedProjectSourceSnapshotEntry>();
   const directoryTimes: Array<{ target: string; atime: Date; mtime: Date }> = [];
   let completedFiles = 0;
   let completedBytes = 0;
-  for (const [relative, entry] of metadata) {
-    const sourcePath = path.join(source, ...relative.split('/'));
-    const targetPath = path.join(temporaryProject, ...relative.split('/'));
-    if (entry.type === 'directory') {
-      fs.mkdirSync(targetPath, { recursive: true });
-      const stat = fs.lstatSync(sourcePath);
-      directoryTimes.push({ target: targetPath, atime: stat.atime, mtime: stat.mtime });
-      continue;
-    }
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    if (entry.type === 'link') {
-      const linkTarget = fs.readlinkSync(sourcePath);
-      if (linkTarget !== entry.linkTarget) {
-        throw new IsolatedProjectPreparationError(`Source link changed while preparing isolated preview: ${relative}`);
-      }
-      fs.symlinkSync(linkTarget, targetPath);
-      const body = Buffer.from(linkTarget, 'utf8');
-      sourceHash.update(`link:${relative}:${linkTarget}\n`);
-      sourceSnapshot.push({ relativePath: relative, size: entry.size, mtimeMs: entry.mtimeMs, hash: sha256(body) });
-      completedFiles += 1;
-      completedBytes += entry.size;
-      onProgress?.({
-        stage: 'copying-project',
-        completed: completedFiles,
-        total: totalFiles,
-        completedBytes,
-        totalBytes,
-      });
-      continue;
-    }
-    const before = fs.lstatSync(sourcePath);
-    const body = fs.readFileSync(sourcePath);
-    const after = fs.lstatSync(sourcePath);
-    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs
-      || before.size !== entry.size || before.mtimeMs !== entry.mtimeMs) {
-      throw new IsolatedProjectPreparationError(`Source file changed while preparing isolated preview: ${relative}`);
-    }
-    fs.writeFileSync(targetPath, body);
-    fs.chmodSync(targetPath, after.mode);
-    fs.utimesSync(targetPath, after.atime, after.mtime);
-    const hash = sha256(body);
-    sourceHash.update(`file:${relative}:${after.size}:`);
-    sourceHash.update(body);
-    sourceHash.update('\n');
-    sourceSnapshot.push({ relativePath: relative, size: after.size, mtimeMs: after.mtimeMs, hash });
+  const reportCompleted = (entry: SourceTreeMetadataEntry): void => {
     completedFiles += 1;
-    completedBytes += after.size;
+    completedBytes += entry.size;
     onProgress?.({
       stage: 'copying-project',
       completed: completedFiles,
@@ -437,16 +394,147 @@ function copyProjectAndCaptureSnapshot(
       completedBytes,
       totalBytes,
     });
+  };
+  for (const [relative, entry] of [...metadata].filter(([, value]) => value.type === 'directory')) {
+    const sourcePath = path.join(source, ...relative.split('/'));
+    const targetPath = path.join(temporaryProject, ...relative.split('/'));
+    fs.mkdirSync(targetPath, { recursive: true });
+    const stat = fs.lstatSync(sourcePath);
+    directoryTimes.push({ target: targetPath, atime: stat.atime, mtime: stat.mtime });
   }
+  for (const [relative, entry] of [...metadata].filter(([, value]) => value.type === 'link')) {
+    const sourcePath = path.join(source, ...relative.split('/'));
+    const targetPath = path.join(temporaryProject, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    const before = fs.lstatSync(sourcePath);
+    const linkTarget = fs.readlinkSync(sourcePath);
+    const after = fs.lstatSync(sourcePath);
+    if (linkTarget !== entry.linkTarget || sourceEntryChanged(entry, before, after)) {
+      throw new IsolatedProjectPreparationError(`Source link changed while preparing isolated preview: ${relative}`);
+    }
+    fs.symlinkSync(linkTarget, targetPath);
+    sourceSnapshot.set(relative, {
+      relativePath: relative,
+      size: entry.size,
+      mtimeMs: entry.mtimeMs,
+      hash: sha256(Buffer.from(linkTarget, 'utf8')),
+    });
+    reportCompleted(entry);
+  }
+  const files = [...metadata].filter((entry): entry is [string, SourceTreeMetadataEntry] => entry[1].type === 'file');
+  await runBoundedFileCopies(
+    files,
+    mapPreviewCopyConcurrency(),
+    async ([relative, entry], signal) => {
+      const sourcePath = path.join(source, ...relative.split('/'));
+      const targetPath = path.join(temporaryProject, ...relative.split('/'));
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      const copied = await copyFileWithHash(relative, sourcePath, targetPath, entry, signal);
+      sourceSnapshot.set(relative, {
+        relativePath: relative,
+        size: copied.size,
+        mtimeMs: copied.mtimeMs,
+        hash: copied.hash,
+      });
+      reportCompleted(entry);
+    },
+  );
   for (const directory of directoryTimes.reverse()) {
-    fs.utimesSync(directory.target, directory.atime, directory.mtime);
+    await fs.promises.utimes(directory.target, directory.atime, directory.mtime);
   }
+  const orderedSnapshot = [...sourceSnapshot.values()]
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
   return {
-    sourceFingerprint: sourceHash.digest('hex'),
-    sourceSnapshot,
+    sourceFingerprint: fingerprintSourceSnapshot(orderedSnapshot),
+    sourceSnapshot: orderedSnapshot,
     sourceMetadata: metadata,
     sourceFileCount: totalFiles,
   };
+}
+
+const MAP_PREVIEW_STREAM_THRESHOLD_BYTES = 1024 * 1024;
+
+export function mapPreviewCopyConcurrency(parallelism = os.availableParallelism()): number {
+  return Math.max(1, Math.min(4, parallelism - 1));
+}
+
+async function copyFileWithHash(
+  relativePath: string,
+  sourcePath: string,
+  targetPath: string,
+  expected: SourceTreeMetadataEntry,
+  signal: AbortSignal,
+): Promise<{ size: number; mtimeMs: number; hash: string }> {
+  const before = await fs.promises.lstat(sourcePath);
+  let hash: string;
+  if (before.size <= MAP_PREVIEW_STREAM_THRESHOLD_BYTES) {
+    const body = await fs.promises.readFile(sourcePath, { signal });
+    if (signal.aborted) throw signal.reason;
+    await fs.promises.writeFile(targetPath, body, { flag: 'wx', signal });
+    hash = sha256(body);
+  } else {
+    const digest = crypto.createHash('sha256');
+    const hashingStream = new Transform({
+      transform(chunk, _encoding, callback) {
+        digest.update(chunk);
+        callback(null, chunk);
+      },
+    });
+    await pipeline(
+      fs.createReadStream(sourcePath),
+      hashingStream,
+      fs.createWriteStream(targetPath, { flags: 'wx' }),
+      { signal },
+    );
+    hash = digest.digest('hex');
+  }
+  const after = await fs.promises.lstat(sourcePath);
+  if (sourceEntryChanged(expected, before, after)) {
+    throw new IsolatedProjectPreparationError(
+      `Source file changed while preparing isolated preview: ${relativePath}`,
+    );
+  }
+  await fs.promises.chmod(targetPath, after.mode);
+  await fs.promises.utimes(targetPath, after.atime, after.mtime);
+  return { size: after.size, mtimeMs: after.mtimeMs, hash };
+}
+
+function sourceEntryChanged(
+  expected: SourceTreeMetadataEntry,
+  before: fs.Stats,
+  after: fs.Stats,
+): boolean {
+  return before.size !== after.size
+    || before.mtimeMs !== after.mtimeMs
+    || before.size !== expected.size
+    || before.mtimeMs !== expected.mtimeMs;
+}
+
+async function runBoundedFileCopies<T>(
+  entries: readonly T[],
+  concurrency: number,
+  copy: (entry: T, signal: AbortSignal) => Promise<void>,
+): Promise<void> {
+  if (!entries.length) return;
+  const controller = new AbortController();
+  let cursor = 0;
+  let firstError: unknown;
+  const workers = Array.from({ length: Math.min(concurrency, entries.length) }, async () => {
+    while (!controller.signal.aborted) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= entries.length) return;
+      try {
+        await copy(entries[index], controller.signal);
+      } catch (error) {
+        if (firstError === undefined) firstError = error;
+        controller.abort(error);
+        return;
+      }
+    }
+  });
+  await Promise.allSettled(workers);
+  if (firstError !== undefined) throw firstError;
 }
 
 function captureSourceTreeMetadata(
@@ -526,15 +614,42 @@ function sameSourceTreeMetadata(
 }
 
 function fingerprintProjectSource(project: string): string {
-  return fingerprintTree(project, (relative) => {
+  const root = fs.realpathSync.native(path.resolve(project));
+  const snapshot: IsolatedProjectSourceSnapshotEntry[] = [];
+  for (const entry of listTreeEntries(root)) {
+    const relative = normalizeRelative(path.relative(root, entry));
     const lower = relative.toLowerCase();
-    return lower === '.git'
+    const excluded = lower === '.git'
       || lower.startsWith('.git/')
       || lower === 'save'
       || lower.startsWith('save/')
       || lower === 'www/save'
       || lower.startsWith('www/save/');
-  });
+    if (!relative || excluded) continue;
+    const stat = fs.lstatSync(entry);
+    if (stat.isDirectory()) continue;
+    const body = stat.isSymbolicLink()
+      ? Buffer.from(fs.readlinkSync(entry), 'utf8')
+      : fs.readFileSync(entry);
+    snapshot.push({
+      relativePath: relative,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      hash: sha256(body),
+    });
+  }
+  return fingerprintSourceSnapshot(snapshot);
+}
+
+function fingerprintSourceSnapshot(
+  entries: readonly IsolatedProjectSourceSnapshotEntry[],
+): string {
+  const hash = crypto.createHash('sha256');
+  hash.update('rpg-agent-source-snapshot-v2\n');
+  for (const entry of [...entries].sort((left, right) => left.relativePath.localeCompare(right.relativePath))) {
+    hash.update(`${entry.relativePath}\0${entry.size}\0${entry.mtimeMs}\0${entry.hash}\n`);
+  }
+  return hash.digest('hex');
 }
 
 function fingerprintSaveState(project: string): string {

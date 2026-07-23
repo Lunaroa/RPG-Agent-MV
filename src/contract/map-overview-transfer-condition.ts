@@ -35,11 +35,11 @@ export const MAP_OVERVIEW_TRANSFER_CONDITION_CATEGORIES: readonly MapOverviewTra
 ] as const;
 
 const VISUALS: Record<MapOverviewTransferConditionCategory, MapOverviewTransferConditionVisual> = {
-  none: { stroke: '#8c8d86', dashArray: null },
+  none: { stroke: '#c65f3d', dashArray: null },
   switch: { stroke: '#3f6fb5', dashArray: null },
-  variable: { stroke: '#b36a12', dashArray: null },
-  'self-switch': { stroke: '#7b4bb3', dashArray: null },
-  combined: { stroke: '#b64b3b', dashArray: '7 5' },
+  variable: { stroke: '#3f6fb5', dashArray: null },
+  'self-switch': { stroke: '#3f6fb5', dashArray: null },
+  combined: { stroke: '#7b4bb3', dashArray: '7 5' },
 };
 
 export function summarizeMapOverviewTransferConditions(

@@ -50,9 +50,16 @@ describe('map overview transfer conditions', () => {
       { pageConditions: { selfSwitchValid: true, selfSwitchCh: 'A' } },
     ])).toBe('combined')
     expect(mapOverviewTransferConditionVisual('combined')).toMatchObject({
-      stroke: '#b64b3b',
+      stroke: '#7b4bb3',
       dashArray: '7 5',
     })
+  })
+
+  it('maps ordinary transfers to orange and every single tracked condition type to blue', () => {
+    expect(mapOverviewTransferConditionVisual('none').stroke).toBe('#c65f3d')
+    expect(mapOverviewTransferConditionVisual('switch').stroke).toBe('#3f6fb5')
+    expect(mapOverviewTransferConditionVisual('variable').stroke).toBe('#3f6fb5')
+    expect(mapOverviewTransferConditionVisual('self-switch').stroke).toBe('#3f6fb5')
   })
 
   it('does not describe item or actor page conditions as one of the colored condition types', () => {

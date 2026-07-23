@@ -12,7 +12,6 @@ export type MapOverviewLayeredGridErrorCode =
   | 'duplicate-node'
   | 'invalid-node-size'
   | 'missing-edge-node'
-  | 'parent-cycle'
 
 export class MapOverviewLayeredGridError extends Error {
   readonly code: MapOverviewLayeredGridErrorCode
@@ -32,6 +31,7 @@ interface ComponentLayout {
   width: number
   height: number
   positions: MapOverviewLayoutPositions
+  parentCycles: number[][]
 }
 
 export interface MapOverviewLayeredGridOptions {
@@ -40,6 +40,11 @@ export interface MapOverviewLayeredGridOptions {
   horizontalSpacing?: number
   layerSpacing?: number
   groupSpacing?: number
+}
+
+export interface MapOverviewLayeredGridResult {
+  positions: MapOverviewLayoutPositions
+  parentCycles: number[][]
 }
 
 function compareNodes(left: MapOverviewLayoutNodeInput, right: MapOverviewLayoutNodeInput): number {
@@ -106,30 +111,81 @@ function connectedComponents(
   return components.sort((left, right) => compareNodes(left[0], right[0]))
 }
 
-function componentDepths(component: readonly MapOverviewLayoutNodeInput[]): Map<string, number> {
+function componentDepths(
+  component: readonly MapOverviewLayoutNodeInput[],
+): { depths: Map<string, number>; parentCycles: number[][] } {
   const nodeById = new Map(component.map((node) => [node.id, node]))
-  const state = new Map<string, 'visiting' | 'done'>()
-  const depths = new Map<string, number>()
+  const indices = new Map<string, number>()
+  const lowLinks = new Map<string, number>()
+  const stack: string[] = []
+  const onStack = new Set<string>()
+  const components: string[][] = []
+  let nextIndex = 0
 
-  const resolve = (node: MapOverviewLayoutNodeInput): number => {
-    const existing = depths.get(node.id)
-    if (existing != null) return existing
-    if (state.get(node.id) === 'visiting') {
-      throw new MapOverviewLayeredGridError(
-        'parent-cycle',
-        `Map overview parent hierarchy contains a cycle at map ${node.mapId}.`,
-      )
-    }
-    state.set(node.id, 'visiting')
+  const visit = (node: MapOverviewLayoutNodeInput): void => {
+    indices.set(node.id, nextIndex)
+    lowLinks.set(node.id, nextIndex)
+    nextIndex += 1
+    stack.push(node.id)
+    onStack.add(node.id)
     const parent = node.parentId > 0 ? nodeById.get(String(node.parentId)) : undefined
-    const depth = parent ? resolve(parent) + 1 : 0
-    depths.set(node.id, depth)
-    state.set(node.id, 'done')
-    return depth
+    if (parent) {
+      if (!indices.has(parent.id)) {
+        visit(parent)
+        lowLinks.set(node.id, Math.min(lowLinks.get(node.id)!, lowLinks.get(parent.id)!))
+      } else if (onStack.has(parent.id)) {
+        lowLinks.set(node.id, Math.min(lowLinks.get(node.id)!, indices.get(parent.id)!))
+      }
+    }
+    if (lowLinks.get(node.id) !== indices.get(node.id)) return
+    const resolved: string[] = []
+    while (stack.length) {
+      const member = stack.pop()!
+      onStack.delete(member)
+      resolved.push(member)
+      if (member === node.id) break
+    }
+    resolved.sort((left, right) => compareNodes(nodeById.get(left)!, nodeById.get(right)!))
+    components.push(resolved)
   }
 
-  for (const node of component) resolve(node)
-  return depths
+  for (const node of [...component].sort(compareNodes)) {
+    if (!indices.has(node.id)) visit(node)
+  }
+  components.sort((left, right) => compareNodes(nodeById.get(left[0])!, nodeById.get(right[0])!))
+  const componentByNode = new Map<string, number>()
+  components.forEach((members, componentId) => {
+    for (const member of members) componentByNode.set(member, componentId)
+  })
+  const parentComponent = new Map<number, number>()
+  for (const node of component) {
+    const childComponent = componentByNode.get(node.id)!
+    const parent = node.parentId > 0 ? nodeById.get(String(node.parentId)) : undefined
+    if (!parent) continue
+    const parentId = componentByNode.get(parent.id)!
+    if (childComponent !== parentId) parentComponent.set(childComponent, parentId)
+  }
+  const componentDepths = new Map<number, number>()
+  const resolveComponentDepth = (componentId: number): number => {
+    const existing = componentDepths.get(componentId)
+    if (existing != null) return existing
+    const parent = parentComponent.get(componentId)
+    const depth = parent == null ? 0 : resolveComponentDepth(parent) + 1
+    componentDepths.set(componentId, depth)
+    return depth
+  }
+  const depths = new Map<string, number>()
+  components.forEach((members, componentId) => {
+    const depth = resolveComponentDepth(componentId)
+    for (const member of members) depths.set(member, depth)
+  })
+  const parentCycles = components
+    .filter((members) => (
+      members.length > 1
+      || nodeById.get(members[0])?.parentId === nodeById.get(members[0])?.mapId
+    ))
+    .map((members) => members.map((id) => nodeById.get(id)!.mapId))
+  return { depths, parentCycles }
 }
 
 function layoutComponent(
@@ -137,7 +193,7 @@ function layoutComponent(
   horizontalSpacing: number,
   layerSpacing: number,
 ): ComponentLayout {
-  const depths = componentDepths(component)
+  const { depths, parentCycles } = componentDepths(component)
   const rows = new Map<number, MapOverviewLayoutNodeInput[]>()
   for (const node of component) {
     const depth = depths.get(node.id) || 0
@@ -171,7 +227,7 @@ function layoutComponent(
     }
     rowTop += row.height + layerSpacing
   }
-  return { key: component[0], width, height, positions }
+  return { key: component[0], width, height, positions, parentCycles }
 }
 
 export function computeMapOverviewLayeredGrid(
@@ -179,7 +235,24 @@ export function computeMapOverviewLayeredGrid(
   edges: readonly MapOverviewLayoutEdgeInput[],
   options: MapOverviewLayeredGridOptions = {},
 ): MapOverviewLayoutPositions {
-  if (!nodes.length) return {}
+  return computeMapOverviewLayeredGridResult(nodes, edges, options).positions
+}
+
+export function inspectMapOverviewLayeredGridParentCycles(
+  nodes: readonly MapOverviewLayoutNodeInput[],
+  edges: readonly MapOverviewLayoutEdgeInput[],
+): number[][] {
+  if (!nodes.length) return []
+  return connectedComponents(nodes, edges)
+    .flatMap((component) => componentDepths(component).parentCycles)
+}
+
+export function computeMapOverviewLayeredGridResult(
+  nodes: readonly MapOverviewLayoutNodeInput[],
+  edges: readonly MapOverviewLayoutEdgeInput[],
+  options: MapOverviewLayeredGridOptions = {},
+): MapOverviewLayeredGridResult {
+  if (!nodes.length) return { positions: {}, parentCycles: [] }
   const horizontalSpacing = options.horizontalSpacing ?? MAP_OVERVIEW_LAYERED_GRID_HORIZONTAL_GAP
   const layerSpacing = options.layerSpacing ?? MAP_OVERVIEW_LAYERED_GRID_LAYER_GAP
   const groupSpacing = options.groupSpacing ?? MAP_OVERVIEW_LAYERED_GRID_COMPONENT_GAP
@@ -205,5 +278,8 @@ export function computeMapOverviewLayeredGrid(
     }
     componentTop += component.height + groupSpacing
   }
-  return positions
+  return {
+    positions,
+    parentCycles: components.flatMap((component) => component.parentCycles),
+  }
 }

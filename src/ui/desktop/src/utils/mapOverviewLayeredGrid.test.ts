@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   computeMapOverviewLayeredGrid,
+  computeMapOverviewLayeredGridResult,
+  inspectMapOverviewLayeredGridParentCycles,
   MAP_OVERVIEW_LAYERED_GRID_COMPONENT_GAP,
   MAP_OVERVIEW_LAYERED_GRID_HORIZONTAL_GAP,
   MAP_OVERVIEW_LAYERED_GRID_LAYER_GAP,
-  MapOverviewLayeredGridError,
 } from './mapOverviewLayeredGrid'
 import type {
   MapOverviewLayoutEdgeInput,
@@ -120,17 +121,25 @@ describe('map overview layered grid', () => {
     expectNoOverlap(nodes, first)
   })
 
-  it('fails fast when the parent hierarchy cycles inside a component', () => {
-    expect(() => computeMapOverviewLayeredGrid([
+  it('places cyclic parent groups on one layer and reports deterministic diagnostics', () => {
+    const nodes = [
       node(1, 2, 1),
       node(2, 1, 2),
-    ], [edge(1, 2)])).toThrowError(MapOverviewLayeredGridError)
+      node(3, 2, 3),
+      node(4, 4, 4),
+    ]
+    const first = computeMapOverviewLayeredGridResult(nodes, [edge(1, 2), edge(2, 3), edge(3, 4)])
+    const second = computeMapOverviewLayeredGridResult(nodes, [edge(1, 2), edge(2, 3), edge(3, 4)])
 
-    try {
-      computeMapOverviewLayeredGrid([node(1, 2, 1), node(2, 1, 2)], [edge(1, 2)])
-    } catch (error) {
-      expect(error).toMatchObject({ code: 'parent-cycle' })
-    }
+    expect(second).toEqual(first)
+    expect(first.parentCycles).toEqual([[1, 2], [4]])
+    expect(inspectMapOverviewLayeredGridParentCycles(
+      nodes,
+      [edge(1, 2), edge(2, 3), edge(3, 4)],
+    )).toEqual(first.parentCycles)
+    expect(first.positions['1'].y).toBe(first.positions['2'].y)
+    expect(first.positions['3'].y).toBeGreaterThan(first.positions['2'].y)
+    expectNoOverlap(nodes, first.positions)
   })
 
   it('fails when a topology edge references a missing node', () => {

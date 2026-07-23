@@ -4,7 +4,7 @@ import type {
   MapOverviewSnapshot,
 } from '@contract/types'
 
-import { computeMapOverviewLayeredGrid } from './mapOverviewLayeredGrid'
+import { computeMapOverviewLayeredGridResult } from './mapOverviewLayeredGrid'
 import {
   buildMapOverviewLayoutEdges,
   buildMapOverviewLayoutNodes,
@@ -21,6 +21,10 @@ export interface MapOverviewLayoutRunHandle {
   stop: () => void
 }
 
+export interface MapOverviewLayoutDiagnostics {
+  parentCycles: number[][]
+}
+
 export async function executeMapOverviewLayout(
   snapshot: Pick<MapOverviewSnapshot, 'nodes' | 'edges'>,
   layoutId: MapOverviewLayoutId,
@@ -31,6 +35,7 @@ export async function executeMapOverviewLayout(
     height?: number
     isCancelled?: () => boolean
     onHandle?: (handle: MapOverviewLayoutRunHandle | null) => void
+    onDiagnostics?: (diagnostics: MapOverviewLayoutDiagnostics) => void
     parameters?: MapOverviewLayoutParametersById[MapOverviewLayoutId]
   },
 ): Promise<MapOverviewLayoutPositions> {
@@ -41,13 +46,15 @@ export async function executeMapOverviewLayout(
       'layered-grid',
       options.parameters ?? defaultMapOverviewLayoutParameters('layered-grid'),
     )
-    return computeMapOverviewLayeredGrid(nodes, edges, {
+    const result = computeMapOverviewLayeredGridResult(nodes, edges, {
       width: options.width,
       height: options.height,
       horizontalSpacing: parameters.horizontalSpacing,
       layerSpacing: parameters.layerSpacing,
       groupSpacing: parameters.groupSpacing,
     })
+    options.onDiagnostics?.({ parentCycles: result.parentCycles })
+    return result.positions
   }
   if (!isMapOverviewLibraryLayoutId(layoutId)) {
     throw new Error(`Unknown map overview layout id: ${String(layoutId)}`)

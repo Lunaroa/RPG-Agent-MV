@@ -52,8 +52,12 @@ import {
   executeMapOverviewLayout,
   type MapOverviewLayoutRunHandle,
 } from '../utils/mapOverviewLayoutExecute'
-import { MapOverviewLayeredGridError } from '../utils/mapOverviewLayeredGrid'
-import type { MapOverviewLayoutPositions } from '../utils/mapOverviewLayoutModel'
+import { inspectMapOverviewLayeredGridParentCycles } from '../utils/mapOverviewLayeredGrid'
+import {
+  buildMapOverviewLayoutEdges,
+  buildMapOverviewLayoutNodes,
+  type MapOverviewLayoutPositions,
+} from '../utils/mapOverviewLayoutModel'
 import { MapOverviewLayoutTaskError } from '../utils/mapOverviewLayoutWorkerClient'
 import {
   clampMapOverviewZoom,
@@ -99,6 +103,7 @@ const overviewProgressTotal = ref(0)
 const preparationPhase = ref<'images' | 'layout' | 'ready' | 'error'>('images')
 const layoutRunning = ref(false)
 const hasPresentedGraph = ref(false)
+const layoutTaskRequested = ref(false)
 const layoutParametersOpen = ref(false)
 const layoutParameterDraft = ref<Record<string, unknown>>({})
 const layoutParameterErrors = ref<Partial<Record<MapOverviewLayoutParameterField, string>>>({})
@@ -163,6 +168,16 @@ const layoutRunningLabel = computed(() => t('mapOverview.layout.running', {
   layout: layoutName(selectedLayoutId.value),
   seconds: layoutElapsedSeconds.value,
 }))
+const layoutTaskVisible = computed(() => (
+  hasPresentedGraph.value
+  && layoutTaskRequested.value
+  && (layoutRunning.value || Boolean(layoutError.value))
+))
+const layoutTaskLayoutId = computed(() => (
+  layoutRunning.value
+    ? selectedLayoutId.value
+    : failedLayoutId.value || appliedLayoutId.value
+))
 const exportStatus = computed(() => mapOverviewExportStore.status)
 const exportFailureLabel = computed(() => exportStatus.value
   ? formatMapOverviewExportError(exportStatus.value, t as Parameters<typeof formatMapOverviewExportError>[1])
@@ -345,10 +360,17 @@ async function loadOverview(startVersion?: string): Promise<void> {
           workspaceStore.readMapOverviewLayoutParameters(project, preparedPositions.layoutId),
         )
       }
-      await restoreInitialViewport()
+      if (preparedPositions.generated) {
+        viewportReady = true
+        await fitGraph()
+        persistZoomNow()
+      } else {
+        await restoreInitialViewport()
+      }
       await maps.finalizeOverviewThumbnails(project)
       preparationPhase.value = 'ready'
       hasPresentedGraph.value = true
+      warnParentCycles(preparedPositions.parentCycles)
     } else {
       snapshot.value = next
       await restoreGraphAfterActivation()
@@ -374,6 +396,7 @@ async function prepareInitialPositions(next: MapOverviewSnapshot): Promise<{
   positions: Record<string, { x: number; y: number }>
   generated: boolean
   layoutId: MapOverviewLayoutId
+  parentCycles: number[][]
 }> {
   const stored = workspaceStore.readMapOverviewPositions(currentProject.value)
   const validStored = Object.fromEntries(Object.entries(stored).filter(([id, position]) => (
@@ -386,21 +409,31 @@ async function prepareInitialPositions(next: MapOverviewSnapshot): Promise<{
     && next.nodes.every((node) => Boolean(validStored[String(node.id)]))
   const storedLayoutId = workspaceStore.readMapOverviewLayout(currentProject.value)
   if (next.nodes.length === 0) {
-    return { positions: {}, generated: false, layoutId: storedLayoutId }
+    return { positions: {}, generated: false, layoutId: storedLayoutId, parentCycles: [] }
   }
   if (currentVersion === MAP_OVERVIEW_LAYOUT_VERSION && complete) {
-    return { positions: validStored, generated: false, layoutId: storedLayoutId }
+    return {
+      positions: validStored,
+      generated: false,
+      layoutId: storedLayoutId,
+      parentCycles: inspectMapOverviewLayeredGridParentCycles(
+        buildMapOverviewLayoutNodes(next.nodes),
+        buildMapOverviewLayoutEdges(next.edges, 'layered-grid'),
+      ),
+    }
   }
 
   const width = Math.max(1, graphHost.value?.clientWidth || document.documentElement.clientWidth)
   const height = Math.max(1, graphHost.value?.clientHeight || document.documentElement.clientHeight)
+  let parentCycles: number[][] = []
   const positions = await executeMapOverviewLayout(next, 'layered-grid', {
     requestId: `initial-${crypto.randomUUID()}`,
     width,
     height,
+    onDiagnostics: (diagnostics) => { parentCycles = diagnostics.parentCycles },
   })
   validateLayoutPositions(next, positions, 'layered-grid')
-  return { positions, generated: true, layoutId: 'layered-grid' }
+  return { positions, generated: true, layoutId: 'layered-grid', parentCycles }
 }
 
 async function prepareThumbnails(next: MapOverviewSnapshot, project: string, generation: number): Promise<void> {
@@ -584,11 +617,13 @@ async function runLayout(
   seedPositions: MapOverviewLayoutPositions = {},
   restoreViewport = false,
   inputParameters?: MapOverviewLayoutParameters,
+  showTaskOverlay = false,
 ): Promise<void> {
   if (!graph || graph.destroyed) return
   cancelActiveLayout(false)
   const requestId = ++layoutRequestId
   selectedLayoutId.value = layoutId
+  layoutTaskRequested.value = showTaskOverlay
   layoutRunning.value = true
   layoutError.value = ''
   failedLayoutId.value = null
@@ -598,6 +633,7 @@ async function runLayout(
     inputParameters ?? workspaceStore.readMapOverviewLayoutParameters(currentProject.value, layoutId),
   )
   startLayoutClock()
+  let parentCycles: number[][] = []
   try {
     const positions = await executeMapOverviewLayout(next, layoutId, {
       requestId: String(requestId),
@@ -606,6 +642,7 @@ async function runLayout(
       height: graphHost.value?.clientHeight,
       isCancelled: () => requestId !== layoutRequestId,
       onHandle: (handle) => { activeLayoutHandle = handle },
+      onDiagnostics: (diagnostics) => { parentCycles = diagnostics.parentCycles },
       parameters,
     })
     if (requestId !== layoutRequestId) return
@@ -619,9 +656,10 @@ async function runLayout(
     appliedLayoutId.value = layoutId
     selectedLayoutId.value = layoutId
     moveHistory.clear()
-    if (restoreViewport) await restoreInitialViewport()
-    else await fitGraph()
+    if (restoreViewport) viewportReady = true
+    await fitGraph()
     if (requestId !== layoutRequestId) return
+    warnParentCycles(parentCycles)
     if (overlapCount > 0) {
       ElMessage.warning(t('mapOverview.layout.overlapWarning', { count: overlapCount }))
     }
@@ -663,6 +701,16 @@ function validateLayoutPositions(
     return 0
   }
   return inspectMapOverviewLayoutOverlaps(nodeRects, positions).count
+}
+
+function warnParentCycles(parentCycles: readonly (readonly number[])[]): void {
+  if (parentCycles.length === 0) return
+  ElMessage.warning(t('mapOverview.layout.parentCycleWarning', {
+    count: parentCycles.length,
+    maps: parentCycles
+      .map((group) => group.map((mapId) => `MAP${String(mapId).padStart(3, '0')}`).join(', '))
+      .join(' · '),
+  }))
 }
 
 function applyPositions(positions: Record<string, { x: number; y: number }>): void {
@@ -756,7 +804,7 @@ async function runLayoutSafe(
   parameters?: MapOverviewLayoutParameters,
 ): Promise<boolean> {
   try {
-    await runLayout(next, layoutId, seed, restoreViewport, parameters)
+    await runLayout(next, layoutId, seed, restoreViewport, parameters, true)
     return !layoutError.value
   } catch {
     selectedLayoutId.value = appliedLayoutId.value
@@ -773,6 +821,7 @@ function retryLayout(): void {
     {},
     !viewportReady,
     failedLayoutParameters ?? workspaceStore.readMapOverviewLayoutParameters(currentProject.value, layoutId),
+    true,
   ).catch(() => undefined)
 }
 
@@ -787,10 +836,25 @@ function cancelActiveLayout(showFeedback: boolean): void {
   activeLayoutHandle?.stop()
   activeLayoutHandle = null
   layoutRunning.value = false
-  failedLayoutId.value = cancelledLayoutId
   selectedLayoutId.value = appliedLayoutId.value
   stopLayoutClock()
-  if (showFeedback) layoutError.value = t('mapOverview.layout.cancelled')
+  if (showFeedback) {
+    failedLayoutId.value = null
+    failedLayoutParameters = null
+    layoutError.value = ''
+    layoutTaskRequested.value = false
+    ElMessage.info(t('mapOverview.layout.cancelled'))
+  } else {
+    failedLayoutId.value = cancelledLayoutId
+  }
+}
+
+function closeLayoutTask(): void {
+  if (layoutRunning.value) return
+  layoutError.value = ''
+  failedLayoutId.value = null
+  failedLayoutParameters = null
+  layoutTaskRequested.value = false
 }
 
 function startLayoutClock(): void {
@@ -811,9 +875,6 @@ function formatLayoutError(error: unknown): string {
   if (error instanceof MapOverviewLayoutTaskError) {
     if (error.code === 'timeout') return t('mapOverview.layout.timeout')
     if (error.code === 'cancelled') return t('mapOverview.layout.cancelled')
-  }
-  if (error instanceof MapOverviewLayeredGridError && error.code === 'parent-cycle') {
-    return t('mapOverview.layout.parentCycle')
   }
   return formatUserFacingErrorMessage(error, 'general', language.value)
 }
@@ -1207,6 +1268,21 @@ function onLayoutSelect(event: Event): void {
   void confirmLayoutChange(value)
 }
 
+function onLayoutTaskSelect(event: Event): void {
+  const layoutId = (event.target as HTMLSelectElement).value as MapOverviewLayoutId
+  if (!snapshot.value) return
+  if (layoutRunning.value) cancelActiveLayout(false)
+  layoutError.value = ''
+  selectedLayoutId.value = layoutId
+  void runLayoutSafe(
+    snapshot.value,
+    layoutId,
+    {},
+    false,
+    workspaceStore.readMapOverviewLayoutParameters(currentProject.value, layoutId),
+  )
+}
+
 function loadLayoutParameterDraft(layoutId: MapOverviewLayoutId): void {
   if (!currentProject.value) {
     layoutParameterDraft.value = { ...defaultMapOverviewLayoutParameters(layoutId) }
@@ -1547,14 +1623,6 @@ async function cancelOverviewExport(): Promise<void> {
             {{ t('mapOverview.export.retry') }}
           </button>
         </div>
-        <div v-if="layoutRunning" class="layout-running" role="status" aria-live="polite">
-          <span>{{ layoutRunningLabel }}</span>
-          <button
-            type="button"
-            data-ui-id="map-overview-layout-stop"
-            @click="stopLayout"
-          >{{ t('mapOverview.layout.stop') }}</button>
-        </div>
         <span v-if="snapshot" class="overview-summary">
           {{ t('mapOverview.summary', { maps: snapshot.nodes.length, edges: snapshot.edges.length }) }}
           <template v-if="snapshot.unresolvedTransferCount"> · {{ t('mapOverview.unresolved', { count: snapshot.unresolvedTransferCount }) }}</template>
@@ -1772,10 +1840,6 @@ async function cancelOverviewExport(): Promise<void> {
             </div>
           </template>
         </aside>
-        <div v-if="layoutError" class="layout-error" role="alert">
-          <span>{{ layoutError }}</span>
-          <button type="button" @click="retryLayout">{{ t('common.retry') }}</button>
-        </div>
         <div
           v-if="contextMenu"
           class="overview-context-menu"
@@ -1788,6 +1852,51 @@ async function cancelOverviewExport(): Promise<void> {
             @click="openMap(contextMenu.mapId)"
           >{{ t('mapOverview.openEditor') }}</button>
         </div>
+      </div>
+      <div
+        v-if="layoutTaskVisible"
+        class="layout-task-overlay"
+        data-ui-id="map-overview-layout-task"
+        @click.stop
+      >
+        <section
+          class="layout-task-dialog"
+          :role="layoutError ? 'alertdialog' : 'dialog'"
+          :aria-label="layoutError ? t('mapOverview.layout.failedTitle') : t('mapOverview.layout.taskTitle')"
+          aria-live="polite"
+        >
+          <template v-if="layoutRunning">
+            <strong>{{ t('mapOverview.layout.taskTitle') }}</strong>
+            <span>{{ layoutRunningLabel }}</span>
+            <label>
+              <span>{{ t('mapOverview.layout.label') }}</span>
+              <select
+                :value="selectedLayoutId"
+                data-ui-id="map-overview-layout-task-select"
+                @change="onLayoutTaskSelect"
+              >
+                <option v-for="layout in MAP_OVERVIEW_LAYOUTS" :key="layout.id" :value="layout.id">
+                  {{ t(layout.labelKey as Parameters<typeof t>[0]) }}
+                </option>
+              </select>
+            </label>
+            <button
+              type="button"
+              class="danger"
+              data-ui-id="map-overview-layout-stop"
+              @click="stopLayout"
+            >{{ t('mapOverview.layout.stop') }}</button>
+          </template>
+          <template v-else>
+            <strong>{{ t('mapOverview.layout.failedTitle') }}</strong>
+            <span>{{ layoutName(layoutTaskLayoutId) }}</span>
+            <p>{{ layoutError }}</p>
+            <div>
+              <button type="button" class="primary" @click="retryLayout">{{ t('common.retry') }}</button>
+              <button type="button" @click="closeLayoutTask">{{ t('common.close') }}</button>
+            </div>
+          </template>
+        </section>
       </div>
     </template>
   </section>
@@ -1883,7 +1992,7 @@ async function cancelOverviewExport(): Promise<void> {
 .issue-list>strong,.thumbnail-issue>strong,.relation-list>strong { margin-top:5px; color:var(--app-ink); font-size:12px; }
 .issue-list p,.thumbnail-issue p,.source-list span,.source-list code { margin:0; color:var(--app-ink-muted); font-size:12px; word-break:break-word; }
 .thumbnail-issue { padding:10px; border:1px dashed var(--app-danger); border-radius:8px; background:color-mix(in srgb,var(--app-danger) 6%,var(--app-bg)); }
-.relation-list button,.thumbnail-issue button,.source-list button,.inspector-primary,.overview-state button,.layout-error button,.overview-refresh-state button { min-height:32px; padding:0 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink); font:inherit; font-size:12px; text-align:left; cursor:pointer; }
+.relation-list button,.thumbnail-issue button,.source-list button,.inspector-primary,.overview-state button,.overview-refresh-state button { min-height:32px; padding:0 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); color:var(--app-ink); font:inherit; font-size:12px; text-align:left; cursor:pointer; }
 .relation-list button { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .relation-route { min-width:0; display:grid; gap:2px; }
 .relation-route small { overflow:hidden; color:var(--app-ink-muted); font-size:10.5px; text-overflow:ellipsis; white-space:nowrap; }
@@ -1902,8 +2011,17 @@ async function cancelOverviewExport(): Promise<void> {
 .condition-badge[data-condition="combined"] { border-style:dashed; color:#b64b3b; }
 .condition-detail { color:var(--app-ink-soft)!important; font-variant-numeric:tabular-nums; }
 .overview-state { min-height:0; flex:1; display:grid; place-content:center; gap:8px; padding:24px; text-align:center; color:var(--app-ink-muted); }
-.overview-state.error,.layout-error { color:var(--app-danger); }
-.layout-error { position:absolute; left:14px; top:14px; z-index:4; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg); }
+.overview-state.error { color:var(--app-danger); }
+.layout-task-overlay { position:absolute; inset:0; z-index:12; display:grid; place-items:center; padding:24px; background:rgba(12,13,12,.48); backdrop-filter:blur(2px); }
+.layout-task-dialog { width:min(420px,calc(100% - 32px)); display:grid; gap:14px; padding:22px; border:1px solid var(--app-border-strong); border-radius:12px; background:var(--app-bg-elevated); color:var(--app-ink); box-shadow:var(--app-shadow-2); }
+.layout-task-dialog>strong { font-size:16px; }
+.layout-task-dialog>span,.layout-task-dialog>p { margin:0; color:var(--app-ink-muted); font-size:12px; line-height:1.5; }
+.layout-task-dialog label { display:grid; gap:6px; color:var(--app-ink-muted); font-size:11px; }
+.layout-task-dialog select { min-height:34px; padding:0 9px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg); color:var(--app-ink); font:inherit; }
+.layout-task-dialog button { min-height:34px; padding:0 12px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg); color:var(--app-ink); font:inherit; cursor:pointer; }
+.layout-task-dialog button.primary { border-color:var(--app-accent); background:var(--app-accent); color:#fff; }
+.layout-task-dialog button.danger { color:var(--app-danger); }
+.layout-task-dialog>div { display:flex; justify-content:flex-end; gap:8px; }
 .overview-context-menu { position:fixed; z-index:20; min-width:160px; padding:4px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); box-shadow:var(--app-shadow-2); }
 .overview-context-menu button { width:100%; min-height:34px; border:0; border-radius:6px; background:transparent; color:var(--app-ink); font:inherit; text-align:left; padding:0 10px; cursor:pointer; }
 .overview-context-menu button:hover:not(:disabled) { background:var(--app-accent-soft); }

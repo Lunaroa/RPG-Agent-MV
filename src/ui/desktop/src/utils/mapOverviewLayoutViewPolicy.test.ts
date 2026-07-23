@@ -61,7 +61,8 @@ describe('Map Overview layout view policy', () => {
   it('keeps coordinate-level display edges separate from layout topology', () => {
     expect(svgSource).toMatch(/next\.edges\.flatMap\(edge =>/)
     expect(svgSource).toMatch(/mapOverviewSvgEdgeGeometry\(edge, geometryNodeMap\.value/)
-    expect(svgSource).toMatch(/mapOverviewSvgPortPoint\(node, x, y\)/)
+    expect(svgSource).toMatch(/tooltipEdge\.sourceX/)
+    expect(svgSource).toMatch(/tooltipEdge\.targetX/)
   })
 
   it('uses the SVG renderer and contains no G6 runtime boundary', () => {
@@ -101,14 +102,13 @@ describe('Map Overview layout view policy', () => {
     expect(svgSource).toMatch(/:aria-label="nodeAriaLabel\(node\)"/)
   })
 
-  it('uses compact labels and exposes transfer coordinates in the inspector', () => {
+  it('keeps map labels compact and exposes coordinates through one edge tooltip and the inspector', () => {
     expect(svgSource).toMatch(/node\.imageHeight \/ 2 \+ 6/)
     expect(svgSource).toMatch(/height="20"/)
     expect(svgSource).toMatch(/font:600 12px/)
-    expect(svgSource).toMatch(/port\.label\.width/)
-    expect(svgSource).toMatch(/font:600 9px/)
-    expect(svgSource).toMatch(/placeMapOverviewPortLabels/)
-    expect(svgSource).toMatch(/map-overview-svg-port-label-leader/)
+    expect(svgSource).toMatch(/role="tooltip"/)
+    expect(svgSource).toMatch(/v-if="edgeTooltip && tooltipEdge"/)
+    expect(svgSource).not.toMatch(/map-overview-svg-port-label/)
     expect(source).toMatch(/edge\.sourceX/)
     expect(source).toMatch(/edge\.targetX/)
     expect(source).toMatch(/:disabled="!canOpenMap\(selectedNode\.id\)"/)
@@ -117,16 +117,24 @@ describe('Map Overview layout view policy', () => {
   it('uses shared transfer-condition visuals and readable inspector details', () => {
     expect(svgSource).toMatch(/classifyMapOverviewEdgeConditions\(edge\.sources\)/)
     expect(svgSource).toMatch(/mapOverviewTransferConditionVisual\(category\)/)
-    expect(svgSource).toMatch(/:aria-label="edgeAriaLabel\(item\.edge, item\.condition\)"/)
+    expect(svgSource).toMatch(/:aria-label="edgeAriaLabel\(item\.edge\)"/)
     expect(source).toMatch(/summarizeMapOverviewTransferConditions\(pageConditions\)/)
     expect(source).not.toMatch(/JSON\.stringify\(source\.pageConditions\)/)
   })
 
-  it('uses orange foreground relationships while retaining condition dash patterns', () => {
+  it('preserves condition colors and dash patterns for foreground relationships', () => {
     expect(svgSource).toMatch(/foregroundEdgeVisualStyle/)
-    expect(svgSource).toMatch(/stroke: 'var\(--map-overview-active-color\)'/)
+    expect(svgSource).toMatch(/stroke: visual\.stroke/)
     expect(svgSource).toMatch(/visual\.dashArray/)
-    expect(svgSource).toMatch(/fill="var\(--map-overview-active-color\)"/)
+    expect(svgSource).toMatch(/:fill="mapOverviewTransferConditionVisual\(category\)\.stroke"/)
+  })
+
+  it('shows user-requested layouts in a centered task overlay with switch and stop actions', () => {
+    expect(source).toMatch(/class="layout-task-overlay"/)
+    expect(source).toMatch(/hasPresentedGraph\.value[\s\S]{0,120}layoutTaskRequested\.value/)
+    expect(source).toMatch(/data-ui-id="map-overview-layout-task-select"/)
+    expect(source).toMatch(/data-ui-id="map-overview-layout-stop"/)
+    expect(source).not.toMatch(/v-if="layoutRunning" class="layout-running"/)
   })
 
   it('requires zero overlap only for layered grid and warns after applying other layouts', () => {

@@ -12,6 +12,7 @@ import type {
 
 class FakeWorker implements MapOverviewLayoutWorkerLike {
   onmessage: ((event: MessageEvent<MapOverviewLayoutWorkerResponse>) => void) | null = null
+  onmessageerror: ((event: MessageEvent<unknown>) => void) | null = null
   onerror: ((event: ErrorEvent) => void) | null = null
   posted: MapOverviewLayoutWorkerRequest[] = []
   terminate = vi.fn()
@@ -22,6 +23,10 @@ class FakeWorker implements MapOverviewLayoutWorkerLike {
 
   respond(response: MapOverviewLayoutWorkerResponse): void {
     this.onmessage?.({ data: response } as MessageEvent<MapOverviewLayoutWorkerResponse>)
+  }
+
+  respondWithUnreadableMessage(): void {
+    this.onmessageerror?.({ data: null } as MessageEvent<unknown>)
   }
 }
 
@@ -86,5 +91,15 @@ describe('map overview layout worker client', () => {
       code: 'worker-start',
       message: 'worker unavailable',
     } satisfies Partial<MapOverviewLayoutTaskError>))
+  })
+
+  it('terminates when a worker response cannot be decoded', async () => {
+    const worker = new FakeWorker()
+    const run = runMapOverviewLayoutWorker(request, { workerFactory: () => worker })
+
+    worker.respondWithUnreadableMessage()
+
+    await expect(run.promise).rejects.toMatchObject({ code: 'worker-error' })
+    expect(worker.terminate).toHaveBeenCalledOnce()
   })
 })

@@ -330,10 +330,57 @@ describe('plugin management service', { concurrency: false }, () => {
   });
 
   test('reorders plugins through staged plugins.js', () => {
-    const result = reorderPlugins(fixture.root, fixture.project, ['OldPlugin', 'QuestLog', 'CoreFix']);
+    const result = reorderPlugins(fixture.root, fixture.project, [2, 1, 0]);
 
     assert.deepEqual(result.plugins.map((plugin) => plugin.name), ['OldPlugin', 'QuestLog', 'CoreFix']);
     assert.deepEqual(sourcePluginArray(fixture.project).map((plugin) => plugin.name), ['CoreFix', 'QuestLog', 'OldPlugin']);
+  });
+
+  test('reorders duplicate separator entries by configuration index', () => {
+    const sourceEntries = [
+      { name: 'CoreFix', status: true, description: '', parameters: { speed: '1' } },
+      { name: '------ Section ------', status: false, description: 'First divider', parameters: {} },
+      { name: 'QuestLog', status: true, description: '', parameters: {} },
+      { name: '------ Section ------', status: false, description: 'Second divider', parameters: {} },
+      { name: 'OldPlugin', status: false, description: '', parameters: {} },
+    ];
+    writePluginsJs(fixture.project, sourceEntries);
+
+    const result = reorderPlugins(fixture.root, fixture.project, [0, 3, 2, 1, 4]);
+
+    assert.deepEqual(result.plugins.map((plugin) => plugin.name), [
+      'CoreFix',
+      '------ Section ------',
+      'QuestLog',
+      '------ Section ------',
+      'OldPlugin',
+    ]);
+    assert.deepEqual(
+      readJsonPluginArray(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins.js')!)
+        .map((plugin) => [plugin.name, plugin.description]),
+      [
+        ['CoreFix', ''],
+        ['------ Section ------', 'Second divider'],
+        ['QuestLog', ''],
+        ['------ Section ------', 'First divider'],
+        ['OldPlugin', ''],
+      ],
+    );
+    assert.deepEqual(sourcePluginArray(fixture.project), sourceEntries);
+  });
+
+  test('rejects invalid configuration index orders without staging', () => {
+    assert.throws(
+      () => reorderPlugins(fixture.root, fixture.project, [0, 1, 1]),
+      /duplicate configuration index: 1/,
+    );
+    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+
+    assert.throws(
+      () => reorderPlugins(fixture.root, fixture.project, [0, 1, 3]),
+      /invalid configuration index: 3/,
+    );
+    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
   });
 
   test('updates plugin parameters through staged plugins.js', () => {
@@ -451,7 +498,7 @@ describe('plugin management service', { concurrency: false }, () => {
     setPluginEnabled(fixture.root, fixture.project, 'DependentPlugin', true);
     applyProjectStaging(fixture.root, fixture.project);
     assert.throws(
-      () => reorderPlugins(fixture.root, fixture.project, ['DependentPlugin', 'BasePlugin']),
+      () => reorderPlugins(fixture.root, fixture.project, [1, 0]),
       /PLUGIN_DEPENDENCY_CONFLICT.*must be ordered after base plugin BasePlugin/,
     );
     assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);

@@ -287,7 +287,7 @@ contextBridge.exposeInMainWorld('api', {
     addConfiguration: (pluginName: string, project?: string) => ipcRenderer.invoke('plugins:addConfiguration', pluginName, project),
     removeConfiguration: (pluginName: string, project?: string) => ipcRenderer.invoke('plugins:removeConfiguration', pluginName, project),
     setEnabled: (pluginName: string, enabled: boolean, project?: string) => ipcRenderer.invoke('plugins:setEnabled', pluginName, enabled, project),
-    reorder: (pluginNames: string[], project?: string) => ipcRenderer.invoke('plugins:reorder', pluginNames, project),
+    reorder: (pluginIndexes: number[], project?: string) => ipcRenderer.invoke('plugins:reorder', pluginIndexes, project),
     updateParameters: (pluginName: string, parameters: Record<string, unknown>, project?: string) =>
       ipcRenderer.invoke('plugins:updateParameters', pluginName, parameters, project),
     installFile: (sourceFile: string, options?: unknown, project?: string) =>

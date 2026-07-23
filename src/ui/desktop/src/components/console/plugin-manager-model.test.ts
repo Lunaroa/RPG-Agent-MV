@@ -8,7 +8,7 @@ import type {
 import {
   buildPluginManagerGroups,
   isPluginReorderLocked,
-  movePluginName,
+  movePluginIndex,
   pluginEngineTargets,
   pluginHelpLanguageKey,
   pluginSupportsEngine,
@@ -90,8 +90,8 @@ describe('plugin manager model', () => {
   });
 
   test('moves within the complete configured order without dropping other entries', () => {
-    expect(movePluginName(['A', 'B', 'C', 'D'], 'B', 4)).toEqual(['A', 'C', 'D', 'B']);
-    expect(movePluginName(['A', 'B', 'C', 'D'], 'C', 0)).toEqual(['C', 'A', 'B', 'D']);
+    expect(movePluginIndex([0, 1, 2, 3], 1, 4)).toEqual([0, 2, 3, 1]);
+    expect(movePluginIndex([0, 1, 2, 3], 2, 0)).toEqual([2, 0, 1, 3]);
   });
 
   test('compares declared plugin targets with the current RPG Maker engine', () => {

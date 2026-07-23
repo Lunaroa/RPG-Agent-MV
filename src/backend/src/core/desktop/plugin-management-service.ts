@@ -91,21 +91,23 @@ export function setPluginEnabled(
 export function reorderPlugins(
   workflowRoot: string,
   project: string,
-  pluginNames: string[],
+  pluginIndexes: number[],
 ): PluginConfigurationResult {
   const parsed = requireReadablePlugins(workflowRoot, project);
-  assertUniqueConfiguredNames(parsed.entries);
-  const requested = pluginNames.map(normalizeConfiguredPluginName);
-  const current = parsed.entries.map((entry) => normalizeConfiguredPluginName(entry.name));
-  if (requested.length !== current.length) throw new Error('Plugin ordering must include every currently configured plugin');
-  const currentSet = new Set(current);
-  const requestedSet = new Set(requested);
-  if (requestedSet.size !== requested.length) throw new Error('Plugin ordering contains duplicate names');
-  for (const name of currentSet) {
-    if (!requestedSet.has(name)) throw new Error(`Plugin ordering is missing: ${name}`);
+  if (pluginIndexes.length !== parsed.entries.length) {
+    throw new Error('Plugin ordering must include every currently configured plugin');
   }
-  const byName = new Map(parsed.entries.map((entry) => [normalizeConfiguredPluginName(entry.name), entry]));
-  const next = requested.map((name) => structuredClone(byName.get(name)!));
+  const requestedSet = new Set<number>();
+  for (const index of pluginIndexes) {
+    if (!Number.isInteger(index) || index < 0 || index >= parsed.entries.length) {
+      throw new Error(`Plugin ordering contains an invalid configuration index: ${String(index)}`);
+    }
+    if (requestedSet.has(index)) {
+      throw new Error(`Plugin ordering contains a duplicate configuration index: ${index}`);
+    }
+    requestedSet.add(index);
+  }
+  const next = pluginIndexes.map((index) => structuredClone(parsed.entries[index]!));
   assertNoNewDependencyIssues(workflowRoot, project, parsed.entries, next);
   writePluginsJs(workflowRoot, project, parsed.relativePath, next);
   return readPluginConfiguration(workflowRoot, project);

@@ -8,7 +8,10 @@ import test from 'node:test';
 
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
-import { verifyIsolatedSourceState } from './isolated-project-preparation.ts';
+import {
+  mapPreviewCopyConcurrency,
+  verifyIsolatedSourceState,
+} from './isolated-project-preparation.ts';
 import {
   MapPreviewPreparationCancelledError,
   MapPreviewPreparationFailedError,
@@ -16,6 +19,13 @@ import {
 } from './map-preview-preparation.ts';
 import type { MapPreviewLoadProgress } from '../../../../contract/types.ts';
 import { writeStagedProjectJson } from './staging-service.ts';
+
+test('caps map preview file copying below the available parallelism', () => {
+  assert.equal(mapPreviewCopyConcurrency(1), 1);
+  assert.equal(mapPreviewCopyConcurrency(2), 1);
+  assert.equal(mapPreviewCopyConcurrency(4), 3);
+  assert.equal(mapPreviewCopyConcurrency(32), 4);
+});
 
 test('prepares the isolated preview off the main event loop with one reusable source snapshot', { concurrency: false }, async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-worker-test-'));

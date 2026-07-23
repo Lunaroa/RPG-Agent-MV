@@ -1694,13 +1694,26 @@ input:focus-visible {
 .help-panel pre {
   height: 100%;
   margin: 0;
-  padding: 14px 16px;
+  padding: 18px 20px;
   overflow: auto;
+  scrollbar-gutter: stable;
+  background: color-mix(
+    in srgb,
+    var(--console-paper-soft, #faf5ec) 62%,
+    var(--console-paper, #fffdfa)
+  );
   color: var(--console-text, #211d17);
-  font: 12px/1.7 var(--app-font-sans);
+  font: 13px/1.8 "Microsoft YaHei", "Microsoft YaHei UI", "微软雅黑", var(--app-font-sans);
+  font-variant-ligatures: none;
+  letter-spacing: .01em;
+  tab-size: 2;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+}
+.help-panel pre::selection {
+  background: color-mix(in srgb, var(--console-accent, #be5630) 24%, transparent);
+  color: var(--console-text, #211d17);
 }
 .help-empty {
   min-height: 120px;

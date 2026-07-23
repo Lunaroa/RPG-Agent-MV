@@ -9,6 +9,10 @@ test('map loading separates the requested map from the committed map', () => {
   assert.match(source, /mapLoadCoordinator\.begin\(\{ project, mapId \}\)/);
   assert.match(source, /mapLoadCoordinator\.runExclusive\(token,/);
   assert.match(source, /if \(!mapLoadCoordinator\.isCurrent\(token\)\) return 'superseded'/);
+  const loadMapSource = source.slice(source.indexOf('async function loadMap('), source.indexOf('async function reloadCurrentMap()'));
+  const requestPhase = loadMapSource.slice(0, loadMapSource.indexOf('busy.value = true'));
+  assert.doesNotMatch(requestPhase, /schedulePreviewIntentReconcile/);
+  assert.equal(loadMapSource.match(/schedulePreviewIntentReconcile\(\)/g)?.length, 3);
 });
 
 test('preview lifecycle is driven by one latest intent queue', () => {

@@ -38,7 +38,7 @@ import {
   startMapPreviewPreparation,
   type MapPreviewPreparationTask,
 } from './map-preview-preparation.ts';
-import { injectMapPreviewIframeHarness } from './map-preview-iframe-harness.ts';
+import { injectMapPreviewIframeHarness, writeMapPreviewIframeHarness } from './map-preview-iframe-harness.ts';
 import {
   assertNoStagingConflicts,
   effectiveMapRevision,
@@ -64,10 +64,18 @@ export interface MapPreviewIframeServiceDependencies {
   verifyFrameIsolation(url: string): boolean;
 }
 
+interface PreparedRuntimeTarget {
+  revision: string;
+  reload: boolean;
+  geometry: ReturnType<typeof previewMapGeometry>;
+  runtime: ReturnType<typeof inspectRmmvProject>;
+}
+
 export class MapPreviewIframeService {
   readonly #workflowRoot: string;
   readonly #dependencies: MapPreviewIframeServiceDependencies;
   #session: MapPreviewSession | null = null;
+  #sourceProject = '';
   #preparation: IsolatedProjectPreparation | null = null;
   #preparationTask: MapPreviewPreparationTask | null = null;
   #preparationGeneration = 0;
@@ -120,6 +128,8 @@ export class MapPreviewIframeService {
     this.#activeOperationId = 1;
     this.#activeLoadStartedAt = now;
     this.#desiredRunning = true;
+    this.#sourceProject = project;
+    this.#pendingResume = null;
     this.#session = {
       sessionId: crypto.randomUUID(),
       operationId: 1,
@@ -167,8 +177,18 @@ export class MapPreviewIframeService {
         cleanupIsolatedProject(prepared);
         return;
       }
+      this.#preparation = prepared;
+      const pendingResume = this.#pendingResume;
+      const targetMapId = pendingResume?.mapId ?? mapId;
+      const targetMapRevision = pendingResume
+        ? effectiveMapRevision(this.#workflowRoot, prepared.sourceProject, targetMapId)
+        : mapRevision;
+      const targetOverrides = pendingResume?.overrides ?? overrides;
+      this.#pendingResume = null;
       const progressNow = new Date().toISOString();
       this.#update({
+        mapId: targetMapId,
+        mapRevision: targetMapRevision,
         loadProgress: loadProgress(
           task.taskId,
           'isolation',
@@ -177,7 +197,6 @@ export class MapPreviewIframeService {
           this.#session.loadProgress?.taskStartedAt || this.#session.startedAt,
         ),
       });
-      this.#preparation = prepared;
       this.#sourceSnapshot = new Map(prepared.sourceSnapshot.map((entry) => [entry.relativePath, {
         size: entry.size,
         mtimeMs: entry.mtimeMs,
@@ -185,20 +204,20 @@ export class MapPreviewIframeService {
       }]));
       this.#stagingSnapshot = prepared.staging;
       const copied = inspectRmmvProject(prepared.temporaryProject);
-      const geometry = previewMapGeometry(prepared.temporaryProject, mapId, copied.tileSize);
+      const geometry = previewMapGeometry(prepared.temporaryProject, targetMapId, copied.tileSize);
       this.#channelToken = crypto.randomBytes(32).toString('hex');
       this.#protocolKey = crypto.randomBytes(32).toString('hex');
       injectMapPreviewIframeHarness(copied.resourceRoot, {
         sessionId: this.#session.sessionId,
         channelToken: this.#channelToken,
-        mapId,
-        mapRevision,
+        mapId: targetMapId,
+        mapRevision: targetMapRevision,
         operationId: this.#activeOperationId,
         viewportWidth: copied.screenWidth,
         viewportHeight: copied.screenHeight,
         tileSize: copied.tileSize,
         geometry,
-        overrides,
+        overrides: targetOverrides,
       });
       const iframeUrl = this.#dependencies.registerPreviewRoot(this.#protocolKey, copied.resourceRoot);
       this.#update({
@@ -213,7 +232,7 @@ export class MapPreviewIframeService {
     } catch (error) {
       if (this.#preparationTask === task) this.#preparationTask = null;
       if (error instanceof MapPreviewPreparationCancelledError || !this.#startIsCurrent(generation)) return;
-      await this.#failPreparation(error, mapId);
+      await this.#failPreparation(error, this.#session?.mapId ?? mapId);
     }
   }
 
@@ -256,7 +275,7 @@ export class MapPreviewIframeService {
       }
       this.#clearRuntimeTimeout();
       this.#update({
-        status: this.#desiredRunning ? 'running' : 'suspending',
+        status: this.#desiredRunning && !this.#pendingResume ? 'running' : 'suspending',
         mapId: event.mapId,
         mapRevision: event.mapRevision,
         mapPixelWidth: positiveInteger(event.mapPixelWidth, 'runtime map pixel width'),
@@ -272,7 +291,9 @@ export class MapPreviewIframeService {
         mapChangeSource: 'editor',
         loadProgress: undefined,
       });
-      if (!this.#desiredRunning) this.#sendCommand({ type: 'suspend', operationId: this.#activeOperationId });
+      if (!this.#desiredRunning || this.#pendingResume) {
+        this.#sendCommand({ type: 'suspend', operationId: this.#activeOperationId });
+      }
     } else if (event.phase === 'loading-map') {
       this.#update({
         status: this.#session.status === 'resuming' ? 'resuming' : 'starting',
@@ -389,7 +410,7 @@ export class MapPreviewIframeService {
 
   async resume(requestInput: MapPreviewResumeRequest): Promise<MapPreviewResult> {
     const project = fs.realpathSync.native(path.resolve(requestInput.project));
-    const request: MapPreviewResumeRequest = {
+    let request: MapPreviewResumeRequest = {
       project,
       mapId: positiveInteger(requestInput.mapId, 'mapId'),
       overrides: normalizedOverrides(requestInput.overrides),
@@ -397,14 +418,40 @@ export class MapPreviewIframeService {
       ...(requestInput.forceReload === true ? { forceReload: true } : {}),
     };
     assertSelfSwitchMap(request.overrides, request.mapId);
-    if (!this.#session || !this.isActive() || !this.#preparation) return this.start(project, request.mapId, request.overrides);
-    if (fs.realpathSync.native(this.#preparation.sourceProject) !== project) {
+    if (!this.#session || !this.isActive()) return this.start(project, request.mapId, request.overrides);
+    const sourceProject = this.#preparation?.sourceProject || this.#sourceProject;
+    if (!sourceProject) throw new Error('The active map preview has no source project.');
+    if (fs.realpathSync.native(sourceProject) !== project) {
       await this.stop();
       const result = await this.start(project, request.mapId, request.overrides);
       if (result.session) this.#update({ resumeKind: 'reisolated' });
       return this.current();
     }
+    request = {
+      ...request,
+      mapRevision: effectiveMapRevision(this.#workflowRoot, project, request.mapId),
+    };
     this.#desiredRunning = true;
+    if (this.#session.status === 'preparing') {
+      this.#pendingResume = request;
+      this.#update({
+        mapId: request.mapId,
+        mapRevision: request.mapRevision,
+        mapChangeSource: 'editor',
+      });
+      return this.current();
+    }
+    if (!this.#preparation) return this.current();
+    if (['starting', 'resuming'].includes(this.#session.status)) {
+      const sameTarget = request.mapId === this.#session.mapId
+        && request.mapRevision === this.#session.mapRevision
+        && request.forceReload !== true;
+      if (sameTarget) {
+        this.#pendingResume = null;
+        return this.current();
+      }
+      return this.#restartLoadingRuntime(request);
+    }
     this.#pendingResume = request;
     if (this.#session.status === 'running') {
       this.#update({ status: 'suspending', actualFps: undefined });
@@ -524,14 +571,97 @@ export class MapPreviewIframeService {
   async #resumeSuspendedInternal(): Promise<MapPreviewResult> {
     if (!this.#session || this.#session.status !== 'suspended' || !this.#preparation || !this.#pendingResume) return this.current();
     const request = this.#pendingResume;
-    assertNoStagingConflicts(this.#workflowRoot, request.project);
-    const changes = inspectWarmProjectChanges(this.#workflowRoot, request.project, this.#sourceSnapshot, this.#stagingSnapshot);
-    if (changes.unsafePaths.length) {
+    const target = this.#prepareRuntimeTarget(request);
+    if (!target) {
       await this.stop();
       const result = await this.start(request.project, request.mapId, request.overrides);
       if (result.session) this.#update({ resumeKind: 'reisolated' });
       return this.current();
     }
+    const purpose = mapPreviewLoadPurpose(this.#session.mapId, request.mapId, target.reload);
+    const operationId = ++this.#nextOperationId;
+    this.#activeOperationId = operationId;
+    this.#activeLoadStartedAt = new Date().toISOString();
+    this.#pendingResume = null;
+    this.#update({
+      operationId,
+      status: 'resuming',
+      mapId: request.mapId,
+      mapRevision: target.revision,
+      mapPixelWidth: target.geometry.pixelWidth,
+      mapPixelHeight: target.geometry.pixelHeight,
+      actualFps: undefined,
+      resumeKind: target.reload ? 'map-sync' : 'warm',
+      loadProgress: undefined,
+    });
+    this.#sendCommand({
+      type: 'resume',
+      operationId,
+      purpose: purpose || 'warm',
+      mapId: request.mapId,
+      mapRevision: target.revision,
+      geometry: target.geometry,
+      overrides: request.overrides,
+    });
+    this.#armRuntimeTimeout('iframe-runtime-resume');
+    return this.current();
+  }
+
+  async #restartLoadingRuntime(request: MapPreviewResumeRequest): Promise<MapPreviewResult> {
+    if (!this.#session || !this.#preparation || !this.#session.iframeUrl) return this.current();
+    const target = this.#prepareRuntimeTarget(request);
+    if (!target) {
+      await this.stop();
+      const result = await this.start(request.project, request.mapId, request.overrides);
+      if (result.session) this.#update({ resumeKind: 'reisolated' });
+      return this.current();
+    }
+    const operationId = ++this.#nextOperationId;
+    const now = new Date().toISOString();
+    this.#activeOperationId = operationId;
+    this.#activeLoadStartedAt = now;
+    this.#pendingResume = null;
+    this.#clearRuntimeTimeout();
+    writeMapPreviewIframeHarness(target.runtime.resourceRoot, {
+      sessionId: this.#session.sessionId,
+      channelToken: this.#channelToken,
+      mapId: request.mapId,
+      mapRevision: target.revision,
+      operationId,
+      viewportWidth: target.runtime.screenWidth,
+      viewportHeight: target.runtime.screenHeight,
+      tileSize: target.runtime.tileSize,
+      geometry: target.geometry,
+      overrides: request.overrides,
+    });
+    this.#update({
+      operationId,
+      status: 'resuming',
+      mapId: request.mapId,
+      mapRevision: target.revision,
+      mapPixelWidth: target.geometry.pixelWidth,
+      mapPixelHeight: target.geometry.pixelHeight,
+      iframeUrl: runtimeReloadUrl(this.#session.iframeUrl, operationId),
+      actualFps: undefined,
+      resumeKind: 'map-sync',
+      mapChangeSource: 'editor',
+      loadProgress: loadProgress(
+        this.#runtimeLoadTaskId(),
+        'runtime',
+        'waiting-for-engine',
+        now,
+        now,
+      ),
+    });
+    this.#armRuntimeTimeout('iframe-runtime-resume');
+    return this.current();
+  }
+
+  #prepareRuntimeTarget(request: MapPreviewResumeRequest): PreparedRuntimeTarget | null {
+    if (!this.#session || !this.#preparation) return null;
+    assertNoStagingConflicts(this.#workflowRoot, request.project);
+    const changes = inspectWarmProjectChanges(this.#workflowRoot, request.project, this.#sourceSnapshot, this.#stagingSnapshot);
+    if (changes.unsafePaths.length) return null;
     this.#sourceSnapshot = changes.sourceSnapshot;
     this.#stagingSnapshot = changes.stagingSnapshot;
     for (const mapId of changes.changedMapIds) this.#pendingMapSyncIds.add(mapId);
@@ -545,40 +675,13 @@ export class MapPreviewIframeService {
       this.#pendingMapSyncIds.has(request.mapId),
       request.forceReload,
     );
-    const purpose = mapPreviewLoadPurpose(this.#session.mapId, request.mapId, reload);
-    const manifest = inspectRmmvProject(this.#preparation.temporaryProject);
-    let geometry = previewMapGeometry(this.#preparation.temporaryProject, this.#session.mapId, manifest.tileSize);
     if (reload) {
       syncEffectiveMap(this.#workflowRoot, request.project, this.#preparation.temporaryProject, request.mapId);
       this.#pendingMapSyncIds.delete(request.mapId);
-      geometry = previewMapGeometry(this.#preparation.temporaryProject, request.mapId, manifest.tileSize);
     }
-    const operationId = ++this.#nextOperationId;
-    this.#activeOperationId = operationId;
-    this.#activeLoadStartedAt = new Date().toISOString();
-    this.#pendingResume = null;
-    this.#update({
-      operationId,
-      status: 'resuming',
-      mapId: request.mapId,
-      mapRevision: revision,
-      mapPixelWidth: geometry.pixelWidth,
-      mapPixelHeight: geometry.pixelHeight,
-      actualFps: undefined,
-      resumeKind: reload ? 'map-sync' : 'warm',
-      loadProgress: undefined,
-    });
-    this.#sendCommand({
-      type: 'resume',
-      operationId,
-      purpose: purpose || 'warm',
-      mapId: request.mapId,
-      mapRevision: revision,
-      geometry,
-      overrides: request.overrides,
-    });
-    this.#armRuntimeTimeout('iframe-runtime-resume');
-    return this.current();
+    const runtime = inspectRmmvProject(this.#preparation.temporaryProject);
+    const geometry = previewMapGeometry(this.#preparation.temporaryProject, request.mapId, runtime.tileSize);
+    return { revision, reload, geometry, runtime };
   }
 
   #sendCommand(command: MapPreviewRuntimeCommandPayload): void {
@@ -644,6 +747,7 @@ export class MapPreviewIframeService {
       catch (cleanupError) { error = `Preview temporary project cleanup failed: ${errorMessage(cleanupError)}`; }
     }
     this.#preparation = null;
+    this.#sourceProject = '';
     this.#sourceSnapshot = null;
     this.#stagingSnapshot = null;
     this.#pendingMapSyncIds.clear();
@@ -864,6 +968,12 @@ function runtimeLoadStage(value: unknown): MapPreviewLoadStage {
     throw new Error('Invalid map preview runtime loading stage.');
   }
   return stage as MapPreviewLoadStage;
+}
+
+function runtimeReloadUrl(value: string, operationId: number): string {
+  const url = new URL(value);
+  url.searchParams.set('previewOperation', String(operationId));
+  return url.toString();
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

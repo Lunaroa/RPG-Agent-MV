@@ -1693,7 +1693,6 @@ async function loadMap(
   const token = mapLoadCoordinator.begin({ project, mapId });
   console.debug('[editor-map-load] requested', { sequence: token.sequence, mapId });
   requestedMapId.value = mapId;
-  if (mode.value === 'preview' && options.reconcilePreview !== false) schedulePreviewIntentReconcile();
   busy.value = true;
   setStatus(t('editor.map.loading'), 'busy');
   const treeNode = findTreeNode(mapId);

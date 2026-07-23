@@ -22,7 +22,7 @@ export function injectMapPreviewIframeHarness(resourceRootInput: string, options
   const markerName = 'rpg-agent-preview-marker.js';
   const harnessName = 'rpg-agent-preview-iframe.js';
   fs.writeFileSync(path.join(scriptDirectory, markerName), markerSource(), 'utf8');
-  fs.writeFileSync(path.join(scriptDirectory, harnessName), iframeHarnessSource(options), 'utf8');
+  writeMapPreviewIframeHarness(resourceRoot, options);
 
   const indexPath = path.join(resourceRoot, 'index.html');
   const index = fs.readFileSync(indexPath, 'utf8');
@@ -42,6 +42,11 @@ export function injectMapPreviewIframeHarness(resourceRootInput: string, options
   const mainEntry = /(<script\b[^>]*\bsrc=["']js\/main\.js["'][^>]*><\/script>)/i;
   if (!mainEntry.test(updatedIndex)) throw new Error('Cannot find the RPG Maker main script in the isolated preview.');
   fs.writeFileSync(indexPath, updatedIndex.replace(mainEntry, `<script src="js/${harnessName}"></script>\n$1`), 'utf8');
+}
+
+export function writeMapPreviewIframeHarness(resourceRootInput: string, options: MapPreviewIframeHarnessOptions): void {
+  const resourceRoot = path.resolve(resourceRootInput);
+  fs.writeFileSync(path.join(resourceRoot, 'js', 'rpg-agent-preview-iframe.js'), iframeHarnessSource(options), 'utf8');
 }
 
 function markerSource(): string {

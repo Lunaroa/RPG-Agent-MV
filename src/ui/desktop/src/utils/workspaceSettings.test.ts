@@ -131,6 +131,10 @@ describe('workspaceSettings', () => {
           zoom: 9,
           layoutVersion: 2,
           layout: 'circular',
+          layoutParameters: {
+            circular: { radius: 800, clockwise: false, startAngle: 90 },
+            grid: { columns: 0, nodeSpacing: 24 },
+          },
         },
       },
     })
@@ -140,6 +144,9 @@ describe('workspaceSettings', () => {
         zoom: 6,
         layoutVersion: 2,
         layout: 'circular',
+        layoutParameters: {
+          circular: { radius: 800, clockwise: false, startAngle: 90 },
+        },
       },
     })
 

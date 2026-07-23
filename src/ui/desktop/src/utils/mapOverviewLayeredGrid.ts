@@ -34,6 +34,14 @@ interface ComponentLayout {
   positions: MapOverviewLayoutPositions
 }
 
+export interface MapOverviewLayeredGridOptions {
+  width?: number
+  height?: number
+  horizontalSpacing?: number
+  layerSpacing?: number
+  groupSpacing?: number
+}
+
 function compareNodes(left: MapOverviewLayoutNodeInput, right: MapOverviewLayoutNodeInput): number {
   return left.order - right.order || left.mapId - right.mapId
 }
@@ -124,7 +132,11 @@ function componentDepths(component: readonly MapOverviewLayoutNodeInput[]): Map<
   return depths
 }
 
-function layoutComponent(component: readonly MapOverviewLayoutNodeInput[]): ComponentLayout {
+function layoutComponent(
+  component: readonly MapOverviewLayoutNodeInput[],
+  horizontalSpacing: number,
+  layerSpacing: number,
+): ComponentLayout {
   const depths = componentDepths(component)
   const rows = new Map<number, MapOverviewLayoutNodeInput[]>()
   for (const node of component) {
@@ -140,12 +152,12 @@ function layoutComponent(component: readonly MapOverviewLayoutNodeInput[]): Comp
   const rowMetrics = orderedRows.map((row) => ({
     nodes: row,
     width: row.reduce((sum, node) => sum + node.width, 0)
-      + Math.max(0, row.length - 1) * MAP_OVERVIEW_LAYERED_GRID_HORIZONTAL_GAP,
+      + Math.max(0, row.length - 1) * horizontalSpacing,
     height: Math.max(...row.map((node) => node.collisionHeight)),
   }))
   const width = Math.max(...rowMetrics.map((row) => row.width))
   const height = rowMetrics.reduce((sum, row) => sum + row.height, 0)
-    + Math.max(0, rowMetrics.length - 1) * MAP_OVERVIEW_LAYERED_GRID_LAYER_GAP
+    + Math.max(0, rowMetrics.length - 1) * layerSpacing
   const positions: MapOverviewLayoutPositions = {}
   let rowTop = 0
   for (const row of rowMetrics) {
@@ -155,9 +167,9 @@ function layoutComponent(component: readonly MapOverviewLayoutNodeInput[]): Comp
         x: left + node.width / 2,
         y: rowTop + row.height / 2,
       }
-      left += node.width + MAP_OVERVIEW_LAYERED_GRID_HORIZONTAL_GAP
+      left += node.width + horizontalSpacing
     }
-    rowTop += row.height + MAP_OVERVIEW_LAYERED_GRID_LAYER_GAP
+    rowTop += row.height + layerSpacing
   }
   return { key: component[0], width, height, positions }
 }
@@ -165,15 +177,20 @@ function layoutComponent(component: readonly MapOverviewLayoutNodeInput[]): Comp
 export function computeMapOverviewLayeredGrid(
   nodes: readonly MapOverviewLayoutNodeInput[],
   edges: readonly MapOverviewLayoutEdgeInput[],
-  viewport: { width?: number; height?: number } = {},
+  options: MapOverviewLayeredGridOptions = {},
 ): MapOverviewLayoutPositions {
   if (!nodes.length) return {}
-  const components = connectedComponents(nodes, edges).map(layoutComponent)
+  const horizontalSpacing = options.horizontalSpacing ?? MAP_OVERVIEW_LAYERED_GRID_HORIZONTAL_GAP
+  const layerSpacing = options.layerSpacing ?? MAP_OVERVIEW_LAYERED_GRID_LAYER_GAP
+  const groupSpacing = options.groupSpacing ?? MAP_OVERVIEW_LAYERED_GRID_COMPONENT_GAP
+  const components = connectedComponents(nodes, edges).map(component => (
+    layoutComponent(component, horizontalSpacing, layerSpacing)
+  ))
   const totalWidth = Math.max(...components.map((component) => component.width))
   const totalHeight = components.reduce((sum, component) => sum + component.height, 0)
-    + Math.max(0, components.length - 1) * MAP_OVERVIEW_LAYERED_GRID_COMPONENT_GAP
-  const viewportCenterX = finitePositive(viewport.width || 0) ? Number(viewport.width) / 2 : totalWidth / 2
-  const viewportCenterY = finitePositive(viewport.height || 0) ? Number(viewport.height) / 2 : totalHeight / 2
+    + Math.max(0, components.length - 1) * groupSpacing
+  const viewportCenterX = finitePositive(options.width || 0) ? Number(options.width) / 2 : totalWidth / 2
+  const viewportCenterY = finitePositive(options.height || 0) ? Number(options.height) / 2 : totalHeight / 2
   const originX = viewportCenterX - totalWidth / 2
   const originY = viewportCenterY - totalHeight / 2
   const positions: MapOverviewLayoutPositions = {}
@@ -186,7 +203,7 @@ export function computeMapOverviewLayeredGrid(
         y: componentTop + position.y,
       }
     }
-    componentTop += component.height + MAP_OVERVIEW_LAYERED_GRID_COMPONENT_GAP
+    componentTop += component.height + groupSpacing
   }
   return positions
 }

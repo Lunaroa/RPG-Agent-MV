@@ -257,6 +257,45 @@ export type MapOverviewLayoutId =
   | 'grid'
   | 'circular';
 
+export type MapOverviewDagreDirection = 'LR' | 'RL' | 'TB' | 'BT';
+
+export interface MapOverviewLayoutParametersById {
+  'layered-grid': {
+    horizontalSpacing: number;
+    layerSpacing: number;
+    groupSpacing: number;
+  };
+  'force-atlas2': {
+    nodeSpacing: number;
+    repulsion: number;
+    centerGravity: number;
+  };
+  'd3-force': {
+    nodeSpacing: number;
+    linkDistance: number;
+    nodeRepulsion: number;
+  };
+  'antv-dagre': {
+    direction: MapOverviewDagreDirection;
+    nodeSpacing: number | null;
+    layerSpacing: number | null;
+  };
+  grid: {
+    columns: number | null;
+    nodeSpacing: number;
+  };
+  circular: {
+    radius: number | null;
+    clockwise: boolean;
+    startAngle: number;
+  };
+}
+
+export type MapOverviewLayoutParameters = MapOverviewLayoutParametersById[MapOverviewLayoutId];
+export type MapOverviewLayoutParametersState = Partial<{
+  [K in MapOverviewLayoutId]: MapOverviewLayoutParametersById[K];
+}>;
+
 export type MapMovePosition = 'before' | 'after' | 'inside';
 
 export interface EventSearchOptions {
@@ -1509,12 +1548,13 @@ export interface WorkspaceMapOverviewProjectState {
   /** Legacy; tolerated on read, omitted after normalize/write. */
   thumbnailQuality?: MapOverviewThumbnailQuality;
   zoom?: number;
-  /** Canvas pan as G6 translateTo position `[x, y]`. */
+  /** SVG viewport translation `[x, y]`. */
   pan?: [number, number];
   selectedNodeId?: number | null;
   selectedEdgeId?: string | null;
   layoutVersion?: number;
   layout?: MapOverviewLayoutId;
+  layoutParameters?: MapOverviewLayoutParametersState;
 }
 
 export interface WorkspaceSettings {

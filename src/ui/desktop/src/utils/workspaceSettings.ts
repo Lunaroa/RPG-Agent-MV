@@ -13,6 +13,7 @@ import { AGENT_PANEL_DEFAULT_WIDTH } from './agentPanelWidth'
 import { CHAT_HISTORY_DEFAULT_WIDTH } from './chatHistoryWidth'
 import { readEditorZoom } from '../composables/useEditorWorkspaceState'
 import { isMapOverviewLayoutId } from './mapOverviewLayouts'
+import { normalizeMapOverviewLayoutParametersState } from './mapOverviewLayoutParameters'
 import { clampMapOverviewZoom } from './mapOverviewViewport'
 import { workspaceNoProjectsAvailable } from './workspaceSettingsLocalization'
 
@@ -217,6 +218,8 @@ export function normalizeMapOverviewProjectState(value: unknown): WorkspaceMapOv
   if (zoom != null) state.zoom = zoom
   if (layoutVersion != null) state.layoutVersion = layoutVersion
   if (layout != null) state.layout = layout
+  const layoutParameters = normalizeMapOverviewLayoutParametersState(record.layoutParameters)
+  if (Object.keys(layoutParameters).length) state.layoutParameters = layoutParameters
   const panX = finiteNumber(Array.isArray(record.pan) ? record.pan[0] : undefined)
   const panY = finiteNumber(Array.isArray(record.pan) ? record.pan[1] : undefined)
   if (panX != null && panY != null) state.pan = [panX, panY]

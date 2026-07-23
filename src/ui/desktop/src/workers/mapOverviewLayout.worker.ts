@@ -10,6 +10,7 @@ import {
   buildMapOverviewLayoutOptions,
   type MapOverviewLibraryLayoutId,
 } from '../utils/mapOverviewLayouts'
+import { parseMapOverviewLayoutParameters } from '../utils/mapOverviewLayoutParameters'
 import type {
   MapOverviewLayoutWorkerRequest,
   MapOverviewLayoutWorkerResponse,
@@ -44,11 +45,12 @@ workerScope.onmessage = (event) => {
 
 async function execute(request: MapOverviewLayoutWorkerRequest): Promise<void> {
   const Ctor = LAYOUT_CTORS[request.layoutId]
+  const parameters = parseMapOverviewLayoutParameters(request.layoutId, request.parameters)
   const options = buildMapOverviewLayoutOptions(request.layoutId, {
     nodes: request.nodes,
     width: request.width,
     height: request.height,
-  })
+  }, parameters)
   const layout = new Ctor({ ...options, enableWorker: false })
   try {
     await layout.execute({

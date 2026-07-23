@@ -30,6 +30,7 @@ const request: MapOverviewLayoutWorkerRequest = {
   layoutId: 'grid',
   nodes: [],
   edges: [],
+  parameters: { columns: null, nodeSpacing: 24 },
 }
 
 afterEach(() => {

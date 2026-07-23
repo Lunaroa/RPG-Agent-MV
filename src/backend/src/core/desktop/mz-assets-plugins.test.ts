@@ -123,6 +123,8 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
     const command = plugin.commandHints.find((hint) => hint.command === "openPanel");
     assert.equal(command?.source, "mz-command-header");
     assert.equal(command?.displayName, "Open Panel");
+    assert.equal(command?.evidence, "* @command openPanel");
+    assert.equal(plugin.commandHints.some((hint) => hint.command === "localizedPanel"), false);
     assert.deepEqual(command?.arguments, [{
       name: "actorId",
       key: "actorId",
@@ -328,7 +330,13 @@ function writeMZProject(project: string): void {
     }],
   });
 
-  writePlugin(path.join(project, "js", "plugins", "tools", "SamplePlugin.js"), `/*:
+  writePlugin(path.join(project, "js", "plugins", "tools", "SamplePlugin.js"), `/*:ja
+ * @target MZ
+ * @plugindesc Localized command sample.
+ * @command localizedPanel
+ * @text Localized Panel
+ */
+/*:
  * @target MZ
  * @plugindesc MZ command sample.
  * @requiredAssets img/pictures/ui/Portrait

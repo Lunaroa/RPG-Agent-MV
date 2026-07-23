@@ -113,6 +113,8 @@ export const MAP_IPC_CHANNELS = [
   'plugins:read',
   'plugins:validate',
   'plugins:writeConfiguration',
+  'plugins:addConfiguration',
+  'plugins:removeConfiguration',
   'plugins:setEnabled',
   'plugins:reorder',
   'plugins:updateParameters',
@@ -439,6 +441,10 @@ export function registerMapIpcHandlers(
     desktop.pluginManagement.validatePluginConfiguration(workflowRoot, project(value)));
   handle('plugins:writeConfiguration', (_event, entries: Array<Record<string, unknown>>, value?: string) =>
     desktop.pluginManagement.writePluginConfiguration(workflowRoot, project(value), entries || []));
+  handle('plugins:addConfiguration', (_event, pluginName: string, value?: string) =>
+    desktop.pluginManagement.addPluginConfigurationEntry(workflowRoot, project(value), pluginName));
+  handle('plugins:removeConfiguration', (_event, pluginName: string, value?: string) =>
+    desktop.pluginManagement.removePluginConfigurationEntry(workflowRoot, project(value), pluginName));
   handle('plugins:setEnabled', (_event, pluginName: string, enabled: boolean, value?: string) =>
     desktop.pluginManagement.setPluginEnabled(workflowRoot, project(value), pluginName, enabled));
   handle('plugins:reorder', (_event, pluginNames: string[], value?: string) =>

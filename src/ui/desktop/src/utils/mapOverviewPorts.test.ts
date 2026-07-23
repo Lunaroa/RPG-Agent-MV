@@ -1,14 +1,69 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildMapOverviewActivePorts,
   mapOverviewEdgeAggregateKey,
   mapOverviewPortLabelGeometry,
   mapOverviewPortKey,
   mapOverviewPortRelative,
   placeMapOverviewPortLabels,
 } from './mapOverviewPorts'
+import { mapOverviewSvgNodeGeometry } from '@contract/map-overview-svg-geometry'
+import type { MapOverviewEdge } from '@contract/types'
 
 describe('mapOverviewPorts', () => {
+  it('deduplicates active endpoints and merges their roles and condition colors', () => {
+    const nodes = new Map([
+      [1, mapOverviewSvgNodeGeometry(
+        { id: 1, name: 'Sample A', readState: 'ready', width: 10, height: 8 },
+        { x: 100, y: 80 },
+      )],
+      [2, mapOverviewSvgNodeGeometry(
+        { id: 2, name: 'Sample B', readState: 'ready', width: 10, height: 8 },
+        { x: 300, y: 80 },
+      )],
+    ])
+    const edges = [
+      makeEdge('plain', 1, 2, {}),
+      makeEdge('conditioned', 2, 1, { switch1Valid: true, switch1Id: 3 }),
+    ]
+
+    const ports = buildMapOverviewActivePorts(edges, new Set(edges.map(edge => edge.id)), nodes)
+    const sharedSourceTarget = ports.find(port => port.key === '1:2:3')
+    const sharedTargetSource = ports.find(port => port.key === '2:4:5')
+
+    expect(ports).toHaveLength(2)
+    expect(sharedSourceTarget).toMatchObject({
+      role: 'both',
+      category: 'combined',
+      point: { x: 70, y: 74 },
+    })
+    expect(sharedTargetSource).toMatchObject({
+      role: 'both',
+      category: 'combined',
+      point: { x: 294, y: 98 },
+    })
+  })
+
+  it('keeps source rings and target dots separate when endpoints do not overlap', () => {
+    const nodes = new Map([
+      [1, mapOverviewSvgNodeGeometry(
+        { id: 1, name: 'Sample A', readState: 'ready', width: 10, height: 8 },
+        { x: 100, y: 80 },
+      )],
+      [2, mapOverviewSvgNodeGeometry(
+        { id: 2, name: 'Sample B', readState: 'ready', width: 10, height: 8 },
+        { x: 300, y: 80 },
+      )],
+    ])
+    const edge = makeEdge('conditioned', 1, 2, { variableValid: true, variableId: 2, variableValue: 1 })
+
+    expect(buildMapOverviewActivePorts([edge], new Set([edge.id]), nodes)).toMatchObject([
+      { key: '1:2:3', role: 'source', category: 'variable' },
+      { key: '2:4:5', role: 'target', category: 'variable' },
+    ])
+  })
+
   it('uses tile centers as relative ports', () => {
     expect(mapOverviewPortRelative(0, 0, 10, 8)).toEqual({ x: 0.05, y: 0.0625 })
     expect(mapOverviewPortRelative(9, 7, 10, 8)).toEqual({ x: 0.95, y: 0.9375 })
@@ -86,3 +141,41 @@ describe('mapOverviewPorts', () => {
     expect(reverse).toBe('4:5,6->1:2,3')
   })
 })
+
+function makeEdge(
+  id: string,
+  sourceMapId: number,
+  targetMapId: number,
+  pageConditions: Record<string, unknown>,
+): MapOverviewEdge {
+  const sourceX = sourceMapId === 1 ? 2 : 4
+  const sourceY = sourceMapId === 1 ? 3 : 5
+  const targetX = targetMapId === 1 ? 2 : 4
+  const targetY = targetMapId === 1 ? 3 : 5
+  return {
+    id,
+    sourceMapId,
+    sourceX,
+    sourceY,
+    targetMapId,
+    targetX,
+    targetY,
+    count: 1,
+    sources: [{
+      sourceMapId,
+      sourceMapName: `Sample ${sourceMapId}`,
+      eventId: 1,
+      eventName: 'Sample event',
+      pageIndex: 0,
+      commandIndex: 0,
+      pageConditions,
+      sourceX,
+      sourceY,
+      targetMapId,
+      targetX,
+      targetY,
+      direction: 2,
+      fadeType: 0,
+    }],
+  }
+}

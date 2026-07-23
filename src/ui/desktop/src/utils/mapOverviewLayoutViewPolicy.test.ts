@@ -114,6 +114,34 @@ describe('Map Overview layout view policy', () => {
     expect(source).toMatch(/:disabled="!canOpenMap\(selectedNode\.id\)"/)
   })
 
+  it('renders visible relationships above nodes while keeping hit targets below them', () => {
+    const hitLayer = svgSource.indexOf('class="map-overview-svg-edge-hits"')
+    const nodeLayer = svgSource.indexOf('class="map-overview-svg-nodes"')
+    const edgeLayer = svgSource.indexOf('class="map-overview-svg-edges"')
+    const foregroundLayer = svgSource.indexOf('class="map-overview-svg-foreground"')
+    const portLayer = svgSource.indexOf('class="map-overview-svg-ports"')
+
+    expect(hitLayer).toBeGreaterThan(-1)
+    expect(hitLayer).toBeLessThan(nodeLayer)
+    expect(nodeLayer).toBeLessThan(edgeLayer)
+    expect(edgeLayer).toBeLessThan(foregroundLayer)
+    expect(foregroundLayer).toBeLessThan(portLayer)
+    expect(svgSource).toMatch(/class="map-overview-svg-edges" pointer-events="none"/)
+    expect(svgSource).toMatch(/class="map-overview-svg-ports" pointer-events="none"/)
+  })
+
+  it('restores active endpoint rings and dots without restoring coordinate cards', () => {
+    expect(svgSource).toMatch(/buildMapOverviewActivePorts/)
+    expect(svgSource).toMatch(/v-for="port in activePorts"/)
+    expect(svgSource).toMatch(/class="map-overview-svg-port source-halo"/)
+    expect(svgSource).toMatch(/map-overview-svg-port\.source-halo \{[^}]*stroke:#fff;[^}]*stroke-width:4;/)
+    expect(svgSource).toMatch(/map-overview-svg-port\.source \{[^}]*stroke-width:2\.5;/)
+    expect(svgSource).toMatch(/map-overview-svg-port\.target,.map-overview-svg-port\.both \{[^}]*stroke:#fff;[^}]*stroke-width:1\.5;/)
+    expect(svgSource).toMatch(/circle\[data-port-map=/)
+    expect(svgSource).not.toMatch(/map-overview-svg-port-label/)
+    expect(svgSource).not.toMatch(/map-overview-svg-port-label-leader/)
+  })
+
   it('uses shared transfer-condition visuals and readable inspector details', () => {
     expect(svgSource).toMatch(/classifyMapOverviewEdgeConditions\(edge\.sources\)/)
     expect(svgSource).toMatch(/mapOverviewTransferConditionVisual\(category\)/)

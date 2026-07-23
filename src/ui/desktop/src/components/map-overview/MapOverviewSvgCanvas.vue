@@ -12,6 +12,7 @@ import {
   mapOverviewSvgEdgeGeometry,
   mapOverviewSvgExportBounds,
   mapOverviewSvgNodeGeometry,
+  mapOverviewSvgPortPoint,
   type MapOverviewSvgEdgeGeometry,
   type MapOverviewSvgNodeGeometry,
   type MapOverviewSvgPosition,
@@ -26,6 +27,11 @@ import {
   MAP_OVERVIEW_MIN_ZOOM,
   MAP_OVERVIEW_WHEEL_SENSITIVITY,
 } from '../../utils/mapOverviewViewport'
+import {
+  buildMapOverviewActivePorts,
+  MAP_OVERVIEW_PORT_MARKER_RADIUS,
+  type MapOverviewActivePort,
+} from '../../utils/mapOverviewPorts'
 import {
   buildMapOverviewFocusedNodeIds,
   buildMapOverviewIncidentEdgeIndex,
@@ -132,6 +138,12 @@ const focusedNodeIds = computed(() => buildMapOverviewFocusedNodeIds(
   selectedEdgeId.value,
 ))
 
+const activePorts = computed(() => buildMapOverviewActivePorts(
+  snapshot.value?.edges || [],
+  activeEdgeIds.value,
+  geometryNodeMap.value,
+))
+
 const tooltipEdge = computed(() => (
   edgeTooltip.value
     ? snapshot.value?.edges.find((edge) => edge.id === edgeTooltip.value?.edgeId) || null
@@ -223,6 +235,11 @@ function foregroundEdgeVisualStyle(category: MapOverviewTransferConditionCategor
 
 function foregroundEdgeLabelStyle(category: MapOverviewTransferConditionCategory): Record<string, string> {
   return { fill: mapOverviewTransferConditionVisual(category).stroke }
+}
+
+function portVisualStyle(port: MapOverviewActivePort): Record<string, string> {
+  const color = mapOverviewTransferConditionVisual(port.category).stroke
+  return port.role === 'source' ? { stroke: color } : { fill: color }
 }
 
 function foregroundEdgeState(edge: MapOverviewEdge): string {
@@ -614,6 +631,19 @@ function updateIncidentGeometry(mapId: number): void {
     element.setAttribute('x', String(geometry.label.x))
     element.setAttribute('y', String(geometry.label.y))
   })
+  const draggedNode = resolveNodeGeometry(mapId)
+  if (!draggedNode) return
+  rootSvg.querySelectorAll<SVGCircleElement>(`circle[data-port-map="${mapId}"]`).forEach(element => {
+    const x = Number(element.dataset.portX)
+    const y = Number(element.dataset.portY)
+    try {
+      const point = mapOverviewSvgPortPoint(draggedNode, x, y)
+      element.setAttribute('cx', String(point.x))
+      element.setAttribute('cy', String(point.y))
+    } catch {
+      // Invalid endpoint coordinates are omitted consistently with the declarative render.
+    }
+  })
 }
 
 function setGestureState(state: 'idle' | 'node-drag' | 'pan'): void {
@@ -795,19 +825,8 @@ defineExpose<MapOverviewSvgCanvasApi>({
         </template>
       </defs>
       <g ref="world" class="map-overview-svg-world">
-        <g class="map-overview-svg-edges">
-          <g v-for="item in geometryEdges" :key="item.edge.id" :style="{ opacity: edgeOpacity(item.edge.id) }">
-            <path
-              class="map-overview-svg-edge"
-              :d="item.geometry.path"
-              :data-edge-id="item.edge.id"
-              :data-edge-source="item.edge.sourceMapId"
-              :data-edge-target="item.edge.targetMapId"
-              :marker-end="`url(#${edgeMarkerId(item.condition)})`"
-              :style="edgeVisualStyle(item.condition)"
-              role="img"
-              :aria-label="edgeAriaLabel(item.edge)"
-            />
+        <g class="map-overview-svg-edge-hits">
+          <template v-for="item in geometryEdges" :key="`hit-${item.edge.id}`">
             <path
               class="map-overview-svg-edge-hit"
               :d="item.geometry.path"
@@ -825,16 +844,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
               @focus="onEdgeFocus($event, item.edge.id)"
               @blur="onEdgeBlur"
             />
-            <text
-              v-if="item.edge.count > 1"
-              class="map-overview-svg-edge-label"
-              :x="item.geometry.label.x"
-              :y="item.geometry.label.y"
-              :data-edge-id="item.edge.id"
-              :data-edge-source="item.edge.sourceMapId"
-              :data-edge-target="item.edge.targetMapId"
-            >×{{ item.edge.count }}</text>
-          </g>
+          </template>
         </g>
 
         <g class="map-overview-svg-nodes">
@@ -908,6 +918,31 @@ defineExpose<MapOverviewSvgCanvasApi>({
           </g>
         </g>
 
+        <g class="map-overview-svg-edges" pointer-events="none">
+          <g v-for="item in geometryEdges" :key="item.edge.id" :style="{ opacity: edgeOpacity(item.edge.id) }">
+            <path
+              class="map-overview-svg-edge"
+              :d="item.geometry.path"
+              :data-edge-id="item.edge.id"
+              :data-edge-source="item.edge.sourceMapId"
+              :data-edge-target="item.edge.targetMapId"
+              :marker-end="`url(#${edgeMarkerId(item.condition)})`"
+              :style="edgeVisualStyle(item.condition)"
+              role="img"
+              :aria-label="edgeAriaLabel(item.edge)"
+            />
+            <text
+              v-if="item.edge.count > 1"
+              class="map-overview-svg-edge-label"
+              :x="item.geometry.label.x"
+              :y="item.geometry.label.y"
+              :data-edge-id="item.edge.id"
+              :data-edge-source="item.edge.sourceMapId"
+              :data-edge-target="item.edge.targetMapId"
+            >×{{ item.edge.count }}</text>
+          </g>
+        </g>
+
         <g class="map-overview-svg-foreground" pointer-events="none">
           <template v-for="item in geometryEdges" :key="`active-${item.edge.id}`">
             <path
@@ -930,6 +965,31 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-target="item.edge.targetMapId"
               :style="foregroundEdgeLabelStyle(item.condition)"
             >×{{ item.edge.count }}</text>
+          </template>
+        </g>
+
+        <g class="map-overview-svg-ports" pointer-events="none">
+          <template v-for="port in activePorts" :key="port.key">
+            <circle
+              v-if="port.role === 'source'"
+              class="map-overview-svg-port source-halo"
+              :cx="port.point.x"
+              :cy="port.point.y"
+              :r="MAP_OVERVIEW_PORT_MARKER_RADIUS"
+              :data-port-map="port.mapId"
+              :data-port-x="port.x"
+              :data-port-y="port.y"
+            />
+            <circle
+              :class="['map-overview-svg-port', port.role]"
+              :cx="port.point.x"
+              :cy="port.point.y"
+              :r="MAP_OVERVIEW_PORT_MARKER_RADIUS"
+              :data-port-map="port.mapId"
+              :data-port-x="port.x"
+              :data-port-y="port.y"
+              :style="portVisualStyle(port)"
+            />
           </template>
         </g>
       </g>
@@ -990,6 +1050,10 @@ defineExpose<MapOverviewSvgCanvasApi>({
 .map-overview-svg-node-error-mark text { fill:#c2412d; text-anchor:middle; font:700 16px var(--app-font-sans); }
 .map-overview-svg-node-label-bg { fill:#f7f7f4; fill-opacity:.78; }
 .map-overview-svg-node-label { fill:#282923; text-anchor:middle; font:600 12px var(--app-font-sans); }
+.map-overview-svg-port { pointer-events:none; vector-effect:non-scaling-stroke; }
+.map-overview-svg-port.source-halo { fill:transparent; stroke:#fff; stroke-width:4; }
+.map-overview-svg-port.source { fill:transparent; stroke-width:2.5; }
+.map-overview-svg-port.target,.map-overview-svg-port.both { stroke:#fff; stroke-width:1.5; }
 .map-overview-edge-tooltip { position:absolute; left:0; top:0; z-index:5; display:grid; gap:4px; width:max-content; max-width:280px; padding:8px 10px; border:1px solid color-mix(in srgb, var(--app-border) 82%, transparent); border-radius:8px; background:color-mix(in srgb, var(--app-bg-elevated) 96%, transparent); color:var(--app-ink); box-shadow:0 8px 24px rgba(30,31,28,.16); pointer-events:none; font-size:11px; line-height:1.4; }
 .map-overview-edge-tooltip strong { font-weight:650; }
 .map-overview-edge-tooltip span,.map-overview-edge-tooltip small { color:var(--app-ink-muted); }

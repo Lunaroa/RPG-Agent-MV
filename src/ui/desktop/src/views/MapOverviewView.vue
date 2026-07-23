@@ -31,6 +31,7 @@ import { findMapOverviewMatches } from '../utils/mapOverviewSearch'
 import { MapOverviewMoveHistory, type MapOverviewNodePosition } from '../utils/mapOverviewMoveHistory'
 import { MAP_OVERVIEW_LAYOUT_VERSION, mapOverviewNodeSize } from '../utils/mapOverviewNodeSize'
 import {
+  inspectMapOverviewLayoutOverlaps,
   isMapOverviewThumbnailVersionChanged,
   mapOverviewPreparationPercent,
   validateMapOverviewLayoutNoOverlap,
@@ -398,7 +399,7 @@ async function prepareInitialPositions(next: MapOverviewSnapshot): Promise<{
     width,
     height,
   })
-  validateLayoutPositions(next, positions)
+  validateLayoutPositions(next, positions, 'layered-grid')
   return { positions, generated: true, layoutId: 'layered-grid' }
 }
 
@@ -608,7 +609,7 @@ async function runLayout(
       parameters,
     })
     if (requestId !== layoutRequestId) return
-    validateLayoutPositions(next, positions)
+    const overlapCount = validateLayoutPositions(next, positions, layoutId)
     await applyPositionsAtomic(positions)
     if (requestId !== layoutRequestId) return
     persistGraphPositions()
@@ -620,6 +621,10 @@ async function runLayout(
     moveHistory.clear()
     if (restoreViewport) await restoreInitialViewport()
     else await fitGraph()
+    if (requestId !== layoutRequestId) return
+    if (overlapCount > 0) {
+      ElMessage.warning(t('mapOverview.layout.overlapWarning', { count: overlapCount }))
+    }
   } catch (error) {
     if (requestId !== layoutRequestId) return
     failedLayoutId.value = layoutId
@@ -636,22 +641,28 @@ async function runLayout(
   }
 }
 
-function validateLayoutPositions(next: MapOverviewSnapshot, positions: MapOverviewLayoutPositions): void {
+function validateLayoutPositions(
+  next: MapOverviewSnapshot,
+  positions: MapOverviewLayoutPositions,
+  layoutId: MapOverviewLayoutId,
+): number {
   validateMapOverviewLayoutPositions(
     next.nodes.map((node) => String(node.id)),
     Object.entries(positions).map(([id, position]) => ({ id, x: position.x, y: position.y })),
   )
-  validateMapOverviewLayoutNoOverlap(
-    next.nodes.map((node) => {
-      const size = mapOverviewNodeSize(node)
-      return {
-        id: String(node.id),
-        width: size.width,
-        height: size.collisionHeight,
-      }
-    }),
-    positions,
-  )
+  const nodeRects = next.nodes.map((node) => {
+    const size = mapOverviewNodeSize(node)
+    return {
+      id: String(node.id),
+      width: size.width,
+      height: size.collisionHeight,
+    }
+  })
+  if (layoutId === 'layered-grid') {
+    validateMapOverviewLayoutNoOverlap(nodeRects, positions)
+    return 0
+  }
+  return inspectMapOverviewLayoutOverlaps(nodeRects, positions).count
 }
 
 function applyPositions(positions: Record<string, { x: number; y: number }>): void {

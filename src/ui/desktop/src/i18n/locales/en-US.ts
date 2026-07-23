@@ -68,6 +68,7 @@ const enUS = {
     'mapOverview.layout.cancelled': 'Layout stopped. The existing map positions were kept.',
     'mapOverview.layout.timeout': 'Layout exceeded 30 seconds, so it was stopped and the existing map positions were kept. Retry or choose another layout.',
     'mapOverview.layout.parentCycle': 'The map parent hierarchy contains a cycle, so the layered grid cannot be generated. Fix the map hierarchy first.',
+    'mapOverview.layout.overlapWarning': 'The layout was applied, but {{count}} map pairs overlap. Drag them apart or adjust the layout parameters.',
     'mapOverview.layout.parameters.action': 'Layout parameters',
     'mapOverview.layout.parameters.title': '{{layout}} layout parameters',
     'mapOverview.layout.parameters.titleShort': 'Parameters',

@@ -13,6 +13,8 @@ import {
   buildPluginParameterRows,
   clonePluginParameterValue,
   createPluginParameterForm,
+  isBooleanParameterEnabled,
+  isSpecialPluginParameterType,
   pluginParameterPayloadsEqual,
   type PluginParameterRow,
   type PluginParameterSummaryLabels,
@@ -179,6 +181,12 @@ function displayReadonlyReason(row: PluginParameterRow): string {
   return t('plugins.parameterReadonlyReason');
 }
 
+function parameterTypeLabel(row: Pick<PluginParameterRow, 'field'>): string {
+  const rawType = String(row.field?.rawType || '').trim();
+  if (rawType) return rawType;
+  return row.field?.kind || '';
+}
+
 function openParameterEditor(key: string): void {
   selectedParameterKey.value = key;
   openSelectedParameterEditor();
@@ -277,7 +285,7 @@ async function focusInitialParameter(): Promise<void> {
     class="plugin-parameter-dialog"
     data-ui-id="plugin-parameter-dialog"
     :title="t('plugins.parameterDialogTitle', { name: plugin?.name || '' })"
-    width="min(860px, calc(100vw - 48px))"
+    width="min(1160px, calc(100vw - 48px))"
     top="3vh"
     :close-on-click-modal="!busy"
     :close-on-press-escape="!busy"
@@ -287,23 +295,22 @@ async function focusInitialParameter(): Promise<void> {
     @closed="emit('closed')"
   >
     <div v-if="plugin" class="parameter-dialog-body">
+      <el-input
+        v-if="parameterRows.length"
+        v-model="parameterQuery"
+        class="parameter-search"
+        clearable
+        size="small"
+        :placeholder="t('plugins.parameterTreeSearchPlaceholder')"
+        :aria-label="t('plugins.parameterTreeSearchPlaceholder')"
+      />
       <section class="plugin-parameters">
-        <div class="parameter-section-header">
-          <h3>{{ t('plugins.parameters') }}</h3>
-          <el-input
-            v-if="parameterRows.length"
-            v-model="parameterQuery"
-            clearable
-            size="small"
-            :placeholder="t('plugins.parameterTreeSearchPlaceholder')"
-            :aria-label="t('plugins.parameterTreeSearchPlaceholder')"
-          />
-        </div>
         <div v-if="parameterRows.length" ref="parameterTable" class="parameter-table-wrap">
           <table role="treegrid">
             <thead>
               <tr>
                 <th scope="col">{{ t('plugins.parameterNameColumn') }}</th>
+                <th scope="col">{{ t('plugins.parameterTypeColumn') }}</th>
                 <th scope="col">{{ t('plugins.parameterValueColumn') }}</th>
               </tr>
             </thead>
@@ -372,12 +379,34 @@ async function focusInitialParameter(): Promise<void> {
                     </el-tag>
                   </div>
                 </td>
+                <td class="parameter-type-cell" :title="parameterTypeLabel(row)">
+                  <el-tag
+                    v-if="isSpecialPluginParameterType(row.field)"
+                    size="small"
+                    effect="plain"
+                    class="parameter-type-tag"
+                  >
+                    {{ parameterTypeLabel(row) }}
+                  </el-tag>
+                  <span v-else>{{ parameterTypeLabel(row) }}</span>
+                </td>
                 <td
                   :class="{ numeric: row.field?.kind === 'number' }"
-                  :title="row.fullValue"
+                  :title="row.field?.kind === 'boolean' ? undefined : row.fullValue"
                 >
                   <div class="parameter-value-cell">
-                    <span>{{ row.summary }}</span>
+                    <el-switch
+                      v-if="row.field?.kind === 'boolean'"
+                      :model-value="isBooleanParameterEnabled(
+                        row.editable ? parameterForm[row.key] : row.fullValue,
+                      )"
+                      disabled
+                      class="parameter-boolean-switch"
+                      :aria-label="row.label"
+                      @click.stop
+                      @dblclick.stop
+                    />
+                    <span v-else>{{ row.summary }}</span>
                     <el-button
                       v-if="row.editable"
                       link
@@ -453,6 +482,7 @@ async function focusInitialParameter(): Promise<void> {
 <style scoped>
 :global(.plugin-parameter-dialog) {
   display: flex;
+  height: min(860px, 94vh);
   max-height: 94vh;
   flex-direction: column;
 }
@@ -463,6 +493,7 @@ async function focusInitialParameter(): Promise<void> {
   border-bottom: 1px solid var(--console-border, #e4dcce);
 }
 :global(.plugin-parameter-dialog .el-dialog__body) {
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   overflow: hidden;
@@ -474,70 +505,67 @@ async function focusInitialParameter(): Promise<void> {
 }
 .parameter-dialog-body {
   min-height: 0;
+  display: flex;
   width: 100%;
+  max-width: 100%;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  overflow-x: hidden;
+}
+.parameter-search {
+  flex: 0 0 auto;
+  max-width: 360px;
+  margin-left: auto;
 }
 .plugin-parameters {
   min-height: 0;
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  flex: 1;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--console-border, #e4dcce);
   border-radius: 10px;
   background: var(--console-paper, #fffdfa);
 }
-.parameter-section-header {
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 10px 6px 0;
-  border-bottom: 1px solid var(--console-border, #e4dcce);
-}
-.parameter-section-header h3 {
-  min-width: 110px;
-  flex: 0 0 auto;
-  border-bottom: 0;
-}
-.parameter-section-header :deep(.el-input) {
-  max-width: 280px;
-  margin-left: auto;
-}
-h3 {
-  margin: 0;
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--console-border, #e4dcce);
-  color: var(--console-text-soft, #5a5247);
-  font-size: 12px;
-  font-weight: 700;
-}
-.plugin-parameters {
-  display: flex;
-  flex-direction: column;
-}
 .parameter-table-wrap {
-  min-height: 180px;
-  flex: 1;
-  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 table {
   width: 100%;
+  max-width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
   font-size: 12px;
 }
 th,
 td {
-  height: 40px;
+  height: 32px;
   box-sizing: border-box;
-  padding: 7px 10px;
+  padding: 4px 10px;
   overflow: hidden;
   border-bottom: 1px solid var(--console-border, #e4dcce);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-th:first-child,
-td:first-child {
+th:nth-child(1),
+td:nth-child(1) {
   width: 42%;
   border-right: 1px solid var(--console-border, #e4dcce);
+}
+th:nth-child(2),
+td:nth-child(2) {
+  width: 18%;
+  border-right: 1px solid var(--console-border, #e4dcce);
+  color: var(--console-text-soft, #5a5247);
+  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
+  font-size: 11px;
 }
 th:last-child {
   background: color-mix(
@@ -568,7 +596,7 @@ th {
   font-size: 11px;
 }
 tbody tr {
-  height: 40px;
+  height: 32px;
   cursor: pointer;
 }
 tbody tr:hover,
@@ -583,6 +611,14 @@ tbody tr.selected td:last-child {
     var(--console-paper-soft, #faf5ec)
   );
 }
+tbody tr:hover td.parameter-type-cell,
+tbody tr.selected td.parameter-type-cell {
+  background: color-mix(
+    in srgb,
+    var(--console-accent-soft, #f8e9df) 46%,
+    var(--console-paper, #fffdfa)
+  );
+}
 tbody tr.readonly {
   color: var(--console-text-muted, #756b5e);
 }
@@ -595,13 +631,13 @@ tbody tr:focus-visible {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
 }
 .parameter-tree-toggle,
 .parameter-tree-spacer {
-  width: 20px;
-  height: 28px;
-  flex: 0 0 20px;
+  width: 18px;
+  height: 22px;
+  flex: 0 0 18px;
 }
 .parameter-tree-toggle {
   padding: 0;
@@ -632,6 +668,22 @@ tbody tr:focus-visible {
   flex: 0 1 auto;
   animation: none;
   transition: none;
+}
+.parameter-type-tag {
+  animation: none;
+  transition: none;
+  max-width: 100%;
+}
+.parameter-type-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.parameter-boolean-switch {
+  flex: 0 0 auto;
+  height: 20px;
+}
+.parameter-boolean-switch.is-disabled {
+  opacity: 1;
 }
 .parameter-readonly-tag {
   flex: 0 0 auto;
@@ -677,18 +729,18 @@ tbody tr:focus-within .parameter-row-edit {
 .parameter-empty {
   flex: 1;
   display: grid;
-  min-height: 220px;
+  min-height: 160px;
   place-items: center;
   color: var(--console-text-muted, #756b5e);
   font-size: 12px;
 }
 .parameter-empty.compact {
-  min-height: 180px;
+  min-height: 120px;
 }
 .parameter-detail {
   flex: 0 0 auto;
-  min-height: 64px;
-  padding: 10px;
+  min-height: 56px;
+  padding: 8px 10px;
   border-top: 1px solid var(--console-border, #e4dcce);
   background: var(--console-paper-soft, #faf5ec);
 }
@@ -717,9 +769,13 @@ tbody tr:focus-within .parameter-row-edit {
   color: var(--app-danger);
   font-size: 11px;
 }
-@media (max-width: 820px) {
+@media (max-width: 980px) {
   :global(.plugin-parameter-dialog .el-dialog__body) {
     overflow: auto;
+  }
+  .parameter-search {
+    max-width: none;
+    margin-left: 0;
   }
   .plugin-parameters {
     min-height: 420px;

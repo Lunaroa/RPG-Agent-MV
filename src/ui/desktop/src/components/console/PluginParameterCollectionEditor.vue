@@ -18,8 +18,9 @@ import {
 } from './plugin-parameter-collection-model';
 import {
   clonePluginParameterValue,
+  isBooleanParameterEnabled,
   isPluginParameterSchemaFieldEditable,
-  replacePluginParameterChildValue,
+  isSpecialPluginParameterType,
   summarizePluginParameterValue,
   type PluginParameterChildTarget,
   type PluginParameterRow,
@@ -210,33 +211,10 @@ function displayStructReadonlyReason(row: PluginParameterRow): string {
     : t('plugins.parameterReadonlyReason');
 }
 
-function isBooleanEnabled(value: unknown): boolean {
-  return value === true || ['true', 'on', '1'].includes(String(value).toLowerCase());
-}
-
-function updateStructBoolean(field: PluginParameterSchemaField, enabled: boolean): void {
-  emit(
-    'update:modelValue',
-    replacePluginParameterChildValue(
-      structSource(),
-      { kind: 'struct', key: field.key },
-      enabled ? 'true' : 'false',
-    ),
-  );
-}
-
-function updateArrayBoolean(index: number, enabled: boolean, key?: string): void {
-  const next = entries.value.map((entry) => clonePluginParameterValue(entry));
-  const current = next[index];
-  if (key && isRecord(current)) {
-    next[index] = {
-      ...current,
-      [key]: enabled ? 'true' : 'false',
-    };
-  } else {
-    next[index] = enabled ? 'true' : 'false';
-  }
-  emit('update:modelValue', next);
+function structTypeLabel(row: Pick<PluginParameterRow, 'field'>): string {
+  const rawType = String(row.field?.rawType || '').trim();
+  if (rawType) return rawType;
+  return row.field?.kind || '';
 }
 
 function editStructField(field: PluginParameterSchemaField): void {
@@ -251,10 +229,6 @@ function editStructField(field: PluginParameterSchemaField): void {
 
 function editStructRow(row: PluginParameterRow): void {
   if (row.field) editStructField(row.field);
-}
-
-function updateStructRowBoolean(row: PluginParameterRow, enabled: boolean): void {
-  if (row.field) updateStructBoolean(row.field, enabled);
 }
 
 function toggleStructExpanded(row: VisiblePluginParameterTreeRow): void {
@@ -395,13 +369,6 @@ async function deleteSelection(): Promise<void> {
   selectedRowIds.value = [];
 }
 
-function deleteOne(index: number): void {
-  const removedId = rowIds.value[index];
-  rowIds.value.splice(index, 1);
-  selectedRowIds.value = selectedRowIds.value.filter((id) => id !== removedId);
-  emit('update:modelValue', removePluginParameterArrayItems(entries.value, [index]));
-}
-
 function startDrag(event: DragEvent, index: number): void {
   if (sortingLocked.value) {
     event.preventDefault();
@@ -536,7 +503,6 @@ function displayValue(value: unknown): string {
       <div ref="collectionTable" class="collection-table-wrap">
         <table
           class="array-table"
-          :style="{ minWidth: `${Math.max(680, 172 + Math.max(columns.length, 1) * 170)}px` }"
         >
           <thead>
             <tr>
@@ -558,9 +524,6 @@ function displayValue(value: unknown): string {
                 </th>
               </template>
               <th v-else scope="col">{{ t('plugins.parameterValueColumn') }}</th>
-              <th class="actions-column" scope="col">
-                {{ t('plugins.parameterActionsColumn') }}
-              </th>
             </tr>
           </thead>
           <tbody>
@@ -611,60 +574,74 @@ function displayValue(value: unknown): string {
               </td>
               <template v-if="columns.length">
                 <td
-                  v-for="column in columns"
+                  v-for="(column, columnIndex) in columns"
                   :key="column.key"
                   :class="{
                     numeric: column.field.kind === 'number',
                     compound: column.field.kind === 'struct' || column.field.kind === 'array',
+                    'value-with-edit': columnIndex === columns.length - 1,
                   }"
                   :title="cellSummary(row.value, column.field)"
                 >
-                  <el-checkbox
-                    v-if="
-                      column.field.kind === 'boolean'
-                      && isPluginParameterSchemaFieldEditable(column.field)
-                    "
-                    :model-value="isBooleanEnabled(cellValue(row.value, column.field))"
-                    :aria-label="column.label"
-                    @click.stop
-                    @dblclick.stop
-                    @change="updateArrayBoolean(row.index, Boolean($event), column.key)"
-                  />
-                  <span v-else>{{ cellSummary(row.value, column.field) }}</span>
+                  <div class="parameter-value-cell">
+                    <el-switch
+                      v-if="column.field.kind === 'boolean'"
+                      :model-value="isBooleanParameterEnabled(cellValue(row.value, column.field))"
+                      disabled
+                      class="parameter-boolean-switch"
+                      :aria-label="column.label"
+                      @click.stop
+                      @dblclick.stop
+                    />
+                    <span v-else>{{ cellSummary(row.value, column.field) }}</span>
+                    <el-button
+                      v-if="
+                        columnIndex === columns.length - 1
+                        && arrayItem
+                        && isPluginParameterSchemaFieldEditable(arrayItem)
+                      "
+                      class="parameter-row-edit"
+                      link
+                      type="primary"
+                      size="small"
+                      @click.stop="editArrayItem(row.index)"
+                      @dblclick.stop
+                    >
+                      {{ t('plugins.editParameter') }}
+                    </el-button>
+                  </div>
                 </td>
               </template>
-              <td v-else :title="arrayItem ? valueSummary(arrayItem, row.value) : ''">
-                <el-checkbox
-                  v-if="
-                    arrayItem?.kind === 'boolean'
-                    && isPluginParameterSchemaFieldEditable(arrayItem)
-                  "
-                  :model-value="isBooleanEnabled(row.value)"
-                  :aria-label="t('plugins.parameterArrayItem', { index: row.index + 1 })"
-                  @click.stop
-                  @dblclick.stop
-                  @change="updateArrayBoolean(row.index, Boolean($event))"
-                />
-                <span v-else>
-                  {{ arrayItem ? valueSummary(arrayItem, row.value) : '' }}
-                </span>
-              </td>
-              <td class="collection-actions" @dblclick.stop>
-                <el-button
-                  v-if="arrayItem && isPluginParameterSchemaFieldEditable(arrayItem)"
-                  link
-                  type="primary"
-                  @click.stop="editArrayItem(row.index)"
-                >
-                  {{ t('plugins.editParameter') }}
-                </el-button>
-                <el-button
-                  link
-                  type="danger"
-                  @click.stop="deleteOne(row.index)"
-                >
-                  {{ t('cmdList.delete') }}
-                </el-button>
+              <td
+                v-else
+                class="value-with-edit"
+                :title="arrayItem ? valueSummary(arrayItem, row.value) : ''"
+              >
+                <div class="parameter-value-cell">
+                  <el-switch
+                    v-if="arrayItem?.kind === 'boolean'"
+                    :model-value="isBooleanParameterEnabled(row.value)"
+                    disabled
+                    class="parameter-boolean-switch"
+                    :aria-label="t('plugins.parameterArrayItem', { index: row.index + 1 })"
+                    @click.stop
+                    @dblclick.stop
+                  />
+                  <span v-else>
+                    {{ arrayItem ? valueSummary(arrayItem, row.value) : '' }}
+                  </span>
+                  <el-button
+                    v-if="arrayItem && isPluginParameterSchemaFieldEditable(arrayItem)"
+                    class="parameter-row-edit"
+                    link
+                    type="primary"
+                    size="small"
+                    @click.stop="editArrayItem(row.index)"
+                    @dblclick.stop
+                  >
+                    {{ t('plugins.editParameter') }}
+                  </el-button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -697,10 +674,8 @@ function displayValue(value: unknown): string {
         <thead>
           <tr>
             <th scope="col">{{ t('plugins.parameterNameColumn') }}</th>
+            <th scope="col">{{ t('plugins.parameterTypeColumn') }}</th>
             <th scope="col">{{ t('plugins.parameterValueColumn') }}</th>
-            <th class="actions-column" scope="col">
-              {{ t('plugins.parameterActionsColumn') }}
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -751,33 +726,53 @@ function displayValue(value: unknown): string {
                 <el-tag size="small" type="info" effect="plain">{{ row.key }}</el-tag>
               </div>
             </td>
+            <td class="parameter-type-cell" :title="structTypeLabel(row)">
+              <el-tag
+                v-if="isSpecialPluginParameterType(row.field)"
+                size="small"
+                effect="plain"
+                class="parameter-type-tag"
+              >
+                {{ structTypeLabel(row) }}
+              </el-tag>
+              <span v-else>{{ structTypeLabel(row) }}</span>
+            </td>
             <td
               :class="{ numeric: row.field?.kind === 'number' }"
-              :title="row.fullValue"
+              :title="row.field?.kind === 'boolean' ? undefined : row.fullValue"
             >
-              <el-checkbox
-                v-if="
-                  row.field?.kind === 'boolean'
-                  && row.editable
-                "
-                :model-value="isBooleanEnabled(structSource()[row.key])"
-                :aria-label="row.label"
-                @click.stop
-                @dblclick.stop
-                @change="updateStructRowBoolean(row, Boolean($event))"
-              />
-              <span v-else>{{ row.summary }}</span>
-            </td>
-            <td class="collection-actions" @dblclick.stop>
-              <el-button
-                v-if="row.editable"
-                link
-                type="primary"
-                @click.stop="editStructRow(row)"
-              >
-                {{ t('plugins.editParameter') }}
-              </el-button>
-              <span v-else>{{ t('plugins.parameterReadonly') }}</span>
+              <div class="parameter-value-cell">
+                <el-switch
+                  v-if="row.field?.kind === 'boolean'"
+                  :model-value="isBooleanParameterEnabled(structSource()[row.key])"
+                  disabled
+                  class="parameter-boolean-switch"
+                  :aria-label="row.label"
+                  @click.stop
+                  @dblclick.stop
+                />
+                <span v-else>{{ row.summary }}</span>
+                <el-button
+                  v-if="row.editable"
+                  class="parameter-row-edit"
+                  link
+                  type="primary"
+                  size="small"
+                  @click.stop="editStructRow(row)"
+                  @dblclick.stop
+                >
+                  {{ t('plugins.editParameter') }}
+                </el-button>
+                <el-tag
+                  v-else-if="!row.editable"
+                  size="small"
+                  type="warning"
+                  effect="plain"
+                  class="parameter-readonly-tag"
+                >
+                  {{ t('plugins.parameterReadonly') }}
+                </el-tag>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -833,24 +828,30 @@ function displayValue(value: unknown): string {
 .collection-table-wrap {
   min-height: 0;
   max-height: 50vh;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   border: 1px solid var(--console-border, #e4dcce);
   border-radius: 8px;
   background: var(--console-paper, #fffdfa);
 }
 table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  table-layout: fixed;
+  table-layout: auto;
   color: var(--console-text, #312d28);
   font-size: 12px;
 }
+.struct-table {
+  width: 100%;
+  table-layout: fixed;
+}
 th,
 td {
-  height: 40px;
+  height: 32px;
   box-sizing: border-box;
-  padding: 0 10px;
+  padding: 4px 10px;
   overflow: hidden;
   border-right: 1px solid var(--console-border, #e4dcce);
   border-bottom: 1px solid var(--console-border, #e4dcce);
@@ -862,7 +863,7 @@ th {
   position: sticky;
   z-index: 3;
   top: 0;
-  height: 38px;
+  height: 32px;
   background: var(--console-paper-soft, #faf5ec);
   color: var(--console-text-soft, #5a5247);
   font-size: 11px;
@@ -918,24 +919,63 @@ tbody tr.drop-after td {
   fill: currentColor;
   color: var(--console-text-muted, #756b5e);
 }
-.actions-column,
-.collection-actions {
-  position: sticky;
-  z-index: 2;
-  right: 0;
-  width: 126px;
-  border-right: 0;
-  background: var(--console-paper, #fffdfa);
-  box-shadow: -8px 0 10px -10px rgb(65 48 34 / 52%);
-  text-align: right;
+.parameter-value-cell {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-th.actions-column {
-  z-index: 4;
-  background: var(--console-paper-soft, #faf5ec);
+.parameter-value-cell > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-tbody tr:hover .collection-actions,
-tbody tr.active .collection-actions {
-  background: var(--console-accent-soft, #f8e9df);
+.parameter-row-edit {
+  flex: 0 0 auto;
+  visibility: hidden;
+  color: #2f80ed;
+  font-weight: 700;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.parameter-row-edit:hover,
+.parameter-row-edit:focus-visible {
+  color: #1769d2;
+}
+tbody tr:hover .parameter-row-edit,
+tbody tr:focus-within .parameter-row-edit {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+.parameter-type-cell {
+  color: var(--console-text-soft, #5a5247);
+  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
+  font-size: 11px;
+}
+.parameter-type-tag {
+  animation: none;
+  transition: none;
+  max-width: 100%;
+}
+.parameter-type-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.parameter-boolean-switch {
+  flex: 0 0 auto;
+  height: 20px;
+}
+.parameter-boolean-switch.is-disabled {
+  opacity: 1;
+}
+.parameter-readonly-tag {
+  flex: 0 0 auto;
+  animation: none;
+  transition: none;
 }
 td.numeric {
   color: var(--console-text, #312d28);
@@ -945,16 +985,20 @@ td.numeric {
 td.compound {
   color: var(--console-accent, #be5630);
 }
-.struct-table th:first-child,
-.struct-table td:first-child {
+.struct-table th:nth-child(1),
+.struct-table td:nth-child(1) {
   width: 42%;
+}
+.struct-table th:nth-child(2),
+.struct-table td:nth-child(2) {
+  width: 18%;
 }
 .struct-name-cell {
   min-width: 0;
   display: flex;
-  height: 39px;
+  height: 31px;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .struct-name-cell > span:not(.parameter-tree-spacer) {
   min-width: 0;

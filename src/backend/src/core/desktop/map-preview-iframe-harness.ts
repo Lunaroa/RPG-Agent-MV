@@ -138,6 +138,13 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       message: message.slice(0, 3000)
     });
   }
+  function reportLoadingStage(stage) {
+    post('loading-progress', {
+      stage: stage,
+      mapId: currentTargetMapId,
+      mapRevision: currentMapRevision
+    });
+  }
   function valueType(value) {
     if (value === null) return 'null';
     if (Array.isArray(value)) return 'array';
@@ -759,6 +766,7 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
     runtimeStage = 'wait-for-engine';
     resetFpsSample();
     post('loading-map', { mapId: currentTargetMapId, mapRevision: currentMapRevision });
+    reportLoadingStage('waiting-for-engine');
     try {
       await waitFor(function () {
         return window.DataManager && window.SceneManager && window.Scene_Map && DataManager.isDatabaseLoaded && DataManager.isDatabaseLoaded();
@@ -771,6 +779,7 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       installResourceTracking();
       resumeLoop();
       runtimeStage = 'wait-for-boot';
+      reportLoadingStage('waiting-for-boot');
       await waitFor(function () {
         var scene = SceneManager._scene;
         return scene && !(scene instanceof Scene_Boot) && SceneManager._sceneStarted !== false;
@@ -778,18 +787,16 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       runtimeStage = 'resize-full-map-renderer';
       resizeGraphics(currentGeometry);
       runtimeStage = 'prepare-game-objects';
-      if (!initialized) {
-        DataManager.setupNewGame();
-        initialized = true;
-      } else {
-        restoreBaseline();
-      }
       resetEventExecution();
+      reportLoadingStage('resetting-game-state');
+      DataManager.setupNewGame();
+      initialized = true;
       captureBaseline();
       applyOverrides(command.overrides || {});
       $gamePlayer.setTransparent(true);
       $gamePlayer.setThrough(true);
       runtimeStage = 'transfer-map';
+      reportLoadingStage('loading-map');
       $gamePlayer.reserveTransfer(currentTargetMapId, 0, 0, 2, 2);
       SceneManager.goto(Scene_Map);
       await waitFor(function () {
@@ -799,6 +806,7 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
           && $gameMap.mapId() === currentTargetMapId;
       }, 'map scene', 15000);
       runtimeStage = 'map-resources';
+      reportLoadingStage('loading-map-resources');
       await waitFor(function () {
         if (failedResources.length) throw new Error('One or more map resources failed to load.');
         return (!window.ImageManager || !ImageManager.isReady || ImageManager.isReady())
@@ -811,6 +819,7 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       $gamePlayer.setThrough(true);
       $gameMap.setDisplayPos(0, 0);
       runtimeStage = 'ready';
+      loading = false;
       resetFpsSample();
       post('ready', Object.assign({
         mapId: currentMapId,

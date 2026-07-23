@@ -6,6 +6,8 @@ import type {
   MapPreviewDevToolsResult,
   MapPreviewFailureCode,
   MapPreviewFailureDetail,
+  MapPreviewLoadProgress,
+  MapPreviewLoadStage,
   MapPreviewOverrides,
   MapPreviewEventState,
   MapPreviewResult,
@@ -77,6 +79,7 @@ export class MapPreviewIframeService {
   #runtimeTimer: ReturnType<typeof setTimeout> | null = null;
   #nextOperationId = 0;
   #activeOperationId = 0;
+  #activeLoadStartedAt = '';
   #desiredRunning = true;
   #pendingResume: MapPreviewResumeRequest | null = null;
   #resumePromise: Promise<MapPreviewResult> | null = null;
@@ -112,8 +115,10 @@ export class MapPreviewIframeService {
     assertNoStagingConflicts(this.#workflowRoot, project);
     const mapRevision = effectiveMapRevision(this.#workflowRoot, project, mapId);
     const now = new Date().toISOString();
+    const taskId = crypto.randomUUID();
     this.#nextOperationId = 1;
     this.#activeOperationId = 1;
+    this.#activeLoadStartedAt = now;
     this.#desiredRunning = true;
     this.#session = {
       sessionId: crypto.randomUUID(),
@@ -128,20 +133,50 @@ export class MapPreviewIframeService {
       eventExecutionEnabled: false,
       inputWait: { kind: 'none' },
       mapChangeSource: 'editor',
+      loadProgress: loadProgress(taskId, 'isolation', 'starting-worker', now),
       startedAt: now,
       updatedAt: now,
     };
     this.#publish();
     const generation = ++this.#preparationGeneration;
     try {
-      const task = startMapPreviewPreparation(this.#workflowRoot, project);
+      const task = startMapPreviewPreparation(this.#workflowRoot, project, {
+        taskId,
+        onProgress: (progress) => this.#handlePreparationProgress(generation, progress),
+      });
       this.#preparationTask = task;
+      void this.#completeStart(generation, task, mapId, mapRevision, overrides);
+      return this.current();
+    } catch (error) {
+      await this.#failPreparation(error, mapId);
+      return this.current();
+    }
+  }
+
+  async #completeStart(
+    generation: number,
+    task: MapPreviewPreparationTask,
+    mapId: number,
+    mapRevision: string,
+    overrides: MapPreviewOverrides,
+  ): Promise<void> {
+    try {
       const prepared = await task.result;
       if (this.#preparationTask === task) this.#preparationTask = null;
       if (!this.#startIsCurrent(generation)) {
         cleanupIsolatedProject(prepared);
-        return this.current();
+        return;
       }
+      const progressNow = new Date().toISOString();
+      this.#update({
+        loadProgress: loadProgress(
+          task.taskId,
+          'isolation',
+          'preparing-runtime',
+          progressNow,
+          this.#session.loadProgress?.taskStartedAt || this.#session.startedAt,
+        ),
+      });
       this.#preparation = prepared;
       this.#sourceSnapshot = new Map(prepared.sourceSnapshot.map((entry) => [entry.relativePath, {
         size: entry.size,
@@ -175,17 +210,33 @@ export class MapPreviewIframeService {
         actualFps: undefined,
       });
       this.#armRuntimeTimeout('iframe-runtime-startup');
-      return this.current();
     } catch (error) {
-      if (error instanceof MapPreviewPreparationCancelledError || !this.#startIsCurrent(generation)) return this.current();
-      await this.#fail(errorMessage(error), error instanceof MapPreviewPreparationFailedError ? 'isolation-preparation-failed' : 'map-render-failed', {
+      if (this.#preparationTask === task) this.#preparationTask = null;
+      if (error instanceof MapPreviewPreparationCancelledError || !this.#startIsCurrent(generation)) return;
+      await this.#failPreparation(error, mapId);
+    }
+  }
+
+  #handlePreparationProgress(generation: number, progress: MapPreviewLoadProgress): void {
+    if (!this.#startIsCurrent(generation) || this.#session?.status !== 'preparing') return;
+    if (this.#session.loadProgress?.taskId !== progress.taskId) return;
+    this.#update({ loadProgress: progress });
+  }
+
+  async #failPreparation(error: unknown, mapId: number): Promise<void> {
+    await this.#fail(
+      errorMessage(error),
+      error instanceof MapPreviewPreparationFailedError ? 'isolation-preparation-failed' : 'map-render-failed',
+      {
         stage: error instanceof MapPreviewPreparationFailedError ? error.stage : 'iframe-runtime-preparation',
         operationId: this.#activeOperationId,
         targetMapId: mapId,
         message: errorMessage(error),
-      });
-      return this.current();
-    }
+        ...(error instanceof MapPreviewPreparationFailedError && error.runtimeOutput
+          ? { runtimeOutput: error.runtimeOutput }
+          : {}),
+      },
+    );
   }
 
   handleRuntimeEvent(eventInput: MapPreviewRuntimeEvent): MapPreviewResult {
@@ -219,10 +270,26 @@ export class MapPreviewIframeService {
         executionCheckpointMapId: optionalPositiveInteger(event.checkpointMapId),
         inputWait: { kind: 'none' },
         mapChangeSource: 'editor',
+        loadProgress: undefined,
       });
       if (!this.#desiredRunning) this.#sendCommand({ type: 'suspend', operationId: this.#activeOperationId });
     } else if (event.phase === 'loading-map') {
-      this.#update({ status: this.#session.status === 'resuming' ? 'resuming' : 'starting', actualFps: undefined });
+      this.#update({
+        status: this.#session.status === 'resuming' ? 'resuming' : 'starting',
+        actualFps: undefined,
+      });
+    } else if (event.phase === 'loading-progress') {
+      this.#update({
+        status: this.#session.status === 'resuming' ? 'resuming' : 'starting',
+        actualFps: undefined,
+        loadProgress: loadProgress(
+          this.#runtimeLoadTaskId(),
+          'runtime',
+          runtimeLoadStage(event.stage),
+          new Date().toISOString(),
+          this.#activeLoadStartedAt,
+        ),
+      });
     } else if (event.phase === 'suspended') {
       this.#clearRuntimeTimeout();
       this.#update({ status: 'suspended', actualFps: undefined });
@@ -488,6 +555,7 @@ export class MapPreviewIframeService {
     }
     const operationId = ++this.#nextOperationId;
     this.#activeOperationId = operationId;
+    this.#activeLoadStartedAt = new Date().toISOString();
     this.#pendingResume = null;
     this.#update({
       operationId,
@@ -498,6 +566,7 @@ export class MapPreviewIframeService {
       mapPixelHeight: geometry.pixelHeight,
       actualFps: undefined,
       resumeKind: reload ? 'map-sync' : 'warm',
+      loadProgress: undefined,
     });
     this.#sendCommand({
       type: 'resume',
@@ -520,6 +589,10 @@ export class MapPreviewIframeService {
       channelToken: this.#channelToken,
       command,
     });
+  }
+
+  #runtimeLoadTaskId(): string {
+    return `${this.#session?.sessionId || 'preview'}:${this.#activeOperationId}`;
   }
 
   #requireRuntime(): void {
@@ -576,6 +649,7 @@ export class MapPreviewIframeService {
     this.#pendingMapSyncIds.clear();
     this.#pendingResume = null;
     this.#activeOperationId = 0;
+    this.#activeLoadStartedAt = '';
     this.#nextOperationId = 0;
     return error;
   }
@@ -609,6 +683,7 @@ export class MapPreviewIframeService {
       ...this.#session,
       status,
       actualFps: undefined,
+      loadProgress: undefined,
       updatedAt: new Date().toISOString(),
       ...(failureCode ? { failureCode } : {}),
       ...(failureDetail ? { failureDetail } : {}),
@@ -639,7 +714,7 @@ function runtimeEvent(value: MapPreviewRuntimeEvent): MapPreviewRuntimeEvent {
   if (!value || value.kind !== 'rpg-agent-map-preview') throw new Error('Invalid map preview runtime event.');
   if (![
     'ready', 'loading-map', 'suspended', 'state', 'fps', 'console', 'error',
-    'input-waiting', 'input-ended', 'runtime-map-changed', 'execution-error',
+    'loading-progress', 'input-waiting', 'input-ended', 'runtime-map-changed', 'execution-error',
   ].includes(String(value.phase))) {
     throw new Error('Invalid map preview runtime event phase.');
   }
@@ -757,4 +832,38 @@ function failureCode(value: unknown): MapPreviewFailureCode {
   ];
   return allowed.includes(code as MapPreviewFailureCode) ? code as MapPreviewFailureCode : 'map-render-failed';
 }
+
+function loadProgress(
+  taskId: string,
+  phase: MapPreviewLoadProgress['phase'],
+  stage: MapPreviewLoadStage,
+  now = new Date().toISOString(),
+  taskStartedAt = now,
+): MapPreviewLoadProgress {
+  return {
+    taskId,
+    phase,
+    stage,
+    taskStartedAt,
+    stageStartedAt: now,
+    updatedAt: now,
+  };
+}
+
+function runtimeLoadStage(value: unknown): MapPreviewLoadStage {
+  const stage = String(value || '');
+  const allowed: MapPreviewLoadStage[] = [
+    'waiting-for-engine',
+    'waiting-for-boot',
+    'resetting-game-state',
+    'loading-map',
+    'loading-map-resources',
+    'ready',
+  ];
+  if (!allowed.includes(stage as MapPreviewLoadStage)) {
+    throw new Error('Invalid map preview runtime loading stage.');
+  }
+  return stage as MapPreviewLoadStage;
+}
+
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

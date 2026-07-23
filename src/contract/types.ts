@@ -846,6 +846,34 @@ export type MapPreviewStatus =
   | 'stopped'
   | 'failed';
 
+export type MapPreviewLoadStage =
+  | 'starting-worker'
+  | 'checking-staged-changes'
+  | 'scanning-project'
+  | 'copying-project'
+  | 'applying-staged-changes'
+  | 'verifying-isolation'
+  | 'preparing-runtime'
+  | 'waiting-for-engine'
+  | 'waiting-for-boot'
+  | 'resetting-game-state'
+  | 'loading-map'
+  | 'loading-map-resources'
+  | 'ready';
+
+export interface MapPreviewLoadProgress {
+  taskId: string;
+  phase: 'isolation' | 'runtime';
+  stage: MapPreviewLoadStage;
+  taskStartedAt: string;
+  stageStartedAt: string;
+  updatedAt: string;
+  completed?: number;
+  total?: number;
+  completedBytes?: number;
+  totalBytes?: number;
+}
+
 export type MapPreviewFailureCode =
   | 'runtime-handshake-timeout'
   | 'runtime-resume-failed'
@@ -948,6 +976,7 @@ export interface MapPreviewSession {
   executionCheckpointMapId?: number;
   inputWait?: MapPreviewInputWaitState;
   mapChangeSource?: 'preview-runtime' | 'editor';
+  loadProgress?: MapPreviewLoadProgress;
   startedAt: string;
   updatedAt: string;
   failureCode?: MapPreviewFailureCode;
@@ -1003,6 +1032,7 @@ export interface MapPreviewRuntimeEvent {
   phase:
     | 'ready'
     | 'loading-map'
+    | 'loading-progress'
     | 'suspended'
     | 'state'
     | 'fps'

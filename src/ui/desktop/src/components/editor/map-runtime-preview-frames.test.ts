@@ -11,7 +11,7 @@ test('hosts the isolated runtime directly instead of copying map frames through 
   assert.match(previewSource, /:src="iframeUrl"/);
   assert.match(previewSource, /pointer-events:none/);
   assert.doesNotMatch(previewSource, /<canvas|RTCPeerConnection|createImageBitmap|ackFrame|WebCodecs|MediaStreamTrackProcessor/);
-  assert.doesNotMatch(editorSource, /onFrame\(|onRtcSignal\(|onRtcGeneration\(/);
+  assert.doesNotMatch(editorSource, /\bonFrame\(|\bonRtcSignal\(|\bonRtcGeneration\(/);
 });
 
 test('accepts runtime events only from the mounted preview frame and forwards authenticated payloads', () => {
@@ -45,4 +45,15 @@ test('shows the native runtime FPS and a dedicated refresh loading label', () =>
   assert.match(previewSource, /if \(props\.refreshing\) return t\('editor\.preview\.refreshing'\)/);
   assert.match(editorSource, /:refreshing="previewRefreshActive"/);
   assert.match(editorSource, /forceReload: true/);
+});
+
+test('shows authoritative loading stages, determinate progress, and elapsed time', () => {
+  assert.match(previewSource, /loadProgress\?: MapPreviewLoadProgress/);
+  assert.match(previewSource, /role="progressbar"/);
+  assert.match(previewSource, /:aria-valuenow="progressPercent"/);
+  assert.match(previewSource, /mapPreviewProgressRatio\(props\.loadProgress\)/);
+  assert.match(previewSource, /editor\.preview\.progress\.copying/);
+  assert.match(previewSource, /editor\.preview\.elapsed/);
+  assert.match(editorSource, /:load-progress="previewSession\?\.loadProgress"/);
+  assert.match(editorSource, /:started-at="previewSession\?\.startedAt"/);
 });

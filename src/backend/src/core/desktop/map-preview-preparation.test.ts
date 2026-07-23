@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import { bootstrapDatabase } from '../db/bootstrap.ts';
@@ -12,6 +14,7 @@ import {
   MapPreviewPreparationFailedError,
   startMapPreviewPreparation,
 } from './map-preview-preparation.ts';
+import type { MapPreviewLoadProgress } from '../../../../contract/types.ts';
 import { writeStagedProjectJson } from './staging-service.ts';
 
 test('prepares the isolated preview off the main event loop with one reusable source snapshot', { concurrency: false }, async () => {
@@ -28,7 +31,10 @@ test('prepares the isolated preview off the main event loop with one reusable so
     fs.writeFileSync(path.join(project, 'www', 'save', 'file1.rpgsave'), 'private-save', 'utf8');
     writeStagedProjectJson(workflowRoot, project, 'www/data/Map001.json', { width: 2, height: 1 });
 
-    const task = startMapPreviewPreparation(workflowRoot, project);
+    const progress: MapPreviewLoadProgress[] = [];
+    const task = startMapPreviewPreparation(workflowRoot, project, {
+      onProgress: (entry) => progress.push(entry),
+    });
     let heartbeat = false;
     setImmediate(() => { heartbeat = true; });
     const preparation = await task.result;
@@ -53,6 +59,16 @@ test('prepares the isolated preview off the main event loop with one reusable so
       savesUnchanged: true,
       stagingUnchanged: true,
     });
+    assert.ok(progress.some((entry) => entry.stage === 'scanning-project' && entry.total === undefined));
+    const copying = progress.filter((entry) => entry.stage === 'copying-project');
+    assert.ok(copying.length >= 2);
+    assert.equal(copying.at(-1)?.completed, 2);
+    assert.equal(copying.at(-1)?.total, 2);
+    assert.equal(copying.at(-1)?.completedBytes, copying.at(-1)?.totalBytes);
+    assert.ok(copying.every((entry, index) => index === 0
+      || (entry.completed || 0) >= (copying[index - 1].completed || 0)));
+    assert.ok(progress.some((entry) => entry.stage === 'applying-staged-changes' && entry.completed === 1 && entry.total === 1));
+    assert.ok(progress.some((entry) => entry.stage === 'verifying-isolation' && entry.completed === 2 && entry.total === 2));
     fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
   } finally {
     closeDatabase();
@@ -87,6 +103,59 @@ test('reports a stable preparation stage and cleans the temporary project on fai
       assert.equal(error.stage, 'resolve-source-project');
       return true;
     });
+    assert.equal(fs.existsSync(task.temporaryProject), false);
+  } finally {
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
+test('ignores progress from another task and keeps drained worker diagnostics on exit', async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-worker-output-'));
+  const project = path.join(workflowRoot, 'projects', 'demo');
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    pid: 1,
+    kill: () => true,
+  });
+  try {
+    fs.mkdirSync(project, { recursive: true });
+    const progress: MapPreviewLoadProgress[] = [];
+    const task = startMapPreviewPreparation(workflowRoot, project, {
+      taskId: 'current-task',
+      onProgress: (entry) => progress.push(entry),
+      spawnProcess: () => {
+        setImmediate(() => {
+          child.emit('message', {
+            type: 'progress',
+            progress: {
+              taskId: 'stale-task',
+              phase: 'isolation',
+              stage: 'copying-project',
+              taskStartedAt: new Date(0).toISOString(),
+              stageStartedAt: new Date(0).toISOString(),
+              updatedAt: new Date(0).toISOString(),
+              completed: 1,
+              total: 2,
+            },
+          });
+          child.stderr.write('worker diagnostic');
+          child.exitCode = 1;
+          child.emit('exit', 1, null);
+        });
+        return child as unknown as import('node:child_process').ChildProcess;
+      },
+    });
+
+    await assert.rejects(task.result, (error: unknown) => {
+      assert.ok(error instanceof MapPreviewPreparationFailedError);
+      assert.equal(error.stage, 'preparation-worker');
+      assert.match(error.runtimeOutput || '', /worker diagnostic/);
+      return true;
+    });
+    assert.deepEqual(progress, []);
     assert.equal(fs.existsSync(task.temporaryProject), false);
   } finally {
     fs.rmSync(workflowRoot, { recursive: true, force: true });

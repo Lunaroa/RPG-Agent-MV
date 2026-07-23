@@ -1765,7 +1765,13 @@ const enUS = {
     'eventImgPicker.character': 'Character',
     'eventImgPicker.tile': 'Tile',
     'eventImgPicker.searchCharacters': 'Search characters',
+    'eventImgPicker.viewMode': 'Character browser view',
+    'eventImgPicker.listView': 'List view',
+    'eventImgPicker.galleryView': 'Large preview',
+    'eventImgPicker.noCharacterMatches': 'No matching character images.',
+    'eventImgPicker.previewFailed': 'Character preview failed to load',
     'eventImgPicker.tileTabs': 'Tile tabs',
+    'eventImgPicker.pickHint': 'Click to select, double-click to confirm',
 
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': 'This command does not need additional parameters.',

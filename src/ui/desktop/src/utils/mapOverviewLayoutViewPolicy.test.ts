@@ -78,9 +78,15 @@ describe('Map Overview layout view policy', () => {
   it('keeps node dragging separate from middle-button and space panning', () => {
     expect(svgSource).toMatch(/shouldStartMapOverviewNodeDrag/)
     expect(svgSource).toMatch(/shouldStartMapOverviewPan/)
+    expect(svgSource).toMatch(/isMapOverviewNodeDragAllowed/)
+    expect(svgSource).toMatch(/'drag-locked': nodeDragLocked\(node\.id\)/)
     expect(svgSource).toMatch(/event\.code !== 'Space'/)
     expect(svgSource).toMatch(/gestureState\.value !== 'idle'/)
     expect(svgSource).toMatch(/@auxclick\.prevent/)
+  })
+
+  it('synchronizes declarative geometry before committing a completed drag', () => {
+    expect(svgSource).toMatch(/renderVersion\.value \+= 1[\s\S]{0,180}emit\('nodeDragEnd'/)
   })
 
   it('keeps the graph usable when individual thumbnails fail and supports an in-place retry', () => {
@@ -92,12 +98,17 @@ describe('Map Overview layout view policy', () => {
     expect(source).toMatch(/thumbnailFailures\.value\.size[\s\S]{0,160}mapOverview\.export\.thumbnailFailures/)
     expect(svgSource).toMatch(/class="map-overview-svg-node-placeholder"/)
     expect(svgSource).toMatch(/'thumbnail-failed': Boolean\(thumbnailError\(node\.id\)\)/)
+    expect(svgSource).toMatch(/:aria-label="nodeAriaLabel\(node\)"/)
   })
 
   it('uses compact labels and exposes transfer coordinates in the inspector', () => {
     expect(svgSource).toMatch(/node\.imageHeight \/ 2 \+ 6/)
     expect(svgSource).toMatch(/height="20"/)
     expect(svgSource).toMatch(/font:600 12px/)
+    expect(svgSource).toMatch(/port\.label\.width/)
+    expect(svgSource).toMatch(/font:600 9px/)
+    expect(svgSource).toMatch(/placeMapOverviewPortLabels/)
+    expect(svgSource).toMatch(/map-overview-svg-port-label-leader/)
     expect(source).toMatch(/edge\.sourceX/)
     expect(source).toMatch(/edge\.targetX/)
     expect(source).toMatch(/:disabled="!canOpenMap\(selectedNode\.id\)"/)
@@ -109,6 +120,19 @@ describe('Map Overview layout view policy', () => {
     expect(svgSource).toMatch(/:aria-label="edgeAriaLabel\(item\.edge, item\.condition\)"/)
     expect(source).toMatch(/summarizeMapOverviewTransferConditions\(pageConditions\)/)
     expect(source).not.toMatch(/JSON\.stringify\(source\.pageConditions\)/)
+  })
+
+  it('uses orange foreground relationships while retaining condition dash patterns', () => {
+    expect(svgSource).toMatch(/foregroundEdgeVisualStyle/)
+    expect(svgSource).toMatch(/stroke: 'var\(--map-overview-active-color\)'/)
+    expect(svgSource).toMatch(/visual\.dashArray/)
+    expect(svgSource).toMatch(/fill="var\(--map-overview-active-color\)"/)
+  })
+
+  it('requires zero overlap only for layered grid and warns after applying other layouts', () => {
+    expect(source).toMatch(/if \(layoutId === 'layered-grid'\) \{\s*validateMapOverviewLayoutNoOverlap/)
+    expect(source).toMatch(/inspectMapOverviewLayoutOverlaps\(nodeRects, positions\)\.count/)
+    expect(source).toMatch(/mapOverview\.layout\.overlapWarning/)
   })
 
   it('keeps PNG export but removes the completed-file reveal action', () => {

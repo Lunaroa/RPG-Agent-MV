@@ -13,6 +13,35 @@ export function shouldStartMapOverviewNodeDrag(input: MapOverviewPointerGestureI
   return input.button === 0
 }
 
+export function buildMapOverviewFocusedNodeIds(
+  edges: readonly MapOverviewEdge[],
+  selectedNodeId: number | null,
+  selectedEdgeId: string | null,
+): ReadonlySet<number> {
+  const focused = new Set<number>()
+  if (selectedNodeId != null) focused.add(selectedNodeId)
+  for (const edge of edges) {
+    if (
+      (selectedNodeId != null && (edge.sourceMapId === selectedNodeId || edge.targetMapId === selectedNodeId))
+      || edge.id === selectedEdgeId
+    ) {
+      focused.add(edge.sourceMapId)
+      focused.add(edge.targetMapId)
+    }
+  }
+  return focused
+}
+
+export function isMapOverviewNodeDragAllowed(
+  mapId: number,
+  selectedNodeId: number | null,
+  selectedEdgeId: string | null,
+  focusedNodeIds: ReadonlySet<number>,
+): boolean {
+  if (selectedNodeId == null && selectedEdgeId == null) return true
+  return focusedNodeIds.has(mapId)
+}
+
 export function shouldStartMapOverviewPan(input: MapOverviewPointerGestureInput): boolean {
   if (input.type === 'wheel') return true
   if (input.type.startsWith('touch')) return !input.interactiveTarget

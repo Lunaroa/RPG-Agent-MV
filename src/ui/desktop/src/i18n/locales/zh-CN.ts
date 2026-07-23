@@ -66,6 +66,7 @@ const zhCN = {
     'mapOverview.layout.cancelled': '已停止排列，原有地图位置保持不变。',
     'mapOverview.layout.timeout': '排列超过 30 秒，已自动停止并保留原有地图位置。你可以重试或选择其他布局。',
     'mapOverview.layout.parentCycle': '地图父子层级存在循环，无法生成分层网格。请先修正地图层级。',
+    'mapOverview.layout.overlapWarning': '布局已应用，但有 {{count}} 对地图重叠。可以拖动调整或修改布局参数。',
     'mapOverview.layout.parameters.action': '布局参数',
     'mapOverview.layout.parameters.title': '{{layout}}布局参数',
     'mapOverview.layout.parameters.titleShort': '参数',

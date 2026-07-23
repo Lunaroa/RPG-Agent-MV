@@ -27,7 +27,16 @@ import {
   MAP_OVERVIEW_WHEEL_SENSITIVITY,
 } from '../../utils/mapOverviewViewport'
 import {
+  MAP_OVERVIEW_PORT_LABEL_OFFSET_Y,
+  MAP_OVERVIEW_PORT_MARKER_RADIUS,
+  mapOverviewPortLabelGeometry,
+  placeMapOverviewPortLabels,
+  type MapOverviewPortLabelGeometry,
+} from '../../utils/mapOverviewPorts'
+import {
+  buildMapOverviewFocusedNodeIds,
   buildMapOverviewIncidentEdgeIndex,
+  isMapOverviewNodeDragAllowed,
   shouldStartMapOverviewNodeDrag,
   shouldStartMapOverviewPan,
 } from '../../utils/mapOverviewSvgInteraction'
@@ -117,21 +126,22 @@ const activeEdgeIds = computed(() => {
 })
 const hasFocus = computed(() => selectedNodeId.value != null || selectedEdgeId.value != null)
 
-const focusedNodeIds = computed(() => {
-  const ids = new Set<number>()
-  if (selectedNodeId.value != null) ids.add(selectedNodeId.value)
-  for (const edge of snapshot.value?.edges || []) {
-    if ((selectedNodeId.value != null && (edge.sourceMapId === selectedNodeId.value || edge.targetMapId === selectedNodeId.value))
-      || edge.id === selectedEdgeId.value) {
-      ids.add(edge.sourceMapId)
-      ids.add(edge.targetMapId)
-    }
-  }
-  return ids
-})
+const focusedNodeIds = computed(() => buildMapOverviewFocusedNodeIds(
+  snapshot.value?.edges || [],
+  selectedNodeId.value,
+  selectedEdgeId.value,
+))
 
 const activePorts = computed(() => {
-  const ports = new Map<string, { key: string; mapId: number; x: number; y: number; role: 'source' | 'target' | 'both'; point: MapOverviewSvgPosition }>()
+  const ports = new Map<string, {
+    key: string
+    mapId: number
+    x: number
+    y: number
+    role: 'source' | 'target' | 'both'
+    point: MapOverviewSvgPosition
+    label: MapOverviewPortLabelGeometry
+  }>()
   const mark = (mapId: number, x: number, y: number, role: 'source' | 'target') => {
     const node = geometryNodeMap.value.get(mapId)
     if (!node) return
@@ -142,7 +152,15 @@ const activePorts = computed(() => {
         if (existing.role !== role) existing.role = 'both'
         return
       }
-      ports.set(key, { key, mapId, x, y, role, point: mapOverviewSvgPortPoint(node, x, y) })
+      ports.set(key, {
+        key,
+        mapId,
+        x,
+        y,
+        role,
+        point: mapOverviewSvgPortPoint(node, x, y),
+        label: mapOverviewPortLabelGeometry(x, y),
+      })
     } catch {
       // Invalid coordinates remain represented by the snapshot issue node, not an SVG port.
     }
@@ -152,7 +170,16 @@ const activePorts = computed(() => {
     mark(edge.sourceMapId, edge.sourceX, edge.sourceY, 'source')
     mark(edge.targetMapId, edge.targetX, edge.targetY, 'target')
   }
-  return [...ports.values()]
+  const values = [...ports.values()]
+  const placements = placeMapOverviewPortLabels(values.map(port => ({
+    key: port.key,
+    point: port.point,
+    label: port.label,
+  })))
+  return values.map(port => ({
+    ...port,
+    placement: placements.get(port.key)!,
+  }))
 })
 
 function nodeTransform(node: MapOverviewSvgNodeGeometry): string {
@@ -167,8 +194,22 @@ function nodeLabel(node: MapOverviewSvgNodeGeometry): string {
   return `${node.name} MAP${String(node.id).padStart(3, '0')}`
 }
 
+function nodeAriaLabel(node: MapOverviewSvgNodeGeometry): string {
+  const error = thumbnailError(node.id)
+  return error ? `${nodeLabel(node)}. ${error}` : nodeLabel(node)
+}
+
 function nodeOpacity(nodeId: number): number {
   return hasFocus.value && !focusedNodeIds.value.has(nodeId) ? 0.16 : 1
+}
+
+function nodeDragLocked(nodeId: number): boolean {
+  return !isMapOverviewNodeDragAllowed(
+    nodeId,
+    selectedNodeId.value,
+    selectedEdgeId.value,
+    focusedNodeIds.value,
+  )
 }
 
 function edgeOpacity(edgeId: string): number {
@@ -189,6 +230,14 @@ function edgeVisualStyle(category: MapOverviewTransferConditionCategory): Record
   const visual = mapOverviewTransferConditionVisual(category)
   return {
     stroke: visual.stroke,
+    ...(visual.dashArray ? { strokeDasharray: visual.dashArray } : {}),
+  }
+}
+
+function foregroundEdgeVisualStyle(category: MapOverviewTransferConditionCategory): Record<string, string> {
+  const visual = mapOverviewTransferConditionVisual(category)
+  return {
+    stroke: 'var(--map-overview-active-color)',
     ...(visual.dashArray ? { strokeDasharray: visual.dashArray } : {}),
   }
 }
@@ -403,12 +452,20 @@ function focusNode(nodeId: string | number, duration = 180): Promise<void> {
 function bindNodeDrag(): void {
   if (!world.value) return
   const behavior = drag<SVGGElement, number>()
-    .filter(event => shouldStartMapOverviewNodeDrag({
-      type: event.type,
-      button: 'button' in event ? Number(event.button) : undefined,
-      spacePressed,
-      interactiveTarget: true,
-    }))
+    .filter((event, mapId) => (
+      shouldStartMapOverviewNodeDrag({
+        type: event.type,
+        button: 'button' in event ? Number(event.button) : undefined,
+        spacePressed,
+        interactiveTarget: true,
+      })
+      && isMapOverviewNodeDragAllowed(
+        mapId,
+        selectedNodeId.value,
+        selectedEdgeId.value,
+        focusedNodeIds.value,
+      )
+    ))
     .container(() => world.value!)
     .subject((_event, mapId) => positions.get(mapId) || { x: 0, y: 0 })
     .on('start', function (event: D3DragEvent<SVGGElement, number, MapOverviewSvgPosition>, mapId) {
@@ -440,7 +497,12 @@ function bindNodeDrag(): void {
       }
       if (this.dataset.dragMoved === 'true') suppressNextClick(mapId)
       setGestureState('idle')
-      emit('nodeDragEnd', { mapId, before, after: { ...after } })
+      renderVersion.value += 1
+      void nextTick(() => {
+        if (destroyed) return
+        bindNodeDrag()
+        emit('nodeDragEnd', { mapId, before, after: { ...after } })
+      })
     })
   select(world.value)
     .selectAll<SVGGElement, number>('.map-overview-svg-node')
@@ -517,8 +579,23 @@ function updateIncidentGeometry(mapId: number): void {
       if (element instanceof SVGCircleElement) {
         element.setAttribute('cx', String(point.x))
         element.setAttribute('cy', String(point.y))
+      } else if (element instanceof SVGLineElement) {
+        const labelOffsetY = Number(element.dataset.portLabelOffsetY)
+        const resolvedOffsetY = Number.isFinite(labelOffsetY)
+          ? labelOffsetY
+          : MAP_OVERVIEW_PORT_LABEL_OFFSET_Y
+        element.setAttribute('x1', String(point.x))
+        element.setAttribute('y1', String(point.y - MAP_OVERVIEW_PORT_MARKER_RADIUS))
+        element.setAttribute('x2', String(point.x))
+        element.setAttribute('y2', String(
+          point.y + resolvedOffsetY + Number(element.dataset.portLabelBottom || 0),
+        ))
       } else {
-        element.setAttribute('transform', `translate(${point.x} ${point.y - 12})`)
+        const labelOffsetY = Number(element.dataset.portLabelOffsetY)
+        const resolvedOffsetY = Number.isFinite(labelOffsetY)
+          ? labelOffsetY
+          : MAP_OVERVIEW_PORT_LABEL_OFFSET_Y
+        element.setAttribute('transform', `translate(${point.x} ${point.y + resolvedOffsetY})`)
       }
     } catch {
       // Ignore invalid active ports.
@@ -698,7 +775,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
             <path d="M0,0 L0,4 L6,2 z" :fill="mapOverviewTransferConditionVisual(category).stroke" />
           </marker>
           <marker :id="edgeMarkerId(category, true)" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
-            <path d="M0,0 L0,6 L8,3 z" :fill="mapOverviewTransferConditionVisual(category).stroke" />
+            <path d="M0,0 L0,6 L8,3 z" fill="var(--map-overview-active-color)" />
           </marker>
         </template>
       </defs>
@@ -748,10 +825,13 @@ defineExpose<MapOverviewSvgCanvasApi>({
               selected: selectedNodeId === node.id,
               invalid: node.readState !== 'ready',
               'thumbnail-failed': Boolean(thumbnailError(node.id)),
+              'drag-locked': nodeDragLocked(node.id),
             }"
             :transform="nodeTransform(node)"
             :style="{ opacity: nodeOpacity(node.id) }"
             :data-map-id="node.id"
+            role="img"
+            :aria-label="nodeAriaLabel(node)"
             @click="onNodeClick($event, node.id)"
             @dblclick.stop="emit('nodeDblclick', node.id)"
             @contextmenu="onNodeContextmenu($event, node.id)"
@@ -817,7 +897,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
               :marker-end="`url(#${edgeMarkerId(item.condition, true)})`"
-              :style="edgeVisualStyle(item.condition)"
+              :style="foregroundEdgeVisualStyle(item.condition)"
             />
             <text
               v-if="activeEdgeIds.has(item.edge.id) && item.edge.count > 1"
@@ -830,24 +910,44 @@ defineExpose<MapOverviewSvgCanvasApi>({
             >×{{ item.edge.count }}</text>
           </template>
           <template v-for="port in activePorts" :key="port.key">
+            <line
+              v-if="port.placement.shifted"
+              class="map-overview-svg-port-label-leader"
+              :x1="port.point.x"
+              :y1="port.point.y - MAP_OVERVIEW_PORT_MARKER_RADIUS"
+              :x2="port.placement.x"
+              :y2="port.placement.y + port.label.rectY + port.label.height"
+              :data-port-map="port.mapId"
+              :data-port-x="port.x"
+              :data-port-y="port.y"
+              :data-port-label-offset-y="port.placement.offsetY"
+              :data-port-label-bottom="port.label.rectY + port.label.height"
+            />
             <circle
               :class="['map-overview-svg-port', port.role]"
               :cx="port.point.x"
               :cy="port.point.y"
-              r="5"
+              :r="MAP_OVERVIEW_PORT_MARKER_RADIUS"
               :data-port-map="port.mapId"
               :data-port-x="port.x"
               :data-port-y="port.y"
             />
             <g
               class="map-overview-svg-port-label"
-              :transform="`translate(${port.point.x} ${port.point.y - 12})`"
+              :transform="`translate(${port.placement.x} ${port.placement.y})`"
               :data-port-map="port.mapId"
               :data-port-x="port.x"
               :data-port-y="port.y"
+              :data-port-label-offset-y="port.placement.offsetY"
             >
-              <rect x="-17" y="-11" width="34" height="16" rx="3" />
-              <text x="0" y="1">{{ port.x }},{{ port.y }}</text>
+              <rect
+                :x="-port.label.width / 2"
+                :y="port.label.rectY"
+                :width="port.label.width"
+                :height="port.label.height"
+                rx="3"
+              />
+              <text x="0" :y="port.label.textY">{{ port.label.text }}</text>
             </g>
           </template>
         </g>
@@ -857,7 +957,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
 </template>
 
 <style scoped>
-.map-overview-svg-root { position:absolute; inset:0; min-width:0; min-height:0; overflow:hidden; }
+.map-overview-svg-root { --map-overview-active-color:#c65f3d; position:absolute; inset:0; min-width:0; min-height:0; overflow:hidden; }
 .map-overview-svg { display:block; width:100%; height:100%; overflow:hidden; touch-action:none; user-select:none; cursor:grab; }
 .map-overview-svg:active { cursor:grabbing; }
 .map-overview-svg-root.space-pan-ready .map-overview-svg,
@@ -866,30 +966,32 @@ defineExpose<MapOverviewSvgCanvasApi>({
 .map-overview-svg-root.gesture-pan .map-overview-svg-node { cursor:grabbing; }
 .map-overview-svg-world { transform-origin:0 0; }
 .map-overview-svg-edge { fill:none; stroke:#8c8d86; stroke-width:1; stroke-linecap:round; stroke-linejoin:round; opacity:.22; vector-effect:non-scaling-stroke; }
-.map-overview-svg-edge.active { stroke:#c65f3d; opacity:.65; }
+.map-overview-svg-edge.active { stroke:var(--map-overview-active-color); opacity:.65; }
 .map-overview-svg-edge.active.node-hovered { stroke-width:1.25; opacity:.65; }
 .map-overview-svg-edge.active.node-selected { stroke-width:1.5; opacity:.8; }
 .map-overview-svg-edge.active.edge-hovered { stroke-width:2; opacity:.9; }
 .map-overview-svg-edge.active.edge-selected { stroke-width:2.5; opacity:1; }
 .map-overview-svg-edge-hit { fill:none; stroke:transparent; stroke-width:13; pointer-events:stroke; cursor:pointer; vector-effect:non-scaling-stroke; }
 .map-overview-svg-edge-label { fill:#5f605a; stroke:#f7f7f4; stroke-width:2.5; opacity:.55; paint-order:stroke; text-anchor:middle; dominant-baseline:middle; font:600 10px var(--app-font-mono); pointer-events:none; }
-.map-overview-svg-edge-label.active { fill:#a5452b; opacity:.8; }
+.map-overview-svg-edge-label.active { fill:var(--map-overview-active-color); opacity:.8; }
 .map-overview-svg-edge-label.active.edge-selected { opacity:1; }
 .map-overview-svg-low-detail .map-overview-svg-edge-label { display:none; }
 .map-overview-svg-node { cursor:move; transition:opacity 120ms ease; }
+.map-overview-svg-node.drag-locked { cursor:pointer; }
 .map-overview-svg-root.gesture-node-drag .map-overview-svg-node { transition:none; }
 .map-overview-svg-node-placeholder { fill:#e9e8e3; pointer-events:none; }
 .map-overview-svg-node-frame { fill:transparent; stroke:transparent; stroke-width:0; vector-effect:non-scaling-stroke; pointer-events:none; }
 .map-overview-svg-node.invalid .map-overview-svg-node-frame { stroke:#c2412d; stroke-width:2; stroke-dasharray:6 4; }
 .map-overview-svg-node.thumbnail-failed .map-overview-svg-node-frame { stroke:#c2412d; stroke-width:2; stroke-dasharray:6 4; }
-.map-overview-svg-node.selected .map-overview-svg-node-frame { stroke:#c65f3d; stroke-width:3; stroke-dasharray:none; }
+.map-overview-svg-node.selected .map-overview-svg-node-frame { stroke:var(--map-overview-active-color); stroke-width:3; stroke-dasharray:none; }
 .map-overview-svg-node-error-mark circle { fill:#f7f7f4; fill-opacity:.92; stroke:#c2412d; stroke-width:2; vector-effect:non-scaling-stroke; }
 .map-overview-svg-node-error-mark text { fill:#c2412d; text-anchor:middle; font:700 16px var(--app-font-sans); }
 .map-overview-svg-node-label-bg { fill:#f7f7f4; fill-opacity:.78; }
 .map-overview-svg-node-label { fill:#282923; text-anchor:middle; font:600 12px var(--app-font-sans); }
-.map-overview-svg-port { stroke:#c65f3d; stroke-width:2; vector-effect:non-scaling-stroke; }
+.map-overview-svg-port { stroke:var(--map-overview-active-color); stroke-width:2; vector-effect:non-scaling-stroke; }
 .map-overview-svg-port.source { fill:transparent; }
-.map-overview-svg-port.target,.map-overview-svg-port.both { fill:#c65f3d; }
+.map-overview-svg-port.target,.map-overview-svg-port.both { fill:var(--map-overview-active-color); }
+.map-overview-svg-port-label-leader { stroke:var(--map-overview-active-color); stroke-width:.75; opacity:.6; vector-effect:non-scaling-stroke; }
 .map-overview-svg-port-label rect { fill:#f7f7f4; fill-opacity:.92; }
-.map-overview-svg-port-label text { fill:#5f605a; text-anchor:middle; font:600 10px var(--app-font-mono); }
+.map-overview-svg-port-label text { fill:#5f605a; text-anchor:middle; font:600 9px var(--app-font-mono); }
 </style>

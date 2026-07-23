@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { MapOverviewEdge } from '@contract/types'
 
 import {
+  buildMapOverviewFocusedNodeIds,
   buildMapOverviewIncidentEdgeIndex,
+  isMapOverviewNodeDragAllowed,
   shouldStartMapOverviewNodeDrag,
   shouldStartMapOverviewPan,
 } from './mapOverviewSvgInteraction'
@@ -59,6 +61,28 @@ describe('map overview SVG gesture policy', () => {
       spacePressed: false,
       interactiveTarget: true,
     })).toBe(true)
+  })
+
+  it('allows only directly focused maps to drag while a node or edge is selected', () => {
+    const edges = [
+      edge('1-2', 1, 2),
+      edge('2-3', 2, 3),
+      edge('4-5', 4, 5),
+    ]
+    const nodeFocus = buildMapOverviewFocusedNodeIds(edges, 1, null)
+    expect([...nodeFocus]).toEqual([1, 2])
+    expect(isMapOverviewNodeDragAllowed(1, 1, null, nodeFocus)).toBe(true)
+    expect(isMapOverviewNodeDragAllowed(2, 1, null, nodeFocus)).toBe(true)
+    expect(isMapOverviewNodeDragAllowed(3, 1, null, nodeFocus)).toBe(false)
+
+    const edgeFocus = buildMapOverviewFocusedNodeIds(edges, null, '2-3')
+    expect([...edgeFocus]).toEqual([2, 3])
+    expect(isMapOverviewNodeDragAllowed(2, null, '2-3', edgeFocus)).toBe(true)
+    expect(isMapOverviewNodeDragAllowed(1, null, '2-3', edgeFocus)).toBe(false)
+  })
+
+  it('does not lock dragging for hover-only state', () => {
+    expect(isMapOverviewNodeDragAllowed(9, null, null, new Set())).toBe(true)
   })
 })
 

@@ -15,6 +15,11 @@ export interface MapOverviewThumbnailFailure {
   error: unknown
 }
 
+export interface MapOverviewLayoutOverlapInspection {
+  count: number
+  first: { leftId: string; rightId: string } | null
+}
+
 export function mapOverviewPreparationPercent(completed: number, total: number): number {
   if (!Number.isInteger(completed) || !Number.isInteger(total) || completed < 0 || total < 0 || completed > total) {
     throw new Error('Invalid map overview preparation progress.')
@@ -54,6 +59,18 @@ export function validateMapOverviewLayoutNoOverlap(
   nodes: readonly MapOverviewPreparedNodeRect[],
   positions: Readonly<Record<string, { x: number; y: number }>>,
 ): void {
+  const inspection = inspectMapOverviewLayoutOverlaps(nodes, positions)
+  if (inspection.first) {
+    throw new Error(`Map overview layout overlaps nodes ${inspection.first.leftId} and ${inspection.first.rightId}.`)
+  }
+}
+
+export function inspectMapOverviewLayoutOverlaps(
+  nodes: readonly MapOverviewPreparedNodeRect[],
+  positions: Readonly<Record<string, { x: number; y: number }>>,
+): MapOverviewLayoutOverlapInspection {
+  let count = 0
+  let first: MapOverviewLayoutOverlapInspection['first'] = null
   for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
     const left = nodes[leftIndex]
     const leftPosition = positions[left.id]
@@ -65,8 +82,10 @@ export function validateMapOverviewLayoutNoOverlap(
       const separatedX = Math.abs(leftPosition.x - rightPosition.x) >= (left.width + right.width) / 2
       const separatedY = Math.abs(leftPosition.y - rightPosition.y) >= (left.height + right.height) / 2
       if (!separatedX && !separatedY) {
-        throw new Error(`Map overview layout overlaps nodes ${left.id} and ${right.id}.`)
+        count += 1
+        first ||= { leftId: left.id, rightId: right.id }
       }
     }
   }
+  return { count, first }
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   firstMapOverviewThumbnailFailure,
+  inspectMapOverviewLayoutOverlaps,
   isMapOverviewThumbnailVersionChanged,
   mapOverviewPreparationPercent,
   validateMapOverviewLayoutNoOverlap,
@@ -60,5 +61,26 @@ describe('map overview preparation gate', () => {
       '1': { x: 0, y: 0 },
       '2': { x: 110, y: 0 },
     })).not.toThrow()
+  })
+
+  it('counts each overlapping node pair once for advisory layout warnings', () => {
+    const nodes = [
+      { id: '1', width: 100, height: 80 },
+      { id: '2', width: 120, height: 60 },
+      { id: '3', width: 40, height: 40 },
+    ]
+    expect(inspectMapOverviewLayoutOverlaps(nodes, {
+      '1': { x: 0, y: 0 },
+      '2': { x: 100, y: 0 },
+      '3': { x: -40, y: 30 },
+    })).toEqual({
+      count: 2,
+      first: { leftId: '1', rightId: '2' },
+    })
+    expect(inspectMapOverviewLayoutOverlaps(nodes, {
+      '1': { x: 0, y: 0 },
+      '2': { x: 110, y: 0 },
+      '3': { x: 0, y: 60 },
+    }).count).toBe(0)
   })
 })

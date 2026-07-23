@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { MapOverviewEdge, MapOverviewSnapshot } from '@contract/types'
+import type { MapOverviewEdge, MapOverviewNode, MapOverviewSnapshot } from '@contract/types'
 import {
   buildMapOverviewSvgEdgeRoutes,
   mapOverviewSvgEdgeGeometry,
@@ -20,6 +20,11 @@ import {
   MAP_OVERVIEW_MIN_ZOOM,
   MAP_OVERVIEW_WHEEL_SENSITIVITY,
 } from '../../utils/mapOverviewViewport'
+import {
+  buildMapOverviewIncidentEdgeIndex,
+  shouldStartMapOverviewNodeDrag,
+  shouldStartMapOverviewPan,
+} from '../../utils/mapOverviewSvgInteraction'
 import type { MapOverviewSvgCanvasApi } from './mapOverviewSvgCanvasApi'
 
 const TRANSPARENT_IMAGE_DATA_URL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='
@@ -49,9 +54,20 @@ const hoveredEdgeId = ref<string | null>(null)
 const explicitWidth = ref(0)
 const explicitHeight = ref(0)
 const currentTransform = ref<ZoomTransform>(zoomIdentity)
+const gestureState = ref<'idle' | 'node-drag' | 'pan'>('idle')
 let zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> | null = null
 let resizeObserver: ResizeObserver | null = null
 let destroyed = false
+let spacePressed = false
+let pointerInsideCanvas = false
+let suppressClickUntil = 0
+let suppressClickMapId: number | null = null
+let panStartTransform: ZoomTransform | null = null
+let panMoved = false
+let incidentEdgesByMap: ReadonlyMap<number, readonly MapOverviewEdge[]> = new Map()
+let nodesById = new Map<number, MapOverviewNode>()
+let pendingIncidentMapId: number | null = null
+let incidentAnimationFrame = 0
 
 const geometryNodes = computed(() => {
   void renderVersion.value
@@ -167,6 +183,7 @@ function foregroundEdgeState(edge: MapOverviewEdge): string {
 
 function onNodeClick(event: MouseEvent, mapId: number): void {
   event.stopPropagation()
+  if (performance.now() < suppressClickUntil && suppressClickMapId === mapId) return
   emit('nodeClick', mapId)
 }
 
@@ -178,12 +195,34 @@ function onNodeContextmenu(event: MouseEvent, mapId: number): void {
 
 function onEdgeClick(event: MouseEvent, edgeId: string): void {
   event.stopPropagation()
+  if (performance.now() < suppressClickUntil) return
   emit('edgeClick', edgeId)
 }
 
 function onCanvasClick(event: MouseEvent): void {
+  if (performance.now() < suppressClickUntil) return
   const target = event.target instanceof Element ? event.target : null
   if (!target?.closest('.map-overview-svg-node, .map-overview-svg-edge-hit')) emit('canvasClick')
+}
+
+function onNodePointerEnter(mapId: number): void {
+  if (gestureState.value !== 'idle') return
+  hoveredNodeId.value = selectedNodeId.value == null && !selectedEdgeId.value ? mapId : null
+}
+
+function onNodePointerLeave(): void {
+  if (gestureState.value !== 'idle') return
+  hoveredNodeId.value = null
+}
+
+function onEdgePointerEnter(edgeId: string): void {
+  if (gestureState.value !== 'idle') return
+  hoveredEdgeId.value = selectedNodeId.value == null && !selectedEdgeId.value ? edgeId : null
+}
+
+function onEdgePointerLeave(): void {
+  if (gestureState.value !== 'idle') return
+  hoveredEdgeId.value = null
 }
 
 async function setScene(
@@ -192,6 +231,8 @@ async function setScene(
   initialPositions: Record<string, MapOverviewSvgPosition> = {},
 ): Promise<void> {
   snapshot.value = next
+  nodesById = new Map(next.nodes.map(node => [node.id, node]))
+  incidentEdgesByMap = buildMapOverviewIncidentEdgeIndex(next.edges)
   images.clear()
   for (const [mapId, imageUrl] of imageUrls) images.set(mapId, imageUrl)
   const validIds = new Set(next.nodes.map(node => node.id))
@@ -318,6 +359,12 @@ function focusNode(nodeId: string | number, duration = 180): Promise<void> {
 function bindNodeDrag(): void {
   if (!world.value) return
   const behavior = drag<SVGGElement, number>()
+    .filter(event => shouldStartMapOverviewNodeDrag({
+      type: event.type,
+      button: 'button' in event ? Number(event.button) : undefined,
+      spacePressed,
+      interactiveTarget: true,
+    }))
     .container(() => world.value!)
     .subject((_event, mapId) => positions.get(mapId) || { x: 0, y: 0 })
     .on('start', function (event: D3DragEvent<SVGGElement, number, MapOverviewSvgPosition>, mapId) {
@@ -325,20 +372,30 @@ function bindNodeDrag(): void {
       const position = positions.get(mapId) || { x: 0, y: 0 }
       this.dataset.dragStartX = String(position.x)
       this.dataset.dragStartY = String(position.y)
+      this.dataset.dragMoved = 'false'
+      hoveredNodeId.value = null
+      hoveredEdgeId.value = null
+      setGestureState('node-drag')
       emit('nodeDragStart', { mapId, position: { ...position } })
     })
     .on('drag', function (event: D3DragEvent<SVGGElement, number, MapOverviewSvgPosition>, mapId) {
       const position = { x: event.x, y: event.y }
       positions.set(mapId, position)
       this.setAttribute('transform', `translate(${position.x} ${position.y})`)
-      updateIncidentGeometry(mapId)
+      const startX = Number(this.dataset.dragStartX || position.x)
+      const startY = Number(this.dataset.dragStartY || position.y)
+      if (Math.hypot(position.x - startX, position.y - startY) >= 2) this.dataset.dragMoved = 'true'
+      scheduleIncidentGeometry(mapId)
     })
     .on('end', function (_event: D3DragEvent<SVGGElement, number, MapOverviewSvgPosition>, mapId) {
+      flushPendingIncidentGeometry()
       const after = positions.get(mapId) || { x: 0, y: 0 }
       const before = {
         x: Number(this.dataset.dragStartX || after.x),
         y: Number(this.dataset.dragStartY || after.y),
       }
+      if (this.dataset.dragMoved === 'true') suppressNextClick(mapId)
+      setGestureState('idle')
       emit('nodeDragEnd', { mapId, before, after: { ...after } })
     })
   select(world.value)
@@ -347,20 +404,51 @@ function bindNodeDrag(): void {
     .call(behavior)
 }
 
+function scheduleIncidentGeometry(mapId: number): void {
+  pendingIncidentMapId = mapId
+  if (incidentAnimationFrame) return
+  incidentAnimationFrame = requestAnimationFrame(() => {
+    incidentAnimationFrame = 0
+    const pendingMapId = pendingIncidentMapId
+    pendingIncidentMapId = null
+    if (pendingMapId != null) updateIncidentGeometry(pendingMapId)
+  })
+}
+
+function flushPendingIncidentGeometry(): void {
+  if (incidentAnimationFrame) cancelAnimationFrame(incidentAnimationFrame)
+  incidentAnimationFrame = 0
+  const pendingMapId = pendingIncidentMapId
+  pendingIncidentMapId = null
+  if (pendingMapId != null) updateIncidentGeometry(pendingMapId)
+}
+
 function updateIncidentGeometry(mapId: number): void {
-  const next = snapshot.value
   const rootSvg = svg.value
-  if (!next || !rootSvg) return
-  const nodeMap = new Map(next.nodes.map(node => [
-    node.id,
-    mapOverviewSvgNodeGeometry(node, positions.get(node.id) || { x: 0, y: 0 }),
-  ]))
-  const edgeById = new Map(next.edges.map(edge => [edge.id, edge]))
+  if (!rootSvg) return
+  const incidentEdges = incidentEdgesByMap.get(mapId) || []
+  if (!incidentEdges.length) return
+  const nodeMap = new Map<number, MapOverviewSvgNodeGeometry>()
+  const resolveNodeGeometry = (nodeId: number): MapOverviewSvgNodeGeometry | null => {
+    const cached = nodeMap.get(nodeId)
+    if (cached) return cached
+    const node = nodesById.get(nodeId)
+    if (!node) return null
+    const geometry = mapOverviewSvgNodeGeometry(node, positions.get(nodeId) || { x: 0, y: 0 })
+    nodeMap.set(nodeId, geometry)
+    return geometry
+  }
   const geometries = new Map<string, MapOverviewSvgEdgeGeometry>()
-  for (const edge of next.edges) {
-    if (edge.sourceMapId !== mapId && edge.targetMapId !== mapId) continue
+  for (const edge of incidentEdges) {
     try {
-      geometries.set(edge.id, mapOverviewSvgEdgeGeometry(edge, nodeMap, routes.value.get(edge.id)))
+      const source = resolveNodeGeometry(edge.sourceMapId)
+      const target = resolveNodeGeometry(edge.targetMapId)
+      if (!source || !target) continue
+      geometries.set(edge.id, mapOverviewSvgEdgeGeometry(
+        edge,
+        new Map([[source.id, source], [target.id, target]]),
+        routes.value.get(edge.id),
+      ))
     } catch {
       // Invalid endpoints are omitted consistently with the declarative render.
     }
@@ -378,7 +466,7 @@ function updateIncidentGeometry(mapId: number): void {
   rootSvg.querySelectorAll<SVGGraphicsElement>(`[data-port-map="${mapId}"]`).forEach(element => {
     const x = Number(element.dataset.portX)
     const y = Number(element.dataset.portY)
-    const node = nodeMap.get(mapId)
+    const node = resolveNodeGeometry(mapId)
     if (!node) return
     try {
       const point = mapOverviewSvgPortPoint(node, x, y)
@@ -394,25 +482,99 @@ function updateIncidentGeometry(mapId: number): void {
   })
 }
 
+function setGestureState(state: 'idle' | 'node-drag' | 'pan'): void {
+  gestureState.value = state
+  root.value?.classList.toggle('gesture-node-drag', state === 'node-drag')
+  root.value?.classList.toggle('gesture-pan', state === 'pan')
+}
+
+function suppressNextClick(mapId: number | null = null): void {
+  suppressClickUntil = performance.now() + 120
+  suppressClickMapId = mapId
+}
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && Boolean(target.closest('.map-overview-svg-node, .map-overview-svg-edge-hit'))
+}
+
 function initializeZoom(): void {
   if (!svg.value) return
   zoomBehavior = zoom<SVGSVGElement, unknown>()
     .scaleExtent([MAP_OVERVIEW_MIN_ZOOM, MAP_OVERVIEW_MAX_ZOOM])
     .wheelDelta(event => -event.deltaY * 0.002 * MAP_OVERVIEW_WHEEL_SENSITIVITY)
-    .filter(event => {
-      if (event.type === 'wheel') return true
-      const target = event.target as Element | null
-      return !target?.closest('.map-overview-svg-node, .map-overview-svg-edge-hit')
+    .filter(event => shouldStartMapOverviewPan({
+      type: event.type,
+      button: 'button' in event ? Number(event.button) : undefined,
+      spacePressed,
+      interactiveTarget: isInteractiveTarget(event.target),
+    }))
+    .on('start.map-overview-gesture', event => {
+      const sourceEvent = event.sourceEvent as Event | null
+      if (!sourceEvent || sourceEvent.type === 'wheel') return
+      panStartTransform = currentTransform.value
+      panMoved = false
+      hoveredNodeId.value = null
+      hoveredEdgeId.value = null
+      setGestureState('pan')
     })
     .on('zoom', event => {
       currentTransform.value = event.transform
+      if (gestureState.value === 'pan' && panStartTransform) {
+        panMoved = panMoved
+          || Math.abs(event.transform.x - panStartTransform.x) >= 2
+          || Math.abs(event.transform.y - panStartTransform.y) >= 2
+          || Math.abs(event.transform.k - panStartTransform.k) >= 0.002
+      }
       if (world.value) {
         world.value.setAttribute('transform', event.transform.toString())
         world.value.classList.toggle('map-overview-svg-low-detail', event.transform.k < 0.35)
       }
       emit('viewportChange')
     })
+    .on('end.map-overview-gesture', () => {
+      if (gestureState.value !== 'pan') return
+      if (panMoved) suppressNextClick()
+      panStartTransform = null
+      panMoved = false
+      setGestureState('idle')
+    })
   select(svg.value).call(zoomBehavior).on('dblclick.zoom', null)
+}
+
+function onWindowKeydown(event: KeyboardEvent): void {
+  if (event.code !== 'Space' || event.repeat || isEditableTarget(event.target)) return
+  if (!pointerInsideCanvas && !root.value?.contains(document.activeElement)) return
+  event.preventDefault()
+  spacePressed = true
+  root.value?.classList.add('space-pan-ready')
+}
+
+function onWindowKeyup(event: KeyboardEvent): void {
+  if (event.code !== 'Space') return
+  clearSpacePanState()
+}
+
+function onWindowBlur(): void {
+  clearSpacePanState()
+  flushPendingIncidentGeometry()
+  if (gestureState.value !== 'idle') setGestureState('idle')
+}
+
+function onVisibilityChange(): void {
+  if (document.visibilityState !== 'visible') onWindowBlur()
+}
+
+function clearSpacePanState(): void {
+  spacePressed = false
+  root.value?.classList.remove('space-pan-ready')
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || (target instanceof HTMLElement && target.isContentEditable)
 }
 
 function destroy(): void {
@@ -420,12 +582,21 @@ function destroy(): void {
   destroyed = true
   resizeObserver?.disconnect()
   resizeObserver = null
+  flushPendingIncidentGeometry()
+  window.removeEventListener('keydown', onWindowKeydown)
+  window.removeEventListener('keyup', onWindowKeyup)
+  window.removeEventListener('blur', onWindowBlur)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (svg.value) select(svg.value).on('.zoom', null)
   if (world.value) select(world.value).selectAll('.map-overview-svg-node').on('.drag', null)
 }
 
 onMounted(() => {
   initializeZoom()
+  window.addEventListener('keydown', onWindowKeydown)
+  window.addEventListener('keyup', onWindowKeyup)
+  window.addEventListener('blur', onWindowBlur)
+  document.addEventListener('visibilitychange', onVisibilityChange)
   resizeObserver = new ResizeObserver(entries => {
     const entry = entries[0]
     if (!entry) return
@@ -458,13 +629,19 @@ defineExpose<MapOverviewSvgCanvasApi>({
 </script>
 
 <template>
-  <div ref="root" class="map-overview-svg-root">
+  <div
+    ref="root"
+    class="map-overview-svg-root"
+    @pointerenter="pointerInsideCanvas = true"
+    @pointerleave="pointerInsideCanvas = false"
+  >
     <svg
       ref="svg"
       class="map-overview-svg"
       :width="explicitWidth || '100%'"
       :height="explicitHeight || '100%'"
       @click="onCanvasClick"
+      @auxclick.prevent
     >
       <defs>
         <marker id="map-overview-arrow" markerWidth="7" markerHeight="7" refX="6" refY="2" orient="auto" markerUnits="userSpaceOnUse">
@@ -492,8 +669,8 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
               @click="onEdgeClick($event, item.edge.id)"
-              @pointerenter="hoveredEdgeId = selectedNodeId == null && !selectedEdgeId ? item.edge.id : null"
-              @pointerleave="hoveredEdgeId = null"
+              @pointerenter="onEdgePointerEnter(item.edge.id)"
+              @pointerleave="onEdgePointerLeave"
             />
             <text
               v-if="item.edge.count > 1"
@@ -519,8 +696,8 @@ defineExpose<MapOverviewSvgCanvasApi>({
             @click="onNodeClick($event, node.id)"
             @dblclick.stop="emit('nodeDblclick', node.id)"
             @contextmenu="onNodeContextmenu($event, node.id)"
-            @pointerenter="hoveredNodeId = selectedNodeId == null && !selectedEdgeId ? node.id : null"
-            @pointerleave="hoveredNodeId = null"
+            @pointerenter="onNodePointerEnter(node.id)"
+            @pointerleave="onNodePointerLeave"
           >
             <image
               :href="imageUrl(node.id)"
@@ -609,6 +786,10 @@ defineExpose<MapOverviewSvgCanvasApi>({
 .map-overview-svg-root { position:absolute; inset:0; min-width:0; min-height:0; overflow:hidden; }
 .map-overview-svg { display:block; width:100%; height:100%; overflow:hidden; touch-action:none; user-select:none; cursor:grab; }
 .map-overview-svg:active { cursor:grabbing; }
+.map-overview-svg-root.space-pan-ready .map-overview-svg,
+.map-overview-svg-root.space-pan-ready .map-overview-svg-node { cursor:grab; }
+.map-overview-svg-root.gesture-pan .map-overview-svg,
+.map-overview-svg-root.gesture-pan .map-overview-svg-node { cursor:grabbing; }
 .map-overview-svg-world { transform-origin:0 0; }
 .map-overview-svg-edge { fill:none; stroke:#8c8d86; stroke-width:1; stroke-linecap:round; stroke-linejoin:round; opacity:.22; vector-effect:non-scaling-stroke; }
 .map-overview-svg-edge.active { stroke:#c65f3d; opacity:.65; }
@@ -622,6 +803,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
 .map-overview-svg-edge-label.active.edge-selected { opacity:1; }
 .map-overview-svg-low-detail .map-overview-svg-edge-label { display:none; }
 .map-overview-svg-node { cursor:move; transition:opacity 120ms ease; }
+.map-overview-svg-root.gesture-node-drag .map-overview-svg-node { transition:none; }
 .map-overview-svg-node-frame { fill:transparent; stroke:transparent; stroke-width:0; vector-effect:non-scaling-stroke; pointer-events:none; }
 .map-overview-svg-node.invalid .map-overview-svg-node-frame { stroke:#c2412d; stroke-width:2; stroke-dasharray:6 4; }
 .map-overview-svg-node.selected .map-overview-svg-node-frame { stroke:#c65f3d; stroke-width:3; stroke-dasharray:none; }

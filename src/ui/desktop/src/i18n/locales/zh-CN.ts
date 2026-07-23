@@ -870,7 +870,6 @@ const zhCN = {
     'editor.preview.stage.ready': '预览已就绪',
     'editor.preview.progress.scanned': '已扫描 {{completed}} 个文件',
     'editor.preview.progress.files': '{{completed}} / {{total}} 个文件',
-    'editor.preview.progress.copying': '{{files}} · {{completedBytes}} / {{totalBytes}} · {{percent}}%',
     'editor.preview.progress.staged': '已应用 {{completed}} / {{total}} 个暂存文件',
     'editor.preview.progress.verified': '已验证 {{completed}} / {{total}} 个文件',
     'editor.preview.elapsed': '已用时间 {{time}}',

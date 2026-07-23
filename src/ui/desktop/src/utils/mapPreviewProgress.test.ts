@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import type { MapPreviewLoadProgress } from '@contract/types';
 import {
-  formatMapPreviewBytes,
   formatMapPreviewElapsed,
   mapPreviewProgressRatio,
 } from './mapPreviewProgress';
@@ -41,8 +40,7 @@ describe('map preview loading progress', () => {
     expect(mapPreviewProgressRatio(progress({ completed: 0, total: 0 }))).toBe(1);
   });
 
-  it('formats capacity and elapsed time without project-specific data', () => {
-    expect(formatMapPreviewBytes(1024 * 1024 * 1.5, 'en-US')).toBe('1.5 MB');
+  it('formats elapsed time without project-specific data', () => {
     expect(formatMapPreviewElapsed(9)).toBe('9s');
     expect(formatMapPreviewElapsed(125)).toBe('2:05');
   });

@@ -74,6 +74,22 @@ describe('map overview snapshot', () => {
     ]);
   });
 
+  test('includes non-empty switch and variable remarks from System.json', () => {
+    writeJson(path.join(dataDir, 'System.json'), {
+      switches: [null, '', 'Door', '  Night  ', null],
+      variables: [null, 'Progress', ''],
+    });
+    writeInfos(1);
+    writeMap(1, [], 4, 4);
+
+    const snapshot = buildMapOverviewSnapshot(root, project);
+    assert.deepEqual(snapshot.switches, [
+      { id: 2, name: 'Door' },
+      { id: 3, name: 'Night' },
+    ]);
+    assert.deepEqual(snapshot.variables, [{ id: 1, name: 'Progress' }]);
+  });
+
   test('keeps bidirectional and self-loop edges separate by exact coordinates', () => {
     writeInfos(2);
     writeMap(1, [event(1, 'Portal', 0, 0, [page({}, [transfer(2, 1, 1), transfer(1, 0, 0)])])], 4, 4);
@@ -190,7 +206,7 @@ describe('map overview snapshot', () => {
     writeMap(2, []);
 
     const first = buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v4.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v5.json');
     const cacheMtime = fs.statSync(cacheFile).mtimeMs;
     const second = buildMapOverviewSnapshot(root, project);
     assert.equal(second.generatedAt, first.generatedAt);
@@ -242,7 +258,7 @@ describe('map overview snapshot', () => {
     writeInfos(1);
     writeMap(1, []);
     const first = buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v4.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v5.json');
     fs.writeFileSync(cacheFile, '{', 'utf8');
     writeJson(path.join(dataDir, 'Map001.json'), {
       width: 3,
@@ -262,7 +278,7 @@ describe('map overview snapshot', () => {
     writeInfos(1);
     writeMap(1, []);
     buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v4.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v5.json');
     const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8')) as {
       thumbnailRendererVersion: number;
       snapshot: MapOverviewSnapshot;

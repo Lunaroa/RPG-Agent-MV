@@ -18,6 +18,10 @@ import {
   type MapOverviewTransferConditionCategory,
   type MapOverviewTransferConditionType,
 } from '@contract/map-overview-transfer-condition'
+import {
+  buildMapOverviewConditionNameMaps,
+  formatMapOverviewConditionDetails,
+} from '../utils/mapOverviewConditionLabels'
 import { maps, workspaceSurfaces } from '../api/client'
 import MapOverviewSvgCanvas from '../components/map-overview/MapOverviewSvgCanvas.vue'
 import type { MapOverviewSvgCanvasApi } from '../components/map-overview/mapOverviewSvgCanvasApi'
@@ -1220,32 +1224,21 @@ function conditionTypeLabel(type: MapOverviewTransferConditionType): string {
   return t(`mapOverview.condition.type.${type}` as Parameters<typeof t>[0])
 }
 
+const conditionNameMaps = computed(() => buildMapOverviewConditionNameMaps(
+  snapshot.value?.switches,
+  snapshot.value?.variables,
+))
+
 function sourceConditionPresentation(pageConditions: Record<string, unknown>): {
   category: MapOverviewTransferConditionCategory
   badges: string[]
   details: string[]
 } {
   const summary = summarizeMapOverviewTransferConditions(pageConditions)
-  const details = summary.switchIds.map(id => t('mapOverview.condition.switchDetail', { id }))
-  if (summary.variable) {
-    details.push(t('mapOverview.condition.variableDetail', {
-      id: summary.variable.id,
-      operator: summary.variable.operator,
-      value: summary.variable.value,
-    }))
-  }
-  if (summary.selfSwitch) {
-    details.push(t('mapOverview.condition.selfSwitchDetail', { channel: summary.selfSwitch }))
-  }
-  if (!summary.types.length) {
-    details.push(summary.hasOtherPageConditions
-      ? t('mapOverview.condition.noneRelevantWithOther')
-      : t('mapOverview.condition.noneRelevant'))
-  }
   return {
     category: classifyMapOverviewTransferConditions(pageConditions),
     badges: summary.types.map(conditionTypeLabel),
-    details,
+    details: formatMapOverviewConditionDetails(summary, t, conditionNameMaps.value),
   }
 }
 

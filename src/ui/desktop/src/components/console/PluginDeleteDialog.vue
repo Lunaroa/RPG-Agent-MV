@@ -41,15 +41,15 @@ const { t } = useI18n();
       <p class="staging-note">{{ t('plugins.deleteStagingNotice') }}</p>
     </div>
     <template #footer>
-      <button type="button" :disabled="busy" @click="$emit('close')">
+      <el-button :disabled="busy" @click="$emit('close')">
         {{ t('editor.mapProperties.cancel') }}
-      </button>
-      <button type="button" :disabled="busy" @click="$emit('removeConfiguration')">
+      </el-button>
+      <el-button :disabled="busy" @click="$emit('removeConfiguration')">
         {{ t('plugins.removeConfigOnly') }}
-      </button>
-      <button type="button" class="danger" :disabled="busy" @click="$emit('deleteFile')">
+      </el-button>
+      <el-button type="danger" :disabled="busy" @click="$emit('deleteFile')">
         {{ t('plugins.deleteFileAndConfig') }}
-      </button>
+      </el-button>
     </template>
   </el-dialog>
 </template>
@@ -86,14 +86,5 @@ const { t } = useI18n();
 .staging-note {
   color: var(--console-text-muted, #9a8e7e);
   font-size: 11px;
-}
-button.danger {
-  border-color: var(--app-danger);
-  background: var(--app-danger);
-  color: #fff;
-}
-button:focus-visible {
-  outline: 2px solid var(--console-accent, #be5630);
-  outline-offset: 2px;
 }
 </style>

@@ -47,6 +47,12 @@ describe('map tree search and character asset browser', () => {
     assert.match(browserSource, /\.character-copy strong\{[^}]*text-overflow:ellipsis;[^}]*white-space:nowrap/);
   });
 
+  test('keeps long list names on one truncated line without horizontal scrolling', () => {
+    assert.match(browserSource, /\.character-list\{[^}]*overflow-x:hidden;[^}]*overflow-y:auto/);
+    assert.match(browserSource, /\.character-list button\{[^}]*min-width:0;[^}]*overflow:hidden;[^}]*text-overflow:ellipsis;[^}]*white-space:nowrap/);
+    assert.match(browserSource, /:title="asset\.fileName"/);
+  });
+
   test('only confirms double clicks after the current canvas hit is valid', () => {
     assert.match(pickerSource, /@dblclick\.prevent="void confirmCharacterCell\(\$event\)"/);
     assert.match(pickerSource, /@dblclick\.prevent="confirmTileCell"/);

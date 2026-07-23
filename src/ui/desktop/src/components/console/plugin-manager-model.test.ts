@@ -6,6 +6,7 @@ import type {
   PluginHeaderMetadata,
 } from '../../api/client';
 import {
+  adjacentPluginListKey,
   buildPluginManagerGroups,
   isPluginReorderLocked,
   movePluginIndex,
@@ -92,6 +93,15 @@ describe('plugin manager model', () => {
   test('moves within the complete configured order without dropping other entries', () => {
     expect(movePluginIndex([0, 1, 2, 3], 1, 4)).toEqual([0, 2, 3, 1]);
     expect(movePluginIndex([0, 1, 2, 3], 2, 0)).toEqual([2, 0, 1, 3]);
+  });
+
+  test('selects adjacent visible rows across plugin groups without wrapping', () => {
+    const keys = ['configured-row:0', 'configured-row:1', 'file:js/plugins/Extra.js'];
+    expect(adjacentPluginListKey(keys, 'configured-row:0', 1)).toBe('configured-row:1');
+    expect(adjacentPluginListKey(keys, 'configured-row:1', 1)).toBe('file:js/plugins/Extra.js');
+    expect(adjacentPluginListKey(keys, 'file:js/plugins/Extra.js', -1)).toBe('configured-row:1');
+    expect(adjacentPluginListKey(keys, 'configured-row:0', -1)).toBeNull();
+    expect(adjacentPluginListKey(keys, 'file:js/plugins/Extra.js', 1)).toBeNull();
   });
 
   test('compares declared plugin targets with the current RPG Maker engine', () => {

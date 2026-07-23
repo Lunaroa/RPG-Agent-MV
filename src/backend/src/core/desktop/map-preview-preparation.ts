@@ -1,26 +1,34 @@
 import childProcess from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { IsolatedMapPreviewPreparation } from './isolated-project-preparation.ts';
+import type { MapPreviewLoadProgress } from '../../../../contract/types.ts';
 import type {
   MapPreviewPreparationWorkerRequest,
+  MapPreviewPreparationWorkerMessage,
   MapPreviewPreparationWorkerResponse,
 } from './map-preview-preparation-worker.ts';
+
+const PREPARATION_OUTPUT_LIMIT = 32_768;
 
 export class MapPreviewPreparationCancelledError extends Error {}
 export class MapPreviewPreparationFailedError extends Error {
   readonly stage: string;
+  readonly runtimeOutput?: string;
 
-  constructor(stage: string, message: string) {
+  constructor(stage: string, message: string, runtimeOutput?: string) {
     super(message);
     this.stage = stage;
+    this.runtimeOutput = runtimeOutput;
   }
 }
 
 export interface MapPreviewPreparationTask {
+  taskId: string;
   child: childProcess.ChildProcess;
   temporaryProject: string;
   result: Promise<IsolatedMapPreviewPreparation>;
@@ -30,6 +38,8 @@ export interface MapPreviewPreparationTask {
 
 export interface MapPreviewPreparationDependencies {
   spawnProcess?(executable: string, args: string[], options: childProcess.SpawnOptions): childProcess.ChildProcess;
+  taskId?: string;
+  onProgress?(progress: MapPreviewLoadProgress): void;
 }
 
 export function startMapPreviewPreparation(
@@ -37,11 +47,13 @@ export function startMapPreviewPreparation(
   project: string,
   dependencies: MapPreviewPreparationDependencies = {},
 ): MapPreviewPreparationTask {
+  const taskId = dependencies.taskId || crypto.randomUUID();
   const controlDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rmmv-agent-preview-worker-'));
   const temporaryProject = fs.mkdtempSync(path.join(os.tmpdir(), 'rmmv-agent-map-preview-'));
   const requestPath = path.join(controlDirectory, 'request.json');
   const responsePath = path.join(controlDirectory, 'response.json');
   const request: MapPreviewPreparationWorkerRequest = {
+    taskId,
     workflowRoot: path.resolve(workflowRoot),
     project: path.resolve(project),
     temporaryProject,
@@ -60,11 +72,12 @@ export function startMapPreviewPreparation(
     cwd: path.resolve(workflowRoot),
     windowsHide: true,
     shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   });
   let cancelled = false;
   let settled = false;
+  let runtimeOutput = '';
   let resolveResult!: (preparation: IsolatedMapPreviewPreparation) => void;
   let rejectResult!: (error: Error) => void;
   const result = new Promise<IsolatedMapPreviewPreparation>((resolve, reject) => {
@@ -75,7 +88,7 @@ export function startMapPreviewPreparation(
     if (settled) return;
     settled = true;
     const controlCleanupError = removeDirectory(controlDirectory, 'preparation control directory');
-    let failure = error;
+    let failure = error ? attachRuntimeOutput(error, runtimeOutput) : undefined;
     if (!failure && !preparation) failure = new Error('Map preview preparation did not return an isolated project.');
     if (controlCleanupError) failure = appendCleanupError(failure, controlCleanupError);
     if (failure) {
@@ -85,6 +98,17 @@ export function startMapPreviewPreparation(
       resolveResult(preparation!);
     }
   };
+  const appendOutput = (chunk: unknown) => {
+    const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
+    runtimeOutput = `${runtimeOutput}${text}`.slice(-PREPARATION_OUTPUT_LIMIT);
+  };
+  child.stdout?.on('data', appendOutput);
+  child.stderr?.on('data', appendOutput);
+  child.on('message', (message: unknown) => {
+    if (settled || cancelled || !isProgressMessage(message)) return;
+    if (message.progress.taskId !== taskId) return;
+    dependencies.onProgress?.(message.progress);
+  });
   child.once('error', (error) => finish(cancelled ? new MapPreviewPreparationCancelledError('Map preview preparation was cancelled.') : error));
   child.once('exit', (code, signal) => {
     if (cancelled) {
@@ -97,8 +121,8 @@ export function startMapPreviewPreparation(
     }
     try {
       const response = JSON.parse(fs.readFileSync(responsePath, 'utf8')) as MapPreviewPreparationWorkerResponse;
-      if (!response.ok) {
-        finish(new MapPreviewPreparationFailedError(response.stage, response.error));
+      if (response.ok === false) {
+        finish(new MapPreviewPreparationFailedError(response.stage, response.error, runtimeOutput));
         return;
       }
       if (path.resolve(response.preparation.temporaryProject) !== path.resolve(temporaryProject)) {
@@ -111,6 +135,7 @@ export function startMapPreviewPreparation(
     }
   });
   return {
+    taskId,
     child,
     temporaryProject,
     result,
@@ -156,8 +181,32 @@ function removeDirectory(directory: string, label: string): Error | null {
 function appendCleanupError(error: Error | undefined, cleanupError: Error): Error {
   const message = [error?.message, cleanupError.message].filter(Boolean).join(' ');
   if (error instanceof MapPreviewPreparationCancelledError) return new MapPreviewPreparationCancelledError(message);
-  if (error instanceof MapPreviewPreparationFailedError) return new MapPreviewPreparationFailedError(error.stage, message);
+  if (error instanceof MapPreviewPreparationFailedError) {
+    return new MapPreviewPreparationFailedError(error.stage, message, error.runtimeOutput);
+  }
   return new Error(message);
+}
+
+function attachRuntimeOutput(error: Error, runtimeOutput: string): Error {
+  const output = runtimeOutput.trim();
+  if (!output || error instanceof MapPreviewPreparationCancelledError) return error;
+  if (error instanceof MapPreviewPreparationFailedError) {
+    return new MapPreviewPreparationFailedError(error.stage, error.message, error.runtimeOutput || output);
+  }
+  return new MapPreviewPreparationFailedError('preparation-worker', error.message, output);
+}
+
+function isProgressMessage(value: unknown): value is MapPreviewPreparationWorkerMessage {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const message = value as Partial<MapPreviewPreparationWorkerMessage>;
+  if (message.type !== 'progress' || !message.progress || typeof message.progress !== 'object') return false;
+  const progress = message.progress as Partial<MapPreviewLoadProgress>;
+  return typeof progress.taskId === 'string'
+    && progress.phase === 'isolation'
+    && typeof progress.stage === 'string'
+    && typeof progress.taskStartedAt === 'string'
+    && typeof progress.stageStartedAt === 'string'
+    && typeof progress.updatedAt === 'string';
 }
 
 function errorMessage(error: unknown): string {

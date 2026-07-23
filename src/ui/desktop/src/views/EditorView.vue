@@ -96,6 +96,8 @@
             :tile-size="currentTileSize"
             :event-focus-epoch="previewEventFocusEpoch"
             :input-wait="previewSession?.inputWait"
+            :load-progress="previewSession?.loadProgress"
+            :started-at="previewSession?.startedAt"
             @retry="restartPreview"
             @copy-diagnostic="copyPreviewDiagnostic"
             @runtime-event="onPreviewRuntimeEvent"
@@ -577,6 +579,12 @@ function stateRecordMap<T>(record?: Record<string, T>): Map<number, T> {
 
 function onPreviewStatus(session: MapPreviewSession) {
   const intent = previewIntentCoordinator.current()?.value;
+  const currentSession = previewSession.value;
+  if (
+    currentSession
+    && !['stopped', 'failed'].includes(currentSession.status)
+    && currentSession.sessionId !== session.sessionId
+  ) return;
   if (
     intent?.active
     && session.status === 'running'
@@ -819,7 +827,6 @@ async function ensurePreviewForIntent(
   }
   previewError.value = '';
   previewDiagnostic.value = null;
-  previewStatus.value = 'preparing';
   previewRequestedMapId.value = mapId;
   revokePreviewFrame();
   try {

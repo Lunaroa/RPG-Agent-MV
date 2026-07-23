@@ -67,7 +67,7 @@ test('keeps native event movement while gating interpreters and player triggers'
     assert.match(harness, /Game_Player\.prototype\.canMove = function \(\) \{ return false; \}/);
     assert.match(harness, /requestAnimationFrame\(fpsLoop\)/);
     assert.match(harness, /suspended \|\| loading \|\| !initialized \|\| runtimeStage !== 'ready'/);
-    assert.match(harness, /runtimeStage = 'ready';\s*resetFpsSample\(\);\s*post\('ready'/);
+    assert.match(harness, /runtimeStage = 'ready';\s*loading = false;\s*resetFpsSample\(\);\s*post\('ready'/);
     assert.doesNotMatch(harness, /SceneManager\._scene instanceof Scene_Map/);
     assert.doesNotMatch(harness, /RTCPeerConnection|captureStream|toDataURL|toBlob|WebCodecs/);
   } finally {
@@ -139,6 +139,31 @@ test('reports event state and validates standard current-map self switches', () 
     assert.match(harness, /\$gameSelfSwitches\.setValue\(key\.split\(','\)/);
     assert.match(harness, /baselineUnsupportedVariableTypes/);
     assert.match(harness, /hasOwnProperty\.call\(baselineUnsupportedVariableTypes, id\)\) return/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('recreates engine game state on map switches and reloads before reapplying preview overrides', () => {
+  const root = fixture('mv');
+  try {
+    injectMapPreviewIframeHarness(root, options);
+    const harness = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
+    const reset = harness.indexOf('resetEventExecution();', harness.indexOf('async function loadMap'));
+    const setup = harness.indexOf('DataManager.setupNewGame();', reset);
+    const baseline = harness.indexOf('captureBaseline();', setup);
+    const overrides = harness.indexOf('applyOverrides(command.overrides || {});', baseline);
+    const transfer = harness.indexOf('$gamePlayer.reserveTransfer(currentTargetMapId', overrides);
+    assert.ok(reset >= 0);
+    assert.ok(reset < setup && setup < baseline && baseline < overrides && overrides < transfer);
+    assert.match(harness, /command\.purpose === 'switch' \|\| command\.purpose === 'reload'/);
+    assert.match(harness, /reportLoadingStage\('resetting-game-state'\)/);
+    assert.match(harness, /reportLoadingStage\('loading-map-resources'\)/);
+    assert.match(harness, /loading = false;[\s\S]*post\('ready'/);
+    assert.doesNotMatch(
+      harness.slice(harness.indexOf('async function loadMap'), harness.indexOf('function handleCommand')),
+      /if \(!initialized\)[\s\S]*restoreBaseline\(\)/,
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

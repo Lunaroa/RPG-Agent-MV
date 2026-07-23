@@ -32,7 +32,11 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
 
   try {
     await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
-    const started = await service.start(project, 1, { switches: { '2': true }, variables: { '3': 8 }, selfSwitches: {} });
+    const preparing = await service.start(project, 1, { switches: { '2': true }, variables: { '3': 8 }, selfSwitches: {} });
+    assert.equal(preparing.session?.status, 'preparing');
+    assert.equal(preparing.session?.loadProgress?.stage, 'starting-worker');
+    await waitForPreviewStatus(service, 'starting');
+    const started = service.current();
     assert.equal(started.session?.status, 'starting');
     assert.equal(started.session?.transportMode, 'iframe');
     assert.equal(started.session?.eventExecutionEnabled, false);
@@ -161,6 +165,18 @@ function runtimeEvent(
     selfSwitchValues: { '3,4,A': true },
     eventStates: [{ id: 4, x: 9, y: 6, active: false, visible: false }],
   };
+}
+
+async function waitForPreviewStatus(
+  service: MapPreviewIframeService,
+  status: MapPreviewSession['status'],
+  timeoutMs = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (service.current().session?.status !== status) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for map preview status ${status}.`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function createMZProject(workflowRoot: string): string {

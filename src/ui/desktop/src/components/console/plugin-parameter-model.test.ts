@@ -10,8 +10,13 @@ import {
   buildPluginParameterPayload,
   buildPluginParameterRows,
   clonePluginParameterValue,
+  createDefaultPluginParameterValue,
   createPluginParameterForm,
+  isPluginParameterSchemaFieldEditable,
   pluginParameterPayloadsEqual,
+  removePluginParameterArrayItem,
+  replacePluginParameterChildValue,
+  validatePluginParameterValue,
 } from './plugin-parameter-model';
 
 const labels = {
@@ -206,11 +211,164 @@ describe('plugin parameter model', () => {
     });
   });
 
+  test('preserves unknown nested keys while editing known structured fields', () => {
+    const plugin = pluginFixture();
+    plugin.parameterSchema!.fields = [
+      field('settings', 'struct', {
+        fields: [
+          field('title', 'text'),
+          field('groups', 'array', {
+            item: field('$group', 'struct', {
+              fields: [field('name', 'text')],
+            }),
+          }),
+        ],
+      }),
+    ];
+    plugin.parameters = {
+      settings: '{"title":"Ready","futureFlag":"keep","groups":"[\\"{\\\\\\"name\\\\\\":\\\\\\"A\\\\\\",\\\\\\"futureChild\\\\\\":\\\\\\"stay\\\\\\"}\\"]"}',
+    };
+
+    const form = createPluginParameterForm(plugin);
+    expect(form.settings).toEqual({
+      title: 'Ready',
+      futureFlag: 'keep',
+      groups: [{ name: 'A', futureChild: 'stay' }],
+    });
+    (form.settings as Record<string, unknown>).title = 'Changed';
+
+    expect(buildPluginParameterPayload(plugin, form)).toEqual({
+      settings: '{"title":"Changed","futureFlag":"keep","groups":"[\\"{\\\\\\"name\\\\\\":\\\\\\"A\\\\\\",\\\\\\"futureChild\\\\\\":\\\\\\"stay\\\\\\"}\\"]"}',
+    });
+  });
+
+  test('creates typed defaults for every nested dialog level', () => {
+    const nested = field('$item', 'struct', {
+      fields: [
+        field('title', 'text', { defaultValue: 'Untitled' }),
+        field('enabled', 'boolean', { defaultValue: 'true' }),
+        field('children', 'array', {
+          item: field('$child', 'struct', {
+            fields: [field('name', 'text')],
+          }),
+        }),
+      ],
+    });
+
+    expect(createDefaultPluginParameterValue(nested)).toEqual({
+      title: 'Untitled',
+      enabled: 'true',
+      children: [],
+    });
+    expect(isPluginParameterSchemaFieldEditable(nested)).toBe(true);
+    expect(isPluginParameterSchemaFieldEditable(field('raw', 'json'))).toBe(false);
+    expect(isPluginParameterSchemaFieldEditable(field('legacy', 'text', {
+      editable: false,
+    }))).toBe(false);
+  });
+
+  test('commits one nested dialog level without mutating its parent draft', () => {
+    const original = {
+      groups: [
+        { name: 'First', children: [{ id: 'a' }] },
+        { name: 'Second', children: [] },
+      ],
+      untouched: 'keep',
+    };
+    const editedItem = replacePluginParameterChildValue(
+      original.groups[0],
+      { kind: 'struct', key: 'children' },
+      [{ id: 'b' }],
+    );
+    const editedGroups = replacePluginParameterChildValue(
+      original.groups,
+      { kind: 'array', index: 0 },
+      editedItem,
+    );
+    const editedRoot = replacePluginParameterChildValue(
+      original,
+      { kind: 'struct', key: 'groups' },
+      editedGroups,
+    ) as typeof original;
+
+    expect(editedRoot).toEqual({
+      groups: [
+        { name: 'First', children: [{ id: 'b' }] },
+        { name: 'Second', children: [] },
+      ],
+      untouched: 'keep',
+    });
+    expect(original.groups[0].children).toEqual([{ id: 'a' }]);
+    expect(removePluginParameterArrayItem(editedRoot.groups, 1)).toEqual([
+      { name: 'First', children: [{ id: 'b' }] },
+    ]);
+  });
+
   test('compares payloads independent of object key insertion order', () => {
     expect(pluginParameterPayloadsEqual(
       { first: '1', nested: { second: 2, third: 3 } },
       { nested: { third: 3, second: 2 }, first: '1' },
     )).toBe(true);
+  });
+
+  test('validates number bounds and decimals without rejecting an existing empty value', () => {
+    const amount = field('amount', 'number', {
+      min: 0,
+      max: 10,
+      decimals: 2,
+    });
+
+    expect(validatePluginParameterValue(amount, '', 'amount', '')).toBeNull();
+    expect(validatePluginParameterValue(amount, '', 'amount', '1')).toEqual({
+      kind: 'number-required',
+      path: 'amount',
+    });
+    expect(validatePluginParameterValue(amount, '-1', 'amount', '1')).toEqual({
+      kind: 'number-min',
+      path: 'amount',
+      min: 0,
+    });
+    expect(validatePluginParameterValue(amount, '11', 'amount', '1')).toEqual({
+      kind: 'number-max',
+      path: 'amount',
+      max: 10,
+    });
+    expect(validatePluginParameterValue(amount, '1.234', 'amount', '1')).toEqual({
+      kind: 'number-decimals',
+      path: 'amount',
+      decimals: 2,
+    });
+    expect(validatePluginParameterValue(amount, '1.23', 'amount', '1')).toBeNull();
+  });
+
+  test('validates nested values and preserves untouched location storage', () => {
+    const nested = field('settings', 'struct', {
+      fields: [
+        field('points', 'array', {
+          item: field('$item', 'location'),
+        }),
+      ],
+    });
+    expect(validatePluginParameterValue(
+      nested,
+      { points: [{ mapId: '3', x: '-1', y: '5' }] },
+      'settings',
+      { points: [{ mapId: '3', x: '4', y: '5' }] },
+    )).toEqual({
+      kind: 'location-invalid',
+      path: 'settings.points[0]',
+    });
+
+    const plugin = pluginFixture();
+    const form = createPluginParameterForm(plugin);
+    form.enabled = 'false';
+    expect(buildPluginParameterPayload(plugin, form).position).toBe(
+      '{"mapId":3,"x":4,"y":5}',
+    );
+    form.position = { mapId: '3', x: '9', y: '5' };
+    expect(buildPluginParameterPayload(plugin, form).position).toBe(
+      '{"mapId":"3","x":"9","y":"5"}',
+    );
   });
 
   test('makes every row readonly when the plugin file is missing', () => {

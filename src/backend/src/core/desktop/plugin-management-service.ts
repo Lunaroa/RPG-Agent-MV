@@ -1016,17 +1016,17 @@ function parseHeaderToSchema(block: string, context?: SchemaParseContext): Parse
     }
 
     if (tag === 'on') {
-      current.onLabel = rest || 'ON';
+      setBooleanLabel(current, true, rest || 'ON');
       continue;
     }
 
     if (tag === 'off') {
-      current.offLabel = rest || 'OFF';
+      setBooleanLabel(current, false, rest || 'OFF');
       continue;
     }
 
     if (tag === 'dir') {
-      current.directory = rest || undefined;
+      setFileDirectory(current, rest || undefined);
       continue;
     }
 
@@ -1131,13 +1131,15 @@ function flushCurrentParameter(
   }
   if (current.kind === 'select' && (!current.options || current.options.length === 0)) {
     warnings.push(`Parameter ${current.key} is declared as select but has no @option`);
-    return null;
+    current.editable = false;
+    current.unsupportedReason = 'select parameters require at least one @option';
   }
   if (current.kind === 'array' && current.item?.kind === 'select' && (!current.item.options || current.item.options.length === 0)) {
     warnings.push(`Parameter ${current.key} is declared as a select array but has no @option`);
-    return null;
+    current.editable = false;
+    current.unsupportedReason = 'select array parameters require at least one @option';
   }
-  const { unsupportedReason, onLabel, offLabel, ...field } = current;
+  const { onLabel, offLabel, ...field } = current;
   fields.push(field);
   return null;
 }
@@ -1279,6 +1281,9 @@ function mapScalarParameterKind(
   if (value === 'json' || value === 'object') {
     return { unsupportedReason: 'raw JSON editing is intentionally unavailable' };
   }
+  if (value === 'image') {
+    return { unsupportedReason: '@type image is not an official RPG Maker type; use @type file with @dir' };
+  }
   if (['string', 'text'].includes(value)) return { kind: 'text', rawType };
   if (value === 'file' || value.startsWith('file ')) return { kind: 'file', rawType };
   if (value === 'map') return { kind: 'map', rawType };
@@ -1323,6 +1328,37 @@ function setNumericDecimals(field: WorkingPluginParameterSchemaField, value: num
     return;
   }
   field.decimals = value;
+}
+
+function setFileDirectory(
+  field: WorkingPluginParameterSchemaField,
+  value: string | undefined,
+): void {
+  if (field.kind === 'array' && field.item?.kind === 'file') {
+    field.item.directory = value;
+    return;
+  }
+  field.directory = value;
+}
+
+function setBooleanLabel(
+  field: WorkingPluginParameterSchemaField,
+  enabled: boolean,
+  label: string,
+): void {
+  if (field.kind === 'array' && field.item?.kind === 'boolean') {
+    const options = field.item.options || [
+      { label: 'ON', value: 'true' },
+      { label: 'OFF', value: 'false' },
+    ];
+    const option = options.find((entry) =>
+      parseBooleanLiteral(String(entry.value)) === enabled);
+    if (option) option.label = label;
+    field.item.options = options;
+    return;
+  }
+  if (enabled) field.onLabel = label;
+  else field.offLabel = label;
 }
 
 function validateNumberDefault(field: Pick<PluginParameterSchemaField, 'defaultValue'>, label: string, warnings: string[]): void {
@@ -1557,7 +1593,7 @@ function parseMZPluginCommands(raw: string): ParsedMZPluginCommand[] {
         continue;
       }
       if (name === 'dir' && argument) {
-        argument.directory = value || undefined;
+        setFileDirectory(argument, value || undefined);
         continue;
       }
       if (name === 'parent' && argument) {
@@ -1588,11 +1624,11 @@ function parseMZPluginCommands(raw: string): ParsedMZPluginCommand[] {
         continue;
       }
       if (name === 'on' && argument) {
-        argument.onLabel = value || 'ON';
+        setBooleanLabel(argument, true, value || 'ON');
         continue;
       }
       if (name === 'off' && argument) {
-        argument.offLabel = value || 'OFF';
+        setBooleanLabel(argument, false, value || 'OFF');
       }
     }
     flushCommand();

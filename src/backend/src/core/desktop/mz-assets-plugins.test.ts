@@ -187,7 +187,14 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
   *
   * @param enabled
   * @type boolean
+  * @on Enabled
+  * @off Disabled
   * @default true
+  *
+  * @param enabledList
+  * @type boolean[]
+  * @on Enabled
+  * @off Disabled
   *
   * @param mode
   * @type select
@@ -204,8 +211,51 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
  * @type file
  * @dir img/pictures
  *
+ * @param portraits
+ * @type file[]
+ * @dir img/pictures/
+ *
  * @param actorId
  * @type actor
+ *
+ * @param classId
+ * @type class
+ *
+ * @param skillId
+ * @type skill
+ *
+ * @param itemId
+ * @type item
+ *
+ * @param weaponId
+ * @type weapon
+ *
+ * @param armorId
+ * @type armor
+ *
+ * @param enemyId
+ * @type enemy
+ *
+ * @param troopId
+ * @type troop
+ *
+ * @param stateId
+ * @type state
+ *
+ * @param animationId
+ * @type animation
+ *
+ * @param tilesetId
+ * @type tileset
+ *
+ * @param commonEventId
+ * @type common_event
+ *
+ * @param switchId
+ * @type switch
+ *
+ * @param variableId
+ * @type variable
  *
  * @param mapId
  * @type map
@@ -221,6 +271,9 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
  *
  * @param mystery
  * @type custom_type
+ *
+ * @param unsupportedImage
+ * @type image
  */
 /*~struct~Row:
  * @param enabled
@@ -247,18 +300,64 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
     assert.equal(fields.details.kind, "multiline");
     assert.equal(fields.amount.decimals, 2);
     assert.equal(fields.enabled.kind, "boolean");
+    assert.deepEqual(fields.enabled.options, [
+      { label: "Enabled", value: "true" },
+      { label: "Disabled", value: "false" },
+    ]);
+    assert.equal(fields.enabledList.item?.kind, "boolean");
+    assert.deepEqual(fields.enabledList.item?.options, [
+      { label: "Enabled", value: "true" },
+      { label: "Disabled", value: "false" },
+    ]);
     assert.deepEqual(fields.mode.options?.map((option) => option.value), ["first", "second"]);
     assert.equal(fields.preset.kind, "combo");
     assert.deepEqual(fields.preset.options?.map((option) => option.value), ["Suggested"]);
     assert.equal(fields.title.parent, "root");
     assert.equal(fields.portrait.kind, "file");
     assert.equal(fields.portrait.directory, "img/pictures");
-    assert.equal(fields.actorId.databaseTable, "Actors");
+    assert.equal(fields.portraits.item?.kind, "file");
+    assert.equal(fields.portraits.item?.directory, "img/pictures/");
+    assert.deepEqual(
+      Object.fromEntries([
+        "actorId",
+        "classId",
+        "skillId",
+        "itemId",
+        "weaponId",
+        "armorId",
+        "enemyId",
+        "troopId",
+        "stateId",
+        "animationId",
+        "tilesetId",
+        "commonEventId",
+        "switchId",
+        "variableId",
+      ].map((key) => [key, fields[key].databaseTable])),
+      {
+        actorId: "Actors",
+        classId: "Classes",
+        skillId: "Skills",
+        itemId: "Items",
+        weaponId: "Weapons",
+        armorId: "Armors",
+        enemyId: "Enemies",
+        troopId: "Troops",
+        stateId: "States",
+        animationId: "Animations",
+        tilesetId: "Tilesets",
+        commonEventId: "CommonEvents",
+        switchId: "System.switches",
+        variableId: "System.variables",
+      },
+    );
     assert.equal(fields.mapId.kind, "map");
     assert.equal(fields.point.kind, "location");
     assert.equal(fields.rows.item?.kind, "struct");
     assert.equal(fields.nested.item?.kind, "array");
     assert.equal(fields.mystery.editable, false);
+    assert.equal(fields.unsupportedImage.editable, false);
+    assert.match(fields.unsupportedImage.unsupportedReason || "", /@type image/);
     assert.equal(config.validation.ok, true);
     assert.throws(
       () => updatePluginParameters(root, project, "TypedPlugin", { mystery: "changed" }),

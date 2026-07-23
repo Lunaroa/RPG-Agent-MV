@@ -24,6 +24,18 @@ export interface PluginParameterRow {
   fullValue: string;
 }
 
+export type PluginParameterChildTarget =
+  | { kind: 'struct'; key: string }
+  | { kind: 'array'; index: number };
+
+export type PluginParameterValidationIssue =
+  | { kind: 'number-required'; path: string }
+  | { kind: 'number-invalid'; path: string }
+  | { kind: 'number-min'; path: string; min: number }
+  | { kind: 'number-max'; path: string; max: number }
+  | { kind: 'number-decimals'; path: string; decimals: number }
+  | { kind: 'location-invalid'; path: string };
+
 export function clonePluginParameterValue<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((entry) => clonePluginParameterValue(entry)) as T;
@@ -37,6 +49,31 @@ export function clonePluginParameterValue<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+export function replacePluginParameterChildValue(
+  container: unknown,
+  target: PluginParameterChildTarget,
+  value: unknown,
+): unknown {
+  if (target.kind === 'struct') {
+    return {
+      ...(isPlainObject(container) ? container : {}),
+      [target.key]: clonePluginParameterValue(value),
+    };
+  }
+  const entries = Array.isArray(container) ? [...container] : [];
+  entries[target.index] = clonePluginParameterValue(value);
+  return entries;
+}
+
+export function removePluginParameterArrayItem(
+  container: unknown,
+  index: number,
+): unknown[] {
+  return (Array.isArray(container) ? container : [])
+    .filter((_, itemIndex) => itemIndex !== index)
+    .map((entry) => clonePluginParameterValue(entry));
 }
 
 export function createPluginParameterForm(plugin: ManagedPluginEntry): Record<string, unknown> {
@@ -58,6 +95,13 @@ export function buildPluginParameterPayload(
   const payload = cloneRecord(plugin.parameters);
   for (const field of plugin.parameterSchema?.fields || []) {
     if (!isPluginParameterFieldEditable(plugin, field)) continue;
+    const baselineValue = normalizePluginParameterValue(
+      field,
+      plugin.parameters[field.key] ?? field.defaultValue,
+    );
+    if (stableSerialize(form[field.key]) === stableSerialize(baselineValue)) {
+      continue;
+    }
     payload[field.key] = serializePluginParameterValue(field, form[field.key]);
   }
   return payload;
@@ -116,7 +160,29 @@ export function isPluginParameterFieldEditable(
   plugin: ManagedPluginEntry,
   field: PluginParameterSchemaField,
 ): boolean {
-  return plugin.fileExists && field.editable !== false && field.kind !== 'json';
+  return plugin.fileExists && isPluginParameterSchemaFieldEditable(field);
+}
+
+export function isPluginParameterSchemaFieldEditable(
+  field: PluginParameterSchemaField,
+): boolean {
+  return field.editable !== false && field.kind !== 'json';
+}
+
+export function createDefaultPluginParameterValue(
+  field?: PluginParameterSchemaField,
+): unknown {
+  if (!field) return '';
+  if (field.kind === 'struct') {
+    return Object.fromEntries((field.fields || []).map((child) => [
+      child.key,
+      createDefaultPluginParameterValue(child),
+    ]));
+  }
+  if (field.kind === 'array') return [];
+  if (field.kind === 'location') return { mapId: '0', x: '0', y: '0' };
+  if (field.kind === 'boolean') return field.defaultValue ?? 'false';
+  return field.defaultValue ?? '';
 }
 
 export function normalizePluginParameterValue(
@@ -127,10 +193,14 @@ export function normalizePluginParameterValue(
   if (field.kind === 'struct') {
     const parsed = parseStructuredValue(value);
     const source = isPlainObject(parsed) ? parsed : {};
-    return Object.fromEntries((field.fields || []).map((child) => [
-      child.key,
-      normalizePluginParameterValue(child, source[child.key] ?? child.defaultValue),
-    ]));
+    const normalized = clonePluginParameterValue(source);
+    for (const child of field.fields || []) {
+      normalized[child.key] = normalizePluginParameterValue(
+        child,
+        source[child.key] ?? child.defaultValue,
+      );
+    }
+    return normalized;
   }
   if (field.kind === 'array') {
     const parsed = parseStructuredValue(value);
@@ -141,11 +211,11 @@ export function normalizePluginParameterValue(
     const parsed = parseStructuredValue(value);
     return isPlainObject(parsed)
       ? {
-          mapId: finiteNumber(parsed.mapId),
-          x: finiteNumber(parsed.x),
-          y: finiteNumber(parsed.y),
+          mapId: scalarValue(parsed.mapId, '0'),
+          x: scalarValue(parsed.x, '0'),
+          y: scalarValue(parsed.y, '0'),
         }
-      : { mapId: 0, x: 0, y: 0 };
+      : { mapId: '0', x: '0', y: '0' };
   }
   if (value === undefined || value === null) {
     if (field.kind === 'boolean') return field.defaultValue ?? 'false';
@@ -160,10 +230,11 @@ export function serializePluginParameterValue(
 ): unknown {
   if (field.kind === 'struct') {
     const source = isPlainObject(value) ? value : {};
-    return JSON.stringify(Object.fromEntries((field.fields || []).map((child) => [
-      child.key,
-      serializePluginParameterValue(child, source[child.key]),
-    ])));
+    const serialized = clonePluginParameterValue(source);
+    for (const child of field.fields || []) {
+      serialized[child.key] = serializePluginParameterValue(child, source[child.key]);
+    }
+    return JSON.stringify(serialized);
   }
   if (field.kind === 'array') {
     const entries = Array.isArray(value) ? value : [];
@@ -177,14 +248,87 @@ export function serializePluginParameterValue(
   if (field.kind === 'location') {
     const location = isPlainObject(value)
       ? {
-          mapId: finiteNumber(value.mapId),
-          x: finiteNumber(value.x),
-          y: finiteNumber(value.y),
+          mapId: String(value.mapId ?? '0'),
+          x: String(value.x ?? '0'),
+          y: String(value.y ?? '0'),
         }
-      : { mapId: 0, x: 0, y: 0 };
+      : { mapId: '0', x: '0', y: '0' };
     return JSON.stringify(location);
   }
   return serializeScalarPluginParameterValue(field, value);
+}
+
+export function validatePluginParameterValue(
+  field: PluginParameterSchemaField,
+  value: unknown,
+  path = field.key,
+  baselineValue?: unknown,
+): PluginParameterValidationIssue | null {
+  if (!isPluginParameterSchemaFieldEditable(field)) return null;
+  if (field.kind === 'number') {
+    const text = String(value ?? '').trim();
+    if (!text) {
+      return String(baselineValue ?? '').trim()
+        ? { kind: 'number-required', path }
+        : null;
+    }
+    if (!/^[-+]?(?:\d+\.?\d*|\.\d+)$/.test(text)) {
+      return { kind: 'number-invalid', path };
+    }
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric)) return { kind: 'number-invalid', path };
+    if (typeof field.min === 'number' && numeric < field.min) {
+      return { kind: 'number-min', path, min: field.min };
+    }
+    if (typeof field.max === 'number' && numeric > field.max) {
+      return { kind: 'number-max', path, max: field.max };
+    }
+    if (typeof field.decimals === 'number') {
+      const fraction = text.match(/\.(\d*)$/)?.[1] || '';
+      if (fraction.length > field.decimals) {
+        return {
+          kind: 'number-decimals',
+          path,
+          decimals: field.decimals,
+        };
+      }
+    }
+    return null;
+  }
+  if (field.kind === 'location') {
+    if (!isPlainObject(value)) return { kind: 'location-invalid', path };
+    const values = [value.mapId, value.x, value.y].map(Number);
+    if (values.some((entry) => !Number.isInteger(entry) || entry < 0)) {
+      return { kind: 'location-invalid', path };
+    }
+    return null;
+  }
+  if (field.kind === 'struct') {
+    const source = isPlainObject(value) ? value : {};
+    for (const child of field.fields || []) {
+      const issue = validatePluginParameterValue(
+        child,
+        source[child.key],
+        `${path}.${child.key}`,
+        isPlainObject(baselineValue) ? baselineValue[child.key] : undefined,
+      );
+      if (issue) return issue;
+    }
+    return null;
+  }
+  if (field.kind === 'array' && field.item) {
+    const entries = Array.isArray(value) ? value : [];
+    for (let index = 0; index < entries.length; index += 1) {
+      const issue = validatePluginParameterValue(
+        field.item,
+        entries[index],
+        `${path}[${index}]`,
+        Array.isArray(baselineValue) ? baselineValue[index] : undefined,
+      );
+      if (issue) return issue;
+    }
+  }
+  return null;
 }
 
 export function displayPluginParameterValue(value: unknown): string {
@@ -198,7 +342,7 @@ export function displayPluginParameterValue(value: unknown): string {
   }
 }
 
-function summarizePluginParameterValue(
+export function summarizePluginParameterValue(
   field: PluginParameterSchemaField,
   value: unknown,
   catalog: EditorProjectCatalog | null,
@@ -225,15 +369,16 @@ function summarizePluginParameterValue(
   }
   if (field.kind === 'location') {
     const location = normalizePluginParameterValue(field, value) as {
-      mapId: number;
-      x: number;
-      y: number;
+      mapId: string;
+      x: string;
+      y: string;
     };
-    const map = catalog?.maps?.find((entry) => entry.id === location.mapId);
+    const mapId = finiteNumber(location.mapId);
+    const map = catalog?.maps?.find((entry) => entry.id === mapId);
     return labels.location(
-      map ? `${map.id} · ${map.name}` : String(location.mapId),
-      location.x,
-      location.y,
+      map ? `${map.id} · ${map.name}` : location.mapId,
+      finiteNumber(location.x),
+      finiteNumber(location.y),
     );
   }
   if (field.kind === 'array') {
@@ -311,7 +456,7 @@ function serializeScalarPluginParameterValue(
 ): unknown {
   if (field.kind === 'boolean') return isBooleanParameterEnabled(value) ? 'true' : 'false';
   if (value === undefined || value === null) return '';
-  return value;
+  return String(value);
 }
 
 function isBooleanParameterEnabled(value: unknown): boolean {
@@ -345,6 +490,12 @@ function stableSerialize(value: unknown): string {
 function finiteNumber(value: unknown): number {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function scalarValue(value: unknown, fallback: string): string {
+  return value === undefined || value === null || value === ''
+    ? fallback
+    : String(value);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -1,120 +1,235 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
-import { ArrowDown, ArrowUp, EditPen, Refresh } from '@element-plus/icons-vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { Plus, Refresh } from '@element-plus/icons-vue';
 import { ElMessageBox } from 'element-plus';
 import {
   maps as mapsApi,
-  projectAssets,
   plugins as pluginApi,
+  projectAssets,
+  system,
   type EditorProjectCatalog,
   type ManagedPluginEntry,
   type ManagedPluginFile,
   type PluginConfigurationResult,
-  type PluginParameterSchemaField,
+  type PluginHeaderMetadata,
   type PluginValidationIssue,
 } from '../../api/client';
 import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
+import { useWorkbenchUiStore } from '../../stores/workbenchUi';
+import { useWorkspaceStore } from '../../stores/workspace';
 import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
-import { translatePluginDiagnosticMessage, translatePluginDiagnosticMessages } from '../../utils/pluginDiagnosticsI18n';
 import { parseProjectStagingSummary } from '../../utils/projectStaging';
+import {
+  clampPluginListWidth,
+  DEFAULT_PLUGIN_LIST_WIDTH,
+  PLUGIN_LIST_MAX_WIDTH,
+  PLUGIN_LIST_MIN_WIDTH,
+} from '../../utils/workspaceSettings';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
-import PluginParameterInput from '../editor/PluginParameterInput.vue';
+import PluginDeleteDialog from './PluginDeleteDialog.vue';
+import PluginEngineTags from './PluginEngineTags.vue';
+import PluginParameterDialog from './PluginParameterDialog.vue';
+import {
+  buildPluginManagerGroups,
+  isPluginReorderLocked,
+  movePluginName,
+  pluginHelpLanguageKey,
+  pluginSupportsEngine,
+  resolvePluginReference,
+} from './plugin-manager-model';
+
+type SelectedItem =
+  | { kind: 'configured'; plugin: ManagedPluginEntry }
+  | { kind: 'file'; file: ManagedPluginFile };
 
 const projectStore = useProjectStore();
+const workbenchUi = useWorkbenchUiStore();
+const workspaceStore = useWorkspaceStore();
 const { language, t } = useI18n();
+
 const config = ref<PluginConfigurationResult | null>(null);
 const editorCatalog = ref<EditorProjectCatalog | null>(null);
-const selectedName = ref('');
+const selectedKey = ref('');
 const search = ref('');
 const loading = ref(false);
+const loadFailed = ref(false);
 const busyKey = ref('');
 const error = ref('');
 const actionMessage = ref('');
-const parametersText = ref('{}');
-const parametersError = ref('');
-const parameterForm = ref<Record<string, unknown>>({});
 const stagingDirty = ref(false);
+const parameterDialogOpen = ref(false);
+const parameterDialogPluginName = ref('');
+const parameterDialogError = ref('');
+const deleteDialogOpen = ref(false);
+const deleteTargetName = ref('');
+const activeHelpTab = ref('');
+const draggedName = ref('');
+const dropIndex = ref<number | null>(null);
+const layoutElement = ref<HTMLElement | null>(null);
+const pluginRowElements = new Map<string, HTMLElement>();
+const listWidth = ref(clampPluginListWidth(
+  workspaceStore.settings.layout?.pluginListWidth ?? DEFAULT_PLUGIN_LIST_WIDTH,
+));
+let resizeStartX = 0;
+let resizeStartWidth = listWidth.value;
 
+const query = computed(() => search.value.trim().toLocaleLowerCase());
+const groups = computed(() => buildPluginManagerGroups(config.value, search.value));
 const plugins = computed(() => config.value?.plugins || []);
 const pluginFiles = computed(() => config.value?.pluginFiles || []);
-const issues = computed(() => (config.value?.validation.issues || []).map((issue) => ({
-  ...issue,
-  message: translatePluginDiagnosticMessage(issue.message, language.value),
-})));
-const blockers = computed(() => issues.value.filter((issue) => issue.severity === 'error'));
-const warnings = computed(() => issues.value.filter((issue) => issue.severity === 'warn'));
-const enabledCount = computed(() => plugins.value.filter((plugin) => plugin.status).length);
-const missingFileCount = computed(() => plugins.value.filter((plugin) => plugin.name && !plugin.fileExists).length);
-const configuredNames = computed(() => new Set(plugins.value.map((plugin) => plugin.name).filter(Boolean)));
-const orphanFiles = computed(() => pluginFiles.value.filter((file) => !configuredNames.value.has(file.name)));
+const unconfiguredFiles = computed(() => buildPluginManagerGroups(config.value).unconfigured);
+const enabledCount = computed(() => groups.value.enabledCount);
+const filteredPlugins = computed(() => groups.value.configured);
+const filteredFiles = computed(() => groups.value.unconfigured);
+const reorderLocked = computed(() => isPluginReorderLocked(search.value, Boolean(busyKey.value)));
 
-const filteredPlugins = computed(() => {
-  const query = search.value.trim().toLocaleLowerCase();
-  if (!query) return plugins.value;
-  return plugins.value.filter((plugin) =>
-    [plugin.name, plugin.description, plugin.fileName, plugin.fileRelativePath]
-      .some((part) => String(part || '').toLocaleLowerCase().includes(query)),
-  );
+const selectedItem = computed<SelectedItem | null>(() => {
+  if (selectedKey.value.startsWith('configured:')) {
+    const name = selectedKey.value.slice('configured:'.length);
+    const plugin = plugins.value.find((entry) => entry.name === name);
+    if (plugin) return { kind: 'configured', plugin };
+  }
+  if (selectedKey.value.startsWith('file:')) {
+    const relativePath = selectedKey.value.slice('file:'.length);
+    const file = unconfiguredFiles.value.find((entry) => entry.relativePath === relativePath);
+    if (file) return { kind: 'file', file };
+  }
+  const plugin = plugins.value[0];
+  if (plugin) return { kind: 'configured', plugin };
+  const file = unconfiguredFiles.value[0];
+  return file ? { kind: 'file', file } : null;
 });
 
 const selectedPlugin = computed(() =>
-  plugins.value.find((plugin) => plugin.name === selectedName.value) || plugins.value[0] || null,
+  selectedItem.value?.kind === 'configured' ? selectedItem.value.plugin : null,
 );
-
-const schemaFields = computed(() => selectedPlugin.value?.parameterSchema?.fields || []);
-const hasSchemaFields = computed(() => schemaFields.value.length > 0);
-const schemaWarnings = computed(() => translatePluginDiagnosticMessages(selectedPlugin.value?.parameterSchemaWarnings || [], language.value));
-const validationStatusLabel = computed(() => {
-  if (blockers.value.length) return t('plugins.blocked');
-  if (warnings.value.length || schemaWarnings.value.length) return t('plugins.warnings');
-  return t('plugins.available');
+const parameterDialogPlugin = computed(() =>
+  plugins.value.find((plugin) => plugin.name === parameterDialogPluginName.value) || null,
+);
+const selectedFile = computed(() =>
+  selectedItem.value?.kind === 'file' ? selectedItem.value.file : null,
+);
+const selectedHeader = computed<PluginHeaderMetadata | null>(() =>
+  selectedPlugin.value?.header || selectedFile.value?.header || null,
+);
+const selectedName = computed(() => selectedPlugin.value?.name || selectedFile.value?.name || '');
+const selectedPath = computed(() => selectedHeader.value?.displayPath || 'js/plugins');
+const selectedDescription = computed(() =>
+  selectedHeader.value?.plugindesc
+  || selectedPlugin.value?.description
+  || t('plugins.noDescription'),
+);
+const selectedIssue = computed(() => {
+  const name = selectedPlugin.value?.name;
+  if (!name) return null;
+  return (config.value?.validation.issues || []).find(
+    (issue) => issue.severity === 'error' && issue.pluginName === name,
+  ) || null;
 });
-const technicalIssueCount = computed(() => issues.value.length + schemaWarnings.value.length);
-const parametersDirty = computed(() => {
-  const plugin = selectedPlugin.value;
-  if (!plugin) return false;
-  const next = buildParametersPayload(false);
-  return next ? formatParameters(next) !== formatParameters(plugin.parameters) : false;
+const currentEngineTarget = computed(() =>
+  projectStore.currentProjectInfo?.engine === 'rpg-maker-mz' ? 'MZ' : 'MV',
+);
+const selectedTargetMismatch = computed(() => {
+  const engine = projectStore.currentProjectInfo?.engine;
+  if (!engine || !selectedHeader.value) return false;
+  return pluginSupportsEngine(selectedHeader.value.target, engine) === false;
 });
+const selectedTargetWarning = computed(() =>
+  selectedTargetMismatch.value
+    ? t('plugins.incompatibleTarget', {
+        current: currentEngineTarget.value,
+        supported: selectedHeader.value?.target.join(' / ') || '-',
+      })
+    : '',
+);
+const deleteTargetPath = computed(
+  () => plugins.value.find((plugin) => plugin.name === deleteTargetName.value)?.header.displayPath || '',
+);
+const selectedHelpTabs = computed(() =>
+  (selectedHeader.value?.helpSections || []).map((section) => ({
+    id: section.language
+      ? `locale:${section.language.toLocaleLowerCase()}`
+      : 'default',
+    label: helpLanguageLabel(section.language),
+    content: section.content,
+  })),
+);
 
 watch(() => projectStore.currentProject, () => {
   resetState();
   if (projectStore.currentProject) void loadPlugins();
 });
 
-watch(selectedPlugin, (plugin) => {
-  resetParameterEditors(plugin);
-});
+watch(
+  () => workspaceStore.settings.layout?.pluginListWidth,
+  (width) => {
+    if (typeof width === 'number') listWidth.value = clampPluginListWidth(width);
+  },
+);
+
+watch(
+  () => [enabledCount.value, plugins.value.length, language.value] as const,
+  updateStatusBar,
+  { immediate: true },
+);
+
+watch(
+  () => `${selectedKey.value}\u0000${selectedHelpTabs.value.map((tab) => tab.id).join('\u0000')}`,
+  () => {
+    activeHelpTab.value = selectedHelpTabs.value[0]?.id || '';
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
+  workbenchUi.sbHideZoom = true;
   if (projectStore.currentProject) void loadPlugins();
 });
 
-function resetState() {
+onBeforeUnmount(() => {
+  stopResize();
+  workbenchUi.sbContextText = '';
+  workbenchUi.sbHideZoom = false;
+  workbenchUi.sbStagingDirty = false;
+});
+
+function resetState(): void {
   config.value = null;
   editorCatalog.value = null;
-  selectedName.value = '';
+  selectedKey.value = '';
   search.value = '';
   error.value = '';
   actionMessage.value = '';
-  parametersError.value = '';
-  parametersText.value = '{}';
-  parameterForm.value = {};
+  loadFailed.value = false;
   busyKey.value = '';
   stagingDirty.value = false;
+  parameterDialogOpen.value = false;
+  parameterDialogPluginName.value = '';
+  parameterDialogError.value = '';
+  deleteDialogOpen.value = false;
+  deleteTargetName.value = '';
+  activeHelpTab.value = '';
+  pluginRowElements.clear();
+  updateStatusBar();
 }
 
-function applyConfig(next: PluginConfigurationResult) {
+function applyConfig(next: PluginConfigurationResult): void {
   config.value = next;
-  if (!next.plugins.some((plugin) => plugin.name === selectedName.value)) {
-    selectedName.value = next.plugins[0]?.name || '';
+  if (!selectedItem.value) {
+    selectedKey.value = next.plugins[0]
+      ? configuredKey(next.plugins[0].name)
+      : next.pluginFiles[0]
+        ? fileKey(next.pluginFiles[0].relativePath)
+        : '';
   }
+  updateStatusBar();
 }
 
-async function loadPlugins() {
+async function loadPlugins(): Promise<void> {
   if (!projectStore.currentProject) return;
   loading.value = true;
+  loadFailed.value = false;
   error.value = '';
   actionMessage.value = '';
   try {
@@ -127,14 +242,20 @@ async function loadPlugins() {
     await refreshStagingStatus();
   } catch (loadError) {
     config.value = null;
-    error.value = formatUserFacingErrorMessage(loadError, 'general', language.value);
+    loadFailed.value = true;
+    console.error('[plugins] failed to load plugin configuration', loadError);
+    updateStatusBar();
   } finally {
     loading.value = false;
   }
 }
 
-async function runAction(key: string, action: () => Promise<PluginConfigurationResult>, message: string) {
-  if (!projectStore.currentProject || busyKey.value) return;
+async function runAction(
+  key: string,
+  action: () => Promise<PluginConfigurationResult>,
+  message: string,
+): Promise<boolean> {
+  if (!projectStore.currentProject || busyKey.value) return false;
   busyKey.value = key;
   error.value = '';
   actionMessage.value = '';
@@ -142,31 +263,154 @@ async function runAction(key: string, action: () => Promise<PluginConfigurationR
     applyConfig(await action());
     await refreshStagingStatus();
     actionMessage.value = message;
+    return true;
   } catch (actionError) {
-    error.value = formatUserFacingErrorMessage(actionError, 'general', language.value);
+    error.value = formatPluginActionError(actionError);
+    return false;
   } finally {
     busyKey.value = '';
   }
 }
 
-async function refreshStagingStatus() {
+async function refreshStagingStatus(): Promise<void> {
   if (!projectStore.currentProject) {
     stagingDirty.value = false;
+    workbenchUi.sbStagingDirty = false;
     return;
   }
   try {
     const status = await mapsApi.projectStaging(projectStore.currentProject) as { staged?: boolean };
     stagingDirty.value = Boolean(status?.staged);
+    workbenchUi.sbStagingDirty = stagingDirty.value;
   } catch {
     /* Staging status does not block plugin configuration reads. */
   }
+}
+
+function updateStatusBar(): void {
+  workbenchUi.sbHideZoom = true;
+  if (!config.value) {
+    workbenchUi.sbContextText = '';
+    return;
+  }
+  workbenchUi.sbContextText = t('plugins.statusCount', {
+    enabled: enabledCount.value,
+    total: plugins.value.length,
+  });
+}
+
+function configuredKey(name: string): string {
+  return `configured:${name}`;
+}
+
+function fileKey(relativePath: string): string {
+  return `file:${relativePath}`;
+}
+
+function selectPlugin(plugin: ManagedPluginEntry): void {
+  selectedKey.value = configuredKey(plugin.name);
+}
+
+function selectFile(file: ManagedPluginFile): void {
+  selectedKey.value = fileKey(file.relativePath);
+}
+
+function helpLanguageLabel(languageCode: string): string {
+  const key = pluginHelpLanguageKey(languageCode);
+  return key ? t(key) : languageCode;
+}
+
+function setPluginRowElement(key: string, element: unknown): void {
+  if (element instanceof HTMLElement) {
+    pluginRowElements.set(key, element);
+  } else {
+    pluginRowElements.delete(key);
+  }
+}
+
+function pluginReferenceAvailable(name: string): boolean {
+  return Boolean(resolvePluginReference(config.value, name));
+}
+
+function pluginReferenceLabel(name: string): string {
+  return pluginReferenceAvailable(name)
+    ? t('plugins.locatePlugin', { name })
+    : t('plugins.pluginReferenceMissing', { name });
+}
+
+async function navigateToPluginReference(name: string): Promise<void> {
+  const target = resolvePluginReference(config.value, name);
+  if (!target) return;
+  search.value = '';
+  const key = target.kind === 'configured'
+    ? configuredKey(target.name)
+    : fileKey(target.relativePath);
+  selectedKey.value = key;
+  await nextTick();
+  const row = pluginRowElements.get(key);
+  row?.focus({ preventScroll: true });
+  row?.scrollIntoView({ block: 'nearest' });
+}
+
+function openParameterDialog(plugin: ManagedPluginEntry): void {
+  if (!plugin.name || busyKey.value) return;
+  selectPlugin(plugin);
+  parameterDialogPluginName.value = plugin.name;
+  parameterDialogError.value = '';
+  parameterDialogOpen.value = true;
+}
+
+async function saveParameters(parameters: Record<string, unknown>): Promise<void> {
+  const plugin = parameterDialogPlugin.value;
+  if (!plugin || !projectStore.currentProject) return;
+  parameterDialogError.value = '';
+  const saved = await runAction(
+    `params:${plugin.name}`,
+    () => pluginApi.updateParameters(plugin.name, parameters, projectStore.currentProject),
+    t('plugins.savedParams', { name: plugin.name }),
+  );
+  if (saved) {
+    parameterDialogOpen.value = false;
+  } else {
+    parameterDialogError.value = error.value;
+  }
+}
+
+function closeParameterDialogState(): void {
+  parameterDialogPluginName.value = '';
+  parameterDialogError.value = '';
+}
+
+async function togglePlugin(plugin: ManagedPluginEntry, enabled: boolean): Promise<void> {
+  if (!projectStore.currentProject || !plugin.name) return;
+  if (enabled && !plugin.fileExists) {
+    error.value = t('plugins.enableMissingFile', { name: plugin.name });
+    return;
+  }
+  await runAction(
+    `toggle:${plugin.name}`,
+    () => pluginApi.setEnabled(plugin.name, enabled, projectStore.currentProject),
+    enabled
+      ? t('plugins.enabledPlugin', { name: plugin.name })
+      : t('plugins.disabledPlugin', { name: plugin.name }),
+  );
+}
+
+async function addExistingFile(file: ManagedPluginFile): Promise<void> {
+  if (!projectStore.currentProject || file.deleted) return;
+  selectedKey.value = configuredKey(file.name);
+  await runAction(
+    `add:${file.name}`,
+    () => pluginApi.addConfiguration(file.name, projectStore.currentProject),
+    t('plugins.addedConfiguration', { name: file.name }),
+  );
 }
 
 function pluginNameFromPath(filePath: string): string {
   return String(filePath || '').split(/[\\/]/).pop()?.replace(/\.js$/i, '') || '';
 }
 
-async function installPlugin() {
+async function installPlugin(): Promise<void> {
   if (!projectStore.currentProject || busyKey.value) return;
   busyKey.value = 'install';
   error.value = '';
@@ -175,7 +419,9 @@ async function installPlugin() {
     const sourceFile = await pluginApi.selectInstallFile();
     if (!sourceFile) return;
     const name = pluginNameFromPath(sourceFile);
-    const overwrite = pluginFiles.value.some((file) => file.name === name && file.exists && !file.deleted);
+    const overwrite = pluginFiles.value.some(
+      (file) => file.name === name && file.exists && !file.deleted,
+    );
     if (overwrite) {
       try {
         await ElMessageBox.confirm(
@@ -187,48 +433,188 @@ async function installPlugin() {
         return;
       }
     }
-    const result = await pluginApi.installFile(sourceFile, { overwrite }, projectStore.currentProject);
+    const result = await pluginApi.installFile(
+      sourceFile,
+      { overwrite },
+      projectStore.currentProject,
+    );
+    selectedKey.value = configuredKey(result.name);
     applyConfig(result.configuration || await pluginApi.read(projectStore.currentProject));
-    selectedName.value = result.name;
     actionMessage.value = overwrite
       ? t('plugins.overwriteSuccess', { name: result.name })
       : t('plugins.installSuccess', { name: result.name });
     await refreshStagingStatus();
   } catch (installError) {
-    error.value = formatUserFacingErrorMessage(installError, 'general', language.value);
+    error.value = formatPluginActionError(installError);
   } finally {
     busyKey.value = '';
   }
 }
 
-async function deleteSelectedPlugin() {
-  const plugin = selectedPlugin.value;
+function openDeleteConfiguredDialog(plugin: ManagedPluginEntry): void {
+  if (!plugin.name || busyKey.value) return;
+  deleteTargetName.value = plugin.name;
+  deleteDialogOpen.value = true;
+}
+
+async function deleteConfiguredPlugin(mode: 'configuration' | 'file'): Promise<void> {
+  const plugin = plugins.value.find((entry) => entry.name === deleteTargetName.value);
   if (!projectStore.currentProject || !plugin?.name || busyKey.value) return;
-  try {
-    await ElMessageBox.confirm(
-      t('plugins.deleteConfirm', { name: plugin.name }),
-      t('plugins.deleteTitle'),
-      { type: 'warning' },
+  const adjacentKey = adjacentConfiguredKey(plugin.name);
+  if (mode === 'configuration') {
+    selectedKey.value = adjacentKey || fileKey(plugin.fileRelativePath);
+    const removed = await runAction(
+      `remove-config:${plugin.name}`,
+      () => pluginApi.removeConfiguration(plugin.name, projectStore.currentProject),
+      t('plugins.removedConfiguration', { name: plugin.name }),
     );
-  } catch {
+    if (removed) closeDeleteConfiguredDialog();
     return;
   }
+
+  selectedKey.value = adjacentKey;
   busyKey.value = `delete:${plugin.name}`;
   error.value = '';
-  actionMessage.value = '';
+  let deleted = false;
   try {
     const result = await pluginApi.deleteFile(plugin.name, {}, projectStore.currentProject);
     applyConfig(result.configuration || await pluginApi.read(projectStore.currentProject));
     actionMessage.value = t('plugins.deleteSuccess', { name: plugin.name });
     await refreshStagingStatus();
+    deleted = true;
   } catch (deleteError) {
-    error.value = formatUserFacingErrorMessage(deleteError, 'general', language.value);
+    error.value = formatPluginActionError(deleteError);
+  } finally {
+    busyKey.value = '';
+  }
+  if (deleted) closeDeleteConfiguredDialog();
+}
+
+function closeDeleteConfiguredDialog(): void {
+  if (busyKey.value) return;
+  deleteDialogOpen.value = false;
+  deleteTargetName.value = '';
+}
+
+function adjacentConfiguredKey(name: string): string {
+  const index = plugins.value.findIndex((plugin) => plugin.name === name);
+  const adjacent = plugins.value[index + 1] || plugins.value[index - 1];
+  return adjacent ? configuredKey(adjacent.name) : '';
+}
+
+async function deleteUnconfiguredFile(file: ManagedPluginFile): Promise<void> {
+  if (!projectStore.currentProject || file.deleted || busyKey.value) return;
+  try {
+    await ElMessageBox.confirm(
+      t('plugins.deleteUnconfiguredConfirm', { name: file.name }),
+      t('plugins.deleteTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('plugins.deleteFile'),
+        cancelButtonText: t('editor.mapProperties.cancel'),
+      },
+    );
+  } catch {
+    return;
+  }
+  const fileIndex = unconfiguredFiles.value.findIndex(
+    (entry) => entry.relativePath === file.relativePath,
+  );
+  const adjacent = unconfiguredFiles.value[fileIndex + 1] || unconfiguredFiles.value[fileIndex - 1];
+  selectedKey.value = adjacent ? fileKey(adjacent.relativePath) : '';
+  busyKey.value = `delete-file:${file.name}`;
+  error.value = '';
+  try {
+    const result = await pluginApi.deleteFile(file.name, {}, projectStore.currentProject);
+    applyConfig(result.configuration || await pluginApi.read(projectStore.currentProject));
+    actionMessage.value = t('plugins.deleteFileSuccess', { name: file.name });
+    await refreshStagingStatus();
+  } catch (deleteError) {
+    error.value = formatPluginActionError(deleteError);
   } finally {
     busyKey.value = '';
   }
 }
 
-async function applyPluginStaging() {
+async function reorderPluginNames(names: string[], messageName: string): Promise<void> {
+  if (!projectStore.currentProject || reorderLocked.value) return;
+  await runAction(
+    `reorder:${messageName}`,
+    () => pluginApi.reorder(names, projectStore.currentProject),
+    t('plugins.adjustedOrder', { name: messageName }),
+  );
+}
+
+function startDrag(event: DragEvent, plugin: ManagedPluginEntry): void {
+  if (reorderLocked.value) {
+    event.preventDefault();
+    return;
+  }
+  draggedName.value = plugin.name;
+  dropIndex.value = plugin.index;
+  event.dataTransfer?.setData('text/plain', plugin.name);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+}
+
+function dragOver(event: DragEvent, index: number): void {
+  if (!draggedName.value || reorderLocked.value) return;
+  event.preventDefault();
+  const target = event.currentTarget as HTMLElement;
+  const bounds = target.getBoundingClientRect();
+  dropIndex.value = index + (event.clientY > bounds.top + bounds.height / 2 ? 1 : 0);
+}
+
+async function finishDrop(event: DragEvent): Promise<void> {
+  event.preventDefault();
+  const movedName = draggedName.value;
+  const from = plugins.value.findIndex((plugin) => plugin.name === movedName);
+  const insertion = dropIndex.value ?? from;
+  clearDrag();
+  if (from < 0 || insertion < 0 || insertion > plugins.value.length) return;
+  const names = movePluginName(
+    plugins.value.map((plugin) => plugin.name),
+    movedName,
+    insertion,
+  );
+  if (names.every((name, index) => name === plugins.value[index]?.name)) return;
+  await reorderPluginNames(names, movedName);
+}
+
+function clearDrag(): void {
+  draggedName.value = '';
+  dropIndex.value = null;
+}
+
+async function keyboardMove(plugin: ManagedPluginEntry, delta: -1 | 1): Promise<void> {
+  if (reorderLocked.value) return;
+  const names = plugins.value.map((entry) => entry.name);
+  const index = names.indexOf(plugin.name);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= names.length) return;
+  [names[index], names[target]] = [names[target], names[index]];
+  await reorderPluginNames(names, plugin.name);
+}
+
+function pluginKeydown(event: KeyboardEvent, plugin: ManagedPluginEntry): void {
+  if (event.altKey && event.key === 'ArrowUp') {
+    event.preventDefault();
+    void keyboardMove(plugin, -1);
+  } else if (event.altKey && event.key === 'ArrowDown') {
+    event.preventDefault();
+    void keyboardMove(plugin, 1);
+  } else if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    selectPlugin(plugin);
+  }
+}
+
+async function openPluginUrl(): Promise<void> {
+  if (selectedHeader.value?.urlHref) {
+    await system.openExternalUrl(selectedHeader.value.urlHref);
+  }
+}
+
+async function applyPluginStaging(): Promise<void> {
   if (!projectStore.currentProject || busyKey.value) return;
   busyKey.value = 'apply-staging';
   error.value = '';
@@ -236,7 +622,9 @@ async function applyPluginStaging() {
     const status = await mapsApi.projectStaging(projectStore.currentProject);
     const summary = parseProjectStagingSummary(status);
     if (summary.operations.length) {
-      const operations = summary.operations.map((operation) => `${operation.operationId} · ${operation.files.length}`).join('\n');
+      const operations = summary.operations
+        .map((operation) => `${operation.operationId} · ${operation.files.length}`)
+        .join('\n');
       try {
         await ElMessageBox.confirm(
           t('plugins.applyAgentOperationsConfirm', { operations }),
@@ -255,13 +643,13 @@ async function applyPluginStaging() {
     await loadPlugins();
     actionMessage.value = t('plugins.applySuccess');
   } catch (applyError) {
-    error.value = formatUserFacingErrorMessage(applyError, 'general', language.value);
+    error.value = formatPluginActionError(applyError);
   } finally {
     busyKey.value = '';
   }
 }
 
-async function discardPluginStaging() {
+async function discardPluginStaging(): Promise<void> {
   if (!projectStore.currentProject || busyKey.value) return;
   busyKey.value = 'discard-staging';
   error.value = '';
@@ -270,784 +658,1043 @@ async function discardPluginStaging() {
     await loadPlugins();
     actionMessage.value = t('plugins.discardSuccess');
   } catch (discardError) {
-    error.value = formatUserFacingErrorMessage(discardError, 'general', language.value);
+    error.value = formatPluginActionError(discardError);
   } finally {
     busyKey.value = '';
   }
 }
 
-function selectPlugin(plugin: ManagedPluginEntry) {
-  selectedName.value = plugin.name;
+function selectedIssueMessage(issue: PluginValidationIssue | null): string {
+  if (!issue) return '';
+  if (issue.code === 'plugin-file-missing') {
+    return t('plugins.fileMissingAction', { name: issue.pluginName || selectedName.value });
+  }
+  const baseMissing = issue.message.match(/requires missing base plugin (.+)$/i);
+  if (baseMissing) {
+    return t('plugins.baseMissingAction', {
+      name: issue.pluginName || selectedName.value,
+      dependency: baseMissing[1],
+    });
+  }
+  const baseDisabled = issue.message.match(/requires enabled base plugin (.+)$/i);
+  if (baseDisabled) {
+    return t('plugins.baseDisabledAction', {
+      name: issue.pluginName || selectedName.value,
+      dependency: baseDisabled[1],
+    });
+  }
+  const order = issue.message.match(/must be ordered (after|before)(?: base plugin)? (.+)$/i);
+  if (order) {
+    return t(order[1].toLowerCase() === 'before'
+      ? 'plugins.orderBeforeAction'
+      : 'plugins.orderAfterAction', {
+      name: issue.pluginName || selectedName.value,
+      dependency: order[2],
+    });
+  }
+  return formatUserFacingErrorMessage(issue.message, 'general', language.value);
 }
 
-function canMove(plugin: ManagedPluginEntry, delta: -1 | 1) {
-  if (!plugin.name || busyKey.value || !config.value) return false;
-  const index = plugins.value.findIndex((entry) => entry.name === plugin.name);
-  const nextIndex = index + delta;
-  return index >= 0 && nextIndex >= 0 && nextIndex < plugins.value.length;
+function formatPluginActionError(value: unknown): string {
+  const raw = value instanceof Error ? value.message : String(value || '');
+  const missingFile = raw.match(/\[PLUGIN_FILE_MISSING\]\s*([^\r\n]+)/i);
+  if (missingFile) return t('plugins.enableMissingFile', { name: missingFile[1].trim() });
+  const dependency = raw.match(/\[PLUGIN_DEPENDENCY_CONFLICT\]\s*(.+)$/i);
+  if (dependency) {
+    return selectedIssueMessage({
+      severity: 'error',
+      code: dependencyCode(dependency[1]),
+      message: dependency[1],
+      pluginName: dependency[1].match(/^Plugin\s+(\S+)/i)?.[1],
+    });
+  }
+  return formatUserFacingErrorMessage(value, 'general', language.value);
 }
 
-async function togglePlugin(plugin: ManagedPluginEntry) {
-  if (!projectStore.currentProject || !plugin.name) return;
-  const nextEnabled = !plugin.status;
-  await runAction(
-    `toggle:${plugin.name}`,
-    () => pluginApi.setEnabled(plugin.name, nextEnabled, projectStore.currentProject),
-    nextEnabled ? t('plugins.enabledPlugin', { name: plugin.name }) : t('plugins.disabledPlugin', { name: plugin.name }),
+function dependencyCode(message: string): string {
+  if (/requires missing base plugin/i.test(message)) return 'plugin-base-missing';
+  if (/requires enabled base plugin/i.test(message)) return 'plugin-base-disabled';
+  if (/ordered before/i.test(message)) return 'plugin-order-before-invalid';
+  return 'plugin-order-after-invalid';
+}
+
+function startResize(event: PointerEvent): void {
+  if (event.button !== 0) return;
+  resizeStartX = event.clientX;
+  resizeStartWidth = listWidth.value;
+  window.addEventListener('pointermove', resizePanel);
+  window.addEventListener('pointerup', finishResize, { once: true });
+  document.body.classList.add('plugin-pane-resizing');
+}
+
+function resizePanel(event: PointerEvent): void {
+  const containerWidth = layoutElement.value?.getBoundingClientRect().width || 0;
+  const viewportMaximum = containerWidth > 0 ? containerWidth - 420 : 560;
+  listWidth.value = clampPluginListWidth(
+    Math.min(viewportMaximum, resizeStartWidth + event.clientX - resizeStartX),
   );
 }
 
-async function movePlugin(plugin: ManagedPluginEntry, delta: -1 | 1) {
-  if (!projectStore.currentProject || !canMove(plugin, delta)) return;
-  const names = plugins.value.map((entry) => entry.name);
-  const index = names.indexOf(plugin.name);
-  const nextIndex = index + delta;
-  [names[index], names[nextIndex]] = [names[nextIndex], names[index]];
-  await runAction(
-    `move:${plugin.name}:${delta}`,
-    () => pluginApi.reorder(names, projectStore.currentProject),
-    t('plugins.adjustedOrder', { name: plugin.name }),
+function finishResize(): void {
+  stopResize();
+  workspaceStore.patchLayout({ pluginListWidth: listWidth.value });
+}
+
+function stopResize(): void {
+  window.removeEventListener('pointermove', resizePanel);
+  window.removeEventListener('pointerup', finishResize);
+  document.body.classList.remove('plugin-pane-resizing');
+}
+
+function resizeKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  listWidth.value = clampPluginListWidth(
+    listWidth.value + (event.key === 'ArrowLeft' ? -16 : 16),
   );
+  workspaceStore.patchLayout({ pluginListWidth: listWidth.value });
 }
-
-async function saveParameters() {
-  const plugin = selectedPlugin.value;
-  if (!projectStore.currentProject || !plugin?.name || busyKey.value) return;
-  parametersError.value = '';
-  const parsed = buildParametersPayload(true);
-  if (!parsed) return;
-  await runAction(
-    `params:${plugin.name}`,
-    () => pluginApi.updateParameters(plugin.name, parsed, projectStore.currentProject),
-    t('plugins.savedParams', { name: plugin.name }),
-  );
-}
-
-function formatParameters(value: Record<string, unknown>) {
-  return JSON.stringify(value || {}, null, 2);
-}
-
-function resetParameterEditors(plugin: ManagedPluginEntry | null) {
-  parametersError.value = '';
-  if (!plugin) {
-    parameterForm.value = {};
-    parametersText.value = '{}';
-    return;
-  }
-  const fields = plugin.parameterSchema?.fields || [];
-  parameterForm.value = Object.fromEntries(fields.map((field) => [
-    field.key,
-    normalizeFieldFormValue(field, plugin.parameters[field.key]),
-  ]));
-  parametersText.value = fields.length
-    ? formatParameters(unknownParameters(plugin.parameters, fields))
-    : formatParameters(plugin.parameters);
-}
-
-function unknownParameters(value: Record<string, unknown>, fields: PluginParameterSchemaField[]) {
-  const known = new Set(fields.map((field) => field.key));
-  return Object.fromEntries(Object.entries(value || {}).filter(([key]) => !known.has(key)));
-}
-
-function parseParameterJson(reportErrors: boolean): Record<string, unknown> | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(parametersText.value || '{}');
-  } catch (parseError) {
-    if (reportErrors) parametersError.value = t('plugins.jsonParseFailed', { message: (parseError as Error).message });
-    return null;
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    if (reportErrors) parametersError.value = hasSchemaFields.value
-      ? t('plugins.unknownParamsMustBeObject')
-      : t('plugins.paramsMustBeObject');
-    return null;
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function buildParametersPayload(reportErrors: boolean): Record<string, unknown> | null {
-  const parsed = parseParameterJson(reportErrors);
-  if (!parsed) return null;
-  if (!hasSchemaFields.value) return parsed;
-  const next: Record<string, unknown> = { ...parsed };
-  for (const field of schemaFields.value) {
-    next[field.key] = field.editable === false
-      ? selectedPlugin.value?.parameters[field.key]
-      : serializeFieldValue(field, parameterForm.value[field.key]);
-  }
-  return next;
-}
-
-function parameterFormValue(field: PluginParameterSchemaField) {
-  return parameterForm.value[field.key] ?? defaultFieldFormValue(field);
-}
-
-function setParameterFormValue(field: PluginParameterSchemaField, value: unknown) {
-  parameterForm.value = { ...parameterForm.value, [field.key]: value };
-}
-
-function parameterCheckboxValue(field: PluginParameterSchemaField) {
-  const value = parameterFormValue(field);
-  return value === true || value === 'true' || value === 'on' || value === '1';
-}
-
-function setParameterCheckboxValue(field: PluginParameterSchemaField, event: Event) {
-  setParameterFormValue(field, (event.target as HTMLInputElement).checked ? 'true' : 'false');
-}
-
-function parameterInputValue(event: Event) {
-  return (event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value;
-}
-
-function normalizeFieldFormValue(field: PluginParameterSchemaField, rawValue: unknown): unknown {
-  const value = rawValue ?? field.defaultValue;
-  if (field.kind === 'struct') return normalizeStructValue(field, value);
-  if (field.kind === 'array') return normalizeArrayValue(field, value);
-  if (field.kind === 'location') {
-    const parsed = parseMaybeJson(value);
-    return isPlainObject(parsed) ? parsed : { mapId: 0, x: 0, y: 0 };
-  }
-  if (value === undefined || value === null) return defaultFieldFormValue(field);
-  return value;
-}
-
-function defaultFieldFormValue(field: PluginParameterSchemaField): unknown {
-  if (field.kind === 'struct') return normalizeStructValue(field, field.defaultValue);
-  if (field.kind === 'array') return normalizeArrayValue(field, field.defaultValue);
-  if (field.kind === 'location') return normalizeFieldFormValue(field, field.defaultValue);
-  if (field.kind === 'boolean') return field.defaultValue ?? 'false';
-  return field.defaultValue ?? '';
-}
-
-function normalizeStructValue(field: PluginParameterSchemaField, rawValue: unknown): Record<string, unknown> {
-  const parsed = parseMaybeJson(rawValue);
-  const source = isPlainObject(parsed) ? parsed : {};
-  return Object.fromEntries((field.fields || []).map((child) => [
-    child.key,
-    normalizeFieldFormValue(child, source[child.key]),
-  ]));
-}
-
-function normalizeArrayValue(field: PluginParameterSchemaField, rawValue: unknown): unknown[] {
-  const parsed = parseMaybeJson(rawValue);
-  if (!Array.isArray(parsed)) return [];
-  const item = field.item;
-  if (!item) return [];
-  return parsed.map((entry) => normalizeFieldFormValue(item, entry));
-}
-
-function parseMaybeJson(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  if (!value.trim()) return undefined;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return undefined;
-  }
-}
-
-function serializeFieldValue(field: PluginParameterSchemaField, value: unknown): unknown {
-  if (field.kind === 'struct') return JSON.stringify(serializeStructValue(field, value));
-  if (field.kind === 'array') {
-    const item = field.item;
-    const entries = Array.isArray(value) ? value : [];
-    if (!item) return '[]';
-    return JSON.stringify(entries.map((entry) =>
-      item.kind === 'struct' || item.kind === 'array'
-        ? serializeFieldValue(item, entry)
-        : serializeScalarFieldValue(item, entry),
-    ));
-  }
-  if (field.kind === 'location') return JSON.stringify(isPlainObject(value) ? value : { mapId: 0, x: 0, y: 0 });
-  return serializeScalarFieldValue(field, value);
-}
-
-function serializeStructValue(field: PluginParameterSchemaField, value: unknown): Record<string, unknown> {
-  const source = isPlainObject(value) ? value : {};
-  return Object.fromEntries((field.fields || []).map((child) => [
-    child.key,
-    serializeFieldValue(child, source[child.key]),
-  ]));
-}
-
-function serializeScalarFieldValue(field: PluginParameterSchemaField, value: unknown): unknown {
-  if (field.kind === 'boolean') return value === true || value === 'true' || value === 'on' || value === '1' ? 'true' : 'false';
-  if (value === undefined || value === null) return '';
-  return value;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isWideField(field: PluginParameterSchemaField): boolean {
-  return field.kind === 'json'
-    || field.kind === 'struct'
-    || field.kind === 'array'
-    || field.kind === 'multiline'
-    || field.kind === 'location'
-    || field.editable === false
-    || (field.kind === 'text' && String(parameterFormValue(field)).length > 80);
-}
-
-function schemaDepth(field: PluginParameterSchemaField): number {
-  const byKey = new Map(schemaFields.value.map((entry) => [entry.key, entry]));
-  const visited = new Set([field.key]);
-  let parent = field.parent;
-  let depth = 0;
-  while (parent && byKey.has(parent) && !visited.has(parent)) {
-    visited.add(parent);
-    depth += 1;
-    parent = byKey.get(parent)?.parent;
-  }
-  return depth;
-}
-
-function structFields(field: PluginParameterSchemaField): PluginParameterSchemaField[] {
-  return field.fields || [];
-}
-
-function structFieldValue(field: PluginParameterSchemaField, child: PluginParameterSchemaField): unknown {
-  const source = parameterFormValue(field);
-  return isPlainObject(source) ? source[child.key] ?? defaultFieldFormValue(child) : defaultFieldFormValue(child);
-}
-
-function setStructFieldValue(field: PluginParameterSchemaField, child: PluginParameterSchemaField, value: unknown) {
-  const source = parameterFormValue(field);
-  const next = isPlainObject(source) ? { ...source } : {};
-  next[child.key] = value;
-  setParameterFormValue(field, next);
-}
-
-function arrayItems(field: PluginParameterSchemaField): unknown[] {
-  const value = parameterFormValue(field);
-  return Array.isArray(value) ? value : [];
-}
-
-function addArrayItem(field: PluginParameterSchemaField) {
-  const item = field.item;
-  if (!item) return;
-  setParameterFormValue(field, [...arrayItems(field), defaultFieldFormValue(item)]);
-}
-
-function removeArrayItem(field: PluginParameterSchemaField, index: number) {
-  setParameterFormValue(field, arrayItems(field).filter((_, itemIndex) => itemIndex !== index));
-}
-
-function arrayScalarValue(field: PluginParameterSchemaField, index: number): unknown {
-  return arrayItems(field)[index] ?? defaultFieldFormValue(field.item || field);
-}
-
-function setArrayScalarValue(field: PluginParameterSchemaField, index: number, value: unknown) {
-  const next = [...arrayItems(field)];
-  next[index] = value;
-  setParameterFormValue(field, next);
-}
-
-function arrayStructFieldValue(field: PluginParameterSchemaField, index: number, child: PluginParameterSchemaField): unknown {
-  const item = arrayItems(field)[index];
-  return isPlainObject(item) ? item[child.key] ?? defaultFieldFormValue(child) : defaultFieldFormValue(child);
-}
-
-function setArrayStructFieldValue(field: PluginParameterSchemaField, index: number, child: PluginParameterSchemaField, value: unknown) {
-  const next = [...arrayItems(field)];
-  const item = isPlainObject(next[index]) ? { ...next[index] as Record<string, unknown> } : {};
-  item[child.key] = value;
-  next[index] = item;
-  setParameterFormValue(field, next);
-}
-
-function scalarCheckboxValue(value: unknown) {
-  return value === true || value === 'true' || value === 'on' || value === '1';
-}
-
-function setScalarCheckboxValue(setter: (value: unknown) => void, event: Event) {
-  setter((event.target as HTMLInputElement).checked ? 'true' : 'false');
-}
-
-function fieldMeta(field: PluginParameterSchemaField) {
-  const parts = [
-    field.rawType ? `type: ${field.rawType}` : '',
-    field.structName ? `struct: ${field.structName}` : '',
-    field.directory ? `dir: ${field.directory}` : '',
-    field.databaseTable ? `data: ${field.databaseTable}` : '',
-    field.parent ? `parent: ${field.parent}` : '',
-    field.decimals != null ? `decimals: ${field.decimals}` : '',
-    field.required ? 'required' : '',
-    field.defaultValue !== undefined && field.defaultValue !== '' ? `default: ${String(field.defaultValue)}` : '',
-  ].filter(Boolean);
-  return parts.join(' · ');
-}
-
-function formatSize(file: ManagedPluginFile) {
-  if (file.size === null) return t('plugins.unknown');
-  if (file.size < 1024) return `${file.size} B`;
-  if (file.size < 1024 * 1024) return `${(file.size / 1024).toFixed(1)} KB`;
-  return `${(file.size / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function issueClass(issue: PluginValidationIssue) {
-  return issue.severity === 'error' ? 'error' : 'warn';
-}
-
-function pluginDescription(plugin: ManagedPluginEntry): string {
-  return plugin.description || plugin.fileRelativePath || t('plugins.noDescription');
-}
-
-function pluginFileStatus(file: ManagedPluginFile): string {
-  if (file.deleted) return t('plugins.pendingDelete');
-  if (file.staged) return t('plugins.staged');
-  if (file.exists) return formatSize(file);
-  return t('plugins.missing');
-}
-
 </script>
 
 <template>
   <div class="console-subpage plugins-pane">
-    <div v-if="!projectStore.currentProject" class="state">{{ t('plugins.selectProjectFirst') }}</div>
+    <div v-if="!projectStore.currentProject" class="state">
+      {{ t('plugins.selectProjectFirst') }}
+    </div>
     <div v-else-if="loading" class="state">{{ t('plugins.loadingConfig') }}</div>
-    <div v-else class="plugins-layout">
+    <div v-else-if="loadFailed" class="state load-failed" role="alert">
+      <p>{{ t('plugins.loadFailed') }}</p>
+      <button type="button" @click="loadPlugins">{{ t('plugins.retryLoad') }}</button>
+    </div>
+    <div
+      v-else
+      ref="layoutElement"
+      class="plugins-layout"
+      :style="{ '--plugin-list-width': `${listWidth}px` }"
+    >
       <aside class="plugin-list-panel">
         <div class="panel-title">
-          <span>{{ t('plugins.configTitle') }}</span>
-          <button type="button" :title="t('plugins.refresh')" :disabled="Boolean(busyKey)" @click="loadPlugins">
-            <Refresh />
-          </button>
+          <span>{{ t('plugins.listTitle') }}</span>
+          <span class="panel-actions">
+            <button
+              type="button"
+              :title="t('plugins.install')"
+              :aria-label="t('plugins.install')"
+              :disabled="Boolean(busyKey)"
+              @click="installPlugin"
+            >
+              <Plus />
+            </button>
+            <button
+              type="button"
+              :title="t('plugins.refresh')"
+              :aria-label="t('plugins.refresh')"
+              :disabled="Boolean(busyKey)"
+              @click="loadPlugins"
+            >
+              <Refresh />
+            </button>
+          </span>
         </div>
-        <div class="summary">
-          <div><strong>{{ plugins.length }}</strong><span>{{ t('plugins.entries') }}</span></div>
-          <div><strong>{{ enabledCount }}</strong><span>{{ t('plugins.enabled') }}</span></div>
-          <div :class="{ bad: missingFileCount }"><strong>{{ missingFileCount }}</strong><span>{{ t('plugins.missingFile') }}</span></div>
-        </div>
+
         <ConsoleSearchInput v-model="search" :placeholder="t('plugins.searchPlaceholder')" />
-        <div v-if="error" class="status error">{{ error }}</div>
-        <div v-if="actionMessage" class="status success">{{ actionMessage }}</div>
+        <p v-if="query" class="reorder-hint">{{ t('plugins.clearSearchToReorder') }}</p>
+        <div v-if="error" class="status error" role="alert">{{ error }}</div>
+        <div v-if="actionMessage" class="status success" role="status">{{ actionMessage }}</div>
+
         <div class="plugin-list">
-          <button
-            v-for="plugin in filteredPlugins"
-            :key="`${plugin.index}:${plugin.name}`"
-            type="button"
-            class="plugin-row"
-            :class="{ active: selectedPlugin?.index === plugin.index, disabled: !plugin.status, broken: plugin.name && !plugin.fileExists }"
-            @click="selectPlugin(plugin)"
-          >
-            <span class="plugin-main">
-              <strong>{{ plugin.name || `#${plugin.index + 1}` }}</strong>
-              <small>{{ pluginDescription(plugin) }}</small>
-            </span>
-            <span class="plugin-badges">
-              <b :class="plugin.status ? 'on' : 'off'">{{ plugin.status ? 'ON' : 'OFF' }}</b>
-              <b :class="plugin.fileExists ? 'ok' : 'missing'">{{ plugin.fileExists ? 'JS' : 'MISS' }}</b>
-            </span>
-          </button>
-          <div v-if="!filteredPlugins.length" class="empty">{{ plugins.length ? t('plugins.noMatch') : t('plugins.noEntries') }}</div>
+          <section class="plugin-group">
+            <h3>{{ t('plugins.configuredGroup') }}</h3>
+            <div
+              v-for="(plugin, index) in filteredPlugins"
+              :key="`${plugin.index}:${plugin.name}`"
+              :ref="(element) => setPluginRowElement(configuredKey(plugin.name), element)"
+              class="plugin-row"
+              :class="{
+                active: selectedPlugin?.name === plugin.name,
+                disabled: !plugin.status,
+                broken: plugin.name && !plugin.fileExists,
+                'drop-before': dropIndex === plugin.index,
+                'drop-after': index === filteredPlugins.length - 1 && dropIndex === plugins.length,
+              }"
+              role="button"
+              tabindex="0"
+              :aria-pressed="selectedPlugin?.name === plugin.name"
+              @click="selectPlugin(plugin)"
+              @dblclick="openParameterDialog(plugin)"
+              @keydown="pluginKeydown($event, plugin)"
+              @dragover="dragOver($event, plugin.index)"
+              @drop="finishDrop"
+            >
+              <span
+                class="drag-handle"
+                :class="{ locked: reorderLocked }"
+                :draggable="!reorderLocked"
+                :title="reorderLocked ? t('plugins.clearSearchToReorder') : t('plugins.dragToReorder')"
+                :aria-label="t('plugins.dragToReorder')"
+                @dragstart.stop="startDrag($event, plugin)"
+                @dragend="clearDrag"
+                @dblclick.stop
+              >
+                <svg
+                  class="drag-handle-dots"
+                  viewBox="0 0 12 18"
+                  aria-hidden="true"
+                >
+                  <circle cx="3" cy="4" r="1.5" />
+                  <circle cx="9" cy="4" r="1.5" />
+                  <circle cx="3" cy="9" r="1.5" />
+                  <circle cx="9" cy="9" r="1.5" />
+                  <circle cx="3" cy="14" r="1.5" />
+                  <circle cx="9" cy="14" r="1.5" />
+                </svg>
+              </span>
+              <span class="plugin-main">
+                <span class="plugin-title-line">
+                  <PluginEngineTags :targets="plugin.header.target" />
+                  <strong>{{ plugin.name || `#${plugin.index + 1}` }}</strong>
+                </span>
+                <small>{{ plugin.header.plugindesc || plugin.description || t('plugins.noDescription') }}</small>
+                <em v-if="!plugin.fileExists">{{ t('plugins.fileMissingShort') }}</em>
+              </span>
+              <span class="plugin-enabled-switch" @click.stop @dblclick.stop>
+                <el-switch
+                  :model-value="plugin.status"
+                  size="small"
+                  :disabled="Boolean(busyKey) || (!plugin.status && !plugin.fileExists)"
+                  :aria-label="plugin.status ? t('plugins.disable') : t('plugins.enable')"
+                  @change="togglePlugin(plugin, Boolean($event))"
+                />
+              </span>
+            </div>
+            <div v-if="!filteredPlugins.length" class="empty">
+              {{ plugins.length ? t('plugins.noMatch') : t('plugins.noEntries') }}
+            </div>
+          </section>
+
+          <section v-if="filteredFiles.length || unconfiguredFiles.length" class="plugin-group unconfigured-group">
+            <h3>{{ t('plugins.unconfiguredFiles') }}</h3>
+            <div
+              v-for="file in filteredFiles"
+              :key="file.relativePath"
+              :ref="(element) => setPluginRowElement(fileKey(file.relativePath), element)"
+              class="plugin-row file-row"
+              :class="{ active: selectedFile?.relativePath === file.relativePath, deleted: file.deleted }"
+              role="button"
+              tabindex="0"
+              :aria-pressed="selectedFile?.relativePath === file.relativePath"
+              @click="selectFile(file)"
+              @keydown.enter.prevent="selectFile(file)"
+              @keydown.space.prevent="selectFile(file)"
+            >
+              <span class="file-spacer" />
+              <span class="plugin-main">
+                <span class="plugin-title-line">
+                  <PluginEngineTags :targets="file.header.target" />
+                  <strong>{{ file.name }}</strong>
+                </span>
+                <small>{{ file.header.plugindesc || file.header.displayPath }}</small>
+                <em v-if="file.deleted">{{ t('plugins.pendingDelete') }}</em>
+              </span>
+              <button
+                v-if="!file.deleted"
+                type="button"
+                class="row-action"
+                :disabled="Boolean(busyKey)"
+                @click.stop="addExistingFile(file)"
+                @dblclick.stop
+              >
+                {{ t('plugins.addToConfiguration') }}
+              </button>
+            </div>
+            <div v-if="unconfiguredFiles.length && !filteredFiles.length" class="empty">
+              {{ t('plugins.noMatch') }}
+            </div>
+          </section>
         </div>
       </aside>
+
+      <div
+        class="pane-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        :aria-label="t('plugins.resizeList')"
+        :aria-valuemin="PLUGIN_LIST_MIN_WIDTH"
+        :aria-valuemax="PLUGIN_LIST_MAX_WIDTH"
+        :aria-valuenow="listWidth"
+        tabindex="0"
+        @pointerdown="startResize"
+        @keydown="resizeKeydown"
+      />
 
       <main class="plugin-detail-panel">
-        <div class="panel-title">
-          <span>{{ selectedPlugin?.name || t('plugins.details') }}</span>
-          <span v-if="config" class="path-chip">{{ config.relativePath }}</span>
-        </div>
-        <div v-if="!config" class="state error">{{ t('plugins.configLoadFailed') }}</div>
-        <template v-else>
-          <section class="validation-strip" :class="{ blocked: blockers.length, clean: !technicalIssueCount }">
-            <strong>{{ validationStatusLabel }}</strong>
-          </section>
-
-          <details v-if="technicalIssueCount" class="technical-details">
-            <summary>{{ t('plugins.showTechnicalDetails', { count: technicalIssueCount }) }}</summary>
-            <div class="technical-detail-body">
-              <div v-if="issues.length" class="technical-detail-section">
-                <strong>{{ t('plugins.configDiag') }}</strong>
-                <div class="issue-list">
-                  <div v-for="issue in issues" :key="`${issue.code}:${issue.index ?? ''}:${issue.pluginName ?? ''}`" class="issue" :class="issueClass(issue)">
-                    <strong>{{ issue.severity === 'error' ? t('plugins.blocker') : t('plugins.warning') }}</strong>
-                    <span>{{ issue.message }}</span>
-                  </div>
-                </div>
+        <template v-if="selectedItem && selectedHeader">
+          <header class="detail-header">
+            <div class="detail-identity">
+              <div class="detail-title-line">
+                <PluginEngineTags :targets="selectedHeader.target" />
+                <strong>{{ selectedName }}</strong>
               </div>
-              <div v-if="schemaWarnings.length" class="technical-detail-section">
-                <strong>{{ t('plugins.paramParsing') }}</strong>
-                <div class="schema-warnings">
-                  <div v-for="warning in schemaWarnings" :key="warning">{{ warning }}</div>
-                </div>
-              </div>
+              <span>{{ selectedPath }}</span>
             </div>
-          </details>
-
-          <section v-if="selectedPlugin" class="detail-card">
-            <div class="plugin-toolbar">
-              <button type="button" :disabled="Boolean(busyKey) || !selectedPlugin.name" @click="togglePlugin(selectedPlugin)">
-                {{ selectedPlugin.status ? t('plugins.disable') : t('plugins.enable') }}
+            <div class="detail-actions">
+              <button
+                v-if="selectedPlugin"
+                type="button"
+                class="primary-action"
+                :disabled="Boolean(busyKey)"
+                @click="openParameterDialog(selectedPlugin)"
+              >
+                {{ t('plugins.configureParameters') }}
               </button>
-              <button type="button" :title="t('plugins.moveUp')" :disabled="!canMove(selectedPlugin, -1)" @click="movePlugin(selectedPlugin, -1)">
-                <ArrowUp />
-              </button>
-              <button type="button" :title="t('plugins.moveDown')" :disabled="!canMove(selectedPlugin, 1)" @click="movePlugin(selectedPlugin, 1)">
-                <ArrowDown />
-              </button>
-              <button type="button" class="danger" :disabled="Boolean(busyKey) || !selectedPlugin.fileExists" @click="deleteSelectedPlugin">
+              <button
+                v-if="selectedPlugin"
+                type="button"
+                class="danger-action"
+                :disabled="Boolean(busyKey)"
+                @click="openDeleteConfiguredDialog(selectedPlugin)"
+              >
                 {{ t('plugins.delete') }}
               </button>
-            </div>
-
-            <dl class="facts">
-              <dt>{{ t('plugins.name') }}</dt><dd>{{ selectedPlugin.name || t('plugins.unnamed') }}</dd>
-              <dt>{{ t('plugins.order') }}</dt><dd>#{{ selectedPlugin.index + 1 }}</dd>
-              <dt>{{ t('plugins.status') }}</dt><dd>{{ selectedPlugin.status ? t('plugins.statusEnabled') : t('plugins.statusDisabled') }}</dd>
-              <dt>{{ t('plugins.file') }}</dt><dd :class="{ danger: !selectedPlugin.fileExists }">{{ selectedPlugin.fileExists ? selectedPlugin.fileRelativePath : t('plugins.fileMissing', { fileName: selectedPlugin.fileName || t('plugins.pluginFileFallback') }) }}</dd>
-              <dt>{{ t('plugins.parameters') }}</dt><dd>{{ t('plugins.paramCount', { count: selectedPlugin.parameterCount }) }}</dd>
-            </dl>
-
-            <div v-if="schemaFields.length" class="schema-params">
-              <div
-                v-for="field in schemaFields"
-                :key="field.key"
-                class="param-field"
-                :class="{ full: isWideField(field), 'tree-child': schemaDepth(field) > 0 }"
-                :style="{ '--plugin-param-depth': String(schemaDepth(field)) }"
+              <button
+                v-else-if="selectedFile && !selectedFile.deleted"
+                type="button"
+                :disabled="Boolean(busyKey)"
+                @click="addExistingFile(selectedFile)"
               >
-                <span>
-                  <strong>{{ field.label }}</strong>
-                  <code>{{ field.key }}</code>
-                </span>
-                <PluginParameterInput
-                  v-if="field.editable === false || ['file', 'database', 'map', 'location', 'multiline', 'combo', 'json', 'struct', 'array'].includes(field.kind)"
-                  :field="field"
-                  :model-value="parameterFormValue(field)"
-                  :catalog="editorCatalog"
-                  @update:model-value="setParameterFormValue(field, $event)"
-                />
-                <input
-                  v-else-if="field.kind === 'text'"
-                  :value="parameterFormValue(field)"
-                  @input="setParameterFormValue(field, parameterInputValue($event))"
-                />
-                <input
-                  v-else-if="field.kind === 'number'"
-                  :value="parameterFormValue(field)"
-                  type="number"
-                  :min="field.min"
-                  :max="field.max"
-                  :step="field.decimals == null ? 1 : 10 ** -Math.max(0, field.decimals)"
-                  @input="setParameterFormValue(field, parameterInputValue($event))"
-                />
-                <label v-else-if="field.kind === 'boolean'" class="param-check">
-                  <input :checked="parameterCheckboxValue(field)" type="checkbox" @change="setParameterCheckboxValue(field, $event)" />
-                  <span>{{ parameterCheckboxValue(field) ? 'true' : 'false' }}</span>
-                </label>
-                <select
-                  v-else-if="field.kind === 'select'"
-                  :value="String(parameterFormValue(field))"
-                  @change="setParameterFormValue(field, parameterInputValue($event))"
-                >
-                  <option v-for="option in field.options || []" :key="String(option.value)" :value="String(option.value)">
-                    {{ option.label }}
-                  </option>
-                </select>
-                <textarea
-                  v-else-if="field.kind === 'json'"
-                  :value="String(parameterFormValue(field))"
-                  rows="4"
-                  spellcheck="false"
-                  @input="setParameterFormValue(field, parameterInputValue($event))"
-                />
-                <div v-else-if="field.kind === 'struct'" class="struct-editor">
-                  <label v-for="child in structFields(field)" :key="child.key" class="nested-field">
-                    <span>
-                      <strong>{{ child.label }}</strong>
-                      <code>{{ child.key }}</code>
-                    </span>
-                    <input
-                      v-if="child.kind === 'text'"
-                      :value="structFieldValue(field, child)"
-                      @input="setStructFieldValue(field, child, parameterInputValue($event))"
-                    />
-                    <input
-                      v-else-if="child.kind === 'number'"
-                      :value="structFieldValue(field, child)"
-                      type="number"
-                      :min="child.min"
-                      :max="child.max"
-                      @input="setStructFieldValue(field, child, parameterInputValue($event))"
-                    />
-                    <label v-else-if="child.kind === 'boolean'" class="param-check">
-                      <input
-                        :checked="scalarCheckboxValue(structFieldValue(field, child))"
-                        type="checkbox"
-                        @change="setScalarCheckboxValue((value) => setStructFieldValue(field, child, value), $event)"
-                      />
-                      <span>{{ scalarCheckboxValue(structFieldValue(field, child)) ? 'true' : 'false' }}</span>
-                    </label>
-                    <select
-                      v-else-if="child.kind === 'select'"
-                      :value="String(structFieldValue(field, child))"
-                      @change="setStructFieldValue(field, child, parameterInputValue($event))"
-                    >
-                      <option v-for="option in child.options || []" :key="String(option.value)" :value="String(option.value)">
-                        {{ option.label }}
-                      </option>
-                    </select>
-                    <textarea
-                      v-else
-                      :value="JSON.stringify(structFieldValue(field, child), null, 2)"
-                      rows="3"
-                      spellcheck="false"
-                      @input="setStructFieldValue(field, child, parameterInputValue($event))"
-                    />
-                    <small v-if="child.description || fieldMeta(child)">
-                      {{ [child.description, fieldMeta(child)].filter(Boolean).join(' · ') }}
-                    </small>
-                  </label>
-                </div>
-                <div v-else-if="field.kind === 'array'" class="array-editor">
-                  <div v-for="(_, index) in arrayItems(field)" :key="`${field.key}:${index}`" class="array-row">
-                    <div class="array-row-head">
-                      <strong>#{{ index + 1 }}</strong>
-                      <button type="button" @click="removeArrayItem(field, index)">{{ t('cmdList.delete') }}</button>
-                    </div>
-                    <div v-if="field.item?.kind === 'struct'" class="struct-editor">
-                      <label v-for="child in field.item.fields || []" :key="child.key" class="nested-field">
-                        <span>
-                          <strong>{{ child.label }}</strong>
-                          <code>{{ child.key }}</code>
-                        </span>
-                        <input
-                          v-if="child.kind === 'text'"
-                          :value="arrayStructFieldValue(field, index, child)"
-                          @input="setArrayStructFieldValue(field, index, child, parameterInputValue($event))"
-                        />
-                        <input
-                          v-else-if="child.kind === 'number'"
-                          :value="arrayStructFieldValue(field, index, child)"
-                          type="number"
-                          :min="child.min"
-                          :max="child.max"
-                          @input="setArrayStructFieldValue(field, index, child, parameterInputValue($event))"
-                        />
-                        <label v-else-if="child.kind === 'boolean'" class="param-check">
-                          <input
-                            :checked="scalarCheckboxValue(arrayStructFieldValue(field, index, child))"
-                            type="checkbox"
-                            @change="setScalarCheckboxValue((value) => setArrayStructFieldValue(field, index, child, value), $event)"
-                          />
-                          <span>{{ scalarCheckboxValue(arrayStructFieldValue(field, index, child)) ? 'true' : 'false' }}</span>
-                        </label>
-                        <select
-                          v-else-if="child.kind === 'select'"
-                          :value="String(arrayStructFieldValue(field, index, child))"
-                          @change="setArrayStructFieldValue(field, index, child, parameterInputValue($event))"
-                        >
-                          <option v-for="option in child.options || []" :key="String(option.value)" :value="String(option.value)">
-                            {{ option.label }}
-                          </option>
-                        </select>
-                        <textarea
-                          v-else
-                          :value="JSON.stringify(arrayStructFieldValue(field, index, child), null, 2)"
-                          rows="3"
-                          spellcheck="false"
-                          @input="setArrayStructFieldValue(field, index, child, parameterInputValue($event))"
-                        />
-                      </label>
-                    </div>
-                    <template v-else-if="field.item">
-                      <input
-                        v-if="field.item.kind === 'text'"
-                        :value="arrayScalarValue(field, index)"
-                        @input="setArrayScalarValue(field, index, parameterInputValue($event))"
-                      />
-                      <input
-                        v-else-if="field.item.kind === 'number'"
-                        :value="arrayScalarValue(field, index)"
-                        type="number"
-                        :min="field.item.min"
-                        :max="field.item.max"
-                        @input="setArrayScalarValue(field, index, parameterInputValue($event))"
-                      />
-                      <label v-else-if="field.item.kind === 'boolean'" class="param-check">
-                        <input
-                          :checked="scalarCheckboxValue(arrayScalarValue(field, index))"
-                          type="checkbox"
-                          @change="setScalarCheckboxValue((value) => setArrayScalarValue(field, index, value), $event)"
-                        />
-                        <span>{{ scalarCheckboxValue(arrayScalarValue(field, index)) ? 'true' : 'false' }}</span>
-                      </label>
-                      <select
-                        v-else-if="field.item.kind === 'select'"
-                        :value="String(arrayScalarValue(field, index))"
-                        @change="setArrayScalarValue(field, index, parameterInputValue($event))"
-                      >
-                        <option v-for="option in field.item.options || []" :key="String(option.value)" :value="String(option.value)">
-                          {{ option.label }}
-                        </option>
-                      </select>
-                      <textarea
-                        v-else
-                        :value="JSON.stringify(arrayScalarValue(field, index), null, 2)"
-                        rows="3"
-                        spellcheck="false"
-                        @input="setArrayScalarValue(field, index, parameterInputValue($event))"
-                      />
-                    </template>
-                  </div>
-                  <button type="button" class="array-add" @click="addArrayItem(field)">{{ t('plugins.addItem') }}</button>
-                  <small v-if="!arrayItems(field).length">{{ t('plugins.arrayEmpty') }}</small>
-                </div>
-                <small v-if="field.description || fieldMeta(field)">
-                  {{ [field.description, fieldMeta(field)].filter(Boolean).join(' · ') }}
-                </small>
-              </div>
+                {{ t('plugins.addToConfiguration') }}
+              </button>
+              <button
+                v-if="selectedFile && !selectedFile.deleted"
+                type="button"
+                class="danger"
+                :disabled="Boolean(busyKey)"
+                @click="deleteUnconfiguredFile(selectedFile)"
+              >
+                {{ t('plugins.deleteFile') }}
+              </button>
             </div>
+          </header>
 
-            <label class="params-editor">
-              <span><EditPen /> {{ schemaFields.length ? t('plugins.unknownParamsJson') : 'parameters JSON' }}</span>
-              <textarea v-model="parametersText" spellcheck="false" @keydown.ctrl.enter.prevent="saveParameters" />
-            </label>
-            <div v-if="parametersError" class="status error">{{ parametersError }}</div>
-            <button type="button" class="primary" :disabled="Boolean(busyKey) || !parametersDirty" @click="saveParameters">
-              {{ busyKey === `params:${selectedPlugin.name}` ? t('ui.saving') : t('plugins.saveParams') }}
-            </button>
-          </section>
-          <div v-else class="empty">{{ t('plugins.selectToEdit') }}</div>
-        </template>
-      </main>
-
-      <aside class="plugin-files-panel">
-        <div class="panel-title">
-          <span>{{ t('plugins.pluginFiles') }}</span>
-          <button type="button" class="text-action" :disabled="Boolean(busyKey)" @click="installPlugin">
-            {{ t('plugins.install') }}
-          </button>
-        </div>
-        <div class="file-list">
-          <div v-for="file in pluginFiles" :key="file.relativePath" class="file-row" :class="{ staged: file.staged, deleted: file.deleted }">
-            <strong>{{ file.fileName }}</strong>
-            <small>{{ file.relativePath }}</small>
-            <span>
-              {{ pluginFileStatus(file) }}
-            </span>
+          <div v-if="selectedIssue" class="actionable-error" role="alert">
+            {{ selectedIssueMessage(selectedIssue) }}
           </div>
-          <div v-if="!pluginFiles.length" class="empty">{{ t('plugins.noJsFiles') }}</div>
-        </div>
-        <div v-if="orphanFiles.length" class="orphan-block">
-          <strong>{{ t('plugins.unconfiguredFiles') }}</strong>
-          <span v-for="file in orphanFiles" :key="file.relativePath">{{ file.fileName }}</span>
-        </div>
-        <div class="file-note">{{ stagingDirty ? t('plugins.stagingPending') : t('plugins.lifecycleNote') }}</div>
-        <div v-if="stagingDirty" class="file-actions">
-          <button type="button" :disabled="Boolean(busyKey)" @click="discardPluginStaging">{{ t('editor.toolbar.discard') }}</button>
-          <button type="button" class="primary" :disabled="Boolean(busyKey)" @click="applyPluginStaging">{{ t('editor.toolbar.applyStaging') }}</button>
-        </div>
-      </aside>
+
+          <section class="metadata-card">
+            <el-descriptions :column="1" size="small" border>
+              <el-descriptions-item
+                v-if="selectedHeader.target.length"
+                :label="t('plugins.metadataTarget')"
+                :label-class-name="selectedTargetMismatch ? 'compatibility-label' : ''"
+                :class-name="selectedTargetMismatch ? 'compatibility-content' : ''"
+              >
+                <div class="target-metadata">
+                  <span>{{ selectedHeader.target.join(' / ') }}</span>
+                  <strong v-if="selectedTargetWarning" role="alert">
+                    {{ selectedTargetWarning }}
+                  </strong>
+                </div>
+              </el-descriptions-item>
+              <el-descriptions-item :label="t('plugins.metadataDescription')">
+                {{ selectedDescription }}
+              </el-descriptions-item>
+              <el-descriptions-item
+                v-if="selectedHeader.author"
+                :label="t('plugins.metadataAuthor')"
+              >
+                {{ selectedHeader.author }}
+              </el-descriptions-item>
+              <el-descriptions-item
+                v-if="selectedHeader.url"
+                :label="t('plugins.metadataUrl')"
+              >
+                <button
+                  v-if="selectedHeader.urlHref"
+                  type="button"
+                  class="metadata-link"
+                  @click="openPluginUrl"
+                >
+                  {{ selectedHeader.url }}
+                </button>
+                <span v-else>{{ selectedHeader.url }}</span>
+              </el-descriptions-item>
+              <el-descriptions-item
+                v-if="selectedHeader.base.length"
+                :label="t('plugins.metadataBase')"
+              >
+                <div class="plugin-reference-list">
+                  <button
+                    v-for="dependency in selectedHeader.base"
+                    :key="`base:${dependency}`"
+                    type="button"
+                    class="metadata-reference"
+                    :disabled="!pluginReferenceAvailable(dependency)"
+                    :title="pluginReferenceLabel(dependency)"
+                    :aria-label="pluginReferenceLabel(dependency)"
+                    @click="navigateToPluginReference(dependency)"
+                  >
+                    {{ dependency }}
+                  </button>
+                </div>
+              </el-descriptions-item>
+              <el-descriptions-item
+                v-if="selectedHeader.orderAfter.length"
+                :label="t('plugins.metadataOrderAfter')"
+              >
+                <div class="plugin-reference-list">
+                  <button
+                    v-for="dependency in selectedHeader.orderAfter"
+                    :key="`order-after:${dependency}`"
+                    type="button"
+                    class="metadata-reference"
+                    :disabled="!pluginReferenceAvailable(dependency)"
+                    :title="pluginReferenceLabel(dependency)"
+                    :aria-label="pluginReferenceLabel(dependency)"
+                    @click="navigateToPluginReference(dependency)"
+                  >
+                    {{ dependency }}
+                  </button>
+                </div>
+              </el-descriptions-item>
+            </el-descriptions>
+          </section>
+
+          <section class="help-panel">
+            <el-tabs
+              v-if="selectedHelpTabs.length"
+              v-model="activeHelpTab"
+              type="card"
+              class="help-language-tabs"
+            >
+              <el-tab-pane
+                v-for="tab in selectedHelpTabs"
+                :key="tab.id"
+                :label="tab.label"
+                :name="tab.id"
+              >
+                <pre v-if="tab.content">{{ tab.content }}</pre>
+                <div v-else class="help-empty">{{ t('plugins.noHelpForLanguage') }}</div>
+              </el-tab-pane>
+            </el-tabs>
+            <div v-else class="help-empty">{{ t('plugins.noHelp') }}</div>
+          </section>
+
+          <footer v-if="stagingDirty" class="staging-bar">
+            <span>{{ t('plugins.stagingSourceUntouched') }}</span>
+            <div>
+              <button type="button" :disabled="Boolean(busyKey)" @click="discardPluginStaging">
+                {{ t('editor.toolbar.discard') }}
+              </button>
+              <button
+                type="button"
+                class="primary"
+                :disabled="Boolean(busyKey)"
+                @click="applyPluginStaging"
+              >
+                {{ t('editor.toolbar.applyStaging') }}
+              </button>
+            </div>
+          </footer>
+        </template>
+        <div v-else class="state">{{ t('plugins.emptySelection') }}</div>
+      </main>
     </div>
+
+    <PluginParameterDialog
+      v-model="parameterDialogOpen"
+      :busy="busyKey.startsWith('params:')"
+      :plugin="parameterDialogPlugin"
+      :catalog="editorCatalog"
+      :error-message="parameterDialogError"
+      @closed="closeParameterDialogState"
+      @save="saveParameters"
+    />
+    <PluginDeleteDialog
+      :visible="deleteDialogOpen"
+      :busy="busyKey.startsWith('delete:') || busyKey.startsWith('remove-config:')"
+      :plugin-name="deleteTargetName"
+      :plugin-path="deleteTargetPath"
+      @close="closeDeleteConfiguredDialog"
+      @remove-configuration="deleteConfiguredPlugin('configuration')"
+      @delete-file="deleteConfiguredPlugin('file')"
+    />
   </div>
 </template>
 
 <style scoped>
-.plugins-pane { height: 100%; min-height: 0; background: var(--console-page,#f4efe7); color: var(--console-text,#211d17); }
-.plugins-layout { height: 100%; min-height: 0; display: grid; grid-template-columns: 280px minmax(360px,1fr) 280px; gap: 22px; padding: 14px 40px 34px; }
-.plugin-list-panel,.plugin-detail-panel,.plugin-files-panel { min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--console-border,#e4dcce); border-radius: 14px; background: var(--console-paper,#fffdfa); }
-.panel-title { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--console-border,#e4dcce); color: var(--console-text-soft,#5a5247); font-size: 12px; font-weight: 650; }
-.panel-title button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--console-text-muted,#9a8e7e); cursor: pointer; }
-.panel-title button.text-action { width: auto; padding: 0 8px; font: inherit; font-size: 10px; font-weight: 700; }
-.panel-title button:hover:not(:disabled) { background: var(--console-accent-soft,#f6e3d7); color: var(--console-accent,#be5630); }
-.panel-title button:disabled,button:disabled { cursor: not-allowed; opacity: .45; }
-.panel-title svg,.plugin-toolbar svg,.params-editor svg { width: 15px; }
-.path-chip { min-width: 0; overflow: hidden; color: var(--console-text-muted,#9a8e7e); font-family: var(--app-font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1px; padding: 10px; border-bottom: 1px solid var(--console-border,#e4dcce); background: var(--console-paper-soft,#faf5ec); }
-.summary div { display: grid; gap: 2px; padding: 8px; border-radius: 9px; background: var(--console-paper,#fffdfa); }
-.summary strong { font-size: 18px; line-height: 1; }
-.summary span { color: var(--console-text-muted,#9a8e7e); font-size: 10px; }
-.summary .bad strong { color: var(--app-danger); }
-.plugin-list-panel :deep(.console-search-input) { width:calc(100% - 20px); height:30px; flex:0 0 30px; margin:10px; box-sizing:border-box; }
-.plugin-list,.file-list { min-height: 0; flex: 1; overflow: auto; padding: 8px; }
-.plugin-row { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px; border: 0; border-radius: 10px; background: transparent; color: var(--console-text,#211d17); font: inherit; text-align: left; cursor: pointer; }
-.plugin-row:hover,.plugin-row.active { background: #fbf1e9; }
-.plugin-row.active { box-shadow: inset 3px 0 var(--console-accent,#be5630); }
-.plugin-row.disabled { color: var(--console-text-muted,#9a8e7e); }
-.plugin-row.broken .plugin-main strong { color: var(--app-danger); }
-.plugin-main { min-width: 0; display: flex; flex: 1; flex-direction: column; gap: 3px; }
-.plugin-main strong,.file-row strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.plugin-main small,.file-row small { overflow: hidden; color: var(--console-text-muted,#9a8e7e); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.plugin-badges { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
-.plugin-badges b { min-width: 38px; padding: 2px 6px; border-radius: 999px; font-family: var(--app-font-mono); font-size: 9px; font-weight: 800; text-align: center; }
-.plugin-badges .on,.plugin-badges .ok { background: var(--app-ok-soft); color: var(--app-ok); }
-.plugin-badges .off { background: var(--console-paper-soft,#faf5ec); color: var(--console-text-muted,#9a8e7e); }
-.plugin-badges .missing { background: var(--app-danger-soft); color: var(--app-danger); }
-.plugin-detail-panel { overflow: auto; }
-.validation-strip { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px; padding: 11px 12px; border-radius: 11px; background: var(--app-warn-soft); color: var(--app-warn); font-size: 12px; }
-.validation-strip.blocked { background: var(--app-danger-soft); color: var(--app-danger); }
-.validation-strip.clean { background: var(--app-ok-soft); color: var(--app-ok); }
-.technical-details { margin: 0 12px 12px; border: 1px solid var(--console-border,#e4dcce); border-radius: 10px; background: var(--console-paper-soft,#faf5ec); color: var(--console-text-soft,#5a5247); font-size: 11px; }
-.technical-details summary { cursor: pointer; padding: 9px 10px; color: var(--console-text-muted,#9a8e7e); font-weight: 650; }
-.technical-details summary:hover { color: var(--console-accent,#be5630); }
-.technical-detail-body { display: grid; gap: 10px; padding: 0 10px 10px; }
-.technical-detail-section { display: grid; gap: 6px; }
-.technical-detail-section > strong { color: var(--console-text-soft,#5a5247); font-size: 11px; }
-.issue-list { display: grid; gap: 6px; margin: 0 12px 12px; }
-.technical-details .issue-list { margin: 0; }
-.issue { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 9px; font-size: 11px; line-height: 1.45; }
-.issue.error,.status.error { background: var(--app-danger-soft); color: var(--app-danger); }
-.issue.warn { background: var(--app-warn-soft); color: var(--app-warn); }
-.detail-card { display: grid; gap: 12px; padding: 12px; }
-.plugin-toolbar { display: flex; gap: 7px; align-items: center; }
-.plugin-toolbar button,.primary { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 9px; background: var(--console-paper,#fffdfa); color: var(--console-text-soft,#5a5247); padding: 0 11px; font: inherit; font-size: 11px; cursor: pointer; }
-.plugin-toolbar button:hover:not(:disabled) { border-color: #d2a88c; color: var(--console-accent,#be5630); }
-.plugin-toolbar button.danger { margin-left: auto; color: var(--app-danger); }
-.facts { display: grid; grid-template-columns: 66px minmax(0,1fr); gap: 8px 10px; margin: 0; padding: 12px; border-radius: 10px; background: var(--console-paper-soft,#faf5ec); font-size: 11px; }
-.facts dt { color: var(--console-text-muted,#9a8e7e); }
-.facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
-.facts .danger { color: var(--app-danger); }
-.status { padding: 8px 10px; border-radius: 9px; font-size: 11px; white-space: pre-wrap; }
-.status { margin: 0 10px 10px; }
-.status.success { background: var(--app-ok-soft); color: var(--app-ok); }
-.schema-warnings { display: grid; gap: 5px; padding: 9px 10px; border-radius: 10px; background: var(--app-warn-soft); color: var(--app-warn); font-size: 11px; line-height: 1.45; }
-.schema-params { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; padding: 12px; border: 1px solid var(--console-border,#e4dcce); border-radius: 10px; background: var(--console-paper-soft,#faf5ec); }
-.param-field { min-width: 0; display: grid; gap: 5px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
-.param-field.tree-child { padding-left: calc(var(--plugin-param-depth) * 12px); border-left: 1px solid var(--console-border,#e4dcce); }
-.param-field.full { grid-column: 1 / -1; }
-.param-field > span,.nested-field > span { min-width: 0; display: flex; align-items: center; gap: 6px; }
-.schema-params strong { overflow: hidden; color: var(--console-text-soft,#5a5247); text-overflow: ellipsis; white-space: nowrap; }
-.schema-params code { min-width: 0; overflow: hidden; color: var(--console-text-muted,#9a8e7e); font-family: var(--app-font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.schema-params input:not([type="checkbox"]),.schema-params select,.schema-params textarea { min-width: 0; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 8px; background: var(--console-paper,#fffdfa); color: var(--console-text,#211d17); padding: 7px 8px; font: inherit; }
-.schema-params textarea { font-family: var(--app-font-mono); resize: vertical; }
-.schema-params small { color: var(--console-text-muted,#9a8e7e); font-size: 10px; line-height: 1.45; white-space: pre-wrap; }
-.param-check { min-height: 31px; display: inline-flex!important; align-items: center; gap: 7px; }
-.param-check span { color: var(--console-text-soft,#5a5247); font-family: var(--app-font-mono); font-size: 10px; }
-.struct-editor { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; padding: 9px; border: 1px solid var(--console-border,#e4dcce); border-radius: 9px; background: var(--console-paper,#fffdfa); }
-.nested-field { min-width: 0; display: grid; gap: 5px; }
-.array-editor { display: grid; gap: 8px; }
-.array-row { display: grid; gap: 8px; padding: 9px; border: 1px solid var(--console-border,#e4dcce); border-radius: 9px; background: var(--console-paper,#fffdfa); }
-.array-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.array-row-head strong { font-family: var(--app-font-mono); font-size: 10px; }
-.array-row-head button,.array-add { min-height: 28px; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 8px; background: var(--console-paper-soft,#faf5ec); color: var(--console-text-soft,#5a5247); padding: 0 9px; font: inherit; font-size: 10px; cursor: pointer; }
-.array-row-head button:hover,.array-add:hover { border-color: #d2a88c; color: var(--console-accent,#be5630); }
-.array-add { width: fit-content; }
-.params-editor { display: grid; gap: 7px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
-.params-editor span { display: inline-flex; align-items: center; gap: 5px; color: var(--console-text-soft,#5a5247); font-weight: 650; }
-.params-editor textarea { min-height: 260px; resize: vertical; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 10px; background: var(--console-paper-soft,#faf5ec); color: var(--console-text,#211d17); padding: 11px; font: 11px/1.55 var(--app-font-mono); }
-.schema-params input:focus,.schema-params select:focus,.schema-params textarea:focus,.params-editor textarea:focus,.plugin-row:focus-visible,.plugin-toolbar button:focus-visible,.primary:focus-visible,.panel-title button:focus-visible { outline: none; box-shadow: var(--app-ring); }
-.primary { width: fit-content; border-color: var(--console-accent,#be5630); background: var(--console-accent,#be5630); color: white; font-weight: 750; }
-.primary:hover:not(:disabled) { background: var(--console-accent-hover,#a8481f); }
-.file-row { display: grid; gap: 3px; padding: 9px 10px; border-radius: 10px; }
-.file-row:hover { background: #fbf1e9; }
-.file-row span { color: var(--console-text-muted,#9a8e7e); font-size: 10px; }
-.file-row.staged span { color: var(--console-accent,#be5630); }
-.file-row.deleted strong,.file-row.deleted span { color: var(--app-danger); }
-.orphan-block { display: grid; gap: 5px; margin: 0 10px 10px; padding: 10px; border-radius: 10px; background: var(--console-paper-soft,#faf5ec); font-size: 11px; }
-.orphan-block strong { color: var(--console-text-soft,#5a5247); }
-.orphan-block span { color: var(--console-text-muted,#9a8e7e); font-family: var(--app-font-mono); font-size: 10px; }
-.file-note { margin: 0 10px 10px; padding: 10px; border-radius: 10px; background: var(--console-accent-soft,#f6e3d7); color: var(--console-accent,#be5630); font-size: 11px; line-height: 1.5; }
-.file-actions { display: flex; justify-content: flex-end; gap: 7px; padding: 0 10px 10px; }
-.file-actions button { min-height: 30px; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 8px; background: var(--console-paper,#fffdfa); color: var(--console-text-soft,#5a5247); padding: 0 10px; font: inherit; font-size: 10px; cursor: pointer; }
-.file-actions .primary { border-color: var(--console-accent,#be5630); background: var(--console-accent,#be5630); color: white; }
-.empty,.state { display: grid; place-items: center; min-height: 110px; padding: 20px; color: var(--console-text-muted,#9a8e7e); font-size: 12px; text-align: center; }
-.state { height: 100%; }
-.state.error { color: var(--app-danger); }
-@media(max-width:1180px){.plugins-layout{grid-template-columns:240px minmax(320px,1fr);}.plugin-files-panel{grid-column:1 / -1;min-height:220px;}}
-@media(max-width:760px){.plugins-layout{grid-template-columns:1fr;padding:14px 24px 28px;}.plugin-list-panel,.plugin-detail-panel,.plugin-files-panel{min-height:260px;}.validation-strip{align-items:flex-start;flex-direction:column;}}
+.plugins-pane {
+  height: 100%;
+  min-height: 0;
+  background: var(--console-page, #f4efe7);
+  color: var(--console-text, #211d17);
+}
+.plugins-layout {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--plugin-list-width, 380px) 7px minmax(0, 1fr);
+  padding: 16px 40px 28px;
+}
+.plugin-list-panel,
+.plugin-detail-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--console-border, #e4dcce);
+  border-radius: 14px;
+  background: var(--console-paper, #fffdfa);
+}
+.panel-title {
+  min-height: 52px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 0 16px;
+  border-bottom: 1px solid var(--console-border, #e4dcce);
+  color: var(--console-text-soft, #5a5247);
+  font-size: 12px;
+  font-weight: 650;
+}
+.panel-actions {
+  display: flex;
+  gap: 4px;
+}
+.panel-title button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--console-text-muted, #9a8e7e);
+  cursor: pointer;
+}
+.panel-title button:hover:not(:disabled) {
+  background: var(--console-paper-soft, #faf5ec);
+  color: var(--console-accent, #be5630);
+}
+.panel-title button :deep(svg) {
+  width: 15px;
+}
+.plugin-list-panel :deep(.console-search-input) {
+  flex: 0 0 auto;
+  margin: 12px 12px 8px;
+}
+.reorder-hint,
+.status {
+  margin: 0 12px 8px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.reorder-hint {
+  background: var(--console-paper-soft, #faf5ec);
+  color: var(--console-text-muted, #9a8e7e);
+}
+.status.error {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+}
+.status.success {
+  background: var(--app-ok-soft);
+  color: var(--app-ok);
+}
+.plugin-list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 0 10px 10px;
+}
+.plugin-group h3 {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 10px 8px 7px;
+  background: var(--console-paper, #fffdfa);
+  color: var(--console-text-muted, #9a8e7e);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.unconfigured-group {
+  margin-top: 8px;
+  border-top: 1px solid var(--console-border, #e4dcce);
+}
+.plugin-row {
+  position: relative;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--console-border, #e4dcce);
+  border-radius: 0;
+  color: var(--console-text, #211d17);
+  cursor: default;
+}
+.plugin-row:hover {
+  background: var(--console-paper-soft, #faf5ec);
+}
+.plugin-row.active {
+  background: var(--console-accent-soft, #f6e3d7);
+  box-shadow: inset 3px 0 var(--console-accent, #be5630);
+}
+.plugin-row:focus-visible,
+.pane-resizer:focus-visible,
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--console-accent, #be5630);
+  outline-offset: 2px;
+}
+.plugin-row.drop-before::before,
+.plugin-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--console-accent, #be5630);
+}
+.plugin-row.drop-before::before {
+  top: -2px;
+}
+.plugin-row.drop-after::after {
+  bottom: -2px;
+}
+.drag-handle {
+  width: 22px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--console-text-muted, #9a8e7e);
+  cursor: grab;
+}
+.drag-handle:hover {
+  background: var(--console-paper, #fffdfa);
+  color: var(--console-text-soft, #5a5247);
+}
+.drag-handle.locked {
+  opacity: .35;
+  cursor: not-allowed;
+}
+.drag-handle-dots {
+  width: 12px;
+  height: 18px;
+  fill: currentColor;
+}
+.plugin-enabled-switch {
+  width: 36px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+}
+.plugin-enabled-switch :deep(.el-switch) {
+  --el-switch-on-color: var(--console-accent, #be5630);
+  --el-switch-off-color: var(--console-border-strong, #ddd3c2);
+  height: 32px;
+}
+.plugin-enabled-switch :deep(.el-switch__core) {
+  min-width: 32px;
+}
+.plugin-main {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.plugin-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.plugin-main strong,
+.plugin-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plugin-main strong {
+  min-width: 0;
+  font-size: 11.5px;
+}
+.plugin-main small {
+  color: var(--console-text-muted, #9a8e7e);
+  font-size: 9.5px;
+}
+.plugin-main em {
+  color: var(--app-danger);
+  font-size: 10px;
+  font-style: normal;
+}
+.plugin-row.disabled .plugin-main {
+  opacity: .68;
+}
+.file-row {
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+.file-row.deleted {
+  opacity: .62;
+}
+.row-action {
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--console-border-strong, #ddd3c2);
+  border-radius: 7px;
+  background: var(--console-paper, #fffdfa);
+  color: var(--console-text-soft, #5a5247);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.empty,
+.state {
+  min-height: 110px;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  color: var(--console-text-muted, #9a8e7e);
+  font-size: 12px;
+  text-align: center;
+}
+.state {
+  height: 100%;
+}
+.load-failed {
+  align-content: center;
+  gap: 12px;
+}
+.load-failed p {
+  margin: 0;
+}
+.load-failed button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--console-border-strong, #ddd3c2);
+  border-radius: 8px;
+  background: var(--console-paper, #fffdfa);
+  color: var(--console-text-soft, #5a5247);
+  font: inherit;
+  cursor: pointer;
+}
+.pane-resizer {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+}
+.pane-resizer::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 3px;
+  width: 1px;
+  background: var(--console-border-strong, #ddd3c2);
+  transition: background-color .15s ease, width .15s ease;
+}
+.pane-resizer:hover::after,
+.pane-resizer:focus-visible::after {
+  width: 2px;
+  background: var(--console-accent, #be5630);
+}
+.plugin-detail-panel {
+  margin-left: 0;
+}
+.detail-header {
+  min-height: 58px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--console-border, #e4dcce);
+}
+.detail-identity {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.detail-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.detail-header strong,
+.detail-identity > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detail-header strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.detail-identity > span {
+  color: var(--console-text-muted, #9a8e7e);
+  font: 10px var(--app-font-mono);
+}
+.detail-actions,
+.staging-bar > div {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 14px;
+}
+.detail-actions button,
+.staging-bar button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--console-border-strong, #ddd3c2);
+  border-radius: 8px;
+  background: var(--console-paper, #fffdfa);
+  color: var(--console-text-soft, #5a5247);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.detail-actions button.primary-action {
+  border-color: var(--app-tone-control);
+  background: var(--app-tone-control);
+  color: #fff;
+  font-weight: 650;
+}
+.detail-actions button.danger-action {
+  border-color: var(--app-danger);
+  background: var(--app-danger);
+  color: #fff;
+  font-weight: 650;
+}
+.detail-actions button.primary-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--app-tone-control) 84%, #000);
+  background: color-mix(in srgb, var(--app-tone-control) 84%, #000);
+}
+.detail-actions button.danger-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--app-danger) 84%, #000);
+  background: color-mix(in srgb, var(--app-danger) 84%, #000);
+}
+.detail-actions button:hover:not(:disabled),
+.staging-bar button:hover:not(:disabled),
+.row-action:hover:not(:disabled) {
+  border-color: var(--console-accent, #be5630);
+}
+.actionable-error {
+  flex: 0 0 auto;
+  margin: 12px 14px 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.metadata-card {
+  flex: 0 0 auto;
+  margin: 14px 14px 0;
+  overflow: hidden;
+  border-radius: 10px;
+}
+.metadata-card :deep(.el-descriptions__table) {
+  table-layout: fixed;
+}
+.metadata-card :deep(.el-descriptions__cell) {
+  border-color: var(--console-border, #e4dcce) !important;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.metadata-card :deep(.el-descriptions__label.el-descriptions__cell.is-bordered-label) {
+  width: 112px;
+  padding: 8px 12px;
+  background: var(--console-paper-soft, #faf5ec);
+  color: var(--console-text-muted, #9a8e7e);
+  font-weight: 500;
+}
+.metadata-card :deep(.el-descriptions__content.el-descriptions__cell.is-bordered-content) {
+  padding: 8px 12px;
+  background: var(--console-paper, #fffdfa);
+  color: var(--console-text, #211d17);
+  overflow-wrap: anywhere;
+}
+.metadata-card :deep(.compatibility-label),
+.metadata-card :deep(.compatibility-content) {
+  border-color: color-mix(in srgb, var(--app-danger) 40%, var(--console-border, #e4dcce)) !important;
+  background: var(--app-danger-soft) !important;
+}
+.metadata-card :deep(.compatibility-label) {
+  color: var(--app-danger) !important;
+}
+.target-metadata {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.target-metadata strong {
+  color: var(--app-danger);
+  font-size: 10px;
+  font-weight: 650;
+}
+.metadata-link {
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--console-accent, #be5630);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.plugin-reference-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.metadata-reference {
+  min-height: 26px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--app-tone-control) 34%, var(--console-border, #e4dcce));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--app-tone-control) 7%, var(--console-paper, #fffdfa));
+  color: var(--app-tone-control);
+  font: inherit;
+  cursor: pointer;
+}
+.metadata-reference:hover:not(:disabled) {
+  border-color: var(--app-tone-control);
+  background: color-mix(in srgb, var(--app-tone-control) 13%, var(--console-paper, #fffdfa));
+}
+.metadata-reference:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--console-text, #211d17);
+  cursor: default;
+  opacity: 1;
+}
+.help-panel {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin: 14px;
+  overflow: hidden;
+  border: 1px solid var(--console-border, #e4dcce);
+  border-radius: 10px;
+}
+.help-language-tabs {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.help-language-tabs :deep(.el-tabs__header) {
+  flex: 0 0 auto;
+  margin: 0;
+  background: var(--console-paper-soft, #faf5ec);
+}
+.help-language-tabs :deep(.el-tabs__nav) {
+  border: 0;
+}
+.help-language-tabs :deep(.el-tabs__item) {
+  min-width: 76px;
+  height: 38px;
+  padding: 0 16px;
+  border-top: 0;
+  border-color: var(--console-border, #e4dcce);
+  color: var(--console-text-muted, #9a8e7e);
+  font-size: 11px;
+}
+.help-language-tabs :deep(.el-tabs__item.is-active) {
+  background: var(--console-paper, #fffdfa);
+  color: var(--console-accent, #be5630);
+}
+.help-language-tabs :deep(.el-tabs__content) {
+  min-height: 0;
+  flex: 1;
+}
+.help-language-tabs :deep(.el-tab-pane) {
+  height: 100%;
+}
+.help-panel pre {
+  height: 100%;
+  margin: 0;
+  padding: 14px 16px;
+  overflow: auto;
+  color: var(--console-text, #211d17);
+  font: 12px/1.7 var(--app-font-sans);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.help-empty {
+  min-height: 120px;
+  height: 100%;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--console-text-muted, #9a8e7e);
+  font-size: 11px;
+}
+.staging-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--console-border, #e4dcce);
+  background: var(--console-accent-soft, #f6e3d7);
+  color: var(--console-text-soft, #5a5247);
+  font-size: 10px;
+}
+.staging-bar button.primary {
+  border-color: var(--console-accent, #be5630);
+  background: var(--console-accent, #be5630);
+  color: #fff;
+}
+button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+:global(body.plugin-pane-resizing) {
+  cursor: col-resize;
+  user-select: none;
+}
+@media (max-width: 760px) {
+  .plugins-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(280px, 42%) minmax(320px, 1fr);
+    gap: 8px;
+    padding: 14px 24px 24px;
+  }
+  .pane-resizer {
+    display: none;
+  }
+  .detail-header,
+  .staging-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-resizer::after {
+    transition: none;
+  }
+}
 </style>

@@ -142,8 +142,8 @@ describe('editor semantic controls', () => {
   });
 
   test('keeps the plugin search compact and identifies the active project at the top-bar center', () => {
-    assert.match(pluginPaneSource, /\.plugin-list-panel :deep\(\.console-search-input\)[^}]+flex:\s*0 0 30px/s);
-    assert.match(pluginPaneSource, /\.plugin-list-panel :deep\(\.console-search-input\)[^}]+height:\s*30px/s);
+    assert.match(pluginPaneSource, /\.plugin-list-panel :deep\(\.console-search-input\)[^}]+flex:\s*0 0 auto/s);
+    assert.match(pluginPaneSource, /\.plugin-list-panel :deep\(\.console-search-input\)[^}]+margin:\s*12px 12px 8px/s);
     assert.match(topBarSource, /data-ui-id="topbar-project-identity"/);
     assert.match(topBarSource, /projectStore\.currentProjectInfo\.iconUrl/);
     assert.match(topBarSource, /projectStore\.currentProjectInfo\.name/);

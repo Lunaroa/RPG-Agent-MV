@@ -1,61 +1,133 @@
 <template>
   <div class="plugin-param-input" :class="{ readonly: isReadonly }">
-    <textarea
+    <el-input
       v-if="isReadonly"
-      :value="displayReadonlyValue"
-      rows="2"
+      :model-value="displayReadonlyValue"
+      type="textarea"
+      :rows="2"
       readonly
+      resize="vertical"
       spellcheck="false"
     />
-    <textarea
+    <el-input
       v-else-if="field.kind === 'multiline' || field.kind === 'json'"
-      :value="stringValue"
-      :rows="field.kind === 'multiline' ? 4 : 3"
+      :model-value="stringValue"
+      type="textarea"
+      :rows="field.kind === 'multiline' ? 7 : 4"
+      resize="vertical"
       spellcheck="false"
-      @input="emitValue(inputValue($event))"
+      @update:model-value="emitTextValue"
     />
-    <input
+    <el-input
       v-else-if="field.kind === 'number'"
-      :value="stringValue"
-      type="number"
-      :min="field.min"
-      :max="field.max"
-      :step="numberStep"
-      @input="emitValue(inputValue($event))"
+      :model-value="stringValue"
+      inputmode="decimal"
+      spellcheck="false"
+      @update:model-value="emitTextValue"
     />
-    <label v-else-if="field.kind === 'boolean'" class="boolean-input">
-      <input :checked="booleanValue" type="checkbox" @change="emitValue(($event.target as HTMLInputElement).checked ? 'true' : 'false')" />
-      <span>{{ booleanValue ? booleanLabel(true) : booleanLabel(false) }}</span>
-    </label>
-    <select v-else-if="field.kind === 'select'" :value="stringValue" @change="emitValue(inputValue($event))">
-      <option v-for="option in field.options || []" :key="String(option.value)" :value="String(option.value)">{{ option.label }}</option>
-    </select>
-    <template v-else-if="field.kind === 'combo'">
-      <input :value="stringValue" type="text" :list="comboListId" @input="emitValue(inputValue($event))" />
-      <datalist :id="comboListId">
-        <option v-for="option in field.options || []" :key="String(option.value)" :value="String(option.value)">{{ option.label }}</option>
-      </datalist>
-    </template>
-    <select v-else-if="field.kind === 'database' && databaseOptions.length" :value="stringValue" @change="emitValue(inputValue($event))">
-      <option value="0">0</option>
-      <option v-for="option in databaseOptions" :key="option.id" :value="String(option.id)">{{ option.id }} · {{ option.name }}</option>
-    </select>
-    <select v-else-if="field.kind === 'map' && catalog?.maps?.length" :value="stringValue" @change="emitValue(inputValue($event))">
-      <option value="0">0</option>
-      <option v-for="map in catalog.maps" :key="map.id" :value="String(map.id)">{{ map.id }} · {{ map.name }}</option>
-    </select>
-    <select v-else-if="field.kind === 'file' && fileOptions.length" :value="stringValue" @change="emitValue(inputValue($event))">
-      <option value=""></option>
-      <option v-for="option in fileOptions" :key="option" :value="option">{{ option }}</option>
-    </select>
+    <el-switch
+      v-else-if="field.kind === 'boolean'"
+      :model-value="booleanValue"
+      :active-text="booleanLabel(true)"
+      :inactive-text="booleanLabel(false)"
+      @change="emitValue(Boolean($event) ? 'true' : 'false')"
+    />
+    <el-select
+      v-else-if="field.kind === 'select'"
+      :model-value="stringValue"
+      @change="emitSelectValue"
+    >
+      <el-option
+        v-for="option in selectOptions"
+        :key="option.value"
+        :label="option.label"
+        :value="option.value"
+      />
+    </el-select>
+    <el-select
+      v-else-if="field.kind === 'combo'"
+      :model-value="stringValue"
+      filterable
+      allow-create
+      default-first-option
+      @change="emitSelectValue"
+    >
+      <el-option
+        v-for="option in selectOptions"
+        :key="option.value"
+        :label="option.label"
+        :value="option.value"
+      />
+    </el-select>
+    <el-select
+      v-else-if="field.kind === 'database'"
+      :model-value="stringValue"
+      filterable
+      @change="emitSelectValue"
+    >
+      <el-option
+        v-for="option in databaseSelectOptions"
+        :key="option.value"
+        :label="option.label"
+        :value="option.value"
+      />
+    </el-select>
+    <el-select
+      v-else-if="field.kind === 'map'"
+      :model-value="stringValue"
+      filterable
+      @change="emitSelectValue"
+    >
+      <el-option
+        v-for="option in mapSelectOptions"
+        :key="option.value"
+        :label="option.label"
+        :value="option.value"
+      />
+    </el-select>
+    <el-select
+      v-else-if="field.kind === 'file'"
+      :model-value="stringValue"
+      filterable
+      clearable
+      @change="emitSelectValue"
+    >
+      <el-option
+        v-for="option in fileSelectOptions"
+        :key="option.value"
+        :label="option.label"
+        :value="option.value"
+      />
+    </el-select>
     <div v-else-if="field.kind === 'location'" class="location-input">
-      <select :value="String(locationValue.mapId)" @change="setLocationPart('mapId', inputValue($event))">
-        <option value="0">0</option>
-        <option v-for="map in catalog?.maps || []" :key="map.id" :value="String(map.id)">{{ map.id }} · {{ map.name }}</option>
-      </select>
-      <input :value="String(locationValue.x)" type="number" min="0" aria-label="x" @input="setLocationPart('x', inputValue($event))" />
-      <input :value="String(locationValue.y)" type="number" min="0" aria-label="y" @input="setLocationPart('y', inputValue($event))" />
-      <button type="button" class="location-picker" @click="openLocationPicker">{{ t('coordinate.chooseMap') }}</button>
+      <el-select
+        :model-value="String(locationValue.mapId)"
+        filterable
+        :aria-label="t('plugins.parameterLocationMap')"
+        @change="setLocationPart('mapId', String($event))"
+      >
+        <el-option
+          v-for="option in locationMapOptions"
+          :key="option.value"
+          :label="option.label"
+          :value="option.value"
+        />
+      </el-select>
+      <el-input
+        :model-value="String(locationValue.x)"
+        inputmode="numeric"
+        aria-label="X"
+        @update:model-value="setLocationPart('x', String($event))"
+      />
+      <el-input
+        :model-value="String(locationValue.y)"
+        inputmode="numeric"
+        aria-label="Y"
+        @update:model-value="setLocationPart('y', String($event))"
+      />
+      <el-button class="location-picker" @click="openLocationPicker">
+        {{ t('coordinate.chooseMap') }}
+      </el-button>
     </div>
     <div v-else-if="field.kind === 'struct'" class="compound-input">
       <label v-for="child in field.fields || []" :key="child.key" class="compound-field">
@@ -78,21 +150,47 @@
           :catalog="catalog"
           @update:model-value="setArrayValue(index, $event)"
         />
-        <button type="button" :aria-label="t('cmdList.delete')" @click="removeArrayValue(index)">×</button>
+        <el-button
+          :aria-label="t('cmdList.delete')"
+          @click="removeArrayValue(index)"
+        >
+          ×
+        </el-button>
       </div>
-      <button type="button" class="array-add" @click="addArrayValue">{{ t('plugins.addItem') }}</button>
+      <el-button class="array-add" @click="addArrayValue">
+        {{ t('plugins.addItem') }}
+      </el-button>
     </div>
-    <input v-else :value="stringValue" type="text" @input="emitValue(inputValue($event))" />
-    <small v-if="field.unsupportedReason" class="readonly-reason">{{ field.unsupportedReason }}</small>
-    <CoordinatePickerDialog ref="coordinatePicker" :catalog="catalog || null" @commit="commitLocation" />
+    <el-input
+      v-else
+      :model-value="stringValue"
+      @update:model-value="emitTextValue"
+    />
+
+    <small v-if="referenceWarning" class="reference-warning" role="status">
+      {{ referenceWarning }}
+    </small>
+    <small v-if="field.unsupportedReason" class="readonly-reason">
+      {{ unsupportedReason }}
+    </small>
+    <CoordinatePickerDialog
+      ref="coordinatePicker"
+      :catalog="catalog || null"
+      @commit="commitLocation"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, useId } from 'vue';
+import { computed, ref } from 'vue';
 import type { EditorProjectCatalog, PluginParameterSchemaField } from '../../api/client';
 import { useI18n } from '../../i18n';
 import CoordinatePickerDialog from './CoordinatePickerDialog.vue';
+
+interface SelectOption {
+  value: string;
+  label: string;
+}
 
 defineOptions({ name: 'PluginParameterInput' });
 const props = defineProps<{
@@ -103,15 +201,13 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>();
 const { t } = useI18n();
 const coordinatePicker = ref<InstanceType<typeof CoordinatePickerDialog> | null>(null);
-const comboListId = `plugin-combo-${useId().replace(/[^a-z0-9_-]/gi, '-')}`;
 
 const isReadonly = computed(() => props.field.editable === false);
 const stringValue = computed(() => props.modelValue == null ? '' : String(props.modelValue));
 const displayReadonlyValue = computed(() => typeof props.modelValue === 'string'
   ? props.modelValue
   : JSON.stringify(props.modelValue ?? '', null, 2));
-const booleanValue = computed(() => props.modelValue === true || ['true', 'on', '1'].includes(String(props.modelValue).toLowerCase()));
-const numberStep = computed(() => props.field.decimals == null ? '1' : String(10 ** -Math.max(0, props.field.decimals)));
+const booleanValue = computed(() => isBooleanEnabled(props.modelValue));
 const structValue = computed<Record<string, unknown>>(() => {
   const value = parseStructuredValue(props.modelValue);
   return isRecord(value) ? value : {};
@@ -120,71 +216,339 @@ const arrayValue = computed<unknown[]>(() => {
   const value = parseStructuredValue(props.modelValue);
   return Array.isArray(value) ? value : [];
 });
-const locationValue = computed<{ mapId: number; x: number; y: number }>(() => {
+const locationValue = computed<{ mapId: number | string; x: number | string; y: number | string }>(() => {
   const value = parseStructuredValue(props.modelValue);
   return isRecord(value)
-    ? { mapId: Number(value.mapId) || 0, x: Number(value.x) || 0, y: Number(value.y) || 0 }
+    ? {
+        mapId: scalarValue(value.mapId, 0),
+        x: scalarValue(value.x, 0),
+        y: scalarValue(value.y, 0),
+      }
     : { mapId: 0, x: 0, y: 0 };
 });
+const selectOptions = computed<SelectOption[]>(() =>
+  (props.field.options || []).map((option) => ({
+    value: String(option.value),
+    label: option.label,
+  })),
+);
 const databaseOptions = computed(() => {
   const keyByTable: Record<string, keyof EditorProjectCatalog> = {
-    Actors: 'actors', Classes: 'classes', Skills: 'skills', Items: 'items', Weapons: 'weapons', Armors: 'armors',
-    Enemies: 'enemies', Troops: 'troops', States: 'states', Animations: 'animations', Tilesets: 'tilesets',
-    CommonEvents: 'commonEvents', 'System.switches': 'switches', 'System.variables': 'variables',
+    Actors: 'actors',
+    Classes: 'classes',
+    Skills: 'skills',
+    Items: 'items',
+    Weapons: 'weapons',
+    Armors: 'armors',
+    Enemies: 'enemies',
+    Troops: 'troops',
+    States: 'states',
+    Animations: 'animations',
+    Tilesets: 'tilesets',
+    CommonEvents: 'commonEvents',
+    'System.switches': 'switches',
+    'System.variables': 'variables',
   };
   const key = keyByTable[props.field.databaseTable || ''];
   const values = key && props.catalog?.[key];
   return Array.isArray(values)
-    ? values.filter((entry): entry is { id: number; name: string } => Boolean(entry && typeof entry === 'object' && 'id' in entry && 'name' in entry))
+    ? values.filter((entry): entry is { id: number; name: string } =>
+        Boolean(entry && typeof entry === 'object' && 'id' in entry && 'name' in entry))
     : [];
 });
+const databaseSelectOptions = computed<SelectOption[]>(() =>
+  withMissingCurrent(
+    [
+      { value: '0', label: '0' },
+      ...databaseOptions.value.map((entry) => ({
+        value: String(entry.id),
+        label: `${entry.id} · ${entry.name}`,
+      })),
+    ],
+    stringValue.value,
+  ),
+);
+const mapSelectOptions = computed<SelectOption[]>(() =>
+  withMissingCurrent(
+    [
+      { value: '0', label: '0' },
+      ...(props.catalog?.maps || []).map((map) => ({
+        value: String(map.id),
+        label: `${map.id} · ${map.name}`,
+      })),
+    ],
+    stringValue.value,
+  ),
+);
+const locationMapOptions = computed<SelectOption[]>(() =>
+  withMissingCurrent(
+    [
+      { value: '0', label: '0' },
+      ...(props.catalog?.maps || []).map((map) => ({
+        value: String(map.id),
+        label: `${map.id} · ${map.name}`,
+      })),
+    ],
+    String(locationValue.value.mapId),
+  ),
+);
 const fileOptions = computed(() => {
-  const normalized = String(props.field.directory || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '').toLowerCase();
+  const normalized = normalizeDirectory(props.field.directory);
   const keyByDirectory: Record<string, keyof EditorProjectCatalog['assets']> = {
-    'img/animations': 'animations', 'img/battlebacks1': 'battlebacks1', 'img/battlebacks2': 'battlebacks2',
-    'img/characters': 'characters', 'img/enemies': 'enemies', 'img/faces': 'faces', 'img/parallaxes': 'parallaxes',
-    'img/pictures': 'pictures', 'img/sv_actors': 'svActors', 'img/sv_enemies': 'svEnemies', 'img/system': 'system',
-    'img/tilesets': 'tilesets', 'img/titles1': 'titles1', 'img/titles2': 'titles2', 'audio/bgm': 'bgm',
-    'audio/bgs': 'bgs', 'audio/me': 'me', 'audio/se': 'se', effects: 'effects', movies: 'movies',
+    'img/animations': 'animations',
+    'img/battlebacks1': 'battlebacks1',
+    'img/battlebacks2': 'battlebacks2',
+    'img/characters': 'characters',
+    'img/enemies': 'enemies',
+    'img/faces': 'faces',
+    'img/parallaxes': 'parallaxes',
+    'img/pictures': 'pictures',
+    'img/sv_actors': 'svActors',
+    'img/sv_enemies': 'svEnemies',
+    'img/system': 'system',
+    'img/tilesets': 'tilesets',
+    'img/titles1': 'titles1',
+    'img/titles2': 'titles2',
+    'audio/bgm': 'bgm',
+    'audio/bgs': 'bgs',
+    'audio/me': 'me',
+    'audio/se': 'se',
+    effects: 'effects',
+    movies: 'movies',
   };
   const key = keyByDirectory[normalized];
-  return key && props.catalog?.assets[key] ? props.catalog.assets[key].map((asset) => asset.name) : [];
+  const entries = key && props.catalog?.assets[key] ? props.catalog.assets[key] : [];
+  return [...new Set(entries.map((asset) => stripExtension(asset.name || asset.fileName)))];
 });
+const fileSelectOptions = computed<SelectOption[]>(() =>
+  withMissingCurrent(
+    [
+      { value: '', label: t('plugins.parameterEmptyValue') },
+      ...fileOptions.value.map((value) => ({ value, label: value })),
+    ],
+    stringValue.value,
+  ),
+);
+const referenceWarning = computed(() => {
+  const current = stringValue.value;
+  if (props.field.kind === 'database' && isMissingCurrent(databaseSelectOptions.value, current)) {
+    return t('plugins.parameterReferenceMissing', { value: current });
+  }
+  if (props.field.kind === 'map' && isMissingCurrent(mapSelectOptions.value, current)) {
+    return t('plugins.parameterMapMissing', { value: current });
+  }
+  if (props.field.kind === 'file' && isMissingCurrent(fileSelectOptions.value, current)) {
+    return t('plugins.parameterFileMissing', { value: current });
+  }
+  if (
+    props.field.kind === 'location'
+    && isMissingCurrent(locationMapOptions.value, String(locationValue.value.mapId))
+  ) {
+    return t('plugins.parameterMapMissing', { value: locationValue.value.mapId });
+  }
+  return '';
+});
+const unsupportedReason = computed(() =>
+  String(props.field.rawType || '').trim().toLowerCase() === 'image'
+    ? t('plugins.parameterImageTypeUnsupported')
+    : props.field.unsupportedReason,
+);
 
-function emitValue(value: unknown) { emit('update:modelValue', value); }
-function inputValue(event: Event) { return (event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value; }
-function booleanLabel(value: boolean) {
-  const option = props.field.options?.find((entry) => String(entry.value) === String(value));
-  return option?.label || String(value);
+function emitValue(value: unknown): void {
+  emit('update:modelValue', value);
 }
-function setStructValue(key: string, value: unknown) { emitValue({ ...structValue.value, [key]: value }); }
-function setArrayValue(index: number, value: unknown) {
+
+function emitTextValue(value: string): void {
+  emitValue(value);
+}
+
+function emitSelectValue(value: unknown): void {
+  emitValue(value == null ? '' : String(value));
+}
+
+function booleanLabel(value: boolean): string {
+  const option = props.field.options?.find((entry) =>
+    isBooleanEnabled(entry.value) === value);
+  return option?.label || (value
+    ? t('plugins.parameterEnabled')
+    : t('plugins.parameterDisabled'));
+}
+
+function setStructValue(key: string, value: unknown): void {
+  emitValue({ ...structValue.value, [key]: value });
+}
+
+function setArrayValue(index: number, value: unknown): void {
   const next = [...arrayValue.value];
   next[index] = value;
   emitValue(next);
 }
-function removeArrayValue(index: number) { emitValue(arrayValue.value.filter((_, itemIndex) => itemIndex !== index)); }
-function addArrayValue() { emitValue([...arrayValue.value, defaultValue(props.field.item)]); }
-function setLocationPart(key: 'mapId' | 'x' | 'y', value: string) { emitValue({ ...locationValue.value, [key]: value }); }
-function openLocationPicker() {
-  coordinatePicker.value?.open({ mode: 'map', allowMapChange: true, ...locationValue.value });
+
+function removeArrayValue(index: number): void {
+  emitValue(arrayValue.value.filter((_, itemIndex) => itemIndex !== index));
 }
-function commitLocation(selection: { mapId: number; x: number; y: number }) { emitValue(selection); }
+
+function addArrayValue(): void {
+  emitValue([...arrayValue.value, defaultValue(props.field.item)]);
+}
+
+function setLocationPart(key: 'mapId' | 'x' | 'y', value: string): void {
+  emitValue({ ...locationValue.value, [key]: value });
+}
+
+function openLocationPicker(): void {
+  coordinatePicker.value?.open({
+    mode: 'map',
+    allowMapChange: true,
+    mapId: Number(locationValue.value.mapId) || 0,
+    x: Number(locationValue.value.x) || 0,
+    y: Number(locationValue.value.y) || 0,
+  });
+}
+
+function commitLocation(selection: { mapId: number; x: number; y: number }): void {
+  emitValue(selection);
+}
+
 function defaultValue(field?: PluginParameterSchemaField): unknown {
   if (!field) return '';
-  if (field.kind === 'struct') return Object.fromEntries((field.fields || []).map((child) => [child.key, defaultValue(child)]));
+  if (field.kind === 'struct') {
+    return Object.fromEntries((field.fields || []).map((child) => [
+      child.key,
+      defaultValue(child),
+    ]));
+  }
   if (field.kind === 'array') return [];
   if (field.kind === 'location') return { mapId: 0, x: 0, y: 0 };
   if (field.kind === 'boolean') return field.defaultValue ?? 'false';
   return field.defaultValue ?? '';
 }
+
+function withMissingCurrent(options: SelectOption[], current: string): SelectOption[] {
+  if (!current || options.some((option) => option.value === current)) return options;
+  return [
+    {
+      value: current,
+      label: t('plugins.parameterMissingCurrentValue', { value: current }),
+    },
+    ...options,
+  ];
+}
+
+function isMissingCurrent(options: SelectOption[], current: string): boolean {
+  if (!current || current === '0') return false;
+  return options[0]?.value === current
+    && options[0]?.label === t('plugins.parameterMissingCurrentValue', { value: current });
+}
+
+function normalizeDirectory(value: unknown): string {
+  return String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/\/$/, '')
+    .toLowerCase();
+}
+
+function stripExtension(value: string): string {
+  return String(value || '').replace(/\.[^.\\/]+$/, '');
+}
+
+function scalarValue(value: unknown, fallback: number): string | number {
+  return value === undefined || value === null || value === '' ? fallback : String(value);
+}
+
+function isBooleanEnabled(value: unknown): boolean {
+  return value === true || ['true', 'on', '1'].includes(String(value).toLowerCase());
+}
+
 function parseStructuredValue(value: unknown): unknown {
   if (typeof value !== 'string') return value;
-  try { return JSON.parse(value); } catch { return value; }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
-function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 </script>
 
 <style scoped>
-.plugin-param-input{min-width:0;display:grid;gap:5px}.plugin-param-input>input:not([type=checkbox]),.plugin-param-input>select,.plugin-param-input>textarea{width:100%;min-width:0;box-sizing:border-box}.boolean-input{display:flex;align-items:center;gap:6px}.location-input{display:grid;grid-template-columns:minmax(110px,1fr) 64px 64px;gap:5px}.location-picker{grid-column:1 / -1;padding:4px 7px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft);color:var(--app-ink);cursor:pointer}.location-picker:hover{border-color:var(--app-accent);background:var(--app-accent-soft)}.compound-input{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;padding:7px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}.compound-field{min-width:0;display:grid;gap:3px}.compound-field>span{overflow:hidden;color:var(--app-ink-muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.array-input{display:grid;gap:6px}.array-item{display:grid;grid-template-columns:20px minmax(0,1fr) 24px;align-items:start;gap:5px;padding:5px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}.array-index{padding-top:6px;color:var(--app-ink-muted);font:10px var(--app-font-mono)}.array-item>button,.array-add{border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink-soft);cursor:pointer}.array-item>button{width:24px;height:24px}.array-add{justify-self:start;padding:4px 8px}.readonly textarea{opacity:.7;cursor:not-allowed}.readonly-reason{color:var(--app-warn);font-size:10px;line-height:1.35}
+.plugin-param-input {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+.plugin-param-input :deep(.el-select),
+.plugin-param-input :deep(.el-input) {
+  width: 100%;
+}
+.location-input {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 78px 78px;
+  gap: 8px;
+}
+.location-picker {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.compound-input {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-soft);
+}
+.compound-field {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.compound-field > span {
+  overflow: hidden;
+  color: var(--app-ink-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.array-input {
+  display: grid;
+  gap: 7px;
+}
+.array-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 32px;
+  align-items: start;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-soft);
+}
+.array-index {
+  padding-top: 7px;
+  color: var(--app-ink-muted);
+  font: 11px var(--app-font-mono);
+}
+.array-add {
+  justify-self: start;
+}
+.readonly :deep(textarea) {
+  cursor: text;
+}
+.reference-warning,
+.readonly-reason {
+  font-size: 11px;
+  line-height: 1.45;
+}
+.reference-warning {
+  color: var(--console-warning, #8a560f);
+}
+.readonly-reason {
+  color: var(--app-warn);
+}
 </style>

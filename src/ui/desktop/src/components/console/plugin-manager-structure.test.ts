@@ -5,7 +5,23 @@ import { describe, test } from 'node:test';
 const paneSource = readFileSync(new URL('./ConsolePluginsPane.vue', import.meta.url), 'utf8');
 const dialogSource = readFileSync(new URL('./PluginParameterDialog.vue', import.meta.url), 'utf8');
 const valueDialogSource = readFileSync(new URL('./PluginParameterValueDialog.vue', import.meta.url), 'utf8');
+const collectionEditorSource = readFileSync(
+  new URL('./PluginParameterCollectionEditor.vue', import.meta.url),
+  'utf8',
+);
 const parameterModelSource = readFileSync(new URL('./plugin-parameter-model.ts', import.meta.url), 'utf8');
+const parameterTreeModelSource = readFileSync(
+  new URL('./plugin-parameter-tree-model.ts', import.meta.url),
+  'utf8',
+);
+const collectionModelSource = readFileSync(
+  new URL('./plugin-parameter-collection-model.ts', import.meta.url),
+  'utf8',
+);
+const parameterInputSource = readFileSync(
+  new URL('../editor/PluginParameterInput.vue', import.meta.url),
+  'utf8',
+);
 const deleteDialogSource = readFileSync(new URL('./PluginDeleteDialog.vue', import.meta.url), 'utf8');
 const engineTagsSource = readFileSync(new URL('./PluginEngineTags.vue', import.meta.url), 'utf8');
 const statusBarSource = readFileSync(new URL('../layout/StatusBar.vue', import.meta.url), 'utf8');
@@ -103,6 +119,14 @@ describe('plugin manager structure', () => {
     assert.match(dialogSource, /:disabled="busy \|\| !parametersDirty"/);
     assert.match(dialogSource, /parameterNameColumn/);
     assert.match(dialogSource, /parameterValueColumn/);
+    assert.match(dialogSource, /buildPluginParameterTree/);
+    assert.match(dialogSource, /flattenPluginParameterTree/);
+    assert.match(dialogSource, /role="treegrid"/);
+    assert.match(dialogSource, /:aria-level="row\.depth \+ 1"/);
+    assert.match(dialogSource, /:aria-expanded="row\.hasChildren \? row\.expanded : undefined"/);
+    assert.match(dialogSource, /parameterTreeSearchPlaceholder/);
+    assert.match(dialogSource, /event\.key === 'ArrowRight'/);
+    assert.match(dialogSource, /event\.key === 'ArrowLeft'/);
     assert.match(dialogSource, /@dblclick="openParameterEditor\(row\.key\)"/);
     assert.match(dialogSource, /@click\.stop="openParameterEditor\(row\.key\)"/);
     assert.match(dialogSource, /function parameterRowKeydown[\s\S]+event\.target !== event\.currentTarget/);
@@ -120,15 +144,77 @@ describe('plugin manager structure', () => {
     assert.match(dialogSource, /tbody tr:hover \.parameter-row-edit,[\s\S]+tbody tr:focus-within \.parameter-row-edit/);
     assert.match(dialogSource, /<el-button[\s\S]+link[\s\S]+class="parameter-row-edit"/);
     assert.match(dialogSource, /<div v-if="selectedRow" class="parameter-detail" aria-live="polite">[\s\S]+selectedRow\.description/);
-    assert.doesNotMatch(dialogSource, /selectedRow\.readonlyReason|selectedRow\.fullValue/);
+    assert.match(dialogSource, /selectedRow\.readonlyReason/);
+    assert.doesNotMatch(dialogSource, /selectedRow\.fullValue/);
     assert.doesNotMatch(dialogSource, /plugin-information|parameterBasicSettings|class="plugin-help"/);
     assert.match(dialogSource, /<el-button :disabled="busy" @click="confirmClose\(\)">/);
     assert.match(dialogSource, /<el-button[\s\S]+type="primary"[\s\S]+:loading="busy"[\s\S]+@click="save"/);
     assert.match(dialogSource, /<PluginParameterValueDialog/);
-    assert.match(valueDialogSource, /<PluginParameterInput/);
+    assert.match(valueDialogSource, /defineOptions\(\{ name: 'PluginParameterValueDialog' \}\)/);
+    assert.match(valueDialogSource, /<PluginParameterInput[\s\S]+v-if="!isCompound"/);
+    assert.match(valueDialogSource, /<el-tabs[\s\S]+type="card"/);
+    assert.match(valueDialogSource, /plugins\.parameterStructureTab/);
+    assert.match(valueDialogSource, /plugins\.parameterTextTab/);
+    assert.match(valueDialogSource, /class="parameter-raw-input"[\s\S]+type="textarea"/);
+    assert.match(valueDialogSource, /parsePluginParameterRawStrict/);
+    assert.match(valueDialogSource, /serializePluginParameterRaw/);
+    assert.match(valueDialogSource, /:before-close="confirmClose"/);
+    assert.match(valueDialogSource, /:close-on-click-modal="true"/);
+    assert.match(valueDialogSource, /pendingAppend/);
+    assert.match(valueDialogSource, /allow-unchanged-commit/);
+    assert.match(valueDialogSource, /<PluginParameterCollectionEditor/);
+    assert.match(
+      valueDialogSource,
+      /<PluginParameterValueDialog[\s\S]+v-if="childDialogOpen && childEditor"[\s\S]+v-model="childDialogOpen"/,
+    );
+    assert.match(valueDialogSource, /createDefaultPluginParameterValue\(item\)/);
+    assert.match(
+      valueDialogSource,
+      /:disabled="Boolean\(validationIssue\) \|\| \(!changed && !allowUnchangedCommit\)"/,
+    );
+    assert.match(collectionEditorSource, /buildPluginParameterCollectionColumns/);
+    assert.match(collectionEditorSource, /buildPluginParameterTree/);
+    assert.match(collectionEditorSource, /flattenPluginParameterTree/);
+    assert.match(collectionEditorSource, /class="struct-table" role="treegrid"/);
+    assert.match(collectionEditorSource, /class="array-toolbar"/);
+    assert.match(collectionEditorSource, /plugins\.parameterSelectedCount/);
+    assert.match(collectionEditorSource, /plugins\.parameterCopySelected/);
+    assert.match(collectionEditorSource, /plugins\.parameterDeleteSelected/);
+    assert.match(collectionEditorSource, /toggleVisibleSelection/);
+    assert.match(collectionEditorSource, /ElMessageBox\.confirm/);
+    assert.match(collectionEditorSource, /clipboard\.writeText/);
+    assert.match(collectionEditorSource, /@dblclick="editArrayItem\(row\.index\)"/);
+    assert.match(collectionEditorSource, /event\.key === 'Enter'/);
+    assert.match(collectionEditorSource, /event\.altKey && \(event\.key === 'ArrowUp'/);
+    assert.match(collectionEditorSource, /class="drag-handle"/);
+    assert.equal((collectionEditorSource.match(/<circle /g) || []).length, 6);
+    assert.match(collectionEditorSource, /:draggable="!sortingLocked"/);
+    assert.match(collectionEditorSource, /column\.field\.kind === 'boolean'/);
+    assert.match(collectionEditorSource, /arrayItem\?\.kind === 'boolean'/);
+    assert.match(collectionEditorSource, /height: 40px/);
+    assert.match(
+      collectionEditorSource,
+      /\.actions-column,[\s\S]+\.collection-actions \{[\s\S]+position: sticky[\s\S]+right: 0/,
+    );
+    assert.match(collectionEditorSource, /overflow: auto/);
+    assert.match(collectionModelSource, /parsePluginParameterRawStrict/);
+    assert.match(collectionModelSource, /PLUGIN_PARAMETER_CLIPBOARD_LIMIT = 32 \* 1024/);
+    assert.match(collectionModelSource, /removePluginParameterArrayItems/);
+    assert.match(collectionModelSource, /movePluginParameterArrayItem/);
+    assert.doesNotMatch(
+      `${valueDialogSource}\n${collectionEditorSource}`,
+      /class="compound-input"|class="array-item"/,
+    );
     assert.doesNotMatch(dialogSource, /parameter-json|parametersJson|unknownParamsJson|<textarea/);
     assert.match(dialogSource, /parameterReadonlyReason|parameterMissingFileReadonly/);
     assert.match(parameterModelSource, /clonePluginParameterValue/);
+    assert.match(parameterTreeModelSource, /findParentCycles/);
+    assert.match(parameterTreeModelSource, /includeAncestors/);
+    assert.match(parameterTreeModelSource, /includeDescendants/);
+    assert.match(parameterInputSource, /<el-switch/);
+    assert.match(parameterInputSource, /allow-create/);
+    assert.match(parameterInputSource, /field\.kind === 'file'/);
+    assert.match(parameterInputSource, /field\.kind === 'location'/);
     assert.doesNotMatch(
       `${dialogSource}\n${valueDialogSource}\n${parameterModelSource}`,
       /structuredClone/,

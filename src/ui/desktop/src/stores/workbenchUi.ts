@@ -27,6 +27,8 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
   const sbMode = ref<'map' | 'event' | 'preview' | ''>('');
   const sbCursor = ref('');
   const sbZoom = ref(100);
+  const sbHideZoom = ref(false);
+  const sbContextText = ref('');
   const sbStagingDirty = ref(false);
   const sbPlacementActive = ref(false);
   const sbPlacementHint = ref('');
@@ -124,6 +126,8 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
     sbMode.value = '';
     sbCursor.value = '';
     sbZoom.value = 100;
+    sbHideZoom.value = false;
+    sbContextText.value = '';
     sbStagingDirty.value = false;
     sbPlacementActive.value = false;
     sbPlacementHint.value = '';
@@ -164,6 +168,8 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
     sbMode,
     sbCursor,
     sbZoom,
+    sbHideZoom,
+    sbContextText,
     sbStagingDirty,
     sbPlacementActive,
     sbPlacementHint,

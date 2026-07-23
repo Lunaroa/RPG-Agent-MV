@@ -1596,6 +1596,7 @@ export interface WorkspaceLayoutState {
   bottomPanelOpen?: boolean;
   leftDockTilesOpen?: boolean;
   leftDockWidth?: number;
+  pluginListWidth?: number;
   leftDockPaletteHeight?: number;
   agentPanelWidth?: number;
   chatHistoryWidth?: number;

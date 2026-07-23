@@ -14,7 +14,8 @@ const { t } = useI18n();
     </span>
     <span v-if="ui.sbCursor" class="sb-item">{{ ui.sbCursor }}</span>
     <span class="sb-fill" />
-    <span class="sb-item">{{ ui.sbZoom }}%</span>
+    <span v-if="ui.sbContextText" class="sb-item">{{ ui.sbContextText }}</span>
+    <span v-if="!ui.sbHideZoom" class="sb-item">{{ ui.sbZoom }}%</span>
     <span class="sb-item" :class="{ 'sb-warn': ui.sbStagingDirty }">
       {{ ui.sbStagingDirty ? t('status.staging.dirty') : t('status.staging.clean') }}
     </span>

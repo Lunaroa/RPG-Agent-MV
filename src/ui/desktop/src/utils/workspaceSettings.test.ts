@@ -3,8 +3,10 @@ import {
   buildWorkspaceMigrationPatch,
   clampPaletteHeight,
   clampLeftDockWidth,
+  clampPluginListWidth,
   computeMaxPaletteHeight,
   DEFAULT_LEFT_DOCK_WIDTH,
+  DEFAULT_PLUGIN_LIST_WIDTH,
   filterLegacyWorkspaceMigrationPatch,
   isLikelyMaximizedWindowBounds,
   isValidWindowBounds,
@@ -24,6 +26,7 @@ describe('workspaceSettings', () => {
     expect(settings.layout?.appRailOpen).toBe(true)
     expect(settings.layout?.leftDockTilesOpen).toBe(true)
     expect(settings.layout?.leftDockWidth).toBeUndefined()
+    expect(settings.layout?.pluginListWidth).toBe(DEFAULT_PLUGIN_LIST_WIDTH)
     expect(settings.layout?.leftDockPaletteHeight).toBeUndefined()
     expect(settings.layout?.agentPanelWidth).toBe(480)
     expect(settings.suppressProjectCompatibilityWarnings).toBe(false)
@@ -86,6 +89,25 @@ describe('workspaceSettings', () => {
     expect(normalizeWorkspaceSettings({
       layout: { leftDockWidth: Number.NaN },
     }).layout?.leftDockWidth).toBeUndefined()
+  })
+
+  it('normalizes and clamps the persisted plugin list width', () => {
+    expect(DEFAULT_PLUGIN_LIST_WIDTH).toBe(380)
+    expect(clampPluginListWidth(120)).toBe(300)
+    expect(clampPluginListWidth(900)).toBe(560)
+    expect(normalizeWorkspaceSettings({
+      layout: { pluginListWidth: 441.6 },
+    }).layout?.pluginListWidth).toBe(442)
+    expect(normalizeWorkspaceSettings({
+      layout: { pluginListWidth: Number.NaN },
+    }).layout?.pluginListWidth).toBe(DEFAULT_PLUGIN_LIST_WIDTH)
+    expect(mergeWorkspaceSettings(
+      { layout: { pluginListWidth: 380, leftDockWidth: 320 } },
+      { layout: { pluginListWidth: 472 } },
+    ).layout).toMatchObject({
+      pluginListWidth: 472,
+      leftDockWidth: 320,
+    })
   })
 
   it('persists left dock width in partial layout patches', () => {

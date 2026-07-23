@@ -137,12 +137,123 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
   }
 });
 
+test('retargets an in-progress isolation preparation without starting another copy', async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-workflow-'));
+  const project = createMZProject(workflowRoot);
+  let isolatedRoot = '';
+  const service = new MapPreviewIframeService(workflowRoot, {
+    registerPreviewRoot(key, resourceRoot) {
+      isolatedRoot = resourceRoot;
+      return `rpg-agent-preview://${key}/index.html`;
+    },
+    unregisterPreviewRoot() {},
+    verifyFrameIsolation: () => true,
+  });
+
+  try {
+    await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
+    const first = await service.start(project, 1);
+    const firstTaskId = first.session?.loadProgress?.taskId;
+    const firstSessionId = first.session?.sessionId;
+
+    const retargeted = await service.resume({
+      project,
+      mapId: 2,
+      overrides: { switches: {}, variables: {}, selfSwitches: {} },
+    });
+
+    assert.equal(retargeted.session?.status, 'preparing');
+    assert.equal(retargeted.session?.sessionId, firstSessionId);
+    assert.equal(retargeted.session?.loadProgress?.taskId, firstTaskId);
+    assert.equal(retargeted.session?.mapId, 2);
+    await waitForPreviewStatus(service, 'starting');
+    assert.equal(service.current().session?.mapId, 2);
+    assert.equal(service.current().session?.mapPixelWidth, 720);
+    assert.equal(service.current().session?.mapPixelHeight, 480);
+    assert.equal(injectedConfig(isolatedRoot).mapId, 2);
+    await service.stop();
+  } finally {
+    service.shutdownSync();
+    closeDatabase();
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
+test('restarts an unfinished iframe map load when a newer map is selected', async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-workflow-'));
+  const project = createMZProject(workflowRoot);
+  let isolatedRoot = '';
+  let registeredUrl = '';
+  let registrations = 0;
+  const service = new MapPreviewIframeService(workflowRoot, {
+    registerPreviewRoot(key, resourceRoot) {
+      registrations += 1;
+      isolatedRoot = resourceRoot;
+      registeredUrl = `rpg-agent-preview://${key}/index.html`;
+      return registeredUrl;
+    },
+    unregisterPreviewRoot() {},
+    verifyFrameIsolation: () => true,
+  });
+
+  try {
+    await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
+    await service.start(project, 1);
+    await waitForPreviewStatus(service, 'starting');
+    const firstSession = service.current().session!;
+    const identity = injectedIdentity(isolatedRoot);
+
+    const duplicate = await service.resume({
+      project,
+      mapId: 1,
+      mapRevision: firstSession.mapRevision,
+      overrides: { switches: {}, variables: {}, selfSwitches: {} },
+    });
+    assert.equal(duplicate.session?.operationId, 1);
+    assert.equal(duplicate.session?.iframeUrl, registeredUrl);
+
+    const switched = await service.resume({
+      project,
+      mapId: 2,
+      overrides: { switches: {}, variables: {}, selfSwitches: {} },
+    });
+
+    assert.equal(switched.session?.status, 'resuming');
+    assert.equal(switched.session?.sessionId, firstSession.sessionId);
+    assert.equal(switched.session?.operationId, 2);
+    assert.equal(switched.session?.mapId, 2);
+    assert.notEqual(switched.session?.iframeUrl, registeredUrl);
+    assert.match(switched.session?.iframeUrl || '', /previewOperation=2/);
+    assert.equal(registrations, 1);
+    assert.equal(injectedConfig(isolatedRoot).mapId, 2);
+    assert.equal(injectedConfig(isolatedRoot).operationId, 2);
+    assert.equal((fs.readFileSync(path.join(isolatedRoot, 'index.html'), 'utf8').match(/rpg-agent-preview-marker\.js/g) || []).length, 1);
+    assert.equal((fs.readFileSync(path.join(isolatedRoot, 'js', 'main.js'), 'utf8').match(/rpg-agent-preview-iframe\.js/g) || []).length, 1);
+
+    service.handleRuntimeEvent({
+      ...runtimeEvent(identity, firstSession, 'error'),
+      message: 'Late failure from the superseded map load.',
+    });
+    assert.equal(service.current().session?.status, 'resuming');
+    assert.equal(service.current().session?.operationId, 2);
+    await service.stop();
+  } finally {
+    service.shutdownSync();
+    closeDatabase();
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
 function injectedIdentity(resourceRoot: string): { sessionId: string; channelToken: string } {
+  const config = injectedConfig(resourceRoot);
+  return { sessionId: config.sessionId, channelToken: config.channelToken };
+}
+
+function injectedConfig(resourceRoot: string): { sessionId: string; channelToken: string; mapId: number; operationId: number } {
   const source = fs.readFileSync(path.join(resourceRoot, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
   const match = source.match(/var config = (\{[^\n]+\});/);
   assert.ok(match);
-  const config = JSON.parse(match[1]) as { sessionId: string; channelToken: string };
-  return { sessionId: config.sessionId, channelToken: config.channelToken };
+  return JSON.parse(match[1]) as { sessionId: string; channelToken: string; mapId: number; operationId: number };
 }
 
 function runtimeEvent(

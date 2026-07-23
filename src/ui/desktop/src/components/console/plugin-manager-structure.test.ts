@@ -82,6 +82,12 @@ describe('plugin manager structure', () => {
     assert.match(paneSource, /scrollIntoView\(\{ block: 'nearest' \}\)/);
     assert.match(paneSource, /class="metadata-reference"/);
     assert.match(paneSource, /<pre v-if="tab\.content">/);
+    assert.match(
+      paneSource,
+      /\.help-panel pre \{[\s\S]+font: 13px\/1\.8 "Microsoft YaHei", "Microsoft YaHei UI", "微软雅黑", var\(--app-font-sans\)/,
+    );
+    assert.match(paneSource, /\.help-panel pre \{[\s\S]+background: color-mix\(/);
+    assert.match(paneSource, /\.help-panel pre \{[\s\S]+font-variant-ligatures: none/);
     assert.match(paneSource, /plugins\.stagingSourceUntouched/);
     assert.doesNotMatch(paneSource, /v-html|marked\(/);
   });

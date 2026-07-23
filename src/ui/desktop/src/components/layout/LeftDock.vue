@@ -93,21 +93,31 @@
       <header class="pane-header">
         <strong>{{ t('editor.left.mapTree') }}</strong>
       </header>
-      <div class="map-tree">
+      <label class="map-tree-search">
+        <Search aria-hidden="true" />
+        <input
+          v-model="mapTreeSearchQuery"
+          type="search"
+          :aria-label="t('editor.left.searchMaps')"
+          :placeholder="t('editor.left.searchMaps')"
+        />
+      </label>
+      <div class="map-tree" :class="{ searching: mapTreeSearchActive }">
         <el-tree
-          :data="mapTree"
+          :key="mapTreeRenderKey"
+          :data="visibleMapTree"
           :props="{ children: 'children', label: 'name' }"
           node-key="id"
           highlight-current
-          :draggable="mapTreeDraggable"
+          :draggable="mapTreeDraggable && !mapTreeSearchActive"
           :allow-drag="allowTreeDrag"
           :allow-drop="allowTreeDrop"
           :expand-on-click-node="false"
-          :default-expanded-keys="expandedMapIds"
+          :default-expanded-keys="visibleExpandedMapIds"
           :current-node-key="selectedMapId ?? undefined"
           @node-click="handleTreeNodeClick"
-          @node-expand="(data: TreeNode) => $emit('node-expand', data)"
-          @node-collapse="(data: TreeNode) => $emit('node-collapse', data)"
+          @node-expand="handleTreeNodeExpand"
+          @node-collapse="handleTreeNodeCollapse"
           @node-contextmenu="(event: MouseEvent, data: TreeNode) => mode !== 'preview' && $emit('node-contextmenu', event, data)"
           @node-drop="handleTreeNodeDrop"
         >
@@ -129,6 +139,7 @@
           <span>{{ mapTreeError }}</span>
           <button type="button" @click="$emit('retry-map-tree')">{{ t('editor.left.retryMaps') }}</button>
         </div>
+        <div v-else-if="mapTreeSearchActive && !visibleMapTree.length" class="pane-empty" role="status">{{ t('editor.left.noMapMatches') }}</div>
         <div v-else-if="!mapTree.length" class="pane-empty">{{ t('editor.left.noMaps') }}</div>
       </div>
     </section>
@@ -151,13 +162,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { AllowDropType, NodeDropType, RenderContentContext } from 'element-plus';
+import { Search } from '@element-plus/icons-vue';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, PaletteTab, PaletteTabId, TreeNode } from '../editor/editorTypes';
 import type { MapPreviewEventState } from '@contract/types';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
+import { useProjectStore } from '../../stores/project';
 import { useI18n } from '../../i18n';
 import { projectMapTreeMove } from '../../utils/mapTreeDragPreview';
 import { isPrimaryMapTreeNodeClick, toggleMapTreeNodeExpansion } from '../../utils/mapTreeNodeInteraction';
+import { searchMapTree } from '../../utils/mapTreeSearch';
 import {
   clampPaletteHeight,
   DEFAULT_LEFT_DOCK_WIDTH,
@@ -194,6 +208,7 @@ const props = defineProps<{
 
 const workbenchUi = useWorkbenchUiStore();
 const workspaceStore = useWorkspaceStore();
+const projectStore = useProjectStore();
 const { t } = useI18n();
 const emit = defineEmits<{
   'palette-ready': [canvas: HTMLCanvasElement];
@@ -223,6 +238,7 @@ const resizing = ref(false);
 const widthResizing = ref(false);
 const dockViewportLimit = ref(LEFT_DOCK_MAX_WIDTH);
 const workbenchHeight = ref(0);
+const mapTreeSearchQuery = ref('');
 let resizeStart: { y: number; height: number } | null = null;
 let widthResizeStart: { x: number; width: number } | null = null;
 let workbenchResizeObserver: ResizeObserver | null = null;
@@ -244,6 +260,17 @@ const workbenchStyle = computed(() => ({
   flex: `0 0 ${displayedDockWidth.value}px`,
 }));
 const previewEventStateMap = computed(() => new Map(props.previewEventStates.map((state) => [state.id, state])));
+const mapTreeSearchActive = computed(() => Boolean(mapTreeSearchQuery.value.trim()));
+const mapTreeSearchResult = computed(() => searchMapTree(props.mapTree, mapTreeSearchQuery.value));
+const visibleMapTree = computed(() => mapTreeSearchResult.value.tree);
+const visibleExpandedMapIds = computed(() => (
+  mapTreeSearchActive.value
+    ? [...new Set([...props.expandedMapIds, ...mapTreeSearchResult.value.expandedAncestorIds])]
+    : props.expandedMapIds
+));
+const mapTreeRenderKey = computed(() => (
+  mapTreeSearchActive.value ? `search:${mapTreeSearchQuery.value.trim().toLowerCase()}` : 'full'
+));
 
 function previewEventState(eventId: number) { return previewEventStateMap.value.get(eventId); }
 function previewEventCoordinates(event: EditorEventListItem): string {
@@ -273,17 +300,25 @@ type ElementTreeNode = RenderContentContext['node'];
 type TreeMovePosition = 'before' | 'after' | 'inside';
 
 function allowTreeDrag(): boolean {
-  return props.mapTreeDraggable;
+  return props.mapTreeDraggable && !mapTreeSearchActive.value;
 }
 
 function allowTreeDrop(draggingNode: ElementTreeNode, dropNode: ElementTreeNode, type: AllowDropType): boolean {
-  if (!props.mapTreeDraggable) return false;
+  if (!props.mapTreeDraggable || mapTreeSearchActive.value) return false;
   return projectMapTreeMove(
     props.mapTree,
     Number((draggingNode.data as TreeNode).id),
     Number((dropNode.data as TreeNode).id),
     allowDropTypeToPosition(type),
   ).valid;
+}
+
+function handleTreeNodeExpand(data: TreeNode): void {
+  if (!mapTreeSearchActive.value) emit('node-expand', data);
+}
+
+function handleTreeNodeCollapse(data: TreeNode): void {
+  if (!mapTreeSearchActive.value) emit('node-collapse', data);
 }
 
 function handleTreeNodeDrop(
@@ -337,6 +372,10 @@ watch(() => [props.selectedEventId, props.currentEvents, props.eventSearchQuery]
   if (eventId == null || query.trim()) return;
   await nextTick();
   eventRowRefs.get(eventId)?.scrollIntoView({ block: 'nearest' });
+});
+
+watch(() => projectStore.currentProject, () => {
+  mapTreeSearchQuery.value = '';
 });
 
 function updateDockViewportLimit(): void {
@@ -516,6 +555,10 @@ onMounted(() => {
   font-weight: 700;
 }
 .pane-header.clickable{cursor:pointer}.pane-chevron{color:var(--app-ink-muted);font-size:12px}.tile-chip{margin-left:auto;max-width:104px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 6px;border-radius:4px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-size:10px;font-weight:600}
+.map-tree-search{height:28px;margin:4px;display:flex;align-items:center;gap:5px;padding:0 6px;border:1px solid var(--app-border);border-radius:2px;background:var(--app-bg);color:var(--app-ink-muted)}
+.map-tree-search:focus-within{border-color:var(--app-accent);box-shadow:0 0 0 1px var(--app-accent)}
+.map-tree-search :deep(svg){width:12px;height:12px}
+.map-tree-search input{width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--app-ink);font:inherit;font-size:11px}
 .pane-count{min-width:20px;padding:1px 5px;border-radius:2px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-size:10px;text-align:center}.event-search{height:28px;margin:4px;display:flex;align-items:center;gap:5px;padding:0 6px;border:1px solid var(--app-border);border-radius:2px;background:var(--app-bg);color:var(--app-ink-muted)}.event-search:focus-within{border-color:var(--app-accent);box-shadow:0 0 0 1px var(--app-accent)}.event-search input{width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--app-ink);font:inherit;font-size:11px}.event-search-scope{min-height:24px;margin:0 4px 3px;display:flex;align-items:center;justify-content:space-between;gap:5px;color:var(--app-ink-muted);font-size:9px}.event-search-scope button{min-height:22px;padding:0 6px;border:1px solid var(--app-border);border-radius:2px;background:var(--app-bg);color:var(--app-accent);font:inherit;font-size:9px;cursor:pointer}.event-search-scope button:hover{background:var(--app-accent-soft)}.event-search-scope button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.event-list{min-height:0;flex:1;overflow:auto;padding:1px 3px 4px}.event-row{width:100%;min-height:25px;padding:3px 5px;display:flex;flex-direction:column;align-items:stretch;gap:1px;border:0;border-radius:1px;background:transparent;color:var(--app-ink);text-align:left;cursor:pointer}.event-row:hover,.event-row.active{background:var(--app-bg-sunken)}.event-row.active{box-shadow:inset 2px 0 0 var(--app-accent)}.event-row.muted{opacity:.52}.event-row.muted.active{opacity:.82}.event-row:focus-visible{outline:2px solid var(--app-accent);outline-offset:-2px}.event-row-main{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}.event-row-main strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:600}.event-row-main small,.event-row-text,.event-row-note{color:var(--app-ink-muted);font-size:9px}.event-row-text,.event-row-note{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.event-row-note{display:block}.preview-status{color:#b76858}.search-hit{min-height:34px;border-bottom:1px solid var(--app-border)}.pane-empty.compact{padding-top:4px;padding-bottom:4px}
 .tile-tabs { display: flex; gap: 1px; padding: 3px; border-top:1px solid var(--app-border); background: var(--app-bg); }
 .tile-tabs button {
@@ -537,6 +580,7 @@ onMounted(() => {
 .palette-canvas { display: block; width:auto; max-width:100%; height:auto; cursor: default; image-rendering: pixelated; }
 .map-tree { flex: 1; overflow: auto; padding: 2px 3px 6px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 22px, var(--app-bg-soft) 22px, var(--app-bg-soft) 44px); background-attachment: local; background-origin: content-box; }
 .tree-node { position:relative; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 5px; overflow: hidden; cursor:grab; }
+.map-tree.searching .tree-node{cursor:pointer}
 .preview-mode .tree-node{cursor:pointer}
 .tree-node:active { cursor:grabbing; }
 .node-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color:var(--app-ink); font-size: 12px; line-height:1; }

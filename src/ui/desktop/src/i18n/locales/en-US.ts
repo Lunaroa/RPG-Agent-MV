@@ -796,6 +796,8 @@ const enUS = {
     'editor.left.resizeEvents': 'Resize event list height',
     'editor.left.resizeDock': 'Resize the left workspace',
     'editor.left.mapTree': 'Map tree',
+    'editor.left.searchMaps': 'Search map name or ID',
+    'editor.left.noMapMatches': 'No matching maps.',
     'editor.left.events': 'Event List',
     'editor.left.searchEvents': 'Search events on this map',
     'editor.left.searchScopeCurrent': 'Current map',

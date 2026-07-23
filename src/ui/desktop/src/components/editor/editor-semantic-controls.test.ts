@@ -181,8 +181,8 @@ describe('editor semantic controls', () => {
   });
 
   test('uses the Element Plus tree drag contract without custom pointer projection', () => {
-    assert.match(leftDockSource, /:data="mapTree"/);
-    assert.match(leftDockSource, /:draggable="mapTreeDraggable"/);
+    assert.match(leftDockSource, /:data="visibleMapTree"/);
+    assert.match(leftDockSource, /:draggable="mapTreeDraggable && !mapTreeSearchActive"/);
     assert.match(leftDockSource, /:allow-drag="allowTreeDrag"/);
     assert.match(leftDockSource, /:allow-drop="allowTreeDrop"/);
     assert.match(leftDockSource, /@node-drop="handleTreeNodeDrop"/);

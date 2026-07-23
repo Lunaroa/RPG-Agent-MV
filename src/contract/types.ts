@@ -874,12 +874,31 @@ export interface MapPreviewLoadProgress {
   totalBytes?: number;
 }
 
+export type MapPreviewStagingConflictReasonCode =
+  | 'SOURCE_EXISTENCE_CHANGED'
+  | 'SOURCE_HASH_CHANGED'
+  | 'DRAFT_MISSING'
+  | 'DRAFT_HASH_CHANGED';
+
+export interface MapPreviewStagingConflictFile {
+  relativePath: string;
+  reasons: MapPreviewStagingConflictReasonCode[];
+}
+
+export interface MapPreviewPreflightFailure {
+  code: 'staging-conflict';
+  stage: 'staging-preflight';
+  conflictCount: number;
+  conflicts: MapPreviewStagingConflictFile[];
+}
+
 export type MapPreviewFailureCode =
   | 'runtime-handshake-timeout'
   | 'runtime-resume-failed'
   | 'map-render-failed'
   | 'isolation-preparation-failed'
-  | 'preview-debug-marker-conflict';
+  | 'preview-debug-marker-conflict'
+  | 'staging-conflict';
 
 export interface MapPreviewFailureDetail {
   stage: string;
@@ -892,6 +911,7 @@ export interface MapPreviewFailureDetail {
   resources?: string[];
   message: string;
   runtimeOutput?: string;
+  stagingConflicts?: MapPreviewStagingConflictFile[];
 }
 
 export interface MapPreviewOverrides {
@@ -987,6 +1007,7 @@ export interface MapPreviewSession {
 export interface MapPreviewResult {
   session?: MapPreviewSession;
   runtimeSelectionRequired?: InteractivePlaytestRuntimeSelectionRequired;
+  preflightFailure?: MapPreviewPreflightFailure;
   error?: string;
 }
 

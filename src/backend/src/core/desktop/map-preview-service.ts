@@ -34,6 +34,7 @@ import {
   startMapPreviewPreparation,
   type MapPreviewPreparationTask,
 } from './map-preview-preparation.ts';
+import { normalizeMapPreviewStagingConflictFiles } from './map-preview-staging-conflict.ts';
 import type {
   InteractiveProjectRuntime,
   InteractiveProjectRuntimeResolution,
@@ -2369,6 +2370,7 @@ export function normalizeMapPreviewFailureDetail(
   const operationId = positiveOptionalInteger(detail.operationId);
   const sourceMapId = positiveOptionalInteger(detail.sourceMapId);
   const targetMapId = positiveOptionalInteger(detail.targetMapId);
+  const stagingConflicts = normalizeMapPreviewStagingConflictFiles(detail.stagingConflicts || []);
   return {
     stage: boundedText(detail.stage || 'unknown', 128),
     ...(operationId ? { operationId } : {}),
@@ -2378,6 +2380,7 @@ export function normalizeMapPreviewFailureDetail(
     ...(typeof detail.transferring === 'boolean' ? { transferring: detail.transferring } : {}),
     ...(typeof detail.resourcesReady === 'boolean' ? { resourcesReady: detail.resourcesReady } : {}),
     ...(resources.length ? { resources } : {}),
+    ...(stagingConflicts.length ? { stagingConflicts } : {}),
     message: sanitizeMapPreviewDiagnosticText(detail.message || 'Map preview failed.', preparation),
     ...(detail.runtimeOutput ? {
       runtimeOutput: sanitizeMapPreviewDiagnosticText(

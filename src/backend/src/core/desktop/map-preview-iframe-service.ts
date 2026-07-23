@@ -40,7 +40,6 @@ import {
 } from './map-preview-preparation.ts';
 import { injectMapPreviewIframeHarness, writeMapPreviewIframeHarness } from './map-preview-iframe-harness.ts';
 import {
-  assertNoStagingConflicts,
   effectiveMapRevision,
   inspectWarmProjectChanges,
   mapPreviewLoadPurpose,
@@ -52,6 +51,7 @@ import {
   syncEffectiveMapInfos,
   type ProjectFileSnapshot,
 } from './map-preview-service.ts';
+import { inspectMapPreviewStagingConflict } from './map-preview-staging-conflict.ts';
 
 const RUNTIME_TIMEOUT_MS = 20_000;
 
@@ -120,7 +120,8 @@ export class MapPreviewIframeService {
     if (!manifest.mapFiles.some((entry) => entry.id === mapId && entry.exists)) {
       throw new Error(`Map${String(mapId).padStart(3, '0')}.json does not exist.`);
     }
-    assertNoStagingConflicts(this.#workflowRoot, project);
+    const preflightFailure = inspectMapPreviewStagingConflict(this.#workflowRoot, project);
+    if (preflightFailure) return { preflightFailure };
     const mapRevision = effectiveMapRevision(this.#workflowRoot, project, mapId);
     const now = new Date().toISOString();
     const taskId = crypto.randomUUID();
@@ -243,6 +244,23 @@ export class MapPreviewIframeService {
   }
 
   async #failPreparation(error: unknown, mapId: number): Promise<void> {
+    const preflightFailure = error instanceof MapPreviewPreparationFailedError
+      ? error.preflightFailure
+      : undefined;
+    if (preflightFailure) {
+      await this.#fail(
+        `Staging preflight found ${preflightFailure.conflictCount} conflicted file(s).`,
+        'staging-conflict',
+        {
+          stage: preflightFailure.stage,
+          operationId: this.#activeOperationId,
+          targetMapId: mapId,
+          message: `Staging preflight found ${preflightFailure.conflictCount} conflicted file(s).`,
+          stagingConflicts: preflightFailure.conflicts,
+        },
+      );
+      return;
+    }
     await this.#fail(
       errorMessage(error),
       error instanceof MapPreviewPreparationFailedError ? 'isolation-preparation-failed' : 'map-render-failed',
@@ -421,7 +439,17 @@ export class MapPreviewIframeService {
     if (!this.#session || !this.isActive()) return this.start(project, request.mapId, request.overrides);
     const sourceProject = this.#preparation?.sourceProject || this.#sourceProject;
     if (!sourceProject) throw new Error('The active map preview has no source project.');
-    if (fs.realpathSync.native(sourceProject) !== project) {
+    const sameProject = fs.realpathSync.native(sourceProject) === project;
+    const preflightFailure = inspectMapPreviewStagingConflict(this.#workflowRoot, project);
+    if (preflightFailure) {
+      const canKeepSuccessfulPreview = sameProject
+        && Boolean(this.#session.iframeUrl)
+        && ['running', 'suspended'].includes(this.#session.status);
+      if (canKeepSuccessfulPreview) return { ...this.current(), preflightFailure };
+      await this.stop();
+      return { preflightFailure };
+    }
+    if (!sameProject) {
       await this.stop();
       const result = await this.start(project, request.mapId, request.overrides);
       if (result.session) this.#update({ resumeKind: 'reisolated' });
@@ -659,7 +687,6 @@ export class MapPreviewIframeService {
 
   #prepareRuntimeTarget(request: MapPreviewResumeRequest): PreparedRuntimeTarget | null {
     if (!this.#session || !this.#preparation) return null;
-    assertNoStagingConflicts(this.#workflowRoot, request.project);
     const changes = inspectWarmProjectChanges(this.#workflowRoot, request.project, this.#sourceSnapshot, this.#stagingSnapshot);
     if (changes.unsafePaths.length) return null;
     this.#sourceSnapshot = changes.sourceSnapshot;

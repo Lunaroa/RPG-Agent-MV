@@ -15,6 +15,7 @@
       :redo-len="redoLen"
       :busy="busy"
       :staging-dirty="stagingDirty && mode !== 'preview'"
+      :staging-conflicted="stagingConflict"
       :preview-refresh-enabled="previewRefreshEnabled"
       :preview-execution-enabled="previewExecutionEnabled"
       :preview-execution-available="previewExecutionAvailable"
@@ -91,6 +92,7 @@
             :presentation-epoch="previewPresentationEpoch"
             :error="previewError"
             :diagnostic="previewDiagnostic"
+            :preflight-failure="previewPreflightFailure"
             :refreshing="previewRefreshActive"
             :selected-event="selectedPreviewEventState"
             :tile-size="currentTileSize"
@@ -99,6 +101,7 @@
             :load-progress="previewSession?.loadProgress"
             :started-at="previewSession?.startedAt"
             @retry="restartPreview"
+            @resolve-staging="resolvePreviewStagingConflict"
             @copy-diagnostic="copyPreviewDiagnostic"
             @runtime-event="onPreviewRuntimeEvent"
             @view-changed="updatePreviewView"
@@ -316,9 +319,21 @@ import { filterMapPreviewOverrides, removeMapPreviewOverrides } from '../utils/m
 import { mapPreviewSelfSwitchKey } from '@contract/map-preview-state';
 import { LatestAsyncCoordinator, type LatestAsyncToken } from '../utils/latestAsyncCoordinator';
 import { previewSessionMatchesIntent, type EditorPreviewIntent } from '../utils/editorPreviewIntent';
-import { mapPreviewDiagnosticFromError, mapPreviewDiagnosticFromSession, serializeMapPreviewDiagnostic, type MapPreviewDiagnostic } from '../utils/mapPreviewDiagnostics';
+import {
+  mapPreviewDiagnosticFromError,
+  mapPreviewDiagnosticFromPreflightFailure,
+  mapPreviewDiagnosticFromSession,
+  mapPreviewPreflightFailureFromSession,
+  serializeMapPreviewDiagnostic,
+  type MapPreviewDiagnostic,
+} from '../utils/mapPreviewDiagnostics';
 import { useI18n, type MessageKey } from '../i18n';
-import type { MapPreviewStateCatalog, RpgMakerEngine } from '@contract/types';
+import type {
+  MapPreviewPreflightFailure,
+  MapPreviewResult,
+  MapPreviewStateCatalog,
+  RpgMakerEngine,
+} from '@contract/types';
 
 interface ApiError extends Error { status?: number }
 type EditableMap = MvMap & Partial<RmmvMapProperties> & Record<string, unknown>;
@@ -378,6 +393,7 @@ const busy = ref(false);
 const statusText = ref('');
 const statusKind = ref<EditorStatusKind>('');
 const stagingDirty = ref(false);
+const stagingConflict = ref(false);
 const stagedMapIds = ref(new Set<number>());
 const selectedEventId = ref<number | null>(null);
 const hoveredEventId = ref<number | null>(null);
@@ -414,6 +430,7 @@ const previewSession = ref<MapPreviewSession | null>(null);
 const previewStatus = ref<MapPreviewStatus>('stopped');
 const previewError = ref('');
 const previewDiagnostic = shallowRef<MapPreviewDiagnostic | null>(null);
+const previewPreflightFailure = shallowRef<MapPreviewPreflightFailure | null>(null);
 const previewRuntimeCommand = shallowRef<MapPreviewRuntimeCommand | null>(null);
 const previewPresentationEpoch = ref(0);
 const previewStateCatalog = ref<MapPreviewStateCatalog>({ switches: [], variables: [] });
@@ -580,6 +597,7 @@ function stateRecordMap<T>(record?: Record<string, T>): Map<number, T> {
 function onPreviewStatus(session: MapPreviewSession) {
   const intent = previewIntentCoordinator.current()?.value;
   const currentSession = previewSession.value;
+  const stagingFailure = mapPreviewPreflightFailureFromSession(session);
   if (
     currentSession
     && !['stopped', 'failed'].includes(currentSession.status)
@@ -611,8 +629,12 @@ function onPreviewStatus(session: MapPreviewSession) {
   if (!previewSessionMatchesIntent(session, intent)) return;
   previewSession.value = session;
   previewStatus.value = session.status;
-  previewError.value = session.status === 'failed' ? previewFailureMessage(session) : '';
+  previewError.value = session.status === 'failed' && !stagingFailure ? previewFailureMessage(session) : '';
   previewDiagnostic.value = session.status === 'failed' ? mapPreviewDiagnosticFromSession(session) : null;
+  if (stagingFailure) {
+    previewPreflightFailure.value = stagingFailure;
+    stagingConflict.value = true;
+  }
   if (session.status === 'running' || session.status === 'failed') previewRefreshActive.value = false;
   if (session.status === 'running') previewRequestedMapId.value = session.mapId;
 }
@@ -625,7 +647,42 @@ function previewFailureMessage(session: MapPreviewSession): string {
   if (session.failureCode === 'runtime-resume-failed') return t('editor.preview.runtimeResumeFailed');
   if (session.failureCode === 'isolation-preparation-failed') return t('editor.preview.isolationPreparationFailed');
   if (session.failureCode === 'preview-debug-marker-conflict') return t('editor.preview.debugMarkerConflict');
+  if (session.failureCode === 'staging-conflict') return t('editor.preview.stagingConflict.title');
   return t('editor.preview.unknownError');
+}
+
+function handlePreviewPreflightFailure(
+  result: MapPreviewResult,
+  intent: Extract<EditorPreviewIntent, { active: true }>,
+): boolean {
+  const failure = result.preflightFailure;
+  if (!failure) return false;
+  if (result.session) onPreviewStatus(result.session);
+  previewPreflightFailure.value = failure;
+  stagingConflict.value = true;
+  previewError.value = '';
+  previewDiagnostic.value = mapPreviewDiagnosticFromPreflightFailure({
+    failure,
+    engine: currentEngine.value,
+    mapId: intent.mapId,
+    operationId: result.session?.operationId || previewSession.value?.operationId,
+  });
+  const retained = Boolean(
+    result.session?.iframeUrl
+    && ['running', 'suspended'].includes(result.session.status),
+  );
+  if (!retained) previewStatus.value = 'failed';
+  previewRefreshActive.value = false;
+  return true;
+}
+
+function clearPreviewPreflightFailure(): void {
+  previewPreflightFailure.value = null;
+}
+
+function acceptPreviewPreflightSuccess(): void {
+  clearPreviewPreflightFailure();
+  stagingConflict.value = false;
 }
 
 function onPreviewRuntimeCommand(command: MapPreviewRuntimeCommand) {
@@ -785,6 +842,7 @@ function schedulePreviewIntentReconcile(): LatestAsyncToken<EditorPreviewIntent>
     previewRefreshActive.value = false;
     previewError.value = '';
     previewDiagnostic.value = null;
+    clearPreviewPreflightFailure();
   }
   void previewIntentCoordinator.runExclusive(token, async ({ isCurrent }) => {
     if (!token.value.active) {
@@ -815,7 +873,10 @@ async function ensurePreviewForIntent(
         intent.mapRevision,
         intent.forceReload,
       );
-      if (isCurrent() && result.session) onPreviewStatus(result.session);
+      if (!isCurrent()) return;
+      if (handlePreviewPreflightFailure(result, intent)) return;
+      acceptPreviewPreflightSuccess();
+      if (result.session) onPreviewStatus(result.session);
     } catch (error) {
       if (!isCurrent()) return;
       console.warn('[editor-preview-intent] failed', { sequence: token.sequence, mapId, stage: 'resume' });
@@ -833,6 +894,7 @@ async function ensurePreviewForIntent(
     syncPreviewOverridesFromWorkspace();
     const result = await mapPreview.start(intent.project, mapId, overridesForCurrentMap());
     if (!isCurrent()) return;
+    if (handlePreviewPreflightFailure(result, intent)) return;
     if (result.runtimeSelectionRequired) {
       const selection = await playtest.selectRuntime(result.runtimeSelectionRequired);
       if (!isCurrent()) return;
@@ -851,10 +913,13 @@ async function ensurePreviewForIntent(
       }
       const retried = await mapPreview.start(intent.project, mapId, overridesForCurrentMap());
       if (!isCurrent()) return;
+      if (handlePreviewPreflightFailure(retried, intent)) return;
+      acceptPreviewPreflightSuccess();
       if (retried.session) onPreviewStatus(retried.session);
       else if (retried.error) throw new Error(retried.error);
       return;
     }
+    acceptPreviewPreflightSuccess();
     if (result.session) onPreviewStatus(result.session);
     else if (result.error) throw new Error(result.error);
   } catch (error) {
@@ -882,6 +947,7 @@ async function stopPreviewSession() {
   previewStatus.value = 'stopped';
   previewError.value = '';
   previewDiagnostic.value = null;
+  clearPreviewPreflightFailure();
   if (!session || ['stopped', 'failed'].includes(session.status)) return;
   try {
     await mapPreview.stop();
@@ -903,12 +969,27 @@ async function suspendPreviewSession() {
 
 async function restartPreview() {
   previewRefreshActive.value = false;
-  const token = previewIntentCoordinator.begin(currentPreviewIntent());
+  const intent = currentPreviewIntent();
+  const keepExistingPreview = Boolean(
+    previewPreflightFailure.value
+    && previewSession.value?.iframeUrl
+    && ['running', 'suspended'].includes(previewSession.value.status),
+  );
+  const token = previewIntentCoordinator.begin(intent.active
+    ? { ...intent, forceReload: keepExistingPreview || intent.forceReload }
+    : intent);
   void previewIntentCoordinator.runExclusive(token, async ({ isCurrent }) => {
-    await stopPreviewSession();
+    if (!keepExistingPreview) await stopPreviewSession();
     if (!isCurrent() || !token.value.active) return;
     await ensurePreviewForIntent(token, isCurrent);
   });
+}
+
+async function resolvePreviewStagingConflict() {
+  mode.value = 'map';
+  await nextTick();
+  await refreshStagingStatus();
+  ElMessage.warning(t('editor.preview.stagingConflict.resolveHint'));
 }
 
 async function refreshPreview() {
@@ -947,6 +1028,7 @@ async function refreshPreview() {
 }
 
 function setDirectPreviewFailure(error: unknown, stage: string, intent: Extract<EditorPreviewIntent, { active: true }>) {
+  clearPreviewPreflightFailure();
   const diagnostic = mapPreviewDiagnosticFromError({
     error,
     stage,
@@ -1266,6 +1348,9 @@ watch(() => projectStore.currentProject, async (project) => {
   requestedMapId.value = null;
   previewIntentCoordinator.invalidate({ active: false, project });
   await stopPreviewSession();
+  stagingDirty.value = false;
+  stagingConflict.value = false;
+  stagedMapIds.value = new Set();
   selectedMapId.value = null;
   mapTree.value = [];
   mapTreeLoading.value = false;
@@ -1804,9 +1889,15 @@ function isStagingDirty(value: unknown) {
 }
 async function refreshStagingStatus() {
   try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject) as { staged?: boolean; maps?: number[]; operations?: unknown[] };
+    const status = await mapsApi.projectStaging(projectStore.currentProject) as {
+      staged?: boolean;
+      conflict?: boolean;
+      maps?: number[];
+      operations?: unknown[];
+    };
     stagedMapIds.value = new Set((status.maps || []).filter(Number.isFinite));
     stagingDirty.value = Boolean(status.staged) || stagedMapIds.value.size > 0;
+    stagingConflict.value = Boolean(status.conflict);
   } catch { /* staging status does not block the editor */ }
 }
 
@@ -1968,6 +2059,10 @@ async function saveProperties() {
 }
 
 async function applyStaging() {
+  if (stagingConflict.value) {
+    ElMessage.warning(t('editor.staging.conflictApplyDisabled'));
+    return;
+  }
   busy.value = true;
   try {
     const status = await mapsApi.projectStaging(projectStore.currentProject);

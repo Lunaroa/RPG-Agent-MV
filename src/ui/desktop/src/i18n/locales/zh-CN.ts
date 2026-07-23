@@ -1765,7 +1765,13 @@ const zhCN = {
     'eventImgPicker.character': '角色图',
     'eventImgPicker.tile': '图块',
     'eventImgPicker.searchCharacters': '搜索角色图',
+    'eventImgPicker.viewMode': '角色图浏览方式',
+    'eventImgPicker.listView': '传统列表',
+    'eventImgPicker.galleryView': '大图预览',
+    'eventImgPicker.noCharacterMatches': '没有匹配的角色图。',
+    'eventImgPicker.previewFailed': '角色图预览加载失败',
     'eventImgPicker.tileTabs': '图块页签',
+    'eventImgPicker.pickHint': '单击选择，双击确定',
 
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': '该指令不需要额外参数。',

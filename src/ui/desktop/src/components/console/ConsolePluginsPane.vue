@@ -31,6 +31,7 @@ import PluginDeleteDialog from './PluginDeleteDialog.vue';
 import PluginEngineTags from './PluginEngineTags.vue';
 import PluginParameterDialog from './PluginParameterDialog.vue';
 import {
+  adjacentPluginListKey,
   buildPluginManagerGroups,
   isPluginReorderLocked,
   movePluginIndex,
@@ -303,6 +304,10 @@ function configuredKey(name: string): string {
   return `configured:${name}`;
 }
 
+function configuredRowKey(index: number): string {
+  return `configured-row:${index}`;
+}
+
 function fileKey(relativePath: string): string {
   return `file:${relativePath}`;
 }
@@ -342,12 +347,22 @@ async function navigateToPluginReference(name: string): Promise<void> {
   const target = resolvePluginReference(config.value, name);
   if (!target) return;
   search.value = '';
-  const key = target.kind === 'configured'
-    ? configuredKey(target.name)
-    : fileKey(target.relativePath);
-  selectedKey.value = key;
+  const configured = target.kind === 'configured'
+    ? plugins.value.find((plugin) => plugin.name === target.name)
+    : null;
+  const selectedItemKey = configured
+    ? configuredKey(configured.name)
+    : target.kind === 'file'
+      ? fileKey(target.relativePath)
+      : '';
+  const rowKey = configured
+    ? configuredRowKey(configured.index)
+    : target.kind === 'file'
+      ? fileKey(target.relativePath)
+      : '';
+  selectedKey.value = selectedItemKey;
   await nextTick();
-  const row = pluginRowElements.get(key);
+  const row = pluginRowElements.get(rowKey);
   row?.focus({ preventScroll: true });
   row?.scrollIntoView({ block: 'nearest' });
 }
@@ -596,16 +611,63 @@ async function keyboardMove(plugin: ManagedPluginEntry, delta: -1 | 1): Promise<
   await reorderPluginIndexes(indexes, plugin.name);
 }
 
+async function navigatePluginList(currentRowKey: string, delta: -1 | 1): Promise<void> {
+  const rows = [
+    ...filteredPlugins.value.map((plugin) => ({
+      key: configuredRowKey(plugin.index),
+      select: () => selectPlugin(plugin),
+    })),
+    ...filteredFiles.value.map((file) => ({
+      key: fileKey(file.relativePath),
+      select: () => selectFile(file),
+    })),
+  ];
+  const targetKey = adjacentPluginListKey(
+    rows.map((row) => row.key),
+    currentRowKey,
+    delta,
+  );
+  if (!targetKey) return;
+  const target = rows.find((row) => row.key === targetKey);
+  if (!target) return;
+  target.select();
+  await nextTick();
+  const row = pluginRowElements.get(targetKey);
+  row?.focus({ preventScroll: true });
+  row?.scrollIntoView({ block: 'nearest' });
+}
+
 function pluginKeydown(event: KeyboardEvent, plugin: ManagedPluginEntry): void {
+  if (event.target !== event.currentTarget) return;
   if (event.altKey && event.key === 'ArrowUp') {
     event.preventDefault();
     void keyboardMove(plugin, -1);
   } else if (event.altKey && event.key === 'ArrowDown') {
     event.preventDefault();
     void keyboardMove(plugin, 1);
+  } else if (!event.ctrlKey && !event.metaKey && !event.shiftKey && event.key === 'ArrowUp') {
+    event.preventDefault();
+    void navigatePluginList(configuredRowKey(plugin.index), -1);
+  } else if (!event.ctrlKey && !event.metaKey && !event.shiftKey && event.key === 'ArrowDown') {
+    event.preventDefault();
+    void navigatePluginList(configuredRowKey(plugin.index), 1);
   } else if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault();
     selectPlugin(plugin);
+  }
+}
+
+function fileKeydown(event: KeyboardEvent, file: ManagedPluginFile): void {
+  if (event.target !== event.currentTarget) return;
+  if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.key === 'ArrowUp') {
+    event.preventDefault();
+    void navigatePluginList(fileKey(file.relativePath), -1);
+  } else if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.key === 'ArrowDown') {
+    event.preventDefault();
+    void navigatePluginList(fileKey(file.relativePath), 1);
+  } else if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    selectFile(file);
   }
 }
 
@@ -809,7 +871,7 @@ function resizeKeydown(event: KeyboardEvent): void {
             <div
               v-for="(plugin, index) in filteredPlugins"
               :key="`${plugin.index}:${plugin.name}`"
-              :ref="(element) => setPluginRowElement(configuredKey(plugin.name), element)"
+              :ref="(element) => setPluginRowElement(configuredRowKey(plugin.index), element)"
               class="plugin-row"
               :class="{
                 active: selectedPlugin?.name === plugin.name,
@@ -885,8 +947,7 @@ function resizeKeydown(event: KeyboardEvent): void {
               tabindex="0"
               :aria-pressed="selectedFile?.relativePath === file.relativePath"
               @click="selectFile(file)"
-              @keydown.enter.prevent="selectFile(file)"
-              @keydown.space.prevent="selectFile(file)"
+              @keydown="fileKeydown($event, file)"
             >
               <span class="file-spacer" />
               <span class="plugin-main">

@@ -122,6 +122,17 @@ export function movePluginIndex(
   return next;
 }
 
+export function adjacentPluginListKey(
+  keys: string[],
+  currentKey: string,
+  delta: -1 | 1,
+): string | null {
+  const currentIndex = keys.indexOf(currentKey);
+  const targetIndex = currentIndex + delta;
+  if (currentIndex < 0 || targetIndex < 0 || targetIndex >= keys.length) return null;
+  return keys[targetIndex] || null;
+}
+
 function matchesPluginSearch(values: unknown[], query: string): boolean {
   return values.some(
     (value) => String(value || '').toLocaleLowerCase().includes(query),

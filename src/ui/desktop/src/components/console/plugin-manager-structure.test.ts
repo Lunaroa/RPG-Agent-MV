@@ -38,6 +38,12 @@ describe('plugin manager structure', () => {
     assert.match(paneSource, /@dblclick\.stop/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowUp'/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowDown'/);
+    assert.match(paneSource, /navigatePluginList\(configuredRowKey\(plugin\.index\), -1\)/);
+    assert.match(paneSource, /navigatePluginList\(configuredRowKey\(plugin\.index\), 1\)/);
+    assert.match(paneSource, /navigatePluginList\(fileKey\(file\.relativePath\), -1\)/);
+    assert.match(paneSource, /navigatePluginList\(fileKey\(file\.relativePath\), 1\)/);
+    assert.equal((paneSource.match(/event\.target !== event\.currentTarget/g) || []).length, 2);
+    assert.match(paneSource, /scrollIntoView\(\{ block: 'nearest' \}\)/);
     assert.match(paneSource, /draggedIndex\.value = plugin\.index/);
     assert.match(paneSource, /pluginApi\.reorder\(indexes,/);
     assert.match(paneSource, /<PluginParameterDialog/);

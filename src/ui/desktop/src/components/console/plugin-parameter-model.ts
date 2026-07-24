@@ -407,7 +407,7 @@ export function summarizePluginParameterValue(
   return summarizeScalar(value, labels);
 }
 
-/** Select options show option text plus the stored value as a tag. */
+/** Select options resolve to a friendly label for summaries. */
 export function resolvePluginParameterSelectPresentation(
   field: Pick<PluginParameterSchemaField, 'kind' | 'options'> | null | undefined,
   value: unknown,

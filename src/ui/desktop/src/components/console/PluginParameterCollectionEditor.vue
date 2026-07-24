@@ -30,7 +30,6 @@ import {
   clonePluginParameterValue,
   isBooleanParameterEnabled,
   isPluginParameterSchemaFieldEditable,
-  resolvePluginParameterSelectPresentation,
   summarizePluginParameterValue,
   type PluginParameterChildTarget,
   type PluginParameterRow,
@@ -268,13 +267,6 @@ function displayStructReadonlyReason(row: PluginParameterRow): string {
 
 function structTypeLabel(row: Pick<PluginParameterRow, 'field'>): string {
   return formatPluginParameterTypeLabel(row.field?.rawType, row.field?.kind, t);
-}
-
-function selectPresentationFor(
-  field: PluginParameterSchemaField | null | undefined,
-  value: unknown,
-): { label: string; value: string } | null {
-  return resolvePluginParameterSelectPresentation(field, value);
 }
 
 function editStructField(field: PluginParameterSchemaField): void {
@@ -774,22 +766,6 @@ function displayValue(value: unknown): string {
                     @click.stop
                     @dblclick.stop
                   />
-                  <div
-                    v-else-if="
-                      column.field.kind === 'select'
-                      && selectPresentationFor(column.field, cellValue(row.value, column.field))
-                    "
-                    class="parameter-select-value"
-                  >
-                    <span>{{
-                      selectPresentationFor(column.field, cellValue(row.value, column.field))!.label
-                    }}</span>
-                    <el-tag size="small" effect="plain" class="parameter-key-tag">
-                      {{
-                        selectPresentationFor(column.field, cellValue(row.value, column.field))!.value
-                      }}
-                    </el-tag>
-                  </div>
                   <template v-else>
                     <PluginParameterValueDecor
                       :field="column.field"
@@ -825,18 +801,6 @@ function displayValue(value: unknown): string {
                   @click.stop
                   @dblclick.stop
                 />
-                <div
-                  v-else-if="
-                    arrayItem?.kind === 'select'
-                    && selectPresentationFor(arrayItem, row.value)
-                  "
-                  class="parameter-select-value"
-                >
-                  <span>{{ selectPresentationFor(arrayItem, row.value)!.label }}</span>
-                  <el-tag size="small" effect="plain" class="parameter-key-tag">
-                    {{ selectPresentationFor(arrayItem, row.value)!.value }}
-                  </el-tag>
-                </div>
                 <template v-else-if="arrayItem">
                   <PluginParameterValueDecor
                     :field="arrayItem"
@@ -980,20 +944,6 @@ function displayValue(value: unknown): string {
                   @click.stop
                   @dblclick.stop
                 />
-                <div
-                  v-else-if="
-                    row.field?.kind === 'select'
-                    && selectPresentationFor(row.field, structSource()[row.key])
-                  "
-                  class="parameter-select-value"
-                >
-                  <span>{{
-                    selectPresentationFor(row.field, structSource()[row.key])!.label
-                  }}</span>
-                  <el-tag size="small" effect="plain" class="parameter-key-tag">
-                    {{ selectPresentationFor(row.field, structSource()[row.key])!.value }}
-                  </el-tag>
-                </div>
                 <template v-else>
                   <PluginParameterValueDecor
                     v-if="row.field"
@@ -1186,18 +1136,6 @@ function displayValue(value: unknown): string {
 .parameter-value-cell > span {
   min-width: 0;
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.parameter-select-value {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.parameter-select-value > span {
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

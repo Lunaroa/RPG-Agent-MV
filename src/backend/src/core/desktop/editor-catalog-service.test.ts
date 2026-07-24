@@ -53,8 +53,8 @@ describe('editor catalog service', () => {
         }],
         classProfiles: [{ classId: 1, dualWield: true }],
       });
-      assert.deepEqual(catalog.weapons[0], { id: 1, name: 'Blade', etypeId: 1 });
-      assert.deepEqual(catalog.armors[0], { id: 1, name: 'Guard', etypeId: 2 });
+      assert.deepEqual(catalog.weapons[0], { id: 1, name: 'Blade', etypeId: 1, iconIndex: 0 });
+      assert.deepEqual(catalog.armors[0], { id: 1, name: 'Guard', etypeId: 2, iconIndex: 0 });
       assert.deepEqual(catalog.enemies[0], {
         id: 1,
         name: 'Slime',

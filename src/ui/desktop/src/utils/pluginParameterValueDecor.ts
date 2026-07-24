@@ -19,6 +19,7 @@ import {
 import type {
   EditorActorCatalogEntry,
   EditorAnimationCatalogEntry,
+  EditorIconCatalogEntry,
   EditorProjectCatalog,
   PluginParameterSchemaField,
 } from '../api/client';
@@ -51,6 +52,10 @@ export type PluginParameterValueMedia =
       characterIndex: number;
     }
   | {
+      kind: 'icon';
+      iconIndex: number;
+    }
+  | {
       kind: 'image';
       url: string;
     };
@@ -77,6 +82,14 @@ const ICON_BY_TABLE: Record<string, { id: PluginParameterValueIconId; icon: Comp
   'System.switches': { id: 'switch', icon: ToggleLeft },
   'System.variables': { id: 'variable', icon: Hash },
 };
+
+const ICONSET_TABLES = new Set([
+  'Skills',
+  'Items',
+  'Weapons',
+  'Armors',
+  'States',
+]);
 
 /**
  * Resolve value-column decoration: database icons, actor/file/animation media thumbs.
@@ -129,6 +142,16 @@ export function resolvePluginParameterValueDecor(
     };
   }
 
+  if (ICONSET_TABLES.has(table)) {
+    const entry = resolveIconCatalogEntry(table, id, catalog);
+    const iconIndex = Math.floor(Number(entry?.iconIndex));
+    if (!Number.isFinite(iconIndex) || iconIndex <= 0) return { icon, iconId, media: null };
+    if (!catalog.assets.system.some((asset) => asset.name === 'IconSet' && asset.url)) {
+      return { icon, iconId, media: null };
+    }
+    return { icon, iconId, media: { kind: 'icon', iconIndex } };
+  }
+
   if (table === 'Animations') {
     const animation = catalog.animations.find((entry) => entry.id === id) as
       | EditorAnimationCatalogEntry
@@ -141,6 +164,22 @@ export function resolvePluginParameterValueDecor(
   }
 
   return { icon, iconId, media: null };
+}
+
+function resolveIconCatalogEntry(
+  table: string,
+  id: number,
+  catalog: EditorProjectCatalog,
+): EditorIconCatalogEntry | undefined {
+  const list =
+    table === 'Skills' ? catalog.skills
+      : table === 'Items' ? catalog.items
+        : table === 'Weapons' ? catalog.weapons
+          : table === 'Armors' ? catalog.armors
+            : table === 'States' ? catalog.states
+              : null;
+  if (!list) return undefined;
+  return list.find((entry) => entry.id === id) as EditorIconCatalogEntry | undefined;
 }
 
 function resolveFileImageMedia(

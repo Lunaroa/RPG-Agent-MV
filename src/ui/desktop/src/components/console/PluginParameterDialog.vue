@@ -21,7 +21,6 @@ import {
   createPluginParameterForm,
   isBooleanParameterEnabled,
   pluginParameterPayloadsEqual,
-  resolvePluginParameterSelectPresentation,
   type PluginParameterRow,
   type PluginParameterSummaryLabels,
 } from './plugin-parameter-model';
@@ -229,17 +228,6 @@ function displayReadonlyReason(row: PluginParameterRow): string {
 
 function parameterTypeLabel(row: Pick<PluginParameterRow, 'field'>): string {
   return formatPluginParameterTypeLabel(row.field?.rawType, row.field?.kind, t);
-}
-
-function selectPresentation(row: Pick<PluginParameterRow, 'field' | 'key' | 'editable'>): {
-  label: string;
-  value: string;
-} | null {
-  if (!row.field) return null;
-  const value = row.editable
-    ? parameterForm.value[row.key]
-    : props.plugin?.parameters?.[row.key];
-  return resolvePluginParameterSelectPresentation(row.field, value);
 }
 
 function openParameterEditor(key: string): void {
@@ -527,20 +515,6 @@ async function focusInitialParameter(): Promise<void> {
                     @click.stop
                     @dblclick.stop
                   />
-                  <div
-                    v-else-if="row.field?.kind === 'select' && selectPresentation(row)"
-                    class="parameter-select-value"
-                    :title="`${selectPresentation(row)!.label} · ${selectPresentation(row)!.value}`"
-                  >
-                    <span>{{ selectPresentation(row)!.label }}</span>
-                    <el-tag
-                      size="small"
-                      effect="plain"
-                      class="parameter-key-tag"
-                    >
-                      {{ selectPresentation(row)!.value }}
-                    </el-tag>
-                  </div>
                   <template v-else>
                     <PluginParameterValueDecor
                       v-if="row.field"
@@ -778,18 +752,6 @@ async function focusInitialParameter(): Promise<void> {
   text-overflow: ellipsis;
   font-weight: 400;
   color: var(--console-accent, #be5630);
-}
-.parameter-select-value {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.parameter-select-value > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .parameter-boolean-switch {
   flex: 0 0 auto;

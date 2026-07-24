@@ -436,7 +436,12 @@ export interface EditorEnemyCatalogEntry extends NamedCatalogEntry {
   battlerHue: number;
 }
 
-export interface EditorEquipmentCatalogEntry extends NamedCatalogEntry {
+/** DB rows that reference IconSet.png via iconIndex (skills/items/states). */
+export interface EditorIconCatalogEntry extends NamedCatalogEntry {
+  iconIndex: number;
+}
+
+export interface EditorEquipmentCatalogEntry extends EditorIconCatalogEntry {
   etypeId: number;
 }
 
@@ -1211,11 +1216,11 @@ export interface EditorProjectCatalog {
   equipTypes: NamedCatalogEntry[];
   actors: EditorActorCatalogEntry[];
   classes: NamedCatalogEntry[];
-  skills: NamedCatalogEntry[];
-  items: NamedCatalogEntry[];
+  skills: EditorIconCatalogEntry[];
+  items: EditorIconCatalogEntry[];
   weapons: EditorEquipmentCatalogEntry[];
   armors: EditorEquipmentCatalogEntry[];
-  states: NamedCatalogEntry[];
+  states: EditorIconCatalogEntry[];
   enemies: EditorEnemyCatalogEntry[];
   troops: NamedCatalogEntry[];
   tilesets: NamedCatalogEntry[];

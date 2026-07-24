@@ -3,6 +3,8 @@ import { computed } from 'vue';
 import type { EditorProjectCatalog, PluginParameterSchemaField } from '../../api/client';
 import { resolvePluginParameterValueDecor } from '../../utils/pluginParameterValueDecor';
 import ActorWalkingFrameThumb from './ActorWalkingFrameThumb.vue';
+import ActorWalkingSheetThumb from './ActorWalkingSheetThumb.vue';
+import IconSetThumb from './IconSetThumb.vue';
 
 const props = defineProps<{
   field: PluginParameterSchemaField;
@@ -16,6 +18,9 @@ const props = defineProps<{
 
 const INLINE = computed(() => Math.max(16, Math.round(props.inlineSize ?? 28)));
 const POPOVER_MAX = computed(() => Math.max(64, Math.round(props.popoverMax ?? 200)));
+const popoverIconSize = computed(() =>
+  Math.min(POPOVER_MAX.value, Math.max(32, Math.round(props.catalog?.iconSize || 32) * 2)),
+);
 
 const decor = computed(() =>
   resolvePluginParameterValueDecor(props.field, props.value, props.catalog),
@@ -44,7 +49,7 @@ const hasMedia = computed(() => Boolean(decor.value.media));
       trigger="hover"
       :show-after="180"
       :hide-after="60"
-      :width="POPOVER_MAX + 16"
+      width="auto"
       popper-class="plugin-parameter-value-media-popper"
     >
       <template #reference>
@@ -53,6 +58,12 @@ const hasMedia = computed(() => Boolean(decor.value.media));
             v-if="decor.media.kind === 'actor'"
             :character-name="decor.media.characterName"
             :character-index="decor.media.characterIndex"
+            :catalog="catalog"
+            :size="INLINE"
+          />
+          <IconSetThumb
+            v-else-if="decor.media.kind === 'icon'"
+            :icon-index="decor.media.iconIndex"
             :catalog="catalog"
             :size="INLINE"
           />
@@ -69,12 +80,18 @@ const hasMedia = computed(() => Boolean(decor.value.media));
         class="parameter-value-popover-preview"
         :style="{ maxWidth: `${POPOVER_MAX}px`, maxHeight: `${POPOVER_MAX}px` }"
       >
-        <ActorWalkingFrameThumb
+        <ActorWalkingSheetThumb
           v-if="decor.media.kind === 'actor'"
           :character-name="decor.media.characterName"
-          :character-index="decor.media.characterIndex"
           :catalog="catalog"
-          :size="POPOVER_MAX"
+          :max-width="POPOVER_MAX"
+          :max-height="POPOVER_MAX"
+        />
+        <IconSetThumb
+          v-else-if="decor.media.kind === 'icon'"
+          :icon-index="decor.media.iconIndex"
+          :catalog="catalog"
+          :size="popoverIconSize"
         />
         <img
           v-else
@@ -130,19 +147,30 @@ const hasMedia = computed(() => Boolean(decor.value.media));
 </style>
 
 <style>
-.plugin-parameter-value-media-popper {
+.plugin-parameter-value-media-popper.el-popper {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none;
   padding: 8px !important;
 }
 .plugin-parameter-value-media-popper .parameter-value-popover-preview {
   display: grid;
   place-items: center;
   overflow: hidden;
+  width: max-content;
+  max-width: inherit;
 }
-.plugin-parameter-value-media-popper .parameter-value-popover-img {
-  max-width: 100%;
-  max-height: 100%;
+.plugin-parameter-value-media-popper .parameter-value-popover-img,
+.plugin-parameter-value-media-popper .actor-walking-sheet-thumb {
+  max-width: 200px;
+  max-height: 200px;
+  width: auto;
+  height: auto;
   display: block;
   object-fit: contain;
   image-rendering: auto;
+}
+.plugin-parameter-value-media-popper .actor-walking-sheet-thumb {
+  image-rendering: pixelated;
 }
 </style>

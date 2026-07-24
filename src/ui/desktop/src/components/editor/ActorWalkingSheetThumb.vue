@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import type { EditorProjectCatalog } from '../../api/client';
+import { eventCharacterBlock } from '../../composables/useMapRenderer';
 import { loadImageElement } from '../../utils/imageLoading';
 
 const props = defineProps<{
   characterName?: string;
+  characterIndex?: number;
   catalog?: EditorProjectCatalog | null;
   maxHeight?: number;
   maxWidth?: number;
@@ -16,7 +18,13 @@ const maxWidthPx = computed(() => Math.max(48, Math.round(props.maxWidth ?? maxH
 let paintSerial = 0;
 
 watch(
-  () => [props.characterName, props.catalog, maxHeightPx.value, maxWidthPx.value] as const,
+  () => [
+    props.characterName,
+    props.characterIndex,
+    props.catalog,
+    maxHeightPx.value,
+    maxWidthPx.value,
+  ] as const,
   () => {
     void paint();
   },
@@ -56,18 +64,34 @@ async function paint(): Promise<void> {
   const image = await loadImageElement(asset.url);
   if (!image || serial !== paintSerial) return;
 
+  const block = eventCharacterBlock(image, {
+    characterName,
+    characterIndex: Number.isInteger(props.characterIndex) ? Number(props.characterIndex) : 0,
+  });
+  if (!block || serial !== paintSerial) return;
+
   const scale = Math.min(
     1,
-    maxWidth / Math.max(1, image.naturalWidth),
-    maxHeight / Math.max(1, image.naturalHeight),
+    maxWidth / Math.max(1, block.sw),
+    maxHeight / Math.max(1, block.sh),
   );
-  const drawWidth = Math.max(1, Math.floor(image.naturalWidth * scale));
-  const drawHeight = Math.max(1, Math.floor(image.naturalHeight * scale));
+  const drawWidth = Math.max(1, Math.floor(block.sw * scale));
+  const drawHeight = Math.max(1, Math.floor(block.sh * scale));
   target.width = drawWidth;
   target.height = drawHeight;
   context.imageSmoothingEnabled = false;
   context.clearRect(0, 0, drawWidth, drawHeight);
-  context.drawImage(image, 0, 0, drawWidth, drawHeight);
+  context.drawImage(
+    image,
+    block.sx,
+    block.sy,
+    block.sw,
+    block.sh,
+    0,
+    0,
+    drawWidth,
+    drawHeight,
+  );
 }
 </script>
 

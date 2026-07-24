@@ -133,6 +133,13 @@ const selectedActorCharacterName = computed(() => {
   const actor = (props.catalog?.actors || []).find((entry) => entry.id === id);
   return String(actor?.characterName || '').trim();
 });
+const selectedActorCharacterIndex = computed(() => {
+  if (!showActorPreview.value) return 0;
+  const id = Number(draft.value);
+  if (!Number.isInteger(id) || id <= 0) return 0;
+  const actor = (props.catalog?.actors || []).find((entry) => entry.id === id);
+  return Number.isInteger(actor?.characterIndex) ? Number(actor?.characterIndex) : 0;
+});
 
 watch(
   () => [props.modelValue, props.field?.key] as const,
@@ -491,6 +498,7 @@ function arrayValue(value: unknown): unknown[] {
         <ActorWalkingSheetThumb
           v-if="selectedActorCharacterName"
           :character-name="selectedActorCharacterName"
+          :character-index="selectedActorCharacterIndex"
           :catalog="catalog"
           :max-width="160"
           :max-height="160"

@@ -83,6 +83,7 @@ const hasMedia = computed(() => Boolean(decor.value.media));
         <ActorWalkingSheetThumb
           v-if="decor.media.kind === 'actor'"
           :character-name="decor.media.characterName"
+          :character-index="decor.media.characterIndex"
           :catalog="catalog"
           :max-width="POPOVER_MAX"
           :max-height="POPOVER_MAX"

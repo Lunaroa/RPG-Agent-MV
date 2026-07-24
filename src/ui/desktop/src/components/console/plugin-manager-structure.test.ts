@@ -339,6 +339,9 @@ describe('plugin manager structure', () => {
     assert.doesNotMatch(filePickerSource, /<audio[\s\S]+controls/);
     assert.match(audioPreviewSource, /formatPluginAudioClock/);
     assert.match(audioPreviewSource, /createPluginAudioPlaybackBundle/);
+    assert.match(audioPreviewSource, /autoplay:\s*true/);
+    assert.match(audioPreviewSource, /pendingAutoplay/);
+    assert.match(audioPreviewSource, /el\.play\(\)/);
     assert.match(audioPreviewSource, /<el-slider/);
     assert.match(audioPreviewSource, /vertical/);
     assert.match(audioPreviewSource, /<el-popover/);

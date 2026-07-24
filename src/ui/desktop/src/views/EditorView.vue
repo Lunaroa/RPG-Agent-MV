@@ -447,6 +447,7 @@ const previewInspectorRevealEpoch = ref(0);
 const previewRuntimeMapSyncId = ref<number | null>(null);
 let previewConsoleRequestSequence = 0;
 let previewConsoleEntrySequence = 0;
+let lastPublishedPreviewFailureKey = '';
 
 let currentMap: EditableMap | null = null;
 let unregisterUiControlHandler: (() => void) | null = null;
@@ -631,6 +632,12 @@ function onPreviewStatus(session: MapPreviewSession) {
   previewStatus.value = session.status;
   previewError.value = session.status === 'failed' && !stagingFailure ? previewFailureMessage(session) : '';
   previewDiagnostic.value = session.status === 'failed' ? mapPreviewDiagnosticFromSession(session) : null;
+  if (session.status === 'failed' && previewDiagnostic.value) {
+    publishPreviewFailureToWorkbench(
+      previewDiagnostic.value,
+      stagingFailure ? t('editor.preview.stagingConflict.title') : previewError.value,
+    );
+  }
   if (stagingFailure) {
     previewPreflightFailure.value = stagingFailure;
     stagingConflict.value = true;
@@ -667,6 +674,10 @@ function handlePreviewPreflightFailure(
     mapId: intent.mapId,
     operationId: result.session?.operationId || previewSession.value?.operationId,
   });
+  publishPreviewFailureToWorkbench(
+    previewDiagnostic.value,
+    t('editor.preview.stagingConflict.title'),
+  );
   const retained = Boolean(
     result.session?.iframeUrl
     && ['running', 'suspended'].includes(result.session.status),
@@ -753,6 +764,45 @@ function appendPreviewConsoleEntry(value: unknown) {
     ...entry,
     id: ++previewConsoleEntrySequence,
   } as MapPreviewConsoleEntry);
+}
+
+function publishPreviewFailureToWorkbench(
+  diagnostic: MapPreviewDiagnostic,
+  headline?: string,
+): void {
+  const key = [
+    diagnostic.failureCode || '',
+    diagnostic.detail.stage,
+    diagnostic.detail.message,
+    diagnostic.operationId || '',
+    diagnostic.mapId,
+  ].join('\0');
+  if (key === lastPublishedPreviewFailureKey) return;
+  lastPublishedPreviewFailureKey = key;
+
+  const timestamp = Date.now();
+  const texts: string[] = [];
+  const title = headline?.trim() || '';
+  const detailMessage = diagnostic.detail.message?.trim() || '';
+  if (title) texts.push(title);
+  if (detailMessage && detailMessage !== title) texts.push(detailMessage);
+  if (diagnostic.failureCode) {
+    texts.push(`${t('editor.preview.diagnosticCode')}: ${diagnostic.failureCode}`);
+  }
+  texts.push(`${t('editor.preview.diagnosticStage')}: ${diagnostic.detail.stage}`);
+  if (diagnostic.detail.runtimeOutput?.trim()) {
+    texts.push(diagnostic.detail.runtimeOutput.trim());
+  }
+  for (const text of texts) {
+    previewConsoleEntries.value = appendPreviewTerminalEntry(previewConsoleEntries.value, {
+      id: ++previewConsoleEntrySequence,
+      level: 'error',
+      source: 'exception',
+      timestamp,
+      text,
+    });
+  }
+  previewConsoleOpen.value = true;
 }
 
 async function executePreviewConsole(code: string) {
@@ -890,6 +940,7 @@ async function ensurePreviewForIntent(
   previewDiagnostic.value = null;
   previewRequestedMapId.value = mapId;
   revokePreviewFrame();
+  lastPublishedPreviewFailureKey = '';
   try {
     syncPreviewOverridesFromWorkspace();
     const result = await mapPreview.start(intent.project, mapId, overridesForCurrentMap());
@@ -909,6 +960,7 @@ async function ensurePreviewForIntent(
           mapId,
           project: intent.project,
         });
+        publishPreviewFailureToWorkbench(previewDiagnostic.value, previewError.value);
         return;
       }
       const retried = await mapPreview.start(intent.project, mapId, overridesForCurrentMap());
@@ -942,6 +994,7 @@ async function stopPreviewSession() {
   previewVariableDraftResetEpoch.value += 1;
   previewConsoleRequestSequence = 0;
   previewConsoleEntrySequence = 0;
+  lastPublishedPreviewFailureKey = '';
   const session = previewSession.value;
   previewSession.value = null;
   previewStatus.value = 'stopped';
@@ -1039,6 +1092,7 @@ function setDirectPreviewFailure(error: unknown, stage: string, intent: Extract<
   });
   previewDiagnostic.value = diagnostic;
   previewError.value = t('editor.preview.unknownError');
+  publishPreviewFailureToWorkbench(diagnostic, previewError.value);
 }
 
 async function copyPreviewDiagnostic() {

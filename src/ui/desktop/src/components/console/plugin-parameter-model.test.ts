@@ -13,7 +13,7 @@ import {
   createDefaultPluginParameterValue,
   createPluginParameterForm,
   isPluginParameterSchemaFieldEditable,
-  isSpecialPluginParameterType,
+  isTaggedPluginParameterValue,
   normalizePluginParameterValue,
   pluginParameterPayloadsEqual,
   removePluginParameterArrayItem,
@@ -335,8 +335,10 @@ describe('plugin parameter model', () => {
     expect(buildPluginParameterPayload(plugin, untouched).memo).toBe(
       plugin.parameters.memo,
     );
-    expect(isSpecialPluginParameterType(note)).toBe(true);
-    expect(isSpecialPluginParameterType(field('title', 'text'))).toBe(false);
+    expect(isTaggedPluginParameterValue(note)).toBe(false);
+    expect(isTaggedPluginParameterValue(field('actorId', 'database'))).toBe(true);
+    expect(isTaggedPluginParameterValue(field('title', 'text'))).toBe(false);
+    expect(isTaggedPluginParameterValue(field('count', 'number'))).toBe(false);
 
     const simple = field('title', 'multiline', { rawType: 'note' });
     expect(normalizePluginParameterValue(simple, '"plain"')).toBe('plain');

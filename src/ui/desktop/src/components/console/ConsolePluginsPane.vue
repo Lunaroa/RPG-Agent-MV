@@ -251,6 +251,15 @@ async function loadPlugins(): Promise<void> {
   }
 }
 
+async function refreshEditorCatalog(): Promise<void> {
+  if (!projectStore.currentProject) return;
+  try {
+    editorCatalog.value = await projectAssets.editorCatalog(projectStore.currentProject);
+  } catch (catalogError) {
+    console.error('[plugins] failed to refresh editor catalog', catalogError);
+  }
+}
+
 async function runAction(
   key: string,
   action: () => Promise<PluginConfigurationResult>,
@@ -1170,6 +1179,7 @@ function resizeKeydown(event: KeyboardEvent): void {
       :error-message="parameterDialogError"
       @closed="closeParameterDialogState"
       @save="saveParameters"
+      @catalog-changed="refreshEditorCatalog"
     />
     <PluginDeleteDialog
       :visible="deleteDialogOpen"

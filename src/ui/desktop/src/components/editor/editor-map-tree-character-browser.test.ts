@@ -20,7 +20,9 @@ describe('map tree search and character asset browser', () => {
   test('uses one shared browser for list and lazy gallery selection without replacing precise canvas picking', () => {
     assert.match(pickerSource, /<CharacterAssetBrowser/);
     assert.match(pickerSource, /@update:view-mode="setCharacterViewMode"/);
-    assert.match(pickerSource, /ref="characterCanvas"[\s\S]+width="560"[\s\S]+height="430"/);
+    assert.match(pickerSource, /ref="characterCanvas"/);
+    assert.match(pickerSource, /CHARACTER_CANVAS_WIDTH = 560/);
+    assert.match(pickerSource, /CHARACTER_CANVAS_HEIGHT = 580/);
     assert.match(browserSource, /:aria-pressed="viewMode === 'list'"/);
     assert.match(browserSource, /:aria-pressed="viewMode === 'gallery'"/);
     assert.match(browserSource, /loading="lazy"/);
@@ -29,11 +31,12 @@ describe('map tree search and character asset browser', () => {
   });
 
   test('keeps one fixed picker surface while the dialog width follows list, gallery, or tile content', () => {
-    assert.match(pickerSource, /--picker-height:\s*460px/);
+    assert.match(pickerSource, /--picker-height:\s*610px/);
     assert.match(pickerSource, /--picker-right-width:\s*600px/);
     assert.match(pickerSource, /\.character-list-dialog\s*\{\s*--dialog-width:\s*820px;\s*--browser-width:\s*220px;/);
     assert.match(pickerSource, /\.character-gallery-dialog\s*\{\s*--dialog-width:\s*1320px;\s*--browser-width:\s*720px;/);
     assert.match(pickerSource, /class="tile-canvas-scroll"/);
+    assert.match(pickerSource, /class="picker-zoom"/);
   });
 
   test('shows five gallery columns on wide windows and one truncated label per card', () => {

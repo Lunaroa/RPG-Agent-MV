@@ -474,11 +474,17 @@ export function isBooleanParameterEnabled(value: unknown): boolean {
   return value === true || ['true', 'on', '1'].includes(String(value).toLowerCase());
 }
 
-/** Plain string/text stays as text; all other schema kinds render as type tags. */
-export function isSpecialPluginParameterType(
+/** Reference / structured values render as tags; plain text and numbers stay as text. */
+export function isTaggedPluginParameterValue(
   field: Pick<PluginParameterSchemaField, 'kind'> | null | undefined,
 ): boolean {
-  return Boolean(field && field.kind !== 'text');
+  if (!field) return false;
+  return field.kind === 'database'
+    || field.kind === 'map'
+    || field.kind === 'file'
+    || field.kind === 'struct'
+    || field.kind === 'array'
+    || field.kind === 'location';
 }
 
 export function isNotePluginParameterField(

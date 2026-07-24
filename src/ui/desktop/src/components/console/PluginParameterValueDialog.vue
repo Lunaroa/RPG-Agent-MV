@@ -36,6 +36,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
   commit: [value: unknown];
+  'catalog-changed': [];
 }>();
 
 interface ChildEditorState {
@@ -69,7 +70,7 @@ const isComplex = computed(() =>
   || props.field?.kind === 'location',
 );
 const dialogTitle = computed(() =>
-  props.title || t('plugins.editParameterTitle', { name: props.field?.label || '' }),
+  formatParameterDialogTitle(props.field, props.title),
 );
 const editorTabLabel = computed(() => {
   const kind = props.field?.kind;
@@ -100,7 +101,7 @@ const changed = computed(() =>
 );
 const childTitle = computed(() =>
   childEditor.value
-    ? t('plugins.editParameterTitle', { name: childEditor.value.label })
+    ? formatParameterDialogTitle(childEditor.value.field, childEditor.value.label)
     : '',
 );
 const validationIssue = computed(() =>
@@ -206,6 +207,22 @@ function formatValidationIssue(issue: PluginParameterValidationIssue): string {
   return t('plugins.parameterLocationInvalid', { path: issue.path });
 }
 
+function formatParameterDialogTitle(
+  field: PluginParameterSchemaField | null | undefined,
+  itemLabel?: string,
+): string {
+  const key = field?.key?.trim() || '';
+  const text = (field?.label || key).trim();
+  const identity = key && text && key !== text
+    ? t('plugins.parameterTitleWithKey', { text, key })
+    : (text || key || t('plugins.parameterUntitled'));
+  const scope = itemLabel?.trim() || '';
+  if (scope && scope !== identity && scope !== text && scope !== key) {
+    return t('plugins.parameterTitleWithScope', { scope, identity });
+  }
+  return identity;
+}
+
 function updateDraft(value: unknown): void {
   draft.value = clonePluginParameterValue(value);
 }
@@ -299,6 +316,10 @@ function arrayValue(value: unknown): unknown[] {
   <el-dialog
     v-model="visible"
     class="plugin-parameter-value-dialog"
+    :class="{
+      'is-compound': isCompound,
+      'is-complex': isComplex && !isCompound,
+    }"
     data-ui-id="plugin-parameter-value-dialog"
     :title="dialogTitle"
     :width="isCompound
@@ -319,17 +340,6 @@ function arrayValue(value: unknown): unknown[] {
       class="parameter-value-editor"
       :class="{ complex: isComplex }"
     >
-      <dl class="parameter-meta" aria-label="parameter identity">
-        <div>
-          <dt>{{ t('plugins.parameterMetaName') }}</dt>
-          <dd>{{ field.key }}</dd>
-        </div>
-        <div>
-          <dt>{{ t('plugins.parameterMetaText') }}</dt>
-          <dd>{{ field.label || field.key }}</dd>
-        </div>
-      </dl>
-
       <el-tabs
         v-model="activeTab"
         class="parameter-mode-tabs"
@@ -356,6 +366,7 @@ function arrayValue(value: unknown): unknown[] {
             :model-value="draft"
             :catalog="catalog"
             @update:model-value="draft = $event"
+            @catalog-changed="emit('catalog-changed')"
           />
         </el-tab-pane>
         <el-tab-pane
@@ -414,18 +425,26 @@ function arrayValue(value: unknown): unknown[] {
     :title="childTitle"
     :allow-unchanged-commit="childEditor.pendingAppend"
     @commit="commitChild"
+    @catalog-changed="emit('catalog-changed')"
   />
 </template>
 
 <style scoped>
 :global(.plugin-parameter-value-dialog) {
-  display: flex;
   max-height: 86vh;
+}
+:global(.plugin-parameter-value-dialog.is-compound),
+:global(.plugin-parameter-value-dialog.is-complex) {
+  display: flex;
   flex-direction: column;
 }
 :global(.plugin-parameter-value-dialog .el-dialog__body) {
   min-height: 0;
   overflow: auto;
+}
+:global(.plugin-parameter-value-dialog.is-compound .el-dialog__body),
+:global(.plugin-parameter-value-dialog.is-complex .el-dialog__body) {
+  flex: 1 1 auto;
 }
 .parameter-value-editor {
   display: grid;
@@ -434,49 +453,25 @@ function arrayValue(value: unknown): unknown[] {
 .parameter-value-editor.complex {
   min-height: 180px;
 }
-.parameter-meta {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--console-border, #e4dcce);
-  border-radius: 8px;
-  background: var(--console-paper-soft, #faf5ec);
-}
-.parameter-meta > div {
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
-  gap: 8px;
-  align-items: baseline;
-}
-.parameter-meta dt {
-  margin: 0;
-  color: var(--console-text-muted, #756b5e);
-  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
-  font-size: 11px;
-  font-weight: 650;
-}
-.parameter-meta dd {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--console-text, #211d17);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .parameter-mode-tabs {
   min-height: 0;
 }
+.parameter-mode-tabs :deep(.el-tabs__header) {
+  margin-bottom: 10px;
+}
 .parameter-mode-tabs :deep(.el-tabs__content) {
   overflow: visible;
+  padding: 0;
+}
+.parameter-mode-tabs :deep(.el-tab-pane) {
+  min-height: 0;
 }
 .parameter-raw-editor {
   display: grid;
   gap: 8px;
 }
 .parameter-raw-input :deep(textarea) {
-  min-height: 160px !important;
+  min-height: 88px !important;
   padding: 12px;
   background: color-mix(in srgb, var(--console-paper-soft, #faf5ec) 82%, white);
   color: var(--console-text, #312d28);
@@ -486,7 +481,7 @@ function arrayValue(value: unknown): unknown[] {
   tab-size: 2;
 }
 .parameter-value-editor.complex .parameter-raw-input :deep(textarea) {
-  min-height: 320px !important;
+  min-height: 240px !important;
 }
 .raw-help,
 .raw-error {

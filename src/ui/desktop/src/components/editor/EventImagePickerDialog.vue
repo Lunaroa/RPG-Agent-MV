@@ -27,27 +27,45 @@
           <div class="picker-surface character-picker-surface">
             <canvas
               ref="characterCanvas"
-              width="560"
-              height="430"
               :aria-label="t('eventImgPicker.pickHint')"
               :title="t('eventImgPicker.pickHint')"
               @click="void pickCharacterCell($event)"
               @dblclick.prevent="void confirmCharacterCell($event)"
+              @wheel.prevent="onPreviewWheel"
             />
+            <div class="picker-zoom" :aria-label="t('eventImgPicker.previewZoom')">
+              <button type="button" data-ui-id="event-image-zoom-out" :title="t('editor.view.zoomOut')" @click="zoomOut">−</button>
+              <button type="button" data-ui-id="event-image-zoom-reset" :title="t('eventImgPicker.resetZoom')" @click="resetZoom">{{ Math.round(previewZoom * 100) }}%</button>
+              <button type="button" data-ui-id="event-image-zoom-in" :title="t('editor.view.zoomIn')" @click="zoomIn">+</button>
+            </div>
           </div>
         </div>
         <div v-else class="tile-picker">
           <nav class="editor-tab-strip" :aria-label="t('eventImgPicker.tileTabs')"><button v-for="entry in tileTabs" :key="entry.label" type="button" :class="{ active: tileTab === entry.label }" :disabled="!entry.image" @click="tileTab = entry.label">{{ entry.label }}</button></nav>
-          <div class="tile-canvas-scroll">
-            <canvas
-              ref="tileCanvas"
-              width="768"
-              height="768"
-              :aria-label="t('eventImgPicker.pickHint')"
-              :title="t('eventImgPicker.pickHint')"
-              @click="pickTileCell"
-              @dblclick.prevent="confirmTileCell"
-            />
+          <div class="tile-canvas-scroll" @wheel.prevent="onPreviewWheel">
+            <div
+              class="tile-zoom-space"
+              :style="{
+                width: `${Math.ceil(tileNaturalWidth * previewZoom)}px`,
+                height: `${Math.ceil(tileNaturalHeight * previewZoom)}px`,
+              }"
+            >
+              <canvas
+                ref="tileCanvas"
+                width="768"
+                height="768"
+                :aria-label="t('eventImgPicker.pickHint')"
+                :title="t('eventImgPicker.pickHint')"
+                :style="{ transform: `scale(${previewZoom})`, transformOrigin: '0 0' }"
+                @click="pickTileCell"
+                @dblclick.prevent="confirmTileCell"
+              />
+            </div>
+            <div class="picker-zoom" :aria-label="t('eventImgPicker.previewZoom')">
+              <button type="button" data-ui-id="event-image-tile-zoom-out" :title="t('editor.view.zoomOut')" @click="zoomOut">−</button>
+              <button type="button" data-ui-id="event-image-tile-zoom-reset" :title="t('eventImgPicker.resetZoom')" @click="resetZoom">{{ Math.round(previewZoom * 100) }}%</button>
+              <button type="button" data-ui-id="event-image-tile-zoom-in" :title="t('editor.view.zoomIn')" @click="zoomIn">+</button>
+            </div>
           </div>
         </div>
         <footer class="editor-modal-footer"><span class="editor-dialog-status">{{ summary }}</span><button type="button" class="editor-btn" @click="close">{{ t('eventcmd.cancel') }}</button><button type="button" class="editor-btn primary" @click="commit">{{ t('eventcmd.ok') }}</button></footer>
@@ -70,6 +88,12 @@ import {
   setRuntimeCharacterAssetViewMode,
   type CharacterAssetViewMode,
 } from '../../utils/characterAssetBrowser';
+
+const CHARACTER_CANVAS_WIDTH = 560;
+const CHARACTER_CANVAS_HEIGHT = 580;
+const PREVIEW_ZOOM_MIN = 0.25;
+const PREVIEW_ZOOM_MAX = 4;
+
 const props = defineProps<{ catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null> }>();
 const emit = defineEmits<{ commit: [image: MvEventImage] }>();
 const { language, t } = useI18n();
@@ -83,6 +107,9 @@ const characterCanvas = ref<HTMLCanvasElement>();
 const tileCanvas = ref<HTMLCanvasElement>();
 const characterCache = new Map<string, HTMLImageElement | null>();
 const tileTab = ref('B');
+const previewZoom = ref(1);
+const tileNaturalWidth = ref(768);
+const tileNaturalHeight = ref(768);
 const summary = computed(() => imageSummary(draft.value, language.value));
 const tileSize = computed(() => Math.max(1, Number(props.catalog?.tileSize) || 48));
 const tileTabs = computed(() => [
@@ -92,7 +119,7 @@ const tileTabs = computed(() => [
   { label: 'D', image: props.tilesetImages[7], base: 512 },
   { label: 'E', image: props.tilesetImages[8], base: 768 },
 ]);
-watch([tab, tileTab], () => void nextTick(paint));
+watch([tab, tileTab, previewZoom], () => void nextTick(paint));
 function onKeyDown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
   event.preventDefault();
@@ -101,10 +128,22 @@ function onKeyDown(event: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
+function clampPreviewZoom(value: number): number {
+  return Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, Math.round(value * 100) / 100));
+}
+function zoomIn() { previewZoom.value = clampPreviewZoom(previewZoom.value * 1.25); }
+function zoomOut() { previewZoom.value = clampPreviewZoom(previewZoom.value / 1.25); }
+function resetZoom() { previewZoom.value = 1; }
+function onPreviewWheel(event: WheelEvent) {
+  if (event.deltaY < 0) zoomIn();
+  else zoomOut();
+}
+
 function open(image: MvEventImage) {
   draft.value = clone(image || defaultImage());
   tab.value = draft.value.tileId ? 'tile' : 'character';
   if (draft.value.tileId) tileTab.value = tileTabForId(Number(draft.value.tileId));
+  previewZoom.value = 1;
   visible.value = true;
   void nextTick(paint);
 }
@@ -129,32 +168,98 @@ async function paint() { if (tab.value === 'character') await paintCharacterShee
 async function paintCharacterSheet() {
   const canvas = characterCanvas.value;
   if (!canvas) return;
-  const context = canvas.getContext('2d')!;
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = '#aeb9c3'; context.fillRect(0, 0, canvas.width, canvas.height);
-  if (!draft.value.characterName) return;
+  if (!draft.value.characterName) {
+    canvas.width = CHARACTER_CANVAS_WIDTH;
+    canvas.height = CHARACTER_CANVAS_HEIGHT;
+    const empty = canvas.getContext('2d')!;
+    empty.clearRect(0, 0, canvas.width, canvas.height);
+    empty.fillStyle = '#aeb9c3';
+    empty.fillRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
   const image = await characterBitmap(draft.value.characterName);
   if (!image) return;
-  const scale = Math.min(1, (canvas.width - 20) / image.naturalWidth, (canvas.height - 20) / image.naturalHeight);
-  const dx = 10, dy = 10, dw = image.naturalWidth * scale, dh = image.naturalHeight * scale;
-  context.imageSmoothingEnabled = false; context.drawImage(image, dx, dy, dw, dh);
-  const big = isBigCharacterName(draft.value.characterName), cols = big ? 3 : 12, rows = big ? 4 : 8, cw = dw / cols, ch = dh / rows;
+  const fit = Math.min(
+    1,
+    (CHARACTER_CANVAS_WIDTH - 20) / image.naturalWidth,
+    (CHARACTER_CANVAS_HEIGHT - 20) / image.naturalHeight,
+  );
+  const scale = fit * previewZoom.value;
+  const dw = image.naturalWidth * scale;
+  const dh = image.naturalHeight * scale;
+  canvas.width = Math.max(CHARACTER_CANVAS_WIDTH, Math.ceil(dw + 20));
+  canvas.height = Math.max(CHARACTER_CANVAS_HEIGHT, Math.ceil(dh + 20));
+  const context = canvas.getContext('2d')!;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = '#aeb9c3';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const dx = Math.max(10, (canvas.width - dw) / 2);
+  const dy = Math.max(10, (canvas.height - dh) / 2);
+  context.imageSmoothingEnabled = false;
+  context.drawImage(image, dx, dy, dw, dh);
+  const big = isBigCharacterName(draft.value.characterName);
+  const cols = big ? 3 : 12;
+  const rows = big ? 4 : 8;
+  const cw = dw / cols;
+  const ch = dh / rows;
   context.strokeStyle = 'rgba(255,255,255,.55)';
-  for (let x = 0; x <= cols; x++) { context.beginPath(); context.moveTo(dx + x * cw, dy); context.lineTo(dx + x * cw, dy + dh); context.stroke(); }
-  for (let y = 0; y <= rows; y++) { context.beginPath(); context.moveTo(dx, dy + y * ch); context.lineTo(dx + dw, dy + y * ch); context.stroke(); }
+  for (let x = 0; x <= cols; x++) {
+    context.beginPath();
+    context.moveTo(dx + x * cw, dy);
+    context.lineTo(dx + x * cw, dy + dh);
+    context.stroke();
+  }
+  for (let y = 0; y <= rows; y++) {
+    context.beginPath();
+    context.moveTo(dx, dy + y * ch);
+    context.lineTo(dx + dw, dy + y * ch);
+    context.stroke();
+  }
   const frame = eventCharacterFrame(image, draft.value)!;
-  const sx = dx + frame.sx * scale, sy = dy + frame.sy * scale, sw = frame.sw * scale, sh = frame.sh * scale;
-  context.strokeStyle = 'rgba(0,0,0,.88)'; context.lineWidth = 5; context.strokeRect(sx, sy, sw, sh);
-  context.strokeStyle = '#fff'; context.lineWidth = 2; context.strokeRect(sx, sy, sw, sh);
+  const sx = dx + frame.sx * scale;
+  const sy = dy + frame.sy * scale;
+  const sw = frame.sw * scale;
+  const sh = frame.sh * scale;
+  context.strokeStyle = 'rgba(0,0,0,.88)';
+  context.lineWidth = 5;
+  context.strokeRect(sx, sy, sw, sh);
+  context.strokeStyle = '#fff';
+  context.lineWidth = 2;
+  context.strokeRect(sx, sy, sw, sh);
 }
 async function pickCharacterCell(event: MouseEvent): Promise<boolean> {
-  const canvas = characterCanvas.value, image = draft.value.characterName ? await characterBitmap(draft.value.characterName) : null;
+  const canvas = characterCanvas.value;
+  const image = draft.value.characterName ? await characterBitmap(draft.value.characterName) : null;
   if (!canvas || !image) return false;
-  const rect = canvas.getBoundingClientRect(), scale = Math.min(1, (canvas.width - 20) / image.naturalWidth, (canvas.height - 20) / image.naturalHeight);
-  const x = ((event.clientX - rect.left) * canvas.width / rect.width - 10) / scale, y = ((event.clientY - rect.top) * canvas.height / rect.height - 10) / scale;
-  const big = isBigCharacterName(draft.value.characterName), cols = big ? 3 : 12, rows = big ? 4 : 8, col = Math.floor(x / (image.naturalWidth / cols)), row = Math.floor(y / (image.naturalHeight / rows));
+  const rect = canvas.getBoundingClientRect();
+  const fit = Math.min(
+    1,
+    (CHARACTER_CANVAS_WIDTH - 20) / image.naturalWidth,
+    (CHARACTER_CANVAS_HEIGHT - 20) / image.naturalHeight,
+  );
+  const scale = fit * previewZoom.value;
+  const dw = image.naturalWidth * scale;
+  const dh = image.naturalHeight * scale;
+  const dx = Math.max(10, (canvas.width - dw) / 2);
+  const dy = Math.max(10, (canvas.height - dh) / 2);
+  const x = ((event.clientX - rect.left) * canvas.width / rect.width - dx) / scale;
+  const y = ((event.clientY - rect.top) * canvas.height / rect.height - dy) / scale;
+  const big = isBigCharacterName(draft.value.characterName);
+  const cols = big ? 3 : 12;
+  const rows = big ? 4 : 8;
+  const col = Math.floor(x / (image.naturalWidth / cols));
+  const row = Math.floor(y / (image.naturalHeight / rows));
   if (col < 0 || row < 0 || col >= cols || row >= rows) return false;
-  Object.assign(draft.value, big ? { characterIndex: 0, pattern: col, direction: [2,4,6,8][row] } : { characterIndex: Math.floor(col / 3) + Math.floor(row / 4) * 4, pattern: col % 3, direction: [2,4,6,8][row % 4] });
+  Object.assign(
+    draft.value,
+    big
+      ? { characterIndex: 0, pattern: col, direction: [2, 4, 6, 8][row] }
+      : {
+          characterIndex: Math.floor(col / 3) + Math.floor(row / 4) * 4,
+          pattern: col % 3,
+          direction: [2, 4, 6, 8][row % 4],
+        },
+  );
   paintCharacterSheet();
   return true;
 }
@@ -165,6 +270,8 @@ function paintTileSheet() {
   const canvas = tileCanvas.value, entry = tileTabs.value.find((item) => item.label === tileTab.value);
   if (!canvas || !entry?.image) return;
   canvas.width = entry.image.naturalWidth; canvas.height = entry.image.naturalHeight;
+  tileNaturalWidth.value = canvas.width;
+  tileNaturalHeight.value = canvas.height;
   const context = canvas.getContext('2d')!; context.drawImage(entry.image, 0, 0);
   context.strokeStyle = 'rgba(255,255,255,.4)';
   for (let x = 0; x <= canvas.width / tileSize.value; x++) { context.beginPath(); context.moveTo(x * tileSize.value + .5, 0); context.lineTo(x * tileSize.value + .5, canvas.height); context.stroke(); }
@@ -212,10 +319,10 @@ defineExpose({ open });
 <style scoped>
 .sub-overlay { z-index: v-bind(subDialogZ); }
 .sub-dialog {
-  --picker-height: 460px;
+  --picker-height: 610px;
   --picker-right-width: 600px;
   width: min(var(--dialog-width), calc(100vw - 48px));
-  max-height: min(86vh, 760px);
+  max-height: min(86vh, 910px);
 }
 .character-list-dialog { --dialog-width: 820px; --browser-width: 220px; }
 .character-gallery-dialog { --dialog-width: 1320px; --browser-width: 720px; }
@@ -235,7 +342,9 @@ defineExpose({ open });
   min-height: 0;
   background: #aeb9c3;
 }
-.picker-surface {
+.picker-surface,
+.tile-canvas-scroll {
+  position: relative;
   display: grid;
   place-items: center;
   overflow: auto;
@@ -246,8 +355,43 @@ defineExpose({ open });
   flex-direction: column;
 }
 .tile-picker > nav { flex: 0 0 auto; }
-.tile-canvas-scroll { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
-.picker-surface canvas { margin: auto; }
+.tile-canvas-scroll {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  place-items: start;
+}
+.tile-zoom-space {
+  position: relative;
+  flex: 0 0 auto;
+}
+.picker-surface canvas,
+.tile-canvas-scroll canvas { margin: 0; }
+.picker-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(20, 24, 29, .18);
+}
+.picker-zoom button {
+  height: 26px;
+  min-width: 28px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #3a414b;
+  font: 600 11px var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
+  cursor: pointer;
+}
+.picker-zoom button:hover { background: #eef1f4; }
+.picker-zoom button:focus-visible { outline: 2px solid var(--app-accent, #c45c26); outline-offset: 1px; }
 canvas { display: block; image-rendering: pixelated; cursor: crosshair; }
 @media (max-width: 1100px) {
   .character-gallery-dialog .picker-grid {

@@ -62,6 +62,9 @@ describe('editor semantic controls', () => {
     assert.doesNotMatch(eventEditorSource, /class="ev-tool-btn block"[^>]+imagePicker/);
     assert.match(eventImagePickerSource, /paintTileSheet\(\);/);
     assert.match(eventImagePickerSource, /strokeStyle = 'rgba\(0,0,0,\.9\)'/);
+    assert.match(eventImagePickerSource, /--picker-height: 610px/);
+    assert.match(eventImagePickerSource, /class="picker-zoom"/);
+    assert.match(eventImagePickerSource, /previewZoom/);
   });
 
   test('keeps editor modes prominent and gives drawing tools distinct icons', () => {

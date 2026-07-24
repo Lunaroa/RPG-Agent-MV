@@ -20,7 +20,7 @@ import {
   clonePluginParameterValue,
   isBooleanParameterEnabled,
   isPluginParameterSchemaFieldEditable,
-  isSpecialPluginParameterType,
+  isTaggedPluginParameterValue,
   summarizePluginParameterValue,
   type PluginParameterChildTarget,
   type PluginParameterRow,
@@ -579,7 +579,6 @@ function displayValue(value: unknown): string {
                   :class="{
                     numeric: column.field.kind === 'number',
                     compound: column.field.kind === 'struct' || column.field.kind === 'array',
-                    'value-with-edit': columnIndex === columns.length - 1,
                   }"
                   :title="cellSummary(row.value, column.field)"
                 >
@@ -593,28 +592,24 @@ function displayValue(value: unknown): string {
                       @click.stop
                       @dblclick.stop
                     />
-                    <span v-else>{{ cellSummary(row.value, column.field) }}</span>
-                    <el-button
-                      v-if="
-                        columnIndex === columns.length - 1
-                        && arrayItem
-                        && isPluginParameterSchemaFieldEditable(arrayItem)
+                    <el-tag
+                      v-else-if="
+                        isTaggedPluginParameterValue(column.field)
+                        && cellSummary(row.value, column.field)
                       "
-                      class="parameter-row-edit"
-                      link
-                      type="primary"
                       size="small"
-                      @click.stop="editArrayItem(row.index)"
-                      @dblclick.stop
+                      effect="plain"
+                      class="parameter-value-tag"
+                      :title="cellSummary(row.value, column.field)"
                     >
-                      {{ t('plugins.editParameter') }}
-                    </el-button>
+                      {{ cellSummary(row.value, column.field) }}
+                    </el-tag>
+                    <span v-else>{{ cellSummary(row.value, column.field) }}</span>
                   </div>
                 </td>
               </template>
               <td
                 v-else
-                class="value-with-edit"
                 :title="arrayItem ? valueSummary(arrayItem, row.value) : ''"
               >
                 <div class="parameter-value-cell">
@@ -627,20 +622,22 @@ function displayValue(value: unknown): string {
                     @click.stop
                     @dblclick.stop
                   />
+                  <el-tag
+                    v-else-if="
+                      arrayItem
+                      && isTaggedPluginParameterValue(arrayItem)
+                      && valueSummary(arrayItem, row.value)
+                    "
+                    size="small"
+                    effect="plain"
+                    class="parameter-value-tag"
+                    :title="valueSummary(arrayItem, row.value)"
+                  >
+                    {{ valueSummary(arrayItem, row.value) }}
+                  </el-tag>
                   <span v-else>
                     {{ arrayItem ? valueSummary(arrayItem, row.value) : '' }}
                   </span>
-                  <el-button
-                    v-if="arrayItem && isPluginParameterSchemaFieldEditable(arrayItem)"
-                    class="parameter-row-edit"
-                    link
-                    type="primary"
-                    size="small"
-                    @click.stop="editArrayItem(row.index)"
-                    @dblclick.stop
-                  >
-                    {{ t('plugins.editParameter') }}
-                  </el-button>
                 </div>
               </td>
             </tr>
@@ -727,15 +724,7 @@ function displayValue(value: unknown): string {
               </div>
             </td>
             <td class="parameter-type-cell" :title="structTypeLabel(row)">
-              <el-tag
-                v-if="isSpecialPluginParameterType(row.field)"
-                size="small"
-                effect="plain"
-                class="parameter-type-tag"
-              >
-                {{ structTypeLabel(row) }}
-              </el-tag>
-              <span v-else>{{ structTypeLabel(row) }}</span>
+              {{ structTypeLabel(row) }}
             </td>
             <td
               :class="{ numeric: row.field?.kind === 'number' }"
@@ -751,20 +740,18 @@ function displayValue(value: unknown): string {
                   @click.stop
                   @dblclick.stop
                 />
-                <span v-else>{{ row.summary }}</span>
-                <el-button
-                  v-if="row.editable"
-                  class="parameter-row-edit"
-                  link
-                  type="primary"
-                  size="small"
-                  @click.stop="editStructRow(row)"
-                  @dblclick.stop
-                >
-                  {{ t('plugins.editParameter') }}
-                </el-button>
                 <el-tag
-                  v-else-if="!row.editable"
+                  v-else-if="isTaggedPluginParameterValue(row.field) && row.summary"
+                  size="small"
+                  effect="plain"
+                  class="parameter-value-tag"
+                  :title="row.fullValue"
+                >
+                  {{ row.summary }}
+                </el-tag>
+                <span v-else>{{ row.summary }}</span>
+                <el-tag
+                  v-if="!row.editable"
                   size="small"
                   type="warning"
                   effect="plain"
@@ -932,38 +919,12 @@ tbody tr.drop-after td {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.parameter-row-edit {
-  flex: 0 0 auto;
-  visibility: hidden;
-  color: #2f80ed;
-  font-weight: 700;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
-}
-.parameter-row-edit:hover,
-.parameter-row-edit:focus-visible {
-  color: #1769d2;
-}
-tbody tr:hover .parameter-row-edit,
-tbody tr:focus-within .parameter-row-edit {
-  visibility: visible;
-  opacity: 1;
-  pointer-events: auto;
-}
 .parameter-type-cell {
+  width: 1%;
   color: var(--console-text-soft, #5a5247);
   font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
   font-size: 11px;
-}
-.parameter-type-tag {
-  animation: none;
-  transition: none;
-  max-width: 100%;
-}
-.parameter-type-tag :deep(.el-tag__content) {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .parameter-boolean-switch {
   flex: 0 0 auto;
@@ -971,6 +932,17 @@ tbody tr:focus-within .parameter-row-edit {
 }
 .parameter-boolean-switch.is-disabled {
   opacity: 1;
+}
+.parameter-value-tag {
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  animation: none;
+  transition: none;
+}
+.parameter-value-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .parameter-readonly-tag {
   flex: 0 0 auto;
@@ -987,11 +959,16 @@ td.compound {
 }
 .struct-table th:nth-child(1),
 .struct-table td:nth-child(1) {
-  width: 42%;
+  width: auto;
 }
 .struct-table th:nth-child(2),
 .struct-table td:nth-child(2) {
-  width: 18%;
+  width: 1%;
+  white-space: nowrap;
+}
+.struct-table th:nth-child(3),
+.struct-table td:nth-child(3) {
+  width: auto;
 }
 .struct-name-cell {
   min-width: 0;

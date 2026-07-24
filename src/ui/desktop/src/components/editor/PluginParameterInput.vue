@@ -59,6 +59,23 @@
         :value="option.value"
       />
     </el-select>
+    <div
+      v-else-if="field.kind === 'database' && systemNamedEntryKind"
+      class="system-named-input"
+    >
+      <el-input
+        :model-value="systemNamedEntryLabel"
+        readonly
+        :aria-label="field.label || field.key"
+        @click="openSystemNamedEntrySelector"
+      />
+      <el-button
+        :aria-label="t('systemNamedEntry.browse')"
+        @click="openSystemNamedEntrySelector"
+      >
+        …
+      </el-button>
+    </div>
     <el-select
       v-else-if="field.kind === 'database'"
       :model-value="stringValue"
@@ -85,20 +102,23 @@
         :value="option.value"
       />
     </el-select>
-    <el-select
+    <div
       v-else-if="field.kind === 'file'"
-      :model-value="stringValue"
-      filterable
-      clearable
-      @change="emitSelectValue"
+      class="file-param-input"
     >
-      <el-option
-        v-for="option in fileSelectOptions"
-        :key="option.value"
-        :label="option.label"
-        :value="option.value"
+      <el-input
+        :model-value="fileDisplayValue"
+        readonly
+        :aria-label="field.label || field.key"
+        @click="openFilePicker"
       />
-    </el-select>
+      <el-button
+        :aria-label="t('pluginFilePicker.browse')"
+        @click="openFilePicker"
+      >
+        …
+      </el-button>
+    </div>
     <div v-else-if="field.kind === 'location'" class="location-input">
       <el-select
         :model-value="String(locationValue.mapId)"
@@ -170,6 +190,9 @@
     <small v-if="referenceWarning" class="reference-warning" role="status">
       {{ referenceWarning }}
     </small>
+    <small v-if="fileResolutionError" class="reference-warning" role="status">
+      {{ fileResolutionError }}
+    </small>
     <small v-if="field.unsupportedReason" class="readonly-reason">
       {{ unsupportedReason }}
     </small>
@@ -178,14 +201,40 @@
       :catalog="catalog || null"
       @commit="commitLocation"
     />
+    <SystemNamedEntrySelectorDialog
+      ref="systemNamedEntrySelector"
+      :catalog="catalog || null"
+      @commit="commitSystemNamedEntry"
+      @catalog-changed="emit('catalog-changed')"
+    />
+    <PluginParameterFilePickerDialog
+      ref="filePicker"
+      :title="field.label || field.key"
+      :directory="fileResolution.ok ? fileResolution.directory : normalizePluginFileDirectory(field.directory)"
+      :media="fileResolution.ok ? fileResolution.media : 'other'"
+      :assets="filePickerAssets"
+      @commit="commitFileSelection"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { ElMessage } from 'element-plus';
 import type { EditorProjectCatalog, PluginParameterSchemaField } from '../../api/client';
 import { useI18n } from '../../i18n';
+import {
+  displaySystemNamedEntryName,
+  formatSystemNamedEntryId,
+} from '../../utils/systemNamedEntryRanges';
+import {
+  normalizePluginFileDirectory,
+  resolvePluginParameterFileAssets,
+} from '../../utils/pluginParameterFileAssets';
 import CoordinatePickerDialog from './CoordinatePickerDialog.vue';
+import PluginParameterFilePickerDialog from './PluginParameterFilePickerDialog.vue';
+import SystemNamedEntrySelectorDialog from './SystemNamedEntrySelectorDialog.vue';
+import type { SystemNamedEntryKind } from './SystemNamedEntrySelectorDialog.vue';
 
 interface SelectOption {
   value: string;
@@ -198,9 +247,14 @@ const props = defineProps<{
   modelValue: unknown;
   catalog?: EditorProjectCatalog | null;
 }>();
-const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>();
+const emit = defineEmits<{
+  'update:modelValue': [value: unknown];
+  'catalog-changed': [];
+}>();
 const { t } = useI18n();
 const coordinatePicker = ref<InstanceType<typeof CoordinatePickerDialog> | null>(null);
+const systemNamedEntrySelector = ref<InstanceType<typeof SystemNamedEntrySelectorDialog> | null>(null);
+const filePicker = ref<InstanceType<typeof PluginParameterFilePickerDialog> | null>(null);
 
 const isReadonly = computed(() => props.field.editable === false);
 const stringValue = computed(() => props.modelValue == null ? '' : String(props.modelValue));
@@ -256,6 +310,20 @@ const databaseOptions = computed(() => {
         Boolean(entry && typeof entry === 'object' && 'id' in entry && 'name' in entry))
     : [];
 });
+const systemNamedEntryKind = computed<SystemNamedEntryKind | null>(() => {
+  if (props.field.databaseTable === 'System.switches') return 'switch';
+  if (props.field.databaseTable === 'System.variables') return 'variable';
+  return null;
+});
+const systemNamedEntryLabel = computed(() => {
+  const id = Number(stringValue.value);
+  if (!Number.isInteger(id) || id <= 0) return t('systemNamedEntry.none');
+  const entry = databaseOptions.value.find((item) => item.id === id);
+  const name = displaySystemNamedEntryName(id, entry?.name || '');
+  return name
+    ? `${formatSystemNamedEntryId(id)} · ${name}`
+    : formatSystemNamedEntryId(id);
+});
 const databaseSelectOptions = computed<SelectOption[]>(() =>
   withMissingCurrent(
     [
@@ -292,43 +360,32 @@ const locationMapOptions = computed<SelectOption[]>(() =>
     String(locationValue.value.mapId),
   ),
 );
-const fileOptions = computed(() => {
-  const normalized = normalizeDirectory(props.field.directory);
-  const keyByDirectory: Record<string, keyof EditorProjectCatalog['assets']> = {
-    'img/animations': 'animations',
-    'img/battlebacks1': 'battlebacks1',
-    'img/battlebacks2': 'battlebacks2',
-    'img/characters': 'characters',
-    'img/enemies': 'enemies',
-    'img/faces': 'faces',
-    'img/parallaxes': 'parallaxes',
-    'img/pictures': 'pictures',
-    'img/sv_actors': 'svActors',
-    'img/sv_enemies': 'svEnemies',
-    'img/system': 'system',
-    'img/tilesets': 'tilesets',
-    'img/titles1': 'titles1',
-    'img/titles2': 'titles2',
-    'audio/bgm': 'bgm',
-    'audio/bgs': 'bgs',
-    'audio/me': 'me',
-    'audio/se': 'se',
-    effects: 'effects',
-    movies: 'movies',
-  };
-  const key = keyByDirectory[normalized];
-  const entries = key && props.catalog?.assets[key] ? props.catalog.assets[key] : [];
-  return [...new Set(entries.map((asset) => stripExtension(asset.name || asset.fileName)))];
-});
-const fileSelectOptions = computed<SelectOption[]>(() =>
-  withMissingCurrent(
-    [
-      { value: '', label: t('plugins.parameterEmptyValue') },
-      ...fileOptions.value.map((value) => ({ value, label: value })),
-    ],
-    stringValue.value,
-  ),
+const fileResolution = computed(() =>
+  resolvePluginParameterFileAssets(props.catalog, props.field.directory),
 );
+const filePickerAssets = computed(() => {
+  if (!fileResolution.value.ok) return [];
+  const assets = fileResolution.value.assets;
+  const current = stringValue.value.trim();
+  if (!current || assets.some((asset) => asset.name === current)) return assets;
+  return [{ name: current, fileName: current, url: '' }, ...assets];
+});
+const fileDisplayValue = computed(() =>
+  stringValue.value || t('pluginFilePicker.none'),
+);
+const fileResolutionError = computed(() => {
+  if (props.field.kind !== 'file' || isReadonly.value) return '';
+  if (fileResolution.value.ok) return '';
+  if (fileResolution.value.reason === 'missing-directory') {
+    return t('pluginFilePicker.missingDirectory');
+  }
+  if (fileResolution.value.reason === 'missing-catalog') {
+    return t('pluginFilePicker.missingCatalog');
+  }
+  return t('pluginFilePicker.unsupportedDirectory', {
+    directory: fileResolution.value.directory,
+  });
+});
 const referenceWarning = computed(() => {
   const current = stringValue.value;
   if (props.field.kind === 'database' && isMissingCurrent(databaseSelectOptions.value, current)) {
@@ -337,7 +394,12 @@ const referenceWarning = computed(() => {
   if (props.field.kind === 'map' && isMissingCurrent(mapSelectOptions.value, current)) {
     return t('plugins.parameterMapMissing', { value: current });
   }
-  if (props.field.kind === 'file' && isMissingCurrent(fileSelectOptions.value, current)) {
+  if (
+    props.field.kind === 'file'
+    && fileResolution.value.ok
+    && current
+    && !fileResolution.value.assets.some((asset) => asset.name === current)
+  ) {
     return t('plugins.parameterFileMissing', { value: current });
   }
   if (
@@ -410,6 +472,33 @@ function commitLocation(selection: { mapId: number; x: number; y: number }): voi
   emitValue(selection);
 }
 
+function openFilePicker(): void {
+  if (isReadonly.value) return;
+  if (!fileResolution.value.ok) {
+    ElMessage.error(fileResolutionError.value || t('pluginFilePicker.missingDirectory'));
+    return;
+  }
+  filePicker.value?.open(stringValue.value);
+}
+
+function commitFileSelection(value: string): void {
+  emitValue(value);
+}
+
+function openSystemNamedEntrySelector(): void {
+  const kind = systemNamedEntryKind.value;
+  if (!kind) return;
+  systemNamedEntrySelector.value?.open({
+    kind,
+    selectedId: Number(stringValue.value) || 0,
+    allowNone: true,
+  });
+}
+
+function commitSystemNamedEntry(selection: { kind: SystemNamedEntryKind; id: number }): void {
+  emitValue(String(selection.id));
+}
+
 function defaultValue(field?: PluginParameterSchemaField): unknown {
   if (!field) return '';
   if (field.kind === 'struct') {
@@ -439,18 +528,6 @@ function isMissingCurrent(options: SelectOption[], current: string): boolean {
   if (!current || current === '0') return false;
   return options[0]?.value === current
     && options[0]?.label === t('plugins.parameterMissingCurrentValue', { value: current });
-}
-
-function normalizeDirectory(value: unknown): string {
-  return String(value || '')
-    .replace(/\\/g, '/')
-    .replace(/^\.\//, '')
-    .replace(/\/$/, '')
-    .toLowerCase();
-}
-
-function stripExtension(value: string): string {
-  return String(value || '').replace(/\.[^.\\/]+$/, '');
 }
 
 function scalarValue(value: unknown, fallback: number): string | number {
@@ -489,6 +566,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) 78px 78px;
   gap: 8px;
+}
+.system-named-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  align-items: center;
+}
+.system-named-input :deep(.el-input) {
+  cursor: pointer;
+}
+.system-named-input :deep(.el-input__wrapper) {
+  cursor: pointer;
+}
+.file-param-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  align-items: center;
+}
+.file-param-input :deep(.el-input) {
+  cursor: pointer;
+}
+.file-param-input :deep(.el-input__wrapper) {
+  cursor: pointer;
 }
 .location-picker {
   grid-column: 1 / -1;

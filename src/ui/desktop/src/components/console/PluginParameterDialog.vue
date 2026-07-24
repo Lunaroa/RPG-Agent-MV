@@ -14,7 +14,7 @@ import {
   clonePluginParameterValue,
   createPluginParameterForm,
   isBooleanParameterEnabled,
-  isSpecialPluginParameterType,
+  isTaggedPluginParameterValue,
   pluginParameterPayloadsEqual,
   type PluginParameterRow,
   type PluginParameterSummaryLabels,
@@ -38,6 +38,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean];
   closed: [];
   save: [parameters: Record<string, unknown>];
+  'catalog-changed': [];
 }>();
 
 const { t } = useI18n();
@@ -380,15 +381,7 @@ async function focusInitialParameter(): Promise<void> {
                   </div>
                 </td>
                 <td class="parameter-type-cell" :title="parameterTypeLabel(row)">
-                  <el-tag
-                    v-if="isSpecialPluginParameterType(row.field)"
-                    size="small"
-                    effect="plain"
-                    class="parameter-type-tag"
-                  >
-                    {{ parameterTypeLabel(row) }}
-                  </el-tag>
-                  <span v-else>{{ parameterTypeLabel(row) }}</span>
+                  {{ parameterTypeLabel(row) }}
                 </td>
                 <td
                   :class="{ numeric: row.field?.kind === 'number' }"
@@ -406,19 +399,16 @@ async function focusInitialParameter(): Promise<void> {
                       @click.stop
                       @dblclick.stop
                     />
-                    <span v-else>{{ row.summary }}</span>
-                    <el-button
-                      v-if="row.editable"
-                      link
-                      type="primary"
+                    <el-tag
+                      v-else-if="isTaggedPluginParameterValue(row.field) && row.summary"
                       size="small"
-                      :disabled="busy"
-                      class="parameter-row-edit"
-                      @click.stop="openParameterEditor(row.key)"
-                      @dblclick.stop
+                      effect="plain"
+                      class="parameter-value-tag"
+                      :title="row.fullValue"
                     >
-                      {{ t('plugins.editParameter') }}
-                    </el-button>
+                      {{ row.summary }}
+                    </el-tag>
+                    <span v-else>{{ row.summary }}</span>
                   </div>
                 </td>
               </tr>
@@ -476,6 +466,7 @@ async function focusInitialParameter(): Promise<void> {
     :value="editingField ? parameterForm[editingField.key] : ''"
     :catalog="catalog"
     @commit="commitParameterValue"
+    @catalog-changed="emit('catalog-changed')"
   />
 </template>
 
@@ -556,16 +547,22 @@ td {
 }
 th:nth-child(1),
 td:nth-child(1) {
-  width: 42%;
+  width: auto;
   border-right: 1px solid var(--console-border, #e4dcce);
 }
 th:nth-child(2),
 td:nth-child(2) {
-  width: 18%;
+  width: 1%;
   border-right: 1px solid var(--console-border, #e4dcce);
   color: var(--console-text-soft, #5a5247);
   font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
   font-size: 11px;
+  white-space: nowrap;
+  text-overflow: clip;
+}
+th:nth-child(3),
+td:nth-child(3) {
+  width: auto;
 }
 th:last-child {
   background: color-mix(
@@ -669,21 +666,23 @@ tbody tr:focus-visible {
   animation: none;
   transition: none;
 }
-.parameter-type-tag {
-  animation: none;
-  transition: none;
-  max-width: 100%;
-}
-.parameter-type-tag :deep(.el-tag__content) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .parameter-boolean-switch {
   flex: 0 0 auto;
   height: 20px;
 }
 .parameter-boolean-switch.is-disabled {
   opacity: 1;
+}
+.parameter-value-tag {
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  animation: none;
+  transition: none;
+}
+.parameter-value-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .parameter-readonly-tag {
   flex: 0 0 auto;
@@ -706,25 +705,6 @@ tbody tr:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.parameter-row-edit {
-  flex: 0 0 auto;
-  visibility: hidden;
-  color: #2f80ed;
-  font-weight: 700;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease;
-}
-.parameter-row-edit:hover,
-.parameter-row-edit:focus-visible {
-  color: #1769d2;
-}
-tbody tr:hover .parameter-row-edit,
-tbody tr:focus-within .parameter-row-edit {
-  visibility: visible;
-  opacity: 1;
-  pointer-events: auto;
 }
 .parameter-empty {
   flex: 1;

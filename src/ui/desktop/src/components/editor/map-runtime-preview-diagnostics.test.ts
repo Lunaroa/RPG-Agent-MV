@@ -28,6 +28,14 @@ test('clears detailed diagnostics when the preview intent is no longer active', 
   assert.match(editorSource, /previewDiagnostic\.value = session\.status === 'failed' \? mapPreviewDiagnosticFromSession\(session\) : null/);
 });
 
+test('publishes preview failures into the workbench console', () => {
+  assert.match(editorSource, /function publishPreviewFailureToWorkbench/);
+  assert.match(editorSource, /publishPreviewFailureToWorkbench\(\s*previewDiagnostic\.value/);
+  assert.match(editorSource, /publishPreviewFailureToWorkbench\(diagnostic, previewError\.value\)/);
+  assert.match(editorSource, /previewConsoleOpen\.value = true/);
+  assert.match(editorSource, /source: 'exception'/);
+});
+
 test('shows structured staging conflicts without replacing a warm preview', () => {
   assert.match(previewSource, /data-ui-id="map-preview-staging-conflict"/);
   assert.match(previewSource, /preflightFailure\.conflicts/);

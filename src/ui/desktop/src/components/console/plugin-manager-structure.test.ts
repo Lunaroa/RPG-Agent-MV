@@ -22,6 +22,10 @@ const parameterInputSource = readFileSync(
   new URL('../editor/PluginParameterInput.vue', import.meta.url),
   'utf8',
 );
+const systemNamedEntrySelectorSource = readFileSync(
+  new URL('../editor/SystemNamedEntrySelectorDialog.vue', import.meta.url),
+  'utf8',
+);
 const deleteDialogSource = readFileSync(new URL('./PluginDeleteDialog.vue', import.meta.url), 'utf8');
 const engineTagsSource = readFileSync(new URL('./PluginEngineTags.vue', import.meta.url), 'utf8');
 const statusBarSource = readFileSync(new URL('../layout/StatusBar.vue', import.meta.url), 'utf8');
@@ -121,8 +125,10 @@ describe('plugin manager structure', () => {
     assert.match(dialogSource, /parameterTypeColumn/);
     assert.match(dialogSource, /parameterValueColumn/);
     assert.match(dialogSource, /parameterTypeLabel\(row\)/);
-    assert.match(dialogSource, /isSpecialPluginParameterType\(row\.field\)/);
-    assert.match(dialogSource, /class="parameter-type-tag"/);
+    assert.doesNotMatch(dialogSource, /isSpecialPluginParameterType|parameter-type-tag/);
+    assert.match(dialogSource, /isTaggedPluginParameterValue\(row\.field\)/);
+    assert.match(dialogSource, /class="parameter-value-tag"/);
+    assert.match(dialogSource, /width: 1%/);
     assert.match(dialogSource, /<el-switch[\s\S]+disabled[\s\S]+class="parameter-boolean-switch"/);
     assert.match(dialogSource, /isBooleanParameterEnabled/);
     assert.match(dialogSource, /buildPluginParameterTree/);
@@ -139,21 +145,14 @@ describe('plugin manager structure', () => {
     assert.match(dialogSource, /event\.key === 'ArrowRight'/);
     assert.match(dialogSource, /event\.key === 'ArrowLeft'/);
     assert.match(dialogSource, /@dblclick="openParameterEditor\(row\.key\)"/);
-    assert.match(dialogSource, /@click\.stop="openParameterEditor\(row\.key\)"/);
     assert.match(dialogSource, /function parameterRowKeydown[\s\S]+event\.target !== event\.currentTarget/);
-    assert.match(dialogSource, /class="parameter-row-edit"[\s\S]+@dblclick\.stop/);
+    assert.doesNotMatch(dialogSource, /parameter-row-edit/);
     assert.match(dialogSource, /<el-tag[\s\S]+class="parameter-key-tag"[\s\S]+\{\{ row\.key \}\}/);
     assert.match(
       dialogSource,
       /\.parameter-key-tag \{[\s\S]+animation: none[\s\S]+transition: none/,
     );
     assert.match(dialogSource, /td:last-child \{[\s\S]+background: color-mix\([\s\S]+color: var\(--console-text/);
-    assert.match(
-      dialogSource,
-      /\.parameter-row-edit \{[\s\S]+visibility: hidden[\s\S]+color: #2f80ed[\s\S]+opacity: 0/,
-    );
-    assert.match(dialogSource, /tbody tr:hover \.parameter-row-edit,[\s\S]+tbody tr:focus-within \.parameter-row-edit/);
-    assert.match(dialogSource, /<el-button[\s\S]+link[\s\S]+class="parameter-row-edit"/);
     assert.match(dialogSource, /<div v-if="selectedRow" class="parameter-detail" aria-live="polite">[\s\S]+selectedRow\.description/);
     assert.match(dialogSource, /selectedRow\.readonlyReason/);
     assert.doesNotMatch(dialogSource, /selectedRow\.fullValue/);
@@ -162,11 +161,10 @@ describe('plugin manager structure', () => {
     assert.match(dialogSource, /<el-button[\s\S]+type="primary"[\s\S]+:loading="busy"[\s\S]+@click="save"/);
     assert.match(dialogSource, /<PluginParameterValueDialog/);
     assert.match(valueDialogSource, /defineOptions\(\{ name: 'PluginParameterValueDialog' \}\)/);
-    assert.match(valueDialogSource, /class="parameter-meta"/);
-    assert.match(valueDialogSource, /plugins\.parameterMetaName/);
-    assert.match(valueDialogSource, /plugins\.parameterMetaText/);
-    assert.match(valueDialogSource, /\{\{ field\.key \}\}/);
-    assert.match(valueDialogSource, /\{\{ field\.label \|\| field\.key \}\}/);
+    assert.doesNotMatch(valueDialogSource, /class="parameter-meta"/);
+    assert.match(valueDialogSource, /formatParameterDialogTitle/);
+    assert.match(valueDialogSource, /plugins\.parameterTitleWithKey/);
+    assert.match(valueDialogSource, /plugins\.parameterTitleWithScope/);
     assert.match(valueDialogSource, /<PluginParameterInput[\s\S]+v-else/);
     assert.match(valueDialogSource, /<el-tabs[\s\S]+type="card"/);
     assert.match(valueDialogSource, /activeTab\.value = 'editor'/);
@@ -212,13 +210,22 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /column\.field\.kind === 'boolean'/);
     assert.match(collectionEditorSource, /arrayItem\?\.kind === 'boolean'/);
     assert.match(collectionEditorSource, /<el-switch[\s\S]+disabled[\s\S]+class="parameter-boolean-switch"/);
-    assert.match(collectionEditorSource, /isSpecialPluginParameterType\(row\.field\)/);
-    assert.match(collectionEditorSource, /class="parameter-type-tag"/);
+    assert.match(collectionEditorSource, /isTaggedPluginParameterValue/);
+    assert.match(collectionEditorSource, /class="parameter-value-tag"/);
+    assert.doesNotMatch(collectionEditorSource, /isSpecialPluginParameterType|parameter-type-tag/);
     assert.doesNotMatch(collectionEditorSource, /updateArrayBoolean|updateStructRowBoolean/);
     assert.match(collectionEditorSource, /height: 32px/);
     assert.match(parameterModelSource, /unwrapNotePluginParameterValue|wrapNotePluginParameterValue/);
     assert.match(parameterModelSource, /isNotePluginParameterField/);
-    assert.match(collectionEditorSource, /class="parameter-row-edit"/);
+    assert.match(parameterModelSource, /isTaggedPluginParameterValue/);
+    assert.match(valueDialogSource, /is-compound/);
+    assert.match(valueDialogSource, /min-height: 88px/);
+    assert.match(parameterInputSource, /SystemNamedEntrySelectorDialog/);
+    assert.match(parameterInputSource, /systemNamedEntryKind/);
+    assert.match(systemNamedEntrySelectorSource, /systemNamedEntry\.changeMaximum/);
+    assert.match(systemNamedEntrySelectorSource, /projectManagement\.updateEntry/);
+    assert.match(systemNamedEntrySelectorSource, /projectManagement\.resizeDatabase/);
+    assert.doesNotMatch(collectionEditorSource, /class="parameter-row-edit"/);
     assert.doesNotMatch(collectionEditorSource, /actions-column|collection-actions/);
     assert.match(collectionEditorSource, /overflow-x: auto/);
     assert.match(collectionEditorSource, /table-layout: auto/);
@@ -240,6 +247,9 @@ describe('plugin manager structure', () => {
     assert.match(parameterInputSource, /<el-switch/);
     assert.match(parameterInputSource, /allow-create/);
     assert.match(parameterInputSource, /field\.kind === 'file'/);
+    assert.match(parameterInputSource, /PluginParameterFilePickerDialog/);
+    assert.match(parameterInputSource, /resolvePluginParameterFileAssets/);
+    assert.doesNotMatch(parameterInputSource, /fileSelectOptions/);
     assert.match(parameterInputSource, /field\.kind === 'location'/);
     assert.doesNotMatch(
       `${dialogSource}\n${valueDialogSource}\n${parameterModelSource}`,

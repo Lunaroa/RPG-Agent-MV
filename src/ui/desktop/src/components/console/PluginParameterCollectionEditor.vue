@@ -30,7 +30,6 @@ import {
   removePluginParameterArrayItems,
 } from './plugin-parameter-collection-model';
 import {
-  clonePluginParameterValue,
   isBooleanParameterEnabled,
   isPluginParameterSchemaFieldEditable,
   isTaggedPluginParameterValue,
@@ -703,8 +702,8 @@ function displayValue(value: unknown): string {
           highlight-current-row
           class="parameter-el-table array-el-table"
           :row-class-name="arrayRowClassName"
-          @row-click="(row) => activeRowId = row.id"
-          @row-dblclick="(row) => editArrayItem(row.index)"
+          @row-click="(row: { id: string; index: number }) => activeRowId = row.id"
+          @row-dblclick="(row: { id: string; index: number }) => editArrayItem(row.index)"
           @header-dragend="onCollectionHeaderDragEnd"
         >
           <el-table-column

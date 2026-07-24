@@ -697,7 +697,7 @@ async function finishDrop(event: DragEvent): Promise<void> {
   const from = plugins.value.findIndex((plugin) => plugin.index === movedIndex);
   const insertion = dropIndex.value ?? from;
   clearDrag();
-  if (!movedPlugin || from < 0 || insertion < 0 || insertion > plugins.value.length) return;
+  if (movedIndex == null || !movedPlugin || from < 0 || insertion < 0 || insertion > plugins.value.length) return;
   const indexes = movePluginIndex(
     plugins.value.map((plugin) => plugin.index),
     movedIndex,

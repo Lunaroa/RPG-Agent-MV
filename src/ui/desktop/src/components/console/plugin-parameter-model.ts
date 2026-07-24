@@ -123,7 +123,7 @@ export function buildPluginParameterRows(
 ): PluginParameterRow[] {
   const fields = plugin.parameterSchema?.fields || [];
   const known = new Set(fields.map((field) => field.key));
-  const rows = fields.map((field) => {
+  const rows: PluginParameterRow[] = fields.map((field) => {
     const editable = isPluginParameterFieldEditable(plugin, field);
     const value = editable
       ? form[field.key]
@@ -481,7 +481,7 @@ function summarizeDatabaseReference(
   return summarizeScalar(value, labels);
 }
 
-function summarizeMultiline(value: unknown, labels: PluginParameterSummaryLabels): string {
+function summarizeMultiline(value: unknown, _labels: PluginParameterSummaryLabels): string {
   const text = displayPluginParameterValue(value).trim();
   if (!text) return '';
   const lines = text.split(/\r?\n/);

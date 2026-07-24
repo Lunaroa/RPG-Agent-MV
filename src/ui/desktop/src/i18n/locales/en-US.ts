@@ -1774,6 +1774,21 @@ const enUS = {
     'eventImgPicker.tileTabs': 'Tile tabs',
     'eventImgPicker.pickHint': 'Click to select, double-click to confirm',
 
+    'systemNamedEntry.switchTitle': 'Switch Selector',
+    'systemNamedEntry.variableTitle': 'Variable Selector',
+    'systemNamedEntry.switchKind': 'Switches',
+    'systemNamedEntry.variableKind': 'Variables',
+    'systemNamedEntry.none': 'None',
+    'systemNamedEntry.name': 'Name',
+    'systemNamedEntry.apply': 'Apply',
+    'systemNamedEntry.browse': 'Browse',
+    'systemNamedEntry.changeMaximum': 'Change Maximum…',
+    'systemNamedEntry.maximumTitle': 'Change {{kind}} Capacity',
+    'systemNamedEntry.maximumPrompt': 'Current capacity is {{current}}. Enter 1–{{limit}}. Shrinking only removes trailing empty slots.',
+    'systemNamedEntry.maximumConfirm': 'Stage Change',
+    'systemNamedEntry.maximumInvalid': 'Enter an integer from 1 through {{limit}}.',
+    'systemNamedEntry.projectMissing': 'No project is available.',
+
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': 'This command does not need additional parameters.',
     'cmdFields.chooseField': 'Choose {{field}}',

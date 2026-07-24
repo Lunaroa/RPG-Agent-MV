@@ -44,6 +44,7 @@ import {
   projectManagedListInvalid,
   projectManagedMaximumInvalid,
   projectManagedMaximumOccupied,
+  projectManagedNamedListIdOutOfRange,
   projectManagedOperationOwnedCannotRevert,
   projectManagedSystemSharedGroupImmutable,
   projectManagedTypeListInvalid,
@@ -127,9 +128,14 @@ export function updateProjectManagedEntry(
   const data = readData(workflowRoot, project, current.relativePath);
   if (request.kind === 'switch' || request.kind === 'variable') {
     const key = request.kind === 'switch' ? 'switches' : 'variables';
+    const group = request.kind === 'switch' ? 'Switches' : 'Variables';
     const name = String((request.value as Record<string, unknown>)?.name || '');
     const list = (data as Record<string, unknown>)[key];
     if (!Array.isArray(list)) throw new Error(projectManagedListInvalid(key));
+    const maximum = Math.max(0, list.length - 1);
+    if (current.id <= 0 || current.id > maximum) {
+      throw new Error(projectManagedNamedListIdOutOfRange(group, current.id, maximum));
+    }
     list[current.id] = name;
   } else {
     if (!request.value || typeof request.value !== 'object' || Array.isArray(request.value)) throw new Error(projectManagedEntryInvalid());
@@ -272,6 +278,9 @@ export function resizeProjectManagedDatabase(
   project: string,
   request: { kind: ProjectManagedEntry['kind']; group?: string; maximum: number },
 ): ProjectManagedDatabaseResizeResult {
+  if (request.kind === 'switch' || request.kind === 'variable') {
+    return resizeSystemNamedList(workflowRoot, project, request.kind, request.maximum);
+  }
   if (request.kind !== 'database') throw new Error(projectManagedCreateDatabaseOnly());
   const schema = schemaForManagedEntry(request);
   const engine = inspectRmmvProject(project).engine;
@@ -310,6 +319,57 @@ export function resizeProjectManagedDatabase(
   return {
     resized: true,
     group: schema.group,
+    previousMaximum,
+    maximum,
+    staging: getProjectStagingStatus(workflowRoot, project),
+  };
+}
+
+const SYSTEM_NAMED_LIST_LIMIT = 5000;
+
+function resizeSystemNamedList(
+  workflowRoot: string,
+  project: string,
+  kind: 'switch' | 'variable',
+  rawMaximum: number,
+): ProjectManagedDatabaseResizeResult {
+  const key = kind === 'switch' ? 'switches' : 'variables';
+  const group = kind === 'switch' ? 'Switches' : 'Variables';
+  const maximum = Number(rawMaximum);
+  if (!Number.isInteger(maximum) || maximum < 1 || maximum > SYSTEM_NAMED_LIST_LIMIT) {
+    throw new Error(projectManagedMaximumInvalid(group, SYSTEM_NAMED_LIST_LIMIT));
+  }
+  const relativePath = relativePathFor(project, { kind });
+  const data = readData(workflowRoot, project, relativePath);
+  if (!isRecord(data)) throw new Error(projectManagedGroupInvalid('System'));
+  const list = data[key];
+  if (!Array.isArray(list)) throw new Error(projectManagedListInvalid(key));
+  if (list.length === 0) list.push(null);
+  else list[0] = null;
+  const previousMaximum = Math.max(0, list.length - 1);
+  if (maximum === previousMaximum) {
+    return {
+      resized: true,
+      group,
+      previousMaximum,
+      maximum,
+      staging: getProjectStagingStatus(workflowRoot, project),
+    };
+  }
+  if (maximum < previousMaximum) {
+    const occupiedIds: number[] = [];
+    for (let id = maximum + 1; id < list.length; id += 1) {
+      if (String(list[id] ?? '').trim()) occupiedIds.push(id);
+    }
+    if (occupiedIds.length) throw new Error(projectManagedMaximumOccupied(group, occupiedIds));
+    list.length = maximum + 1;
+  } else {
+    while (list.length <= maximum) list.push('');
+  }
+  writeStagedProjectJson(workflowRoot, project, relativePath, data);
+  return {
+    resized: true,
+    group,
     previousMaximum,
     maximum,
     staging: getProjectStagingStatus(workflowRoot, project),

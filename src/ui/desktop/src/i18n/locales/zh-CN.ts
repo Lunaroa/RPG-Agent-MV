@@ -1774,6 +1774,21 @@ const zhCN = {
     'eventImgPicker.tileTabs': '图块页签',
     'eventImgPicker.pickHint': '单击选择，双击确定',
 
+    'systemNamedEntry.switchTitle': '开关选择器',
+    'systemNamedEntry.variableTitle': '变量选择器',
+    'systemNamedEntry.switchKind': '开关',
+    'systemNamedEntry.variableKind': '变量',
+    'systemNamedEntry.none': '无',
+    'systemNamedEntry.name': '名称',
+    'systemNamedEntry.apply': '应用',
+    'systemNamedEntry.browse': '浏览',
+    'systemNamedEntry.changeMaximum': '更改最大值…',
+    'systemNamedEntry.maximumTitle': '调整{{kind}}容量',
+    'systemNamedEntry.maximumPrompt': '当前容量为 {{current}}。请输入 1–{{limit}}。缩小容量时，只允许移除末尾空槽。',
+    'systemNamedEntry.maximumConfirm': '暂存修改',
+    'systemNamedEntry.maximumInvalid': '请输入 1 到 {{limit}} 之间的整数。',
+    'systemNamedEntry.projectMissing': '当前项目不可用。',
+
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': '该指令不需要额外参数。',
     'cmdFields.chooseField': '选择{{field}}',

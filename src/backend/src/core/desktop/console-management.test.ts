@@ -93,6 +93,36 @@ describe('console management services', { concurrency: false }, () => {
     assert.equal(system.relativePath, 'www/data/System.json');
   });
 
+  test('resizes switch and variable maxima through staging', () => {
+    const expanded = resizeProjectManagedDatabase(root, project, { kind: 'switch', maximum: 40 });
+    assert.equal(expanded.previousMaximum, 1);
+    assert.equal(expanded.maximum, 40);
+    const switches = (readJson(getProjectFileForRead(root, project, 'www/data/System.json')!) as any).switches;
+    assert.equal(switches.length, 41);
+    assert.equal(switches[0], null);
+    assert.equal(switches[1], 'Door');
+    assert.equal(switches[40], '');
+
+    assert.throws(
+      () => withTestLanguage(() => resizeProjectManagedDatabase(root, project, { kind: 'switch', maximum: 0 })),
+      /容量|capacity/i,
+    );
+
+    updateProjectManagedEntry(root, project, { kind: 'switch', id: 25, value: { id: 25, name: 'Marked' } });
+    assert.throws(
+      () => withTestLanguage(() => resizeProjectManagedDatabase(root, project, { kind: 'switch', maximum: 20 })),
+      /不能缩小|cannot be reduced/i,
+    );
+
+    updateProjectManagedEntry(root, project, { kind: 'switch', id: 25, value: { id: 25, name: '' } });
+    const shrunk = resizeProjectManagedDatabase(root, project, { kind: 'switch', maximum: 20 });
+    assert.equal(shrunk.maximum, 20);
+    assert.equal(
+      (readJson(getProjectFileForRead(root, project, 'www/data/System.json')!) as any).switches.length,
+      21,
+    );
+  });
+
   test('edits System-backed Types and Terms document groups through staging', () => {
     const types = getProjectManagedEntry(root, project, { kind: 'database', group: 'Types', id: 0 });
     assert.deepEqual((types.value as any).skillTypes, ['', 'Magic', 'Special']);

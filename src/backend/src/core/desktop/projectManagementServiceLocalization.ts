@@ -140,6 +140,18 @@ export function projectManagedMaximumOccupied(
   });
 }
 
+export function projectManagedNamedListIdOutOfRange(
+  group: string,
+  id: number,
+  maximum: number,
+  language?: ProductLanguage | null,
+): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `${group} #${id} 超出当前容量 1–${maximum}；请先更改最大值`,
+    'en-US': `${group} #${id} is outside the current capacity 1–${maximum}; change the maximum first`,
+  });
+}
+
 export function projectManagedOperationOwnedCannotRevert(language?: ProductLanguage | null): string {
   return pickByLocale(resolveLanguage(language), {
     'zh-CN': '这条修改属于 Agent 数据库操作，不能单独撤销；请放弃对应的完整操作',

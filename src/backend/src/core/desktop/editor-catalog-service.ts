@@ -10,6 +10,7 @@ import type {
   EditorEquipmentCatalogEntry,
   EditorIconCatalogEntry,
   EditorProjectCatalog,
+  EditorTilesetCatalogEntry,
   NamedCatalogEntry,
   ProjectAssetEntry,
   ProjectRelativeDirectoryListResult,
@@ -123,7 +124,7 @@ export function buildEditorProjectCatalog(workflowRoot: string, project: string)
     states: iconDatabaseList(readProjectJson(workflowRoot, project, dataFile('States.json'), [])),
     enemies: enemyDatabaseList(enemies),
     troops: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Troops.json'), [])),
-    tilesets: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Tilesets.json'), [])),
+    tilesets: tilesetDatabaseList(readProjectJson(workflowRoot, project, dataFile('Tilesets.json'), [])),
     commonEvents: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('CommonEvents.json'), [])),
     animations: animationDatabaseList(readProjectJson(workflowRoot, project, dataFile('Animations.json'), [])),
     battle: {
@@ -259,6 +260,22 @@ function enemyDatabaseList(value: unknown): EditorEnemyCatalogEntry[] {
       name: stringValue(record.name) || `#${id}`,
       battlerName: stringValue(record.battlerName),
       battlerHue: integerValue(record.battlerHue) ?? 0,
+    }];
+  });
+}
+
+function tilesetDatabaseList(value: unknown): EditorTilesetCatalogEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    const record = asRecord(entry);
+    if (!record) return [];
+    const id = positiveInteger(record.id) ?? index;
+    if (id <= 0) return [];
+    const rawNames = Array.isArray(record.tilesetNames) ? record.tilesetNames : [];
+    return [{
+      id,
+      name: stringValue(record.name) || `#${id}`,
+      tilesetNames: rawNames.map((name) => stringValue(name)),
     }];
   });
 }

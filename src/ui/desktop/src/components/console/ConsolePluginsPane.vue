@@ -930,6 +930,7 @@ function resizeKeydown(event: KeyboardEvent): void {
                   <PluginEngineTags :targets="plugin.header.target" />
                   <strong>{{ plugin.name || `#${plugin.index + 1}` }}</strong>
                 </span>
+                <small v-if="plugin.name.includes('/')">{{ plugin.fileRelativePath }}</small>
                 <small>{{ plugin.header.plugindesc || plugin.description || t('plugins.noDescription') }}</small>
                 <em v-if="!plugin.fileExists">{{ t('plugins.fileMissingShort') }}</em>
               </span>

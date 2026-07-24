@@ -41,6 +41,7 @@ async function paint(): Promise<void> {
   context.imageSmoothingEnabled = false;
 
   const iconIndex = Math.floor(Number(props.iconIndex));
+  // Index 0 is the blank IconSet cell in RMMV.
   if (!Number.isFinite(iconIndex) || iconIndex <= 0) return;
 
   const asset = props.catalog?.assets.system.find((entry) => entry.name === 'IconSet');
@@ -66,7 +67,6 @@ async function paint(): Promise<void> {
     class="icon-set-thumb"
     :width="displaySize"
     :height="displaySize"
-    :style="{ width: cssSize, height: cssSize }"
     aria-hidden="true"
   />
 </template>
@@ -74,6 +74,9 @@ async function paint(): Promise<void> {
 <style scoped>
 .icon-set-thumb {
   display: block;
+  flex: 0 0 auto;
+  width: v-bind(cssSize);
+  height: v-bind(cssSize);
   image-rendering: pixelated;
 }
 </style>

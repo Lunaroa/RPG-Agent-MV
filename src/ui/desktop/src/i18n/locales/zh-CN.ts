@@ -1795,6 +1795,14 @@ const zhCN = {
     'pluginFilePicker.missingCatalog': '工程素材目录尚未加载，无法打开文件选择器。',
     'pluginFilePicker.directoryNotFound': '工程内相对目录「{{directory}}」不存在。请在工程中创建该目录，或修正插件的 @dir。',
     'pluginFilePicker.invalidDirectory': '工程内相对目录「{{directory}}」无效。@dir 必须落在工程内部。',
+    'pluginTilesetPicker.title': '选择图块集',
+    'pluginTilesetPicker.closeTitle': '关闭图块集选择',
+    'pluginTilesetPicker.searchPlaceholder': '搜索图块集',
+    'pluginTilesetPicker.none': '(无)',
+    'pluginTilesetPicker.browse': '浏览图块集',
+    'pluginTilesetPicker.hint': '从图块集列表中选择；右侧预览整张素材图。',
+    'pluginTilesetPicker.noMatches': '没有匹配的图块集。',
+    'pluginTilesetPicker.previewFailed': '预览加载失败',
 
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': '该指令不需要额外参数。',

@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import { translate } from '../i18n';
-import { formatPluginParameterTypeLabel } from './pluginParameterTypeLabel';
+import {
+  formatPluginParameterTypeLabel,
+  pluginParameterTypeLabelIsList,
+  pluginParameterTypeStructParts,
+  stripPluginParameterTypeListBrackets,
+} from './pluginParameterTypeLabel';
 
 describe('formatPluginParameterTypeLabel', () => {
   const zh = (key: Parameters<typeof translate>[0], params?: Record<string, string | number>) =>
@@ -40,5 +45,28 @@ describe('formatPluginParameterTypeLabel', () => {
     expect(formatPluginParameterTypeLabel('', 'number', zh)).toBe('数字');
     expect(formatPluginParameterTypeLabel(null, 'text', zh)).toBe('字符串');
     expect(formatPluginParameterTypeLabel('', 'mystery', zh)).toBe('mystery');
+  });
+});
+
+describe('list / struct type display helpers', () => {
+  test('detects list brackets and strips them for tagged display', () => {
+    expect(pluginParameterTypeLabelIsList('字符串[]')).toBe(true);
+    expect(pluginParameterTypeLabelIsList('数字[][]')).toBe(true);
+    expect(pluginParameterTypeLabelIsList('字符串')).toBe(false);
+    expect(stripPluginParameterTypeListBrackets('字符串[]')).toBe('字符串');
+    expect(stripPluginParameterTypeListBrackets('结构体 · MenuText[]')).toBe('结构体 · MenuText');
+    expect(stripPluginParameterTypeListBrackets('数字[][]')).toBe('数字');
+  });
+
+  test('splits struct keyword for blue tag rendering', () => {
+    expect(pluginParameterTypeStructParts('结构体 · TestStruct')).toEqual({
+      keyword: '结构体',
+      name: 'TestStruct',
+    });
+    expect(pluginParameterTypeStructParts('Struct · MenuText')).toEqual({
+      keyword: 'Struct',
+      name: 'MenuText',
+    });
+    expect(pluginParameterTypeStructParts('字符串')).toBeNull();
   });
 });

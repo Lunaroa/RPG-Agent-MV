@@ -15,7 +15,10 @@ import {
   normalizePluginParameterMainColumns,
 } from '../../utils/pluginParameterTableColumns';
 import {
-  formatPluginParameterTypeLabel, pluginParameterTypeLabelIsList,
+  formatPluginParameterTypeLabel,
+  pluginParameterTypeLabelIsList,
+  pluginParameterTypeStructParts,
+  stripPluginParameterTypeListBrackets,
 } from '../../utils/pluginParameterTypeLabel';
 import PluginParameterValueDecor from '../editor/PluginParameterValueDecor.vue';
 import {
@@ -30,6 +33,8 @@ import {
   clonePluginParameterValue,
   isBooleanParameterEnabled,
   isPluginParameterSchemaFieldEditable,
+  isTaggedPluginParameterValue,
+  resolvePluginParameterSelectPresentation,
   summarizePluginParameterValue,
   type PluginParameterChildTarget,
   type PluginParameterRow,
@@ -267,6 +272,28 @@ function displayStructReadonlyReason(row: PluginParameterRow): string {
 
 function structTypeLabel(row: Pick<PluginParameterRow, 'field'>): string {
   return formatPluginParameterTypeLabel(row.field?.rawType, row.field?.kind, t);
+}
+
+function structTypeDisplay(row: Pick<PluginParameterRow, 'field'>): {
+  isList: boolean;
+  struct: { keyword: string; name: string } | null;
+  text: string;
+} {
+  const full = structTypeLabel(row);
+  const isList = pluginParameterTypeLabelIsList(full);
+  const text = isList ? stripPluginParameterTypeListBrackets(full) : full;
+  return {
+    isList,
+    struct: pluginParameterTypeStructParts(text),
+    text,
+  };
+}
+
+function selectPresentationFor(
+  field: PluginParameterSchemaField | null | undefined,
+  value: unknown,
+): ReturnType<typeof resolvePluginParameterSelectPresentation> {
+  return resolvePluginParameterSelectPresentation(field, value);
 }
 
 function editStructField(field: PluginParameterSchemaField): void {
@@ -766,13 +793,29 @@ function displayValue(value: unknown): string {
                     @click.stop
                     @dblclick.stop
                   />
+                  <template v-else-if="column.field.kind === 'select' && selectPresentationFor(column.field, cellValue(row.value, column.field))">
+                    <span class="parameter-select-value">
+                      <span>{{ selectPresentationFor(column.field, cellValue(row.value, column.field))!.label }}</span>
+                      <el-tag size="small" effect="plain" class="parameter-key-tag">
+                        {{ selectPresentationFor(column.field, cellValue(row.value, column.field))!.value }}
+                      </el-tag>
+                    </span>
+                  </template>
                   <template v-else>
                     <PluginParameterValueDecor
                       :field="column.field"
                       :value="cellValue(row.value, column.field)"
                       :catalog="catalog"
                     />
-                    <span>{{ cellSummary(row.value, column.field) }}</span>
+                    <el-tag
+                      v-if="isTaggedPluginParameterValue(column.field)"
+                      size="small"
+                      effect="plain"
+                      class="parameter-value-tag"
+                    >
+                      {{ cellSummary(row.value, column.field) }}
+                    </el-tag>
+                    <span v-else>{{ cellSummary(row.value, column.field) }}</span>
                   </template>
                 </div>
               </template>
@@ -801,13 +844,29 @@ function displayValue(value: unknown): string {
                   @click.stop
                   @dblclick.stop
                 />
+                <template v-else-if="arrayItem?.kind === 'select' && selectPresentationFor(arrayItem, row.value)">
+                  <span class="parameter-select-value">
+                    <span>{{ selectPresentationFor(arrayItem, row.value)!.label }}</span>
+                    <el-tag size="small" effect="plain" class="parameter-key-tag">
+                      {{ selectPresentationFor(arrayItem, row.value)!.value }}
+                    </el-tag>
+                  </span>
+                </template>
                 <template v-else-if="arrayItem">
                   <PluginParameterValueDecor
                     :field="arrayItem"
                     :value="row.value"
                     :catalog="catalog"
                   />
-                  <span>{{ valueSummary(arrayItem, row.value) }}</span>
+                  <el-tag
+                    v-if="isTaggedPluginParameterValue(arrayItem)"
+                    size="small"
+                    effect="plain"
+                    class="parameter-value-tag"
+                  >
+                    {{ valueSummary(arrayItem, row.value) }}
+                  </el-tag>
+                  <span v-else>{{ valueSummary(arrayItem, row.value) }}</span>
                 </template>
               </div>
             </template>
@@ -910,14 +969,24 @@ function displayValue(value: unknown): string {
                 :title="structTypeLabel(row)"
               >
                 <el-tag
-                  v-if="pluginParameterTypeLabelIsList(structTypeLabel(row))"
+                  v-if="structTypeDisplay(row).isList"
                   size="small"
                   effect="plain"
                   class="parameter-list-tag"
                 >
                   {{ t('plugins.parameterTypeListTag') }}
                 </el-tag>
-                <span>{{ structTypeLabel(row) }}</span>
+                <template v-if="structTypeDisplay(row).struct">
+                  <el-tag
+                    size="small"
+                    effect="plain"
+                    class="parameter-struct-tag"
+                  >
+                    {{ structTypeDisplay(row).struct!.keyword }}
+                  </el-tag>
+                  <span>{{ structTypeDisplay(row).struct!.name }}</span>
+                </template>
+                <span v-else>{{ structTypeDisplay(row).text }}</span>
               </div>
             </template>
           </el-table-column>
@@ -944,6 +1013,15 @@ function displayValue(value: unknown): string {
                   @click.stop
                   @dblclick.stop
                 />
+                <span
+                  v-else-if="row.field?.kind === 'select' && selectPresentationFor(row.field, structSource()[row.key])"
+                  class="parameter-select-value"
+                >
+                  <span>{{ selectPresentationFor(row.field, structSource()[row.key])!.label }}</span>
+                  <el-tag size="small" effect="plain" class="parameter-key-tag">
+                    {{ selectPresentationFor(row.field, structSource()[row.key])!.value }}
+                  </el-tag>
+                </span>
                 <template v-else>
                   <PluginParameterValueDecor
                     v-if="row.field"
@@ -951,7 +1029,15 @@ function displayValue(value: unknown): string {
                     :value="structSource()[row.key]"
                     :catalog="catalog"
                   />
-                  <span>{{ row.summary }}</span>
+                  <el-tag
+                    v-if="isTaggedPluginParameterValue(row.field)"
+                    size="small"
+                    effect="plain"
+                    class="parameter-value-tag"
+                  >
+                    {{ row.summary }}
+                  </el-tag>
+                  <span v-else>{{ row.summary }}</span>
                 </template>
                 <el-tag
                   v-if="!row.editable"
@@ -1048,7 +1134,7 @@ function displayValue(value: unknown): string {
   text-overflow: ellipsis;
 }
 .parameter-el-table :deep(.el-table__body td.el-table__cell) {
-  padding: 8px 0;
+  padding: 4px 0;
 }
 .parameter-el-table :deep(.el-table__body td.el-table__cell .cell) {
   line-height: 22px;
@@ -1081,6 +1167,44 @@ function displayValue(value: unknown): string {
   flex: 0 0 auto;
   animation: none;
   transition: none;
+}
+.parameter-struct-tag {
+  flex: 0 0 auto;
+  color: #2563eb;
+  border-color: color-mix(in srgb, #2563eb 35%, var(--console-border, #e4dcce));
+  background: color-mix(in srgb, #2563eb 10%, var(--console-paper, #fffdfa));
+  animation: none;
+  transition: none;
+}
+.parameter-value-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+  background: color-mix(in srgb, var(--console-accent, #be5630) 10%, transparent);
+  border-color: color-mix(in srgb, var(--console-accent, #be5630) 32%, transparent);
+  animation: none;
+  transition: none;
+}
+.parameter-value-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+}
+.parameter-select-value {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.parameter-select-value > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .parameter-el-table :deep(.el-table__body tr:hover > td.parameter-value-column),
 .parameter-el-table :deep(.el-table__body tr.current-row > td.parameter-value-column) {

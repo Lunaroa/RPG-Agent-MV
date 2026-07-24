@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { EditorProjectCatalog, PluginParameterSchemaField } from '../api/client';
-import { resolvePluginParameterValueDecor } from './pluginParameterValueDecor';
+import {
+  resolvePluginParameterValueDecor,
+  resolveTilesetPreviewSheetName,
+} from './pluginParameterValueDecor';
 
 function field(
   partial: Partial<PluginParameterSchemaField> & Pick<PluginParameterSchemaField, 'key' | 'kind'>,
@@ -39,9 +42,17 @@ function catalogStub(overrides: Partial<EditorProjectCatalog> = {}): EditorProje
     weapons: [],
     armors: [],
     states: [],
-    enemies: [],
+    enemies: [
+      { id: 1, name: 'Slime', battlerName: 'Slime', battlerHue: 0 },
+    ],
     troops: [],
-    tilesets: [],
+    tilesets: [
+      {
+        id: 1,
+        name: 'Field',
+        tilesetNames: ['', '', '', '', '', 'World_A5', 'World_B', '', ''],
+      },
+    ],
     commonEvents: [],
     animations: [
       { id: 1, name: 'Hit', animation1Name: 'Attack1' },
@@ -59,9 +70,16 @@ function catalogStub(overrides: Partial<EditorProjectCatalog> = {}): EditorProje
       characters: [{ name: 'Actor1', fileName: 'Actor1.png', url: 'rmmv-asset://project/t/img/characters/Actor1.png' }],
       faces: [],
       svActors: [],
-      enemies: [],
-      svEnemies: [],
-      tilesets: [],
+      enemies: [
+        { name: 'Slime', fileName: 'Slime.png', url: 'rmmv-asset://project/t/img/enemies/Slime.png' },
+      ],
+      svEnemies: [
+        { name: 'Slime', fileName: 'Slime.png', url: 'rmmv-asset://project/t/img/sv_enemies/Slime.png' },
+      ],
+      tilesets: [
+        { name: 'World_A5', fileName: 'World_A5.png', url: 'rmmv-asset://project/t/img/tilesets/World_A5.png' },
+        { name: 'World_B', fileName: 'World_B.png', url: 'rmmv-asset://project/t/img/tilesets/World_B.png' },
+      ],
       animations: [
         { name: 'Attack1', fileName: 'Attack1.png', url: 'rmmv-asset://project/t/img/animations/Attack1.png' },
       ],
@@ -84,6 +102,14 @@ function catalogStub(overrides: Partial<EditorProjectCatalog> = {}): EditorProje
     ...overrides,
   } as EditorProjectCatalog;
 }
+
+describe('resolveTilesetPreviewSheetName', () => {
+  it('prefers A5 then first non-empty sheet', () => {
+    expect(resolveTilesetPreviewSheetName(['', '', '', '', '', 'A5', 'B'])).toBe('A5');
+    expect(resolveTilesetPreviewSheetName(['A1', '', '', '', '', '', 'B'])).toBe('A1');
+    expect(resolveTilesetPreviewSheetName(['', '', ''])).toBeNull();
+  });
+});
 
 describe('resolvePluginParameterValueDecor', () => {
   it('adds a database icon without media for class references', () => {
@@ -161,6 +187,49 @@ describe('resolvePluginParameterValueDecor', () => {
     );
     expect(decor.iconId).toBe('class');
     expect(decor.media).toBeNull();
+  });
+
+  it('resolves enemy battler image from front-view assets', () => {
+    const decor = resolvePluginParameterValueDecor(
+      field({ key: 'enemyId', kind: 'database', databaseTable: 'Enemies' }),
+      1,
+      catalogStub(),
+    );
+    expect(decor.iconId).toBe('enemy');
+    expect(decor.media).toEqual({
+      kind: 'image',
+      url: 'rmmv-asset://project/t/img/enemies/Slime.png',
+    });
+  });
+
+  it('resolves enemy battler from sv_enemies when sideView is on', () => {
+    const decor = resolvePluginParameterValueDecor(
+      field({ key: 'enemyId', kind: 'database', databaseTable: 'Enemies' }),
+      1,
+      catalogStub({
+        battle: {
+          ...catalogStub().battle,
+          sideView: true,
+        },
+      }),
+    );
+    expect(decor.media).toEqual({
+      kind: 'image',
+      url: 'rmmv-asset://project/t/img/sv_enemies/Slime.png',
+    });
+  });
+
+  it('resolves tileset sheet media preferring A5', () => {
+    const decor = resolvePluginParameterValueDecor(
+      field({ key: 'tilesetId', kind: 'database', databaseTable: 'Tilesets' }),
+      1,
+      catalogStub(),
+    );
+    expect(decor.iconId).toBe('tileset');
+    expect(decor.media).toEqual({
+      kind: 'image',
+      url: 'rmmv-asset://project/t/img/tilesets/World_A5.png',
+    });
   });
 
   it('resolves file image thumbs from catalog assets', () => {

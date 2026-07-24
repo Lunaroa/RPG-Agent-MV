@@ -93,14 +93,31 @@
         …
       </el-button>
     </div>
+    <div
+      v-else-if="field.kind === 'database' && isTilesetDatabase"
+      class="file-param-input"
+    >
+      <el-input
+        :model-value="tilesetDisplayValue"
+        readonly
+        :aria-label="field.label || field.key"
+        @click="openTilesetPicker"
+      />
+      <el-button
+        :aria-label="t('pluginTilesetPicker.browse')"
+        @click="openTilesetPicker"
+      >
+        …
+      </el-button>
+    </div>
     <el-select
       v-else-if="field.kind === 'database'"
       :model-value="stringValue"
       filterable
       class="database-param-select"
-      :class="{ 'is-actor-select': isActorDatabase }"
-      :popper-class="isActorDatabase
-        ? 'plugin-parameter-select-popper plugin-parameter-actor-popper'
+      :class="{ 'is-media-select': databaseOptionHasMedia }"
+      :popper-class="databaseOptionHasMedia
+        ? 'plugin-parameter-select-popper plugin-parameter-media-popper'
         : 'plugin-parameter-select-popper'"
       @change="emitSelectValue"
     >
@@ -110,12 +127,26 @@
         :label="option.label"
         :value="option.value"
       >
-        <div v-if="isActorDatabase" class="actor-option">
+        <div v-if="databaseOptionHasMedia" class="database-media-option">
           <ActorWalkingFrameThumb
+            v-if="isActorDatabase"
             :character-name="actorGraphicForOption(option.value)?.characterName"
             :character-index="actorGraphicForOption(option.value)?.characterIndex"
             :catalog="catalog"
             :size="48"
+          />
+          <IconSetThumb
+            v-else-if="databaseOptionIconIndex(option.value) != null"
+            :icon-index="databaseOptionIconIndex(option.value)!"
+            :catalog="catalog"
+            :size="28"
+          />
+          <img
+            v-else-if="databaseOptionImageUrl(option.value)"
+            :src="databaseOptionImageUrl(option.value)!"
+            alt=""
+            class="database-option-thumb"
+            draggable="false"
           />
           <span>{{ option.label }}</span>
         </div>
@@ -249,13 +280,24 @@
       :folders="filePickerFolders"
       @commit="commitFileSelection"
     />
+    <PluginParameterTilesetPickerDialog
+      ref="tilesetPicker"
+      :title="field.label || field.key"
+      :catalog="catalog"
+      @commit="commitTilesetSelection"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import type { EditorActorCatalogEntry, EditorProjectCatalog, PluginParameterSchemaField } from '../../api/client';
+import type {
+  EditorActorCatalogEntry,
+  EditorIconCatalogEntry,
+  EditorProjectCatalog,
+  PluginParameterSchemaField,
+} from '../../api/client';
 import { projectAssets } from '../../api/client';
 import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
@@ -268,9 +310,15 @@ import {
   resolvePluginParameterFileAssets,
   type PluginFileAssetResolution,
 } from '../../utils/pluginParameterFileAssets';
+import { resolvePluginParameterValueDecor } from '../../utils/pluginParameterValueDecor';
+import {
+  formatPluginTilesetDisplayLabel,
+} from '../../utils/pluginParameterTilesetPicker';
 import ActorWalkingFrameThumb from './ActorWalkingFrameThumb.vue';
+import IconSetThumb from './IconSetThumb.vue';
 import CoordinatePickerDialog from './CoordinatePickerDialog.vue';
 import PluginParameterFilePickerDialog from './PluginParameterFilePickerDialog.vue';
+import PluginParameterTilesetPickerDialog from './PluginParameterTilesetPickerDialog.vue';
 import SystemNamedEntrySelectorDialog from './SystemNamedEntrySelectorDialog.vue';
 import type { SystemNamedEntryKind } from './SystemNamedEntrySelectorDialog.vue';
 
@@ -294,6 +342,7 @@ const projectStore = useProjectStore();
 const coordinatePicker = ref<InstanceType<typeof CoordinatePickerDialog> | null>(null);
 const systemNamedEntrySelector = ref<InstanceType<typeof SystemNamedEntrySelectorDialog> | null>(null);
 const filePicker = ref<InstanceType<typeof PluginParameterFilePickerDialog> | null>(null);
+const tilesetPicker = ref<InstanceType<typeof PluginParameterTilesetPickerDialog> | null>(null);
 const fileResolution = ref<PluginFileAssetResolution>({
   ok: false,
   reason: 'missing-directory',
@@ -371,6 +420,21 @@ const databaseOptions = computed(() => {
     : [];
 });
 const isActorDatabase = computed(() => props.field.databaseTable === 'Actors');
+const isTilesetDatabase = computed(() => props.field.databaseTable === 'Tilesets');
+const databaseOptionHasMedia = computed(() => {
+  const table = props.field.databaseTable || '';
+  return table === 'Actors'
+    || table === 'Skills'
+    || table === 'Items'
+    || table === 'Weapons'
+    || table === 'Armors'
+    || table === 'States'
+    || table === 'Enemies'
+    || table === 'Animations';
+});
+const tilesetDisplayValue = computed(() =>
+  formatPluginTilesetDisplayLabel(props.catalog, stringValue.value, t('pluginTilesetPicker.none')),
+);
 const actorOptionsById = computed(() => {
   const map = new Map<number, EditorActorCatalogEntry>();
   if (!isActorDatabase.value) return map;
@@ -379,6 +443,37 @@ const actorOptionsById = computed(() => {
   }
   return map;
 });
+const iconOptionsById = computed(() => {
+  const map = new Map<number, number>();
+  const table = props.field.databaseTable || '';
+  const list =
+    table === 'Skills' ? props.catalog?.skills
+      : table === 'Items' ? props.catalog?.items
+        : table === 'Weapons' ? props.catalog?.weapons
+          : table === 'Armors' ? props.catalog?.armors
+            : table === 'States' ? props.catalog?.states
+              : null;
+  if (!list) return map;
+  for (const entry of list as EditorIconCatalogEntry[]) {
+    const iconIndex = Math.floor(Number(entry.iconIndex));
+    if (Number.isFinite(iconIndex) && iconIndex > 0) map.set(entry.id, iconIndex);
+  }
+  return map;
+});
+
+function databaseOptionIconIndex(value: string): number | null {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return iconOptionsById.value.get(id) ?? null;
+}
+
+function databaseOptionImageUrl(value: string): string | null {
+  if (isActorDatabase.value || databaseOptionIconIndex(value) != null) return null;
+  const field = props.field;
+  if (field.kind !== 'database') return null;
+  const decor = resolvePluginParameterValueDecor(field, Number(value), props.catalog);
+  return decor.media?.kind === 'image' ? decor.media.url : null;
+}
 const systemNamedEntryKind = computed<SystemNamedEntryKind | null>(() => {
   if (props.field.databaseTable === 'System.switches') return 'switch';
   if (props.field.databaseTable === 'System.variables') return 'variable';
@@ -614,6 +709,15 @@ function commitFileSelection(value: string): void {
   emitValue(value);
 }
 
+function openTilesetPicker(): void {
+  if (isReadonly.value) return;
+  tilesetPicker.value?.open(stringValue.value);
+}
+
+function commitTilesetSelection(id: number): void {
+  emitValue(String(id));
+}
+
 function openSystemNamedEntrySelector(): void {
   const kind = systemNamedEntryKind.value;
   if (!kind) return;
@@ -814,27 +918,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 .readonly-reason {
   color: var(--app-warn);
 }
-.actor-option {
+.actor-option,
+.database-media-option {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 8px;
 }
-.actor-option > span {
+.actor-option > span,
+.database-media-option > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.database-option-thumb {
+  flex: 0 0 auto;
+  width: auto;
+  height: 28px;
+  max-width: 48px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--console-paper-soft, #faf5ec) 70%, transparent);
+}
 </style>
 
 <style>
-.plugin-parameter-actor-popper .el-select-dropdown__item {
+.plugin-parameter-actor-popper .el-select-dropdown__item,
+.plugin-parameter-media-popper .el-select-dropdown__item {
   height: auto;
   min-height: 56px;
   padding-top: 4px;
   padding-bottom: 4px;
   line-height: 1.3;
+}
+.plugin-parameter-media-popper .el-select-dropdown__item {
+  min-height: 40px;
 }
 .plugin-parameter-select-popper .el-select-dropdown__item.is-selected {
   font-weight: 400;

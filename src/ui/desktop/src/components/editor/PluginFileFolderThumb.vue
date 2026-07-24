@@ -97,6 +97,8 @@ function markFailed(url: string): void {
   top: 12px;
   width: 48px;
   height: 60px;
+  display: grid;
+  place-items: center;
   overflow: hidden;
   border: 1px solid rgba(40, 32, 18, .28);
   border-radius: 3px;
@@ -104,11 +106,14 @@ function markFailed(url: string): void {
   box-shadow: 0 1px 3px rgba(40, 32, 18, .22);
 }
 .folder-sheet img {
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
   display: block;
-  object-fit: cover;
-  object-position: center top;
+  margin: 0 auto;
+  object-fit: contain;
+  object-position: center center;
   image-rendering: auto;
 }
 .sheet-0 {

@@ -190,7 +190,7 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.throws(() => updatePluginParameters(
       fixture.root,
       fixture.project,
-      'ParameterKinds',
+      0,
       {
         notes: 'Changed',
         rawJson: '{"enabled":false}',
@@ -320,7 +320,7 @@ describe('plugin management service', { concurrency: false }, () => {
   });
 
   test('disables a plugin through staging without mutating source plugins.js', () => {
-    const result = setPluginEnabled(fixture.root, fixture.project, 'QuestLog', false);
+    const result = setPluginEnabled(fixture.root, fixture.project, 1, false);
 
     assert.equal(result.plugins.find((plugin) => plugin.name === 'QuestLog')?.status, false);
     assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), true);
@@ -384,7 +384,7 @@ describe('plugin management service', { concurrency: false }, () => {
   });
 
   test('updates plugin parameters through staged plugins.js', () => {
-    const result = updatePluginParameters(fixture.root, fixture.project, 'CoreFix', {
+    const result = updatePluginParameters(fixture.root, fixture.project, 0, {
       speed: '2',
       mode: 'safe',
     });
@@ -420,7 +420,7 @@ describe('plugin management service', { concurrency: false }, () => {
   });
 
   test('applies staged plugin configuration back to source only on apply', () => {
-    setPluginEnabled(fixture.root, fixture.project, 'QuestLog', false);
+    setPluginEnabled(fixture.root, fixture.project, 1, false);
 
     assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), true);
     const applied = applyProjectStaging(fixture.root, fixture.project);
@@ -467,7 +467,7 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.equal(fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js'), 'utf8'), sourceBefore);
     assert.equal(fs.existsSync(looseFile), true);
 
-    const removed = removePluginConfigurationEntry(fixture.root, fixture.project, 'LoosePlugin');
+    const removed = removePluginConfigurationEntry(fixture.root, fixture.project, added.plugins.length - 1);
     assert.equal(removed.plugins.some((plugin) => plugin.name === 'LoosePlugin'), false);
     assert.equal(removed.pluginFiles.some((file) => file.name === 'LoosePlugin' && file.exists), true);
     assert.equal(fs.existsSync(looseFile), true);
@@ -489,13 +489,13 @@ describe('plugin management service', { concurrency: false }, () => {
     ]);
 
     assert.throws(
-      () => setPluginEnabled(fixture.root, fixture.project, 'DependentPlugin', true),
+      () => setPluginEnabled(fixture.root, fixture.project, 1, true),
       /PLUGIN_DEPENDENCY_CONFLICT.*requires enabled base plugin BasePlugin/,
     );
     assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
 
-    setPluginEnabled(fixture.root, fixture.project, 'BasePlugin', true);
-    setPluginEnabled(fixture.root, fixture.project, 'DependentPlugin', true);
+    setPluginEnabled(fixture.root, fixture.project, 0, true);
+    setPluginEnabled(fixture.root, fixture.project, 1, true);
     applyProjectStaging(fixture.root, fixture.project);
     assert.throws(
       () => reorderPlugins(fixture.root, fixture.project, [1, 0]),
@@ -506,11 +506,11 @@ describe('plugin management service', { concurrency: false }, () => {
 
   test('allows disabling a missing plugin but rejects enabling it without staging', () => {
     fs.rmSync(path.join(fixture.project, 'www', 'js', 'plugins', 'OldPlugin.js'));
-    setPluginEnabled(fixture.root, fixture.project, 'OldPlugin', false);
+    setPluginEnabled(fixture.root, fixture.project, 2, false);
     applyProjectStaging(fixture.root, fixture.project);
 
     assert.throws(
-      () => setPluginEnabled(fixture.root, fixture.project, 'OldPlugin', true),
+      () => setPluginEnabled(fixture.root, fixture.project, 2, true),
       /PLUGIN_FILE_MISSING.*OldPlugin/,
     );
     assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
@@ -533,6 +533,68 @@ describe('plugin management service', { concurrency: false }, () => {
       '/* replacement quest */',
     );
     assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), true);
+  });
+
+  test('with duplicate configured names can still add another unused plugin', () => {
+    writePluginsJs(fixture.project, [
+      { name: 'CoreFix', status: true, description: '', parameters: { speed: '1' } },
+      { name: '------ Section ------', status: false, description: 'First divider', parameters: {} },
+      { name: '------ Section ------', status: false, description: 'Second divider', parameters: {} },
+      { name: 'OldPlugin', status: false, description: '', parameters: {} },
+    ]);
+    fs.writeFileSync(path.join(fixture.project, 'www', 'js', 'plugins', 'LoosePlugin.js'), '/* loose */', 'utf8');
+
+    const added = addPluginConfigurationEntry(fixture.root, fixture.project, 'LoosePlugin');
+
+    assert.equal(added.plugins.at(-1)?.name, 'LoosePlugin');
+    assert.ok(added.validation.issues.some((issue) =>
+      issue.code === 'plugin-name-duplicate' && issue.pluginName === '------ Section ------'));
+
+    const withQuestLog = addPluginConfigurationEntry(fixture.root, fixture.project, 'QuestLog');
+    assert.equal(withQuestLog.plugins.at(-1)?.name, 'QuestLog');
+  });
+
+  test('remove and setEnabled by index only affect one duplicate-named row', () => {
+    writePluginsJs(fixture.project, [
+      { name: 'CoreFix', status: true, description: '', parameters: { speed: '1' } },
+      { name: '------ Section ------', status: true, description: 'First divider', parameters: {} },
+      { name: '------ Section ------', status: true, description: 'Second divider', parameters: {} },
+      { name: 'OldPlugin', status: false, description: '', parameters: {} },
+    ]);
+
+    const disabled = setPluginEnabled(fixture.root, fixture.project, 1, false);
+    assert.equal(disabled.plugins[1]?.status, false);
+    assert.equal(disabled.plugins[2]?.status, true);
+    assert.equal(disabled.plugins[1]?.description, 'First divider');
+    assert.equal(disabled.plugins[2]?.description, 'Second divider');
+
+    const removed = removePluginConfigurationEntry(fixture.root, fixture.project, 1);
+    assert.deepEqual(
+      removed.plugins.map((plugin) => [plugin.name, plugin.description, plugin.status]),
+      [
+        ['CoreFix', '', true],
+        ['------ Section ------', 'Second divider', true],
+        ['OldPlugin', '', false],
+      ],
+    );
+  });
+
+  test('adding a plugin name that already exists still fails fast', () => {
+    writePluginsJs(fixture.project, [
+      { name: '------ Section ------', status: false, description: 'First divider', parameters: {} },
+      { name: '------ Section ------', status: false, description: 'Second divider', parameters: {} },
+      { name: 'CoreFix', status: true, description: '', parameters: { speed: '1' } },
+    ]);
+
+    assert.throws(
+      () => addPluginConfigurationEntry(fixture.root, fixture.project, '------ Section ------'),
+      /Plugin configuration already exists: ------ Section ------/,
+    );
+    assert.throws(
+      () => addPluginConfigurationEntry(fixture.root, fixture.project, 'CoreFix'),
+      /Plugin configuration already exists: CoreFix/,
+    );
+    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
   });
 
   test('does not expose force deletion and rolls back every draft when an atomic stage fails', () => {

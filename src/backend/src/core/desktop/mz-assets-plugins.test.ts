@@ -360,7 +360,7 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
     assert.match(fields.unsupportedImage.unsupportedReason || "", /@type image/);
     assert.equal(config.validation.ok, true);
     assert.throws(
-      () => updatePluginParameters(root, project, "TypedPlugin", { mystery: "changed" }),
+      () => updatePluginParameters(root, project, 1, { mystery: "changed" }),
       /must be preserved unchanged/,
     );
 

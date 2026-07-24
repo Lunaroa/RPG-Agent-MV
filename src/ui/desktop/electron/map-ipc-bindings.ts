@@ -456,14 +456,14 @@ export function registerMapIpcHandlers(
     desktop.pluginManagement.writePluginConfiguration(workflowRoot, project(value), entries || []));
   handle('plugins:addConfiguration', (_event, pluginName: string, value?: string) =>
     desktop.pluginManagement.addPluginConfigurationEntry(workflowRoot, project(value), pluginName));
-  handle('plugins:removeConfiguration', (_event, pluginName: string, value?: string) =>
-    desktop.pluginManagement.removePluginConfigurationEntry(workflowRoot, project(value), pluginName));
-  handle('plugins:setEnabled', (_event, pluginName: string, enabled: boolean, value?: string) =>
-    desktop.pluginManagement.setPluginEnabled(workflowRoot, project(value), pluginName, enabled));
+  handle('plugins:removeConfiguration', (_event, pluginIndex: number, value?: string) =>
+    desktop.pluginManagement.removePluginConfigurationEntry(workflowRoot, project(value), pluginIndex));
+  handle('plugins:setEnabled', (_event, pluginIndex: number, enabled: boolean, value?: string) =>
+    desktop.pluginManagement.setPluginEnabled(workflowRoot, project(value), pluginIndex, enabled));
   handle('plugins:reorder', (_event, pluginIndexes: number[], value?: string) =>
     desktop.pluginManagement.reorderPlugins(workflowRoot, project(value), pluginIndexes || []));
-  handle('plugins:updateParameters', (_event, pluginName: string, parameters: Record<string, unknown>, value?: string) =>
-    desktop.pluginManagement.updatePluginParameters(workflowRoot, project(value), pluginName, parameters || {}));
+  handle('plugins:updateParameters', (_event, pluginIndex: number, parameters: Record<string, unknown>, value?: string) =>
+    desktop.pluginManagement.updatePluginParameters(workflowRoot, project(value), pluginIndex, parameters || {}));
   handle('plugins:installFile', (_event, sourceFile: string, options?: Record<string, unknown>, value?: string) =>
     desktop.pluginManagement.installPluginFile(workflowRoot, project(value), sourceFile, options || {}));
   handle('plugins:selectInstallFile', async (event) => {

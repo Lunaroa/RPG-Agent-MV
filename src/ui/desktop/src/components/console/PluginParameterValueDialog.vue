@@ -25,6 +25,7 @@ import {
   type PluginParameterValidationIssue,
 } from './plugin-parameter-model';
 import { resolvePluginParameterFileAssets } from '../../utils/pluginParameterFileAssets';
+import { resolvePluginTilesetPreviewUrl } from '../../utils/pluginParameterTilesetPicker';
 
 defineOptions({ name: 'PluginParameterValueDialog' });
 
@@ -125,6 +126,14 @@ const showFilePreview = computed(() =>
 );
 const showActorPreview = computed(() =>
   props.field?.kind === 'database' && props.field.databaseTable === 'Actors',
+);
+const showTilesetPreview = computed(() =>
+  props.field?.kind === 'database' && props.field.databaseTable === 'Tilesets',
+);
+const selectedTilesetPreviewUrl = computed(() =>
+  showTilesetPreview.value
+    ? resolvePluginTilesetPreviewUrl(props.catalog, draft.value)
+    : null,
 );
 const selectedActorCharacterName = computed(() => {
   if (!showActorPreview.value) return '';
@@ -507,6 +516,22 @@ function arrayValue(value: unknown): unknown[] {
           {{ t('pluginFilePicker.none') }}
         </p>
       </div>
+
+      <div
+        v-else-if="showTilesetPreview"
+        class="parameter-file-preview parameter-tileset-preview"
+        :aria-label="t('plugins.parameterTypeTileset')"
+      >
+        <img
+          v-if="selectedTilesetPreviewUrl"
+          :src="selectedTilesetPreviewUrl"
+          :alt="String(draft || '')"
+          class="parameter-tileset-preview-img"
+        />
+        <p v-else class="parameter-file-preview-empty">
+          {{ Number(draft) > 0 ? t('pluginTilesetPicker.previewFailed') : t('pluginTilesetPicker.none') }}
+        </p>
+      </div>
     </div>
 
     <template #footer>
@@ -620,9 +645,10 @@ function arrayValue(value: unknown): unknown[] {
   white-space: pre-wrap;
 }
 .parameter-file-preview {
-  height: 160px;
-  display: grid;
-  place-items: center;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
   border: 1px solid var(--console-border, #e4dcce);
   border-radius: 8px;
@@ -638,9 +664,16 @@ function arrayValue(value: unknown): unknown[] {
 .parameter-file-preview img {
   max-width: 100%;
   max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  width: auto;
+  height: auto;
   display: block;
   object-fit: contain;
   image-rendering: auto;
+}
+.parameter-tileset-preview-img {
+  image-rendering: pixelated;
 }
 .parameter-file-preview-empty {
   margin: 0;

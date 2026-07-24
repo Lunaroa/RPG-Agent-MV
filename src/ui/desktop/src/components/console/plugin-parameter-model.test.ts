@@ -171,7 +171,7 @@ describe('plugin parameter model', () => {
       '{"title":"Ready","speed":"3"}',
     );
     expect(rows.find((row) => row.key === 'levels')?.summary).toBe('2 items');
-    expect(isTaggedPluginParameterValue(field('settings', 'struct'))).toBe(false);
+    expect(isTaggedPluginParameterValue(field('settings', 'struct'))).toBe(true);
     expect(rows.find((row) => row.key === 'unsupported')?.editable).toBe(false);
     expect(rows.find((row) => row.key === 'legacy')?.editable).toBe(false);
   });

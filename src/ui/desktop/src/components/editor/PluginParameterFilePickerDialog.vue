@@ -159,9 +159,9 @@
             @pointercancel="onPreviewPointerUp"
             @auxclick.prevent
           >
-            <div class="preview-scroll">
+            <div class="preview-scroll" ref="previewScrollEl">
               <div
-                v-if="media === 'image' && selectedAsset"
+                v-if="media === 'image' && selectedAsset && previewUrl"
                 class="image-zoom-space"
                 :style="{
                   width: `${Math.ceil(imageNaturalWidth * previewZoom)}px`,
@@ -170,12 +170,12 @@
                 }"
               >
                 <img
-                  v-if="previewUrl"
                   :src="previewUrl"
                   :alt="selectedAsset.name"
                   :style="{ transform: `scale(${previewZoom})`, transformOrigin: '0 0' }"
                   draggable="false"
                   @load="onImageLoad"
+                  @error="onPreviewImageError"
                 />
               </div>
               <audio
@@ -195,14 +195,14 @@
                 preload="metadata"
               />
               <p v-else-if="selectedAsset" class="plain-preview">
-                {{ selectedAsset.name }}
+                {{ previewFailed ? t('pluginFilePicker.previewFailed') : selectedAsset.name }}
               </p>
               <p v-else class="plain-preview">
                 {{ t('pluginFilePicker.none') }}
               </p>
             </div>
             <div
-              v-if="media === 'image' && selectedAsset"
+              v-if="media === 'image' && selectedAsset && previewUrl"
               class="picker-zoom"
               :aria-label="t('pluginFilePicker.previewZoom')"
             >
@@ -277,6 +277,7 @@ const expandedFolderIds = ref<Set<string>>(new Set());
 const viewMode = ref<PluginFileBrowserViewMode>(getRuntimePluginFileBrowserViewMode());
 const galleryFocusId = ref(PLUGIN_FILE_GALLERY_NONE_ID);
 const galleryEl = ref<HTMLElement | null>(null);
+const previewScrollEl = ref<HTMLElement | null>(null);
 const failedImageUrls = ref(new Set<string>());
 const previewZoom = ref(1);
 const previewPanX = ref(0);
@@ -284,6 +285,7 @@ const previewPanY = ref(0);
 const previewUrl = ref('');
 const imageNaturalWidth = ref(320);
 const imageNaturalHeight = ref(240);
+const previewFailed = ref(false);
 const spaceHeld = ref(false);
 const isPanning = ref(false);
 let panPointerId: number | null = null;
@@ -544,17 +546,45 @@ function scrollGalleryFocusIntoView(): void {
 }
 
 async function refreshPreview(asset: PluginFileAssetOption | null) {
+  previewFailed.value = false;
   if (!asset?.url) {
     previewUrl.value = '';
     return;
   }
-  previewUrl.value = await resolveAssetUrl(asset.url);
+  try {
+    previewUrl.value = await resolveAssetUrl(asset.url);
+  } catch {
+    previewUrl.value = '';
+    previewFailed.value = true;
+  }
 }
 
 function onImageLoad(event: Event) {
   const image = event.target as HTMLImageElement;
   imageNaturalWidth.value = Math.max(1, image.naturalWidth || 320);
   imageNaturalHeight.value = Math.max(1, image.naturalHeight || 240);
+  fitPreviewToView();
+}
+
+function onPreviewImageError() {
+  previewFailed.value = true;
+  previewUrl.value = '';
+}
+
+/** Fit whole image in the preview pane (min scale), never crop. */
+function fitPreviewToView() {
+  const scroll = previewScrollEl.value;
+  const pad = 32;
+  const availW = Math.max(1, (scroll?.clientWidth || 480) - pad);
+  const availH = Math.max(1, (scroll?.clientHeight || 360) - pad);
+  const scale = Math.min(
+    1,
+    availW / Math.max(1, imageNaturalWidth.value),
+    availH / Math.max(1, imageNaturalHeight.value),
+  );
+  previewZoom.value = clampPreviewZoom(scale);
+  previewPanX.value = 0;
+  previewPanY.value = 0;
 }
 
 function clampPreviewZoom(value: number): number {
@@ -781,12 +811,14 @@ defineExpose({ open });
   color: var(--app-ink-muted);
 }
 .gallery-preview img {
-  width: 100%;
-  height: 100%;
+  /* Fit by min(box/img) scale: whole image visible, never crop. */
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
   display: block;
   object-fit: contain;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+  image-rendering: auto;
 }
 .folder-preview {
   background-image: none;

@@ -13,14 +13,16 @@ import { useWorkspaceStore } from '../../stores/workspace';
 import {
   normalizePluginParameterMainColumns,
 } from '../../utils/pluginParameterTableColumns';
-import { formatPluginParameterTypeLabel, pluginParameterTypeLabelIsList } from '../../utils/pluginParameterTypeLabel';
+import { formatPluginParameterTypeLabel, pluginParameterTypeLabelIsList, pluginParameterTypeStructParts, stripPluginParameterTypeListBrackets } from '../../utils/pluginParameterTypeLabel';
 import {
   buildPluginParameterPayload,
   buildPluginParameterRows,
   clonePluginParameterValue,
   createPluginParameterForm,
   isBooleanParameterEnabled,
+  isTaggedPluginParameterValue,
   pluginParameterPayloadsEqual,
+  resolvePluginParameterSelectPresentation,
   type PluginParameterRow,
   type PluginParameterSummaryLabels,
 } from './plugin-parameter-model';
@@ -228,6 +230,27 @@ function displayReadonlyReason(row: PluginParameterRow): string {
 
 function parameterTypeLabel(row: Pick<PluginParameterRow, 'field'>): string {
   return formatPluginParameterTypeLabel(row.field?.rawType, row.field?.kind, t);
+}
+
+function parameterTypeDisplay(row: Pick<PluginParameterRow, 'field'>): {
+  isList: boolean;
+  struct: { keyword: string; name: string } | null;
+  text: string;
+} {
+  const full = parameterTypeLabel(row);
+  const isList = pluginParameterTypeLabelIsList(full);
+  const text = isList ? stripPluginParameterTypeListBrackets(full) : full;
+  return {
+    isList,
+    struct: pluginParameterTypeStructParts(text),
+    text,
+  };
+}
+
+function selectPresentation(row: Pick<PluginParameterRow, 'field'> & { key?: string }): ReturnType<typeof resolvePluginParameterSelectPresentation> {
+  if (!row.field || row.field.kind !== 'select') return null;
+  const value = row.key != null ? parameterForm.value[row.key] : undefined;
+  return resolvePluginParameterSelectPresentation(row.field, value);
 }
 
 function openParameterEditor(key: string): void {
@@ -479,14 +502,24 @@ async function focusInitialParameter(): Promise<void> {
                   :title="parameterTypeLabel(row)"
                 >
                   <el-tag
-                    v-if="pluginParameterTypeLabelIsList(parameterTypeLabel(row))"
+                    v-if="parameterTypeDisplay(row).isList"
                     size="small"
                     effect="plain"
                     class="parameter-list-tag"
                   >
                     {{ t('plugins.parameterTypeListTag') }}
                   </el-tag>
-                  <span>{{ parameterTypeLabel(row) }}</span>
+                  <template v-if="parameterTypeDisplay(row).struct">
+                    <el-tag
+                      size="small"
+                      effect="plain"
+                      class="parameter-struct-tag"
+                    >
+                      {{ parameterTypeDisplay(row).struct!.keyword }}
+                    </el-tag>
+                    <span>{{ parameterTypeDisplay(row).struct!.name }}</span>
+                  </template>
+                  <span v-else>{{ parameterTypeDisplay(row).text }}</span>
                 </div>
               </template>
             </el-table-column>
@@ -515,6 +548,19 @@ async function focusInitialParameter(): Promise<void> {
                     @click.stop
                     @dblclick.stop
                   />
+                  <span
+                    v-else-if="row.field?.kind === 'select' && selectPresentation(row)"
+                    class="parameter-select-value"
+                  >
+                    <span>{{ selectPresentation(row)!.label }}</span>
+                    <el-tag
+                      size="small"
+                      effect="plain"
+                      class="parameter-key-tag"
+                    >
+                      {{ selectPresentation(row)!.value }}
+                    </el-tag>
+                  </span>
                   <template v-else>
                     <PluginParameterValueDecor
                       v-if="row.field"
@@ -522,7 +568,15 @@ async function focusInitialParameter(): Promise<void> {
                       :value="parameterForm[row.key]"
                       :catalog="catalog"
                     />
-                    <span>{{ row.summary }}</span>
+                    <el-tag
+                      v-if="isTaggedPluginParameterValue(row.field)"
+                      size="small"
+                      effect="plain"
+                      class="parameter-value-tag"
+                    >
+                      {{ row.summary }}
+                    </el-tag>
+                    <span v-else>{{ row.summary }}</span>
                   </template>
                 </div>
               </template>
@@ -659,7 +713,7 @@ async function focusInitialParameter(): Promise<void> {
   font-weight: 600;
 }
 .parameter-el-table :deep(.el-table__body td.el-table__cell) {
-  padding: 8px 0;
+  padding: 4px 0;
 }
 .parameter-el-table :deep(.el-table__body td.el-table__cell .cell) {
   line-height: 22px;
@@ -692,6 +746,44 @@ async function focusInitialParameter(): Promise<void> {
   flex: 0 0 auto;
   animation: none;
   transition: none;
+}
+.parameter-struct-tag {
+  flex: 0 0 auto;
+  color: #2563eb;
+  border-color: color-mix(in srgb, #2563eb 35%, var(--console-border, #e4dcce));
+  background: color-mix(in srgb, #2563eb 10%, var(--console-paper, #fffdfa));
+  animation: none;
+  transition: none;
+}
+.parameter-value-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+  background: color-mix(in srgb, var(--console-accent, #be5630) 10%, transparent);
+  border-color: color-mix(in srgb, var(--console-accent, #be5630) 32%, transparent);
+  animation: none;
+  transition: none;
+}
+.parameter-value-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+}
+.parameter-select-value {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.parameter-select-value > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .parameter-el-table :deep(.el-table__body tr:hover > td.parameter-value-column),
 .parameter-el-table :deep(.el-table__body tr.current-row > td.parameter-value-column) {

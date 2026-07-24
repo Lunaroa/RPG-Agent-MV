@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { EditorProjectCatalog, ProjectRelativeDirectoryListResult } from '../../api/client';
 import {
+  inferPluginFileMediaKind,
   normalizePluginFileDirectory,
   resolvePluginParameterFileAssets,
   resolvePluginParameterFileAssetsFromCatalog,
@@ -74,6 +75,15 @@ function catalogWith(
 }
 
 describe('pluginParameterFileAssets', () => {
+  test('infers media for img/audio roots and nested dirs', () => {
+    assert.equal(inferPluginFileMediaKind('img'), 'image');
+    assert.equal(inferPluginFileMediaKind('img/titles1'), 'image');
+    assert.equal(inferPluginFileMediaKind('audio'), 'audio');
+    assert.equal(inferPluginFileMediaKind('audio/bgm'), 'audio');
+    assert.equal(inferPluginFileMediaKind('movies'), 'movie');
+    assert.equal(inferPluginFileMediaKind('effects'), 'other');
+  });
+
   test('normalizes @dir and fails fast when directory is missing', () => {
     assert.equal(normalizePluginFileDirectory(' img/pictures/ '), 'img/pictures');
     assert.equal(resolvePluginParameterFileAssetsFromCatalog(catalogWith({}), '').ok, false);

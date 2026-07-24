@@ -138,13 +138,16 @@ describe('plugin manager structure', () => {
     assert.match(dialogSource, /parameterValueColumn/);
     assert.match(dialogSource, /parameterTypeLabel\(row\)/);
     assert.match(dialogSource, /class="parameter-type-text"/);
-    assert.match(dialogSource, /pluginParameterTypeLabelIsList/);
+    assert.match(dialogSource, /pluginParameterTypeLabelIsList|parameterTypeDisplay/);
     assert.match(dialogSource, /parameterTypeListTag/);
+    assert.match(dialogSource, /parameter-struct-tag/);
     assert.doesNotMatch(dialogSource, /isSpecialPluginParameterType/);
-    assert.doesNotMatch(dialogSource, /isTaggedPluginParameterValue\(row\.field\)/);
-    assert.doesNotMatch(dialogSource, /class="parameter-value-tag"/);
+    assert.match(dialogSource, /isTaggedPluginParameterValue\(row\.field\)/);
+    assert.match(dialogSource, /class="parameter-value-tag"/);
     assert.match(dialogSource, /class-name="parameter-value-column"/);
     assert.match(dialogSource, /PluginParameterValueDecor/);
+    assert.match(dialogSource, /parameter-select-value/);
+    assert.match(dialogSource, /resolvePluginParameterSelectPresentation/);
     assert.match(
       dialogSource,
       /tr:hover > td\.parameter-value-column[\s\S]+tr\.current-row > td\.parameter-value-column/,
@@ -226,8 +229,9 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /column-key="name"/);
     assert.match(collectionEditorSource, /column-key="type"/);
     assert.match(collectionEditorSource, /class="parameter-type-text"/);
-    assert.match(collectionEditorSource, /pluginParameterTypeLabelIsList/);
+    assert.match(collectionEditorSource, /pluginParameterTypeLabelIsList|structTypeDisplay/);
     assert.match(collectionEditorSource, /parameterTypeListTag/);
+    assert.match(collectionEditorSource, /parameter-struct-tag/);
     assert.match(collectionEditorSource, /resizable/);
     assert.match(collectionEditorSource, /parameterTypeColumn/);
     assert.match(collectionEditorSource, /class="array-toolbar"/);
@@ -246,15 +250,28 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /column\.field\.kind === 'boolean'/);
     assert.match(collectionEditorSource, /arrayItem\?\.kind === 'boolean'/);
     assert.match(collectionEditorSource, /<el-switch[\s\S]+disabled[\s\S]+class="parameter-boolean-switch"/);
-    assert.doesNotMatch(collectionEditorSource, /isTaggedPluginParameterValue/);
-    assert.doesNotMatch(collectionEditorSource, /class="parameter-value-tag"/);
+    assert.match(collectionEditorSource, /isTaggedPluginParameterValue/);
+    assert.match(collectionEditorSource, /class="parameter-value-tag"/);
     assert.match(collectionEditorSource, /class-name="parameter-value-column"/);
     assert.match(collectionEditorSource, /PluginParameterValueDecor/);
+    assert.match(collectionEditorSource, /parameter-select-value/);
     assert.doesNotMatch(collectionEditorSource, /isSpecialPluginParameterType/);
     assert.doesNotMatch(collectionEditorSource, /updateArrayBoolean|updateStructRowBoolean/);
     assert.match(parameterModelSource, /unwrapNotePluginParameterValue|wrapNotePluginParameterValue/);
     assert.match(parameterModelSource, /isNotePluginParameterField/);
     assert.match(parameterModelSource, /isTaggedPluginParameterValue/);
+    assert.match(
+      parameterModelSource,
+      /field\.kind === 'location'[\s\S]+field\.kind === 'struct'/,
+    );
+    assert.match(
+      dialogSource,
+      /\.parameter-value-tag \{[\s\S]+border-color:[\s\S]+animation: none/,
+    );
+    assert.match(
+      collectionEditorSource,
+      /\.parameter-value-tag \{[\s\S]+border-color:[\s\S]+animation: none/,
+    );
     assert.match(valueDialogSource, /is-compound/);
     assert.match(valueDialogSource, /min-height: 88px/);
     assert.match(valueDialogSource, /parameter-description[\s\S]+parameter-mode-tabs/);
@@ -267,7 +284,9 @@ describe('plugin manager structure', () => {
     assert.doesNotMatch(parameterInputSource, /unsupportedDirectory/);
     assert.match(parameterInputSource, /systemNamedEntryKind/);
     assert.match(parameterInputSource, /:size="48"/);
-    assert.match(parameterInputSource, /plugin-parameter-actor-popper/);
+    assert.match(parameterInputSource, /plugin-parameter-actor-popper|plugin-parameter-media-popper/);
+    assert.match(parameterInputSource, /IconSetThumb/);
+    assert.match(parameterInputSource, /databaseOptionHasMedia/);
     assert.match(systemNamedEntrySelectorSource, /systemNamedEntry\.changeMaximum/);
     assert.match(systemNamedEntrySelectorSource, /projectManagement\.updateEntry/);
     assert.match(systemNamedEntrySelectorSource, /projectManagement\.resizeDatabase/);
@@ -296,6 +315,9 @@ describe('plugin manager structure', () => {
     assert.match(parameterInputSource, /allow-create/);
     assert.match(parameterInputSource, /field\.kind === 'file'/);
     assert.match(parameterInputSource, /PluginParameterFilePickerDialog/);
+    assert.match(parameterInputSource, /PluginParameterTilesetPickerDialog/);
+    assert.match(parameterInputSource, /isTilesetDatabase/);
+    assert.match(valueDialogSource, /showTilesetPreview|resolvePluginTilesetPreviewUrl/);
     assert.match(parameterInputSource, /resolvePluginParameterFileAssets/);
     assert.doesNotMatch(parameterInputSource, /fileSelectOptions/);
     assert.match(parameterInputSource, /field\.kind === 'location'/);

@@ -1795,6 +1795,14 @@ const enUS = {
     'pluginFilePicker.missingCatalog': 'Project assets are not loaded yet, so the file picker cannot open.',
     'pluginFilePicker.directoryNotFound': 'The project-relative directory "{{directory}}" does not exist. Create it in the project or fix the plugin @dir.',
     'pluginFilePicker.invalidDirectory': 'The project-relative directory "{{directory}}" is invalid. @dir must stay inside the project.',
+    'pluginTilesetPicker.title': 'Select Tileset',
+    'pluginTilesetPicker.closeTitle': 'Close tileset picker',
+    'pluginTilesetPicker.searchPlaceholder': 'Search tilesets',
+    'pluginTilesetPicker.none': '(None)',
+    'pluginTilesetPicker.browse': 'Browse tilesets',
+    'pluginTilesetPicker.hint': 'Pick a tileset from the gallery; the right pane shows the full preview sheet.',
+    'pluginTilesetPicker.noMatches': 'No matching tilesets.',
+    'pluginTilesetPicker.previewFailed': 'Preview failed to load',
 
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': 'This command does not need additional parameters.',

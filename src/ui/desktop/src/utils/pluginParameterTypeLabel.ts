@@ -96,6 +96,24 @@ export function pluginParameterTypeLabelIsList(label: string): boolean {
   return /\[\s*\]/.test(String(label || ''));
 }
 
+/** Drop trailing `[]` / `[][]` when a separate「列表」tag already marks arrays. */
+export function stripPluginParameterTypeListBrackets(label: string): string {
+  return String(label || '').replace(/((?:\s*\[\s*\])+)$/g, '').trim();
+}
+
+/**
+ * Split「结构体 · Name」/「Struct · Name」so the keyword can render as a blue tag.
+ */
+export function pluginParameterTypeStructParts(
+  label: string,
+): { keyword: string; name: string } | null {
+  const match = String(label || '').trim().match(/^(结构体|Struct)\s*·\s*(.+)$/i);
+  if (!match) return null;
+  const name = match[2].trim();
+  if (!name) return null;
+  return { keyword: match[1], name };
+}
+
 function labelRawType(raw: string, translate: Translate): string | null {
   const arraySuffix = raw.match(/((?:\s*\[\s*\])+)$/);
   if (arraySuffix) {

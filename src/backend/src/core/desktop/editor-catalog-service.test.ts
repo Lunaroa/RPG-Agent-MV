@@ -61,6 +61,11 @@ describe('editor catalog service', () => {
         battlerName: 'Slime',
         battlerHue: 45,
       });
+      assert.deepEqual(catalog.tilesets[0], {
+        id: 1,
+        name: 'Outside',
+        tilesetNames: ['Outside_A1', '', '', '', '', 'Outside_A5', '', '', ''],
+      });
       assertIncludes(catalog.assets.characters.map((asset) => asset.fileName), 'Hero.png');
       assertIncludes(catalog.assets.faces.map((asset) => asset.fileName), 'HeroFace.png');
       assertIncludes(catalog.assets.svActors.map((asset) => asset.fileName), 'HeroSv.png');
@@ -213,7 +218,12 @@ function writeFlatProject(project: string): void {
     battlerHue: 45,
   }]);
   writeJson(path.join(dataDir, 'Troops.json'), []);
-  writeJson(path.join(dataDir, 'Tilesets.json'), []);
+  writeJson(path.join(dataDir, 'Tilesets.json'), [null, {
+    id: 1,
+    name: 'Outside',
+    mode: 1,
+    tilesetNames: ['Outside_A1', '', '', '', '', 'Outside_A5', '', '', ''],
+  }]);
   writeJson(path.join(dataDir, 'CommonEvents.json'), []);
   writeJson(path.join(dataDir, 'Animations.json'), []);
   fs.writeFileSync(path.join(project, 'img', 'characters', 'Hero.png'), 'png', 'utf8');

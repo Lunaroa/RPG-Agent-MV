@@ -509,7 +509,7 @@ export function isBooleanParameterEnabled(value: unknown): boolean {
   return value === true || ['true', 'on', '1'].includes(String(value).toLowerCase());
 }
 
-/** Reference / collection values render as tags; plain text, numbers, and struct JSON stay as text. */
+/** Reference / collection / struct summaries render as tags; plain text and numbers stay as text. */
 export function isTaggedPluginParameterValue(
   field: Pick<PluginParameterSchemaField, 'kind'> | null | undefined,
 ): boolean {
@@ -518,7 +518,8 @@ export function isTaggedPluginParameterValue(
     || field.kind === 'map'
     || field.kind === 'file'
     || field.kind === 'array'
-    || field.kind === 'location';
+    || field.kind === 'location'
+    || field.kind === 'struct';
 }
 
 export function isNotePluginParameterField(

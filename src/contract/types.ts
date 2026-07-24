@@ -436,6 +436,11 @@ export interface EditorEnemyCatalogEntry extends NamedCatalogEntry {
   battlerHue: number;
 }
 
+/** Tileset DB row; tilesetNames[0..8] map to A1–A5, B, C, D, E sheets. */
+export interface EditorTilesetCatalogEntry extends NamedCatalogEntry {
+  tilesetNames: string[];
+}
+
 /** DB rows that reference IconSet.png via iconIndex (skills/items/states). */
 export interface EditorIconCatalogEntry extends NamedCatalogEntry {
   iconIndex: number;
@@ -1223,7 +1228,7 @@ export interface EditorProjectCatalog {
   states: EditorIconCatalogEntry[];
   enemies: EditorEnemyCatalogEntry[];
   troops: NamedCatalogEntry[];
-  tilesets: NamedCatalogEntry[];
+  tilesets: EditorTilesetCatalogEntry[];
   commonEvents: NamedCatalogEntry[];
   animations: EditorAnimationCatalogEntry[];
   battle: EditorBattleContext;

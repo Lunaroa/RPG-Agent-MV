@@ -19,8 +19,10 @@ import {
 import type {
   EditorActorCatalogEntry,
   EditorAnimationCatalogEntry,
+  EditorEnemyCatalogEntry,
   EditorIconCatalogEntry,
   EditorProjectCatalog,
+  EditorTilesetCatalogEntry,
   PluginParameterSchemaField,
 } from '../api/client';
 import {
@@ -145,7 +147,9 @@ export function resolvePluginParameterValueDecor(
   if (ICONSET_TABLES.has(table)) {
     const entry = resolveIconCatalogEntry(table, id, catalog);
     const iconIndex = Math.floor(Number(entry?.iconIndex));
-    if (!Number.isFinite(iconIndex) || iconIndex <= 0) return { icon, iconId, media: null };
+    if (!Number.isFinite(iconIndex) || iconIndex < 0) return { icon, iconId, media: null };
+    // Index 0 is the blank IconSet cell in RMMV; skip empty thumbs.
+    if (iconIndex === 0) return { icon, iconId, media: null };
     if (!catalog.assets.system.some((asset) => asset.name === 'IconSet' && asset.url)) {
       return { icon, iconId, media: null };
     }
@@ -163,7 +167,38 @@ export function resolvePluginParameterValueDecor(
     return { icon, iconId, media: { kind: 'image', url: asset.url } };
   }
 
+  if (table === 'Enemies') {
+    const enemy = catalog.enemies.find((entry) => entry.id === id) as EditorEnemyCatalogEntry | undefined;
+    const battlerName = String(enemy?.battlerName || '').trim();
+    if (!battlerName) return { icon, iconId, media: null };
+    const bucket = catalog.battle?.sideView ? catalog.assets.svEnemies : catalog.assets.enemies;
+    const asset = bucket.find((entry) => entry.name === battlerName);
+    if (!asset?.url) return { icon, iconId, media: null };
+    return { icon, iconId, media: { kind: 'image', url: asset.url } };
+  }
+
+  if (table === 'Tilesets') {
+    const tileset = catalog.tilesets.find((entry) => entry.id === id) as EditorTilesetCatalogEntry | undefined;
+    const sheetName = resolveTilesetPreviewSheetName(tileset?.tilesetNames);
+    if (!sheetName) return { icon, iconId, media: null };
+    const asset = catalog.assets.tilesets.find((entry) => entry.name === sheetName);
+    if (!asset?.url) return { icon, iconId, media: null };
+    return { icon, iconId, media: { kind: 'image', url: asset.url } };
+  }
+
   return { icon, iconId, media: null };
+}
+
+/**
+ * Pick a cheap static sheet for tileset thumbs: prefer A5 (index 5), else first non-empty.
+ */
+export function resolveTilesetPreviewSheetName(
+  tilesetNames: readonly string[] | null | undefined,
+): string | null {
+  if (!tilesetNames?.length) return null;
+  const names = tilesetNames.map((name) => String(name || '').trim());
+  if (names[5]) return names[5];
+  return names.find(Boolean) || null;
 }
 
 function resolveIconCatalogEntry(

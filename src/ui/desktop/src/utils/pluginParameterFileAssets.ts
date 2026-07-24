@@ -101,8 +101,9 @@ export function normalizePluginFileDirectory(value: unknown): string {
 
 export function inferPluginFileMediaKind(directory: string): PluginFileMediaKind {
   const normalized = normalizePluginFileDirectory(directory);
-  if (normalized.startsWith('img/')) return 'image';
-  if (normalized.startsWith('audio/')) return 'audio';
+  // Exact `img` / `audio` roots (MZ nested @dir) as well as `img/...` / `audio/...`.
+  if (normalized === 'img' || normalized.startsWith('img/')) return 'image';
+  if (normalized === 'audio' || normalized.startsWith('audio/')) return 'audio';
   if (normalized === 'movies' || normalized.startsWith('movies/')) return 'movie';
   return 'other';
 }

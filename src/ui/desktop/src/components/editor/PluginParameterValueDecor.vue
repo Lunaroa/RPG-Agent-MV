@@ -138,9 +138,10 @@ const hasMedia = computed(() => Boolean(decor.value.media));
   cursor: default;
 }
 .parameter-value-thumb-img {
-  height: 100%;
-  width: auto;
   max-width: 72px;
+  max-height: 100%;
+  width: auto;
+  height: auto;
   display: block;
   object-fit: contain;
   image-rendering: auto;

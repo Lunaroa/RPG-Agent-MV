@@ -179,7 +179,7 @@ declare global {
       };
       projectAssets: {
         editorCatalog(project?: string): Promise<unknown>;
-        listRelativeDirectory(relativeDirectory: string, project?: string): Promise<unknown>;
+        listRelativeDirectory(relativeDirectory: string, project?: string, recursive?: boolean): Promise<unknown>;
         detail(target: unknown, project?: string): Promise<unknown>;
         rename(target: unknown, nextName: string, project?: string): Promise<unknown>;
         remove(target: unknown, project?: string): Promise<unknown>;
@@ -958,8 +958,16 @@ export const projectAssets = {
   editorCatalog(project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.editorCatalog(project) as Promise<EditorProjectCatalog>;
   },
-  listRelativeDirectory(relativeDirectory: string, project: string = DEFAULT_PROJECT) {
-    return desktopApi().projectAssets.listRelativeDirectory(relativeDirectory, project) as Promise<ProjectRelativeDirectoryListResult>;
+  listRelativeDirectory(
+    relativeDirectory: string,
+    project: string = DEFAULT_PROJECT,
+    recursive = false,
+  ) {
+    return desktopApi().projectAssets.listRelativeDirectory(
+      relativeDirectory,
+      project,
+      recursive,
+    ) as Promise<ProjectRelativeDirectoryListResult>;
   },
   detail(target: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.detail(toPlain(target), project) as Promise<ManagedAssetDetail>;

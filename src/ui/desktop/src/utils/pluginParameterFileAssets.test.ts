@@ -9,6 +9,7 @@ import {
 
 function catalogWith(
   assets: Partial<EditorProjectCatalog['assets']>,
+  engine: EditorProjectCatalog['engine'] = 'rpg-maker-mv',
 ): EditorProjectCatalog {
   const empty: EditorProjectCatalog['assets'] = {
     characters: [],
@@ -34,7 +35,7 @@ function catalogWith(
   };
   return {
     project: 'projects/sample',
-    engine: 'rpg-maker-mv',
+    engine,
     tileSize: 48,
     screenWidth: 816,
     screenHeight: 624,
@@ -82,18 +83,27 @@ describe('pluginParameterFileAssets', () => {
     );
   });
 
-  test('lists whole files under a standard @dir without selecting sprite cells', () => {
-    const catalog = catalogWith({
-      pictures: [
-        { name: 'Actor1', fileName: 'Actor1.png', url: 'rmmv-asset://a' },
-        { name: 'ui/Badge', fileName: 'ui/Badge.png', url: 'rmmv-asset://b' },
-      ],
-    });
-    const resolved = resolvePluginParameterFileAssetsFromCatalog(catalog, 'img/pictures');
-    assert.equal(resolved.ok, true);
-    if (!resolved.ok) return;
-    assert.equal(resolved.media, 'image');
-    assert.deepEqual(resolved.assets.map((asset) => asset.name), ['Actor1', 'ui/Badge']);
+  test('MV lists only top-level files under @dir while MZ keeps nested relative paths', () => {
+    const pictures = [
+      { name: 'Actor1', fileName: 'Actor1.png', url: 'rmmv-asset://a' },
+      { name: 'ui/Badge', fileName: 'ui/Badge.png', url: 'rmmv-asset://b' },
+    ];
+    const mv = resolvePluginParameterFileAssetsFromCatalog(
+      catalogWith({ pictures }, 'rpg-maker-mv'),
+      'img/pictures',
+    );
+    assert.equal(mv.ok, true);
+    if (!mv.ok) return;
+    assert.deepEqual(mv.assets.map((asset) => asset.name), ['Actor1']);
+
+    const mz = resolvePluginParameterFileAssetsFromCatalog(
+      catalogWith({ pictures }, 'rpg-maker-mz'),
+      'img/pictures',
+    );
+    assert.equal(mz.ok, true);
+    if (!mz.ok) return;
+    assert.equal(mz.media, 'image');
+    assert.deepEqual(mz.assets.map((asset) => asset.name), ['Actor1', 'ui/Badge']);
   });
 
   test('scopes nested @dir to files under that subdirectory', () => {
@@ -103,7 +113,7 @@ describe('pluginParameterFileAssets', () => {
         { name: 'ui/Badge', fileName: 'ui/Badge.png', url: 'rmmv-asset://b' },
         { name: 'ui/Frame', fileName: 'ui/Frame.png', url: 'rmmv-asset://c' },
       ],
-    });
+    }, 'rpg-maker-mz');
     const resolved = resolvePluginParameterFileAssetsFromCatalog(catalog, 'img/pictures/ui/');
     assert.equal(resolved.ok, true);
     if (!resolved.ok) return;
@@ -121,13 +131,17 @@ describe('pluginParameterFileAssets', () => {
   test('lists arbitrary project-relative directories when they exist', async () => {
     const listRelativeDirectory = async (
       relativeDirectory: string,
-    ): Promise<ProjectRelativeDirectoryListResult> => ({
-      ok: true,
-      directory: relativeDirectory,
-      assets: [
-        { name: 'map_upper', fileName: 'map_upper.png', url: 'rmmv-asset://map' },
-      ],
-    });
+      options: { recursive: boolean },
+    ): Promise<ProjectRelativeDirectoryListResult> => {
+      assert.equal(options.recursive, false);
+      return {
+        ok: true,
+        directory: relativeDirectory,
+        assets: [
+          { name: 'map_upper', fileName: 'map_upper.png', url: 'rmmv-asset://map' },
+        ],
+      };
+    };
     const resolved = await resolvePluginParameterFileAssets(
       catalogWith({}),
       'img/map',
@@ -137,6 +151,31 @@ describe('pluginParameterFileAssets', () => {
     if (!resolved.ok) return;
     assert.equal(resolved.media, 'image');
     assert.deepEqual(resolved.assets.map((asset) => asset.name), ['map_upper']);
+  });
+
+  test('asks disk listing for nested files on MZ projects', async () => {
+    const listRelativeDirectory = async (
+      relativeDirectory: string,
+      options: { recursive: boolean },
+    ): Promise<ProjectRelativeDirectoryListResult> => {
+      assert.equal(options.recursive, true);
+      return {
+        ok: true,
+        directory: relativeDirectory,
+        assets: [
+          { name: 'flat', fileName: 'flat.png', url: 'rmmv-asset://flat' },
+          { name: 'ui/nested', fileName: 'ui/nested.png', url: 'rmmv-asset://nested' },
+        ],
+      };
+    };
+    const resolved = await resolvePluginParameterFileAssets(
+      catalogWith({}, 'rpg-maker-mz'),
+      'img/map',
+      listRelativeDirectory,
+    );
+    assert.equal(resolved.ok, true);
+    if (!resolved.ok) return;
+    assert.deepEqual(resolved.assets.map((asset) => asset.name), ['flat', 'ui/nested']);
   });
 
   test('reports directory-not-found when the relative path is absent', async () => {

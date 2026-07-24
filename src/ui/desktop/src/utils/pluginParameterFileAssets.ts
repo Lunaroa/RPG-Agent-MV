@@ -2,6 +2,7 @@ import type {
   EditorProjectCatalog,
   ProjectAssetEntry,
   ProjectRelativeDirectoryListResult,
+  RpgMakerEngine,
 } from '../api/client';
 
 export type PluginFileMediaKind = 'image' | 'audio' | 'movie' | 'other';
@@ -58,6 +59,21 @@ export type PluginFileAssetResolution =
       directory: string;
     };
 
+/** MZ plugin file pickers may nest under @dir; MV's editor only lists the @dir folder itself. */
+export function pluginFileParameterAllowsSubdirectories(
+  engine: RpgMakerEngine | null | undefined,
+): boolean {
+  return engine === 'rpg-maker-mz';
+}
+
+export function filterPluginFileAssetsForEngine(
+  assets: PluginFileAssetOption[],
+  engine: RpgMakerEngine | null | undefined,
+): PluginFileAssetOption[] {
+  if (pluginFileParameterAllowsSubdirectories(engine)) return assets;
+  return assets.filter((asset) => !String(asset.name || '').includes('/'));
+}
+
 export function normalizePluginFileDirectory(value: unknown): string {
   return String(value || '')
     .trim()
@@ -100,10 +116,13 @@ export function resolvePluginParameterFileAssetsFromCatalog(
 
   const bucketAssets = catalog.assets[match.bucket.key] || [];
   const relativePrefix = match.relativePrefix;
-  const assets = bucketAssets
-    .map((asset) => toRelativeOption(asset, relativePrefix))
-    .filter((asset): asset is PluginFileAssetOption => Boolean(asset))
-    .sort((left, right) => left.name.localeCompare(right.name));
+  const assets = filterPluginFileAssetsForEngine(
+    bucketAssets
+      .map((asset) => toRelativeOption(asset, relativePrefix))
+      .filter((asset): asset is PluginFileAssetOption => Boolean(asset))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    catalog.engine,
+  );
 
   return {
     ok: true,
@@ -117,14 +136,18 @@ export function resolvePluginParameterFileAssetsFromCatalog(
 export async function resolvePluginParameterFileAssets(
   catalog: EditorProjectCatalog | null | undefined,
   directory: unknown,
-  listRelativeDirectory: (relativeDirectory: string) => Promise<ProjectRelativeDirectoryListResult>,
+  listRelativeDirectory: (
+    relativeDirectory: string,
+    options: { recursive: boolean },
+  ) => Promise<ProjectRelativeDirectoryListResult>,
 ): Promise<PluginFileAssetResolution> {
   const fromCatalog = resolvePluginParameterFileAssetsFromCatalog(catalog, directory);
   if (fromCatalog.ok !== 'needs-list') return fromCatalog;
 
+  const recursive = pluginFileParameterAllowsSubdirectories(catalog?.engine);
   let listed: ProjectRelativeDirectoryListResult;
   try {
-    listed = await listRelativeDirectory(fromCatalog.directory);
+    listed = await listRelativeDirectory(fromCatalog.directory, { recursive });
   } catch {
     return {
       ok: false,
@@ -146,14 +169,17 @@ export async function resolvePluginParameterFileAssets(
     directory: listed.directory || fromCatalog.directory,
     bucketDirectory: listed.directory || fromCatalog.directory,
     media: fromCatalog.media,
-    assets: listed.assets
-      .map((asset) => ({
-        name: String(asset.name || '').replace(/\\/g, '/'),
-        fileName: asset.fileName,
-        url: asset.url,
-      }))
-      .filter((asset) => asset.name && !asset.name.includes('..'))
-      .sort((left, right) => left.name.localeCompare(right.name)),
+    assets: filterPluginFileAssetsForEngine(
+      listed.assets
+        .map((asset) => ({
+          name: String(asset.name || '').replace(/\\/g, '/'),
+          fileName: asset.fileName,
+          url: asset.url,
+        }))
+        .filter((asset) => asset.name && !asset.name.includes('..'))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      catalog?.engine,
+    ),
   };
 }
 

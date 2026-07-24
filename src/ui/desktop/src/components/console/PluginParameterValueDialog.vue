@@ -383,7 +383,7 @@ function arrayValue(value: unknown): unknown[] {
               type="textarea"
               resize="none"
               spellcheck="false"
-              :autosize="{ minRows: isCompound || isComplex ? 14 : 6, maxRows: 24 }"
+              :autosize="{ minRows: isCompound || isComplex ? 6 : 4, maxRows: 18 }"
               :aria-label="t('plugins.parameterRawTextLabel')"
               @input="rawError = ''"
             />
@@ -451,7 +451,7 @@ function arrayValue(value: unknown): unknown[] {
   gap: 10px;
 }
 .parameter-value-editor.complex {
-  min-height: 180px;
+  min-height: 0;
 }
 .parameter-mode-tabs {
   min-height: 0;
@@ -481,7 +481,7 @@ function arrayValue(value: unknown): unknown[] {
   tab-size: 2;
 }
 .parameter-value-editor.complex .parameter-raw-input :deep(textarea) {
-  min-height: 240px !important;
+  min-height: 120px !important;
 }
 .raw-help,
 .raw-error {

@@ -13,7 +13,7 @@
       v-else-if="field.kind === 'multiline' || field.kind === 'json'"
       :model-value="stringValue"
       type="textarea"
-      :rows="field.kind === 'multiline' ? 7 : 4"
+      :rows="field.kind === 'multiline' ? 4 : 3"
       resize="vertical"
       spellcheck="false"
       @update:model-value="emitTextValue"
@@ -455,11 +455,11 @@ async function refreshFileResolution(): Promise<void> {
   const resolved = await resolvePluginParameterFileAssets(
     props.catalog,
     props.field.directory,
-    (relativeDirectory) => {
+    (relativeDirectory, { recursive }) => {
       if (!project) {
         return Promise.reject(new Error('missing-project'));
       }
-      return projectAssets.listRelativeDirectory(relativeDirectory, project);
+      return projectAssets.listRelativeDirectory(relativeDirectory, project, recursive);
     },
   );
   if (serial !== fileResolutionSerial) return;

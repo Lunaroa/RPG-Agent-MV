@@ -371,8 +371,18 @@ export function registerMapIpcHandlers(
       status: typeof unrejectOptions?.status === 'string' ? unrejectOptions.status : undefined,
     }));
   handle('projectAssets:editorCatalog', (_event, value?: string) => desktop.catalog.buildEditorProjectCatalog(workflowRoot, project(value)));
-  handle('projectAssets:listRelativeDirectory', (_event, relativeDirectory: string, value?: string) =>
-    desktop.catalog.listProjectRelativeDirectoryAssets(workflowRoot, project(value), relativeDirectory));
+  handle('projectAssets:listRelativeDirectory', (
+    _event,
+    relativeDirectory: string,
+    value?: string,
+    recursive?: boolean,
+  ) =>
+    desktop.catalog.listProjectRelativeDirectoryAssets(
+      workflowRoot,
+      project(value),
+      relativeDirectory,
+      { recursive: recursive === true },
+    ));
   handle('projectAssets:detail', (_event, target: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.getAssetDetail(workflowRoot, project(value), target));
   handle('projectAssets:rename', (_event, target: Record<string, unknown>, nextName: string, value?: string) =>

@@ -6,10 +6,12 @@ import {
   buildPluginFileTree,
   folderPathOfAssetName,
   listPluginFileGalleryEntries,
+  listPluginFileTreeNavItems,
   movePluginFileGalleryNavIndex,
   PLUGIN_FILE_GALLERY_NONE_ID,
   resolvePluginFileGalleryColumnCount,
   resolvePluginFileGalleryFocusId,
+  resolvePluginFileTreeNavIndex,
 } from './pluginParameterFileBrowser';
 
 function asset(name: string, url = `rmmv-asset://${name}`): PluginFileAssetOption {
@@ -107,5 +109,26 @@ describe('pluginParameterFileBrowser', () => {
     assert.equal(resolvePluginFileGalleryColumnCount(1200), 4);
     assert.equal(resolvePluginFileGalleryColumnCount(1000), 3);
     assert.equal(resolvePluginFileGalleryFocusId('', []), PLUGIN_FILE_GALLERY_NONE_ID);
+  });
+
+  test('lists visible tree rows for list-view arrow navigation', () => {
+    const tree = buildPluginFileTree([
+      asset('Actor1'),
+      asset('ui/Badge'),
+      asset('ui/Frame'),
+    ]);
+    const collapsed = listPluginFileTreeNavItems(tree, new Set());
+    assert.deepEqual(
+      collapsed.map((item) => item.kind === 'file' ? item.name : item.kind === 'folder' ? item.id : item.kind),
+      ['none', 'ui', 'Actor1'],
+    );
+    const expanded = listPluginFileTreeNavItems(tree, new Set(['ui']));
+    assert.deepEqual(
+      expanded.map((item) => item.kind === 'file' ? item.name : item.kind === 'folder' ? item.id : item.kind),
+      ['none', 'ui', 'ui/Badge', 'ui/Frame', 'Actor1'],
+    );
+    assert.equal(resolvePluginFileTreeNavIndex(expanded, 'ui/Frame', 'ui'), 3);
+    assert.equal(resolvePluginFileTreeNavIndex(expanded, '', 'ui'), 1);
+    assert.equal(resolvePluginFileTreeNavIndex(expanded, '', ''), 0);
   });
 });

@@ -6,6 +6,7 @@
         class="tree-row folder-row"
         :class="{ current: currentPath === node.id }"
         :style="{ paddingLeft: `${8 + depth * 14}px` }"
+        :data-list-nav-id="`folder:${node.id}`"
         :aria-expanded="expandedIds.has(node.id)"
         @click="emit('activate-folder', node.id)"
       >
@@ -31,6 +32,7 @@
       class="tree-row file-row"
       :class="{ active: selectedName === node.id }"
       :style="{ paddingLeft: `${24 + depth * 14}px` }"
+      :data-list-nav-id="`file:${node.id}`"
       :title="node.asset.name"
       @click="emit('select-file', node.asset.name)"
       @dblclick.prevent="emit('confirm-file', node.asset.name)"

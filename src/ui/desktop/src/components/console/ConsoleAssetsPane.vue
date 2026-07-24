@@ -648,7 +648,13 @@ function formatAssetImportIssues(issues: string[]): string {
         <div v-else class="detail-scroll">
           <div class="detail-preview" :class="selectedEntry ? previewClass(selectedEntry) : {}">
             <img v-if="isImage && selectedFile" :src="selectedFile.url" :alt="selectedFile.name">
-            <audio v-else-if="isAudio && selectedFile" :src="selectedFile.url" controls />
+            <audio
+              v-else-if="isAudio && selectedFile"
+              :key="selectedFile.url"
+              :src="selectedFile.url"
+              controls
+              preload="auto"
+            />
             <video v-else-if="isVideo && selectedFile" :src="selectedFile.url" controls />
             <img v-else-if="selectedMap && selectedMap.screenshotUrl" :src="selectedMap.screenshotUrl" :alt="selectedMap.title">
             <component v-else :is="categoryIcons[selectedEntry.category]" />

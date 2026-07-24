@@ -80,6 +80,8 @@
       v-else-if="field.kind === 'database'"
       :model-value="stringValue"
       filterable
+      class="database-param-select"
+      :class="{ 'is-actor-select': isActorDatabase }"
       @change="emitSelectValue"
     >
       <el-option
@@ -87,7 +89,18 @@
         :key="option.value"
         :label="option.label"
         :value="option.value"
-      />
+      >
+        <div v-if="isActorDatabase" class="actor-option">
+          <ActorWalkingFrameThumb
+            :character-name="actorGraphicForOption(option.value)?.characterName"
+            :character-index="actorGraphicForOption(option.value)?.characterIndex"
+            :catalog="catalog"
+            :size="32"
+          />
+          <span>{{ option.label }}</span>
+        </div>
+        <span v-else>{{ option.label }}</span>
+      </el-option>
     </el-select>
     <el-select
       v-else-if="field.kind === 'map'"
@@ -219,10 +232,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import type { EditorProjectCatalog, PluginParameterSchemaField } from '../../api/client';
+import type { EditorActorCatalogEntry, EditorProjectCatalog, PluginParameterSchemaField } from '../../api/client';
+import { projectAssets } from '../../api/client';
 import { useI18n } from '../../i18n';
+import { useProjectStore } from '../../stores/project';
 import {
   displaySystemNamedEntryName,
   formatSystemNamedEntryId,
@@ -230,7 +245,9 @@ import {
 import {
   normalizePluginFileDirectory,
   resolvePluginParameterFileAssets,
+  type PluginFileAssetResolution,
 } from '../../utils/pluginParameterFileAssets';
+import ActorWalkingFrameThumb from './ActorWalkingFrameThumb.vue';
 import CoordinatePickerDialog from './CoordinatePickerDialog.vue';
 import PluginParameterFilePickerDialog from './PluginParameterFilePickerDialog.vue';
 import SystemNamedEntrySelectorDialog from './SystemNamedEntrySelectorDialog.vue';
@@ -252,9 +269,16 @@ const emit = defineEmits<{
   'catalog-changed': [];
 }>();
 const { t } = useI18n();
+const projectStore = useProjectStore();
 const coordinatePicker = ref<InstanceType<typeof CoordinatePickerDialog> | null>(null);
 const systemNamedEntrySelector = ref<InstanceType<typeof SystemNamedEntrySelectorDialog> | null>(null);
 const filePicker = ref<InstanceType<typeof PluginParameterFilePickerDialog> | null>(null);
+const fileResolution = ref<PluginFileAssetResolution>({
+  ok: false,
+  reason: 'missing-directory',
+  directory: '',
+});
+let fileResolutionSerial = 0;
 
 const isReadonly = computed(() => props.field.editable === false);
 const stringValue = computed(() => props.modelValue == null ? '' : String(props.modelValue));
@@ -310,6 +334,15 @@ const databaseOptions = computed(() => {
         Boolean(entry && typeof entry === 'object' && 'id' in entry && 'name' in entry))
     : [];
 });
+const isActorDatabase = computed(() => props.field.databaseTable === 'Actors');
+const actorOptionsById = computed(() => {
+  const map = new Map<number, EditorActorCatalogEntry>();
+  if (!isActorDatabase.value) return map;
+  for (const entry of props.catalog?.actors || []) {
+    map.set(entry.id, entry);
+  }
+  return map;
+});
 const systemNamedEntryKind = computed<SystemNamedEntryKind | null>(() => {
   if (props.field.databaseTable === 'System.switches') return 'switch';
   if (props.field.databaseTable === 'System.variables') return 'variable';
@@ -336,6 +369,12 @@ const databaseSelectOptions = computed<SelectOption[]>(() =>
     stringValue.value,
   ),
 );
+
+function actorGraphicForOption(value: string): EditorActorCatalogEntry | null {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return actorOptionsById.value.get(id) || null;
+}
 const mapSelectOptions = computed<SelectOption[]>(() =>
   withMissingCurrent(
     [
@@ -360,9 +399,41 @@ const locationMapOptions = computed<SelectOption[]>(() =>
     String(locationValue.value.mapId),
   ),
 );
-const fileResolution = computed(() =>
-  resolvePluginParameterFileAssets(props.catalog, props.field.directory),
+
+watch(
+  () => [
+    props.field.kind,
+    props.field.directory,
+    props.catalog,
+    projectStore.currentProject,
+  ] as const,
+  () => {
+    void refreshFileResolution();
+  },
+  { immediate: true },
 );
+
+async function refreshFileResolution(): Promise<void> {
+  const serial = ++fileResolutionSerial;
+  if (props.field.kind !== 'file') {
+    fileResolution.value = { ok: false, reason: 'missing-directory', directory: '' };
+    return;
+  }
+  const project = projectStore.currentProject;
+  const resolved = await resolvePluginParameterFileAssets(
+    props.catalog,
+    props.field.directory,
+    (relativeDirectory) => {
+      if (!project) {
+        return Promise.reject(new Error('missing-project'));
+      }
+      return projectAssets.listRelativeDirectory(relativeDirectory, project);
+    },
+  );
+  if (serial !== fileResolutionSerial) return;
+  fileResolution.value = resolved;
+}
+
 const filePickerAssets = computed(() => {
   if (!fileResolution.value.ok) return [];
   const assets = fileResolution.value.assets;
@@ -382,7 +453,12 @@ const fileResolutionError = computed(() => {
   if (fileResolution.value.reason === 'missing-catalog') {
     return t('pluginFilePicker.missingCatalog');
   }
-  return t('pluginFilePicker.unsupportedDirectory', {
+  if (fileResolution.value.reason === 'invalid-directory') {
+    return t('pluginFilePicker.invalidDirectory', {
+      directory: fileResolution.value.directory,
+    });
+  }
+  return t('pluginFilePicker.directoryNotFound', {
     directory: fileResolution.value.directory,
   });
 });
@@ -651,5 +727,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 .readonly-reason {
   color: var(--app-warn);
+}
+.actor-option {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.actor-option > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.database-param-select.is-actor-select :deep(.el-select-dropdown__item) {
+  height: auto;
+  min-height: 40px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  line-height: 1.3;
 }
 </style>

@@ -179,6 +179,7 @@ declare global {
       };
       projectAssets: {
         editorCatalog(project?: string): Promise<unknown>;
+        listRelativeDirectory(relativeDirectory: string, project?: string): Promise<unknown>;
         detail(target: unknown, project?: string): Promise<unknown>;
         rename(target: unknown, nextName: string, project?: string): Promise<unknown>;
         remove(target: unknown, project?: string): Promise<unknown>;
@@ -309,7 +310,7 @@ function desktopApi(): Window['api'] {
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
-  EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -332,7 +333,7 @@ import type {
 } from '@contract/types';
 export type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
-  EditorProjectCatalog, EditorActorBattleProfile, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -956,6 +957,9 @@ export const events = {
 export const projectAssets = {
   editorCatalog(project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.editorCatalog(project) as Promise<EditorProjectCatalog>;
+  },
+  listRelativeDirectory(relativeDirectory: string, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.listRelativeDirectory(relativeDirectory, project) as Promise<ProjectRelativeDirectoryListResult>;
   },
   detail(target: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.detail(toPlain(target), project) as Promise<ManagedAssetDetail>;

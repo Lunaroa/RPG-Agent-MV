@@ -153,6 +153,7 @@ const draftName = ref('');
 const activeRangeStart = ref(1);
 const localEntries = ref<NamedCatalogEntry[]>([]);
 const titleId = 'system-named-entry-title';
+const subDialogZ = String(LAYER_Z.subDialog);
 
 const dialogTitle = computed(() =>
   titleOverride.value
@@ -390,6 +391,9 @@ defineExpose({ open, close });
 </script>
 
 <style scoped>
+.system-named-overlay {
+  z-index: v-bind(subDialogZ);
+}
 .system-named-dialog {
   width: min(560px, calc(100vw - 48px));
   display: grid;

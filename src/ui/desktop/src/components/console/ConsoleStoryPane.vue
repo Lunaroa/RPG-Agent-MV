@@ -2410,7 +2410,7 @@ function detailTitle(): string {
               <dt>{{ t('story.assetReferences') }}</dt><dd>{{ pmDetail.references?.length || 0 }}</dd>
               <dt>{{ t('story.assetState') }}</dt><dd>{{ pmDetail.staged ? t('story.assetStaged') : t('story.assetSource') }}</dd>
             </dl>
-            <audio v-if="pmDetail.url" :src="pmDetail.url" controls />
+            <audio v-if="pmDetail.url" :key="pmDetail.url" :src="pmDetail.url" controls preload="auto" />
             <div v-else class="empty-hint">{{ t('story.audioNotFound') }}</div>
             <div v-if="pmDetail.references?.length" class="asset-reference-list">
               <span v-for="reference in pmDetail.references" :key="`${reference.file}:${reference.path}`">{{ reference.file }} · {{ reference.path }}</span>

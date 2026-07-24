@@ -84,6 +84,7 @@ export const MAP_IPC_CHANNELS = [
   'eventRegistry:approve',
   'eventRegistry:unreject',
   'projectAssets:editorCatalog',
+  'projectAssets:listRelativeDirectory',
   'projectAssets:detail',
   'projectAssets:rename',
   'projectAssets:remove',
@@ -370,6 +371,8 @@ export function registerMapIpcHandlers(
       status: typeof unrejectOptions?.status === 'string' ? unrejectOptions.status : undefined,
     }));
   handle('projectAssets:editorCatalog', (_event, value?: string) => desktop.catalog.buildEditorProjectCatalog(workflowRoot, project(value)));
+  handle('projectAssets:listRelativeDirectory', (_event, relativeDirectory: string, value?: string) =>
+    desktop.catalog.listProjectRelativeDirectoryAssets(workflowRoot, project(value), relativeDirectory));
   handle('projectAssets:detail', (_event, target: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.getAssetDetail(workflowRoot, project(value), target));
   handle('projectAssets:rename', (_event, target: Record<string, unknown>, nextName: string, value?: string) =>

@@ -1761,8 +1761,12 @@ function registerAssetProtocol(): void {
   if (assetProtocolRegistered) return;
   protocol.handle('rmmv-asset', async (request) => {
     try {
-      const response = await net.fetch(pathToFileURL(desktop.assets.resolveAssetRequest(workflowRoot, request.url)).toString());
-      return withAssetCanvasCors(response);
+      const absolutePath = desktop.assets.resolveAssetRequest(workflowRoot, request.url);
+      const headers = new Headers();
+      const range = request.headers.get('Range');
+      if (range) headers.set('Range', range);
+      const response = await net.fetch(pathToFileURL(absolutePath).toString(), { headers });
+      return withAssetCanvasCors(response, { filePath: absolutePath });
     } catch {
       return withAssetCanvasCors(new Response('not found', { status: 404 }));
     }

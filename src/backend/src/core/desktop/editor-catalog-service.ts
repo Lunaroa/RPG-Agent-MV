@@ -3,12 +3,14 @@ import path from 'node:path';
 
 import type {
   EditorActorBattleProfile,
+  EditorActorCatalogEntry,
   EditorBattleTestBattler,
   EditorEnemyCatalogEntry,
   EditorEquipmentCatalogEntry,
   EditorProjectCatalog,
   NamedCatalogEntry,
   ProjectAssetEntry,
+  ProjectRelativeDirectoryListResult,
 } from '../../../../contract/types.ts';
 import { readJson } from '../rmmv/json.ts';
 import { assetBucketRelativePath, dataRelativePath, inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
@@ -40,6 +42,35 @@ const ASSET_BUCKETS = {
   effects: { bucket: 'effects', extensions: new Set(['.efkefc']) },
 } as const;
 
+const PLUGIN_FILE_MEDIA_EXTENSIONS = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.ogg',
+  '.m4a',
+  '.mp3',
+  '.webm',
+  '.mp4',
+  '.efkefc',
+]);
+
+export function listProjectRelativeDirectoryAssets(
+  workflowRoot: string,
+  project: string,
+  relativeDirectory: string,
+): ProjectRelativeDirectoryListResult {
+  const directory = normalizeProjectRelativeDirectoryInput(relativeDirectory);
+  const assets = listProjectAssets(workflowRoot, project, directory, PLUGIN_FILE_MEDIA_EXTENSIONS);
+  if (assets.length > 0) {
+    return { ok: true, directory, assets };
+  }
+  if (!projectRelativeDirectoryExists(workflowRoot, project, directory)) {
+    return { ok: false, reason: 'directory-not-found', directory };
+  }
+  return { ok: true, directory, assets };
+}
+
 export function buildEditorProjectCatalog(workflowRoot: string, project: string): EditorProjectCatalog {
   const layout = resolveRmmvLayout(project);
   const manifest = inspectRmmvProject(project);
@@ -67,7 +98,7 @@ export function buildEditorProjectCatalog(workflowRoot: string, project: string)
     weaponTypes: namedStringList(system.weaponTypes),
     armorTypes: namedStringList(system.armorTypes),
     equipTypes: namedStringList(system.equipTypes),
-    actors: namedDatabaseList(actors),
+    actors: actorDatabaseList(actors),
     classes: namedDatabaseList(classes),
     skills: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Skills.json'), [])),
     items: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Items.json'), [])),
@@ -131,6 +162,26 @@ function namedDatabaseList(value: unknown): NamedCatalogEntry[] {
     const id = Number((entry as Record<string, unknown>).id ?? index);
     if (!Number.isInteger(id) || id <= 0) return [];
     return [{ id, name: String((entry as Record<string, unknown>).name || `#${id}`) }];
+  });
+}
+
+function actorDatabaseList(value: unknown): EditorActorCatalogEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    const record = asRecord(entry);
+    if (!record) return [];
+    const id = positiveInteger(record.id) ?? index;
+    if (id <= 0) return [];
+    const rawCharacterIndex = integerValue(record.characterIndex);
+    const characterIndex = rawCharacterIndex == null
+      ? 0
+      : Math.max(0, Math.min(7, rawCharacterIndex));
+    return [{
+      id,
+      name: stringValue(record.name) || `#${id}`,
+      characterName: stringValue(record.characterName),
+      characterIndex,
+    }];
   });
 }
 
@@ -227,6 +278,41 @@ function integerArray(value: unknown): number[] {
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function normalizeProjectRelativeDirectoryInput(value: string): string {
+  const portable = String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+  if (!portable) {
+    throw new Error('Project-relative directory is required.');
+  }
+  if (path.win32.isAbsolute(value) || path.posix.isAbsolute(portable) || /^[A-Za-z]:/.test(portable)) {
+    throw new Error(`Project-relative directory must not be absolute: ${value}`);
+  }
+  if (portable.split('/').includes('..')) {
+    throw new Error(`Project-relative directory must not contain "..": ${value}`);
+  }
+  const normalized = path.posix.normalize(portable);
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
+    throw new Error(`Project-relative directory is invalid: ${value}`);
+  }
+  if (normalized.split('/').includes('..')) {
+    throw new Error(`Project-relative directory must not contain "..": ${value}`);
+  }
+  return normalized;
+}
+
+function projectRelativeDirectoryExists(workflowRoot: string, project: string, directory: string): boolean {
+  const absolute = path.join(project, ...directory.split('/'));
+  if (fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()) return true;
+  const prefix = `${directory}/`;
+  return getProjectStagingStatus(workflowRoot, project).files.some((entry) => (
+    !entry.delete && entry.relativePath.startsWith(prefix)
+  ));
 }
 
 function listProjectAssets(workflowRoot: string, project: string, directory: string, extensions: ReadonlySet<string>): ProjectAssetEntry[] {

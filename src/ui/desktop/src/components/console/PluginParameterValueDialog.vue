@@ -340,6 +340,9 @@ function arrayValue(value: unknown): unknown[] {
       class="parameter-value-editor"
       :class="{ complex: isComplex }"
     >
+      <p v-if="field.description" class="parameter-description">
+        {{ field.description }}
+      </p>
       <el-tabs
         v-model="activeTab"
         class="parameter-mode-tabs"
@@ -394,9 +397,6 @@ function arrayValue(value: unknown): unknown[] {
         </el-tab-pane>
       </el-tabs>
 
-      <p v-if="field.description" class="parameter-description">
-        {{ field.description }}
-      </p>
       <p v-if="validationMessage" class="parameter-validation-error" role="alert">
         {{ validationMessage }}
       </p>

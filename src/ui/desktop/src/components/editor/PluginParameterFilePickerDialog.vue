@@ -77,15 +77,19 @@
               </div>
               <audio
                 v-else-if="media === 'audio' && previewUrl"
+                :key="previewUrl"
                 class="audio-preview"
                 :src="previewUrl"
                 controls
+                preload="auto"
               />
               <video
                 v-else-if="media === 'movie' && previewUrl"
+                :key="previewUrl"
                 class="movie-preview"
                 :src="previewUrl"
                 controls
+                preload="metadata"
               />
               <p v-else-if="selectedAsset" class="plain-preview">
                 {{ selectedAsset.name }}

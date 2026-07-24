@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessageBox } from 'element-plus';
+import type { TableInstance } from 'element-plus';
 import { ArrowRight, WarningFilled } from '@element-plus/icons-vue';
 import {
   type EditorProjectCatalog,
@@ -8,6 +9,10 @@ import {
   type PluginParameterSchemaField,
 } from '../../api/client';
 import { useI18n } from '../../i18n';
+import { useWorkspaceStore } from '../../stores/workspace';
+import {
+  normalizePluginParameterMainColumns,
+} from '../../utils/pluginParameterTableColumns';
 import {
   buildPluginParameterPayload,
   buildPluginParameterRows,
@@ -42,12 +47,14 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const workspaceStore = useWorkspaceStore();
 const parameterForm = ref<Record<string, unknown>>({});
 const baselinePayload = ref<Record<string, unknown>>({});
 const selectedParameterKey = ref('');
 const valueDialogOpen = ref(false);
 const editingField = ref<PluginParameterSchemaField | null>(null);
 const parameterTable = ref<HTMLElement | null>(null);
+const parameterElTable = ref<TableInstance | null>(null);
 const parameterQuery = ref('');
 const expandedParameterKeys = ref<Set<string>>(new Set());
 
@@ -55,6 +62,12 @@ const visible = computed({
   get: () => props.modelValue,
   set: (value) => emit('update:modelValue', value),
 });
+const mainColumnWidths = computed(() =>
+  normalizePluginParameterMainColumns(
+    workspaceStore.settings.layout?.pluginParameterMainColumns,
+  ),
+);
+const valueColumnWidth = computed(() => mainColumnWidths.value.value);
 const summaryLabels = computed<PluginParameterSummaryLabels>(() => ({
   enabled: t('plugins.parameterEnabled'),
   disabled: t('plugins.parameterDisabled'),
@@ -115,6 +128,24 @@ watch(
     else valueDialogOpen.value = false;
   },
   { immediate: true },
+);
+
+watch(
+  () => selectedParameterKey.value,
+  (key) => {
+    const row = visibleParameterRows.value.find((item) => item.key === key);
+    if (row) parameterElTable.value?.setCurrentRow(row);
+  },
+);
+
+watch(
+  () => parameterQuery.value,
+  () => {
+    if (!selectedParameterKey.value) return;
+    if (!visibleParameterRows.value.some((row) => row.key === selectedParameterKey.value)) {
+      selectedParameterKey.value = visibleParameterRows.value[0]?.key || '';
+    }
+  },
 );
 
 watch(
@@ -214,7 +245,6 @@ function parameterRowKeydown(
   row: VisiblePluginParameterTreeRow,
   index: number,
 ): void {
-  if (event.target !== event.currentTarget) return;
   if (event.key === 'Enter') {
     event.preventDefault();
     selectedParameterKey.value = row.key;
@@ -252,6 +282,41 @@ function parameterRowKeydown(
   focusParameterRow(next.key);
 }
 
+function onParameterTableKeydown(event: KeyboardEvent): void {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (target.closest('button, input, textarea, .el-switch, .el-select')) return;
+  const index = visibleParameterRows.value.findIndex(
+    (row) => row.key === selectedParameterKey.value,
+  );
+  if (index < 0) return;
+  const row = visibleParameterRows.value[index];
+  if (!row) return;
+  parameterRowKeydown(event, row, index);
+}
+
+function parameterRowClassName({ row }: { row: VisiblePluginParameterTreeRow }): string {
+  return [
+    selectedParameterKey.value === row.key ? 'is-selected-parameter' : '',
+    row.editable ? '' : 'is-readonly-parameter',
+  ].filter(Boolean).join(' ');
+}
+
+function onMainHeaderDragEnd(
+  newWidth: number,
+  _oldWidth: number,
+  column: { columnKey?: string; property?: string },
+): void {
+  const key = column.columnKey || column.property;
+  if (key !== 'name' && key !== 'type' && key !== 'value') return;
+  workspaceStore.patchLayout({
+    pluginParameterMainColumns: normalizePluginParameterMainColumns({
+      ...mainColumnWidths.value,
+      [key]: newWidth,
+    }),
+  });
+}
+
 function toggleParameterExpanded(row: VisiblePluginParameterTreeRow): void {
   if (!row.hasChildren || parameterQuery.value.trim()) return;
   selectedParameterKey.value = row.key;
@@ -268,15 +333,21 @@ function setParameterExpanded(key: string, expanded: boolean): void {
 function focusParameterRow(key: string): void {
   selectedParameterKey.value = key;
   void nextTick(() => {
+    const row = visibleParameterRows.value.find((item) => item.key === key);
+    if (row) parameterElTable.value?.setCurrentRow(row);
     parameterTable.value
-      ?.querySelector<HTMLElement>(`[data-parameter-key="${CSS.escape(key)}"]`)
-      ?.focus();
+      ?.querySelector('.el-table__body tr.current-row')
+      ?.scrollIntoView({ block: 'nearest' });
   });
 }
 
 async function focusInitialParameter(): Promise<void> {
   await nextTick();
-  parameterTable.value?.querySelector<HTMLElement>('tbody tr')?.focus();
+  parameterTable.value?.focus({ preventScroll: true });
+  const row = visibleParameterRows.value.find(
+    (item) => item.key === selectedParameterKey.value,
+  ) || visibleParameterRows.value[0];
+  if (row) parameterElTable.value?.setCurrentRow(row);
 }
 </script>
 
@@ -306,115 +377,142 @@ async function focusInitialParameter(): Promise<void> {
         :aria-label="t('plugins.parameterTreeSearchPlaceholder')"
       />
       <section class="plugin-parameters">
-        <div v-if="parameterRows.length" ref="parameterTable" class="parameter-table-wrap">
-          <table role="treegrid">
-            <thead>
-              <tr>
-                <th scope="col">{{ t('plugins.parameterNameColumn') }}</th>
-                <th scope="col">{{ t('plugins.parameterTypeColumn') }}</th>
-                <th scope="col">{{ t('plugins.parameterValueColumn') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="(row, index) in visibleParameterRows"
-                :key="row.key"
-                :data-parameter-key="row.key"
-                :class="{ selected: selectedRow?.key === row.key, readonly: !row.editable }"
-                tabindex="0"
-                :aria-selected="selectedRow?.key === row.key"
-                :aria-level="row.depth + 1"
-                :aria-expanded="row.hasChildren ? row.expanded : undefined"
-                @click="selectParameter(row.key)"
-                @dblclick="openParameterEditor(row.key)"
-                @keydown="parameterRowKeydown($event, row, index)"
-              >
-                <td>
-                  <div
-                    class="parameter-name-cell"
-                    :style="{ paddingInlineStart: `${row.depth * 18}px` }"
+        <div
+          v-if="parameterRows.length"
+          ref="parameterTable"
+          class="parameter-table-wrap"
+          tabindex="0"
+          @keydown="onParameterTableKeydown"
+        >
+          <el-table
+            v-if="visibleParameterRows.length"
+            ref="parameterElTable"
+            :data="visibleParameterRows"
+            border
+            height="100%"
+            row-key="key"
+            highlight-current-row
+            class="parameter-el-table"
+            :row-class-name="parameterRowClassName"
+            @row-click="(row: VisiblePluginParameterTreeRow) => selectParameter(row.key)"
+            @row-dblclick="(row: VisiblePluginParameterTreeRow) => openParameterEditor(row.key)"
+            @header-dragend="onMainHeaderDragEnd"
+          >
+            <el-table-column
+              column-key="name"
+              :label="t('plugins.parameterNameColumn')"
+              :width="mainColumnWidths.name"
+              resizable
+            >
+              <template #default="{ row }">
+                <div
+                  class="parameter-name-cell"
+                  :style="{ paddingInlineStart: `${row.depth * 18}px` }"
+                >
+                  <el-button
+                    v-if="row.hasChildren"
+                    class="parameter-tree-toggle"
+                    link
+                    :aria-label="row.expanded
+                      ? t('plugins.parameterCollapseGroup', { name: row.label })
+                      : t('plugins.parameterExpandGroup', { name: row.label })"
+                    :aria-expanded="row.expanded"
+                    :disabled="Boolean(parameterQuery.trim())"
+                    @click.stop="toggleParameterExpanded(row)"
+                    @dblclick.stop
                   >
-                    <el-button
-                      v-if="row.hasChildren"
-                      class="parameter-tree-toggle"
-                      link
-                      :aria-label="row.expanded
-                        ? t('plugins.parameterCollapseGroup', { name: row.label })
-                        : t('plugins.parameterExpandGroup', { name: row.label })"
-                      :aria-expanded="row.expanded"
-                      :disabled="Boolean(parameterQuery.trim())"
-                      @click.stop="toggleParameterExpanded(row)"
-                      @dblclick.stop
-                    >
-                      <el-icon :class="{ expanded: row.expanded }">
-                        <ArrowRight />
-                      </el-icon>
-                    </el-button>
-                    <span v-else class="parameter-tree-spacer" aria-hidden="true" />
-                    <el-icon
-                      v-if="row.hierarchyIssue"
-                      class="parameter-hierarchy-warning"
-                      :title="t('plugins.parameterHierarchyWarning')"
-                      :aria-label="t('plugins.parameterHierarchyWarning')"
-                      role="img"
-                    >
-                      <WarningFilled />
+                    <el-icon :class="{ expanded: row.expanded }">
+                      <ArrowRight />
                     </el-icon>
-                    <span>{{ row.label }}</span>
-                    <el-tag
-                      size="small"
-                      type="info"
-                      effect="plain"
-                      class="parameter-key-tag"
-                    >
-                      {{ row.key }}
-                    </el-tag>
-                    <el-tag
-                      v-if="!row.editable"
-                      size="small"
-                      type="warning"
-                      effect="plain"
-                      class="parameter-readonly-tag"
-                    >
-                      {{ t('plugins.parameterReadonly') }}
-                    </el-tag>
-                  </div>
-                </td>
-                <td class="parameter-type-cell" :title="parameterTypeLabel(row)">
+                  </el-button>
+                  <span v-else class="parameter-tree-spacer" aria-hidden="true" />
+                  <el-icon
+                    v-if="row.hierarchyIssue"
+                    class="parameter-hierarchy-warning"
+                    :title="t('plugins.parameterHierarchyWarning')"
+                    :aria-label="t('plugins.parameterHierarchyWarning')"
+                    role="img"
+                  >
+                    <WarningFilled />
+                  </el-icon>
+                  <span>{{ row.label }}</span>
+                  <el-tag
+                    size="small"
+                    type="info"
+                    effect="plain"
+                    class="parameter-key-tag"
+                  >
+                    {{ row.key }}
+                  </el-tag>
+                  <el-tag
+                    v-if="!row.editable"
+                    size="small"
+                    type="warning"
+                    effect="plain"
+                    class="parameter-readonly-tag"
+                  >
+                    {{ t('plugins.parameterReadonly') }}
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              column-key="type"
+              :label="t('plugins.parameterTypeColumn')"
+              :width="mainColumnWidths.type"
+              resizable
+              class-name="parameter-type-cell"
+            >
+              <template #default="{ row }">
+                <el-tag
+                  size="small"
+                  effect="plain"
+                  class="parameter-type-tag"
+                  :title="parameterTypeLabel(row)"
+                >
                   {{ parameterTypeLabel(row) }}
-                </td>
-                <td
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column
+              column-key="value"
+              :label="t('plugins.parameterValueColumn')"
+              :width="valueColumnWidth"
+              :min-width="valueColumnWidth ? undefined : 160"
+              resizable
+            >
+              <template #default="{ row }">
+                <div
+                  class="parameter-value-cell"
                   :class="{ numeric: row.field?.kind === 'number' }"
                   :title="row.field?.kind === 'boolean' ? undefined : row.fullValue"
                 >
-                  <div class="parameter-value-cell">
-                    <el-switch
-                      v-if="row.field?.kind === 'boolean'"
-                      :model-value="isBooleanParameterEnabled(
-                        row.editable ? parameterForm[row.key] : row.fullValue,
-                      )"
-                      disabled
-                      class="parameter-boolean-switch"
-                      :aria-label="row.label"
-                      @click.stop
-                      @dblclick.stop
-                    />
-                    <el-tag
-                      v-else-if="isTaggedPluginParameterValue(row.field) && row.summary"
-                      size="small"
-                      effect="plain"
-                      class="parameter-value-tag"
-                      :title="row.fullValue"
-                    >
-                      {{ row.summary }}
-                    </el-tag>
-                    <span v-else>{{ row.summary }}</span>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-if="!visibleParameterRows.length" class="parameter-empty compact">
+                  <el-switch
+                    v-if="row.field?.kind === 'boolean'"
+                    :model-value="isBooleanParameterEnabled(
+                      row.editable ? parameterForm[row.key] : row.fullValue,
+                    )"
+                    disabled
+                    class="parameter-boolean-switch"
+                    :aria-label="row.label"
+                    @click.stop
+                    @dblclick.stop
+                  />
+                  <el-tag
+                    v-else-if="isTaggedPluginParameterValue(row.field) && row.summary"
+                    size="small"
+                    effect="plain"
+                    class="parameter-value-tag"
+                    :title="row.fullValue"
+                  >
+                    {{ row.summary }}
+                  </el-tag>
+                  <span v-else>{{ row.summary }}</span>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-else class="parameter-empty compact">
             {{ t('plugins.parameterTreeNoMatch') }}
           </div>
         </div>
@@ -524,105 +622,48 @@ async function focusInitialParameter(): Promise<void> {
 .parameter-table-wrap {
   min-height: 0;
   flex: 1 1 auto;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-table {
-  width: 100%;
-  max-width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-  font-size: 12px;
-}
-th,
-td {
-  height: 32px;
-  box-sizing: border-box;
-  padding: 4px 10px;
   overflow: hidden;
-  border-bottom: 1px solid var(--console-border, #e4dcce);
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  outline: none;
 }
-th:nth-child(1),
-td:nth-child(1) {
-  width: auto;
-  border-right: 1px solid var(--console-border, #e4dcce);
+.parameter-table-wrap:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--console-accent, #be5630);
 }
-th:nth-child(2),
-td:nth-child(2) {
-  width: 1%;
-  border-right: 1px solid var(--console-border, #e4dcce);
-  color: var(--console-text-soft, #5a5247);
-  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
-  font-size: 11px;
-  white-space: nowrap;
-  text-overflow: clip;
+.parameter-el-table {
+  --el-table-border-color: var(--console-border, #e4dcce);
+  --el-table-header-bg-color: var(--console-paper-soft, #faf5ec);
+  --el-table-row-hover-bg-color: var(--console-accent-soft, #f8e9df);
+  --el-table-current-row-bg-color: var(--console-accent-soft, #f8e9df);
+  height: 100%;
+  font-size: 12px;
+  background: transparent;
 }
-th:nth-child(3),
-td:nth-child(3) {
-  width: auto;
-}
-th:last-child {
-  background: color-mix(
-    in srgb,
-    var(--console-paper-soft, #faf5ec) 76%,
-    var(--console-border, #e4dcce)
-  );
-}
-td:last-child {
-  background: color-mix(
-    in srgb,
-    var(--console-paper-soft, #faf5ec) 58%,
-    var(--console-paper, #fffdfa)
-  );
-  color: var(--console-text, #211d17);
-  font-weight: 520;
-}
-td.numeric {
-  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
-  font-variant-numeric: tabular-nums;
-}
-th {
-  position: sticky;
-  z-index: 1;
-  top: 0;
-  background: var(--console-paper-soft, #faf5ec);
+.parameter-el-table :deep(.el-table__header th.el-table__cell) {
   color: var(--console-text-soft, #5a5247);
   font-size: 11px;
+  font-weight: 600;
 }
-tbody tr {
-  height: 32px;
+.parameter-el-table :deep(.el-table__body td.el-table__cell) {
+  padding: 4px 0;
+}
+.parameter-el-table :deep(.el-table__row) {
   cursor: pointer;
 }
-tbody tr:hover,
-tbody tr.selected {
-  background: var(--console-accent-soft, #f8e9df);
-}
-tbody tr:hover td:last-child,
-tbody tr.selected td:last-child {
-  background: color-mix(
-    in srgb,
-    var(--console-accent-soft, #f8e9df) 72%,
-    var(--console-paper-soft, #faf5ec)
-  );
-}
-tbody tr:hover td.parameter-type-cell,
-tbody tr.selected td.parameter-type-cell {
-  background: color-mix(
-    in srgb,
-    var(--console-accent-soft, #f8e9df) 46%,
-    var(--console-paper, #fffdfa)
-  );
-}
-tbody tr.readonly {
+.parameter-el-table :deep(.el-table__row.is-readonly-parameter) {
   color: var(--console-text-muted, #756b5e);
 }
-tbody tr:focus-visible {
-  position: relative;
-  outline: 2px solid var(--console-accent, #be5630);
-  outline-offset: -2px;
+.parameter-el-table :deep(.parameter-type-cell .cell) {
+  color: var(--console-text-soft, #5a5247);
+  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
+  font-size: 11px;
+}
+.parameter-type-tag {
+  max-width: 100%;
+  animation: none;
+  transition: none;
+}
+.parameter-type-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .parameter-name-cell {
   min-width: 0;

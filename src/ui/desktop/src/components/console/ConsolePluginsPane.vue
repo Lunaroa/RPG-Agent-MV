@@ -376,8 +376,12 @@ async function navigateToPluginReference(name: string): Promise<void> {
   row?.scrollIntoView({ block: 'nearest' });
 }
 
+function hasConfigurableParameters(plugin: ManagedPluginEntry): boolean {
+  return (plugin.parameterSchema?.fields.length ?? 0) > 0;
+}
+
 function openParameterDialog(plugin: ManagedPluginEntry): void {
-  if (!plugin.name || busyKey.value) return;
+  if (!plugin.name || busyKey.value || !hasConfigurableParameters(plugin)) return;
   selectPlugin(plugin);
   parameterDialogPluginName.value = plugin.name;
   parameterDialogError.value = '';
@@ -1010,7 +1014,7 @@ function resizeKeydown(event: KeyboardEvent): void {
             </div>
             <div class="detail-actions">
               <button
-                v-if="selectedPlugin"
+                v-if="selectedPlugin && hasConfigurableParameters(selectedPlugin)"
                 type="button"
                 class="primary-action"
                 :disabled="Boolean(busyKey)"

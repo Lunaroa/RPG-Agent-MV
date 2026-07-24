@@ -38,6 +38,10 @@ export function withAssetCanvasCors(
   const headers = new Headers(response.headers);
   headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  // Full responses need Accept-Ranges so Chromium can resolve finite media duration.
+  if (response.status === 200 && !headers.has('Accept-Ranges')) {
+    headers.set('Accept-Ranges', 'bytes');
+  }
   const typed = options.filePath ? contentTypeForAssetPath(options.filePath) : null;
   const current = headers.get('Content-Type') || '';
   if (typed && (!current || current === 'application/octet-stream' || current.startsWith('text/'))) {

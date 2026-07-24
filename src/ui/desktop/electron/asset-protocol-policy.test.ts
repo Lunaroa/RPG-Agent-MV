@@ -43,6 +43,34 @@ describe('asset protocol policy', () => {
     }), { filePath: 'C:/project/audio/se/Short.ogg' });
 
     assert.equal(response.headers.get('Content-Type'), 'audio/ogg');
+    assert.equal(response.headers.get('Accept-Ranges'), 'bytes');
     assert.equal(await response.text(), 'ogg-bytes');
+  });
+
+  test('adds Accept-Ranges on full asset responses when missing', async () => {
+    const response = withAssetCanvasCors(new Response('theme', {
+      status: 200,
+      headers: { 'Content-Type': 'audio/ogg', 'Content-Length': '5' },
+    }));
+    assert.equal(response.headers.get('Accept-Ranges'), 'bytes');
+  });
+
+  test('keeps existing Accept-Ranges and does not force it on partial responses', async () => {
+    const ranged = withAssetCanvasCors(new Response('partial', {
+      status: 206,
+      headers: {
+        'Content-Type': 'audio/ogg',
+        'Content-Range': 'bytes 0-3/5',
+        'Accept-Ranges': 'bytes',
+      },
+    }));
+    assert.equal(ranged.status, 206);
+    assert.equal(ranged.headers.get('Accept-Ranges'), 'bytes');
+
+    const preexisting = withAssetCanvasCors(new Response('full', {
+      status: 200,
+      headers: { 'Content-Type': 'audio/ogg', 'Accept-Ranges': 'none' },
+    }));
+    assert.equal(preexisting.headers.get('Accept-Ranges'), 'none');
   });
 });

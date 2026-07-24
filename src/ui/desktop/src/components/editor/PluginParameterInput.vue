@@ -18,12 +18,16 @@
       spellcheck="false"
       @update:model-value="emitTextValue"
     />
-    <el-input
+    <el-input-number
       v-else-if="field.kind === 'number'"
-      :model-value="stringValue"
-      inputmode="decimal"
-      spellcheck="false"
-      @update:model-value="emitTextValue"
+      :model-value="numberModelValue"
+      :min="field.min"
+      :max="field.max"
+      :precision="numberPrecision"
+      :step="numberStep"
+      controls-position="right"
+      class="parameter-number-input"
+      @update:model-value="emitNumberValue"
     />
     <el-switch
       v-else-if="field.kind === 'boolean'"
@@ -35,14 +39,27 @@
     <el-select
       v-else-if="field.kind === 'select'"
       :model-value="stringValue"
+      class="select-param-select"
+      popper-class="plugin-parameter-select-popper"
       @change="emitSelectValue"
     >
+      <template #label="{ label, value }">
+        <span class="select-option-line">
+          <span>{{ selectOptionLabel(value, label) }}</span>
+          <el-tag size="small" effect="plain" class="parameter-key-tag">{{ value }}</el-tag>
+        </span>
+      </template>
       <el-option
         v-for="option in selectOptions"
         :key="option.value"
         :label="option.label"
         :value="option.value"
-      />
+      >
+        <span class="select-option-line">
+          <span>{{ option.label }}</span>
+          <el-tag size="small" effect="plain" class="parameter-key-tag">{{ option.value }}</el-tag>
+        </span>
+      </el-option>
     </el-select>
     <el-select
       v-else-if="field.kind === 'combo'"
@@ -282,6 +299,21 @@ let fileResolutionSerial = 0;
 
 const isReadonly = computed(() => props.field.editable === false);
 const stringValue = computed(() => props.modelValue == null ? '' : String(props.modelValue));
+const numberModelValue = computed<number | undefined>(() => {
+  const text = String(props.modelValue ?? '').trim();
+  if (!text) return undefined;
+  const numeric = Number(text);
+  return Number.isFinite(numeric) ? numeric : undefined;
+});
+const numberPrecision = computed<number | undefined>(() =>
+  typeof props.field.decimals === 'number' ? props.field.decimals : undefined,
+);
+const numberStep = computed(() => {
+  if (typeof props.field.decimals === 'number') {
+    return props.field.decimals <= 0 ? 1 : 10 ** -props.field.decimals;
+  }
+  return 1;
+});
 const displayReadonlyValue = computed(() => typeof props.modelValue === 'string'
   ? props.modelValue
   : JSON.stringify(props.modelValue ?? '', null, 2));
@@ -500,8 +532,21 @@ function emitTextValue(value: string): void {
   emitValue(value);
 }
 
+function emitNumberValue(value: number | undefined | null): void {
+  if (value === undefined || value === null || Number.isNaN(value)) {
+    emitValue('');
+    return;
+  }
+  emitValue(String(value));
+}
+
 function emitSelectValue(value: unknown): void {
   emitValue(value == null ? '' : String(value));
+}
+
+function selectOptionLabel(value: unknown, fallbackLabel: unknown): string {
+  const match = selectOptions.value.find((option) => option.value === String(value ?? ''));
+  return match?.label || String(fallbackLabel ?? value ?? '');
 }
 
 function booleanLabel(value: boolean): string {
@@ -635,8 +680,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   gap: 7px;
 }
 .plugin-param-input :deep(.el-select),
-.plugin-param-input :deep(.el-input) {
+.plugin-param-input :deep(.el-input),
+.plugin-param-input :deep(.el-input-number),
+.plugin-param-input :deep(.parameter-number-input) {
   width: 100%;
+}
+.select-option-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.select-option-line > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.parameter-key-tag {
+  flex: 0 0 auto;
+  max-width: 46%;
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+  background: color-mix(in srgb, var(--console-accent, #be5630) 10%, transparent);
+  border-color: color-mix(in srgb, var(--console-accent, #be5630) 32%, transparent);
+  animation: none;
+  transition: none;
+}
+.parameter-key-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+}
+.select-param-select :deep(.el-select__selected-item) {
+  font-weight: 400;
 }
 .location-input {
   display: grid;
@@ -746,5 +824,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   padding-top: 4px;
   padding-bottom: 4px;
   line-height: 1.3;
+}
+</style>
+
+<style>
+.plugin-parameter-select-popper .el-select-dropdown__item.is-selected {
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+}
+.plugin-parameter-select-popper .parameter-key-tag {
+  flex: 0 0 auto;
+  max-width: 46%;
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+  background: color-mix(in srgb, var(--console-accent, #be5630) 10%, transparent);
+  border-color: color-mix(in srgb, var(--console-accent, #be5630) 32%, transparent);
+}
+.plugin-parameter-select-popper .parameter-key-tag .el-tag__content {
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+}
+.plugin-parameter-select-popper .select-option-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 </style>

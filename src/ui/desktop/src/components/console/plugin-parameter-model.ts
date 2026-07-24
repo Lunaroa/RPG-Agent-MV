@@ -364,7 +364,11 @@ export function summarizePluginParameterValue(
     );
     return option?.label || (enabled ? labels.enabled : labels.disabled);
   }
-  if (field.kind === 'select' || field.kind === 'combo') {
+  if (field.kind === 'select') {
+    const presentation = resolvePluginParameterSelectPresentation(field, value);
+    return presentation?.label || summarizeScalar(value, labels);
+  }
+  if (field.kind === 'combo') {
     return field.options?.find((entry) => String(entry.value) === String(value))?.label
       || summarizeScalar(value, labels);
   }
@@ -395,7 +399,7 @@ export function summarizePluginParameterValue(
     return labels.itemCount(Array.isArray(parsed) ? parsed.length : 0);
   }
   if (field.kind === 'struct') {
-    return labels.structuredValue;
+    return summarizeStructJson(value);
   }
   if (field.kind === 'multiline' || field.kind === 'json') {
     return summarizeMultiline(value, labels);
@@ -403,13 +407,44 @@ export function summarizePluginParameterValue(
   return summarizeScalar(value, labels);
 }
 
+/** Select options show option text plus the stored value as a tag. */
+export function resolvePluginParameterSelectPresentation(
+  field: Pick<PluginParameterSchemaField, 'kind' | 'options'> | null | undefined,
+  value: unknown,
+): { label: string; value: string } | null {
+  if (!field || field.kind !== 'select') return null;
+  const raw = value == null ? '' : String(value);
+  if (!raw && !field.options?.length) return null;
+  const option = field.options?.find((entry) => String(entry.value) === raw);
+  if (option) {
+    return {
+      label: String(option.label || option.value),
+      value: String(option.value),
+    };
+  }
+  if (!raw) return null;
+  return { label: raw, value: raw };
+}
+
 function summarizeUnknownPluginParameterValue(
   value: unknown,
   labels: PluginParameterSummaryLabels,
 ): string {
   if (Array.isArray(value)) return labels.itemCount(value.length);
-  if (isPlainObject(value)) return labels.structuredValue;
+  if (isPlainObject(value)) return summarizeStructJson(value);
   return summarizeMultiline(value, labels);
+}
+
+/** Compact JSON for the value column (RM-style object display). */
+function summarizeStructJson(value: unknown): string {
+  const parsed = parseStructuredValue(value);
+  if (parsed === undefined || parsed === null) return '';
+  if (typeof parsed === 'string' && !parsed.trim()) return '';
+  try {
+    return JSON.stringify(parsed);
+  } catch {
+    return String(parsed);
+  }
 }
 
 function summarizeDatabaseReference(
@@ -474,7 +509,7 @@ export function isBooleanParameterEnabled(value: unknown): boolean {
   return value === true || ['true', 'on', '1'].includes(String(value).toLowerCase());
 }
 
-/** Reference / structured values render as tags; plain text and numbers stay as text. */
+/** Reference / collection values render as tags; plain text, numbers, and struct JSON stay as text. */
 export function isTaggedPluginParameterValue(
   field: Pick<PluginParameterSchemaField, 'kind'> | null | undefined,
 ): boolean {
@@ -482,7 +517,6 @@ export function isTaggedPluginParameterValue(
   return field.kind === 'database'
     || field.kind === 'map'
     || field.kind === 'file'
-    || field.kind === 'struct'
     || field.kind === 'array'
     || field.kind === 'location';
 }

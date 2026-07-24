@@ -13,6 +13,7 @@ import { useWorkspaceStore } from '../../stores/workspace';
 import {
   normalizePluginParameterMainColumns,
 } from '../../utils/pluginParameterTableColumns';
+import { formatPluginParameterTypeLabel } from '../../utils/pluginParameterTypeLabel';
 import {
   buildPluginParameterPayload,
   buildPluginParameterRows,
@@ -21,11 +22,13 @@ import {
   isBooleanParameterEnabled,
   isTaggedPluginParameterValue,
   pluginParameterPayloadsEqual,
+  resolvePluginParameterSelectPresentation,
   type PluginParameterRow,
   type PluginParameterSummaryLabels,
 } from './plugin-parameter-model';
 import {
   buildPluginParameterTree,
+  collectPluginParameterExpandableKeys,
   flattenPluginParameterTree,
   type VisiblePluginParameterTreeRow,
 } from './plugin-parameter-tree-model';
@@ -162,8 +165,8 @@ function resetEditor(): void {
   valueDialogOpen.value = false;
   editingField.value = null;
   parameterQuery.value = '';
-  expandedParameterKeys.value = new Set();
   if (!plugin) {
+    expandedParameterKeys.value = new Set();
     parameterForm.value = {};
     baselinePayload.value = {};
     selectedParameterKey.value = '';
@@ -172,6 +175,17 @@ function resetEditor(): void {
   parameterForm.value = createPluginParameterForm(plugin);
   baselinePayload.value = clonePluginParameterValue(
     buildPluginParameterPayload(plugin, parameterForm.value),
+  );
+  expandedParameterKeys.value = collectPluginParameterExpandableKeys(
+    buildPluginParameterTree(
+      buildPluginParameterRows(
+        plugin,
+        parameterForm.value,
+        props.catalog,
+        summaryLabels.value,
+        t('plugins.parameterReadonlyReason'),
+      ),
+    ),
   );
   selectedParameterKey.value = parameterRows.value[0]?.key
     || plugin.parameterSchema?.fields[0]?.key
@@ -214,9 +228,18 @@ function displayReadonlyReason(row: PluginParameterRow): string {
 }
 
 function parameterTypeLabel(row: Pick<PluginParameterRow, 'field'>): string {
-  const rawType = String(row.field?.rawType || '').trim();
-  if (rawType) return rawType;
-  return row.field?.kind || '';
+  return formatPluginParameterTypeLabel(row.field?.rawType, row.field?.kind, t);
+}
+
+function selectPresentation(row: Pick<PluginParameterRow, 'field' | 'key' | 'editable'>): {
+  label: string;
+  value: string;
+} | null {
+  if (!row.field) return null;
+  const value = row.editable
+    ? parameterForm.value[row.key]
+    : props.plugin?.parameters?.[row.key];
+  return resolvePluginParameterSelectPresentation(row.field, value);
 }
 
 function openParameterEditor(key: string): void {
@@ -438,7 +461,6 @@ async function focusInitialParameter(): Promise<void> {
                   <span>{{ row.label }}</span>
                   <el-tag
                     size="small"
-                    type="info"
                     effect="plain"
                     class="parameter-key-tag"
                   >
@@ -498,6 +520,20 @@ async function focusInitialParameter(): Promise<void> {
                     @click.stop
                     @dblclick.stop
                   />
+                  <div
+                    v-else-if="row.field?.kind === 'select' && selectPresentation(row)"
+                    class="parameter-select-value"
+                    :title="`${selectPresentation(row)!.label} · ${selectPresentation(row)!.value}`"
+                  >
+                    <span>{{ selectPresentation(row)!.label }}</span>
+                    <el-tag
+                      size="small"
+                      effect="plain"
+                      class="parameter-key-tag"
+                    >
+                      {{ selectPresentation(row)!.value }}
+                    </el-tag>
+                  </div>
                   <el-tag
                     v-else-if="isTaggedPluginParameterValue(row.field) && row.summary"
                     size="small"
@@ -704,8 +740,30 @@ async function focusInitialParameter(): Promise<void> {
   min-width: 0;
   max-width: 48%;
   flex: 0 1 auto;
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+  background: color-mix(in srgb, var(--console-accent, #be5630) 10%, transparent);
+  border-color: color-mix(in srgb, var(--console-accent, #be5630) 32%, transparent);
   animation: none;
   transition: none;
+}
+.parameter-key-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  color: var(--console-accent, #be5630);
+}
+.parameter-select-value {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.parameter-select-value > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .parameter-boolean-switch {
   flex: 0 0 auto;
@@ -729,10 +787,6 @@ async function focusInitialParameter(): Promise<void> {
   flex: 0 0 auto;
   animation: none;
   transition: none;
-}
-.parameter-key-tag :deep(.el-tag__content) {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .parameter-value-cell {
   min-width: 0;

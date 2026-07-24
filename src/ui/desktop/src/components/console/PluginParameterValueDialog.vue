@@ -572,11 +572,12 @@ function arrayValue(value: unknown): unknown[] {
 }
 :global(.plugin-parameter-value-dialog .el-dialog__body) {
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 :global(.plugin-parameter-value-dialog.is-compound .el-dialog__body),
 :global(.plugin-parameter-value-dialog.is-complex .el-dialog__body) {
   flex: 1 1 auto;
+  overflow: auto;
 }
 .parameter-value-editor {
   display: grid;
@@ -593,7 +594,7 @@ function arrayValue(value: unknown): unknown[] {
 }
 .parameter-mode-tabs :deep(.el-tabs__content) {
   overflow: visible;
-  padding: 0;
+  padding: 4px;
 }
 .parameter-mode-tabs :deep(.el-tab-pane) {
   min-height: 0;

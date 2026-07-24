@@ -144,6 +144,7 @@ const selectedId = ref(0);
 const failedUrls = ref(new Set<string>());
 const previewFailed = ref(false);
 const galleryEl = ref<HTMLElement | null>(null);
+const subDialogZ = String(LAYER_Z.subDialog);
 
 const title = computed(() => props.title || t('pluginTilesetPicker.title'));
 const options = computed(() => buildPluginParameterTilesetOptions(props.catalog));
@@ -217,6 +218,7 @@ defineExpose({ open, close });
 </script>
 
 <style scoped>
+.sub-overlay { z-index: v-bind(subDialogZ); }
 .tileset-picker-dialog {
   --dialog-width: 1080px;
   width: min(var(--dialog-width), calc(100vw - 48px));

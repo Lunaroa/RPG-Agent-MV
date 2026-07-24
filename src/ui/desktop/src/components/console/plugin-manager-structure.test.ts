@@ -22,6 +22,10 @@ const parameterInputSource = readFileSync(
   new URL('../editor/PluginParameterInput.vue', import.meta.url),
   'utf8',
 );
+const tilesetPickerSource = readFileSync(
+  new URL('../editor/PluginParameterTilesetPickerDialog.vue', import.meta.url),
+  'utf8',
+);
 const systemNamedEntrySelectorSource = readFileSync(
   new URL('../editor/SystemNamedEntrySelectorDialog.vue', import.meta.url),
   'utf8',
@@ -279,6 +283,10 @@ describe('plugin manager structure', () => {
     assert.match(valueDialogSource, /showActorPreview/);
     assert.match(systemNamedEntrySelectorSource, /z-index: v-bind\(subDialogZ\)/);
     assert.match(systemNamedEntrySelectorSource, /LAYER_Z\.subDialog/);
+    assert.match(tilesetPickerSource, /z-index: v-bind\(subDialogZ\)/);
+    assert.match(tilesetPickerSource, /LAYER_Z\.subDialog/);
+    assert.match(valueDialogSource, /overflow: visible/);
+    assert.match(valueDialogSource, /\.el-tabs__content[\s\S]+padding: 4px/);
     assert.match(parameterInputSource, /listRelativeDirectory/);
     assert.match(parameterInputSource, /directoryNotFound|pluginFilePicker\.directoryNotFound/);
     assert.doesNotMatch(parameterInputSource, /unsupportedDirectory/);

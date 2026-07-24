@@ -92,7 +92,11 @@ describe('plugin manager structure', () => {
     assert.match(paneSource, /pluginApi\.reorder\(indexes,/);
     assert.match(paneSource, /<PluginParameterDialog/);
     assert.match(paneSource, /v-model="parameterDialogOpen"/);
-    assert.match(paneSource, /parameterDialogPluginName\.value = plugin\.name/);
+    assert.match(paneSource, /parameterDialogPluginIndex\.value = plugin\.index/);
+    assert.match(paneSource, /pluginApi\.setEnabled\(plugin\.index/);
+    assert.match(paneSource, /pluginApi\.removeConfiguration\(plugin\.index/);
+    assert.match(paneSource, /pluginApi\.updateParameters\(plugin\.index/);
+    assert.match(paneSource, /configuredRowKey\(plugin\.index\)/);
     assert.match(paneSource, /const plugin = parameterDialogPlugin\.value/);
     assert.doesNotMatch(paneSource, /plugins\.moveUp|plugins\.moveDown/);
   });

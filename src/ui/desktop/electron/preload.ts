@@ -287,11 +287,11 @@ contextBridge.exposeInMainWorld('api', {
     validate: (project?: string) => ipcRenderer.invoke('plugins:validate', project),
     writeConfiguration: (entries: unknown[], project?: string) => ipcRenderer.invoke('plugins:writeConfiguration', entries, project),
     addConfiguration: (pluginName: string, project?: string) => ipcRenderer.invoke('plugins:addConfiguration', pluginName, project),
-    removeConfiguration: (pluginName: string, project?: string) => ipcRenderer.invoke('plugins:removeConfiguration', pluginName, project),
-    setEnabled: (pluginName: string, enabled: boolean, project?: string) => ipcRenderer.invoke('plugins:setEnabled', pluginName, enabled, project),
+    removeConfiguration: (pluginIndex: number, project?: string) => ipcRenderer.invoke('plugins:removeConfiguration', pluginIndex, project),
+    setEnabled: (pluginIndex: number, enabled: boolean, project?: string) => ipcRenderer.invoke('plugins:setEnabled', pluginIndex, enabled, project),
     reorder: (pluginIndexes: number[], project?: string) => ipcRenderer.invoke('plugins:reorder', pluginIndexes, project),
-    updateParameters: (pluginName: string, parameters: Record<string, unknown>, project?: string) =>
-      ipcRenderer.invoke('plugins:updateParameters', pluginName, parameters, project),
+    updateParameters: (pluginIndex: number, parameters: Record<string, unknown>, project?: string) =>
+      ipcRenderer.invoke('plugins:updateParameters', pluginIndex, parameters, project),
     installFile: (sourceFile: string, options?: unknown, project?: string) =>
       ipcRenderer.invoke('plugins:installFile', sourceFile, options, project),
     selectInstallFile: () => ipcRenderer.invoke('plugins:selectInstallFile'),

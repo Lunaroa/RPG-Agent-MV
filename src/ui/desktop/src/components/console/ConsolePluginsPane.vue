@@ -60,10 +60,10 @@ const error = ref('');
 const actionMessage = ref('');
 const stagingDirty = ref(false);
 const parameterDialogOpen = ref(false);
-const parameterDialogPluginName = ref('');
+const parameterDialogPluginIndex = ref<number | null>(null);
 const parameterDialogError = ref('');
 const deleteDialogOpen = ref(false);
-const deleteTargetName = ref('');
+const deleteTargetIndex = ref<number | null>(null);
 const activeHelpTab = ref('');
 const draggedIndex = ref<number | null>(null);
 const dropIndex = ref<number | null>(null);
@@ -86,6 +86,11 @@ const filteredFiles = computed(() => groups.value.unconfigured);
 const reorderLocked = computed(() => isPluginReorderLocked(search.value, Boolean(busyKey.value)));
 
 const selectedItem = computed<SelectedItem | null>(() => {
+  if (selectedKey.value.startsWith('configured-row:')) {
+    const index = Number(selectedKey.value.slice('configured-row:'.length));
+    const plugin = plugins.value.find((entry) => entry.index === index);
+    if (plugin) return { kind: 'configured', plugin };
+  }
   if (selectedKey.value.startsWith('configured:')) {
     const name = selectedKey.value.slice('configured:'.length);
     const plugin = plugins.value.find((entry) => entry.name === name);
@@ -106,7 +111,9 @@ const selectedPlugin = computed(() =>
   selectedItem.value?.kind === 'configured' ? selectedItem.value.plugin : null,
 );
 const parameterDialogPlugin = computed(() =>
-  plugins.value.find((plugin) => plugin.name === parameterDialogPluginName.value) || null,
+  parameterDialogPluginIndex.value == null
+    ? null
+    : (plugins.value.find((plugin) => plugin.index === parameterDialogPluginIndex.value) || null),
 );
 const selectedFile = computed(() =>
   selectedItem.value?.kind === 'file' ? selectedItem.value.file : null,
@@ -144,9 +151,14 @@ const selectedTargetWarning = computed(() =>
       })
     : '',
 );
-const deleteTargetPath = computed(
-  () => plugins.value.find((plugin) => plugin.name === deleteTargetName.value)?.header.displayPath || '',
-);
+const deleteTargetPath = computed(() => {
+  if (deleteTargetIndex.value == null) return '';
+  return plugins.value.find((plugin) => plugin.index === deleteTargetIndex.value)?.header.displayPath || '';
+});
+const deleteTargetName = computed(() => {
+  if (deleteTargetIndex.value == null) return '';
+  return plugins.value.find((plugin) => plugin.index === deleteTargetIndex.value)?.name || '';
+});
 const selectedHelpTabs = computed(() =>
   (selectedHeader.value?.helpSections || []).map((section) => ({
     id: section.language
@@ -206,10 +218,10 @@ function resetState(): void {
   busyKey.value = '';
   stagingDirty.value = false;
   parameterDialogOpen.value = false;
-  parameterDialogPluginName.value = '';
+  parameterDialogPluginIndex.value = null;
   parameterDialogError.value = '';
   deleteDialogOpen.value = false;
-  deleteTargetName.value = '';
+  deleteTargetIndex.value = null;
   activeHelpTab.value = '';
   pluginRowElements.clear();
   updateStatusBar();
@@ -219,7 +231,7 @@ function applyConfig(next: PluginConfigurationResult): void {
   config.value = next;
   if (!selectedItem.value) {
     selectedKey.value = next.plugins[0]
-      ? configuredKey(next.plugins[0].name)
+      ? configuredRowKey(next.plugins[0].index)
       : next.pluginFiles[0]
         ? fileKey(next.pluginFiles[0].relativePath)
         : '';
@@ -322,7 +334,7 @@ function fileKey(relativePath: string): string {
 }
 
 function selectPlugin(plugin: ManagedPluginEntry): void {
-  selectedKey.value = configuredKey(plugin.name);
+  selectedKey.value = configuredRowKey(plugin.index);
 }
 
 function selectFile(file: ManagedPluginFile): void {
@@ -360,15 +372,11 @@ async function navigateToPluginReference(name: string): Promise<void> {
     ? plugins.value.find((plugin) => plugin.name === target.name)
     : null;
   const selectedItemKey = configured
-    ? configuredKey(configured.name)
-    : target.kind === 'file'
-      ? fileKey(target.relativePath)
-      : '';
-  const rowKey = configured
     ? configuredRowKey(configured.index)
     : target.kind === 'file'
       ? fileKey(target.relativePath)
       : '';
+  const rowKey = selectedItemKey;
   selectedKey.value = selectedItemKey;
   await nextTick();
   const row = pluginRowElements.get(rowKey);
@@ -383,7 +391,7 @@ function hasConfigurableParameters(plugin: ManagedPluginEntry): boolean {
 function openParameterDialog(plugin: ManagedPluginEntry): void {
   if (!plugin.name || busyKey.value || !hasConfigurableParameters(plugin)) return;
   selectPlugin(plugin);
-  parameterDialogPluginName.value = plugin.name;
+  parameterDialogPluginIndex.value = plugin.index;
   parameterDialogError.value = '';
   parameterDialogOpen.value = true;
 }
@@ -393,8 +401,8 @@ async function saveParameters(parameters: Record<string, unknown>): Promise<void
   if (!plugin || !projectStore.currentProject) return;
   parameterDialogError.value = '';
   const saved = await runAction(
-    `params:${plugin.name}`,
-    () => pluginApi.updateParameters(plugin.name, parameters, projectStore.currentProject),
+    `params:${plugin.index}`,
+    () => pluginApi.updateParameters(plugin.index, parameters, projectStore.currentProject),
     t('plugins.savedParams', { name: plugin.name }),
   );
   if (saved) {
@@ -405,7 +413,7 @@ async function saveParameters(parameters: Record<string, unknown>): Promise<void
 }
 
 function closeParameterDialogState(): void {
-  parameterDialogPluginName.value = '';
+  parameterDialogPluginIndex.value = null;
   parameterDialogError.value = '';
 }
 
@@ -416,8 +424,8 @@ async function togglePlugin(plugin: ManagedPluginEntry, enabled: boolean): Promi
     return;
   }
   await runAction(
-    `toggle:${plugin.name}`,
-    () => pluginApi.setEnabled(plugin.name, enabled, projectStore.currentProject),
+    `toggle:${plugin.index}`,
+    () => pluginApi.setEnabled(plugin.index, enabled, projectStore.currentProject),
     enabled
       ? t('plugins.enabledPlugin', { name: plugin.name })
       : t('plugins.disabledPlugin', { name: plugin.name }),
@@ -481,19 +489,21 @@ async function installPlugin(): Promise<void> {
 
 function openDeleteConfiguredDialog(plugin: ManagedPluginEntry): void {
   if (!plugin.name || busyKey.value) return;
-  deleteTargetName.value = plugin.name;
+  deleteTargetIndex.value = plugin.index;
   deleteDialogOpen.value = true;
 }
 
 async function deleteConfiguredPlugin(mode: 'configuration' | 'file'): Promise<void> {
-  const plugin = plugins.value.find((entry) => entry.name === deleteTargetName.value);
+  const plugin = deleteTargetIndex.value == null
+    ? null
+    : plugins.value.find((entry) => entry.index === deleteTargetIndex.value) || null;
   if (!projectStore.currentProject || !plugin?.name || busyKey.value) return;
-  const adjacentKey = adjacentConfiguredKey(plugin.name);
+  const adjacentKey = adjacentConfiguredKey(plugin.index);
   if (mode === 'configuration') {
     selectedKey.value = adjacentKey || fileKey(plugin.fileRelativePath);
     const removed = await runAction(
-      `remove-config:${plugin.name}`,
-      () => pluginApi.removeConfiguration(plugin.name, projectStore.currentProject),
+      `remove-config:${plugin.index}`,
+      () => pluginApi.removeConfiguration(plugin.index, projectStore.currentProject),
       t('plugins.removedConfiguration', { name: plugin.name }),
     );
     if (removed) closeDeleteConfiguredDialog();
@@ -521,13 +531,13 @@ async function deleteConfiguredPlugin(mode: 'configuration' | 'file'): Promise<v
 function closeDeleteConfiguredDialog(): void {
   if (busyKey.value) return;
   deleteDialogOpen.value = false;
-  deleteTargetName.value = '';
+  deleteTargetIndex.value = null;
 }
 
-function adjacentConfiguredKey(name: string): string {
-  const index = plugins.value.findIndex((plugin) => plugin.name === name);
-  const adjacent = plugins.value[index + 1] || plugins.value[index - 1];
-  return adjacent ? configuredKey(adjacent.name) : '';
+function adjacentConfiguredKey(index: number): string {
+  const current = plugins.value.findIndex((plugin) => plugin.index === index);
+  const adjacent = plugins.value[current + 1] || plugins.value[current - 1];
+  return adjacent ? configuredRowKey(adjacent.index) : '';
 }
 
 async function deleteUnconfiguredFile(file: ManagedPluginFile): Promise<void> {

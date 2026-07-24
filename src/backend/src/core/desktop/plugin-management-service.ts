@@ -72,15 +72,14 @@ export function writePluginConfiguration(
 export function setPluginEnabled(
   workflowRoot: string,
   project: string,
-  pluginName: string,
+  pluginIndex: number,
   enabled: boolean,
 ): PluginConfigurationResult {
   const parsed = requireReadablePlugins(workflowRoot, project);
-  const name = normalizeConfiguredPluginName(pluginName);
   const next = clonePluginConfigEntries(parsed.entries);
-  const entry = requireUniquePluginEntry(next, name);
-  if (enabled && !resolveExistingPluginFileRelativePath(workflowRoot, project, name)) {
-    throw new Error(`[PLUGIN_FILE_MISSING] ${name}`);
+  const entry = requirePluginEntryAtIndex(next, pluginIndex);
+  if (enabled && !resolveExistingPluginFileRelativePath(workflowRoot, project, entry.name)) {
+    throw new Error(`[PLUGIN_FILE_MISSING] ${entry.name}`);
   }
   entry.status = Boolean(enabled);
   assertNoNewDependencyIssues(workflowRoot, project, parsed.entries, next);
@@ -120,7 +119,6 @@ export function addPluginConfigurationEntry(
 ): PluginConfigurationResult {
   const parsed = requireReadablePlugins(workflowRoot, project);
   const name = normalizeConfiguredPluginName(pluginName);
-  assertUniqueConfiguredNames(parsed.entries);
   if (parsed.entries.some((entry) => entry.name === name)) {
     throw new Error(`Plugin configuration already exists: ${name}`);
   }
@@ -137,16 +135,15 @@ export function addPluginConfigurationEntry(
 export function removePluginConfigurationEntry(
   workflowRoot: string,
   project: string,
-  pluginName: string,
+  pluginIndex: number,
 ): PluginConfigurationResult {
   const parsed = requireReadablePlugins(workflowRoot, project);
-  const name = normalizeConfiguredPluginName(pluginName);
-  requireUniquePluginEntry(parsed.entries, name);
+  requirePluginEntryAtIndex(parsed.entries, pluginIndex);
   writePluginsJs(
     workflowRoot,
     project,
     parsed.relativePath,
-    parsed.entries.filter((entry) => entry.name !== name),
+    parsed.entries.filter((_entry, index) => index !== pluginIndex),
   );
   return readPluginConfiguration(workflowRoot, project);
 }
@@ -154,19 +151,19 @@ export function removePluginConfigurationEntry(
 export function updatePluginParameters(
   workflowRoot: string,
   project: string,
-  pluginName: string,
+  pluginIndex: number,
   parameters: Record<string, unknown>,
 ): PluginConfigurationResult {
   if (!isPlainObject(parameters)) throw new Error('Plugin parameters must be an object');
-  const managed = readPluginConfiguration(workflowRoot, project).plugins.find((entry) => entry.name === pluginName);
-  if (!managed) throw new Error(`Plugin does not exist: ${pluginName}`);
+  const managed = readPluginConfiguration(workflowRoot, project).plugins[pluginIndex];
+  if (!managed) throw new Error(`Plugin configuration index out of range: ${pluginIndex}`);
   for (const field of managed.parameterSchema?.fields || []) {
     if (field.editable !== false) continue;
     if (!isDeepStrictEqual(parameters[field.key], managed.parameters[field.key])) {
       throw new Error(`Plugin parameter ${field.key} uses unsupported type ${field.rawType || '(unknown)'} and must be preserved unchanged`);
     }
   }
-  return updatePluginEntry(workflowRoot, project, pluginName, (entry) => {
+  return updatePluginEntry(workflowRoot, project, pluginIndex, (entry) => {
     entry.parameters = structuredClone(parameters);
   });
 }
@@ -351,15 +348,12 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
 function updatePluginEntry(
   workflowRoot: string,
   project: string,
-  pluginName: string,
+  pluginIndex: number,
   update: (entry: PluginConfigEntry) => void,
 ): PluginConfigurationResult {
   const parsed = requireReadablePlugins(workflowRoot, project);
-  const name = normalizeConfiguredPluginName(pluginName);
-  const matches = parsed.entries.filter((entry) => entry.name === name);
-  if (!matches.length) throw new Error(`Plugin does not exist: ${name}`);
-  if (matches.length > 1) throw new Error(`Duplicate plugin configuration cannot be modified safely: ${name}`);
-  update(matches[0]);
+  const entry = requirePluginEntryAtIndex(parsed.entries, pluginIndex);
+  update(entry);
   writePluginsJs(workflowRoot, project, parsed.relativePath, parsed.entries);
   return readPluginConfiguration(workflowRoot, project);
 }
@@ -573,15 +567,6 @@ function normalizePluginFileStem(value: string): string {
   return name;
 }
 
-function assertUniqueConfiguredNames(entries: PluginConfigEntry[]): void {
-  const seen = new Set<string>();
-  for (const entry of entries) {
-    const name = normalizeConfiguredPluginName(entry.name);
-    if (seen.has(name)) throw new Error(`Duplicate plugin configuration cannot be sorted safely: ${name}`);
-    seen.add(name);
-  }
-}
-
 function isPluginFileRelativePath(relativePath: string): boolean {
   return /^(?:www\/)?js\/plugins\/(?:[^/]+\/)*[^/]+\.js$/i.test(relativePath)
     && !relativePath.split('/').some((part) => part === '..');
@@ -779,11 +764,11 @@ function clonePluginConfigEntries(entries: PluginConfigEntry[]): PluginConfigEnt
   }));
 }
 
-function requireUniquePluginEntry(entries: PluginConfigEntry[], name: string): PluginConfigEntry {
-  const matches = entries.filter((entry) => entry.name === name);
-  if (!matches.length) throw new Error(`Plugin does not exist: ${name}`);
-  if (matches.length > 1) throw new Error(`Duplicate plugin configuration cannot be modified safely: ${name}`);
-  return matches[0];
+function requirePluginEntryAtIndex(entries: PluginConfigEntry[], pluginIndex: number): PluginConfigEntry {
+  if (!Number.isInteger(pluginIndex) || pluginIndex < 0 || pluginIndex >= entries.length) {
+    throw new Error(`Plugin configuration index out of range: ${String(pluginIndex)}`);
+  }
+  return entries[pluginIndex]!;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

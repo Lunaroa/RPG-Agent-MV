@@ -285,10 +285,10 @@ declare global {
         validate(project?: string): Promise<unknown>;
         writeConfiguration(entries: unknown[], project?: string): Promise<unknown>;
         addConfiguration(pluginName: string, project?: string): Promise<unknown>;
-        removeConfiguration(pluginName: string, project?: string): Promise<unknown>;
-        setEnabled(pluginName: string, enabled: boolean, project?: string): Promise<unknown>;
+        removeConfiguration(pluginIndex: number, project?: string): Promise<unknown>;
+        setEnabled(pluginIndex: number, enabled: boolean, project?: string): Promise<unknown>;
         reorder(pluginIndexes: number[], project?: string): Promise<unknown>;
-        updateParameters(pluginName: string, parameters: Record<string, unknown>, project?: string): Promise<unknown>;
+        updateParameters(pluginIndex: number, parameters: Record<string, unknown>, project?: string): Promise<unknown>;
         installFile(sourceFile: string, options?: unknown, project?: string): Promise<unknown>;
         selectInstallFile(): Promise<string | null>;
         deleteFile(pluginName: string, options?: unknown, project?: string): Promise<unknown>;
@@ -1442,17 +1442,17 @@ export const plugins = {
   addConfiguration(pluginName: string, project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.addConfiguration(pluginName, project) as Promise<PluginConfigurationResult>;
   },
-  removeConfiguration(pluginName: string, project: string = DEFAULT_PROJECT) {
-    return desktopApi().plugins.removeConfiguration(pluginName, project) as Promise<PluginConfigurationResult>;
+  removeConfiguration(pluginIndex: number, project: string = DEFAULT_PROJECT) {
+    return desktopApi().plugins.removeConfiguration(pluginIndex, project) as Promise<PluginConfigurationResult>;
   },
-  setEnabled(pluginName: string, enabled: boolean, project: string = DEFAULT_PROJECT) {
-    return desktopApi().plugins.setEnabled(pluginName, enabled, project) as Promise<PluginConfigurationResult>;
+  setEnabled(pluginIndex: number, enabled: boolean, project: string = DEFAULT_PROJECT) {
+    return desktopApi().plugins.setEnabled(pluginIndex, enabled, project) as Promise<PluginConfigurationResult>;
   },
   reorder(pluginIndexes: number[], project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.reorder(toPlain(pluginIndexes), project) as Promise<PluginConfigurationResult>;
   },
-  updateParameters(pluginName: string, parameters: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
-    return desktopApi().plugins.updateParameters(pluginName, toPlain(parameters), project) as Promise<PluginConfigurationResult>;
+  updateParameters(pluginIndex: number, parameters: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
+    return desktopApi().plugins.updateParameters(pluginIndex, toPlain(parameters), project) as Promise<PluginConfigurationResult>;
   },
   installFile(sourceFile: string, options: Record<string, unknown> = {}, project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.installFile(sourceFile, toPlain(options), project) as Promise<{

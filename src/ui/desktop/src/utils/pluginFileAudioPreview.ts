@@ -1,3 +1,17 @@
+/** Survives Vue remounts when the file picker swaps `:key` on preview src. */
+let rememberedVolumePercent = 100;
+let rememberedMuted = false;
+
+export function getRememberedPluginAudioVolume(): { volumePercent: number; muted: boolean } {
+  return { volumePercent: rememberedVolumePercent, muted: rememberedMuted };
+}
+
+export function rememberPluginAudioVolume(volumePercent: number, muted: boolean): void {
+  const clamped = Math.min(100, Math.max(0, volumePercent));
+  rememberedVolumePercent = clamped;
+  rememberedMuted = muted || clamped <= 0;
+}
+
 /** Format seconds as m:ss (or h:mm:ss when ≥ 1 hour). Invalid values → `--:--`. */
 export function formatPluginAudioClock(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '--:--';

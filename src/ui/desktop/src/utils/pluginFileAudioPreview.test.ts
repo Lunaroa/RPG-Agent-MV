@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
   formatPluginAudioClock,
+  getRememberedPluginAudioVolume,
   pluginAudioProgressRatio,
   readFiniteAudioDuration,
+  rememberPluginAudioVolume,
 } from './pluginFileAudioPreview';
 
 describe('pluginFileAudioPreview', () => {
@@ -24,5 +26,14 @@ describe('pluginFileAudioPreview', () => {
     assert.equal(readFiniteAudioDuration(12.5), 12.5);
     assert.equal(Number.isNaN(readFiniteAudioDuration(Number.POSITIVE_INFINITY)), true);
     assert.equal(Number.isNaN(readFiniteAudioDuration(0)), true);
+  });
+
+  test('remembers preview volume outside component setup so remounts keep it', () => {
+    rememberPluginAudioVolume(100, false);
+    rememberPluginAudioVolume(35, false);
+    assert.deepEqual(getRememberedPluginAudioVolume(), { volumePercent: 35, muted: false });
+    rememberPluginAudioVolume(0, false);
+    assert.deepEqual(getRememberedPluginAudioVolume(), { volumePercent: 0, muted: true });
+    rememberPluginAudioVolume(100, false);
   });
 });

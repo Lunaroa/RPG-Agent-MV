@@ -457,6 +457,27 @@ export function eventCharacterFrame(bitmap: HTMLImageElement, image: MvEventImag
   };
 }
 
+/** Full 3×4 walking block for one characterIndex (or whole sheet when `$` big). */
+export function eventCharacterBlock(
+  bitmap: HTMLImageElement,
+  image: Pick<MvEventImage, 'characterName' | 'characterIndex'>,
+): { sx: number; sy: number; sw: number; sh: number } | null {
+  const name = image.characterName || '';
+  const big = isBigCharacterName(name);
+  const pw = bitmap.naturalWidth / (big ? 3 : 12);
+  const ph = bitmap.naturalHeight / (big ? 4 : 8);
+  if (!Number.isFinite(pw) || !Number.isFinite(ph) || pw <= 0 || ph <= 0) return null;
+  const index = clampInt(image.characterIndex, 0, 7);
+  const blockX = big ? 0 : (index % 4) * 3;
+  const blockY = big ? 0 : Math.floor(index / 4) * 4;
+  return {
+    sx: Math.floor(blockX * pw),
+    sy: Math.floor(blockY * ph),
+    sw: Math.floor(pw * 3),
+    sh: Math.floor(ph * 4),
+  };
+}
+
 export function isBigCharacterName(name: string): boolean {
   return characterNameMarkers(name).big;
 }

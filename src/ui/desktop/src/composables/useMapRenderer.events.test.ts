@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { characterNameMarkers, drawMapContent, eventCharacterFrame, type MvMap } from './useMapRenderer.ts';
+import { characterNameMarkers, drawMapContent, eventCharacterBlock, eventCharacterFrame, type MvMap } from './useMapRenderer.ts';
 
 interface RecordedCall {
   kind: 'drawImage' | 'fillRect' | 'stroke' | 'strokeRect';
@@ -37,6 +37,16 @@ describe('map event-layer rendering', () => {
     assert.deepEqual(normal && [normal.sw, normal.sh], [12, 24]);
     assert.deepEqual(big && [big.sw, big.sh], [48, 48]);
     assert.deepEqual(objectBig && [objectBig.sw, objectBig.sh], [48, 48]);
+  });
+
+  test('crops the full 3x4 walking block for one character index', () => {
+    const bitmap = { naturalWidth: 144, naturalHeight: 192 } as HTMLImageElement;
+    const block0 = eventCharacterBlock(bitmap, { characterName: 'Actor1', characterIndex: 0 });
+    const block5 = eventCharacterBlock(bitmap, { characterName: 'Actor1', characterIndex: 5 });
+    const big = eventCharacterBlock(bitmap, { characterName: '$Actor1', characterIndex: 3 });
+    assert.deepEqual(block0, { sx: 0, sy: 0, sw: 36, sh: 96 });
+    assert.deepEqual(block5, { sx: 36, sy: 96, sw: 36, sh: 96 });
+    assert.deepEqual(big, { sx: 0, sy: 0, sw: 144, sh: 192 });
   });
 
   test('raises people six pixels but keeps object characters on the tile baseline', () => {

@@ -295,7 +295,10 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('plugins:updateParameters', pluginIndex, parameters, project),
     installFile: (sourceFile: string, options?: unknown, project?: string) =>
       ipcRenderer.invoke('plugins:installFile', sourceFile, options, project),
+    installDirectory: (sourceDirectory: string, options?: unknown, project?: string) =>
+      ipcRenderer.invoke('plugins:installDirectory', sourceDirectory, options, project),
     selectInstallFile: () => ipcRenderer.invoke('plugins:selectInstallFile'),
+    selectInstallDirectory: () => ipcRenderer.invoke('plugins:selectInstallDirectory'),
     deleteFile: (pluginName: string, options?: unknown, project?: string) =>
       ipcRenderer.invoke('plugins:deleteFile', pluginName, options, project),
   },

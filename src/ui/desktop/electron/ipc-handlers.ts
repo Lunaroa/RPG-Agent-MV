@@ -1191,6 +1191,14 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       });
       return result.canceled ? null : result.filePaths[0] || null;
     },
+    selectPluginDirectory: async (event: Electron.IpcMainInvokeEvent) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+      const result = await dialog.showOpenDialog(parent, {
+        title: electronText(currentProductLanguage(), 'plugins.selectDirectoryTitle'),
+        properties: ['openDirectory'],
+      });
+      return result.canceled ? null : result.filePaths[0] || null;
+    },
     selectAssetFile: async (event: Electron.IpcMainInvokeEvent, category: string, extensions: string[]) => {
       const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
       const result = await dialog.showOpenDialog(parent, {

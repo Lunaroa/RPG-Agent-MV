@@ -18,6 +18,7 @@ export interface IpcRegistrar {
 export interface ProjectIpcOptions {
   selectProjectDirectory?: (event: unknown) => Promise<string | null>;
   selectPluginFile?: (event: unknown) => Promise<string | null>;
+  selectPluginDirectory?: (event: unknown) => Promise<string | null>;
   selectAssetFile?: (event: unknown, category: string, extensions: string[]) => Promise<string | null>;
   selectMapOverviewExportTarget?: (event: unknown, defaultName: string) => Promise<string | null>;
   openProjectDirectory?: (projectPath: string) => Promise<void>;
@@ -121,7 +122,9 @@ export const MAP_IPC_CHANNELS = [
   'plugins:reorder',
   'plugins:updateParameters',
   'plugins:installFile',
+  'plugins:installDirectory',
   'plugins:selectInstallFile',
+  'plugins:selectInstallDirectory',
   'plugins:deleteFile',
   'assetLibrary:catalog',
   'assetLibrary:detail',
@@ -469,9 +472,17 @@ export function registerMapIpcHandlers(
     desktop.pluginManagement.updatePluginParameters(workflowRoot, project(value), pluginIndex, parameters || {}));
   handle('plugins:installFile', (_event, sourceFile: string, options?: Record<string, unknown>, value?: string) =>
     desktop.pluginManagement.installPluginFile(workflowRoot, project(value), sourceFile, options || {}));
+  handle('plugins:installDirectory', (_event, sourceDirectory: string, options?: Record<string, unknown>, value?: string) =>
+    desktop.pluginManagement.installPluginDirectory(workflowRoot, project(value), sourceDirectory, options || {}));
   handle('plugins:selectInstallFile', async (event) => {
     if (!options.selectPluginFile) throw new Error(electronText(options.productLanguage?.(), 'plugins.selectFileUnsupported'));
     return options.selectPluginFile(event);
+  });
+  handle('plugins:selectInstallDirectory', async (event) => {
+    if (!options.selectPluginDirectory) {
+      throw new Error(electronText(options.productLanguage?.(), 'plugins.selectDirectoryUnsupported'));
+    }
+    return options.selectPluginDirectory(event);
   });
   handle('plugins:deleteFile', (_event, pluginName: string, options?: Record<string, unknown>, value?: string) =>
     desktop.pluginManagement.deletePluginFile(workflowRoot, project(value), pluginName, options || {}));

@@ -291,7 +291,9 @@ declare global {
         reorder(pluginIndexes: number[], project?: string): Promise<unknown>;
         updateParameters(pluginIndex: number, parameters: Record<string, unknown>, project?: string): Promise<unknown>;
         installFile(sourceFile: string, options?: unknown, project?: string): Promise<unknown>;
+        installDirectory(sourceDirectory: string, options?: unknown, project?: string): Promise<unknown>;
         selectInstallFile(): Promise<string | null>;
+        selectInstallDirectory(): Promise<string | null>;
         deleteFile(pluginName: string, options?: unknown, project?: string): Promise<unknown>;
       };
       assetLibrary: {
@@ -1431,6 +1433,9 @@ export const plugins = {
   selectInstallFile() {
     return desktopApi().plugins.selectInstallFile() as Promise<string | null>;
   },
+  selectInstallDirectory() {
+    return desktopApi().plugins.selectInstallDirectory() as Promise<string | null>;
+  },
   read(project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.read(project) as Promise<PluginConfigurationResult>;
   },
@@ -1464,6 +1469,13 @@ export const plugins = {
       relativePath: string;
       staging: unknown;
       configuration?: PluginConfigurationResult;
+    }>;
+  },
+  installDirectory(sourceDirectory: string, options: Record<string, unknown> = {}, project: string = DEFAULT_PROJECT) {
+    return desktopApi().plugins.installDirectory(sourceDirectory, toPlain(options), project) as Promise<{
+      installed: Array<{ name: string; relativePath: string }>;
+      staging: unknown;
+      configuration: PluginConfigurationResult;
     }>;
   },
   deleteFile(pluginName: string, options: Record<string, unknown> = {}, project: string = DEFAULT_PROJECT) {

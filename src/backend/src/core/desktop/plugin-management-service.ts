@@ -230,6 +230,83 @@ export function installPluginFile(
   };
 }
 
+/** List .js files under a directory with install names relative to that directory. */
+export function collectPluginInstallEntriesFromDirectory(
+  sourceDirectory: string,
+): Array<{ sourceFile: string; name: string }> {
+  const root = path.resolve(sourceDirectory);
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+    throw new Error('Plugin source directory does not exist');
+  }
+  const files = listFilesRecursively(root)
+    .filter((relative) => relative.toLowerCase().endsWith('.js'))
+    .sort();
+  if (!files.length) throw new Error('Plugin source directory contains no .js files');
+  return files.map((relative) => ({
+    sourceFile: path.join(root, ...relative.split('/')),
+    name: normalizePluginFileStem(relative),
+  }));
+}
+
+export function installPluginDirectory(
+  workflowRoot: string,
+  project: string,
+  sourceDirectory: string,
+  options: { overwrite?: boolean } = {},
+): {
+  installed: Array<{ name: string; relativePath: string }>;
+  staging: unknown;
+  configuration: PluginConfigurationResult;
+} {
+  if (options.overwrite !== undefined && typeof options.overwrite !== 'boolean') {
+    throw new Error('Plugin overwrite must be a boolean');
+  }
+  const sources = collectPluginInstallEntriesFromDirectory(sourceDirectory);
+  const parsed = requireReadablePlugins(workflowRoot, project);
+  const nextEntries = clonePluginConfigEntries(parsed.entries);
+  const mutations: StagedProjectFileMutation[] = [];
+  const installed: Array<{ name: string; relativePath: string }> = [];
+
+  for (const source of sources) {
+    const relativePath = `${pluginDirRelativePath(project)}/${source.name}.js`;
+    const targetExists = Boolean(getProjectFileForRead(workflowRoot, project, relativePath));
+    if (targetExists && !options.overwrite) {
+      throw new Error(`Plugin file already exists: ${source.name}.js`);
+    }
+    if (!fs.existsSync(source.sourceFile) || !fs.statSync(source.sourceFile).isFile()) {
+      throw new Error(`Plugin source file does not exist: ${source.sourceFile}`);
+    }
+    mutations.push({
+      relativePath,
+      content: fs.readFileSync(source.sourceFile),
+    });
+    const configured = nextEntries.filter((entry) => entry.name === source.name);
+    if (configured.length > 1) {
+      throw new Error(`Duplicate plugin configuration cannot be modified safely: ${source.name}`);
+    }
+    if (configured.length === 0) {
+      nextEntries.push({
+        name: source.name,
+        status: false,
+        description: '',
+        parameters: {},
+      });
+    }
+    installed.push({ name: source.name, relativePath });
+  }
+
+  mutations.push({
+    relativePath: parsed.relativePath,
+    content: Buffer.from(serializePlugins(nextEntries), 'utf8'),
+  });
+  stageProjectFilesAtomically(workflowRoot, project, mutations);
+  return {
+    installed,
+    staging: getProjectStagingStatus(workflowRoot, project),
+    configuration: readPluginConfiguration(workflowRoot, project),
+  };
+}
+
 export function deletePluginFile(
   workflowRoot: string,
   project: string,

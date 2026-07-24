@@ -117,8 +117,11 @@ const playbackSrc = ref('');
 const playing = ref(false);
 const currentTime = ref(0);
 const duration = ref(Number.NaN);
-const volumePercent = ref(100);
-const muted = ref(false);
+/** Survives remounts when the file picker swaps :key on preview src. */
+let rememberedVolumePercent = 100;
+let rememberedMuted = false;
+const volumePercent = ref(rememberedVolumePercent);
+const muted = ref(rememberedMuted);
 const volumeOpen = ref(false);
 const seeking = ref(false);
 const loadFailed = ref(false);
@@ -170,6 +173,7 @@ async function bindSource(src: string): Promise<void> {
     }
     pendingAutoplay = props.autoplay;
     await nextTick();
+    applyRememberedVolume();
     await tryAutoplay(token);
   } catch {
     if (token !== bindToken) return;
@@ -178,10 +182,20 @@ async function bindSource(src: string): Promise<void> {
   }
 }
 
+function applyRememberedVolume(): void {
+  const el = audioEl.value;
+  if (!el) return;
+  el.volume = rememberedMuted ? 0 : rememberedVolumePercent / 100;
+  el.muted = rememberedMuted || rememberedVolumePercent <= 0;
+  volumePercent.value = rememberedVolumePercent;
+  muted.value = rememberedMuted || rememberedVolumePercent <= 0;
+}
+
 async function tryAutoplay(token: number): Promise<void> {
   if (!pendingAutoplay || token !== bindToken) return;
   const el = audioEl.value;
   if (!el || !playbackSrc.value || loadFailed.value) return;
+  applyRememberedVolume();
   try {
     await el.play();
     if (token === bindToken) pendingAutoplay = false;
@@ -195,6 +209,7 @@ async function tryAutoplay(token: number): Promise<void> {
 }
 
 function onCanPlay(): void {
+  applyRememberedVolume();
   syncFromElement();
   void tryAutoplay(bindToken);
 }
@@ -209,8 +224,6 @@ function syncFromElement(): void {
   if (Number.isFinite(nextDuration)) {
     duration.value = nextDuration;
   }
-  volumePercent.value = Math.round((el.muted ? 0 : el.volume) * 100);
-  muted.value = el.muted || el.volume <= 0;
 }
 
 function onAudioError(): void {
@@ -261,6 +274,8 @@ function onVolumeInput(value: number | number[]): void {
   el.muted = clamped <= 0;
   volumePercent.value = clamped;
   muted.value = el.muted;
+  rememberedVolumePercent = clamped;
+  rememberedMuted = el.muted;
 }
 
 onUnmounted(() => {

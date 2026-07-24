@@ -16,6 +16,7 @@ import {
 import {
   addPluginConfigurationEntry,
   deletePluginFile,
+  installPluginDirectory,
   installPluginFile,
   readManagedPluginEntry,
   readPluginConfiguration,
@@ -456,6 +457,47 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.equal(applied.applied, true);
     assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), false);
     assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+  });
+
+  test('installs nested MZ plugin names under js/plugins subfolders', () => {
+    const external = path.join(fixture.root, 'external', 'SamplePlugin.js');
+    fs.mkdirSync(path.dirname(external), { recursive: true });
+    fs.writeFileSync(external, '/* nested sample */', 'utf8');
+
+    const installed = installPluginFile(fixture.root, fixture.project, external, {
+      name: 'tools/SamplePlugin',
+    });
+
+    assert.equal(installed.name, 'tools/SamplePlugin');
+    assert.equal(installed.relativePath, 'www/js/plugins/tools/SamplePlugin.js');
+    assert.ok(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/tools/SamplePlugin.js'));
+    assert.equal(
+      installed.configuration?.plugins.some((plugin) => plugin.name === 'tools/SamplePlugin'),
+      true,
+    );
+    assert.equal(
+      installed.configuration?.pluginFiles.some((file) => file.name === 'tools/SamplePlugin' && file.exists),
+      true,
+    );
+  });
+
+  test('installs a plugin directory tree with names relative to the selected folder', () => {
+    const pack = path.join(fixture.root, 'external', 'plugins');
+    fs.mkdirSync(path.join(pack, 'tools'), { recursive: true });
+    fs.writeFileSync(path.join(pack, 'RootPlugin.js'), '/* root */', 'utf8');
+    fs.writeFileSync(path.join(pack, 'tools', 'NestedPlugin.js'), '/* nested */', 'utf8');
+
+    const installed = installPluginDirectory(fixture.root, fixture.project, pack);
+    assert.deepEqual(
+      installed.installed.map((entry) => entry.name).sort(),
+      ['RootPlugin', 'tools/NestedPlugin'],
+    );
+    assert.ok(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/RootPlugin.js'));
+    assert.ok(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/tools/NestedPlugin.js'));
+    assert.equal(
+      installed.configuration.plugins.some((plugin) => plugin.name === 'tools/NestedPlugin'),
+      true,
+    );
   });
 
   test('installs and deletes plugin files through staging', () => {

@@ -284,6 +284,7 @@ contextBridge.exposeInMainWorld('api', {
 
   plugins: {
     read: (project?: string) => ipcRenderer.invoke('plugins:read', project),
+    readEntry: (pluginIndex: number, project?: string) => ipcRenderer.invoke('plugins:readEntry', pluginIndex, project),
     validate: (project?: string) => ipcRenderer.invoke('plugins:validate', project),
     writeConfiguration: (entries: unknown[], project?: string) => ipcRenderer.invoke('plugins:writeConfiguration', entries, project),
     addConfiguration: (pluginName: string, project?: string) => ipcRenderer.invoke('plugins:addConfiguration', pluginName, project),

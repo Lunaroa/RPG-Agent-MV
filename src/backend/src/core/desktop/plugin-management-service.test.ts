@@ -17,6 +17,7 @@ import {
   addPluginConfigurationEntry,
   deletePluginFile,
   installPluginFile,
+  readManagedPluginEntry,
   readPluginConfiguration,
   removePluginConfigurationEntry,
   reorderPlugins,
@@ -57,6 +58,33 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.equal(config.plugins[0].fileExists, true);
     assert.deepEqual(config.pluginFiles.map((file) => file.fileName), ['CoreFix.js', 'OldPlugin.js', 'QuestLog.js']);
     assert.equal(config.validation.ok, true);
+  });
+
+  test('reads a single configured entry so parameter schema can refresh without a full list parse', () => {
+    const before = readManagedPluginEntry(fixture.root, fixture.project, 0);
+    assert.equal(before.name, 'CoreFix');
+    assert.ok(before.parameterSchema?.fields.some((field) => field.key === 'speed'));
+
+    fs.writeFileSync(path.join(fixture.project, 'www', 'js', 'plugins', 'CoreFix.js'), `/*:
+ * @plugindesc Core fixes refreshed.
+ * @param speed
+ * @type number
+ * @default 1
+ *
+ * @param burst
+ * @type number
+ * @default 2
+ */
+`, 'utf8');
+
+    const after = readManagedPluginEntry(fixture.root, fixture.project, 0);
+    assert.equal(after.name, 'CoreFix');
+    assert.equal(after.header.plugindesc, 'Core fixes refreshed.');
+    assert.deepEqual(after.parameterSchema?.fields.map((field) => field.key), ['speed', 'burst']);
+    assert.throws(
+      () => readManagedPluginEntry(fixture.root, fixture.project, 99),
+      /Plugin configuration index out of range: 99/,
+    );
   });
 
   test('reads display metadata only from the default plugin header', () => {

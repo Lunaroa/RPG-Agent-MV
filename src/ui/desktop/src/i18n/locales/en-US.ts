@@ -1788,7 +1788,8 @@ const enUS = {
     'pluginFilePicker.resetZoom': 'Reset preview zoom',
     'pluginFilePicker.missingDirectory': 'This file parameter is missing @dir, so the picker cannot open. Ask the plugin author to add @dir.',
     'pluginFilePicker.missingCatalog': 'Project assets are not loaded yet, so the file picker cannot open.',
-    'pluginFilePicker.unsupportedDirectory': 'Unsupported asset directory "{{directory}}". The file picker can only select files from standard in-project asset directories.',
+    'pluginFilePicker.directoryNotFound': 'The project-relative directory "{{directory}}" does not exist. Create it in the project or fix the plugin @dir.',
+    'pluginFilePicker.invalidDirectory': 'The project-relative directory "{{directory}}" is invalid. @dir must stay inside the project.',
 
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': 'This command does not need additional parameters.',

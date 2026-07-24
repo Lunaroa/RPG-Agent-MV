@@ -14,6 +14,11 @@ import { CHAT_HISTORY_DEFAULT_WIDTH } from './chatHistoryWidth'
 import { readEditorZoom } from '../composables/useEditorWorkspaceState'
 import { isMapOverviewLayoutId } from './mapOverviewLayouts'
 import { normalizeMapOverviewLayoutParametersState } from './mapOverviewLayoutParameters'
+import {
+  DEFAULT_PLUGIN_PARAMETER_MAIN_COLUMNS,
+  normalizePluginParameterCollectionColumns,
+  normalizePluginParameterMainColumns,
+} from './pluginParameterTableColumns'
 import { clampMapOverviewZoom } from './mapOverviewViewport'
 import { workspaceNoProjectsAvailable } from './workspaceSettingsLocalization'
 
@@ -71,6 +76,8 @@ export const DEFAULT_WORKSPACE_LAYOUT: Required<WorkspaceLayoutState> = {
   leftDockPaletteHeight: DEFAULT_LEFT_DOCK_PALETTE_HEIGHT,
   agentPanelWidth: AGENT_PANEL_DEFAULT_WIDTH,
   chatHistoryWidth: CHAT_HISTORY_DEFAULT_WIDTH,
+  pluginParameterMainColumns: DEFAULT_PLUGIN_PARAMETER_MAIN_COLUMNS,
+  pluginParameterCollectionColumns: {},
 }
 
 function finiteNumber(value: unknown): number | undefined {
@@ -145,6 +152,12 @@ export function normalizeWorkspaceLayout(
       : clampPaletteHeight(paletteHeight),
     agentPanelWidth: agentWidth == null ? DEFAULT_WORKSPACE_LAYOUT.agentPanelWidth : agentWidth,
     chatHistoryWidth: historyWidth == null ? DEFAULT_WORKSPACE_LAYOUT.chatHistoryWidth : historyWidth,
+    pluginParameterMainColumns: normalizePluginParameterMainColumns(
+      source.pluginParameterMainColumns ?? DEFAULT_WORKSPACE_LAYOUT.pluginParameterMainColumns,
+    ),
+    pluginParameterCollectionColumns: normalizePluginParameterCollectionColumns(
+      source.pluginParameterCollectionColumns,
+    ),
   }
 }
 
@@ -362,6 +375,16 @@ export function normalizeWorkspacePatch(raw: unknown): WorkspaceSettings {
     if (paletteHeight != null) layout.leftDockPaletteHeight = clampPaletteHeight(paletteHeight)
     if (agentWidth != null) layout.agentPanelWidth = agentWidth
     if (historyWidth != null) layout.chatHistoryWidth = historyWidth
+    if (source.layout.pluginParameterMainColumns && typeof source.layout.pluginParameterMainColumns === 'object') {
+      layout.pluginParameterMainColumns = normalizePluginParameterMainColumns(
+        source.layout.pluginParameterMainColumns,
+      )
+    }
+    if (source.layout.pluginParameterCollectionColumns && typeof source.layout.pluginParameterCollectionColumns === 'object') {
+      layout.pluginParameterCollectionColumns = normalizePluginParameterCollectionColumns(
+        source.layout.pluginParameterCollectionColumns,
+      )
+    }
     if (Object.keys(layout).length) patch.layout = layout
   }
 
@@ -471,7 +494,21 @@ export function mergeWorkspaceSettings(
     }
   }
   if (next.window) merged.window = { ...base.window, ...next.window }
-  if (next.layout) merged.layout = { ...base.layout, ...next.layout }
+  if (next.layout) {
+    merged.layout = { ...base.layout, ...next.layout }
+    if (next.layout.pluginParameterMainColumns) {
+      merged.layout.pluginParameterMainColumns = normalizePluginParameterMainColumns({
+        ...base.layout?.pluginParameterMainColumns,
+        ...next.layout.pluginParameterMainColumns,
+      })
+    }
+    if (next.layout.pluginParameterCollectionColumns) {
+      merged.layout.pluginParameterCollectionColumns = normalizePluginParameterCollectionColumns({
+        ...base.layout?.pluginParameterCollectionColumns,
+        ...next.layout.pluginParameterCollectionColumns,
+      })
+    }
+  }
   if (next.composer) {
     merged.composer = {
       ...base.composer,

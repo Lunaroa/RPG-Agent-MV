@@ -54,7 +54,19 @@ describe('plugin manager structure', () => {
   test('keeps selection, parameter editing, and ordering as distinct interactions', () => {
     assert.match(paneSource, /@click="selectPlugin\(plugin\)"/);
     assert.match(paneSource, /@dblclick="openParameterDialog\(plugin\)"/);
+    assert.match(
+      paneSource,
+      /v-if="selectedPlugin && hasConfigurableParameters\(selectedPlugin\)"/,
+    );
     assert.match(paneSource, /@click="openParameterDialog\(selectedPlugin\)"/);
+    assert.match(
+      paneSource,
+      /function hasConfigurableParameters[\s\S]+parameterSchema\?\.fields\.length/,
+    );
+    assert.match(
+      paneSource,
+      /!hasConfigurableParameters\(plugin\)/,
+    );
     assert.match(paneSource, /@dblclick\.stop/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowUp'/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowDown'/);
@@ -125,34 +137,37 @@ describe('plugin manager structure', () => {
     assert.match(dialogSource, /parameterTypeColumn/);
     assert.match(dialogSource, /parameterValueColumn/);
     assert.match(dialogSource, /parameterTypeLabel\(row\)/);
-    assert.doesNotMatch(dialogSource, /isSpecialPluginParameterType|parameter-type-tag/);
+    assert.match(dialogSource, /class="parameter-type-tag"/);
+    assert.doesNotMatch(dialogSource, /isSpecialPluginParameterType/);
     assert.match(dialogSource, /isTaggedPluginParameterValue\(row\.field\)/);
     assert.match(dialogSource, /class="parameter-value-tag"/);
-    assert.match(dialogSource, /width: 1%/);
+    assert.match(dialogSource, /<el-table/);
+    assert.match(dialogSource, /@header-dragend="onMainHeaderDragEnd"/);
+    assert.match(dialogSource, /pluginParameterMainColumns/);
+    assert.match(dialogSource, /normalizePluginParameterMainColumns/);
+    assert.match(dialogSource, /mainColumnWidths/);
+    assert.match(dialogSource, /column-key="name"/);
+    assert.match(dialogSource, /column-key="type"/);
+    assert.match(dialogSource, /resizable/);
     assert.match(dialogSource, /<el-switch[\s\S]+disabled[\s\S]+class="parameter-boolean-switch"/);
     assert.match(dialogSource, /isBooleanParameterEnabled/);
     assert.match(dialogSource, /buildPluginParameterTree/);
     assert.match(dialogSource, /flattenPluginParameterTree/);
-    assert.match(dialogSource, /role="treegrid"/);
-    assert.match(dialogSource, /:aria-level="row\.depth \+ 1"/);
-    assert.match(dialogSource, /:aria-expanded="row\.hasChildren \? row\.expanded : undefined"/);
     assert.match(dialogSource, /parameterTreeSearchPlaceholder/);
     assert.match(dialogSource, /class="parameter-search"/);
     assert.doesNotMatch(dialogSource, /parameter-section-header/);
     assert.match(dialogSource, /width="min\(1160px, calc\(100vw - 48px\)\)"/);
-    assert.match(dialogSource, /height: 32px/);
-    assert.match(dialogSource, /\.parameter-table-wrap \{[\s\S]+overflow-x: hidden[\s\S]+overflow-y: auto/);
+    assert.match(dialogSource, /\.parameter-table-wrap \{[\s\S]+overflow: hidden/);
     assert.match(dialogSource, /event\.key === 'ArrowRight'/);
     assert.match(dialogSource, /event\.key === 'ArrowLeft'/);
-    assert.match(dialogSource, /@dblclick="openParameterEditor\(row\.key\)"/);
-    assert.match(dialogSource, /function parameterRowKeydown[\s\S]+event\.target !== event\.currentTarget/);
+    assert.match(dialogSource, /@row-dblclick="\(row: VisiblePluginParameterTreeRow\) => openParameterEditor\(row\.key\)"/);
+    assert.match(dialogSource, /function onParameterTableKeydown/);
     assert.doesNotMatch(dialogSource, /parameter-row-edit/);
     assert.match(dialogSource, /<el-tag[\s\S]+class="parameter-key-tag"[\s\S]+\{\{ row\.key \}\}/);
     assert.match(
       dialogSource,
       /\.parameter-key-tag \{[\s\S]+animation: none[\s\S]+transition: none/,
     );
-    assert.match(dialogSource, /td:last-child \{[\s\S]+background: color-mix\([\s\S]+color: var\(--console-text/);
     assert.match(dialogSource, /<div v-if="selectedRow" class="parameter-detail" aria-live="polite">[\s\S]+selectedRow\.description/);
     assert.match(dialogSource, /selectedRow\.readonlyReason/);
     assert.doesNotMatch(dialogSource, /selectedRow\.fullValue/);
@@ -192,7 +207,18 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /buildPluginParameterCollectionColumns/);
     assert.match(collectionEditorSource, /buildPluginParameterTree/);
     assert.match(collectionEditorSource, /flattenPluginParameterTree/);
-    assert.match(collectionEditorSource, /class="struct-table" role="treegrid"/);
+    assert.match(collectionEditorSource, /<el-table/);
+    assert.match(collectionEditorSource, /@header-dragend="onMainHeaderDragEnd"/);
+    assert.match(collectionEditorSource, /@header-dragend="onCollectionHeaderDragEnd"/);
+    assert.match(collectionEditorSource, /pluginParameterMainColumns/);
+    assert.match(collectionEditorSource, /pluginParameterCollectionColumns/);
+    assert.match(collectionEditorSource, /normalizePluginParameterMainColumns/);
+    assert.match(collectionEditorSource, /normalizePluginParameterCollectionColumns/);
+    assert.match(collectionEditorSource, /mainColumnWidths/);
+    assert.match(collectionEditorSource, /column-key="name"/);
+    assert.match(collectionEditorSource, /column-key="type"/);
+    assert.match(collectionEditorSource, /class="parameter-type-tag"/);
+    assert.match(collectionEditorSource, /resizable/);
     assert.match(collectionEditorSource, /parameterTypeColumn/);
     assert.match(collectionEditorSource, /class="array-toolbar"/);
     assert.match(collectionEditorSource, /plugins\.parameterSelectedCount/);
@@ -201,7 +227,7 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /toggleVisibleSelection/);
     assert.match(collectionEditorSource, /ElMessageBox\.confirm/);
     assert.match(collectionEditorSource, /clipboard\.writeText/);
-    assert.match(collectionEditorSource, /@dblclick="editArrayItem\(row\.index\)"/);
+    assert.match(collectionEditorSource, /@row-dblclick="\(row\) => editArrayItem\(row\.index\)"/);
     assert.match(collectionEditorSource, /event\.key === 'Enter'/);
     assert.match(collectionEditorSource, /event\.altKey && \(event\.key === 'ArrowUp'/);
     assert.match(collectionEditorSource, /class="drag-handle"/);
@@ -212,23 +238,27 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /<el-switch[\s\S]+disabled[\s\S]+class="parameter-boolean-switch"/);
     assert.match(collectionEditorSource, /isTaggedPluginParameterValue/);
     assert.match(collectionEditorSource, /class="parameter-value-tag"/);
-    assert.doesNotMatch(collectionEditorSource, /isSpecialPluginParameterType|parameter-type-tag/);
+    assert.doesNotMatch(collectionEditorSource, /isSpecialPluginParameterType/);
     assert.doesNotMatch(collectionEditorSource, /updateArrayBoolean|updateStructRowBoolean/);
-    assert.match(collectionEditorSource, /height: 32px/);
     assert.match(parameterModelSource, /unwrapNotePluginParameterValue|wrapNotePluginParameterValue/);
     assert.match(parameterModelSource, /isNotePluginParameterField/);
     assert.match(parameterModelSource, /isTaggedPluginParameterValue/);
     assert.match(valueDialogSource, /is-compound/);
     assert.match(valueDialogSource, /min-height: 88px/);
-    assert.match(parameterInputSource, /SystemNamedEntrySelectorDialog/);
+    assert.match(valueDialogSource, /parameter-description[\s\S]+parameter-mode-tabs/);
+    assert.match(systemNamedEntrySelectorSource, /z-index: v-bind\(subDialogZ\)/);
+    assert.match(systemNamedEntrySelectorSource, /LAYER_Z\.subDialog/);
+    assert.match(parameterInputSource, /listRelativeDirectory/);
+    assert.match(parameterInputSource, /directoryNotFound|pluginFilePicker\.directoryNotFound/);
+    assert.doesNotMatch(parameterInputSource, /unsupportedDirectory/);
     assert.match(parameterInputSource, /systemNamedEntryKind/);
     assert.match(systemNamedEntrySelectorSource, /systemNamedEntry\.changeMaximum/);
     assert.match(systemNamedEntrySelectorSource, /projectManagement\.updateEntry/);
     assert.match(systemNamedEntrySelectorSource, /projectManagement\.resizeDatabase/);
     assert.doesNotMatch(collectionEditorSource, /class="parameter-row-edit"/);
     assert.doesNotMatch(collectionEditorSource, /actions-column|collection-actions/);
-    assert.match(collectionEditorSource, /overflow-x: auto/);
-    assert.match(collectionEditorSource, /table-layout: auto/);
+    assert.match(collectionEditorSource, /overflow: hidden/);
+    assert.match(collectionEditorSource, /class="parameter-el-table/);
     assert.match(collectionModelSource, /parsePluginParameterRawStrict/);
     assert.match(collectionModelSource, /PLUGIN_PARAMETER_CLIPBOARD_LIMIT = 32 \* 1024/);
     assert.match(collectionModelSource, /removePluginParameterArrayItems/);
@@ -244,6 +274,8 @@ describe('plugin manager structure', () => {
     assert.match(parameterTreeModelSource, /findParentCycles/);
     assert.match(parameterTreeModelSource, /includeAncestors/);
     assert.match(parameterTreeModelSource, /includeDescendants/);
+    assert.match(parameterInputSource, /ActorWalkingFrameThumb/);
+    assert.match(parameterInputSource, /isActorDatabase/);
     assert.match(parameterInputSource, /<el-switch/);
     assert.match(parameterInputSource, /allow-create/);
     assert.match(parameterInputSource, /field\.kind === 'file'/);

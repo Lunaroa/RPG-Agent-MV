@@ -1788,7 +1788,8 @@ const zhCN = {
     'pluginFilePicker.resetZoom': '重置预览缩放',
     'pluginFilePicker.missingDirectory': '该文件参数缺少 @dir，无法打开选择器。请让插件作者补上 @dir。',
     'pluginFilePicker.missingCatalog': '工程素材目录尚未加载，无法打开文件选择器。',
-    'pluginFilePicker.unsupportedDirectory': '不支持的素材目录「{{directory}}」。文件选择器只能选择工程内标准素材目录中的文件。',
+    'pluginFilePicker.directoryNotFound': '工程内相对目录「{{directory}}」不存在。请在工程中创建该目录，或修正插件的 @dir。',
+    'pluginFilePicker.invalidDirectory': '工程内相对目录「{{directory}}」无效。@dir 必须落在工程内部。',
 
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': '该指令不需要额外参数。',

@@ -191,6 +191,8 @@ contextBridge.exposeInMainWorld('api', {
 
   projectAssets: {
     editorCatalog: (project?: string) => ipcRenderer.invoke('projectAssets:editorCatalog', project),
+    listRelativeDirectory: (relativeDirectory: string, project?: string) =>
+      ipcRenderer.invoke('projectAssets:listRelativeDirectory', relativeDirectory, project),
     detail: (target: unknown, project?: string) => ipcRenderer.invoke('projectAssets:detail', target, project),
     rename: (target: unknown, nextName: string, project?: string) => ipcRenderer.invoke('projectAssets:rename', target, nextName, project),
     remove: (target: unknown, project?: string) => ipcRenderer.invoke('projectAssets:remove', target, project),

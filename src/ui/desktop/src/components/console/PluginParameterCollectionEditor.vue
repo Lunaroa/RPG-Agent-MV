@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import type { TableInstance } from 'element-plus';
 import { ArrowRight, WarningFilled } from '@element-plus/icons-vue';
 import type {
   EditorProjectCatalog,
@@ -8,6 +9,11 @@ import type {
 } from '../../api/client';
 import { clipboard } from '../../api/client';
 import { useI18n } from '../../i18n';
+import { useWorkspaceStore } from '../../stores/workspace';
+import {
+  normalizePluginParameterCollectionColumns,
+  normalizePluginParameterMainColumns,
+} from '../../utils/pluginParameterTableColumns';
 import {
   buildPluginParameterCollectionColumns,
   buildPluginParameterCollectionRows,
@@ -50,8 +56,10 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const query = ref('');
+const workspaceStore = useWorkspaceStore();
 const collectionTable = ref<HTMLElement | null>(null);
+const structElTable = ref<TableInstance | null>(null);
+const arrayElTable = ref<TableInstance | null>(null);
 const selectedRowIds = ref<string[]>([]);
 const activeRowId = ref('');
 const rowIds = ref<string[]>([]);
@@ -61,6 +69,17 @@ const expandedStructKeys = ref<Set<string>>(new Set());
 const activeStructKey = ref('');
 let rowSerial = 0;
 
+const mainColumnWidths = computed(() =>
+  normalizePluginParameterMainColumns(
+    workspaceStore.settings.layout?.pluginParameterMainColumns,
+  ),
+);
+const valueColumnWidth = computed(() => mainColumnWidths.value.value);
+const collectionColumnWidths = computed(() =>
+  normalizePluginParameterCollectionColumns(
+    workspaceStore.settings.layout?.pluginParameterCollectionColumns,
+  ),
+);
 const summaryLabels = computed<PluginParameterSummaryLabels>(() => ({
   enabled: t('plugins.parameterEnabled'),
   disabled: t('plugins.parameterDisabled'),
@@ -142,6 +161,7 @@ const sortingLocked = computed(() => Boolean(query.value.trim()));
 const arrayItem = computed(() =>
   props.field.kind === 'array' ? props.field.item : undefined,
 );
+const query = ref('');
 
 watch(
   () => entries.value.length,
@@ -178,6 +198,27 @@ watch(
   },
   { immediate: true },
 );
+
+watch(
+  () => activeStructKey.value,
+  (key) => {
+    const row = visibleStructRows.value.find((item) => item.key === key);
+    if (row) structElTable.value?.setCurrentRow(row);
+  },
+);
+
+watch(
+  () => activeRowId.value,
+  (id) => {
+    const row = visibleRows.value.find((item) => item.id === id);
+    if (row) arrayElTable.value?.setCurrentRow(row);
+  },
+);
+
+function collectionColumnWidth(key: string, fallback?: number): number | undefined {
+  const width = collectionColumnWidths.value[key];
+  return width ?? fallback;
+}
 
 function createRowId(): string {
   rowSerial += 1;
@@ -249,7 +290,6 @@ function structRowKeydown(
   row: VisiblePluginParameterTreeRow,
   index: number,
 ): void {
-  if (event.target !== event.currentTarget) return;
   if (event.key === 'Enter') {
     event.preventDefault();
     activeStructKey.value = row.key;
@@ -285,12 +325,64 @@ function structRowKeydown(
   if (next) focusStructRow(next.key);
 }
 
+function onStructTableKeydown(event: KeyboardEvent): void {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (target.closest('button, input, textarea, .el-switch, .el-select')) return;
+  const index = visibleStructRows.value.findIndex(
+    (row) => row.key === activeStructKey.value,
+  );
+  if (index < 0) return;
+  const row = visibleStructRows.value[index];
+  if (!row) return;
+  structRowKeydown(event, row, index);
+}
+
+function structRowClassName({ row }: { row: VisiblePluginParameterTreeRow }): string {
+  return [
+    activeStructKey.value === row.key ? 'is-selected-parameter' : '',
+    row.editable ? '' : 'is-readonly-parameter',
+  ].filter(Boolean).join(' ');
+}
+
+function onMainHeaderDragEnd(
+  newWidth: number,
+  _oldWidth: number,
+  column: { columnKey?: string; property?: string },
+): void {
+  const key = column.columnKey || column.property;
+  if (key !== 'name' && key !== 'type' && key !== 'value') return;
+  workspaceStore.patchLayout({
+    pluginParameterMainColumns: normalizePluginParameterMainColumns({
+      ...mainColumnWidths.value,
+      [key]: newWidth,
+    }),
+  });
+}
+
+function onCollectionHeaderDragEnd(
+  newWidth: number,
+  _oldWidth: number,
+  column: { columnKey?: string; property?: string },
+): void {
+  const key = column.columnKey || column.property;
+  if (!key) return;
+  workspaceStore.patchLayout({
+    pluginParameterCollectionColumns: normalizePluginParameterCollectionColumns({
+      ...collectionColumnWidths.value,
+      [key]: newWidth,
+    }),
+  });
+}
+
 function focusStructRow(key: string): void {
   activeStructKey.value = key;
   void nextTick(() => {
+    const row = visibleStructRows.value.find((item) => item.key === key);
+    if (row) structElTable.value?.setCurrentRow(row);
     collectionTable.value
-      ?.querySelector<HTMLElement>(`[data-struct-parameter-key="${CSS.escape(key)}"]`)
-      ?.focus();
+      ?.querySelector('.struct-el-table .el-table__body tr.current-row')
+      ?.scrollIntoView({ block: 'nearest' });
   });
 }
 
@@ -382,11 +474,23 @@ function startDrag(event: DragEvent, index: number): void {
   }
 }
 
-function dragOver(event: DragEvent, index: number): void {
+function resolveArrayRowIndexFromDragEvent(event: DragEvent): number | null {
+  const rowEl = (event.target as HTMLElement | null)?.closest('tr.el-table__row');
+  if (!rowEl) return null;
+  const rowKey = rowEl.getAttribute('data-row-key');
+  if (!rowKey) return null;
+  const row = visibleRows.value.find((item) => item.id === rowKey);
+  return row?.index ?? null;
+}
+
+function onArrayTableDragOver(event: DragEvent): void {
   if (sortingLocked.value || draggedIndex.value === null) return;
+  const index = resolveArrayRowIndexFromDragEvent(event);
+  if (index === null) return;
   event.preventDefault();
-  const row = event.currentTarget as HTMLElement;
-  dropIndex.value = event.clientY >= row.getBoundingClientRect().top + row.offsetHeight / 2
+  const rowEl = (event.target as HTMLElement).closest('tr.el-table__row');
+  if (!rowEl) return;
+  dropIndex.value = event.clientY >= rowEl.getBoundingClientRect().top + rowEl.offsetHeight / 2
     ? index + 1
     : index;
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
@@ -415,7 +519,6 @@ function moveItem(from: number, to: number): void {
 }
 
 function rowKeydown(event: KeyboardEvent, visibleIndex: number, sourceIndex: number): void {
-  if (event.target !== event.currentTarget) return;
   if (event.key === 'Enter') {
     event.preventDefault();
     editArrayItem(sourceIndex);
@@ -440,10 +543,39 @@ function rowKeydown(event: KeyboardEvent, visibleIndex: number, sourceIndex: num
     Math.min(visibleRows.value.length - 1, visibleIndex + (event.key === 'ArrowUp' ? -1 : 1)),
   )];
   if (!target) return;
-  activeRowId.value = target.id;
-  collectionTable.value
-    ?.querySelector<HTMLElement>(`[data-parameter-row-id="${target.id}"]`)
-    ?.focus();
+  focusArrayRow(target.id);
+}
+
+function onArrayTableKeydown(event: KeyboardEvent): void {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (target.closest('button, input, textarea, .el-switch, .el-select, .el-checkbox')) return;
+  const visibleIndex = visibleRows.value.findIndex((row) => row.id === activeRowId.value);
+  if (visibleIndex < 0) return;
+  const row = visibleRows.value[visibleIndex];
+  if (!row) return;
+  rowKeydown(event, visibleIndex, row.index);
+}
+
+function arrayRowClassName({ row }: { row: { id: string; index: number } }): string {
+  return [
+    activeRowId.value === row.id ? 'is-selected-array-row' : '',
+    dropIndex.value === row.index ? 'drop-before' : '',
+    row.index === entries.value.length - 1 && dropIndex.value === entries.value.length
+      ? 'drop-after'
+      : '',
+  ].filter(Boolean).join(' ');
+}
+
+function focusArrayRow(id: string): void {
+  activeRowId.value = id;
+  void nextTick(() => {
+    const row = visibleRows.value.find((item) => item.id === id);
+    if (row) arrayElTable.value?.setCurrentRow(row);
+    collectionTable.value
+      ?.querySelector('.array-el-table .el-table__body tr.current-row')
+      ?.scrollIntoView({ block: 'nearest' });
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -500,150 +632,175 @@ function displayValue(value: unknown): string {
         {{ t('plugins.parameterClearSearchToReorder') }}
       </p>
 
-      <div ref="collectionTable" class="collection-table-wrap">
-        <table
-          class="array-table"
+      <div
+        ref="collectionTable"
+        class="collection-table-wrap"
+        tabindex="0"
+        @dragover="onArrayTableDragOver"
+        @drop="finishDrop"
+        @keydown="onArrayTableKeydown"
+      >
+        <el-table
+          v-if="visibleRows.length"
+          ref="arrayElTable"
+          :data="visibleRows"
+          border
+          row-key="id"
+          highlight-current-row
+          class="parameter-el-table array-el-table"
+          :row-class-name="arrayRowClassName"
+          @row-click="(row) => activeRowId = row.id"
+          @row-dblclick="(row) => editArrayItem(row.index)"
+          @header-dragend="onCollectionHeaderDragEnd"
         >
-          <thead>
-            <tr>
-              <th class="select-column">
-                <el-checkbox
-                  :model-value="allVisibleSelected"
-                  :indeterminate="someVisibleSelected"
-                  :aria-label="t('plugins.parameterSelectVisible')"
-                  @change="toggleVisibleSelection(Boolean($event))"
-                />
-              </th>
-              <th class="drag-column">
-                <span class="visually-hidden">{{ t('plugins.parameterOrderColumn') }}</span>
-              </th>
-              <template v-if="columns.length">
-                <th v-for="column in columns" :key="column.key" scope="col">
-                  <span>{{ column.label }}</span>
-                  <small>{{ column.key }}</small>
-                </th>
-              </template>
-              <th v-else scope="col">{{ t('plugins.parameterValueColumn') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="(row, visibleIndex) in visibleRows"
-              :key="row.id"
-              :data-parameter-row-id="row.id"
-              :class="{
-                active: activeRowId === row.id,
-                'drop-before': dropIndex === row.index,
-                'drop-after': row.index === entries.length - 1 && dropIndex === entries.length,
-              }"
-              tabindex="0"
-              @click="activeRowId = row.id"
-              @dblclick="editArrayItem(row.index)"
-              @keydown="rowKeydown($event, visibleIndex, row.index)"
-              @dragover="dragOver($event, row.index)"
-              @drop="finishDrop"
+          <el-table-column
+            column-key="select"
+            :width="collectionColumnWidth('select', 42)"
+            resizable
+            class-name="select-column"
+          >
+            <template #header>
+              <el-checkbox
+                :model-value="allVisibleSelected"
+                :indeterminate="someVisibleSelected"
+                :aria-label="t('plugins.parameterSelectVisible')"
+                @change="toggleVisibleSelection(Boolean($event))"
+              />
+            </template>
+            <template #default="{ row }">
+              <el-checkbox
+                :model-value="selectedRowIds.includes(row.id)"
+                :aria-label="t('plugins.parameterSelectItem', { index: row.index + 1 })"
+                @click.stop
+                @dblclick.stop
+                @change="toggleRowSelection(row.id, Boolean($event))"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column
+            column-key="order"
+            :width="collectionColumnWidth('order', 42)"
+            resizable
+            class-name="drag-column"
+          >
+            <template #header>
+              <span class="visually-hidden">{{ t('plugins.parameterOrderColumn') }}</span>
+            </template>
+            <template #default="{ row }">
+              <span
+                class="drag-handle"
+                :class="{ locked: sortingLocked }"
+                :draggable="!sortingLocked"
+                :title="sortingLocked
+                  ? t('plugins.parameterClearSearchToReorder')
+                  : t('plugins.parameterDragToReorder')"
+                :aria-label="t('plugins.parameterDragToReorder')"
+                @dragstart.stop="startDrag($event, row.index)"
+                @dragend="clearDrag"
+                @dblclick.stop
+              >
+                <svg viewBox="0 0 12 18" aria-hidden="true">
+                  <circle cx="3" cy="4" r="1.5" />
+                  <circle cx="9" cy="4" r="1.5" />
+                  <circle cx="3" cy="9" r="1.5" />
+                  <circle cx="9" cy="9" r="1.5" />
+                  <circle cx="3" cy="14" r="1.5" />
+                  <circle cx="9" cy="14" r="1.5" />
+                </svg>
+              </span>
+            </template>
+          </el-table-column>
+          <template v-if="columns.length">
+            <el-table-column
+              v-for="column in columns"
+              :key="column.key"
+              :column-key="column.key"
+              :width="collectionColumnWidth(column.key)"
+              :min-width="collectionColumnWidth(column.key) ? undefined : 120"
+              resizable
+              :class-name="[
+                column.field.kind === 'number' ? 'numeric' : '',
+                column.field.kind === 'struct' || column.field.kind === 'array' ? 'compound' : '',
+              ].filter(Boolean).join(' ')"
             >
-              <td class="select-column" @click.stop @dblclick.stop>
-                <el-checkbox
-                  :model-value="selectedRowIds.includes(row.id)"
-                  :aria-label="t('plugins.parameterSelectItem', { index: row.index + 1 })"
-                  @change="toggleRowSelection(row.id, Boolean($event))"
-                />
-              </td>
-              <td class="drag-column" @dblclick.stop>
-                <span
-                  class="drag-handle"
-                  :class="{ locked: sortingLocked }"
-                  :draggable="!sortingLocked"
-                  :title="sortingLocked
-                    ? t('plugins.parameterClearSearchToReorder')
-                    : t('plugins.parameterDragToReorder')"
-                  :aria-label="t('plugins.parameterDragToReorder')"
-                  @dragstart.stop="startDrag($event, row.index)"
-                  @dragend="clearDrag"
-                >
-                  <svg viewBox="0 0 12 18" aria-hidden="true">
-                    <circle cx="3" cy="4" r="1.5" />
-                    <circle cx="9" cy="4" r="1.5" />
-                    <circle cx="3" cy="9" r="1.5" />
-                    <circle cx="9" cy="9" r="1.5" />
-                    <circle cx="3" cy="14" r="1.5" />
-                    <circle cx="9" cy="14" r="1.5" />
-                  </svg>
-                </span>
-              </td>
-              <template v-if="columns.length">
-                <td
-                  v-for="(column, columnIndex) in columns"
-                  :key="column.key"
-                  :class="{
-                    numeric: column.field.kind === 'number',
-                    compound: column.field.kind === 'struct' || column.field.kind === 'array',
-                  }"
+              <template #header>
+                <span>{{ column.label }}</span>
+                <small>{{ column.key }}</small>
+              </template>
+              <template #default="{ row }">
+                <div
+                  class="parameter-value-cell"
                   :title="cellSummary(row.value, column.field)"
                 >
-                  <div class="parameter-value-cell">
-                    <el-switch
-                      v-if="column.field.kind === 'boolean'"
-                      :model-value="isBooleanParameterEnabled(cellValue(row.value, column.field))"
-                      disabled
-                      class="parameter-boolean-switch"
-                      :aria-label="column.label"
-                      @click.stop
-                      @dblclick.stop
-                    />
-                    <el-tag
-                      v-else-if="
-                        isTaggedPluginParameterValue(column.field)
-                        && cellSummary(row.value, column.field)
-                      "
-                      size="small"
-                      effect="plain"
-                      class="parameter-value-tag"
-                      :title="cellSummary(row.value, column.field)"
-                    >
-                      {{ cellSummary(row.value, column.field) }}
-                    </el-tag>
-                    <span v-else>{{ cellSummary(row.value, column.field) }}</span>
-                  </div>
-                </td>
-              </template>
-              <td
-                v-else
-                :title="arrayItem ? valueSummary(arrayItem, row.value) : ''"
-              >
-                <div class="parameter-value-cell">
                   <el-switch
-                    v-if="arrayItem?.kind === 'boolean'"
-                    :model-value="isBooleanParameterEnabled(row.value)"
+                    v-if="column.field.kind === 'boolean'"
+                    :model-value="isBooleanParameterEnabled(cellValue(row.value, column.field))"
                     disabled
                     class="parameter-boolean-switch"
-                    :aria-label="t('plugins.parameterArrayItem', { index: row.index + 1 })"
+                    :aria-label="column.label"
                     @click.stop
                     @dblclick.stop
                   />
                   <el-tag
                     v-else-if="
-                      arrayItem
-                      && isTaggedPluginParameterValue(arrayItem)
-                      && valueSummary(arrayItem, row.value)
+                      isTaggedPluginParameterValue(column.field)
+                      && cellSummary(row.value, column.field)
                     "
                     size="small"
                     effect="plain"
                     class="parameter-value-tag"
-                    :title="valueSummary(arrayItem, row.value)"
+                    :title="cellSummary(row.value, column.field)"
                   >
-                    {{ valueSummary(arrayItem, row.value) }}
+                    {{ cellSummary(row.value, column.field) }}
                   </el-tag>
-                  <span v-else>
-                    {{ arrayItem ? valueSummary(arrayItem, row.value) : '' }}
-                  </span>
+                  <span v-else>{{ cellSummary(row.value, column.field) }}</span>
                 </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-if="!visibleRows.length" class="collection-empty">
+              </template>
+            </el-table-column>
+          </template>
+          <el-table-column
+            v-else
+            column-key="value"
+            :label="t('plugins.parameterValueColumn')"
+            :width="collectionColumnWidth('value')"
+            :min-width="collectionColumnWidth('value') ? undefined : 160"
+            resizable
+          >
+            <template #default="{ row }">
+              <div
+                class="parameter-value-cell"
+                :title="arrayItem ? valueSummary(arrayItem, row.value) : ''"
+              >
+                <el-switch
+                  v-if="arrayItem?.kind === 'boolean'"
+                  :model-value="isBooleanParameterEnabled(row.value)"
+                  disabled
+                  class="parameter-boolean-switch"
+                  :aria-label="t('plugins.parameterArrayItem', { index: row.index + 1 })"
+                  @click.stop
+                  @dblclick.stop
+                />
+                <el-tag
+                  v-else-if="
+                    arrayItem
+                    && isTaggedPluginParameterValue(arrayItem)
+                    && valueSummary(arrayItem, row.value)
+                  "
+                  size="small"
+                  effect="plain"
+                  class="parameter-value-tag"
+                  :title="valueSummary(arrayItem, row.value)"
+                >
+                  {{ valueSummary(arrayItem, row.value) }}
+                </el-tag>
+                <span v-else>
+                  {{ arrayItem ? valueSummary(arrayItem, row.value) : '' }}
+                </span>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-else class="collection-empty">
           {{ entries.length ? t('plugins.noMatch') : t('plugins.arrayEmpty') }}
         </div>
       </div>
@@ -666,29 +823,32 @@ function displayValue(value: unknown): string {
           :aria-label="t('plugins.parameterTreeSearchPlaceholder')"
         />
       </div>
-      <div ref="collectionTable" class="collection-table-wrap struct-table-wrap">
-      <table class="struct-table" role="treegrid">
-        <thead>
-          <tr>
-            <th scope="col">{{ t('plugins.parameterNameColumn') }}</th>
-            <th scope="col">{{ t('plugins.parameterTypeColumn') }}</th>
-            <th scope="col">{{ t('plugins.parameterValueColumn') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="(row, index) in visibleStructRows"
-            :key="row.key"
-            :data-struct-parameter-key="row.key"
-            :class="{ active: activeStructKey === row.key }"
-            tabindex="0"
-            :aria-level="row.depth + 1"
-            :aria-expanded="row.hasChildren ? row.expanded : undefined"
-            @click="activeStructKey = row.key"
-            @dblclick="editStructRow(row)"
-            @keydown="structRowKeydown($event, row, index)"
+      <div
+        ref="collectionTable"
+        class="collection-table-wrap struct-table-wrap"
+        tabindex="0"
+        @keydown="onStructTableKeydown"
+      >
+        <el-table
+          v-if="visibleStructRows.length"
+          ref="structElTable"
+          :data="visibleStructRows"
+          border
+          row-key="key"
+          highlight-current-row
+          class="parameter-el-table struct-el-table"
+          :row-class-name="structRowClassName"
+          @row-click="(row: VisiblePluginParameterTreeRow) => activeStructKey = row.key"
+          @row-dblclick="(row: VisiblePluginParameterTreeRow) => editStructRow(row)"
+          @header-dragend="onMainHeaderDragEnd"
+        >
+          <el-table-column
+            column-key="name"
+            :label="t('plugins.parameterNameColumn')"
+            :width="mainColumnWidths.name"
+            resizable
           >
-            <td>
+            <template #default="{ row }">
               <div
                 class="struct-name-cell"
                 :style="{ paddingInlineStart: `${row.depth * 18}px` }"
@@ -722,15 +882,39 @@ function displayValue(value: unknown): string {
                 <span>{{ row.label }}</span>
                 <el-tag size="small" type="info" effect="plain">{{ row.key }}</el-tag>
               </div>
-            </td>
-            <td class="parameter-type-cell" :title="structTypeLabel(row)">
-              {{ structTypeLabel(row) }}
-            </td>
-            <td
-              :class="{ numeric: row.field?.kind === 'number' }"
-              :title="row.field?.kind === 'boolean' ? undefined : row.fullValue"
-            >
-              <div class="parameter-value-cell">
+            </template>
+          </el-table-column>
+          <el-table-column
+            column-key="type"
+            :label="t('plugins.parameterTypeColumn')"
+            :width="mainColumnWidths.type"
+            resizable
+            class-name="parameter-type-cell"
+          >
+            <template #default="{ row }">
+              <el-tag
+                size="small"
+                effect="plain"
+                class="parameter-type-tag"
+                :title="structTypeLabel(row)"
+              >
+                {{ structTypeLabel(row) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column
+            column-key="value"
+            :label="t('plugins.parameterValueColumn')"
+            :width="valueColumnWidth"
+            :min-width="valueColumnWidth ? undefined : 160"
+            resizable
+          >
+            <template #default="{ row }">
+              <div
+                class="parameter-value-cell"
+                :class="{ numeric: row.field?.kind === 'number' }"
+                :title="row.field?.kind === 'boolean' ? undefined : row.fullValue"
+              >
                 <el-switch
                   v-if="row.field?.kind === 'boolean'"
                   :model-value="isBooleanParameterEnabled(structSource()[row.key])"
@@ -760,14 +944,13 @@ function displayValue(value: unknown): string {
                   {{ t('plugins.parameterReadonly') }}
                 </el-tag>
               </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-if="!visibleStructRows.length" class="collection-empty">
-        {{ structFields.length ? t('plugins.parameterTreeNoMatch') : t('plugins.noParameters') }}
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-else class="collection-empty">
+          {{ structFields.length ? t('plugins.parameterTreeNoMatch') : t('plugins.noParameters') }}
+        </div>
       </div>
-    </div>
       <div v-if="activeStructRow" class="struct-parameter-detail" aria-live="polite">
         <p v-if="activeStructRow.description">{{ activeStructRow.description }}</p>
         <p v-if="activeStructRow.readonlyReason" class="parameter-readonly-message">
@@ -815,76 +998,70 @@ function displayValue(value: unknown): string {
 .collection-table-wrap {
   min-height: 0;
   max-height: 50vh;
-  overflow-x: auto;
-  overflow-y: auto;
+  overflow: hidden;
+  outline: none;
   border: 1px solid var(--console-border, #e4dcce);
   border-radius: 8px;
   background: var(--console-paper, #fffdfa);
 }
-table {
-  width: max-content;
-  min-width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  table-layout: auto;
-  color: var(--console-text, #312d28);
-  font-size: 12px;
+.collection-table-wrap:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--console-accent, #be5630);
 }
-.struct-table {
+.parameter-el-table {
+  --el-table-border-color: var(--console-border, #e4dcce);
+  --el-table-header-bg-color: var(--console-paper-soft, #faf5ec);
+  --el-table-row-hover-bg-color: var(--console-accent-soft, #f8e9df);
+  --el-table-current-row-bg-color: var(--console-accent-soft, #f8e9df);
   width: 100%;
-  table-layout: fixed;
+  font-size: 12px;
+  background: transparent;
 }
-th,
-td {
-  height: 32px;
-  box-sizing: border-box;
-  padding: 4px 10px;
-  overflow: hidden;
-  border-right: 1px solid var(--console-border, #e4dcce);
-  border-bottom: 1px solid var(--console-border, #e4dcce);
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-th {
-  position: sticky;
-  z-index: 3;
-  top: 0;
-  height: 32px;
-  background: var(--console-paper-soft, #faf5ec);
+.parameter-el-table :deep(.el-table__header th.el-table__cell) {
   color: var(--console-text-soft, #5a5247);
   font-size: 11px;
   font-weight: 600;
 }
-th small {
+.parameter-el-table :deep(.el-table__header th small) {
   display: block;
   overflow: hidden;
   color: var(--console-text-muted, #756b5e);
   font-weight: 400;
   text-overflow: ellipsis;
 }
-tbody tr {
+.parameter-el-table :deep(.el-table__body td.el-table__cell) {
+  padding: 4px 0;
+}
+.parameter-el-table :deep(.el-table__row) {
   cursor: pointer;
 }
-tbody tr:hover,
-tbody tr.active {
-  background: var(--console-accent-soft, #f8e9df);
+.parameter-el-table :deep(.el-table__row.is-readonly-parameter) {
+  color: var(--console-text-muted, #756b5e);
 }
-tbody tr:focus-visible {
-  outline: 2px solid var(--console-accent, #be5630);
-  outline-offset: -2px;
+.parameter-el-table :deep(.parameter-type-cell .cell) {
+  color: var(--console-text-soft, #5a5247);
+  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
+  font-size: 11px;
 }
-tbody tr.drop-before td {
+.parameter-type-tag {
+  max-width: 100%;
+  animation: none;
+  transition: none;
+}
+.parameter-type-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.parameter-el-table :deep(.select-column .cell),
+.parameter-el-table :deep(.drag-column .cell) {
+  display: flex;
+  justify-content: center;
+  padding-inline: 0;
+}
+.parameter-el-table :deep(.el-table__row.drop-before td) {
   border-top: 2px solid var(--console-accent, #be5630);
 }
-tbody tr.drop-after td {
+.parameter-el-table :deep(.el-table__row.drop-after td) {
   border-bottom: 2px solid var(--console-accent, #be5630);
-}
-.select-column,
-.drag-column {
-  width: 42px;
-  padding: 0;
-  text-align: center;
 }
 .drag-handle {
   width: 32px;
@@ -919,13 +1096,6 @@ tbody tr.drop-after td {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.parameter-type-cell {
-  width: 1%;
-  color: var(--console-text-soft, #5a5247);
-  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
-  font-size: 11px;
-  white-space: nowrap;
-}
 .parameter-boolean-switch {
   flex: 0 0 auto;
   height: 20px;
@@ -949,31 +1119,17 @@ tbody tr.drop-after td {
   animation: none;
   transition: none;
 }
-td.numeric {
+.parameter-el-table :deep(td.numeric .cell) {
   color: var(--console-text, #312d28);
   font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
   font-variant-numeric: tabular-nums;
 }
-td.compound {
+.parameter-el-table :deep(td.compound .cell) {
   color: var(--console-accent, #be5630);
-}
-.struct-table th:nth-child(1),
-.struct-table td:nth-child(1) {
-  width: auto;
-}
-.struct-table th:nth-child(2),
-.struct-table td:nth-child(2) {
-  width: 1%;
-  white-space: nowrap;
-}
-.struct-table th:nth-child(3),
-.struct-table td:nth-child(3) {
-  width: auto;
 }
 .struct-name-cell {
   min-width: 0;
   display: flex;
-  height: 31px;
   align-items: center;
   gap: 6px;
 }
@@ -983,7 +1139,7 @@ td.compound {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.struct-table :deep(.el-tag) {
+.struct-name-cell :deep(.el-tag) {
   max-width: 44%;
   overflow: hidden;
   animation: none;

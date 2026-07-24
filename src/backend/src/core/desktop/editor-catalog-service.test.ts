@@ -6,7 +6,7 @@ import { describe, test } from 'node:test';
 
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
-import { buildEditorProjectCatalog } from './editor-catalog-service.ts';
+import { buildEditorProjectCatalog, listProjectRelativeDirectoryAssets } from './editor-catalog-service.ts';
 import { writeStagedProjectBuffer } from './staging-service.ts';
 
 describe('editor catalog service', () => {
@@ -28,6 +28,12 @@ describe('editor catalog service', () => {
       assert.equal(catalog.armorTypes[0].name, 'Shield');
       assert.equal(catalog.equipTypes[0].name, 'Weapon');
       assert.equal(catalog.actors[0].name, 'Hero');
+      assert.deepEqual(catalog.actors[0], {
+        id: 1,
+        name: 'Hero',
+        characterName: 'Hero',
+        characterIndex: 0,
+      });
       assert.equal(catalog.skills[0].name, 'Spark');
       assert.deepEqual(catalog.battle, {
         sideView: true,
@@ -84,6 +90,36 @@ describe('editor catalog service', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('lists media files under arbitrary project-relative directories', async () => {
+    const root = tempRoot();
+    const project = path.join(root, 'projects', 'RelativeDirProject');
+    try {
+      await bootstrapDatabase(root, { importLegacyJson: false });
+      fs.mkdirSync(path.join(project, 'img', 'map'), { recursive: true });
+      fs.writeFileSync(path.join(project, 'img', 'map', 'foo.png'), 'png', 'utf8');
+      writeStagedProjectBuffer(root, project, 'img/map/staged-bar.png', Buffer.from('png', 'utf8'));
+
+      const listed = listProjectRelativeDirectoryAssets(root, project, 'img/map');
+      assert.equal(listed.ok, true);
+      if (!listed.ok) return;
+      assert.equal(listed.directory, 'img/map');
+      assertIncludes(listed.assets.map((asset) => asset.fileName), 'foo.png');
+      assertIncludes(listed.assets.map((asset) => asset.fileName), 'staged-bar.png');
+      assert.equal(listed.assets.find((asset) => asset.fileName === 'foo.png')?.name, 'foo');
+
+      const missing = listProjectRelativeDirectoryAssets(root, project, 'img/missing');
+      assert.deepEqual(missing, { ok: false, reason: 'directory-not-found', directory: 'img/missing' });
+
+      assert.throws(
+        () => listProjectRelativeDirectoryAssets(root, project, '../escape'),
+        /must not contain "\.\."/,
+      );
+    } finally {
+      closeDatabase();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function tempRoot(): string {
@@ -130,6 +166,8 @@ function writeFlatProject(project: string): void {
   writeJson(path.join(dataDir, 'Actors.json'), [null, {
     id: 1,
     name: 'Hero',
+    characterName: 'Hero',
+    characterIndex: 0,
     classId: 1,
     initialLevel: 3,
     maxLevel: 80,

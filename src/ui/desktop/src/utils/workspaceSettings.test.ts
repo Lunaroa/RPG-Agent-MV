@@ -19,6 +19,7 @@ import {
   PALETTE_PANE_RESIZER_HEIGHT,
   resolveStoredProjectPath,
 } from './workspaceSettings'
+import { DEFAULT_PLUGIN_PARAMETER_MAIN_COLUMNS } from './pluginParameterTableColumns'
 
 describe('workspaceSettings', () => {
   it('normalizes layout defaults', () => {
@@ -29,6 +30,8 @@ describe('workspaceSettings', () => {
     expect(settings.layout?.pluginListWidth).toBe(DEFAULT_PLUGIN_LIST_WIDTH)
     expect(settings.layout?.leftDockPaletteHeight).toBeUndefined()
     expect(settings.layout?.agentPanelWidth).toBe(480)
+    expect(settings.layout?.pluginParameterMainColumns).toEqual(DEFAULT_PLUGIN_PARAMETER_MAIN_COLUMNS)
+    expect(settings.layout?.pluginParameterCollectionColumns).toEqual({})
     expect(settings.suppressProjectCompatibilityWarnings).toBe(false)
   })
 
@@ -107,6 +110,43 @@ describe('workspaceSettings', () => {
     ).layout).toMatchObject({
       pluginListWidth: 472,
       leftDockWidth: 320,
+    })
+  })
+
+  it('normalizes and clamps plugin parameter table column widths', () => {
+    expect(normalizeWorkspaceSettings({
+      layout: {
+        pluginParameterMainColumns: { name: 1000, type: 50, value: 40 },
+        pluginParameterCollectionColumns: { colA: 900, colB: 120.4 },
+      },
+    }).layout).toMatchObject({
+      pluginParameterMainColumns: { name: 720, type: 96, value: 80 },
+      pluginParameterCollectionColumns: { colA: 720, colB: 120 },
+    })
+
+    const merged = mergeWorkspaceSettings(
+      {
+        layout: {
+          pluginParameterMainColumns: { name: 300, type: 150, value: 200 },
+          pluginParameterCollectionColumns: { colA: 200, colB: 180 },
+        },
+      },
+      {
+        layout: {
+          pluginParameterMainColumns: { name: 400 },
+          pluginParameterCollectionColumns: { colB: 220, colC: 160 },
+        },
+      },
+    )
+    expect(merged.layout?.pluginParameterMainColumns).toEqual({
+      name: 400,
+      type: 150,
+      value: 200,
+    })
+    expect(merged.layout?.pluginParameterCollectionColumns).toEqual({
+      colA: 200,
+      colB: 220,
+      colC: 160,
     })
   })
 

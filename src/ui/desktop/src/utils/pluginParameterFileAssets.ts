@@ -1,4 +1,8 @@
-import type { EditorProjectCatalog, ProjectAssetEntry } from '../api/client';
+import type {
+  EditorProjectCatalog,
+  ProjectAssetEntry,
+  ProjectRelativeDirectoryListResult,
+} from '../api/client';
 
 export type PluginFileMediaKind = 'image' | 'audio' | 'movie' | 'other';
 
@@ -16,7 +20,7 @@ type DirectoryBucket = {
   media: PluginFileMediaKind;
 };
 
-/** Canonical project-relative @dir roots that the editor catalog can list. */
+/** Known catalog buckets for fast in-memory listing; other project-relative @dir use disk listing. */
 export const PLUGIN_FILE_DIRECTORY_BUCKETS: readonly DirectoryBucket[] = [
   { directory: 'img/animations', key: 'animations', media: 'image' },
   { directory: 'img/battlebacks1', key: 'battlebacks1', media: 'image' },
@@ -50,7 +54,7 @@ export type PluginFileAssetResolution =
     }
   | {
       ok: false;
-      reason: 'missing-directory' | 'unsupported-directory' | 'missing-catalog';
+      reason: 'missing-directory' | 'directory-not-found' | 'missing-catalog' | 'invalid-directory';
       directory: string;
     };
 
@@ -64,10 +68,19 @@ export function normalizePluginFileDirectory(value: unknown): string {
     .toLowerCase();
 }
 
-export function resolvePluginParameterFileAssets(
+export function inferPluginFileMediaKind(directory: string): PluginFileMediaKind {
+  const normalized = normalizePluginFileDirectory(directory);
+  if (normalized.startsWith('img/')) return 'image';
+  if (normalized.startsWith('audio/')) return 'audio';
+  if (normalized === 'movies' || normalized.startsWith('movies/')) return 'movie';
+  return 'other';
+}
+
+/** Sync path used when @dir maps onto the editor catalog asset buckets. */
+export function resolvePluginParameterFileAssetsFromCatalog(
   catalog: EditorProjectCatalog | null | undefined,
   directory: unknown,
-): PluginFileAssetResolution {
+): PluginFileAssetResolution | { ok: 'needs-list'; directory: string; media: PluginFileMediaKind } {
   const normalized = normalizePluginFileDirectory(directory);
   if (!normalized) {
     return { ok: false, reason: 'missing-directory', directory: '' };
@@ -78,7 +91,11 @@ export function resolvePluginParameterFileAssets(
 
   const match = matchDirectoryBucket(normalized);
   if (!match) {
-    return { ok: false, reason: 'unsupported-directory', directory: normalized };
+    return {
+      ok: 'needs-list',
+      directory: normalized,
+      media: inferPluginFileMediaKind(normalized),
+    };
   }
 
   const bucketAssets = catalog.assets[match.bucket.key] || [];
@@ -94,6 +111,49 @@ export function resolvePluginParameterFileAssets(
     bucketDirectory: match.bucket.directory,
     media: match.bucket.media,
     assets,
+  };
+}
+
+export async function resolvePluginParameterFileAssets(
+  catalog: EditorProjectCatalog | null | undefined,
+  directory: unknown,
+  listRelativeDirectory: (relativeDirectory: string) => Promise<ProjectRelativeDirectoryListResult>,
+): Promise<PluginFileAssetResolution> {
+  const fromCatalog = resolvePluginParameterFileAssetsFromCatalog(catalog, directory);
+  if (fromCatalog.ok !== 'needs-list') return fromCatalog;
+
+  let listed: ProjectRelativeDirectoryListResult;
+  try {
+    listed = await listRelativeDirectory(fromCatalog.directory);
+  } catch {
+    return {
+      ok: false,
+      reason: 'invalid-directory',
+      directory: fromCatalog.directory,
+    };
+  }
+
+  if (!listed.ok) {
+    return {
+      ok: false,
+      reason: 'directory-not-found',
+      directory: listed.directory || fromCatalog.directory,
+    };
+  }
+
+  return {
+    ok: true,
+    directory: listed.directory || fromCatalog.directory,
+    bucketDirectory: listed.directory || fromCatalog.directory,
+    media: fromCatalog.media,
+    assets: listed.assets
+      .map((asset) => ({
+        name: String(asset.name || '').replace(/\\/g, '/'),
+        fileName: asset.fileName,
+        url: asset.url,
+      }))
+      .filter((asset) => asset.name && !asset.name.includes('..'))
+      .sort((left, right) => left.name.localeCompare(right.name)),
   };
 }
 

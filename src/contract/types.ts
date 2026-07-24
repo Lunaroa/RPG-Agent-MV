@@ -440,6 +440,11 @@ export interface EditorEquipmentCatalogEntry extends NamedCatalogEntry {
   etypeId: number;
 }
 
+export interface EditorActorCatalogEntry extends NamedCatalogEntry {
+  characterName: string;
+  characterIndex: number;
+}
+
 export interface EditorActorBattleProfile {
   actorId: number;
   classId: number;
@@ -477,6 +482,18 @@ export interface ProjectAssetEntry {
   fileName: string;
   url: string;
 }
+
+export type ProjectRelativeDirectoryListResult =
+  | {
+      ok: true;
+      directory: string;
+      assets: ProjectAssetEntry[];
+    }
+  | {
+      ok: false;
+      reason: 'directory-not-found';
+      directory: string;
+    };
 
 export type ManagedAssetScope = 'project';
 
@@ -1185,7 +1202,7 @@ export interface EditorProjectCatalog {
   weaponTypes: NamedCatalogEntry[];
   armorTypes: NamedCatalogEntry[];
   equipTypes: NamedCatalogEntry[];
-  actors: NamedCatalogEntry[];
+  actors: EditorActorCatalogEntry[];
   classes: NamedCatalogEntry[];
   skills: NamedCatalogEntry[];
   items: NamedCatalogEntry[];
@@ -1594,6 +1611,12 @@ export interface WorkspaceWindowState {
   firstRunDone?: boolean;
 }
 
+export interface PluginParameterMainColumnWidths {
+  name: number;
+  type: number;
+  value?: number;
+}
+
 export interface WorkspaceLayoutState {
   appRailOpen?: boolean;
   agentPanelOpen?: boolean;
@@ -1604,6 +1627,8 @@ export interface WorkspaceLayoutState {
   leftDockPaletteHeight?: number;
   agentPanelWidth?: number;
   chatHistoryWidth?: number;
+  pluginParameterMainColumns?: PluginParameterMainColumnWidths;
+  pluginParameterCollectionColumns?: Record<string, number>;
 }
 
 export interface WorkspaceComposerState {

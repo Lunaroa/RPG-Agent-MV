@@ -77,8 +77,13 @@ describe('plugin manager structure', () => {
     );
     assert.match(
       paneSource,
-      /!hasConfigurableParameters\(plugin\)/,
+      /!hasConfigurableParameters\(fresh\)/,
     );
+    assert.match(paneSource, /async function selectPlugin/);
+    assert.match(paneSource, /async function openParameterDialog/);
+    assert.match(paneSource, /reloadPluginsQuietly\(\)/);
+    assert.match(paneSource, /reloadPluginsQuietly\(\{ catalog: true \}\)/);
+    assert.match(paneSource, /pluginApi\.read\(/);
     assert.match(paneSource, /@dblclick\.stop/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowUp'/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowDown'/);
@@ -92,7 +97,8 @@ describe('plugin manager structure', () => {
     assert.match(paneSource, /pluginApi\.reorder\(indexes,/);
     assert.match(paneSource, /<PluginParameterDialog/);
     assert.match(paneSource, /v-model="parameterDialogOpen"/);
-    assert.match(paneSource, /parameterDialogPluginIndex\.value = plugin\.index/);
+    assert.match(paneSource, /parameterDialogPluginIndex\.value = fresh\.index/);
+    assert.match(paneSource, /plugins\.noParameters/);
     assert.match(paneSource, /pluginApi\.setEnabled\(plugin\.index/);
     assert.match(paneSource, /pluginApi\.removeConfiguration\(plugin\.index/);
     assert.match(paneSource, /pluginApi\.updateParameters\(plugin\.index/);

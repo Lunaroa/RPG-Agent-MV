@@ -27,50 +27,52 @@
           >×</button>
         </header>
 
-        <p class="directory-hint" :title="directoryHint">
-          {{ directoryHint }}
-        </p>
-
         <div class="picker-grid">
           <aside class="file-browser" :class="viewMode">
             <div class="browser-toolbar">
-              <label class="file-search">
-                <Search aria-hidden="true" />
-                <input
-                  v-model="search"
-                  type="search"
-                  :placeholder="t('pluginFilePicker.searchPlaceholder')"
-                  :aria-label="t('pluginFilePicker.searchPlaceholder')"
-                />
-              </label>
-              <div class="view-switch" role="group" :aria-label="t('pluginFilePicker.viewMode')">
-                <button
-                  type="button"
-                  :class="{ active: viewMode === 'list' }"
-                  :aria-label="t('pluginFilePicker.listView')"
-                  :title="t('pluginFilePicker.listView')"
-                  :aria-pressed="viewMode === 'list'"
-                  @click="setViewMode('list')"
-                >
-                  <List aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  :class="{ active: viewMode === 'gallery' }"
-                  :aria-label="t('pluginFilePicker.galleryView')"
-                  :title="t('pluginFilePicker.galleryView')"
-                  :aria-pressed="viewMode === 'gallery'"
-                  @click="setViewMode('gallery')"
-                >
-                  <Grid aria-hidden="true" />
-                </button>
+              <p class="directory-hint" :title="directoryHint">
+                {{ directoryHint }}
+              </p>
+              <div class="browser-toolbar-row">
+                <label class="file-search">
+                  <Search aria-hidden="true" />
+                  <input
+                    v-model="search"
+                    type="search"
+                    :placeholder="t('pluginFilePicker.searchPlaceholder')"
+                    :aria-label="t('pluginFilePicker.searchPlaceholder')"
+                  />
+                </label>
+                <div class="view-switch" role="group" :aria-label="t('pluginFilePicker.viewMode')">
+                  <button
+                    type="button"
+                    :class="{ active: viewMode === 'list' }"
+                    :aria-label="t('pluginFilePicker.listView')"
+                    :title="t('pluginFilePicker.listView')"
+                    :aria-pressed="viewMode === 'list'"
+                    @click="setViewMode('list')"
+                  >
+                    <List aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ active: viewMode === 'gallery' }"
+                    :aria-label="t('pluginFilePicker.galleryView')"
+                    :title="t('pluginFilePicker.galleryView')"
+                    :aria-pressed="viewMode === 'gallery'"
+                    @click="setViewMode('gallery')"
+                  >
+                    <Grid aria-hidden="true" />
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div v-if="viewMode === 'list'" class="file-tree">
+            <div v-if="viewMode === 'list'" ref="listEl" class="file-tree" tabindex="0">
               <button
                 type="button"
                 class="tree-row file-row"
+                data-list-nav-id="none"
                 :class="{ active: !name }"
                 @click="selectAsset('')"
               >
@@ -180,6 +182,7 @@
               </div>
               <PluginFileAudioPreview
                 v-else-if="media === 'audio' && previewUrl"
+                ref="audioPreviewRef"
                 :key="previewUrl"
                 :src="previewUrl"
               />
@@ -240,6 +243,7 @@ import {
   folderPathOfAssetName,
   getRuntimePluginFileBrowserViewMode,
   listPluginFileGalleryEntries,
+  listPluginFileTreeNavItems,
   buildPluginFileGalleryNavIds,
   movePluginFileGalleryNavIndex,
   normalizePluginFileBrowsePath,
@@ -247,6 +251,7 @@ import {
   PLUGIN_FILE_GALLERY_NONE_ID,
   resolvePluginFileGalleryColumnCount,
   resolvePluginFileGalleryFocusId,
+  resolvePluginFileTreeNavIndex,
   setRuntimePluginFileBrowserViewMode,
   type PluginFileBrowserViewMode,
   type PluginFileGalleryEntry,
@@ -275,6 +280,7 @@ const expandedFolderIds = ref<Set<string>>(new Set());
 const viewMode = ref<PluginFileBrowserViewMode>(getRuntimePluginFileBrowserViewMode());
 const galleryFocusId = ref(PLUGIN_FILE_GALLERY_NONE_ID);
 const galleryEl = ref<HTMLElement | null>(null);
+const listEl = ref<HTMLElement | null>(null);
 const previewScrollEl = ref<HTMLElement | null>(null);
 const failedImageUrls = ref(new Set<string>());
 const previewZoom = ref(1);
@@ -286,6 +292,7 @@ const imageNaturalHeight = ref(240);
 const previewFailed = ref(false);
 const spaceHeld = ref(false);
 const isPanning = ref(false);
+const audioPreviewRef = ref<{ restartFromBeginning: () => void } | null>(null);
 let panPointerId: number | null = null;
 let panOriginX = 0;
 let panOriginY = 0;
@@ -340,11 +347,24 @@ watch(
 
 function onKeyDown(event: KeyboardEvent) {
   if (!visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
-  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-    return;
+  const inTextField = event.target instanceof HTMLInputElement
+    || event.target instanceof HTMLTextAreaElement;
+  const isArrowKey = event.key === 'ArrowLeft'
+    || event.key === 'ArrowRight'
+    || event.key === 'ArrowUp'
+    || event.key === 'ArrowDown';
+  if (inTextField) {
+    // Arrow keys leave search and navigate the file browser.
+    if (!isArrowKey) return;
+    (event.target as HTMLElement).blur();
   }
   if (event.code === 'Space') {
+    if (inTextField) return;
     event.preventDefault();
+    if (props.media === 'audio' && previewUrl.value) {
+      if (!event.repeat) audioPreviewRef.value?.restartFromBeginning();
+      return;
+    }
     spaceHeld.value = true;
     return;
   }
@@ -353,13 +373,20 @@ function onKeyDown(event: KeyboardEvent) {
     close();
     return;
   }
+  if (viewMode.value === 'list') {
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveListFocus(event.key === 'ArrowUp' ? -1 : 1);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      activateListFocus();
+      return;
+    }
+  }
   if (viewMode.value === 'gallery') {
-    if (
-      event.key === 'ArrowLeft'
-      || event.key === 'ArrowRight'
-      || event.key === 'ArrowUp'
-      || event.key === 'ArrowDown'
-    ) {
+    if (isArrowKey) {
       event.preventDefault();
       moveGalleryFocus(event.key);
       return;
@@ -376,12 +403,12 @@ function onKeyUp(event: KeyboardEvent) {
 }
 
 onMounted(() => {
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('keyup', onKeyUp, true);
 });
 onUnmounted(() => {
-  window.removeEventListener('keydown', onKeyDown);
-  window.removeEventListener('keyup', onKeyUp);
+  window.removeEventListener('keydown', onKeyDown, true);
+  window.removeEventListener('keyup', onKeyUp, true);
 });
 
 function open(currentName = '') {
@@ -476,6 +503,51 @@ function onGalleryClick(entry: PluginFileGalleryEntry): void {
 function onGalleryDblclick(entry: PluginFileGalleryEntry): void {
   if (entry.kind === 'file') confirmAsset(entry.asset.name);
   else onGalleryClick(entry);
+}
+
+function moveListFocus(delta: -1 | 1): void {
+  const items = listPluginFileTreeNavItems(treeNodes.value, expandedFolderIds.value);
+  if (!items.length) return;
+  const current = resolvePluginFileTreeNavIndex(items, name.value, currentPath.value);
+  const nextIndex = Math.max(0, Math.min(items.length - 1, current + delta));
+  const item = items[nextIndex];
+  if (!item) return;
+  if (item.kind === 'none') {
+    selectAsset('');
+  } else if (item.kind === 'file') {
+    selectAsset(item.name);
+  } else {
+    name.value = '';
+    currentPath.value = item.id;
+    previewZoom.value = 1;
+    previewPanX.value = 0;
+    previewPanY.value = 0;
+  }
+  scrollListFocusIntoView(item.navId);
+}
+
+function activateListFocus(): void {
+  if (!name.value) {
+    const items = listPluginFileTreeNavItems(treeNodes.value, expandedFolderIds.value);
+    const current = resolvePluginFileTreeNavIndex(items, name.value, currentPath.value);
+    const item = items[current];
+    if (item?.kind === 'folder') {
+      activateFolder(item.id);
+      return;
+    }
+    commit();
+    return;
+  }
+  confirmAsset(name.value);
+}
+
+function scrollListFocusIntoView(navId: string): void {
+  void nextTick(() => {
+    const root = listEl.value;
+    if (!root) return;
+    const target = root.querySelector(`[data-list-nav-id="${CSS.escape(navId)}"]`) as HTMLElement | null;
+    target?.scrollIntoView({ block: 'nearest' });
+  });
 }
 
 function moveGalleryFocus(
@@ -646,7 +718,7 @@ defineExpose({ open });
 .plugin-file-gallery-dialog { --dialog-width: 1320px; --browser-width: 720px; }
 .directory-hint {
   margin: 0;
-  padding: 0 14px 8px;
+  padding: 0 2px;
   color: var(--app-ink-soft, #5a5247);
   font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
   font-size: 11px;
@@ -672,10 +744,16 @@ defineExpose({ open });
 }
 .browser-toolbar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
   padding: 8px;
   border-bottom: 1px solid var(--app-border);
+}
+.browser-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 .file-search {
   height: 30px;

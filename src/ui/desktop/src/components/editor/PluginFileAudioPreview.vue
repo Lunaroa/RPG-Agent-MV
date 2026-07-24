@@ -227,6 +227,14 @@ function togglePlay(): void {
   }
 }
 
+function restartFromBeginning(): void {
+  const el = audioEl.value;
+  if (!el || !playbackSrc.value || loadFailed.value) return;
+  el.currentTime = 0;
+  currentTime.value = 0;
+  void el.play();
+}
+
 function onEnded(): void {
   playing.value = false;
   syncFromElement();
@@ -259,6 +267,10 @@ onUnmounted(() => {
   bindToken += 1;
   audioEl.value?.pause();
   revokeObjectUrl();
+});
+
+defineExpose({
+  restartFromBeginning,
 });
 </script>
 

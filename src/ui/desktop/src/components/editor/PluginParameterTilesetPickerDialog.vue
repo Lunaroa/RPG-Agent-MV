@@ -117,12 +117,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Close, Search, WarningFilled } from '@element-plus/icons-vue';
 import type { EditorProjectCatalog } from '../../api/client';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
+import { movePluginFileGalleryNavIndex } from '../../utils/pluginParameterFileBrowser';
 import {
   buildPluginParameterTilesetOptions,
   type PluginTilesetPickerOption,
@@ -196,15 +197,52 @@ function markFailed(url: string | null): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (!visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
+  const inTextField = event.target instanceof HTMLInputElement
+    || event.target instanceof HTMLTextAreaElement;
+  const isArrowKey = event.key === 'ArrowLeft'
+    || event.key === 'ArrowRight'
+    || event.key === 'ArrowUp'
+    || event.key === 'ArrowDown';
   if (event.key === 'Escape') {
     event.preventDefault();
     close();
     return;
   }
-  if (event.key === 'Enter' && !(event.target instanceof HTMLInputElement)) {
+  if (inTextField && !isArrowKey) return;
+  if (inTextField && isArrowKey) {
+    (event.target as HTMLElement).blur();
+  }
+  if (isArrowKey) {
+    event.preventDefault();
+    moveTilesetFocus(event.key);
+    return;
+  }
+  if (event.key === 'Enter' && !inTextField) {
     event.preventDefault();
     commit();
   }
+}
+
+function moveTilesetFocus(key: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'): void {
+  const ids = [0, ...filteredOptions.value.map((option) => option.id)];
+  if (!ids.length) return;
+  const current = Math.max(0, ids.indexOf(selectedId.value));
+  const nextIndex = movePluginFileGalleryNavIndex(
+    current,
+    key,
+    3,
+    ids.length,
+  );
+  const nextId = ids[nextIndex];
+  if (nextId == null || nextId === selectedId.value) return;
+  selectedId.value = nextId;
+  void nextTick(() => {
+    const root = galleryEl.value;
+    if (!root) return;
+    const cards = root.querySelectorAll('.gallery-card');
+    const card = cards[nextIndex] as HTMLElement | undefined;
+    card?.scrollIntoView({ block: 'nearest' });
+  });
 }
 
 onMounted(() => {

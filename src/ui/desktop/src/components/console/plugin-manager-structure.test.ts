@@ -202,6 +202,7 @@ describe('plugin manager structure', () => {
       dialogSource,
       /\.parameter-key-tag \{[\s\S]+animation: none[\s\S]+transition: none/,
     );
+    assert.doesNotMatch(dialogSource, /\.parameter-key-tag \{[\s\S]*max-width:\s*48%/);
     assert.match(dialogSource, /<div v-if="selectedRow" class="parameter-detail" aria-live="polite">[\s\S]+selectedRow\.description/);
     assert.match(dialogSource, /selectedRow\.readonlyReason/);
     assert.doesNotMatch(dialogSource, /selectedRow\.fullValue/);
@@ -343,12 +344,26 @@ describe('plugin manager structure', () => {
     assert.match(parameterInputSource, /field\.kind === 'file'/);
     assert.match(parameterInputSource, /PluginParameterFilePickerDialog/);
     assert.match(filePickerSource, /PluginFileAudioPreview/);
+    assert.match(filePickerSource, /audioPreviewRef/);
+    assert.match(filePickerSource, /restartFromBeginning/);
+    assert.match(filePickerSource, /props\.media === 'audio'/);
+    assert.match(filePickerSource, /browser-toolbar-row/);
+    assert.match(filePickerSource, /directory-hint[\s\S]*file-search|directoryHint[\s\S]*file-search/);
+    assert.match(filePickerSource, /moveListFocus/);
+    assert.match(filePickerSource, /listPluginFileTreeNavItems/);
+    assert.match(filePickerSource, /viewMode\.value === 'list'/);
+    assert.match(filePickerSource, /addEventListener\('keydown', onKeyDown, true\)/);
     assert.doesNotMatch(filePickerSource, /<audio[\s\S]+controls/);
+    assert.match(tilesetPickerSource, /moveTilesetFocus/);
+    assert.match(tilesetPickerSource, /ArrowUp/);
     assert.match(audioPreviewSource, /formatPluginAudioClock/);
     assert.match(audioPreviewSource, /createPluginAudioPlaybackBundle/);
     assert.match(audioPreviewSource, /autoplay:\s*true/);
     assert.match(audioPreviewSource, /pendingAutoplay/);
     assert.match(audioPreviewSource, /el\.play\(\)/);
+    assert.match(audioPreviewSource, /function restartFromBeginning/);
+    assert.match(audioPreviewSource, /el\.currentTime = 0/);
+    assert.match(audioPreviewSource, /defineExpose\(\{\s*restartFromBeginning/);
     assert.match(audioPreviewSource, /<el-slider/);
     assert.match(audioPreviewSource, /vertical/);
     assert.match(audioPreviewSource, /<el-popover/);

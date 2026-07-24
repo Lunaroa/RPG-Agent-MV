@@ -276,6 +276,51 @@ export function resolvePluginFileGalleryFocusId(
   return match?.id || PLUGIN_FILE_GALLERY_NONE_ID;
 }
 
+export type PluginFileTreeNavItem =
+  | { kind: 'none'; navId: 'none' }
+  | { kind: 'folder'; navId: string; id: string }
+  | { kind: 'file'; navId: string; name: string };
+
+/** Visible list-view rows in display order (respecting expanded folders). */
+export function listPluginFileTreeNavItems(
+  nodes: PluginFileTreeNode[],
+  expandedIds: ReadonlySet<string>,
+): PluginFileTreeNavItem[] {
+  const items: PluginFileTreeNavItem[] = [{ kind: 'none', navId: 'none' }];
+
+  function walk(list: PluginFileTreeNode[]): void {
+    for (const node of list) {
+      if (node.kind === 'folder') {
+        items.push({ kind: 'folder', navId: `folder:${node.id}`, id: node.id });
+        if (expandedIds.has(node.id)) walk(node.children);
+        continue;
+      }
+      items.push({ kind: 'file', navId: `file:${node.id}`, name: node.id });
+    }
+  }
+
+  walk(nodes);
+  return items;
+}
+
+export function resolvePluginFileTreeNavIndex(
+  items: PluginFileTreeNavItem[],
+  selectedName: string,
+  currentPath: string,
+): number {
+  const normalizedName = normalizePluginFileBrowsePath(selectedName);
+  if (normalizedName) {
+    const fileIndex = items.findIndex((item) => item.kind === 'file' && item.name === normalizedName);
+    if (fileIndex >= 0) return fileIndex;
+  }
+  const normalizedPath = normalizePluginFileBrowsePath(currentPath);
+  if (normalizedPath) {
+    const folderIndex = items.findIndex((item) => item.kind === 'folder' && item.id === normalizedPath);
+    if (folderIndex >= 0) return folderIndex;
+  }
+  return 0;
+}
+
 export function ancestorPluginFileFolderPaths(assetName: string): string[] {
   const folder = folderPathOfAssetName(assetName);
   if (!folder) return [];

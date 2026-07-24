@@ -830,7 +830,6 @@ async function focusInitialParameter(): Promise<void> {
 }
 .parameter-key-tag {
   min-width: 0;
-  max-width: 48%;
   flex: 0 1 auto;
   font-weight: 400;
   color: var(--console-accent, #be5630);

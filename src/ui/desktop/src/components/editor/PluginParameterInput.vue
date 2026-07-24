@@ -811,7 +811,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 .parameter-key-tag {
   flex: 0 0 auto;
-  max-width: 46%;
   font-weight: 400;
   color: var(--console-accent, #be5630);
   background: color-mix(in srgb, var(--console-accent, #be5630) 10%, transparent);
@@ -961,7 +960,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 .plugin-parameter-select-popper .parameter-key-tag {
   flex: 0 0 auto;
-  max-width: 46%;
   font-weight: 400;
   color: var(--console-accent, #be5630);
   background: color-mix(in srgb, var(--console-accent, #be5630) 10%, transparent);

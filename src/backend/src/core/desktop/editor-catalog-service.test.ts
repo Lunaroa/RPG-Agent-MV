@@ -96,23 +96,36 @@ describe('editor catalog service', () => {
     const project = path.join(root, 'projects', 'RelativeDirProject');
     try {
       await bootstrapDatabase(root, { importLegacyJson: false });
-      fs.mkdirSync(path.join(project, 'img', 'map'), { recursive: true });
+      fs.mkdirSync(path.join(project, 'img', 'map', 'nested'), { recursive: true });
       fs.writeFileSync(path.join(project, 'img', 'map', 'foo.png'), 'png', 'utf8');
+      fs.writeFileSync(path.join(project, 'img', 'map', 'nested', 'deep.png'), 'png', 'utf8');
       writeStagedProjectBuffer(root, project, 'img/map/staged-bar.png', Buffer.from('png', 'utf8'));
+      writeStagedProjectBuffer(root, project, 'img/map/nested/staged-deep.png', Buffer.from('png', 'utf8'));
 
-      const listed = listProjectRelativeDirectoryAssets(root, project, 'img/map');
-      assert.equal(listed.ok, true);
-      if (!listed.ok) return;
-      assert.equal(listed.directory, 'img/map');
-      assertIncludes(listed.assets.map((asset) => asset.fileName), 'foo.png');
-      assertIncludes(listed.assets.map((asset) => asset.fileName), 'staged-bar.png');
-      assert.equal(listed.assets.find((asset) => asset.fileName === 'foo.png')?.name, 'foo');
+      const mvListed = listProjectRelativeDirectoryAssets(root, project, 'img/map', { recursive: false });
+      assert.equal(mvListed.ok, true);
+      if (!mvListed.ok) return;
+      assert.equal(mvListed.directory, 'img/map');
+      assertIncludes(mvListed.assets.map((asset) => asset.fileName), 'foo.png');
+      assertIncludes(mvListed.assets.map((asset) => asset.fileName), 'staged-bar.png');
+      assert.equal(mvListed.assets.find((asset) => asset.fileName === 'foo.png')?.name, 'foo');
+      assert.equal(mvListed.assets.some((asset) => asset.fileName.includes('/')), false);
 
-      const missing = listProjectRelativeDirectoryAssets(root, project, 'img/missing');
+      const mzListed = listProjectRelativeDirectoryAssets(root, project, 'img/map', { recursive: true });
+      assert.equal(mzListed.ok, true);
+      if (!mzListed.ok) return;
+      assertIncludes(mzListed.assets.map((asset) => asset.fileName), 'nested/deep.png');
+      assertIncludes(mzListed.assets.map((asset) => asset.fileName), 'nested/staged-deep.png');
+      assert.equal(
+        mzListed.assets.find((asset) => asset.fileName === 'nested/deep.png')?.name,
+        'nested/deep',
+      );
+
+      const missing = listProjectRelativeDirectoryAssets(root, project, 'img/missing', { recursive: false });
       assert.deepEqual(missing, { ok: false, reason: 'directory-not-found', directory: 'img/missing' });
 
       assert.throws(
-        () => listProjectRelativeDirectoryAssets(root, project, '../escape'),
+        () => listProjectRelativeDirectoryAssets(root, project, '../escape', { recursive: false }),
         /must not contain "\.\."/,
       );
     } finally {

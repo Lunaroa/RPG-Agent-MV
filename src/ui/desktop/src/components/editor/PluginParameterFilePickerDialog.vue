@@ -8,6 +8,10 @@
     >
       <section
         class="sub-dialog plugin-file-dialog editor-modal-shell"
+        :class="{
+          'plugin-file-list-dialog': viewMode === 'list',
+          'plugin-file-gallery-dialog': viewMode === 'gallery',
+        }"
         role="dialog"
         aria-modal="true"
         aria-labelledby="plugin-file-picker-title"
@@ -23,38 +27,124 @@
           >×</button>
         </header>
 
-        <p class="directory-hint" :title="directory">
-          {{ t('pluginFilePicker.directory', { directory }) }}
+        <p class="directory-hint" :title="directoryHint">
+          {{ directoryHint }}
         </p>
 
         <div class="picker-grid">
-          <aside>
-            <input
-              v-model="search"
-              :placeholder="t('pluginFilePicker.searchPlaceholder')"
-              :aria-label="t('pluginFilePicker.searchPlaceholder')"
-            />
-            <button
-              type="button"
-              :class="{ active: !name }"
-              @click="selectAsset('')"
-            >
-              {{ t('pluginFilePicker.none') }}
-            </button>
-            <button
-              v-for="asset in filteredAssets"
-              :key="asset.name"
-              type="button"
-              :class="{ active: name === asset.name }"
-              :title="asset.name"
-              @click="selectAsset(asset.name)"
-              @dblclick.prevent="confirmAsset(asset.name)"
-            >
-              {{ asset.name }}
-            </button>
-            <p v-if="!filteredAssets.length" class="aside-empty">
-              {{ t('pluginFilePicker.noMatches') }}
-            </p>
+          <aside class="file-browser" :class="viewMode">
+            <div class="browser-toolbar">
+              <label class="file-search">
+                <Search aria-hidden="true" />
+                <input
+                  v-model="search"
+                  type="search"
+                  :placeholder="t('pluginFilePicker.searchPlaceholder')"
+                  :aria-label="t('pluginFilePicker.searchPlaceholder')"
+                />
+              </label>
+              <div class="view-switch" role="group" :aria-label="t('pluginFilePicker.viewMode')">
+                <button
+                  type="button"
+                  :class="{ active: viewMode === 'list' }"
+                  :aria-label="t('pluginFilePicker.listView')"
+                  :title="t('pluginFilePicker.listView')"
+                  :aria-pressed="viewMode === 'list'"
+                  @click="setViewMode('list')"
+                >
+                  <List aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  :class="{ active: viewMode === 'gallery' }"
+                  :aria-label="t('pluginFilePicker.galleryView')"
+                  :title="t('pluginFilePicker.galleryView')"
+                  :aria-pressed="viewMode === 'gallery'"
+                  @click="setViewMode('gallery')"
+                >
+                  <Grid aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            <div v-if="viewMode === 'list'" class="file-tree">
+              <button
+                type="button"
+                class="tree-row file-row"
+                :class="{ active: !name }"
+                @click="selectAsset('')"
+              >
+                {{ t('pluginFilePicker.none') }}
+              </button>
+              <PluginFileTreeNodes
+                :nodes="treeNodes"
+                :depth="0"
+                :expanded-ids="expandedFolderIds"
+                :selected-name="name"
+                :current-path="currentPath"
+                @activate-folder="activateFolder"
+                @select-file="selectAsset"
+                @confirm-file="confirmAsset"
+              />
+              <p v-if="!treeNodes.length" class="browser-empty">
+                {{ t('pluginFilePicker.noMatches') }}
+              </p>
+            </div>
+
+            <div v-else class="file-gallery">
+              <button
+                type="button"
+                class="gallery-card none-card"
+                :class="{ active: !name && !currentPath }"
+                @click="selectAsset('')"
+              >
+                <span class="gallery-preview empty-preview" aria-hidden="true"><Close /></span>
+                <span class="gallery-copy"><strong>{{ t('pluginFilePicker.none') }}</strong></span>
+              </button>
+              <button
+                v-for="entry in galleryEntries"
+                :key="`${entry.kind}:${entry.id}`"
+                type="button"
+                class="gallery-card"
+                :class="{
+                  active: entry.kind === 'file' && name === entry.asset.name,
+                  'folder-card': entry.kind === 'folder' || entry.kind === 'parent',
+                }"
+                :title="entry.kind === 'file' ? entry.asset.name : entry.label"
+                :aria-label="entry.kind === 'file' ? entry.asset.name : entry.label"
+                @click="onGalleryClick(entry)"
+                @dblclick.prevent="onGalleryDblclick(entry)"
+              >
+                <span class="gallery-preview" :class="{ 'folder-preview': entry.kind !== 'file' }">
+                  <template v-if="entry.kind === 'parent'">
+                    <PluginFileFolderThumb :urls="[]" />
+                  </template>
+                  <template v-else-if="entry.kind === 'folder'">
+                    <PluginFileFolderThumb :urls="entry.previewUrls" />
+                  </template>
+                  <template v-else-if="media === 'image'">
+                    <img
+                      v-if="entry.asset.url && !failedImageUrls.has(entry.asset.url)"
+                      :src="entry.asset.url"
+                      :alt="entry.label"
+                      loading="lazy"
+                      decoding="async"
+                      @error="markImageFailed(entry.asset.url)"
+                    />
+                    <span v-else class="preview-failed" role="img" :aria-label="t('pluginFilePicker.previewFailed')">
+                      <WarningFilled aria-hidden="true" />
+                    </span>
+                  </template>
+                  <template v-else>
+                    <Document aria-hidden="true" />
+                  </template>
+                </span>
+                <span class="gallery-copy"><strong>{{ entry.label }}</strong></span>
+              </button>
+              <p v-if="!galleryEntries.length" class="browser-empty">
+                {{ t('pluginFilePicker.noMatches') }}
+              </p>
+            </div>
           </aside>
 
           <main class="preview-surface">
@@ -124,6 +214,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { Close, Document, Grid, List, Search, WarningFilled } from '@element-plus/icons-vue';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { resolveAssetUrl } from '../../api/client';
@@ -132,6 +223,21 @@ import type {
   PluginFileAssetOption,
   PluginFileMediaKind,
 } from '../../utils/pluginParameterFileAssets';
+import {
+  ancestorPluginFileFolderPaths,
+  buildPluginFileTree,
+  filterPluginFileAssetsByQuery,
+  folderPathOfAssetName,
+  getRuntimePluginFileBrowserViewMode,
+  listPluginFileGalleryEntries,
+  normalizePluginFileBrowsePath,
+  parentPluginFileBrowsePath,
+  setRuntimePluginFileBrowserViewMode,
+  type PluginFileBrowserViewMode,
+  type PluginFileGalleryEntry,
+} from '../../utils/pluginParameterFileBrowser';
+import PluginFileTreeNodes from './PluginFileTreeNodes.vue';
+import PluginFileFolderThumb from './PluginFileFolderThumb.vue';
 
 const props = defineProps<{
   title?: string;
@@ -147,6 +253,10 @@ const subDialogZ = String(LAYER_Z.subDialog);
 const visible = ref(false);
 const search = ref('');
 const name = ref('');
+const currentPath = ref('');
+const expandedFolderIds = ref<Set<string>>(new Set());
+const viewMode = ref<PluginFileBrowserViewMode>(getRuntimePluginFileBrowserViewMode());
+const failedImageUrls = ref(new Set<string>());
 const previewZoom = ref(1);
 const previewUrl = ref('');
 const imageNaturalWidth = ref(320);
@@ -155,17 +265,24 @@ const PREVIEW_ZOOM_MIN = 0.25;
 const PREVIEW_ZOOM_MAX = 4;
 
 const title = computed(() => props.title || t('pluginFilePicker.title'));
-const filteredAssets = computed(() => {
-  const query = search.value.trim().toLowerCase();
-  if (!query) return props.assets;
-  return props.assets.filter((asset) => asset.name.toLowerCase().includes(query));
-});
+const filteredAssets = computed(() => filterPluginFileAssetsByQuery(props.assets, search.value));
+const treeNodes = computed(() => buildPluginFileTree(filteredAssets.value));
+const galleryEntries = computed(() =>
+  listPluginFileGalleryEntries(filteredAssets.value, currentPath.value, {
+    parentLabel: t('pluginFilePicker.parentFolder'),
+  }),
+);
 const selectedAsset = computed(() =>
   props.assets.find((asset) => asset.name === name.value) || null,
 );
 const summary = computed(() =>
   name.value ? name.value : t('pluginFilePicker.none'),
 );
+const directoryHint = computed(() => {
+  const base = t('pluginFilePicker.directory', { directory: props.directory });
+  if (!currentPath.value) return base;
+  return `${base} / ${currentPath.value}`;
+});
 
 watch(selectedAsset, (asset) => {
   void refreshPreview(asset);
@@ -181,9 +298,14 @@ onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
 function open(currentName = '') {
-  name.value = currentName || '';
+  const normalized = normalizePluginFileBrowsePath(currentName);
+  name.value = normalized;
   search.value = '';
   previewZoom.value = 1;
+  failedImageUrls.value = new Set();
+  currentPath.value = folderPathOfAssetName(normalized);
+  expandedFolderIds.value = new Set(ancestorPluginFileFolderPaths(normalized));
+  viewMode.value = getRuntimePluginFileBrowserViewMode();
   visible.value = true;
   void nextTick(() => {
     void refreshPreview(selectedAsset.value);
@@ -195,14 +317,65 @@ function close() {
   previewUrl.value = '';
 }
 
+function setViewMode(mode: PluginFileBrowserViewMode): void {
+  viewMode.value = mode;
+  setRuntimePluginFileBrowserViewMode(mode);
+}
+
+function markImageFailed(url: string): void {
+  failedImageUrls.value = new Set([...failedImageUrls.value, url]);
+}
+
+function activateFolder(folderId: string): void {
+  const next = new Set(expandedFolderIds.value);
+  if (next.has(folderId)) next.delete(folderId);
+  else next.add(folderId);
+  expandedFolderIds.value = next;
+  currentPath.value = normalizePluginFileBrowsePath(folderId);
+}
+
+function enterFolder(folderPath: string): void {
+  currentPath.value = normalizePluginFileBrowsePath(folderPath);
+  const next = new Set(expandedFolderIds.value);
+  for (const ancestor of ancestorPluginFileFolderPaths(`${folderPath}/x`)) {
+    next.add(ancestor);
+  }
+  next.add(folderPath);
+  expandedFolderIds.value = next;
+}
+
 function selectAsset(value: string) {
-  name.value = value;
+  const normalized = normalizePluginFileBrowsePath(value);
+  name.value = normalized;
   previewZoom.value = 1;
+  if (normalized) {
+    currentPath.value = folderPathOfAssetName(normalized);
+    const next = new Set(expandedFolderIds.value);
+    for (const ancestor of ancestorPluginFileFolderPaths(normalized)) next.add(ancestor);
+    expandedFolderIds.value = next;
+  }
 }
 
 function confirmAsset(value: string) {
-  name.value = value;
+  selectAsset(value);
   commit();
+}
+
+function onGalleryClick(entry: PluginFileGalleryEntry): void {
+  if (entry.kind === 'parent') {
+    currentPath.value = parentPluginFileBrowsePath(currentPath.value);
+    return;
+  }
+  if (entry.kind === 'folder') {
+    enterFolder(entry.path);
+    return;
+  }
+  selectAsset(entry.asset.name);
+}
+
+function onGalleryDblclick(entry: PluginFileGalleryEntry): void {
+  if (entry.kind === 'file') confirmAsset(entry.asset.name);
+  else onGalleryClick(entry);
 }
 
 async function refreshPreview(asset: PluginFileAssetOption | null) {
@@ -238,9 +411,14 @@ defineExpose({ open });
 .sub-overlay { z-index: v-bind(subDialogZ); }
 .sub-dialog {
   --picker-height: 610px;
-  width: min(920px, calc(100vw - 48px));
+  --picker-right-width: 560px;
+  --dialog-width: 920px;
+  --browser-width: 280px;
+  width: min(var(--dialog-width), calc(100vw - 48px));
   max-height: min(86vh, 900px);
 }
+.plugin-file-list-dialog { --dialog-width: 900px; --browser-width: 300px; }
+.plugin-file-gallery-dialog { --dialog-width: 1320px; --browser-width: 720px; }
 .directory-hint {
   margin: 0;
   padding: 0 14px 8px;
@@ -255,49 +433,203 @@ defineExpose({ open });
   height: min(var(--picker-height), calc(100vh - 180px));
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, var(--browser-width)) minmax(0, var(--picker-right-width));
   flex: 0 1 var(--picker-height);
 }
-aside {
+.file-browser {
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--app-border);
-}
-aside input {
-  box-sizing: border-box;
-  width: calc(100% - 16px);
-  margin: 8px;
-  padding: 5px 8px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-sm);
   background: var(--app-bg);
-  color: var(--app-ink);
 }
-aside button {
+.browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--app-border);
+}
+.file-search {
+  height: 30px;
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  background: var(--app-bg);
+  color: var(--app-ink-muted);
+}
+.file-search:focus-within {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 1px var(--app-accent);
+}
+.file-search :deep(svg) { width: 13px; height: 13px; }
+.file-search input {
   width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--app-ink);
+  font: inherit;
+  font-size: 11px;
+}
+.view-switch {
+  height: 30px;
+  display: flex;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  background: var(--app-bg-soft);
+}
+.view-switch button {
+  width: 28px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--app-ink-muted);
+  cursor: pointer;
+}
+.view-switch button:hover { color: var(--app-ink); background: var(--app-bg); }
+.view-switch button.active {
+  background: var(--app-bg);
+  color: var(--app-accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+}
+.view-switch :deep(svg) { width: 14px; height: 14px; }
+.file-tree,
+.file-gallery {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+.tree-row {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   min-height: 28px;
-  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
   border: 0;
   border-bottom: 1px solid var(--app-border);
   background: var(--app-bg);
   color: var(--app-ink);
   cursor: pointer;
   text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font: inherit;
+  font-size: 11px;
 }
-aside button:hover { background: var(--app-bg-sunken); }
-aside button.active {
+.tree-row:hover { background: var(--app-bg-sunken); }
+.tree-row.active {
   background: var(--app-accent-soft);
   color: var(--app-accent);
   font-weight: 600;
 }
-.aside-empty {
+.file-gallery {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px;
+  padding: 8px;
+}
+.gallery-card {
+  min-width: 0;
+  display: flex;
+  min-height: 148px;
+  flex-direction: column;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  background: var(--app-bg);
+  color: var(--app-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.gallery-card:hover { background: var(--app-bg-soft); }
+.gallery-card.active {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 35%, transparent);
+}
+.gallery-preview {
+  height: 120px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 5px;
+  background-color: var(--app-bg-sunken);
+  background-image:
+    linear-gradient(45deg, var(--app-border) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--app-border) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--app-border) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--app-border) 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+  color: var(--app-ink-muted);
+}
+.gallery-preview img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+.folder-preview {
+  background-image: none;
+  background-color: #f7f4ee;
+  color: #c9a227;
+}
+.folder-preview :deep(svg),
+.empty-preview :deep(svg),
+.preview-failed :deep(svg) {
+  width: 28px;
+  height: 28px;
+}
+.empty-preview { background-image: none; }
+.preview-failed {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+}
+.gallery-copy {
+  min-width: 0;
+  display: block;
+}
+.gallery-copy strong {
+  display: block;
+  overflow: hidden;
+  color: var(--app-ink);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-empty {
+  grid-column: 1 / -1;
   margin: 0;
-  padding: 16px 10px;
-  color: var(--app-ink-soft);
-  font-size: 12px;
+  padding: 18px 10px;
+  color: var(--app-ink-muted);
+  font-size: 11px;
+  text-align: center;
 }
 .preview-surface {
   position: relative;
@@ -311,10 +643,7 @@ aside button.active {
   display: grid;
   place-items: center;
 }
-.image-zoom-space {
-  position: relative;
-  flex: 0 0 auto;
-}
+.image-zoom-space { position: relative; flex: 0 0 auto; }
 .image-zoom-space img {
   display: block;
   image-rendering: pixelated;
@@ -358,5 +687,14 @@ aside button.active {
 .picker-zoom button:focus-visible {
   outline: 2px solid var(--app-accent, #c45c26);
   outline-offset: 1px;
+}
+@media (max-width: 1300px) {
+  .file-gallery { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 1100px) {
+  .plugin-file-gallery-dialog .picker-grid {
+    grid-template-columns: minmax(420px, 1fr) minmax(0, min(var(--picker-right-width), calc(100% - 420px)));
+  }
+  .file-gallery { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 </style>

@@ -59,9 +59,17 @@ export function listProjectRelativeDirectoryAssets(
   workflowRoot: string,
   project: string,
   relativeDirectory: string,
+  options: { recursive: boolean },
 ): ProjectRelativeDirectoryListResult {
   const directory = normalizeProjectRelativeDirectoryInput(relativeDirectory);
-  const assets = listProjectAssets(workflowRoot, project, directory, PLUGIN_FILE_MEDIA_EXTENSIONS);
+  // Caller supplies recursive from project engine (MZ true, MV false).
+  const assets = listProjectAssets(
+    workflowRoot,
+    project,
+    directory,
+    PLUGIN_FILE_MEDIA_EXTENSIONS,
+    { recursive: options.recursive },
+  );
   if (assets.length > 0) {
     return { ok: true, directory, assets };
   }
@@ -315,11 +323,21 @@ function projectRelativeDirectoryExists(workflowRoot: string, project: string, d
   ));
 }
 
-function listProjectAssets(workflowRoot: string, project: string, directory: string, extensions: ReadonlySet<string>): ProjectAssetEntry[] {
+function listProjectAssets(
+  workflowRoot: string,
+  project: string,
+  directory: string,
+  extensions: ReadonlySet<string>,
+  options: { recursive?: boolean } = {},
+): ProjectAssetEntry[] {
+  const recursive = options.recursive !== false;
   const files = new Map<string, boolean>();
   const absolute = path.join(project, ...directory.split('/'));
   if (fs.existsSync(absolute)) {
-    for (const fileName of listFilesRecursively(absolute)) {
+    const listed = recursive
+      ? listFilesRecursively(absolute)
+      : listFilesInDirectory(absolute);
+    for (const fileName of listed) {
       if (extensions.has(path.extname(fileName).toLowerCase())) files.set(fileName, true);
     }
   }
@@ -328,6 +346,7 @@ function listProjectAssets(workflowRoot: string, project: string, directory: str
     if (!entry.relativePath.startsWith(prefix)) continue;
     const fileName = entry.relativePath.slice(prefix.length);
     if (!fileName || !extensions.has(path.extname(fileName).toLowerCase())) continue;
+    if (!recursive && fileName.includes('/')) continue;
     if (entry.delete) files.delete(fileName);
     else files.set(fileName, true);
   }
@@ -338,6 +357,13 @@ function listProjectAssets(workflowRoot: string, project: string, directory: str
       fileName,
       url: projectAssetUrl(project, `${directory}/${fileName}`),
     }));
+}
+
+function listFilesInDirectory(root: string): string[] {
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [];
+  return fs.readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
 }
 
 function listFilesRecursively(root: string): string[] {

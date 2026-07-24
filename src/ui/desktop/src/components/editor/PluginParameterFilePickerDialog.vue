@@ -147,7 +147,16 @@
             </div>
           </aside>
 
-          <main class="preview-surface">
+          <main
+            class="preview-surface"
+            :class="{ 'is-panning': isPanning || spaceHeld }"
+            @wheel.prevent="onPreviewWheel"
+            @pointerdown="onPreviewPointerDown"
+            @pointermove="onPreviewPointerMove"
+            @pointerup="onPreviewPointerUp"
+            @pointercancel="onPreviewPointerUp"
+            @auxclick.prevent
+          >
             <div class="preview-scroll">
               <div
                 v-if="media === 'image' && selectedAsset"
@@ -155,6 +164,7 @@
                 :style="{
                   width: `${Math.ceil(imageNaturalWidth * previewZoom)}px`,
                   height: `${Math.ceil(imageNaturalHeight * previewZoom)}px`,
+                  transform: `translate(${previewPanX}px, ${previewPanY}px)`,
                 }"
               >
                 <img
@@ -162,6 +172,7 @@
                   :src="previewUrl"
                   :alt="selectedAsset.name"
                   :style="{ transform: `scale(${previewZoom})`, transformOrigin: '0 0' }"
+                  draggable="false"
                   @load="onImageLoad"
                 />
               </div>
@@ -244,6 +255,7 @@ const props = defineProps<{
   directory: string;
   media: PluginFileMediaKind;
   assets: PluginFileAssetOption[];
+  folders?: string[];
 }>();
 
 const emit = defineEmits<{ commit: [name: string] }>();
@@ -258,18 +270,34 @@ const expandedFolderIds = ref<Set<string>>(new Set());
 const viewMode = ref<PluginFileBrowserViewMode>(getRuntimePluginFileBrowserViewMode());
 const failedImageUrls = ref(new Set<string>());
 const previewZoom = ref(1);
+const previewPanX = ref(0);
+const previewPanY = ref(0);
 const previewUrl = ref('');
 const imageNaturalWidth = ref(320);
 const imageNaturalHeight = ref(240);
+const spaceHeld = ref(false);
+const isPanning = ref(false);
+let panPointerId: number | null = null;
+let panOriginX = 0;
+let panOriginY = 0;
+let panStartX = 0;
+let panStartY = 0;
 const PREVIEW_ZOOM_MIN = 0.25;
 const PREVIEW_ZOOM_MAX = 4;
 
 const title = computed(() => props.title || t('pluginFilePicker.title'));
 const filteredAssets = computed(() => filterPluginFileAssetsByQuery(props.assets, search.value));
-const treeNodes = computed(() => buildPluginFileTree(filteredAssets.value));
+const filteredFolders = computed(() => {
+  const query = search.value.trim().toLowerCase();
+  const folders = props.folders || [];
+  if (!query) return folders;
+  return folders.filter((folder) => folder.toLowerCase().includes(query));
+});
+const treeNodes = computed(() => buildPluginFileTree(filteredAssets.value, filteredFolders.value));
 const galleryEntries = computed(() =>
   listPluginFileGalleryEntries(filteredAssets.value, currentPath.value, {
     parentLabel: t('pluginFilePicker.parentFolder'),
+    folders: filteredFolders.value,
   }),
 );
 const selectedAsset = computed(() =>
@@ -285,23 +313,43 @@ const directoryHint = computed(() => {
 });
 
 watch(selectedAsset, (asset) => {
+  previewPanX.value = 0;
+  previewPanY.value = 0;
   void refreshPreview(asset);
 });
 
 function onKeyDown(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
+  if (!visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
+  if (event.code === 'Space' && !(event.target instanceof HTMLInputElement)) {
+    event.preventDefault();
+    spaceHeld.value = true;
+    return;
+  }
+  if (event.key !== 'Escape') return;
   event.preventDefault();
   close();
 }
 
-onMounted(() => window.addEventListener('keydown', onKeyDown));
-onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
+function onKeyUp(event: KeyboardEvent) {
+  if (event.code === 'Space') spaceHeld.value = false;
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+});
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeyDown);
+  window.removeEventListener('keyup', onKeyUp);
+});
 
 function open(currentName = '') {
   const normalized = normalizePluginFileBrowsePath(currentName);
   name.value = normalized;
   search.value = '';
   previewZoom.value = 1;
+  previewPanX.value = 0;
+  previewPanY.value = 0;
   failedImageUrls.value = new Set();
   currentPath.value = folderPathOfAssetName(normalized);
   expandedFolderIds.value = new Set(ancestorPluginFileFolderPaths(normalized));
@@ -348,6 +396,8 @@ function selectAsset(value: string) {
   const normalized = normalizePluginFileBrowsePath(value);
   name.value = normalized;
   previewZoom.value = 1;
+  previewPanX.value = 0;
+  previewPanY.value = 0;
   if (normalized) {
     currentPath.value = folderPathOfAssetName(normalized);
     const next = new Set(expandedFolderIds.value);
@@ -397,7 +447,39 @@ function clampPreviewZoom(value: number): number {
 }
 function zoomIn() { previewZoom.value = clampPreviewZoom(previewZoom.value * 1.25); }
 function zoomOut() { previewZoom.value = clampPreviewZoom(previewZoom.value / 1.25); }
-function resetZoom() { previewZoom.value = 1; }
+function resetZoom() {
+  previewZoom.value = 1;
+  previewPanX.value = 0;
+  previewPanY.value = 0;
+}
+function onPreviewWheel(event: WheelEvent) {
+  if (event.deltaY < 0) zoomIn();
+  else zoomOut();
+}
+function onPreviewPointerDown(event: PointerEvent) {
+  if (props.media !== 'image' || !selectedAsset.value) return;
+  const middle = event.button === 1;
+  const spaceDrag = event.button === 0 && spaceHeld.value;
+  if (!middle && !spaceDrag) return;
+  event.preventDefault();
+  isPanning.value = true;
+  panPointerId = event.pointerId;
+  panOriginX = event.clientX;
+  panOriginY = event.clientY;
+  panStartX = previewPanX.value;
+  panStartY = previewPanY.value;
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+}
+function onPreviewPointerMove(event: PointerEvent) {
+  if (!isPanning.value || panPointerId !== event.pointerId) return;
+  previewPanX.value = panStartX + (event.clientX - panOriginX);
+  previewPanY.value = panStartY + (event.clientY - panOriginY);
+}
+function onPreviewPointerUp(event: PointerEvent) {
+  if (panPointerId !== event.pointerId) return;
+  isPanning.value = false;
+  panPointerId = null;
+}
 
 function commit() {
   emit('commit', name.value);
@@ -636,6 +718,15 @@ defineExpose({ open });
   min-width: 0;
   min-height: 0;
   background: #aeb9c3;
+  touch-action: none;
+}
+.preview-surface.is-panning,
+.preview-surface.is-panning * {
+  cursor: grab;
+}
+.preview-surface.is-panning:active,
+.preview-surface.is-panning:active * {
+  cursor: grabbing;
 }
 .preview-scroll {
   height: 100%;

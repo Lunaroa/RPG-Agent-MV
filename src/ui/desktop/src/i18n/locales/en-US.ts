@@ -1999,6 +1999,7 @@ const enUS = {
     'plugins.parameterTypeMap': 'Map',
     'plugins.parameterTypeLocation': 'Location',
     'plugins.parameterTypeStruct': 'Struct · {{name}}',
+    'plugins.parameterTypeListTag': 'List',
     'plugins.parameterValueColumn': 'Value',
     'plugins.parameterActionsColumn': 'Actions',
     'plugins.parameterArrayItem': 'Item {{index}}',

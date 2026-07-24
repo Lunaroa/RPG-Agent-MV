@@ -110,6 +110,8 @@ describe('editor catalog service', () => {
       assertIncludes(mvListed.assets.map((asset) => asset.fileName), 'staged-bar.png');
       assert.equal(mvListed.assets.find((asset) => asset.fileName === 'foo.png')?.name, 'foo');
       assert.equal(mvListed.assets.some((asset) => asset.fileName.includes('/')), false);
+      assertIncludes(mvListed.folders, 'nested');
+      assert.equal(mvListed.folders.some((folder) => folder.includes('/')), false);
 
       const mzListed = listProjectRelativeDirectoryAssets(root, project, 'img/map', { recursive: true });
       assert.equal(mzListed.ok, true);
@@ -120,6 +122,13 @@ describe('editor catalog service', () => {
         mzListed.assets.find((asset) => asset.fileName === 'nested/deep.png')?.name,
         'nested/deep',
       );
+      assertIncludes(mzListed.folders, 'nested');
+
+      fs.mkdirSync(path.join(project, 'img', 'map', 'empty_only'), { recursive: true });
+      const withEmpty = listProjectRelativeDirectoryAssets(root, project, 'img/map', { recursive: true });
+      assert.equal(withEmpty.ok, true);
+      if (!withEmpty.ok) return;
+      assertIncludes(withEmpty.folders, 'empty_only');
 
       const missing = listProjectRelativeDirectoryAssets(root, project, 'img/missing', { recursive: false });
       assert.deepEqual(missing, { ok: false, reason: 'directory-not-found', directory: 'img/missing' });

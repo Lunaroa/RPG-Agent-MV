@@ -4,6 +4,7 @@ import path from 'node:path';
 import type {
   EditorActorBattleProfile,
   EditorActorCatalogEntry,
+  EditorAnimationCatalogEntry,
   EditorBattleTestBattler,
   EditorEnemyCatalogEntry,
   EditorEquipmentCatalogEntry,
@@ -70,13 +71,19 @@ export function listProjectRelativeDirectoryAssets(
     PLUGIN_FILE_MEDIA_EXTENSIONS,
     { recursive: options.recursive },
   );
-  if (assets.length > 0) {
-    return { ok: true, directory, assets };
+  const folders = listProjectFolders(
+    workflowRoot,
+    project,
+    directory,
+    { recursive: options.recursive },
+  );
+  if (assets.length > 0 || folders.length > 0) {
+    return { ok: true, directory, assets, folders };
   }
   if (!projectRelativeDirectoryExists(workflowRoot, project, directory)) {
     return { ok: false, reason: 'directory-not-found', directory };
   }
-  return { ok: true, directory, assets };
+  return { ok: true, directory, assets, folders };
 }
 
 export function buildEditorProjectCatalog(workflowRoot: string, project: string): EditorProjectCatalog {
@@ -117,7 +124,7 @@ export function buildEditorProjectCatalog(workflowRoot: string, project: string)
     troops: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Troops.json'), [])),
     tilesets: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Tilesets.json'), [])),
     commonEvents: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('CommonEvents.json'), [])),
-    animations: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Animations.json'), [])),
+    animations: animationDatabaseList(readProjectJson(workflowRoot, project, dataFile('Animations.json'), [])),
     battle: {
       sideView: system.optSideView === true,
       battleback1Name: stringValue(system.battleback1Name),
@@ -189,6 +196,21 @@ function actorDatabaseList(value: unknown): EditorActorCatalogEntry[] {
       name: stringValue(record.name) || `#${id}`,
       characterName: stringValue(record.characterName),
       characterIndex,
+    }];
+  });
+}
+
+function animationDatabaseList(value: unknown): EditorAnimationCatalogEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    const record = asRecord(entry);
+    if (!record) return [];
+    const id = positiveInteger(record.id) ?? index;
+    if (id <= 0) return [];
+    return [{
+      id,
+      name: stringValue(record.name) || `#${id}`,
+      animation1Name: stringValue(record.animation1Name),
     }];
   });
 }
@@ -378,4 +400,55 @@ function listFilesRecursively(root: string): string[] {
   };
   visit(root, '');
   return files;
+}
+
+function listProjectFolders(
+  workflowRoot: string,
+  project: string,
+  directory: string,
+  options: { recursive: boolean },
+): string[] {
+  const folders = new Set<string>();
+  const absolute = path.join(project, ...directory.split('/'));
+  if (fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()) {
+    const listed = options.recursive
+      ? listDirectoriesRecursively(absolute)
+      : listDirectoriesInDirectory(absolute);
+    for (const folder of listed) folders.add(folder.replace(/\\/g, '/'));
+  }
+  const prefix = `${directory}/`;
+  for (const entry of getProjectStagingStatus(workflowRoot, project).files) {
+    if (!entry.relativePath.startsWith(prefix)) continue;
+    const rest = entry.relativePath.slice(prefix.length);
+    if (!rest.includes('/')) continue;
+    const parts = rest.split('/');
+    const depth = options.recursive ? parts.length - 1 : 1;
+    let cursor = '';
+    for (let index = 0; index < depth; index += 1) {
+      cursor = cursor ? `${cursor}/${parts[index]}` : parts[index]!;
+      folders.add(cursor);
+    }
+  }
+  return [...folders].sort((left, right) => left.localeCompare(right));
+}
+
+function listDirectoriesInDirectory(root: string): string[] {
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [];
+  return fs.readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+}
+
+function listDirectoriesRecursively(root: string): string[] {
+  const folders: string[] = [];
+  const visit = (directory: string, prefix: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      folders.push(relative);
+      visit(path.join(directory, entry.name), relative);
+    }
+  };
+  visit(root, '');
+  return folders;
 }

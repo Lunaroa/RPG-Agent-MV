@@ -5,7 +5,10 @@ import type {
   EditorProjectCatalog,
   PluginParameterSchemaField,
 } from '../../api/client';
+import { projectAssets, resolveAssetUrl } from '../../api/client';
 import { useI18n } from '../../i18n';
+import { useProjectStore } from '../../stores/project';
+import ActorWalkingSheetThumb from '../editor/ActorWalkingSheetThumb.vue';
 import PluginParameterInput from '../editor/PluginParameterInput.vue';
 import PluginParameterCollectionEditor from './PluginParameterCollectionEditor.vue';
 import {
@@ -21,6 +24,7 @@ import {
   type PluginParameterChildTarget,
   type PluginParameterValidationIssue,
 } from './plugin-parameter-model';
+import { resolvePluginParameterFileAssets } from '../../utils/pluginParameterFileAssets';
 
 defineOptions({ name: 'PluginParameterValueDialog' });
 
@@ -48,6 +52,7 @@ interface ChildEditorState {
 }
 
 const { t } = useI18n();
+const projectStore = useProjectStore();
 const editorBody = ref<HTMLElement | null>(null);
 const draft = ref<unknown>('');
 const activeTab = ref<'editor' | 'text'>('editor');
@@ -56,6 +61,8 @@ const rawError = ref('');
 const collectionVersion = ref(0);
 const childDialogOpen = ref(false);
 const childEditor = ref<ChildEditorState | null>(null);
+const filePreviewUrl = ref('');
+const filePreviewFailed = ref(false);
 
 const visible = computed({
   get: () => props.modelValue,
@@ -112,6 +119,20 @@ const validationIssue = computed(() =>
 const validationMessage = computed(() =>
   validationIssue.value ? formatValidationIssue(validationIssue.value) : '',
 );
+const showFilePreview = computed(() =>
+  props.field?.kind === 'file'
+  && String(props.field.directory || '').toLowerCase().startsWith('img/'),
+);
+const showActorPreview = computed(() =>
+  props.field?.kind === 'database' && props.field.databaseTable === 'Actors',
+);
+const selectedActorCharacterName = computed(() => {
+  if (!showActorPreview.value) return '';
+  const id = Number(draft.value);
+  if (!Number.isInteger(id) || id <= 0) return '';
+  const actor = (props.catalog?.actors || []).find((entry) => entry.id === id);
+  return String(actor?.characterName || '').trim();
+});
 
 watch(
   () => [props.modelValue, props.field?.key] as const,
@@ -124,13 +145,58 @@ watch(
         : '';
       rawError.value = '';
       collectionVersion.value += 1;
+      void refreshFilePreview();
     } else {
       childDialogOpen.value = false;
       childEditor.value = null;
+      filePreviewUrl.value = '';
+      filePreviewFailed.value = false;
     }
   },
   { immediate: true },
 );
+
+watch(
+  () => [draft.value, props.field?.kind, props.field?.directory, props.catalog] as const,
+  () => {
+    if (!props.modelValue || props.field?.kind !== 'file') return;
+    void refreshFilePreview();
+  },
+);
+
+async function refreshFilePreview(): Promise<void> {
+  filePreviewFailed.value = false;
+  if (!showFilePreview.value || !props.field) {
+    filePreviewUrl.value = '';
+    return;
+  }
+  const selected = String(draft.value || '').trim();
+  if (!selected) {
+    filePreviewUrl.value = '';
+    return;
+  }
+  const project = projectStore.currentProject;
+  if (!project || !props.catalog) {
+    filePreviewUrl.value = '';
+    return;
+  }
+  const resolved = await resolvePluginParameterFileAssets(
+    props.catalog,
+    props.field.directory,
+    (relativeDirectory, { recursive }) =>
+      projectAssets.listRelativeDirectory(relativeDirectory, project, recursive),
+  );
+  if (!resolved.ok) {
+    filePreviewUrl.value = '';
+    return;
+  }
+  const asset = resolved.assets.find((entry) => entry.name === selected);
+  if (!asset?.url) {
+    filePreviewUrl.value = '';
+    return;
+  }
+  filePreviewUrl.value = await resolveAssetUrl(asset.url);
+}
 
 function commit(): void {
   if (!props.field) return;
@@ -400,6 +466,38 @@ function arrayValue(value: unknown): unknown[] {
       <p v-if="validationMessage" class="parameter-validation-error" role="alert">
         {{ validationMessage }}
       </p>
+
+      <div
+        v-if="showFilePreview"
+        class="parameter-file-preview"
+        :aria-label="t('pluginFilePicker.title')"
+      >
+        <img
+          v-if="filePreviewUrl && !filePreviewFailed"
+          :src="filePreviewUrl"
+          :alt="String(draft || '')"
+          @error="filePreviewFailed = true"
+        />
+        <p v-else class="parameter-file-preview-empty">
+          {{ String(draft || '').trim() ? t('pluginFilePicker.previewFailed') : t('pluginFilePicker.none') }}
+        </p>
+      </div>
+
+      <div
+        v-else-if="showActorPreview"
+        class="parameter-file-preview parameter-actor-preview"
+        :aria-label="t('plugins.parameterTypeActor')"
+      >
+        <ActorWalkingSheetThumb
+          v-if="selectedActorCharacterName"
+          :character-name="selectedActorCharacterName"
+          :catalog="catalog"
+          :max-height="160"
+        />
+        <p v-else class="parameter-file-preview-empty">
+          {{ t('pluginFilePicker.none') }}
+        </p>
+      </div>
     </div>
 
     <template #footer>
@@ -507,10 +605,38 @@ function arrayValue(value: unknown): unknown[] {
 }
 .parameter-description {
   padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--console-paper-soft, #faf5ec);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--console-accent, #be5630) 8%, transparent);
   color: var(--console-text-soft, #5a5247);
   white-space: pre-wrap;
+}
+.parameter-file-preview {
+  height: 160px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--console-border, #e4dcce);
+  border-radius: 8px;
+  background:
+    linear-gradient(45deg, #ece4d8 25%, transparent 25%),
+    linear-gradient(-45deg, #ece4d8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ece4d8 75%),
+    linear-gradient(-45deg, transparent 75%, #ece4d8 75%);
+  background-color: #f7f2e9;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+.parameter-file-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  object-fit: contain;
+  image-rendering: auto;
+}
+.parameter-file-preview-empty {
+  margin: 0;
+  color: var(--console-text-muted, #756b5e);
+  font-size: 12px;
 }
 .parameter-validation-error {
   padding: 8px 10px;

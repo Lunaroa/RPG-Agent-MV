@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { TableInstance } from 'element-plus';
 import { ArrowRight, WarningFilled } from '@element-plus/icons-vue';
@@ -14,7 +14,10 @@ import {
   normalizePluginParameterCollectionColumns,
   normalizePluginParameterMainColumns,
 } from '../../utils/pluginParameterTableColumns';
-import { formatPluginParameterTypeLabel } from '../../utils/pluginParameterTypeLabel';
+import {
+  formatPluginParameterTypeLabel, pluginParameterTypeLabelIsList,
+} from '../../utils/pluginParameterTypeLabel';
+import PluginParameterValueDecor from '../editor/PluginParameterValueDecor.vue';
 import {
   buildPluginParameterCollectionColumns,
   buildPluginParameterCollectionRows,
@@ -27,7 +30,6 @@ import {
   clonePluginParameterValue,
   isBooleanParameterEnabled,
   isPluginParameterSchemaFieldEditable,
-  isTaggedPluginParameterValue,
   resolvePluginParameterSelectPresentation,
   summarizePluginParameterValue,
   type PluginParameterChildTarget,
@@ -71,6 +73,7 @@ const dropIndex = ref<number | null>(null);
 const expandedStructKeys = ref<Set<string>>(new Set());
 const activeStructKey = ref('');
 let rowSerial = 0;
+let pointerDragId: number | null = null;
 
 const mainColumnWidths = computed(() =>
   normalizePluginParameterMainColumns(
@@ -220,6 +223,11 @@ watch(
     if (row) arrayElTable.value?.setCurrentRow(row);
   },
 );
+
+onBeforeUnmount(() => {
+  clearPointerDragListeners();
+  clearDrag();
+});
 
 function collectionColumnWidth(key: string, fallback?: number): number | undefined {
   const width = collectionColumnWidths.value[key];
@@ -472,49 +480,67 @@ async function deleteSelection(): Promise<void> {
   selectedRowIds.value = [];
 }
 
-function startDrag(event: DragEvent, index: number): void {
-  if (sortingLocked.value) {
-    event.preventDefault();
-    return;
-  }
+function startPointerDrag(event: PointerEvent, index: number): void {
+  if (sortingLocked.value || event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const handle = event.currentTarget as HTMLElement | null;
+  if (!handle) return;
+  pointerDragId = event.pointerId;
+  handle.setPointerCapture(event.pointerId);
   draggedIndex.value = index;
   dropIndex.value = index;
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', String(index));
-  }
+  window.addEventListener('pointermove', onPointerDragMove);
+  window.addEventListener('pointerup', onPointerDragEnd);
+  window.addEventListener('pointercancel', onPointerDragEnd);
 }
 
-function resolveArrayRowIndexFromDragEvent(event: DragEvent): number | null {
-  const rowEl = (event.target as HTMLElement | null)?.closest('tr.el-table__row');
-  if (!rowEl) return null;
-  const rowKey = rowEl.getAttribute('data-row-key');
-  if (!rowKey) return null;
-  const row = visibleRows.value.find((item) => item.id === rowKey);
-  return row?.index ?? null;
-}
-
-function onArrayTableDragOver(event: DragEvent): void {
-  if (sortingLocked.value || draggedIndex.value === null) return;
-  const index = resolveArrayRowIndexFromDragEvent(event);
+function onPointerDragMove(event: PointerEvent): void {
+  if (pointerDragId !== event.pointerId || draggedIndex.value === null) return;
+  const index = resolveArrayRowIndexFromPoint(event.clientX, event.clientY);
   if (index === null) return;
-  event.preventDefault();
-  const rowEl = (event.target as HTMLElement).closest('tr.el-table__row');
+  const rowEl = document.elementFromPoint(event.clientX, event.clientY)
+    ?.closest?.('tr.el-table__row') as HTMLElement | null;
   if (!rowEl) return;
   dropIndex.value = event.clientY >= rowEl.getBoundingClientRect().top + rowEl.offsetHeight / 2
     ? index + 1
     : index;
-  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
 }
 
-function finishDrop(event: DragEvent): void {
-  event.preventDefault();
+function onPointerDragEnd(event: PointerEvent): void {
+  if (pointerDragId !== null && event.pointerId !== pointerDragId) return;
   const from = draggedIndex.value;
   const rawTarget = dropIndex.value;
-  if (from === null || rawTarget === null) return clearDrag();
+  clearPointerDragListeners();
+  if (from === null || rawTarget === null) {
+    clearDrag();
+    return;
+  }
   const to = Math.max(0, Math.min(entries.value.length - 1, rawTarget > from ? rawTarget - 1 : rawTarget));
   moveItem(from, to);
   clearDrag();
+}
+
+function clearPointerDragListeners(): void {
+  window.removeEventListener('pointermove', onPointerDragMove);
+  window.removeEventListener('pointerup', onPointerDragEnd);
+  window.removeEventListener('pointercancel', onPointerDragEnd);
+  pointerDragId = null;
+}
+
+function resolveArrayRowIndexFromPoint(clientX: number, clientY: number): number | null {
+  const hit = document.elementFromPoint(clientX, clientY);
+  const rowEl = hit?.closest?.('tr.el-table__row') as HTMLElement | null;
+  if (!rowEl || !collectionTable.value?.contains(rowEl)) return null;
+  const rowKey = rowEl.getAttribute('data-row-key');
+  if (rowKey) {
+    const byKey = visibleRows.value.find((item) => item.id === rowKey);
+    if (byKey) return byKey.index;
+  }
+  const bodyRows = [...(rowEl.parentElement?.querySelectorAll('tr.el-table__row') || [])];
+  const visualIndex = bodyRows.indexOf(rowEl);
+  if (visualIndex < 0) return null;
+  return visibleRows.value[visualIndex]?.index ?? null;
 }
 
 function clearDrag(): void {
@@ -647,8 +673,6 @@ function displayValue(value: unknown): string {
         ref="collectionTable"
         class="collection-table-wrap"
         tabindex="0"
-        @dragover="onArrayTableDragOver"
-        @drop="finishDrop"
         @keydown="onArrayTableKeydown"
       >
         <el-table
@@ -700,14 +724,12 @@ function displayValue(value: unknown): string {
             <template #default="{ row }">
               <span
                 class="drag-handle"
-                :class="{ locked: sortingLocked }"
-                :draggable="!sortingLocked"
+                :class="{ locked: sortingLocked, dragging: draggedIndex === row.index }"
                 :title="sortingLocked
                   ? t('plugins.parameterClearSearchToReorder')
                   : t('plugins.parameterDragToReorder')"
                 :aria-label="t('plugins.parameterDragToReorder')"
-                @dragstart.stop="startDrag($event, row.index)"
-                @dragend="clearDrag"
+                @pointerdown="startPointerDrag($event, row.index)"
                 @dblclick.stop
               >
                 <svg viewBox="0 0 12 18" aria-hidden="true">
@@ -768,19 +790,14 @@ function displayValue(value: unknown): string {
                       }}
                     </el-tag>
                   </div>
-                  <el-tag
-                    v-else-if="
-                      isTaggedPluginParameterValue(column.field)
-                      && cellSummary(row.value, column.field)
-                    "
-                    size="small"
-                    effect="plain"
-                    class="parameter-value-tag"
-                    :title="cellSummary(row.value, column.field)"
-                  >
-                    {{ cellSummary(row.value, column.field) }}
-                  </el-tag>
-                  <span v-else>{{ cellSummary(row.value, column.field) }}</span>
+                  <template v-else>
+                    <PluginParameterValueDecor
+                      :field="column.field"
+                      :value="cellValue(row.value, column.field)"
+                      :catalog="catalog"
+                    />
+                    <span>{{ cellSummary(row.value, column.field) }}</span>
+                  </template>
                 </div>
               </template>
             </el-table-column>
@@ -792,6 +809,7 @@ function displayValue(value: unknown): string {
             :width="collectionColumnWidth('value')"
             :min-width="collectionColumnWidth('value') ? undefined : 160"
             resizable
+            class-name="parameter-value-column"
           >
             <template #default="{ row }">
               <div
@@ -819,22 +837,14 @@ function displayValue(value: unknown): string {
                     {{ selectPresentationFor(arrayItem, row.value)!.value }}
                   </el-tag>
                 </div>
-                <el-tag
-                  v-else-if="
-                    arrayItem
-                    && isTaggedPluginParameterValue(arrayItem)
-                    && valueSummary(arrayItem, row.value)
-                  "
-                  size="small"
-                  effect="plain"
-                  class="parameter-value-tag"
-                  :title="valueSummary(arrayItem, row.value)"
-                >
-                  {{ valueSummary(arrayItem, row.value) }}
-                </el-tag>
-                <span v-else>
-                  {{ arrayItem ? valueSummary(arrayItem, row.value) : '' }}
-                </span>
+                <template v-else-if="arrayItem">
+                  <PluginParameterValueDecor
+                    :field="arrayItem"
+                    :value="row.value"
+                    :catalog="catalog"
+                  />
+                  <span>{{ valueSummary(arrayItem, row.value) }}</span>
+                </template>
               </div>
             </template>
           </el-table-column>
@@ -931,14 +941,20 @@ function displayValue(value: unknown): string {
             class-name="parameter-type-cell"
           >
             <template #default="{ row }">
-              <el-tag
-                size="small"
-                effect="plain"
-                class="parameter-type-tag"
+              <div
+                class="parameter-type-text"
                 :title="structTypeLabel(row)"
               >
-                {{ structTypeLabel(row) }}
-              </el-tag>
+                <el-tag
+                  v-if="pluginParameterTypeLabelIsList(structTypeLabel(row))"
+                  size="small"
+                  effect="plain"
+                  class="parameter-list-tag"
+                >
+                  {{ t('plugins.parameterTypeListTag') }}
+                </el-tag>
+                <span>{{ structTypeLabel(row) }}</span>
+              </div>
             </template>
           </el-table-column>
           <el-table-column
@@ -947,6 +963,7 @@ function displayValue(value: unknown): string {
             :width="valueColumnWidth"
             :min-width="valueColumnWidth ? undefined : 160"
             resizable
+            class-name="parameter-value-column"
           >
             <template #default="{ row }">
               <div
@@ -977,16 +994,15 @@ function displayValue(value: unknown): string {
                     {{ selectPresentationFor(row.field, structSource()[row.key])!.value }}
                   </el-tag>
                 </div>
-                <el-tag
-                  v-else-if="isTaggedPluginParameterValue(row.field) && row.summary"
-                  size="small"
-                  effect="plain"
-                  class="parameter-value-tag"
-                  :title="row.fullValue"
-                >
-                  {{ row.summary }}
-                </el-tag>
-                <span v-else>{{ row.summary }}</span>
+                <template v-else>
+                  <PluginParameterValueDecor
+                    v-if="row.field"
+                    :field="row.field"
+                    :value="structSource()[row.key]"
+                    :catalog="catalog"
+                  />
+                  <span>{{ row.summary }}</span>
+                </template>
                 <el-tag
                   v-if="!row.editable"
                   size="small"
@@ -1082,7 +1098,10 @@ function displayValue(value: unknown): string {
   text-overflow: ellipsis;
 }
 .parameter-el-table :deep(.el-table__body td.el-table__cell) {
-  padding: 4px 0;
+  padding: 8px 0;
+}
+.parameter-el-table :deep(.el-table__body td.el-table__cell .cell) {
+  line-height: 22px;
 }
 .parameter-el-table :deep(.el-table__row) {
   cursor: pointer;
@@ -1095,14 +1114,31 @@ function displayValue(value: unknown): string {
   font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
   font-size: 11px;
 }
-.parameter-type-tag {
-  max-width: 100%;
+.parameter-type-text {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.parameter-type-text > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.parameter-list-tag {
+  flex: 0 0 auto;
   animation: none;
   transition: none;
 }
-.parameter-type-tag :deep(.el-tag__content) {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.parameter-el-table :deep(.el-table__body tr:hover > td.parameter-value-column),
+.parameter-el-table :deep(.el-table__body tr.current-row > td.parameter-value-column) {
+  background: color-mix(
+    in srgb,
+    var(--console-accent-soft, #f8e9df) 72%,
+    var(--console-paper-soft, #faf5ec)
+  );
 }
 .parameter-el-table :deep(.select-column .cell),
 .parameter-el-table :deep(.drag-column .cell) {
@@ -1122,19 +1158,24 @@ function displayValue(value: unknown): string {
   display: inline-grid;
   cursor: grab;
   place-items: center;
+  touch-action: none;
+  user-select: none;
 }
-.drag-handle:active {
+.drag-handle:active,
+.drag-handle.dragging {
   cursor: grabbing;
 }
 .drag-handle.locked {
   cursor: not-allowed;
   opacity: 0.45;
+  pointer-events: none;
 }
 .drag-handle svg {
   width: 12px;
   height: 18px;
   fill: currentColor;
   color: var(--console-text-muted, #756b5e);
+  pointer-events: none;
 }
 .parameter-value-cell {
   min-width: 0;
@@ -1184,17 +1225,6 @@ function displayValue(value: unknown): string {
 }
 .parameter-boolean-switch.is-disabled {
   opacity: 1;
-}
-.parameter-value-tag {
-  min-width: 0;
-  max-width: 100%;
-  flex: 0 1 auto;
-  animation: none;
-  transition: none;
-}
-.parameter-value-tag :deep(.el-tag__content) {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .parameter-readonly-tag {
   flex: 0 0 auto;

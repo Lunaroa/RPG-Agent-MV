@@ -99,6 +99,9 @@
       filterable
       class="database-param-select"
       :class="{ 'is-actor-select': isActorDatabase }"
+      :popper-class="isActorDatabase
+        ? 'plugin-parameter-select-popper plugin-parameter-actor-popper'
+        : 'plugin-parameter-select-popper'"
       @change="emitSelectValue"
     >
       <el-option
@@ -112,7 +115,7 @@
             :character-name="actorGraphicForOption(option.value)?.characterName"
             :character-index="actorGraphicForOption(option.value)?.characterIndex"
             :catalog="catalog"
-            :size="32"
+            :size="48"
           />
           <span>{{ option.label }}</span>
         </div>
@@ -243,6 +246,7 @@
       :directory="fileResolution.ok ? fileResolution.directory : normalizePluginFileDirectory(field.directory)"
       :media="fileResolution.ok ? fileResolution.media : 'other'"
       :assets="filePickerAssets"
+      :folders="filePickerFolders"
       @commit="commitFileSelection"
     />
   </div>
@@ -473,6 +477,9 @@ const filePickerAssets = computed(() => {
   if (!current || assets.some((asset) => asset.name === current)) return assets;
   return [{ name: current, fileName: current, url: '' }, ...assets];
 });
+const filePickerFolders = computed(() =>
+  fileResolution.value.ok ? fileResolution.value.folders : [],
+);
 const fileDisplayValue = computed(() =>
   stringValue.value || t('pluginFilePicker.none'),
 );
@@ -593,8 +600,9 @@ function commitLocation(selection: { mapId: number; x: number; y: number }): voi
   emitValue(selection);
 }
 
-function openFilePicker(): void {
+async function openFilePicker(): Promise<void> {
   if (isReadonly.value) return;
+  await refreshFileResolution();
   if (!fileResolution.value.ok) {
     ElMessage.error(fileResolutionError.value || t('pluginFilePicker.missingDirectory'));
     return;
@@ -818,16 +826,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.database-param-select.is-actor-select :deep(.el-select-dropdown__item) {
+</style>
+
+<style>
+.plugin-parameter-actor-popper .el-select-dropdown__item {
   height: auto;
-  min-height: 40px;
+  min-height: 56px;
   padding-top: 4px;
   padding-bottom: 4px;
   line-height: 1.3;
 }
-</style>
-
-<style>
 .plugin-parameter-select-popper .el-select-dropdown__item.is-selected {
   font-weight: 400;
   color: var(--console-accent, #be5630);

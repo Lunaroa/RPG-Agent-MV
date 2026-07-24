@@ -75,7 +75,10 @@ export function filterPluginFileAssetsByQuery(
   });
 }
 
-export function buildPluginFileTree(assets: PluginFileAssetOption[]): PluginFileTreeNode[] {
+export function buildPluginFileTree(
+  assets: PluginFileAssetOption[],
+  folders: string[] = [],
+): PluginFileTreeNode[] {
   type MutableFolder = {
     kind: 'folder';
     id: string;
@@ -91,6 +94,10 @@ export function buildPluginFileTree(assets: PluginFileAssetOption[]): PluginFile
     folders: new Map(),
     files: [],
   };
+
+  for (const folderPath of folders) {
+    ensureFolder(root, normalizePluginFileBrowsePath(folderPath));
+  }
 
   for (const asset of assets) {
     const name = normalizePluginFileBrowsePath(asset.name);
@@ -121,6 +128,21 @@ export function buildPluginFileTree(assets: PluginFileAssetOption[]): PluginFile
 
   return freezeFolder(root);
 
+  function ensureFolder(rootFolder: MutableFolder, folderPath: string): void {
+    const normalized = normalizePluginFileBrowsePath(folderPath);
+    if (!normalized || normalized.includes('..')) return;
+    let cursor = rootFolder;
+    for (const label of normalized.split('/').filter(Boolean)) {
+      const id = joinPluginFileBrowsePath(cursor.id, label);
+      let next = cursor.folders.get(label);
+      if (!next) {
+        next = { kind: 'folder', id, label, folders: new Map(), files: [] };
+        cursor.folders.set(label, next);
+      }
+      cursor = next;
+    }
+  }
+
   function freezeFolder(folder: MutableFolder): PluginFileTreeNode[] {
     const children: PluginFileTreeNode[] = [
       ...[...folder.folders.values()]
@@ -140,12 +162,26 @@ export function buildPluginFileTree(assets: PluginFileAssetOption[]): PluginFile
 export function listPluginFileGalleryEntries(
   assets: PluginFileAssetOption[],
   currentPath: string,
-  options: { parentLabel?: string } = {},
+  options: { parentLabel?: string; folders?: string[] } = {},
 ): PluginFileGalleryEntry[] {
   const path = normalizePluginFileBrowsePath(currentPath);
   const prefix = path ? `${path}/` : '';
   const folders = new Map<string, string>();
   const files: PluginFileAssetOption[] = [];
+
+  for (const folderPath of options.folders || []) {
+    const normalized = normalizePluginFileBrowsePath(folderPath);
+    if (!normalized || normalized.includes('..')) continue;
+    if (path) {
+      if (normalized === path || !normalized.startsWith(prefix)) continue;
+      const rest = normalized.slice(prefix.length);
+      if (!rest || rest.includes('/')) continue;
+      folders.set(normalized, rest);
+      continue;
+    }
+    if (normalized.includes('/')) continue;
+    folders.set(normalized, normalized);
+  }
 
   for (const asset of assets) {
     const name = normalizePluginFileBrowsePath(asset.name);

@@ -13,14 +13,13 @@ import { useWorkspaceStore } from '../../stores/workspace';
 import {
   normalizePluginParameterMainColumns,
 } from '../../utils/pluginParameterTableColumns';
-import { formatPluginParameterTypeLabel } from '../../utils/pluginParameterTypeLabel';
+import { formatPluginParameterTypeLabel, pluginParameterTypeLabelIsList } from '../../utils/pluginParameterTypeLabel';
 import {
   buildPluginParameterPayload,
   buildPluginParameterRows,
   clonePluginParameterValue,
   createPluginParameterForm,
   isBooleanParameterEnabled,
-  isTaggedPluginParameterValue,
   pluginParameterPayloadsEqual,
   resolvePluginParameterSelectPresentation,
   type PluginParameterRow,
@@ -33,6 +32,7 @@ import {
   type VisiblePluginParameterTreeRow,
 } from './plugin-parameter-tree-model';
 import PluginParameterValueDialog from './PluginParameterValueDialog.vue';
+import PluginParameterValueDecor from '../editor/PluginParameterValueDecor.vue';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -486,14 +486,20 @@ async function focusInitialParameter(): Promise<void> {
               class-name="parameter-type-cell"
             >
               <template #default="{ row }">
-                <el-tag
-                  size="small"
-                  effect="plain"
-                  class="parameter-type-tag"
+                <div
+                  class="parameter-type-text"
                   :title="parameterTypeLabel(row)"
                 >
-                  {{ parameterTypeLabel(row) }}
-                </el-tag>
+                  <el-tag
+                    v-if="pluginParameterTypeLabelIsList(parameterTypeLabel(row))"
+                    size="small"
+                    effect="plain"
+                    class="parameter-list-tag"
+                  >
+                    {{ t('plugins.parameterTypeListTag') }}
+                  </el-tag>
+                  <span>{{ parameterTypeLabel(row) }}</span>
+                </div>
               </template>
             </el-table-column>
             <el-table-column
@@ -502,6 +508,7 @@ async function focusInitialParameter(): Promise<void> {
               :width="valueColumnWidth"
               :min-width="valueColumnWidth ? undefined : 160"
               resizable
+              class-name="parameter-value-column"
             >
               <template #default="{ row }">
                 <div
@@ -534,16 +541,15 @@ async function focusInitialParameter(): Promise<void> {
                       {{ selectPresentation(row)!.value }}
                     </el-tag>
                   </div>
-                  <el-tag
-                    v-else-if="isTaggedPluginParameterValue(row.field) && row.summary"
-                    size="small"
-                    effect="plain"
-                    class="parameter-value-tag"
-                    :title="row.fullValue"
-                  >
-                    {{ row.summary }}
-                  </el-tag>
-                  <span v-else>{{ row.summary }}</span>
+                  <template v-else>
+                    <PluginParameterValueDecor
+                      v-if="row.field"
+                      :field="row.field"
+                      :value="parameterForm[row.key]"
+                      :catalog="catalog"
+                    />
+                    <span>{{ row.summary }}</span>
+                  </template>
                 </div>
               </template>
             </el-table-column>
@@ -679,7 +685,10 @@ async function focusInitialParameter(): Promise<void> {
   font-weight: 600;
 }
 .parameter-el-table :deep(.el-table__body td.el-table__cell) {
-  padding: 4px 0;
+  padding: 8px 0;
+}
+.parameter-el-table :deep(.el-table__body td.el-table__cell .cell) {
+  line-height: 22px;
 }
 .parameter-el-table :deep(.el-table__row) {
   cursor: pointer;
@@ -692,14 +701,31 @@ async function focusInitialParameter(): Promise<void> {
   font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
   font-size: 11px;
 }
-.parameter-type-tag {
-  max-width: 100%;
+.parameter-type-text {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.parameter-type-text > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.parameter-list-tag {
+  flex: 0 0 auto;
   animation: none;
   transition: none;
 }
-.parameter-type-tag :deep(.el-tag__content) {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.parameter-el-table :deep(.el-table__body tr:hover > td.parameter-value-column),
+.parameter-el-table :deep(.el-table__body tr.current-row > td.parameter-value-column) {
+  background: color-mix(
+    in srgb,
+    var(--console-accent-soft, #f8e9df) 72%,
+    var(--console-paper-soft, #faf5ec)
+  );
 }
 .parameter-name-cell {
   min-width: 0;
@@ -771,17 +797,6 @@ async function focusInitialParameter(): Promise<void> {
 }
 .parameter-boolean-switch.is-disabled {
   opacity: 1;
-}
-.parameter-value-tag {
-  min-width: 0;
-  max-width: 100%;
-  flex: 0 1 auto;
-  animation: none;
-  transition: none;
-}
-.parameter-value-tag :deep(.el-tag__content) {
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .parameter-readonly-tag {
   flex: 0 0 auto;

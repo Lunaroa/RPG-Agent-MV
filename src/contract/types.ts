@@ -445,6 +445,11 @@ export interface EditorActorCatalogEntry extends NamedCatalogEntry {
   characterIndex: number;
 }
 
+/** Animation DB row with cheap static sheet name for thumbnails (not frame playback). */
+export interface EditorAnimationCatalogEntry extends NamedCatalogEntry {
+  animation1Name: string;
+}
+
 export interface EditorActorBattleProfile {
   actorId: number;
   classId: number;
@@ -488,6 +493,8 @@ export type ProjectRelativeDirectoryListResult =
       ok: true;
       directory: string;
       assets: ProjectAssetEntry[];
+      /** Relative folder paths under `directory` (includes empty folders). */
+      folders: string[];
     }
   | {
       ok: false;
@@ -1213,7 +1220,7 @@ export interface EditorProjectCatalog {
   troops: NamedCatalogEntry[];
   tilesets: NamedCatalogEntry[];
   commonEvents: NamedCatalogEntry[];
-  animations: NamedCatalogEntry[];
+  animations: EditorAnimationCatalogEntry[];
   battle: EditorBattleContext;
   assets: {
     characters: ProjectAssetEntry[];

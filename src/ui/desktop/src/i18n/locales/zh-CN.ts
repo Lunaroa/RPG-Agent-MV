@@ -1999,6 +1999,7 @@ const zhCN = {
     'plugins.parameterTypeMap': '地图',
     'plugins.parameterTypeLocation': '坐标',
     'plugins.parameterTypeStruct': '结构体 · {{name}}',
+    'plugins.parameterTypeListTag': '列表',
     'plugins.parameterValueColumn': '值',
     'plugins.parameterActionsColumn': '操作',
     'plugins.parameterArrayItem': '条目 {{index}}',

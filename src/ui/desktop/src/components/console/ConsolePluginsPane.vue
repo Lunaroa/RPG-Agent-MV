@@ -74,7 +74,6 @@ const listWidth = ref(clampPluginListWidth(
 ));
 let resizeStartX = 0;
 let resizeStartWidth = listWidth.value;
-let quietReloadToken = 0;
 
 const query = computed(() => search.value.trim().toLocaleLowerCase());
 const groups = computed(() => buildPluginManagerGroups(config.value, search.value));
@@ -264,34 +263,6 @@ async function loadPlugins(): Promise<void> {
   }
 }
 
-/** Re-read disk without full-page loading (selection / open parameters). */
-async function reloadPluginsQuietly(options: { catalog?: boolean } = {}): Promise<boolean> {
-  if (!projectStore.currentProject) return false;
-  const token = ++quietReloadToken;
-  try {
-    if (options.catalog) {
-      const [nextConfig, catalog] = await Promise.all([
-        pluginApi.read(projectStore.currentProject),
-        projectAssets.editorCatalog(projectStore.currentProject),
-      ]);
-      if (token !== quietReloadToken) return false;
-      applyConfig(nextConfig);
-      editorCatalog.value = catalog;
-    } else {
-      const nextConfig = await pluginApi.read(projectStore.currentProject);
-      if (token !== quietReloadToken) return false;
-      applyConfig(nextConfig);
-    }
-    await refreshStagingStatus();
-    return token === quietReloadToken;
-  } catch (loadError) {
-    if (token !== quietReloadToken) return false;
-    console.error('[plugins] failed to refresh plugin configuration', loadError);
-    error.value = formatPluginActionError(loadError);
-    return false;
-  }
-}
-
 async function refreshEditorCatalog(): Promise<void> {
   if (!projectStore.currentProject) return;
   try {
@@ -362,9 +333,8 @@ function fileKey(relativePath: string): string {
   return `file:${relativePath}`;
 }
 
-async function selectPlugin(plugin: ManagedPluginEntry): Promise<void> {
+function selectPlugin(plugin: ManagedPluginEntry): void {
   selectedKey.value = configuredRowKey(plugin.index);
-  await reloadPluginsQuietly();
 }
 
 function selectFile(file: ManagedPluginFile): void {
@@ -418,25 +388,47 @@ function hasConfigurableParameters(plugin: ManagedPluginEntry): boolean {
   return (plugin.parameterSchema?.fields.length ?? 0) > 0;
 }
 
+function mergeManagedPluginEntry(entry: ManagedPluginEntry): void {
+  if (!config.value) return;
+  const nextPlugins = config.value.plugins.slice();
+  const atIndex = nextPlugins.findIndex((plugin) => plugin.index === entry.index);
+  if (atIndex >= 0) {
+    nextPlugins[atIndex] = entry;
+  } else {
+    nextPlugins.push(entry);
+    nextPlugins.sort((left, right) => left.index - right.index);
+  }
+  config.value = { ...config.value, plugins: nextPlugins };
+  updateStatusBar();
+}
+
 async function openParameterDialog(plugin: ManagedPluginEntry): Promise<void> {
-  if (!plugin.name || busyKey.value) return;
-  selectedKey.value = configuredRowKey(plugin.index);
-  const refreshed = await reloadPluginsQuietly({ catalog: true });
-  if (!refreshed || busyKey.value) return;
-  const fresh = plugins.value.find((entry) => entry.index === plugin.index && entry.name === plugin.name)
-    || plugins.value.find((entry) => entry.name === plugin.name);
-  if (!fresh) {
-    error.value = t('plugins.emptySelection');
-    return;
-  }
-  selectedKey.value = configuredRowKey(fresh.index);
-  if (!hasConfigurableParameters(fresh)) {
-    actionMessage.value = t('plugins.noParameters');
-    return;
-  }
-  parameterDialogPluginIndex.value = fresh.index;
+  if (!plugin.name || busyKey.value || !projectStore.currentProject) return;
+  selectPlugin(plugin);
   parameterDialogError.value = '';
-  parameterDialogOpen.value = true;
+  actionMessage.value = '';
+  try {
+    const [fresh, catalog] = await Promise.all([
+      pluginApi.readEntry(plugin.index, projectStore.currentProject),
+      projectAssets.editorCatalog(projectStore.currentProject),
+    ]);
+    if (busyKey.value) return;
+    if (fresh.name !== plugin.name) {
+      error.value = t('plugins.emptySelection');
+      return;
+    }
+    mergeManagedPluginEntry(fresh);
+    editorCatalog.value = catalog;
+    selectedKey.value = configuredRowKey(fresh.index);
+    if (!hasConfigurableParameters(fresh)) {
+      actionMessage.value = t('plugins.noParameters');
+      return;
+    }
+    parameterDialogPluginIndex.value = fresh.index;
+    parameterDialogOpen.value = true;
+  } catch (refreshError) {
+    error.value = formatPluginActionError(refreshError);
+  }
 }
 
 async function saveParameters(parameters: Record<string, unknown>): Promise<void> {

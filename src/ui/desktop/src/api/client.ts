@@ -282,6 +282,7 @@ declare global {
       };
       plugins: {
         read(project?: string): Promise<unknown>;
+        readEntry(pluginIndex: number, project?: string): Promise<unknown>;
         validate(project?: string): Promise<unknown>;
         writeConfiguration(entries: unknown[], project?: string): Promise<unknown>;
         addConfiguration(pluginName: string, project?: string): Promise<unknown>;
@@ -1432,6 +1433,9 @@ export const plugins = {
   },
   read(project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.read(project) as Promise<PluginConfigurationResult>;
+  },
+  readEntry(pluginIndex: number, project: string = DEFAULT_PROJECT) {
+    return desktopApi().plugins.readEntry(pluginIndex, project) as Promise<ManagedPluginEntry>;
   },
   validate(project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.validate(project) as Promise<PluginValidationResult>;

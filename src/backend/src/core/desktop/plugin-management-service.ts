@@ -58,6 +58,17 @@ export function readPluginConfiguration(workflowRoot: string, project: string): 
   };
 }
 
+/** Re-parse a single configured row from disk (plugins.js entry + that plugin's .js header/schema). */
+export function readManagedPluginEntry(
+  workflowRoot: string,
+  project: string,
+  pluginIndex: number,
+): ManagedPluginEntry {
+  const parsed = requireReadablePlugins(workflowRoot, project);
+  const entry = requirePluginEntryAtIndex(parsed.entries, pluginIndex);
+  return toManagedEntry(workflowRoot, project, entry, pluginIndex);
+}
+
 export function writePluginConfiguration(
   workflowRoot: string,
   project: string,

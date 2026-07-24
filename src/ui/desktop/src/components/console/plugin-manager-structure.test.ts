@@ -79,11 +79,12 @@ describe('plugin manager structure', () => {
       paneSource,
       /!hasConfigurableParameters\(fresh\)/,
     );
-    assert.match(paneSource, /async function selectPlugin/);
+    assert.match(paneSource, /function selectPlugin/);
+    assert.doesNotMatch(paneSource, /async function selectPlugin/);
     assert.match(paneSource, /async function openParameterDialog/);
-    assert.match(paneSource, /reloadPluginsQuietly\(\)/);
-    assert.match(paneSource, /reloadPluginsQuietly\(\{ catalog: true \}\)/);
-    assert.match(paneSource, /pluginApi\.read\(/);
+    assert.doesNotMatch(paneSource, /reloadPluginsQuietly/);
+    assert.match(paneSource, /pluginApi\.readEntry\(plugin\.index/);
+    assert.match(paneSource, /mergeManagedPluginEntry\(fresh\)/);
     assert.match(paneSource, /@dblclick\.stop/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowUp'/);
     assert.match(paneSource, /event\.altKey && event\.key === 'ArrowDown'/);

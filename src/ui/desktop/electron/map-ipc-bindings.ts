@@ -112,6 +112,7 @@ export const MAP_IPC_CHANNELS = [
   'commonEvents:editCommandList',
   'commonEvents:references',
   'plugins:read',
+  'plugins:readEntry',
   'plugins:validate',
   'plugins:writeConfiguration',
   'plugins:addConfiguration',
@@ -450,6 +451,8 @@ export function registerMapIpcHandlers(
 
   handle('plugins:read', (_event, value?: string) =>
     desktop.pluginManagement.readPluginConfiguration(workflowRoot, project(value)));
+  handle('plugins:readEntry', (_event, pluginIndex: number, value?: string) =>
+    desktop.pluginManagement.readManagedPluginEntry(workflowRoot, project(value), pluginIndex));
   handle('plugins:validate', (_event, value?: string) =>
     desktop.pluginManagement.validatePluginConfiguration(workflowRoot, project(value)));
   handle('plugins:writeConfiguration', (_event, entries: Array<Record<string, unknown>>, value?: string) =>

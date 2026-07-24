@@ -79,6 +79,7 @@
             :show-tooltip="false"
             :aria-label="t('pluginFilePicker.audioVolume')"
             @input="onVolumeInput"
+            @change="onVolumeInput"
           />
         </div>
       </el-popover>
@@ -98,7 +99,9 @@ import { useI18n } from '../../i18n';
 import {
   createPluginAudioPlaybackBundle,
   formatPluginAudioClock,
+  getRememberedPluginAudioVolume,
   readFiniteAudioDuration,
+  rememberPluginAudioVolume,
 } from '../../utils/pluginFileAudioPreview';
 
 const props = withDefaults(defineProps<{
@@ -117,11 +120,9 @@ const playbackSrc = ref('');
 const playing = ref(false);
 const currentTime = ref(0);
 const duration = ref(Number.NaN);
-/** Survives remounts when the file picker swaps :key on preview src. */
-let rememberedVolumePercent = 100;
-let rememberedMuted = false;
-const volumePercent = ref(rememberedVolumePercent);
-const muted = ref(rememberedMuted);
+const remembered = getRememberedPluginAudioVolume();
+const volumePercent = ref(remembered.volumePercent);
+const muted = ref(remembered.muted);
 const volumeOpen = ref(false);
 const seeking = ref(false);
 const loadFailed = ref(false);
@@ -185,10 +186,11 @@ async function bindSource(src: string): Promise<void> {
 function applyRememberedVolume(): void {
   const el = audioEl.value;
   if (!el) return;
-  el.volume = rememberedMuted ? 0 : rememberedVolumePercent / 100;
-  el.muted = rememberedMuted || rememberedVolumePercent <= 0;
-  volumePercent.value = rememberedVolumePercent;
-  muted.value = rememberedMuted || rememberedVolumePercent <= 0;
+  const next = getRememberedPluginAudioVolume();
+  el.volume = next.muted ? 0 : next.volumePercent / 100;
+  el.muted = next.muted || next.volumePercent <= 0;
+  volumePercent.value = next.volumePercent;
+  muted.value = next.muted || next.volumePercent <= 0;
 }
 
 async function tryAutoplay(token: number): Promise<void> {
@@ -274,8 +276,7 @@ function onVolumeInput(value: number | number[]): void {
   el.muted = clamped <= 0;
   volumePercent.value = clamped;
   muted.value = el.muted;
-  rememberedVolumePercent = clamped;
-  rememberedMuted = el.muted;
+  rememberPluginAudioVolume(clamped, el.muted);
 }
 
 onUnmounted(() => {

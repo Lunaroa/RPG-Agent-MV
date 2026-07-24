@@ -398,6 +398,14 @@ defineExpose({ open, close });
   width: min(560px, calc(100vw - 48px));
   display: grid;
   gap: 10px;
+  padding: 0 12px 12px;
+  box-sizing: border-box;
+}
+.system-named-dialog > .editor-modal-header {
+  margin: 0 -12px;
+}
+.system-named-dialog > .editor-modal-footer {
+  border-radius: 6px;
 }
 .system-named-body {
   display: grid;

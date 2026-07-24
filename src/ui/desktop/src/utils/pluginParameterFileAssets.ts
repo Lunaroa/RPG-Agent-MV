@@ -21,7 +21,7 @@ type DirectoryBucket = {
   media: PluginFileMediaKind;
 };
 
-/** Known catalog buckets for fast in-memory listing; other project-relative @dir use disk listing. */
+/** Known catalog buckets for media/kind hints; picker listing always reads disk live. */
 export const PLUGIN_FILE_DIRECTORY_BUCKETS: readonly DirectoryBucket[] = [
   { directory: 'img/animations', key: 'animations', media: 'image' },
   { directory: 'img/battlebacks1', key: 'battlebacks1', media: 'image' },
@@ -52,6 +52,7 @@ export type PluginFileAssetResolution =
       bucketDirectory: string;
       media: PluginFileMediaKind;
       assets: PluginFileAssetOption[];
+      folders: string[];
     }
   | {
       ok: false;
@@ -74,6 +75,20 @@ export function filterPluginFileAssetsForEngine(
   return assets.filter((asset) => !String(asset.name || '').includes('/'));
 }
 
+export function filterPluginFileFoldersForEngine(
+  folders: string[],
+  engine: RpgMakerEngine | null | undefined,
+): string[] {
+  const unique = new Set<string>();
+  for (const folder of folders) {
+    const normalized = String(folder || '').replace(/\\/g, '/');
+    if (!normalized || normalized.includes('..')) continue;
+    if (!pluginFileParameterAllowsSubdirectories(engine) && normalized.includes('/')) continue;
+    unique.add(normalized);
+  }
+  return [...unique].sort((left, right) => left.localeCompare(right));
+}
+
 export function normalizePluginFileDirectory(value: unknown): string {
   return String(value || '')
     .trim()
@@ -92,7 +107,10 @@ export function inferPluginFileMediaKind(directory: string): PluginFileMediaKind
   return 'other';
 }
 
-/** Sync path used when @dir maps onto the editor catalog asset buckets. */
+/**
+ * Sync catalog snapshot for quick checks. Prefer `resolvePluginParameterFileAssets`
+ * when opening the picker so folders/files reflect the live project disk.
+ */
 export function resolvePluginParameterFileAssetsFromCatalog(
   catalog: EditorProjectCatalog | null | undefined,
   directory: unknown,
@@ -123,6 +141,10 @@ export function resolvePluginParameterFileAssetsFromCatalog(
       .sort((left, right) => left.name.localeCompare(right.name)),
     catalog.engine,
   );
+  const folders = filterPluginFileFoldersForEngine(
+    foldersFromAssetNames(assets.map((asset) => asset.name)),
+    catalog.engine,
+  );
 
   return {
     ok: true,
@@ -130,9 +152,11 @@ export function resolvePluginParameterFileAssetsFromCatalog(
     bucketDirectory: match.bucket.directory,
     media: match.bucket.media,
     assets,
+    folders,
   };
 }
 
+/** Always lists from disk so newly created (including empty) folders appear immediately. */
 export async function resolvePluginParameterFileAssets(
   catalog: EditorProjectCatalog | null | undefined,
   directory: unknown,
@@ -141,18 +165,26 @@ export async function resolvePluginParameterFileAssets(
     options: { recursive: boolean },
   ) => Promise<ProjectRelativeDirectoryListResult>,
 ): Promise<PluginFileAssetResolution> {
-  const fromCatalog = resolvePluginParameterFileAssetsFromCatalog(catalog, directory);
-  if (fromCatalog.ok !== 'needs-list') return fromCatalog;
+  const normalized = normalizePluginFileDirectory(directory);
+  if (!normalized) {
+    return { ok: false, reason: 'missing-directory', directory: '' };
+  }
+  if (!catalog) {
+    return { ok: false, reason: 'missing-catalog', directory: normalized };
+  }
 
-  const recursive = pluginFileParameterAllowsSubdirectories(catalog?.engine);
+  const match = matchDirectoryBucket(normalized);
+  const media = match?.bucket.media || inferPluginFileMediaKind(normalized);
+  const recursive = pluginFileParameterAllowsSubdirectories(catalog.engine);
+
   let listed: ProjectRelativeDirectoryListResult;
   try {
-    listed = await listRelativeDirectory(fromCatalog.directory, { recursive });
+    listed = await listRelativeDirectory(normalized, { recursive });
   } catch {
     return {
       ok: false,
       reason: 'invalid-directory',
-      directory: fromCatalog.directory,
+      directory: normalized,
     };
   }
 
@@ -160,27 +192,52 @@ export async function resolvePluginParameterFileAssets(
     return {
       ok: false,
       reason: 'directory-not-found',
-      directory: listed.directory || fromCatalog.directory,
+      directory: listed.directory || normalized,
     };
   }
 
+  const assets = filterPluginFileAssetsForEngine(
+    listed.assets
+      .map((asset) => ({
+        name: String(asset.name || '').replace(/\\/g, '/'),
+        fileName: asset.fileName,
+        url: asset.url,
+      }))
+      .filter((asset) => asset.name && !asset.name.includes('..'))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    catalog.engine,
+  );
+  const folders = filterPluginFileFoldersForEngine(
+    [
+      ...(listed.folders || []),
+      ...foldersFromAssetNames(assets.map((asset) => asset.name)),
+    ],
+    catalog.engine,
+  );
+
   return {
     ok: true,
-    directory: listed.directory || fromCatalog.directory,
-    bucketDirectory: listed.directory || fromCatalog.directory,
-    media: fromCatalog.media,
-    assets: filterPluginFileAssetsForEngine(
-      listed.assets
-        .map((asset) => ({
-          name: String(asset.name || '').replace(/\\/g, '/'),
-          fileName: asset.fileName,
-          url: asset.url,
-        }))
-        .filter((asset) => asset.name && !asset.name.includes('..'))
-        .sort((left, right) => left.name.localeCompare(right.name)),
-      catalog?.engine,
-    ),
+    directory: listed.directory || normalized,
+    bucketDirectory: match?.bucket.directory || listed.directory || normalized,
+    media,
+    assets,
+    folders,
   };
+}
+
+export function foldersFromAssetNames(names: string[]): string[] {
+  const folders = new Set<string>();
+  for (const name of names) {
+    const normalized = String(name || '').replace(/\\/g, '/');
+    if (!normalized.includes('/')) continue;
+    const parts = normalized.split('/').filter(Boolean);
+    let cursor = '';
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      cursor = cursor ? `${cursor}/${parts[index]}` : parts[index]!;
+      folders.add(cursor);
+    }
+  }
+  return [...folders];
 }
 
 function matchDirectoryBucket(directory: string): {

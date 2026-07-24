@@ -74,6 +74,18 @@ describe('pluginParameterFileBrowser', () => {
     );
   });
 
+  test('includes empty folders from an explicit folder list', () => {
+    const root = listPluginFileGalleryEntries([asset('Actor1')], '', {
+      folders: ['empty_box', 'ui'],
+    });
+    assert.deepEqual(
+      root.filter((entry) => entry.kind === 'folder').map((entry) => entry.id),
+      ['empty_box', 'ui'],
+    );
+    const tree = buildPluginFileTree([asset('Actor1')], ['empty_box']);
+    assert.equal(tree.some((node) => node.kind === 'folder' && node.id === 'empty_box'), true);
+  });
+
   test('resolves folder ancestors for opening an existing nested selection', () => {
     assert.equal(folderPathOfAssetName('ui/Badge'), 'ui');
     assert.deepEqual(ancestorPluginFileFolderPaths('busts/aedxy/normal'), [

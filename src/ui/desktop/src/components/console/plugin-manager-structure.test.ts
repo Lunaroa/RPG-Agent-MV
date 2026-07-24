@@ -137,10 +137,18 @@ describe('plugin manager structure', () => {
     assert.match(dialogSource, /parameterTypeColumn/);
     assert.match(dialogSource, /parameterValueColumn/);
     assert.match(dialogSource, /parameterTypeLabel\(row\)/);
-    assert.match(dialogSource, /class="parameter-type-tag"/);
+    assert.match(dialogSource, /class="parameter-type-text"/);
+    assert.match(dialogSource, /pluginParameterTypeLabelIsList/);
+    assert.match(dialogSource, /parameterTypeListTag/);
     assert.doesNotMatch(dialogSource, /isSpecialPluginParameterType/);
-    assert.match(dialogSource, /isTaggedPluginParameterValue\(row\.field\)/);
-    assert.match(dialogSource, /class="parameter-value-tag"/);
+    assert.doesNotMatch(dialogSource, /isTaggedPluginParameterValue\(row\.field\)/);
+    assert.doesNotMatch(dialogSource, /class="parameter-value-tag"/);
+    assert.match(dialogSource, /class-name="parameter-value-column"/);
+    assert.match(dialogSource, /PluginParameterValueDecor/);
+    assert.match(
+      dialogSource,
+      /tr:hover > td\.parameter-value-column[\s\S]+tr\.current-row > td\.parameter-value-column/,
+    );
     assert.match(dialogSource, /<el-table/);
     assert.match(dialogSource, /@header-dragend="onMainHeaderDragEnd"/);
     assert.match(dialogSource, /pluginParameterMainColumns/);
@@ -217,7 +225,9 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /mainColumnWidths/);
     assert.match(collectionEditorSource, /column-key="name"/);
     assert.match(collectionEditorSource, /column-key="type"/);
-    assert.match(collectionEditorSource, /class="parameter-type-tag"/);
+    assert.match(collectionEditorSource, /class="parameter-type-text"/);
+    assert.match(collectionEditorSource, /pluginParameterTypeLabelIsList/);
+    assert.match(collectionEditorSource, /parameterTypeListTag/);
     assert.match(collectionEditorSource, /resizable/);
     assert.match(collectionEditorSource, /parameterTypeColumn/);
     assert.match(collectionEditorSource, /class="array-toolbar"/);
@@ -232,12 +242,14 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /event\.altKey && \(event\.key === 'ArrowUp'/);
     assert.match(collectionEditorSource, /class="drag-handle"/);
     assert.equal((collectionEditorSource.match(/<circle /g) || []).length, 6);
-    assert.match(collectionEditorSource, /:draggable="!sortingLocked"/);
+    assert.match(collectionEditorSource, /@pointerdown="startPointerDrag/);
     assert.match(collectionEditorSource, /column\.field\.kind === 'boolean'/);
     assert.match(collectionEditorSource, /arrayItem\?\.kind === 'boolean'/);
     assert.match(collectionEditorSource, /<el-switch[\s\S]+disabled[\s\S]+class="parameter-boolean-switch"/);
-    assert.match(collectionEditorSource, /isTaggedPluginParameterValue/);
-    assert.match(collectionEditorSource, /class="parameter-value-tag"/);
+    assert.doesNotMatch(collectionEditorSource, /isTaggedPluginParameterValue/);
+    assert.doesNotMatch(collectionEditorSource, /class="parameter-value-tag"/);
+    assert.match(collectionEditorSource, /class-name="parameter-value-column"/);
+    assert.match(collectionEditorSource, /PluginParameterValueDecor/);
     assert.doesNotMatch(collectionEditorSource, /isSpecialPluginParameterType/);
     assert.doesNotMatch(collectionEditorSource, /updateArrayBoolean|updateStructRowBoolean/);
     assert.match(parameterModelSource, /unwrapNotePluginParameterValue|wrapNotePluginParameterValue/);
@@ -246,12 +258,16 @@ describe('plugin manager structure', () => {
     assert.match(valueDialogSource, /is-compound/);
     assert.match(valueDialogSource, /min-height: 88px/);
     assert.match(valueDialogSource, /parameter-description[\s\S]+parameter-mode-tabs/);
+    assert.match(valueDialogSource, /ActorWalkingSheetThumb/);
+    assert.match(valueDialogSource, /showActorPreview/);
     assert.match(systemNamedEntrySelectorSource, /z-index: v-bind\(subDialogZ\)/);
     assert.match(systemNamedEntrySelectorSource, /LAYER_Z\.subDialog/);
     assert.match(parameterInputSource, /listRelativeDirectory/);
     assert.match(parameterInputSource, /directoryNotFound|pluginFilePicker\.directoryNotFound/);
     assert.doesNotMatch(parameterInputSource, /unsupportedDirectory/);
     assert.match(parameterInputSource, /systemNamedEntryKind/);
+    assert.match(parameterInputSource, /:size="48"/);
+    assert.match(parameterInputSource, /plugin-parameter-actor-popper/);
     assert.match(systemNamedEntrySelectorSource, /systemNamedEntry\.changeMaximum/);
     assert.match(systemNamedEntrySelectorSource, /projectManagement\.updateEntry/);
     assert.match(systemNamedEntrySelectorSource, /projectManagement\.resizeDatabase/);

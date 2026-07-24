@@ -91,6 +91,11 @@ export function formatPluginParameterTypeLabel(
   return labeled ?? kind;
 }
 
+/** True when the displayed type string denotes an array (`[]` / `[][]`…). */
+export function pluginParameterTypeLabelIsList(label: string): boolean {
+  return /\[\s*\]/.test(String(label || ''));
+}
+
 function labelRawType(raw: string, translate: Translate): string | null {
   const arraySuffix = raw.match(/((?:\s*\[\s*\])+)$/);
   if (arraySuffix) {

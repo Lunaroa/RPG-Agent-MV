@@ -140,6 +140,7 @@ describe('pluginParameterFileAssets', () => {
         assets: [
           { name: 'map_upper', fileName: 'map_upper.png', url: 'rmmv-asset://map' },
         ],
+        folders: ['empty_ui'],
       };
     };
     const resolved = await resolvePluginParameterFileAssets(
@@ -151,6 +152,7 @@ describe('pluginParameterFileAssets', () => {
     if (!resolved.ok) return;
     assert.equal(resolved.media, 'image');
     assert.deepEqual(resolved.assets.map((asset) => asset.name), ['map_upper']);
+    assert.deepEqual(resolved.folders, ['empty_ui']);
   });
 
   test('asks disk listing for nested files on MZ projects', async () => {
@@ -166,6 +168,7 @@ describe('pluginParameterFileAssets', () => {
           { name: 'flat', fileName: 'flat.png', url: 'rmmv-asset://flat' },
           { name: 'ui/nested', fileName: 'ui/nested.png', url: 'rmmv-asset://nested' },
         ],
+        folders: ['ui', 'empty'],
       };
     };
     const resolved = await resolvePluginParameterFileAssets(
@@ -176,6 +179,36 @@ describe('pluginParameterFileAssets', () => {
     assert.equal(resolved.ok, true);
     if (!resolved.ok) return;
     assert.deepEqual(resolved.assets.map((asset) => asset.name), ['flat', 'ui/nested']);
+    assert.deepEqual(resolved.folders, ['empty', 'ui']);
+  });
+
+  test('live-lists catalog buckets from disk instead of cached catalog assets', async () => {
+    let listedDir = '';
+    const listRelativeDirectory = async (
+      relativeDirectory: string,
+      options: { recursive: boolean },
+    ): Promise<ProjectRelativeDirectoryListResult> => {
+      listedDir = relativeDirectory;
+      assert.equal(options.recursive, false);
+      return {
+        ok: true,
+        directory: relativeDirectory,
+        assets: [{ name: 'LiveOnly', fileName: 'LiveOnly.png', url: 'rmmv-asset://live' }],
+        folders: ['brand_new'],
+      };
+    };
+    const resolved = await resolvePluginParameterFileAssets(
+      catalogWith({
+        pictures: [{ name: 'Stale', fileName: 'Stale.png', url: 'rmmv-asset://stale' }],
+      }),
+      'img/pictures',
+      listRelativeDirectory,
+    );
+    assert.equal(listedDir, 'img/pictures');
+    assert.equal(resolved.ok, true);
+    if (!resolved.ok) return;
+    assert.deepEqual(resolved.assets.map((asset) => asset.name), ['LiveOnly']);
+    assert.deepEqual(resolved.folders, ['brand_new']);
   });
 
   test('reports directory-not-found when the relative path is absent', async () => {

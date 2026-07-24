@@ -7,7 +7,7 @@
       @loadedmetadata="syncFromElement"
       @durationchange="syncFromElement"
       @loadeddata="syncFromElement"
-      @canplay="syncFromElement"
+      @canplay="onCanPlay"
       @timeupdate="syncFromElement"
       @ended="onEnded"
       @play="playing = true"
@@ -91,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { Pause, Play, Volume2, VolumeX } from '@lucide/vue';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
@@ -101,9 +101,13 @@ import {
   readFiniteAudioDuration,
 } from '../../utils/pluginFileAudioPreview';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   src: string;
-}>();
+  /** Start playback when a new preview source is ready (file picker selection). */
+  autoplay?: boolean;
+}>(), {
+  autoplay: true,
+});
 
 const { t } = useI18n();
 /** Above file-picker subDialog (2500) so the volume popover is clickable. */
@@ -120,6 +124,7 @@ const seeking = ref(false);
 const loadFailed = ref(false);
 let objectUrl: string | null = null;
 let bindToken = 0;
+let pendingAutoplay = false;
 
 const canSeek = computed(() => Number.isFinite(duration.value) && duration.value > 0);
 const seekMax = computed(() => (canSeek.value ? duration.value : 1));
@@ -147,6 +152,7 @@ async function bindSource(src: string): Promise<void> {
   volumeOpen.value = false;
   seeking.value = false;
   loadFailed.value = false;
+  pendingAutoplay = false;
   playbackSrc.value = '';
   revokeObjectUrl();
   if (!src) return;
@@ -162,10 +168,35 @@ async function bindSource(src: string): Promise<void> {
     if (Number.isFinite(bundle.durationSeconds)) {
       duration.value = bundle.durationSeconds;
     }
+    pendingAutoplay = props.autoplay;
+    await nextTick();
+    await tryAutoplay(token);
   } catch {
     if (token !== bindToken) return;
     loadFailed.value = true;
+    pendingAutoplay = false;
   }
+}
+
+async function tryAutoplay(token: number): Promise<void> {
+  if (!pendingAutoplay || token !== bindToken) return;
+  const el = audioEl.value;
+  if (!el || !playbackSrc.value || loadFailed.value) return;
+  try {
+    await el.play();
+    if (token === bindToken) pendingAutoplay = false;
+  } catch (error) {
+    if (token !== bindToken) return;
+    // Gesture expired or policy blocked — stop retrying; manual play still works.
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      pendingAutoplay = false;
+    }
+  }
+}
+
+function onCanPlay(): void {
+  syncFromElement();
+  void tryAutoplay(bindToken);
 }
 
 function syncFromElement(): void {

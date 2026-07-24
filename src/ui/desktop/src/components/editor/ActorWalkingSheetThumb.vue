@@ -7,14 +7,16 @@ const props = defineProps<{
   characterName?: string;
   catalog?: EditorProjectCatalog | null;
   maxHeight?: number;
+  maxWidth?: number;
 }>();
 
 const canvas = ref<HTMLCanvasElement | null>(null);
-const cssHeight = computed(() => `${Math.max(48, Math.round(props.maxHeight ?? 160))}px`);
+const maxHeightPx = computed(() => Math.max(48, Math.round(props.maxHeight ?? 160)));
+const maxWidthPx = computed(() => Math.max(48, Math.round(props.maxWidth ?? maxHeightPx.value)));
 let paintSerial = 0;
 
 watch(
-  () => [props.characterName, props.catalog, props.maxHeight] as const,
+  () => [props.characterName, props.catalog, maxHeightPx.value, maxWidthPx.value] as const,
   () => {
     void paint();
   },
@@ -33,19 +35,20 @@ async function paint(): Promise<void> {
   const context = target.getContext('2d');
   if (!context) return;
 
-  const maxHeight = Math.max(48, Math.round(props.maxHeight ?? 160));
+  const maxHeight = maxHeightPx.value;
+  const maxWidth = maxWidthPx.value;
   const characterName = String(props.characterName || '').trim();
   if (!characterName) {
-    target.width = maxHeight;
-    target.height = maxHeight;
+    target.width = Math.min(maxWidth, maxHeight);
+    target.height = Math.min(maxWidth, maxHeight);
     context.clearRect(0, 0, target.width, target.height);
     return;
   }
 
   const asset = props.catalog?.assets.characters.find((entry) => entry.name === characterName);
   if (!asset?.url) {
-    target.width = maxHeight;
-    target.height = maxHeight;
+    target.width = Math.min(maxWidth, maxHeight);
+    target.height = Math.min(maxWidth, maxHeight);
     context.clearRect(0, 0, target.width, target.height);
     return;
   }
@@ -53,7 +56,11 @@ async function paint(): Promise<void> {
   const image = await loadImageElement(asset.url);
   if (!image || serial !== paintSerial) return;
 
-  const scale = Math.min(1, maxHeight / Math.max(1, image.naturalHeight));
+  const scale = Math.min(
+    1,
+    maxWidth / Math.max(1, image.naturalWidth),
+    maxHeight / Math.max(1, image.naturalHeight),
+  );
   const drawWidth = Math.max(1, Math.floor(image.naturalWidth * scale));
   const drawHeight = Math.max(1, Math.floor(image.naturalHeight * scale));
   target.width = drawWidth;
@@ -68,7 +75,7 @@ async function paint(): Promise<void> {
   <canvas
     ref="canvas"
     class="actor-walking-sheet-thumb"
-    :style="{ maxHeight: cssHeight }"
+    :style="{ maxWidth: `${maxWidthPx}px`, maxHeight: `${maxHeightPx}px` }"
     aria-hidden="true"
   />
 </template>

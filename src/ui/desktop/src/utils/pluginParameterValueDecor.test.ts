@@ -134,6 +134,35 @@ describe('resolvePluginParameterValueDecor', () => {
     expect(decor.media).toBeNull();
   });
 
+  it('resolves IconSet media for skills with iconIndex', () => {
+    const catalog = catalogStub({
+      skills: [{ id: 1, name: 'Attack', iconIndex: 76 }],
+      assets: {
+        ...catalogStub().assets,
+        system: [
+          { name: 'IconSet', fileName: 'IconSet.png', url: 'rmmv-asset://project/t/img/system/IconSet.png' },
+        ],
+      },
+    });
+    const decor = resolvePluginParameterValueDecor(
+      field({ key: 'skillId', kind: 'database', databaseTable: 'Skills' }),
+      1,
+      catalog,
+    );
+    expect(decor.iconId).toBe('skill');
+    expect(decor.media).toEqual({ kind: 'icon', iconIndex: 76 });
+  });
+
+  it('keeps class as type icon only without IconSet media', () => {
+    const decor = resolvePluginParameterValueDecor(
+      field({ key: 'classId', kind: 'database', databaseTable: 'Classes' }),
+      1,
+      catalogStub(),
+    );
+    expect(decor.iconId).toBe('class');
+    expect(decor.media).toBeNull();
+  });
+
   it('resolves file image thumbs from catalog assets', () => {
     const decor = resolvePluginParameterValueDecor(
       field({ key: 'pic', kind: 'file', directory: 'img/pictures' }),

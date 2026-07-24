@@ -310,7 +310,7 @@ function desktopApi(): Window['api'] {
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
-  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -333,7 +333,7 @@ import type {
 } from '@contract/types';
 export type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
-  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,

@@ -492,6 +492,7 @@ function arrayValue(value: unknown): unknown[] {
           v-if="selectedActorCharacterName"
           :character-name="selectedActorCharacterName"
           :catalog="catalog"
+          :max-width="160"
           :max-height="160"
         />
         <p v-else class="parameter-file-preview-empty">

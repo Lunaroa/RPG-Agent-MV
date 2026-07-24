@@ -91,11 +91,12 @@
               </p>
             </div>
 
-            <div v-else class="file-gallery">
+            <div v-else ref="galleryEl" class="file-gallery" tabindex="0">
               <button
                 type="button"
                 class="gallery-card none-card"
-                :class="{ active: !name && !currentPath }"
+                :class="{ active: galleryFocusId === PLUGIN_FILE_GALLERY_NONE_ID }"
+                data-gallery-id="__none__"
                 @click="selectAsset('')"
               >
                 <span class="gallery-preview empty-preview" aria-hidden="true"><Close /></span>
@@ -107,9 +108,10 @@
                 type="button"
                 class="gallery-card"
                 :class="{
-                  active: entry.kind === 'file' && name === entry.asset.name,
+                  active: galleryFocusId === entry.id,
                   'folder-card': entry.kind === 'folder' || entry.kind === 'parent',
                 }"
+                :data-gallery-id="entry.id"
                 :title="entry.kind === 'file' ? entry.asset.name : entry.label"
                 :aria-label="entry.kind === 'file' ? entry.asset.name : entry.label"
                 @click="onGalleryClick(entry)"
@@ -241,8 +243,13 @@ import {
   folderPathOfAssetName,
   getRuntimePluginFileBrowserViewMode,
   listPluginFileGalleryEntries,
+  buildPluginFileGalleryNavIds,
+  movePluginFileGalleryNavIndex,
   normalizePluginFileBrowsePath,
   parentPluginFileBrowsePath,
+  PLUGIN_FILE_GALLERY_NONE_ID,
+  resolvePluginFileGalleryColumnCount,
+  resolvePluginFileGalleryFocusId,
   setRuntimePluginFileBrowserViewMode,
   type PluginFileBrowserViewMode,
   type PluginFileGalleryEntry,
@@ -268,6 +275,8 @@ const name = ref('');
 const currentPath = ref('');
 const expandedFolderIds = ref<Set<string>>(new Set());
 const viewMode = ref<PluginFileBrowserViewMode>(getRuntimePluginFileBrowserViewMode());
+const galleryFocusId = ref(PLUGIN_FILE_GALLERY_NONE_ID);
+const galleryEl = ref<HTMLElement | null>(null);
 const failedImageUrls = ref(new Set<string>());
 const previewZoom = ref(1);
 const previewPanX = ref(0);
@@ -300,6 +309,7 @@ const galleryEntries = computed(() =>
     folders: filteredFolders.value,
   }),
 );
+const galleryNavIds = computed(() => buildPluginFileGalleryNavIds(galleryEntries.value));
 const selectedAsset = computed(() =>
   props.assets.find((asset) => asset.name === name.value) || null,
 );
@@ -318,16 +328,47 @@ watch(selectedAsset, (asset) => {
   void refreshPreview(asset);
 });
 
+watch(
+  () => [visible.value, viewMode.value, name.value, currentPath.value, galleryNavIds.value.join('\0')] as const,
+  () => {
+    if (!visible.value || viewMode.value !== 'gallery') return;
+    if (!galleryNavIds.value.includes(galleryFocusId.value)) {
+      galleryFocusId.value = resolvePluginFileGalleryFocusId(name.value, galleryEntries.value);
+    }
+  },
+);
+
 function onKeyDown(event: KeyboardEvent) {
   if (!visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
-  if (event.code === 'Space' && !(event.target instanceof HTMLInputElement)) {
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+    return;
+  }
+  if (event.code === 'Space') {
     event.preventDefault();
     spaceHeld.value = true;
     return;
   }
-  if (event.key !== 'Escape') return;
-  event.preventDefault();
-  close();
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    close();
+    return;
+  }
+  if (viewMode.value === 'gallery') {
+    if (
+      event.key === 'ArrowLeft'
+      || event.key === 'ArrowRight'
+      || event.key === 'ArrowUp'
+      || event.key === 'ArrowDown'
+    ) {
+      event.preventDefault();
+      moveGalleryFocus(event.key);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      activateGalleryFocus();
+    }
+  }
 }
 
 function onKeyUp(event: KeyboardEvent) {
@@ -356,7 +397,9 @@ function open(currentName = '') {
   viewMode.value = getRuntimePluginFileBrowserViewMode();
   visible.value = true;
   void nextTick(() => {
+    galleryFocusId.value = resolvePluginFileGalleryFocusId(normalized, galleryEntries.value);
     void refreshPreview(selectedAsset.value);
+    scrollGalleryFocusIntoView();
   });
 }
 
@@ -390,6 +433,8 @@ function enterFolder(folderPath: string): void {
   }
   next.add(folderPath);
   expandedFolderIds.value = next;
+  galleryFocusId.value = PLUGIN_FILE_GALLERY_NONE_ID;
+  void nextTick(() => scrollGalleryFocusIntoView());
 }
 
 function selectAsset(value: string) {
@@ -398,6 +443,9 @@ function selectAsset(value: string) {
   previewZoom.value = 1;
   previewPanX.value = 0;
   previewPanY.value = 0;
+  galleryFocusId.value = normalized
+    ? resolvePluginFileGalleryFocusId(normalized, galleryEntries.value)
+    : PLUGIN_FILE_GALLERY_NONE_ID;
   if (normalized) {
     currentPath.value = folderPathOfAssetName(normalized);
     const next = new Set(expandedFolderIds.value);
@@ -413,7 +461,9 @@ function confirmAsset(value: string) {
 
 function onGalleryClick(entry: PluginFileGalleryEntry): void {
   if (entry.kind === 'parent') {
+    galleryFocusId.value = PLUGIN_FILE_GALLERY_NONE_ID;
     currentPath.value = parentPluginFileBrowsePath(currentPath.value);
+    void nextTick(() => scrollGalleryFocusIntoView());
     return;
   }
   if (entry.kind === 'folder') {
@@ -426,6 +476,71 @@ function onGalleryClick(entry: PluginFileGalleryEntry): void {
 function onGalleryDblclick(entry: PluginFileGalleryEntry): void {
   if (entry.kind === 'file') confirmAsset(entry.asset.name);
   else onGalleryClick(entry);
+}
+
+function moveGalleryFocus(
+  key: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown',
+): void {
+  const ids = galleryNavIds.value;
+  if (!ids.length) return;
+  const current = Math.max(0, ids.indexOf(galleryFocusId.value));
+  const nextIndex = movePluginFileGalleryNavIndex(
+    current,
+    key,
+    resolvePluginFileGalleryColumnCount(window.innerWidth),
+    ids.length,
+  );
+  const nextId = ids[nextIndex];
+  if (!nextId || nextId === galleryFocusId.value) return;
+  applyGalleryFocusId(nextId);
+  scrollGalleryFocusIntoView();
+}
+
+function applyGalleryFocusId(focusId: string): void {
+  galleryFocusId.value = focusId;
+  if (focusId === PLUGIN_FILE_GALLERY_NONE_ID) {
+    name.value = '';
+    previewZoom.value = 1;
+    previewPanX.value = 0;
+    previewPanY.value = 0;
+    return;
+  }
+  const entry = galleryEntries.value.find((item) => item.id === focusId);
+  if (entry?.kind === 'file') {
+    name.value = entry.asset.name;
+    previewZoom.value = 1;
+    previewPanX.value = 0;
+    previewPanY.value = 0;
+  }
+}
+
+function activateGalleryFocus(): void {
+  const focusId = galleryFocusId.value;
+  if (focusId === PLUGIN_FILE_GALLERY_NONE_ID) {
+    commit();
+    return;
+  }
+  const entry = galleryEntries.value.find((item) => item.id === focusId);
+  if (!entry) return;
+  if (entry.kind === 'file') {
+    confirmAsset(entry.asset.name);
+    return;
+  }
+  onGalleryClick(entry);
+}
+
+function scrollGalleryFocusIntoView(): void {
+  void nextTick(() => {
+    const root = galleryEl.value;
+    if (!root) return;
+    const focusId = galleryFocusId.value;
+    const target = root.querySelector(
+      focusId === PLUGIN_FILE_GALLERY_NONE_ID
+        ? '[data-gallery-id="__none__"]'
+        : `[data-gallery-id="${CSS.escape(focusId)}"]`,
+    ) as HTMLElement | null;
+    target?.scrollIntoView({ block: 'nearest' });
+  });
 }
 
 async function refreshPreview(asset: PluginFileAssetOption | null) {

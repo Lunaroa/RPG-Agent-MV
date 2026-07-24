@@ -235,6 +235,47 @@ export function listPluginFileGalleryEntries(
   return entries;
 }
 
+/** Synthetic id for the gallery "none" card (always first in nav order). */
+export const PLUGIN_FILE_GALLERY_NONE_ID = '__none__';
+
+export function buildPluginFileGalleryNavIds(entries: PluginFileGalleryEntry[]): string[] {
+  return [PLUGIN_FILE_GALLERY_NONE_ID, ...entries.map((entry) => entry.id)];
+}
+
+/** Column count must match `.file-gallery` CSS breakpoints. */
+export function resolvePluginFileGalleryColumnCount(viewportWidth: number): number {
+  if (viewportWidth <= 1100) return 3;
+  if (viewportWidth <= 1300) return 4;
+  return 5;
+}
+
+export function movePluginFileGalleryNavIndex(
+  index: number,
+  key: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown',
+  columnCount: number,
+  length: number,
+): number {
+  if (length <= 0) return 0;
+  const columns = Math.max(1, Math.floor(columnCount));
+  let next = index;
+  if (key === 'ArrowLeft') next = index - 1;
+  else if (key === 'ArrowRight') next = index + 1;
+  else if (key === 'ArrowUp') next = index - columns;
+  else if (key === 'ArrowDown') next = index + columns;
+  if (next < 0 || next >= length) return index;
+  return next;
+}
+
+export function resolvePluginFileGalleryFocusId(
+  selectedName: string,
+  entries: PluginFileGalleryEntry[],
+): string {
+  const normalized = normalizePluginFileBrowsePath(selectedName);
+  if (!normalized) return PLUGIN_FILE_GALLERY_NONE_ID;
+  const match = entries.find((entry) => entry.kind === 'file' && entry.asset.name === normalized);
+  return match?.id || PLUGIN_FILE_GALLERY_NONE_ID;
+}
+
 export function ancestorPluginFileFolderPaths(assetName: string): string[] {
   const folder = folderPathOfAssetName(assetName);
   if (!folder) return [];

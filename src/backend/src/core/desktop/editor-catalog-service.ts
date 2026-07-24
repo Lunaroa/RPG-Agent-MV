@@ -8,6 +8,7 @@ import type {
   EditorBattleTestBattler,
   EditorEnemyCatalogEntry,
   EditorEquipmentCatalogEntry,
+  EditorIconCatalogEntry,
   EditorProjectCatalog,
   NamedCatalogEntry,
   ProjectAssetEntry,
@@ -115,11 +116,11 @@ export function buildEditorProjectCatalog(workflowRoot: string, project: string)
     equipTypes: namedStringList(system.equipTypes),
     actors: actorDatabaseList(actors),
     classes: namedDatabaseList(classes),
-    skills: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Skills.json'), [])),
-    items: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Items.json'), [])),
+    skills: iconDatabaseList(readProjectJson(workflowRoot, project, dataFile('Skills.json'), [])),
+    items: iconDatabaseList(readProjectJson(workflowRoot, project, dataFile('Items.json'), [])),
     weapons: equipmentDatabaseList(weapons),
     armors: equipmentDatabaseList(armors),
-    states: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('States.json'), [])),
+    states: iconDatabaseList(readProjectJson(workflowRoot, project, dataFile('States.json'), [])),
     enemies: enemyDatabaseList(enemies),
     troops: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Troops.json'), [])),
     tilesets: namedDatabaseList(readProjectJson(workflowRoot, project, dataFile('Tilesets.json'), [])),
@@ -222,7 +223,27 @@ function equipmentDatabaseList(value: unknown): EditorEquipmentCatalogEntry[] {
     if (!record) return [];
     const id = positiveInteger(record.id) ?? index;
     if (id <= 0) return [];
-    return [{ id, name: stringValue(record.name) || `#${id}`, etypeId: integerValue(record.etypeId) ?? 0 }];
+    return [{
+      id,
+      name: stringValue(record.name) || `#${id}`,
+      etypeId: integerValue(record.etypeId) ?? 0,
+      iconIndex: Math.max(0, integerValue(record.iconIndex) ?? 0),
+    }];
+  });
+}
+
+function iconDatabaseList(value: unknown): EditorIconCatalogEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    const record = asRecord(entry);
+    if (!record) return [];
+    const id = positiveInteger(record.id) ?? index;
+    if (id <= 0) return [];
+    return [{
+      id,
+      name: stringValue(record.name) || `#${id}`,
+      iconIndex: Math.max(0, integerValue(record.iconIndex) ?? 0),
+    }];
   });
 }
 

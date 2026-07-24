@@ -6,6 +6,10 @@ import {
   buildPluginFileTree,
   folderPathOfAssetName,
   listPluginFileGalleryEntries,
+  movePluginFileGalleryNavIndex,
+  PLUGIN_FILE_GALLERY_NONE_ID,
+  resolvePluginFileGalleryColumnCount,
+  resolvePluginFileGalleryFocusId,
 } from './pluginParameterFileBrowser';
 
 function asset(name: string, url = `rmmv-asset://${name}`): PluginFileAssetOption {
@@ -92,5 +96,16 @@ describe('pluginParameterFileBrowser', () => {
       'busts',
       'busts/aedxy',
     ]);
+  });
+
+  test('moves gallery focus by grid columns for arrow keys', () => {
+    assert.equal(movePluginFileGalleryNavIndex(6, 'ArrowUp', 5, 20), 1);
+    assert.equal(movePluginFileGalleryNavIndex(1, 'ArrowDown', 5, 20), 6);
+    assert.equal(movePluginFileGalleryNavIndex(0, 'ArrowLeft', 5, 20), 0);
+    assert.equal(movePluginFileGalleryNavIndex(19, 'ArrowRight', 5, 20), 19);
+    assert.equal(resolvePluginFileGalleryColumnCount(1400), 5);
+    assert.equal(resolvePluginFileGalleryColumnCount(1200), 4);
+    assert.equal(resolvePluginFileGalleryColumnCount(1000), 3);
+    assert.equal(resolvePluginFileGalleryFocusId('', []), PLUGIN_FILE_GALLERY_NONE_ID);
   });
 });

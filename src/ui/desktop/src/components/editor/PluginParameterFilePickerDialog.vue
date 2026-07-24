@@ -178,13 +178,10 @@
                   @error="onPreviewImageError"
                 />
               </div>
-              <audio
+              <PluginFileAudioPreview
                 v-else-if="media === 'audio' && previewUrl"
                 :key="previewUrl"
-                class="audio-preview"
                 :src="previewUrl"
-                controls
-                preload="auto"
               />
               <video
                 v-else-if="media === 'movie' && previewUrl"
@@ -256,6 +253,7 @@ import {
 } from '../../utils/pluginParameterFileBrowser';
 import PluginFileTreeNodes from './PluginFileTreeNodes.vue';
 import PluginFileFolderThumb from './PluginFileFolderThumb.vue';
+import PluginFileAudioPreview from './PluginFileAudioPreview.vue';
 
 const props = defineProps<{
   title?: string;
@@ -886,7 +884,6 @@ defineExpose({ open });
   display: block;
   image-rendering: pixelated;
 }
-.audio-preview,
 .movie-preview {
   width: min(100%, 520px);
   margin: 24px;

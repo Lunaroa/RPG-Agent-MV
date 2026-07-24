@@ -26,6 +26,14 @@ const tilesetPickerSource = readFileSync(
   new URL('../editor/PluginParameterTilesetPickerDialog.vue', import.meta.url),
   'utf8',
 );
+const filePickerSource = readFileSync(
+  new URL('../editor/PluginParameterFilePickerDialog.vue', import.meta.url),
+  'utf8',
+);
+const audioPreviewSource = readFileSync(
+  new URL('../editor/PluginFileAudioPreview.vue', import.meta.url),
+  'utf8',
+);
 const systemNamedEntrySelectorSource = readFileSync(
   new URL('../editor/SystemNamedEntrySelectorDialog.vue', import.meta.url),
   'utf8',
@@ -323,6 +331,18 @@ describe('plugin manager structure', () => {
     assert.match(parameterInputSource, /allow-create/);
     assert.match(parameterInputSource, /field\.kind === 'file'/);
     assert.match(parameterInputSource, /PluginParameterFilePickerDialog/);
+    assert.match(filePickerSource, /PluginFileAudioPreview/);
+    assert.doesNotMatch(filePickerSource, /<audio[\s\S]+controls/);
+    assert.match(audioPreviewSource, /formatPluginAudioClock/);
+    assert.match(audioPreviewSource, /createPluginAudioPlaybackBundle/);
+    assert.match(audioPreviewSource, /<el-slider/);
+    assert.match(audioPreviewSource, /vertical/);
+    assert.match(audioPreviewSource, /<el-popover/);
+    assert.match(audioPreviewSource, /placement="top"/);
+    assert.match(audioPreviewSource, /:z-index="volumeZ"|LAYER_Z\.contextMenu/);
+    assert.match(audioPreviewSource, /teleported/);
+    assert.doesNotMatch(audioPreviewSource, /transform: rotate\(-90deg\)/);
+    assert.doesNotMatch(audioPreviewSource, /orient="vertical"/);
     assert.match(parameterInputSource, /PluginParameterTilesetPickerDialog/);
     assert.match(parameterInputSource, /isTilesetDatabase/);
     assert.match(valueDialogSource, /showTilesetPreview|resolvePluginTilesetPreviewUrl/);

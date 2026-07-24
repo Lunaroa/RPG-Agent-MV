@@ -18,6 +18,7 @@ import {
   pluginParameterPayloadsEqual,
   removePluginParameterArrayItem,
   replacePluginParameterChildValue,
+  resolvePluginParameterSelectPresentation,
   serializePluginParameterValue,
   validatePluginParameterValue,
 } from './plugin-parameter-model';
@@ -166,7 +167,11 @@ describe('plugin parameter model', () => {
     expect(rows.find((row) => row.key === 'mode')?.summary).toBe('Safe Mode');
     expect(rows.find((row) => row.key === 'actorId')?.summary).toBe('2 · Sample Actor');
     expect(rows.find((row) => row.key === 'position')?.summary).toBe('3 · Sample Map (4, 5)');
+    expect(rows.find((row) => row.key === 'settings')?.summary).toBe(
+      '{"title":"Ready","speed":"3"}',
+    );
     expect(rows.find((row) => row.key === 'levels')?.summary).toBe('2 items');
+    expect(isTaggedPluginParameterValue(field('settings', 'struct'))).toBe(false);
     expect(rows.find((row) => row.key === 'unsupported')?.editable).toBe(false);
     expect(rows.find((row) => row.key === 'legacy')?.editable).toBe(false);
   });
@@ -343,6 +348,28 @@ describe('plugin parameter model', () => {
     const simple = field('title', 'multiline', { rawType: 'note' });
     expect(normalizePluginParameterValue(simple, '"plain"')).toBe('plain');
     expect(serializePluginParameterValue(simple, 'plain')).toBe('"plain"');
+  });
+
+  test('presents select options as label plus stored value', () => {
+    const mode = field('mode', 'select', {
+      options: [
+        { label: '居中', value: 'center' },
+        { label: 'Left', value: 'Left' },
+      ],
+    });
+    expect(resolvePluginParameterSelectPresentation(mode, 'center')).toEqual({
+      label: '居中',
+      value: 'center',
+    });
+    expect(resolvePluginParameterSelectPresentation(mode, 'Left')).toEqual({
+      label: 'Left',
+      value: 'Left',
+    });
+    expect(resolvePluginParameterSelectPresentation(mode, 'missing')).toEqual({
+      label: 'missing',
+      value: 'missing',
+    });
+    expect(resolvePluginParameterSelectPresentation(field('preset', 'combo'), 'x')).toBeNull();
   });
 
   test('validates number bounds and decimals without rejecting an existing empty value', () => {

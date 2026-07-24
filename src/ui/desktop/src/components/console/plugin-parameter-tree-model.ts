@@ -112,6 +112,17 @@ export function flattenPluginParameterTree(
   return result;
 }
 
+/** Keys that have children — used to expand the whole tree by default. */
+export function collectPluginParameterExpandableKeys(
+  tree: PluginParameterTree,
+): Set<string> {
+  const keys = new Set<string>();
+  for (const node of tree.nodes.values()) {
+    if (node.children.length > 0) keys.add(node.key);
+  }
+  return keys;
+}
+
 function searchIncludedKeys(
   tree: PluginParameterTree,
   query: string,

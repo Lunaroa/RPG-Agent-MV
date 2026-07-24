@@ -3,6 +3,7 @@ import type { PluginParameterSchemaField } from '../../api/client';
 import type { PluginParameterRow } from './plugin-parameter-model';
 import {
   buildPluginParameterTree,
+  collectPluginParameterExpandableKeys,
   flattenPluginParameterTree,
 } from './plugin-parameter-tree-model';
 
@@ -54,6 +55,23 @@ describe('plugin parameter tree model', () => {
       ['childB', 1],
       ['sibling', 0],
     ]);
+  });
+
+  test('collects every parent key so the dialog can expand by default', () => {
+    const tree = buildPluginParameterTree([
+      row('root'),
+      row('childA', 'root'),
+      row('grandchild', 'childA'),
+      row('sibling'),
+    ]);
+    expect([...collectPluginParameterExpandableKeys(tree)].sort()).toEqual([
+      'childA',
+      'root',
+    ]);
+    expect(
+      flattenPluginParameterTree(tree, collectPluginParameterExpandableKeys(tree))
+        .map((entry) => entry.key),
+    ).toEqual(['root', 'childA', 'grandchild', 'sibling']);
   });
 
   test('supports seven levels without changing row values', () => {

@@ -364,6 +364,10 @@ describe('plugin manager structure', () => {
     assert.match(audioPreviewSource, /function restartFromBeginning/);
     assert.match(audioPreviewSource, /el\.currentTime = 0/);
     assert.match(audioPreviewSource, /defineExpose\(\{\s*restartFromBeginning/);
+    assert.match(audioPreviewSource, /rememberedVolumePercent/);
+    assert.match(audioPreviewSource, /applyRememberedVolume/);
+    assert.match(paneSource, /derivePluginInstallNameFromSourcePath/);
+    assert.match(paneSource, /installDirectory|selectInstallDirectory/);
     assert.match(audioPreviewSource, /<el-slider/);
     assert.match(audioPreviewSource, /vertical/);
     assert.match(audioPreviewSource, /<el-popover/);

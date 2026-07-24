@@ -26,6 +26,7 @@ import {
   PLUGIN_LIST_MAX_WIDTH,
   PLUGIN_LIST_MIN_WIDTH,
 } from '../../utils/workspaceSettings';
+import { derivePluginInstallNameFromSourcePath } from '../../utils/pluginInstallPath';
 import ConsoleSearchInput from './ConsoleSearchInput.vue';
 import PluginDeleteDialog from './PluginDeleteDialog.vue';
 import PluginEngineTags from './PluginEngineTags.vue';
@@ -477,8 +478,8 @@ async function addExistingFile(file: ManagedPluginFile): Promise<void> {
   );
 }
 
-function pluginNameFromPath(filePath: string): string {
-  return String(filePath || '').split(/[\\/]/).pop()?.replace(/\.js$/i, '') || '';
+function pluginExistsInProject(name: string): boolean {
+  return pluginFiles.value.some((file) => file.name === name && file.exists && !file.deleted);
 }
 
 async function installPlugin(): Promise<void> {
@@ -487,12 +488,64 @@ async function installPlugin(): Promise<void> {
   error.value = '';
   actionMessage.value = '';
   try {
+    let mode: 'file' | 'directory';
+    try {
+      await ElMessageBox.confirm(
+        t('plugins.installModeMessage'),
+        t('plugins.installModeTitle'),
+        {
+          distinguishCancelAndClose: true,
+          confirmButtonText: t('plugins.installModeFile'),
+          cancelButtonText: t('plugins.installModeDirectory'),
+          type: 'info',
+        },
+      );
+      mode = 'file';
+    } catch (action) {
+      if (action === 'cancel') mode = 'directory';
+      else return;
+    }
+
+    if (mode === 'directory') {
+      const sourceDirectory = await pluginApi.selectInstallDirectory();
+      if (!sourceDirectory) return;
+      let result;
+      try {
+        result = await pluginApi.installDirectory(
+          sourceDirectory,
+          { overwrite: false },
+          projectStore.currentProject,
+        );
+      } catch (firstError) {
+        const message = formatPluginActionError(firstError);
+        if (!/already exists/i.test(message)) throw firstError;
+        try {
+          await ElMessageBox.confirm(
+            t('plugins.overwriteDirectoryConfirm'),
+            t('plugins.overwriteTitle'),
+            { type: 'warning' },
+          );
+        } catch {
+          return;
+        }
+        result = await pluginApi.installDirectory(
+          sourceDirectory,
+          { overwrite: true },
+          projectStore.currentProject,
+        );
+      }
+      const first = result.installed[0];
+      selectedKey.value = first ? configuredKey(first.name) : selectedKey.value;
+      applyConfig(result.configuration);
+      actionMessage.value = t('plugins.installDirectorySuccess', { count: result.installed.length });
+      await refreshStagingStatus();
+      return;
+    }
+
     const sourceFile = await pluginApi.selectInstallFile();
     if (!sourceFile) return;
-    const name = pluginNameFromPath(sourceFile);
-    const overwrite = pluginFiles.value.some(
-      (file) => file.name === name && file.exists && !file.deleted,
-    );
+    const name = derivePluginInstallNameFromSourcePath(sourceFile);
+    const overwrite = pluginExistsInProject(name);
     if (overwrite) {
       try {
         await ElMessageBox.confirm(
@@ -506,7 +559,7 @@ async function installPlugin(): Promise<void> {
     }
     const result = await pluginApi.installFile(
       sourceFile,
-      { overwrite },
+      { name, overwrite },
       projectStore.currentProject,
     );
     selectedKey.value = configuredKey(result.name);

@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('api', {
   clipboard: {
     writeText: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
     readImage: () => ipcRenderer.invoke('clipboard:readImage'),
+    writeFiles: (request: string[] | { project: string; relativePaths: string[] }) =>
+      ipcRenderer.invoke('clipboard:writeFiles', request),
   },
 
   files: {
@@ -204,7 +206,11 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('projectAssets:invalidateBrowseCache', project),
     detail: (target: unknown, project?: string) => ipcRenderer.invoke('projectAssets:detail', target, project),
     rename: (target: unknown, nextName: string, project?: string) => ipcRenderer.invoke('projectAssets:rename', target, nextName, project),
+    renameSubfolder: (nodeId: string, nextName: string, project?: string) =>
+      ipcRenderer.invoke('projectAssets:renameSubfolder', nodeId, nextName, project),
     remove: (targets: unknown, force?: boolean, project?: string) => ipcRenderer.invoke('projectAssets:remove', targets, force, project),
+    removeSubfolder: (nodeId: string, force?: boolean, project?: string) =>
+      ipcRenderer.invoke('projectAssets:removeSubfolder', nodeId, force, project),
     referenceGraph: (project?: string) => ipcRenderer.invoke('projectAssets:referenceGraph', project),
     checkRenameSafety: (target: unknown, nextName: string, project?: string) =>
       ipcRenderer.invoke('projectAssets:checkRenameSafety', target, nextName, project),
@@ -218,6 +224,13 @@ contextBridge.exposeInMainWorld('api', {
     selectImportFile: (category: string) => ipcRenderer.invoke('projectAssets:selectImportFile', category),
     copy: (request: unknown, project?: string) => ipcRenderer.invoke('projectAssets:copy', request, project),
     revealInFolder: (request: unknown, project?: string) => ipcRenderer.invoke('projectAssets:revealInFolder', request, project),
+    startWatcher: (project?: string) => ipcRenderer.invoke('projectAssets:startWatcher', project),
+    stopWatcher: () => ipcRenderer.invoke('projectAssets:stopWatcher'),
+    onChange: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('projectAssets:changed', handler);
+      return () => ipcRenderer.removeListener('projectAssets:changed', handler);
+    },
   },
 
   projectManagement: {

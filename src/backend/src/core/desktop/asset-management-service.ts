@@ -4,6 +4,7 @@ import path from 'node:path';
 import { projectAssetCategoryLabel } from '../../../../contract/project-asset-category-labels.ts';
 import {
   parseProjectAssetBrowserNodeId,
+  projectAssetBrowserNodeId,
   PROJECT_ASSET_PICTURES_CATEGORY_ID,
   projectAssetBrowserAllowsPictureSubfolders,
 } from '../../../../contract/project-asset-browser-nodes.ts';
@@ -58,6 +59,9 @@ import {
   assetManagementSourceMustBeAbsolute,
   assetManagementSourceNotFile,
   assetManagementSourceRequired,
+  assetManagementSubfolderMissing,
+  assetManagementSubfolderNameOccupied,
+  assetManagementSubfolderUnsupported,
   assetManagementTargetNameExists,
   assetManagementTrashFailed,
   assetManagementTrashPortMissing,
@@ -748,6 +752,173 @@ export function renameAsset(
     ...target,
     relativePath: renamePairs[0]!.nextRelative,
   });
+}
+
+export interface ProjectAssetSubfolderMutationResult {
+  previousNodeId: string;
+  nextNodeId: string;
+  directory: string;
+}
+
+function requireUserPictureSubfolder(project: string, nodeId: string): { subpath: string } {
+  const { categoryId, subpath } = parseProjectAssetBrowserNodeId(nodeId);
+  if (
+    categoryId !== PROJECT_ASSET_PICTURES_CATEGORY_ID
+    || !subpath
+    || !projectAssetBrowserAllowsPictureSubfolders(inspectRmmvProject(project).engine)
+  ) {
+    throw new Error(assetManagementSubfolderUnsupported(nodeId));
+  }
+  return { subpath };
+}
+
+function normalizeFolderLeafName(value: string): string {
+  const name = String(value || '').trim();
+  if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
+    throw new Error(assetManagementInvalidName());
+  }
+  if (/[<>:"|?*\u0000-\u001f]/.test(name)) {
+    throw new Error(assetManagementInvalidName());
+  }
+  return name;
+}
+
+/**
+ * Rename an MZ pictures disk subfolder (e.g. pictures/ui → pictures/hud).
+ * Rewrites nested logical asset names and references via renameAsset.
+ */
+export function renameProjectAssetSubfolder(
+  workflowRoot: string,
+  project: string,
+  nodeId: string,
+  nextFolderNameValue: string,
+): ProjectAssetSubfolderMutationResult {
+  const { subpath } = requireUserPictureSubfolder(project, nodeId);
+  const segments = subpath.split('/').filter(Boolean);
+  const leaf = segments[segments.length - 1]!;
+  const parentSubpath = segments.slice(0, -1).join('/');
+  const nextLeaf = normalizeFolderLeafName(nextFolderNameValue);
+  const nextSubpath = parentSubpath ? `${parentSubpath}/${nextLeaf}` : nextLeaf;
+  const nextNodeId = projectAssetBrowserNodeId(PROJECT_ASSET_PICTURES_CATEGORY_ID, nextSubpath);
+  const relativeRoot = projectAssetRelativeDirectory(workflowRoot, project, PROJECT_ASSET_PICTURES_CATEGORY_ID);
+  const oldDirectory = `${relativeRoot}/${subpath}`;
+  const newDirectory = `${relativeRoot}/${nextSubpath}`;
+  const projectRoot = path.resolve(project);
+  const oldAbsolute = path.resolve(projectRoot, ...oldDirectory.split('/'));
+  const newAbsolute = path.resolve(projectRoot, ...newDirectory.split('/'));
+  assertInside(projectRoot, oldAbsolute);
+  assertInside(projectRoot, newAbsolute);
+
+  if (nextLeaf === leaf) {
+    return { previousNodeId: nodeId, nextNodeId: nodeId, directory: oldDirectory };
+  }
+  if (fs.existsSync(newAbsolute)) {
+    throw new Error(assetManagementSubfolderNameOccupied(nextLeaf));
+  }
+
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  const prefix = `${subpath}/`;
+  const nested = graph.assets
+    .filter((asset) => asset.category === PROJECT_ASSET_PICTURES_CATEGORY_ID && asset.name.startsWith(prefix))
+    .sort((left, right) => right.name.length - left.name.length);
+
+  for (const asset of nested) {
+    const rest = asset.name.slice(prefix.length);
+    const nextName = `${nextSubpath}/${rest}`;
+    renameAsset(workflowRoot, project, {
+      scope: 'project',
+      category: PROJECT_ASSET_PICTURES_CATEGORY_ID,
+      relativePath: asset.relativePath,
+      name: asset.name,
+    }, nextName);
+  }
+
+  if (fs.existsSync(oldAbsolute)) {
+    if (fs.existsSync(newAbsolute)) {
+      fs.rmSync(oldAbsolute, { recursive: true, force: true });
+    } else {
+      fs.mkdirSync(path.dirname(newAbsolute), { recursive: true });
+      fs.renameSync(oldAbsolute, newAbsolute);
+    }
+  } else if (nested.length === 0) {
+    throw new Error(assetManagementSubfolderMissing(oldDirectory));
+  }
+
+  invalidateProjectAssetBrowserCache(project);
+  invalidateProjectAssetListingCache(project);
+  invalidateProjectAssetReferenceGraphCache(project);
+  return { previousNodeId: nodeId, nextNodeId, directory: newDirectory };
+}
+
+/**
+ * Delete an MZ pictures disk subfolder and all nested picture assets (via trash).
+ * Without `force`, referenced assets block the whole folder — nothing is deleted
+ * and the blocked items are returned so the UI can ask for confirmation.
+ */
+export async function deleteProjectAssetSubfolder(
+  workflowRoot: string,
+  project: string,
+  nodeId: string,
+  options: { force?: boolean } = {},
+  dependencies?: ProjectAssetDeleteDependencies,
+): Promise<ProjectAssetDeleteBatchResult> {
+  const { subpath } = requireUserPictureSubfolder(project, nodeId);
+  const relativeRoot = projectAssetRelativeDirectory(workflowRoot, project, PROJECT_ASSET_PICTURES_CATEGORY_ID);
+  const directory = `${relativeRoot}/${subpath}`;
+  const projectRoot = path.resolve(project);
+  const absolute = path.resolve(projectRoot, ...directory.split('/'));
+  assertInside(projectRoot, absolute);
+
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  const prefix = `${subpath}/`;
+  const nested = graph.assets.filter(
+    (asset) => asset.category === PROJECT_ASSET_PICTURES_CATEGORY_ID && asset.name.startsWith(prefix),
+  );
+  const targets: ProjectAssetDeleteTargetInput[] = nested.map((asset) => ({
+    category: PROJECT_ASSET_PICTURES_CATEGORY_ID,
+    name: asset.name,
+    relativePath: asset.relativePath,
+  }));
+
+  let batch: ProjectAssetDeleteBatchResult = { results: [] };
+  if (targets.length) {
+    if (!options.force) {
+      // All-or-nothing: surface every blocked asset before touching the disk.
+      const safety = checkProjectAssetDeleteSafetyBatch(workflowRoot, project, targets);
+      const blocked = safety.filter((item) => !item.ok);
+      if (blocked.length) {
+        return {
+          results: blocked.map((item) => ({
+            target: item.target,
+            status: 'blocked' as const,
+            references: item.references,
+            error: item.blockers.join('; '),
+          })),
+        };
+      }
+    }
+    batch = await deleteProjectAssets(workflowRoot, project, targets, options, dependencies);
+    const failed = batch.results.filter((item) => item.status !== 'deleted');
+    if (failed.length) return batch;
+  }
+
+  if (fs.existsSync(absolute)) {
+    const trashItem = dependencies?.trashItem;
+    if (!trashItem) throw new Error(assetManagementTrashPortMissing());
+    try {
+      await trashItem(absolute);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(assetManagementTrashFailed(directory, reason));
+    }
+  } else if (targets.length === 0) {
+    throw new Error(assetManagementSubfolderMissing(directory));
+  }
+
+  invalidateProjectAssetBrowserCache(project);
+  invalidateProjectAssetListingCache(project);
+  invalidateProjectAssetReferenceGraphCache(project);
+  return batch;
 }
 
 export async function deleteProjectAssets(

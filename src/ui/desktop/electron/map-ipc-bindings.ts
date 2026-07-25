@@ -420,6 +420,8 @@ export function registerMapIpcHandlers(
     desktop.assetManagement.getAssetDetail(workflowRoot, project(value), target));
   handle('projectAssets:rename', (_event, target: Record<string, unknown>, nextName: string, value?: string) =>
     desktop.assetManagement.renameAsset(workflowRoot, project(value), target, nextName));
+  handle('projectAssets:renameSubfolder', (_event, nodeId: string, nextName: string, value?: string) =>
+    desktop.assetManagement.renameProjectAssetSubfolder(workflowRoot, project(value), nodeId, nextName));
   handle('projectAssets:remove', (
     _event,
     targets: Array<Record<string, unknown>>,
@@ -429,6 +431,18 @@ export function registerMapIpcHandlers(
     workflowRoot,
     project(value),
     targets,
+    { force: force === true },
+    { trashItem: options.trashProjectAsset },
+  ));
+  handle('projectAssets:removeSubfolder', (
+    _event,
+    nodeId: string,
+    force?: boolean,
+    value?: string,
+  ) => desktop.assetManagement.deleteProjectAssetSubfolder(
+    workflowRoot,
+    project(value),
+    nodeId,
     { force: force === true },
     { trashItem: options.trashProjectAsset },
   ));

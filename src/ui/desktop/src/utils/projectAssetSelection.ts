@@ -17,6 +17,11 @@ export interface ProjectAssetGridLayoutInput {
   cellWidth: number;
   cellHeight: number;
   gap: number;
+  /** Content-coordinate offset of the first grid cell (e.g. grid inset padding). */
+  originX?: number;
+  originY?: number;
+  /** Leading non-file cells (folder tiles) occupying grid slots before orderedIds[0]. */
+  leadingItemCount?: number;
 }
 
 export interface ProjectAssetContentRect {
@@ -119,13 +124,15 @@ export function projectAssetCellRectAtIndex(
   const cellWidth = Math.max(0, layout.cellWidth);
   const cellHeight = Math.max(0, layout.cellHeight);
   const gap = Math.max(0, layout.gap);
+  const originX = layout.originX ?? 0;
+  const originY = layout.originY ?? 0;
   const strideX = cellWidth + gap;
   const strideY = cellHeight + gap;
   const row = Math.floor(index / columnCount);
   const column = index % columnCount;
   return {
-    x: column * strideX,
-    y: row * strideY,
+    x: originX + column * strideX,
+    y: originY + row * strideY,
     width: cellWidth,
     height: cellHeight,
   };
@@ -141,6 +148,7 @@ export function projectAssetRectsIntersect(
 /**
  * Marquee hit-test against the full ordered id list using layout math (not DOM / not visible window).
  * Rectangles are in content coordinates (origin at top-left of the scrollable grid content).
+ * `leadingItemCount` shifts file indices past leading folder tiles that share the same grid.
  */
 export function hitTestProjectAssetMarquee(
   orderedIds: readonly string[],
@@ -148,9 +156,10 @@ export function hitTestProjectAssetMarquee(
   marquee: ProjectAssetContentRect,
 ): string[] {
   const normalized = normalizeContentRect(marquee);
+  const leading = Math.max(0, Math.floor(layout.leadingItemCount ?? 0));
   const hits: string[] = [];
   for (let index = 0; index < orderedIds.length; index += 1) {
-    const cell = projectAssetCellRectAtIndex(index, layout);
+    const cell = projectAssetCellRectAtIndex(index + leading, layout);
     const cellRect: ProjectAssetContentRect = {
       left: cell.x,
       top: cell.y,

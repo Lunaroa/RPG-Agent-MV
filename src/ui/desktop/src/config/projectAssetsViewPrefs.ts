@@ -6,6 +6,7 @@ import {
   type ProjectAssetSortDir,
   type ProjectAssetSortKey,
 } from '../utils/projectAssetSorting.ts';
+import type { AssetPreviewMediaKind } from '../utils/assetPreview.ts';
 
 export const PROJECT_ASSETS_VIEW_PREFS_PREFIX = 'rpg-agent-project-assets';
 
@@ -19,6 +20,11 @@ export const PROJECT_ASSET_VIEW_MODE_DEFAULT: ProjectAssetViewMode = 'icons';
 
 export function isProjectAssetViewMode(value: unknown): value is ProjectAssetViewMode {
   return typeof value === 'string' && (PROJECT_ASSET_VIEW_MODES as readonly string[]).includes(value);
+}
+
+/** Audio categories default to details; everything else defaults to icons. */
+export function defaultProjectAssetViewModeForMedia(media: AssetPreviewMediaKind): ProjectAssetViewMode {
+  return media === 'audio' ? 'details' : PROJECT_ASSET_VIEW_MODE_DEFAULT;
 }
 
 export interface ProjectAssetSortPreference {
@@ -79,19 +85,25 @@ export function saveProjectAssetThumbSize(size: number): void {
   }
 }
 
-export function loadProjectAssetViewMode(): ProjectAssetViewMode {
+export function loadProjectAssetViewMode(media: AssetPreviewMediaKind = 'other'): ProjectAssetViewMode {
   try {
-    const stored = localStorage.getItem(storageKey('viewMode'));
-    if (isProjectAssetViewMode(stored)) return stored;
+    const byMedia = localStorage.getItem(storageKey(`viewMode.${media}`));
+    if (isProjectAssetViewMode(byMedia)) return byMedia;
+    // Audio must keep its details default: never let the legacy global key
+    // (written by pre-per-media builds) override it.
+    if (media !== 'audio') {
+      const legacy = localStorage.getItem(storageKey('viewMode'));
+      if (isProjectAssetViewMode(legacy)) return legacy;
+    }
   } catch {
     /* ignore */
   }
-  return PROJECT_ASSET_VIEW_MODE_DEFAULT;
+  return defaultProjectAssetViewModeForMedia(media);
 }
 
-export function saveProjectAssetViewMode(mode: ProjectAssetViewMode): void {
+export function saveProjectAssetViewMode(mode: ProjectAssetViewMode, media: AssetPreviewMediaKind = 'other'): void {
   try {
-    localStorage.setItem(storageKey('viewMode'), mode);
+    localStorage.setItem(storageKey(`viewMode.${media}`), mode);
   } catch {
     /* ignore */
   }

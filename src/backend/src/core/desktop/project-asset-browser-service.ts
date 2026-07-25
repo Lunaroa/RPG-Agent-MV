@@ -76,6 +76,76 @@ export function invalidateProjectAssetBrowserCache(project?: string): void {
   invalidateProjectAssetListingCache(project);
 }
 
+/**
+ * Watch the project's asset directories for file system changes and invoke
+ * `onChange` after a short debounce. Scope is limited to the engine resource
+ * buckets (img/audio/fonts/movies/effects) so app/session writes elsewhere
+ * (save/, data/, staging) do not churn the asset browser.
+ * Returns a cleanup function that stops all watchers.
+ */
+export function startProjectAssetWatcher(
+  project: string,
+  onChange: () => void,
+): () => void {
+  const ASSET_DIRECTORIES = ['img', 'audio', 'fonts', 'movies', 'effects'];
+  const watchers: fs.FSWatcher[] = [];
+  const watchedDirectories = new Set<string>();
+  let closed = false;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleChange(): void {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      onChange();
+    }, 300);
+  }
+
+  function watchDirectory(absolute: string, recursive: boolean, listener: () => void): void {
+    if (closed || watchedDirectories.has(absolute) || !fs.existsSync(absolute)) return;
+    try {
+      const watcher = fs.watch(absolute, { recursive }, listener);
+      watcher.on('error', () => { /* ignore */ });
+      watcher.unref();
+      watchers.push(watcher);
+      watchedDirectories.add(absolute);
+    } catch {
+      // Watching may fail on some platforms or permission issues; degrade gracefully.
+    }
+  }
+
+  try {
+    const resourceRoot = resolveRmmvLayout(project).resourceRoot;
+    const armAssetDirWatchers = (): void => {
+      for (const dir of ASSET_DIRECTORIES) {
+        watchDirectory(path.join(resourceRoot, dir), true, scheduleChange);
+      }
+    };
+    armAssetDirWatchers();
+    // Top-level watch (non-recursive) catches asset buckets created after start
+    // (e.g. fonts/ added later) and re-arms their recursive watchers.
+    watchDirectory(resourceRoot, false, () => {
+      armAssetDirWatchers();
+      scheduleChange();
+    });
+  } catch {
+    // Layout unresolved (not an RMMV project yet); nothing to watch.
+  }
+
+  return () => {
+    closed = true;
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    for (const w of watchers) {
+      try { w.close(); } catch { /* ignore */ }
+    }
+    watchers.length = 0;
+    watchedDirectories.clear();
+  };
+}
+
 export function buildProjectAssetCategoryTree(
   workflowRoot: string,
   project: string,

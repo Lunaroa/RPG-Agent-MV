@@ -1,33 +1,50 @@
 <template>
-  <span class="folder-thumb" :class="{ empty: !visibleUrls.length }" aria-hidden="true">
-    <span class="folder-back" />
+  <span
+    class="folder-thumb-wrap"
+    :style="{ width: `${widthPx}px`, height: `${heightPx}px` }"
+    aria-hidden="true"
+  >
     <span
-      v-for="(url, index) in visibleUrls"
-      :key="`${url}:${index}`"
-      class="folder-sheet"
-      :class="`sheet-${index}`"
-      :style="{ zIndex: 2 + index }"
+      class="folder-thumb"
+      :class="{ empty: !visibleUrls.length }"
+      :style="{ transform: `scale(${scale})` }"
     >
-      <img
-        v-if="!failed.has(url)"
-        :src="url"
-        alt=""
-        loading="lazy"
-        decoding="async"
-        @error="markFailed(url)"
-      />
+      <span class="folder-back" />
+      <span
+        v-for="(url, index) in visibleUrls"
+        :key="`${url}:${index}`"
+        class="folder-sheet"
+        :class="`sheet-${index}`"
+        :style="{ zIndex: 2 + index }"
+      >
+        <img
+          v-if="!failed.has(url)"
+          :src="url"
+          alt=""
+          loading="lazy"
+          decoding="async"
+          @error="markFailed(url)"
+        />
+      </span>
+      <span class="folder-front" />
+      <span class="folder-tab" />
     </span>
-    <span class="folder-front" />
-    <span class="folder-tab" />
   </span>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 
-const props = defineProps<{
+const BASE_WIDTH = 108;
+const BASE_HEIGHT = 88;
+
+const props = withDefaults(defineProps<{
   urls: string[];
-}>();
+  /** Render width in px; height follows the 108:88 aspect. Defaults to native 108. */
+  size?: number;
+}>(), {
+  size: BASE_WIDTH,
+});
 
 const failed = ref(new Set<string>());
 
@@ -42,18 +59,31 @@ const visibleUrls = computed(() =>
   props.urls.filter((url) => url && !failed.value.has(url)).slice(0, 3),
 );
 
+const widthPx = computed(() => Math.max(24, Math.round(props.size)));
+const heightPx = computed(() => Math.round((widthPx.value * BASE_HEIGHT) / BASE_WIDTH));
+const scale = computed(() => widthPx.value / BASE_WIDTH);
+
 function markFailed(url: string): void {
   failed.value = new Set([...failed.value, url]);
 }
 </script>
 
 <style scoped>
-.folder-thumb {
+.folder-thumb-wrap {
   position: relative;
+  display: block;
+  margin: 0 auto;
+  overflow: visible;
+}
+
+.folder-thumb {
+  position: absolute;
+  left: 0;
+  top: 0;
   width: 108px;
   height: 88px;
   display: block;
-  margin: 0 auto;
+  transform-origin: top left;
   filter: drop-shadow(0 1px 2px rgba(40, 32, 18, .2));
 }
 .folder-back,

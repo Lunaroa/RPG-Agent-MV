@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElImageViewer, ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   ArrowDown,
   Check,
+  CopyDocument,
   Document,
   Headset,
   Film,
@@ -10,6 +11,7 @@ import {
   Picture,
   Refresh,
   Sort,
+  Star,
   Upload,
   View,
 } from '@element-plus/icons-vue'
@@ -42,9 +44,9 @@ import {
   type ManagedAssetDetail,
 } from '../api/client'
 import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'
-import AssetFolderIcon from '../components/AssetFolderIcon.vue'
 import AssetGridFontThumb from '../components/AssetGridFontThumb.vue'
 import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
+import PluginFileFolderThumb from '../components/editor/PluginFileFolderThumb.vue'
 import ConsoleSearchInput from '../components/console/ConsoleSearchInput.vue'
 import { useI18n } from '../i18n'
 import { useProjectStore } from '../stores/project'
@@ -62,15 +64,21 @@ import {
   projectAssetCategoryLabel,
   projectAssetMediaKind,
 } from '../utils/projectAssetLocalization'
-import { parseProjectAssetBrowserNodeId } from '@contract/project-asset-browser-nodes'
-import { computeProjectAssetGridWindow } from '../utils/projectAssetGridWindow'
 import {
-  computeHoverPreviewPosition,
-  projectAssetThumbnailUrlForBucket,
-  PROJECT_ASSET_HOVER_PREVIEW_DELAY_MS,
-  PROJECT_ASSET_HOVER_PREVIEW_MAX_SIZE,
-} from '../utils/projectAssetHoverPreview'
+  parseProjectAssetBrowserNodeId,
+} from '@contract/project-asset-browser-nodes'
+import { computeProjectAssetGridWindow } from '../utils/projectAssetGridWindow'
 import { planProjectAssetDeleteConfirmation } from '../utils/projectAssetDeleteFlow'
+import {
+  isProjectAssetUserPictureSubfolder,
+  normalizeProjectAssetFolderLeafName,
+} from '../utils/projectAssetFolderPolicy'
+import {
+  formatProjectAssetBytes,
+  formatProjectAssetModified,
+  formatProjectAssetTypeName,
+} from '../utils/projectAssetListFormatting'
+import { buildProjectAssetPathCrumbs } from '../utils/projectAssetPathCrumbs'
 import {
   sortProjectAssetEntries,
   type ProjectAssetSortDir,
@@ -80,8 +88,11 @@ import {
   clampProjectAssetThumbSize,
   loadProjectAssetSortPreference,
   loadProjectAssetThumbSize,
+  loadProjectAssetViewMode,
   saveProjectAssetSortPreference,
   saveProjectAssetThumbSize,
+  saveProjectAssetViewMode,
+  type ProjectAssetViewMode,
 } from '../config/projectAssetsViewPrefs'
 import {
   applyOverwriteBatchDecision,
@@ -90,6 +101,10 @@ import {
   planDroppedImportItems,
   type ImportOverwriteCandidate,
 } from '../utils/projectAssetImportFlow'
+import {
+  getProjectAssetFavorites,
+  toggleProjectAssetFavorite,
+} from '../utils/projectAssetFavorites'
 import {
   clearProjectAssetSelection,
   emptyProjectAssetSelection,
@@ -108,17 +123,19 @@ import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 
 /**
- * Compact Explorer-like grid metrics. cellWidth hugs the square thumbnail;
+ * Explorer-like grid metrics. cellWidth hugs the square thumbnail;
  * cellHeight adds a two-line name band. Rendering and marquee share these values.
  * Sizes include padding + 1px border (border-box on the cell).
  */
-const CELL_GAP = 4
-const CELL_PAD = 4
+const CELL_GAP = 16
+const CELL_PAD = 8
 const CELL_BORDER = 1
-const CELL_INNER_GAP = 4
+const CELL_INNER_GAP = 6
 const NAME_LINE_HEIGHT = 13
 const NAME_LINES = 2
 const OVERSCAN_ROWS = 2
+const GRID_INSET = 12
+const THUMB_ARM_BATCH = 6
 
 type TreeNodeView = {
   id: string
@@ -154,13 +171,66 @@ const treeLoading = ref(false)
 
 const selectedCategoryId = ref('')
 const categoryEntries = ref<ProjectAssetBrowseEntry[]>([])
+const categoryDirectory = ref('')
 const categoryError = ref('')
 const categoryLoading = ref(false)
+
+const favorites = ref<Set<string>>(new Set())
+
+/** Frontend-only virtual tree node aggregating favorited files and folders. */
+const FAVORITES_NODE_ID = '__favorites__'
+
+const isFavoritesSelection = computed(() => selectedCategoryId.value === FAVORITES_NODE_ID)
+
+/**
+ * Entry ids embed their base category (`pictures:ui/foo`). The favorites view
+ * mixes categories in one grid, so per-entry gates must not use selectedCategoryId.
+ */
+function entryCategoryId(entry: ProjectAssetBrowseEntry): string {
+  const sep = entry.id.indexOf(':')
+  return sep > 0 ? entry.id.slice(0, sep) : selectedCategoryId.value
+}
+
+/** Browser nodes that must be listed to resolve the favorited file ids. */
+function favoriteListingNodes(ids: ReadonlySet<string>): string[] {
+  const nodes = new Set<string>()
+  for (const id of ids) {
+    const sep = id.indexOf(':')
+    if (sep <= 0) continue // folder favorites carry the node id itself
+    const category = id.slice(0, sep)
+    const name = id.slice(sep + 1)
+    const slash = name.lastIndexOf('/')
+    nodes.add(slash > 0 ? `${category}/${name.slice(0, slash)}` : category)
+  }
+  return [...nodes]
+}
+
+function refreshFavorites(): void {
+  if (projectStore.currentProject) {
+    favorites.value = getProjectAssetFavorites(projectStore.currentProject)
+  }
+}
+
+function toggleFavorite(id: string): void {
+  if (!projectStore.currentProject) return
+  favorites.value = toggleProjectAssetFavorite(projectStore.currentProject, id)
+}
+
+function toggleFavoriteForContextFolder(): void {
+  const folderId = contextFolderId.value
+  closeContextMenu()
+  if (folderId) toggleFavorite(folderId)
+}
+
+function isFavorite(id: string): boolean {
+  return favorites.value.has(id)
+}
 
 const searchQuery = ref('')
 const sortPreference = loadProjectAssetSortPreference()
 const sortKey = ref<ProjectAssetSortKey>(sortPreference.key)
 const sortDir = ref<ProjectAssetSortDir>(sortPreference.dir)
+const viewMode = ref<ProjectAssetViewMode>(loadProjectAssetViewMode('other'))
 const selection = ref<ProjectAssetSelectionState>(emptyProjectAssetSelection())
 const selectedFolderId = ref<string | null>(null)
 const mutationBusy = ref(false)
@@ -172,9 +242,22 @@ const stagingError = ref('')
 
 const previewVisible = ref(false)
 const previewIndex = ref(0)
+const imageViewerVisible = ref(false)
+const imageViewerUrls = ref<string[]>([])
+const imageViewerIndex = ref(0)
+
+const previewPanelVisible = ref(false)
+
+const previewPanelEntry = computed(() => {
+  if (!previewPanelVisible.value) return null
+  const entries = selectedFileEntries.value
+  if (entries.length !== 1) return null
+  return entries[0]!
+})
 
 const contextMenu = ref<{ x: number; y: number } | null>(null)
-const contextMenuKind = ref<'cell' | 'background'>('cell')
+const contextMenuKind = ref<'cell' | 'background' | 'folder' | 'tree'>('cell')
+const contextFolderId = ref<string | null>(null)
 
 /** In-app clipboard: mutation-target snapshot taken at copy time (carries the source category). */
 const assetClipboard = ref<{ targets: ProjectAssetDeleteTargetInput[] } | null>(null)
@@ -196,9 +279,6 @@ let thumbnailArmGeneration = 0
 /** Lazy per-category folder-icon previews: categoryId -> up to two thumbnail URLs. */
 const folderPreviews = ref(new Map<string, string[]>())
 const folderPreviewLoading = new Set<string>()
-/** Floating hover preview for image cells: full asset at up to 200px, aspect preserved. */
-const hoverPreview = ref<{ id: string; name: string; url: string; left: number; top: number } | null>(null)
-let hoverPreviewTimer: ReturnType<typeof setTimeout> | null = null
 
 /** Thumbnail edge in px (user zoom, 48-512, persisted). Default 72. */
 const thumbSize = ref(loadProjectAssetThumbSize())
@@ -223,6 +303,11 @@ type MarqueeState = {
 const marquee = ref<MarqueeState | null>(null)
 let marqueeActive = false
 let suppressNextClick = false
+let marqueePending = false
+let marqueePendingOrigin: { x: number; y: number } | null = null
+let marqueePendingHost: HTMLElement | null = null
+let marqueePendingPointerId = -1
+const MARQUEE_DRAG_THRESHOLD = 5
 const fileDropActive = ref(false)
 let fileDragDepth = 0
 
@@ -233,6 +318,7 @@ const listingCoordinator = new LatestAsyncCoordinator<{
 }>()
 
 let resizeObserver: ResizeObserver | null = null
+let unsubscribeAssetWatcher: (() => void) | null = null
 
 const previewSurfaceLabels = computed<AssetPreviewSurfaceLabels>(() => ({
   previewFailed: t('projectAssets.previewFailed'),
@@ -262,9 +348,19 @@ const thumbnailBucket = computed(() =>
   selectProjectAssetThumbnailBucket(thumbSize.value, window.devicePixelRatio || 1),
 )
 
-const treeData = computed<TreeNodeView[]>(() =>
-  treeNodes.value.map((node) => mapTreeNode(node)),
-)
+const treeData = computed<TreeNodeView[]>(() => {
+  const nodes = treeNodes.value.map((node) => mapTreeNode(node))
+  if (nodes.length === 0) return nodes
+  return [
+    {
+      id: FAVORITES_NODE_ID,
+      label: t('projectAssets.favoritesNode'),
+      entryCount: favorites.value.size,
+      children: undefined,
+    },
+    ...nodes,
+  ]
+})
 
 const selectedNode = computed(() => findTreeNode(treeNodes.value, selectedCategoryId.value))
 
@@ -273,6 +369,21 @@ const isGroupSelection = computed(() =>
 )
 
 const folderItems = computed<FolderGridItem[]>(() => {
+  if (isFavoritesSelection.value) {
+    const items: FolderGridItem[] = []
+    for (const id of favorites.value) {
+      if (id.includes(':')) continue
+      const node = findTreeNode(treeNodes.value, id)
+      if (!node) continue
+      items.push({
+        kind: 'folder' as const,
+        id: node.id,
+        label: projectAssetCategoryLabel(node.id, language.value),
+        entryCount: node.entryCount,
+      })
+    }
+    return items.sort((left, right) => left.label.localeCompare(right.label))
+  }
   const node = selectedNode.value
   if (!node?.children?.length) return []
   return node.children.map((child) => ({
@@ -284,9 +395,13 @@ const folderItems = computed<FolderGridItem[]>(() => {
 })
 
 const filteredEntries = computed(() => {
+  // Favorites listing is a snapshot; keep it live against un-favoriting.
+  const base = isFavoritesSelection.value
+    ? categoryEntries.value.filter((entry) => favorites.value.has(entry.id))
+    : categoryEntries.value
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return categoryEntries.value
-  return categoryEntries.value.filter((entry) => entry.name.toLowerCase().includes(query))
+  if (!query) return base
+  return base.filter((entry) => entry.name.toLowerCase().includes(query))
 })
 
 /** Search-filtered entries in the user's chosen sort order; single order source for grid, range-select and preview navigation. */
@@ -318,8 +433,60 @@ watch(thumbSize, (size) => {
   saveProjectAssetThumbSize(size)
 })
 
+watch(selectedCategoryId, (categoryId) => {
+  if (!categoryId) return
+  viewMode.value = loadProjectAssetViewMode(projectAssetMediaKind(categoryId))
+})
+
+watch(viewMode, (mode) => {
+  if (!selectedCategoryId.value) return
+  saveProjectAssetViewMode(mode, projectAssetMediaKind(selectedCategoryId.value))
+})
+
+const showIconGrid = computed(() => viewMode.value === 'icons')
+const showDetailsView = computed(() => viewMode.value === 'details' || viewMode.value === 'list')
+
+const displayDirectory = computed(() => {
+  const node = selectedNode.value
+  if (node?.directory) return node.directory
+  return categoryDirectory.value
+})
+
+const pathCrumbs = computed(() =>
+  buildProjectAssetPathCrumbs(displayDirectory.value, treeNodes.value),
+)
+
+/** Absolute on-disk directory for the current node — what "copy path" writes and hover shows. */
+const displayAbsoluteDirectory = computed(() => {
+  const project = projectStore.currentProject
+  const relative = displayDirectory.value
+  if (!project || !relative) return ''
+  const separator = project.includes('\\') ? '\\' : '/'
+  const root = project.replace(/[\\/]+$/, '')
+  return [root, ...relative.split('/').filter(Boolean)].join(separator)
+})
+
+const searchPlaceholder = computed(() => {
+  const label = selectedCategoryId.value
+    ? projectAssetCategoryLabel(selectedCategoryId.value, language.value)
+    : ''
+  if (!label) return t('projectAssets.searchPlaceholder')
+  return t('projectAssets.searchInFolder', { name: label })
+})
+
+const imageDimensionCache = ref(new Map<string, { width: number; height: number }>())
+
+const previewableImageEntries = computed(() => {
+  return sortedEntries.value.filter((entry) => {
+    const categoryId = entryCategoryId(entry)
+    return isProjectAssetImageCategory(categoryId)
+      && projectAssetCanPreview(categoryId, entry.encrypted)
+      && entry.url
+  })
+})
+
 function onGridWheel(event: WheelEvent) {
-  if (!event.ctrlKey) return
+  if (!showIconGrid.value || !event.ctrlKey) return
   event.preventDefault()
   const step = event.deltaY > 0 ? -8 : 8
   thumbSize.value = clampProjectAssetThumbSize(thumbSize.value + step)
@@ -341,13 +508,13 @@ const gridItems = computed<GridItem[]>(() => {
 
 const gridWindow = computed(() =>
   computeProjectAssetGridWindow({
-    containerWidth: containerWidth.value,
-    containerHeight: containerHeight.value,
+    containerWidth: Math.max(0, containerWidth.value - GRID_INSET * 2),
+    containerHeight: Math.max(0, containerHeight.value - GRID_INSET * 2),
     cellWidth: cellWidth.value,
     cellHeight: cellHeight.value,
     gap: CELL_GAP,
     itemCount: gridItems.value.length,
-    scrollTop: scrollTop.value,
+    scrollTop: Math.max(0, scrollTop.value - GRID_INSET),
     overscanRows: OVERSCAN_ROWS,
   }),
 )
@@ -365,8 +532,8 @@ const visibleItems = computed(() => {
       index,
       style: {
         position: 'absolute' as const,
-        left: `${column * (width + CELL_GAP)}px`,
-        top: `${row * (height + CELL_GAP)}px`,
+        left: `${GRID_INSET + column * (width + CELL_GAP)}px`,
+        top: `${GRID_INSET + row * (height + CELL_GAP)}px`,
         width: `${width}px`,
         height: `${height}px`,
       },
@@ -374,7 +541,7 @@ const visibleItems = computed(() => {
   })
 })
 
-/** Fetch up to two image thumbnails of a category for its folder icon. Cached and in-flight deduped; failures settle as "no previews" without retry storms. */
+/** Fetch up to three image thumbnails of a category for its folder icon. Cached and in-flight deduped; failures settle as "no previews" without retry storms. */
 async function ensureFolderPreview(categoryId: string) {
   const project = projectStore.currentProject
   if (!project) return
@@ -384,7 +551,7 @@ async function ensureFolderPreview(categoryId: string) {
     const listing = await projectAssets.browseCategory(categoryId, project, 128)
     const urls = listing.entries
       .filter((entry) => Boolean(entry.thumbnailUrl) && !entry.encrypted)
-      .slice(0, 2)
+      .slice(0, 3)
       .map((entry) => entry.thumbnailUrl as string)
     folderPreviews.value.set(categoryId, urls)
   } catch {
@@ -408,13 +575,15 @@ async function armVisibleThumbnails(
   const ordered = [...items]
     .filter((cell) => cell.item.kind === 'file')
     .sort((left, right) => left.index - right.index)
-  for (const cell of ordered) {
+  const pending = ordered.filter((cell) => cell.item.kind === 'file' && !armedThumbnailIds.value.has(cell.item.entry.id))
+  for (let offset = 0; offset < pending.length; offset += THUMB_ARM_BATCH) {
     if (generation !== thumbnailArmGeneration) return
-    if (cell.item.kind !== 'file') continue
-    const id = cell.item.entry.id
-    if (armedThumbnailIds.value.has(id)) continue
+    const batch = pending.slice(offset, offset + THUMB_ARM_BATCH)
     const next = new Set(armedThumbnailIds.value)
-    next.add(id)
+    for (const cell of batch) {
+      if (cell.item.kind !== 'file') continue
+      next.add(cell.item.entry.id)
+    }
     armedThumbnailIds.value = next
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => resolve())
@@ -451,6 +620,7 @@ const canImport = computed(() =>
     projectStore.currentProject
     && selectedCategoryId.value
     && !isGroupSelection.value
+    && !isFavoritesSelection.value
     && !mutationBusy.value
     && !stagingBusy.value,
   ),
@@ -478,6 +648,13 @@ const contextDeleteLabel = computed(() => {
   const count = selectedFileEntries.value.length
   if (count <= 1) return t('projectAssets.delete')
   return t('projectAssets.deleteMany', { count })
+})
+
+const selectionStats = computed(() => {
+  const entries = selectedFileEntries.value
+  if (entries.length === 0) return null
+  const totalBytes = entries.reduce((sum, e) => sum + (e.bytes || 0), 0)
+  return { count: entries.length, totalBytes, totalSize: formatSize(totalBytes) }
 })
 
 const marqueeStyle = computed(() => {
@@ -520,14 +697,30 @@ function findTreeNode(
 }
 
 function formatSize(size: number): string {
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} KB`
-  return `${(size / 1024 / 1024).toFixed(1)} MB`
+  return formatProjectAssetBytes(size) || '—'
 }
 
 function formatModified(mtimeMs: number): string {
-  if (!Number.isFinite(mtimeMs) || mtimeMs <= 0) return '—'
-  return new Date(mtimeMs).toLocaleString()
+  return formatProjectAssetModified(mtimeMs) || '—'
+}
+
+function entryTypeLabel(entry: ProjectAssetBrowseEntry): string {
+  return formatProjectAssetTypeName(entry.variants[0]?.extension || '') || '—'
+}
+
+function cellExtensionTag(entry: ProjectAssetBrowseEntry): string {
+  const raw = entry.variants[0]?.extension || entry.name.split('.').pop() || ''
+  // Backend extensions carry the leading dot (path.extname); tags show bare "png".
+  return raw.replace(/^\./, '').toLowerCase()
+}
+
+function cellExtensionColorClass(ext: string): string {
+  const e = ext.replace(/^\./, '').toLowerCase()
+  if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'].includes(e)) return 'ext-image'
+  if (['ogg', 'mp3', 'wav', 'm4a', 'flac', 'aac'].includes(e)) return 'ext-audio'
+  if (['mp4', 'webm', 'avi', 'mov', 'mkv'].includes(e)) return 'ext-video'
+  if (['ttf', 'otf', 'woff', 'woff2'].includes(e)) return 'ext-font'
+  return 'ext-other'
 }
 
 function formatError(errorValue: unknown): string {
@@ -548,10 +741,6 @@ function typeIconSizePx(size: number): number {
   return Math.max(20, Math.min(96, Math.round(size * 0.45)))
 }
 
-function gridMediaKind(): ReturnType<typeof projectAssetMediaKind> {
-  return projectAssetMediaKind(selectedCategoryId.value)
-}
-
 /** Only fonts get in-cell content previews (Windows Fonts folder). Audio/effects use icons. */
 function usesArmedFontThumb(categoryId: string): boolean {
   return projectAssetMediaKind(categoryId) === 'font'
@@ -560,10 +749,11 @@ function usesArmedFontThumb(categoryId: string): boolean {
 function cellUsesIconFallback(entry: ProjectAssetBrowseEntry): boolean {
   if (entry.encrypted) return true
   if (failedThumbnails.value.has(entry.id)) return true
-  if (isProjectAssetImageCategory(selectedCategoryId.value)) {
+  const categoryId = entryCategoryId(entry)
+  if (isProjectAssetImageCategory(categoryId)) {
     return !entry.thumbnailUrl
   }
-  if (usesArmedFontThumb(selectedCategoryId.value)) {
+  if (usesArmedFontThumb(categoryId)) {
     return !entry.url || !armedThumbnailIds.value.has(entry.id)
   }
   return true
@@ -571,7 +761,7 @@ function cellUsesIconFallback(entry: ProjectAssetBrowseEntry): boolean {
 
 function cellShowsFontThumb(entry: ProjectAssetBrowseEntry): boolean {
   if (entry.encrypted || failedThumbnails.value.has(entry.id)) return false
-  if (!usesArmedFontThumb(selectedCategoryId.value)) return false
+  if (!usesArmedFontThumb(entryCategoryId(entry))) return false
   return Boolean(entry.url) && armedThumbnailIds.value.has(entry.id)
 }
 
@@ -648,7 +838,7 @@ function buildEffectPreviewInfo(entry: ProjectAssetBrowseEntry): NonNullable<Ass
 }
 
 function toPreviewItem(entry: ProjectAssetBrowseEntry): AssetPreviewItem {
-  const categoryId = selectedCategoryId.value
+  const categoryId = entryCategoryId(entry)
   const media = projectAssetMediaKind(categoryId)
   const canPreview = projectAssetCanPreview(categoryId, entry.encrypted)
   if (media === 'effect' && !entry.encrypted) {
@@ -679,41 +869,7 @@ function measureGrid() {
 
 function onGridScroll() {
   scrollTop.value = gridHost.value?.scrollTop || 0
-  clearHoverPreview()
-}
-
-function clearHoverPreview() {
-  if (hoverPreviewTimer) {
-    clearTimeout(hoverPreviewTimer)
-    hoverPreviewTimer = null
-  }
-  hoverPreview.value = null
-}
-
-function onCellMouseEnter(event: MouseEvent, item: GridItem) {
-  clearHoverPreview()
-  if (item.kind !== 'file') return
-  const entry = item.entry
-  if (!isProjectAssetImageCategory(selectedCategoryId.value)) return
-  if (entry.encrypted || !entry.thumbnailUrl || failedThumbnails.value.has(entry.id)) return
-  const thumbnailUrl = entry.thumbnailUrl
-  const mouseX = event.clientX
-  const mouseY = event.clientY
-  hoverPreviewTimer = setTimeout(() => {
-    hoverPreviewTimer = null
-    const bucket = selectProjectAssetThumbnailBucket(
-      PROJECT_ASSET_HOVER_PREVIEW_MAX_SIZE,
-      window.devicePixelRatio || 1,
-    )
-    const url = projectAssetThumbnailUrlForBucket(thumbnailUrl, bucket) ?? thumbnailUrl
-    const pos = computeHoverPreviewPosition({
-      mouseX,
-      mouseY,
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-    })
-    hoverPreview.value = { id: entry.id, name: entry.name, url, left: pos.left, top: pos.top }
-  }, PROJECT_ASSET_HOVER_PREVIEW_DELAY_MS)
+  clearMetaTooltip()
 }
 
 function syncTreeCurrentKey(categoryId: string) {
@@ -769,7 +925,8 @@ async function loadTree(preferredCategoryId?: string) {
   try {
     const tree = await projectAssets.browseTree(projectStore.currentProject)
     treeNodes.value = tree.nodes
-    const nextId = preferredCategoryId && findTreeNode(tree.nodes, preferredCategoryId)
+    const nextId = preferredCategoryId
+      && (preferredCategoryId === FAVORITES_NODE_ID || findTreeNode(tree.nodes, preferredCategoryId))
       ? preferredCategoryId
       : tree.nodes[0]?.id || ''
     selectedCategoryId.value = nextId
@@ -788,9 +945,13 @@ async function loadTree(preferredCategoryId?: string) {
   }
 }
 
-async function loadCategory(categoryId: string) {
+async function loadCategory(categoryId: string, options: { preserveViewState?: boolean } = {}) {
   if (!projectStore.currentProject || !categoryId) {
     categoryEntries.value = []
+    return
+  }
+  if (categoryId === FAVORITES_NODE_ID) {
+    await loadFavoritesListing(options)
     return
   }
   if (isProjectAssetGroupCategory(categoryId)) {
@@ -800,11 +961,14 @@ async function loadCategory(categoryId: string) {
       bucket: thumbnailBucket.value,
     })
     categoryEntries.value = []
+    categoryDirectory.value = ''
     categoryError.value = ''
     categoryLoading.value = false
-    clearFileSelection()
-    scrollTop.value = 0
-    if (gridHost.value) gridHost.value.scrollTop = 0
+    if (!options.preserveViewState) {
+      clearFileSelection()
+      scrollTop.value = 0
+      if (gridHost.value) gridHost.value.scrollTop = 0
+    }
     return
   }
 
@@ -813,22 +977,85 @@ async function loadCategory(categoryId: string) {
   const token = listingCoordinator.begin({ project, categoryId, bucket })
   categoryLoading.value = true
   categoryError.value = ''
-  selectedFolderId.value = null
-  scrollTop.value = 0
-  if (gridHost.value) gridHost.value.scrollTop = 0
-  failedThumbnails.value = new Set()
-  armedThumbnailIds.value = new Set()
-  thumbnailArmGeneration += 1
+  if (!options.preserveViewState) {
+    selectedFolderId.value = null
+    scrollTop.value = 0
+    if (gridHost.value) gridHost.value.scrollTop = 0
+    failedThumbnails.value = new Set()
+    armedThumbnailIds.value = new Set()
+    imageDimensionCache.value = new Map()
+    thumbnailArmGeneration += 1
+  }
 
   await listingCoordinator.runExclusive(token, async (context) => {
     try {
       const listing = await projectAssets.browseCategory(categoryId, project, bucket)
       if (!context.isCurrent()) return
       categoryEntries.value = listing.entries
+      categoryDirectory.value = listing.directory || ''
       categoryError.value = ''
       selection.value = pruneProjectAssetSelection(
         selection.value,
         new Set(listing.entries.map((entry) => entry.id)),
+      )
+    } catch (error) {
+      if (!context.isCurrent()) return
+      categoryEntries.value = []
+      categoryDirectory.value = ''
+      categoryError.value = t('projectAssets.loadCategoryFailed', { message: formatError(error) })
+      clearFileSelection()
+    } finally {
+      if (context.isCurrent()) categoryLoading.value = false
+    }
+  })
+}
+
+/** Load the virtual favorites listing: browse every node a favorited file lives in, keep only favorites. */
+async function loadFavoritesListing(options: { preserveViewState?: boolean } = {}) {
+  const project = projectStore.currentProject
+  if (!project) return
+  const bucket = thumbnailBucket.value
+  const token = listingCoordinator.begin({ project, categoryId: FAVORITES_NODE_ID, bucket })
+  categoryLoading.value = true
+  categoryError.value = ''
+  categoryDirectory.value = ''
+  if (!options.preserveViewState) {
+    selectedFolderId.value = null
+    scrollTop.value = 0
+    if (gridHost.value) gridHost.value.scrollTop = 0
+    failedThumbnails.value = new Set()
+    armedThumbnailIds.value = new Set()
+    imageDimensionCache.value = new Map()
+    thumbnailArmGeneration += 1
+  }
+
+  await listingCoordinator.runExclusive(token, async (context) => {
+    try {
+      const ids = favorites.value
+      const nodes = favoriteListingNodes(ids)
+      const listings = await Promise.all(nodes.map(async (node) => {
+        try {
+          return await projectAssets.browseCategory(node, project, bucket)
+        } catch {
+          return null // node vanished on disk; its favorites simply do not resolve
+        }
+      }))
+      if (!context.isCurrent()) return
+      const seen = new Set<string>()
+      const entries: ProjectAssetBrowseEntry[] = []
+      for (const listing of listings) {
+        if (!listing) continue
+        for (const entry of listing.entries) {
+          if (!ids.has(entry.id) || seen.has(entry.id)) continue
+          seen.add(entry.id)
+          entries.push(entry)
+        }
+      }
+      categoryEntries.value = entries
+      categoryError.value = ''
+      selection.value = pruneProjectAssetSelection(
+        selection.value,
+        new Set(entries.map((entry) => entry.id)),
       )
     } catch (error) {
       if (!context.isCurrent()) return
@@ -892,12 +1119,38 @@ function openPreviewForEntry(entryId: string) {
   const index = sortedEntries.value.findIndex((entry) => entry.id === entryId)
   if (index < 0) return
   applyFileSelection(selectProjectAssetExclusive(entryId))
+  const entry = sortedEntries.value[index]!
+  const entryCategory = entryCategoryId(entry)
+  const media = projectAssetMediaKind(entryCategory)
+  if (media === 'image' && projectAssetCanPreview(entryCategory, entry.encrypted) && entry.url) {
+    const imageEntries = previewableImageEntries.value
+    const viewerIndex = imageEntries.findIndex((item) => item.id === entryId)
+    if (viewerIndex >= 0) {
+      imageViewerUrls.value = imageEntries.map((item) => item.url)
+      imageViewerIndex.value = viewerIndex
+      imageViewerVisible.value = true
+      previewVisible.value = false
+      return
+    }
+  }
+  imageViewerVisible.value = false
   previewIndex.value = index
   previewVisible.value = true
 }
 
 function closePreview() {
   previewVisible.value = false
+}
+
+function closeImageViewer() {
+  imageViewerVisible.value = false
+}
+
+function onImageViewerSwitch(index: number) {
+  imageViewerIndex.value = index
+  const url = imageViewerUrls.value[index]
+  const entry = sortedEntries.value.find((item) => item.url === url)
+  if (entry) applyFileSelection(selectProjectAssetExclusive(entry.id))
 }
 
 function onPreviewNavigate(index: number) {
@@ -924,14 +1177,34 @@ function openContextMenu(event: MouseEvent, entryId: string) {
   } else {
     selectedFolderId.value = null
   }
+  contextFolderId.value = null
   contextMenuKind.value = 'cell'
   contextMenu.value = { x: event.clientX, y: event.clientY }
 }
 
+function openFolderContextMenu(event: MouseEvent, folderId: string) {
+  event.preventDefault()
+  event.stopPropagation()
+  clearFileSelection()
+  selectedFolderId.value = folderId
+  contextFolderId.value = folderId
+  contextMenuKind.value = 'folder'
+  contextMenu.value = { x: event.clientX, y: event.clientY }
+}
+
+function openTreeContextMenu(event: MouseEvent, nodeId: string) {
+  event.preventDefault()
+  event.stopPropagation()
+  // The favorites node is virtual — no on-disk directory to reveal, rename or delete.
+  if (nodeId === FAVORITES_NODE_ID) return
+  contextFolderId.value = nodeId
+  contextMenuKind.value = 'tree'
+  contextMenu.value = { x: event.clientX, y: event.clientY }
+}
+
 function onGridBackgroundContextMenu(event: MouseEvent) {
-  const target = event.target as HTMLElement | null
-  if (target?.closest('.project-assets-cell')) return
-  const canPaste = Boolean(assetClipboard.value) && !isGroupSelection.value
+  if (isEventOnGridCell(event.target)) return
+  const canPaste = Boolean(assetClipboard.value) && !isGroupSelection.value && !isFavoritesSelection.value
   if (!canPaste && !canImport.value) return
   event.preventDefault()
   clearAllSelection()
@@ -967,7 +1240,122 @@ async function revealInFolderForSelection() {
   try {
     await projectAssets.revealInFolder({ relativePath }, projectStore.currentProject)
   } catch (error) {
-    mutationError.value = formatError(error)
+    showMutationToast(formatError(error))
+  }
+}
+
+async function revealFolderInExplorer(nodeId: string) {
+  closeContextMenu()
+  if (!projectStore.currentProject) return
+  const node = findTreeNode(treeNodes.value, nodeId)
+  const relativePath = node?.directory || ''
+  if (!relativePath) {
+    showMutationToast(t('projectAssets.loadCategoryFailed', { message: nodeId }))
+    return
+  }
+  try {
+    await projectAssets.revealInFolder({ relativePath }, projectStore.currentProject)
+  } catch (error) {
+    showMutationToast(formatError(error))
+  }
+}
+
+function showMutationToast(message: string) {
+  ElNotification({
+    type: 'error',
+    title: t('projectAssets.mutationBlockedTitle'),
+    message,
+    duration: 0,
+    position: 'bottom-right',
+  })
+}
+
+async function copyCategoryPath() {
+  const pathText = displayAbsoluteDirectory.value || displayDirectory.value.trim()
+  if (!pathText) return
+  try {
+    await clipboard.writeText(pathText)
+    ElMessage.success(t('projectAssets.pathCopied'))
+  } catch (error) {
+    showMutationToast(formatError(error))
+  }
+}
+
+function onPathCrumbClick(nodeId: string | null) {
+  if (!nodeId) return
+  selectCategory(nodeId)
+}
+
+function fileTooltipLines(entry: ProjectAssetBrowseEntry): string[] {
+  const lines = [
+    t('projectAssets.tooltipSize', { size: formatSize(entry.bytes) }),
+    t('projectAssets.tooltipModified', { time: formatModified(entry.mtimeMs) }),
+  ]
+  const dims = imageDimensionCache.value.get(entry.id)
+  if (dims) {
+    lines.push(t('projectAssets.tooltipResolution', {
+      width: dims.width,
+      height: dims.height,
+    }))
+  }
+  return lines
+}
+
+function folderTooltipLines(item: FolderGridItem): string[] {
+  return [t('projectAssets.tooltipEntryCount', { count: item.entryCount })]
+}
+
+// Explorer-style metadata tooltip: shows below the pointer after a short hover delay.
+const META_TOOLTIP_DELAY_MS = 400
+const metaTooltip = ref<{ lines: string[]; left: number; top: number } | null>(null)
+let metaTooltipTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearMetaTooltip() {
+  if (metaTooltipTimer) {
+    clearTimeout(metaTooltipTimer)
+    metaTooltipTimer = null
+  }
+  metaTooltip.value = null
+}
+
+function onItemMouseEnter(event: MouseEvent, item: GridItem) {
+  if (item.kind === 'file') void ensureImageDimensions(item.entry)
+  clearMetaTooltip()
+  const anchorX = event.clientX
+  const anchorY = event.clientY
+  metaTooltipTimer = setTimeout(() => {
+    metaTooltipTimer = null
+    const lines = item.kind === 'folder' ? folderTooltipLines(item) : fileTooltipLines(item.entry)
+    if (!lines.length) return
+    metaTooltip.value = {
+      lines,
+      left: Math.max(0, Math.min(anchorX + 12, window.innerWidth - 300)),
+      top: Math.max(0, Math.min(anchorY + 20, window.innerHeight - 120)),
+    }
+  }, META_TOOLTIP_DELAY_MS)
+}
+
+async function ensureImageDimensions(entry: ProjectAssetBrowseEntry) {
+  if (!isProjectAssetImageCategory(entryCategoryId(entry))) return
+  if (entry.encrypted || imageDimensionCache.value.has(entry.id)) return
+  const url = entry.url || entry.thumbnailUrl
+  if (!url) return
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error('image load failed'))
+      el.src = url
+    })
+    const width = image.naturalWidth
+    const height = image.naturalHeight
+    if (width > 0 && height > 0) {
+      const next = new Map(imageDimensionCache.value)
+      next.set(entry.id, { width, height })
+      imageDimensionCache.value = next
+    }
+  } catch {
+    /* omit resolution when image cannot be read */
   }
 }
 
@@ -981,7 +1369,7 @@ async function copyAssetText(kind: 'name' | 'relativePath') {
     await clipboard.writeText(text)
     ElMessage.success(t('projectAssets.textCopied'))
   } catch (error) {
-    mutationError.value = formatError(error)
+    showMutationToast(formatError(error))
   }
 }
 
@@ -1002,6 +1390,17 @@ function copySelection() {
   if (!targets.length) return
   assetClipboard.value = { targets }
   closeContextMenu()
+
+  // Also write files to the system clipboard (Windows) so they can be pasted in Explorer etc.
+  const relativePaths = selectedFileEntries.value
+    .map((entry) => entryPrimaryPath(entry))
+    .filter((p): p is string => Boolean(p))
+  if (relativePaths.length > 0 && projectStore.currentProject) {
+    void clipboard.writeFiles({
+      project: projectStore.currentProject,
+      relativePaths,
+    })
+  }
 }
 
 function assertCopyResultsShape(
@@ -1038,7 +1437,7 @@ function formatCopyResultMessage(results: ProjectAssetCopyItemResult[]): string 
 async function pasteClipboard() {
   const clipboard = assetClipboard.value
   if (!clipboard || !projectStore.currentProject || mutationBusy.value) return
-  if (!selectedCategoryId.value || isGroupSelection.value) return
+  if (!selectedCategoryId.value || isGroupSelection.value || isFavoritesSelection.value) return
   closeContextMenu()
   mutationBusy.value = true
   mutationError.value = ''
@@ -1075,7 +1474,8 @@ function entryMutationTarget(entry: ProjectAssetBrowseEntry) {
   if (!relativePath) return null
   return {
     scope: 'project' as const,
-    category: selectedCategoryId.value,
+    // Favorites mixes categories; each entry id carries its own base category.
+    category: isFavoritesSelection.value ? entryCategoryId(entry) : selectedCategoryId.value,
     relativePath,
   }
 }
@@ -1095,7 +1495,8 @@ function contentPointFromClient(
 }
 
 function isEventOnGridCell(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest('.project-assets-cell'))
+  return target instanceof Element
+    && Boolean(target.closest('.project-assets-cell, .project-assets-details-row'))
 }
 
 function requireGridHostFromEvent(event: PointerEvent): HTMLElement {
@@ -1108,9 +1509,21 @@ function requireGridHostFromEvent(event: PointerEvent): HTMLElement {
 
 function onGridPointerDown(event: PointerEvent) {
   if (event.button !== 0) return
+  clearMetaTooltip()
   if (isGroupSelection.value) return
-  if (isEventOnGridCell(event.target)) return
+  // Marquee geometry is icon-grid math; the details list selects by plain clicks only.
+  if (!showIconGrid.value) return
   const host = requireGridHostFromEvent(event)
+
+  if (isEventOnGridCell(event.target)) {
+    // Enter pending state: activate marquee only if the user drags beyond threshold.
+    // Do NOT capture pointer here so that a simple click still reaches the cell handler.
+    marqueePending = true
+    marqueePendingOrigin = contentPointFromClient(host, event.clientX, event.clientY)
+    marqueePendingHost = host
+    marqueePendingPointerId = event.pointerId
+    return
+  }
 
   closeContextMenu()
   marqueeActive = true
@@ -1127,7 +1540,55 @@ function onGridPointerDown(event: PointerEvent) {
   event.preventDefault()
 }
 
+/** Apply the marquee rect to the selection; used live during drag (Explorer-like) and on release. */
+function applyMarqueeSelection(draft: MarqueeState) {
+  const rect = normalizeContentRect({
+    left: draft.originX,
+    top: draft.originY,
+    right: draft.currentX,
+    bottom: draft.currentY,
+  })
+  applyFileSelection(selectProjectAssetsByMarquee(
+    orderedFileIds.value,
+    {
+      columnCount: gridWindow.value.columnCount,
+      cellWidth: cellWidth.value,
+      cellHeight: cellHeight.value,
+      gap: CELL_GAP,
+      originX: GRID_INSET,
+      originY: GRID_INSET,
+      leadingItemCount: gridItems.value.length - orderedFileIds.value.length,
+    },
+    rect,
+  ))
+}
+
 function onGridPointerMove(event: PointerEvent) {
+  if (marqueePending && marqueePendingOrigin && marqueePendingHost) {
+    const point = contentPointFromClient(marqueePendingHost, event.clientX, event.clientY)
+    const dx = Math.abs(point.x - marqueePendingOrigin.x)
+    const dy = Math.abs(point.y - marqueePendingOrigin.y)
+    if (dx > MARQUEE_DRAG_THRESHOLD || dy > MARQUEE_DRAG_THRESHOLD) {
+      // Threshold exceeded: promote pending to active marquee.
+      marqueePending = false
+      marqueeActive = true
+      suppressNextClick = true
+      closeContextMenu()
+      marquee.value = {
+        originX: marqueePendingOrigin.x,
+        originY: marqueePendingOrigin.y,
+        currentX: point.x,
+        currentY: point.y,
+      }
+      marqueePendingHost.setPointerCapture(marqueePendingPointerId)
+      marqueePendingOrigin = null
+      marqueePendingHost = null
+      focusGridHost()
+      event.preventDefault()
+      applyMarqueeSelection(marquee.value)
+    }
+    return
+  }
   if (!marqueeActive || !marquee.value) return
   const host = requireGridHostFromEvent(event)
   const point = contentPointFromClient(host, event.clientX, event.clientY)
@@ -1136,6 +1597,8 @@ function onGridPointerMove(event: PointerEvent) {
     currentX: point.x,
     currentY: point.y,
   }
+  // Live selection while dragging, matching the native Explorer marquee.
+  applyMarqueeSelection(marquee.value)
 }
 
 function finishMarquee(event: PointerEvent) {
@@ -1162,23 +1625,29 @@ function finishMarquee(event: PointerEvent) {
     return
   }
   suppressNextClick = true
-  applyFileSelection(selectProjectAssetsByMarquee(
-    orderedFileIds.value,
-    {
-      columnCount: gridWindow.value.columnCount,
-      cellWidth: cellWidth.value,
-      cellHeight: cellHeight.value,
-      gap: CELL_GAP,
-    },
-    rect,
-  ))
+  applyMarqueeSelection(draft)
 }
 
 function onGridPointerUp(event: PointerEvent) {
+  if (marqueePending) {
+    // Simple click on a cell (no drag): reset pending and let the click handler work.
+    marqueePending = false
+    marqueePendingOrigin = null
+    marqueePendingHost = null
+    marqueePendingPointerId = -1
+    return
+  }
   finishMarquee(event)
 }
 
 function onGridPointerCancel(event: PointerEvent) {
+  if (marqueePending) {
+    marqueePending = false
+    marqueePendingOrigin = null
+    marqueePendingHost = null
+    marqueePendingPointerId = -1
+    return
+  }
   finishMarquee(event)
 }
 
@@ -1449,6 +1918,7 @@ const treeDropTargetId = ref<string | null>(null)
 
 function treeNodeAcceptsDrop(categoryId: string): boolean {
   return Boolean(projectStore.currentProject)
+    && categoryId !== FAVORITES_NODE_ID
     && !isProjectAssetGroupCategory(categoryId)
     && !mutationBusy.value
 }
@@ -1600,7 +2070,7 @@ async function renameSelectedEntry() {
   let nextName = ''
   try {
     const response = await ElMessageBox.prompt(
-      t('projectAssets.renamePrompt', { count: 0 }),
+      t('projectAssets.renamePrompt'),
       t('projectAssets.renameTitle'),
       {
         inputValue: entry.name,
@@ -1619,24 +2089,107 @@ async function renameSelectedEntry() {
   try {
     const safety = await projectAssets.checkRenameSafety(target, nextName, projectStore.currentProject)
     if (!safety.ok) {
-      mutationError.value = t('projectAssets.mutationBlocked', {
+      showMutationToast(t('projectAssets.mutationBlocked', {
         reasons: safety.blockers.join('\n'),
-      })
+      }))
       return
     }
-    try {
-      await ElMessageBox.confirm(
-        t('projectAssets.renameConfirm', { count: safety.references.length }),
-        t('projectAssets.renameTitle'),
-        { type: 'warning' },
-      )
-    } catch {
-      return
+    if (safety.references.length > 0) {
+      try {
+        await ElMessageBox.confirm(
+          t('projectAssets.renameConfirm', { count: safety.references.length }),
+          t('projectAssets.renameTitle'),
+          { type: 'warning' },
+        )
+      } catch {
+        return
+      }
     }
     const renamed = await projectAssets.rename(target, nextName, projectStore.currentProject)
     await afterMutation(renamed)
   } catch (error) {
-    mutationError.value = formatError(error)
+    showMutationToast(formatError(error))
+  } finally {
+    mutationBusy.value = false
+  }
+}
+
+async function renameContextFolder() {
+  const folderId = contextFolderId.value
+  closeContextMenu()
+  if (!folderId || !isProjectAssetUserPictureSubfolder(folderId) || !projectStore.currentProject || mutationBusy.value) {
+    return
+  }
+  const leaf = folderId.split('/').filter(Boolean).pop() || folderId
+  let nextName = ''
+  try {
+    const response = await ElMessageBox.prompt(
+      t('projectAssets.folderRenamePrompt'),
+      t('projectAssets.folderRenameTitle'),
+      {
+        inputValue: leaf,
+        inputPattern: /^[^<>:"/\\|?*\u0000-\u001f]+$/,
+        inputErrorMessage: t('projectAssets.nameInvalid'),
+      },
+    )
+    nextName = normalizeProjectAssetFolderLeafName(String(response.value || '').trim())
+  } catch {
+    return
+  }
+  if (!nextName || nextName === leaf) return
+  mutationBusy.value = true
+  try {
+    const result = await projectAssets.renameSubfolder(folderId, nextName, projectStore.currentProject)
+    await loadTree(result.nextNodeId)
+  } catch (error) {
+    showMutationToast(formatError(error))
+  } finally {
+    mutationBusy.value = false
+  }
+}
+
+async function deleteContextFolder() {
+  const folderId = contextFolderId.value
+  closeContextMenu()
+  if (!folderId || !isProjectAssetUserPictureSubfolder(folderId) || !projectStore.currentProject || mutationBusy.value) {
+    return
+  }
+  const leaf = folderId.split('/').filter(Boolean).pop() || folderId
+  try {
+    await ElMessageBox.confirm(
+      t('projectAssets.folderDeleteConfirm', { name: leaf }),
+      t('projectAssets.folderDeleteTitle'),
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  mutationBusy.value = true
+  try {
+    // First pass without force: backend blocks the whole folder when any nested
+    // asset is still referenced, without deleting anything.
+    const first = await projectAssets.removeSubfolder(folderId, false, projectStore.currentProject)
+    const blocked = first.results.filter((item) => item.status === 'blocked')
+    if (blocked.length > 0) {
+      mutationBusy.value = false
+      try {
+        await ElMessageBox.confirm(
+          t('projectAssets.folderDeleteForceConfirm', { count: blocked.length }),
+          t('projectAssets.folderDeleteTitle'),
+          { type: 'warning' },
+        )
+      } catch {
+        return
+      }
+      mutationBusy.value = true
+      await projectAssets.removeSubfolder(folderId, true, projectStore.currentProject)
+    }
+    const parentId = folderId.includes('/')
+      ? folderId.slice(0, folderId.lastIndexOf('/'))
+      : 'pictures'
+    await loadTree(parentId === 'pictures' || parentId.startsWith('pictures') ? parentId : 'pictures')
+  } catch (error) {
+    showMutationToast(formatError(error))
   } finally {
     mutationBusy.value = false
   }
@@ -1823,6 +2376,31 @@ async function refreshAll() {
   await refreshStagingStatus()
 }
 
+/** Watcher-driven refresh: reload tree + entries while keeping scroll, selection, and armed thumbnails. */
+async function refreshSilently() {
+  const project = projectStore.currentProject
+  if (!project) return
+  await projectAssets.invalidateBrowseCache(project)
+  try {
+    const tree = await projectAssets.browseTree(project)
+    treeNodes.value = tree.nodes
+    treeError.value = ''
+  } catch (error) {
+    treeError.value = t('projectAssets.loadTreeFailed', { message: formatError(error) })
+    return
+  }
+  folderPreviews.value = new Map()
+  const categoryId = selectedCategoryId.value
+  if (!categoryId || (categoryId !== FAVORITES_NODE_ID && !findTreeNode(treeNodes.value, categoryId))) {
+    // Current node vanished on disk — fall back to the full reload with default selection.
+    await loadTree()
+    return
+  }
+  syncTreeCurrentKey(categoryId)
+  await loadCategory(categoryId, { preserveViewState: true })
+  await refreshStagingStatus()
+}
+
 async function applyProjectStaging() {
   if (!projectStore.currentProject || stagingBusy.value) return
   stagingBusy.value = true
@@ -1863,10 +2441,16 @@ async function discardProjectStaging() {
 
 watch(
   () => projectStore.currentProject,
-  () => {
+  (newProject) => {
     clearAllSelection()
     void loadTree()
     void refreshStagingStatus()
+    refreshFavorites()
+    // Restart file-system watcher for the new project
+    void projectAssets.stopWatcher()
+    if (newProject) {
+      void projectAssets.startWatcher(newProject)
+    }
   },
 )
 
@@ -1886,13 +2470,26 @@ onMounted(() => {
   window.addEventListener('drop', preventWindowFileNavigation)
   void loadTree()
   void refreshStagingStatus()
+  refreshFavorites()
+
+  // Start file-system watcher for auto-refresh
+  if (projectStore.currentProject) {
+    void projectAssets.startWatcher(projectStore.currentProject)
+  }
+  unsubscribeAssetWatcher = projectAssets.onChange(() => {
+    void refreshSilently()
+  })
 })
 
 onUnmounted(() => {
   window.removeEventListener('dragover', preventWindowFileNavigation)
   window.removeEventListener('drop', preventWindowFileNavigation)
+  clearMetaTooltip()
   resizeObserver?.disconnect()
   resizeObserver = null
+  unsubscribeAssetWatcher?.()
+  unsubscribeAssetWatcher = null
+  void projectAssets.stopWatcher()
 })
 
 watch(gridHost, (el, previous) => {
@@ -1905,7 +2502,11 @@ watch(gridHost, (el, previous) => {
 </script>
 
 <template>
-  <div class="project-assets-page" data-ui-id="project-assets-page">
+  <div
+    class="project-assets-page"
+    :class="{ 'has-preview-panel': previewPanelVisible }"
+    data-ui-id="project-assets-page"
+  >
     <aside class="project-assets-tree-pane" :aria-label="t('projectAssets.treeAria')">
       <div v-if="treeError" class="project-assets-error" role="alert">{{ treeError }}</div>
       <div v-else-if="treeLoading && treeData.length === 0" class="project-assets-state">
@@ -1933,6 +2534,7 @@ watch(gridHost, (el, previous) => {
             class="project-assets-tree-node"
             :class="{ 'is-drop-target': treeDropTargetId === data.id }"
             :title="`${data.label} (${data.entryCount})`"
+            @contextmenu="openTreeContextMenu($event, data.id)"
             @dragenter="onTreeNodeDragEnter($event, data.id)"
             @dragover="onTreeNodeDragOver($event, data.id)"
             @dragleave="onTreeNodeDragLeave($event, data.id)"
@@ -1946,11 +2548,66 @@ watch(gridHost, (el, previous) => {
     </aside>
 
     <section class="project-assets-main">
-      <header class="project-assets-toolbar">
+      <div
+        class="project-assets-address-row"
+        data-ui-id="project-assets-address-row"
+      >
+        <div
+          class="project-assets-path-bar"
+          data-ui-id="project-assets-path-bar"
+        >
+          <nav
+            v-if="pathCrumbs.length"
+            class="project-assets-breadcrumbs"
+            :aria-label="t('projectAssets.pathAria')"
+            :title="displayAbsoluteDirectory"
+          >
+            <template
+              v-for="(crumb, index) in pathCrumbs"
+              :key="crumb.directory"
+            >
+              <span
+                v-if="index > 0"
+                class="project-assets-crumb-sep"
+                aria-hidden="true"
+              >›</span>
+              <button
+                v-if="crumb.nodeId && index < pathCrumbs.length - 1"
+                type="button"
+                class="project-assets-crumb"
+                @click="onPathCrumbClick(crumb.nodeId)"
+              >{{ crumb.label }}</button>
+              <span
+                v-else
+                class="project-assets-crumb is-current"
+              >{{ crumb.label }}</span>
+            </template>
+          </nav>
+          <code
+            v-else
+            class="project-assets-path-text"
+            tabindex="0"
+            :title="displayAbsoluteDirectory"
+          >{{ displayDirectory || '—' }}</code>
+          <button
+            type="button"
+            class="project-assets-path-copy"
+            data-ui-id="project-assets-path-copy"
+            :disabled="!displayDirectory"
+            :title="t('projectAssets.pathCopy')"
+            @click="copyCategoryPath"
+          >
+            <el-icon><CopyDocument /></el-icon>
+          </button>
+        </div>
         <ConsoleSearchInput
           v-model="searchQuery"
-          :placeholder="t('projectAssets.searchPlaceholder')"
+          class="project-assets-address-search"
+          :placeholder="searchPlaceholder"
         />
+      </div>
+
+      <header class="project-assets-toolbar">
         <div class="project-assets-toolbar-actions">
           <el-dropdown
             trigger="click"
@@ -2012,12 +2669,18 @@ watch(gridHost, (el, previous) => {
                 <el-dropdown-item
                   v-for="preset in iconSizePresets"
                   :key="preset.key"
-                  @click="thumbSize = preset.size"
+                  @click="viewMode = 'icons'; thumbSize = preset.size"
                 >
                   <span class="project-assets-menu-check">
-                    <el-icon v-if="thumbSize === preset.size"><Check /></el-icon>
+                    <el-icon v-if="showIconGrid && thumbSize === preset.size"><Check /></el-icon>
                   </span>
                   <span>{{ preset.label }}</span>
+                </el-dropdown-item>
+                <el-dropdown-item divided @click="viewMode = 'details'">
+                  <span class="project-assets-menu-check">
+                    <el-icon v-if="!showIconGrid"><Check /></el-icon>
+                  </span>
+                  <span>{{ t('projectAssets.viewDetails') }}</span>
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -2042,6 +2705,16 @@ watch(gridHost, (el, previous) => {
           >
             <el-icon><Refresh /></el-icon>
             <span>{{ t('projectAssets.refresh') }}</span>
+          </button>
+          <button
+            type="button"
+            class="project-assets-tool-btn"
+            :class="{ 'is-active': previewPanelVisible }"
+            :title="t('projectAssets.togglePreviewPanel')"
+            @click="previewPanelVisible = !previewPanelVisible"
+          >
+            <el-icon><View /></el-icon>
+            <span>{{ t('projectAssets.previewPanel') }}</span>
           </button>
         </div>
       </header>
@@ -2074,9 +2747,32 @@ watch(gridHost, (el, previous) => {
         </div>
       </div>
 
-      <div v-if="stagingError" class="project-assets-error" role="alert" data-ui-id="project-assets-staging-error">{{ stagingError }}</div>
-      <div v-if="mutationError" class="project-assets-error" role="alert" data-ui-id="project-assets-mutation-error">{{ mutationError }}</div>
-      <div v-if="categoryError" class="project-assets-error" role="alert">{{ categoryError }}</div>
+      <div
+        v-if="stagingError"
+        class="project-assets-error"
+        role="alert"
+        data-ui-id="project-assets-staging-error"
+      >
+        <span>{{ stagingError }}</span>
+        <button type="button" class="project-assets-error-dismiss" @click="stagingError = ''">{{ t('projectAssets.errorDismiss') }}</button>
+      </div>
+      <div
+        v-if="mutationError"
+        class="project-assets-error"
+        role="alert"
+        data-ui-id="project-assets-mutation-error"
+      >
+        <span>{{ mutationError }}</span>
+        <button type="button" class="project-assets-error-dismiss" @click="mutationError = ''">{{ t('projectAssets.errorDismiss') }}</button>
+      </div>
+      <div
+        v-if="categoryError"
+        class="project-assets-error"
+        role="alert"
+      >
+        <span>{{ categoryError }}</span>
+        <button type="button" class="project-assets-error-dismiss" @click="categoryError = ''">{{ t('projectAssets.errorDismiss') }}</button>
+      </div>
 
       <div
         ref="gridHost"
@@ -2112,121 +2808,253 @@ watch(gridHost, (el, previous) => {
           {{ emptyMessage }}
         </div>
         <div
-          v-else
+          v-else-if="showIconGrid"
           class="project-assets-grid-spacer"
           :class="{ 'is-marquee': Boolean(marquee) }"
-          :style="{ height: `${gridWindow.totalHeight}px` }"
+          :style="{ height: `${gridWindow.totalHeight + GRID_INSET * 2}px` }"
         >
-          <button
+          <div
             v-for="cell in visibleItems"
             :key="cell.item.kind === 'folder' ? `folder:${cell.item.id}` : cell.item.entry.id"
-            type="button"
-            class="project-assets-cell"
-            :class="{
-              selected: cell.item.kind === 'folder'
-                ? isFolderSelected(cell.item.id)
-                : isFileSelected(cell.item.entry.id),
-            }"
+            class="project-assets-cell-host"
             :style="cell.style"
-            :data-ui-id="cell.item.kind === 'folder'
-              ? `project-assets-folder-${cell.item.id}`
-              : `project-assets-cell-${cell.item.entry.id}`"
-            @click="onCellClick($event, cell.item)"
-            @dblclick="onCellDoubleClick(cell.item)"
-            @keydown="onCellKeydown($event, cell.item)"
-            @mouseenter="onCellMouseEnter($event, cell.item)"
-            @mouseleave="clearHoverPreview"
-            @contextmenu="cell.item.kind === 'file'
-              ? openContextMenu($event, cell.item.entry.id)
-              : undefined"
           >
-            <template v-if="cell.item.kind === 'folder'">
-              <span
-                class="project-assets-thumb is-folder"
-                :style="{ width: `${thumbSize}px`, height: `${thumbSize}px` }"
-              >
-                <AssetFolderIcon
-                  :previews="folderPreviews.get(cell.item.id) ?? []"
-                  :size="thumbSize"
-                />
-              </span>
-              <span class="project-assets-name" :title="`${cell.item.label} (${cell.item.entryCount})`">{{ cell.item.label }}</span>
-            </template>
-            <template v-else>
-              <span
-                class="project-assets-thumb"
-                :style="{ width: `${thumbSize}px`, height: `${thumbSize}px` }"
-                :class="{
-                  'is-icon': cellUsesIconFallback(cell.item.entry),
-                  'is-media-thumb': cellShowsFontThumb(cell.item.entry),
-                  'is-encrypted': cell.item.entry.encrypted,
-                }"
-              >
-                <img
-                  v-if="isProjectAssetImageCategory(selectedCategoryId)
-                    && !cell.item.entry.encrypted
-                    && cell.item.entry.thumbnailUrl
-                    && !failedThumbnails.has(cell.item.entry.id)
-                    && armedThumbnailIds.has(cell.item.entry.id)"
-                  :src="cell.item.entry.thumbnailUrl"
-                  :alt="cell.item.entry.name"
-                  draggable="false"
-                  @error="onThumbnailError(cell.item.entry.id)"
-                />
-                <template v-else-if="cell.item.entry.encrypted">
-                  <span class="project-assets-encrypted">{{ t('projectAssets.encrypted') }}</span>
-                </template>
-                <template v-else-if="failedThumbnails.has(cell.item.entry.id)">
-                  <el-icon :size="typeIconSizePx(thumbSize)">
-                    <component :is="typeIcon(selectedCategoryId)" />
+            <button
+              type="button"
+              class="project-assets-cell"
+              :class="{
+                selected: cell.item.kind === 'folder'
+                  ? isFolderSelected(cell.item.id)
+                  : isFileSelected(cell.item.entry.id),
+              }"
+              :data-ui-id="cell.item.kind === 'folder'
+                ? `project-assets-folder-${cell.item.id}`
+                : `project-assets-cell-${cell.item.entry.id}`"
+              @click="onCellClick($event, cell.item)"
+              @dblclick="onCellDoubleClick(cell.item)"
+              @keydown="onCellKeydown($event, cell.item)"
+              @mouseenter="onItemMouseEnter($event, cell.item)"
+              @mouseleave="clearMetaTooltip"
+              @contextmenu="cell.item.kind === 'file'
+                ? openContextMenu($event, cell.item.entry.id)
+                : openFolderContextMenu($event, cell.item.id)"
+            >
+              <template v-if="cell.item.kind === 'folder'">
+                <span
+                  class="project-assets-thumb is-folder"
+                  :style="{ width: `${thumbSize}px`, height: `${thumbSize}px` }"
+                >
+                  <button
+                    type="button"
+                    class="project-assets-fav-btn"
+                    :class="{ 'is-favorite': isFavorite(cell.item.id) }"
+                    :title="isFavorite(cell.item.id)
+                      ? t('projectAssets.unfavorite')
+                      : t('projectAssets.favorite')"
+                    @click.stop="toggleFavorite(cell.item.id)"
+                  >
+                    <el-icon :size="14"><Star /></el-icon>
+                  </button>
+                  <PluginFileFolderThumb
+                    :urls="folderPreviews.get(cell.item.id) ?? []"
+                    :size="Math.max(48, Math.round(thumbSize * 0.92))"
+                  />
+                </span>
+                <span class="project-assets-name">{{ cell.item.label }}</span>
+              </template>
+              <template v-else>
+                <span
+                  class="project-assets-thumb"
+                  :style="{ width: `${thumbSize}px`, height: `${thumbSize}px` }"
+                  :class="{
+                    'is-icon': cellUsesIconFallback(cell.item.entry),
+                    'is-media-thumb': cellShowsFontThumb(cell.item.entry),
+                    'is-encrypted': cell.item.entry.encrypted,
+                  }"
+                >
+                  <span
+                    v-if="cellExtensionTag(cell.item.entry)"
+                    class="project-assets-ext-tag"
+                    :class="cellExtensionColorClass(cellExtensionTag(cell.item.entry))"
+                  >{{ cellExtensionTag(cell.item.entry) }}</span>
+                  <button
+                    type="button"
+                    class="project-assets-fav-btn"
+                    :class="{ 'is-favorite': isFavorite(cell.item.entry.id) }"
+                    :title="isFavorite(cell.item.entry.id)
+                      ? t('projectAssets.unfavorite')
+                      : t('projectAssets.favorite')"
+                    @click.stop="toggleFavorite(cell.item.entry.id)"
+                  >
+                    <el-icon :size="14"><Star /></el-icon>
+                  </button>
+                  <img
+                    v-if="isProjectAssetImageCategory(entryCategoryId(cell.item.entry))
+                      && !cell.item.entry.encrypted
+                      && cell.item.entry.thumbnailUrl
+                      && !failedThumbnails.has(cell.item.entry.id)
+                      && armedThumbnailIds.has(cell.item.entry.id)"
+                    :src="cell.item.entry.thumbnailUrl"
+                    :alt="cell.item.entry.name"
+                    draggable="false"
+                    @error="onThumbnailError(cell.item.entry.id)"
+                  />
+                  <template v-else-if="cell.item.entry.encrypted">
+                    <span class="project-assets-encrypted">{{ t('projectAssets.encrypted') }}</span>
+                  </template>
+                  <template v-else-if="failedThumbnails.has(cell.item.entry.id)">
+                    <el-icon :size="typeIconSizePx(thumbSize)">
+                      <component :is="typeIcon(entryCategoryId(cell.item.entry))" />
+                    </el-icon>
+                  </template>
+                  <template
+                    v-else-if="isProjectAssetImageCategory(entryCategoryId(cell.item.entry))
+                      && cell.item.entry.thumbnailUrl
+                      && !armedThumbnailIds.has(cell.item.entry.id)"
+                  />
+                  <AssetGridFontThumb
+                    v-else-if="projectAssetMediaKind(entryCategoryId(cell.item.entry)) === 'font'
+                      && cell.item.entry.url
+                      && armedThumbnailIds.has(cell.item.entry.id)"
+                    :src="cell.item.entry.url"
+                    :size="thumbSize"
+                    :sample-text="t('projectAssets.fontPreviewSample')"
+                    @error="onThumbnailError(cell.item.entry.id)"
+                  />
+                  <template
+                    v-else-if="usesArmedFontThumb(entryCategoryId(cell.item.entry))
+                      && cell.item.entry.url
+                      && !armedThumbnailIds.has(cell.item.entry.id)"
+                  />
+                  <el-icon v-else :size="typeIconSizePx(thumbSize)">
+                    <component :is="typeIcon(entryCategoryId(cell.item.entry))" />
                   </el-icon>
-                </template>
-                <template
-                  v-else-if="isProjectAssetImageCategory(selectedCategoryId)
-                    && cell.item.entry.thumbnailUrl
-                    && !armedThumbnailIds.has(cell.item.entry.id)"
-                />
-                <AssetGridFontThumb
-                  v-else-if="gridMediaKind() === 'font'
-                    && cell.item.entry.url
-                    && armedThumbnailIds.has(cell.item.entry.id)"
-                  :src="cell.item.entry.url"
-                  :size="thumbSize"
-                  :sample-text="t('projectAssets.fontPreviewSample')"
-                  @error="onThumbnailError(cell.item.entry.id)"
-                />
-                <template
-                  v-else-if="usesArmedFontThumb(selectedCategoryId)
-                    && cell.item.entry.url
-                    && !armedThumbnailIds.has(cell.item.entry.id)"
-                />
-                <el-icon v-else :size="typeIconSizePx(thumbSize)">
-                  <component :is="typeIcon(selectedCategoryId)" />
-                </el-icon>
-              </span>
-              <span class="project-assets-name" :title="cell.item.entry.name">{{ displayAssetName(cell.item.entry.name) }}</span>
-            </template>
-          </button>
+                </span>
+                <span class="project-assets-name">{{ displayAssetName(cell.item.entry.name) }}</span>
+              </template>
+            </button>
+          </div>
           <div
             v-if="marqueeStyle"
             class="project-assets-marquee"
             :style="marqueeStyle"
           />
         </div>
+        <div
+          v-else-if="showDetailsView"
+          class="project-assets-details"
+          data-ui-id="project-assets-details"
+        >
+          <div class="project-assets-details-header">
+            <span>{{ t('projectAssets.columnName') }}</span>
+            <span>{{ t('projectAssets.columnType') }}</span>
+            <span>{{ t('projectAssets.columnSize') }}</span>
+            <span>{{ t('projectAssets.columnModified') }}</span>
+          </div>
+          <button
+            v-for="item in gridItems"
+            :key="item.kind === 'folder' ? `folder:${item.id}` : item.entry.id"
+            type="button"
+            class="project-assets-details-row"
+            :class="{
+              selected: item.kind === 'folder'
+                ? isFolderSelected(item.id)
+                : isFileSelected(item.entry.id),
+            }"
+            :data-ui-id="item.kind === 'folder'
+              ? `project-assets-folder-${item.id}`
+              : `project-assets-cell-${item.entry.id}`"
+            @click="onCellClick($event, item)"
+            @dblclick="onCellDoubleClick(item)"
+            @mouseenter="onItemMouseEnter($event, item)"
+            @mouseleave="clearMetaTooltip"
+            @contextmenu="item.kind === 'file'
+              ? openContextMenu($event, item.entry.id)
+              : openFolderContextMenu($event, item.id)"
+          >
+            <span class="col-name">
+              <span
+                v-if="item.kind === 'file' && cellExtensionTag(item.entry)"
+                class="project-assets-ext-tag is-inline"
+                :class="cellExtensionColorClass(cellExtensionTag(item.entry))"
+              >{{ cellExtensionTag(item.entry) }}</span>
+              <span class="col-name-text">{{ item.kind === 'folder' ? item.label : displayAssetName(item.entry.name) }}</span>
+              <button
+                type="button"
+                class="project-assets-fav-btn is-inline"
+                :class="{ 'is-favorite': isFavorite(item.kind === 'folder' ? item.id : item.entry.id) }"
+                :title="isFavorite(item.kind === 'folder' ? item.id : item.entry.id)
+                  ? t('projectAssets.unfavorite')
+                  : t('projectAssets.favorite')"
+                @click.stop="toggleFavorite(item.kind === 'folder' ? item.id : item.entry.id)"
+              >
+                <el-icon :size="12"><Star /></el-icon>
+              </button>
+            </span>
+            <span class="col-type">{{ item.kind === 'folder' ? '—' : entryTypeLabel(item.entry) }}</span>
+            <span class="col-size">{{ item.kind === 'folder' ? '—' : formatSize(item.entry.bytes) }}</span>
+            <span class="col-mtime">{{ item.kind === 'folder' ? '—' : formatModified(item.entry.mtimeMs) }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div
+        v-if="selectionStats"
+        class="project-assets-selection-bar"
+      >
+        {{ t('projectAssets.selectionCount', { count: selectionStats.count }) }}
+        <span class="selection-bar-sep">·</span>
+        {{ t('projectAssets.selectionSize', { size: selectionStats.totalSize }) }}
       </div>
     </section>
 
     <div
-      v-if="hoverPreview"
-      class="project-assets-hover-preview"
-      :style="{ left: `${hoverPreview.left}px`, top: `${hoverPreview.top}px` }"
+      v-if="metaTooltip"
+      class="project-assets-meta-tooltip"
+      :style="{ left: `${metaTooltip.left}px`, top: `${metaTooltip.top}px` }"
     >
-      <img
-        :src="hoverPreview.url"
-        :alt="hoverPreview.name"
-        draggable="false"
-      >
+      <p
+        v-for="(line, tipIndex) in metaTooltip.lines"
+        :key="`tip-${tipIndex}`"
+      >{{ line }}</p>
     </div>
+
+    <aside
+      v-if="previewPanelVisible"
+      class="project-assets-preview-panel"
+    >
+      <template v-if="previewPanelEntry">
+        <img
+          v-if="previewPanelEntry.thumbnailUrl
+            && !failedThumbnails.has(previewPanelEntry.id)
+            && isProjectAssetImageCategory(entryCategoryId(previewPanelEntry))"
+          class="project-assets-preview-panel-img"
+          :src="previewPanelEntry.thumbnailUrl"
+          :alt="previewPanelEntry.name"
+          draggable="false"
+        />
+        <div v-else class="project-assets-preview-panel-empty">
+          {{ entryTypeLabel(previewPanelEntry) }}
+        </div>
+        <p class="project-assets-preview-panel-name">{{ previewPanelEntry.name }}</p>
+        <p class="project-assets-preview-panel-name" style="color: var(--app-ink-muted)">
+          {{ formatSize(previewPanelEntry.bytes) }}
+        </p>
+      </template>
+      <div v-else class="project-assets-preview-panel-empty">
+        {{ t('projectAssets.previewPanelEmpty') }}
+      </div>
+    </aside>
+
+    <ElImageViewer
+      v-if="imageViewerVisible"
+      :url-list="imageViewerUrls"
+      :initial-index="imageViewerIndex"
+      teleported
+      hide-on-click-modal
+      @close="closeImageViewer"
+      @switch="onImageViewerSwitch"
+    />
 
     <AssetPreviewDialog
       :visible="previewVisible"
@@ -2286,6 +3114,12 @@ watch(gridHost, (el, previous) => {
             >{{ t('projectAssets.copyRelativePath') }}</li>
             <li
               v-if="singleSelectedFile"
+              @click="toggleFavorite(singleSelectedFile.id)"
+            >{{ isFavorite(singleSelectedFile.id)
+              ? t('projectAssets.unfavorite')
+              : t('projectAssets.favorite') }}</li>
+            <li
+              v-if="singleSelectedFile"
               @click="renameSelectedEntry"
             >{{ t('projectAssets.rename') }}</li>
             <li
@@ -2293,6 +3127,27 @@ watch(gridHost, (el, previous) => {
               class="ctx-danger"
               @click="deleteSelectedEntries"
             >{{ contextDeleteLabel }}</li>
+          </template>
+          <template v-else-if="contextMenuKind === 'folder' || contextMenuKind === 'tree'">
+            <li
+              v-if="contextFolderId"
+              @click="revealFolderInExplorer(contextFolderId)"
+            >{{ t('projectAssets.revealInFolder') }}</li>
+            <li
+              v-if="contextFolderId"
+              @click="toggleFavoriteForContextFolder"
+            >{{ contextFolderId && isFavorite(contextFolderId)
+              ? t('projectAssets.unfavorite')
+              : t('projectAssets.favorite') }}</li>
+            <li
+              v-if="contextFolderId && isProjectAssetUserPictureSubfolder(contextFolderId)"
+              @click="renameContextFolder"
+            >{{ t('projectAssets.rename') }}</li>
+            <li
+              v-if="contextFolderId && isProjectAssetUserPictureSubfolder(contextFolderId)"
+              class="ctx-danger"
+              @click="deleteContextFolder"
+            >{{ t('projectAssets.delete') }}</li>
           </template>
           <template v-else>
             <li
@@ -2319,6 +3174,46 @@ watch(gridHost, (el, previous) => {
   gap: 16px;
   padding: 12px 20px 20px;
   overflow: hidden;
+}
+
+.project-assets-page.has-preview-panel {
+  grid-template-columns: 230px minmax(0, 1fr) 300px;
+}
+
+.project-assets-preview-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-elevated);
+}
+
+.project-assets-preview-panel-empty {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  color: var(--app-ink-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.project-assets-preview-panel-name {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--app-ink);
+  text-align: center;
+  word-break: break-all;
+}
+
+.project-assets-preview-panel-img {
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-sunken);
 }
 
 .project-assets-tree-pane {
@@ -2392,16 +3287,25 @@ watch(gridHost, (el, previous) => {
   flex: 0 0 auto;
 }
 
-.project-assets-toolbar :deep(.console-search-input) {
-  flex: 1;
-  min-width: 0;
-}
-
 .project-assets-toolbar-actions {
   display: flex;
   gap: 8px;
   flex: 0 0 auto;
   align-items: center;
+}
+
+.project-assets-address-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.project-assets-address-search {
+  flex: 0 1 280px;
+  min-width: 160px;
+  max-width: 360px;
 }
 
 .project-assets-menu-caret {
@@ -2471,6 +3375,10 @@ watch(gridHost, (el, previous) => {
 }
 
 .project-assets-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--app-danger) 35%, var(--app-border));
   border-radius: var(--app-radius-sm);
@@ -2480,11 +3388,106 @@ watch(gridHost, (el, previous) => {
   white-space: pre-wrap;
 }
 
+.project-assets-error-dismiss {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.project-assets-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg);
+}
+
+.project-assets-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.project-assets-crumb {
+  border: 0;
+  padding: 4px 6px;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-assets-crumb:hover {
+  background: var(--app-bg-sunken);
+}
+
+.project-assets-crumb.is-current {
+  padding: 4px 6px;
+  color: var(--app-ink-muted);
+  user-select: text;
+}
+
+.project-assets-crumb-sep {
+  color: var(--app-ink-muted);
+  font-size: 12px;
+}
+
+.project-assets-path-text {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  color: var(--app-ink-muted);
+  font-family: var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
+  font-size: 12px;
+  overflow: auto;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.project-assets-path-copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-ink-muted);
+  cursor: pointer;
+}
+
+.project-assets-path-copy:hover:not(:disabled) {
+  background: var(--app-bg-sunken);
+  color: var(--app-ink);
+}
+
+.project-assets-path-copy:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .project-assets-grid-host {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
+  padding: 0;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-elevated);
@@ -2526,9 +3529,25 @@ watch(gridHost, (el, previous) => {
   position: absolute;
   z-index: 2;
   box-sizing: border-box;
-  border: 1px solid color-mix(in srgb, var(--app-accent) 70%, var(--app-border));
-  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--app-accent) 90%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent) 35%, transparent);
   pointer-events: none;
+}
+
+.project-assets-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  margin-top: auto;
+  font-size: 12px;
+  color: var(--app-ink-muted);
+  border-top: 1px solid var(--app-border);
+  background: var(--app-bg-sunken);
+}
+
+.selection-bar-sep {
+  color: var(--app-border);
 }
 
 .project-assets-empty,
@@ -2542,13 +3561,19 @@ watch(gridHost, (el, previous) => {
   text-align: center;
 }
 
+.project-assets-cell-host {
+  box-sizing: border-box;
+}
+
 .project-assets-cell {
   box-sizing: border-box;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 4px;
+  gap: 6px;
+  padding: 8px;
   border: 1px solid transparent;
   border-radius: var(--app-radius-md);
   background: transparent;
@@ -2573,13 +3598,100 @@ watch(gridHost, (el, previous) => {
 }
 
 .project-assets-thumb {
+  position: relative;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
   overflow: hidden;
   border-radius: var(--app-radius-sm);
-  background: var(--app-bg-sunken);
+  background-color: var(--app-bg-sunken);
+  background-image:
+    linear-gradient(45deg, var(--app-border) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--app-border) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--app-border) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--app-border) 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
   color: var(--app-ink-muted);
+}
+
+.project-assets-ext-tag {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 1;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  border-radius: 3px;
+  color: #fff;
+  pointer-events: none;
+}
+.project-assets-ext-tag.ext-image  { background: #2e7d32; }
+.project-assets-ext-tag.ext-audio  { background: #c62828; }
+.project-assets-ext-tag.ext-video  { background: #1565c0; }
+.project-assets-ext-tag.ext-font   { background: #6a1b9a; }
+.project-assets-ext-tag.ext-other  { background: #546e7a; }
+
+.project-assets-fav-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.project-assets-fav-btn:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
+.project-assets-fav-btn.is-favorite {
+  display: flex;
+  color: #f5a623;
+  background: rgba(0, 0, 0, 0.45);
+}
+.project-assets-cell:hover .project-assets-fav-btn,
+.project-assets-cell:focus-within .project-assets-fav-btn {
+  display: flex;
+}
+
+/* Inline variants for the details list: flow with the name text instead of overlaying the thumb. */
+.project-assets-ext-tag.is-inline {
+  position: static;
+  flex: 0 0 auto;
+}
+.project-assets-fav-btn.is-inline {
+  position: static;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  color: var(--app-ink-muted);
+}
+.project-assets-fav-btn.is-inline:hover {
+  background: var(--app-bg-sunken);
+  color: var(--app-ink);
+}
+.project-assets-fav-btn.is-inline.is-favorite {
+  display: flex;
+  color: #f5a623;
+  background: transparent;
+}
+.project-assets-details-row:hover .project-assets-fav-btn.is-inline,
+.project-assets-details-row:focus-within .project-assets-fav-btn.is-inline {
+  display: flex;
 }
 
 .project-assets-thumb img {
@@ -2594,28 +3706,6 @@ watch(gridHost, (el, previous) => {
   image-rendering: pixelated;
 }
 
-.project-assets-hover-preview {
-  position: fixed;
-  z-index: 30;
-  display: grid;
-  place-items: center;
-  padding: 6px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-  background: var(--el-bg-color-overlay);
-  box-shadow: var(--app-shadow-overlay);
-  pointer-events: none;
-}
-
-.project-assets-hover-preview img {
-  max-width: 200px;
-  max-height: 200px;
-  width: auto;
-  height: auto;
-  object-fit: contain;
-  image-rendering: pixelated;
-}
-
 .project-assets-thumb.is-icon :deep(svg) {
   width: 1em;
   height: 1em;
@@ -2626,11 +3716,77 @@ watch(gridHost, (el, previous) => {
 }
 
 .project-assets-thumb.is-folder {
-  background: transparent;
+  overflow: visible;
+  background-color: transparent;
+  background-image: none;
 }
 
 .project-assets-thumb.is-encrypted {
+  background-image: none;
   background: color-mix(in srgb, var(--app-ink-muted) 12%, var(--app-bg-sunken));
+}
+
+.project-assets-details {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 8px 12px 12px;
+}
+
+.project-assets-details-header,
+.project-assets-details-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(72px, 0.7fr) minmax(72px, 0.7fr) minmax(120px, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.project-assets-details-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-bg-elevated);
+  color: var(--app-ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.project-assets-details-row {
+  padding: 7px 8px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border) 70%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--app-ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.project-assets-details-row:hover {
+  background: var(--app-bg-sunken);
+}
+
+.project-assets-details-row.selected {
+  background: var(--app-accent-soft);
+}
+
+.project-assets-details-row .col-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.project-assets-details-row .col-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-assets-encrypted {
@@ -2689,5 +3845,28 @@ watch(gridHost, (el, previous) => {
 
 .ctx-menu li.ctx-danger {
   color: var(--el-color-danger);
+}
+
+/* Explorer-style metadata tooltip anchored below the pointer */
+.project-assets-meta-tooltip {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color, #d4d4d8);
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  max-width: 280px;
+  color: #1f1f1f;
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.project-assets-meta-tooltip p {
+  margin: 0;
 }
 </style>

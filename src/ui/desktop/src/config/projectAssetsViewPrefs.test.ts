@@ -2,13 +2,16 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
   clampProjectAssetThumbSize,
+  defaultProjectAssetViewModeForMedia,
   loadProjectAssetSortPreference,
   loadProjectAssetThumbSize,
+  loadProjectAssetViewMode,
   PROJECT_ASSET_SORT_DEFAULT,
   PROJECT_ASSET_THUMB_SIZE_DEFAULT,
   PROJECT_ASSETS_VIEW_PREFS_PREFIX,
   saveProjectAssetSortPreference,
   saveProjectAssetThumbSize,
+  saveProjectAssetViewMode,
 } from './projectAssetsViewPrefs';
 
 /** Deterministic in-memory localStorage so the suite does not depend on host web-storage flags. */
@@ -72,5 +75,40 @@ describe('projectAssetsViewPrefs thumbSize', () => {
     assert.equal(loadProjectAssetThumbSize(), 512);
     saveProjectAssetThumbSize(120);
     assert.equal(loadProjectAssetThumbSize(), 120);
+  });
+});
+
+describe('projectAssetsViewPrefs viewMode', () => {
+  test('defaults audio to details and other media to icons', () => {
+    clearPrefs();
+    assert.equal(defaultProjectAssetViewModeForMedia('audio'), 'details');
+    assert.equal(defaultProjectAssetViewModeForMedia('image'), 'icons');
+    assert.equal(loadProjectAssetViewMode('audio'), 'details');
+    assert.equal(loadProjectAssetViewMode('image'), 'icons');
+  });
+
+  test('persists per-media view mode', () => {
+    clearPrefs();
+    saveProjectAssetViewMode('details', 'image');
+    assert.equal(loadProjectAssetViewMode('image'), 'details');
+    assert.equal(loadProjectAssetViewMode('audio'), 'details');
+    saveProjectAssetViewMode('icons', 'audio');
+    assert.equal(loadProjectAssetViewMode('audio'), 'icons');
+    assert.equal(loadProjectAssetViewMode('image'), 'details');
+  });
+
+  test('audio ignores the legacy global key so its details default survives', () => {
+    clearPrefs();
+    localStorage.setItem(`${PROJECT_ASSETS_VIEW_PREFS_PREFIX}.viewMode`, 'icons');
+    assert.equal(loadProjectAssetViewMode('audio'), 'details');
+    // Non-audio media still respects the pre-per-media user choice.
+    assert.equal(loadProjectAssetViewMode('image'), 'icons');
+  });
+
+  test('saving never writes the legacy global key', () => {
+    clearPrefs();
+    saveProjectAssetViewMode('icons', 'image');
+    assert.equal(localStorage.getItem(`${PROJECT_ASSETS_VIEW_PREFS_PREFIX}.viewMode`), null);
+    assert.equal(loadProjectAssetViewMode('audio'), 'details');
   });
 });

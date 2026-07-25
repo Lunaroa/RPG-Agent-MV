@@ -143,6 +143,26 @@ const loadFailed = ref(false);
 let objectUrl: string | null = null;
 let bindToken = 0;
 let pendingAutoplay = false;
+let rafId: number | null = null;
+
+function startProgressRaf(): void {
+  stopProgressRaf();
+  const tick = () => {
+    const el = audioEl.value;
+    if (el && !seeking.value) {
+      currentTime.value = el.currentTime || 0;
+    }
+    rafId = requestAnimationFrame(tick);
+  };
+  rafId = requestAnimationFrame(tick);
+}
+
+function stopProgressRaf(): void {
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+}
 
 const canSeek = computed(() => Number.isFinite(duration.value) && duration.value > 0);
 const seekMax = computed(() => (canSeek.value ? duration.value : 1));
@@ -158,6 +178,11 @@ watch(
 
 watch([waveformPeaks, currentTime, duration], () => {
   drawWaveform();
+});
+
+watch(playing, (isPlaying) => {
+  if (isPlaying) startProgressRaf();
+  else stopProgressRaf();
 });
 
 function revokeObjectUrl(): void {
@@ -366,6 +391,7 @@ function onVolumeInput(value: number | number[]): void {
 
 onUnmounted(() => {
   bindToken += 1;
+  stopProgressRaf();
   audioEl.value?.pause();
   revokeObjectUrl();
 });

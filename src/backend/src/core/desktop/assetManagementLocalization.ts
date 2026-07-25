@@ -198,3 +198,24 @@ export function assetManagementDeletePartialFailure(
     'en-US': `Asset delete partially failed. Moved to trash: ${deletedLabel}. Not deleted: ${failedLabel}`,
   });
 }
+
+export function assetManagementSubfolderUnsupported(nodeId: string, language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `仅支持重命名或删除 MZ 图片子文件夹；收到：${nodeId}`,
+    'en-US': `Only MZ picture subfolders can be renamed or deleted; got: ${nodeId}`,
+  });
+}
+
+export function assetManagementSubfolderMissing(directory: string, language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `文件夹不存在：${directory}`,
+    'en-US': `Folder does not exist: ${directory}`,
+  });
+}
+
+export function assetManagementSubfolderNameOccupied(name: string, language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `目标文件夹名称已存在：${name}`,
+    'en-US': `Target folder name already exists: ${name}`,
+  });
+}

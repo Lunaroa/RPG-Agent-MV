@@ -520,6 +520,40 @@ function publishInteractivePlaytestStatus(run: InteractivePlaytestRun): void {
   }
 }
 
+/* ── Project asset file-system watcher ──────────────────────────── */
+let assetWatcherCleanup: (() => void) | null = null;
+let assetWatcherProject: string | null = null;
+
+function publishProjectAssetChange(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send('projectAssets:changed');
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function startProjectAssetWatcherForProject(projectPath: string): void {
+  stopProjectAssetWatcher();
+  if (!projectPath || !desktop?.projectAssetBrowser?.startProjectAssetWatcher) return;
+  assetWatcherProject = projectPath;
+  assetWatcherCleanup = desktop.projectAssetBrowser.startProjectAssetWatcher(
+    projectPath,
+    publishProjectAssetChange,
+  );
+}
+
+function stopProjectAssetWatcher(): void {
+  if (assetWatcherCleanup) {
+    assetWatcherCleanup();
+    assetWatcherCleanup = null;
+  }
+  assetWatcherProject = null;
+}
+
 function resolveInteractivePlaytestSession(project: string, requestedSessionId?: string): string | undefined {
   const summaries = agentSessionRuntime?.list?.() as Array<Record<string, unknown>> | undefined;
   if (!Array.isArray(summaries)) return undefined;
@@ -1234,6 +1268,49 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     },
   });
 
+  // ── Project asset file-system watcher IPC ──
+  ipcMain.handle('projectAssets:startWatcher', (_event, value?: string) => {
+    const resolved = value === undefined || value === null || value === ''
+      ? undefined
+      : desktop.project.resolveProjectPath(workflowRoot, value);
+    if (!resolved) return { ok: false as const };
+    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
+    startProjectAssetWatcherForProject(resolved);
+    return { ok: true as const, project: resolved };
+  });
+  ipcMain.handle('projectAssets:stopWatcher', () => {
+    stopProjectAssetWatcher();
+    return { ok: true as const };
+  });
+
+  // ── Write files to system clipboard (Windows) ──
+  ipcMain.handle('clipboard:writeFiles', async (_event, request: string[] | { project: string; relativePaths: string[] }) => {
+    let absolutePaths: string[];
+    if (Array.isArray(request)) {
+      absolutePaths = request;
+    } else if (request && typeof request.project === 'string' && Array.isArray(request.relativePaths)) {
+      const projectPath = desktop.project.resolveProjectPath(workflowRoot, request.project);
+      absolutePaths = request.relativePaths.map((rp) => path.join(projectPath, rp));
+    } else {
+      return { ok: false as const, reason: 'invalid request' };
+    }
+    if (absolutePaths.length === 0) return { ok: false as const };
+    if (process.platform !== 'win32') return { ok: false as const, reason: 'unsupported platform' };
+    const validPaths = absolutePaths.filter((p) => typeof p === 'string' && fs.existsSync(p));
+    if (validPaths.length === 0) return { ok: false as const, reason: 'no valid paths' };
+    const script = `Add-Type -AssemblyName System.Windows.Forms; $c = New-Object System.Collections.Specialized.StringCollection; ${validPaths.map((p) => `$c.Add('${p.replace(/'/g, "''")}')`).join('; ')}; [System.Windows.Forms.Clipboard]::SetFileDropList($c)`;
+    const { execFile } = await import('node:child_process');
+    return new Promise<{ ok: boolean; reason?: string }>((resolve) => {
+      execFile('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 5000 }, (error) => {
+        if (error) {
+          resolve({ ok: false, reason: error.message });
+        } else {
+          resolve({ ok: true });
+        }
+      });
+    });
+  });
+
   registerInteractivePlaytestIpcHandlers(ipcMain, requireInteractivePlaytestService(), {
     beforeStart: async () => {
       if (requireMapPreviewService().isActive()) await requireMapPreviewService().stop();
@@ -1807,6 +1884,10 @@ function registerAssetProtocol(): void {
  * 清理 IPC 处理器
  */
 export function cleanupIpcHandlers(): void {
+  stopProjectAssetWatcher();
+  ipcMain.removeHandler('projectAssets:startWatcher');
+  ipcMain.removeHandler('projectAssets:stopWatcher');
+  ipcMain.removeHandler('clipboard:writeFiles');
   if (mapPreviewService) {
     mapPreviewService.shutdownSync();
     mapPreviewService = null;

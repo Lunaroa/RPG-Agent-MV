@@ -34,6 +34,7 @@ declare global {
       };
       clipboard: {
         writeText(text: string): Promise<{ ok: true }>;
+        writeFiles(request: string[] | { project: string; relativePaths: string[] }): Promise<{ ok: boolean; reason?: string }>;
         readImage(): Promise<{
           filename: string;
           mime: string;
@@ -188,7 +189,9 @@ declare global {
         invalidateBrowseCache(project?: string): Promise<unknown>;
         detail(target: unknown, project?: string): Promise<unknown>;
         rename(target: unknown, nextName: string, project?: string): Promise<unknown>;
+        renameSubfolder(nodeId: string, nextName: string, project?: string): Promise<unknown>;
         remove(targets: unknown, force?: boolean, project?: string): Promise<unknown>;
+        removeSubfolder(nodeId: string, force?: boolean, project?: string): Promise<unknown>;
         referenceGraph(project?: string): Promise<unknown>;
         checkRenameSafety(target: unknown, nextName: string, project?: string): Promise<unknown>;
         checkDeleteSafety(targets: unknown, project?: string): Promise<unknown>;
@@ -198,6 +201,9 @@ declare global {
         selectImportFile(category: string): Promise<string[] | null>;
         copy(request: unknown, project?: string): Promise<unknown>;
         revealInFolder(request: unknown, project?: string): Promise<unknown>;
+        startWatcher(project?: string): Promise<{ ok: boolean; project: string | null }>;
+        stopWatcher(): Promise<{ ok: boolean }>;
+        onChange(callback: () => void): () => void;
       };
       settings: {
         listProviders(): Promise<{ providers: unknown[] }>;
@@ -514,6 +520,9 @@ export const clipboard = {
   },
   readImage() {
     return desktopApi().clipboard.readImage();
+  },
+  writeFiles(request: string[] | { project: string; relativePaths: string[] }) {
+    return desktopApi().clipboard.writeFiles(request) as Promise<{ ok: boolean; reason?: string }>;
   },
 };
 
@@ -1010,12 +1019,22 @@ export const projectAssets = {
   rename(target: Record<string, unknown>, nextName: string, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.rename(toPlain(target), nextName, project) as Promise<ManagedAssetDetail>;
   },
+  renameSubfolder(nodeId: string, nextName: string, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.renameSubfolder(nodeId, nextName, project) as Promise<{
+      previousNodeId: string;
+      nextNodeId: string;
+      directory: string;
+    }>;
+  },
   remove(
     targets: ProjectAssetDeleteTargetInput[],
     force: boolean = false,
     project: string = DEFAULT_PROJECT,
   ) {
     return desktopApi().projectAssets.remove(toPlain(targets), force, project) as Promise<ProjectAssetDeleteBatchResult>;
+  },
+  removeSubfolder(nodeId: string, force: boolean = false, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.removeSubfolder(nodeId, force, project) as Promise<ProjectAssetDeleteBatchResult>;
   },
   checkRenameSafety(target: Record<string, unknown>, nextName: string, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.checkRenameSafety(toPlain(target), nextName, project) as Promise<ProjectAssetMutationSafetyCheck>;
@@ -1055,6 +1074,15 @@ export const projectAssets = {
   },
   revealInFolder(request: { relativePath: string }, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.revealInFolder(toPlain(request), project) as Promise<{ ok: boolean }>;
+  },
+  startWatcher(project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.startWatcher(project) as Promise<{ ok: boolean; project: string | null }>;
+  },
+  stopWatcher() {
+    return desktopApi().projectAssets.stopWatcher() as Promise<{ ok: boolean }>;
+  },
+  onChange(callback: () => void): () => void {
+    return desktopApi().projectAssets.onChange(callback);
   },
 };
 

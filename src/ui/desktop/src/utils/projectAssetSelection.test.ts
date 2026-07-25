@@ -109,6 +109,36 @@ describe('projectAssetSelection layout / marquee', () => {
     assert.equal(next.anchorId, 'b');
   });
 
+  test('grid origin shifts cell geometry so inset grids hit-test correctly', () => {
+    const inset = { ...layout, originX: 12, originY: 12 };
+    assert.deepEqual(projectAssetCellRectAtIndex(0, inset), {
+      x: 12,
+      y: 12,
+      width: 100,
+      height: 100,
+    });
+    // A marquee entirely inside the inset band (above/left of cell 0) hits nothing.
+    assert.deepEqual(hitTestProjectAssetMarquee(IDS, inset, { left: 0, top: 0, right: 11, bottom: 11 }), []);
+    // Crossing into cell 0 hits it.
+    assert.deepEqual(hitTestProjectAssetMarquee(IDS, inset, { left: 0, top: 0, right: 20, bottom: 20 }), ['a']);
+  });
+
+  test('leading folder tiles shift file indices in the shared grid', () => {
+    // Two folder tiles occupy slots 0-1; file 'a' renders at slot 2 (row 0, col 2).
+    const withFolders = { ...layout, leadingItemCount: 2 };
+    const hits = hitTestProjectAssetMarquee(
+      IDS,
+      withFolders,
+      { left: 220, top: 0, right: 320, bottom: 100 },
+    );
+    assert.deepEqual(hits, ['a']);
+    // Without the offset the same rect would have claimed 'c'.
+    assert.deepEqual(
+      hitTestProjectAssetMarquee(IDS, layout, { left: 220, top: 0, right: 320, bottom: 100 }),
+      ['c'],
+    );
+  });
+
   test('inverted marquee corners still hit the same cells', () => {
     const forward = hitTestProjectAssetMarquee(
       IDS,

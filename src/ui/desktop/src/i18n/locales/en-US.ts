@@ -119,6 +119,7 @@ const enUS = {
     'projectAssets.sortModified': 'Date modified',
     'projectAssets.sortAsc': 'Ascending',
     'projectAssets.sortDesc': 'Descending',
+    'projectAssets.thumbZoom': 'Thumbnail size',
 
     'mapOverview.empty.title': 'No project selected',
     'mapOverview.empty.body': 'Map Overview reads the current project maps and definite transfer relationships.',

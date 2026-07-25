@@ -117,6 +117,7 @@ const zhCN = {
     'projectAssets.sortModified': '按修改日期',
     'projectAssets.sortAsc': '升序',
     'projectAssets.sortDesc': '降序',
+    'projectAssets.thumbZoom': '缩略图大小',
 
     'mapOverview.empty.title': '还没有选择项目',
     'mapOverview.empty.body': '全局地图会读取当前项目的地图和确定的场所移动关系。',

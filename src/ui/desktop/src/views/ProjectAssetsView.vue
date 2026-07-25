@@ -60,8 +60,13 @@ import {
   type ProjectAssetSortKey,
 } from '../utils/projectAssetSorting'
 import {
+  clampProjectAssetThumbSize,
   loadProjectAssetSortPreference,
+  loadProjectAssetThumbSize,
+  PROJECT_ASSET_THUMB_SIZE_MAX,
+  PROJECT_ASSET_THUMB_SIZE_MIN,
   saveProjectAssetSortPreference,
+  saveProjectAssetThumbSize,
 } from '../config/projectAssetsViewPrefs'
 import {
   applyOverwriteBatchDecision,
@@ -87,10 +92,11 @@ import { selectProjectAssetThumbnailBucket } from '../utils/projectAssetThumbnai
 import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging'
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 
-/** Cell width/height for the virtualized grid (room for thumb + wrapped name). */
-const CELL_SIZE = 148
+/**
+ * Gap between grid cells. Cell size is derived from the user's thumbnail
+ * zoom (thumbSize + name area) so rendering and marquee math share one value.
+ */
 const CELL_GAP = 10
-const THUMB_SIZE = 96
 const OVERSCAN_ROWS = 2
 
 type TreeNodeView = {
@@ -153,6 +159,10 @@ const containerHeight = ref(0)
 const scrollTop = ref(0)
 const failedThumbnails = ref(new Set<string>())
 
+/** Thumbnail height in px (user zoom, 48-512, persisted). Cell = thumb + name area; default 72+76=148 matches the original fixed cell. */
+const thumbSize = ref(loadProjectAssetThumbSize())
+const cellSize = computed(() => thumbSize.value + 76)
+
 type MarqueeState = {
   originX: number
   originY: number
@@ -188,7 +198,7 @@ const previewDialogLabels = computed<AssetPreviewDialogLabels>(() => ({
 }))
 
 const thumbnailBucket = computed(() =>
-  selectProjectAssetThumbnailBucket(THUMB_SIZE, window.devicePixelRatio || 1),
+  selectProjectAssetThumbnailBucket(thumbSize.value, window.devicePixelRatio || 1),
 )
 
 const treeData = computed<TreeNodeView[]>(() =>
@@ -231,6 +241,17 @@ function toggleSortDir() {
   sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
 }
 
+watch(thumbSize, (size) => {
+  saveProjectAssetThumbSize(size)
+})
+
+function onGridWheel(event: WheelEvent) {
+  if (!event.ctrlKey) return
+  event.preventDefault()
+  const step = event.deltaY > 0 ? -8 : 8
+  thumbSize.value = clampProjectAssetThumbSize(thumbSize.value + step)
+}
+
 const gridItems = computed<GridItem[]>(() => {
   if (!selectedCategoryId.value) return []
   if (isGroupSelection.value) {
@@ -245,7 +266,7 @@ const gridWindow = computed(() =>
   computeProjectAssetGridWindow({
     containerWidth: containerWidth.value,
     containerHeight: containerHeight.value,
-    cellSize: CELL_SIZE,
+    cellSize: cellSize.value,
     gap: CELL_GAP,
     itemCount: gridItems.value.length,
     scrollTop: scrollTop.value,
@@ -264,10 +285,10 @@ const visibleItems = computed(() => {
       index,
       style: {
         position: 'absolute' as const,
-        left: `${column * (CELL_SIZE + CELL_GAP)}px`,
-        top: `${row * (CELL_SIZE + CELL_GAP)}px`,
-        width: `${CELL_SIZE}px`,
-        height: `${CELL_SIZE}px`,
+        left: `${column * (cellSize.value + CELL_GAP)}px`,
+        top: `${row * (cellSize.value + CELL_GAP)}px`,
+        width: `${cellSize.value}px`,
+        height: `${cellSize.value}px`,
       },
     }
   })
@@ -787,7 +808,7 @@ function finishMarquee(event: PointerEvent) {
     orderedFileIds.value,
     {
       columnCount: gridWindow.value.columnCount,
-      cellSize: CELL_SIZE,
+      cellSize: cellSize.value,
       gap: CELL_GAP,
     },
     rect,
@@ -1501,6 +1522,15 @@ watch(gridHost, (el, previous) => {
           >
             <el-icon><ArrowUp v-if="sortDir === 'asc'" /><ArrowDown v-else /></el-icon>
           </button>
+          <el-slider
+            v-model="thumbSize"
+            class="project-assets-zoom-slider"
+            :min="PROJECT_ASSET_THUMB_SIZE_MIN"
+            :max="PROJECT_ASSET_THUMB_SIZE_MAX"
+            data-ui-id="project-assets-zoom"
+            :aria-label="t('projectAssets.thumbZoom')"
+            :disabled="!projectStore.currentProject || isGroupSelection"
+          />
           <button
             type="button"
             class="project-assets-tool-btn"
@@ -1570,6 +1600,7 @@ watch(gridHost, (el, previous) => {
         @pointerup="onGridPointerUp"
         @pointercancel="onGridPointerCancel"
         @keydown="onGridKeydown"
+        @wheel="onGridWheel"
         @dragenter="onGridDragEnter"
         @dragover="onGridDragOver"
         @dragleave="onGridDragLeave"
@@ -1616,7 +1647,7 @@ watch(gridHost, (el, previous) => {
               : undefined"
           >
             <template v-if="cell.item.kind === 'folder'">
-              <span class="project-assets-thumb is-icon">
+              <span class="project-assets-thumb is-icon" :style="{ height: `${thumbSize}px` }">
                 <el-icon><Folder /></el-icon>
               </span>
               <span class="project-assets-name" :title="`${cell.item.label} (${cell.item.entryCount})`">{{ cell.item.label }}</span>
@@ -1624,6 +1655,7 @@ watch(gridHost, (el, previous) => {
             <template v-else>
               <span
                 class="project-assets-thumb"
+                :style="{ height: `${thumbSize}px` }"
                 :class="{
                   'is-icon': !isProjectAssetImageCategory(selectedCategoryId)
                     || cell.item.entry.encrypted
@@ -1794,6 +1826,11 @@ watch(gridHost, (el, previous) => {
   width: 128px;
 }
 
+.project-assets-zoom-slider {
+  width: 120px;
+  flex: 0 0 auto;
+}
+
 .project-assets-tool-btn {
   display: inline-flex;
   align-items: center;
@@ -1953,7 +1990,6 @@ watch(gridHost, (el, previous) => {
   place-items: center;
   flex: 0 0 auto;
   width: 100%;
-  height: 72px;
   overflow: hidden;
   border-radius: var(--app-radius-sm);
   background: var(--app-bg-sunken);

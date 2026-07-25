@@ -16,6 +16,7 @@ import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
 import { withAssetCanvasCors } from './asset-protocol-policy.js';
+import { ensureProjectAssetThumbnail } from './project-asset-thumbnail-cache.js';
 import {
   clearMapPreviewProtocol,
   registerMapPreviewProtocol,
@@ -414,6 +415,7 @@ async function loadBackendModules(roots: AppRoots) {
     },
     assetLibrary: await import(new URL('desktop/asset-library-service.ts', coreUrl).href),
     assetManagement: await import(new URL('desktop/asset-management-service.ts', coreUrl).href),
+    projectAssetBrowser: await import(new URL('desktop/project-asset-browser-service.ts', coreUrl).href),
     projectManagement: await import(new URL('desktop/project-management-service.ts', coreUrl).href),
     commonEvents: await import(new URL('desktop/common-event-service.ts', coreUrl).href),
     pluginManagement: await import(new URL('desktop/plugin-management-service.ts', coreUrl).href),
@@ -1769,6 +1771,19 @@ function registerAssetProtocol(): void {
   if (assetProtocolRegistered) return;
   protocol.handle('rmmv-asset', async (request) => {
     try {
+      const requestUrl = new URL(request.url);
+      if (requestUrl.hostname === 'project-thumbnail') {
+        const resolved = desktop.assets.resolveProjectThumbnailRequest(workflowRoot, request.url);
+        const thumbnail = await ensureProjectAssetThumbnail({
+          workflowRoot,
+          project: resolved.project,
+          relativePath: resolved.relativePath,
+          sourceFilePath: resolved.sourceFilePath,
+          sizeBucket: resolved.sizeBucket,
+        });
+        const response = await net.fetch(pathToFileURL(thumbnail.filePath).toString());
+        return withAssetCanvasCors(response, { filePath: thumbnail.filePath });
+      }
       const absolutePath = desktop.assets.resolveAssetRequest(workflowRoot, request.url);
       const headers = new Headers();
       const range = request.headers.get('Range');

@@ -1,24 +1,28 @@
-import type { StoryCategoryId } from './consoleStoryLocalization'
+import type { DatabaseCategoryId } from './consoleStoryLocalization'
 
-const STORY_CATEGORY_IDS = new Set<StoryCategoryId>([
-  'overview', 'maps', 'switches', 'variables', 'commonEvents', 'audio', 'images', 'database',
+const DATABASE_SECTION_IDS = new Set<DatabaseCategoryId>([
+  'switches', 'variables', 'database', 'commonEvents',
 ])
 
-export type AppRailItemId = 'workbench' | 'database' | 'map-overview' | 'console'
+export type AppRailItemId = 'workbench' | 'database' | 'project-assets' | 'map-overview' | 'console'
 
-export function normalizeProjectManagementSection(value: unknown): StoryCategoryId {
-  return typeof value === 'string' && STORY_CATEGORY_IDS.has(value as StoryCategoryId)
-    ? value as StoryCategoryId
-    : 'overview'
+export function normalizeDatabaseSection(value: unknown): DatabaseCategoryId {
+  if (typeof value === 'string' && DATABASE_SECTION_IDS.has(value as DatabaseCategoryId)) {
+    return value as DatabaseCategoryId
+  }
+  return 'database'
 }
+
+/** @deprecated Use normalizeDatabaseSection */
+export const normalizeProjectManagementSection = normalizeDatabaseSection
 
 export function resolveAppRailItem(
   routePath: string,
-  query: Record<string, unknown>,
+  _query: Record<string, unknown>,
 ): AppRailItemId {
-  if (routePath === '/console') {
-    return query.page === 'story' && query.section === 'database' ? 'database' : 'console'
-  }
+  if (routePath === '/database') return 'database'
+  if (routePath === '/console') return 'console'
+  if (routePath === '/project-assets') return 'project-assets'
   if (routePath === '/map-overview') return 'map-overview'
   return 'workbench'
 }

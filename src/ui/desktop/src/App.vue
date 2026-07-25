@@ -113,7 +113,17 @@ function uiControlState(extra: Record<string, unknown> = {}) {
       query: { ...route.query },
       fullPath: route.fullPath,
     },
-    page: route.path === '/console' ? 'console' : route.path === '/workbench' ? 'workbench' : route.path === '/map-overview' ? 'map-overview' : 'other',
+    page: route.path === '/console'
+      ? 'console'
+      : route.path === '/workbench'
+        ? 'workbench'
+        : route.path === '/database'
+          ? 'database'
+          : route.path === '/project-assets'
+            ? 'project-assets'
+            : route.path === '/map-overview'
+              ? 'map-overview'
+              : 'other',
     consolePage: consolePage.value,
     project: projectStore.currentProject || '',
     language: language.value,
@@ -130,10 +140,11 @@ function uiControlState(extra: Record<string, unknown> = {}) {
 async function navigateUiControlTarget(target: string) {
   const routes: Record<string, { path: string; query?: Record<string, string> }> = {
     workbench: { path: '/workbench' },
+    database: { path: '/database' },
+    'project-assets': { path: '/project-assets' },
     'map-overview': { path: '/map-overview' },
     'console-home': { path: '/console', query: { page: 'home' } },
     'console-assets': { path: '/console', query: { page: 'assets' } },
-    'console-story': { path: '/console', query: { page: 'story' } },
     'console-plugins': { path: '/console', query: { page: 'plugins' } },
     'console-logs': { path: '/console', query: { page: 'logs' } },
     'console-settings': { path: '/console', query: { page: 'settings' } },

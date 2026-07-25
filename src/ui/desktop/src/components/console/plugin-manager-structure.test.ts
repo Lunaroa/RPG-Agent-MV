@@ -30,6 +30,10 @@ const filePickerSource = readFileSync(
   new URL('../editor/PluginParameterFilePickerDialog.vue', import.meta.url),
   'utf8',
 );
+const assetPreviewSurfaceSource = readFileSync(
+  new URL('../AssetPreviewSurface.vue', import.meta.url),
+  'utf8',
+);
 const audioPreviewSource = readFileSync(
   new URL('../editor/PluginFileAudioPreview.vue', import.meta.url),
   'utf8',
@@ -343,9 +347,16 @@ describe('plugin manager structure', () => {
     assert.match(parameterInputSource, /allow-create/);
     assert.match(parameterInputSource, /field\.kind === 'file'/);
     assert.match(parameterInputSource, /PluginParameterFilePickerDialog/);
-    assert.match(filePickerSource, /PluginFileAudioPreview/);
-    assert.match(filePickerSource, /audioPreviewRef/);
+    // Audio preview component is used by the shared preview surface (extracted from the picker).
+    assert.match(assetPreviewSurfaceSource, /PluginFileAudioPreview/);
+    assert.match(assetPreviewSurfaceSource, /audioPreviewRef/);
+    assert.match(assetPreviewSurfaceSource, /media === 'audio'/);
+    assert.match(assetPreviewSurfaceSource, /defineExpose\(\{[^}]*restartFromBeginning/);
+    // Picker keeps a handle to the preview surface and Space restarts audio from the beginning.
+    assert.match(filePickerSource, /AssetPreviewSurface/);
+    assert.match(filePickerSource, /previewSurfaceRef/);
     assert.match(filePickerSource, /restartFromBeginning/);
+    // Audio Space path is still keyed on the picker's media kind.
     assert.match(filePickerSource, /props\.media === 'audio'/);
     assert.match(filePickerSource, /browser-toolbar-row/);
     assert.match(filePickerSource, /directory-hint[\s\S]*file-search|directoryHint[\s\S]*file-search/);

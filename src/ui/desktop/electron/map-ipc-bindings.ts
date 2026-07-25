@@ -86,6 +86,9 @@ export const MAP_IPC_CHANNELS = [
   'eventRegistry:unreject',
   'projectAssets:editorCatalog',
   'projectAssets:listRelativeDirectory',
+  'projectAssets:browseTree',
+  'projectAssets:browseCategory',
+  'projectAssets:invalidateBrowseCache',
   'projectAssets:detail',
   'projectAssets:rename',
   'projectAssets:remove',
@@ -387,6 +390,27 @@ export function registerMapIpcHandlers(
       relativeDirectory,
       { recursive: recursive === true },
     ));
+  handle('projectAssets:browseTree', (_event, value?: string) =>
+    desktop.projectAssetBrowser.buildProjectAssetCategoryTree(workflowRoot, project(value)));
+  handle('projectAssets:browseCategory', (
+    _event,
+    categoryId: string,
+    value?: string,
+    thumbnailSizeBucket?: number,
+  ) =>
+    desktop.projectAssetBrowser.listProjectAssetCategory(
+      workflowRoot,
+      project(value),
+      categoryId,
+      thumbnailSizeBucket,
+    ));
+  handle('projectAssets:invalidateBrowseCache', (_event, value?: string) => {
+    const resolved = value === undefined || value === null || value === ''
+      ? undefined
+      : project(value);
+    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
+    return { ok: true as const, project: resolved ? path.resolve(resolved) : null };
+  });
   handle('projectAssets:detail', (_event, target: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.getAssetDetail(workflowRoot, project(value), target));
   handle('projectAssets:rename', (_event, target: Record<string, unknown>, nextName: string, value?: string) =>

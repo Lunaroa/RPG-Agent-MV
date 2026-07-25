@@ -2,67 +2,46 @@
 import { computed, onActivated, onDeactivated, ref, watch } from 'vue';
 import { ArrowRight } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { useProjectStore } from '../../stores/project';
+import { useProjectStore } from '../stores/project';
 import { useRoute, useRouter } from 'vue-router';
 import {
   commonEvents as commonEventsApi,
   maps as mapsApi,
-  projectAssets,
   projectManagement,
   workspaceSurfaces,
   playtest,
   type InteractiveBattleTestBattler,
   type InteractiveParticleAnimationPreview,
-  type EditorProjectCatalog,
-  type ManagedAssetDetail,
   type ProjectManagedEntry,
   type ProjectOverview,
-  type ProjectOverviewAudioBucket,
   type ProjectOverviewDbGroup,
   type ProjectOverviewDbPreview,
-  type ProjectOverviewImageBucket,
-  type ProjectOverviewMap,
-  type ProjectOverviewMapEvent,
   type ProjectOverviewReadIssue,
-} from '../../api/client';
-import { cloneDraft } from '../../utils/clone-draft';
-import { createDraftHistory } from '../../utils/draft-history';
-import { useWorkbenchUiStore } from '../../stores/workbenchUi';
-import { findEditorMapEvent, type MvEditorEvent } from '../../composables/useEventEditor';
-import { usePmEventEditor } from '../../composables/usePmEventEditor';
-import EventEditorDialog from '../editor/EventEditorDialog.vue';
-import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
-import CommonEventDetailEditor from './CommonEventDetailEditor.vue';
-import DatabaseEntryDetailEditor from './DatabaseEntryDetailEditor.vue';
-import BattleTestSetupDialog from './BattleTestSetupDialog.vue';
-import StagedEntryInspection from './StagedEntryInspection.vue';
-import MapEventCommandPreview from './MapEventCommandPreview.vue';
-import ConsoleSearchInput from './ConsoleSearchInput.vue';
-import { useI18n } from '../../i18n';
-import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
+} from '../api/client';
+import { cloneDraft } from '../utils/clone-draft';
+import { createDraftHistory } from '../utils/draft-history';
+import { useWorkbenchUiStore } from '../stores/workbenchUi';
+import { usePmEventEditor } from '../composables/usePmEventEditor';
+import StructuredFieldsEditor from '../components/console/StructuredFieldsEditor.vue';
+import CommonEventDetailEditor from '../components/console/CommonEventDetailEditor.vue';
+import DatabaseEntryDetailEditor from '../components/console/DatabaseEntryDetailEditor.vue';
+import BattleTestSetupDialog from '../components/console/BattleTestSetupDialog.vue';
+import StagedEntryInspection from '../components/console/StagedEntryInspection.vue';
+import ConsoleSearchInput from '../components/console/ConsoleSearchInput.vue';
+import { useI18n } from '../i18n';
+import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
 import {
-  IMAGE_BUCKET_LABELS,
   MANAGED_KIND_LABELS,
   newCommonEventName,
-  STORY_CATEGORY_LABELS,
-  type StoryCategoryId,
-} from '../../utils/consoleStoryLocalization';
-import { databaseFieldLabel, databaseGroupLabel } from '../../utils/rmmvDatabaseLocalization';
-import { parseProjectStagingSummary, type ProjectStagingSummary } from '../../utils/projectStaging';
-import { LatestAsyncCoordinator } from '../../utils/latestAsyncCoordinator';
-import { normalizeProjectManagementSection } from '../../utils/projectManagementRoute';
+  DATABASE_CATEGORY_LABELS,
+  type DatabaseCategoryId,
+} from '../utils/consoleStoryLocalization';
+import { databaseFieldLabel, databaseGroupLabel } from '../utils/rmmvDatabaseLocalization';
+import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
+import { LatestAsyncCoordinator } from '../utils/latestAsyncCoordinator';
+import { normalizeDatabaseSection } from '../utils/projectManagementRoute';
 
-type PmDetail =
-  | { kind: 'managed'; entry: ProjectManagedEntry }
-  | { kind: 'audio'; category: string; name: string; url: string; fileName: string; relativePath: string; missing?: boolean; staged?: boolean; references?: ManagedAssetDetail['references']; size?: number }
-  | { kind: 'image'; category: string; name: string; url: string; fileName: string; relativePath: string; missing?: boolean; staged?: boolean; references?: ManagedAssetDetail['references']; size?: number };
-
-type ImageGridItem = {
-  name: string;
-  fileName: string;
-  url: string;
-  missing: boolean;
-};
+type PmDetail = { kind: 'managed'; entry: ProjectManagedEntry };
 
 type DatabaseGridItem = {
   id: number;
@@ -78,7 +57,6 @@ const workbenchUi = useWorkbenchUiStore();
 const route = useRoute();
 const router = useRouter();
 const { language, t } = useI18n();
-const props = withDefaults(defineProps<{ active?: boolean }>(), { active: true });
 
 const stagingDirty = ref(false);
 const stagingBusy = ref(false);
@@ -252,34 +230,16 @@ async function loadData(startVersion?: string) {
 }
 
 const {
-  eventDialogOpen,
-  eventDraft,
-  eventOverview,
-  eventSaving,
-  eventLoading,
-  editorMapId,
-  systemData,
   editorCatalog,
-  tilesetImages,
   loadImage,
   ensureCatalog,
-  openMapEventEditor,
-  closeEventEditor,
-  saveEvent,
   resetCatalog,
-  bindEventDialogRef,
 } = usePmEventEditor(() => projectStore.currentProject, () => loadData());
 
-function saveEventIfUnlocked(...args: Parameters<typeof saveEvent>): ReturnType<typeof saveEvent> | undefined {
-  if (surfaceWriteLocked.value) return undefined;
-  return saveEvent(...args);
-}
-const selected = ref<StoryCategoryId>('overview');
+const selected = ref<DatabaseCategoryId>('database');
 const searchQuery = ref('');
 const selectedDbGroup = ref('Actors');
 const selectedDbSubField = ref('');
-const selectedAudioBucket = ref('bgm');
-const selectedImageBucket = ref('pictures');
 const pmSubPaneExpanded = ref(true);
 const showUnnamed = ref(false);
 
@@ -301,18 +261,11 @@ const DB_GROUP_ORDER = [
 const DOCUMENT_DATABASE_GROUPS = new Set(['System', 'Types', 'Terms']);
 const TYPES_SUBFIELD_ORDER = ['elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes'] as const;
 const TERMS_SUBFIELD_ORDER = ['basic', 'params', 'commands', 'messages'] as const;
-const AUDIO_BUCKET_ORDER = ['bgm', 'bgs', 'me', 'se'] as const;
-const IMAGE_BUCKET_ORDER = [
-  'animations', 'battlebacks1', 'battlebacks2', 'characters', 'enemies', 'faces', 'parallaxes',
-  'pictures', 'sv_actors', 'sv_enemies', 'system', 'tilesets', 'titles1', 'titles2',
-] as const;
 const DB_PREVIEW_GROUPS = new Set([
   'Actors', 'Skills', 'Items', 'Weapons', 'Armors', 'Enemies', 'Troops', 'States',
   'Animations', 'Tilesets', 'System',
 ]);
 
-const selectedMapId = ref<number | null>(null);
-const selectedEventId = ref<number | null>(null);
 const pmDetail = ref<PmDetail | null>(null);
 const detailDraft = ref<unknown>(null);
 const detailBusy = ref(false);
@@ -353,11 +306,6 @@ const currentTroopName = computed(() => {
     : {};
   return String(draft.name || `#${entry.id}`);
 });
-const eventPreviewBusy = ref(false);
-const eventPreviewError = ref('');
-const eventPreviewEvent = ref<MvEditorEvent | null>(null);
-const eventPreviewSystemData = ref<{ switches: string[]; variables: string[] } | null>(null);
-let eventPreviewRequest = 0;
 
 function syncDraftHistoryCounts(): void {
   draftUndoCount.value = draftHistory.undoCount;
@@ -445,11 +393,12 @@ function handleDraftHistoryShortcut(event: KeyboardEvent): void {
 watch(() => projectStore.currentProject, (project) => {
   activationSequence += 1;
   overviewCoordinator.invalidate({ project });
-  selectedMapId.value = null;
-  selectedEventId.value = null;
-  selected.value = normalizeProjectManagementSection(route.query.section);
+  selected.value = normalizeDatabaseSection(route.query.section);
+  if (selected.value === 'commonEvents') {
+    selected.value = 'database';
+    selectedDbGroup.value = 'CommonEvents';
+  }
   closeDetail();
-  closeEventEditor();
   resetCatalog();
   stagingDirty.value = false;
   battleTestDialogVisible.value = false;
@@ -474,17 +423,15 @@ watch(editorCatalog, (catalog) => {
   temporaryBattleback2Name.value = catalog.battle.battleback2Name;
 });
 
-watch(() => props.active, (active) => {
-  setProjectManagementActive(active);
-}, { immediate: true });
-
 onActivated(() => {
-  setProjectManagementActive(props.active);
+  setProjectManagementActive(true);
 });
 
 onDeactivated(() => {
   setProjectManagementActive(false);
 });
+
+setProjectManagementActive(true);
 
 function setProjectManagementActive(active: boolean): void {
   if (surfaceActive === active) return;
@@ -494,7 +441,7 @@ function setProjectManagementActive(active: boolean): void {
     validating.value = false;
     return;
   }
-  const routeSection = normalizeProjectManagementSection(route.query.section);
+  const routeSection = normalizeDatabaseSection(route.query.section);
   if (selected.value !== routeSection) selectCategory(routeSection);
   void activateProjectManagement();
 }
@@ -536,12 +483,10 @@ watch(selected, (name) => {
   searchQuery.value = '';
   resetGroupVisibleLimits();
   if (name === 'database') syncSelectedDbGroup();
-  if (name === 'audio') syncSelectedAudioBucket();
-  if (name === 'images') syncSelectedImageBucket();
-  if (surfaceActive && route.path === '/console' && route.query.section !== name) {
+  if (surfaceActive && route.path === '/database' && route.query.section !== name) {
     void router.replace({
-      path: route.path,
-      query: { ...route.query, page: 'story', section: name },
+      path: '/database',
+      query: { section: name },
     });
   }
 });
@@ -551,30 +496,16 @@ watch(searchQuery, () => {
 });
 
 watch([selected, () => projectStore.currentProject], ([name]) => {
-  if ((name === 'images' || name === 'database') && projectStore.currentProject) void ensureCatalog();
-});
-
-watch([selectedMapId, selectedEventId, () => projectStore.currentProject, overview], ([mapId, eventId]) => {
-  if (mapId && eventId) {
-    void loadEventPreview(mapId, eventId);
-  } else {
-    resetEventPreview();
-  }
+  if (name === 'database' && projectStore.currentProject) void ensureCatalog();
 });
 
 const scan = computed(() => overview.value?.scan);
-const assets = computed(() => overview.value?.assets);
-const maps = computed(() => scan.value?.maps || []);
 const switches = computed(() => scan.value?.switches || []);
 const variables = computed(() => scan.value?.variables || []);
 const commonEvents = computed(() => scan.value?.commonEvents || []);
 const database = computed(() => scan.value?.database || {});
 const readIssues = computed(() => overview.value?.readIssues || []);
 const foundationalReadIssues = computed(() => readIssues.value.filter((issue) => issue.scope === 'project'));
-
-function mapReadIssue(mapId: number): ProjectOverviewReadIssue | null {
-  return readIssues.value.find((issue) => issue.scope === 'map' && issue.mapId === mapId) || null;
-}
 
 function databaseReadIssue(group: string): ProjectOverviewReadIssue | null {
   return readIssues.value.find((issue) => issue.scope === 'database' && issue.databaseGroup === group) || null;
@@ -584,55 +515,25 @@ function formatReadIssue(issue: ProjectOverviewReadIssue): string {
   return `${issue.relativePath} · ${issue.message}`;
 }
 
-function mapReadIssueText(mapId: number): string {
-  const issue = mapReadIssue(mapId);
-  return issue ? formatReadIssue(issue) : '';
-}
-
 function databaseReadIssueText(group: string): string {
   const issue = databaseReadIssue(group);
   return issue ? formatReadIssue(issue) : '';
 }
 
-const selectedMapReadIssue = computed(() => selectedMapId.value == null ? null : mapReadIssue(selectedMapId.value));
 const selectedDatabaseReadIssue = computed(() => databaseReadIssue(selectedDbGroup.value));
-const assetReadIssue = computed(() => readIssues.value.find((issue) => issue.scope === 'assets') || null);
 const commonEventsReadIssue = computed(() => databaseReadIssue('CommonEvents'));
-
-const audioTotal = computed(() => {
-  if (!assets.value?.audio) return 0;
-  return Object.values(assets.value.audio).reduce((sum, b) => sum + (b.count || 0), 0);
-});
-
-const imageTotal = computed(() => {
-  if (!assets.value?.images) return 0;
-  return Object.values(assets.value.images).reduce((sum, b) => sum + (b.count || 0), 0);
-});
 
 const dbTotal = computed(() => {
   if (!scan.value?.database) return 0;
   return Object.values(scan.value.database).reduce((sum, e) => sum + (e.count || 0), 0);
 });
 
-const totalEvents = computed(() => maps.value.reduce((sum, m) => sum + m.eventCount, 0));
-
 const categories = computed(() => [
-  { id: 'overview' as const, count: maps.value.length + switches.value.length + variables.value.length + commonEvents.value.length + audioTotal.value + imageTotal.value + dbTotal.value },
-  { id: 'maps' as const, count: maps.value.length },
   { id: 'switches' as const, count: switches.value.filter(s => s.name).length },
   { id: 'variables' as const, count: variables.value.filter(v => v.name).length },
-  { id: 'commonEvents' as const, count: commonEvents.value.filter(e => e.name).length },
-  { id: 'audio' as const, count: assetReadIssue.value ? '!' : audioTotal.value },
-  { id: 'images' as const, count: assetReadIssue.value ? '!' : imageTotal.value },
   { id: 'database' as const, count: dbTotal.value },
 ]);
 
-const selectedMap = computed(() => {
-  if (!selectedMapId.value) return null;
-  return maps.value.find(m => m.id === selectedMapId.value) || null;
-});
-const selectedMapEvents = computed(() => selectedMap.value?.events || []);
-const selectedEvent = computed(() => selectedMapEvents.value.find(e => e.id === selectedEventId.value) || null);
 const selectedCommonEventId = computed(() => (
   pmDetail.value?.kind === 'managed' && pmDetail.value.entry.kind === 'commonEvent'
     ? pmDetail.value.entry.id
@@ -650,43 +551,16 @@ function matchesQuery(...parts: Array<string | number | null | undefined>): bool
 
 const pmSearchPlaceholder = computed(() => {
   switch (selected.value) {
-    case 'maps':
-      return t('story.searchMaps');
     case 'switches':
     case 'variables':
       return t('story.searchNameOrId');
-    case 'commonEvents':
-      return t('story.searchCommonEvent');
-    case 'audio':
-      return t('story.searchAudio');
-    case 'images':
-      return t('story.searchImage');
     case 'database':
-      return t('story.searchDatabase');
+      return isCommonEventsGroup(selectedDbGroup.value)
+        ? t('story.searchCommonEvent')
+        : t('story.searchDatabase');
     default:
       return t('story.search');
   }
-});
-
-function mapEventMatchesQuery(event: ProjectOverviewMapEvent): boolean {
-  return matchesQuery(event.name, event.id, `(${event.x}, ${event.y})`, event.x, event.y, event.note, event.searchText);
-}
-
-function mapMatchesQuery(map: ProjectOverviewMap): boolean {
-  return matchesQuery(map.name, map.id) || map.events.some((event) => mapEventMatchesQuery(event));
-}
-
-const filteredMaps = computed(() => {
-  const query = normalizedSearchQuery();
-  if (!query) return maps.value;
-  return maps.value.filter((map) => mapMatchesQuery(map));
-});
-
-const filteredMapEvents = computed(() => {
-  const events = selectedMapEvents.value;
-  const query = normalizedSearchQuery();
-  if (!query) return events;
-  return events.filter((event) => mapEventMatchesQuery(event));
 });
 
 const filteredSwitches = computed(() => {
@@ -706,34 +580,6 @@ const filteredCommonEvents = computed(() => {
   const query = normalizedSearchQuery();
   if (!query) return base;
   return base.filter((item) => matchesQuery(item.id, item.name, item.trigger, item.switchName, item.searchText));
-});
-
-const filteredAudio = computed(() => {
-  const audio = assets.value?.audio || {};
-  const query = normalizedSearchQuery();
-  if (!query) return audio;
-  const result: Record<string, ProjectOverviewAudioBucket> = {};
-  for (const [key, bucket] of Object.entries(audio)) {
-    const names = bucket.names.filter((name) => matchesQuery(name));
-    if (names.length) {
-      result[key] = { ...bucket, names, count: names.length };
-    }
-  }
-  return result;
-});
-
-const filteredImages = computed(() => {
-  const images = assets.value?.images || {};
-  const query = normalizedSearchQuery();
-  if (!query) return images;
-  const result: Record<string, ProjectOverviewImageBucket> = {};
-  for (const [key, bucket] of Object.entries(images)) {
-    const names = bucket.names.filter((name) => matchesQuery(name));
-    if (names.length) {
-      result[key] = { ...bucket, names, count: names.length };
-    }
-  }
-  return result;
 });
 
 const filteredDatabase = computed(() => {
@@ -767,40 +613,12 @@ const dbGroupOptions = computed(() =>
   }),
 );
 
-const audioBucketOptions = computed(() =>
-  AUDIO_BUCKET_ORDER.map((key) => {
-    const bucket = assets.value?.audio?.[key];
-    const count = bucket?.names.length ?? bucket?.count ?? 0;
-    return { key, label: key.toUpperCase(), count };
-  }),
-);
-
-const imageBucketOptions = computed(() =>
-  IMAGE_BUCKET_ORDER.map((key) => {
-    const bucket = assets.value?.images?.[key];
-    const count = bucket?.names.length ?? bucket?.count ?? 0;
-    return { key, label: imageBucketLabel(key), count };
-  }),
-);
-
 const activeDbGroup = computed((): ProjectOverviewDbGroup => {
   return filteredDatabase.value[selectedDbGroup.value] ?? { exists: false, readState: 'missing', count: 0, named: [] };
 });
 
 const selectedDbGroupMetadata = computed((): ProjectOverviewDbGroup => {
   return database.value[selectedDbGroup.value] ?? { exists: false, readState: 'missing', count: 0, named: [] };
-});
-
-const activeAudioBucket = computed((): ProjectOverviewAudioBucket => {
-  return filteredAudio.value[selectedAudioBucket.value] ?? {
-    dir: '', exists: false, count: 0, names: [], files: [],
-  };
-});
-
-const activeImageBucket = computed((): ProjectOverviewImageBucket => {
-  return filteredImages.value[selectedImageBucket.value] ?? {
-    dir: '', exists: false, count: 0, names: [], files: [],
-  };
 });
 
 const visibleDbEntries = computed(() =>
@@ -823,37 +641,6 @@ const visibleDbGridItems = computed<DatabaseGridItem[]>(() => (
   })
 ));
 
-const visibleAudioNames = computed(() =>
-  visibleGroupSlice('audio', selectedAudioBucket.value, activeAudioBucket.value.names),
-);
-
-const visibleImageNames = computed(() =>
-  visibleGroupSlice('image', selectedImageBucket.value, activeImageBucket.value.names),
-);
-
-const visibleImageGridItems = computed<ImageGridItem[]>(() => {
-  const catalog = editorCatalog.value;
-  const catalogKey = imageCatalogKey(selectedImageBucket.value);
-  const catalogAssets = catalogKey ? catalog?.assets[catalogKey] ?? [] : [];
-  return visibleImageNames.value.map((name) => {
-    const fileName = resolveImageFileName(selectedImageBucket.value, name) || '';
-    const thumbnail = catalogAssets.find((asset) => (
-      asset.name === name || asset.fileName === fileName || asset.fileName.replace(/\.[^.]+$/, '') === name
-    ));
-    return {
-      name,
-      fileName,
-      url: thumbnail?.url || '',
-      missing: !fileName || !thumbnail?.url,
-    };
-  });
-});
-
-const activeImageKey = computed(() => {
-  if (pmDetail.value?.kind !== 'image') return '';
-  return `${pmDetail.value.category}:${pmDetail.value.name}`;
-});
-
 const activeDbKey = computed(() => {
   if (pmDetail.value?.kind !== 'managed' || pmDetail.value.entry.kind !== 'database') return '';
   const entry = pmDetail.value.entry;
@@ -871,33 +658,15 @@ const remainingDbEntries = computed(() =>
   remainingGroupItems('database', selectedDbGroup.value, activeDbGroup.value.named.length),
 );
 
-const hasMoreAudioNames = computed(() =>
-  hasMoreGroupItems('audio', selectedAudioBucket.value, activeAudioBucket.value.names.length),
-);
-
-const hasMoreImageNames = computed(() =>
-  hasMoreGroupItems('image', selectedImageBucket.value, activeImageBucket.value.names.length),
-);
-
-const remainingAudioNames = computed(() =>
-  remainingGroupItems('audio', selectedAudioBucket.value, activeAudioBucket.value.names.length),
-);
-
-const remainingImageNames = computed(() =>
-  remainingGroupItems('image', selectedImageBucket.value, activeImageBucket.value.names.length),
-);
-
 const pmListHeaderTitle = computed(() => {
   if (selected.value === 'database') return `${categoryLabel('database')} · ${dbLabel(selectedDbGroup.value)}`;
-  if (selected.value === 'audio') return `${categoryLabel('audio')} · ${selectedAudioBucket.value.toUpperCase()}`;
-  if (selected.value === 'images') return `${categoryLabel('images')} · ${imageBucketLabel(selectedImageBucket.value)}`;
   return categoryLabel(selected.value);
 });
 
 const GROUP_PAGE_SIZE = 60;
 const groupVisibleLimits = ref<Record<string, number>>({});
 
-type PmGroupTab = 'audio' | 'image' | 'database';
+type PmGroupTab = 'database';
 
 function groupLimitKey(tab: PmGroupTab, groupKey: string): string {
   return `${tab}:${groupKey}`;
@@ -932,16 +701,13 @@ function showMoreGroupItems(tab: PmGroupTab, groupKey: string, total: number): v
   };
 }
 
-function categoryLabel(id: StoryCategoryId): string {
-  return STORY_CATEGORY_LABELS[id]?.[language.value] ?? id;
+function categoryLabel(id: DatabaseCategoryId): string {
+  if (id === 'commonEvents') return MANAGED_KIND_LABELS.commonEvent[language.value];
+  return DATABASE_CATEGORY_LABELS[id]?.[language.value] ?? id;
 }
 
 function dbLabel(key: string): string {
   return databaseGroupLabel(key, language.value);
-}
-
-function imageBucketLabel(key: string): string {
-  return IMAGE_BUCKET_LABELS[key]?.[language.value] ?? key;
 }
 
 function managedKindLabel(kind: ProjectManagedEntry['kind']): string {
@@ -950,10 +716,6 @@ function managedKindLabel(kind: ProjectManagedEntry['kind']): string {
 
 function itemCountLabel(count: number): string {
   return t('story.itemCount', { count });
-}
-
-function mapEventSummary(mapCount: number, eventCount: number): string {
-  return t('story.mapEventCount', { maps: mapCount, events: eventCount });
 }
 
 function unnamedLabel(): string {
@@ -1029,11 +791,6 @@ const selectedDbCapacity = computed(() => (
 const selectedDbMaximumLimit = computed(() => selectedDbGroupMetadata.value.maxEntries ?? null);
 const canResizeSelectedDbGroup = computed(() => selectedDbGroupMetadata.value.readState === 'ready' && selectedDbMaximumLimit.value !== null);
 
-function dbSummary(): string {
-  if (!scan.value?.database) return '';
-  return Object.keys(scan.value.database).map(k => dbLabel(k)).join(' / ');
-}
-
 function closeDetail() {
   pmDetail.value = null;
   resetDetailDraft(null);
@@ -1047,26 +804,6 @@ function syncSelectedDbGroup(): void {
   if (!valid) {
     const withData = options.find((option) => typeof option.count === 'number' && option.count > 0);
     selectedDbGroup.value = withData?.key ?? options[0].key;
-  }
-}
-
-function syncSelectedAudioBucket(): void {
-  const options = audioBucketOptions.value;
-  if (!options.length) return;
-  const valid = options.some((option) => option.key === selectedAudioBucket.value);
-  if (!valid) {
-    const withData = options.find((option) => option.count > 0);
-    selectedAudioBucket.value = withData?.key ?? options[0].key;
-  }
-}
-
-function syncSelectedImageBucket(): void {
-  const options = imageBucketOptions.value;
-  if (!options.length) return;
-  const valid = options.some((option) => option.key === selectedImageBucket.value);
-  if (!valid) {
-    const withData = options.find((option) => option.count > 0);
-    selectedImageBucket.value = withData?.key ?? options[0].key;
   }
 }
 
@@ -1089,87 +826,39 @@ function selectDbGroup(key: string): void {
   if (!sameGroup) closeDetail();
 }
 
-function selectAudioBucket(key: string): void {
-  if (selectedAudioBucket.value === key) return;
-  selectedAudioBucket.value = key;
-  closeDetail();
-  resetGroupVisibleLimits();
-}
-
-function selectImageBucket(key: string): void {
-  if (selectedImageBucket.value === key) return;
-  selectedImageBucket.value = key;
-  closeDetail();
-  resetGroupVisibleLimits();
-}
-
-function selectCategory(id: StoryCategoryId) {
+function selectCategory(id: DatabaseCategoryId) {
   if (selected.value !== id) {
     closeDetail();
-    selectedEventId.value = null;
   }
   selected.value = id;
-  if (id !== 'maps') selectedMapId.value = null;
   if (id === 'database') syncSelectedDbGroup();
-  if (id === 'audio') syncSelectedAudioBucket();
-  if (id === 'images') syncSelectedImageBucket();
 }
 
 watch(() => route.query.section, (section) => {
-  if (!surfaceActive || route.path !== '/console' || route.query.page !== 'story') return;
-  const next = normalizeProjectManagementSection(section);
+  if (!surfaceActive || route.path !== '/database') return;
+  const next = normalizeDatabaseSection(section);
+  if (next === 'commonEvents') {
+    selectCategory('database');
+    selectedDbGroup.value = 'CommonEvents';
+    if (section !== 'database') {
+      void router.replace({ path: '/database', query: { section: 'database' } });
+    }
+    return;
+  }
   if (selected.value !== next) selectCategory(next);
   if (section !== next) {
     void router.replace({
-      path: route.path,
-      query: { ...route.query, page: 'story', section: next },
+      path: '/database',
+      query: { section: next },
     });
   }
 }, { immediate: true });
 
-function selectMap(mapId: number) {
-  selectedMapId.value = mapId;
-  selectedEventId.value = null;
-  closeDetail();
-}
-
 function clearDetailPanel() {
   closeDetail();
-  selectedEventId.value = null;
-}
-
-function resetEventPreview() {
-  eventPreviewRequest += 1;
-  eventPreviewBusy.value = false;
-  eventPreviewError.value = '';
-  eventPreviewEvent.value = null;
-  eventPreviewSystemData.value = null;
-}
-
-async function loadEventPreview(mapId: number, eventId: number) {
-  const requestId = eventPreviewRequest + 1;
-  eventPreviewRequest = requestId;
-  eventPreviewBusy.value = true;
-  eventPreviewError.value = '';
-  eventPreviewEvent.value = null;
-  eventPreviewSystemData.value = null;
-  try {
-    const payload = await mapsApi.get(mapId, projectStore.currentProject);
-    if (requestId !== eventPreviewRequest) return;
-    const event = findEditorMapEvent(payload.map.events, eventId);
-    if (!event) throw new Error(t('story.eventNotExists'));
-    eventPreviewEvent.value = event;
-    eventPreviewSystemData.value = payload.system || null;
-  } catch (loadError) {
-    if (requestId !== eventPreviewRequest) return;
-    eventPreviewError.value = (loadError as Error).message;
-  } finally {
-    if (requestId === eventPreviewRequest) eventPreviewBusy.value = false;
-  }
 }
 
 async function openManaged(kind: ProjectManagedEntry['kind'], id: number, group?: string) {
-  selectedEventId.value = null;
   detailBusy.value = true;
   detailError.value = '';
   pmDetail.value = null;
@@ -1277,7 +966,6 @@ async function clearDbEntry(id: number) {
 
 async function createDatabaseEntry(group: string) {
   if (surfaceWriteLocked.value) return;
-  selectedEventId.value = null;
   detailBusy.value = true;
   detailError.value = '';
   pmDetail.value = null;
@@ -1344,9 +1032,8 @@ async function changeSelectedDatabaseMaximum() {
   }
 }
 
-async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents') {
+async function createCommonEvent(_targetCategory: DatabaseCategoryId = 'database') {
   if (surfaceWriteLocked.value) return;
-  selectedEventId.value = null;
   detailBusy.value = true;
   detailError.value = '';
   pmDetail.value = null;
@@ -1364,7 +1051,8 @@ async function createCommonEvent(targetCategory: StoryCategoryId = 'commonEvents
     const entry = await projectManagement.getEntry({ kind: 'commonEvent', id: result.entry.id }, projectStore.currentProject);
     pmDetail.value = { kind: 'managed', entry };
     resetDetailDraft(cloneDraft(entry.value));
-    selected.value = targetCategory;
+    selected.value = 'database';
+    selectedDbGroup.value = 'CommonEvents';
     showUnnamed.value = true;
     await loadData();
   } catch (createError) {
@@ -1386,7 +1074,8 @@ async function duplicateCurrentCommonEvent() {
     const entry = await projectManagement.getEntry({ kind: 'commonEvent', id: result.entry.id }, projectStore.currentProject);
     pmDetail.value = { kind: 'managed', entry };
     resetDetailDraft(cloneDraft(entry.value));
-    selected.value = 'commonEvents';
+    selected.value = 'database';
+    selectedDbGroup.value = 'CommonEvents';
     showUnnamed.value = true;
     await loadData();
   } catch (duplicateError) {
@@ -1412,43 +1101,6 @@ async function deleteCurrentCommonEvent() {
   } finally {
     detailBusy.value = false;
   }
-}
-
-function selectMapEvent(eventId: number) {
-  closeDetail();
-  selectedEventId.value = eventId;
-}
-
-function openMapEvent(mapId: number, eventId: number) {
-  selectMapEvent(eventId);
-  void openMapEventEditor(mapId, eventId);
-}
-
-function resolveAudioFileName(bucketKey: string, name: string): string | null {
-  const bucket = assets.value?.audio?.[bucketKey];
-  if (!bucket) return null;
-  const exact = bucket.files.find((file) => file === name || file.startsWith(`${name}.`));
-  if (exact) return exact;
-  return bucket.files.find((file) => file.replace(/\.[^.]+$/, '') === name) || null;
-}
-
-function resolveImageFileName(bucketKey: string, name: string): string | null {
-  const bucket = assets.value?.images?.[bucketKey];
-  if (!bucket) return null;
-  const exact = bucket.files.find((file) => file === name || file.startsWith(`${name}.`));
-  if (exact) return exact;
-  return bucket.files.find((file) => file.replace(/\.[^.]+$/, '') === name) || null;
-}
-
-function imageDetailCategory(bucketKey: string): string {
-  if (bucketKey === 'sv_actors') return 'svActors';
-  if (bucketKey === 'sv_enemies') return 'svEnemies';
-  return bucketKey;
-}
-
-function imageCatalogKey(bucketKey: string): keyof EditorProjectCatalog['assets'] | null {
-  const key = imageDetailCategory(bucketKey) as keyof EditorProjectCatalog['assets'];
-  return editorCatalog.value?.assets[key] ? key : null;
 }
 
 function findDbPreviewAsset(preview: ProjectOverviewDbPreview) {
@@ -1524,224 +1176,6 @@ function clampInt(value: unknown, min: number, max: number): number {
 function isBigCharacterName(name: string): boolean {
   const sign = String(name || '').match(/^[!$]+/);
   return Boolean(sign && sign[0].includes('$'));
-}
-
-function projectRelativeAssetPath(bucketDir: string, fileName: string): string {
-  const root = normalizePath(assets.value?.projectRoot || '');
-  const dir = normalizePath(bucketDir);
-  const prefix = root ? `${root}/` : '';
-  const relativeDir = prefix && dir.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())
-    ? dir.slice(prefix.length)
-    : dir.replace(/^.*?(?:www\/)?img\//, (match) => match.endsWith('www/img/') ? 'www/img/' : 'img/');
-  return `${relativeDir}/${fileName}`.replace(/\/+/g, '/').replace(/^\/+/, '');
-}
-
-function normalizePath(value: string): string {
-  return String(value || '').replace(/\\/g, '/').replace(/\/+$/, '');
-}
-
-async function openAudioDetail(bucketKey: string, name: string) {
-  selectedEventId.value = null;
-  detailBusy.value = true;
-  detailError.value = '';
-  pmDetail.value = null;
-  resetDetailDraft(null);
-  try {
-    const fileName = resolveAudioFileName(bucketKey, name);
-    const bucket = assets.value?.audio?.[bucketKey];
-    if (!fileName || !bucket) {
-      pmDetail.value = {
-        kind: 'audio',
-        category: bucketKey,
-        name,
-        url: '',
-        fileName: '',
-        relativePath: '',
-        missing: true,
-      };
-      return;
-    }
-    const relativePath = projectRelativeAssetPath(bucket.dir, fileName);
-    const asset = await projectAssets.detail({ scope: 'project', category: bucketKey, relativePath }, projectStore.currentProject);
-    setAssetDetail('audio', bucketKey, asset);
-  } catch (loadError) {
-    detailError.value = (loadError as Error).message;
-  } finally {
-    detailBusy.value = false;
-  }
-}
-
-async function openImageDetail(bucketKey: string, name: string) {
-  selectedEventId.value = null;
-  detailBusy.value = true;
-  detailError.value = '';
-  pmDetail.value = null;
-  resetDetailDraft(null);
-  try {
-    const fileName = resolveImageFileName(bucketKey, name);
-    const bucket = assets.value?.images?.[bucketKey];
-    if (!fileName || !bucket) {
-      pmDetail.value = {
-        kind: 'image',
-        category: bucketKey,
-        name,
-        url: '',
-        fileName: '',
-        relativePath: '',
-        missing: true,
-      };
-      return;
-    }
-    const relativePath = projectRelativeAssetPath(bucket.dir, fileName);
-    const asset = await projectAssets.detail({ scope: 'project', category: imageDetailCategory(bucketKey), relativePath }, projectStore.currentProject);
-    setAssetDetail('image', bucketKey, asset);
-  } catch (loadError) {
-    detailError.value = (loadError as Error).message;
-  } finally {
-    detailBusy.value = false;
-  }
-}
-
-function setAssetDetail(kind: 'audio' | 'image', bucketKey: string, asset: ManagedAssetDetail) {
-  pmDetail.value = {
-    kind,
-    category: bucketKey,
-    name: asset.name,
-    url: asset.url || '',
-    fileName: asset.fileName,
-    relativePath: asset.relativePath,
-    staged: asset.staged,
-    references: asset.references,
-    size: asset.size,
-  };
-}
-
-function currentAssetDetail() {
-  const detail = pmDetail.value;
-  return detail?.kind === 'audio' || detail?.kind === 'image' ? detail : null;
-}
-
-function currentAssetTarget() {
-  const detail = currentAssetDetail();
-  if (!detail || detail.missing || !detail.relativePath) return null;
-  return {
-    scope: 'project',
-    category: detail.kind === 'image' ? imageDetailCategory(detail.category) : detail.category,
-    relativePath: detail.relativePath,
-  };
-}
-
-function localFileParts(filePath: string): { fileName: string; name: string } {
-  const fileName = String(filePath || '').split(/[\\/]/).pop() || '';
-  return { fileName, name: fileName.replace(/\.[^.]+$/, '') };
-}
-
-async function importCurrentAssetCategory() {
-  if (!projectStore.currentProject || detailBusy.value || surfaceWriteLocked.value || !['audio', 'images'].includes(selected.value)) return;
-  const kind = selected.value === 'audio' ? 'audio' : 'image';
-  const bucketKey = kind === 'audio' ? selectedAudioBucket.value : selectedImageBucket.value;
-  const category = kind === 'image' ? imageDetailCategory(bucketKey) : bucketKey;
-  detailBusy.value = true;
-  detailError.value = '';
-  try {
-    const sourceFile = await projectAssets.selectImportFile(category);
-    if (!sourceFile) return;
-    const { name } = localFileParts(sourceFile);
-    const bucketNames = kind === 'audio'
-      ? assets.value?.audio?.[bucketKey]?.names || []
-      : assets.value?.images?.[bucketKey]?.names || [];
-    const overwrite = bucketNames.includes(name);
-    if (overwrite) {
-      try {
-        await ElMessageBox.confirm(
-          t('story.assetOverwriteConfirm', { name }),
-          t('story.assetOverwriteTitle'),
-          { type: 'warning' },
-        );
-      } catch {
-        return;
-      }
-    }
-    const asset = await projectAssets.importLocalFile({ category, sourceFile, overwrite }, projectStore.currentProject);
-    resetCatalog();
-    if (kind === 'image') await ensureCatalog();
-    await loadData();
-    setAssetDetail(kind, bucketKey, asset);
-  } catch (importError) {
-    detailError.value = (importError as Error).message;
-  } finally {
-    detailBusy.value = false;
-  }
-}
-
-async function renameCurrentAsset() {
-  const detail = currentAssetDetail();
-  const target = currentAssetTarget();
-  if (!detail || !target || !projectStore.currentProject || detailBusy.value || surfaceWriteLocked.value) return;
-  let nextName = '';
-  try {
-    const response = await ElMessageBox.prompt(
-      t('story.assetRenamePrompt', { count: detail.references?.length || 0 }),
-      t('story.assetRenameTitle'),
-      { inputValue: detail.name, inputPattern: /^[^<>:"/\\|?*\u0000-\u001f]+$/, inputErrorMessage: t('story.assetNameInvalid') },
-    );
-    nextName = String(response.value || '').trim();
-  } catch {
-    return;
-  }
-  detailBusy.value = true;
-  detailError.value = '';
-  try {
-    const safety = await projectAssets.checkRenameSafety(target, nextName, projectStore.currentProject);
-    if (!safety.ok) throw new Error(safety.blockers.join('\n'));
-    try {
-      await ElMessageBox.confirm(
-        t('story.assetRenameConfirm', { count: safety.references.length }),
-        t('story.assetRenameTitle'),
-        { type: 'warning' },
-      );
-    } catch {
-      return;
-    }
-    const renamed = await projectAssets.rename(target, nextName, projectStore.currentProject);
-    resetCatalog();
-    if (detail.kind === 'image') await ensureCatalog();
-    await loadData();
-    setAssetDetail(detail.kind, detail.category, renamed);
-  } catch (renameError) {
-    detailError.value = (renameError as Error).message;
-  } finally {
-    detailBusy.value = false;
-  }
-}
-
-async function deleteCurrentAsset() {
-  const detail = currentAssetDetail();
-  const target = currentAssetTarget();
-  if (!detail || !target || !projectStore.currentProject || detailBusy.value || surfaceWriteLocked.value) return;
-  detailBusy.value = true;
-  detailError.value = '';
-  try {
-    const safety = await projectAssets.checkDeleteSafety(target, projectStore.currentProject);
-    if (!safety.ok) throw new Error(safety.blockers.join('\n'));
-    try {
-      await ElMessageBox.confirm(
-        t('story.assetDeleteConfirm', { name: detail.name }),
-        t('story.assetDeleteTitle'),
-        { type: 'warning' },
-      );
-    } catch {
-      return;
-    }
-    await projectAssets.remove(target, projectStore.currentProject);
-    resetCatalog();
-    closeDetail();
-    await loadData();
-  } catch (deleteError) {
-    detailError.value = (deleteError as Error).message;
-  } finally {
-    detailBusy.value = false;
-  }
 }
 
 async function saveDetail() {
@@ -1868,28 +1302,18 @@ async function startParticlePreview(): Promise<void> {
   }
 }
 
-function openMapInEditor(mapId: number, eventId?: number) {
-  const query: Record<string, string> = { mapId: String(mapId) };
-  if (eventId) query.eventId = String(eventId);
-  void router.push({ path: '/workbench', query });
-}
-
 function detailTitle(): string {
   if (!pmDetail.value) return '';
-  if (pmDetail.value.kind === 'managed') {
-    const entry = pmDetail.value.entry;
-    if (entry.kind === 'database' && isDocumentSubFieldGroup(String(entry.group || '')) && selectedDbSubField.value) {
-      return `${dbLabel(String(entry.group || ''))} · ${dbFieldLabel(selectedDbSubField.value)}`;
-    }
-    return `${entry.kind === 'database' ? dbLabel(String(entry.group || '')) : managedKindLabel(entry.kind)} · #${entry.id}`;
+  const entry = pmDetail.value.entry;
+  if (entry.kind === 'database' && isDocumentSubFieldGroup(String(entry.group || '')) && selectedDbSubField.value) {
+    return `${dbLabel(String(entry.group || ''))} · ${dbFieldLabel(selectedDbSubField.value)}`;
   }
-  if (pmDetail.value.kind === 'image') return `${imageBucketLabel(pmDetail.value.category)} · ${pmDetail.value.name}`;
-  return `${pmDetail.value.category.toUpperCase()} · ${pmDetail.value.name}`;
+  return `${entry.kind === 'database' ? dbLabel(String(entry.group || '')) : managedKindLabel(entry.kind)} · #${entry.id}`;
 }
 </script>
 
 <template>
-  <div class="console-subpage" :aria-busy="validating || refreshing">
+  <div class="database-page console-subpage" data-ui-id="database-page" :aria-busy="validating || refreshing">
     <div v-if="!projectStore.currentProject" class="state">{{ t('story.addProjectFirst') }}</div>
     <div v-else-if="error && !overview" class="state error" role="alert">
       <span>{{ formatErrorText(error) }}</span>
@@ -1919,33 +1343,20 @@ function detailTitle(): string {
     >
       <!-- Sidebar -->
       <aside class="console-panel pm-categories">
-        <div class="console-panel-title">{{ t('story.projectMgmt') }}</div>
+        <div class="console-panel-title">{{ t('app.nav.database') }}</div>
         <div class="pm-sidebar">
           <button
             v-for="cat in categories"
             :key="cat.id"
             type="button"
-            :data-ui-id="`story-category-${cat.id}`"
+            :data-ui-id="`database-category-${cat.id}`"
             class="folder"
             :class="{ active: selected === cat.id }"
             @click="selectCategory(cat.id)"
           >
-            <!-- Map icon -->
-            <svg v-if="cat.id === 'maps'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
-            <!-- Switch icon -->
-            <svg v-else-if="cat.id === 'switches'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M8 7h8M8 12h8m-8 5h8M5 7h.01M5 12h.01M5 17h.01" /></svg>
-            <!-- Variable icon -->
+            <svg v-if="cat.id === 'switches'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M8 7h8M8 12h8m-8 5h8M5 7h.01M5 12h.01M5 17h.01" /></svg>
             <svg v-else-if="cat.id === 'variables'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
-            <!-- Common event icon -->
-            <svg v-else-if="cat.id === 'commonEvents'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-            <!-- Audio icon -->
-            <svg v-else-if="cat.id === 'audio'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-            <!-- Image icon -->
-            <svg v-else-if="cat.id === 'images'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 5h16v14H4z" /><path d="M8 13l2.2-2.2a1 1 0 011.4 0L17 16" /><path d="M14 10h.01" /></svg>
-            <!-- Database icon -->
-            <svg v-else-if="cat.id === 'database'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
-            <!-- Grid icon (overview) -->
-            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" /></svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
             <span>{{ categoryLabel(cat.id) }}</span>
             <b>{{ cat.count }}</b>
           </button>
@@ -1961,7 +1372,7 @@ function detailTitle(): string {
               v-for="opt in dbGroupOptions"
               :key="opt.key"
               type="button"
-              :data-ui-id="`story-database-group-${opt.key}`"
+              :data-ui-id="`database-group-${opt.key}`"
               class="sub-category-button"
               :class="{ active: opt.key === selectedDbGroup, error: opt.readState !== 'ready' }"
               :title="opt.readState === 'ready' ? undefined : databaseReadIssueText(opt.key)"
@@ -1972,180 +1383,18 @@ function detailTitle(): string {
             </button>
           </div>
         </div>
-        <div v-else-if="selected === 'audio'" class="pm-sub-pane">
-          <button type="button" class="pm-sub-pane-toggle" @click="pmSubPaneExpanded = !pmSubPaneExpanded">
-            <el-icon :class="{ collapsed: !pmSubPaneExpanded }"><ArrowRight /></el-icon>
-            <span>{{ t('story.audioType') }}</span>
-            <b>{{ activeAudioBucket.names.length }}</b>
-          </button>
-          <div v-show="pmSubPaneExpanded" class="pm-sub-list">
-            <button
-              v-for="opt in audioBucketOptions"
-              :key="opt.key"
-              type="button"
-              class="sub-category-button"
-              :class="{ active: opt.key === selectedAudioBucket }"
-              @click="selectAudioBucket(opt.key)"
-            >
-              <span>{{ opt.label }}</span>
-              <b>{{ opt.count }}</b>
-            </button>
-          </div>
-        </div>
-        <div v-else-if="selected === 'images'" class="pm-sub-pane">
-          <button type="button" class="pm-sub-pane-toggle" @click="pmSubPaneExpanded = !pmSubPaneExpanded">
-            <el-icon :class="{ collapsed: !pmSubPaneExpanded }"><ArrowRight /></el-icon>
-            <span>{{ t('story.imageType') }}</span>
-            <b>{{ activeImageBucket.names.length }}</b>
-          </button>
-          <div v-show="pmSubPaneExpanded" class="pm-sub-list">
-            <button
-              v-for="opt in imageBucketOptions"
-              :key="opt.key"
-              type="button"
-              class="sub-category-button"
-              :class="{ active: opt.key === selectedImageBucket }"
-              @click="selectImageBucket(opt.key)"
-            >
-              <span>{{ opt.label }}</span>
-              <b>{{ opt.count }}</b>
-            </button>
-          </div>
-        </div>
       </aside>
 
       <!-- Main content -->
       <main class="console-panel">
-        <div v-if="selected === 'overview'" class="console-panel-title"><span>{{ categoryLabel(selected) }}</span></div>
-        <div v-else class="console-list-header">
+        <div class="console-list-header">
           <span>{{ pmListHeaderTitle }}</span>
           <ConsoleSearchInput v-model="searchQuery" :placeholder="pmSearchPlaceholder" />
         </div>
         <div class="console-panel-scroll pm-content">
 
-          <!-- ========== Overview ========== -->
-          <template v-if="selected === 'overview'">
-            <div class="overview-grid">
-              <button type="button" class="asset-card clickable" @click="selectCategory('maps')">
-                <span class="asset-thumb">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
-                </span>
-                <span><strong>{{ categoryLabel('maps') }}</strong><small>{{ mapEventSummary(maps.length, totalEvents) }}</small></span>
-                <em>{{ t('story.mapOverview') }}</em>
-              </button>
-
-              <button type="button" class="asset-card clickable" @click="selectCategory('switches')">
-                <span class="asset-thumb">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7h8M8 12h8m-8 5h8M5 7h.01M5 12h.01M5 17h.01" /></svg>
-                </span>
-                <span><strong>{{ categoryLabel('switches') }}</strong><small>{{ itemCountLabel(switches.filter(s => s.name).length) }}</small></span>
-                <em>{{ t('story.namedSwitches') }}</em>
-              </button>
-
-              <button type="button" class="asset-card clickable" @click="selectCategory('variables')">
-                <span class="asset-thumb">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
-                </span>
-                <span><strong>{{ categoryLabel('variables') }}</strong><small>{{ itemCountLabel(variables.filter(v => v.name).length) }}</small></span>
-                <em>{{ t('story.namedVariables') }}</em>
-              </button>
-
-              <button type="button" class="asset-card clickable" @click="selectCategory('commonEvents')">
-                <span class="asset-thumb">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                </span>
-                <span><strong>{{ categoryLabel('commonEvents') }}</strong><small>{{ itemCountLabel(commonEvents.filter(e => e.name).length) }}</small></span>
-                <em>{{ t('story.namedCommonEvents') }}</em>
-              </button>
-
-              <button type="button" class="asset-card clickable" @click="selectCategory('audio')">
-                <span class="asset-thumb">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                </span>
-                <span><strong>{{ categoryLabel('audio') }}</strong><small>{{ assetReadIssue ? t('story.assetReadFailed') : itemCountLabel(audioTotal) }}</small></span>
-                <em>BGM / BGS / ME / SE</em>
-              </button>
-
-              <button type="button" class="asset-card clickable" @click="selectCategory('images')">
-                <span class="asset-thumb">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z" /><path d="M8 13l2.2-2.2a1 1 0 011.4 0L17 16" /><path d="M14 10h.01" /></svg>
-                </span>
-                <span><strong>{{ categoryLabel('images') }}</strong><small>{{ assetReadIssue ? t('story.assetReadFailed') : itemCountLabel(imageTotal) }}</small></span>
-                <em>{{ t('story.imgAssets') }}</em>
-              </button>
-
-              <button type="button" class="asset-card clickable" @click="selectCategory('database')">
-                <span class="asset-thumb">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
-                </span>
-                <span><strong>{{ categoryLabel('database') }}</strong><small>{{ itemCountLabel(dbTotal) }} · {{ dbSummary() }}</small></span>
-                <em>{{ t('story.dataIndex') }}</em>
-              </button>
-            </div>
-          </template>
-
-          <!-- ========== Maps and events ========== -->
-          <template v-else-if="selected === 'maps'">
-            <div class="map-split">
-              <div class="map-list">
-                <button
-                  v-for="m in filteredMaps"
-                  :key="m.id"
-                  type="button"
-                  class="map-item"
-                  :class="{ active: selectedMapId === m.id, error: m.readState !== 'ready' }"
-                  :title="m.readState === 'ready' ? undefined : mapReadIssueText(m.id)"
-                  @click="selectMap(m.id)"
-                >
-                  <span class="map-name">{{ m.name }}</span>
-                  <span class="badge">{{ m.readState === 'ready' ? m.eventCount : '!' }}</span>
-                </button>
-                <div v-if="!filteredMaps.length" class="empty-hint">{{ maps.length ? t('story.noMatchMaps') : t('story.noMapData') }}</div>
-              </div>
-              <div class="event-detail">
-                <div v-if="selectedMapId && selectedMap?.readState === 'ready'" class="map-toolbar">
-                  <button type="button" class="link-button" @click="openMapInEditor(selectedMapId)">{{ t('story.openInMapEditor') }}</button>
-                  <button
-                    v-if="eventDialogOpen && editorMapId === selectedMapId && eventDraft?.id"
-                    type="button"
-                    class="link-button"
-                    @click="openMapInEditor(selectedMapId, eventDraft!.id)"
-                  >{{ t('story.viewLocation') }}</button>
-                </div>
-                <div v-if="selectedMapReadIssue" class="read-issue-detail" role="alert">
-                  <strong>{{ t('story.mapReadFailed') }}</strong>
-                  <span>{{ formatReadIssue(selectedMapReadIssue) }}</span>
-                </div>
-                <template v-else-if="selectedMapId && filteredMapEvents.length">
-                  <div class="event-row event-header">
-                    <span class="ev-id">ID</span>
-                    <span class="ev-name">{{ t('commonEvent.name') }}</span>
-                    <span class="ev-pos">{{ t('story.position') }}</span>
-                    <span class="ev-pages">{{ t('story.pages') }}</span>
-                  </div>
-                  <button
-                    v-for="e in filteredMapEvents"
-                    :key="e.id"
-                    type="button"
-                    class="event-row"
-                    :class="{ active: selectedEventId === e.id, loading: eventLoading && selectedEventId === e.id }"
-                    @click="selectMapEvent(e.id)"
-                    @dblclick.prevent="openMapEvent(selectedMapId!, e.id)"
-                  >
-                    <span class="ev-id">{{ String(e.id).padStart(3, '0') }}</span>
-                    <span class="ev-name">{{ e.name || unnamedLabel() }}</span>
-                    <span class="ev-pos">({{ e.x }}, {{ e.y }})</span>
-                    <span class="ev-pages">{{ e.pageCount }}</span>
-                  </button>
-                </template>
-                <div v-else-if="selectedMapId" class="empty-hint">{{ selectedMapEvents.length ? t('story.noMatchEvents') : t('story.noEventsOnMap') }}</div>
-                <div v-else class="empty-hint">{{ t('story.selectMapHint') }}</div>
-              </div>
-            </div>
-          </template>
-
           <!-- ========== Switches ========== -->
-          <template v-else-if="selected === 'switches'">
+          <template v-if="selected === 'switches'">
             <div class="list-toolbar">
               <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
             </div>
@@ -2172,114 +1421,38 @@ function detailTitle(): string {
             </div>
           </template>
 
-          <!-- ========== Common events ========== -->
-          <template v-else-if="selected === 'commonEvents'">
-            <div class="list-toolbar">
-              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
-              <div class="toolbar-actions">
-                <button type="button" :disabled="Boolean(commonEventsReadIssue)" @click="createCommonEvent()">{{ t('story.new') }}</button>
-                <button type="button" :disabled="selectedCommonEventId == null" @click="duplicateCurrentCommonEvent">{{ t('story.duplicate') }}</button>
-                <button type="button" class="danger" :disabled="selectedCommonEventId == null" @click="deleteCurrentCommonEvent">{{ t('cmdList.delete') }}</button>
-              </div>
-            </div>
-            <div v-if="commonEventsReadIssue" class="read-issue-detail" role="alert">
-              <strong>{{ t('story.databaseReadFailed') }}</strong>
-              <span>{{ formatReadIssue(commonEventsReadIssue) }}</span>
-            </div>
-            <div v-else class="id-list">
-              <button
-                v-for="ce in filteredCommonEvents"
-                :key="ce.id"
-                type="button"
-                class="id-row ce-row"
-                @click="openManaged('commonEvent', ce.id)"
-                @contextmenu.prevent="openManaged('commonEvent', ce.id)"
-              >
-                <span class="row-id">{{ String(ce.id).padStart(4, '0') }}</span>
-                <span class="row-name">{{ ce.name || unnamedLabel() }}</span>
-              </button>
-              <div v-if="!filteredCommonEvents.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
-            </div>
-          </template>
-
-          <!-- ========== Audio ========== -->
-          <template v-else-if="selected === 'audio'">
-            <div class="list-toolbar asset-toolbar">
-              <span>{{ selectedAudioBucket.toUpperCase() }}</span>
-              <button type="button" :disabled="detailBusy || stagingBusy || Boolean(assetReadIssue)" @click="importCurrentAssetCategory">{{ t('story.assetImport') }}</button>
-            </div>
-            <div v-if="assetReadIssue" class="read-issue-detail" role="alert">
-              <strong>{{ t('story.assetReadFailed') }}</strong>
-              <span>{{ formatReadIssue(assetReadIssue) }}</span>
-            </div>
-            <div v-else class="id-list">
-              <button
-                v-for="n in visibleAudioNames"
-                :key="n"
-                type="button"
-                class="id-row audio-row"
-                @click="openAudioDetail(selectedAudioBucket, n)"
-              >
-                <span class="row-name">{{ n }}</span>
-              </button>
-              <button
-                v-if="hasMoreAudioNames"
-                type="button"
-                class="load-more"
-                @click="showMoreGroupItems('audio', selectedAudioBucket, activeAudioBucket.names.length)"
-              >
-                {{ showMoreLabel(remainingAudioNames) }}
-              </button>
-              <div v-if="!visibleAudioNames.length" class="empty-hint">
-                {{ assets?.audio?.[selectedAudioBucket] ? t('story.noMatchAudio') : t('story.noAudioData') }}
-              </div>
-            </div>
-          </template>
-
-          <!-- ========== Images ========== -->
-          <template v-else-if="selected === 'images'">
-            <div class="list-toolbar asset-toolbar">
-              <span>{{ imageBucketLabel(selectedImageBucket) }}</span>
-              <button type="button" :disabled="detailBusy || stagingBusy || Boolean(assetReadIssue)" @click="importCurrentAssetCategory">{{ t('story.assetImport') }}</button>
-            </div>
-            <div v-if="assetReadIssue" class="read-issue-detail" role="alert">
-              <strong>{{ t('story.assetReadFailed') }}</strong>
-              <span>{{ formatReadIssue(assetReadIssue) }}</span>
-            </div>
-            <div v-else class="image-grid">
-              <button
-                v-for="item in visibleImageGridItems"
-                :key="item.name"
-                type="button"
-                class="image-grid-card"
-                :class="{ active: activeImageKey === `${selectedImageBucket}:${item.name}`, missing: item.missing }"
-                @click="openImageDetail(selectedImageBucket, item.name)"
-              >
-                <span class="image-grid-thumb">
-                  <img v-if="item.url" :src="item.url" :alt="item.name" />
-                  <span v-else class="image-grid-missing">{{ t('story.noPreview') }}</span>
-                </span>
-                <span class="image-grid-meta">
-                  <strong>{{ item.name }}</strong>
-                  <small>{{ item.fileName || t('story.fileMissing') }}</small>
-                </span>
-              </button>
-              <button
-                v-if="hasMoreImageNames"
-                type="button"
-                class="load-more image-grid-more"
-                @click="showMoreGroupItems('image', selectedImageBucket, activeImageBucket.names.length)"
-              >
-                {{ showMoreLabel(remainingImageNames) }}
-              </button>
-              <div v-if="!visibleImageNames.length" class="empty-hint">
-                {{ assets?.images?.[selectedImageBucket] ? t('story.noMatchImages') : t('story.noImageData') }}
-              </div>
-            </div>
-          </template>
-
           <!-- ========== Database ========== -->
           <template v-else-if="selected === 'database'">
+            <template v-if="isCommonEventsGroup(selectedDbGroup)">
+              <div class="list-toolbar">
+                <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
+                <div class="toolbar-actions">
+                  <button type="button" :disabled="Boolean(commonEventsReadIssue)" @click="createCommonEvent()">{{ t('story.new') }}</button>
+                  <button type="button" :disabled="selectedCommonEventId == null" @click="duplicateCurrentCommonEvent">{{ t('story.duplicate') }}</button>
+                  <button type="button" class="danger" :disabled="selectedCommonEventId == null" @click="deleteCurrentCommonEvent">{{ t('cmdList.delete') }}</button>
+                </div>
+              </div>
+              <div v-if="commonEventsReadIssue" class="read-issue-detail" role="alert">
+                <strong>{{ t('story.databaseReadFailed') }}</strong>
+                <span>{{ formatReadIssue(commonEventsReadIssue) }}</span>
+              </div>
+              <div v-else class="id-list">
+                <button
+                  v-for="ce in filteredCommonEvents"
+                  :key="ce.id"
+                  type="button"
+                  class="id-row ce-row"
+                  :class="{ active: selectedCommonEventId === ce.id }"
+                  @click="openManaged('commonEvent', ce.id)"
+                  @contextmenu.prevent="openManaged('commonEvent', ce.id)"
+                >
+                  <span class="row-id">{{ String(ce.id).padStart(4, '0') }}</span>
+                  <span class="row-name">{{ ce.name || unnamedLabel() }}</span>
+                </button>
+                <div v-if="!filteredCommonEvents.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
+              </div>
+            </template>
+            <template v-else>
             <div class="list-toolbar database-toolbar">
               <span>{{ dbLabel(selectedDbGroup) }} · {{ selectedDatabaseReadIssue ? t('story.databaseReadFailed') : itemCountLabel(isDocumentSubFieldGroup(selectedDbGroup) ? dbSubFieldOrder(selectedDbGroup).length : activeDbGroup.named.length) }}</span>
               <template v-if="!isDocumentSubFieldGroup(selectedDbGroup)">
@@ -2327,7 +1500,7 @@ function detailTitle(): string {
                 v-for="entry in visibleDbGridItems"
                 :key="entry.id"
                 type="button"
-                :data-ui-id="`story-database-entry-${selectedDbGroup}-${entry.id}`"
+                :data-ui-id="`database-entry-${selectedDbGroup}-${entry.id}`"
                 class="image-grid-card database-grid-card"
                 :class="{ active: activeDbKey === `${selectedDbGroup}:${entry.id}`, missing: entry.missing || !entry.preview }"
                 @click="openManaged('database', entry.id, selectedDbGroup)"
@@ -2365,7 +1538,7 @@ function detailTitle(): string {
                 v-for="entry in visibleDbEntries"
                 :key="entry.id"
                 type="button"
-                :data-ui-id="`story-database-entry-${selectedDbGroup}-${entry.id}`"
+                :data-ui-id="`database-entry-${selectedDbGroup}-${entry.id}`"
                 class="id-row"
                 @click="openManaged('database', entry.id, selectedDbGroup)"
                 @contextmenu.prevent="openDbContextMenu($event, entry.id)"
@@ -2385,6 +1558,7 @@ function detailTitle(): string {
                 {{ database[selectedDbGroup] ? t('story.noMatchEntries') : t('story.noDatabaseData') }}
               </div>
             </div>
+            </template>
           </template>
 
         </div>
@@ -2395,43 +1569,11 @@ function detailTitle(): string {
             <div>
               <strong>{{ t('story.entryDetails') }}</strong>
               <span v-if="pmDetail">{{ detailTitle() }}</span>
-              <span v-else-if="selectedEvent">{{ t('story.event') }} · #{{ selectedEvent.id }}</span>
-              <span v-else-if="selectedMap">{{ t('story.map') }} · #{{ selectedMap.id }}</span>
               <span v-else>{{ t('story.selectEntryHint') }}</span>
             </div>
-            <button v-if="pmDetail || detailError || selectedEvent" type="button" @click="clearDetailPanel">×</button>
+            <button v-if="pmDetail || detailError" type="button" @click="clearDetailPanel">×</button>
           </header>
           <div v-if="detailBusy && !pmDetail" class="empty-hint">{{ t('story.loadingEntry') }}</div>
-          <div v-else-if="pmDetail?.kind === 'audio'" class="pm-detail-body audio-detail">
-            <dl class="audio-facts">
-              <dt>{{ t('eventEditorDialog.type') }}</dt><dd>{{ pmDetail.category.toUpperCase() }}</dd>
-              <dt>{{ t('story.fileName') }}</dt><dd>{{ pmDetail.fileName || '—' }}</dd>
-              <dt>{{ t('story.path') }}</dt><dd>{{ pmDetail.relativePath || '—' }}</dd>
-              <dt>{{ t('story.assetReferences') }}</dt><dd>{{ pmDetail.references?.length || 0 }}</dd>
-              <dt>{{ t('story.assetState') }}</dt><dd>{{ pmDetail.staged ? t('story.assetStaged') : t('story.assetSource') }}</dd>
-            </dl>
-            <audio v-if="pmDetail.url" :key="pmDetail.url" :src="pmDetail.url" controls preload="auto" />
-            <div v-else class="empty-hint">{{ t('story.audioNotFound') }}</div>
-            <div v-if="pmDetail.references?.length" class="asset-reference-list">
-              <span v-for="reference in pmDetail.references" :key="`${reference.file}:${reference.path}`">{{ reference.file }} · {{ reference.path }}</span>
-            </div>
-          </div>
-          <div v-else-if="pmDetail?.kind === 'image'" class="pm-detail-body image-detail">
-            <dl class="audio-facts">
-              <dt>{{ t('eventEditorDialog.type') }}</dt><dd>{{ imageBucketLabel(pmDetail.category) }}</dd>
-              <dt>{{ t('story.fileName') }}</dt><dd>{{ pmDetail.fileName || '—' }}</dd>
-              <dt>{{ t('story.path') }}</dt><dd>{{ pmDetail.relativePath || '—' }}</dd>
-              <dt>{{ t('story.assetReferences') }}</dt><dd>{{ pmDetail.references?.length || 0 }}</dd>
-              <dt>{{ t('story.assetState') }}</dt><dd>{{ pmDetail.staged ? t('story.assetStaged') : t('story.assetSource') }}</dd>
-            </dl>
-            <div v-if="pmDetail.url" class="image-preview-frame">
-              <img :src="pmDetail.url" :alt="pmDetail.name" />
-            </div>
-            <div v-else class="empty-hint">{{ t('story.imageNotFound') }}</div>
-            <div v-if="pmDetail.references?.length" class="asset-reference-list">
-              <span v-for="reference in pmDetail.references" :key="`${reference.file}:${reference.path}`">{{ reference.file }} · {{ reference.path }}</span>
-            </div>
-          </div>
           <div
             v-else-if="pmDetail?.kind === 'managed' && pmDetail.entry.kind === 'commonEvent'"
             class="pm-detail-body"
@@ -2474,63 +1616,17 @@ function detailTitle(): string {
           <div v-else-if="pmDetail && detailEditable" class="pm-detail-body">
             <StructuredFieldsEditor v-model="detailDraft" :label="t('story.entryFields')" />
           </div>
-          <div v-else-if="selectedEvent && selectedMapId" class="pm-detail-body event-inspector">
-            <dl class="detail-facts">
-              <dt>{{ t('story.eventId') }}</dt><dd>{{ String(selectedEvent.id).padStart(3, '0') }}</dd>
-              <dt>{{ t('commonEvent.name') }}</dt><dd>{{ selectedEvent.name || unnamedLabel() }}</dd>
-              <dt>{{ t('story.map') }}</dt><dd>{{ selectedMap?.name || `Map${selectedMapId}` }}</dd>
-              <dt>{{ t('story.position') }}</dt><dd>({{ selectedEvent.x }}, {{ selectedEvent.y }})</dd>
-              <dt>{{ t('story.pages') }}</dt><dd>{{ selectedEvent.pageCount }}</dd>
-            </dl>
-            <div v-if="eventPreviewBusy" class="event-preview-state">{{ t('story.loadingEventContents') }}</div>
-            <div v-else-if="eventPreviewError" class="detail-error event-preview-error">{{ t('story.eventContentsLoadFailed') }}{{ formatErrorText(eventPreviewError) }}</div>
-            <MapEventCommandPreview
-              v-else-if="eventPreviewEvent"
-              :event="eventPreviewEvent"
-              :system-data="eventPreviewSystemData"
-            />
-            <div v-else class="event-preview-state">{{ t('story.noEventContents') }}</div>
-            <div class="detail-actions">
-              <button type="button" class="secondary-button" @click="openMapEvent(selectedMapId, selectedEvent.id)">{{ t('story.openEventEditor') }}</button>
-              <button type="button" class="secondary-button" @click="openMapInEditor(selectedMapId, selectedEvent.id)">{{ t('story.viewMapLocation') }}</button>
-            </div>
-          </div>
-          <div v-else-if="selected === 'maps' && selectedMap && selectedMapReadIssue" class="pm-detail-body read-issue-detail" role="alert">
-            <strong>{{ t('story.mapReadFailed') }}</strong>
-            <span>{{ formatReadIssue(selectedMapReadIssue) }}</span>
-          </div>
-          <div v-else-if="selected === 'maps' && selectedMap" class="pm-detail-body event-inspector">
-            <dl class="detail-facts">
-              <dt>{{ t('story.mapId') }}</dt><dd>{{ String(selectedMap.id).padStart(3, '0') }}</dd>
-              <dt>{{ t('commonEvent.name') }}</dt><dd>{{ selectedMap.name }}</dd>
-              <dt>{{ t('story.eventCount') }}</dt><dd>{{ selectedMap.eventCount }}</dd>
-            </dl>
-            <div class="detail-actions">
-              <button type="button" class="secondary-button" @click="openMapInEditor(selectedMap.id)">{{ t('story.openMapEditor') }}</button>
-            </div>
-            <p class="detail-note">{{ t('story.selectMiddleHint') }}</p>
-          </div>
           <div v-else-if="detailError && !pmDetail" class="detail-error">{{ formatErrorText(detailError) }}</div>
-          <div v-else class="detail-empty">{{ t('story.selectFromMiddle') }}</div>
+          <div v-else class="detail-empty">{{ t('story.selectEntryHint') }}</div>
           <div v-if="detailError && pmDetail" class="detail-error">{{ formatErrorText(detailError) }}</div>
           <footer v-if="pmDetail">
-            <template v-if="pmDetail.kind === 'audio' || pmDetail.kind === 'image'">
-              <span>{{ t('story.assetLifecycleNote') }}</span>
-              <div class="pm-detail-footer-actions">
-                <button type="button" class="secondary-button" :disabled="detailBusy || stagingBusy || pmDetail.missing" @click="renameCurrentAsset">{{ t('story.assetRename') }}</button>
-                <button type="button" class="secondary-button danger" :disabled="detailBusy || stagingBusy || pmDetail.missing" @click="deleteCurrentAsset">{{ t('cmdList.delete') }}</button>
-                <button v-if="stagingDirty" type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="discardProjectStaging">{{ t('editor.toolbar.discard') }}</button>
-                <button v-if="stagingDirty" type="button" class="secondary-button staging-apply-button" :disabled="detailBusy || stagingBusy" @click="applyProjectStaging">{{ t('editor.toolbar.applyStaging') }}</button>
-              </div>
-            </template>
-            <template v-else>
               <span>{{ t('story.saveStagingNote') }}</span>
               <div class="pm-detail-footer-actions">
                 <button
                   v-if="supportsDraftHistory"
                   type="button"
                   class="secondary-button"
-                  data-ui-id="story-draft-undo"
+                  data-ui-id="database-draft-undo"
                   :disabled="detailBusy || stagingBusy || !canUndoDraft"
                   @click="undoDetailDraft"
                 >
@@ -2540,7 +1636,7 @@ function detailTitle(): string {
                   v-if="supportsDraftHistory"
                   type="button"
                   class="secondary-button"
-                  data-ui-id="story-draft-redo"
+                  data-ui-id="database-draft-redo"
                   :disabled="detailBusy || stagingBusy || !canRedoDraft"
                   @click="redoDetailDraft"
                 >
@@ -2577,26 +1673,10 @@ function detailTitle(): string {
                   {{ detailBusy ? t('ui.saving') : t('story.saveChanges') }}
                 </button>
               </div>
-            </template>
           </footer>
       </aside>
     </div>
     </template>
-
-    <EventEditorDialog
-      :ref="bindEventDialogRef"
-      :visible="eventDialogOpen"
-      :draft="eventDraft"
-      :saving="eventSaving"
-      :map-id="editorMapId"
-      :system-data="systemData"
-      :catalog="editorCatalog"
-      :tileset-images="tilesetImages"
-      :load-image="loadImage"
-      :overview="eventOverview"
-      @close="closeEventEditor"
-      @save="saveEventIfUnlocked"
-    />
 
     <BattleTestSetupDialog
       :visible="battleTestDialogVisible"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue';
-import { Collection, Connection, Document, Setting, Tickets } from '@element-plus/icons-vue';
+import { Collection, Connection, Document, Setting } from '@element-plus/icons-vue';
 import { useProjectStore } from '../../stores/project';
 import type { ConsolePage } from '../../stores/workbenchUi';
 import StoryProjectIdentityControl from './StoryProjectIdentityControl.vue';
@@ -11,11 +11,9 @@ const props = defineProps<{
   assetCount: number;
   sessionCount: number;
   projectItemCount: number;
-  databaseCount: number;
   audioCount: number;
   projectStatsError: string | null;
   projectStatsLoading: boolean;
-  projectIssueCount: number;
   assetsLoading: boolean;
   logsLoading: boolean;
 }>();
@@ -32,7 +30,6 @@ const kpis = computed(() => [
 
 const cards = [
   { page: 'assets' as const, titleKey: 'settings.console.assets', descKey: 'console.home.assetsDesc', icon: Collection, tone: 'purple' },
-  { page: 'story' as const, titleKey: 'settings.console.story', descKey: 'console.home.storyDesc', icon: Tickets, tone: 'green' },
   { page: 'plugins' as const, titleKey: 'settings.console.plugins', descKey: 'console.home.pluginsDesc', icon: Connection, tone: 'blue' },
   { page: 'logs' as const, titleKey: 'settings.console.logs', descKey: 'console.home.logsDesc', icon: Document, tone: 'amber' },
   { page: 'settings' as const, titleKey: 'settings.console.settings', descKey: 'console.home.settingsDesc', icon: Setting, tone: 'gray' },
@@ -65,7 +62,7 @@ const cards = [
       </div>
     </div>
 
-    <div class="card-grid" :class="{ 'has-five': cards.length === 5 }">
+    <div class="card-grid">
       <button
         v-for="card in cards"
         :key="card.page"
@@ -82,10 +79,6 @@ const cards = [
           <strong>{{ t(card.titleKey) }}</strong><small>{{ t(card.descKey) }}</small>
           <span class="stats" v-if="card.page === 'assets' && assetsLoading">{{ t('console.home.statsReading') }}</span>
           <span class="stats" v-else-if="card.page === 'assets'"><b>{{ assetCount }}</b> {{ t('console.home.statsStaticAssets') }}</span>
-          <span class="stats" v-else-if="card.page === 'story' && projectStatsLoading">{{ t('console.home.statsReading') }}</span>
-          <span class="stats error" v-else-if="card.page === 'story' && projectStatsError">{{ t('console.home.statsProjectFailed') }}</span>
-          <span class="stats error" v-else-if="card.page === 'story' && projectIssueCount">{{ t('console.home.statsReadIssues', { count: projectIssueCount }) }}</span>
-          <span class="stats" v-else-if="card.page === 'story'"><b>{{ databaseCount }}</b> {{ t('console.home.statsDatabase') }} · <b>{{ audioCount }}</b> {{ t('console.home.statsAudio') }}</span>
           <span class="stats" v-else-if="card.page === 'plugins'">{{ t('console.home.statsPlugins') }}</span>
           <span class="stats" v-else-if="card.page === 'logs' && logsLoading">{{ t('console.home.statsReading') }}</span>
           <span class="stats" v-else-if="card.page === 'logs'"><b>{{ sessionCount }}</b> {{ t('console.home.statsSessions') }}</span>

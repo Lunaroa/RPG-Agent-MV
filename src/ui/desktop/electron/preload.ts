@@ -193,6 +193,11 @@ contextBridge.exposeInMainWorld('api', {
     editorCatalog: (project?: string) => ipcRenderer.invoke('projectAssets:editorCatalog', project),
     listRelativeDirectory: (relativeDirectory: string, project?: string, recursive?: boolean) =>
       ipcRenderer.invoke('projectAssets:listRelativeDirectory', relativeDirectory, project, recursive),
+    browseTree: (project?: string) => ipcRenderer.invoke('projectAssets:browseTree', project),
+    browseCategory: (categoryId: string, project?: string, thumbnailSizeBucket?: number) =>
+      ipcRenderer.invoke('projectAssets:browseCategory', categoryId, project, thumbnailSizeBucket),
+    invalidateBrowseCache: (project?: string) =>
+      ipcRenderer.invoke('projectAssets:invalidateBrowseCache', project),
     detail: (target: unknown, project?: string) => ipcRenderer.invoke('projectAssets:detail', target, project),
     rename: (target: unknown, nextName: string, project?: string) => ipcRenderer.invoke('projectAssets:rename', target, nextName, project),
     remove: (target: unknown, project?: string) => ipcRenderer.invoke('projectAssets:remove', target, project),

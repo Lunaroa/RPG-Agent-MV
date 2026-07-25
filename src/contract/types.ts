@@ -498,6 +498,50 @@ export interface ProjectAssetEntry {
   url: string;
 }
 
+/** Project resource browser (game-project files), not the product content-pack library. */
+export interface ProjectAssetCategoryTreeNode {
+  id: string;
+  directory: string;
+  entryCount: number;
+  children?: ProjectAssetCategoryTreeNode[];
+}
+
+export interface ProjectAssetCategoryTree {
+  project: string;
+  nodes: ProjectAssetCategoryTreeNode[];
+}
+
+export interface ProjectAssetBrowseVariant {
+  relativePath: string;
+  fileName: string;
+  extension: string;
+  bytes: number;
+  mtimeMs: number;
+  encrypted: boolean;
+}
+
+export interface ProjectAssetBrowseEntry {
+  id: string;
+  name: string;
+  variants: ProjectAssetBrowseVariant[];
+  bytes: number;
+  mtimeMs: number;
+  encrypted: boolean;
+  url: string;
+  thumbnailUrl: string | null;
+}
+
+export interface ProjectAssetCategoryListing {
+  categoryId: string;
+  directory: string;
+  entries: ProjectAssetBrowseEntry[];
+}
+
+export interface ProjectAssetBrowseCacheInvalidationResult {
+  ok: true;
+  project: string | null;
+}
+
 export type ProjectRelativeDirectoryListResult =
   | {
       ok: true;

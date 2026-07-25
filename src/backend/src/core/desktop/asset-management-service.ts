@@ -19,6 +19,7 @@ import { readJson } from '../rmmv/json.ts';
 import type { ProjectReadIssue } from '../rmmv/project-scanner.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { projectAssetUrl } from './asset-service.ts';
+import { invalidateProjectAssetBrowserCache } from './project-asset-browser-service.ts';
 import {
   assetManagementAssetMissing,
   assetManagementCategoryMissing,
@@ -288,6 +289,7 @@ export function replaceMissingAssetReference(
     throw new Error(assetManagementReplacementUnsupported());
   }
   stageProjectFilesAtomically(workflowRoot, project, update.mutations);
+  invalidateProjectAssetBrowserCache(project);
   return {
     category: request.category,
     missingName,
@@ -339,6 +341,7 @@ export function importLocalAssetFile(
     mutations.push({ relativePath: occupied[0].relativePath, delete: true });
   }
   stageProjectFilesAtomically(workflowRoot, project, mutations);
+  invalidateProjectAssetBrowserCache(project);
   return getAssetDetail(workflowRoot, project, {
     scope: 'project',
     category,
@@ -377,6 +380,7 @@ export function renameAsset(
     { relativePath: resolved.relativePath, delete: true },
     ...update.mutations,
   ]);
+  invalidateProjectAssetBrowserCache(project);
   return getAssetDetail(workflowRoot, project, { ...target, relativePath: nextRelative });
 }
 
@@ -390,6 +394,7 @@ export function deleteAsset(workflowRoot: string, project: string, target: Asset
   });
   if (!safety.ok) throw new Error(safety.blockers.join('; '));
   stageProjectFilesAtomically(workflowRoot, project, [{ relativePath: resolved.relativePath, delete: true }]);
+  invalidateProjectAssetBrowserCache(project);
   return { deleted: true };
 }
 

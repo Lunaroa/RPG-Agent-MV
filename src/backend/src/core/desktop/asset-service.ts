@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { chatImageExtension, isChatImageMime } from '../../../../contract/chat-image-attachments.ts';
+import { assertProjectAssetThumbnailSizeBucket } from '../../../../contract/project-asset-thumbnails.ts';
 import { findMapLibraryScreenshot } from './library-service.ts';
 import { getProjectFileForRead, isInside } from './staging-service.ts';
-import { chatImageExtension, isChatImageMime } from '../../../../contract/chat-image-attachments.ts';
 
 export function projectAssetUrl(project: string, relativePath: string): string {
   const token = Buffer.from(path.resolve(project), 'utf8').toString('base64url');
@@ -11,10 +12,45 @@ export function projectAssetUrl(project: string, relativePath: string): string {
   return `rmmv-asset://project/${token}/${relative.split('/').map(encodeURIComponent).join('/')}`;
 }
 
+export function projectAssetThumbnailUrl(
+  project: string,
+  relativePath: string,
+  sizeBucket: number,
+): string {
+  assertProjectAssetThumbnailSizeBucket(sizeBucket);
+  const token = Buffer.from(path.resolve(project), 'utf8').toString('base64url');
+  const relative = normalizeRelativePath(relativePath);
+  return `rmmv-asset://project-thumbnail/${token}/${sizeBucket}/${relative.split('/').map(encodeURIComponent).join('/')}`;
+}
+
 export function librarySourceAssetUrl(sourceSlug: string, relativePath: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(sourceSlug)) throw new Error('Invalid library asset source.');
   const relative = normalizeRelativePath(relativePath);
   return `rmmv-asset://library/source/${encodeURIComponent(sourceSlug)}/${relative.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+export interface ResolvedProjectThumbnailRequest {
+  project: string;
+  relativePath: string;
+  sizeBucket: number;
+  sourceFilePath: string;
+}
+
+export function resolveProjectThumbnailRequest(
+  workflowRoot: string,
+  requestUrl: string,
+): ResolvedProjectThumbnailRequest {
+  const url = new URL(requestUrl);
+  if (url.protocol !== 'rmmv-asset:') throw new Error('Unsupported asset protocol.');
+  if (url.hostname !== 'project-thumbnail') throw new Error('Invalid project thumbnail asset URL.');
+  const [token, sizeBucketRaw, ...parts] = url.pathname.replace(/^\/+/, '').split('/');
+  if (!token || !sizeBucketRaw || !parts.length) throw new Error('Invalid project thumbnail asset URL.');
+  const sizeBucket = Number(sizeBucketRaw);
+  assertProjectAssetThumbnailSizeBucket(sizeBucket);
+  const project = path.resolve(Buffer.from(token, 'base64url').toString('utf8'));
+  const relative = normalizeRelativePath(parts.map(decodeURIComponent).join('/'));
+  const sourceFilePath = assertReadableProjectAsset(workflowRoot, project, relative);
+  return { project, relativePath: relative, sizeBucket, sourceFilePath };
 }
 
 export function resolveAssetRequest(workflowRoot: string, requestUrl: string): string {
@@ -43,16 +79,8 @@ export function resolveAssetRequest(workflowRoot: string, requestUrl: string): s
     const [token, ...parts] = url.pathname.replace(/^\/+/, '').split('/');
     if (!token || !parts.length) throw new Error('Invalid project asset URL.');
     const project = path.resolve(Buffer.from(token, 'base64url').toString('utf8'));
-    const projectsRoot = path.join(path.resolve(workflowRoot), 'projects');
-    if (!isInside(projectsRoot, project) && !isRegisteredProject(workflowRoot, project)) {
-      throw new Error('Project asset is outside the workspace projects directory and not in the project registry.');
-    }
     const relative = normalizeRelativePath(parts.map(decodeURIComponent).join('/'));
-    const filePath = getProjectFileForRead(workflowRoot, project, relative);
-    const stagingRoot = path.join(path.resolve(workflowRoot), 'runtime', 'agent-console-staging');
-    if (!filePath || (!isInside(project, filePath) && !isInside(stagingRoot, filePath))) throw new Error('Project asset path is outside allowed roots.');
-    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) throw new Error('Project asset not found.');
-    return filePath;
+    return assertReadableProjectAsset(workflowRoot, project, relative);
   }
   if (url.hostname === 'session') {
     const [sessionId, attachmentId, ...extra] = url.pathname.replace(/^\/+/, '').split('/').map(decodeURIComponent);
@@ -81,6 +109,24 @@ export function resolveAssetRequest(workflowRoot: string, requestUrl: string): s
     return filePath;
   }
   throw new Error('Unknown asset namespace.');
+}
+
+function assertReadableProjectAsset(
+  workflowRoot: string,
+  project: string,
+  relative: string,
+): string {
+  const projectsRoot = path.join(path.resolve(workflowRoot), 'projects');
+  if (!isInside(projectsRoot, project) && !isRegisteredProject(workflowRoot, project)) {
+    throw new Error('Project asset is outside the workspace projects directory and not in the project registry.');
+  }
+  const filePath = getProjectFileForRead(workflowRoot, project, relative);
+  const stagingRoot = path.join(path.resolve(workflowRoot), 'runtime', 'agent-console-staging');
+  if (!filePath || (!isInside(project, filePath) && !isInside(stagingRoot, filePath))) {
+    throw new Error('Project asset path is outside allowed roots.');
+  }
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) throw new Error('Project asset not found.');
+  return filePath;
 }
 
 function isRegisteredProject(workflowRoot: string, projectPath: string): boolean {

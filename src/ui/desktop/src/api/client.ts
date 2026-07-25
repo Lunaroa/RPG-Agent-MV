@@ -180,6 +180,9 @@ declare global {
       projectAssets: {
         editorCatalog(project?: string): Promise<unknown>;
         listRelativeDirectory(relativeDirectory: string, project?: string, recursive?: boolean): Promise<unknown>;
+        browseTree(project?: string): Promise<unknown>;
+        browseCategory(categoryId: string, project?: string, thumbnailSizeBucket?: number): Promise<unknown>;
+        invalidateBrowseCache(project?: string): Promise<unknown>;
         detail(target: unknown, project?: string): Promise<unknown>;
         rename(target: unknown, nextName: string, project?: string): Promise<unknown>;
         remove(target: unknown, project?: string): Promise<unknown>;
@@ -315,6 +318,7 @@ import type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
+  ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
   AssetLibraryCatalog, AssetLibraryCategoryId, AssetLibraryEntry, AssetLibraryImportResult,
@@ -338,6 +342,7 @@ export type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
+  ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
   ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
   AssetLibraryCatalog, AssetLibraryCategoryId, AssetLibraryEntry, AssetLibraryImportResult,
@@ -971,6 +976,19 @@ export const projectAssets = {
       project,
       recursive,
     ) as Promise<ProjectRelativeDirectoryListResult>;
+  },
+  browseTree(project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.browseTree(project) as Promise<ProjectAssetCategoryTree>;
+  },
+  browseCategory(categoryId: string, project: string = DEFAULT_PROJECT, thumbnailSizeBucket?: number) {
+    return desktopApi().projectAssets.browseCategory(
+      categoryId,
+      project,
+      thumbnailSizeBucket,
+    ) as Promise<ProjectAssetCategoryListing>;
+  },
+  invalidateBrowseCache(project?: string) {
+    return desktopApi().projectAssets.invalidateBrowseCache(project) as Promise<ProjectAssetBrowseCacheInvalidationResult>;
   },
   detail(target: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.detail(toPlain(target), project) as Promise<ManagedAssetDetail>;

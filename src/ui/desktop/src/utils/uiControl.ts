@@ -162,14 +162,26 @@ function pointerUiElement(command: UiControlCommand, language: ProductLanguage):
   const type = phase === 'down' ? 'pointerdown' : phase === 'move' ? 'pointermove' : 'pointerup';
   const button = Number.isInteger(command.button) ? Number(command.button) : 0;
   const buttons = phase === 'up' ? 0 : 1 << button;
+  const clientX = rect.left + offsetX;
+  const clientY = rect.top + offsetY;
   element.dispatchEvent(new PointerEvent(type, {
     bubbles: true,
     cancelable: true,
-    clientX: rect.left + offsetX,
-    clientY: rect.top + offsetY,
+    clientX,
+    clientY,
     button,
     buttons,
   }));
+  if (phase === 'up' && button === 2) {
+    element.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX,
+      clientY,
+      button: 2,
+      buttons: 0,
+    }));
+  }
   return { action: 'pointer', phase, offsetX, offsetY, target: elementState(element) };
 }
 

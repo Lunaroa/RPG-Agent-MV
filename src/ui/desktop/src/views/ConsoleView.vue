@@ -17,7 +17,6 @@ import ConsoleHome from '../components/console/ConsoleHome.vue';
 import ConsoleLogsPane from '../components/console/ConsoleLogsPane.vue';
 import ConsolePluginsPane from '../components/console/ConsolePluginsPane.vue';
 import ConsoleSettingsPane from '../components/console/ConsoleSettingsPane.vue';
-import ConsoleStoryPane from '../components/console/ConsoleStoryPane.vue';
 import StoryProjectIdentityControl from '../components/console/StoryProjectIdentityControl.vue';
 import ProjectAccessControl from '../components/console/ProjectAccessControl.vue';
 import { useI18n, type MessageKey } from '../i18n';
@@ -28,19 +27,28 @@ const route = useRoute();
 const router = useRouter();
 const projectStore = useProjectStore();
 const { language, t } = useI18n();
-const allowedPages: ConsolePage[] = ['home', 'assets', 'story', 'plugins', 'logs', 'settings'];
+const allowedPages: ConsolePage[] = ['home', 'assets', 'plugins', 'logs', 'settings'];
 const retainedPage = ref<ConsolePage>('home');
 const currentPage = computed<ConsolePage>(() => retainedPage.value);
 
-watch(() => [route.path, route.query.page] as const, ([routePath, pageValue]) => {
+watch(() => [route.path, route.query.page, route.query.section] as const, ([routePath, pageValue, sectionValue]) => {
   if (routePath !== '/console') return;
+  if (pageValue === 'story') {
+    const section = typeof sectionValue === 'string' ? sectionValue : undefined;
+    void router.replace({
+      path: '/database',
+      query: section && section !== 'overview' && section !== 'maps' && section !== 'audio' && section !== 'images'
+        ? { section }
+        : {},
+    });
+    return;
+  }
   const page = String(pageValue || 'home') as ConsolePage;
   retainedPage.value = allowedPages.includes(page) ? page : 'home';
 }, { immediate: true });
 const titleKeys: Record<ConsolePage, MessageKey> = {
   home: 'settings.console.home',
   assets: 'settings.console.assets',
-  story: 'settings.console.story',
   plugins: 'settings.console.plugins',
   logs: 'settings.console.logs',
   settings: 'settings.console.settings',
@@ -140,8 +148,6 @@ const projectItemCount = computed(() => {
   return scan.maps.length + eventCount + namedSwitches + namedVariables + scan.commonEvents.length + databaseCount.value + audioCount.value;
 });
 
-const projectIssueCount = computed(() => projectOverview.value?.readIssues.length || 0);
-
 watch(currentPage, (page) => {
   if (!projectStore.currentProject) return;
   if ((page === 'home' || page === 'assets') && !catalog.value && !assetsLoading.value) void loadAssets();
@@ -183,11 +189,9 @@ onDeactivated(() => {
       :asset-count="assetCount"
       :session-count="currentProjectSessions.length"
       :project-item-count="projectItemCount"
-      :database-count="databaseCount"
       :audio-count="audioCount"
       :project-stats-error="projectStatsError"
       :project-stats-loading="projectStatsLoading"
-      :project-issue-count="projectIssueCount"
       :assets-loading="assetsLoading"
       :logs-loading="logsLoading"
       @navigate="go"
@@ -206,10 +210,6 @@ onDeactivated(() => {
         </div>
       </header>
       <ConsoleAssetsPane v-if="currentPage === 'assets'" :catalog="catalog" :loading="assetsLoading" :error="assetsError" />
-      <ConsoleStoryPane
-        v-show="currentPage === 'story'"
-        :active="consoleActive && currentPage === 'story'"
-      />
       <ConsolePluginsPane v-if="currentPage === 'plugins'" />
       <ConsoleLogsPane v-if="currentPage === 'logs'" :sessions="sessions" :loading="logsLoading" :error="logsError" :current-project="projectStore.currentProject" />
       <ConsoleSettingsPane v-if="currentPage === 'settings'" />

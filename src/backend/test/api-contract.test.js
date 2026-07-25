@@ -40,6 +40,9 @@ describe('map IPC bindings', () => {
     assert.equal(MAP_IPC_CHANNELS.includes('assetLibrary:catalog'), true);
     assert.equal(MAP_IPC_CHANNELS.includes('assetLibrary:import'), true);
     assert.equal(MAP_IPC_CHANNELS.includes('projects:remove'), true);
+    assert.equal(MAP_IPC_CHANNELS.includes('projectAssets:browseTree'), true);
+    assert.equal(MAP_IPC_CHANNELS.includes('projectAssets:browseCategory'), true);
+    assert.equal(MAP_IPC_CHANNELS.includes('projectAssets:invalidateBrowseCache'), true);
 
     assert.equal(await handlers.get('plugins:selectInstallFile')({}), null);
     assert.equal(await handlers.get('projectAssets:selectImportFile')({}, 'pictures'), null);
@@ -153,6 +156,7 @@ function createDesktopMock(calls) {
         calls.push(['resolve', root, value]);
         return project;
       },
+      getProjectCompatibilityWarning() { return null; },
     },
     maps: {
       buildMapIndex(_root, resolved) { return { project: resolved, blocks: [], maps: [] }; },
@@ -202,6 +206,11 @@ function createDesktopMock(calls) {
     },
     assetManagement: {
       getAssetImportFileExtensions() { return ['png', 'jpg', 'jpeg', 'webp', 'rpgmvp']; },
+    },
+    projectAssetBrowser: {
+      buildProjectAssetCategoryTree() { return { project, nodes: [] }; },
+      listProjectAssetCategory() { return { categoryId: 'pictures', directory: 'img/pictures', entries: [] }; },
+      invalidateProjectAssetBrowserCache() {},
     },
     library: {
       listMapLibrary() { return { totalEntries: 0, entries: [] }; },

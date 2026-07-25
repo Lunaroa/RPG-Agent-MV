@@ -1,6 +1,8 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
 const WorkbenchView = () => import('../views/WorkbenchView.vue')
+const DatabaseView = () => import('../views/DatabaseView.vue')
+const ProjectAssetsView = () => import('../views/ProjectAssetsView.vue')
 const MapOverviewView = () => import('../views/MapOverviewView.vue')
 const ConsoleView = () => import('../views/ConsoleView.vue')
 
@@ -15,6 +17,16 @@ const router = createRouter({
       path: '/workbench',
       name: 'workbench',
       component: WorkbenchView
+    },
+    {
+      path: '/database',
+      name: 'database',
+      component: DatabaseView
+    },
+    {
+      path: '/project-assets',
+      name: 'project-assets',
+      component: ProjectAssetsView
     },
     {
       path: '/map-overview',
@@ -40,7 +52,7 @@ const router = createRouter({
     },
     {
       path: '/story-graph',
-      redirect: '/console?page=story'
+      redirect: '/database'
     },
     {
       path: '/:pathMatch(.*)*',

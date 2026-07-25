@@ -151,68 +151,16 @@
             </div>
           </aside>
 
-          <main
-            class="preview-surface"
-            :class="{ 'is-panning': isPanning || spaceHeld }"
-            @wheel.prevent="onPreviewWheel"
-            @pointerdown="onPreviewPointerDown"
-            @pointermove="onPreviewPointerMove"
-            @pointerup="onPreviewPointerUp"
-            @pointercancel="onPreviewPointerUp"
-            @auxclick.prevent
-          >
-            <div class="preview-scroll" ref="previewScrollEl">
-              <div
-                v-if="media === 'image' && selectedAsset && previewUrl"
-                class="image-zoom-space"
-                :style="{
-                  width: `${Math.ceil(imageNaturalWidth * previewZoom)}px`,
-                  height: `${Math.ceil(imageNaturalHeight * previewZoom)}px`,
-                  transform: `translate(${previewPanX}px, ${previewPanY}px)`,
-                }"
-              >
-                <img
-                  :src="previewUrl"
-                  :alt="selectedAsset.name"
-                  :style="{ transform: `scale(${previewZoom})`, transformOrigin: '0 0' }"
-                  draggable="false"
-                  @load="onImageLoad"
-                  @error="onPreviewImageError"
-                />
-              </div>
-              <PluginFileAudioPreview
-                v-else-if="media === 'audio' && previewUrl"
-                ref="audioPreviewRef"
-                :key="previewUrl"
-                :src="previewUrl"
-              />
-              <video
-                v-else-if="media === 'movie' && previewUrl"
-                :key="previewUrl"
-                class="movie-preview"
-                :src="previewUrl"
-                controls
-                preload="metadata"
-              />
-              <p v-else-if="selectedAsset" class="plain-preview">
-                {{ previewFailed ? t('pluginFilePicker.previewFailed') : selectedAsset.name }}
-              </p>
-              <p v-else class="plain-preview">
-                {{ t('pluginFilePicker.none') }}
-              </p>
-            </div>
-            <div
-              v-if="media === 'image' && selectedAsset && previewUrl"
-              class="picker-zoom"
-              :aria-label="t('pluginFilePicker.previewZoom')"
-            >
-              <button type="button" :title="t('editor.view.zoomOut')" @click="zoomOut">−</button>
-              <button type="button" :title="t('pluginFilePicker.resetZoom')" @click="resetZoom">
-                {{ Math.round(previewZoom * 100) }}%
-              </button>
-              <button type="button" :title="t('editor.view.zoomIn')" @click="zoomIn">+</button>
-            </div>
-          </main>
+          <AssetPreviewSurface
+            ref="previewSurfaceRef"
+            :media="media"
+            :preview-url="previewUrl"
+            :display-name="selectedAsset?.name || ''"
+            :preview-failed="previewFailed"
+            :space-held="spaceHeld"
+            :labels="previewSurfaceLabels"
+            @image-error="onPreviewImageError"
+          />
         </div>
 
         <footer class="editor-modal-footer">
@@ -258,7 +206,8 @@ import {
 } from '../../utils/pluginParameterFileBrowser';
 import PluginFileTreeNodes from './PluginFileTreeNodes.vue';
 import PluginFileFolderThumb from './PluginFileFolderThumb.vue';
-import PluginFileAudioPreview from './PluginFileAudioPreview.vue';
+import AssetPreviewSurface from '../AssetPreviewSurface.vue';
+import type { AssetPreviewSurfaceLabels } from '../../utils/assetPreview';
 
 const props = defineProps<{
   title?: string;
@@ -281,25 +230,20 @@ const viewMode = ref<PluginFileBrowserViewMode>(getRuntimePluginFileBrowserViewM
 const galleryFocusId = ref(PLUGIN_FILE_GALLERY_NONE_ID);
 const galleryEl = ref<HTMLElement | null>(null);
 const listEl = ref<HTMLElement | null>(null);
-const previewScrollEl = ref<HTMLElement | null>(null);
 const failedImageUrls = ref(new Set<string>());
-const previewZoom = ref(1);
-const previewPanX = ref(0);
-const previewPanY = ref(0);
 const previewUrl = ref('');
-const imageNaturalWidth = ref(320);
-const imageNaturalHeight = ref(240);
 const previewFailed = ref(false);
 const spaceHeld = ref(false);
-const isPanning = ref(false);
-const audioPreviewRef = ref<{ restartFromBeginning: () => void } | null>(null);
-let panPointerId: number | null = null;
-let panOriginX = 0;
-let panOriginY = 0;
-let panStartX = 0;
-let panStartY = 0;
-const PREVIEW_ZOOM_MIN = 0.25;
-const PREVIEW_ZOOM_MAX = 4;
+const previewSurfaceRef = ref<{ restartFromBeginning: () => void; resetView: () => void } | null>(null);
+
+const previewSurfaceLabels = computed<AssetPreviewSurfaceLabels>(() => ({
+  previewFailed: t('pluginFilePicker.previewFailed'),
+  none: t('pluginFilePicker.none'),
+  previewZoom: t('pluginFilePicker.previewZoom'),
+  resetZoom: t('pluginFilePicker.resetZoom'),
+  zoomOut: t('editor.view.zoomOut'),
+  zoomIn: t('editor.view.zoomIn'),
+}));
 
 const title = computed(() => props.title || t('pluginFilePicker.title'));
 const filteredAssets = computed(() => filterPluginFileAssetsByQuery(props.assets, search.value));
@@ -330,8 +274,6 @@ const directoryHint = computed(() => {
 });
 
 watch(selectedAsset, (asset) => {
-  previewPanX.value = 0;
-  previewPanY.value = 0;
   void refreshPreview(asset);
 });
 
@@ -362,7 +304,7 @@ function onKeyDown(event: KeyboardEvent) {
     if (inTextField) return;
     event.preventDefault();
     if (props.media === 'audio' && previewUrl.value) {
-      if (!event.repeat) audioPreviewRef.value?.restartFromBeginning();
+      if (!event.repeat) previewSurfaceRef.value?.restartFromBeginning();
       return;
     }
     spaceHeld.value = true;
@@ -415,9 +357,6 @@ function open(currentName = '') {
   const normalized = normalizePluginFileBrowsePath(currentName);
   name.value = normalized;
   search.value = '';
-  previewZoom.value = 1;
-  previewPanX.value = 0;
-  previewPanY.value = 0;
   failedImageUrls.value = new Set();
   currentPath.value = folderPathOfAssetName(normalized);
   expandedFolderIds.value = new Set(ancestorPluginFileFolderPaths(normalized));
@@ -466,10 +405,11 @@ function enterFolder(folderPath: string): void {
 
 function selectAsset(value: string) {
   const normalized = normalizePluginFileBrowsePath(value);
+  // Same-asset re-select: surface watch keys on url/name and will not fire.
+  if (normalized === name.value) {
+    previewSurfaceRef.value?.resetView();
+  }
   name.value = normalized;
-  previewZoom.value = 1;
-  previewPanX.value = 0;
-  previewPanY.value = 0;
   galleryFocusId.value = normalized
     ? resolvePluginFileGalleryFocusId(normalized, galleryEntries.value)
     : PLUGIN_FILE_GALLERY_NONE_ID;
@@ -519,9 +459,6 @@ function moveListFocus(delta: -1 | 1): void {
   } else {
     name.value = '';
     currentPath.value = item.id;
-    previewZoom.value = 1;
-    previewPanX.value = 0;
-    previewPanY.value = 0;
   }
   scrollListFocusIntoView(item.navId);
 }
@@ -572,17 +509,11 @@ function applyGalleryFocusId(focusId: string): void {
   galleryFocusId.value = focusId;
   if (focusId === PLUGIN_FILE_GALLERY_NONE_ID) {
     name.value = '';
-    previewZoom.value = 1;
-    previewPanX.value = 0;
-    previewPanY.value = 0;
     return;
   }
   const entry = galleryEntries.value.find((item) => item.id === focusId);
   if (entry?.kind === 'file') {
     name.value = entry.asset.name;
-    previewZoom.value = 1;
-    previewPanX.value = 0;
-    previewPanY.value = 0;
   }
 }
 
@@ -629,71 +560,9 @@ async function refreshPreview(asset: PluginFileAssetOption | null) {
   }
 }
 
-function onImageLoad(event: Event) {
-  const image = event.target as HTMLImageElement;
-  imageNaturalWidth.value = Math.max(1, image.naturalWidth || 320);
-  imageNaturalHeight.value = Math.max(1, image.naturalHeight || 240);
-  fitPreviewToView();
-}
-
 function onPreviewImageError() {
   previewFailed.value = true;
   previewUrl.value = '';
-}
-
-/** Fit whole image in the preview pane (min scale), never crop. */
-function fitPreviewToView() {
-  const scroll = previewScrollEl.value;
-  const pad = 32;
-  const availW = Math.max(1, (scroll?.clientWidth || 480) - pad);
-  const availH = Math.max(1, (scroll?.clientHeight || 360) - pad);
-  const scale = Math.min(
-    1,
-    availW / Math.max(1, imageNaturalWidth.value),
-    availH / Math.max(1, imageNaturalHeight.value),
-  );
-  previewZoom.value = clampPreviewZoom(scale);
-  previewPanX.value = 0;
-  previewPanY.value = 0;
-}
-
-function clampPreviewZoom(value: number): number {
-  return Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, Math.round(value * 100) / 100));
-}
-function zoomIn() { previewZoom.value = clampPreviewZoom(previewZoom.value * 1.25); }
-function zoomOut() { previewZoom.value = clampPreviewZoom(previewZoom.value / 1.25); }
-function resetZoom() {
-  previewZoom.value = 1;
-  previewPanX.value = 0;
-  previewPanY.value = 0;
-}
-function onPreviewWheel(event: WheelEvent) {
-  if (event.deltaY < 0) zoomIn();
-  else zoomOut();
-}
-function onPreviewPointerDown(event: PointerEvent) {
-  if (props.media !== 'image' || !selectedAsset.value) return;
-  const middle = event.button === 1;
-  const spaceDrag = event.button === 0 && spaceHeld.value;
-  if (!middle && !spaceDrag) return;
-  event.preventDefault();
-  isPanning.value = true;
-  panPointerId = event.pointerId;
-  panOriginX = event.clientX;
-  panOriginY = event.clientY;
-  panStartX = previewPanX.value;
-  panStartY = previewPanY.value;
-  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-}
-function onPreviewPointerMove(event: PointerEvent) {
-  if (!isPanning.value || panPointerId !== event.pointerId) return;
-  previewPanX.value = panStartX + (event.clientX - panOriginX);
-  previewPanY.value = panStartY + (event.clientY - panOriginY);
-}
-function onPreviewPointerUp(event: PointerEvent) {
-  if (panPointerId !== event.pointerId) return;
-  isPanning.value = false;
-  panPointerId = null;
 }
 
 function commit() {
@@ -935,71 +804,6 @@ defineExpose({ open });
   color: var(--app-ink-muted);
   font-size: 11px;
   text-align: center;
-}
-.preview-surface {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  background: #aeb9c3;
-  touch-action: none;
-}
-.preview-surface.is-panning,
-.preview-surface.is-panning * {
-  cursor: grab;
-}
-.preview-surface.is-panning:active,
-.preview-surface.is-panning:active * {
-  cursor: grabbing;
-}
-.preview-scroll {
-  height: 100%;
-  overflow: auto;
-  display: grid;
-  place-items: center;
-}
-.image-zoom-space { position: relative; flex: 0 0 auto; }
-.image-zoom-space img {
-  display: block;
-  image-rendering: pixelated;
-}
-.movie-preview {
-  width: min(100%, 520px);
-  margin: 24px;
-}
-.plain-preview {
-  margin: 0;
-  padding: 24px;
-  color: #2a3138;
-  font-size: 13px;
-  text-align: center;
-}
-.picker-zoom {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  z-index: 2;
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 999px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(20, 24, 29, .18);
-}
-.picker-zoom button {
-  height: 26px;
-  min-width: 28px;
-  padding: 0 7px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: #3a414b;
-  font: 600 11px var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
-  cursor: pointer;
-}
-.picker-zoom button:hover { background: #eef1f4; }
-.picker-zoom button:focus-visible {
-  outline: 2px solid var(--app-accent, #c45c26);
-  outline-offset: 1px;
 }
 @media (max-width: 1300px) {
   .file-gallery { grid-template-columns: repeat(4, minmax(0, 1fr)); }

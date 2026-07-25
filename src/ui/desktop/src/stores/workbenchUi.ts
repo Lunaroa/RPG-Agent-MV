@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { clampPaletteHeight } from '../utils/workspaceSettings';
 
-export type ConsolePage = 'home' | 'assets' | 'story' | 'plugins' | 'logs' | 'settings';
+export type ConsolePage = 'home' | 'assets' | 'plugins' | 'logs' | 'settings';
 
 /** 聊天面板菜单按钮打开的右侧侧边栏类型；null = 不显示侧边栏。 */
 export type SidePanelKind = 'task' | 'plan' | 'placement' | 'subagent' | null;

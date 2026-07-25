@@ -1077,9 +1077,11 @@ function importResultMessageCopy() {
 async function runImportForSourceFiles(
   sourceFiles: string[],
   preRejections: LocalImportRejection[] = [],
+  categoryOverride?: string,
 ) {
-  if (!projectStore.currentProject || !selectedCategoryId.value) return
-  const category = selectedCategoryId.value
+  if (!projectStore.currentProject) return
+  const category = categoryOverride || selectedCategoryId.value
+  if (!category) return
   let candidates: ImportOverwriteCandidate[] = sourceFiles.map((sourceFile) => {
     const parts = localFileParts(sourceFile)
     return {
@@ -1089,9 +1091,18 @@ async function runImportForSourceFiles(
     }
   })
 
-  const conflicts = candidates.filter((candidate) =>
-    categoryEntries.value.some((entry) => entry.name === candidate.name),
-  )
+  // Overwrite detection needs the target category's existing names; the loaded
+  // listing only matches when the target is the category on screen.
+  let existingNames: ReadonlySet<string>
+  if (!categoryOverride || category === selectedCategoryId.value) {
+    existingNames = new Set(categoryEntries.value.map((entry) => entry.name))
+  } else {
+    const listing = await projectAssets.browseCategory(category, projectStore.currentProject)
+    existingNames = new Set(
+      ((listing as { entries?: ProjectAssetBrowseEntry[] }).entries || []).map((entry) => entry.name),
+    )
+  }
+  const conflicts = candidates.filter((candidate) => existingNames.has(candidate.name))
   let skippedFromDialog: ProjectAssetImportItemResult[] = []
 
   if (conflicts.length === 1 && candidates.length === 1) {
@@ -1227,18 +1238,56 @@ function onGridDragLeave(event: DragEvent) {
   if (fileDragDepth === 0) fileDropActive.value = false
 }
 
-async function onGridDrop(event: DragEvent) {
-  event.preventDefault()
-  fileDragDepth = 0
-  fileDropActive.value = false
+const treeDropTargetId = ref<string | null>(null)
 
-  if (!projectStore.currentProject) return
-  if (!canImport.value) {
+function treeNodeAcceptsDrop(categoryId: string): boolean {
+  return Boolean(projectStore.currentProject)
+    && !isProjectAssetGroupCategory(categoryId)
+    && !mutationBusy.value
+}
+
+function onTreeNodeDragEnter(event: DragEvent, categoryId: string) {
+  if (!isFileDragEvent(event)) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (treeNodeAcceptsDrop(categoryId)) treeDropTargetId.value = categoryId
+}
+
+function onTreeNodeDragOver(event: DragEvent, categoryId: string) {
+  if (!isFileDragEvent(event)) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = treeNodeAcceptsDrop(categoryId) ? 'copy' : 'none'
+  }
+}
+
+function onTreeNodeDragLeave(event: DragEvent, categoryId: string) {
+  if (!isFileDragEvent(event)) return
+  const related = event.relatedTarget as Node | null
+  if (related && (event.currentTarget as HTMLElement).contains(related)) return
+  if (treeDropTargetId.value === categoryId) treeDropTargetId.value = null
+}
+
+async function onTreeNodeDrop(event: DragEvent, categoryId: string) {
+  if (!isFileDragEvent(event)) return
+  event.preventDefault()
+  event.stopPropagation()
+  treeDropTargetId.value = null
+  if (!treeNodeAcceptsDrop(categoryId)) {
     mutationError.value = t('projectAssets.importDropNeedsCategory')
     return
   }
-  if (mutationBusy.value) return
+  await runDroppedImport(resolveDroppedImportPlan(event), categoryId)
+}
 
+type DroppedImportPlan = {
+  sourceFiles: string[]
+  rejections: LocalImportRejection[]
+}
+
+/** Resolve a drop's dataTransfer into importable absolute paths plus per-item rejections. */
+function resolveDroppedImportPlan(event: DragEvent): DroppedImportPlan {
   const dataTransfer = event.dataTransfer
   if (!dataTransfer) {
     throw new Error(t('projectAssets.importPathUnresolved', { name: t('projectAssets.importResultUnknownReason') }))
@@ -1286,15 +1335,16 @@ async function onGridDrop(event: DragEvent) {
       ? t('projectAssets.importDropDirectoryRejected', { name: item.name })
       : t('projectAssets.importPathUnresolved', { name: item.name }),
   }))
-  const sourceFiles = plan.sourceFiles
+  return { sourceFiles: plan.sourceFiles, rejections }
+}
 
-  if (sourceFiles.length === 0 && rejections.length === 0) return
-
+async function runDroppedImport(plan: DroppedImportPlan, categoryOverride?: string) {
+  if (plan.sourceFiles.length === 0 && plan.rejections.length === 0) return
   mutationBusy.value = true
   mutationError.value = ''
   try {
-    if (sourceFiles.length === 0) {
-      mutationError.value = formatImportResultMessage(rejections.map((item) => ({
+    if (plan.sourceFiles.length === 0) {
+      mutationError.value = formatImportResultMessage(plan.rejections.map((item) => ({
         sourceFile: item.name,
         targetName: item.name,
         relativePath: null,
@@ -1303,12 +1353,27 @@ async function onGridDrop(event: DragEvent) {
       })), importResultMessageCopy())
       return
     }
-    await runImportForSourceFiles(sourceFiles, rejections)
+    await runImportForSourceFiles(plan.sourceFiles, plan.rejections, categoryOverride)
   } catch (error) {
     mutationError.value = formatError(error)
   } finally {
     mutationBusy.value = false
   }
+}
+
+async function onGridDrop(event: DragEvent) {
+  event.preventDefault()
+  fileDragDepth = 0
+  fileDropActive.value = false
+
+  if (!projectStore.currentProject) return
+  if (!canImport.value) {
+    mutationError.value = t('projectAssets.importDropNeedsCategory')
+    return
+  }
+  if (mutationBusy.value) return
+
+  await runDroppedImport(resolveDroppedImportPlan(event))
 }
 
 function resolveDroppedFilePath(file: File): string | null {
@@ -1657,7 +1722,15 @@ watch(gridHost, (el, previous) => {
         @node-click="onTreeNodeClick"
       >
         <template #default="{ data }">
-          <span class="project-assets-tree-node" :title="`${data.label} (${data.entryCount})`">
+          <span
+            class="project-assets-tree-node"
+            :class="{ 'is-drop-target': treeDropTargetId === data.id }"
+            :title="`${data.label} (${data.entryCount})`"
+            @dragenter="onTreeNodeDragEnter($event, data.id)"
+            @dragover="onTreeNodeDragOver($event, data.id)"
+            @dragleave="onTreeNodeDragLeave($event, data.id)"
+            @drop="onTreeNodeDrop($event, data.id)"
+          >
             <span>{{ data.label }}</span>
             <small>{{ data.entryCount }}</small>
           </span>
@@ -1996,6 +2069,14 @@ watch(gridHost, (el, previous) => {
   gap: 6px;
   width: 100%;
   padding-right: 4px;
+  border-radius: var(--app-radius-sm);
+}
+
+.project-assets-tree-node.is-drop-target {
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+  outline: 1px dashed var(--app-accent);
+  outline-offset: -1px;
 }
 
 .project-assets-tree-node span {

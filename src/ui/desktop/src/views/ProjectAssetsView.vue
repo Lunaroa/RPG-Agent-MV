@@ -60,6 +60,12 @@ import {
   projectAssetMediaKind,
 } from '../utils/projectAssetLocalization'
 import { computeProjectAssetGridWindow } from '../utils/projectAssetGridWindow'
+import {
+  computeHoverPreviewPosition,
+  projectAssetThumbnailUrlForBucket,
+  PROJECT_ASSET_HOVER_PREVIEW_DELAY_MS,
+  PROJECT_ASSET_HOVER_PREVIEW_MAX_SIZE,
+} from '../utils/projectAssetHoverPreview'
 import { planProjectAssetDeleteConfirmation } from '../utils/projectAssetDeleteFlow'
 import {
   sortProjectAssetEntries,
@@ -176,6 +182,9 @@ const containerWidth = ref(0)
 const containerHeight = ref(0)
 const scrollTop = ref(0)
 const failedThumbnails = ref(new Set<string>())
+/** Floating hover preview for image cells: full asset at up to 200px, aspect preserved. */
+const hoverPreview = ref<{ id: string; name: string; url: string; left: number; top: number } | null>(null)
+let hoverPreviewTimer: ReturnType<typeof setTimeout> | null = null
 
 /** Thumbnail height in px (user zoom, 48-512, persisted). Cell = thumb + name area; default 72+76=148 matches the original fixed cell. */
 const thumbSize = ref(loadProjectAssetThumbSize())
@@ -513,6 +522,41 @@ function measureGrid() {
 
 function onGridScroll() {
   scrollTop.value = gridHost.value?.scrollTop || 0
+  clearHoverPreview()
+}
+
+function clearHoverPreview() {
+  if (hoverPreviewTimer) {
+    clearTimeout(hoverPreviewTimer)
+    hoverPreviewTimer = null
+  }
+  hoverPreview.value = null
+}
+
+function onCellMouseEnter(event: MouseEvent, item: GridItem) {
+  clearHoverPreview()
+  if (item.kind !== 'file') return
+  const entry = item.entry
+  if (!isProjectAssetImageCategory(selectedCategoryId.value)) return
+  if (entry.encrypted || !entry.thumbnailUrl || failedThumbnails.value.has(entry.id)) return
+  const thumbnailUrl = entry.thumbnailUrl
+  const mouseX = event.clientX
+  const mouseY = event.clientY
+  hoverPreviewTimer = setTimeout(() => {
+    hoverPreviewTimer = null
+    const bucket = selectProjectAssetThumbnailBucket(
+      PROJECT_ASSET_HOVER_PREVIEW_MAX_SIZE,
+      window.devicePixelRatio || 1,
+    )
+    const url = projectAssetThumbnailUrlForBucket(thumbnailUrl, bucket) ?? thumbnailUrl
+    const pos = computeHoverPreviewPosition({
+      mouseX,
+      mouseY,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    })
+    hoverPreview.value = { id: entry.id, name: entry.name, url, left: pos.left, top: pos.top }
+  }, PROJECT_ASSET_HOVER_PREVIEW_DELAY_MS)
 }
 
 function syncTreeCurrentKey(categoryId: string) {
@@ -1889,6 +1933,8 @@ watch(gridHost, (el, previous) => {
             @click="onCellClick($event, cell.item)"
             @dblclick="onCellDoubleClick(cell.item)"
             @keydown="onCellKeydown($event, cell.item)"
+            @mouseenter="onCellMouseEnter($event, cell.item)"
+            @mouseleave="clearHoverPreview"
             @contextmenu="cell.item.kind === 'file'
               ? openContextMenu($event, cell.item.entry.id)
               : undefined"
@@ -1942,6 +1988,18 @@ watch(gridHost, (el, previous) => {
         </div>
       </div>
     </section>
+
+    <div
+      v-if="hoverPreview"
+      class="project-assets-hover-preview"
+      :style="{ left: `${hoverPreview.left}px`, top: `${hoverPreview.top}px` }"
+    >
+      <img
+        :src="hoverPreview.url"
+        :alt="hoverPreview.name"
+        draggable="false"
+      >
+    </div>
 
     <AssetPreviewDialog
       :visible="previewVisible"
@@ -2294,8 +2352,32 @@ watch(gridHost, (el, previous) => {
 }
 
 .project-assets-thumb img {
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.project-assets-hover-preview {
+  position: fixed;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--el-bg-color-overlay);
+  box-shadow: var(--app-shadow-overlay);
+  pointer-events: none;
+}
+
+.project-assets-hover-preview img {
+  max-width: 200px;
+  max-height: 200px;
+  width: auto;
+  height: auto;
   object-fit: contain;
   image-rendering: pixelated;
 }

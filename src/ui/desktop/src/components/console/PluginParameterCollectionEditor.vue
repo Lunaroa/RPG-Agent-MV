@@ -983,7 +983,6 @@ function displayValue(value: unknown): string {
                   >
                     {{ structTypeDisplay(row).struct!.keyword }}
                   </el-tag>
-                  <span>{{ structTypeDisplay(row).struct!.name }}</span>
                 </template>
                 <span v-else>{{ structTypeDisplay(row).text }}</span>
               </div>

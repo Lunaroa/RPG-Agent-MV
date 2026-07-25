@@ -517,7 +517,6 @@ async function focusInitialParameter(): Promise<void> {
                     >
                       {{ parameterTypeDisplay(row).struct!.keyword }}
                     </el-tag>
-                    <span>{{ parameterTypeDisplay(row).struct!.name }}</span>
                   </template>
                   <span v-else>{{ parameterTypeDisplay(row).text }}</span>
                 </div>

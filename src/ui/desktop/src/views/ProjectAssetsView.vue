@@ -4,7 +4,6 @@ import {
   ArrowDown,
   Check,
   Document,
-  Folder,
   Headset,
   Film,
   MagicStick,
@@ -43,6 +42,7 @@ import {
   type ManagedAssetDetail,
 } from '../api/client'
 import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'
+import AssetFolderIcon from '../components/AssetFolderIcon.vue'
 import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
 import ConsoleSearchInput from '../components/console/ConsoleSearchInput.vue'
 import { useI18n } from '../i18n'
@@ -182,6 +182,9 @@ const containerWidth = ref(0)
 const containerHeight = ref(0)
 const scrollTop = ref(0)
 const failedThumbnails = ref(new Set<string>())
+/** Lazy per-category folder-icon previews: categoryId -> up to two thumbnail URLs. */
+const folderPreviews = ref(new Map<string, string[]>())
+const folderPreviewLoading = new Set<string>()
 /** Floating hover preview for image cells: full asset at up to 200px, aspect preserved. */
 const hoverPreview = ref<{ id: string; name: string; url: string; left: number; top: number } | null>(null)
 let hoverPreviewTimer: ReturnType<typeof setTimeout> | null = null
@@ -340,6 +343,32 @@ const visibleItems = computed(() => {
     }
   })
 })
+
+/** Fetch up to two image thumbnails of a category for its folder icon. Cached and in-flight deduped; failures settle as "no previews" without retry storms. */
+async function ensureFolderPreview(categoryId: string) {
+  const project = projectStore.currentProject
+  if (!project) return
+  if (folderPreviews.value.has(categoryId) || folderPreviewLoading.has(categoryId)) return
+  folderPreviewLoading.add(categoryId)
+  try {
+    const listing = await projectAssets.browseCategory(categoryId, project, 128)
+    const urls = listing.entries
+      .filter((entry) => Boolean(entry.thumbnailUrl) && !entry.encrypted)
+      .slice(0, 2)
+      .map((entry) => entry.thumbnailUrl as string)
+    folderPreviews.value.set(categoryId, urls)
+  } catch {
+    folderPreviews.value.set(categoryId, [])
+  } finally {
+    folderPreviewLoading.delete(categoryId)
+  }
+}
+
+watch(visibleItems, (items) => {
+  for (const cell of items) {
+    if (cell.item.kind === 'folder') void ensureFolderPreview(cell.item.id)
+  }
+}, { immediate: true })
 
 const emptyMessage = computed(() => {
   if (!projectStore.currentProject) return t('projectAssets.noProject')
@@ -611,6 +640,7 @@ async function confirmAgentOperations(summary: ProjectStagingSummary): Promise<b
 }
 
 async function loadTree(preferredCategoryId?: string) {
+  folderPreviews.value = new Map()
   if (!projectStore.currentProject) {
     treeNodes.value = []
     selectedCategoryId.value = ''
@@ -1990,8 +2020,11 @@ watch(gridHost, (el, previous) => {
               : undefined"
           >
             <template v-if="cell.item.kind === 'folder'">
-              <span class="project-assets-thumb is-icon" :style="{ height: `${thumbSize}px` }">
-                <el-icon><Folder /></el-icon>
+              <span class="project-assets-thumb is-folder" :style="{ height: `${thumbSize}px` }">
+                <AssetFolderIcon
+                  :previews="folderPreviews.get(cell.item.id) ?? []"
+                  :size="thumbSize"
+                />
               </span>
               <span class="project-assets-name" :title="`${cell.item.label} (${cell.item.entryCount})`">{{ cell.item.label }}</span>
             </template>
@@ -2439,6 +2472,10 @@ watch(gridHost, (el, previous) => {
 .project-assets-thumb.is-icon :deep(svg) {
   width: 28px;
   height: 28px;
+}
+
+.project-assets-thumb.is-folder {
+  background: transparent;
 }
 
 .project-assets-thumb.is-encrypted {

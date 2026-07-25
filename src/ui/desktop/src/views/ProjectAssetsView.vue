@@ -2,7 +2,7 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
-  ArrowUp,
+  Check,
   Document,
   Folder,
   Headset,
@@ -10,7 +10,9 @@ import {
   MagicStick,
   Picture,
   Refresh,
+  Sort,
   Upload,
+  View,
 } from '@element-plus/icons-vue'
 import {
   computed,
@@ -76,8 +78,6 @@ import {
   clampProjectAssetThumbSize,
   loadProjectAssetSortPreference,
   loadProjectAssetThumbSize,
-  PROJECT_ASSET_THUMB_SIZE_MAX,
-  PROJECT_ASSET_THUMB_SIZE_MIN,
   saveProjectAssetSortPreference,
   saveProjectAssetThumbSize,
 } from '../config/projectAssetsViewPrefs'
@@ -272,9 +272,21 @@ watch([sortKey, sortDir], ([key, dir]) => {
   saveProjectAssetSortPreference({ key, dir })
 })
 
-function toggleSortDir() {
-  sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
-}
+/** Explorer-style sort menu entries (menu order: name, date modified, type, size). */
+const sortMenuItems = computed(() => ([
+  { key: 'name' as const, label: t('projectAssets.sortName') },
+  { key: 'mtimeMs' as const, label: t('projectAssets.sortModified') },
+  { key: 'type' as const, label: t('projectAssets.sortType') },
+  { key: 'bytes' as const, label: t('projectAssets.sortSize') },
+]))
+
+/** Explorer-style View menu icon-size presets (labels localized). */
+const iconSizePresets = computed(() => ([
+  { key: 'xl', size: 256, label: t('projectAssets.viewIcons.xl') },
+  { key: 'l', size: 128, label: t('projectAssets.viewIcons.l') },
+  { key: 'm', size: 72, label: t('projectAssets.viewIcons.m') },
+  { key: 's', size: 48, label: t('projectAssets.viewIcons.s') },
+]))
 
 watch(thumbSize, (size) => {
   saveProjectAssetThumbSize(size)
@@ -1789,38 +1801,76 @@ watch(gridHost, (el, previous) => {
           :placeholder="t('projectAssets.searchPlaceholder')"
         />
         <div class="project-assets-toolbar-actions">
-          <el-select
-            v-model="sortKey"
-            class="project-assets-sort-select"
-            size="small"
-            data-ui-id="project-assets-sort-key"
-            :aria-label="t('projectAssets.sortLabel')"
+          <el-dropdown
+            trigger="click"
             :disabled="!projectStore.currentProject || isGroupSelection"
+            data-ui-id="project-assets-sort-menu"
           >
-            <el-option value="name" :label="t('projectAssets.sortName')" />
-            <el-option value="bytes" :label="t('projectAssets.sortSize')" />
-            <el-option value="mtimeMs" :label="t('projectAssets.sortModified')" />
-          </el-select>
-          <button
-            type="button"
-            class="project-assets-tool-btn"
-            data-ui-id="project-assets-sort-dir"
+            <button
+              type="button"
+              class="project-assets-tool-btn"
+              :disabled="!projectStore.currentProject || isGroupSelection"
+            >
+              <el-icon><Sort /></el-icon>
+              <span>{{ t('projectAssets.sortMenu') }}</span>
+              <el-icon class="project-assets-menu-caret"><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-for="item in sortMenuItems"
+                  :key="item.key"
+                  @click="sortKey = item.key"
+                >
+                  <span class="project-assets-menu-check">
+                    <el-icon v-if="sortKey === item.key"><Check /></el-icon>
+                  </span>
+                  <span>{{ item.label }}</span>
+                </el-dropdown-item>
+                <el-dropdown-item divided @click="sortDir = 'asc'">
+                  <span class="project-assets-menu-check">
+                    <el-icon v-if="sortDir === 'asc'"><Check /></el-icon>
+                  </span>
+                  <span>{{ t('projectAssets.sortAsc') }}</span>
+                </el-dropdown-item>
+                <el-dropdown-item @click="sortDir = 'desc'">
+                  <span class="project-assets-menu-check">
+                    <el-icon v-if="sortDir === 'desc'"><Check /></el-icon>
+                  </span>
+                  <span>{{ t('projectAssets.sortDesc') }}</span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-dropdown
+            trigger="click"
             :disabled="!projectStore.currentProject || isGroupSelection"
-            :title="sortDir === 'asc' ? t('projectAssets.sortAsc') : t('projectAssets.sortDesc')"
-            :aria-label="sortDir === 'asc' ? t('projectAssets.sortAsc') : t('projectAssets.sortDesc')"
-            @click="toggleSortDir"
+            data-ui-id="project-assets-view-menu"
           >
-            <el-icon><ArrowUp v-if="sortDir === 'asc'" /><ArrowDown v-else /></el-icon>
-          </button>
-          <el-slider
-            v-model="thumbSize"
-            class="project-assets-zoom-slider"
-            :min="PROJECT_ASSET_THUMB_SIZE_MIN"
-            :max="PROJECT_ASSET_THUMB_SIZE_MAX"
-            data-ui-id="project-assets-zoom"
-            :aria-label="t('projectAssets.thumbZoom')"
-            :disabled="!projectStore.currentProject || isGroupSelection"
-          />
+            <button
+              type="button"
+              class="project-assets-tool-btn"
+              :disabled="!projectStore.currentProject || isGroupSelection"
+            >
+              <el-icon><View /></el-icon>
+              <span>{{ t('projectAssets.viewMenu') }}</span>
+              <el-icon class="project-assets-menu-caret"><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-for="preset in iconSizePresets"
+                  :key="preset.key"
+                  @click="thumbSize = preset.size"
+                >
+                  <span class="project-assets-menu-check">
+                    <el-icon v-if="thumbSize === preset.size"><Check /></el-icon>
+                  </span>
+                  <span>{{ preset.label }}</span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <button
             type="button"
             class="project-assets-tool-btn"
@@ -2177,12 +2227,16 @@ watch(gridHost, (el, previous) => {
   align-items: center;
 }
 
-.project-assets-sort-select {
-  width: 128px;
+.project-assets-menu-caret {
+  margin-left: 2px;
+  font-size: 12px;
 }
 
-.project-assets-zoom-slider {
-  width: 120px;
+.project-assets-menu-check {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  margin-right: 6px;
   flex: 0 0 auto;
 }
 

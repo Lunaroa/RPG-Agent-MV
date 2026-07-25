@@ -7,15 +7,22 @@ import {
   sortProjectAssetEntries,
 } from './projectAssetSorting';
 
-function makeEntry(name: string, bytes: number, mtimeMs: number): ProjectAssetBrowseEntry {
+function makeEntry(name: string, bytes: number, mtimeMs: number, extension = '.png'): ProjectAssetBrowseEntry {
   return {
     id: `pictures:${name}`,
     name,
-    variants: [],
+    variants: [{
+      relativePath: `www/img/pictures/${name}${extension}`,
+      fileName: `${name}${extension}`,
+      extension,
+      bytes,
+      mtimeMs,
+      encrypted: false,
+    }],
     bytes,
     mtimeMs,
     encrypted: false,
-    url: `rmmv-asset://project/img/pictures/${name}.png`,
+    url: `rmmv-asset://project/img/pictures/${name}${extension}`,
     thumbnailUrl: null,
   } as ProjectAssetBrowseEntry;
 }
@@ -39,6 +46,18 @@ describe('sortProjectAssetEntries', () => {
     );
   });
 
+  test('sorts by extension then name for the type key', () => {
+    const entries = [
+      makeEntry('zeta', 0, 0, '.png'),
+      makeEntry('beta', 0, 0, '.gif'),
+      makeEntry('alpha', 0, 0, '.png'),
+    ];
+    assert.deepEqual(
+      sortProjectAssetEntries(entries, 'type', 'asc').map((entry) => entry.name),
+      ['beta', 'alpha', 'zeta'],
+    );
+  });
+
   test('does not mutate the input array and keeps ties stable', () => {
     const entries = [makeEntry('x', 5, 1), makeEntry('y', 5, 2), makeEntry('z', 5, 3)];
     const snapshot = [...entries];
@@ -54,6 +73,7 @@ describe('sort key/dir guards', () => {
     assert.equal(isProjectAssetSortKey('name'), true);
     assert.equal(isProjectAssetSortKey('bytes'), true);
     assert.equal(isProjectAssetSortKey('mtimeMs'), true);
+    assert.equal(isProjectAssetSortKey('type'), true);
     assert.equal(isProjectAssetSortKey('referenceCount'), false);
     assert.equal(isProjectAssetSortKey(1), false);
     assert.equal(isProjectAssetSortDir('asc'), true);

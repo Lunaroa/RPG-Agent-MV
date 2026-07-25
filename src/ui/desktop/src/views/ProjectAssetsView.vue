@@ -22,6 +22,9 @@ import type { ElTree } from 'element-plus'
 import type {
   ProjectAssetBrowseEntry,
   ProjectAssetCategoryTreeNode,
+  ProjectAssetDeleteBatchResult,
+  ProjectAssetDeleteItemResult,
+  ProjectAssetMutationSafetyCheck,
 } from '@contract/types'
 import {
   maps as mapsApi,
@@ -47,6 +50,19 @@ import {
   projectAssetMediaKind,
 } from '../utils/projectAssetLocalization'
 import { computeProjectAssetGridWindow } from '../utils/projectAssetGridWindow'
+import {
+  clearProjectAssetSelection,
+  emptyProjectAssetSelection,
+  normalizeContentRect,
+  pruneProjectAssetSelection,
+  selectAllProjectAssets,
+  selectProjectAssetExclusive,
+  selectProjectAssetRange,
+  selectProjectAssetsByMarquee,
+  toggleProjectAssetSelection,
+  viewportPointToContentPoint,
+  type ProjectAssetSelectionState,
+} from '../utils/projectAssetSelection'
 import { selectProjectAssetThumbnailBucket } from '../utils/projectAssetThumbnailBucket'
 import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging'
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
@@ -95,7 +111,8 @@ const categoryError = ref('')
 const categoryLoading = ref(false)
 
 const searchQuery = ref('')
-const selectedEntryId = ref<string | null>(null)
+const selection = ref<ProjectAssetSelectionState>(emptyProjectAssetSelection())
+const selectedFolderId = ref<string | null>(null)
 const mutationBusy = ref(false)
 const mutationError = ref('')
 
@@ -106,12 +123,22 @@ const stagingError = ref('')
 const previewVisible = ref(false)
 const previewIndex = ref(0)
 
-const contextMenu = ref<{ x: number; y: number; entryId: string } | null>(null)
+const contextMenu = ref<{ x: number; y: number } | null>(null)
 
 const containerWidth = ref(0)
 const containerHeight = ref(0)
 const scrollTop = ref(0)
 const failedThumbnails = ref(new Set<string>())
+
+type MarqueeState = {
+  originX: number
+  originY: number
+  currentX: number
+  currentY: number
+}
+const marquee = ref<MarqueeState | null>(null)
+let marqueeActive = false
+let suppressNextClick = false
 
 const listingCoordinator = new LatestAsyncCoordinator<{
   project: string
@@ -237,6 +264,46 @@ const canImport = computed(() =>
   ),
 )
 
+/** Ordered file ids for the current category listing (full list; not the virtualized window). */
+const orderedFileIds = computed(() => {
+  if (isGroupSelection.value) return [] as string[]
+  return filteredEntries.value.map((entry) => entry.id)
+})
+
+const selectedIdSet = computed(() => new Set(selection.value.selectedIds))
+
+const selectedFileEntries = computed(() => {
+  if (isGroupSelection.value) return [] as ProjectAssetBrowseEntry[]
+  const ids = selectedIdSet.value
+  return filteredEntries.value.filter((entry) => ids.has(entry.id))
+})
+
+const singleSelectedFile = computed(() =>
+  selectedFileEntries.value.length === 1 ? selectedFileEntries.value[0]! : null,
+)
+
+const contextDeleteLabel = computed(() => {
+  const count = selectedFileEntries.value.length
+  if (count <= 1) return t('projectAssets.delete')
+  return t('projectAssets.deleteMany', { count })
+})
+
+const marqueeStyle = computed(() => {
+  if (!marquee.value) return null
+  const rect = normalizeContentRect({
+    left: marquee.value.originX,
+    top: marquee.value.originY,
+    right: marquee.value.currentX,
+    bottom: marquee.value.currentY,
+  })
+  return {
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.right - rect.left}px`,
+    height: `${rect.bottom - rect.top}px`,
+  }
+})
+
 function mapTreeNode(node: ProjectAssetCategoryTreeNode): TreeNodeView {
   return {
     id: node.id,
@@ -286,6 +353,40 @@ function typeIcon(categoryId: string) {
 
 function entryPrimaryPath(entry: ProjectAssetBrowseEntry): string {
   return entry.variants[0]?.relativePath || ''
+}
+
+function clearFileSelection() {
+  selection.value = clearProjectAssetSelection()
+}
+
+function clearAllSelection() {
+  clearFileSelection()
+  selectedFolderId.value = null
+}
+
+function isFileSelected(entryId: string): boolean {
+  return selectedIdSet.value.has(entryId)
+}
+
+function isFolderSelected(folderId: string): boolean {
+  return selectedFolderId.value === folderId
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (target.isContentEditable) return true
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+}
+
+function applyFileSelection(next: ProjectAssetSelectionState) {
+  selectedFolderId.value = null
+  selection.value = next
+}
+
+function focusGridHost() {
+  gridHost.value?.focus({ preventScroll: true })
 }
 
 function buildEntryMetadata(entry: ProjectAssetBrowseEntry, categoryId: string): string {
@@ -414,7 +515,7 @@ async function loadCategory(categoryId: string) {
     categoryEntries.value = []
     categoryError.value = ''
     categoryLoading.value = false
-    selectedEntryId.value = null
+    clearFileSelection()
     scrollTop.value = 0
     if (gridHost.value) gridHost.value.scrollTop = 0
     return
@@ -425,7 +526,7 @@ async function loadCategory(categoryId: string) {
   const token = listingCoordinator.begin({ project, categoryId, bucket })
   categoryLoading.value = true
   categoryError.value = ''
-  selectedEntryId.value = null
+  selectedFolderId.value = null
   scrollTop.value = 0
   if (gridHost.value) gridHost.value.scrollTop = 0
   failedThumbnails.value = new Set()
@@ -436,10 +537,15 @@ async function loadCategory(categoryId: string) {
       if (!context.isCurrent()) return
       categoryEntries.value = listing.entries
       categoryError.value = ''
+      selection.value = pruneProjectAssetSelection(
+        selection.value,
+        new Set(listing.entries.map((entry) => entry.id)),
+      )
     } catch (error) {
       if (!context.isCurrent()) return
       categoryEntries.value = []
       categoryError.value = t('projectAssets.loadCategoryFailed', { message: formatError(error) })
+      clearFileSelection()
     } finally {
       if (context.isCurrent()) categoryLoading.value = false
     }
@@ -451,6 +557,7 @@ function selectCategory(categoryId: string) {
     syncTreeCurrentKey(categoryId)
     return
   }
+  clearAllSelection()
   selectedCategoryId.value = categoryId
   searchQuery.value = ''
   syncTreeCurrentKey(categoryId)
@@ -461,12 +568,27 @@ function onTreeNodeClick(data: TreeNodeView) {
   selectCategory(data.id)
 }
 
-function onCellClick(item: GridItem) {
-  if (item.kind === 'folder') {
-    selectedEntryId.value = item.id
+function onCellClick(event: MouseEvent, item: GridItem) {
+  if (suppressNextClick) {
+    suppressNextClick = false
     return
   }
-  selectedEntryId.value = item.entry.id
+  if (item.kind === 'folder') {
+    clearFileSelection()
+    selectedFolderId.value = item.id
+    return
+  }
+
+  const entryId = item.entry.id
+  if (event.shiftKey) {
+    applyFileSelection(selectProjectAssetRange(orderedFileIds.value, selection.value, entryId))
+    return
+  }
+  if (event.ctrlKey || event.metaKey) {
+    applyFileSelection(toggleProjectAssetSelection(selection.value, entryId))
+    return
+  }
+  applyFileSelection(selectProjectAssetExclusive(entryId))
 }
 
 function onCellDoubleClick(item: GridItem) {
@@ -480,7 +602,7 @@ function onCellDoubleClick(item: GridItem) {
 function openPreviewForEntry(entryId: string) {
   const index = filteredEntries.value.findIndex((entry) => entry.id === entryId)
   if (index < 0) return
-  selectedEntryId.value = entryId
+  applyFileSelection(selectProjectAssetExclusive(entryId))
   previewIndex.value = index
   previewVisible.value = true
 }
@@ -492,14 +614,14 @@ function closePreview() {
 function onPreviewNavigate(index: number) {
   previewIndex.value = index
   const entry = filteredEntries.value[index]
-  if (entry) selectedEntryId.value = entry.id
+  if (entry) applyFileSelection(selectProjectAssetExclusive(entry.id))
 }
 
 function onCellKeydown(event: KeyboardEvent, item: GridItem) {
-  if (event.key === 'Enter') {
-    event.preventDefault()
-    onCellDoubleClick(item)
-  }
+  if (event.key !== 'Enter' || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+  // Prevent native button activation on Enter. Folders enter here; files bubble to the grid host.
+  event.preventDefault()
+  if (item.kind === 'folder') onCellDoubleClick(item)
 }
 
 function onThumbnailError(entryId: string) {
@@ -508,8 +630,18 @@ function onThumbnailError(entryId: string) {
 
 function openContextMenu(event: MouseEvent, entryId: string) {
   event.preventDefault()
-  selectedEntryId.value = entryId
-  contextMenu.value = { x: event.clientX, y: event.clientY, entryId }
+  if (!selectedIdSet.value.has(entryId)) {
+    applyFileSelection(selectProjectAssetExclusive(entryId))
+  } else {
+    selectedFolderId.value = null
+  }
+  contextMenu.value = { x: event.clientX, y: event.clientY }
+}
+
+function previewFromContextMenu() {
+  const entry = singleSelectedFile.value
+  closeContextMenu()
+  if (entry) openPreviewForEntry(entry.id)
 }
 
 function closeContextMenu() {
@@ -521,11 +653,6 @@ function localFileParts(filePath: string): { fileName: string; name: string } {
   return { fileName, name: fileName.replace(/\.[^.]+$/, '') }
 }
 
-function selectedFileEntry(): ProjectAssetBrowseEntry | null {
-  if (!selectedEntryId.value || isGroupSelection.value) return null
-  return categoryEntries.value.find((entry) => entry.id === selectedEntryId.value) || null
-}
-
 function entryMutationTarget(entry: ProjectAssetBrowseEntry) {
   const relativePath = entryPrimaryPath(entry)
   if (!relativePath) return null
@@ -533,6 +660,153 @@ function entryMutationTarget(entry: ProjectAssetBrowseEntry) {
     scope: 'project' as const,
     category: selectedCategoryId.value,
     relativePath,
+  }
+}
+
+function contentPointFromClient(
+  host: HTMLElement,
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  const rect = host.getBoundingClientRect()
+  return viewportPointToContentPoint(
+    clientX - rect.left,
+    clientY - rect.top,
+    host.scrollLeft,
+    host.scrollTop,
+  )
+}
+
+function isEventOnGridCell(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest('.project-assets-cell'))
+}
+
+function requireGridHostFromEvent(event: PointerEvent): HTMLElement {
+  const host = event.currentTarget
+  if (!(host instanceof HTMLElement)) {
+    throw new Error('Project assets grid host is missing; cannot resolve marquee coordinates.')
+  }
+  return host
+}
+
+function onGridPointerDown(event: PointerEvent) {
+  if (event.button !== 0) return
+  if (isGroupSelection.value) return
+  if (isEventOnGridCell(event.target)) return
+  const host = requireGridHostFromEvent(event)
+
+  closeContextMenu()
+  marqueeActive = true
+  suppressNextClick = false
+  const point = contentPointFromClient(host, event.clientX, event.clientY)
+  marquee.value = {
+    originX: point.x,
+    originY: point.y,
+    currentX: point.x,
+    currentY: point.y,
+  }
+  host.setPointerCapture(event.pointerId)
+  focusGridHost()
+  event.preventDefault()
+}
+
+function onGridPointerMove(event: PointerEvent) {
+  if (!marqueeActive || !marquee.value) return
+  const host = requireGridHostFromEvent(event)
+  const point = contentPointFromClient(host, event.clientX, event.clientY)
+  marquee.value = {
+    ...marquee.value,
+    currentX: point.x,
+    currentY: point.y,
+  }
+}
+
+function finishMarquee(event: PointerEvent) {
+  if (!marqueeActive) return
+  marqueeActive = false
+  const draft = marquee.value
+  marquee.value = null
+  try {
+    gridHost.value?.releasePointerCapture(event.pointerId)
+  } catch {
+    // Pointer may already be released.
+  }
+  if (!draft) return
+
+  const rect = normalizeContentRect({
+    left: draft.originX,
+    top: draft.originY,
+    right: draft.currentX,
+    bottom: draft.currentY,
+  })
+  const moved = Math.abs(rect.right - rect.left) > 3 || Math.abs(rect.bottom - rect.top) > 3
+  if (!moved) {
+    clearAllSelection()
+    return
+  }
+  suppressNextClick = true
+  applyFileSelection(selectProjectAssetsByMarquee(
+    orderedFileIds.value,
+    {
+      columnCount: gridWindow.value.columnCount,
+      cellSize: CELL_SIZE,
+      gap: CELL_GAP,
+    },
+    rect,
+  ))
+}
+
+function onGridPointerUp(event: PointerEvent) {
+  finishMarquee(event)
+}
+
+function onGridPointerCancel(event: PointerEvent) {
+  finishMarquee(event)
+}
+
+function onGridKeydown(event: KeyboardEvent) {
+  if (isTypingTarget(event.target)) return
+  if (previewVisible.value) return
+  if (isGroupSelection.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      clearAllSelection()
+      closeContextMenu()
+    }
+    return
+  }
+
+  const ctrl = event.ctrlKey || event.metaKey
+  if (ctrl && (event.key === 'a' || event.key === 'A')) {
+    event.preventDefault()
+    applyFileSelection(selectAllProjectAssets(orderedFileIds.value, selection.value))
+    return
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    clearAllSelection()
+    closeContextMenu()
+    return
+  }
+  if (event.key === 'F2') {
+    if (singleSelectedFile.value) {
+      event.preventDefault()
+      void renameSelectedEntry()
+    }
+    return
+  }
+  if (event.key === 'Delete') {
+    if (selectedFileEntries.value.length > 0) {
+      event.preventDefault()
+      void deleteSelectedEntries()
+    }
+    return
+  }
+  if (event.key === 'Enter' && !ctrl && !event.shiftKey && !event.altKey) {
+    if (singleSelectedFile.value) {
+      event.preventDefault()
+      openPreviewForEntry(singleSelectedFile.value.id)
+    }
   }
 }
 
@@ -570,7 +844,7 @@ async function importFile() {
 }
 
 async function renameSelectedEntry() {
-  const entry = selectedFileEntry()
+  const entry = singleSelectedFile.value
   const target = entry ? entryMutationTarget(entry) : null
   if (!entry || !target || !projectStore.currentProject || mutationBusy.value) return
   closeContextMenu()
@@ -619,43 +893,152 @@ async function renameSelectedEntry() {
   }
 }
 
-async function deleteSelectedEntry() {
-  const entry = selectedFileEntry()
-  const target = entry ? entryMutationTarget(entry) : null
-  if (!entry || !target || !projectStore.currentProject || mutationBusy.value) return
+function assertSafetyResultsShape(
+  results: unknown,
+  expected: number,
+): asserts results is ProjectAssetMutationSafetyCheck[] {
+  if (!Array.isArray(results)) {
+    throw new Error(t('projectAssets.deleteSafetyShapeError', {
+      expected,
+      actual: typeof results,
+    }))
+  }
+  if (results.length !== expected) {
+    throw new Error(t('projectAssets.deleteSafetyShapeError', {
+      expected,
+      actual: results.length,
+    }))
+  }
+}
+
+function assertDeleteResultsShape(
+  batch: unknown,
+  expected: number,
+): asserts batch is ProjectAssetDeleteBatchResult {
+  if (!batch || typeof batch !== 'object' || !('results' in batch)) {
+    throw new Error(t('projectAssets.deleteResultShapeError', {
+      expected,
+      actual: 'missing results',
+    }))
+  }
+  const results = (batch as ProjectAssetDeleteBatchResult).results
+  if (!Array.isArray(results) || results.length !== expected) {
+    throw new Error(t('projectAssets.deleteResultShapeError', {
+      expected,
+      actual: Array.isArray(results) ? results.length : typeof results,
+    }))
+  }
+}
+
+function formatDeleteConfirmMessage(
+  entries: ProjectAssetBrowseEntry[],
+  safetyResults: ProjectAssetMutationSafetyCheck[],
+): string {
+  const count = entries.length
+  const referenced = safetyResults.filter((item) => item.references.length > 0).length
+  if (count === 1 && referenced === 0) {
+    return t('projectAssets.deleteConfirm', { name: entries[0]!.name })
+  }
+  if (count === 1) {
+    return t('projectAssets.deleteConfirmBatchOne', { referenced })
+  }
+  return t('projectAssets.deleteConfirmBatchMany', { count, referenced })
+}
+
+function formatDeleteResultMessage(results: ProjectAssetDeleteItemResult[]): string {
+  const deleted = results.filter((item) => item.status === 'deleted')
+  const blocked = results.filter((item) => item.status === 'blocked')
+  const failed = results.filter((item) => item.status === 'failed')
+  const lines: string[] = []
+  if (blocked.length === 0 && failed.length === 0) {
+    lines.push(
+      deleted.length === 1
+        ? t('projectAssets.deleteResultAllDeletedOne')
+        : t('projectAssets.deleteResultAllDeletedMany', { deleted: deleted.length }),
+    )
+    return lines.join('\n')
+  }
+  lines.push(t('projectAssets.deleteResultMixed', {
+    deleted: deleted.length,
+    blocked: blocked.length,
+    failed: failed.length,
+  }))
+  for (const item of blocked) {
+    const reason = item.error
+      || item.references.map((reference) => reference.source).join(', ')
+      || t('projectAssets.deleteResultUnknownReason')
+    lines.push(t('projectAssets.deleteResultBlockedItem', {
+      name: item.target.name,
+      reason,
+    }))
+  }
+  for (const item of failed) {
+    lines.push(t('projectAssets.deleteResultFailedItem', {
+      name: item.target.name,
+      reason: item.error || t('projectAssets.deleteResultUnknownReason'),
+    }))
+  }
+  return lines.join('\n')
+}
+
+async function deleteSelectedEntries() {
+  const entries = selectedFileEntries.value
+  if (entries.length === 0 || !projectStore.currentProject || mutationBusy.value) return
+  const targets = entries.map((entry) => entryMutationTarget(entry))
+  if (targets.some((target) => !target)) {
+    mutationError.value = t('projectAssets.deleteMissingPath')
+    return
+  }
+  const resolvedTargets = targets as NonNullable<(typeof targets)[number]>[]
   closeContextMenu()
   mutationBusy.value = true
   mutationError.value = ''
   try {
-    const safetyResults = await projectAssets.checkDeleteSafety([target], projectStore.currentProject)
-    if (!Array.isArray(safetyResults) || safetyResults.length !== 1) {
-      throw new Error('Delete safety check returned an unexpected result shape.')
-    }
-    const safety = safetyResults[0]!
-    if (!safety.ok) {
-      mutationError.value = t('projectAssets.mutationBlocked', {
-        reasons: safety.blockers.join('\n'),
-      })
-      return
-    }
+    const safetyResults = await projectAssets.checkDeleteSafety(
+      resolvedTargets,
+      projectStore.currentProject,
+    )
+    assertSafetyResultsShape(safetyResults, resolvedTargets.length)
+
     try {
       await ElMessageBox.confirm(
-        t('projectAssets.deleteConfirm', { name: entry.name }),
+        formatDeleteConfirmMessage(entries, safetyResults),
         t('projectAssets.deleteTitle'),
         { type: 'warning' },
       )
     } catch {
       return
     }
-    const removed = await projectAssets.remove([target], false, projectStore.currentProject)
-    const first = removed.results?.[0]
-    if (first && first.status !== 'deleted') {
-      mutationError.value = first.error || t('projectAssets.mutationBlocked', {
-        reasons: (first.references || []).map((reference) => reference.source).join('\n'),
-      })
-      return
+
+    const removed = await projectAssets.remove(
+      resolvedTargets,
+      false,
+      projectStore.currentProject,
+    )
+    assertDeleteResultsShape(removed, resolvedTargets.length)
+
+    const deletedIds = new Set<string>()
+    for (let index = 0; index < removed.results.length; index += 1) {
+      const result = removed.results[index]!
+      if (result.status === 'deleted') {
+        deletedIds.add(entries[index]!.id)
+      }
     }
-    selectedEntryId.value = null
+
+    const summary = formatDeleteResultMessage(removed.results)
+    const hasProblems = removed.results.some((item) => item.status !== 'deleted')
+    if (hasProblems) {
+      mutationError.value = summary
+    } else {
+      mutationError.value = ''
+      ElMessage.success(summary)
+    }
+
+    // Drop deleted ids before refresh so the reload prune keeps remaining selection.
+    selection.value = pruneProjectAssetSelection(
+      selection.value,
+      selection.value.selectedIds.filter((id) => !deletedIds.has(id)),
+    )
     await afterMutation(null)
   } catch (error) {
     mutationError.value = formatError(error)
@@ -674,7 +1057,7 @@ async function afterMutation(detail: ManagedAssetDetail | null) {
   await loadTree(selectedCategoryId.value)
   if (detail?.name) {
     const match = categoryEntries.value.find((entry) => entry.name === detail.name)
-    if (match) selectedEntryId.value = match.id
+    if (match) applyFileSelection(selectProjectAssetExclusive(match.id))
   }
 }
 
@@ -728,6 +1111,7 @@ async function discardProjectStaging() {
 watch(
   () => projectStore.currentProject,
   () => {
+    clearAllSelection()
     void loadTree()
     void refreshStagingStatus()
   },
@@ -863,8 +1247,14 @@ onUnmounted(() => {
         ref="gridHost"
         class="project-assets-grid-host"
         data-ui-id="project-assets-grid"
+        tabindex="0"
         :aria-label="t('projectAssets.gridAria')"
         @scroll="onGridScroll"
+        @pointerdown="onGridPointerDown"
+        @pointermove="onGridPointerMove"
+        @pointerup="onGridPointerUp"
+        @pointercancel="onGridPointerCancel"
+        @keydown="onGridKeydown"
       >
         <div
           v-if="emptyMessage && !categoryLoading"
@@ -875,6 +1265,7 @@ onUnmounted(() => {
         <div
           v-else
           class="project-assets-grid-spacer"
+          :class="{ 'is-marquee': Boolean(marquee) }"
           :style="{ height: `${gridWindow.totalHeight}px` }"
         >
           <button
@@ -884,14 +1275,14 @@ onUnmounted(() => {
             class="project-assets-cell"
             :class="{
               selected: cell.item.kind === 'folder'
-                ? selectedEntryId === cell.item.id
-                : selectedEntryId === cell.item.entry.id,
+                ? isFolderSelected(cell.item.id)
+                : isFileSelected(cell.item.entry.id),
             }"
             :style="cell.style"
             :data-ui-id="cell.item.kind === 'folder'
               ? `project-assets-folder-${cell.item.id}`
               : `project-assets-cell-${cell.item.entry.id}`"
-            @click="onCellClick(cell.item)"
+            @click="onCellClick($event, cell.item)"
             @dblclick="onCellDoubleClick(cell.item)"
             @keydown="onCellKeydown($event, cell.item)"
             @contextmenu="cell.item.kind === 'file'
@@ -938,6 +1329,11 @@ onUnmounted(() => {
               <span class="project-assets-name" :title="cell.item.entry.name">{{ cell.item.entry.name }}</span>
             </template>
           </button>
+          <div
+            v-if="marqueeStyle"
+            class="project-assets-marquee"
+            :style="marqueeStyle"
+          />
         </div>
       </div>
     </section>
@@ -963,8 +1359,19 @@ onUnmounted(() => {
           class="ctx-menu"
           :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         >
-          <li @click="renameSelectedEntry">{{ t('projectAssets.rename') }}</li>
-          <li class="ctx-danger" @click="deleteSelectedEntry">{{ t('projectAssets.delete') }}</li>
+          <li
+            v-if="singleSelectedFile"
+            @click="previewFromContextMenu"
+          >{{ t('projectAssets.preview') }}</li>
+          <li
+            v-if="singleSelectedFile"
+            @click="renameSelectedEntry"
+          >{{ t('projectAssets.rename') }}</li>
+          <li
+            v-if="selectedFileEntries.length > 0"
+            class="ctx-danger"
+            @click="deleteSelectedEntries"
+          >{{ contextDeleteLabel }}</li>
         </ul>
       </div>
     </teleport>
@@ -1127,11 +1534,25 @@ onUnmounted(() => {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-elevated);
+  outline: none;
 }
 
 .project-assets-grid-spacer {
   position: relative;
   width: 100%;
+}
+
+.project-assets-grid-spacer.is-marquee {
+  user-select: none;
+}
+
+.project-assets-marquee {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--app-accent) 70%, var(--app-border));
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+  pointer-events: none;
 }
 
 .project-assets-empty,

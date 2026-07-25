@@ -352,6 +352,9 @@ function buildUiControlCommand(args: ParsedArgs): Record<string, unknown> {
     command.key = args.key;
     if (args.modifiers) command.modifiers = args.modifiers;
   }
+  if (type === "click" && args.modifiers) {
+    command.modifiers = args.modifiers;
+  }
   if (type === "wait") {
     if (args.condition) command.condition = args.condition;
     if (args.expect !== undefined) command.expect = args.expect;

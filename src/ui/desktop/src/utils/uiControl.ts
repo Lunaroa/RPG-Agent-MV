@@ -190,8 +190,18 @@ function clickUiElement(command: UiControlCommand, language: ProductLanguage): R
   ensureActionableElement(element, language);
   scrollElementIntoView(element);
   focusElement(element);
-  element.click();
-  return { action: 'click', target: elementState(element) };
+  const modifierTokens = new Set((command.modifiers || []).map(normalizeModifierToken).filter(Boolean));
+  const modifiers = Array.from(modifierTokens).sort();
+  element.dispatchEvent(new MouseEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    ctrlKey: modifierTokens.has('ctrl'),
+    metaKey: modifierTokens.has('meta'),
+    shiftKey: modifierTokens.has('shift'),
+    altKey: modifierTokens.has('alt'),
+    button: 0,
+  }));
+  return { action: 'click', target: elementState(element), modifiers };
 }
 
 function inputUiElement(command: UiControlCommand, language: ProductLanguage): Record<string, unknown> {

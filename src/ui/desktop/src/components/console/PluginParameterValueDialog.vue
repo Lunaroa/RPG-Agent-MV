@@ -1,15 +1,22 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { ElMessageBox } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import type {
   EditorProjectCatalog,
+  InteractiveParticleAnimationPreview,
   PluginParameterSchemaField,
 } from '../../api/client';
-import { projectAssets, resolveAssetUrl } from '../../api/client';
+import {
+  playtest,
+  projectAssets,
+  projectManagement,
+  resolveAssetUrl,
+} from '../../api/client';
 import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
 import ActorWalkingSheetThumb from '../editor/ActorWalkingSheetThumb.vue';
 import PluginParameterInput from '../editor/PluginParameterInput.vue';
+import PluginAnimationFramePreview from './PluginAnimationFramePreview.vue';
 import PluginParameterCollectionEditor from './PluginParameterCollectionEditor.vue';
 import {
   parsePluginParameterRawStrict,
@@ -24,8 +31,18 @@ import {
   type PluginParameterChildTarget,
   type PluginParameterValidationIssue,
 } from './plugin-parameter-model';
-import { resolvePluginParameterFileAssets } from '../../utils/pluginParameterFileAssets';
+import {
+  asParticleAnimationPreview,
+  readPluginAnimationClassicPreview,
+  resolvePluginAnimationPreviewKind,
+} from '../../utils/pluginParameterAnimationPreview';
+import {
+  findCatalogImageAssetUrlByLogicalName,
+  inferPluginFileMediaKind,
+  resolvePluginParameterFileAssets,
+} from '../../utils/pluginParameterFileAssets';
 import { resolvePluginTilesetPreviewUrl } from '../../utils/pluginParameterTilesetPicker';
+import { loadImageElement } from '../../utils/imageLoading';
 
 defineOptions({ name: 'PluginParameterValueDialog' });
 
@@ -64,6 +81,11 @@ const childDialogOpen = ref(false);
 const childEditor = ref<ChildEditorState | null>(null);
 const filePreviewUrl = ref('');
 const filePreviewFailed = ref(false);
+const animationRecord = ref<unknown>(null);
+const animationPreviewError = ref('');
+const animationPreviewLoading = ref(false);
+const particlePreviewBusy = ref(false);
+let animationPreviewRequestId = 0;
 
 const visible = computed({
   get: () => props.modelValue,
@@ -122,13 +144,32 @@ const validationMessage = computed(() =>
 );
 const showFilePreview = computed(() =>
   props.field?.kind === 'file'
-  && String(props.field.directory || '').toLowerCase().startsWith('img/'),
+  && inferPluginFileMediaKind(String(props.field.directory || '')) === 'image',
 );
 const showActorPreview = computed(() =>
   props.field?.kind === 'database' && props.field.databaseTable === 'Actors',
 );
 const showTilesetPreview = computed(() =>
   props.field?.kind === 'database' && props.field.databaseTable === 'Tilesets',
+);
+const showAnimationPreview = computed(() =>
+  props.field?.kind === 'database' && props.field.databaseTable === 'Animations',
+);
+const selectedAnimationId = computed(() => {
+  if (!showAnimationPreview.value) return 0;
+  const id = Number(draft.value);
+  return Number.isInteger(id) && id > 0 ? id : 0;
+});
+const animationPreviewKind = computed(() =>
+  resolvePluginAnimationPreviewKind(animationRecord.value),
+);
+const classicAnimationPreview = computed(() =>
+  animationPreviewKind.value === 'classic'
+    ? readPluginAnimationClassicPreview(animationRecord.value)
+    : null,
+);
+const particleAnimationPreview = computed(() =>
+  asParticleAnimationPreview(animationRecord.value),
 );
 const selectedTilesetPreviewUrl = computed(() =>
   showTilesetPreview.value
@@ -162,11 +203,13 @@ watch(
       rawError.value = '';
       collectionVersion.value += 1;
       void refreshFilePreview();
+      void refreshAnimationPreview();
     } else {
       childDialogOpen.value = false;
       childEditor.value = null;
       filePreviewUrl.value = '';
       filePreviewFailed.value = false;
+      resetAnimationPreview();
     }
   },
   { immediate: true },
@@ -177,6 +220,14 @@ watch(
   () => {
     if (!props.modelValue || props.field?.kind !== 'file') return;
     void refreshFilePreview();
+  },
+);
+
+watch(
+  () => [draft.value, props.field?.kind, props.field?.databaseTable, props.catalog?.project] as const,
+  () => {
+    if (!props.modelValue || !showAnimationPreview.value) return;
+    void refreshAnimationPreview();
   },
 );
 
@@ -202,16 +253,108 @@ async function refreshFilePreview(): Promise<void> {
     (relativeDirectory, { recursive }) =>
       projectAssets.listRelativeDirectory(relativeDirectory, project, recursive),
   );
-  if (!resolved.ok) {
+  let url = '';
+  if (resolved.ok) {
+    const asset = resolved.assets.find((entry) => entry.name === selected);
+    url = asset?.url || '';
+  }
+  if (!url) {
+    url = findCatalogImageAssetUrlByLogicalName(props.catalog, selected) || '';
+  }
+  if (!url) {
     filePreviewUrl.value = '';
     return;
   }
-  const asset = resolved.assets.find((entry) => entry.name === selected);
-  if (!asset?.url) {
-    filePreviewUrl.value = '';
+  filePreviewUrl.value = await resolveAssetUrl(url);
+}
+
+function resetAnimationPreview(): void {
+  animationPreviewRequestId += 1;
+  animationRecord.value = null;
+  animationPreviewError.value = '';
+  animationPreviewLoading.value = false;
+  particlePreviewBusy.value = false;
+}
+
+async function refreshAnimationPreview(): Promise<void> {
+  if (!showAnimationPreview.value) {
+    resetAnimationPreview();
     return;
   }
-  filePreviewUrl.value = await resolveAssetUrl(asset.url);
+  const id = selectedAnimationId.value;
+  if (!id) {
+    animationRecord.value = null;
+    animationPreviewError.value = '';
+    animationPreviewLoading.value = false;
+    return;
+  }
+  const project = projectStore.currentProject;
+  if (!project) {
+    animationRecord.value = null;
+    animationPreviewError.value = t('plugins.parameterAnimationLoadFailed', {
+      message: t('story.addProjectFirst'),
+    });
+    return;
+  }
+  const requestId = ++animationPreviewRequestId;
+  animationPreviewLoading.value = true;
+  animationPreviewError.value = '';
+  try {
+    const entry = await projectManagement.getEntry({
+      kind: 'database',
+      group: 'Animations',
+      id,
+    }, project);
+    if (requestId !== animationPreviewRequestId) return;
+    if (!entry?.value || typeof entry.value !== 'object' || Array.isArray(entry.value)) {
+      animationRecord.value = null;
+      animationPreviewError.value = t('plugins.parameterAnimationLoadFailed', {
+        message: t('db.particlePreviewInvalid'),
+      });
+      return;
+    }
+    animationRecord.value = entry.value;
+  } catch (error) {
+    if (requestId !== animationPreviewRequestId) return;
+    animationRecord.value = null;
+    animationPreviewError.value = t('plugins.parameterAnimationLoadFailed', {
+      message: (error as Error).message,
+    });
+  } finally {
+    if (requestId === animationPreviewRequestId) {
+      animationPreviewLoading.value = false;
+    }
+  }
+}
+
+async function startParticlePreview(): Promise<void> {
+  const project = projectStore.currentProject;
+  const preview = particleAnimationPreview.value;
+  if (!project || !preview || particlePreviewBusy.value) return;
+  if (props.catalog?.engine !== 'rpg-maker-mz') {
+    ElMessage.error(t('db.particlePreviewMZOnly'));
+    return;
+  }
+  particlePreviewBusy.value = true;
+  try {
+    const result = await playtest.start({
+      mode: 'particle_preview',
+      project,
+      animationPreview: clonePluginParameterValue(preview) as InteractiveParticleAnimationPreview,
+    });
+    if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
+      throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'));
+    }
+    ElMessage.success(t('db.particlePreviewStarted'));
+  } catch (error) {
+    ElMessage.error(t('db.particlePreviewFailed', { message: (error as Error).message }));
+  } finally {
+    particlePreviewBusy.value = false;
+  }
+}
+
+async function loadAnimationSheetImage(url: string): Promise<HTMLImageElement | null> {
+  return loadImageElement(await resolveAssetUrl(url));
 }
 
 function commit(): void {
@@ -532,6 +675,48 @@ function arrayValue(value: unknown): unknown[] {
           {{ Number(draft) > 0 ? t('pluginTilesetPicker.previewFailed') : t('pluginTilesetPicker.none') }}
         </p>
       </div>
+
+      <div
+        v-else-if="showAnimationPreview"
+        class="parameter-animation-preview"
+        :aria-label="t('plugins.parameterTypeAnimation')"
+        data-ui-id="plugin-parameter-animation-preview"
+      >
+        <p v-if="!selectedAnimationId" class="parameter-file-preview-empty">
+          {{ t('pluginFilePicker.none') }}
+        </p>
+        <p v-else-if="animationPreviewLoading" class="parameter-file-preview-empty">
+          {{ t('plugins.parameterAnimationLoading') }}
+        </p>
+        <p v-else-if="animationPreviewError" class="parameter-validation-error" role="alert">
+          {{ animationPreviewError }}
+        </p>
+        <div
+          v-else-if="animationPreviewKind === 'particle' && particleAnimationPreview"
+          class="parameter-particle-preview"
+        >
+          <el-button
+            type="primary"
+            :loading="particlePreviewBusy"
+            @click="startParticlePreview"
+          >
+            {{ t('db.previewParticle') }}
+          </el-button>
+        </div>
+        <PluginAnimationFramePreview
+          v-else-if="animationPreviewKind === 'classic' && classicAnimationPreview"
+          :frames="classicAnimationPreview.frames"
+          :catalog="catalog"
+          :animation1-name="classicAnimationPreview.animation1Name"
+          :animation1-hue="classicAnimationPreview.animation1Hue"
+          :animation2-name="classicAnimationPreview.animation2Name"
+          :animation2-hue="classicAnimationPreview.animation2Hue"
+          :load-image="loadAnimationSheetImage"
+        />
+        <p v-else class="parameter-file-preview-empty">
+          {{ t('db.particlePreviewInvalid') }}
+        </p>
+      </div>
     </div>
 
     <template #footer>
@@ -680,6 +865,14 @@ function arrayValue(value: unknown): unknown[] {
   margin: 0;
   color: var(--console-text-muted, #756b5e);
   font-size: 12px;
+}
+.parameter-animation-preview {
+  display: grid;
+  gap: 8px;
+}
+.parameter-particle-preview {
+  display: flex;
+  align-items: center;
 }
 .parameter-validation-error {
   padding: 8px 10px;

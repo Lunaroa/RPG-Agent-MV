@@ -33,6 +33,19 @@ export function firstMapOverviewThumbnailFailure(
   return failures.length ? [...failures].sort((left, right) => left.mapId - right.mapId)[0] : null
 }
 
+export type MapOverviewFatalPhase = 'scan' | 'images' | 'layout' | 'present'
+
+/** Classify which preparation stage threw a fatal (whole-view) error. */
+export function resolveMapOverviewFatalPhase(args: {
+  hasSnapshotPayload: boolean
+  preparationPhase: 'images' | 'layout' | 'ready' | 'error'
+}): MapOverviewFatalPhase {
+  if (!args.hasSnapshotPayload) return 'scan'
+  if (args.preparationPhase === 'layout') return 'layout'
+  if (args.preparationPhase === 'ready' || args.preparationPhase === 'error') return 'present'
+  return 'images'
+}
+
 export function isMapOverviewThumbnailVersionChanged(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || '')
   return /map overview thumbnail version changed/i.test(message)

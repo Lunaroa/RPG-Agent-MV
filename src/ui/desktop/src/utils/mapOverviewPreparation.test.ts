@@ -5,6 +5,7 @@ import {
   inspectMapOverviewLayoutOverlaps,
   isMapOverviewThumbnailVersionChanged,
   mapOverviewPreparationPercent,
+  resolveMapOverviewFatalPhase,
   validateMapOverviewLayoutNoOverlap,
   validateMapOverviewLayoutPositions,
 } from './mapOverviewPreparation'
@@ -26,6 +27,25 @@ describe('map overview preparation gate', () => {
     expect(firstMapOverviewThumbnailFailure([])).toBeNull()
     expect(isMapOverviewThumbnailVersionChanged(stale)).toBe(true)
     expect(isMapOverviewThumbnailVersionChanged(new Error('decode failed'))).toBe(false)
+  })
+
+  it('classifies fatal preparation phases without blaming thumbnail counts', () => {
+    expect(resolveMapOverviewFatalPhase({
+      hasSnapshotPayload: false,
+      preparationPhase: 'images',
+    })).toBe('scan')
+    expect(resolveMapOverviewFatalPhase({
+      hasSnapshotPayload: true,
+      preparationPhase: 'images',
+    })).toBe('images')
+    expect(resolveMapOverviewFatalPhase({
+      hasSnapshotPayload: true,
+      preparationPhase: 'layout',
+    })).toBe('layout')
+    expect(resolveMapOverviewFatalPhase({
+      hasSnapshotPayload: true,
+      preparationPhase: 'ready',
+    })).toBe('present')
   })
 
   it('accepts complete finite layout positions', () => {

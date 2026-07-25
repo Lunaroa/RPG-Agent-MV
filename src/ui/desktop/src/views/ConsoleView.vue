@@ -4,10 +4,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { ArrowLeft } from '@element-plus/icons-vue';
 import {
   assetLibrary,
-  projectManagement,
   sessions as sessionsApi,
   type AssetLibraryCatalog,
-  type ProjectOverview,
   type SessionSummary,
 } from '../api/client';
 import { useProjectStore } from '../stores/project';
@@ -21,7 +19,6 @@ import StoryProjectIdentityControl from '../components/console/StoryProjectIdent
 import ProjectAccessControl from '../components/console/ProjectAccessControl.vue';
 import { useI18n, type MessageKey } from '../i18n';
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
-import { LatestAsyncCoordinator } from '../utils/latestAsyncCoordinator';
 
 const route = useRoute();
 const router = useRouter();
@@ -59,30 +56,20 @@ const assetsError = ref<string | null>(null);
 const sessions = ref<SessionSummary[]>([]);
 const logsLoading = ref(false);
 const logsError = ref<string | null>(null);
-const projectOverview = ref<ProjectOverview | null>(null);
-const projectStatsError = ref<string | null>(null);
-const projectStatsLoading = ref(false);
-const projectOverviewCoordinator = new LatestAsyncCoordinator<{ project: string }>();
 const consoleActive = ref(false);
-
-const currentProjectSessions = computed(() =>
-  sessions.value.filter((session) => session.project === projectStore.currentProject),
-);
 
 function go(page: ConsolePage) {
   void router.push({ path: '/console', query: page === 'home' ? { page: 'home' } : { page } });
 }
 
 function reloadProjectBoundData() {
-  projectOverviewCoordinator.invalidate({ project: projectStore.currentProject });
   sessions.value = [];
-  projectOverview.value = null;
-  projectStatsLoading.value = false;
-  projectStatsError.value = null;
+  catalog.value = null;
+  assetsError.value = null;
   logsError.value = null;
   if (!projectStore.currentProject || !consoleActive.value) return;
-  void loadLogs();
-  void loadProjectOverview();
+  if (currentPage.value === 'assets') void loadAssets();
+  if (currentPage.value === 'logs') void loadLogs();
 }
 
 async function loadAssets() {
@@ -101,60 +88,14 @@ async function loadLogs() {
   finally { logsLoading.value = false; }
 }
 
-async function loadProjectOverview() {
-  const project = projectStore.currentProject;
-  if (!project) return;
-  const token = projectOverviewCoordinator.begin({ project });
-  projectStatsLoading.value = true;
-  projectStatsError.value = null;
-  projectOverview.value = null;
-  try {
-    const nextOverview = await projectManagement.overview(project);
-    if (!projectOverviewCoordinator.isCurrent(token) || projectStore.currentProject !== project) return;
-    projectOverview.value = nextOverview;
-  } catch (error) {
-    if (!projectOverviewCoordinator.isCurrent(token) || projectStore.currentProject !== project) return;
-    projectOverview.value = null;
-    projectStatsError.value = formatErrorText(error);
-  } finally {
-    if (projectOverviewCoordinator.isCurrent(token)) projectStatsLoading.value = false;
-  }
-}
-
 function formatErrorText(errorValue: unknown): string {
   return formatUserFacingErrorMessage(errorValue, 'general', language.value);
 }
 
-const assetCount = computed(() => {
-  return catalog.value?.totalEntries || 0;
-});
-
-const databaseCount = computed(() => {
-  const database = projectOverview.value?.scan.database || {};
-  return Object.values(database).reduce((sum, group) => sum + (group.count || 0), 0);
-});
-
-const audioCount = computed(() => {
-  const audio = projectOverview.value?.assets?.audio || {};
-  return Object.values(audio).reduce((sum, bucket) => sum + (bucket.count || 0), 0);
-});
-
-const projectItemCount = computed(() => {
-  const scan = projectOverview.value?.scan;
-  if (!scan) return 0;
-  const namedSwitches = scan.switches.filter((item) => item.name).length;
-  const namedVariables = scan.variables.filter((item) => item.name).length;
-  const eventCount = scan.maps.reduce((sum, map) => sum + map.eventCount, 0);
-  return scan.maps.length + eventCount + namedSwitches + namedVariables + scan.commonEvents.length + databaseCount.value + audioCount.value;
-});
-
 watch(currentPage, (page) => {
   if (!projectStore.currentProject) return;
-  if ((page === 'home' || page === 'assets') && !catalog.value && !assetsLoading.value) void loadAssets();
-  if ((page === 'home' || page === 'logs') && !sessions.value.length && !logsLoading.value) void loadLogs();
-  if (page === 'home' && !projectOverview.value && !projectStatsLoading.value) {
-    void loadProjectOverview();
-  }
+  if (page === 'assets' && !catalog.value && !assetsLoading.value) void loadAssets();
+  if (page === 'logs' && !sessions.value.length && !logsLoading.value) void loadLogs();
 }, { immediate: true });
 
 watch(() => projectStore.currentProject, (project, previous) => {
@@ -172,9 +113,8 @@ onMounted(async () => {
 onActivated(() => {
   consoleActive.value = true;
   if (!projectStore.currentProject) return;
-  if ((currentPage.value === 'home' || currentPage.value === 'assets') && !catalog.value && !assetsLoading.value) void loadAssets();
-  if ((currentPage.value === 'home' || currentPage.value === 'logs') && !sessions.value.length && !logsLoading.value) void loadLogs();
-  if (currentPage.value === 'home' && !projectOverview.value && !projectStatsLoading.value) void loadProjectOverview();
+  if (currentPage.value === 'assets' && !catalog.value && !assetsLoading.value) void loadAssets();
+  if (currentPage.value === 'logs' && !sessions.value.length && !logsLoading.value) void loadLogs();
 });
 
 onDeactivated(() => {
@@ -186,14 +126,6 @@ onDeactivated(() => {
   <div class="console-view" :data-ui-id="`console-view-${currentPage}`">
     <ConsoleHome
       v-show="currentPage === 'home'"
-      :asset-count="assetCount"
-      :session-count="currentProjectSessions.length"
-      :project-item-count="projectItemCount"
-      :audio-count="audioCount"
-      :project-stats-error="projectStatsError"
-      :project-stats-loading="projectStatsLoading"
-      :assets-loading="assetsLoading"
-      :logs-loading="logsLoading"
       @navigate="go"
     />
     <section v-show="currentPage !== 'home'" class="console-page" :data-ui-id="`console-page-${currentPage}`">

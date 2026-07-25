@@ -27,8 +27,13 @@ import {
   PLUGIN_LIST_MIN_WIDTH,
 } from '../../utils/workspaceSettings';
 import { derivePluginInstallNameFromSourcePath } from '../../utils/pluginInstallPath';
-import ConsoleSearchInput from './ConsoleSearchInput.vue';
-import PluginDeleteDialog from './PluginDeleteDialog.vue';
+import {
+  isExternalFileDrag,
+  planDroppedPluginFiles,
+  type PluginDropItem,
+  type PluginDropRejectionReason,
+} from '../../utils/pluginDropInstall';
+import ConsoleSearchInput from './ConsoleSearchInput.vue';import PluginDeleteDialog from './PluginDeleteDialog.vue';
 import PluginEngineTags from './PluginEngineTags.vue';
 import PluginParameterDialog from './PluginParameterDialog.vue';
 import {
@@ -68,6 +73,7 @@ const deleteTargetIndex = ref<number | null>(null);
 const activeHelpTab = ref('');
 const draggedIndex = ref<number | null>(null);
 const dropIndex = ref<number | null>(null);
+const fileDropActive = ref(false);
 const layoutElement = ref<HTMLElement | null>(null);
 const pluginRowElements = new Map<string, HTMLElement>();
 const listWidth = ref(clampPluginListWidth(
@@ -544,35 +550,167 @@ async function installPlugin(): Promise<void> {
 
     const sourceFile = await pluginApi.selectInstallFile();
     if (!sourceFile) return;
-    const name = derivePluginInstallNameFromSourcePath(sourceFile);
-    const overwrite = pluginExistsInProject(name);
-    if (overwrite) {
-      try {
-        await ElMessageBox.confirm(
-          t('plugins.overwriteConfirm', { name }),
-          t('plugins.overwriteTitle'),
-          { type: 'warning' },
-        );
-      } catch {
-        return;
-      }
-    }
-    const result = await pluginApi.installFile(
-      sourceFile,
-      { name, overwrite },
-      projectStore.currentProject,
-    );
-    selectedKey.value = configuredKey(result.name);
-    applyConfig(result.configuration || await pluginApi.read(projectStore.currentProject));
-    actionMessage.value = overwrite
-      ? t('plugins.overwriteSuccess', { name: result.name })
-      : t('plugins.installSuccess', { name: result.name });
-    await refreshStagingStatus();
+    const installed = await installPluginFromAbsolutePath(sourceFile);
+    if (!installed) return;
   } catch (installError) {
     error.value = formatPluginActionError(installError);
   } finally {
     busyKey.value = '';
   }
+}
+
+/**
+ * Install one .js plugin from an absolute path.
+ * Returns false when the user cancels overwrite; throws on hard failures.
+ */
+async function installPluginFromAbsolutePath(sourceFile: string): Promise<boolean> {
+  if (!projectStore.currentProject) return false;
+  const name = derivePluginInstallNameFromSourcePath(sourceFile);
+  const overwrite = pluginExistsInProject(name);
+  if (overwrite) {
+    try {
+      await ElMessageBox.confirm(
+        t('plugins.overwriteConfirm', { name }),
+        t('plugins.overwriteTitle'),
+        { type: 'warning' },
+      );
+    } catch {
+      return false;
+    }
+  }
+  const result = await pluginApi.installFile(
+    sourceFile,
+    { name, overwrite },
+    projectStore.currentProject,
+  );
+  selectedKey.value = configuredKey(result.name);
+  applyConfig(result.configuration || await pluginApi.read(projectStore.currentProject));
+  actionMessage.value = overwrite
+    ? t('plugins.overwriteSuccess', { name: result.name })
+    : t('plugins.installSuccess', { name: result.name });
+  await refreshStagingStatus();
+  return true;
+}
+
+function formatPluginDropRejection(name: string, reason: PluginDropRejectionReason): string {
+  if (reason === 'directory') return t('plugins.dropDirectoryRejected', { name });
+  if (reason === 'not-js') return t('plugins.dropNotJsRejected', { name });
+  return t('plugins.dropPathUnresolved', { name });
+}
+
+function resolveDroppedPluginFilePath(file: File): string | null {
+  const api = window.api;
+  if (!api || !api.files || typeof api.files.getPathForFile !== 'function') {
+    throw new Error(t('plugins.dropPathUnresolved', { name: file.name }));
+  }
+  const absolutePath = String(api.files.getPathForFile(file) || '').trim();
+  return absolutePath || null;
+}
+
+function resolveDroppedPluginItems(event: DragEvent): PluginDropItem[] {
+  const dataTransfer = event.dataTransfer;
+  if (!dataTransfer) {
+    throw new Error(t('plugins.dropPathUnresolved', { name: t('plugins.dropUnknownItem') }));
+  }
+  const files = Array.from(dataTransfer.files || []);
+  const items = dataTransfer.items ? Array.from(dataTransfer.items) : [];
+  const planned: PluginDropItem[] = [];
+  if (items.length > 0) {
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (!item || item.kind !== 'file') continue;
+      const entry = typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null;
+      const file = item.getAsFile() || files[index] || null;
+      const label = (file && file.name)
+        || (entry && entry.name)
+        || t('plugins.dropUnknownItem');
+      if (entry && entry.isDirectory) {
+        planned.push({ isDirectory: true, name: label, absolutePath: null });
+        continue;
+      }
+      if (!file) {
+        planned.push({ isDirectory: false, name: label, absolutePath: null });
+        continue;
+      }
+      planned.push({
+        isDirectory: false,
+        name: file.name,
+        absolutePath: resolveDroppedPluginFilePath(file),
+      });
+    }
+    return planned;
+  }
+  return files.map((file) => ({
+    isDirectory: false,
+    name: file.name,
+    absolutePath: resolveDroppedPluginFilePath(file),
+  }));
+}
+
+async function installPluginsFromDrop(event: DragEvent): Promise<void> {
+  if (!projectStore.currentProject || busyKey.value) return;
+  busyKey.value = 'install-drop';
+  error.value = '';
+  actionMessage.value = '';
+  try {
+    const plan = planDroppedPluginFiles(resolveDroppedPluginItems(event));
+    if (plan.sourceFiles.length === 0 && plan.rejections.length === 0) return;
+    if (plan.sourceFiles.length === 0) {
+      error.value = plan.rejections
+        .map((item) => formatPluginDropRejection(item.name, item.reason))
+        .join('\n');
+      return;
+    }
+    let installedCount = 0;
+    let skippedOverwrite = 0;
+    for (const sourceFile of plan.sourceFiles) {
+      const installed = await installPluginFromAbsolutePath(sourceFile);
+      if (installed) installedCount += 1;
+      else skippedOverwrite += 1;
+    }
+    const rejectionMessages = plan.rejections.map((item) =>
+      formatPluginDropRejection(item.name, item.reason));
+    if (rejectionMessages.length) {
+      error.value = rejectionMessages.join('\n');
+    }
+    if (installedCount > 0) {
+      actionMessage.value = t('plugins.dropInstallSuccess', { count: installedCount });
+    } else if (skippedOverwrite > 0 && !rejectionMessages.length) {
+      actionMessage.value = '';
+    }
+  } catch (installError) {
+    error.value = formatPluginActionError(installError);
+  } finally {
+    busyKey.value = '';
+  }
+}
+
+function onPluginPanelDragEnter(event: DragEvent): void {
+  if (!isExternalFileDrag(event)) return;
+  event.preventDefault();
+  fileDropActive.value = true;
+}
+
+function onPluginPanelDragOver(event: DragEvent): void {
+  if (!isExternalFileDrag(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  fileDropActive.value = true;
+}
+
+function onPluginPanelDragLeave(event: DragEvent): void {
+  if (!isExternalFileDrag(event)) return;
+  const related = event.relatedTarget as Node | null;
+  if (related && (event.currentTarget as HTMLElement).contains(related)) return;
+  fileDropActive.value = false;
+}
+
+async function onPluginPanelDrop(event: DragEvent): Promise<void> {
+  if (!isExternalFileDrag(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  fileDropActive.value = false;
+  await installPluginsFromDrop(event);
 }
 
 function openDeleteConfiguredDialog(plugin: ManagedPluginEntry): void {
@@ -691,6 +829,13 @@ function dragOver(event: DragEvent, index: number): void {
 }
 
 async function finishDrop(event: DragEvent): Promise<void> {
+  if (isExternalFileDrag(event)) {
+    event.preventDefault();
+    event.stopPropagation();
+    fileDropActive.value = false;
+    await installPluginsFromDrop(event);
+    return;
+  }
   event.preventDefault();
   const movedIndex = draggedIndex.value;
   const movedPlugin = plugins.value.find((plugin) => plugin.index === movedIndex);
@@ -946,7 +1091,15 @@ function resizeKeydown(event: KeyboardEvent): void {
       class="plugins-layout"
       :style="{ '--plugin-list-width': `${listWidth}px` }"
     >
-      <aside class="plugin-list-panel">
+      <aside
+        class="plugin-list-panel"
+        :class="{ 'file-drop-active': fileDropActive }"
+        data-ui-id="plugin-list-drop-zone"
+        @dragenter="onPluginPanelDragEnter"
+        @dragover="onPluginPanelDragOver"
+        @dragleave="onPluginPanelDragLeave"
+        @drop="onPluginPanelDrop"
+      >
         <div class="panel-title">
           <span>{{ t('plugins.listTitle') }}</span>
           <span class="panel-actions">
@@ -1320,6 +1473,11 @@ function resizeKeydown(event: KeyboardEvent): void {
   border: 1px solid var(--console-border, #e4dcce);
   border-radius: 14px;
   background: var(--console-paper, #fffdfa);
+}
+.plugin-list-panel.file-drop-active {
+  outline: 2px dashed color-mix(in srgb, var(--console-accent, #be5630) 55%, transparent);
+  outline-offset: -4px;
+  background: color-mix(in srgb, var(--console-accent, #be5630) 6%, var(--console-paper, #fffdfa));
 }
 .panel-title {
   min-height: 52px;

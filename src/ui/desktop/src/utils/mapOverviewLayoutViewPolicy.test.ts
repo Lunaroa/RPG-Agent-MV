@@ -177,6 +177,14 @@ describe('Map Overview layout view policy', () => {
     expect(source).not.toMatch(/revealOverviewExport/)
   })
 
+  it('separates fatal preparation errors from partial thumbnail failures', () => {
+    expect(source).toMatch(/preparationPhase === 'error'[\s\S]*?t\('mapOverview\.loadFailed'\)/)
+    expect(source).not.toMatch(/failedThumbnailCount \? t\('mapOverview\.preparing\.failedTitle'/)
+    expect(source).toMatch(/firstMapOverviewThumbnailFailure/)
+    expect(source).toMatch(/notifyPartialThumbnailFailures/)
+    expect(source).toMatch(/mapOverview\.preparing\.fatal\.\$\{fatalPhase\}/)
+  })
+
   it('keeps thin visual edges, wide transparent hit targets, and graded interaction emphasis', () => {
     expect(svgSource).toMatch(/map-overview-svg-edge \{[^}]*stroke-width:1;/)
     expect(svgSource).toMatch(/map-overview-svg-edge-hit \{[^}]*stroke-width:13;/)

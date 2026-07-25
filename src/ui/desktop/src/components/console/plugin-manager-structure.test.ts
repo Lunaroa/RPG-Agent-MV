@@ -67,6 +67,18 @@ describe('plugin manager structure', () => {
     assert.doesNotMatch(paneSource, /plugin-badges|summary-card|technical-details/);
   });
 
+  test('installs dropped .js files with overwrite confirm and rejects non-plugin drops', () => {
+    assert.match(paneSource, /data-ui-id="plugin-list-drop-zone"/);
+    assert.match(paneSource, /@drop="onPluginPanelDrop"/);
+    assert.match(paneSource, /installPluginFromAbsolutePath/);
+    assert.match(paneSource, /isExternalFileDrag/);
+    assert.match(paneSource, /planDroppedPluginFiles/);
+    assert.match(paneSource, /plugins\.overwriteConfirm/);
+    assert.match(paneSource, /plugins\.dropNotJsRejected/);
+    assert.match(paneSource, /plugins\.dropDirectoryRejected/);
+    assert.match(paneSource, /getPathForFile/);
+  });
+
   test('keeps selection, parameter editing, and ordering as distinct interactions', () => {
     assert.match(paneSource, /@click="selectPlugin\(plugin\)"/);
     assert.match(paneSource, /@dblclick="openParameterDialog\(plugin\)"/);
@@ -245,6 +257,16 @@ describe('plugin manager structure', () => {
       valueDialogSource,
       /:disabled="Boolean\(validationIssue\) \|\| \(!changed && !allowUnchangedCommit\)"/,
     );
+    assert.match(valueDialogSource, /inferPluginFileMediaKind\(String\(props\.field\.directory \|\| ''\)\) === 'image'/);
+    assert.doesNotMatch(
+      valueDialogSource,
+      /directory\.startsWith\('img\/'\)|toLowerCase\(\)\.startsWith\('img\/'\)/,
+    );
+    assert.match(valueDialogSource, /findCatalogImageAssetUrlByLogicalName/);
+    assert.match(valueDialogSource, /databaseTable === 'Animations'/);
+    assert.match(valueDialogSource, /mode:\s*'particle_preview'/);
+    assert.match(valueDialogSource, /<PluginAnimationFramePreview/);
+    assert.match(valueDialogSource, /db\.particlePreviewMZOnly/);
     assert.match(collectionEditorSource, /buildPluginParameterCollectionColumns/);
     assert.match(collectionEditorSource, /buildPluginParameterTree/);
     assert.match(collectionEditorSource, /flattenPluginParameterTree/);
@@ -271,7 +293,7 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /toggleVisibleSelection/);
     assert.match(collectionEditorSource, /ElMessageBox\.confirm/);
     assert.match(collectionEditorSource, /clipboard\.writeText/);
-    assert.match(collectionEditorSource, /@row-dblclick="\(row\) => editArrayItem\(row\.index\)"/);
+    assert.match(collectionEditorSource, /@row-dblclick="\(row: \{ id: string; index: number \}\) => editArrayItem\(row\.index\)"/);
     assert.match(collectionEditorSource, /event\.key === 'Enter'/);
     assert.match(collectionEditorSource, /event\.altKey && \(event\.key === 'ArrowUp'/);
     assert.match(collectionEditorSource, /class="drag-handle"/);

@@ -38,6 +38,8 @@ import {
   inspectMapOverviewLayoutOverlaps,
   isMapOverviewThumbnailVersionChanged,
   mapOverviewPreparationPercent,
+  firstMapOverviewThumbnailFailure,
+  resolveMapOverviewFatalPhase,
   validateMapOverviewLayoutNoOverlap,
   validateMapOverviewLayoutPositions,
 } from '../utils/mapOverviewPreparation'
@@ -323,8 +325,10 @@ async function loadOverview(startVersion?: string): Promise<void> {
   overviewProgressCompleted.value = 0
   overviewProgressTotal.value = 0
   preparationPhase.value = 'images'
+  let hasSnapshotPayload = false
   try {
     const next = await maps.overview(project, overviewProgressSessionId)
+    hasSnapshotPayload = true
     const settled = await workspaceSurfaces.validate({
       surface: 'mapOverview',
       loadedVersion: startVersion,
@@ -375,6 +379,7 @@ async function loadOverview(startVersion?: string): Promise<void> {
       preparationPhase.value = 'ready'
       hasPresentedGraph.value = true
       warnParentCycles(preparedPositions.parentCycles)
+      notifyPartialThumbnailFailures()
     } else {
       snapshot.value = next
       await restoreGraphAfterActivation()
@@ -385,8 +390,13 @@ async function loadOverview(startVersion?: string): Promise<void> {
     refreshing.value = false
   } catch (error) {
     if (generation !== loadGeneration) return
+    const fatalPhase = resolveMapOverviewFatalPhase({
+      hasSnapshotPayload,
+      preparationPhase: preparationPhase.value,
+    })
     preparationPhase.value = 'error'
-    loadError.value = formatUserFacingErrorMessage(error, 'general', language.value)
+    const message = formatUserFacingErrorMessage(error, 'general', language.value)
+    loadError.value = t(`mapOverview.preparing.fatal.${fatalPhase}`, { message })
   } finally {
     if (generation === loadGeneration) {
       loading.value = false
@@ -490,6 +500,22 @@ function formatThumbnailFailure(error: unknown): string {
   return isMapOverviewThumbnailVersionChanged(error)
     ? t('mapOverview.preparing.versionChanged')
     : formatUserFacingErrorMessage(error, 'general', language.value)
+}
+
+function notifyPartialThumbnailFailures(): void {
+  const failures = [...thumbnailFailures.value.entries()].map(([mapId, error]) => ({ mapId, error }))
+  if (!failures.length) return
+  const first = firstMapOverviewThumbnailFailure(failures)
+  const reason = first
+    ? (first.error instanceof Error ? first.error.message : String(first.error || ''))
+    : ''
+  const detail = first
+    ? t('mapOverview.preparing.failedDetail', { mapId: first.mapId, reason })
+    : ''
+  ElMessage.warning([
+    t('mapOverview.preparing.failedBody', { count: failures.length }),
+    detail,
+  ].filter(Boolean).join(' '))
 }
 
 function thumbnailAbortError(): Error {
@@ -1676,7 +1702,7 @@ async function cancelOverviewExport(): Promise<void> {
           data-ui-id="map-overview-preparing"
         >
           <template v-if="preparationPhase === 'error'">
-            <strong>{{ failedThumbnailCount ? t('mapOverview.preparing.failedTitle', { count: failedThumbnailCount }) : t('mapOverview.loadFailed') }}</strong>
+            <strong>{{ t('mapOverview.loadFailed') }}</strong>
             <span>{{ loadError }}</span>
             <button type="button" data-ui-id="map-overview-preparing-retry" @click="retryPreparation">{{ t('common.retry') }}</button>
           </template>

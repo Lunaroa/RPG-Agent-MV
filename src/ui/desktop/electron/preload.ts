@@ -5,7 +5,7 @@ import type {
   MapOverviewScanProgressEvent,
 } from '../../../contract/types.ts';
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // 暴露 IPC API 给渲染层（由 vite-plugin-electron 构建为 dist-electron/preload.js）
 contextBridge.exposeInMainWorld('api', {
@@ -37,6 +37,10 @@ contextBridge.exposeInMainWorld('api', {
   clipboard: {
     writeText: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
     readImage: () => ipcRenderer.invoke('clipboard:readImage'),
+  },
+
+  files: {
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
   },
 
   uiControl: {
@@ -209,6 +213,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('projectAssets:replaceMissingReference', request, project),
     importLocalFile: (request: unknown, project?: string) =>
       ipcRenderer.invoke('projectAssets:importLocalFile', request, project),
+    importLocalFiles: (request: unknown, project?: string) =>
+      ipcRenderer.invoke('projectAssets:importLocalFiles', request, project),
     selectImportFile: (category: string) => ipcRenderer.invoke('projectAssets:selectImportFile', category),
   },
 

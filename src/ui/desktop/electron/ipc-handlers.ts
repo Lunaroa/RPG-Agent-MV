@@ -1208,10 +1208,10 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
       const result = await dialog.showOpenDialog(parent, {
         title: electronText(currentProductLanguage(), 'assets.selectFileTitle', { category }),
-        properties: ['openFile'],
+        properties: ['openFile', 'multiSelections'],
         filters: [{ name: category, extensions }],
       });
-      return result.canceled ? null : result.filePaths[0] || null;
+      return result.canceled ? null : result.filePaths;
     },
     selectMapOverviewExportTarget: async (event: Electron.IpcMainInvokeEvent, defaultName: string) => {
       const parent = BrowserWindow.fromWebContents(event.sender) || undefined;

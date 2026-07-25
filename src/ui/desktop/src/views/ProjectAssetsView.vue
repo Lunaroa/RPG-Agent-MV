@@ -24,6 +24,8 @@ import type {
   ProjectAssetCategoryTreeNode,
   ProjectAssetDeleteBatchResult,
   ProjectAssetDeleteItemResult,
+  ProjectAssetImportBatchResult,
+  ProjectAssetImportItemResult,
   ProjectAssetMutationSafetyCheck,
 } from '@contract/types'
 import {
@@ -50,6 +52,13 @@ import {
   projectAssetMediaKind,
 } from '../utils/projectAssetLocalization'
 import { computeProjectAssetGridWindow } from '../utils/projectAssetGridWindow'
+import {
+  applyOverwriteBatchDecision,
+  assertImportBatchResultShape,
+  formatImportResultMessage,
+  planDroppedImportItems,
+  type ImportOverwriteCandidate,
+} from '../utils/projectAssetImportFlow'
 import {
   clearProjectAssetSelection,
   emptyProjectAssetSelection,
@@ -139,6 +148,8 @@ type MarqueeState = {
 const marquee = ref<MarqueeState | null>(null)
 let marqueeActive = false
 let suppressNextClick = false
+const fileDropActive = ref(false)
+let fileDragDepth = 0
 
 const listingCoordinator = new LatestAsyncCoordinator<{
   project: string
@@ -816,31 +827,280 @@ async function importFile() {
   mutationBusy.value = true
   mutationError.value = ''
   try {
-    const sourceFile = await projectAssets.selectImportFile(category)
-    if (!sourceFile) return
-    const { name } = localFileParts(sourceFile)
-    const overwrite = categoryEntries.value.some((entry) => entry.name === name)
-    if (overwrite) {
-      try {
-        await ElMessageBox.confirm(
-          t('projectAssets.overwriteConfirm', { name }),
-          t('projectAssets.overwriteTitle'),
-          { type: 'warning' },
-        )
-      } catch {
-        return
-      }
-    }
-    const imported = await projectAssets.importLocalFile(
-      { category, sourceFile, overwrite },
-      projectStore.currentProject,
-    )
-    await afterMutation(imported)
+    const sourceFiles = await projectAssets.selectImportFile(category)
+    if (!sourceFiles || sourceFiles.length === 0) return
+    await runImportForSourceFiles(sourceFiles)
   } catch (error) {
     mutationError.value = formatError(error)
   } finally {
     mutationBusy.value = false
   }
+}
+
+type LocalImportRejection = {
+  name: string;
+  reason: string;
+}
+
+function importResultMessageCopy() {
+  return {
+    allImportedOne: t('projectAssets.importResultAllImportedOne'),
+    allImportedMany: (imported: number) => t('projectAssets.importResultAllImportedMany', { imported }),
+    mixed: (imported: number, skipped: number, failed: number) => t('projectAssets.importResultMixed', {
+      imported,
+      skipped,
+      failed,
+    }),
+    skippedItem: (name: string, reason: string) => t('projectAssets.importResultSkippedItem', { name, reason }),
+    failedItem: (name: string, reason: string) => t('projectAssets.importResultFailedItem', { name, reason }),
+    unknownReason: t('projectAssets.importResultUnknownReason'),
+  }
+}
+
+async function runImportForSourceFiles(
+  sourceFiles: string[],
+  preRejections: LocalImportRejection[] = [],
+) {
+  if (!projectStore.currentProject || !selectedCategoryId.value) return
+  const category = selectedCategoryId.value
+  let candidates: ImportOverwriteCandidate[] = sourceFiles.map((sourceFile) => {
+    const parts = localFileParts(sourceFile)
+    return {
+      sourceFile,
+      name: parts.name,
+      overwrite: false,
+    }
+  })
+
+  const conflicts = candidates.filter((candidate) =>
+    categoryEntries.value.some((entry) => entry.name === candidate.name),
+  )
+  let skippedFromDialog: ProjectAssetImportItemResult[] = []
+
+  if (conflicts.length === 1 && candidates.length === 1) {
+    try {
+      await ElMessageBox.confirm(
+        t('projectAssets.overwriteConfirm', { name: conflicts[0]!.name }),
+        t('projectAssets.overwriteTitle'),
+        { type: 'warning' },
+      )
+      candidates[0]!.overwrite = true
+    } catch {
+      return
+    }
+  } else if (conflicts.length > 0) {
+    const decision = await askBatchOverwriteDecision(conflicts.map((item) => item.name))
+    const applied = applyOverwriteBatchDecision(
+      candidates,
+      new Set(conflicts.map((item) => item.name)),
+      decision,
+    )
+    if (applied.outcome === 'cancel') return
+    candidates = applied.candidates
+    skippedFromDialog = applied.skipped.map((item) => ({
+      sourceFile: item.sourceFile,
+      targetName: item.name,
+      relativePath: null,
+      status: 'skipped' as const,
+      error: t('projectAssets.importSkipSameNameReason'),
+    }))
+  }
+
+  const localFailed: ProjectAssetImportItemResult[] = preRejections.map((item) => ({
+    sourceFile: item.name,
+    targetName: item.name,
+    relativePath: null,
+    status: 'failed' as const,
+    error: item.reason,
+  }))
+
+  let backendResults: ProjectAssetImportItemResult[] = []
+  if (candidates.length > 0) {
+    const batch = await projectAssets.importLocalFiles(
+      {
+        category,
+        files: candidates.map((candidate) => ({
+          sourceFile: candidate.sourceFile,
+          overwrite: candidate.overwrite || undefined,
+        })),
+      },
+      projectStore.currentProject,
+    )
+    if (!batch || typeof batch !== 'object' || !('results' in batch)) {
+      throw new Error(t('projectAssets.importResultShapeError', {
+        expected: candidates.length,
+        actual: 'missing results',
+      }))
+    }
+    const typedBatch = batch as ProjectAssetImportBatchResult
+    if (!Array.isArray(typedBatch.results) || typedBatch.results.length !== candidates.length) {
+      throw new Error(t('projectAssets.importResultShapeError', {
+        expected: candidates.length,
+        actual: Array.isArray(typedBatch.results) ? typedBatch.results.length : typeof typedBatch.results,
+      }))
+    }
+    assertImportBatchResultShape(typedBatch, candidates.length)
+    backendResults = typedBatch.results
+  }
+
+  const combined = [...backendResults, ...skippedFromDialog, ...localFailed]
+  const summary = formatImportResultMessage(combined, importResultMessageCopy())
+  const hasProblems = combined.some((item) => item.status !== 'imported')
+  if (hasProblems) {
+    mutationError.value = summary
+  } else {
+    mutationError.value = ''
+    ElMessage.success(summary)
+  }
+
+  const firstImported = backendResults.find((item) => item.status === 'imported' && item.detail)
+  await afterMutation(firstImported?.detail || null)
+}
+
+async function askBatchOverwriteDecision(names: string[]): Promise<'overwrite' | 'skip' | 'cancel'> {
+  try {
+    await ElMessageBox.confirm(
+      t('projectAssets.overwriteBatchConfirm', {
+        count: names.length,
+        names: names.join('\n'),
+      }),
+      t('projectAssets.overwriteBatchTitle'),
+      {
+        type: 'warning',
+        distinguishCancelAndClose: true,
+        confirmButtonText: t('projectAssets.overwriteBatchOverwrite'),
+        cancelButtonText: t('projectAssets.overwriteBatchSkip'),
+      },
+    )
+    return 'overwrite'
+  } catch (action) {
+    if (action === 'cancel') return 'skip'
+    return 'cancel'
+  }
+}
+
+function isFileDragEvent(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types || []).includes('Files')
+}
+
+function preventWindowFileNavigation(event: DragEvent) {
+  if (!isFileDragEvent(event)) return
+  event.preventDefault()
+}
+
+function onGridDragEnter(event: DragEvent) {
+  if (!isFileDragEvent(event)) return
+  event.preventDefault()
+  fileDragDepth += 1
+  if (canImport.value) fileDropActive.value = true
+}
+
+function onGridDragOver(event: DragEvent) {
+  if (!isFileDragEvent(event)) return
+  event.preventDefault()
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = canImport.value ? 'copy' : 'none'
+  }
+  if (canImport.value) fileDropActive.value = true
+}
+
+function onGridDragLeave(event: DragEvent) {
+  if (!isFileDragEvent(event)) return
+  fileDragDepth = Math.max(0, fileDragDepth - 1)
+  if (fileDragDepth === 0) fileDropActive.value = false
+}
+
+async function onGridDrop(event: DragEvent) {
+  event.preventDefault()
+  fileDragDepth = 0
+  fileDropActive.value = false
+
+  if (!projectStore.currentProject) return
+  if (!canImport.value) {
+    mutationError.value = t('projectAssets.importDropNeedsCategory')
+    return
+  }
+  if (mutationBusy.value) return
+
+  const dataTransfer = event.dataTransfer
+  if (!dataTransfer) {
+    throw new Error(t('projectAssets.importPathUnresolved', { name: t('projectAssets.importResultUnknownReason') }))
+  }
+  const files = Array.from(dataTransfer.files || [])
+  const items = dataTransfer.items ? Array.from(dataTransfer.items) : []
+  const planned = []
+  if (items.length > 0) {
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]
+      if (!item || item.kind !== 'file') continue
+      const entry = typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null
+      const file = item.getAsFile() || files[index] || null
+      const label = (file && file.name)
+        || (entry && entry.name)
+        || t('projectAssets.importResultUnknownReason')
+      if (entry && entry.isDirectory) {
+        planned.push({ isDirectory: true, name: label, absolutePath: null })
+        continue
+      }
+      if (!file) {
+        planned.push({ isDirectory: false, name: label, absolutePath: null })
+        continue
+      }
+      planned.push({
+        isDirectory: false,
+        name: file.name,
+        absolutePath: resolveDroppedFilePath(file),
+      })
+    }
+  } else {
+    for (const file of files) {
+      planned.push({
+        isDirectory: false,
+        name: file.name,
+        absolutePath: resolveDroppedFilePath(file),
+      })
+    }
+  }
+
+  const plan = planDroppedImportItems(planned)
+  const rejections: LocalImportRejection[] = plan.rejections.map((item) => ({
+    name: item.name,
+    reason: item.reason === 'directory'
+      ? t('projectAssets.importDropDirectoryRejected', { name: item.name })
+      : t('projectAssets.importPathUnresolved', { name: item.name }),
+  }))
+  const sourceFiles = plan.sourceFiles
+
+  if (sourceFiles.length === 0 && rejections.length === 0) return
+
+  mutationBusy.value = true
+  mutationError.value = ''
+  try {
+    if (sourceFiles.length === 0) {
+      mutationError.value = formatImportResultMessage(rejections.map((item) => ({
+        sourceFile: item.name,
+        targetName: item.name,
+        relativePath: null,
+        status: 'failed' as const,
+        error: item.reason,
+      })), importResultMessageCopy())
+      return
+    }
+    await runImportForSourceFiles(sourceFiles, rejections)
+  } catch (error) {
+    mutationError.value = formatError(error)
+  } finally {
+    mutationBusy.value = false
+  }
+}
+
+function resolveDroppedFilePath(file: File): string | null {
+  const api = window.api
+  if (!api || !api.files || typeof api.files.getPathForFile !== 'function') {
+    throw new Error(t('projectAssets.importPathUnresolved', { name: file.name }))
+  }
+  const absolutePath = String(api.files.getPathForFile(file) || '').trim()
+  return absolutePath || null
 }
 
 async function renameSelectedEntry() {
@@ -1129,8 +1389,17 @@ onMounted(() => {
     resizeObserver = new ResizeObserver(() => measureGrid())
     if (gridHost.value) resizeObserver.observe(gridHost.value)
   }
+  window.addEventListener('dragover', preventWindowFileNavigation)
+  window.addEventListener('drop', preventWindowFileNavigation)
   void loadTree()
   void refreshStagingStatus()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('dragover', preventWindowFileNavigation)
+  window.removeEventListener('drop', preventWindowFileNavigation)
+  resizeObserver?.disconnect()
+  resizeObserver = null
 })
 
 watch(gridHost, (el, previous) => {
@@ -1139,11 +1408,6 @@ watch(gridHost, (el, previous) => {
     if (el) resizeObserver.observe(el)
   }
   measureGrid()
-})
-
-onUnmounted(() => {
-  resizeObserver?.disconnect()
-  resizeObserver = null
 })
 </script>
 
@@ -1240,12 +1504,13 @@ onUnmounted(() => {
       </div>
 
       <div v-if="stagingError" class="project-assets-error" role="alert" data-ui-id="project-assets-staging-error">{{ stagingError }}</div>
-      <div v-if="mutationError" class="project-assets-error" role="alert">{{ mutationError }}</div>
+      <div v-if="mutationError" class="project-assets-error" role="alert" data-ui-id="project-assets-mutation-error">{{ mutationError }}</div>
       <div v-if="categoryError" class="project-assets-error" role="alert">{{ categoryError }}</div>
 
       <div
         ref="gridHost"
         class="project-assets-grid-host"
+        :class="{ 'is-file-drop-target': fileDropActive }"
         data-ui-id="project-assets-grid"
         tabindex="0"
         :aria-label="t('projectAssets.gridAria')"
@@ -1255,7 +1520,18 @@ onUnmounted(() => {
         @pointerup="onGridPointerUp"
         @pointercancel="onGridPointerCancel"
         @keydown="onGridKeydown"
+        @dragenter="onGridDragEnter"
+        @dragover="onGridDragOver"
+        @dragleave="onGridDragLeave"
+        @drop="onGridDrop"
       >
+        <div
+          v-if="fileDropActive"
+          class="project-assets-drop-hint"
+          data-ui-id="project-assets-drop-hint"
+        >
+          {{ t('projectAssets.dropHint') }}
+        </div>
         <div
           v-if="emptyMessage && !categoryLoading"
           class="project-assets-empty"
@@ -1535,6 +1811,28 @@ onUnmounted(() => {
   border-radius: var(--app-radius-md);
   background: var(--app-bg-elevated);
   outline: none;
+}
+
+.project-assets-grid-host.is-file-drop-target {
+  border-color: var(--app-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--app-accent) 8%, var(--app-bg-elevated));
+}
+
+.project-assets-drop-hint {
+  position: sticky;
+  top: 12px;
+  z-index: 3;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  margin: 12px auto 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--app-accent) 45%, var(--app-border));
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, var(--app-bg) 88%, var(--app-accent));
+  color: var(--app-fg);
+  font-size: 13px;
+  pointer-events: none;
 }
 
 .project-assets-grid-spacer {

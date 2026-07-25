@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { projectAssetCategoryLabel } from '../../../../contract/project-asset-category-labels.ts';
 import type {
   ManagedAssetDetail,
   ManagedAssetRef,
@@ -8,7 +9,11 @@ import type {
   ProjectAssetDeleteBatchResult,
   ProjectAssetDeleteItemResult,
   ProjectAssetDeleteTargetInput,
+  ProjectAssetImportBatchResult,
+  ProjectAssetImportItemInput,
+  ProjectAssetImportItemResult,
   ProjectAssetImportLocalFileInput,
+  ProjectAssetImportLocalFilesInput,
   ProjectAssetMutationSafetyCheck,
   ProjectAssetReference,
   ProjectAssetReferenceGraph,
@@ -17,6 +22,7 @@ import type {
   ProjectAssetReplaceMissingReferenceResult,
   ProjectMissingAssetReference,
 } from '../../../../contract/types.ts';
+import { resolveLanguage } from '../i18n/request-language.ts';
 import { buildAssetInventory } from '../rmmv/asset-inventory.ts';
 import { readJson } from '../rmmv/json.ts';
 import type { ProjectReadIssue } from '../rmmv/project-scanner.ts';
@@ -27,6 +33,8 @@ import {
   assetManagementAssetMissing,
   assetManagementCategoryMissing,
   assetManagementDeletePartialFailure,
+  assetManagementImportBatchEmpty,
+  assetManagementImportDuplicateTarget,
   assetManagementImportParamsMissing,
   assetManagementInvalidName,
   assetManagementInvalidPath,
@@ -356,32 +364,262 @@ export function importLocalAssetFile(
   request: ProjectAssetImportLocalFileInput,
 ): ManagedAssetDetail {
   const input = normalizeImportLocalAssetRequest(request);
+  const batch = importLocalAssetFiles(workflowRoot, project, {
+    category: input.category,
+    files: [{
+      sourceFile: input.sourceFile,
+      targetName: input.targetName,
+      overwrite: input.overwrite,
+    }],
+  });
+  const item = batch.results[0];
+  if (!item) throw new Error(assetManagementImportParamsMissing());
+  if (item.status === 'imported' && item.detail) return item.detail;
+  throw new Error(item.error || assetManagementImportParamsMissing());
+}
+
+export function importLocalAssetFiles(
+  workflowRoot: string,
+  project: string,
+  request: ProjectAssetImportLocalFilesInput,
+): ProjectAssetImportBatchResult {
+  const input = normalizeImportLocalAssetFilesRequest(request);
   const category = requireAssetCategory(input.category);
   const definition = RMMV_ASSET_CATEGORIES.find((item) => item.id === category);
   if (!definition) throw new Error(unsupportedAssetCategory(input.category));
 
-  const sourceFile = normalizeLocalSourceFile(input.sourceFile);
-  const stat = fs.statSync(sourceFile);
-  if (!stat.isFile()) throw new Error(assetManagementSourceNotFile());
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  const results: ProjectAssetImportItemResult[] = [];
+  const pending: Array<{
+    sourceFile: string;
+    targetName: string;
+    targetRelative: string;
+    mutations: StagedProjectFileMutation[];
+  }> = [];
+  const claimedNames = new Set<string>();
+
+  for (const file of input.files) {
+    const prepared = prepareImportLocalAssetItem(
+      workflowRoot,
+      project,
+      category,
+      definition.extensions,
+      graph,
+      file,
+      claimedNames,
+    );
+    if (prepared.status !== 'ready') {
+      results.push({
+        sourceFile: prepared.sourceFile,
+        targetName: prepared.targetName,
+        relativePath: prepared.relativePath,
+        status: prepared.status,
+        error: prepared.error,
+      });
+      continue;
+    }
+    claimedNames.add(prepared.targetName);
+    pending.push({
+      sourceFile: prepared.sourceFile,
+      targetName: prepared.targetName,
+      targetRelative: prepared.targetRelative,
+      mutations: prepared.mutations,
+    });
+    results.push({
+      sourceFile: prepared.sourceFile,
+      targetName: prepared.targetName,
+      relativePath: prepared.targetRelative,
+      status: 'imported',
+    });
+  }
+
+  if (pending.length) {
+    try {
+      const mutations = pending.flatMap((item) => item.mutations);
+      applyProjectFilesAtomically(workflowRoot, project, mutations);
+      invalidateProjectAssetBrowserCache(project);
+      for (const item of results) {
+        if (item.status !== 'imported' || !item.relativePath) continue;
+        item.detail = getAssetDetail(workflowRoot, project, {
+          scope: 'project',
+          category,
+          relativePath: item.relativePath,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      for (const item of results) {
+        if (item.status !== 'imported') continue;
+        item.status = 'failed';
+        item.error = message;
+        delete item.detail;
+      }
+    }
+  }
+
+  return { results };
+}
+
+type PreparedImportItem =
+  | {
+    status: 'ready';
+    sourceFile: string;
+    targetName: string;
+    targetRelative: string;
+    mutations: StagedProjectFileMutation[];
+  }
+  | {
+    status: 'skipped' | 'failed';
+    sourceFile: string;
+    targetName: string | null;
+    relativePath: string | null;
+    error: string;
+  };
+
+function prepareImportLocalAssetItem(
+  workflowRoot: string,
+  project: string,
+  category: RmmvAssetCategory,
+  allowedExtensions: readonly string[],
+  graph: ProjectAssetReferenceGraph,
+  file: ProjectAssetImportItemInput,
+  claimedNames: ReadonlySet<string>,
+): PreparedImportItem {
+  const sourceFileRaw = String(file.sourceFile || '');
+  let sourceFile: string;
+  try {
+    sourceFile = normalizeLocalSourceFile(sourceFileRaw);
+  } catch (error) {
+    return {
+      status: 'failed',
+      sourceFile: sourceFileRaw,
+      targetName: null,
+      relativePath: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  try {
+    const stat = fs.statSync(sourceFile);
+    if (!stat.isFile()) {
+      return {
+        status: 'failed',
+        sourceFile,
+        targetName: null,
+        relativePath: null,
+        error: assetManagementSourceNotFile(),
+      };
+    }
+  } catch (error) {
+    return {
+      status: 'failed',
+      sourceFile,
+      targetName: null,
+      relativePath: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 
   const sourceFileName = path.basename(sourceFile);
   const sourceExtension = path.extname(sourceFileName);
   const sourceExtensionLower = sourceExtension.toLowerCase();
-  if (!definition.extensions.includes(sourceExtensionLower)) {
-    throw new Error(unsupportedAssetExtension(category, sourceExtension));
+  if (!allowedExtensions.includes(sourceExtensionLower)) {
+    return {
+      status: 'failed',
+      sourceFile,
+      targetName: null,
+      relativePath: null,
+      error: unsupportedAssetExtension(
+        projectAssetCategoryLabel(category, resolveLanguage()),
+        sourceExtension,
+        allowedExtensions,
+      ),
+    };
   }
 
-  const targetName = input.targetName === undefined || input.targetName.trim() === ''
-    ? path.basename(sourceFileName, sourceExtension)
-    : normalizeImportTargetName(input.targetName);
-  const targetRelative = `${projectAssetRelativeDirectory(workflowRoot, project, category)}/${targetName}${sourceExtension}`;
-  assertProjectRelativeTarget(project, targetRelative);
+  let targetName: string;
+  try {
+    targetName = file.targetName === undefined || String(file.targetName).trim() === ''
+      ? path.basename(sourceFileName, sourceExtension)
+      : normalizeImportTargetName(String(file.targetName));
+  } catch (error) {
+    return {
+      status: 'failed',
+      sourceFile,
+      targetName: null,
+      relativePath: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 
-  const graph = buildAssetReferenceGraph(workflowRoot, project);
+  if (claimedNames.has(targetName)) {
+    return {
+      status: 'failed',
+      sourceFile,
+      targetName,
+      relativePath: null,
+      error: assetManagementImportDuplicateTarget(targetName),
+    };
+  }
+
+  const targetRelative = `${projectAssetRelativeDirectory(workflowRoot, project, category)}/${targetName}${sourceExtension}`;
+  try {
+    assertProjectRelativeTarget(project, targetRelative);
+  } catch (error) {
+    return {
+      status: 'failed',
+      sourceFile,
+      targetName,
+      relativePath: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
   const occupied = graph.assets.filter((asset) => asset.category === category && asset.name === targetName);
-  if (occupied.length > 1) throw new Error(assetManagementTargetNameExists());
-  if (occupied.length === 1 && input.overwrite !== true) {
-    throw new Error(assetManagementOverwriteRequired());
+  if (occupied.length > 1) {
+    return {
+      status: 'failed',
+      sourceFile,
+      targetName,
+      relativePath: targetRelative,
+      error: assetManagementTargetNameExists(),
+    };
+  }
+  if (occupied.length === 1 && file.overwrite !== true) {
+    return {
+      status: 'skipped',
+      sourceFile,
+      targetName,
+      relativePath: targetRelative,
+      error: assetManagementOverwriteRequired(),
+    };
+  }
+
+  const candidateRelativePaths = [
+    targetRelative,
+    ...(occupied[0] && occupied[0].relativePath !== targetRelative ? [occupied[0].relativePath] : []),
+  ];
+  const stagedConflict = findProjectStagingPathConflict(workflowRoot, project, candidateRelativePaths);
+  if (stagedConflict?.kind === 'draft') {
+    return {
+      status: 'failed',
+      sourceFile,
+      targetName,
+      relativePath: targetRelative,
+      error: stagingUnappliedDraftBlocksAssetMutation(stagedConflict.relativePath),
+    };
+  }
+  if (stagedConflict?.kind === 'operation') {
+    return {
+      status: 'failed',
+      sourceFile,
+      targetName,
+      relativePath: targetRelative,
+      error: stagingOperationReservationBlocksAssetMutation(
+        stagedConflict.relativePath,
+        stagedConflict.operationId,
+      ),
+    };
   }
 
   const mutations: StagedProjectFileMutation[] = [{
@@ -391,13 +629,14 @@ export function importLocalAssetFile(
   if (occupied[0] && occupied[0].relativePath !== targetRelative) {
     mutations.push({ relativePath: occupied[0].relativePath, delete: true });
   }
-  stageProjectFilesAtomically(workflowRoot, project, mutations);
-  invalidateProjectAssetBrowserCache(project);
-  return getAssetDetail(workflowRoot, project, {
-    scope: 'project',
-    category,
-    relativePath: targetRelative,
-  });
+
+  return {
+    status: 'ready',
+    sourceFile,
+    targetName,
+    targetRelative,
+    mutations,
+  };
 }
 
 export function renameAsset(
@@ -1080,6 +1319,37 @@ function normalizeImportLocalAssetRequest(request: ProjectAssetImportLocalFileIn
     sourceFile: request.sourceFile,
     targetName: request.targetName,
     overwrite: request.overwrite,
+  };
+}
+
+function normalizeImportLocalAssetFilesRequest(
+  request: ProjectAssetImportLocalFilesInput,
+): ProjectAssetImportLocalFilesInput {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error(assetManagementImportParamsMissing());
+  if (typeof request.category !== 'string' || !request.category.trim()) throw new Error(assetManagementCategoryMissing());
+  if (!Array.isArray(request.files) || request.files.length === 0) throw new Error(assetManagementImportBatchEmpty());
+  const files = request.files.map((file) => {
+    if (!file || typeof file !== 'object' || Array.isArray(file)) {
+      throw new Error(assetManagementImportParamsMissing());
+    }
+    if (typeof file.sourceFile !== 'string' || !file.sourceFile.trim()) {
+      throw new Error(assetManagementSourceRequired());
+    }
+    if (file.targetName !== undefined && typeof file.targetName !== 'string') {
+      throw new Error(assetManagementInvalidName());
+    }
+    if (file.overwrite !== undefined && typeof file.overwrite !== 'boolean') {
+      throw new Error(assetManagementOverwriteMustBeBoolean());
+    }
+    return {
+      sourceFile: file.sourceFile,
+      targetName: file.targetName,
+      overwrite: file.overwrite,
+    };
+  });
+  return {
+    category: request.category,
+    files,
   };
 }
 

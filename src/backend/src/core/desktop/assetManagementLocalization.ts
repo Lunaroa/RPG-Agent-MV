@@ -52,8 +52,8 @@ export function assetManagementSourceNotFile(language?: ProductLanguage | null):
 
 export function assetManagementOverwriteRequired(language?: ProductLanguage | null): string {
   return pickByLocale(resolveLanguage(language), {
-    'zh-CN': '目标资产已存在，覆盖导入需要显式开启 overwrite',
-    'en-US': 'Target asset already exists; enable overwrite explicitly to replace it',
+    'zh-CN': '目标素材已存在，需要明确选择覆盖后才能替换',
+    'en-US': 'Target asset already exists; choose replace explicitly to overwrite it',
   });
 }
 
@@ -134,14 +134,34 @@ export function unsupportedAssetCategory(category: string, language?: ProductLan
   });
 }
 
-export function unsupportedAssetExtension(category: string, extension: string, language?: ProductLanguage | null): string {
+export function unsupportedAssetExtension(
+  categoryLabel: string,
+  extension: string,
+  allowedExtensions: readonly string[],
+  language?: ProductLanguage | null,
+): string {
   const extLabel = extension || pickByLocale(resolveLanguage(language), {
     'zh-CN': '无扩展名',
     'en-US': 'no extension',
   });
+  const allowedLabel = allowedExtensions.join(', ');
   return pickByLocale(resolveLanguage(language), {
-    'zh-CN': `资产类型 ${category} 不支持 ${extLabel} 文件`,
-    'en-US': `Asset category ${category} does not support ${extLabel} files`,
+    'zh-CN': `「${categoryLabel}」不支持 ${extLabel} 文件（允许：${allowedLabel}）`,
+    'en-US': `"${categoryLabel}" does not support ${extLabel} files (allowed: ${allowedLabel})`,
+  });
+}
+
+export function assetManagementImportBatchEmpty(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '批量导入至少需要一个本地文件',
+    'en-US': 'Batch import requires at least one local file',
+  });
+}
+
+export function assetManagementImportDuplicateTarget(targetName: string, language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `同一批导入中重复的目标名：${targetName}`,
+    'en-US': `Duplicate target name in the same import batch: ${targetName}`,
   });
 }
 

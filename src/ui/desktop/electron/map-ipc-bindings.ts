@@ -19,7 +19,7 @@ export interface ProjectIpcOptions {
   selectProjectDirectory?: (event: unknown) => Promise<string | null>;
   selectPluginFile?: (event: unknown) => Promise<string | null>;
   selectPluginDirectory?: (event: unknown) => Promise<string | null>;
-  selectAssetFile?: (event: unknown, category: string, extensions: string[]) => Promise<string | null>;
+  selectAssetFile?: (event: unknown, category: string, extensions: string[]) => Promise<string[] | null>;
   selectMapOverviewExportTarget?: (event: unknown, defaultName: string) => Promise<string | null>;
   openProjectDirectory?: (projectPath: string) => Promise<void>;
   productLanguage?: () => ProductLanguage;
@@ -98,6 +98,7 @@ export const MAP_IPC_CHANNELS = [
   'projectAssets:checkDeleteSafety',
   'projectAssets:replaceMissingReference',
   'projectAssets:importLocalFile',
+  'projectAssets:importLocalFiles',
   'projectAssets:selectImportFile',
   'projectManagement:overview',
   'projectManagement:getEntry',
@@ -438,6 +439,8 @@ export function registerMapIpcHandlers(
     desktop.assetManagement.replaceMissingAssetReference(workflowRoot, project(value), request));
   handle('projectAssets:importLocalFile', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.importLocalAssetFile(workflowRoot, project(value), request));
+  handle('projectAssets:importLocalFiles', (_event, request: Record<string, unknown>, value?: string) =>
+    desktop.assetManagement.importLocalAssetFiles(workflowRoot, project(value), request));
   handle('projectAssets:selectImportFile', async (event, category: string) => {
     if (!options.selectAssetFile) throw new Error(electronText(options.productLanguage?.(), 'assets.selectFileUnsupported'));
     const extensions = desktop.assetManagement.getAssetImportFileExtensions(category);

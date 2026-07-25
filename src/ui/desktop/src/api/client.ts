@@ -41,6 +41,9 @@ declare global {
           dataBase64: string;
         } | null>;
       };
+      files: {
+        getPathForFile(file: File): string;
+      };
       uiControl: {
         onCommand(callback: (payload: unknown) => void): () => void;
         sendResult(payload: unknown): void;
@@ -191,7 +194,8 @@ declare global {
         checkDeleteSafety(targets: unknown, project?: string): Promise<unknown>;
         replaceMissingReference(request: unknown, project?: string): Promise<unknown>;
         importLocalFile(request: unknown, project?: string): Promise<unknown>;
-        selectImportFile(category: string): Promise<string | null>;
+        importLocalFiles(request: unknown, project?: string): Promise<unknown>;
+        selectImportFile(category: string): Promise<string[] | null>;
       };
       settings: {
         listProviders(): Promise<{ providers: unknown[] }>;
@@ -318,10 +322,11 @@ import type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
-  ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput,
+  ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput, ProjectAssetDeleteItemResult,
   ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
+  ProjectAssetImportLocalFilesInput, ProjectAssetImportBatchResult, ProjectAssetImportItemResult,
   AssetLibraryCatalog, AssetLibraryCategoryId, AssetLibraryEntry, AssetLibraryImportResult,
   AssetLibraryImportValidation, AssetLibrarySkillEntry,
   ProviderSummary, UiSettings, PermissionSettings, AgentExecutionSettings, AgentExecutionEngineId,
@@ -346,6 +351,8 @@ export type {
   ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
   ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
+  ProjectAssetImportLocalFilesInput, ProjectAssetImportBatchResult, ProjectAssetImportItemResult,
+  ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput, ProjectAssetDeleteItemResult,
   AssetLibraryCatalog, AssetLibraryCategoryId, AssetLibraryEntry, AssetLibraryImportResult,
   AssetLibraryImportValidation, AssetLibrarySkillEntry,
   ProviderSummary, UiSettings, PermissionSettings, AgentExecutionSettings, AgentExecutionEngineId,
@@ -1028,8 +1035,14 @@ export const projectAssets = {
       project,
     ) as Promise<ManagedAssetDetail>;
   },
+  importLocalFiles(request: ProjectAssetImportLocalFilesInput, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.importLocalFiles(
+      toPlain(request),
+      project,
+    ) as Promise<ProjectAssetImportBatchResult>;
+  },
   selectImportFile(category: string) {
-    return desktopApi().projectAssets.selectImportFile(category) as Promise<string | null>;
+    return desktopApi().projectAssets.selectImportFile(category) as Promise<string[] | null>;
   },
 };
 

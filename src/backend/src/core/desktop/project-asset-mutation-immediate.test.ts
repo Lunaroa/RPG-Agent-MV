@@ -11,6 +11,8 @@ import { readJson, writeJson } from '../rmmv/json.ts';
 import { withTestLanguage } from '../i18n/with-test-language.ts';
 import {
   deleteProjectAssets,
+  importLocalAssetFile,
+  importLocalAssetFiles,
   renameAsset,
 } from './asset-management-service.ts';
 import {
@@ -70,6 +72,63 @@ describe('project asset immediate mutations', { concurrency: false }, () => {
     const status = getProjectStagingStatus(root, project);
     assert.equal(status.files.some((entry) => entry.relativePath === unrelatedRelative), true);
     assert.equal(status.files.some((entry) => entry.relativePath.includes('Hero') || entry.relativePath.includes('Lead')), false);
+  });
+
+  test('import commits only involved files and leaves unrelated staging drafts untouched', () => {
+    const unrelatedRelative = 'www/data/Map002.json';
+    const unrelatedSource = path.join(project, 'www', 'data', 'Map002.json');
+    const unrelatedBefore = fs.readFileSync(unrelatedSource, 'utf8');
+    stageProjectFilesAtomically(root, project, [{
+      relativePath: unrelatedRelative,
+      content: Buffer.from('{"note":"unreviewed draft"}', 'utf8'),
+    }]);
+
+    const localFile = path.join(root, 'desktop-local-assets', 'FreshPortrait.png');
+    fs.mkdirSync(path.dirname(localFile), { recursive: true });
+    fs.writeFileSync(localFile, 'fresh portrait');
+
+    const imported = importLocalAssetFile(root, project, {
+      category: 'pictures',
+      sourceFile: localFile,
+    });
+
+    assert.equal(imported.relativePath, 'www/img/pictures/FreshPortrait.png');
+    assert.equal(fs.readFileSync(path.join(project, 'www', 'img', 'pictures', 'FreshPortrait.png'), 'utf8'), 'fresh portrait');
+    assert.equal(fs.readFileSync(unrelatedSource, 'utf8'), unrelatedBefore);
+    const stagedUnrelated = getProjectFileForRead(root, project, unrelatedRelative);
+    assert.ok(stagedUnrelated);
+    assert.equal(fs.readFileSync(stagedUnrelated, 'utf8'), '{"note":"unreviewed draft"}');
+    const status = getProjectStagingStatus(root, project);
+    assert.equal(status.files.some((entry) => entry.relativePath === unrelatedRelative), true);
+    assert.equal(status.files.some((entry) => entry.relativePath === 'www/img/pictures/FreshPortrait.png'), false);
+  });
+
+  test('importLocalAssetFiles returns per-item results without throwing on mixed failures', () => {
+    const good = path.join(root, 'desktop-local-assets', 'Good.png');
+    const bad = path.join(root, 'desktop-local-assets', 'Bad.txt');
+    const clash = path.join(root, 'desktop-local-assets', 'Unused.png');
+    fs.mkdirSync(path.dirname(good), { recursive: true });
+    fs.writeFileSync(good, 'good');
+    fs.writeFileSync(bad, 'bad');
+    fs.writeFileSync(clash, 'clash');
+
+    const batch = withTestLanguage(() => importLocalAssetFiles(root, project, {
+      category: 'pictures',
+      files: [
+        { sourceFile: good },
+        { sourceFile: bad },
+        { sourceFile: clash },
+      ],
+    }));
+
+    assert.equal(batch.results.length, 3);
+    assert.equal(batch.results[0]?.status, 'imported');
+    assert.equal(batch.results[1]?.status, 'failed');
+    assert.match(batch.results[1]?.error || '', /不支持|\.txt/i);
+    assert.equal(batch.results[2]?.status, 'skipped');
+    assert.match(batch.results[2]?.error || '', /明确选择覆盖|choose replace explicitly/i);
+    assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'pictures', 'Good.png')), true);
+    assert.equal(fs.readFileSync(path.join(project, 'www', 'img', 'pictures', 'Unused.png'), 'utf8'), 'unused');
   });
 
   test('rename fail-fast when a target reference file already has an unapplied draft', () => {

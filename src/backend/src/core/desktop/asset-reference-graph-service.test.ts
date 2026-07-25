@@ -158,7 +158,7 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.equal(status.files.some((entry) => entry.relativePath === 'www/img/pictures/Unused.png'), false);
   });
 
-  test('importLocalAssetFile copies a local file into the category directory through staging', () => {
+  test('importLocalAssetFile copies a local file into the category directory immediately', () => {
     const localFile = path.join(root, 'desktop-local-assets', 'ImportedPortrait.png');
     fs.mkdirSync(path.dirname(localFile), { recursive: true });
     fs.writeFileSync(localFile, 'imported portrait');
@@ -171,29 +171,22 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.equal(result.category, 'pictures');
     assert.equal(result.name, 'ImportedPortrait');
     assert.equal(result.relativePath, 'www/img/pictures/ImportedPortrait.png');
-    assert.equal(result.staged, true);
+    assert.equal(result.staged, false);
     assert.equal(result.size, 'imported portrait'.length);
     assert.deepEqual(result.references, []);
 
     const sourceTarget = path.join(project, 'www', 'img', 'pictures', 'ImportedPortrait.png');
-    assert.equal(fs.existsSync(sourceTarget), false);
-    const stagedPath = getProjectFileForRead(root, project, 'www/img/pictures/ImportedPortrait.png');
-    assert.equal(typeof stagedPath, 'string');
-    assert.ok(stagedPath);
-    assert.notEqual(stagedPath, sourceTarget);
-    assert.equal(fs.readFileSync(stagedPath as string, 'utf8'), 'imported portrait');
+    assert.equal(fs.existsSync(sourceTarget), true);
+    assert.equal(fs.readFileSync(sourceTarget, 'utf8'), 'imported portrait');
 
     const status = getProjectStagingStatus(root, project);
-    const stagedEntry = status.files.find((entry) => entry.relativePath === 'www/img/pictures/ImportedPortrait.png');
-    assert.ok(stagedEntry);
-    assert.equal(stagedEntry.sourceExisted, false);
-    assert.equal(stagedEntry.dirty, true);
+    assert.equal(status.files.some((entry) => entry.relativePath === 'www/img/pictures/ImportedPortrait.png'), false);
 
     const graph = buildAssetReferenceGraph(root, project);
     const imported = graph.assets.find((asset) => asset.relativePath === 'www/img/pictures/ImportedPortrait.png');
     assert.ok(imported);
     assert.equal(imported.category, 'pictures');
-    assert.equal(imported.staged, true);
+    assert.equal(imported.staged, false);
   });
 
   test('importLocalAssetFile rejects unsupported extensions for the selected category', () => {
@@ -218,7 +211,7 @@ describe('asset reference graph service', { concurrency: false }, () => {
       category: 'characters',
       sourceFile: localFile,
       targetName: 'Hero',
-    })), /覆盖导入/);
+    })), /明确选择覆盖|choose replace explicitly/i);
 
     const result = importLocalAssetFile(root, project, {
       category: 'characters',
@@ -228,11 +221,10 @@ describe('asset reference graph service', { concurrency: false }, () => {
     });
 
     assert.equal(result.relativePath, 'www/img/characters/Hero.png');
-    assert.equal(result.staged, true);
-    assert.equal(fs.readFileSync(sourceTarget, 'utf8'), 'hero');
-    const stagedPath = getProjectFileForRead(root, project, 'www/img/characters/Hero.png');
-    assert.ok(stagedPath);
-    assert.equal(fs.readFileSync(stagedPath as string, 'utf8'), 'replacement hero');
+    assert.equal(result.staged, false);
+    assert.equal(fs.readFileSync(sourceTarget, 'utf8'), 'replacement hero');
+    const status = getProjectStagingStatus(root, project);
+    assert.equal(status.files.some((entry) => entry.relativePath === 'www/img/characters/Hero.png'), false);
   });
 
   test('importLocalAssetFile rejects unsafe local import inputs', () => {

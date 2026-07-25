@@ -8,9 +8,15 @@ import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
 import { readJson, writeJson } from "../rmmv/json.ts";
 import { RPG_MAKER_MZ_ENGINE_FILES } from "../rmmv/rpg-maker-engine.ts";
-import { buildStagedAwareAssetInventory, renameAsset } from "./asset-management-service.ts";
+import {
+  buildStagedAwareAssetInventory,
+  importLocalAssetFiles,
+  renameAsset,
+} from "./asset-management-service.ts";
 import { buildAssetReferenceGraph } from "./asset-reference-graph-service.ts";
+import { buildProjectAssetCategoryTree, listProjectAssetCategory } from "./project-asset-browser-service.ts";
 import { readPluginConfiguration, updatePluginParameters, validatePluginConfiguration } from "./plugin-management-service.ts";
+import { withTestLanguage } from "../i18n/with-test-language.ts";
 
 describe("MZ nested assets and plugin declarations", { concurrency: false }, () => {
   let root: string;
@@ -29,6 +35,49 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
   afterEach(() => {
     closeDatabase();
     fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  test("importLocalAssetFiles writes immediately under MZ img/faces without www prefix", () => {
+    fs.mkdirSync(path.join(project, "img", "faces"), { recursive: true });
+    fs.writeFileSync(path.join(project, "img", "faces", "Actor1.png"), "face-before");
+    const beforeTree = buildProjectAssetCategoryTree(root, project);
+    const facesNode = findCategoryNode(beforeTree.nodes, "faces");
+    assert.ok(facesNode);
+    const beforeCount = facesNode.entryCount;
+
+    const localFile = path.join(root, "import-source", "SandboxFace.png");
+    fs.mkdirSync(path.dirname(localFile), { recursive: true });
+    fs.writeFileSync(localFile, "sandbox-face-bytes");
+
+    const batch = importLocalAssetFiles(root, project, {
+      category: "faces",
+      files: [{ sourceFile: localFile }],
+    });
+    assert.equal(batch.results.length, 1);
+    assert.equal(batch.results[0]?.status, "imported");
+    assert.equal(batch.results[0]?.relativePath, "img/faces/SandboxFace.png");
+
+    const target = path.join(project, "img", "faces", "SandboxFace.png");
+    assert.equal(fs.existsSync(target), true);
+    assert.equal(fs.readFileSync(target, "utf8"), "sandbox-face-bytes");
+    assert.equal(fs.existsSync(path.join(project, "www", "img", "faces", "SandboxFace.png")), false);
+
+    const listing = listProjectAssetCategory(root, project, "faces");
+    assert.equal(listing.entries.some((entry) => entry.name === "SandboxFace"), true);
+    const afterTree = buildProjectAssetCategoryTree(root, project);
+    const afterFaces = findCategoryNode(afterTree.nodes, "faces");
+    assert.ok(afterFaces);
+    assert.equal(afterFaces.entryCount, beforeCount + 1);
+
+    const badFile = path.join(root, "import-source", "Bad.txt");
+    fs.writeFileSync(badFile, "nope");
+    const rejected = withTestLanguage(() => importLocalAssetFiles(root, project, {
+      category: "faces",
+      files: [{ sourceFile: badFile }],
+    }));
+    assert.equal(rejected.results[0]?.status, "failed");
+    assert.match(rejected.results[0]?.error || "", /脸图/);
+    assert.doesNotMatch(rejected.results[0]?.error || "", /\bfaces\b/);
   });
 
   test("tracks and safely renames nested pictures and particle effects", () => {
@@ -362,6 +411,20 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
     assert.equal(validatePluginConfiguration(root, project).issues.some((issue) => issue.code === "plugin-base-order-invalid"), true);
   });
 });
+
+function findCategoryNode(
+  nodes: Array<{ id: string; entryCount: number; children?: Array<{ id: string; entryCount: number }> }>,
+  id: string,
+): { id: string; entryCount: number } | null {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    if (node.children) {
+      const child = findCategoryNode(node.children, id);
+      if (child) return child;
+    }
+  }
+  return null;
+}
 
 function writeMZProject(project: string): void {
   fs.mkdirSync(project, { recursive: true });

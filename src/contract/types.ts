@@ -681,6 +681,32 @@ export interface ProjectAssetImportLocalFileInput {
   overwrite?: boolean;
 }
 
+export interface ProjectAssetImportItemInput {
+  sourceFile: string;
+  targetName?: string;
+  overwrite?: boolean;
+}
+
+export interface ProjectAssetImportLocalFilesInput {
+  category: string;
+  files: ProjectAssetImportItemInput[];
+}
+
+export type ProjectAssetImportItemStatus = 'imported' | 'skipped' | 'failed';
+
+export interface ProjectAssetImportItemResult {
+  sourceFile: string;
+  targetName: string | null;
+  relativePath: string | null;
+  status: ProjectAssetImportItemStatus;
+  detail?: ManagedAssetDetail;
+  error?: string;
+}
+
+export interface ProjectAssetImportBatchResult {
+  results: ProjectAssetImportItemResult[];
+}
+
 export type AssetLibraryCategoryId =
   | 'maps'
   | 'skills'

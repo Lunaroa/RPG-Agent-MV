@@ -3,7 +3,8 @@
 export interface ProjectAssetGridWindowInput {
   containerWidth: number;
   containerHeight: number;
-  cellSize: number;
+  cellWidth: number;
+  cellHeight: number;
   gap: number;
   itemCount: number;
   scrollTop: number;
@@ -27,24 +28,26 @@ export interface ProjectAssetGridWindow {
 export function computeProjectAssetGridWindow(
   input: ProjectAssetGridWindowInput,
 ): ProjectAssetGridWindow {
-  const cellSize = Math.max(0, input.cellSize);
+  const cellWidth = Math.max(0, input.cellWidth);
+  const cellHeight = Math.max(0, input.cellHeight);
   const gap = Math.max(0, input.gap);
   const itemCount = Math.max(0, Math.floor(input.itemCount));
   const containerWidth = Math.max(0, input.containerWidth);
   const containerHeight = Math.max(0, input.containerHeight);
   const overscanRows = Math.max(0, Math.floor(input.overscanRows ?? 2));
-  const stride = cellSize + gap;
+  const strideX = cellWidth + gap;
+  const strideY = cellHeight + gap;
 
-  const columnCount = cellSize <= 0
+  const columnCount = cellWidth <= 0
     ? 1
-    : Math.max(1, Math.floor((containerWidth + gap) / stride));
+    : Math.max(1, Math.floor((containerWidth + gap) / strideX));
 
   const rowCount = itemCount === 0 ? 0 : Math.ceil(itemCount / columnCount);
   const totalHeight = rowCount === 0
     ? 0
-    : rowCount * cellSize + Math.max(0, rowCount - 1) * gap;
+    : rowCount * cellHeight + Math.max(0, rowCount - 1) * gap;
 
-  if (rowCount === 0 || stride <= 0) {
+  if (rowCount === 0 || strideY <= 0) {
     return {
       columnCount,
       rowCount,
@@ -58,8 +61,8 @@ export function computeProjectAssetGridWindow(
 
   const maxScrollTop = Math.max(0, totalHeight - containerHeight);
   const scrollTop = Math.min(Math.max(0, input.scrollTop), maxScrollTop);
-  const visibleRows = Math.max(1, Math.ceil(containerHeight / stride) + 1);
-  const rawStart = Math.floor(scrollTop / stride);
+  const visibleRows = Math.max(1, Math.ceil(containerHeight / strideY) + 1);
+  const rawStart = Math.floor(scrollTop / strideY);
   const startRow = Math.max(0, rawStart - overscanRows);
   const endRow = Math.min(rowCount, rawStart + visibleRows + overscanRows);
   const startIndex = startRow * columnCount;

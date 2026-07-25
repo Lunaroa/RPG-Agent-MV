@@ -245,6 +245,35 @@ describe('resolvePluginParameterValueDecor', () => {
     });
   });
 
+  it('resolves bare img directory thumbs from catalog image buckets', () => {
+    const byBareName = resolvePluginParameterValueDecor(
+      field({ key: 'file', kind: 'file', directory: 'img' }),
+      'Pic',
+      catalogStub(),
+    );
+    expect(byBareName.media).toEqual({
+      kind: 'image',
+      url: 'rmmv-asset://project/t/img/pictures/Pic.png',
+    });
+
+    const byRelativePath = resolvePluginParameterValueDecor(
+      field({ key: 'file', kind: 'file', directory: 'img' }),
+      'pictures/Pic',
+      catalogStub(),
+    );
+    expect(byRelativePath.media).toEqual({
+      kind: 'image',
+      url: 'rmmv-asset://project/t/img/pictures/Pic.png',
+    });
+
+    const missing = resolvePluginParameterValueDecor(
+      field({ key: 'file', kind: 'file', directory: 'img' }),
+      'MissingNo',
+      catalogStub(),
+    );
+    expect(missing.media).toBeNull();
+  });
+
   it('skips non-image file directories', () => {
     const decor = resolvePluginParameterValueDecor(
       field({ key: 'bgm', kind: 'file', directory: 'audio/bgm' }),

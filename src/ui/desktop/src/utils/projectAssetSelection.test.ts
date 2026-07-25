@@ -77,7 +77,7 @@ describe('projectAssetSelection click model', () => {
 });
 
 describe('projectAssetSelection layout / marquee', () => {
-  const layout = { columnCount: 3, cellSize: 100, gap: 10 };
+  const layout = { columnCount: 3, cellWidth: 100, cellHeight: 100, gap: 10 };
 
   test('cell geometry follows index → row/column math', () => {
     // index 4 → row 1, col 1 with 3 columns

@@ -169,8 +169,10 @@ describe('plugin manager structure', () => {
     assert.match(dialogSource, /parameterTypeListTag/);
     assert.match(dialogSource, /parameter-struct-tag/);
     assert.doesNotMatch(dialogSource, /isSpecialPluginParameterType/);
-    assert.match(dialogSource, /isTaggedPluginParameterValue\(row\.field\)/);
+    assert.match(dialogSource, /isTaggedPluginParameterValue\(row\.field\) && String\(row\.summary/);
     assert.match(dialogSource, /class="parameter-value-tag"/);
+    assert.match(dialogSource, /\.parameter-value-tag \{[\s\S]*width:\s*auto/);
+    assert.match(dialogSource, /\.parameter-value-tag \{[\s\S]*text-align:\s*left/);
     assert.match(dialogSource, /class-name="parameter-value-column"/);
     assert.match(dialogSource, /PluginParameterValueDecor/);
     assert.match(dialogSource, /parameter-select-value/);
@@ -279,7 +281,10 @@ describe('plugin manager structure', () => {
     assert.match(collectionEditorSource, /arrayItem\?\.kind === 'boolean'/);
     assert.match(collectionEditorSource, /<el-switch[\s\S]+disabled[\s\S]+class="parameter-boolean-switch"/);
     assert.match(collectionEditorSource, /isTaggedPluginParameterValue/);
+    assert.match(collectionEditorSource, /String\(row\.summary \|\| ''\)\.trim\(\)/);
     assert.match(collectionEditorSource, /class="parameter-value-tag"/);
+    assert.match(collectionEditorSource, /\.parameter-value-tag \{[\s\S]*width:\s*auto/);
+    assert.match(collectionEditorSource, /\.parameter-value-tag \{[\s\S]*text-align:\s*left/);
     assert.match(collectionEditorSource, /class-name="parameter-value-column"/);
     assert.match(collectionEditorSource, /PluginParameterValueDecor/);
     assert.match(collectionEditorSource, /parameter-select-value/);

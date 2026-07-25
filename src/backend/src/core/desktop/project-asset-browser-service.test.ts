@@ -178,13 +178,79 @@ describe('project asset browser service', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+  test('MZ pictures tree nests disk subfolders; browse lists one level with logical path names', async () => {
+    const root = tempRoot();
+    const project = path.join(root, 'projects', 'demo_mod');
+    try {
+      await bootstrapDatabase(root, { importLegacyJson: false });
+      writeMzProjectSkeleton(project);
+      fs.mkdirSync(path.join(project, 'img', 'pictures', 'ui'), { recursive: true });
+      fs.writeFileSync(path.join(project, 'img', 'pictures', 'Root.png'), 'root');
+      fs.writeFileSync(path.join(project, 'img', 'pictures', 'ui', 'Portrait.png'), 'nested');
+
+      const tree = buildProjectAssetCategoryTree(root, project);
+      const pictures = tree.nodes.find((node) => node.id === 'img')?.children?.find((child) => child.id === 'pictures');
+      assert.ok(pictures);
+      assert.equal(pictures!.entryCount, 2);
+      const ui = pictures!.children?.find((child) => child.id === 'pictures/ui');
+      assert.ok(ui);
+      assert.equal(ui!.directory, 'img/pictures/ui');
+      assert.equal(ui!.entryCount, 1);
+
+      const rootListing = listProjectAssetCategory(root, project, 'pictures');
+      assert.deepEqual(rootListing.entries.map((entry) => entry.name).sort(), ['Root']);
+
+      const nestedListing = listProjectAssetCategory(root, project, 'pictures/ui');
+      assert.equal(nestedListing.categoryId, 'pictures/ui');
+      assert.equal(nestedListing.directory, 'img/pictures/ui');
+      assert.equal(nestedListing.entries.length, 1);
+      assert.equal(nestedListing.entries[0]!.name, 'ui/Portrait');
+      assert.equal(nestedListing.entries[0]!.id, 'pictures:ui/Portrait');
+    } finally {
+      closeDatabase();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('MV pictures stay flat even when nested directories exist on disk', async () => {
+    const root = tempRoot();
+    const project = path.join(root, 'projects', 'sample');
+    try {
+      await bootstrapDatabase(root, { importLegacyJson: false });
+      writeMvProjectSkeleton(project);
+      fs.mkdirSync(path.join(project, 'www', 'img', 'pictures', 'ui'), { recursive: true });
+      fs.writeFileSync(path.join(project, 'www', 'img', 'pictures', 'Root.png'), 'root');
+      fs.writeFileSync(path.join(project, 'www', 'img', 'pictures', 'ui', 'Hidden.png'), 'hidden');
+
+      const tree = buildProjectAssetCategoryTree(root, project);
+      const pictures = tree.nodes.find((node) => node.id === 'img')?.children?.find((child) => child.id === 'pictures');
+      assert.ok(pictures);
+      assert.equal(pictures!.children, undefined);
+      assert.equal(pictures!.entryCount, 1);
+
+      const listing = listProjectAssetCategory(root, project, 'pictures');
+      assert.deepEqual(listing.entries.map((entry) => entry.name), ['Root']);
+      assert.throws(
+        () => listProjectAssetCategory(root, project, 'pictures/ui'),
+        /only supported for MZ pictures/,
+      );
+    } finally {
+      closeDatabase();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
-function collectIds(nodes: Array<{ id: string; children?: Array<{ id: string }> }>): string[] {
+function collectIds(nodes: Array<{ id: string; children?: Array<{ id: string; children?: Array<{ id: string }> }> }>): string[] {
   const ids: string[] = [];
   for (const node of nodes) {
     ids.push(node.id);
-    if (node.children) ids.push(...node.children.map((child) => child.id));
+    if (node.children) {
+      for (const child of node.children) {
+        ids.push(child.id);
+        if (child.children) ids.push(...child.children.map((nested) => nested.id));
+      }
+    }
   }
   return ids;
 }

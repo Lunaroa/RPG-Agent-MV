@@ -2,6 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { projectAssetCategoryLabel } from '../../../../contract/project-asset-category-labels.ts';
+import {
+  parseProjectAssetBrowserNodeId,
+  PROJECT_ASSET_PICTURES_CATEGORY_ID,
+  projectAssetBrowserAllowsPictureSubfolders,
+} from '../../../../contract/project-asset-browser-nodes.ts';
 import type {
   ManagedAssetDetail,
   ManagedAssetRef,
@@ -387,7 +392,19 @@ export function importLocalAssetFiles(
   request: ProjectAssetImportLocalFilesInput,
 ): ProjectAssetImportBatchResult {
   const input = normalizeImportLocalAssetFilesRequest(request);
-  const category = requireAssetCategory(input.category);
+  const { categoryId, subpath } = parseProjectAssetBrowserNodeId(input.category);
+  if (subpath) {
+    const engine = inspectRmmvProject(project).engine;
+    if (
+      categoryId !== PROJECT_ASSET_PICTURES_CATEGORY_ID
+      || !projectAssetBrowserAllowsPictureSubfolders(engine)
+    ) {
+      throw new Error(
+        `Project asset import into subfolders is only supported for MZ pictures; got: ${input.category}`,
+      );
+    }
+  }
+  const category = requireAssetCategory(categoryId);
   const definition = RMMV_ASSET_CATEGORIES.find((item) => item.id === category);
   if (!definition) throw new Error(unsupportedAssetCategory(input.category));
 
@@ -410,6 +427,7 @@ export function importLocalAssetFiles(
       graph,
       file,
       claimedNames,
+      subpath,
     );
     if (prepared.status !== 'ready') {
       results.push({
@@ -487,6 +505,7 @@ function prepareImportLocalAssetItem(
   graph: ProjectAssetReferenceGraph,
   file: ProjectAssetImportItemInput,
   claimedNames: ReadonlySet<string>,
+  subpath = '',
 ): PreparedImportItem {
   const sourceFileRaw = String(file.sourceFile || '');
   let sourceFile: string;
@@ -542,9 +561,14 @@ function prepareImportLocalAssetItem(
 
   let targetName: string;
   try {
-    targetName = file.targetName === undefined || String(file.targetName).trim() === ''
+    const rawBase = file.targetName === undefined || String(file.targetName).trim() === ''
       ? path.basename(sourceFileName, sourceExtension)
-      : normalizeImportTargetName(String(file.targetName));
+      : String(file.targetName);
+    const leafName = rawBase.replace(/\\/g, '/').split('/').filter(Boolean).pop() || rawBase;
+    const cleanSubpath = subpath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    targetName = cleanSubpath
+      ? normalizeImportTargetName(`${cleanSubpath}/${leafName}`)
+      : normalizeImportTargetName(leafName);
   } catch (error) {
     return {
       status: 'failed',
@@ -948,9 +972,24 @@ export function copyProjectAssets(
   if (!request || !Array.isArray(request.targets) || request.targets.length === 0) {
     throw new Error(assetManagementMissingParams());
   }
-  const requestedTargetCategory = request.targetCategory === undefined || request.targetCategory === null
+  const requestedTarget = request.targetCategory === undefined || request.targetCategory === null
     ? null
-    : requireAssetCategory(request.targetCategory);
+    : parseProjectAssetBrowserNodeId(request.targetCategory);
+  if (requestedTarget?.subpath) {
+    const engine = inspectRmmvProject(project).engine;
+    if (
+      requestedTarget.categoryId !== PROJECT_ASSET_PICTURES_CATEGORY_ID
+      || !projectAssetBrowserAllowsPictureSubfolders(engine)
+    ) {
+      throw new Error(
+        `Project asset copy into subfolders is only supported for MZ pictures; got: ${request.targetCategory}`,
+      );
+    }
+  }
+  const requestedTargetCategory = requestedTarget
+    ? requireAssetCategory(requestedTarget.categoryId)
+    : null;
+  const targetSubpath = requestedTarget?.subpath ?? '';
   const graph = getProjectAssetReferenceGraph(workflowRoot, project);
   const results: ProjectAssetCopyItemResult[] = [];
   const pending: Array<{
@@ -993,7 +1032,9 @@ export function copyProjectAssets(
       continue;
     }
 
-    const copiedName = nextAvailableCopyName(graph, category, name, claimedNames);
+    const leafName = name.includes('/') ? name.split('/').pop()! : name;
+    const copyBaseName = targetSubpath ? `${targetSubpath}/${leafName}` : name;
+    const copiedName = nextAvailableCopyName(graph, category, copyBaseName, claimedNames);
     const directory = projectAssetRelativeDirectory(workflowRoot, project, category);
     const copiedRelativePaths = variants.map(
       (variant) => `${directory}/${copiedName}${path.extname(variant.relativePath)}`,

@@ -7,7 +7,8 @@ describe('computeProjectAssetGridWindow', () => {
     const window = computeProjectAssetGridWindow({
       containerWidth: 400,
       containerHeight: 300,
-      cellSize: 100,
+      cellWidth: 100,
+      cellHeight: 100,
       gap: 10,
       itemCount: 0,
       scrollTop: 0,
@@ -23,7 +24,8 @@ describe('computeProjectAssetGridWindow', () => {
     const window = computeProjectAssetGridWindow({
       containerWidth: 320,
       containerHeight: 240,
-      cellSize: 100,
+      cellWidth: 100,
+      cellHeight: 100,
       gap: 10,
       itemCount: 5,
       scrollTop: 0,
@@ -41,7 +43,8 @@ describe('computeProjectAssetGridWindow', () => {
     const window = computeProjectAssetGridWindow({
       containerWidth: 210,
       containerHeight: 110,
-      cellSize: 100,
+      cellWidth: 100,
+      cellHeight: 100,
       gap: 10,
       itemCount: 8,
       scrollTop: 10_000,
@@ -61,7 +64,8 @@ describe('computeProjectAssetGridWindow', () => {
     const window = computeProjectAssetGridWindow({
       containerWidth: 40,
       containerHeight: 200,
-      cellSize: 100,
+      cellWidth: 100,
+      cellHeight: 100,
       gap: 10,
       itemCount: 3,
       scrollTop: 0,

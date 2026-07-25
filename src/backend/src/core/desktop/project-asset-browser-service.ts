@@ -2,6 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  parseProjectAssetBrowserNodeId,
+  PROJECT_ASSET_PICTURES_CATEGORY_ID,
+  projectAssetBrowserAllowsPictureSubfolders,
+  projectAssetBrowserNodeId,
+} from '../../../../contract/project-asset-browser-nodes.ts';
+import {
   resolveProjectAssetThumbnailSizeBucket,
 } from '../../../../contract/project-asset-thumbnails.ts';
 import type {
@@ -23,14 +29,27 @@ import { getProjectFileForRead, getProjectStagingStatus } from './staging-servic
 
 const BROWSER_CATEGORIES = RMMV_ASSET_CATEGORIES.filter((category) => category.id !== 'plugins');
 
+/**
+ * MZ projects use the `data` layout (no `www/`); MV uses `www-data`.
+ * Prefer layout over full engine inspect so incomplete test skeletons still browse.
+ */
+function projectAllowsPictureSubfolders(project: string): boolean {
+  return projectAssetBrowserAllowsPictureSubfolders(
+    resolveRmmvLayout(project).kind === 'data' ? 'rpg-maker-mz' : 'rpg-maker-mv',
+  );
+}
+
 export type ProjectAssetDirectoryScanner = (
   absoluteDirectory: string,
 ) => Array<{ fileName: string; bytes: number; mtimeMs: number }>;
+
+export type ProjectAssetSubdirectoryScanner = (absoluteDirectory: string) => string[];
 
 type ProjectStagingStatus = ReturnType<typeof getProjectStagingStatus>;
 
 export interface ProjectAssetBrowserDependencies {
   readDirectoryEntries?: ProjectAssetDirectoryScanner;
+  readSubdirectories?: ProjectAssetSubdirectoryScanner;
   stagingStatus?: ProjectStagingStatus;
 }
 
@@ -65,6 +84,7 @@ export function buildProjectAssetCategoryTree(
   const stagingStatus = dependencies.stagingStatus ?? getProjectStagingStatus(workflowRoot, project);
   const deps: ProjectAssetBrowserDependencies = { ...dependencies, stagingStatus };
   const layout = resolveRmmvLayout(project);
+  const allowPictureSubfolders = projectAllowsPictureSubfolders(project);
   const groups = new Map<string, {
     id: string;
     directory: string;
@@ -75,12 +95,35 @@ export function buildProjectAssetCategoryTree(
   for (const category of BROWSER_CATEGORIES) {
     const relativeDirectory = resourceRelativePath(layout, category.directory);
     if (!projectRelativeDirectoryPresent(project, relativeDirectory, stagingStatus)) continue;
-    const listing = listProjectAssetCategory(workflowRoot, project, category.id, undefined, deps);
+    const recursiveCount = allowPictureSubfolders && category.id === PROJECT_ASSET_PICTURES_CATEGORY_ID
+      ? countCategoryFiles(
+        workflowRoot,
+        project,
+        relativeDirectory,
+        '',
+        category.extensions,
+        stagingStatus,
+        deps.readDirectoryEntries ?? defaultDirectoryScanner,
+        true,
+      )
+      : listProjectAssetCategory(workflowRoot, project, category.id, undefined, deps).entries.length;
     const node: ProjectAssetCategoryTreeNode = {
       id: category.id,
       directory: relativeDirectory,
-      entryCount: listing.entries.length,
+      entryCount: recursiveCount,
     };
+    if (allowPictureSubfolders && category.id === PROJECT_ASSET_PICTURES_CATEGORY_ID) {
+      const children = buildPictureSubfolderNodes(
+        workflowRoot,
+        project,
+        relativeDirectory,
+        '',
+        category.extensions,
+        stagingStatus,
+        deps,
+      );
+      if (children.length > 0) node.children = children;
+    }
     const slash = category.directory.indexOf('/');
     if (slash < 0) {
       leaves.push(node);
@@ -113,34 +156,55 @@ export function buildProjectAssetCategoryTree(
   };
 }
 
+/**
+ * List files for a browser node id. Accepts engine category ids (`pictures`) or
+ * MZ picture subfolder ids (`pictures/ui`).
+ */
 export function listProjectAssetCategory(
   workflowRoot: string,
   project: string,
-  categoryId: string,
+  categoryIdOrNodeId: string,
   thumbnailSizeBucket?: number,
   dependencies: ProjectAssetBrowserDependencies = {},
 ): ProjectAssetCategoryListing {
+  const { categoryId, subpath } = parseProjectAssetBrowserNodeId(categoryIdOrNodeId);
   const category = BROWSER_CATEGORIES.find((entry) => entry.id === categoryId);
   if (!category) {
     throw new Error(
       `Unknown project asset browser category: ${categoryId}. Use a category id from RMMV_ASSET_CATEGORIES excluding plugins.`,
     );
   }
+  if (subpath) {
+    if (
+      categoryId !== PROJECT_ASSET_PICTURES_CATEGORY_ID
+      || !projectAllowsPictureSubfolders(project)
+    ) {
+      throw new Error(
+        `Project asset subfolders are only supported for MZ pictures; got node id: ${categoryIdOrNodeId}`,
+      );
+    }
+    assertSafeSubpath(subpath);
+  }
 
   const sizeBucket = resolveProjectAssetThumbnailSizeBucket(thumbnailSizeBucket);
   const stagingStatus = dependencies.stagingStatus ?? getProjectStagingStatus(workflowRoot, project);
   const readDirectoryEntries = dependencies.readDirectoryEntries ?? defaultDirectoryScanner;
   const layout = resolveRmmvLayout(project);
-  const relativeDirectory = resourceRelativePath(layout, category.directory);
+  const categoryRelativeDirectory = resourceRelativePath(layout, category.directory);
+  const relativeDirectory = subpath
+    ? `${categoryRelativeDirectory}/${subpath}`
+    : categoryRelativeDirectory;
+  const nodeId = projectAssetBrowserNodeId(categoryId, subpath);
   const revision = computeListingRevision(project, relativeDirectory, stagingStatus);
-  const cacheKey = `${cacheProjectKey(project)}\0${category.id}\0${sizeBucket}`;
+  const cacheKey = `${cacheProjectKey(project)}\0${nodeId}\0${sizeBucket}`;
   const cached = listingCache.get(cacheKey);
   if (cached && cached.revision === revision) return cached.listing;
 
   const scanned = scanCategoryFiles(
     workflowRoot,
     project,
-    relativeDirectory,
+    categoryRelativeDirectory,
+    subpath,
     category.extensions,
     stagingStatus,
     readDirectoryEntries,
@@ -171,7 +235,7 @@ export function listProjectAssetCategory(
   });
 
   const listing: ProjectAssetCategoryListing = {
-    categoryId: category.id,
+    categoryId: nodeId,
     directory: relativeDirectory,
     entries,
   };
@@ -179,26 +243,94 @@ export function listProjectAssetCategory(
   return listing;
 }
 
+function buildPictureSubfolderNodes(
+  workflowRoot: string,
+  project: string,
+  categoryRelativeDirectory: string,
+  parentSubpath: string,
+  extensions: readonly string[],
+  stagingStatus: ProjectStagingStatus,
+  dependencies: ProjectAssetBrowserDependencies,
+): ProjectAssetCategoryTreeNode[] {
+  const readSubdirectories = dependencies.readSubdirectories ?? defaultSubdirectoryScanner;
+  const readDirectoryEntries = dependencies.readDirectoryEntries ?? defaultDirectoryScanner;
+  const absoluteDirectory = absoluteProjectPath(
+    project,
+    parentSubpath ? `${categoryRelativeDirectory}/${parentSubpath}` : categoryRelativeDirectory,
+  );
+  const names = new Set<string>();
+  if (fs.existsSync(absoluteDirectory) && fs.statSync(absoluteDirectory).isDirectory()) {
+    for (const name of readSubdirectories(absoluteDirectory)) names.add(name);
+  }
+  const prefix = `${categoryRelativeDirectory}/${parentSubpath ? `${parentSubpath}/` : ''}`;
+  for (const staged of stagingStatus.files) {
+    if (staged.delete || !staged.relativePath.startsWith(prefix)) continue;
+    const remainder = staged.relativePath.slice(prefix.length);
+    const slash = remainder.indexOf('/');
+    if (slash <= 0) continue;
+    names.add(remainder.slice(0, slash));
+  }
+
+  const nodes: ProjectAssetCategoryTreeNode[] = [];
+  for (const name of [...names].sort((left, right) => left.localeCompare(right))) {
+    assertSafeSubpathSegment(name);
+    const childSubpath = parentSubpath ? `${parentSubpath}/${name}` : name;
+    const childDirectory = `${categoryRelativeDirectory}/${childSubpath}`;
+    const children = buildPictureSubfolderNodes(
+      workflowRoot,
+      project,
+      categoryRelativeDirectory,
+      childSubpath,
+      extensions,
+      stagingStatus,
+      dependencies,
+    );
+    const entryCount = countCategoryFiles(
+      workflowRoot,
+      project,
+      categoryRelativeDirectory,
+      childSubpath,
+      extensions,
+      stagingStatus,
+      readDirectoryEntries,
+      true,
+    );
+    nodes.push({
+      id: projectAssetBrowserNodeId(PROJECT_ASSET_PICTURES_CATEGORY_ID, childSubpath),
+      directory: childDirectory,
+      entryCount,
+      ...(children.length > 0 ? { children } : {}),
+    });
+  }
+  return nodes;
+}
+
 function scanCategoryFiles(
   workflowRoot: string,
   project: string,
-  relativeDirectory: string,
+  categoryRelativeDirectory: string,
+  subpath: string,
   extensions: readonly string[],
   stagingStatus: ProjectStagingStatus,
   readDirectoryEntries: ProjectAssetDirectoryScanner,
 ): ProjectAssetScannedFile[] {
   const accepted = new Set(extensions.map((extension) => extension.toLowerCase()));
+  const relativeDirectory = subpath
+    ? `${categoryRelativeDirectory}/${subpath}`
+    : categoryRelativeDirectory;
   const files = new Map<string, ProjectAssetScannedFile>();
-  const absoluteDirectory = path.join(project, ...relativeDirectory.split('/'));
+  const absoluteDirectory = absoluteProjectPath(project, relativeDirectory);
   if (fs.existsSync(absoluteDirectory) && fs.statSync(absoluteDirectory).isDirectory()) {
     for (const entry of readDirectoryEntries(absoluteDirectory)) {
       const extension = path.extname(entry.fileName).toLowerCase();
       if (!accepted.has(extension)) continue;
+      const logicalName = logicalNameForFile(subpath, entry.fileName);
       files.set(entry.fileName, {
         fileName: entry.fileName,
         relativePath: `${relativeDirectory}/${entry.fileName}`,
         bytes: entry.bytes,
         mtimeMs: entry.mtimeMs,
+        logicalName,
       });
     }
   }
@@ -226,10 +358,77 @@ function scanCategoryFiles(
       relativePath: staged.relativePath,
       bytes: stat.size,
       mtimeMs: stat.mtimeMs,
+      logicalName: logicalNameForFile(subpath, fileName),
     });
   }
 
   return [...files.values()];
+}
+
+function countCategoryFiles(
+  workflowRoot: string,
+  project: string,
+  categoryRelativeDirectory: string,
+  subpath: string,
+  extensions: readonly string[],
+  stagingStatus: ProjectStagingStatus,
+  readDirectoryEntries: ProjectAssetDirectoryScanner,
+  recursive: boolean,
+): number {
+  const accepted = new Set(extensions.map((extension) => extension.toLowerCase()));
+  const relativeDirectory = subpath
+    ? `${categoryRelativeDirectory}/${subpath}`
+    : categoryRelativeDirectory;
+  const counted = new Set<string>();
+  const absoluteDirectory = absoluteProjectPath(project, relativeDirectory);
+
+  const walk = (absolute: string, relative: string) => {
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isDirectory()) return;
+    for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
+      if (entry.isFile()) {
+        const extension = path.extname(entry.name).toLowerCase();
+        if (!accepted.has(extension)) continue;
+        counted.add(`${relative}/${entry.name}`);
+        continue;
+      }
+      if (recursive && entry.isDirectory()) {
+        walk(path.join(absolute, entry.name), `${relative}/${entry.name}`);
+      }
+    }
+  };
+  walk(absoluteDirectory, relativeDirectory);
+
+  // Prefer scanned files when a custom scanner is injected (tests); still union staging.
+  if (fs.existsSync(absoluteDirectory) && fs.statSync(absoluteDirectory).isDirectory()) {
+    for (const entry of readDirectoryEntries(absoluteDirectory)) {
+      const extension = path.extname(entry.fileName).toLowerCase();
+      if (!accepted.has(extension)) continue;
+      counted.add(`${relativeDirectory}/${entry.fileName}`);
+    }
+  }
+
+  const prefix = `${relativeDirectory}/`;
+  for (const staged of stagingStatus.files) {
+    if (!staged.relativePath.startsWith(prefix)) continue;
+    const remainder = staged.relativePath.slice(prefix.length);
+    if (!remainder) continue;
+    if (!recursive && remainder.includes('/')) continue;
+    const extension = path.extname(remainder).toLowerCase();
+    if (!accepted.has(extension)) continue;
+    if (staged.delete) {
+      counted.delete(staged.relativePath);
+      continue;
+    }
+    counted.add(staged.relativePath);
+  }
+
+  return counted.size;
+}
+
+function logicalNameForFile(subpath: string, fileName: string): string {
+  const extension = path.extname(fileName);
+  const base = extension ? fileName.slice(0, -extension.length) : fileName;
+  return subpath ? `${subpath}/${base}` : base;
 }
 
 function computeListingRevision(
@@ -237,7 +436,7 @@ function computeListingRevision(
   relativeDirectory: string,
   stagingStatus: ProjectStagingStatus,
 ): string {
-  const absoluteDirectory = path.join(project, ...relativeDirectory.split('/'));
+  const absoluteDirectory = absoluteProjectPath(project, relativeDirectory);
   let directoryMtime = 0;
   if (fs.existsSync(absoluteDirectory)) {
     const stat = fs.statSync(absoluteDirectory);
@@ -262,7 +461,7 @@ function projectRelativeDirectoryPresent(
   relativeDirectory: string,
   stagingStatus: ProjectStagingStatus,
 ): boolean {
-  const absolute = path.join(project, ...relativeDirectory.split('/'));
+  const absolute = absoluteProjectPath(project, relativeDirectory);
   if (fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()) return true;
   const prefix = `${relativeDirectory}/`;
   return stagingStatus.files.some((entry) => (
@@ -280,6 +479,33 @@ function defaultDirectoryScanner(
       const stat = fs.statSync(absolute);
       return { fileName: entry.name, bytes: stat.size, mtimeMs: stat.mtimeMs };
     });
+}
+
+function defaultSubdirectoryScanner(absoluteDirectory: string): string[] {
+  if (!fs.existsSync(absoluteDirectory) || !fs.statSync(absoluteDirectory).isDirectory()) {
+    return [];
+  }
+  return fs.readdirSync(absoluteDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => name !== '.' && name !== '..')
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function absoluteProjectPath(project: string, relativeDirectory: string): string {
+  return path.join(project, ...relativeDirectory.split('/').filter(Boolean));
+}
+
+function assertSafeSubpath(subpath: string): void {
+  for (const segment of subpath.split('/')) {
+    assertSafeSubpathSegment(segment);
+  }
+}
+
+function assertSafeSubpathSegment(segment: string): void {
+  if (!segment || segment === '.' || segment === '..' || segment.includes('\\')) {
+    throw new Error(`Invalid project asset subfolder segment: ${segment}`);
+  }
 }
 
 function cacheProjectKey(project: string): string {

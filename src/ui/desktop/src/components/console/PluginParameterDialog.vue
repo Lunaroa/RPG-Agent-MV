@@ -569,7 +569,7 @@ async function focusInitialParameter(): Promise<void> {
                       :catalog="catalog"
                     />
                     <el-tag
-                      v-if="isTaggedPluginParameterValue(row.field)"
+                      v-if="isTaggedPluginParameterValue(row.field) && String(row.summary || '').trim()"
                       size="small"
                       effect="plain"
                       class="parameter-value-tag"
@@ -756,9 +756,12 @@ async function focusInitialParameter(): Promise<void> {
   transition: none;
 }
 .parameter-value-tag {
-  max-width: 100%;
+  width: auto;
+  max-width: none;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
   font-weight: 400;
   color: var(--console-accent, #be5630);
   background: color-mix(in srgb, var(--console-accent, #be5630) 10%, transparent);
@@ -769,6 +772,7 @@ async function focusInitialParameter(): Promise<void> {
 .parameter-value-tag :deep(.el-tag__content) {
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
   font-weight: 400;
   color: var(--console-accent, #be5630);
 }
@@ -868,6 +872,27 @@ async function focusInitialParameter(): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: middle;
+  max-width: initial;
+}
+.parameter-value-cell > .parameter-value-decor {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+.parameter-value-cell > .parameter-value-tag {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: none;
+  margin-left: 10px;
+}
+.parameter-el-table :deep(td.el-table__cell > .cell > div),
+.parameter-el-table :deep(td.el-table__cell .parameter-value-cell) {
+  box-sizing: border-box;
+}
+.parameter-el-table :deep(td.el-table__cell > .cell > div) {
+  width: auto;
+  display: inline-block;
+  vertical-align: bottom;
 }
 .parameter-empty {
   flex: 1;

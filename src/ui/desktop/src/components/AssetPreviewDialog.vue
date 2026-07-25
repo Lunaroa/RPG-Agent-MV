@@ -36,6 +36,7 @@
             :preview-failed="currentPreviewFailed"
             :space-held="spaceHeld"
             :labels="surfaceLabels"
+            :info="currentItem.info"
             @image-error="onImageError"
           />
           <p v-else class="asset-preview-empty plain-preview">{{ surfaceLabels.none }}</p>

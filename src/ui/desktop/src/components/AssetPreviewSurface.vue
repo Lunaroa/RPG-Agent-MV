@@ -42,6 +42,19 @@
         controls
         preload="metadata"
       />
+      <AssetFontPreview
+        v-else-if="media === 'font' && previewUrl"
+        :key="previewUrl"
+        :src="previewUrl"
+        :display-name="displayName"
+        :sample-text="labels.fontSample"
+        :load-failed-label="labels.fontLoadFailed || labels.previewFailed"
+      />
+      <AssetEffectInfoPreview
+        v-else-if="media === 'effect' && info"
+        :display-name="displayName"
+        :info="info"
+      />
       <p v-else-if="displayName" class="plain-preview">
         {{ previewFailed ? labels.previewFailed : displayName }}
       </p>
@@ -66,7 +79,10 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import PluginFileAudioPreview from './editor/PluginFileAudioPreview.vue';
+import AssetFontPreview from './AssetFontPreview.vue';
+import AssetEffectInfoPreview from './AssetEffectInfoPreview.vue';
 import type {
+  AssetPreviewItem,
   AssetPreviewMediaKind,
   AssetPreviewSurfaceLabels,
 } from '../utils/assetPreview';
@@ -79,6 +95,7 @@ const props = defineProps<{
   /** Caller tracks Space; meaning differs per media kind outside this surface. */
   spaceHeld: boolean;
   labels: AssetPreviewSurfaceLabels;
+  info?: AssetPreviewItem['info'];
 }>();
 
 const emit = defineEmits<{
@@ -108,9 +125,6 @@ function resetPreviewTransform(): void {
   previewPanY.value = 0;
 }
 
-// Asset-change reset is owned here (not by callers): any host, including
-// AssetPreviewDialog, gets correct behaviour when previewUrl/displayName change.
-// Images then refit via onImageLoad → fitPreviewToView.
 watch(
   () => [props.previewUrl, props.displayName] as const,
   () => {
@@ -154,6 +168,7 @@ function resetZoom() {
   resetPreviewTransform();
 }
 function onPreviewWheel(event: WheelEvent) {
+  if (props.media !== 'image') return;
   if (event.deltaY < 0) zoomIn();
   else zoomOut();
 }
@@ -186,11 +201,6 @@ function restartFromBeginning(): void {
   audioPreviewRef.value?.restartFromBeginning();
 }
 
-/**
- * Same-asset re-select only: URL and displayName are unchanged, so the
- * asset-change watch does not fire. Callers must not use this for ordinary
- * selection changes.
- */
 function resetView(): void {
   resetPreviewTransform();
 }

@@ -37,15 +37,24 @@ describe('projectAssetLocalization', () => {
     assert.equal(isProjectAssetImageCategory('sv_actors'), false);
     assert.equal(projectAssetMediaKind('bgm'), 'audio');
     assert.equal(projectAssetMediaKind('movies'), 'movie');
-    assert.equal(projectAssetMediaKind('fonts'), 'other');
-    assert.equal(projectAssetMediaKind('effects'), 'other');
+    assert.equal(projectAssetMediaKind('fonts'), 'font');
+    assert.equal(projectAssetMediaKind('effects'), 'effect');
   });
 
-  test('blocks preview for encrypted entries and effects', () => {
+  test('blocks preview for encrypted entries and effects animation', () => {
     assert.equal(projectAssetCanPreview('characters', false), true);
     assert.equal(projectAssetCanPreview('characters', true), false);
+    assert.equal(projectAssetCanPreview('fonts', false), true);
+    assert.equal(projectAssetCanPreview('fonts', true), false);
     assert.equal(projectAssetCanPreview('effects', false), false);
     assert.equal(projectAssetCanPreview('bgm', false), true);
-    assert.equal(projectAssetCanPreview('fonts', false), false);
+  });
+
+  test('labels MZ picture subfolders with the disk directory name', () => {
+    assert.equal(projectAssetCategoryLabel('pictures/ui', 'zh-CN'), 'ui');
+    assert.equal(projectAssetCategoryLabel('pictures/ui/portraits', 'en-US'), 'portraits');
+    assert.equal(isProjectAssetImageCategory('pictures/ui'), true);
+    assert.equal(isProjectAssetGroupCategory('pictures/ui'), false);
+    assert.equal(projectAssetMediaKind('pictures/ui'), 'image');
   });
 });

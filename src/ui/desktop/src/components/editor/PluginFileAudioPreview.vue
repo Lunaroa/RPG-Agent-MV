@@ -15,6 +15,16 @@
       @error="onAudioError"
     />
 
+    <button
+      type="button"
+      class="audio-wave"
+      :disabled="!canSeek || loadFailed"
+      :aria-label="t('pluginFilePicker.audioSeek')"
+      @click="onWaveformClick"
+    >
+      <canvas ref="waveCanvas" class="audio-wave-canvas" aria-hidden="true" />
+    </button>
+
     <div class="audio-bar">
       <button
         type="button"
@@ -100,8 +110,10 @@ import {
   createPluginAudioPlaybackBundle,
   formatPluginAudioClock,
   getRememberedPluginAudioVolume,
+  pluginAudioProgressRatio,
   readFiniteAudioDuration,
   rememberPluginAudioVolume,
+  seekTimeFromWaveformPointer,
 } from '../../utils/pluginFileAudioPreview';
 
 const props = withDefaults(defineProps<{
@@ -116,10 +128,12 @@ const { t } = useI18n();
 /** Above file-picker subDialog (2500) so the volume popover is clickable. */
 const volumeZ = LAYER_Z.contextMenu;
 const audioEl = ref<HTMLAudioElement | null>(null);
+const waveCanvas = ref<HTMLCanvasElement | null>(null);
 const playbackSrc = ref('');
 const playing = ref(false);
 const currentTime = ref(0);
 const duration = ref(Number.NaN);
+const waveformPeaks = ref<number[]>([]);
 const remembered = getRememberedPluginAudioVolume();
 const volumePercent = ref(remembered.volumePercent);
 const muted = ref(remembered.muted);
@@ -142,6 +156,10 @@ watch(
   { immediate: true },
 );
 
+watch([waveformPeaks, currentTime, duration], () => {
+  drawWaveform();
+});
+
 function revokeObjectUrl(): void {
   if (!objectUrl) return;
   URL.revokeObjectURL(objectUrl);
@@ -153,6 +171,7 @@ async function bindSource(src: string): Promise<void> {
   playing.value = false;
   currentTime.value = 0;
   duration.value = Number.NaN;
+  waveformPeaks.value = [];
   volumeOpen.value = false;
   seeking.value = false;
   loadFailed.value = false;
@@ -169,18 +188,85 @@ async function bindSource(src: string): Promise<void> {
     }
     objectUrl = bundle.objectUrl;
     playbackSrc.value = bundle.objectUrl;
+    waveformPeaks.value = bundle.peaks;
     if (Number.isFinite(bundle.durationSeconds)) {
       duration.value = bundle.durationSeconds;
     }
     pendingAutoplay = props.autoplay;
     await nextTick();
     applyRememberedVolume();
+    drawWaveform();
     await tryAutoplay(token);
   } catch {
     if (token !== bindToken) return;
     loadFailed.value = true;
     pendingAutoplay = false;
   }
+}
+
+function drawWaveform(): void {
+  const canvas = waveCanvas.value;
+  if (!canvas) return;
+  const cssWidth = Math.max(1, canvas.clientWidth || 480);
+  const cssHeight = Math.max(1, canvas.clientHeight || 64);
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const peaks = waveformPeaks.value;
+  const midY = cssHeight / 2;
+  const progress = pluginAudioProgressRatio(currentTime.value, duration.value);
+  const progressX = cssWidth * progress;
+
+  ctx.fillStyle = '#d7dee5';
+  ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+  if (peaks.length === 0) {
+    ctx.strokeStyle = '#9aa3ad';
+    ctx.beginPath();
+    ctx.moveTo(0, midY);
+    ctx.lineTo(cssWidth, midY);
+    ctx.stroke();
+  } else {
+    const barWidth = cssWidth / peaks.length;
+    for (let i = 0; i < peaks.length; i += 1) {
+      const peak = peaks[i] ?? 0;
+      const barHeight = Math.max(2, peak * (cssHeight - 8));
+      const x = i * barWidth;
+      const played = x + barWidth * 0.5 <= progressX;
+      ctx.fillStyle = played ? '#2a3138' : '#8a939e';
+      ctx.fillRect(
+        x + barWidth * 0.15,
+        midY - barHeight / 2,
+        Math.max(1, barWidth * 0.7),
+        barHeight,
+      );
+    }
+  }
+
+  ctx.strokeStyle = '#c45c26';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(progressX, 0);
+  ctx.lineTo(progressX, cssHeight);
+  ctx.stroke();
+}
+
+function onWaveformClick(event: MouseEvent): void {
+  const canvas = waveCanvas.value;
+  const el = audioEl.value;
+  if (!canvas || !el || !canSeek.value) return;
+  const rect = canvas.getBoundingClientRect();
+  const next = seekTimeFromWaveformPointer(event.clientX, rect.left, rect.width, duration.value);
+  seeking.value = true;
+  currentTime.value = next;
+  el.currentTime = next;
+  seeking.value = false;
+  drawWaveform();
 }
 
 function applyRememberedVolume(): void {
@@ -203,7 +289,6 @@ async function tryAutoplay(token: number): Promise<void> {
     if (token === bindToken) pendingAutoplay = false;
   } catch (error) {
     if (token !== bindToken) return;
-    // Gesture expired or policy blocked — stop retrying; manual play still works.
     if (error instanceof DOMException && error.name === 'NotAllowedError') {
       pendingAutoplay = false;
     }
@@ -297,6 +382,30 @@ defineExpose({
   display: grid;
   gap: 8px;
   justify-items: stretch;
+}
+.audio-wave {
+  display: block;
+  width: 100%;
+  height: 72px;
+  padding: 0;
+  border: 1px solid #c9d0d7;
+  border-radius: 8px;
+  background: #d7dee5;
+  cursor: pointer;
+  overflow: hidden;
+}
+.audio-wave:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.audio-wave:focus-visible {
+  outline: 2px solid var(--app-accent, #c45c26);
+  outline-offset: 1px;
+}
+.audio-wave-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .audio-bar {
   display: flex;

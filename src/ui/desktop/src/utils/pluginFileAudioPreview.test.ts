@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
+  buildAudioWaveformPeaks,
   formatPluginAudioClock,
   getRememberedPluginAudioVolume,
   pluginAudioProgressRatio,
   readFiniteAudioDuration,
   rememberPluginAudioVolume,
+  seekTimeFromWaveformPointer,
 } from './pluginFileAudioPreview';
 
 describe('pluginFileAudioPreview', () => {
@@ -26,6 +28,18 @@ describe('pluginFileAudioPreview', () => {
     assert.equal(readFiniteAudioDuration(12.5), 12.5);
     assert.equal(Number.isNaN(readFiniteAudioDuration(Number.POSITIVE_INFINITY)), true);
     assert.equal(Number.isNaN(readFiniteAudioDuration(0)), true);
+  });
+
+  test('builds normalized waveform peaks and seek mapping', () => {
+    const peaks = buildAudioWaveformPeaks([0, 0.5, -1, 0.25, 0, 0], 3);
+    assert.equal(peaks.length, 3);
+    assert.ok(peaks.every((peak) => peak >= 0 && peak <= 1));
+    assert.equal(Math.max(...peaks), 1);
+
+    assert.equal(seekTimeFromWaveformPointer(50, 0, 100, 10), 5);
+    assert.equal(seekTimeFromWaveformPointer(-10, 0, 100, 10), 0);
+    assert.equal(seekTimeFromWaveformPointer(200, 0, 100, 10), 10);
+    assert.equal(seekTimeFromWaveformPointer(50, 0, 0, 10), 0);
   });
 
   test('remembers preview volume outside component setup so remounts keep it', () => {

@@ -807,7 +807,7 @@ function displayValue(value: unknown): string {
                       :catalog="catalog"
                     />
                     <el-tag
-                      v-if="isTaggedPluginParameterValue(column.field)"
+                      v-if="isTaggedPluginParameterValue(column.field) && String(cellSummary(row.value, column.field) || '').trim()"
                       size="small"
                       effect="plain"
                       class="parameter-value-tag"
@@ -858,7 +858,7 @@ function displayValue(value: unknown): string {
                     :catalog="catalog"
                   />
                   <el-tag
-                    v-if="isTaggedPluginParameterValue(arrayItem)"
+                    v-if="isTaggedPluginParameterValue(arrayItem) && String(valueSummary(arrayItem, row.value) || '').trim()"
                     size="small"
                     effect="plain"
                     class="parameter-value-tag"
@@ -1029,7 +1029,7 @@ function displayValue(value: unknown): string {
                     :catalog="catalog"
                   />
                   <el-tag
-                    v-if="isTaggedPluginParameterValue(row.field)"
+                    v-if="isTaggedPluginParameterValue(row.field) && String(row.summary || '').trim()"
                     size="small"
                     effect="plain"
                     class="parameter-value-tag"
@@ -1176,9 +1176,12 @@ function displayValue(value: unknown): string {
   transition: none;
 }
 .parameter-value-tag {
-  max-width: 100%;
+  width: auto;
+  max-width: none;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
   font-weight: 400;
   color: var(--console-accent, #be5630);
   background: color-mix(in srgb, var(--console-accent, #be5630) 10%, transparent);
@@ -1189,6 +1192,7 @@ function displayValue(value: unknown): string {
 .parameter-value-tag :deep(.el-tag__content) {
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
   font-weight: 400;
   color: var(--console-accent, #be5630);
 }
@@ -1262,6 +1266,27 @@ function displayValue(value: unknown): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: middle;
+  max-width: initial;
+}
+.parameter-value-cell > .parameter-value-decor {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+.parameter-value-cell > .parameter-value-tag {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: none;
+  margin-left: 10px;
+}
+.parameter-el-table :deep(td.el-table__cell > .cell > div),
+.parameter-el-table :deep(td.el-table__cell .parameter-value-cell) {
+  box-sizing: border-box;
+}
+.parameter-el-table :deep(td.el-table__cell > .cell > div) {
+  width: auto;
+  display: inline-block;
+  vertical-align: bottom;
 }
 .parameter-key-tag {
   min-width: 0;

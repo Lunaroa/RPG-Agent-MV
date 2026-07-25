@@ -9,6 +9,11 @@ export interface ProjectAssetScannedFile {
   relativePath: string;
   bytes: number;
   mtimeMs: number;
+  /**
+   * Logical asset name used by the engine (may include a subdirectory under the
+   * category root, e.g. `ui/Portrait`). When omitted, derived from fileName.
+   */
+  logicalName?: string;
 }
 
 export interface ProjectAssetLogicalVariant {
@@ -78,7 +83,9 @@ export function groupProjectAssetLogicalEntries(
   for (const file of files) {
     const extension = extensionOf(file.fileName);
     if (!accepted.has(extension)) continue;
-    const logicalKey = basenameWithoutExtension(file.fileName).toLowerCase();
+    const name = (file.logicalName ?? basenameWithoutExtension(file.fileName)).trim();
+    if (!name) continue;
+    const logicalKey = name.toLowerCase();
     const variant: ProjectAssetLogicalVariant = {
       relativePath: file.relativePath,
       fileName: file.fileName,
@@ -93,7 +100,7 @@ export function groupProjectAssetLogicalEntries(
       continue;
     }
     groups.set(logicalKey, {
-      name: basenameWithoutExtension(file.fileName),
+      name,
       variants: [variant],
     });
   }

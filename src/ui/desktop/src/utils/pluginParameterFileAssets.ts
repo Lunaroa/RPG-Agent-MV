@@ -241,6 +241,48 @@ export function foldersFromAssetNames(names: string[]): string[] {
   return [...folders];
 }
 
+/**
+ * Sync lookup across all catalog image buckets for bare `img` (needs-list) value thumbs.
+ * Matches catalog entry names, or `pictures/X` / `img/pictures/X` style paths from the picker.
+ */
+export function findCatalogImageAssetUrlByLogicalName(
+  catalog: EditorProjectCatalog,
+  selectedName: string,
+): string | null {
+  const selected = String(selectedName || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '')
+    .trim();
+  if (!selected || selected.includes('..')) return null;
+
+  for (const bucket of PLUGIN_FILE_DIRECTORY_BUCKETS) {
+    if (bucket.media !== 'image') continue;
+    const assets = catalog.assets[bucket.key] || [];
+    for (const name of candidateLogicalNamesForImageBucket(selected, bucket.directory)) {
+      const asset = assets.find((entry) => entry.name === name);
+      if (asset?.url) return asset.url;
+    }
+  }
+  return null;
+}
+
+function candidateLogicalNamesForImageBucket(
+  selected: string,
+  bucketDirectory: string,
+): string[] {
+  const names = new Set<string>([selected]);
+  const short = bucketDirectory.startsWith('img/')
+    ? bucketDirectory.slice('img/'.length)
+    : bucketDirectory;
+  if (selected.startsWith(`${bucketDirectory}/`)) {
+    names.add(selected.slice(bucketDirectory.length + 1));
+  }
+  if (short && selected.startsWith(`${short}/`)) {
+    names.add(selected.slice(short.length + 1));
+  }
+  return [...names].filter(Boolean);
+}
+
 function matchDirectoryBucket(directory: string): {
   bucket: DirectoryBucket;
   relativePrefix: string;

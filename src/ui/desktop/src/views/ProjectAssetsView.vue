@@ -43,6 +43,7 @@ import {
 } from '../api/client'
 import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'
 import AssetFolderIcon from '../components/AssetFolderIcon.vue'
+import AssetGridFontThumb from '../components/AssetGridFontThumb.vue'
 import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
 import ConsoleSearchInput from '../components/console/ConsoleSearchInput.vue'
 import { useI18n } from '../i18n'
@@ -61,6 +62,7 @@ import {
   projectAssetCategoryLabel,
   projectAssetMediaKind,
 } from '../utils/projectAssetLocalization'
+import { parseProjectAssetBrowserNodeId } from '@contract/project-asset-browser-nodes'
 import { computeProjectAssetGridWindow } from '../utils/projectAssetGridWindow'
 import {
   computeHoverPreviewPosition,
@@ -106,10 +108,16 @@ import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 
 /**
- * Gap between grid cells. Cell size is derived from the user's thumbnail
- * zoom (thumbSize + name area) so rendering and marquee math share one value.
+ * Compact Explorer-like grid metrics. cellWidth hugs the square thumbnail;
+ * cellHeight adds a two-line name band. Rendering and marquee share these values.
+ * Sizes include padding + 1px border (border-box on the cell).
  */
-const CELL_GAP = 10
+const CELL_GAP = 4
+const CELL_PAD = 4
+const CELL_BORDER = 1
+const CELL_INNER_GAP = 4
+const NAME_LINE_HEIGHT = 13
+const NAME_LINES = 2
 const OVERSCAN_ROWS = 2
 
 type TreeNodeView = {
@@ -182,6 +190,9 @@ const containerWidth = ref(0)
 const containerHeight = ref(0)
 const scrollTop = ref(0)
 const failedThumbnails = ref(new Set<string>())
+/** Ids allowed to bind thumbnail src; armed top→bottom so the serial main-process queue matches viewport order. */
+const armedThumbnailIds = ref(new Set<string>())
+let thumbnailArmGeneration = 0
 /** Lazy per-category folder-icon previews: categoryId -> up to two thumbnail URLs. */
 const folderPreviews = ref(new Map<string, string[]>())
 const folderPreviewLoading = new Set<string>()
@@ -189,9 +200,19 @@ const folderPreviewLoading = new Set<string>()
 const hoverPreview = ref<{ id: string; name: string; url: string; left: number; top: number } | null>(null)
 let hoverPreviewTimer: ReturnType<typeof setTimeout> | null = null
 
-/** Thumbnail height in px (user zoom, 48-512, persisted). Cell = thumb + name area; default 72+76=148 matches the original fixed cell. */
+/** Thumbnail edge in px (user zoom, 48-512, persisted). Default 72. */
 const thumbSize = ref(loadProjectAssetThumbSize())
-const cellSize = computed(() => thumbSize.value + 76)
+const cellWidth = computed(() =>
+  thumbSize.value + CELL_PAD * 2 + CELL_BORDER * 2,
+)
+const cellHeight = computed(() =>
+  CELL_PAD
+  + thumbSize.value
+  + CELL_INNER_GAP
+  + NAME_LINE_HEIGHT * NAME_LINES
+  + CELL_PAD
+  + CELL_BORDER * 2,
+)
 
 type MarqueeState = {
   originX: number
@@ -220,6 +241,8 @@ const previewSurfaceLabels = computed<AssetPreviewSurfaceLabels>(() => ({
   resetZoom: t('projectAssets.resetZoom'),
   zoomOut: t('projectAssets.zoomOut'),
   zoomIn: t('projectAssets.zoomIn'),
+  fontSample: t('projectAssets.fontPreviewSample'),
+  fontLoadFailed: t('projectAssets.fontPreviewFailed'),
 }))
 
 const previewDialogLabels = computed<AssetPreviewDialogLabels>(() => ({
@@ -304,19 +327,24 @@ function onGridWheel(event: WheelEvent) {
 
 const gridItems = computed<GridItem[]>(() => {
   if (!selectedCategoryId.value) return []
-  if (isGroupSelection.value) {
-    const query = searchQuery.value.trim().toLowerCase()
-    if (!query) return folderItems.value
-    return folderItems.value.filter((item) => item.label.toLowerCase().includes(query))
-  }
-  return sortedEntries.value.map((entry) => ({ kind: 'file' as const, entry }))
+  const query = searchQuery.value.trim().toLowerCase()
+  const folders = query
+    ? folderItems.value.filter((item) => item.label.toLowerCase().includes(query))
+    : folderItems.value
+  // Group roots (audio / img): folders only.
+  if (isGroupSelection.value) return folders
+  // Leaf categories may still have children (MZ pictures disk subfolders).
+  // Explorer order: folders first, then files at this level.
+  const files = sortedEntries.value.map((entry) => ({ kind: 'file' as const, entry }))
+  return [...folders, ...files]
 })
 
 const gridWindow = computed(() =>
   computeProjectAssetGridWindow({
     containerWidth: containerWidth.value,
     containerHeight: containerHeight.value,
-    cellSize: cellSize.value,
+    cellWidth: cellWidth.value,
+    cellHeight: cellHeight.value,
     gap: CELL_GAP,
     itemCount: gridItems.value.length,
     scrollTop: scrollTop.value,
@@ -326,6 +354,8 @@ const gridWindow = computed(() =>
 
 const visibleItems = computed(() => {
   const { startIndex, endIndex, columnCount } = gridWindow.value
+  const width = cellWidth.value
+  const height = cellHeight.value
   return gridItems.value.slice(startIndex, endIndex).map((item, offset) => {
     const index = startIndex + offset
     const row = Math.floor(index / columnCount)
@@ -335,10 +365,10 @@ const visibleItems = computed(() => {
       index,
       style: {
         position: 'absolute' as const,
-        left: `${column * (cellSize.value + CELL_GAP)}px`,
-        top: `${row * (cellSize.value + CELL_GAP)}px`,
-        width: `${cellSize.value}px`,
-        height: `${cellSize.value}px`,
+        left: `${column * (width + CELL_GAP)}px`,
+        top: `${row * (height + CELL_GAP)}px`,
+        width: `${width}px`,
+        height: `${height}px`,
       },
     }
   })
@@ -368,7 +398,34 @@ watch(visibleItems, (items) => {
   for (const cell of items) {
     if (cell.item.kind === 'folder') void ensureFolderPreview(cell.item.id)
   }
+  void armVisibleThumbnails(items)
 }, { immediate: true })
+
+async function armVisibleThumbnails(
+  items: Array<{ item: GridItem; index: number }>,
+) {
+  const generation = ++thumbnailArmGeneration
+  const ordered = [...items]
+    .filter((cell) => cell.item.kind === 'file')
+    .sort((left, right) => left.index - right.index)
+  for (const cell of ordered) {
+    if (generation !== thumbnailArmGeneration) return
+    if (cell.item.kind !== 'file') continue
+    const id = cell.item.entry.id
+    if (armedThumbnailIds.value.has(id)) continue
+    const next = new Set(armedThumbnailIds.value)
+    next.add(id)
+    armedThumbnailIds.value = next
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve())
+    })
+  }
+}
+
+function displayAssetName(name: string): string {
+  const parts = name.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts[parts.length - 1] || name
+}
 
 const emptyMessage = computed(() => {
   if (!projectStore.currentProject) return t('projectAssets.noProject')
@@ -486,6 +543,38 @@ function typeIcon(categoryId: string) {
   return Document
 }
 
+/** Scale type icons with the thumb slider (avoid tiny glyph in a huge square). */
+function typeIconSizePx(size: number): number {
+  return Math.max(20, Math.min(96, Math.round(size * 0.45)))
+}
+
+function gridMediaKind(): ReturnType<typeof projectAssetMediaKind> {
+  return projectAssetMediaKind(selectedCategoryId.value)
+}
+
+/** Only fonts get in-cell content previews (Windows Fonts folder). Audio/effects use icons. */
+function usesArmedFontThumb(categoryId: string): boolean {
+  return projectAssetMediaKind(categoryId) === 'font'
+}
+
+function cellUsesIconFallback(entry: ProjectAssetBrowseEntry): boolean {
+  if (entry.encrypted) return true
+  if (failedThumbnails.value.has(entry.id)) return true
+  if (isProjectAssetImageCategory(selectedCategoryId.value)) {
+    return !entry.thumbnailUrl
+  }
+  if (usesArmedFontThumb(selectedCategoryId.value)) {
+    return !entry.url || !armedThumbnailIds.value.has(entry.id)
+  }
+  return true
+}
+
+function cellShowsFontThumb(entry: ProjectAssetBrowseEntry): boolean {
+  if (entry.encrypted || failedThumbnails.value.has(entry.id)) return false
+  if (!usesArmedFontThumb(selectedCategoryId.value)) return false
+  return Boolean(entry.url) && armedThumbnailIds.value.has(entry.id)
+}
+
 function entryPrimaryPath(entry: ProjectAssetBrowseEntry): string {
   return entry.variants[0]?.relativePath || ''
 }
@@ -524,7 +613,7 @@ function focusGridHost() {
   gridHost.value?.focus({ preventScroll: true })
 }
 
-function buildEntryMetadata(entry: ProjectAssetBrowseEntry, categoryId: string): string {
+function buildEntryMetadata(entry: ProjectAssetBrowseEntry): string {
   const parts = [
     t('projectAssets.metaSize', { size: formatSize(entry.bytes) }),
     t('projectAssets.metaModified', { time: formatModified(entry.mtimeMs) }),
@@ -536,21 +625,48 @@ function buildEntryMetadata(entry: ProjectAssetBrowseEntry, categoryId: string):
   }
   if (entry.encrypted) {
     parts.push(t('projectAssets.cannotPreviewEncrypted'))
-  } else if (categoryId === 'effects') {
-    parts.push(t('projectAssets.cannotPreviewEffects'))
   }
   return parts.join(' · ')
 }
 
+function buildEffectPreviewInfo(entry: ProjectAssetBrowseEntry): NonNullable<AssetPreviewItem['info']> {
+  const rows = [
+    { label: t('projectAssets.effectInfoName'), value: entry.name },
+    { label: t('projectAssets.effectInfoSize'), value: formatSize(entry.bytes) },
+    { label: t('projectAssets.effectInfoModified'), value: formatModified(entry.mtimeMs) },
+  ]
+  if (entry.variants.length > 0) {
+    rows.push({
+      label: t('projectAssets.effectInfoFiles'),
+      value: entry.variants.map((variant) => variant.relativePath || variant.fileName).join(', '),
+    })
+  }
+  return {
+    notice: t('projectAssets.cannotPreviewEffects'),
+    rows,
+  }
+}
+
 function toPreviewItem(entry: ProjectAssetBrowseEntry): AssetPreviewItem {
   const categoryId = selectedCategoryId.value
+  const media = projectAssetMediaKind(categoryId)
   const canPreview = projectAssetCanPreview(categoryId, entry.encrypted)
+  if (media === 'effect' && !entry.encrypted) {
+    return {
+      id: entry.id,
+      displayName: entry.name,
+      url: '',
+      media: 'effect',
+      metadata: buildEntryMetadata(entry),
+      info: buildEffectPreviewInfo(entry),
+    }
+  }
   return {
     id: entry.id,
     displayName: entry.name,
     url: canPreview ? entry.url : '',
-    media: canPreview ? projectAssetMediaKind(categoryId) : 'other',
-    metadata: buildEntryMetadata(entry, categoryId),
+    media: canPreview ? media : 'other',
+    metadata: buildEntryMetadata(entry),
   }
 }
 
@@ -701,6 +817,8 @@ async function loadCategory(categoryId: string) {
   scrollTop.value = 0
   if (gridHost.value) gridHost.value.scrollTop = 0
   failedThumbnails.value = new Set()
+  armedThumbnailIds.value = new Set()
+  thumbnailArmGeneration += 1
 
   await listingCoordinator.runExclusive(token, async (context) => {
     try {
@@ -1048,7 +1166,8 @@ function finishMarquee(event: PointerEvent) {
     orderedFileIds.value,
     {
       columnCount: gridWindow.value.columnCount,
-      cellSize: cellSize.value,
+      cellWidth: cellWidth.value,
+      cellHeight: cellHeight.value,
       gap: CELL_GAP,
     },
     rect,
@@ -1168,11 +1287,13 @@ async function runImportForSourceFiles(
   if (!projectStore.currentProject) return
   const category = categoryOverride || selectedCategoryId.value
   if (!category) return
+  const { subpath: importSubpath } = parseProjectAssetBrowserNodeId(category)
   let candidates: ImportOverwriteCandidate[] = sourceFiles.map((sourceFile) => {
     const parts = localFileParts(sourceFile)
+    const leaf = parts.name
     return {
       sourceFile,
-      name: parts.name,
+      name: importSubpath ? `${importSubpath}/${leaf}` : leaf,
       overwrite: false,
     }
   })
@@ -2020,7 +2141,10 @@ watch(gridHost, (el, previous) => {
               : undefined"
           >
             <template v-if="cell.item.kind === 'folder'">
-              <span class="project-assets-thumb is-folder" :style="{ height: `${thumbSize}px` }">
+              <span
+                class="project-assets-thumb is-folder"
+                :style="{ width: `${thumbSize}px`, height: `${thumbSize}px` }"
+              >
                 <AssetFolderIcon
                   :previews="folderPreviews.get(cell.item.id) ?? []"
                   :size="thumbSize"
@@ -2031,12 +2155,10 @@ watch(gridHost, (el, previous) => {
             <template v-else>
               <span
                 class="project-assets-thumb"
-                :style="{ height: `${thumbSize}px` }"
+                :style="{ width: `${thumbSize}px`, height: `${thumbSize}px` }"
                 :class="{
-                  'is-icon': !isProjectAssetImageCategory(selectedCategoryId)
-                    || cell.item.entry.encrypted
-                    || !cell.item.entry.thumbnailUrl
-                    || failedThumbnails.has(cell.item.entry.id),
+                  'is-icon': cellUsesIconFallback(cell.item.entry),
+                  'is-media-thumb': cellShowsFontThumb(cell.item.entry),
                   'is-encrypted': cell.item.entry.encrypted,
                 }"
               >
@@ -2044,7 +2166,8 @@ watch(gridHost, (el, previous) => {
                   v-if="isProjectAssetImageCategory(selectedCategoryId)
                     && !cell.item.entry.encrypted
                     && cell.item.entry.thumbnailUrl
-                    && !failedThumbnails.has(cell.item.entry.id)"
+                    && !failedThumbnails.has(cell.item.entry.id)
+                    && armedThumbnailIds.has(cell.item.entry.id)"
                   :src="cell.item.entry.thumbnailUrl"
                   :alt="cell.item.entry.name"
                   draggable="false"
@@ -2054,13 +2177,34 @@ watch(gridHost, (el, previous) => {
                   <span class="project-assets-encrypted">{{ t('projectAssets.encrypted') }}</span>
                 </template>
                 <template v-else-if="failedThumbnails.has(cell.item.entry.id)">
-                  <span class="project-assets-encrypted">{{ t('projectAssets.thumbnailFailed') }}</span>
+                  <el-icon :size="typeIconSizePx(thumbSize)">
+                    <component :is="typeIcon(selectedCategoryId)" />
+                  </el-icon>
                 </template>
-                <el-icon v-else>
+                <template
+                  v-else-if="isProjectAssetImageCategory(selectedCategoryId)
+                    && cell.item.entry.thumbnailUrl
+                    && !armedThumbnailIds.has(cell.item.entry.id)"
+                />
+                <AssetGridFontThumb
+                  v-else-if="gridMediaKind() === 'font'
+                    && cell.item.entry.url
+                    && armedThumbnailIds.has(cell.item.entry.id)"
+                  :src="cell.item.entry.url"
+                  :size="thumbSize"
+                  :sample-text="t('projectAssets.fontPreviewSample')"
+                  @error="onThumbnailError(cell.item.entry.id)"
+                />
+                <template
+                  v-else-if="usesArmedFontThumb(selectedCategoryId)
+                    && cell.item.entry.url
+                    && !armedThumbnailIds.has(cell.item.entry.id)"
+                />
+                <el-icon v-else :size="typeIconSizePx(thumbSize)">
                   <component :is="typeIcon(selectedCategoryId)" />
                 </el-icon>
               </span>
-              <span class="project-assets-name" :title="cell.item.entry.name">{{ cell.item.entry.name }}</span>
+              <span class="project-assets-name" :title="cell.item.entry.name">{{ displayAssetName(cell.item.entry.name) }}</span>
             </template>
           </button>
           <div
@@ -2399,17 +2543,18 @@ watch(gridHost, (el, previous) => {
 }
 
 .project-assets-cell {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding: 8px;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
   border: 1px solid transparent;
   border-radius: var(--app-radius-md);
   background: transparent;
   color: var(--app-ink);
   font: inherit;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
 }
 
@@ -2431,7 +2576,6 @@ watch(gridHost, (el, previous) => {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 100%;
   overflow: hidden;
   border-radius: var(--app-radius-sm);
   background: var(--app-bg-sunken);
@@ -2439,11 +2583,14 @@ watch(gridHost, (el, previous) => {
 }
 
 .project-assets-thumb img {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
+  /* Fill the square box, then letterbox — never overflow-crop. */
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   object-fit: contain;
+  object-position: center;
   image-rendering: pixelated;
 }
 
@@ -2470,8 +2617,12 @@ watch(gridHost, (el, previous) => {
 }
 
 .project-assets-thumb.is-icon :deep(svg) {
-  width: 28px;
-  height: 28px;
+  width: 1em;
+  height: 1em;
+}
+
+.project-assets-thumb.is-media-thumb {
+  padding: 0;
 }
 
 .project-assets-thumb.is-folder {
@@ -2493,12 +2644,14 @@ watch(gridHost, (el, previous) => {
 .project-assets-name {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   overflow: hidden;
+  width: 100%;
   min-height: 0;
+  max-height: 26px;
   font-size: 11px;
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 13px;
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;

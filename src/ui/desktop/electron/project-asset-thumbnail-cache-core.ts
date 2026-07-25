@@ -96,6 +96,28 @@ export function projectAssetThumbnailNeedsDownscale(
   return sourceWidth > sizeBucket || sourceHeight > sizeBucket;
 }
 
+/**
+ * Aspect-preserving fit into a square bucket: longest edge ≤ sizeBucket, never crop.
+ * Caller must only invoke when {@link projectAssetThumbnailNeedsDownscale} is true.
+ */
+export function computeProjectAssetThumbnailFitSize(
+  sourceWidth: number,
+  sourceHeight: number,
+  sizeBucket: number,
+): { width: number; height: number } {
+  assertProjectAssetThumbnailSizeBucket(sizeBucket);
+  if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || sourceWidth <= 0 || sourceHeight <= 0) {
+    throw new Error(
+      `Invalid source image dimensions for thumbnail: ${sourceWidth}x${sourceHeight}`,
+    );
+  }
+  const scale = Math.min(sizeBucket / sourceWidth, sizeBucket / sourceHeight);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
+  };
+}
+
 export type ProjectAssetThumbnailPlan =
   | { action: 'serve-source'; reason: 'no-downscale-needed' }
   | { action: 'use-cache'; cachePath: string }

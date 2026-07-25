@@ -2,6 +2,7 @@ import { nativeImage } from 'electron';
 
 import {
   assertProjectAssetThumbnailSizeBucket,
+  computeProjectAssetThumbnailFitSize,
   ensureProjectAssetThumbnailSync,
   projectAssetThumbnailNeedsDownscale,
   type ProjectAssetThumbnailCodec,
@@ -27,9 +28,11 @@ export function createNativeImageProjectAssetThumbnailCodec(): ProjectAssetThumb
     if (!projectAssetThumbnailNeedsDownscale(width, height, sizeBucket)) {
       return { width, height, thumbnailPng: null };
     }
-    const scale = Math.min(sizeBucket / width, sizeBucket / height);
-    const targetWidth = Math.max(1, Math.round(width * scale));
-    const targetHeight = Math.max(1, Math.round(height * scale));
+    const { width: targetWidth, height: targetHeight } = computeProjectAssetThumbnailFitSize(
+      width,
+      height,
+      sizeBucket,
+    );
     const resized = image.resize({ width: targetWidth, height: targetHeight, quality: 'best' });
     if (resized.isEmpty()) {
       throw new Error(`Failed to resize image for thumbnail: ${sourceFilePath}`);

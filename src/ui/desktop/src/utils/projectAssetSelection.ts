@@ -14,7 +14,8 @@ export interface ProjectAssetGridCellRect {
 
 export interface ProjectAssetGridLayoutInput {
   columnCount: number;
-  cellSize: number;
+  cellWidth: number;
+  cellHeight: number;
   gap: number;
 }
 
@@ -115,16 +116,18 @@ export function projectAssetCellRectAtIndex(
   layout: ProjectAssetGridLayoutInput,
 ): ProjectAssetGridCellRect {
   const columnCount = Math.max(1, Math.floor(layout.columnCount));
-  const cellSize = Math.max(0, layout.cellSize);
+  const cellWidth = Math.max(0, layout.cellWidth);
+  const cellHeight = Math.max(0, layout.cellHeight);
   const gap = Math.max(0, layout.gap);
-  const stride = cellSize + gap;
+  const strideX = cellWidth + gap;
+  const strideY = cellHeight + gap;
   const row = Math.floor(index / columnCount);
   const column = index % columnCount;
   return {
-    x: column * stride,
-    y: row * stride,
-    width: cellSize,
-    height: cellSize,
+    x: column * strideX,
+    y: row * strideY,
+    width: cellWidth,
+    height: cellHeight,
   };
 }
 

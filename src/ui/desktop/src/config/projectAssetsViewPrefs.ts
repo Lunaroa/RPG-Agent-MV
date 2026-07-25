@@ -13,6 +13,14 @@ export const PROJECT_ASSET_THUMB_SIZE_MIN = 48;
 export const PROJECT_ASSET_THUMB_SIZE_MAX = 512;
 export const PROJECT_ASSET_THUMB_SIZE_DEFAULT = 72;
 
+export type ProjectAssetViewMode = 'icons' | 'list' | 'details';
+export const PROJECT_ASSET_VIEW_MODES: readonly ProjectAssetViewMode[] = ['icons', 'list', 'details'];
+export const PROJECT_ASSET_VIEW_MODE_DEFAULT: ProjectAssetViewMode = 'icons';
+
+export function isProjectAssetViewMode(value: unknown): value is ProjectAssetViewMode {
+  return typeof value === 'string' && (PROJECT_ASSET_VIEW_MODES as readonly string[]).includes(value);
+}
+
 export interface ProjectAssetSortPreference {
   key: ProjectAssetSortKey;
   dir: ProjectAssetSortDir;
@@ -66,6 +74,24 @@ export function loadProjectAssetThumbSize(): number {
 export function saveProjectAssetThumbSize(size: number): void {
   try {
     localStorage.setItem(storageKey('thumbSize'), String(clampProjectAssetThumbSize(size)));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadProjectAssetViewMode(): ProjectAssetViewMode {
+  try {
+    const stored = localStorage.getItem(storageKey('viewMode'));
+    if (isProjectAssetViewMode(stored)) return stored;
+  } catch {
+    /* ignore */
+  }
+  return PROJECT_ASSET_VIEW_MODE_DEFAULT;
+}
+
+export function saveProjectAssetViewMode(mode: ProjectAssetViewMode): void {
+  try {
+    localStorage.setItem(storageKey('viewMode'), mode);
   } catch {
     /* ignore */
   }

@@ -26,6 +26,7 @@ import type {
   PluginParameterSchemaField,
 } from '../api/client';
 import {
+  findCatalogImageAssetUrlByLogicalName,
   inferPluginFileMediaKind,
   resolvePluginParameterFileAssetsFromCatalog,
 } from './pluginParameterFileAssets';
@@ -226,8 +227,21 @@ function resolveFileImageMedia(
   if (!selected) return null;
   if (inferPluginFileMediaKind(String(directory || '')) !== 'image') return null;
   const resolved = resolvePluginParameterFileAssetsFromCatalog(catalog, directory);
-  if (!resolved || resolved.ok !== true) return null;
-  const asset = resolved.assets.find((entry) => entry.name === selected);
-  if (!asset?.url) return null;
-  return { kind: 'image', url: asset.url };
+  if (resolved && resolved.ok === true) {
+    const asset = resolved.assets.find((entry) => entry.name === selected);
+    if (!asset?.url) return null;
+    return { kind: 'image', url: asset.url };
+  }
+  // Bare `img` / unmatched image roots: catalog returns needs-list for the picker.
+  // Value-column thumbs still resolve synchronously from known img/* buckets.
+  if (
+    catalog
+    && resolved
+    && resolved.ok === 'needs-list'
+    && resolved.media === 'image'
+  ) {
+    const url = findCatalogImageAssetUrlByLogicalName(catalog, selected);
+    if (url) return { kind: 'image', url };
+  }
+  return null;
 }

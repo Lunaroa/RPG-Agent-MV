@@ -6,6 +6,7 @@ import { describe, test } from 'node:test';
 
 import {
   assertProjectAssetThumbnailSizeBucket,
+  computeProjectAssetThumbnailFitSize,
   ensureProjectAssetThumbnailSync,
   planProjectAssetThumbnail,
   PROJECT_ASSET_THUMBNAIL_SCHEMA_VERSION,
@@ -19,6 +20,27 @@ describe('project asset thumbnail cache core', () => {
   test('rejects size buckets outside the allowed set', () => {
     assert.throws(() => assertProjectAssetThumbnailSizeBucket(96), /Unsupported project asset thumbnail size bucket/);
     assert.throws(() => projectAssetThumbnailNeedsDownscale(100, 100, 96 as 128), /Unsupported/);
+  });
+
+  test('fit size keeps aspect ratio and never exceeds the bucket', () => {
+    const wide = computeProjectAssetThumbnailFitSize(1000, 500, 128);
+    assert.equal(wide.width, 128);
+    assert.equal(wide.height, 64);
+    assert.ok(wide.width <= 128 && wide.height <= 128);
+
+    const tall = computeProjectAssetThumbnailFitSize(400, 800, 128);
+    assert.equal(tall.width, 64);
+    assert.equal(tall.height, 128);
+
+    const square = computeProjectAssetThumbnailFitSize(512, 512, 256);
+    assert.equal(square.width, 256);
+    assert.equal(square.height, 256);
+
+    const near = computeProjectAssetThumbnailFitSize(300, 100, 128);
+    assert.equal(near.width, 128);
+    assert.equal(near.height, 43);
+    assert.ok(Math.abs(near.width / near.height - 3) < 0.05);
+    assert.ok(near.width <= 128 && near.height <= 128);
   });
 
   test('cache path and content version are stable and change with inputs', () => {

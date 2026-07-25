@@ -8,6 +8,14 @@ import { registerMapIpcHandlers } from './map-ipc-bindings.ts';
 const WORKSPACE_PATH = path.join(os.tmpdir(), 'rpg-agent-mv-workspace');
 const PROJECT_PATH = path.join(os.tmpdir(), 'rpg-agent-mv-project');
 
+function ipcOptions(overrides: Record<string, unknown> = {}) {
+  return {
+    withProductLanguage: (_language: unknown, fn: () => unknown) => fn(),
+    trashProjectAsset: async () => undefined,
+    ...overrides,
+  };
+}
+
 describe('map IPC project compatibility warnings', () => {
   test('forwards the restricted workspace surface validation request', async () => {
     const handlers = new Map<string, (...args: any[]) => unknown>();
@@ -17,7 +25,7 @@ describe('map IPC project compatibility warnings', () => {
         calls.push(args);
         return { version: 'version' };
       },
-    }), { withProductLanguage: (_language, fn) => fn() });
+    }), ipcOptions());
 
     const request = { surface: 'editor', loadedVersion: 'previous', mapId: 3 };
     await handlers.get('workspaceSurfaces:validate')!({}, request, PROJECT_PATH);
@@ -36,7 +44,7 @@ describe('map IPC project compatibility warnings', () => {
       },
       cancelThumbnailSession: sessionId => canceled.push(sessionId),
       listProjects: () => [{ path: PROJECT_PATH }],
-    }), { withProductLanguage: (_language, fn) => fn() });
+    }), ipcOptions());
 
     await handlers.get('maps:overviewThumbnail')!({}, 7, '0123456789abcdefabcd', PROJECT_PATH, 'session-1');
     await handlers.get('maps:cancelOverviewThumbnails')!({}, 'session-1');
@@ -55,7 +63,7 @@ describe('map IPC project compatibility warnings', () => {
         reportProgress?.({ phase: 'reading-maps', completed: 2, total: 5 });
         return { nodes: [] };
       },
-    }), { withProductLanguage: (_language, fn) => fn() });
+    }), ipcOptions());
 
     const result = await handlers.get('maps:overview')!({
       sender: { send: (channel: string, payload: unknown) => events.push({ channel, payload }) },
@@ -109,13 +117,12 @@ describe('map IPC project compatibility warnings', () => {
         options.onStatus?.(status);
         return status;
       },
-    }), {
-      withProductLanguage: (_language, fn) => fn(),
-      selectMapOverviewExportTarget: async (_event, name) => {
+    }), ipcOptions({
+      selectMapOverviewExportTarget: async (_event: unknown, name: string) => {
         defaultName = name;
         return outputPath;
       },
-    });
+    }));
 
     const result = await handlers.get('maps:overviewExportStart')!({
       sender: { send: (channel: string, payload: unknown) => events.push({ channel, payload }) },
@@ -138,7 +145,7 @@ describe('map IPC project compatibility warnings', () => {
         return { ok: true };
       },
       listProjects: () => [{ path: path.join(os.tmpdir(), 'rpg-agent-mv-other-project') }],
-    }), { withProductLanguage: (_language, fn) => fn() });
+    }), ipcOptions());
 
     await assert.rejects(
       async () => handlers.get('maps:overviewThumbnail')!({}, 7, '0123456789abcdefabcd', PROJECT_PATH, 'session-1'),
@@ -156,14 +163,13 @@ describe('map IPC project compatibility warnings', () => {
         registered = true;
         return sampleProject();
       },
-    }), {
-      withProductLanguage: (_language, fn) => fn(),
-      confirmProjectCompatibility: async (_event, warning, action) => {
+    }), ipcOptions({
+      confirmProjectCompatibility: async (_event: unknown, warning: unknown, action: string) => {
         assert.deepEqual(warning, versionWarning());
         confirmedAction = action;
         return { confirmed: true, suppressFutureWarnings: false };
       },
-    });
+    }));
 
     const result = await handlers.get('projects:add')!({}, PROJECT_PATH) as Record<string, unknown>;
 
@@ -181,11 +187,10 @@ describe('map IPC project compatibility warnings', () => {
         applied = true;
         return { success: true };
       },
-    }), {
-      withProductLanguage: (_language, fn) => fn(),
+    }), ipcOptions({
       confirmProjectCompatibility: async () => ({ confirmed: false, suppressFutureWarnings: true }),
       suppressProjectCompatibilityWarnings: () => { suppressionWrites += 1; },
-    });
+    }));
 
     const result = await handlers.get('staging:applyProject')!({}, PROJECT_PATH, []) as Record<string, unknown>;
 
@@ -202,13 +207,12 @@ describe('map IPC project compatibility warnings', () => {
       warning: encryptionWarning(),
       register: () => sampleProject(),
       apply: () => { applied = true; return { success: true }; },
-    }), {
-      withProductLanguage: (_language, fn) => fn(),
+    }), ipcOptions({
       confirmProjectCompatibility: async () => {
         confirmations += 1;
         return { confirmed: true, suppressFutureWarnings: false };
       },
-    });
+    }));
 
     await handlers.get('projects:add')!({}, PROJECT_PATH);
     await handlers.get('staging:applyProject')!({}, PROJECT_PATH, []);
@@ -259,6 +263,12 @@ function desktop(overrides: {
     },
     workspaceSurfaces: {
       validateWorkspaceSurfaceVersion: (...args: unknown[]) => overrides.validateWorkspaceSurface?.(...args),
+    },
+    projectAssetBrowser: {
+      invalidateProjectAssetBrowserCache() {},
+    },
+    projectManagement: {
+      preflightProjectManagedStagingApply() {},
     },
   };
 }

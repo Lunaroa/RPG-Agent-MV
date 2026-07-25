@@ -15,6 +15,13 @@ import {
 import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
 import { readPluginConfiguration } from './plugin-management-service.ts';
 import type { PluginParameterSchemaField } from '../../../../contract/types.ts';
+import {
+  invalidateProjectAssetReferenceGraphCache,
+  readProjectAssetReferenceGraphCache,
+  writeProjectAssetReferenceGraphCache,
+} from './project-asset-reference-graph-cache-store.ts';
+
+export { invalidateProjectAssetReferenceGraphCache } from './project-asset-reference-graph-cache-store.ts';
 
 export type RmmvAssetCategory =
   | 'characters'
@@ -106,7 +113,7 @@ export interface AssetMutationSafetyCheck {
   blockers: string[];
 }
 
-interface ProjectAssetLayout {
+export interface ProjectAssetLayout {
   dataRelativeDir: string;
   gameRootRelative: string;
 }
@@ -229,23 +236,54 @@ export function buildAssetReferenceGraph(workflowRoot: string, project: string):
   };
 }
 
+export interface ProjectAssetReferenceGraphBuildDependencies {
+  buildGraph?: (workflowRoot: string, project: string) => RmmvAssetReferenceGraph;
+}
+
+export function getProjectAssetReferenceGraph(
+  workflowRoot: string,
+  project: string,
+  dependencies: ProjectAssetReferenceGraphBuildDependencies = {},
+): RmmvAssetReferenceGraph {
+  const hit = readProjectAssetReferenceGraphCache(project);
+  if (hit) return hit;
+  const build = dependencies.buildGraph || buildAssetReferenceGraph;
+  const graph = build(workflowRoot, project);
+  writeProjectAssetReferenceGraphCache(project, graph);
+  return graph;
+}
+
+export function putProjectAssetReferenceGraph(
+  project: string,
+  graph: RmmvAssetReferenceGraph,
+): void {
+  writeProjectAssetReferenceGraphCache(project, graph);
+}
+
 export function findReferencesForAsset(workflowRoot: string, project: string, target: AssetGraphTarget): RmmvAssetReference[] {
   const category = requireCategory(target.category);
   const name = targetAssetName(target);
-  return buildAssetReferenceGraph(workflowRoot, project).references
+  return getProjectAssetReferenceGraph(workflowRoot, project).references
     .filter((reference) => reference.category === category && reference.name === name);
 }
 
 export function findMissingAssetReferences(workflowRoot: string, project: string): RmmvMissingAssetReference[] {
-  return buildAssetReferenceGraph(workflowRoot, project).missingReferences;
+  return getProjectAssetReferenceGraph(workflowRoot, project).missingReferences;
 }
 
 export function findUnusedProjectAssets(workflowRoot: string, project: string): RmmvProjectAsset[] {
-  return buildAssetReferenceGraph(workflowRoot, project).unusedAssets;
+  return getProjectAssetReferenceGraph(workflowRoot, project).unusedAssets;
 }
 
 export function checkAssetDeleteSafety(workflowRoot: string, project: string, target: AssetGraphTarget): AssetMutationSafetyCheck {
-  const graph = buildAssetReferenceGraph(workflowRoot, project);
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  return checkAssetDeleteSafetyAgainstGraph(graph, target);
+}
+
+export function checkAssetDeleteSafetyAgainstGraph(
+  graph: RmmvAssetReferenceGraph,
+  target: AssetGraphTarget,
+): AssetMutationSafetyCheck {
   const category = requireCategory(target.category);
   const name = targetAssetName(target);
   const asset = findGraphAsset(graph, target, category, name);
@@ -268,23 +306,32 @@ export function checkAssetRenameSafety(
   target: AssetGraphTarget,
   nextNameValue: string,
 ): AssetMutationSafetyCheck {
-  const graph = buildAssetReferenceGraph(workflowRoot, project);
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  return checkAssetRenameSafetyAgainstGraph(graph, target, nextNameValue);
+}
+
+export function checkAssetRenameSafetyAgainstGraph(
+  graph: RmmvAssetReferenceGraph,
+  target: AssetGraphTarget,
+  nextNameValue: string,
+): AssetMutationSafetyCheck {
   const category = requireCategory(target.category);
   const name = targetAssetName(target);
   const nextName = normalizeAssetName(nextNameValue);
-  const asset = findGraphAsset(graph, target, category, name);
+  const variants = findLogicalAssetVariants(graph, category, name, target.relativePath);
   const references = graph.references.filter((reference) => reference.category === category && reference.name === name);
   const blockers: string[] = [];
   let nextRelativePath: string | undefined;
-  if (!asset) {
+  if (!variants.length) {
     blockers.push(assetGraphAssetMissing());
   } else {
     const relativeDir = categoryRelativeDirectory({
       dataRelativeDir: graph.dataRelativeDir,
       gameRootRelative: graph.gameRootRelative,
     }, category);
-    nextRelativePath = `${relativeDir}/${nextName}${path.extname(asset.fileName)}`;
-    const occupied = graph.assets.some((item) => item.relativePath === nextRelativePath);
+    const nextPaths = variants.map((asset) => `${relativeDir}/${nextName}${path.extname(asset.fileName)}`);
+    nextRelativePath = nextPaths[0];
+    const occupied = nextPaths.some((candidate) => graph.assets.some((item) => item.relativePath === candidate));
     if (occupied) blockers.push(assetGraphTargetNameOccupied());
   }
   if (category === 'system' && name === 'IconSet' && references.some((reference) => reference.path.endsWith('.iconIndex'))) {
@@ -295,12 +342,26 @@ export function checkAssetRenameSafety(
   return {
     ok: blockers.length === 0,
     action: 'rename',
-    target: { category, name, relativePath: asset?.relativePath || target.relativePath || null },
+    target: { category, name, relativePath: variants[0]?.relativePath || target.relativePath || null },
     nextName,
     nextRelativePath,
     references,
     blockers,
   };
+}
+
+export function findLogicalAssetVariants(
+  graph: RmmvAssetReferenceGraph,
+  category: RmmvAssetCategory,
+  name: string,
+  relativePath?: string | null,
+): RmmvProjectAsset[] {
+  const byName = graph.assets.filter((asset) => asset.category === category && asset.name === name);
+  if (byName.length) return byName;
+  if (!relativePath) return [];
+  const normalized = relativePath.replace(/\\/g, '/');
+  const match = graph.assets.find((asset) => asset.relativePath === normalized);
+  return match ? graph.assets.filter((asset) => asset.category === match.category && asset.name === match.name) : [];
 }
 
 function canRewriteAssetReference(reference: RmmvAssetReference): boolean {
@@ -335,6 +396,14 @@ export function projectAssetRelativeDirectory(workflowRoot: string, project: str
 
 export function expectedAssetRelativePaths(workflowRoot: string, project: string, category: string, name: string): string[] {
   return expectedRelativePaths(resolveProjectAssetLayout(workflowRoot, project), requireCategory(category), normalizeAssetName(name));
+}
+
+export function expectedRelativePathsForLayout(
+  layout: ProjectAssetLayout,
+  category: RmmvAssetCategory,
+  name: string,
+): string[] {
+  return expectedRelativePaths(layout, category, name);
 }
 
 function scanDatabaseReferences(context: ScanContext): void {

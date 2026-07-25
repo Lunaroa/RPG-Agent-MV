@@ -18,6 +18,7 @@ import {
   groupProjectAssetLogicalEntries,
   type ProjectAssetScannedFile,
 } from './project-asset-logical-grouping.ts';
+import { invalidateProjectAssetReferenceGraphCache } from './project-asset-reference-graph-cache-store.ts';
 import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
 
 const BROWSER_CATEGORIES = RMMV_ASSET_CATEGORIES.filter((category) => category.id !== 'plugins');
@@ -40,7 +41,7 @@ interface ListingCacheEntry {
 
 const listingCache = new Map<string, ListingCacheEntry>();
 
-export function invalidateProjectAssetBrowserCache(project?: string): void {
+export function invalidateProjectAssetListingCache(project?: string): void {
   if (!project) {
     listingCache.clear();
     return;
@@ -49,6 +50,11 @@ export function invalidateProjectAssetBrowserCache(project?: string): void {
   for (const key of listingCache.keys()) {
     if (key.startsWith(prefix)) listingCache.delete(key);
   }
+}
+
+export function invalidateProjectAssetBrowserCache(project?: string): void {
+  invalidateProjectAssetReferenceGraphCache(project);
+  invalidateProjectAssetListingCache(project);
 }
 
 export function buildProjectAssetCategoryTree(

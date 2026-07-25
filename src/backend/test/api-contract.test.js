@@ -26,6 +26,7 @@ describe('map IPC bindings', () => {
     registerMapIpcHandlers(ipc, 'C:/workflow', desktop, {
       productLanguage: () => 'en-US',
       withProductLanguage: (_language, fn) => fn(),
+      trashProjectAsset: async () => undefined,
       selectPluginFile: async () => {
         pickerCalls.push(['plugin']);
         return null;

@@ -269,8 +269,10 @@ export async function confirmProjectStagingBeforeClose(workflowRoot: string, win
         expectedOperationIds: operationIds,
         validate: () => desktop.projectManagement.preflightProjectManagedStagingApply(workflowRoot, projectPath),
       });
+      desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(projectPath);
     } else if (result.response === 1) {
       desktop.staging.discardProjectStaging(workflowRoot, projectPath);
+      desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(projectPath);
     }
   } catch (error) {
     const failureKey = result.response === 0 ? 'staging.saveFailed' : 'staging.discardFailed';
@@ -1175,6 +1177,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
       return showProjectCompatibilityWarning(parent, warning, action);
     },
+    trashProjectAsset: (absolutePath: string) => shell.trashItem(absolutePath),
     selectProjectDirectory: async (event: Electron.IpcMainInvokeEvent) => {
       const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
       const result = await dialog.showOpenDialog(parent, {

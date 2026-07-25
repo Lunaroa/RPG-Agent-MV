@@ -627,7 +627,11 @@ async function deleteSelectedEntry() {
   mutationBusy.value = true
   mutationError.value = ''
   try {
-    const safety = await projectAssets.checkDeleteSafety(target, projectStore.currentProject)
+    const safetyResults = await projectAssets.checkDeleteSafety([target], projectStore.currentProject)
+    if (!Array.isArray(safetyResults) || safetyResults.length !== 1) {
+      throw new Error('Delete safety check returned an unexpected result shape.')
+    }
+    const safety = safetyResults[0]!
     if (!safety.ok) {
       mutationError.value = t('projectAssets.mutationBlocked', {
         reasons: safety.blockers.join('\n'),
@@ -643,7 +647,14 @@ async function deleteSelectedEntry() {
     } catch {
       return
     }
-    await projectAssets.remove(target, projectStore.currentProject)
+    const removed = await projectAssets.remove([target], false, projectStore.currentProject)
+    const first = removed.results?.[0]
+    if (first && first.status !== 'deleted') {
+      mutationError.value = first.error || t('projectAssets.mutationBlocked', {
+        reasons: (first.references || []).map((reference) => reference.source).join('\n'),
+      })
+      return
+    }
     selectedEntryId.value = null
     await afterMutation(null)
   } catch (error) {

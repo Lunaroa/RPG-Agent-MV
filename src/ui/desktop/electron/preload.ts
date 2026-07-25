@@ -200,11 +200,11 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('projectAssets:invalidateBrowseCache', project),
     detail: (target: unknown, project?: string) => ipcRenderer.invoke('projectAssets:detail', target, project),
     rename: (target: unknown, nextName: string, project?: string) => ipcRenderer.invoke('projectAssets:rename', target, nextName, project),
-    remove: (target: unknown, project?: string) => ipcRenderer.invoke('projectAssets:remove', target, project),
+    remove: (targets: unknown, force?: boolean, project?: string) => ipcRenderer.invoke('projectAssets:remove', targets, force, project),
     referenceGraph: (project?: string) => ipcRenderer.invoke('projectAssets:referenceGraph', project),
     checkRenameSafety: (target: unknown, nextName: string, project?: string) =>
       ipcRenderer.invoke('projectAssets:checkRenameSafety', target, nextName, project),
-    checkDeleteSafety: (target: unknown, project?: string) => ipcRenderer.invoke('projectAssets:checkDeleteSafety', target, project),
+    checkDeleteSafety: (targets: unknown, project?: string) => ipcRenderer.invoke('projectAssets:checkDeleteSafety', targets, project),
     replaceMissingReference: (request: unknown, project?: string) =>
       ipcRenderer.invoke('projectAssets:replaceMissingReference', request, project),
     importLocalFile: (request: unknown, project?: string) =>

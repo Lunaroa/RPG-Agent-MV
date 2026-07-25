@@ -5,6 +5,9 @@ import type {
   ManagedAssetDetail,
   ManagedAssetRef,
   ManagedAssetScope,
+  ProjectAssetDeleteBatchResult,
+  ProjectAssetDeleteItemResult,
+  ProjectAssetDeleteTargetInput,
   ProjectAssetImportLocalFileInput,
   ProjectAssetMutationSafetyCheck,
   ProjectAssetReference,
@@ -19,10 +22,11 @@ import { readJson } from '../rmmv/json.ts';
 import type { ProjectReadIssue } from '../rmmv/project-scanner.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { projectAssetUrl } from './asset-service.ts';
-import { invalidateProjectAssetBrowserCache } from './project-asset-browser-service.ts';
+import { invalidateProjectAssetBrowserCache, invalidateProjectAssetListingCache } from './project-asset-browser-service.ts';
 import {
   assetManagementAssetMissing,
   assetManagementCategoryMissing,
+  assetManagementDeletePartialFailure,
   assetManagementImportParamsMissing,
   assetManagementInvalidName,
   assetManagementInvalidPath,
@@ -39,13 +43,23 @@ import {
   assetManagementSourceNotFile,
   assetManagementSourceRequired,
   assetManagementTargetNameExists,
+  assetManagementTrashFailed,
+  assetManagementTrashPortMissing,
   unsupportedAssetCategory,
   unsupportedAssetExtension,
 } from './assetManagementLocalization.ts';
 import {
+  applyProjectAssetReferenceGraphDelete,
+  applyProjectAssetReferenceGraphRename,
+} from './project-asset-reference-graph-cache.ts';
+import { invalidateProjectAssetReferenceGraphCache } from './project-asset-reference-graph-cache-store.ts';
+import {
   buildAssetReferenceGraph,
-  checkAssetDeleteSafety,
+  getProjectAssetReferenceGraph,
+  putProjectAssetReferenceGraph,
+  checkAssetDeleteSafetyAgainstGraph,
   checkAssetRenameSafety,
+  findLogicalAssetVariants,
   findReferencesForAsset,
   projectAssetRelativeDirectory,
   requireAssetCategory,
@@ -54,19 +68,36 @@ import {
   type RmmvMissingAssetReference,
   type RmmvProjectAsset,
   type RmmvAssetCategory,
+  type ProjectAssetReferenceGraphBuildDependencies,
 } from './asset-reference-graph-service.ts';
 import {
+  applyProjectFilesAtomically,
+  findProjectStagingPathConflict,
   getProjectFileForRead,
   getProjectStagingStatus,
   isInside,
   stageProjectFilesAtomically,
   type StagedProjectFileMutation,
 } from './staging-service.ts';
+import {
+  stagingChangedDuringAssetDelete,
+  stagingOperationReservationBlocksAssetMutation,
+  stagingUnappliedDraftBlocksAssetMutation,
+} from './stagingServiceLocalization.ts';
 
 interface AssetTarget {
   scope: ManagedAssetScope;
   category: string;
   relativePath: string;
+  name?: string;
+}
+
+export interface ProjectAssetTrashPort {
+  trashItem(absolutePath: string): Promise<void>;
+}
+
+export interface ProjectAssetDeleteDependencies {
+  trashItem: (absolutePath: string) => Promise<void>;
 }
 
 const INVENTORY_AUDIO_CATEGORIES = ['bgm', 'bgs', 'me', 'se'] as const;
@@ -222,7 +253,7 @@ export function buildProjectManagementAssetInventory(
 }
 
 export function buildProjectAssetReferenceGraph(workflowRoot: string, project: string): ProjectAssetReferenceGraph {
-  const graph = buildAssetReferenceGraph(workflowRoot, project);
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
   return {
     generatedAt: graph.generatedAt,
     projectRoot: graph.projectRoot,
@@ -239,7 +270,8 @@ export function buildProjectAssetReferenceGraph(workflowRoot: string, project: s
 }
 
 export function checkProjectAssetDeleteSafety(workflowRoot: string, project: string, target: AssetTarget): ProjectAssetMutationSafetyCheck {
-  const result = checkAssetDeleteSafety(workflowRoot, project, target);
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  const result = checkAssetDeleteSafetyAgainstGraph(graph, target);
   return {
     ok: result.ok,
     action: result.action,
@@ -247,6 +279,25 @@ export function checkProjectAssetDeleteSafety(workflowRoot: string, project: str
     references: result.references.map(mapGraphReference),
     blockers: result.blockers,
   };
+}
+
+export function checkProjectAssetDeleteSafetyBatch(
+  workflowRoot: string,
+  project: string,
+  targets: readonly ProjectAssetDeleteTargetInput[],
+  dependencies: ProjectAssetReferenceGraphBuildDependencies = {},
+): ProjectAssetMutationSafetyCheck[] {
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project, dependencies);
+  return targets.map((target) => {
+    const result = checkAssetDeleteSafetyAgainstGraph(graph, target);
+    return {
+      ok: result.ok,
+      action: result.action,
+      target: result.target,
+      references: result.references.map(mapGraphReference),
+      blockers: result.blockers,
+    };
+  });
 }
 
 export function checkProjectAssetRenameSafety(
@@ -356,45 +407,289 @@ export function renameAsset(
   nextNameValue: string,
 ): ManagedAssetDetail {
   const nextName = normalizeAssetName(nextNameValue);
-  const resolved = resolveAssetPath(workflowRoot, project, target);
-  if (!fs.existsSync(resolved.absolute)) throw new Error(assetManagementAssetMissing());
-  const ext = path.extname(resolved.absolute);
-  const before = assetNameFromRelative(workflowRoot, project, resolved.category, resolved.relativePath);
-  const safety = checkAssetRenameSafety(workflowRoot, project, { category: resolved.category, relativePath: resolved.relativePath, name: before }, nextName);
-  if (!safety.ok) throw new Error(safety.blockers.join('; '));
-  if (!safety.nextRelativePath) throw new Error(assetManagementReplacementUnsupported());
-  const nextRelative = safety.nextRelativePath;
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  const category = requireAssetCategory(target.category);
+  const before = target.name?.trim()
+    ? normalizeAssetName(target.name)
+    : assetNameFromRelative(
+      workflowRoot,
+      project,
+      category,
+      normalizeRelative(target.relativePath || defaultRelative(workflowRoot, project, category)),
+    );
+  const variants = findLogicalAssetVariants(graph, category, before, target.relativePath);
+  if (!variants.length) throw new Error(assetManagementAssetMissing());
 
-  if (getProjectFileForRead(workflowRoot, project, nextRelative)) throw new Error(assetManagementTargetNameExists());
+  const safety = checkAssetRenameSafety(workflowRoot, project, {
+    category,
+    relativePath: variants[0]!.relativePath,
+    name: before,
+  }, nextName);
+  if (!safety.ok) throw new Error(safety.blockers.join('; '));
+
+  const relativeDir = projectAssetRelativeDirectory(workflowRoot, project, category);
+  const renamePairs = variants.map((variant) => {
+    const extension = path.extname(variant.fileName);
+    const nextRelative = `${relativeDir}/${nextName}${extension}`;
+    const sourceAbsolute = path.resolve(project, ...variant.relativePath.split('/'));
+    assertInside(path.resolve(project), sourceAbsolute);
+    if (!fs.existsSync(sourceAbsolute)) throw new Error(assetManagementAssetMissing());
+    return {
+      beforeRelative: variant.relativePath,
+      nextRelative,
+      sourceAbsolute,
+    };
+  });
+  for (const pair of renamePairs) {
+    if (getProjectFileForRead(workflowRoot, project, pair.nextRelative)) {
+      throw new Error(assetManagementTargetNameExists());
+    }
+  }
+
   const update = prepareProjectAssetReferenceMutations(
     workflowRoot,
     project,
-    resolved.category,
+    category,
     before,
     nextName,
     safety.references,
   );
-  if (update.updatedReferences !== safety.references.length) throw new Error(assetManagementReplacementUnsupported());
-  stageProjectFilesAtomically(workflowRoot, project, [
-    { relativePath: nextRelative, content: fs.readFileSync(resolved.absolute) },
-    { relativePath: resolved.relativePath, delete: true },
+  if (update.updatedReferences !== safety.references.length) {
+    throw new Error(assetManagementReplacementUnsupported());
+  }
+
+  const mutations: StagedProjectFileMutation[] = [
+    ...renamePairs.flatMap((pair) => ([
+      { relativePath: pair.nextRelative, content: fs.readFileSync(pair.sourceAbsolute) },
+      { relativePath: pair.beforeRelative, delete: true as const },
+    ])),
     ...update.mutations,
-  ]);
-  invalidateProjectAssetBrowserCache(project);
-  return getAssetDetail(workflowRoot, project, { ...target, relativePath: nextRelative });
+  ];
+  applyProjectFilesAtomically(workflowRoot, project, mutations);
+
+  const nextGraph = applyProjectAssetReferenceGraphRename(
+    graph,
+    category,
+    before,
+    nextName,
+    safety.references,
+  );
+  if (nextGraph) putProjectAssetReferenceGraph(project, nextGraph);
+  else invalidateProjectAssetReferenceGraphCache(project);
+  invalidateProjectAssetListingCache(project);
+
+  return getAssetDetail(workflowRoot, project, {
+    ...target,
+    relativePath: renamePairs[0]!.nextRelative,
+  });
 }
 
-export function deleteAsset(workflowRoot: string, project: string, target: AssetTarget): { deleted: true } {
-  const resolved = resolveAssetPath(workflowRoot, project, target);
-  if (!fs.existsSync(resolved.absolute)) throw new Error(assetManagementAssetMissing());
-  const safety = checkAssetDeleteSafety(workflowRoot, project, {
-    category: resolved.category,
-    relativePath: resolved.relativePath,
-    name: assetNameFromRelative(workflowRoot, project, resolved.category, resolved.relativePath),
-  });
-  if (!safety.ok) throw new Error(safety.blockers.join('; '));
-  stageProjectFilesAtomically(workflowRoot, project, [{ relativePath: resolved.relativePath, delete: true }]);
-  invalidateProjectAssetBrowserCache(project);
+export async function deleteProjectAssets(
+  workflowRoot: string,
+  project: string,
+  targets: readonly ProjectAssetDeleteTargetInput[],
+  options: { force?: boolean } = {},
+  dependencies?: ProjectAssetDeleteDependencies,
+): Promise<ProjectAssetDeleteBatchResult> {
+  if (!Array.isArray(targets) || targets.length === 0) {
+    throw new Error(assetManagementMissingParams());
+  }
+  const trashItem = dependencies?.trashItem;
+  if (!trashItem) throw new Error(assetManagementTrashPortMissing());
+
+  const force = options.force === true;
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  const results: ProjectAssetDeleteItemResult[] = [];
+  const deletedLogical: Array<{ category: RmmvAssetCategory; name: string }> = [];
+  const allDeletedRelativePaths: string[] = [];
+
+  for (const target of targets) {
+    const category = requireAssetCategory(target.category);
+    const earlyRelativePaths = target.relativePath ? [normalizeRelative(target.relativePath)] : [];
+    if (earlyRelativePaths.length) {
+      const earlyConflict = findProjectStagingPathConflict(workflowRoot, project, earlyRelativePaths);
+      if (earlyConflict?.kind === 'draft') {
+        results.push({
+          target: { category, name: String(target.name || ''), relativePath: target.relativePath || null },
+          status: 'failed',
+          references: [],
+          error: stagingUnappliedDraftBlocksAssetMutation(earlyConflict.relativePath),
+        });
+        continue;
+      }
+      if (earlyConflict?.kind === 'operation') {
+        results.push({
+          target: { category, name: String(target.name || ''), relativePath: target.relativePath || null },
+          status: 'failed',
+          references: [],
+          error: stagingOperationReservationBlocksAssetMutation(
+            earlyConflict.relativePath,
+            earlyConflict.operationId,
+          ),
+        });
+        continue;
+      }
+    }
+
+    let name: string;
+    try {
+      name = target.name?.trim()
+        ? normalizeAssetName(target.name)
+        : assetNameFromRelative(
+          workflowRoot,
+          project,
+          category,
+          normalizeRelative(target.relativePath || defaultRelative(workflowRoot, project, category)),
+        );
+    } catch (error) {
+      results.push({
+        target: { category, name: String(target.name || ''), relativePath: target.relativePath || null },
+        status: 'failed',
+        references: [],
+        error: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+
+    const safety = checkAssetDeleteSafetyAgainstGraph(graph, { category, name, relativePath: target.relativePath });
+    const mappedReferences = safety.references.map(mapGraphReference);
+    const variants = findLogicalAssetVariants(graph, category, name, target.relativePath);
+    const candidateRelativePaths = [
+      ...variants.map((variant) => variant.relativePath),
+      ...(target.relativePath ? [normalizeRelative(target.relativePath)] : []),
+    ];
+    const stagedConflict = findProjectStagingPathConflict(workflowRoot, project, candidateRelativePaths);
+    if (stagedConflict?.kind === 'draft') {
+      results.push({
+        target: safety.target,
+        status: 'failed',
+        references: mappedReferences,
+        error: stagingUnappliedDraftBlocksAssetMutation(stagedConflict.relativePath),
+      });
+      continue;
+    }
+    if (stagedConflict?.kind === 'operation') {
+      results.push({
+        target: safety.target,
+        status: 'failed',
+        references: mappedReferences,
+        error: stagingOperationReservationBlocksAssetMutation(
+          stagedConflict.relativePath,
+          stagedConflict.operationId,
+        ),
+      });
+      continue;
+    }
+
+    if (!force && safety.references.length) {
+      results.push({
+        target: safety.target,
+        status: 'blocked',
+        references: mappedReferences,
+        error: safety.blockers.join('; '),
+      });
+      continue;
+    }
+
+    if (!variants.length) {
+      results.push({
+        target: safety.target,
+        status: 'failed',
+        references: mappedReferences,
+        error: assetManagementAssetMissing(),
+      });
+      continue;
+    }
+
+    const deletedRelativePaths: string[] = [];
+    const failedParts: string[] = [];
+    for (const variant of variants) {
+      const absolute = path.resolve(project, ...variant.relativePath.split('/'));
+      assertInside(path.resolve(project), absolute);
+      if (!fs.existsSync(absolute)) {
+        failedParts.push(`${variant.relativePath}: ${assetManagementAssetMissing()}`);
+        continue;
+      }
+      try {
+        await trashItem(absolute);
+        if (fs.existsSync(absolute)) {
+          failedParts.push(assetManagementTrashFailed(
+            variant.relativePath,
+            'trash port returned without removing the source file',
+          ));
+          continue;
+        }
+        deletedRelativePaths.push(variant.relativePath);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        failedParts.push(assetManagementTrashFailed(variant.relativePath, reason));
+      }
+    }
+
+    allDeletedRelativePaths.push(...deletedRelativePaths);
+
+    if (failedParts.length) {
+      results.push({
+        target: safety.target,
+        status: 'failed',
+        references: mappedReferences,
+        deletedRelativePaths,
+        error: deletedRelativePaths.length
+          ? assetManagementDeletePartialFailure(deletedRelativePaths, failedParts)
+          : failedParts.join('; '),
+      });
+      if (deletedRelativePaths.length) deletedLogical.push({ category, name });
+      continue;
+    }
+
+    results.push({
+      target: safety.target,
+      status: 'deleted',
+      references: mappedReferences,
+      deletedRelativePaths,
+    });
+    deletedLogical.push({ category, name });
+  }
+
+  if (allDeletedRelativePaths.length) {
+    const raced = findProjectStagingPathConflict(workflowRoot, project, allDeletedRelativePaths);
+    if (raced) {
+      invalidateProjectAssetReferenceGraphCache(project);
+      invalidateProjectAssetListingCache(project);
+      throw new Error(stagingChangedDuringAssetDelete(allDeletedRelativePaths));
+    }
+  }
+
+  let nextGraph = graph;
+  let cacheValid = true;
+  for (const item of deletedLogical) {
+    const updated = applyProjectAssetReferenceGraphDelete(nextGraph, item.category, item.name);
+    if (!updated) {
+      cacheValid = false;
+      break;
+    }
+    nextGraph = updated;
+  }
+  if (cacheValid && deletedLogical.length) putProjectAssetReferenceGraph(project, nextGraph);
+  else if (deletedLogical.length) invalidateProjectAssetReferenceGraphCache(project);
+  if (deletedLogical.length) invalidateProjectAssetListingCache(project);
+
+  return { results };
+}
+
+/** Single-target throw wrapper; production IPC uses deleteProjectAssets batch results. */
+export async function deleteAsset(
+  workflowRoot: string,
+  project: string,
+  target: AssetTarget,
+  options: { force?: boolean } = {},
+  dependencies?: ProjectAssetDeleteDependencies,
+): Promise<{ deleted: true }> {
+  const batch = await deleteProjectAssets(workflowRoot, project, [target], options, dependencies);
+  const result = batch.results[0];
+  if (!result) throw new Error(assetManagementMissingParams());
+  if (result.status === 'blocked') throw new Error(result.error || 'blocked');
+  if (result.status === 'failed') throw new Error(result.error || assetManagementAssetMissing());
   return { deleted: true };
 }
 
@@ -750,7 +1045,11 @@ function assetNameFromRelative(
 ): string {
   const directory = projectAssetRelativeDirectory(workflowRoot, project, category);
   const normalized = normalizeRelative(relativePath);
-  if (!normalized.startsWith(`${directory}/`)) throw new Error(assetManagementInvalidPath());
+  const directoryPrefix = `${directory}/`;
+  const matchesCaseSensitive = normalized.startsWith(directoryPrefix);
+  const matchesCaseInsensitive = process.platform === 'win32'
+    && normalized.toLowerCase().startsWith(directoryPrefix.toLowerCase());
+  if (!matchesCaseSensitive && !matchesCaseInsensitive) throw new Error(assetManagementInvalidPath());
   const fileName = normalized.slice(directory.length + 1);
   return fileName.slice(0, -path.posix.extname(fileName).length);
 }

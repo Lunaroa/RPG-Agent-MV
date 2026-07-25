@@ -185,10 +185,10 @@ declare global {
         invalidateBrowseCache(project?: string): Promise<unknown>;
         detail(target: unknown, project?: string): Promise<unknown>;
         rename(target: unknown, nextName: string, project?: string): Promise<unknown>;
-        remove(target: unknown, project?: string): Promise<unknown>;
+        remove(targets: unknown, force?: boolean, project?: string): Promise<unknown>;
         referenceGraph(project?: string): Promise<unknown>;
         checkRenameSafety(target: unknown, nextName: string, project?: string): Promise<unknown>;
-        checkDeleteSafety(target: unknown, project?: string): Promise<unknown>;
+        checkDeleteSafety(targets: unknown, project?: string): Promise<unknown>;
         replaceMissingReference(request: unknown, project?: string): Promise<unknown>;
         importLocalFile(request: unknown, project?: string): Promise<unknown>;
         selectImportFile(category: string): Promise<string | null>;
@@ -318,6 +318,7 @@ import type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
+  ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput,
   ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -999,14 +1000,21 @@ export const projectAssets = {
   rename(target: Record<string, unknown>, nextName: string, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.rename(toPlain(target), nextName, project) as Promise<ManagedAssetDetail>;
   },
-  remove(target: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
-    return desktopApi().projectAssets.remove(toPlain(target), project) as Promise<{ deleted: true }>;
+  remove(
+    targets: ProjectAssetDeleteTargetInput[],
+    force: boolean = false,
+    project: string = DEFAULT_PROJECT,
+  ) {
+    return desktopApi().projectAssets.remove(toPlain(targets), force, project) as Promise<ProjectAssetDeleteBatchResult>;
   },
   checkRenameSafety(target: Record<string, unknown>, nextName: string, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.checkRenameSafety(toPlain(target), nextName, project) as Promise<ProjectAssetMutationSafetyCheck>;
   },
-  checkDeleteSafety(target: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
-    return desktopApi().projectAssets.checkDeleteSafety(toPlain(target), project) as Promise<ProjectAssetMutationSafetyCheck>;
+  checkDeleteSafety(
+    targets: ProjectAssetDeleteTargetInput[],
+    project: string = DEFAULT_PROJECT,
+  ) {
+    return desktopApi().projectAssets.checkDeleteSafety(toPlain(targets), project) as Promise<ProjectAssetMutationSafetyCheck[]>;
   },
   replaceMissingReference(request: ProjectAssetReplaceMissingReferenceInput, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.replaceMissingReference(

@@ -8,7 +8,7 @@ import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { createDefaultRmmvDatabaseEntry } from '../rmmv/database-schema.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
-import { deleteAsset, getAssetDetail, renameAsset } from './asset-management-service.ts';
+import { deleteProjectAssets, getAssetDetail, renameAsset } from './asset-management-service.ts';
 import {
   buildProjectManagementScan,
   createProjectManagedEntry,
@@ -22,7 +22,6 @@ import {
 import { withTestLanguage } from '../i18n/with-test-language.ts';
 import {
   applyProjectStaging,
-  discardProjectStaging,
   getProjectFileForRead,
   getProjectStagingStatus,
 } from './staging-service.ts';
@@ -58,21 +57,29 @@ describe('console management services', { concurrency: false }, () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('renames a project asset, updates references, and supports discard', () => {
+  test('renames a project asset, updates references on disk, and blocks referenced deletes', async () => {
     const target = { scope: 'project' as const, category: 'characters', relativePath: 'www/img/characters/Hero.png' };
     assert.equal(getAssetDetail(root, project, target).references.length, 1);
     const renamed = renameAsset(root, project, target, 'Lead');
     assert.equal(renamed.fileName, 'Lead.png');
-    assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'characters', 'Lead.png')), false);
-    const stagedActors = getProjectFileForRead(root, project, 'www/data/Actors.json');
-    assert.ok(stagedActors);
-    assert.equal((readJson(stagedActors) as any[])[1].characterName, 'Lead');
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].characterName, 'Hero');
-    assert.equal(getProjectStagingStatus(root, project).staged, true);
-    assert.throws(() => withTestLanguage(() => deleteAsset(root, project, { ...target, relativePath: 'www/img/characters/Lead.png' })), /引用/);
-    discardProjectStaging(root, project);
-    assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'characters', 'Hero.png')), true);
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].characterName, 'Hero');
+    assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'characters', 'Lead.png')), true);
+    assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'characters', 'Hero.png')), false);
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].characterName, 'Lead');
+    assert.equal(getProjectStagingStatus(root, project).staged, false);
+    await assert.rejects(() => withTestLanguage(() => deleteProjectAssets(root, project, [{
+      ...target,
+      relativePath: 'www/img/characters/Lead.png',
+    }], {}, {
+      trashItem: async (absolutePath) => {
+        fs.unlinkSync(absolutePath);
+      },
+    }).then((batch) => {
+      const result = batch.results[0];
+      if (result?.status === 'blocked' || result?.status === 'failed') {
+        throw new Error(result.error || 'blocked');
+      }
+      return batch;
+    })), /引用/);
   });
 
   test('reads and updates structured project entries through staging', () => {

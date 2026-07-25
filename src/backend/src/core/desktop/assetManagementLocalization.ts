@@ -144,3 +144,37 @@ export function unsupportedAssetExtension(category: string, extension: string, l
     'en-US': `Asset category ${category} does not support ${extLabel} files`,
   });
 }
+
+export function assetManagementTrashPortMissing(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '未注入系统回收站端口，无法删除工程素材',
+    'en-US': 'System trash port is not injected; cannot delete project assets',
+  });
+}
+
+export function assetManagementTrashFailed(
+  relativePath: string,
+  reason: string,
+  language?: ProductLanguage | null,
+): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `无法将 ${relativePath} 移入系统回收站：${reason}`,
+    'en-US': `Could not move ${relativePath} to the system trash: ${reason}`,
+  });
+}
+
+export function assetManagementDeletePartialFailure(
+  deleted: readonly string[],
+  failed: readonly string[],
+  language?: ProductLanguage | null,
+): string {
+  const deletedLabel = deleted.length ? deleted.join(', ') : pickByLocale(resolveLanguage(language), {
+    'zh-CN': '无',
+    'en-US': 'none',
+  });
+  const failedLabel = failed.join('; ');
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': `素材删除部分失败。已进入回收站：${deletedLabel}。未删除：${failedLabel}`,
+    'en-US': `Asset delete partially failed. Moved to trash: ${deletedLabel}. Not deleted: ${failedLabel}`,
+  });
+}

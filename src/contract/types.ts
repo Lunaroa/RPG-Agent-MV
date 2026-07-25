@@ -635,6 +635,31 @@ export interface ProjectAssetMutationSafetyCheck {
   blockers: string[];
 }
 
+export interface ProjectAssetDeleteTargetInput {
+  scope?: ManagedAssetScope;
+  category: string;
+  relativePath?: string;
+  name?: string;
+}
+
+export type ProjectAssetDeleteItemStatus = 'deleted' | 'blocked' | 'failed';
+
+export interface ProjectAssetDeleteItemResult {
+  target: {
+    category: string;
+    name: string;
+    relativePath: string | null;
+  };
+  status: ProjectAssetDeleteItemStatus;
+  references: ProjectAssetReference[];
+  deletedRelativePaths?: string[];
+  error?: string;
+}
+
+export interface ProjectAssetDeleteBatchResult {
+  results: ProjectAssetDeleteItemResult[];
+}
+
 export interface ProjectAssetReplaceMissingReferenceInput {
   category: string;
   missingName: string;

@@ -26,7 +26,8 @@ import {
   type StagingOperation,
   type StagingOwnershipContext,
 } from './staging-ownership.ts';
-import { stagingSharedFilesRequireProjectAction } from './stagingServiceLocalization.ts';
+import { stagingSharedFilesRequireProjectAction, stagingUnappliedDraftBlocksAssetMutation, stagingOperationReservationBlocksAssetMutation } from './stagingServiceLocalization.ts';
+import { invalidateProjectAssetReferenceGraphCache } from './project-asset-reference-graph-cache-store.ts';
 
 export { STAGING_ERROR_CODES, StagingError, type StagingErrorCode } from './staging-errors.ts';
 export type {
@@ -170,6 +171,7 @@ export function ensureStagedMap(
     ensureDraftProjectDataFiles(context, manifest);
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return { project: context.draftRoot, sourceProject: context.project, mapFile: draftFilePath(context, relative), staging: getStagingStatus(workflowRoot, project, mapId) };
   });
 }
@@ -194,6 +196,7 @@ export function markStagedMapUpdated(
     delete entry.delete;
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return getStagingStatus(workflowRoot, project, mapId);
   });
 }
@@ -230,6 +233,7 @@ export function withStagedMapMutation<T>(
     delete entry.delete;
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return {
       project: staged.project,
       sourceProject: staged.sourceProject,
@@ -276,6 +280,7 @@ export function ensureStagedProjectFile(
     assertStagingWriteOwnership(manifest, relative, ownership, relativePathIdentity);
     const entry = ensureDraft(context, manifest, relative);
     writeManifest(context, manifest);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     const draftFile = draftFilePath(context, relative);
     return {
       project: context.project,
@@ -316,6 +321,7 @@ export function writeStagedProjectJson(
         updateManifest: () => commitManifest(context, nextManifest),
       });
       cleanupStagingFilesystem(context);
+      invalidateProjectAssetReferenceGraphCache(context.project);
       return { relativePath: relative, sourceFile, draftFile, entry: null, restored: true };
     }
     const entry = ensureDraft(context, manifest, relative);
@@ -325,6 +331,7 @@ export function writeStagedProjectJson(
     delete entry.delete;
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return { relativePath: relative, sourceFile, draftFile, entry, restored: false };
   });
 }
@@ -352,6 +359,7 @@ export function writeStagedProjectBuffer(
     delete entry.delete;
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return { relativePath: relative, sourceFile, draftFile, entry };
   });
 }
@@ -376,6 +384,7 @@ export function deleteStagedProjectFile(
     entry.updatedAt = new Date().toISOString();
     updateMapEntry(context, manifest, relative, entry);
     writeManifest(context, manifest);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return { relativePath: relative, deleted: true, entry };
   });
 }
@@ -437,6 +446,7 @@ export function stageProjectFilesAtomically(
         updateMapEntry(context, manifest, mutation.relativePath, entry);
       }
       writeManifest(context, manifest);
+      invalidateProjectAssetReferenceGraphCache(context.project);
     } catch (error) {
       for (const [draftFile, snapshot] of snapshots) {
         if (snapshot === null) {
@@ -446,6 +456,108 @@ export function stageProjectFilesAtomically(
         }
         fs.mkdirSync(path.dirname(draftFile), { recursive: true });
         fs.writeFileSync(draftFile, snapshot);
+      }
+      throw error;
+    }
+
+    return {
+      files: resolved.map((mutation) => mutation.relativePath),
+      staging: getProjectStagingStatus(workflowRoot, project),
+    };
+  });
+}
+
+/**
+ * Write the given file mutations to the source project immediately via the
+ * staging transaction primitive, without leaving drafts behind and without
+ * applying unrelated staged files.
+ *
+ * Fail-fast if any target path already has an unapplied staging draft or is
+ * reserved by a database staging operation.
+ */
+export function applyProjectFilesAtomically(
+  workflowRoot: string,
+  project: string,
+  mutations: readonly StagedProjectFileMutation[],
+  dependencies: StagedProjectBatchDependencies = {},
+) {
+  if (!Array.isArray(mutations) || mutations.length === 0) {
+    throw new Error('Atomic project apply requires at least one file mutation.');
+  }
+  const normalized = mutations.map((mutation) => {
+    const relativePath = normalizeRelativePath(mutation.relativePath);
+    if (mutation.delete === true) return { relativePath, delete: true } as const;
+    if (!Buffer.isBuffer(mutation.content)) {
+      throw new Error(`Atomic project apply content must be a Buffer: ${relativePath}`);
+    }
+    return { relativePath, content: mutation.content, delete: false } as const;
+  });
+  if (new Set(normalized.map((mutation) => relativePathIdentity(mutation.relativePath))).size !== normalized.length) {
+    throw new Error('Atomic project apply contains duplicate file paths.');
+  }
+
+  const context = buildContext(workflowRoot, project);
+  return withStagingMutationLock(context, () => {
+    const baselineManifest = readManifest(context);
+    const workingManifest = cloneManifest(baselineManifest);
+    const resolved = normalized.map((mutation) => ({
+      ...mutation,
+      relativePath: resolveManifestRelativePath(workingManifest, mutation.relativePath),
+    }));
+
+    for (const mutation of resolved) {
+      const conflict = findManifestPathConflict(baselineManifest, mutation.relativePath);
+      if (conflict?.kind === 'draft') {
+        throw new Error(stagingUnappliedDraftBlocksAssetMutation(conflict.relativePath));
+      }
+      if (conflict?.kind === 'operation') {
+        throw new Error(stagingOperationReservationBlocksAssetMutation(
+          conflict.relativePath,
+          conflict.operationId,
+        ));
+      }
+    }
+
+    const createdDraftFiles: string[] = [];
+    try {
+      for (const [index, mutation] of resolved.entries()) {
+        dependencies.beforeMutation?.({ ...mutation, index } as StagedProjectFileMutation & { index: number });
+        const entry = ensureDraft(context, workingManifest, mutation.relativePath);
+        const draftFile = draftFilePath(context, mutation.relativePath);
+        createdDraftFiles.push(draftFile);
+        if (mutation.delete) {
+          if (fs.existsSync(draftFile)) fs.unlinkSync(draftFile);
+          entry.delete = true;
+          entry.draftHash = null;
+        } else {
+          fs.mkdirSync(path.dirname(draftFile), { recursive: true });
+          fs.writeFileSync(draftFile, mutation.content);
+          delete entry.delete;
+          entry.draftHash = fileHash(draftFile);
+        }
+        entry.updatedAt = new Date().toISOString();
+        updateMapEntry(context, workingManifest, mutation.relativePath, entry);
+      }
+
+      const appliedRelativePaths = resolved.map((mutation) => mutation.relativePath);
+      const nextManifest = cloneManifest(workingManifest);
+      removeManifestFileMetadata(nextManifest, appliedRelativePaths);
+      commitStagingTransaction({
+        entries: buildTransactionEntries(context, workingManifest, appliedRelativePaths),
+        transactionRoot: transactionRoot(context),
+        updateManifest: () => {
+          if (Object.keys(nextManifest.files).length === 0 && Object.keys(nextManifest.operations).length === 0) {
+            StagingManifestDao.deleteByProject(context.projectHash);
+            return;
+          }
+          writeManifest(context, nextManifest);
+        },
+      });
+      cleanupStagingFilesystem(context);
+    } catch (error) {
+      for (const draftFile of createdDraftFiles) {
+        if (fs.existsSync(draftFile)) fs.unlinkSync(draftFile);
+        removeEmptyParents(path.dirname(draftFile), context.draftRoot);
       }
       throw error;
     }
@@ -549,6 +661,7 @@ export function registerDatabaseStagingOperation(
       }
       manifest.operations[operationId] = operation;
       writeManifest(context, manifest);
+      invalidateProjectAssetReferenceGraphCache(context.project);
       return cloneStagingOperation(operation);
     } catch (error) {
       for (const [draftFile, snapshot] of draftSnapshots) {
@@ -702,6 +815,7 @@ export function stageDatabaseStagingOperationDrafts(
       }
       manifest.operations[operationId] = operation;
       writeManifest(context, manifest);
+      invalidateProjectAssetReferenceGraphCache(context.project);
       return cloneStagingOperation(operation);
     } catch (error) {
       for (const [draftFile, snapshot] of draftSnapshots) {
@@ -843,6 +957,7 @@ export function applyStagedOperation(
       updateManifest: () => commitManifest(context, nextManifest),
     });
     cleanupStagingFilesystem(context);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return {
       applied: true,
       files,
@@ -873,6 +988,7 @@ export function discardStagedOperation(
       updateManifest: () => commitManifest(context, nextManifest),
     });
     cleanupStagingFilesystem(context);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return {
       discarded: true,
       files,
@@ -905,6 +1021,7 @@ export function applyStagedMap(
       updateManifest: () => commitManifest(context, nextManifest),
     });
     cleanupStagingFilesystem(context);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return {
       applied: true,
       mapId,
@@ -936,6 +1053,7 @@ export function discardStagedMap(
       updateManifest: () => commitManifest(context, nextManifest),
     });
     cleanupStagingFilesystem(context);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return {
       discarded: true,
       mapId,
@@ -969,6 +1087,7 @@ export function applyProjectStaging(
       updateManifest: () => deleteManifest(context),
     });
     cleanupStagingFilesystem(context);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return { applied: true, files, operations, staging: getProjectStagingStatus(workflowRoot, project) };
   });
 }
@@ -1013,6 +1132,7 @@ export function discardProjectStaging(
       updateManifest: () => deleteManifest(context),
     });
     cleanupStagingFilesystem(context);
+    invalidateProjectAssetReferenceGraphCache(context.project);
     return { discarded: true, files, operations, staging: getProjectStagingStatus(workflowRoot, project) };
   });
 }
@@ -1579,6 +1699,47 @@ function normalizeRelativePath(value: string): string {
     throw new StagingError(STAGING_ERROR_CODES.unsafePath, `Unsafe staging path: ${value}`);
   }
   return relative;
+}
+
+export function projectRelativePathIdentity(relativePath: string): string {
+  return relativePathIdentity(relativePath);
+}
+
+export function findProjectStagingPathConflict(
+  workflowRoot: string,
+  project: string,
+  relativePaths: readonly string[],
+): { kind: 'draft'; relativePath: string } | { kind: 'operation'; relativePath: string; operationId: string } | null {
+  const context = buildContext(workflowRoot, project);
+  const manifest = readManifest(context);
+  for (const relativePath of relativePaths) {
+    const conflict = findManifestPathConflict(manifest, relativePath);
+    if (conflict) return conflict;
+  }
+  return null;
+}
+
+function findManifestPathConflict(
+  manifest: Manifest,
+  relativePath: string,
+): { kind: 'draft'; relativePath: string } | { kind: 'operation'; relativePath: string; operationId: string } | null {
+  const identity = relativePathIdentity(relativePath);
+  const draftRelative = Object.keys(manifest.files).find((relative) => relativePathIdentity(relative) === identity);
+  if (draftRelative) {
+    const entry = manifest.files[draftRelative];
+    if (entry?.operationId) {
+      return { kind: 'operation', relativePath: draftRelative, operationId: entry.operationId };
+    }
+    return { kind: 'draft', relativePath: draftRelative };
+  }
+  const owner = Object.values(manifest.operations).find((operation) => (
+    operation.files.some((candidate) => relativePathIdentity(candidate) === identity)
+  ));
+  if (owner) {
+    const reserved = owner.files.find((candidate) => relativePathIdentity(candidate) === identity) || relativePath;
+    return { kind: 'operation', relativePath: reserved, operationId: owner.operationId };
+  }
+  return null;
 }
 
 function relativePathIdentity(relativePath: string): string {

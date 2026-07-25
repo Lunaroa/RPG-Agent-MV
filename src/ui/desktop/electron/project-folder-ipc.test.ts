@@ -16,6 +16,7 @@ test('opens only the project path resolved by the registered project service', a
     },
   }, {
     withProductLanguage: (_language, callback) => callback(),
+    trashProjectAsset: async () => undefined,
     openProjectDirectory: async (projectPath) => { opened.push(projectPath); },
   });
 

@@ -9,7 +9,7 @@ import { closeDatabase } from '../db/pool.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
 import {
   buildStagedAwareAssetInventory,
-  deleteAsset,
+  deleteProjectAssets,
   getAssetDetail,
   importLocalAssetFile,
   renameAsset,
@@ -109,7 +109,7 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.ok(renameHero.references.some((reference) => reference.file === 'www/data/Actors.json'));
   }));
 
-  test('feeds asset-management detail and delete guard from the graph', () => {
+  test('feeds asset-management detail and delete guard from the graph', async () => {
     const detail = getAssetDetail(root, project, {
       scope: 'project',
       category: 'characters',
@@ -118,30 +118,44 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.ok(detail.references.some((reference) => reference.file === 'www/data/Actors.json'));
     assert.ok(detail.references.some((reference) => reference.file === 'www/data/Map001.json'));
 
-    assert.throws(() => withTestLanguage(() => deleteAsset(root, project, {
+    await assert.rejects(() => withTestLanguage(() => deleteProjectAssets(root, project, [{
       scope: 'project',
       category: 'characters',
       relativePath: 'www/img/characters/Hero.png',
+    }], {}, {
+      trashItem: async (absolutePath) => {
+        fs.unlinkSync(absolutePath);
+      },
+    }).then((batch) => {
+      const result = batch.results[0];
+      if (result?.status === 'blocked' || result?.status === 'failed') {
+        throw new Error(result.error || 'blocked');
+      }
+      return batch;
     })), /引用/);
   });
 
-  test('deleteAsset stages safe unused asset deletion without touching source file', () => {
+  test('deleteAsset moves unused asset to trash port and removes source file', async () => {
     const sourcePath = path.join(project, 'www', 'img', 'pictures', 'Unused.png');
     assert.equal(fs.existsSync(sourcePath), true);
+    const trashed: string[] = [];
 
-    const result = deleteAsset(root, project, {
+    const batch = await deleteProjectAssets(root, project, [{
       scope: 'project',
       category: 'pictures',
       relativePath: 'www/img/pictures/Unused.png',
+    }], {}, {
+      trashItem: async (absolutePath) => {
+        trashed.push(absolutePath);
+        fs.unlinkSync(absolutePath);
+      },
     });
 
-    assert.deepEqual(result, { deleted: true });
-    assert.equal(fs.existsSync(sourcePath), true);
+    assert.equal(batch.results[0]?.status, 'deleted');
+    assert.deepEqual(trashed, [sourcePath]);
+    assert.equal(fs.existsSync(sourcePath), false);
     const status = getProjectStagingStatus(root, project);
-    const stagedEntry = status.files.find((entry) => entry.relativePath === 'www/img/pictures/Unused.png');
-    assert.ok(stagedEntry);
-    assert.equal(stagedEntry.delete, true);
-    assert.equal(stagedEntry.dirty, true);
+    assert.equal(status.files.some((entry) => entry.relativePath === 'www/img/pictures/Unused.png'), false);
   });
 
   test('importLocalAssetFile copies a local file into the category directory through staging', () => {
@@ -309,9 +323,9 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.ok(beforeSource.includes('MissingPlugin'));
   });
 
-  test('renames references inside plugin parameters before staging the asset move', () => {
+  test('renames references inside plugin parameters and writes the asset move to disk', () => {
     const sourcePluginConfig = path.join(project, 'www', 'js', 'plugins.js');
-    const sourceConfigBefore = fs.readFileSync(sourcePluginConfig, 'utf8');
+    const sourcePicture = path.join(project, 'www', 'img', 'pictures', 'Portrait.png');
 
     const result = renameAsset(root, project, {
       scope: 'project',
@@ -321,19 +335,18 @@ describe('asset reference graph service', { concurrency: false }, () => {
 
     assert.equal(result.name, 'PortraitAlt');
     assert.equal(result.references.length, 2);
-    const stagedPluginConfig = fs.readFileSync(getProjectFileForRead(root, project, 'www/js/plugins.js')!, 'utf8');
-    assert.match(stagedPluginConfig, /img\/pictures\/PortraitAlt/);
-    assert.doesNotMatch(stagedPluginConfig, /img\/pictures\/Portrait"/);
+    assert.match(fs.readFileSync(sourcePluginConfig, 'utf8'), /img\/pictures\/PortraitAlt/);
+    assert.doesNotMatch(fs.readFileSync(sourcePluginConfig, 'utf8'), /img\/pictures\/Portrait"/);
     assert.match(
-      JSON.stringify(readJson(getProjectFileForRead(root, project, 'www/data/Map001.json')!)),
+      JSON.stringify(readJson(path.join(project, 'www', 'data', 'Map001.json'))),
       /PortraitAlt/,
     );
-    assert.equal(fs.readFileSync(sourcePluginConfig, 'utf8'), sourceConfigBefore);
-    assert.equal(getProjectFileForRead(root, project, 'www/img/pictures/Portrait.png'), null);
-    assert.ok(getProjectFileForRead(root, project, 'www/img/pictures/PortraitAlt.png'));
+    assert.equal(fs.existsSync(sourcePicture), false);
+    assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'pictures', 'PortraitAlt.png')), true);
+    assert.equal(getProjectStagingStatus(root, project).staged, false);
   });
 
-  test('builds project asset lists from the effective staged add, rename, and delete state', () => {
+  test('builds project asset lists from the effective staged add plus immediate rename and delete', async () => {
     const localFile = path.join(root, 'desktop-local-assets', 'NewPicture.png');
     fs.mkdirSync(path.dirname(localFile), { recursive: true });
     fs.writeFileSync(localFile, 'new picture');
@@ -343,10 +356,14 @@ describe('asset reference graph service', { concurrency: false }, () => {
       category: 'pictures',
       relativePath: 'www/img/pictures/Unused.png',
     }, 'RenamedUnused');
-    deleteAsset(root, project, {
+    await deleteProjectAssets(root, project, [{
       scope: 'project',
       category: 'pictures',
       relativePath: 'www/img/pictures/RenamedUnused.png',
+    }], {}, {
+      trashItem: async (absolutePath) => {
+        fs.unlinkSync(absolutePath);
+      },
     });
 
     const inventory = buildStagedAwareAssetInventory(root, project);

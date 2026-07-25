@@ -38,6 +38,7 @@ export interface ProjectIpcOptions {
     },
     action: 'import' | 'write',
   ) => Promise<{ confirmed: boolean; suppressFutureWarnings: boolean }>;
+  trashProjectAsset: (absolutePath: string) => Promise<void>;
 }
 
 export const MAP_IPC_CHANNELS = [
@@ -415,14 +416,24 @@ export function registerMapIpcHandlers(
     desktop.assetManagement.getAssetDetail(workflowRoot, project(value), target));
   handle('projectAssets:rename', (_event, target: Record<string, unknown>, nextName: string, value?: string) =>
     desktop.assetManagement.renameAsset(workflowRoot, project(value), target, nextName));
-  handle('projectAssets:remove', (_event, target: Record<string, unknown>, value?: string) =>
-    desktop.assetManagement.deleteAsset(workflowRoot, project(value), target));
+  handle('projectAssets:remove', (
+    _event,
+    targets: Array<Record<string, unknown>>,
+    force?: boolean,
+    value?: string,
+  ) => desktop.assetManagement.deleteProjectAssets(
+    workflowRoot,
+    project(value),
+    targets,
+    { force: force === true },
+    { trashItem: options.trashProjectAsset },
+  ));
   handle('projectAssets:referenceGraph', (_event, value?: string) =>
     desktop.assetManagement.buildProjectAssetReferenceGraph(workflowRoot, project(value)));
   handle('projectAssets:checkRenameSafety', (_event, target: Record<string, unknown>, nextName: string, value?: string) =>
     desktop.assetManagement.checkProjectAssetRenameSafety(workflowRoot, project(value), target, nextName));
-  handle('projectAssets:checkDeleteSafety', (_event, target: Record<string, unknown>, value?: string) =>
-    desktop.assetManagement.checkProjectAssetDeleteSafety(workflowRoot, project(value), target));
+  handle('projectAssets:checkDeleteSafety', (_event, targets: Array<Record<string, unknown>>, value?: string) =>
+    desktop.assetManagement.checkProjectAssetDeleteSafetyBatch(workflowRoot, project(value), targets));
   handle('projectAssets:replaceMissingReference', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.replaceMissingAssetReference(workflowRoot, project(value), request));
   handle('projectAssets:importLocalFile', (_event, request: Record<string, unknown>, value?: string) =>
@@ -522,19 +533,33 @@ export function registerMapIpcHandlers(
   handle('staging:applyProject', async (event, value?: string, expectedOperationIds?: string[]) => {
     const resolved = project(value);
     if (!await confirmProjectCompatibility(event, resolved, 'write')) return { canceled: true };
-    return desktop.staging.applyProjectStaging(workflowRoot, resolved, {
+    const result = desktop.staging.applyProjectStaging(workflowRoot, resolved, {
       expectedOperationIds: expectedOperationIds || [],
       validate: () => desktop.projectManagement.preflightProjectManagedStagingApply(workflowRoot, resolved),
     });
+    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
+    return result;
   });
-  handle('staging:discardProject', (_event, value?: string) => desktop.staging.discardProjectStaging(workflowRoot, project(value)));
+  handle('staging:discardProject', (_event, value?: string) => {
+    const resolved = project(value);
+    const result = desktop.staging.discardProjectStaging(workflowRoot, resolved);
+    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
+    return result;
+  });
   handle('staging:mapStatus', (_event, mapId: number, value?: string) => desktop.staging.getStagingStatus(workflowRoot, project(value), mapId));
   handle('staging:applyMap', async (event, mapId: number, value?: string) => {
     const resolved = project(value);
     if (!await confirmProjectCompatibility(event, resolved, 'write')) return { canceled: true };
-    return desktop.staging.applyStagedMap(workflowRoot, resolved, mapId);
+    const result = desktop.staging.applyStagedMap(workflowRoot, resolved, mapId);
+    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
+    return result;
   });
-  handle('staging:discardMap', (_event, mapId: number, value?: string) => desktop.staging.discardStagedMap(workflowRoot, project(value), mapId));
+  handle('staging:discardMap', (_event, mapId: number, value?: string) => {
+    const resolved = project(value);
+    const result = desktop.staging.discardStagedMap(workflowRoot, resolved, mapId);
+    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
+    return result;
+  });
 
   handle('placementQueue:get', (_event, value?: string) =>
     desktop.placementQueue.getPlacementQueueSession(workflowRoot, project(value)));

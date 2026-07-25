@@ -11,7 +11,6 @@ import { RPG_MAKER_MZ_ENGINE_FILES } from "../rmmv/rpg-maker-engine.ts";
 import { buildStagedAwareAssetInventory, renameAsset } from "./asset-management-service.ts";
 import { buildAssetReferenceGraph } from "./asset-reference-graph-service.ts";
 import { readPluginConfiguration, updatePluginParameters, validatePluginConfiguration } from "./plugin-management-service.ts";
-import { getProjectFileForRead } from "./staging-service.ts";
 
 describe("MZ nested assets and plugin declarations", { concurrency: false }, () => {
   let root: string;
@@ -66,18 +65,14 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
       relativePath: "effects/battle/Spark.efkefc",
     }, "battle/SparkRenamed");
     assert.equal(renamed.name, "battle/SparkRenamed");
-    assert.equal(fs.existsSync(path.join(project, "effects", "battle", "Spark.efkefc")), true);
-    assert.equal(getProjectFileForRead(root, project, "effects/battle/Spark.efkefc"), null);
-    assert.ok(getProjectFileForRead(root, project, "effects/battle/SparkRenamed.efkefc"));
+    assert.equal(fs.existsSync(path.join(project, "effects", "battle", "Spark.efkefc")), false);
+    assert.equal(fs.existsSync(path.join(project, "effects", "battle", "SparkRenamed.efkefc")), true);
 
-    const stagedAnimationsFile = getProjectFileForRead(root, project, "data/Animations.json");
-    const stagedAnimations = readJson(stagedAnimationsFile!) as Array<{ effectName?: string } | null>;
-    assert.equal(stagedAnimations[1]?.effectName, "battle/SparkRenamed");
-    const stagedPlugin = readPluginConfiguration(root, project).plugins.find((entry) => entry.name === "tools/SamplePlugin");
-    assert.equal(stagedPlugin?.parameters.effect, "effects/battle/SparkRenamed.efkefc");
     const sourceAnimations = readJson(path.join(project, "data", "Animations.json")) as Array<{ effectName?: string } | null>;
-    assert.equal(sourceAnimations[1]?.effectName, "battle/Spark");
-    assert.match(fs.readFileSync(path.join(project, "js", "plugins.js"), "utf8"), /effects\/battle\/Spark\.efkefc/);
+    assert.equal(sourceAnimations[1]?.effectName, "battle/SparkRenamed");
+    const sourcePlugin = readPluginConfiguration(root, project).plugins.find((entry) => entry.name === "tools/SamplePlugin");
+    assert.equal(sourcePlugin?.parameters.effect, "effects/battle/SparkRenamed.efkefc");
+    assert.match(fs.readFileSync(path.join(project, "js", "plugins.js"), "utf8"), /effects\/battle\/SparkRenamed\.efkefc/);
 
     const renamedPicture = renameAsset(root, project, {
       scope: "project",
@@ -85,14 +80,9 @@ describe("MZ nested assets and plugin declarations", { concurrency: false }, () 
       relativePath: "img/pictures/ui/Portrait.png",
     }, "ui/PortraitRenamed");
     assert.equal(renamedPicture.name, "ui/PortraitRenamed");
-    const stagedPluginSource = getProjectFileForRead(root, project, "js/plugins/tools/SamplePlugin.js");
-    assert.match(fs.readFileSync(stagedPluginSource!, "utf8"), /ui\/PortraitRenamed/);
-    assert.match(fs.readFileSync(path.join(project, "js", "plugins", "tools", "SamplePlugin.js"), "utf8"), /ui\/Portrait/);
-    const stagedItemsFile = getProjectFileForRead(root, project, "data/Items.json");
-    const stagedItems = readJson(stagedItemsFile!) as Array<{ note?: string } | null>;
-    assert.equal(stagedItems[1]?.note, "<SampleImage:ui/PortraitRenamed>");
+    assert.match(fs.readFileSync(path.join(project, "js", "plugins", "tools", "SamplePlugin.js"), "utf8"), /ui\/PortraitRenamed/);
     const sourceItems = readJson(path.join(project, "data", "Items.json")) as Array<{ note?: string } | null>;
-    assert.equal(sourceItems[1]?.note, "<SampleImage:ui/Portrait>");
+    assert.equal(sourceItems[1]?.note, "<SampleImage:ui/PortraitRenamed>");
   });
 
   test("summarizes missing MZ particle effects separately from compatibility sheets", () => {

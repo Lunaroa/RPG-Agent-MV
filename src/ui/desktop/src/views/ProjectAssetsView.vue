@@ -54,6 +54,7 @@ import {
   projectAssetMediaKind,
 } from '../utils/projectAssetLocalization'
 import { computeProjectAssetGridWindow } from '../utils/projectAssetGridWindow'
+import { planProjectAssetDeleteConfirmation } from '../utils/projectAssetDeleteFlow'
 import {
   sortProjectAssetEntries,
   type ProjectAssetSortDir,
@@ -1238,19 +1239,18 @@ function assertDeleteResultsShape(
   }
 }
 
-function formatDeleteConfirmMessage(
-  entries: ProjectAssetBrowseEntry[],
-  safetyResults: ProjectAssetMutationSafetyCheck[],
-): string {
-  const count = entries.length
-  const referenced = safetyResults.filter((item) => item.references.length > 0).length
-  if (count === 1 && referenced === 0) {
-    return t('projectAssets.deleteConfirm', { name: entries[0]!.name })
+function deleteConfirmationCopy() {
+  return {
+    confirmSingle: (name: string) => t('projectAssets.deleteConfirm', { name }),
+    confirmBatchMany: (count: number, referenced: number) =>
+      t('projectAssets.deleteConfirmBatchMany', { count, referenced }),
+    forceIntro: (references: string) =>
+      t('projectAssets.deleteForceConfirm', { references }),
+    forceReferenceItem: (name: string, sources: string) =>
+      t('projectAssets.deleteForceReferenceItem', { name, sources }),
+    forceOverflow: (count: number) => t('projectAssets.deleteForceOverflow', { count }),
+    forceButton: t('projectAssets.deleteForceButton'),
   }
-  if (count === 1) {
-    return t('projectAssets.deleteConfirmBatchOne', { referenced })
-  }
-  return t('projectAssets.deleteConfirmBatchMany', { count, referenced })
 }
 
 function formatDeleteResultMessage(results: ProjectAssetDeleteItemResult[]): string {
@@ -1308,11 +1308,16 @@ async function deleteSelectedEntries() {
     )
     assertSafetyResultsShape(safetyResults, resolvedTargets.length)
 
+    const plan = planProjectAssetDeleteConfirmation(entries, safetyResults, deleteConfirmationCopy())
     try {
       await ElMessageBox.confirm(
-        formatDeleteConfirmMessage(entries, safetyResults),
+        plan.message,
         t('projectAssets.deleteTitle'),
-        { type: 'warning' },
+        {
+          type: 'warning',
+          confirmButtonText: plan.confirmButtonText,
+          confirmButtonClass: plan.force ? 'el-button--danger' : '',
+        },
       )
     } catch {
       return
@@ -1320,7 +1325,7 @@ async function deleteSelectedEntries() {
 
     const removed = await projectAssets.remove(
       resolvedTargets,
-      false,
+      plan.force,
       projectStore.currentProject,
     )
     assertDeleteResultsShape(removed, resolvedTargets.length)

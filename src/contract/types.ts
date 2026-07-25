@@ -660,6 +660,34 @@ export interface ProjectAssetDeleteBatchResult {
   results: ProjectAssetDeleteItemResult[];
 }
 
+export interface ProjectAssetCopyBatchInput {
+  /** Assets to copy; same target shape as delete (logical asset name or a variant relativePath). */
+  targets: ProjectAssetDeleteTargetInput[];
+  /** Destination category for cross-category paste; defaults to each item's own category. */
+  targetCategory?: string;
+}
+
+export type ProjectAssetCopyItemStatus = 'copied' | 'failed';
+
+export interface ProjectAssetCopyItemResult {
+  target: {
+    category: string;
+    name: string;
+    relativePath: string | null;
+  };
+  status: ProjectAssetCopyItemStatus;
+  /** Actual name given to the copy (e.g. "name_2") and every variant path written. */
+  copiedName?: string;
+  copiedRelativePaths?: string[];
+  detail?: ManagedAssetDetail;
+  error?: string;
+}
+
+export interface ProjectAssetCopyBatchResult {
+  results: ProjectAssetCopyItemResult[];
+}
+
+
 export interface ProjectAssetReplaceMissingReferenceInput {
   category: string;
   missingName: string;

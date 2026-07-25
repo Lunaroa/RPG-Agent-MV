@@ -6,6 +6,9 @@ import type {
   ManagedAssetDetail,
   ManagedAssetRef,
   ManagedAssetScope,
+  ProjectAssetCopyBatchInput,
+  ProjectAssetCopyBatchResult,
+  ProjectAssetCopyItemResult,
   ProjectAssetDeleteBatchResult,
   ProjectAssetDeleteItemResult,
   ProjectAssetDeleteTargetInput,
@@ -930,6 +933,165 @@ export async function deleteAsset(
   if (result.status === 'blocked') throw new Error(result.error || 'blocked');
   if (result.status === 'failed') throw new Error(result.error || assetManagementAssetMissing());
   return { deleted: true };
+}
+
+/**
+ * Copy logical assets (all variants) inside the library, or into another category
+ * when request.targetCategory is set. Copies are named "name_2" style and applied
+ * immediately through one scoped atomic apply, mirroring import's batch structure.
+ */
+export function copyProjectAssets(
+  workflowRoot: string,
+  project: string,
+  request: ProjectAssetCopyBatchInput,
+): ProjectAssetCopyBatchResult {
+  if (!request || !Array.isArray(request.targets) || request.targets.length === 0) {
+    throw new Error(assetManagementMissingParams());
+  }
+  const requestedTargetCategory = request.targetCategory === undefined || request.targetCategory === null
+    ? null
+    : requireAssetCategory(request.targetCategory);
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  const results: ProjectAssetCopyItemResult[] = [];
+  const pending: Array<{
+    result: ProjectAssetCopyItemResult;
+    category: RmmvAssetCategory;
+    copiedRelativePaths: string[];
+    mutations: StagedProjectFileMutation[];
+  }> = [];
+  const claimedNames = new Set<string>();
+
+  for (const rawTarget of request.targets) {
+    const sourceCategory = requireAssetCategory(rawTarget.category);
+    const category = requestedTargetCategory ?? sourceCategory;
+    const failWith = (error: string, name = String(rawTarget.name || '')): void => {
+      results.push({
+        target: { category: sourceCategory, name, relativePath: rawTarget.relativePath || null },
+        status: 'failed',
+        error,
+      });
+    };
+
+    let name: string;
+    try {
+      name = rawTarget.name?.trim()
+        ? normalizeAssetName(rawTarget.name)
+        : assetNameFromRelative(
+          workflowRoot,
+          project,
+          sourceCategory,
+          normalizeRelative(rawTarget.relativePath || defaultRelative(workflowRoot, project, sourceCategory)),
+        );
+    } catch (error) {
+      failWith(error instanceof Error ? error.message : String(error));
+      continue;
+    }
+
+    const variants = findLogicalAssetVariants(graph, sourceCategory, name, rawTarget.relativePath);
+    if (!variants.length) {
+      failWith(assetManagementAssetMissing(), name);
+      continue;
+    }
+
+    const copiedName = nextAvailableCopyName(graph, category, name, claimedNames);
+    const directory = projectAssetRelativeDirectory(workflowRoot, project, category);
+    const copiedRelativePaths = variants.map(
+      (variant) => `${directory}/${copiedName}${path.extname(variant.relativePath)}`,
+    );
+    try {
+      for (const relativePath of copiedRelativePaths) assertProjectRelativeTarget(project, relativePath);
+    } catch (error) {
+      failWith(error instanceof Error ? error.message : String(error), name);
+      continue;
+    }
+
+    const stagedConflict = findProjectStagingPathConflict(workflowRoot, project, [
+      ...variants.map((variant) => variant.relativePath),
+      ...copiedRelativePaths,
+    ]);
+    if (stagedConflict?.kind === 'draft') {
+      failWith(stagingUnappliedDraftBlocksAssetMutation(stagedConflict.relativePath), name);
+      continue;
+    }
+    if (stagedConflict?.kind === 'operation') {
+      failWith(
+        stagingOperationReservationBlocksAssetMutation(stagedConflict.relativePath, stagedConflict.operationId),
+        name,
+      );
+      continue;
+    }
+
+    const mutations: StagedProjectFileMutation[] = [];
+    let readError: string | null = null;
+    for (let index = 0; index < variants.length; index += 1) {
+      const variant = variants[index]!;
+      const absolute = path.resolve(project, ...variant.relativePath.split('/'));
+      try {
+        assertInside(path.resolve(project), absolute);
+        mutations.push({ relativePath: copiedRelativePaths[index]!, content: fs.readFileSync(absolute) });
+      } catch (error) {
+        readError = error instanceof Error ? error.message : String(error);
+        break;
+      }
+    }
+    if (readError) {
+      failWith(readError, name);
+      continue;
+    }
+
+    claimedNames.add(copiedName);
+    const result: ProjectAssetCopyItemResult = {
+      target: { category: sourceCategory, name, relativePath: rawTarget.relativePath || null },
+      status: 'copied',
+      copiedName,
+      copiedRelativePaths,
+    };
+    results.push(result);
+    pending.push({ result, category, copiedRelativePaths, mutations });
+  }
+
+  if (pending.length) {
+    try {
+      applyProjectFilesAtomically(workflowRoot, project, pending.flatMap((item) => item.mutations));
+      invalidateProjectAssetBrowserCache(project);
+      invalidateProjectAssetReferenceGraphCache(project);
+      for (const item of pending) {
+        item.result.detail = getAssetDetail(workflowRoot, project, {
+          scope: 'project',
+          category: item.category,
+          relativePath: item.copiedRelativePaths[0],
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      for (const item of pending) {
+        item.result.status = 'failed';
+        item.result.error = message;
+        delete item.result.detail;
+      }
+    }
+  }
+
+  return { results };
+}
+
+/** First free "name_2"-style copy name inside the target category (graph assets + intra-batch claims). */
+function nextAvailableCopyName(
+  graph: ProjectAssetReferenceGraph,
+  category: RmmvAssetCategory,
+  baseName: string,
+  claimedNames: ReadonlySet<string>,
+): string {
+  const isTaken = (candidate: string): boolean =>
+    claimedNames.has(candidate)
+    || graph.assets.some((asset) => asset.category === category && asset.name === candidate);
+  let suffix = 2;
+  let candidate = `${baseName}_${suffix}`;
+  while (isTaken(candidate)) {
+    suffix += 1;
+    candidate = `${baseName}_${suffix}`;
+  }
+  return candidate;
 }
 
 function resolveAssetPath(workflowRoot: string, project: string, target: AssetTarget): { absolute: string; relativePath: string; category: RmmvAssetCategory } {

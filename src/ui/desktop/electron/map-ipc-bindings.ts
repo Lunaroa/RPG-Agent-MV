@@ -100,6 +100,7 @@ export const MAP_IPC_CHANNELS = [
   'projectAssets:importLocalFile',
   'projectAssets:importLocalFiles',
   'projectAssets:selectImportFile',
+  'projectAssets:copy',
   'projectManagement:overview',
   'projectManagement:getEntry',
   'projectManagement:updateEntry',
@@ -441,6 +442,8 @@ export function registerMapIpcHandlers(
     desktop.assetManagement.importLocalAssetFile(workflowRoot, project(value), request));
   handle('projectAssets:importLocalFiles', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.importLocalAssetFiles(workflowRoot, project(value), request));
+  handle('projectAssets:copy', (_event, request: Record<string, unknown>, value?: string) =>
+    desktop.assetManagement.copyProjectAssets(workflowRoot, project(value), request));
   handle('projectAssets:selectImportFile', async (event, category: string) => {
     if (!options.selectAssetFile) throw new Error(electronText(options.productLanguage?.(), 'assets.selectFileUnsupported'));
     const extensions = desktop.assetManagement.getAssetImportFileExtensions(category);

@@ -24,8 +24,11 @@ import type { ElTree } from 'element-plus'
 import type {
   ProjectAssetBrowseEntry,
   ProjectAssetCategoryTreeNode,
+  ProjectAssetCopyBatchResult,
+  ProjectAssetCopyItemResult,
   ProjectAssetDeleteBatchResult,
   ProjectAssetDeleteItemResult,
+  ProjectAssetDeleteTargetInput,
   ProjectAssetImportBatchResult,
   ProjectAssetImportItemResult,
   ProjectAssetMutationSafetyCheck,
@@ -154,6 +157,9 @@ const previewVisible = ref(false)
 const previewIndex = ref(0)
 
 const contextMenu = ref<{ x: number; y: number } | null>(null)
+
+/** In-app clipboard: mutation-target snapshot taken at copy time (carries the source category). */
+const assetClipboard = ref<{ targets: ProjectAssetDeleteTargetInput[] } | null>(null)
 
 const containerWidth = ref(0)
 const containerHeight = ref(0)
@@ -708,6 +714,76 @@ function closeContextMenu() {
   contextMenu.value = null
 }
 
+function copySelection() {
+  const targets = selectedFileEntries.value
+    .map((entry) => entryMutationTarget(entry))
+    .filter((target): target is NonNullable<typeof target> => Boolean(target))
+  if (!targets.length) return
+  assetClipboard.value = { targets }
+  closeContextMenu()
+}
+
+function assertCopyResultsShape(
+  batch: unknown,
+  expected: number,
+): asserts batch is ProjectAssetCopyBatchResult {
+  const results = (batch as ProjectAssetCopyBatchResult | null | undefined)?.results
+  if (!Array.isArray(results) || results.length !== expected) {
+    throw new Error(t('projectAssets.copyResultShapeError', {
+      expected,
+      actual: Array.isArray(results) ? results.length : typeof results,
+    }))
+  }
+}
+
+function formatCopyResultMessage(results: ProjectAssetCopyItemResult[]): string {
+  const copied = results.filter((item) => item.status === 'copied')
+  const failed = results.filter((item) => item.status === 'failed')
+  if (failed.length === 0) {
+    return copied.length === 1
+      ? t('projectAssets.copyResultAllCopiedOne')
+      : t('projectAssets.copyResultAllCopiedMany', { copied: copied.length })
+  }
+  const lines = [t('projectAssets.copyResultMixed', { copied: copied.length, failed: failed.length })]
+  for (const item of failed) {
+    lines.push(t('projectAssets.copyResultFailedItem', {
+      name: item.target.name,
+      reason: item.error || t('projectAssets.copyResultUnknownReason'),
+    }))
+  }
+  return lines.join('\n')
+}
+
+async function pasteClipboard() {
+  const clipboard = assetClipboard.value
+  if (!clipboard || !projectStore.currentProject || mutationBusy.value) return
+  if (!selectedCategoryId.value || isGroupSelection.value) return
+  closeContextMenu()
+  mutationBusy.value = true
+  mutationError.value = ''
+  try {
+    const batch = await projectAssets.copy(
+      { targets: clipboard.targets, targetCategory: selectedCategoryId.value },
+      projectStore.currentProject,
+    )
+    assertCopyResultsShape(batch, clipboard.targets.length)
+    const summary = formatCopyResultMessage(batch.results)
+    const hasProblems = batch.results.some((item) => item.status !== 'copied')
+    if (hasProblems) {
+      mutationError.value = summary
+    } else {
+      mutationError.value = ''
+      ElMessage.success(summary)
+    }
+    const firstCopied = batch.results.find((item) => item.status === 'copied' && item.detail)
+    await afterMutation(firstCopied?.detail || null)
+  } catch (error) {
+    mutationError.value = formatError(error)
+  } finally {
+    mutationBusy.value = false
+  }
+}
+
 function localFileParts(filePath: string): { fileName: string; name: string } {
   const fileName = String(filePath || '').split(/[\\/]/).pop() || ''
   return { fileName, name: fileName.replace(/\.[^.]+$/, '') }
@@ -840,6 +916,20 @@ function onGridKeydown(event: KeyboardEvent) {
   if (ctrl && (event.key === 'a' || event.key === 'A')) {
     event.preventDefault()
     applyFileSelection(selectAllProjectAssets(orderedFileIds.value, selection.value))
+    return
+  }
+  if (ctrl && (event.key === 'c' || event.key === 'C')) {
+    if (selectedFileEntries.value.length > 0) {
+      event.preventDefault()
+      copySelection()
+    }
+    return
+  }
+  if (ctrl && (event.key === 'v' || event.key === 'V')) {
+    if (assetClipboard.value) {
+      event.preventDefault()
+      void pasteClipboard()
+    }
     return
   }
   if (event.key === 'Escape') {
@@ -1726,6 +1816,14 @@ watch(gridHost, (el, previous) => {
             v-if="singleSelectedFile"
             @click="previewFromContextMenu"
           >{{ t('projectAssets.preview') }}</li>
+          <li
+            v-if="selectedFileEntries.length > 0"
+            @click="copySelection"
+          >{{ t('projectAssets.copy') }}</li>
+          <li
+            v-if="assetClipboard && !isGroupSelection"
+            @click="pasteClipboard"
+          >{{ t('projectAssets.paste') }}</li>
           <li
             v-if="singleSelectedFile"
             @click="renameSelectedEntry"

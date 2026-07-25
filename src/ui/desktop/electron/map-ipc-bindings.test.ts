@@ -284,6 +284,29 @@ function versionWarning() {
   };
 }
 
+describe('projectAssets IPC', () => {
+  test('forwards copy requests to the asset management service', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const calls: unknown[][] = [];
+    const facade = {
+      ...desktop({}),
+      assetManagement: {
+        copyProjectAssets: (...args: unknown[]) => {
+          calls.push(args);
+          return { results: [] };
+        },
+      },
+    };
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, facade, ipcOptions());
+
+    const request = { targets: [{ category: 'pictures', name: 'Unused' }], targetCategory: 'pictures' };
+    const result = await handlers.get('projectAssets:copy')!({}, request, PROJECT_PATH);
+
+    assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, request]]);
+    assert.deepEqual(result, { results: [] });
+  });
+});
+
 function encryptionWarning() {
   return {
     detectedVersion: '1.10.0',

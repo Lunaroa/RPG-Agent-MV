@@ -196,6 +196,7 @@ declare global {
         importLocalFile(request: unknown, project?: string): Promise<unknown>;
         importLocalFiles(request: unknown, project?: string): Promise<unknown>;
         selectImportFile(category: string): Promise<string[] | null>;
+        copy(request: unknown, project?: string): Promise<unknown>;
       };
       settings: {
         listProviders(): Promise<{ providers: unknown[] }>;
@@ -323,6 +324,7 @@ import type {
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput, ProjectAssetDeleteItemResult,
+  ProjectAssetCopyBatchInput, ProjectAssetCopyBatchResult,
   ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -1043,6 +1045,12 @@ export const projectAssets = {
   },
   selectImportFile(category: string) {
     return desktopApi().projectAssets.selectImportFile(category) as Promise<string[] | null>;
+  },
+  copy(request: ProjectAssetCopyBatchInput, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.copy(
+      toPlain(request),
+      project,
+    ) as Promise<ProjectAssetCopyBatchResult>;
   },
 };
 

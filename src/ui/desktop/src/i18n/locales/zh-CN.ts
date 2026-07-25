@@ -111,6 +111,12 @@ const zhCN = {
     'projectAssets.deleteResultShapeError': '删除返回了不符合约定的结果（期望 {{expected}} 条，实际 {{actual}} 条）。',
     'projectAssets.deleteMissingPath': '选中的素材中有缺少相对路径的项，无法删除。',
     'projectAssets.deleteResultUnknownReason': '未提供原因',
+    'projectAssets.sortLabel': '排序方式',
+    'projectAssets.sortName': '按名称',
+    'projectAssets.sortSize': '按文件大小',
+    'projectAssets.sortModified': '按修改日期',
+    'projectAssets.sortAsc': '升序',
+    'projectAssets.sortDesc': '降序',
 
     'mapOverview.empty.title': '还没有选择项目',
     'mapOverview.empty.body': '全局地图会读取当前项目的地图和确定的场所移动关系。',

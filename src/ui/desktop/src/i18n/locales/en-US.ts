@@ -113,6 +113,12 @@ const enUS = {
     'projectAssets.deleteResultShapeError': 'Delete returned an unexpected result shape (expected {{expected}} item(s), got {{actual}}).',
     'projectAssets.deleteMissingPath': 'One or more selected resources are missing a relative path and cannot be deleted.',
     'projectAssets.deleteResultUnknownReason': 'No reason provided',
+    'projectAssets.sortLabel': 'Sort by',
+    'projectAssets.sortName': 'Name',
+    'projectAssets.sortSize': 'File size',
+    'projectAssets.sortModified': 'Date modified',
+    'projectAssets.sortAsc': 'Ascending',
+    'projectAssets.sortDesc': 'Descending',
 
     'mapOverview.empty.title': 'No project selected',
     'mapOverview.empty.body': 'Map Overview reads the current project maps and definite transfer relationships.',

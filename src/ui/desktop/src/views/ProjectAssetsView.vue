@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  ArrowDown,
+  ArrowUp,
   Document,
   Folder,
   Headset,
@@ -52,6 +54,15 @@ import {
   projectAssetMediaKind,
 } from '../utils/projectAssetLocalization'
 import { computeProjectAssetGridWindow } from '../utils/projectAssetGridWindow'
+import {
+  sortProjectAssetEntries,
+  type ProjectAssetSortDir,
+  type ProjectAssetSortKey,
+} from '../utils/projectAssetSorting'
+import {
+  loadProjectAssetSortPreference,
+  saveProjectAssetSortPreference,
+} from '../config/projectAssetsViewPrefs'
 import {
   applyOverwriteBatchDecision,
   assertImportBatchResultShape,
@@ -120,6 +131,9 @@ const categoryError = ref('')
 const categoryLoading = ref(false)
 
 const searchQuery = ref('')
+const sortPreference = loadProjectAssetSortPreference()
+const sortKey = ref<ProjectAssetSortKey>(sortPreference.key)
+const sortDir = ref<ProjectAssetSortDir>(sortPreference.dir)
 const selection = ref<ProjectAssetSelectionState>(emptyProjectAssetSelection())
 const selectedFolderId = ref<string | null>(null)
 const mutationBusy = ref(false)
@@ -204,6 +218,19 @@ const filteredEntries = computed(() => {
   return categoryEntries.value.filter((entry) => entry.name.toLowerCase().includes(query))
 })
 
+/** Search-filtered entries in the user's chosen sort order; single order source for grid, range-select and preview navigation. */
+const sortedEntries = computed(() =>
+  sortProjectAssetEntries(filteredEntries.value, sortKey.value, sortDir.value),
+)
+
+watch([sortKey, sortDir], ([key, dir]) => {
+  saveProjectAssetSortPreference({ key, dir })
+})
+
+function toggleSortDir() {
+  sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+}
+
 const gridItems = computed<GridItem[]>(() => {
   if (!selectedCategoryId.value) return []
   if (isGroupSelection.value) {
@@ -211,7 +238,7 @@ const gridItems = computed<GridItem[]>(() => {
     if (!query) return folderItems.value
     return folderItems.value.filter((item) => item.label.toLowerCase().includes(query))
   }
-  return filteredEntries.value.map((entry) => ({ kind: 'file' as const, entry }))
+  return sortedEntries.value.map((entry) => ({ kind: 'file' as const, entry }))
 })
 
 const gridWindow = computed(() =>
@@ -262,7 +289,7 @@ const emptyMessage = computed(() => {
 
 const previewItems = computed<AssetPreviewItem[]>(() => {
   if (isGroupSelection.value) return []
-  return filteredEntries.value.map((entry) => toPreviewItem(entry))
+  return sortedEntries.value.map((entry) => toPreviewItem(entry))
 })
 
 const canImport = computed(() =>
@@ -278,7 +305,7 @@ const canImport = computed(() =>
 /** Ordered file ids for the current category listing (full list; not the virtualized window). */
 const orderedFileIds = computed(() => {
   if (isGroupSelection.value) return [] as string[]
-  return filteredEntries.value.map((entry) => entry.id)
+  return sortedEntries.value.map((entry) => entry.id)
 })
 
 const selectedIdSet = computed(() => new Set(selection.value.selectedIds))
@@ -286,7 +313,7 @@ const selectedIdSet = computed(() => new Set(selection.value.selectedIds))
 const selectedFileEntries = computed(() => {
   if (isGroupSelection.value) return [] as ProjectAssetBrowseEntry[]
   const ids = selectedIdSet.value
-  return filteredEntries.value.filter((entry) => ids.has(entry.id))
+  return sortedEntries.value.filter((entry) => ids.has(entry.id))
 })
 
 const singleSelectedFile = computed(() =>
@@ -611,7 +638,7 @@ function onCellDoubleClick(item: GridItem) {
 }
 
 function openPreviewForEntry(entryId: string) {
-  const index = filteredEntries.value.findIndex((entry) => entry.id === entryId)
+  const index = sortedEntries.value.findIndex((entry) => entry.id === entryId)
   if (index < 0) return
   applyFileSelection(selectProjectAssetExclusive(entryId))
   previewIndex.value = index
@@ -624,7 +651,7 @@ function closePreview() {
 
 function onPreviewNavigate(index: number) {
   previewIndex.value = index
-  const entry = filteredEntries.value[index]
+  const entry = sortedEntries.value[index]
   if (entry) applyFileSelection(selectProjectAssetExclusive(entry.id))
 }
 
@@ -1451,6 +1478,29 @@ watch(gridHost, (el, previous) => {
           :placeholder="t('projectAssets.searchPlaceholder')"
         />
         <div class="project-assets-toolbar-actions">
+          <el-select
+            v-model="sortKey"
+            class="project-assets-sort-select"
+            size="small"
+            data-ui-id="project-assets-sort-key"
+            :aria-label="t('projectAssets.sortLabel')"
+            :disabled="!projectStore.currentProject || isGroupSelection"
+          >
+            <el-option value="name" :label="t('projectAssets.sortName')" />
+            <el-option value="bytes" :label="t('projectAssets.sortSize')" />
+            <el-option value="mtimeMs" :label="t('projectAssets.sortModified')" />
+          </el-select>
+          <button
+            type="button"
+            class="project-assets-tool-btn"
+            data-ui-id="project-assets-sort-dir"
+            :disabled="!projectStore.currentProject || isGroupSelection"
+            :title="sortDir === 'asc' ? t('projectAssets.sortAsc') : t('projectAssets.sortDesc')"
+            :aria-label="sortDir === 'asc' ? t('projectAssets.sortAsc') : t('projectAssets.sortDesc')"
+            @click="toggleSortDir"
+          >
+            <el-icon><ArrowUp v-if="sortDir === 'asc'" /><ArrowDown v-else /></el-icon>
+          </button>
           <button
             type="button"
             class="project-assets-tool-btn"
@@ -1737,6 +1787,11 @@ watch(gridHost, (el, previous) => {
   display: flex;
   gap: 8px;
   flex: 0 0 auto;
+  align-items: center;
+}
+
+.project-assets-sort-select {
+  width: 128px;
 }
 
 .project-assets-tool-btn {

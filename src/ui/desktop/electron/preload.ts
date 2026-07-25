@@ -217,6 +217,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('projectAssets:importLocalFiles', request, project),
     selectImportFile: (category: string) => ipcRenderer.invoke('projectAssets:selectImportFile', category),
     copy: (request: unknown, project?: string) => ipcRenderer.invoke('projectAssets:copy', request, project),
+    revealInFolder: (request: unknown, project?: string) => ipcRenderer.invoke('projectAssets:revealInFolder', request, project),
   },
 
   projectManagement: {

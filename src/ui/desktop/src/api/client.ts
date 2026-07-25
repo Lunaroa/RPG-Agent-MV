@@ -197,6 +197,7 @@ declare global {
         importLocalFiles(request: unknown, project?: string): Promise<unknown>;
         selectImportFile(category: string): Promise<string[] | null>;
         copy(request: unknown, project?: string): Promise<unknown>;
+        revealInFolder(request: unknown, project?: string): Promise<unknown>;
       };
       settings: {
         listProviders(): Promise<{ providers: unknown[] }>;
@@ -1051,6 +1052,9 @@ export const projectAssets = {
       toPlain(request),
       project,
     ) as Promise<ProjectAssetCopyBatchResult>;
+  },
+  revealInFolder(request: { relativePath: string }, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.revealInFolder(toPlain(request), project) as Promise<{ ok: boolean }>;
   },
 };
 

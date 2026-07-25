@@ -305,6 +305,25 @@ describe('projectAssets IPC', () => {
     assert.deepEqual(calls, [[WORKSPACE_PATH, PROJECT_PATH, request]]);
     assert.deepEqual(result, { results: [] });
   });
+
+  test('reveals an in-project asset in the file manager and rejects path escapes', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const revealed: string[] = [];
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({}), ipcOptions({
+      revealProjectAsset: (absolutePath: string) => revealed.push(absolutePath),
+    }));
+
+    const reveal = handlers.get('projectAssets:revealInFolder')!;
+    const inside = await reveal({}, { relativePath: 'www/img/pictures/Unused.png' }, PROJECT_PATH);
+    assert.deepEqual(inside, { ok: true });
+    assert.deepEqual(revealed, [path.join(PROJECT_PATH, 'www', 'img', 'pictures', 'Unused.png')]);
+
+    assert.throws(
+      () => reveal({}, { relativePath: '../outside.txt' }, PROJECT_PATH),
+      /outside the project/,
+    );
+    assert.equal(revealed.length, 1);
+  });
 });
 
 function encryptionWarning() {

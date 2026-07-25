@@ -39,6 +39,7 @@ export interface ProjectIpcOptions {
     action: 'import' | 'write',
   ) => Promise<{ confirmed: boolean; suppressFutureWarnings: boolean }>;
   trashProjectAsset: (absolutePath: string) => Promise<void>;
+  revealProjectAsset?: (absolutePath: string) => void;
 }
 
 export const MAP_IPC_CHANNELS = [
@@ -101,6 +102,7 @@ export const MAP_IPC_CHANNELS = [
   'projectAssets:importLocalFiles',
   'projectAssets:selectImportFile',
   'projectAssets:copy',
+  'projectAssets:revealInFolder',
   'projectManagement:overview',
   'projectManagement:getEntry',
   'projectManagement:updateEntry',
@@ -444,6 +446,20 @@ export function registerMapIpcHandlers(
     desktop.assetManagement.importLocalAssetFiles(workflowRoot, project(value), request));
   handle('projectAssets:copy', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.copyProjectAssets(workflowRoot, project(value), request));
+  handle('projectAssets:revealInFolder', (_event, request: Record<string, unknown>, value?: string) => {
+    if (!options.revealProjectAsset) throw new Error('Revealing assets in the file manager is not available.');
+    const resolved = path.resolve(project(value));
+    const relativePath = String((request as { relativePath?: unknown })?.relativePath || '');
+    if (!relativePath) throw new Error('A project-relative asset path is required.');
+    const absolute = path.resolve(resolved, ...relativePath.split('/'));
+    const rootWithSep = resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
+    const inside = process.platform === 'win32'
+      ? absolute.toLowerCase().startsWith(rootWithSep.toLowerCase())
+      : absolute.startsWith(rootWithSep);
+    if (!inside) throw new Error('The requested asset path is outside the project.');
+    options.revealProjectAsset(absolute);
+    return { ok: true as const };
+  });
   handle('projectAssets:selectImportFile', async (event, category: string) => {
     if (!options.selectAssetFile) throw new Error(electronText(options.productLanguage?.(), 'assets.selectFileUnsupported'));
     const extensions = desktop.assetManagement.getAssetImportFileExtensions(category);

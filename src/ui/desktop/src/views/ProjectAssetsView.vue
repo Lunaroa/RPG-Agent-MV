@@ -22,6 +22,7 @@ import {
 } from 'vue'
 import type { ElTree } from 'element-plus'
 import type {
+  ManagedAssetRef,
   ProjectAssetBrowseEntry,
   ProjectAssetCategoryTreeNode,
   ProjectAssetCopyBatchResult,
@@ -34,11 +35,13 @@ import type {
   ProjectAssetMutationSafetyCheck,
 } from '@contract/types'
 import {
+  clipboard,
   maps as mapsApi,
   projectAssets,
   type ManagedAssetDetail,
 } from '../api/client'
 import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'
+import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
 import ConsoleSearchInput from '../components/console/ConsoleSearchInput.vue'
 import { useI18n } from '../i18n'
 import { useProjectStore } from '../stores/project'
@@ -157,9 +160,17 @@ const previewVisible = ref(false)
 const previewIndex = ref(0)
 
 const contextMenu = ref<{ x: number; y: number } | null>(null)
+const contextMenuKind = ref<'cell' | 'background'>('cell')
 
 /** In-app clipboard: mutation-target snapshot taken at copy time (carries the source category). */
 const assetClipboard = ref<{ targets: ProjectAssetDeleteTargetInput[] } | null>(null)
+
+const referencesDialog = ref<{
+  name: string
+  references: ManagedAssetRef[]
+  loading: boolean
+  failed: boolean
+} | null>(null)
 
 const containerWidth = ref(0)
 const containerHeight = ref(0)
@@ -201,6 +212,14 @@ const previewSurfaceLabels = computed<AssetPreviewSurfaceLabels>(() => ({
 
 const previewDialogLabels = computed<AssetPreviewDialogLabels>(() => ({
   closeTitle: t('projectAssets.previewCloseTitle'),
+  close: t('common.close'),
+}))
+
+const referencesDialogLabels = computed(() => ({
+  title: t('projectAssets.referencesTitle'),
+  empty: t('projectAssets.referencesEmpty'),
+  loadFailed: t('projectAssets.referencesLoadFailed'),
+  loading: t('projectAssets.referencesLoading'),
   close: t('common.close'),
 }))
 
@@ -701,7 +720,65 @@ function openContextMenu(event: MouseEvent, entryId: string) {
   } else {
     selectedFolderId.value = null
   }
+  contextMenuKind.value = 'cell'
   contextMenu.value = { x: event.clientX, y: event.clientY }
+}
+
+function onGridBackgroundContextMenu(event: MouseEvent) {
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.project-assets-cell')) return
+  const canPaste = Boolean(assetClipboard.value) && !isGroupSelection.value
+  if (!canPaste && !canImport.value) return
+  event.preventDefault()
+  clearAllSelection()
+  contextMenuKind.value = 'background'
+  contextMenu.value = { x: event.clientX, y: event.clientY }
+}
+
+async function showReferencesForSelection() {
+  const entry = singleSelectedFile.value
+  closeContextMenu()
+  if (!entry || !projectStore.currentProject) return
+  const target = entryMutationTarget(entry)
+  if (!target) return
+  referencesDialog.value = { name: entry.name, references: [], loading: true, failed: false }
+  try {
+    const detail = await projectAssets.detail(target, projectStore.currentProject)
+    if (!referencesDialog.value) return
+    referencesDialog.value.references = Array.isArray(detail.references) ? detail.references : []
+    referencesDialog.value.loading = false
+  } catch {
+    if (!referencesDialog.value) return
+    referencesDialog.value.loading = false
+    referencesDialog.value.failed = true
+  }
+}
+
+async function revealInFolderForSelection() {
+  const entry = singleSelectedFile.value
+  closeContextMenu()
+  if (!entry || !projectStore.currentProject) return
+  const relativePath = entryPrimaryPath(entry)
+  if (!relativePath) return
+  try {
+    await projectAssets.revealInFolder({ relativePath }, projectStore.currentProject)
+  } catch (error) {
+    mutationError.value = formatError(error)
+  }
+}
+
+async function copyAssetText(kind: 'name' | 'relativePath') {
+  const entry = singleSelectedFile.value
+  closeContextMenu()
+  if (!entry) return
+  const text = kind === 'name' ? entry.name : entryPrimaryPath(entry)
+  if (!text) return
+  try {
+    await clipboard.writeText(text)
+    ElMessage.success(t('projectAssets.textCopied'))
+  } catch (error) {
+    mutationError.value = formatError(error)
+  }
 }
 
 function previewFromContextMenu() {
@@ -963,6 +1040,7 @@ function onGridKeydown(event: KeyboardEvent) {
 async function importFile() {
   if (!canImport.value || !projectStore.currentProject) return
   const category = selectedCategoryId.value
+  closeContextMenu()
   mutationBusy.value = true
   mutationError.value = ''
   try {
@@ -1696,6 +1774,7 @@ watch(gridHost, (el, previous) => {
         @pointercancel="onGridPointerCancel"
         @keydown="onGridKeydown"
         @wheel="onGridWheel"
+        @contextmenu="onGridBackgroundContextMenu"
         @dragenter="onGridDragEnter"
         @dragover="onGridDragOver"
         @dragleave="onGridDragLeave"
@@ -1801,6 +1880,16 @@ watch(gridHost, (el, previous) => {
       @navigate="onPreviewNavigate"
     />
 
+    <AssetReferencesDialog
+      :visible="Boolean(referencesDialog)"
+      :asset-name="referencesDialog?.name || ''"
+      :references="referencesDialog?.references || []"
+      :loading="referencesDialog?.loading || false"
+      :failed="referencesDialog?.failed || false"
+      :labels="referencesDialogLabels"
+      @close="referencesDialog = null"
+    />
+
     <teleport to="body">
       <div
         v-if="contextMenu"
@@ -1812,27 +1901,51 @@ watch(gridHost, (el, previous) => {
           class="ctx-menu"
           :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         >
-          <li
-            v-if="singleSelectedFile"
-            @click="previewFromContextMenu"
-          >{{ t('projectAssets.preview') }}</li>
-          <li
-            v-if="selectedFileEntries.length > 0"
-            @click="copySelection"
-          >{{ t('projectAssets.copy') }}</li>
-          <li
-            v-if="assetClipboard && !isGroupSelection"
-            @click="pasteClipboard"
-          >{{ t('projectAssets.paste') }}</li>
-          <li
-            v-if="singleSelectedFile"
-            @click="renameSelectedEntry"
-          >{{ t('projectAssets.rename') }}</li>
-          <li
-            v-if="selectedFileEntries.length > 0"
-            class="ctx-danger"
-            @click="deleteSelectedEntries"
-          >{{ contextDeleteLabel }}</li>
+          <template v-if="contextMenuKind === 'cell'">
+            <li
+              v-if="singleSelectedFile"
+              @click="previewFromContextMenu"
+            >{{ t('projectAssets.preview') }}</li>
+            <li
+              v-if="singleSelectedFile"
+              @click="showReferencesForSelection"
+            >{{ t('projectAssets.showReferences') }}</li>
+            <li
+              v-if="selectedFileEntries.length > 0"
+              @click="copySelection"
+            >{{ t('projectAssets.copy') }}</li>
+            <li
+              v-if="singleSelectedFile"
+              @click="revealInFolderForSelection"
+            >{{ t('projectAssets.revealInFolder') }}</li>
+            <li
+              v-if="singleSelectedFile"
+              @click="copyAssetText('name')"
+            >{{ t('projectAssets.copyName') }}</li>
+            <li
+              v-if="singleSelectedFile"
+              @click="copyAssetText('relativePath')"
+            >{{ t('projectAssets.copyRelativePath') }}</li>
+            <li
+              v-if="singleSelectedFile"
+              @click="renameSelectedEntry"
+            >{{ t('projectAssets.rename') }}</li>
+            <li
+              v-if="selectedFileEntries.length > 0"
+              class="ctx-danger"
+              @click="deleteSelectedEntries"
+            >{{ contextDeleteLabel }}</li>
+          </template>
+          <template v-else>
+            <li
+              v-if="assetClipboard && !isGroupSelection"
+              @click="pasteClipboard"
+            >{{ t('projectAssets.paste') }}</li>
+            <li
+              v-if="canImport"
+              @click="importFile"
+            >{{ t('projectAssets.importMenuItem') }}</li>
+          </template>
         </ul>
       </div>
     </teleport>

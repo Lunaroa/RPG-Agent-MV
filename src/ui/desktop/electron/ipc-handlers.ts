@@ -1178,6 +1178,9 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       return showProjectCompatibilityWarning(parent, warning, action);
     },
     trashProjectAsset: (absolutePath: string) => shell.trashItem(absolutePath),
+    revealProjectAsset: (absolutePath: string) => {
+      shell.showItemInFolder(absolutePath);
+    },
     selectProjectDirectory: async (event: Electron.IpcMainInvokeEvent) => {
       const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
       const result = await dialog.showOpenDialog(parent, {

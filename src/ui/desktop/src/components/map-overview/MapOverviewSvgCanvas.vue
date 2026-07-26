@@ -43,6 +43,7 @@ import {
   shouldStartMapOverviewPan,
 } from '../../utils/mapOverviewSvgInteraction'
 import { placeMapOverviewTooltip } from '../../utils/mapOverviewTooltipPosition'
+import { mergeBidirectionalMapOverviewEdges } from '../../utils/mapOverviewEdgeMerge'
 import { useI18n } from '../../i18n'
 import type { MapOverviewSvgCanvasApi } from './mapOverviewSvgCanvasApi'
 
@@ -103,29 +104,37 @@ const geometryNodes = computed(() => {
 })
 
 const geometryNodeMap = computed(() => new Map(geometryNodes.value.map(node => [node.id, node])))
-const routes = computed(() => buildMapOverviewSvgEdgeRoutes(snapshot.value?.edges || []))
-const geometryEdges = computed(() => {
-  const next = snapshot.value
-  if (!next) return []
-  return next.edges.flatMap(edge => {
-    try {
-      const condition = classifyMapOverviewEdgeConditions(edge.sources)
-      return [{
-        edge,
-        condition,
-        geometry: mapOverviewSvgEdgeGeometry(edge, geometryNodeMap.value, routes.value.get(edge.id)),
-      }]
-    } catch {
-      return []
-    }
-  })
-})
+const mergedEdges = computed(() => mergeBidirectionalMapOverviewEdges(snapshot.value?.edges || []))
+const mergedByRepresentativeId = computed(() => new Map(mergedEdges.value.map(item => [item.edge.id, item])))
+const routes = computed(() => buildMapOverviewSvgEdgeRoutes(mergedEdges.value.map(item => item.edge)))
+const geometryEdges = computed(() => mergedEdges.value.flatMap(item => {
+  try {
+    const condition = classifyMapOverviewEdgeConditions(
+      item.reverse ? [...item.edge.sources, ...item.reverse.sources] : item.edge.sources,
+    )
+    return [{
+      edge: item.edge,
+      reverse: item.reverse,
+      bidirectional: item.bidirectional,
+      totalCount: item.totalCount,
+      condition,
+      geometry: mapOverviewSvgEdgeGeometry(item.edge, geometryNodeMap.value, routes.value.get(item.edge.id)),
+    }]
+  } catch {
+    return []
+  }
+}))
 
 const activeNodeId = computed(() => selectedNodeId.value ?? (selectedEdgeId.value ? null : hoveredNodeId.value))
 const activeEdgeId = computed(() => selectedEdgeId.value ?? (selectedNodeId.value == null ? hoveredEdgeId.value : null))
 const activeEdgeIds = computed(() => {
   const ids = new Set<string>()
-  if (activeEdgeId.value) ids.add(activeEdgeId.value)
+  if (activeEdgeId.value) {
+    ids.add(activeEdgeId.value)
+    // Include the mirrored direction so both endpoints light up as ports.
+    const reverse = mergedByRepresentativeId.value.get(activeEdgeId.value)?.reverse
+    if (reverse) ids.add(reverse.id)
+  }
   if (activeNodeId.value != null) {
     for (const edge of snapshot.value?.edges || []) {
       if (edge.sourceMapId === activeNodeId.value || edge.targetMapId === activeNodeId.value) ids.add(edge.id)
@@ -147,13 +156,19 @@ const activePorts = computed(() => buildMapOverviewActivePorts(
   geometryNodeMap.value,
 ))
 
-const tooltipEdge = computed(() => (
+const tooltipMerged = computed(() => (
   edgeTooltip.value
-    ? snapshot.value?.edges.find((edge) => edge.id === edgeTooltip.value?.edgeId) || null
+    ? mergedByRepresentativeId.value.get(edgeTooltip.value.edgeId) || null
     : null
 ))
+const tooltipEdge = computed(() => tooltipMerged.value?.edge || null)
+const tooltipReverse = computed(() => tooltipMerged.value?.reverse || null)
 const tooltipCondition = computed(() => {
   const edge = tooltipEdge.value
+  return edge ? edgeConditionLabel(edge) : ''
+})
+const tooltipReverseCondition = computed(() => {
+  const edge = tooltipReverse.value
   return edge ? edgeConditionLabel(edge) : ''
 })
 const conditionNameMaps = computed(() => buildMapOverviewConditionNameMaps(
@@ -205,8 +220,15 @@ function edgeMarkerId(category: MapOverviewTransferConditionCategory, active = f
   return `map-overview-arrow-${category}${active ? '-active' : ''}`
 }
 
-function edgeAriaLabel(edge: MapOverviewEdge): string {
-  return `MAP${String(edge.sourceMapId).padStart(3, '0')} (${edge.sourceX}, ${edge.sourceY}) → MAP${String(edge.targetMapId).padStart(3, '0')} (${edge.targetX}, ${edge.targetY}); ${edgeConditionLabel(edge)}`
+/** Reversed arrow head shown at the start of merged A ⇄ B edges. */
+function edgeStartMarkerId(category: MapOverviewTransferConditionCategory, active = false): string {
+  return `map-overview-arrow-start-${category}${active ? '-active' : ''}`
+}
+
+function edgeAriaLabel(edge: MapOverviewEdge, reverse: MapOverviewEdge | null = null): string {
+  const forward = `MAP${String(edge.sourceMapId).padStart(3, '0')} (${edge.sourceX}, ${edge.sourceY}) → MAP${String(edge.targetMapId).padStart(3, '0')} (${edge.targetX}, ${edge.targetY}); ${edgeConditionLabel(edge)}`
+  if (!reverse) return forward
+  return `${forward}; MAP${String(reverse.sourceMapId).padStart(3, '0')} (${reverse.sourceX}, ${reverse.sourceY}) → MAP${String(reverse.targetMapId).padStart(3, '0')} (${reverse.targetX}, ${reverse.targetY}); ${edgeConditionLabel(reverse)}`
 }
 
 function edgeVisualStyle(category: MapOverviewTransferConditionCategory): Record<string, string> {
@@ -814,6 +836,12 @@ defineExpose<MapOverviewSvgCanvasApi>({
           <marker :id="edgeMarkerId(category, true)" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="userSpaceOnUse">
             <path d="M0,0 L0,6 L8,3 z" :fill="mapOverviewTransferConditionVisual(category).stroke" />
           </marker>
+          <marker :id="edgeStartMarkerId(category)" markerWidth="7" markerHeight="7" refX="0" refY="2" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M6,0 L6,4 L0,2 z" :fill="mapOverviewTransferConditionVisual(category).stroke" />
+          </marker>
+          <marker :id="edgeStartMarkerId(category, true)" markerWidth="9" markerHeight="9" refX="0" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M8,0 L8,6 L0,3 z" :fill="mapOverviewTransferConditionVisual(category).stroke" />
+          </marker>
         </template>
       </defs>
       <g ref="world" class="map-overview-svg-world">
@@ -827,7 +855,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-target="item.edge.targetMapId"
               tabindex="0"
               role="button"
-              :aria-label="edgeAriaLabel(item.edge)"
+              :aria-label="edgeAriaLabel(item.edge, item.reverse)"
               :aria-describedby="edgeTooltip?.edgeId === item.edge.id ? 'map-overview-edge-tooltip' : undefined"
               @click="onEdgeClick($event, item.edge.id)"
               @pointerenter="onEdgePointerEnter($event, item.edge.id)"
@@ -918,20 +946,21 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-id="item.edge.id"
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
+              :marker-start="item.bidirectional ? `url(#${edgeStartMarkerId(item.condition)})` : undefined"
               :marker-end="`url(#${edgeMarkerId(item.condition)})`"
               :style="edgeVisualStyle(item.condition)"
               role="img"
-              :aria-label="edgeAriaLabel(item.edge)"
+              :aria-label="edgeAriaLabel(item.edge, item.reverse)"
             />
             <text
-              v-if="item.edge.count > 1"
+              v-if="item.totalCount > 1"
               class="map-overview-svg-edge-label"
               :x="item.geometry.label.x"
               :y="item.geometry.label.y"
               :data-edge-id="item.edge.id"
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
-            >×{{ item.edge.count }}</text>
+            >×{{ item.totalCount }}</text>
           </g>
         </g>
 
@@ -944,11 +973,12 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-id="item.edge.id"
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
+              :marker-start="item.bidirectional ? `url(#${edgeStartMarkerId(item.condition, true)})` : undefined"
               :marker-end="`url(#${edgeMarkerId(item.condition, true)})`"
               :style="foregroundEdgeVisualStyle(item.condition)"
             />
             <text
-              v-if="activeEdgeIds.has(item.edge.id) && item.edge.count > 1"
+              v-if="activeEdgeIds.has(item.edge.id) && item.totalCount > 1"
               :class="['map-overview-svg-edge-label', 'active', foregroundEdgeState(item.edge)]"
               :x="item.geometry.label.x"
               :y="item.geometry.label.y"
@@ -956,7 +986,7 @@ defineExpose<MapOverviewSvgCanvasApi>({
               :data-edge-source="item.edge.sourceMapId"
               :data-edge-target="item.edge.targetMapId"
               :style="foregroundEdgeLabelStyle(item.condition)"
-            >×{{ item.edge.count }}</text>
+            >×{{ item.totalCount }}</text>
           </template>
         </g>
 
@@ -997,13 +1027,17 @@ defineExpose<MapOverviewSvgCanvasApi>({
       <strong>
         MAP{{ String(tooltipEdge.sourceMapId).padStart(3, '0') }}
         ({{ tooltipEdge.sourceX }}, {{ tooltipEdge.sourceY }})
-        →
+        {{ tooltipReverse ? '⇄' : '→' }}
         MAP{{ String(tooltipEdge.targetMapId).padStart(3, '0') }}
         ({{ tooltipEdge.targetX }}, {{ tooltipEdge.targetY }})
       </strong>
-      <span>{{ tooltipCondition }}</span>
+      <span>{{ tooltipReverse ? '→ ' : '' }}{{ tooltipCondition }}</span>
       <small>{{ t('mapOverview.tooltip.transferCount', { count: tooltipEdge.count }) }}</small>
-      <small v-if="tooltipEdge.sources.length > 1">
+      <template v-if="tooltipReverse">
+        <span>← {{ tooltipReverseCondition }}</span>
+        <small>{{ t('mapOverview.tooltip.transferCount', { count: tooltipReverse.count }) }}</small>
+      </template>
+      <small v-if="tooltipEdge.sources.length > 1 || (tooltipReverse?.sources.length || 0) > 1">
         {{ t('mapOverview.tooltip.multipleSources') }}
       </small>
     </div>

@@ -22,6 +22,7 @@ import {
   buildMapOverviewConditionNameMaps,
   formatMapOverviewConditionDetails,
 } from '../utils/mapOverviewConditionLabels'
+import { mergeBidirectionalMapOverviewEdges } from '../utils/mapOverviewEdgeMerge'
 import { maps, workspaceSurfaces } from '../api/client'
 import MapOverviewSvgCanvas from '../components/map-overview/MapOverviewSvgCanvas.vue'
 import type { MapOverviewSvgCanvasApi } from '../components/map-overview/mapOverviewSvgCanvasApi'
@@ -137,6 +138,21 @@ const thumbnailRetrySessions = new Map<number, string>()
 const currentProject = computed(() => projectStore.currentProject || '')
 const selectedNode = computed(() => snapshot.value?.nodes.find((node) => node.id === selectedNodeId.value) || null)
 const selectedEdge = computed(() => snapshot.value?.edges.find((edge) => edge.id === selectedEdgeId.value) || null)
+// Merged A ⇄ B unit for the inspector so both directions show up together.
+const selectedEdgeUnit = computed(() => {
+  if (!selectedEdgeId.value) return null
+  return mergeBidirectionalMapOverviewEdges(snapshot.value?.edges || [])
+    .find((item) => item.edge.id === selectedEdgeId.value || item.reverse?.id === selectedEdgeId.value) || null
+})
+const selectedEdgeForward = computed(() => selectedEdgeUnit.value?.edge || selectedEdge.value)
+const selectedEdgeReverse = computed(() => selectedEdgeUnit.value?.reverse || null)
+const selectedEdgeDirections = computed(() => {
+  const forward = selectedEdgeForward.value
+  if (!forward) return []
+  const reverse = selectedEdgeReverse.value
+  return reverse ? [forward, reverse] : [forward]
+})
+const selectedEdgeAllSources = computed(() => selectedEdgeDirections.value.flatMap((edge) => edge.sources))
 const selectedThumbnailFailure = computed(() => selectedNode.value
   ? thumbnailFailures.value.get(selectedNode.value.id) || ''
   : '')
@@ -1827,35 +1843,40 @@ async function cancelOverviewExport(): Promise<void> {
               {{ t('mapOverview.openEditorUnavailable') }}
             </p>
           </template>
-          <template v-else-if="selectedEdge">
+          <template v-else-if="selectedEdgeForward">
             <header>
-              <strong>{{ mapLabel(selectedEdge.sourceMapId) }}</strong>
-              <span>→ {{ mapLabel(selectedEdge.targetMapId) }} · ×{{ selectedEdge.count }}</span>
+              <strong>{{ mapLabel(selectedEdgeForward.sourceMapId) }}</strong>
+              <span>{{ selectedEdgeReverse ? '⇄' : '→' }} {{ mapLabel(selectedEdgeForward.targetMapId) }} · ×{{ selectedEdgeForward.count + (selectedEdgeReverse?.count || 0) }}</span>
               <span
                 class="condition-badge"
-                :data-condition="classifyMapOverviewEdgeConditions(selectedEdge.sources)"
-              >{{ conditionCategoryLabel(classifyMapOverviewEdgeConditions(selectedEdge.sources)) }}</span>
+                :data-condition="classifyMapOverviewEdgeConditions(selectedEdgeAllSources)"
+              >{{ conditionCategoryLabel(classifyMapOverviewEdgeConditions(selectedEdgeAllSources)) }}</span>
             </header>
             <div class="source-list">
-              <article v-for="source in selectedEdge.sources" :key="`${source.eventId}-${source.pageIndex}-${source.commandIndex}`">
-                <strong>{{ source.eventName }} · #{{ source.eventId }}</strong>
-                <span>{{ t('mapOverview.source.location', { page: source.pageIndex + 1, command: source.commandIndex + 1 }) }}</span>
-                <span>{{ source.sourceX }}, {{ source.sourceY }} → {{ source.targetX }}, {{ source.targetY }}</span>
-                <div v-if="sourceConditionPresentation(source.pageConditions).badges.length" class="condition-badges">
+              <template v-for="direction in selectedEdgeDirections" :key="direction.id">
+                <p v-if="selectedEdgeReverse" class="direction-caption">
+                  {{ mapLabel(direction.sourceMapId) }} → {{ mapLabel(direction.targetMapId) }} · ×{{ direction.count }}
+                </p>
+                <article v-for="source in direction.sources" :key="`${direction.id}-${source.eventId}-${source.pageIndex}-${source.commandIndex}`">
+                  <strong>{{ source.eventName }} · #{{ source.eventId }}</strong>
+                  <span>{{ t('mapOverview.source.location', { page: source.pageIndex + 1, command: source.commandIndex + 1 }) }}</span>
+                  <span>{{ source.sourceX }}, {{ source.sourceY }} → {{ source.targetX }}, {{ source.targetY }}</span>
+                  <div v-if="sourceConditionPresentation(source.pageConditions).badges.length" class="condition-badges">
+                    <span
+                      v-for="badge in sourceConditionPresentation(source.pageConditions).badges"
+                      :key="badge"
+                      class="condition-badge"
+                      :data-condition="sourceConditionPresentation(source.pageConditions).category"
+                    >{{ badge }}</span>
+                  </div>
                   <span
-                    v-for="badge in sourceConditionPresentation(source.pageConditions).badges"
-                    :key="badge"
-                    class="condition-badge"
-                    :data-condition="sourceConditionPresentation(source.pageConditions).category"
-                  >{{ badge }}</span>
-                </div>
-                <span
-                  v-for="detail in sourceConditionPresentation(source.pageConditions).details"
-                  :key="detail"
-                  class="condition-detail"
-                >{{ detail }}</span>
-                <button type="button" @click="openEvent(source.sourceMapId, source.eventId)">{{ t('mapOverview.openEvent') }}</button>
-              </article>
+                    v-for="detail in sourceConditionPresentation(source.pageConditions).details"
+                    :key="detail"
+                    class="condition-detail"
+                  >{{ detail }}</span>
+                  <button type="button" @click="openEvent(source.sourceMapId, source.eventId)">{{ t('mapOverview.openEvent') }}</button>
+                </article>
+              </template>
             </div>
           </template>
         </aside>
@@ -2022,6 +2043,7 @@ async function cancelOverviewExport(): Promise<void> {
 .inspector-primary:disabled,.thumbnail-issue button:disabled,.overview-context-menu button:disabled { opacity:.48; cursor:not-allowed; }
 .open-editor-reason { margin:6px 0 0; color:var(--app-ink-muted); font-size:11px; text-align:center; }
 .source-list article { display:grid; gap:5px; padding:10px; border:1px solid var(--app-border); border-radius:8px; background:var(--app-bg-elevated); }
+.source-list .direction-caption { margin:2px 0 0; color:var(--app-ink); font-size:12px; font-weight:650; }
 .condition-badges { display:flex; flex-wrap:wrap; gap:5px; }
 .condition-badge { width:max-content; display:inline-flex; align-items:center; min-height:19px; padding:0 6px; border:1px solid currentColor; border-radius:999px; color:#6f706a; font-size:10px; font-weight:600; line-height:1; }
 .condition-badge[data-condition="switch"] { color:#3f6fb5; }

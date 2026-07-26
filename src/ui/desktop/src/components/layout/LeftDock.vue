@@ -128,7 +128,22 @@
               :class="{ missing: !data.mapFileExists }"
               @dblclick.stop="toggleMapTreeNodeExpansion(node)"
             >
-              <span class="node-label">{{ node.label }}</span>
+              <span class="node-main">
+                <span class="node-label">{{ node.label }}</span>
+                <button
+                  type="button"
+                  class="node-fav"
+                  :class="{ active: mapFavorites.has(data.id) }"
+                  :title="mapFavorites.has(data.id) ? t('editor.left.unfavoriteMap') : t('editor.left.favoriteMap')"
+                  :aria-label="mapFavorites.has(data.id) ? t('editor.left.unfavoriteMap') : t('editor.left.favoriteMap')"
+                  :aria-pressed="mapFavorites.has(data.id)"
+                  @click.stop="toggleMapFavorite(data.id)"
+                  @dblclick.stop
+                >
+                  <StarFilled v-if="mapFavorites.has(data.id)" />
+                  <Star v-else />
+                </button>
+              </span>
               <span v-if="!data.mapFileExists" class="node-missing" :title="t('editor.left.mapFileMissing')">{{ t('editor.left.missing') }}</span>
               <span v-if="stagedMapIds.has(data.id)" class="node-staged" :title="t('editor.left.stagedTitle')">{{ t('editor.left.staged') }}</span>
             </span>
@@ -162,9 +177,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { AllowDropType, NodeDropType, RenderContentContext } from 'element-plus';
-import { Search } from '@element-plus/icons-vue';
+import { Search, Star, StarFilled } from '@element-plus/icons-vue';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, PaletteTab, PaletteTabId, TreeNode } from '../editor/editorTypes';
 import type { MapPreviewEventState } from '@contract/types';
+import { projectAssets } from '../../api/client';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
 import { useProjectStore } from '../../stores/project';
@@ -239,6 +255,7 @@ const widthResizing = ref(false);
 const dockViewportLimit = ref(LEFT_DOCK_MAX_WIDTH);
 const workbenchHeight = ref(0);
 const mapTreeSearchQuery = ref('');
+const mapFavorites = ref(new Set<number>());
 let resizeStart: { y: number; height: number } | null = null;
 let widthResizeStart: { x: number; width: number } | null = null;
 let workbenchResizeObserver: ResizeObserver | null = null;
@@ -294,6 +311,42 @@ function toggleTiles() {
 function handleTreeNodeClick(data: TreeNode, _node: unknown, _component: unknown, event?: MouseEvent): void {
   if (!isPrimaryMapTreeNodeClick(event?.detail)) return;
   emit('node-click', data);
+}
+
+// Map favorites live in the shared asset annotation store (target id `map:<id>`).
+async function refreshMapFavorites(): Promise<void> {
+  const project = projectStore.currentProject;
+  if (!project) {
+    mapFavorites.value = new Set();
+    return;
+  }
+  try {
+    const annotations = await projectAssets.listAnnotations(project);
+    const next = new Set<number>();
+    for (const annotation of annotations) {
+      if (!annotation.favorite || !annotation.targetId.startsWith('map:')) continue;
+      const mapId = Number(annotation.targetId.slice('map:'.length));
+      if (Number.isInteger(mapId)) next.add(mapId);
+    }
+    mapFavorites.value = next;
+  } catch {
+    // Favorites are decorative; keep the tree usable when the store is unavailable.
+  }
+}
+
+async function toggleMapFavorite(mapId: number): Promise<void> {
+  const project = projectStore.currentProject;
+  if (!project) return;
+  const favorite = !mapFavorites.value.has(mapId);
+  const next = new Set(mapFavorites.value);
+  if (favorite) next.add(mapId);
+  else next.delete(mapId);
+  mapFavorites.value = next;
+  try {
+    await projectAssets.setAnnotation({ targetId: `map:${mapId}`, kind: 'map', favorite }, project);
+  } catch {
+    await refreshMapFavorites();
+  }
 }
 
 type ElementTreeNode = RenderContentContext['node'];
@@ -376,6 +429,7 @@ watch(() => [props.selectedEventId, props.currentEvents, props.eventSearchQuery]
 
 watch(() => projectStore.currentProject, () => {
   mapTreeSearchQuery.value = '';
+  void refreshMapFavorites();
 });
 
 function updateDockViewportLimit(): void {
@@ -489,6 +543,7 @@ onMounted(() => {
     workspaceStore.markLeftDockWidthPersisted(Math.min(DEFAULT_LEFT_DOCK_WIDTH, dockViewportLimit.value));
   }
   if (paletteRef.value) emit('palette-ready', paletteRef.value);
+  void refreshMapFavorites();
   void nextTick(() => {
     applyInitialPaletteHeightIfNeeded();
   });
@@ -584,6 +639,12 @@ onMounted(() => {
 .preview-mode .tree-node{cursor:pointer}
 .tree-node:active { cursor:grabbing; }
 .node-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color:var(--app-ink); font-size: 12px; line-height:1; }
+.node-main { min-width:0; display:flex; align-items:center; gap:2px; }
+.node-fav { flex:0 0 auto; display:none; width:16px; height:16px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--app-ink-muted); cursor:pointer; align-items:center; justify-content:center; }
+.node-fav :deep(svg), .node-fav svg { width:12px; height:12px; }
+.node-fav:hover { background:var(--app-bg-sunken); color:var(--app-ink); }
+.node-fav.active { display:flex; color:#f5a623; }
+.tree-node:hover .node-fav, .tree-node:focus-within .node-fav { display:flex; }
 .node-staged { flex:0 0 auto; padding: 1px 4px; border-radius: 4px; background: var(--app-warn-soft); color: var(--app-warn); font-size: 9px; font-weight:600; }
 .tree-node.missing .node-label { color: var(--app-danger); text-decoration: line-through; text-decoration-thickness: 1px; }
 .node-missing { flex:0 0 auto; padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--app-danger) 11%, transparent); color: var(--app-danger); font-size: 9px; font-weight:650; }

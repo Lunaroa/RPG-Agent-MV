@@ -59,8 +59,9 @@ describe('Map Overview layout view policy', () => {
   })
 
   it('keeps coordinate-level display edges separate from layout topology', () => {
-    expect(svgSource).toMatch(/next\.edges\.flatMap\(edge =>/)
-    expect(svgSource).toMatch(/mapOverviewSvgEdgeGeometry\(edge, geometryNodeMap\.value/)
+    expect(svgSource).toMatch(/mergedEdges\.value\.flatMap\(item =>/)
+    expect(svgSource).toMatch(/mergeBidirectionalMapOverviewEdges\(snapshot\.value\?\.edges \|\| \[\]\)/)
+    expect(svgSource).toMatch(/mapOverviewSvgEdgeGeometry\(item\.edge, geometryNodeMap\.value/)
     expect(svgSource).toMatch(/tooltipEdge\.sourceX/)
     expect(svgSource).toMatch(/tooltipEdge\.targetX/)
   })
@@ -143,9 +144,9 @@ describe('Map Overview layout view policy', () => {
   })
 
   it('uses shared transfer-condition visuals and readable inspector details', () => {
-    expect(svgSource).toMatch(/classifyMapOverviewEdgeConditions\(edge\.sources\)/)
+    expect(svgSource).toMatch(/classifyMapOverviewEdgeConditions\(/)
     expect(svgSource).toMatch(/mapOverviewTransferConditionVisual\(category\)/)
-    expect(svgSource).toMatch(/:aria-label="edgeAriaLabel\(item\.edge\)"/)
+    expect(svgSource).toMatch(/:aria-label="edgeAriaLabel\(item\.edge, item\.reverse\)"/)
     expect(source).toMatch(/summarizeMapOverviewTransferConditions\(pageConditions\)/)
     expect(source).not.toMatch(/JSON\.stringify\(source\.pageConditions\)/)
   })

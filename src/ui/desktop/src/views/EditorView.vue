@@ -158,10 +158,12 @@
           :mode="mode"
           :catalog="editorCatalog"
           :current-map-id="selectedMapId"
+          :current-map-note="currentMapNote"
           @select="onPlacementSelect"
           @place="onPlacementPlace"
           @reject="onPlacementReject"
           @back-chat="goBackToChatPlacement"
+          @save-note="saveMapNote"
         />
         <PreviewConsolePanel
           v-if="mode === 'preview'"
@@ -404,6 +406,7 @@ const eventSearchHits = ref<EditorEventSearchHit[]>([]);
 const eventSearchLoading = ref(false);
 const eventSearchTruncated = ref(false);
 const currentMapName = ref('');
+const currentMapNote = ref('');
 const currentTileSize = ref(48);
 const currentEngine = ref<RpgMakerEngine>('rpg-maker-mv');
 const currentTilesetMode = ref<number | null>(null);
@@ -1869,6 +1872,7 @@ async function loadMap(
       previewStateCatalog.value = payload.previewState || { switches: [], variables: [] };
       syncPreviewOverridesFromWorkspace();
       currentMapName.value = String(payload.info.name || '');
+      currentMapNote.value = String(nextMap.note || '');
       tilesetFlags.value = Array.isArray(payload.tileset?.flags) ? payload.tileset.flags : [];
       setPropertiesFromMap(currentMapName.value, nextMap, Number(payload.info.parentId || 0));
       stagingDirty.value = isStagingDirty(payload.staging);
@@ -2110,6 +2114,20 @@ async function saveProperties() {
     }
   } catch (error) { ElMessage.error(t('editor.map.savePropertiesFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
+}
+
+async function saveMapNote(mapId: number, note: string) {
+  try {
+    await mapsApi.updateProperties(mapId, { note }, projectStore.currentProject);
+    if (selectedMapId.value === mapId) {
+      if (currentMap) currentMap.note = note;
+      currentMapNote.value = note;
+    }
+    await refreshStagingStatus();
+    setStatus(t('editor.map.propertiesSavedStaged'), 'saved');
+  } catch (error) {
+    ElMessage.error(t('editor.map.savePropertiesFailed', { message: (error as Error).message }));
+  }
 }
 
 async function applyStaging() {
@@ -2502,6 +2520,7 @@ function clearCurrentMap() {
   selectedMapId.value = null;
   currentMap = null;
   currentMapName.value = '';
+  currentMapNote.value = '';
   currentTileSize.value = 48;
   currentTilesetImages.value = [];
   currentParallaxImage.value = null;

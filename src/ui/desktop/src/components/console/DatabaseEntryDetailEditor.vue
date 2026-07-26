@@ -98,7 +98,11 @@ import {
   localizeDatabaseLabel,
   localizeDatabaseOptions,
 } from '../../utils/rmmvDatabaseLocalization';
-import { DATABASE_RM_LAYOUTS, RM_LAYOUT_HIDDEN_PATHS } from '../../utils/databaseRmLayouts';
+import {
+  DATABASE_RM_LAYOUTS,
+  RM_LAYOUT_HIDDEN_PATHS,
+  type RmPanelLayout,
+} from '../../utils/databaseRmLayouts';
 import { tilesetSlotCount, tilesetSlotLabel } from '../../utils/tilesetSlots';
 
 type DbRecord = Record<string, unknown>;
@@ -203,7 +207,7 @@ const visibleSchemaFields = computed(() => (
 // structure. Flat groups collapse to a single field-grid row so the template keeps
 // exactly one copy of the field branch chain.
 interface RmRenderRow { key: string; fields: RmmvDatabaseFieldSchema[] }
-interface RmRenderPanel { key: string; titleKey: string; rows: RmRenderRow[] }
+interface RmRenderPanel { key: string; titleKey: RmPanelLayout['titleKey']; rows: RmRenderRow[] }
 interface RmRenderColumn { key: 'main' | 'side' | 'flat'; panels: RmRenderPanel[] }
 const hasRmLayout = computed(() => Boolean(DATABASE_RM_LAYOUTS[props.group || '']));
 const rmRenderColumns = computed<RmRenderColumn[]>(() => {

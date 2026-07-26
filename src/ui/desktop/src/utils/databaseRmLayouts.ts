@@ -1,3 +1,5 @@
+import type { MessageKey } from '../i18n/messages';
+
 // Stock RM database layouts: entry-type groups mirror the reference editor's
 // group boxes (main column) plus the traits/damage/effects + note side column.
 // Rows list field paths rendered side by side; missing paths are skipped so
@@ -5,7 +7,7 @@
 
 export interface RmPanelLayout {
   /** i18n key for the group box title; '' lets a complex field keep its own title. */
-  titleKey: string;
+  titleKey: MessageKey | '';
   column: 'main' | 'side';
   rows: string[][];
 }

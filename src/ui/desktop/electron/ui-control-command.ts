@@ -6,6 +6,7 @@ export type UiControlCommandType =
   | 'open-event-editor'
   | 'state'
   | 'click'
+  | 'dblclick'
   | 'pointer'
   | 'input'
   | 'key'
@@ -54,6 +55,7 @@ const ALLOWED_COMMAND_TYPES = new Set<UiControlCommandType>([
   'open-event-editor',
   'state',
   'click',
+  'dblclick',
   'pointer',
   'input',
   'key',
@@ -97,7 +99,7 @@ export function normalizeUiControlCommand(raw: unknown): UiControlCommand {
     command.eventId = normalizePositiveInteger(value.eventId, 'eventId');
   }
 
-  if (['click', 'pointer', 'input', 'read', 'wait'].includes(type)) {
+  if (['click', 'dblclick', 'pointer', 'input', 'read', 'wait'].includes(type)) {
     normalizeElementTarget(value, command);
   }
 
@@ -127,7 +129,7 @@ export function normalizeUiControlCommand(raw: unknown): UiControlCommand {
     command.modifiers = normalizeModifiers(value.modifiers);
   }
 
-  if (type === 'click' && value.modifiers !== undefined) {
+  if ((type === 'click' || type === 'dblclick') && value.modifiers !== undefined) {
     command.modifiers = normalizeModifiers(value.modifiers);
   }
 

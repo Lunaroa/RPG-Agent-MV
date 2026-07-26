@@ -15,6 +15,17 @@ describe('UI control click command modifiers', () => {
     assert.deepEqual(command.modifiers, ['ctrl']);
   });
 
+  test('normalizes double-click targets and modifiers', () => {
+    const command = normalizeUiControlCommand({
+      type: 'dblclick',
+      testId: 'database-entry-demo',
+      modifiers: ['shift'],
+    });
+    assert.equal(command.type, 'dblclick');
+    assert.equal(command.testId, 'database-entry-demo');
+    assert.deepEqual(command.modifiers, ['shift']);
+  });
+
   test('rejects an unsupported click modifier instead of dropping it', () => {
     assert.throws(
       () => normalizeUiControlCommand({

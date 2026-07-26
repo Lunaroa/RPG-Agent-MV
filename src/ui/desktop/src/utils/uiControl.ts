@@ -7,6 +7,7 @@ export type UiControlCommandType =
   | 'open-event-editor'
   | 'state'
   | 'click'
+  | 'dblclick'
   | 'pointer'
   | 'input'
   | 'key'
@@ -126,7 +127,7 @@ export function collectUiControlPageState(): Record<string, unknown> {
 }
 
 export async function runDomUiControlCommand(command: UiControlCommand, language: ProductLanguage): Promise<Record<string, unknown>> {
-  if (command.type === 'click') return clickUiElement(command, language);
+  if (command.type === 'click' || command.type === 'dblclick') return clickUiElement(command, language);
   if (command.type === 'pointer') return pointerUiElement(command, language);
   if (command.type === 'input') return inputUiElement(command, language);
   if (command.type === 'key') return keyUiElement(command, language);
@@ -192,7 +193,7 @@ function clickUiElement(command: UiControlCommand, language: ProductLanguage): R
   focusElement(element);
   const modifierTokens = new Set((command.modifiers || []).map(normalizeModifierToken).filter(Boolean));
   const modifiers = Array.from(modifierTokens).sort();
-  element.dispatchEvent(new MouseEvent('click', {
+  const eventInit: MouseEventInit = {
     bubbles: true,
     cancelable: true,
     ctrlKey: modifierTokens.has('ctrl'),
@@ -200,8 +201,13 @@ function clickUiElement(command: UiControlCommand, language: ProductLanguage): R
     shiftKey: modifierTokens.has('shift'),
     altKey: modifierTokens.has('alt'),
     button: 0,
-  }));
-  return { action: 'click', target: elementState(element), modifiers };
+  };
+  element.dispatchEvent(new MouseEvent('click', eventInit));
+  if (command.type === 'dblclick') {
+    element.dispatchEvent(new MouseEvent('click', eventInit));
+    element.dispatchEvent(new MouseEvent('dblclick', { ...eventInit, detail: 2 }));
+  }
+  return { action: command.type, target: elementState(element), modifiers };
 }
 
 function inputUiElement(command: UiControlCommand, language: ProductLanguage): Record<string, unknown> {

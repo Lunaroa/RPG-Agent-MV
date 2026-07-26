@@ -3612,7 +3612,7 @@ watch(gridHost, (el, previous) => {
               && previewPanelEntry.thumbnailUrl
               && !failedThumbnails.has(previewPanelEntry.id)"
             class="project-assets-preview-panel-img"
-            :src="previewPanelEntry.thumbnailUrl"
+            :src="previewPanelEntry.url || previewPanelEntry.thumbnailUrl"
             :alt="previewPanelEntry.name"
             draggable="false"
           />
@@ -3907,8 +3907,9 @@ watch(gridHost, (el, previous) => {
 }
 
 .project-assets-preview-panel-img {
+  /* Natural size, shrink-to-fit only: never upscale small art, never overflow the pane. */
   max-width: 100%;
-  max-height: min(360px, 60vh);
+  max-height: calc(100vh - 260px);
   object-fit: contain;
   border-radius: var(--app-radius-sm);
   background: var(--app-bg-sunken);

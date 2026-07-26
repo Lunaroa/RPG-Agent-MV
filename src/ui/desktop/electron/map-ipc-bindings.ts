@@ -40,6 +40,7 @@ export interface ProjectIpcOptions {
   ) => Promise<{ confirmed: boolean; suppressFutureWarnings: boolean }>;
   trashProjectAsset: (absolutePath: string) => Promise<void>;
   revealProjectAsset?: (absolutePath: string) => void;
+  openProjectAsset?: (absolutePath: string) => Promise<void>;
 }
 
 export const MAP_IPC_CHANNELS = [
@@ -109,6 +110,7 @@ export const MAP_IPC_CHANNELS = [
   'projectAssets:listAnnotations',
   'projectAssets:setAnnotation',
   'projectAssets:revealInFolder',
+  'projectAssets:openFile',
   'projectManagement:overview',
   'projectManagement:getEntry',
   'projectManagement:updateEntry',
@@ -530,8 +532,7 @@ export function registerMapIpcHandlers(
     desktop.assetAnnotations.listAssetAnnotations(project(value)));
   handle('projectAssets:setAnnotation', (_event, input: Record<string, unknown>, value?: string) =>
     desktop.assetAnnotations.setAssetAnnotation(project(value), input));
-  handle('projectAssets:revealInFolder', (_event, request: Record<string, unknown>, value?: string) => {
-    if (!options.revealProjectAsset) throw new Error('Revealing assets in the file manager is not available.');
+  const resolveProjectAssetPath = (request: Record<string, unknown>, value?: string): string => {
     const resolved = path.resolve(project(value));
     const relativePath = String((request as { relativePath?: unknown })?.relativePath || '');
     if (!relativePath) throw new Error('A project-relative asset path is required.');
@@ -541,7 +542,18 @@ export function registerMapIpcHandlers(
       ? absolute.toLowerCase().startsWith(rootWithSep.toLowerCase())
       : absolute.startsWith(rootWithSep);
     if (!inside) throw new Error('The requested asset path is outside the project.');
+    return absolute;
+  };
+  handle('projectAssets:revealInFolder', (_event, request: Record<string, unknown>, value?: string) => {
+    if (!options.revealProjectAsset) throw new Error('Revealing assets in the file manager is not available.');
+    const absolute = resolveProjectAssetPath(request, value);
     options.revealProjectAsset(absolute);
+    return { ok: true as const };
+  });
+  handle('projectAssets:openFile', async (_event, request: Record<string, unknown>, value?: string) => {
+    if (!options.openProjectAsset) throw new Error('Opening assets with the system application is not available.');
+    const absolute = resolveProjectAssetPath(request, value);
+    await options.openProjectAsset(absolute);
     return { ok: true as const };
   });
   handle('projectAssets:selectImportFile', async (event, category: string) => {

@@ -241,7 +241,14 @@ html.theme-dark .composer-textarea::placeholder {
 }
 
 /* Read-failure toast lists one affected file per line. */
+.el-notification.read-issue-notification {
+  width: min(520px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+}
+
 .el-notification.read-issue-notification .el-notification__content {
+  max-height: min(360px, calc(100vh - 160px));
+  overflow-y: auto;
   white-space: pre-line;
   overflow-wrap: anywhere;
   text-align: left;

@@ -230,6 +230,7 @@ contextBridge.exposeInMainWorld('api', {
     listAnnotations: (project?: string) => ipcRenderer.invoke('projectAssets:listAnnotations', project),
     setAnnotation: (input: unknown, project?: string) => ipcRenderer.invoke('projectAssets:setAnnotation', input, project),
     revealInFolder: (request: unknown, project?: string) => ipcRenderer.invoke('projectAssets:revealInFolder', request, project),
+    openFile: (request: unknown, project?: string) => ipcRenderer.invoke('projectAssets:openFile', request, project),
     startWatcher: (project?: string) => ipcRenderer.invoke('projectAssets:startWatcher', project),
     stopWatcher: () => ipcRenderer.invoke('projectAssets:stopWatcher'),
     onChange: (callback: () => void) => {

@@ -324,6 +324,54 @@ describe('projectAssets IPC', () => {
     );
     assert.equal(revealed.length, 1);
   });
+
+  test('opens an in-project asset with the system application', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const opened: string[] = [];
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({}), ipcOptions({
+      openProjectAsset: async (absolutePath: string) => {
+        opened.push(absolutePath);
+      },
+    }));
+
+    const result = await handlers.get('projectAssets:openFile')!(
+      {},
+      { relativePath: 'www/audio/bgm/Sample.ogg' },
+      PROJECT_PATH,
+    );
+
+    assert.deepEqual(result, { ok: true });
+    assert.deepEqual(opened, [path.join(PROJECT_PATH, 'www', 'audio', 'bgm', 'Sample.ogg')]);
+  });
+
+  test('rejects empty and escaping paths before system open', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    let calls = 0;
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({}), ipcOptions({
+      openProjectAsset: async () => {
+        calls += 1;
+      },
+    }));
+    const open = handlers.get('projectAssets:openFile')!;
+
+    await assert.rejects(open({}, { relativePath: '' }, PROJECT_PATH), /path is required/);
+    await assert.rejects(open({}, { relativePath: '../outside.txt' }, PROJECT_PATH), /outside the project/);
+    assert.equal(calls, 0);
+  });
+
+  test('forwards system association failures from openFile', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({}), ipcOptions({
+      openProjectAsset: async () => {
+        throw new Error('No application is associated with the specified file.');
+      },
+    }));
+
+    await assert.rejects(
+      handlers.get('projectAssets:openFile')!({}, { relativePath: 'www/fonts/Sample.ttf' }, PROJECT_PATH),
+      /No application is associated/,
+    );
+  });
 });
 
 function encryptionWarning() {

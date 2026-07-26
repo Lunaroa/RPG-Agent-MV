@@ -178,34 +178,36 @@ describe('project asset browser service', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
-  test('MZ pictures tree nests disk subfolders; browse lists one level with logical path names', async () => {
+  test('MZ pictures tree and listing preserve arbitrary safe folder depth', async () => {
     const root = tempRoot();
     const project = path.join(root, 'projects', 'demo_mod');
     try {
       await bootstrapDatabase(root, { importLegacyJson: false });
       writeMzProjectSkeleton(project);
-      fs.mkdirSync(path.join(project, 'img', 'pictures', 'ui'), { recursive: true });
+      fs.mkdirSync(path.join(project, 'img', 'pictures', 'busts', 'aks'), { recursive: true });
       fs.writeFileSync(path.join(project, 'img', 'pictures', 'Root.png'), 'root');
-      fs.writeFileSync(path.join(project, 'img', 'pictures', 'ui', 'Portrait.png'), 'nested');
+      fs.writeFileSync(path.join(project, 'img', 'pictures', 'busts', 'aks', 'Portrait.png'), 'nested');
 
       const tree = buildProjectAssetCategoryTree(root, project);
       const pictures = tree.nodes.find((node) => node.id === 'img')?.children?.find((child) => child.id === 'pictures');
       assert.ok(pictures);
       assert.equal(pictures!.entryCount, 2);
-      const ui = pictures!.children?.find((child) => child.id === 'pictures/ui');
-      assert.ok(ui);
-      assert.equal(ui!.directory, 'img/pictures/ui');
-      assert.equal(ui!.entryCount, 1);
+      const busts = pictures!.children?.find((child) => child.id === 'pictures/busts');
+      const aks = busts?.children?.find((child) => child.id === 'pictures/busts/aks');
+      assert.ok(busts);
+      assert.ok(aks);
+      assert.equal(aks!.directory, 'img/pictures/busts/aks');
+      assert.equal(aks!.entryCount, 1);
 
       const rootListing = listProjectAssetCategory(root, project, 'pictures');
       assert.deepEqual(rootListing.entries.map((entry) => entry.name).sort(), ['Root']);
 
-      const nestedListing = listProjectAssetCategory(root, project, 'pictures/ui');
-      assert.equal(nestedListing.categoryId, 'pictures/ui');
-      assert.equal(nestedListing.directory, 'img/pictures/ui');
+      const nestedListing = listProjectAssetCategory(root, project, 'pictures/busts/aks');
+      assert.equal(nestedListing.categoryId, 'pictures/busts/aks');
+      assert.equal(nestedListing.directory, 'img/pictures/busts/aks');
       assert.equal(nestedListing.entries.length, 1);
-      assert.equal(nestedListing.entries[0]!.name, 'ui/Portrait');
-      assert.equal(nestedListing.entries[0]!.id, 'pictures:ui/Portrait');
+      assert.equal(nestedListing.entries[0]!.name, 'busts/aks/Portrait');
+      assert.equal(nestedListing.entries[0]!.id, 'pictures:busts/aks/Portrait');
     } finally {
       closeDatabase();
       fs.rmSync(root, { recursive: true, force: true });

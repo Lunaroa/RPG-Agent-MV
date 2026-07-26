@@ -1230,6 +1230,10 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     revealProjectAsset: (absolutePath: string) => {
       shell.showItemInFolder(absolutePath);
     },
+    openProjectAsset: async (absolutePath: string) => {
+      const error = await shell.openPath(absolutePath);
+      if (error) throw new Error(error);
+    },
     selectProjectDirectory: async (event: Electron.IpcMainInvokeEvent) => {
       const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
       const result = await dialog.showOpenDialog(parent, {

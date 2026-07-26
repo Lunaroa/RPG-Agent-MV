@@ -6,8 +6,9 @@
           <strong id="image-asset-picker-title" class="editor-modal-title">{{ title }}</strong>
           <button type="button" class="editor-modal-close" :aria-label="t('imgPicker.closeTitle')" :title="t('eventcmd.close')" @click="close">×</button>
         </header>
-        <div class="picker-grid">
-          <aside>
+        <div class="picker-grid" :class="{ 'picker-grid--single': mode === 'icon' }">
+          <!-- Icon indexes always reference the fixed IconSet sheet; no asset switching. -->
+          <aside v-if="mode !== 'icon'">
             <input v-model="search" :placeholder="t('imgPicker.searchPlaceholder')" />
             <button type="button" :class="{ active: !name }" @click="selectAsset('')">{{ t('imgPicker.none') }}</button>
             <button
@@ -314,6 +315,7 @@ defineExpose({ open });
 .sub-overlay { z-index: v-bind(subDialogZ); }
 .sub-dialog { width: min(820px, 86vw); max-height: min(82vh, 700px); }
 .picker-grid { min-height: 0; display: grid; grid-template-columns: 190px 1fr; flex: 1; }
+.picker-grid--single { grid-template-columns: 1fr; }
 aside { overflow: auto; border-right: 1px solid var(--app-border); }
 aside input { box-sizing: border-box; width: calc(100% - 16px); margin: 8px; padding: 5px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-bg); color: var(--app-ink); }
 aside button { width: 100%; min-height: 28px; padding: 0 8px; border: 0; border-bottom: 1px solid var(--app-border); background: var(--app-bg); color: var(--app-ink); cursor: pointer; text-align: left; }

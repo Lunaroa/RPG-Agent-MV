@@ -46,10 +46,12 @@ import type {
 import {
   clipboard,
   maps as mapsApi,
+  playtest,
   projectAssets,
   type ManagedAssetDetail,
 } from '../api/client'
 import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'
+import AssetFontPreview from '../components/AssetFontPreview.vue'
 import AssetGridFontThumb from '../components/AssetGridFontThumb.vue'
 import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
 import ProjectAssetsAudioBar, { type AssetsAudioBarItem } from '../components/ProjectAssetsAudioBar.vue'
@@ -101,12 +103,17 @@ import {
 } from '../utils/projectAssetSorting'
 import {
   clampProjectAssetThumbSize,
+  clampProjectAssetPreviewPanelWidth,
+  loadProjectAssetPreviewPanelWidth,
   loadProjectAssetSortPreference,
   loadProjectAssetThumbSize,
   loadProjectAssetViewMode,
   saveProjectAssetSortPreference,
   saveProjectAssetThumbSize,
+  saveProjectAssetPreviewPanelWidth,
   saveProjectAssetViewMode,
+  PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MIN,
+  PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MAX,
   type ProjectAssetViewMode,
 } from '../config/projectAssetsViewPrefs'
 import {
@@ -134,8 +141,8 @@ import {
   type ProjectAssetSelectionState,
 } from '../utils/projectAssetSelection'
 import { selectProjectAssetThumbnailBucket } from '../utils/projectAssetThumbnailBucket'
-import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging'
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
+import { buildProjectAssetEffectPreview } from '../utils/projectAssetEffectPreview'
 
 /**
  * Explorer-like grid metrics. cellWidth hugs the square thumbnail;
@@ -223,27 +230,25 @@ function favoriteListingNodes(ids: ReadonlySet<string>): string[] {
   return [...nodes]
 }
 
-function refreshFavorites(): void {
+async function refreshFavorites(): Promise<void> {
   const project = projectStore.currentProject
   if (!project) return
-  void (async () => {
-    try {
-      await migrateLegacyFavoritesToDb(project)
-      const list = await projectAssets.listAnnotations(project)
-      if (projectStore.currentProject !== project) return
-      const index = new Map<string, ProjectAssetAnnotation>()
-      const favoriteIds = new Set<string>()
-      for (const item of list) {
-        index.set(item.targetId, item)
-        // Map favorites share the table but belong to the editor map tree, not this view.
-        if (item.favorite && item.kind !== 'map') favoriteIds.add(item.targetId)
-      }
-      annotationIndex.value = index
-      favorites.value = favoriteIds
-    } catch {
-      /* annotations unavailable; favorites stay as-is */
+  try {
+    await migrateLegacyFavoritesToDb(project)
+    const list = await projectAssets.listAnnotations(project)
+    if (projectStore.currentProject !== project) return
+    const index = new Map<string, ProjectAssetAnnotation>()
+    const favoriteIds = new Set<string>()
+    for (const item of list) {
+      index.set(item.targetId, item)
+      // Map favorites share the table but belong to the editor map tree, not this view.
+      if (item.favorite && item.kind !== 'map') favoriteIds.add(item.targetId)
     }
-  })()
+    annotationIndex.value = index
+    favorites.value = favoriteIds
+  } catch {
+    /* annotations unavailable; favorites stay as-is */
+  }
 }
 
 /** One-time migration: legacy localStorage favorites → rmmv.db asset_annotations. */
@@ -276,7 +281,7 @@ function toggleFavorite(id: string): void {
     kind: id.includes(':') ? 'asset' : 'folder',
     favorite: makeFavorite,
   }, project).catch(() => {
-    refreshFavorites() // revert the optimistic flip on failure
+    void refreshFavorites() // revert the optimistic flip on failure
   })
 }
 
@@ -343,6 +348,7 @@ async function editNoteForTarget(
       next.delete(targetId)
     }
     annotationIndex.value = next
+    ElMessage.success(t('projectAssets.noteSaved'))
   } catch (error) {
     showMutationToast(formatError(error))
   }
@@ -358,26 +364,83 @@ const selectedFolderId = ref<string | null>(null)
 const mutationBusy = ref(false)
 const mutationError = ref('')
 
-const stagingDirty = ref(false)
-const stagingBusy = ref(false)
-const stagingError = ref('')
-
 const previewVisible = ref(false)
 const previewIndex = ref(0)
 const imageViewerVisible = ref(false)
 const imageViewerUrls = ref<string[]>([])
 const imageViewerIndex = ref(0)
 
-const previewPanelVisible = ref(false)
+const pageHost = ref<HTMLElement | null>(null)
+const previewPanelRequested = ref(false)
+const previewPanelWidth = ref(loadProjectAssetPreviewPanelWidth())
 
 const previewPanelEntry = computed(() => {
-  if (!previewPanelVisible.value) return null
   const entries = selectedFileEntries.value
   if (entries.length !== 1) return null
   return entries[0]!
 })
+const previewPanelMedia = computed(() => {
+  const entry = previewPanelEntry.value
+  return projectAssetMediaKind(entry ? entryCategoryId(entry) : selectedCategoryId.value)
+})
+const previewToggleAvailable = computed(() => previewPanelMedia.value !== 'audio')
+const previewPanelVisible = computed(() =>
+  previewPanelRequested.value && previewToggleAvailable.value)
+const previewPanelNote = computed(() =>
+  previewPanelEntry.value ? entryNote(previewPanelEntry.value.id).trim() : '')
+
+let previewResizeStartX = 0
+let previewResizeStartWidth = 0
+
+function effectivePreviewPanelMaxWidth(): number {
+  const available = (pageHost.value?.clientWidth || window.innerWidth) - 230 - 32 - 40 - 360
+  return Math.max(
+    PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MIN,
+    Math.min(PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MAX, available),
+  )
+}
+
+function setPreviewPanelWidth(width: number, persist = false): void {
+  previewPanelWidth.value = Math.min(
+    effectivePreviewPanelMaxWidth(),
+    clampProjectAssetPreviewPanelWidth(width),
+  )
+  if (persist) saveProjectAssetPreviewPanelWidth(previewPanelWidth.value)
+}
+
+function onPreviewResizeStart(event: PointerEvent): void {
+  previewResizeStartX = event.clientX
+  previewResizeStartWidth = previewPanelWidth.value
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+
+function onPreviewResizeMove(event: PointerEvent): void {
+  const target = event.currentTarget as HTMLElement
+  if (!target.hasPointerCapture(event.pointerId)) return
+  setPreviewPanelWidth(previewResizeStartWidth - (event.clientX - previewResizeStartX))
+}
+
+function onPreviewResizeEnd(event: PointerEvent): void {
+  const target = event.currentTarget as HTMLElement
+  if (!target.hasPointerCapture(event.pointerId)) return
+  target.releasePointerCapture(event.pointerId)
+  saveProjectAssetPreviewPanelWidth(previewPanelWidth.value)
+}
+
+function onPreviewResizeKeydown(event: KeyboardEvent): void {
+  const step = event.shiftKey ? 48 : 16
+  let width: number | null = null
+  if (event.key === 'ArrowLeft') width = previewPanelWidth.value + step
+  if (event.key === 'ArrowRight') width = previewPanelWidth.value - step
+  if (event.key === 'Home') width = PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MIN
+  if (event.key === 'End') width = effectivePreviewPanelMaxWidth()
+  if (width === null) return
+  event.preventDefault()
+  setPreviewPanelWidth(width, true)
+}
 
 const contextMenu = ref<{ x: number; y: number } | null>(null)
+const contextMenuRef = ref<HTMLElement | null>(null)
 const contextMenuKind = ref<'cell' | 'background' | 'folder' | 'tree'>('cell')
 const contextFolderId = ref<string | null>(null)
 
@@ -613,6 +676,10 @@ const selectedAudioEntries = computed(() =>
 function playSelectedAudio(): void {
   const entries = selectedAudioEntries.value
   closeContextMenu()
+  playAudioEntries(entries)
+}
+
+function playAudioEntries(entries: ProjectAssetBrowseEntry[]): void {
   if (entries.length === 0) return
   audioPlaylist.value = entries.map((entry) => ({
     id: entry.id,
@@ -637,7 +704,8 @@ watch(thumbSize, (size) => {
   saveProjectAssetThumbSize(size)
 })
 
-watch(selectedCategoryId, (categoryId) => {
+watch(selectedCategoryId, (categoryId, previousCategoryId) => {
+  if (categoryId !== previousCategoryId) closeAudioPlayer()
   if (!categoryId) return
   viewMode.value = loadProjectAssetViewMode(projectAssetMediaKind(categoryId))
 })
@@ -828,8 +896,7 @@ const canImport = computed(() =>
     && selectedCategoryId.value
     && !isGroupSelection.value
     && !isFavoritesSelection.value
-    && !mutationBusy.value
-    && !stagingBusy.value,
+    && !mutationBusy.value,
   ),
 )
 
@@ -1039,8 +1106,30 @@ function buildEffectPreviewInfo(entry: ProjectAssetBrowseEntry): NonNullable<Ass
     })
   }
   return {
-    notice: t('projectAssets.cannotPreviewEffects'),
+    notice: t('projectAssets.effectPreviewDescription'),
     rows,
+    action: {
+      label: t('projectAssets.previewEffect'),
+      run: () => startEffectPreview(entry),
+    },
+  }
+}
+
+async function startEffectPreview(entry: ProjectAssetBrowseEntry): Promise<void> {
+  const project = projectStore.currentProject
+  if (!project || entry.encrypted) return
+  try {
+    const result = await playtest.start({
+      mode: 'particle_preview',
+      project,
+      animationPreview: buildProjectAssetEffectPreview(entry.name),
+    })
+    if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
+      throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'))
+    }
+    ElMessage.success(t('projectAssets.effectPreviewStarted'))
+  } catch (error) {
+    ElMessage.error(t('projectAssets.effectPreviewFailed', { message: formatError(error) }))
   }
 }
 
@@ -1087,34 +1176,15 @@ function syncTreeCurrentKey(categoryId: string) {
 
 async function refreshStagingStatus() {
   if (!projectStore.currentProject) {
-    stagingDirty.value = false
     workbenchUi.sbStagingDirty = false
-    stagingError.value = ''
     return
   }
   try {
     const status = await mapsApi.projectStaging(projectStore.currentProject)
-    stagingDirty.value = Boolean((status as { staged?: boolean }).staged)
-    workbenchUi.sbStagingDirty = stagingDirty.value
-    stagingError.value = ''
-  } catch (error) {
-    // Keep last known dirty flag; surface that the indicator cannot be trusted.
-    stagingError.value = t('projectAssets.stagingStatusFailed', { message: formatError(error) })
-  }
-}
-
-async function confirmAgentOperations(summary: ProjectStagingSummary): Promise<boolean> {
-  const operations = summary.operations.length
-  if (operations <= 0) return true
-  try {
-    await ElMessageBox.confirm(
-      t('story.applyAgentOperationsConfirm', { operations }),
-      t('story.applyAgentOperationsTitle'),
-      { type: 'warning' },
-    )
-    return true
+    workbenchUi.sbStagingDirty = Boolean((status as { staged?: boolean }).staged)
   } catch {
-    return false
+    // Best-effort only: asset mutations are immediate and a stale global indicator
+    // must not be presented as asset staging.
   }
 }
 
@@ -1319,6 +1389,11 @@ function onCellDoubleClick(item: GridItem) {
     selectCategory(item.id)
     return
   }
+  if (isAudioEntry(item.entry)) {
+    applyFileSelection(selectProjectAssetExclusive(item.entry.id))
+    playAudioEntries([item.entry])
+    return
+  }
   openPreviewForEntry(item.entry.id)
 }
 
@@ -1377,6 +1452,20 @@ function onThumbnailError(entryId: string) {
   failedThumbnails.value = new Set([...failedThumbnails.value, entryId])
 }
 
+function positionContextMenu(x: number, y: number): void {
+  contextMenu.value = { x, y }
+  void nextTick(() => {
+    const menu = contextMenuRef.value
+    if (!menu || !contextMenu.value) return
+    const margin = 8
+    const rect = menu.getBoundingClientRect()
+    contextMenu.value = {
+      x: Math.max(margin, Math.min(x, window.innerWidth - rect.width - margin)),
+      y: Math.max(margin, Math.min(y, window.innerHeight - rect.height - margin)),
+    }
+  })
+}
+
 function openContextMenu(event: MouseEvent, entryId: string) {
   event.preventDefault()
   if (!selectedIdSet.value.has(entryId)) {
@@ -1386,7 +1475,7 @@ function openContextMenu(event: MouseEvent, entryId: string) {
   }
   contextFolderId.value = null
   contextMenuKind.value = 'cell'
-  contextMenu.value = { x: event.clientX, y: event.clientY }
+  positionContextMenu(event.clientX, event.clientY)
 }
 
 function openFolderContextMenu(event: MouseEvent, folderId: string) {
@@ -1396,7 +1485,7 @@ function openFolderContextMenu(event: MouseEvent, folderId: string) {
   selectedFolderId.value = folderId
   contextFolderId.value = folderId
   contextMenuKind.value = 'folder'
-  contextMenu.value = { x: event.clientX, y: event.clientY }
+  positionContextMenu(event.clientX, event.clientY)
 }
 
 function openTreeContextMenu(event: MouseEvent, nodeId: string) {
@@ -1406,7 +1495,7 @@ function openTreeContextMenu(event: MouseEvent, nodeId: string) {
   if (nodeId === FAVORITES_NODE_ID) return
   contextFolderId.value = nodeId
   contextMenuKind.value = 'tree'
-  contextMenu.value = { x: event.clientX, y: event.clientY }
+  positionContextMenu(event.clientX, event.clientY)
 }
 
 function onGridBackgroundContextMenu(event: MouseEvent) {
@@ -1422,7 +1511,7 @@ function onGridBackgroundContextMenu(event: MouseEvent) {
     void probeSystemClipboardFiles()
   }
   contextMenuKind.value = 'background'
-  contextMenu.value = { x: event.clientX, y: event.clientY }
+  positionContextMenu(event.clientX, event.clientY)
 }
 
 async function showReferencesForSelection() {
@@ -1454,6 +1543,19 @@ async function revealInFolderForSelection() {
     await projectAssets.revealInFolder({ relativePath }, projectStore.currentProject)
   } catch (error) {
     showMutationToast(formatError(error))
+  }
+}
+
+async function openSelectionWithSystemApplication() {
+  const entry = singleSelectedFile.value
+  closeContextMenu()
+  if (!entry || !projectStore.currentProject) return
+  const relativePath = entryPrimaryPath(entry)
+  if (!relativePath) return
+  try {
+    await projectAssets.openFile({ relativePath }, projectStore.currentProject)
+  } catch {
+    showMutationToast(t('projectAssets.openFailed'))
   }
 }
 
@@ -1617,6 +1719,11 @@ function closeContextMenu() {
   contextMenu.value = null
 }
 
+function onWindowResize(): void {
+  closeContextMenu()
+  if (previewPanelVisible.value) setPreviewPanelWidth(previewPanelWidth.value)
+}
+
 function copySelection() {
   const targets = selectedFileEntries.value
     .map((entry) => entryMutationTarget(entry))
@@ -1711,6 +1818,7 @@ async function pasteFolderClipboard() {
     folderClipboard.value = null // a cut clipboard is single-use
     ElMessage.success(t('projectAssets.folderMoved'))
     await loadTree(result.nextNodeId)
+    await refreshFavorites()
   } catch (error) {
     showMutationToast(formatError(error))
   } finally {
@@ -1891,6 +1999,7 @@ async function pasteMoveClipboard(targets: ProjectAssetDeleteTargetInput[]) {
     if (anyMoved) assetClipboard.value = null // a cut clipboard is single-use
     const firstMoved = batch.results.find((item) => item.status === 'moved' && item.detail)
     await afterMutation(firstMoved?.detail || null)
+    if (anyMoved) await refreshFavorites()
   } catch (error) {
     mutationError.value = formatError(error)
   } finally {
@@ -1908,8 +2017,9 @@ function entryMutationTarget(entry: ProjectAssetBrowseEntry) {
   if (!relativePath) return null
   return {
     scope: 'project' as const,
-    // Favorites mixes categories; each entry id carries its own base category.
-    category: isFavoritesSelection.value ? entryCategoryId(entry) : selectedCategoryId.value,
+    // Nested picture folders are locations, not asset categories. The entry id
+    // always carries the backend's base category (for example "pictures").
+    category: entryCategoryId(entry),
     relativePath,
   }
 }
@@ -2150,7 +2260,11 @@ function onGridKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && !ctrl && !event.shiftKey && !event.altKey) {
     if (singleSelectedFile.value) {
       event.preventDefault()
-      openPreviewForEntry(singleSelectedFile.value.id)
+      if (isAudioEntry(singleSelectedFile.value)) {
+        playAudioEntries([singleSelectedFile.value])
+      } else {
+        openPreviewForEntry(singleSelectedFile.value.id)
+      }
     }
   }
 }
@@ -2551,6 +2665,8 @@ async function renameSelectedEntry() {
     }
     const renamed = await projectAssets.rename(target, nextName, projectStore.currentProject)
     await afterMutation(renamed)
+    await refreshFavorites()
+    ElMessage.success(t('projectAssets.renameSucceeded'))
   } catch (error) {
     showMutationToast(formatError(error))
   } finally {
@@ -2585,6 +2701,8 @@ async function renameContextFolder() {
   try {
     const result = await projectAssets.renameSubfolder(folderId, nextName, projectStore.currentProject)
     await loadTree(result.nextNodeId)
+    await refreshFavorites()
+    ElMessage.success(t('projectAssets.folderRenameSucceeded'))
   } catch (error) {
     showMutationToast(formatError(error))
   } finally {
@@ -2632,6 +2750,7 @@ async function deleteContextFolder() {
       ? folderId.slice(0, folderId.lastIndexOf('/'))
       : 'pictures'
     await loadTree(parentId === 'pictures' || parentId.startsWith('pictures') ? parentId : 'pictures')
+    ElMessage.success(t('projectAssets.folderDeleteSucceeded'))
   } catch (error) {
     showMutationToast(formatError(error))
   } finally {
@@ -2799,11 +2918,6 @@ async function deleteSelectedEntries() {
 
 async function afterMutation(detail: ManagedAssetDetail | null) {
   await refreshStagingStatus()
-  if (stagingError.value) {
-    // Mutation reached staging; if status cannot be read, do not imply a clean project.
-    stagingDirty.value = true
-    workbenchUi.sbStagingDirty = true
-  }
   await loadTree(selectedCategoryId.value)
   if (detail?.name) {
     const match = categoryEntries.value.find((entry) => entry.name === detail.name)
@@ -2845,44 +2959,6 @@ async function refreshSilently() {
   await refreshStagingStatus()
 }
 
-async function applyProjectStaging() {
-  if (!projectStore.currentProject || stagingBusy.value) return
-  stagingBusy.value = true
-  mutationError.value = ''
-  try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject)
-    const summary = parseProjectStagingSummary(status)
-    if (!await confirmAgentOperations(summary)) return
-    const result = await mapsApi.applyProjectStaging(
-      projectStore.currentProject,
-      summary.operations.map((operation) => operation.operationId),
-    ) as { canceled?: boolean }
-    if (result?.canceled) return
-    await refreshStagingStatus()
-    await loadTree(selectedCategoryId.value)
-    ElMessage.success(t('editor.toolbar.applyStaging'))
-  } catch (error) {
-    mutationError.value = formatError(error)
-  } finally {
-    stagingBusy.value = false
-  }
-}
-
-async function discardProjectStaging() {
-  if (!projectStore.currentProject || stagingBusy.value) return
-  stagingBusy.value = true
-  mutationError.value = ''
-  try {
-    await mapsApi.discardProjectStaging(projectStore.currentProject)
-    await refreshStagingStatus()
-    await loadTree(selectedCategoryId.value)
-  } catch (error) {
-    mutationError.value = formatError(error)
-  } finally {
-    stagingBusy.value = false
-  }
-}
-
 watch(
   () => projectStore.currentProject,
   (newProject) => {
@@ -2892,7 +2968,7 @@ watch(
     folderClipboard.value = null
     void loadTree()
     void refreshStagingStatus()
-    refreshFavorites()
+    void refreshFavorites()
     // Restart file-system watcher for the new project
     void projectAssets.stopWatcher()
     if (newProject) {
@@ -2938,15 +3014,17 @@ watch([showDetailsView, detailsShowsDuration, gridItems, gridHost], () => {
 
 onMounted(() => {
   measureGrid()
+  setPreviewPanelWidth(previewPanelWidth.value)
   if (typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => measureGrid())
     if (gridHost.value) resizeObserver.observe(gridHost.value)
   }
   window.addEventListener('dragover', preventWindowFileNavigation)
   window.addEventListener('drop', preventWindowFileNavigation)
+  window.addEventListener('resize', onWindowResize)
   void loadTree()
   void refreshStagingStatus()
-  refreshFavorites()
+  void refreshFavorites()
 
   // Start file-system watcher for auto-refresh
   if (projectStore.currentProject) {
@@ -2960,6 +3038,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('dragover', preventWindowFileNavigation)
   window.removeEventListener('drop', preventWindowFileNavigation)
+  window.removeEventListener('resize', onWindowResize)
   clearMetaTooltip()
   audioDurationObserver?.disconnect()
   audioDurationObserver = null
@@ -2981,8 +3060,12 @@ watch(gridHost, (el, previous) => {
 
 <template>
   <div
+    ref="pageHost"
     class="project-assets-page"
     :class="{ 'has-preview-panel': previewPanelVisible }"
+    :style="previewPanelVisible
+      ? { '--project-assets-preview-width': `${previewPanelWidth}px` }
+      : undefined"
     data-ui-id="project-assets-page"
   >
     <aside class="project-assets-tree-pane" :aria-label="t('projectAssets.treeAria')">
@@ -3019,6 +3102,11 @@ watch(gridHost, (el, previous) => {
             @drop="onTreeNodeDrop($event, data.id)"
           >
             <span>{{ data.label }}</span>
+            <el-icon
+              v-if="isFavorite(data.id)"
+              class="project-assets-tree-favorite"
+              :aria-label="t('projectAssets.favorite')"
+            ><StarFilled /></el-icon>
             <small>{{ data.entryCount }}</small>
           </span>
         </template>
@@ -3177,7 +3265,7 @@ watch(gridHost, (el, previous) => {
             type="button"
             class="project-assets-tool-btn"
             data-ui-id="project-assets-refresh"
-            :disabled="!projectStore.currentProject || mutationBusy || stagingBusy"
+            :disabled="!projectStore.currentProject || mutationBusy"
             :title="t('projectAssets.refresh')"
             @click="refreshAll"
           >
@@ -3185,11 +3273,13 @@ watch(gridHost, (el, previous) => {
             <span>{{ t('projectAssets.refresh') }}</span>
           </button>
           <button
+            v-if="previewToggleAvailable"
             type="button"
             class="project-assets-tool-btn"
             :class="{ 'is-active': previewPanelVisible }"
             :title="t('projectAssets.togglePreviewPanel')"
-            @click="previewPanelVisible = !previewPanelVisible"
+            :aria-pressed="previewPanelVisible"
+            @click="previewPanelRequested = !previewPanelRequested"
           >
             <el-icon><View /></el-icon>
             <span>{{ t('projectAssets.previewPanel') }}</span>
@@ -3197,43 +3287,6 @@ watch(gridHost, (el, previous) => {
         </div>
       </header>
 
-      <div
-        v-if="stagingDirty"
-        class="project-assets-staging"
-        data-ui-id="project-assets-staging-bar"
-      >
-        <span>{{ t('projectAssets.stagingPending') }}</span>
-        <div class="project-assets-staging-actions">
-          <button
-            type="button"
-            class="project-assets-tool-btn"
-            data-ui-id="project-assets-discard"
-            :disabled="stagingBusy || mutationBusy"
-            @click="discardProjectStaging"
-          >
-            {{ t('editor.toolbar.discard') }}
-          </button>
-          <button
-            type="button"
-            class="project-assets-tool-btn project-assets-apply"
-            data-ui-id="project-assets-apply"
-            :disabled="stagingBusy || mutationBusy"
-            @click="applyProjectStaging"
-          >
-            {{ t('editor.toolbar.applyStaging') }}
-          </button>
-        </div>
-      </div>
-
-      <div
-        v-if="stagingError"
-        class="project-assets-error"
-        role="alert"
-        data-ui-id="project-assets-staging-error"
-      >
-        <span>{{ stagingError }}</span>
-        <button type="button" class="project-assets-error-dismiss" @click="stagingError = ''">{{ t('projectAssets.errorDismiss') }}</button>
-      </div>
       <div
         v-if="mutationError"
         class="project-assets-error"
@@ -3537,26 +3590,62 @@ watch(gridHost, (el, previous) => {
       v-if="previewPanelVisible"
       class="project-assets-preview-panel"
     >
-      <template v-if="previewPanelEntry">
-        <img
-          v-if="previewPanelEntry.thumbnailUrl
-            && !failedThumbnails.has(previewPanelEntry.id)
-            && isProjectAssetImageCategory(entryCategoryId(previewPanelEntry))"
-          class="project-assets-preview-panel-img"
-          :src="previewPanelEntry.thumbnailUrl"
-          :alt="previewPanelEntry.name"
-          draggable="false"
-        />
-        <div v-else class="project-assets-preview-panel-empty">
-          {{ entryTypeLabel(previewPanelEntry) }}
+      <div
+        class="project-assets-preview-resizer"
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        :aria-label="t('projectAssets.previewPanelResize')"
+        :aria-valuemin="PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MIN"
+        :aria-valuemax="effectivePreviewPanelMaxWidth()"
+        :aria-valuenow="previewPanelWidth"
+        @pointerdown="onPreviewResizeStart"
+        @pointermove="onPreviewResizeMove"
+        @pointerup="onPreviewResizeEnd"
+        @pointercancel="onPreviewResizeEnd"
+        @keydown="onPreviewResizeKeydown"
+      />
+      <div class="project-assets-preview-panel-scroll">
+        <div v-if="previewPanelEntry" class="project-assets-preview-panel-content">
+          <img
+            v-if="previewPanelMedia === 'image'
+              && previewPanelEntry.thumbnailUrl
+              && !failedThumbnails.has(previewPanelEntry.id)"
+            class="project-assets-preview-panel-img"
+            :src="previewPanelEntry.thumbnailUrl"
+            :alt="previewPanelEntry.name"
+            draggable="false"
+          />
+          <video
+            v-else-if="previewPanelMedia === 'movie' && previewPanelEntry.url"
+            class="project-assets-preview-panel-video"
+            :src="previewPanelEntry.url"
+            controls
+            preload="metadata"
+          />
+          <AssetFontPreview
+            v-else-if="previewPanelMedia === 'font' && previewPanelEntry.url"
+            class="project-assets-preview-panel-font"
+            :src="previewPanelEntry.url"
+            :display-name="previewPanelEntry.name"
+            :sample-text="t('projectAssets.fontPreviewSample')"
+            :load-failed-label="t('projectAssets.fontPreviewFailed')"
+          />
+          <div v-else class="project-assets-preview-panel-type">
+            {{ entryTypeLabel(previewPanelEntry) }}
+          </div>
+          <p class="project-assets-preview-panel-name">{{ previewPanelEntry.name }}</p>
+          <p class="project-assets-preview-panel-size">
+            {{ formatSize(previewPanelEntry.bytes) }}
+          </p>
+          <p
+            v-if="previewPanelNote"
+            class="project-assets-preview-panel-note"
+          >{{ previewPanelNote }}</p>
         </div>
-        <p class="project-assets-preview-panel-name">{{ previewPanelEntry.name }}</p>
-        <p class="project-assets-preview-panel-name" style="color: var(--app-ink-muted)">
-          {{ formatSize(previewPanelEntry.bytes) }}
-        </p>
-      </template>
-      <div v-else class="project-assets-preview-panel-empty">
-        {{ t('projectAssets.previewPanelEmpty') }}
+        <div v-else class="project-assets-preview-panel-empty">
+          {{ t('projectAssets.previewPanelEmpty') }}
+        </div>
       </div>
     </aside>
 
@@ -3598,6 +3687,7 @@ watch(gridHost, (el, previous) => {
         @contextmenu.prevent="closeContextMenu"
       >
         <ul
+          ref="contextMenuRef"
           class="ctx-menu"
           :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }"
         >
@@ -3608,9 +3698,14 @@ watch(gridHost, (el, previous) => {
               @click="playSelectedAudio"
             >{{ t('projectAssets.play') }}</li>
             <li
-              v-if="singleSelectedFile"
+              v-if="singleSelectedFile && !isAudioEntry(singleSelectedFile)"
               @click="previewFromContextMenu"
             >{{ t('projectAssets.preview') }}</li>
+            <li
+              v-if="singleSelectedFile"
+              data-ui-id="project-assets-ctx-open"
+              @click="openSelectionWithSystemApplication"
+            >{{ t('projectAssets.open') }}</li>
             <li
               v-if="singleSelectedFile"
               @click="showReferencesForSelection"
@@ -3726,43 +3821,123 @@ watch(gridHost, (el, previous) => {
 }
 
 .project-assets-page.has-preview-panel {
-  grid-template-columns: 230px minmax(0, 1fr) 300px;
+  grid-template-columns: 230px minmax(360px, 1fr) var(--project-assets-preview-width, 400px);
 }
 
 .project-assets-preview-panel {
+  position: relative;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: auto;
-  padding: 12px;
+  overflow: visible;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-elevated);
 }
 
+.project-assets-preview-resizer {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  bottom: 8px;
+  left: -10px;
+  width: 18px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.project-assets-preview-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.project-assets-preview-resizer:hover::after,
+.project-assets-preview-resizer:focus-visible::after {
+  background: var(--app-accent);
+}
+
+.project-assets-preview-resizer:focus-visible {
+  outline: none;
+}
+
+.project-assets-preview-panel-scroll {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.project-assets-preview-panel-content {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-assets-preview-panel-name {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--app-ink);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.project-assets-preview-panel-size {
+  margin: 4px 0 0;
+  color: var(--app-ink-muted);
+  font-size: 12px;
+}
+
+.project-assets-preview-panel-note {
+  width: 100%;
+  max-height: 180px;
+  margin: 12px 0 0;
+  overflow-y: auto;
+  color: var(--app-ink-soft);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.project-assets-preview-panel-img {
+  max-width: 100%;
+  max-height: min(360px, 60vh);
+  object-fit: contain;
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-sunken);
+}
+
+.project-assets-preview-panel-video {
+  width: 100%;
+  max-height: min(360px, 60vh);
+  border-radius: var(--app-radius-sm);
+  background: #000;
+}
+
+.project-assets-preview-panel-font {
+  width: 100%;
+  margin: 0;
+}
+
+.project-assets-preview-panel-type,
 .project-assets-preview-panel-empty {
   display: grid;
+  min-height: 120px;
   place-items: center;
-  flex: 1;
   color: var(--app-ink-muted);
   font-size: 12px;
   text-align: center;
 }
 
-.project-assets-preview-panel-name {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--app-ink);
-  text-align: center;
-  word-break: break-all;
-}
-
-.project-assets-preview-panel-img {
-  max-width: 100%;
-  max-height: 240px;
-  object-fit: contain;
-  border-radius: var(--app-radius-sm);
-  background: var(--app-bg-sunken);
+.project-assets-preview-panel-empty {
+  height: 100%;
 }
 
 .project-assets-tree-pane {
@@ -3818,6 +3993,12 @@ watch(gridHost, (el, previous) => {
   margin-left: auto;
   color: var(--app-ink-muted);
   font-size: 10px;
+}
+
+.project-assets-tree-favorite {
+  flex: none;
+  color: var(--el-color-warning);
+  font-size: 12px;
 }
 
 .project-assets-main {
@@ -3889,6 +4070,12 @@ watch(gridHost, (el, previous) => {
   background: var(--app-bg-sunken);
 }
 
+.project-assets-tool-btn.is-active {
+  border-color: color-mix(in srgb, var(--app-accent) 55%, var(--app-border));
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+
 .project-assets-tool-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -3897,30 +4084,6 @@ watch(gridHost, (el, previous) => {
 .project-assets-tool-btn :deep(svg) {
   width: 14px;
   height: 14px;
-}
-
-.project-assets-apply {
-  border-color: color-mix(in srgb, var(--app-accent) 40%, var(--app-border));
-  color: var(--app-accent);
-}
-
-.project-assets-staging {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 36px;
-  padding: 6px 10px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-sm);
-  background: var(--app-bg);
-  color: var(--app-ink-muted);
-  font-size: 12px;
-}
-
-.project-assets-staging-actions {
-  display: flex;
-  gap: 8px;
 }
 
 .project-assets-error {

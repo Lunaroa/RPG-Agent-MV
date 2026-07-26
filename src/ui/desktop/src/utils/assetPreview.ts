@@ -14,6 +14,10 @@ export interface AssetPreviewItem {
   info?: {
     notice: string;
     rows: Array<{ label: string; value: string }>;
+    action?: {
+      label: string;
+      run: () => void | Promise<void>;
+    };
   };
 }
 

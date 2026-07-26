@@ -13,6 +13,9 @@ export const PROJECT_ASSETS_VIEW_PREFS_PREFIX = 'rpg-agent-project-assets';
 export const PROJECT_ASSET_THUMB_SIZE_MIN = 48;
 export const PROJECT_ASSET_THUMB_SIZE_MAX = 512;
 export const PROJECT_ASSET_THUMB_SIZE_DEFAULT = 72;
+export const PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MIN = 300;
+export const PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MAX = 640;
+export const PROJECT_ASSET_PREVIEW_PANEL_WIDTH_DEFAULT = 400;
 
 export type ProjectAssetViewMode = 'icons' | 'list' | 'details';
 export const PROJECT_ASSET_VIEW_MODES: readonly ProjectAssetViewMode[] = ['icons', 'list', 'details'];
@@ -38,6 +41,15 @@ export function clampProjectAssetThumbSize(value: unknown): number {
   const size = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : NaN;
   if (Number.isNaN(size)) return PROJECT_ASSET_THUMB_SIZE_DEFAULT;
   return Math.min(PROJECT_ASSET_THUMB_SIZE_MAX, Math.max(PROJECT_ASSET_THUMB_SIZE_MIN, size));
+}
+
+export function clampProjectAssetPreviewPanelWidth(value: unknown): number {
+  const width = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : NaN;
+  if (Number.isNaN(width)) return PROJECT_ASSET_PREVIEW_PANEL_WIDTH_DEFAULT;
+  return Math.min(
+    PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MAX,
+    Math.max(PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MIN, width),
+  );
 }
 
 function storageKey(suffix: string): string {
@@ -80,6 +92,27 @@ export function loadProjectAssetThumbSize(): number {
 export function saveProjectAssetThumbSize(size: number): void {
   try {
     localStorage.setItem(storageKey('thumbSize'), String(clampProjectAssetThumbSize(size)));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadProjectAssetPreviewPanelWidth(): number {
+  try {
+    const stored = localStorage.getItem(storageKey('previewPanelWidth'));
+    if (stored !== null) return clampProjectAssetPreviewPanelWidth(Number(stored));
+  } catch {
+    /* ignore */
+  }
+  return PROJECT_ASSET_PREVIEW_PANEL_WIDTH_DEFAULT;
+}
+
+export function saveProjectAssetPreviewPanelWidth(width: number): void {
+  try {
+    localStorage.setItem(
+      storageKey('previewPanelWidth'),
+      String(clampProjectAssetPreviewPanelWidth(width)),
+    );
   } catch {
     /* ignore */
   }

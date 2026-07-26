@@ -206,6 +206,7 @@ declare global {
         listAnnotations(project?: string): Promise<unknown>;
         setAnnotation(input: unknown, project?: string): Promise<unknown>;
         revealInFolder(request: unknown, project?: string): Promise<unknown>;
+        openFile(request: unknown, project?: string): Promise<unknown>;
         startWatcher(project?: string): Promise<{ ok: boolean; project: string | null }>;
         stopWatcher(): Promise<{ ok: boolean }>;
         onChange(callback: () => void): () => void;
@@ -1103,6 +1104,9 @@ export const projectAssets = {
   },
   revealInFolder(request: { relativePath: string }, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.revealInFolder(toPlain(request), project) as Promise<{ ok: boolean }>;
+  },
+  openFile(request: { relativePath: string }, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.openFile(toPlain(request), project) as Promise<{ ok: true }>;
   },
   startWatcher(project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.startWatcher(project) as Promise<{ ok: boolean; project: string | null }>;

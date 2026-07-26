@@ -1,10 +1,23 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import type { AssetPreviewItem } from '../utils/assetPreview';
 
-defineProps<{
+const props = defineProps<{
   displayName: string;
   info: NonNullable<AssetPreviewItem['info']>;
 }>();
+
+const actionBusy = ref(false);
+
+async function runAction(): Promise<void> {
+  if (!props.info.action || actionBusy.value) return;
+  actionBusy.value = true;
+  try {
+    await props.info.action.run();
+  } finally {
+    actionBusy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -16,6 +29,16 @@ defineProps<{
         <dd :title="row.value">{{ row.value }}</dd>
       </div>
     </dl>
+    <button
+      v-if="info.action"
+      type="button"
+      class="effect-info-action"
+      :disabled="actionBusy"
+      :aria-busy="actionBusy"
+      @click="runAction"
+    >
+      {{ info.action.label }}
+    </button>
   </div>
 </template>
 
@@ -63,5 +86,28 @@ defineProps<{
   font: 600 12px / 1.35 var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+.effect-info-action {
+  min-height: 32px;
+  justify-self: start;
+  border: 1px solid var(--app-accent, #c45c26);
+  border-radius: 6px;
+  background: var(--app-accent, #c45c26);
+  color: #fff;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.effect-info-action:hover:not(:disabled) {
+  filter: brightness(.96);
+}
+.effect-info-action:focus-visible {
+  outline: 2px solid var(--app-accent, #c45c26);
+  outline-offset: 2px;
+}
+.effect-info-action:disabled {
+  cursor: wait;
+  opacity: .6;
 }
 </style>

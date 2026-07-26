@@ -2,15 +2,19 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
   clampProjectAssetThumbSize,
+  clampProjectAssetPreviewPanelWidth,
   defaultProjectAssetViewModeForMedia,
   loadProjectAssetSortPreference,
   loadProjectAssetThumbSize,
+  loadProjectAssetPreviewPanelWidth,
   loadProjectAssetViewMode,
   PROJECT_ASSET_SORT_DEFAULT,
   PROJECT_ASSET_THUMB_SIZE_DEFAULT,
+  PROJECT_ASSET_PREVIEW_PANEL_WIDTH_DEFAULT,
   PROJECT_ASSETS_VIEW_PREFS_PREFIX,
   saveProjectAssetSortPreference,
   saveProjectAssetThumbSize,
+  saveProjectAssetPreviewPanelWidth,
   saveProjectAssetViewMode,
 } from './projectAssetsViewPrefs';
 
@@ -75,6 +79,24 @@ describe('projectAssetsViewPrefs thumbSize', () => {
     assert.equal(loadProjectAssetThumbSize(), 512);
     saveProjectAssetThumbSize(120);
     assert.equal(loadProjectAssetThumbSize(), 120);
+  });
+});
+
+describe('projectAssetsViewPrefs previewPanelWidth', () => {
+  test('defaults to 400 and clamps into the 300-640 range', () => {
+    clearPrefs();
+    assert.equal(loadProjectAssetPreviewPanelWidth(), PROJECT_ASSET_PREVIEW_PANEL_WIDTH_DEFAULT);
+    assert.equal(clampProjectAssetPreviewPanelWidth(100), 300);
+    assert.equal(clampProjectAssetPreviewPanelWidth(900), 640);
+    assert.equal(clampProjectAssetPreviewPanelWidth('broken'), 400);
+  });
+
+  test('round-trips a clamped width and rejects corrupted storage', () => {
+    clearPrefs();
+    saveProjectAssetPreviewPanelWidth(512.4);
+    assert.equal(loadProjectAssetPreviewPanelWidth(), 512);
+    localStorage.setItem(`${PROJECT_ASSETS_VIEW_PREFS_PREFIX}.previewPanelWidth`, 'broken');
+    assert.equal(loadProjectAssetPreviewPanelWidth(), PROJECT_ASSET_PREVIEW_PANEL_WIDTH_DEFAULT);
   });
 });
 

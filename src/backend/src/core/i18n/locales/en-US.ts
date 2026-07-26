@@ -10,6 +10,7 @@ const enUS = {
     'runtime.permissionRequired': 'Permission Required',
     'runtime.timeout': 'opencode exceeded {{seconds}} seconds for this run and was stopped automatically.',
     'runtime.emptyOutput': 'opencode finished this run without useful model output: no text, no tool calls, and token usage is 0.',
+    'runtime.rmmvToolsUnavailable': 'The RMMV tool group failed to start, so this run stopped before the Agent modified project files. Start the task again; if it still fails, check the tool runtime. Details: {{detail}}',
     'runtime.permissionFailureUserMessage': [
       'Some file tools were denied by **external_directory** permissions. This usually happens when the agent tries to Read/List the user home folder, global Agent config, or paths outside the repository while running from the game project.',
       'The Agent should only read the **game project** and **`RPG-Agent-MV/`**. Tool instructions start at `RPG-Agent-MV/AGENT_GUIDE.md`; do not read the user home folder, global config, or unauthorized paths outside the product root.',

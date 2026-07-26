@@ -1007,6 +1007,22 @@ export function shouldBlockEmptyOpencodePass(input: {
     && input.outputTokens === 0;
 }
 
+export function hasEnabledRmmvTools(config: Record<string, unknown>): boolean {
+  return Object.entries(asRecord(config.tools))
+    .some(([toolId, enabled]) => toolId.startsWith("rmmv_") && enabled === true);
+}
+
+export function rmmvMcpStatusBlocker(
+  statusData: unknown,
+  productLanguage?: ProductLanguage | null,
+): string | null {
+  const status = asRecord(asRecord(statusData).rmmv);
+  const state = asString(status.status).trim().toLowerCase();
+  if (state === "connected") return null;
+  const detail = asString(status.error).trim() || state || "status missing";
+  return backendText("runtime.rmmvToolsUnavailable", productLanguage, { detail });
+}
+
 function emitTerminalStatus(
   status: OpencodeRunResult["status"],
   blocker: string | null,
@@ -1146,6 +1162,20 @@ export async function runOpencodeSession(
   try {
     onEvent({ type: "status", status: "running", at: startedAt });
     onEvent({ type: "command", command: "opencode serve + session.promptAsync", executable: server.executable, at: startedAt });
+
+    if (hasEnabledRmmvTools(input.config)) {
+      const mcpStatus = await client.mcp.status({
+        query: { directory: input.cwd },
+        signal: controller.signal,
+      });
+      if (mcpStatus.error || !mcpStatus.data) {
+        throw mcpStatus.error || new Error(
+          backendText("runtime.rmmvToolsUnavailable", productLanguage, { detail: "status request failed" }),
+        );
+      }
+      const mcpBlocker = rmmvMcpStatusBlocker(mcpStatus.data, productLanguage);
+      if (mcpBlocker) throw new Error(mcpBlocker);
+    }
 
     if (!opencodeSessionId) {
       const created = await client.session.create({

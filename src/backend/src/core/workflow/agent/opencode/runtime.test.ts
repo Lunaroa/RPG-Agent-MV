@@ -4,10 +4,12 @@ import test from "node:test";
 
 import {
   buildOpencodeServerEnv,
+  hasEnabledRmmvTools,
   isOpencodeRootTurnActivity,
   isOpencodeRootTurnTerminalActivity,
   isOpencodeSessionIdleSnapshot,
   normalizeOpencodeEvent,
+  rmmvMcpStatusBlocker,
   shouldBlockEmptyOpencodePass,
   shouldBlockUnexpectedOpencodeStreamEnd,
   shouldCompleteOpencodeTurn,
@@ -786,4 +788,29 @@ test("empty opencode pass is treated as blocked", () => {
     inputTokens: 0,
     outputTokens: 0,
   }), false);
+});
+
+test("RMMV MCP health gate blocks failed tool groups before the model runs", () => {
+  assert.equal(hasEnabledRmmvTools({
+    tools: {
+      read: true,
+      rmmv_RmmvEvent: true,
+      rmmv_RmmvReadContext: true,
+    },
+  }), true);
+  assert.equal(hasEnabledRmmvTools({ tools: { read: true, rmmv_RmmvEvent: false } }), false);
+  assert.equal(rmmvMcpStatusBlocker({ rmmv: { status: "connected" } }, "zh-CN"), null);
+  assert.match(
+    String(rmmvMcpStatusBlocker({
+      rmmv: {
+        status: "failed",
+        error: "MCP error -32000: Connection closed",
+      },
+    }, "zh-CN")),
+    /RMMV 工具组启动失败.*Connection closed/,
+  );
+  assert.match(
+    String(rmmvMcpStatusBlocker({}, "en-US")),
+    /RMMV tool group failed to start.*status missing/,
+  );
 });

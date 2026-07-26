@@ -5,11 +5,14 @@ import { resolveCliOutRoot, resolveWorkflowRoot } from "../workspace-paths.ts";
 import type { RmmvHandlerInput } from "./rmmv-handler-types.ts";
 
 export class RmmvProjectBindingError extends Error {
+  readonly code: "project-not-bound" | "project-invalid" | "project-binding-mismatch";
+
   constructor(
-    public readonly code: "project-not-bound" | "project-invalid" | "project-binding-mismatch",
+    code: "project-not-bound" | "project-invalid" | "project-binding-mismatch",
     message: string,
   ) {
     super(message);
+    this.code = code;
     this.name = "RmmvProjectBindingError";
   }
 }

@@ -10,6 +10,7 @@ const zhCN = {
     'runtime.permissionRequired': '权限确认',
     'runtime.timeout': 'opencode 本轮运行超过 {{seconds}} 秒，已自动停止。',
     'runtime.emptyOutput': 'opencode 本轮结束但模型没有产生有效输出：没有文本、没有工具调用，token usage 为 0。',
+    'runtime.rmmvToolsUnavailable': 'RMMV 工具组启动失败，本轮已停止，Agent 尚未修改工程文件。请重新发起本轮任务；若仍失败，请检查工具运行环境。详情：{{detail}}',
     'runtime.permissionFailureUserMessage': [
       '部分文件工具因 **external_directory** 权限被拒（常见于在游戏工程 cwd 下尝试 Read 用户主目录、全局 Agent 配置目录或仓库外的路径）。',
       'Agent 应只读：**游戏工程**与 **`RPG-Agent-MV/`**。工具说明从 `RPG-Agent-MV/AGENT_GUIDE.md` 开始，不要读用户主目录、全局配置或产品根之外的未授权路径。',

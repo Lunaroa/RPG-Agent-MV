@@ -319,6 +319,7 @@ export function normalizeWorkspaceSettings(raw: unknown): WorkspaceSettings {
     composer,
     projects: Object.keys(projects).length ? projects : undefined,
     mapOverviewProjects: Object.keys(mapOverviewProjects).length ? mapOverviewProjects : undefined,
+    previewDisabledPlugins: normalizePreviewDisabledPlugins(source.previewDisabledPlugins, false),
   }
 }
 
@@ -416,7 +417,27 @@ export function normalizeWorkspacePatch(raw: unknown): WorkspaceSettings {
     if (Object.keys(mapOverviewProjects).length) patch.mapOverviewProjects = mapOverviewProjects
   }
 
+  if (source.previewDisabledPlugins && typeof source.previewDisabledPlugins === 'object') {
+    // Empty arrays stay in the patch: they clear a project's disabled list on merge.
+    const previewDisabledPlugins = normalizePreviewDisabledPlugins(source.previewDisabledPlugins, true)
+    if (previewDisabledPlugins) patch.previewDisabledPlugins = previewDisabledPlugins
+  }
+
   return patch
+}
+
+function normalizePreviewDisabledPlugins(
+  value: unknown,
+  keepEmpty: boolean,
+): Record<string, string[]> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const result: Record<string, string[]> = {}
+  for (const [projectPath, list] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue
+    const names = [...new Set(list.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map((item) => item.trim()))]
+    if (names.length || keepEmpty) result[projectPath] = names
+  }
+  return Object.keys(result).length ? result : undefined
 }
 
 function normalizeModelsByEngine(
@@ -521,6 +542,13 @@ export function mergeWorkspaceSettings(
   }
   merged.projects = Object.keys(mergedProjects).length ? mergedProjects : undefined
   merged.mapOverviewProjects = Object.keys(mergedMapOverviewProjects).length ? mergedMapOverviewProjects : undefined
+  if (next.previewDisabledPlugins) {
+    // Per-project replace; empty patch arrays clear the entry via the final normalize.
+    merged.previewDisabledPlugins = {
+      ...(base.previewDisabledPlugins || {}),
+      ...next.previewDisabledPlugins,
+    }
+  }
   return normalizeWorkspaceSettings(merged)
 }
 

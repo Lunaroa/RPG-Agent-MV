@@ -24,7 +24,9 @@ test('project read surfaces compile and distinguish loading, partial failure, re
   assert.doesNotMatch(sources.home, /kpi-strip/);
   assert.doesNotMatch(sources.home, /projectItemCount|projectStatsLoading|loadProjectOverview/);
   assert.doesNotMatch(sources.view, /loadProjectOverview|projectManagement\.overview|projectOverviewCoordinator/);
-  assert.match(sources.home, /console\.home\.statsAssets/);
+  // Assets and plugins cards were removed from the console home (still reachable elsewhere).
+  assert.doesNotMatch(sources.home, /console\.home\.statsAssets/);
+  assert.doesNotMatch(sources.home, /console\.home\.statsPlugins/);
   assert.match(sources.home, /console\.home\.statsLogs/);
   assert.match(sources.view, /if \(page === 'assets' && !catalog\.value/);
   assert.match(sources.view, /if \(page === 'logs' && !sessions\.value\.length/);

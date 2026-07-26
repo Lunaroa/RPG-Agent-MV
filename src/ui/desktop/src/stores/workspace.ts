@@ -78,6 +78,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         ...(current.mapOverviewProjects || {}),
         ...(patch.mapOverviewProjects || {}),
       },
+      previewDisabledPlugins: {
+        ...(current.previewDisabledPlugins || {}),
+        ...(patch.previewDisabledPlugins || {}),
+      },
     }
   }
 
@@ -174,6 +178,21 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   function readProjectEditor(projectPath: string): WorkspaceEditorProjectState | null {
     return settings.value.projects?.[projectPath] || null
+  }
+
+  /** Plugins excluded from map preview for a project (plugins.js itself is never modified). */
+  function readPreviewDisabledPlugins(projectPath: string): string[] {
+    return settings.value.previewDisabledPlugins?.[projectPath] || []
+  }
+
+  function setPluginPreviewEnabled(projectPath: string, pluginName: string, enabled: boolean): Promise<void> {
+    const current = new Set(readPreviewDisabledPlugins(projectPath))
+    if (enabled) {
+      current.delete(pluginName)
+    } else {
+      current.add(pluginName)
+    }
+    return patch({ previewDisabledPlugins: { [projectPath]: [...current] } })
   }
 
   function patchMapOverviewPositions(projectPath: string, positions: Record<string, { x: number; y: number }>): void {
@@ -440,6 +459,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     patchComposer,
     patchProjectEditor,
     readProjectEditor,
+    readPreviewDisabledPlugins,
+    setPluginPreviewEnabled,
     patchMapOverviewPositions,
     readMapOverviewPositions,
     patchMapOverviewThumbnailQuality,

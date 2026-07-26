@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onActivated, onDeactivated, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
 import { useProjectStore } from '../stores/project';
 import { useRoute, useRouter } from 'vue-router';
 import {
@@ -471,7 +471,6 @@ const scan = computed(() => overview.value?.scan);
 const commonEvents = computed(() => scan.value?.commonEvents || []);
 const database = computed(() => scan.value?.database || {});
 const readIssues = computed(() => overview.value?.readIssues || []);
-const foundationalReadIssues = computed(() => readIssues.value.filter((issue) => issue.scope === 'project'));
 
 function databaseReadIssue(group: string): ProjectOverviewReadIssue | null {
   return readIssues.value.find((issue) => issue.scope === 'database' && issue.databaseGroup === group) || null;
@@ -480,6 +479,25 @@ function databaseReadIssue(group: string): ProjectOverviewReadIssue | null {
 function formatReadIssue(issue: ProjectOverviewReadIssue): string {
   return `${issue.relativePath} · ${issue.message}`;
 }
+
+/** Floating bottom-right toast for read failures; lists the affected files instead of pinning a top bar. */
+let lastReadIssueSignature = '';
+watch(readIssues, (issues) => {
+  const signature = issues.map((issue) => `${issue.relativePath}:${issue.code}`).join('|');
+  if (!issues.length || signature === lastReadIssueSignature) {
+    if (!issues.length) lastReadIssueSignature = '';
+    return;
+  }
+  lastReadIssueSignature = signature;
+  ElNotification({
+    type: 'error',
+    title: t('story.readIssues', { count: issues.length }),
+    message: issues.map((issue) => formatReadIssue(issue)).join('\n'),
+    duration: 0,
+    position: 'bottom-right',
+    customClass: 'read-issue-notification',
+  });
+});
 
 function databaseReadIssueText(group: string): string {
   const issue = databaseReadIssue(group);
@@ -1138,13 +1156,6 @@ function detailTitle(): string {
         <button type="button" class="secondary-button" @click="loadData()">{{ t('story.retryOverview') }}</button>
       </template>
       <span v-else>{{ t('story.loadingOverview') }}</span>
-    </div>
-    <div v-if="readIssues.length" class="read-issue-summary" :role="foundationalReadIssues.length ? 'alert' : 'status'">
-      <span>{{ t('story.readIssues', { count: readIssues.length }) }}</span>
-      <template v-if="foundationalReadIssues.length">
-        <span v-for="issue in foundationalReadIssues" :key="`${issue.relativePath}:${issue.code}`">{{ formatReadIssue(issue) }}</span>
-        <button type="button" class="secondary-button" @click="loadData()">{{ t('story.retryOverview') }}</button>
-      </template>
     </div>
     <div
       class="console-split pm-split"
@@ -1812,7 +1823,6 @@ function detailTitle(): string {
   text-align: center;
 }
 .detail-error{padding:12px;color:var(--app-danger);font-size:11px}
-.read-issue-summary{display:flex;align-items:center;gap:10px;flex:0 0 auto;margin:0 0 8px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--app-danger) 35%,var(--app-border));border-radius:6px;background:color-mix(in srgb,var(--app-danger) 7%,var(--app-bg));color:var(--app-danger);font-size:11px;overflow-wrap:anywhere}
 .read-issue-detail{display:grid;gap:6px;margin:12px;padding:12px;border:1px solid color-mix(in srgb,var(--app-danger) 35%,var(--app-border));border-radius:6px;background:color-mix(in srgb,var(--app-danger) 7%,var(--app-bg));color:var(--app-danger);font-size:11px;overflow-wrap:anywhere}
 .map-item.error,.sub-category-button.error{color:var(--app-danger)}
 

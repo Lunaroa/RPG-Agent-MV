@@ -117,6 +117,25 @@ const selectedItem = computed<SelectedItem | null>(() => {
 const selectedPlugin = computed(() =>
   selectedItem.value?.kind === 'configured' ? selectedItem.value.plugin : null,
 );
+
+/** Map-preview participation (stored in the app DB; plugins.js is never touched). */
+const previewEnabledForSelected = computed(() => {
+  const plugin = selectedPlugin.value;
+  const project = projectStore.currentProject;
+  if (!plugin || !plugin.name || !project) return true;
+  return !workspaceStore.readPreviewDisabledPlugins(project).includes(plugin.name);
+});
+
+async function togglePluginPreview(enabled: boolean): Promise<void> {
+  const plugin = selectedPlugin.value;
+  const project = projectStore.currentProject;
+  if (!plugin || !plugin.name || !project) return;
+  try {
+    await workspaceStore.setPluginPreviewEnabled(project, plugin.name, enabled);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
 const parameterDialogPlugin = computed(() =>
   parameterDialogPluginIndex.value == null
     ? null
@@ -1265,6 +1284,20 @@ function resizeKeydown(event: KeyboardEvent): void {
               <span>{{ selectedPath }}</span>
             </div>
             <div class="detail-actions">
+              <label
+                v-if="selectedPlugin && selectedPlugin.name"
+                class="preview-switch"
+                :title="t('plugins.previewSwitchHint')"
+                data-ui-id="console-plugin-preview-switch"
+              >
+                <span>{{ t('plugins.previewSwitch') }}</span>
+                <el-switch
+                  :model-value="previewEnabledForSelected"
+                  size="small"
+                  :aria-label="t('plugins.previewSwitchHint')"
+                  @change="togglePluginPreview(Boolean($event))"
+                />
+              </label>
               <button
                 v-if="selectedPlugin && hasConfigurableParameters(selectedPlugin)"
                 type="button"
@@ -1786,6 +1819,14 @@ input:focus-visible {
   flex: 0 0 auto;
   display: flex;
   gap: 14px;
+}
+.detail-actions .preview-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--console-text-muted, #6d6558);
+  cursor: default;
 }
 .detail-actions button,
 .staging-bar button {

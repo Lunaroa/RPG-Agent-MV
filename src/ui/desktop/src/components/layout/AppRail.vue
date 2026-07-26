@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Coin, Folder, Grid, MapLocation, Monitor, Setting } from '@element-plus/icons-vue'
+import { Coin, Connection, Folder, Grid, MapLocation, Monitor, Setting } from '@element-plus/icons-vue'
 import { useI18n } from '../../i18n'
 import { resolveAppRailItem } from '../../utils/projectManagementRoute'
 
@@ -25,6 +25,13 @@ const items = computed(() => [
     uiId: 'nav-project-assets',
   },
   { id: 'map-overview', to: '/map-overview', label: t('app.nav.mapOverview'), icon: MapLocation, uiId: 'nav-map-overview' },
+  {
+    id: 'plugins',
+    to: '/console?page=plugins',
+    label: t('settings.console.plugins'),
+    icon: Connection,
+    uiId: 'nav-plugins',
+  },
   { id: 'console', to: '/console', label: t('app.nav.console'), icon: Monitor, uiId: 'nav-console' },
 ])
 

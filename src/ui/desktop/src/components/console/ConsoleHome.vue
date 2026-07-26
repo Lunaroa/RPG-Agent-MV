@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { type Component } from 'vue';
-import { Collection, Connection, Document, Setting } from '@element-plus/icons-vue';
+import { Document, Setting } from '@element-plus/icons-vue';
 import { useProjectStore } from '../../stores/project';
 import type { ConsolePage } from '../../stores/workbenchUi';
 import StoryProjectIdentityControl from './StoryProjectIdentityControl.vue';
@@ -12,22 +12,6 @@ const projectStore = useProjectStore();
 const { t } = useI18n();
 
 const cards = [
-  {
-    page: 'assets' as const,
-    titleKey: 'settings.console.assets',
-    descKey: 'console.home.assetsDesc',
-    statsKey: 'console.home.statsAssets',
-    icon: Collection,
-    tone: 'purple',
-  },
-  {
-    page: 'plugins' as const,
-    titleKey: 'settings.console.plugins',
-    descKey: 'console.home.pluginsDesc',
-    statsKey: 'console.home.statsPlugins',
-    icon: Connection,
-    tone: 'blue',
-  },
   {
     page: 'logs' as const,
     titleKey: 'settings.console.logs',

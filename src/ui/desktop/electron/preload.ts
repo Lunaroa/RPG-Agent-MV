@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('api', {
     readImage: () => ipcRenderer.invoke('clipboard:readImage'),
     writeFiles: (request: string[] | { project: string; relativePaths: string[] }) =>
       ipcRenderer.invoke('clipboard:writeFiles', request),
+    readFiles: () => ipcRenderer.invoke('clipboard:readFiles'),
   },
 
   files: {
@@ -208,6 +209,8 @@ contextBridge.exposeInMainWorld('api', {
     rename: (target: unknown, nextName: string, project?: string) => ipcRenderer.invoke('projectAssets:rename', target, nextName, project),
     renameSubfolder: (nodeId: string, nextName: string, project?: string) =>
       ipcRenderer.invoke('projectAssets:renameSubfolder', nodeId, nextName, project),
+    moveSubfolder: (nodeId: string, targetNodeId: string, project?: string) =>
+      ipcRenderer.invoke('projectAssets:moveSubfolder', nodeId, targetNodeId, project),
     remove: (targets: unknown, force?: boolean, project?: string) => ipcRenderer.invoke('projectAssets:remove', targets, force, project),
     removeSubfolder: (nodeId: string, force?: boolean, project?: string) =>
       ipcRenderer.invoke('projectAssets:removeSubfolder', nodeId, force, project),
@@ -223,6 +226,9 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('projectAssets:importLocalFiles', request, project),
     selectImportFile: (category: string) => ipcRenderer.invoke('projectAssets:selectImportFile', category),
     copy: (request: unknown, project?: string) => ipcRenderer.invoke('projectAssets:copy', request, project),
+    move: (request: unknown, project?: string) => ipcRenderer.invoke('projectAssets:move', request, project),
+    listAnnotations: (project?: string) => ipcRenderer.invoke('projectAssets:listAnnotations', project),
+    setAnnotation: (input: unknown, project?: string) => ipcRenderer.invoke('projectAssets:setAnnotation', input, project),
     revealInFolder: (request: unknown, project?: string) => ipcRenderer.invoke('projectAssets:revealInFolder', request, project),
     startWatcher: (project?: string) => ipcRenderer.invoke('projectAssets:startWatcher', project),
     stopWatcher: () => ipcRenderer.invoke('projectAssets:stopWatcher'),

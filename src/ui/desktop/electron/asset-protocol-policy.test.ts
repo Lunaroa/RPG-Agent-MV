@@ -4,6 +4,7 @@ import { describe, test } from 'node:test';
 import {
   RMMV_ASSET_SCHEME,
   contentTypeForAssetPath,
+  parseAssetRangeHeader,
   withAssetCanvasCors,
 } from './asset-protocol-policy.ts';
 
@@ -14,6 +15,19 @@ describe('asset protocol policy', () => {
     assert.equal(RMMV_ASSET_SCHEME.privileges.standard, true);
     assert.equal(RMMV_ASSET_SCHEME.privileges.stream, true);
     assert.equal(RMMV_ASSET_SCHEME.privileges.supportFetchAPI, true);
+  });
+
+  test('parses open-ended, bounded, suffix, and invalid byte ranges', () => {
+    assert.deepEqual(parseAssetRangeHeader('bytes=0-', 100), { start: 0, end: 99 });
+    assert.deepEqual(parseAssetRangeHeader('bytes=10-19', 100), { start: 10, end: 19 });
+    assert.deepEqual(parseAssetRangeHeader('bytes=90-500', 100), { start: 90, end: 99 });
+    assert.deepEqual(parseAssetRangeHeader('bytes=-25', 100), { start: 75, end: 99 });
+    assert.equal(parseAssetRangeHeader('bytes=100-', 100), null);
+    assert.equal(parseAssetRangeHeader('bytes=20-10', 100), null);
+    assert.equal(parseAssetRangeHeader('bytes=-', 100), null);
+    assert.equal(parseAssetRangeHeader('items=0-1', 100), null);
+    assert.equal(parseAssetRangeHeader(null, 100), null);
+    assert.equal(parseAssetRangeHeader('bytes=0-', 0), null);
   });
 
   test('maps common media extensions to browser-friendly content types', () => {

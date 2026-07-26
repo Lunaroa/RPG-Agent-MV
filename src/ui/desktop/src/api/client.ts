@@ -35,6 +35,7 @@ declare global {
       clipboard: {
         writeText(text: string): Promise<{ ok: true }>;
         writeFiles(request: string[] | { project: string; relativePaths: string[] }): Promise<{ ok: boolean; reason?: string }>;
+        readFiles(): Promise<{ ok: boolean; reason?: string; paths: string[] }>;
         readImage(): Promise<{
           filename: string;
           mime: string;
@@ -190,6 +191,7 @@ declare global {
         detail(target: unknown, project?: string): Promise<unknown>;
         rename(target: unknown, nextName: string, project?: string): Promise<unknown>;
         renameSubfolder(nodeId: string, nextName: string, project?: string): Promise<unknown>;
+        moveSubfolder(nodeId: string, targetNodeId: string, project?: string): Promise<unknown>;
         remove(targets: unknown, force?: boolean, project?: string): Promise<unknown>;
         removeSubfolder(nodeId: string, force?: boolean, project?: string): Promise<unknown>;
         referenceGraph(project?: string): Promise<unknown>;
@@ -200,6 +202,9 @@ declare global {
         importLocalFiles(request: unknown, project?: string): Promise<unknown>;
         selectImportFile(category: string): Promise<string[] | null>;
         copy(request: unknown, project?: string): Promise<unknown>;
+        move(request: unknown, project?: string): Promise<unknown>;
+        listAnnotations(project?: string): Promise<unknown>;
+        setAnnotation(input: unknown, project?: string): Promise<unknown>;
         revealInFolder(request: unknown, project?: string): Promise<unknown>;
         startWatcher(project?: string): Promise<{ ok: boolean; project: string | null }>;
         stopWatcher(): Promise<{ ok: boolean }>;
@@ -332,6 +337,8 @@ import type {
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput, ProjectAssetDeleteItemResult,
   ProjectAssetCopyBatchInput, ProjectAssetCopyBatchResult,
+  ProjectAssetMoveBatchInput, ProjectAssetMoveBatchResult,
+  ProjectAssetAnnotation, ProjectAssetAnnotationInput,
   ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
@@ -523,6 +530,9 @@ export const clipboard = {
   },
   writeFiles(request: string[] | { project: string; relativePaths: string[] }) {
     return desktopApi().clipboard.writeFiles(request) as Promise<{ ok: boolean; reason?: string }>;
+  },
+  readFiles() {
+    return desktopApi().clipboard.readFiles() as Promise<{ ok: boolean; reason?: string; paths: string[] }>;
   },
 };
 
@@ -1026,6 +1036,13 @@ export const projectAssets = {
       directory: string;
     }>;
   },
+  moveSubfolder(nodeId: string, targetNodeId: string, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.moveSubfolder(nodeId, targetNodeId, project) as Promise<{
+      previousNodeId: string;
+      nextNodeId: string;
+      directory: string;
+    }>;
+  },
   remove(
     targets: ProjectAssetDeleteTargetInput[],
     force: boolean = false,
@@ -1071,6 +1088,18 @@ export const projectAssets = {
       toPlain(request),
       project,
     ) as Promise<ProjectAssetCopyBatchResult>;
+  },
+  move(request: ProjectAssetMoveBatchInput, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.move(
+      toPlain(request),
+      project,
+    ) as Promise<ProjectAssetMoveBatchResult>;
+  },
+  listAnnotations(project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.listAnnotations(project) as Promise<ProjectAssetAnnotation[]>;
+  },
+  setAnnotation(input: ProjectAssetAnnotationInput, project: string = DEFAULT_PROJECT) {
+    return desktopApi().projectAssets.setAnnotation(toPlain(input), project) as Promise<ProjectAssetAnnotation | null>;
   },
   revealInFolder(request: { relativePath: string }, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectAssets.revealInFolder(toPlain(request), project) as Promise<{ ok: boolean }>;

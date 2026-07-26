@@ -1,6 +1,7 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, net, protocol, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import { Readable } from 'stream';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { cleanupClipboardIpcHandlers, registerClipboardIpcHandlers } from './clipboard-ipc-bindings.js';
 import { cleanupMapIpcHandlers, registerMapIpcHandlers } from './map-ipc-bindings.js';
@@ -15,7 +16,7 @@ import {
 import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
-import { withAssetCanvasCors } from './asset-protocol-policy.js';
+import { parseAssetRangeHeader, withAssetCanvasCors } from './asset-protocol-policy.js';
 import { ensureProjectAssetThumbnail } from './project-asset-thumbnail-cache.js';
 import {
   clearMapPreviewProtocol,
@@ -417,6 +418,7 @@ async function loadBackendModules(roots: AppRoots) {
     },
     assetLibrary: await import(new URL('desktop/asset-library-service.ts', coreUrl).href),
     assetManagement: await import(new URL('desktop/asset-management-service.ts', coreUrl).href),
+    assetAnnotations: await import(new URL('desktop/asset-annotation-service.ts', coreUrl).href),
     projectAssetBrowser: await import(new URL('desktop/project-asset-browser-service.ts', coreUrl).href),
     projectManagement: await import(new URL('desktop/project-management-service.ts', coreUrl).href),
     commonEvents: await import(new URL('desktop/common-event-service.ts', coreUrl).href),
@@ -460,7 +462,8 @@ async function loadBackendModules(roots: AppRoots) {
       },
       onStatus: publishMapPreviewStatus,
       onCommand: publishMapPreviewRuntimeCommand,
-      registerPreviewRoot: registerMapPreviewRoot,
+      registerPreviewRoot: (key: string, resourceRoot: string, sourceProject?: string) =>
+        registerMapPreviewRoot(key, resourceRoot, resolvePreviewDisabledPlugins(sourceProject)),
       unregisterPreviewRoot: unregisterMapPreviewRoot,
       verifyFrameIsolation: verifyMapPreviewFrameIsolation,
     },
@@ -472,6 +475,18 @@ function publishMapPreviewStatus(session: MapPreviewSession): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('mapPreview:status', payload);
   }
+}
+
+/** Plugins the user switched off for preview (workspace settings; path-insensitive project match). */
+function resolvePreviewDisabledPlugins(sourceProject?: string): string[] {
+  if (!sourceProject) return [];
+  const record = getWorkspaceSettings().previewDisabledPlugins || {};
+  const wanted = path.resolve(sourceProject).toLowerCase();
+  for (const [projectPath, names] of Object.entries(record)) {
+    if (path.resolve(projectPath).toLowerCase() !== wanted) continue;
+    return Array.isArray(names) ? names.filter((name) => typeof name === 'string' && name.trim() !== '') : [];
+  }
+  return [];
 }
 
 function publishMapPreviewRuntimeCommand(command: MapPreviewRuntimeCommand): void {
@@ -1311,6 +1326,26 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     });
   });
 
+  // ── Read file paths from the system clipboard (Windows, CF_HDROP) ──
+  ipcMain.handle('clipboard:readFiles', async () => {
+    if (process.platform !== 'win32') return { ok: false as const, reason: 'unsupported platform', paths: [] as string[] };
+    const script = 'Add-Type -AssemblyName System.Windows.Forms; $list = [System.Windows.Forms.Clipboard]::GetFileDropList(); if ($list) { $list | ForEach-Object { Write-Output $_ } }';
+    const { execFile } = await import('node:child_process');
+    return new Promise<{ ok: boolean; reason?: string; paths: string[] }>((resolve) => {
+      execFile('powershell.exe', ['-NoProfile', '-Command', script], { timeout: 5000 }, (error, stdout) => {
+        if (error) {
+          resolve({ ok: false, reason: error.message, paths: [] });
+          return;
+        }
+        const paths = String(stdout || '')
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+        resolve({ ok: true, paths });
+      });
+    });
+  });
+
   registerInteractivePlaytestIpcHandlers(ipcMain, requireInteractivePlaytestService(), {
     beforeStart: async () => {
       if (requireMapPreviewService().isActive()) await requireMapPreviewService().stop();
@@ -1868,10 +1903,24 @@ function registerAssetProtocol(): void {
         return withAssetCanvasCors(response, { filePath: thumbnail.filePath });
       }
       const absolutePath = desktop.assets.resolveAssetRequest(workflowRoot, request.url);
-      const headers = new Headers();
-      const range = request.headers.get('Range');
-      if (range) headers.set('Range', range);
-      const response = await net.fetch(pathToFileURL(absolutePath).toString(), { headers });
+      // net.fetch(file://) ignores Range headers, so serve partial content ourselves:
+      // Chromium's media stack needs real 206 responses to resolve audio durations.
+      const rangeHeader = request.headers.get('Range');
+      const fileSize = fs.statSync(absolutePath).size;
+      const range = parseAssetRangeHeader(rangeHeader, fileSize);
+      if (range) {
+        const stream = fs.createReadStream(absolutePath, { start: range.start, end: range.end });
+        const partial = new Response(Readable.toWeb(stream) as unknown as BodyInit, {
+          status: 206,
+          headers: {
+            'Content-Range': `bytes ${range.start}-${range.end}/${fileSize}`,
+            'Content-Length': String(range.end - range.start + 1),
+            'Accept-Ranges': 'bytes',
+          },
+        });
+        return withAssetCanvasCors(partial, { filePath: absolutePath });
+      }
+      const response = await net.fetch(pathToFileURL(absolutePath).toString());
       return withAssetCanvasCors(response, { filePath: absolutePath });
     } catch {
       return withAssetCanvasCors(new Response('not found', { status: 404 }));

@@ -31,6 +31,34 @@ export function contentTypeForAssetPath(filePath: string): string | null {
   return EXTENSION_CONTENT_TYPES[extension] || null;
 }
 
+export interface ParsedAssetRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Parse a single-range `bytes=` header against a known file size.
+ * Chromium's media stack always sends `Range: bytes=0-` (and later seeks);
+ * answering with a real 206 is required for <audio> to resolve OGG durations.
+ */
+export function parseAssetRangeHeader(rangeHeader: string | null, fileSize: number): ParsedAssetRange | null {
+  if (!rangeHeader || !Number.isFinite(fileSize) || fileSize <= 0) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match) return null;
+  const [, rawStart, rawEnd] = match;
+  if (!rawStart && !rawEnd) return null;
+  if (!rawStart) {
+    const suffix = Number(rawEnd);
+    if (!Number.isInteger(suffix) || suffix <= 0) return null;
+    return { start: Math.max(0, fileSize - suffix), end: fileSize - 1 };
+  }
+  const start = Number(rawStart);
+  if (!Number.isInteger(start) || start >= fileSize) return null;
+  const end = rawEnd ? Math.min(Number(rawEnd), fileSize - 1) : fileSize - 1;
+  if (!Number.isInteger(end) || end < start) return null;
+  return { start, end };
+}
+
 export function withAssetCanvasCors(
   response: Response,
   options: { filePath?: string } = {},

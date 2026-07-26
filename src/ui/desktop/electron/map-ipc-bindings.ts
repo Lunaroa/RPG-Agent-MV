@@ -93,7 +93,10 @@ export const MAP_IPC_CHANNELS = [
   'projectAssets:invalidateBrowseCache',
   'projectAssets:detail',
   'projectAssets:rename',
+  'projectAssets:renameSubfolder',
+  'projectAssets:moveSubfolder',
   'projectAssets:remove',
+  'projectAssets:removeSubfolder',
   'projectAssets:referenceGraph',
   'projectAssets:checkRenameSafety',
   'projectAssets:checkDeleteSafety',
@@ -102,6 +105,9 @@ export const MAP_IPC_CHANNELS = [
   'projectAssets:importLocalFiles',
   'projectAssets:selectImportFile',
   'projectAssets:copy',
+  'projectAssets:move',
+  'projectAssets:listAnnotations',
+  'projectAssets:setAnnotation',
   'projectAssets:revealInFolder',
   'projectManagement:overview',
   'projectManagement:getEntry',
@@ -418,10 +424,35 @@ export function registerMapIpcHandlers(
   });
   handle('projectAssets:detail', (_event, target: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.getAssetDetail(workflowRoot, project(value), target));
-  handle('projectAssets:rename', (_event, target: Record<string, unknown>, nextName: string, value?: string) =>
-    desktop.assetManagement.renameAsset(workflowRoot, project(value), target, nextName));
-  handle('projectAssets:renameSubfolder', (_event, nodeId: string, nextName: string, value?: string) =>
-    desktop.assetManagement.renameProjectAssetSubfolder(workflowRoot, project(value), nodeId, nextName));
+  handle('projectAssets:rename', (_event, target: Record<string, unknown>, nextName: string, value?: string) => {
+    const resolved = project(value);
+    const detail = desktop.assetManagement.renameAsset(workflowRoot, resolved, target, nextName);
+    try {
+      // Annotations (notes/favorites) follow the logical asset id; best-effort.
+      desktop.assetAnnotations.transferAssetAnnotation(
+        resolved,
+        `${String(target?.category || '')}:${String(target?.name || '')}`,
+        `${String(target?.category || '')}:${nextName}`,
+      );
+    } catch { /* annotation upkeep must never fail the rename */ }
+    return detail;
+  });
+  handle('projectAssets:renameSubfolder', (_event, nodeId: string, nextName: string, value?: string) => {
+    const resolved = project(value);
+    const result = desktop.assetManagement.renameProjectAssetSubfolder(workflowRoot, resolved, nodeId, nextName);
+    try {
+      desktop.assetAnnotations.transferSubfolderAnnotations(resolved, result.previousNodeId, result.nextNodeId);
+    } catch { /* best-effort */ }
+    return result;
+  });
+  handle('projectAssets:moveSubfolder', (_event, nodeId: string, targetNodeId: string, value?: string) => {
+    const resolved = project(value);
+    const result = desktop.assetManagement.moveProjectAssetSubfolder(workflowRoot, resolved, nodeId, targetNodeId);
+    try {
+      desktop.assetAnnotations.transferSubfolderAnnotations(resolved, result.previousNodeId, result.nextNodeId);
+    } catch { /* best-effort */ }
+    return result;
+  });
   handle('projectAssets:remove', (
     _event,
     targets: Array<Record<string, unknown>>,
@@ -454,12 +485,51 @@ export function registerMapIpcHandlers(
     desktop.assetManagement.checkProjectAssetDeleteSafetyBatch(workflowRoot, project(value), targets));
   handle('projectAssets:replaceMissingReference', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.replaceMissingAssetReference(workflowRoot, project(value), request));
-  handle('projectAssets:importLocalFile', (_event, request: Record<string, unknown>, value?: string) =>
-    desktop.assetManagement.importLocalAssetFile(workflowRoot, project(value), request));
-  handle('projectAssets:importLocalFiles', (_event, request: Record<string, unknown>, value?: string) =>
-    desktop.assetManagement.importLocalAssetFiles(workflowRoot, project(value), request));
+  handle('projectAssets:importLocalFile', async (_event, request: Record<string, unknown>, value?: string) => {
+    const resolved = project(value);
+    const detail = await desktop.assetManagement.importLocalAssetFile(workflowRoot, resolved, request);
+    try {
+      if (detail?.relativePath) {
+        desktop.assetAnnotations.backfillEmbeddedAssetNotes(resolved, [detail]);
+      }
+    } catch { /* best-effort */ }
+    return detail;
+  });
+  handle('projectAssets:importLocalFiles', async (_event, request: Record<string, unknown>, value?: string) => {
+    const resolved = project(value);
+    const batch = await desktop.assetManagement.importLocalAssetFiles(workflowRoot, resolved, request);
+    try {
+      // Files may arrive with embedded notes (PNG tEXt / OGG comment); adopt them into the DB.
+      const imported = (batch?.results || [])
+        .map((item: { detail?: unknown }) => item.detail)
+        .filter((detail: { relativePath?: unknown } | undefined): detail is Record<string, unknown> =>
+          Boolean(detail && (detail as { relativePath?: unknown }).relativePath));
+      if (imported.length) desktop.assetAnnotations.backfillEmbeddedAssetNotes(resolved, imported);
+    } catch { /* best-effort */ }
+    return batch;
+  });
   handle('projectAssets:copy', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.assetManagement.copyProjectAssets(workflowRoot, project(value), request));
+  handle('projectAssets:move', (_event, request: Record<string, unknown>, value?: string) => {
+    const resolved = project(value);
+    const batch = desktop.assetManagement.moveProjectAssets(workflowRoot, resolved, request);
+    try {
+      const targetCategory = String((request as { targetCategory?: unknown })?.targetCategory || '');
+      for (const item of batch?.results || []) {
+        if (item.status !== 'moved' || !item.movedName) continue;
+        desktop.assetAnnotations.transferAssetAnnotation(
+          resolved,
+          `${item.target.category}:${item.target.name}`,
+          `${targetCategory}:${item.movedName}`,
+        );
+      }
+    } catch { /* best-effort */ }
+    return batch;
+  });
+  handle('projectAssets:listAnnotations', (_event, value?: string) =>
+    desktop.assetAnnotations.listAssetAnnotations(project(value)));
+  handle('projectAssets:setAnnotation', (_event, input: Record<string, unknown>, value?: string) =>
+    desktop.assetAnnotations.setAssetAnnotation(project(value), input));
   handle('projectAssets:revealInFolder', (_event, request: Record<string, unknown>, value?: string) => {
     if (!options.revealProjectAsset) throw new Error('Revealing assets in the file manager is not available.');
     const resolved = path.resolve(project(value));

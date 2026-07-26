@@ -7,11 +7,16 @@ import {
   normalizeMapPreviewProtocolKey,
   resolveConfinedMapPreviewResource,
 } from './map-preview-protocol-policy.js';
+import {
+  filterMapPreviewPluginsJs,
+  isMapPreviewPluginsJsPath,
+} from './map-preview-plugins-filter.js';
 
 export { MAP_PREVIEW_SCHEME } from './map-preview-protocol-policy.js';
 
 interface PreviewProtocolEntry {
   resourceRoot: string;
+  disabledPlugins: readonly string[];
 }
 
 const entries = new Map<string, PreviewProtocolEntry>();
@@ -28,6 +33,21 @@ export function registerMapPreviewProtocol(): void {
       const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
       const target = resolveConfinedMapPreviewResource(entry.resourceRoot, relative);
       if (!fs.existsSync(target) || !fs.statSync(target).isFile()) return new Response('not found', { status: 404 });
+      // Preview-only plugin toggle: rewrite the served plugins.js, never the file on disk.
+      if (entry.disabledPlugins.length && isMapPreviewPluginsJsPath(relative)) {
+        const filtered = filterMapPreviewPluginsJs(fs.readFileSync(target, 'utf8'), entry.disabledPlugins);
+        if (filtered !== null) {
+          return new Response(request.method === 'HEAD' ? null : filtered, {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/javascript; charset=utf-8',
+              'Cache-Control': 'no-store',
+              'Cross-Origin-Resource-Policy': 'same-origin',
+              'X-Content-Type-Options': 'nosniff',
+            },
+          });
+        }
+      }
       const response = await net.fetch(pathToFileURL(target).toString());
       const headers = new Headers(response.headers);
       headers.set('Cache-Control', 'no-store');
@@ -45,10 +65,14 @@ export function registerMapPreviewProtocol(): void {
   registered = true;
 }
 
-export function registerMapPreviewRoot(keyInput: string, resourceRootInput: string): string {
+export function registerMapPreviewRoot(
+  keyInput: string,
+  resourceRootInput: string,
+  disabledPlugins: readonly string[] = [],
+): string {
   const key = normalizeMapPreviewProtocolKey(keyInput);
   const resourceRoot = fs.realpathSync.native(path.resolve(resourceRootInput));
-  entries.set(key, { resourceRoot });
+  entries.set(key, { resourceRoot, disabledPlugins: [...disabledPlugins] });
   return `${MAP_PREVIEW_SCHEME.scheme}://${key}/index.html`;
 }
 

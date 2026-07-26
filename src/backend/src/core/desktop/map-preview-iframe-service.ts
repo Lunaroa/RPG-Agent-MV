@@ -59,7 +59,7 @@ export interface MapPreviewIframeServiceDependencies {
   isPlaytestActive?(): boolean;
   onStatus?(session: MapPreviewSession): void;
   onCommand?(command: MapPreviewRuntimeCommand): void;
-  registerPreviewRoot(key: string, resourceRoot: string): string;
+  registerPreviewRoot(key: string, resourceRoot: string, sourceProject?: string): string;
   unregisterPreviewRoot(key: string): void;
   verifyFrameIsolation(url: string): boolean;
 }
@@ -220,7 +220,11 @@ export class MapPreviewIframeService {
         geometry,
         overrides: targetOverrides,
       });
-      const iframeUrl = this.#dependencies.registerPreviewRoot(this.#protocolKey, copied.resourceRoot);
+      const iframeUrl = this.#dependencies.registerPreviewRoot(
+        this.#protocolKey,
+        copied.resourceRoot,
+        prepared.sourceProject,
+      );
       this.#update({
         status: 'starting',
         iframeUrl,

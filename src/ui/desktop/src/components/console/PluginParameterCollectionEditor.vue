@@ -1336,7 +1336,6 @@ function displayValue(value: unknown): string {
   white-space: nowrap;
 }
 .struct-name-cell :deep(.el-tag) {
-  max-width: 44%;
   overflow: hidden;
   animation: none;
   transition: none;

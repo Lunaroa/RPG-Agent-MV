@@ -1,6 +1,7 @@
 /**
- * Favorites store for the project asset browser.
- * Persists a set of favorite file/folder IDs per project in localStorage.
+ * Legacy favorites store for the project asset browser (localStorage).
+ * Favorites now live in rmmv.db (asset_annotations); this module remains only
+ * to read and clear old data during the one-time migration.
  */
 
 const STORAGE_KEY_PREFIX = 'project-asset-favorites:'
@@ -9,7 +10,7 @@ function storageKey(project: string): string {
   return `${STORAGE_KEY_PREFIX}${project.toLowerCase()}`
 }
 
-function readFavorites(project: string): Set<string> {
+export function getProjectAssetFavorites(project: string): Set<string> {
   try {
     const raw = localStorage.getItem(storageKey(project))
     if (!raw) return new Set()
@@ -21,43 +22,11 @@ function readFavorites(project: string): Set<string> {
   }
 }
 
-function writeFavorites(project: string, favorites: Set<string>): void {
+export function clearProjectAssetFavorites(project: string): void {
   try {
-    localStorage.setItem(storageKey(project), JSON.stringify([...favorites]))
+    localStorage.removeItem(storageKey(project))
   } catch {
-    /* storage full or unavailable */
+    /* storage unavailable */
   }
 }
 
-export function getProjectAssetFavorites(project: string): Set<string> {
-  return readFavorites(project)
-}
-
-export function isProjectAssetFavorite(project: string, id: string): boolean {
-  return readFavorites(project).has(id)
-}
-
-export function toggleProjectAssetFavorite(project: string, id: string): Set<string> {
-  const favorites = readFavorites(project)
-  if (favorites.has(id)) {
-    favorites.delete(id)
-  } else {
-    favorites.add(id)
-  }
-  writeFavorites(project, favorites)
-  return favorites
-}
-
-export function addProjectAssetFavorite(project: string, id: string): Set<string> {
-  const favorites = readFavorites(project)
-  favorites.add(id)
-  writeFavorites(project, favorites)
-  return favorites
-}
-
-export function removeProjectAssetFavorite(project: string, id: string): Set<string> {
-  const favorites = readFavorites(project)
-  favorites.delete(id)
-  writeFavorites(project, favorites)
-  return favorites
-}

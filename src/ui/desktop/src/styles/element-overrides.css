@@ -239,3 +239,10 @@ html.theme-dark .composer-textarea::placeholder {
   border-color: var(--app-border);
   box-shadow: var(--app-shadow-2);
 }
+
+/* Read-failure toast lists one affected file per line. */
+.el-notification.read-issue-notification .el-notification__content {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  text-align: left;
+}

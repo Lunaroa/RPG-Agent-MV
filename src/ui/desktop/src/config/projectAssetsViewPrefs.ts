@@ -2,9 +2,9 @@
 
 import {
   isProjectAssetSortDir,
-  isProjectAssetSortKey,
+  isProjectAssetSortKeySetting,
   type ProjectAssetSortDir,
-  type ProjectAssetSortKey,
+  type ProjectAssetSortKeySetting,
 } from '../utils/projectAssetSorting.ts';
 import type { AssetPreviewMediaKind } from '../utils/assetPreview.ts';
 
@@ -28,7 +28,7 @@ export function defaultProjectAssetViewModeForMedia(media: AssetPreviewMediaKind
 }
 
 export interface ProjectAssetSortPreference {
-  key: ProjectAssetSortKey;
+  key: ProjectAssetSortKeySetting;
   dir: ProjectAssetSortDir;
 }
 
@@ -49,7 +49,7 @@ export function loadProjectAssetSortPreference(): ProjectAssetSortPreference {
     const stored = localStorage.getItem(storageKey('sort'));
     if (stored) {
       const parsed = JSON.parse(stored) as { key?: unknown; dir?: unknown };
-      if (isProjectAssetSortKey(parsed?.key) && isProjectAssetSortDir(parsed?.dir)) {
+      if (isProjectAssetSortKeySetting(parsed?.key) && isProjectAssetSortDir(parsed?.dir)) {
         return { key: parsed.key, dir: parsed.dir };
       }
     }

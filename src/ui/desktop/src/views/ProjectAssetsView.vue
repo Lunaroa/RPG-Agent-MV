@@ -2,6 +2,8 @@
 import { ElImageViewer, ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   ArrowDown,
+  CaretBottom,
+  CaretTop,
   Check,
   CopyDocument,
   Document,
@@ -12,6 +14,7 @@ import {
   Refresh,
   Sort,
   Star,
+  StarFilled,
   Upload,
   View,
 } from '@element-plus/icons-vue'
@@ -26,6 +29,7 @@ import {
 import type { ElTree } from 'element-plus'
 import type {
   ManagedAssetRef,
+  ProjectAssetAnnotation,
   ProjectAssetBrowseEntry,
   ProjectAssetCategoryTreeNode,
   ProjectAssetCopyBatchResult,
@@ -35,6 +39,8 @@ import type {
   ProjectAssetDeleteTargetInput,
   ProjectAssetImportBatchResult,
   ProjectAssetImportItemResult,
+  ProjectAssetMoveBatchResult,
+  ProjectAssetMoveItemResult,
   ProjectAssetMutationSafetyCheck,
 } from '@contract/types'
 import {
@@ -46,6 +52,7 @@ import {
 import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'
 import AssetGridFontThumb from '../components/AssetGridFontThumb.vue'
 import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
+import ProjectAssetsAudioBar, { type AssetsAudioBarItem } from '../components/ProjectAssetsAudioBar.vue'
 import PluginFileFolderThumb from '../components/editor/PluginFileFolderThumb.vue'
 import ConsoleSearchInput from '../components/console/ConsoleSearchInput.vue'
 import { useI18n } from '../i18n'
@@ -66,8 +73,14 @@ import {
 } from '../utils/projectAssetLocalization'
 import {
   parseProjectAssetBrowserNodeId,
+  PROJECT_ASSET_PICTURES_CATEGORY_ID,
 } from '@contract/project-asset-browser-nodes'
 import { computeProjectAssetGridWindow } from '../utils/projectAssetGridWindow'
+import {
+  getCachedProjectAssetAudioDuration,
+  loadProjectAssetAudioDuration,
+} from '../utils/projectAssetAudioDurations'
+import { formatPluginAudioClock } from '../utils/pluginFileAudioPreview'
 import { planProjectAssetDeleteConfirmation } from '../utils/projectAssetDeleteFlow'
 import {
   isProjectAssetUserPictureSubfolder,
@@ -80,9 +93,11 @@ import {
 } from '../utils/projectAssetListFormatting'
 import { buildProjectAssetPathCrumbs } from '../utils/projectAssetPathCrumbs'
 import {
+  nextProjectAssetHeaderSort,
   sortProjectAssetEntries,
   type ProjectAssetSortDir,
   type ProjectAssetSortKey,
+  type ProjectAssetSortKeySetting,
 } from '../utils/projectAssetSorting'
 import {
   clampProjectAssetThumbSize,
@@ -102,8 +117,8 @@ import {
   type ImportOverwriteCandidate,
 } from '../utils/projectAssetImportFlow'
 import {
+  clearProjectAssetFavorites,
   getProjectAssetFavorites,
-  toggleProjectAssetFavorite,
 } from '../utils/projectAssetFavorites'
 import {
   clearProjectAssetSelection,
@@ -177,6 +192,9 @@ const categoryLoading = ref(false)
 
 const favorites = ref<Set<string>>(new Set())
 
+/** Full annotation rows (note + favorite) keyed by target id, loaded with favorites. */
+const annotationIndex = ref<Map<string, ProjectAssetAnnotation>>(new Map())
+
 /** Frontend-only virtual tree node aggregating favorited files and folders. */
 const FAVORITES_NODE_ID = '__favorites__'
 
@@ -206,14 +224,60 @@ function favoriteListingNodes(ids: ReadonlySet<string>): string[] {
 }
 
 function refreshFavorites(): void {
-  if (projectStore.currentProject) {
-    favorites.value = getProjectAssetFavorites(projectStore.currentProject)
+  const project = projectStore.currentProject
+  if (!project) return
+  void (async () => {
+    try {
+      await migrateLegacyFavoritesToDb(project)
+      const list = await projectAssets.listAnnotations(project)
+      if (projectStore.currentProject !== project) return
+      const index = new Map<string, ProjectAssetAnnotation>()
+      const favoriteIds = new Set<string>()
+      for (const item of list) {
+        index.set(item.targetId, item)
+        // Map favorites share the table but belong to the editor map tree, not this view.
+        if (item.favorite && item.kind !== 'map') favoriteIds.add(item.targetId)
+      }
+      annotationIndex.value = index
+      favorites.value = favoriteIds
+    } catch {
+      /* annotations unavailable; favorites stay as-is */
+    }
+  })()
+}
+
+/** One-time migration: legacy localStorage favorites → rmmv.db asset_annotations. */
+async function migrateLegacyFavoritesToDb(project: string): Promise<void> {
+  const legacy = getProjectAssetFavorites(project)
+  if (legacy.size === 0) return
+  for (const id of legacy) {
+    await projectAssets.setAnnotation({
+      targetId: id,
+      kind: id.includes(':') ? 'asset' : 'folder',
+      favorite: true,
+    }, project)
   }
+  clearProjectAssetFavorites(project)
 }
 
 function toggleFavorite(id: string): void {
-  if (!projectStore.currentProject) return
-  favorites.value = toggleProjectAssetFavorite(projectStore.currentProject, id)
+  const project = projectStore.currentProject
+  if (!project) return
+  const next = new Set(favorites.value)
+  const makeFavorite = !next.has(id)
+  if (makeFavorite) {
+    next.add(id)
+  } else {
+    next.delete(id)
+  }
+  favorites.value = next
+  void projectAssets.setAnnotation({
+    targetId: id,
+    kind: id.includes(':') ? 'asset' : 'folder',
+    favorite: makeFavorite,
+  }, project).catch(() => {
+    refreshFavorites() // revert the optimistic flip on failure
+  })
 }
 
 function toggleFavoriteForContextFolder(): void {
@@ -226,9 +290,67 @@ function isFavorite(id: string): boolean {
   return favorites.value.has(id)
 }
 
+/** Stored note for any annotation target (file entry id or folder node id). */
+function entryNote(targetId: string): string {
+  return annotationIndex.value.get(targetId)?.note || ''
+}
+
+async function editNoteForSelection(): Promise<void> {
+  const entry = singleSelectedFile.value
+  closeContextMenu()
+  if (!entry) return
+  await editNoteForTarget(entry.id, 'asset', entryPrimaryPath(entry))
+}
+
+async function editNoteForContextFolder(): Promise<void> {
+  const folderId = contextFolderId.value
+  closeContextMenu()
+  if (folderId) await editNoteForTarget(folderId, 'folder', null)
+}
+
+/** Prompt-based note editor; notes double-write to DB and (PNG/OGG) into the file itself. */
+async function editNoteForTarget(
+  targetId: string,
+  kind: 'asset' | 'folder',
+  relativePath: string | null,
+): Promise<void> {
+  const project = projectStore.currentProject
+  if (!project) return
+  const current = entryNote(targetId)
+  let note = ''
+  try {
+    const response = await ElMessageBox.prompt(
+      t('projectAssets.notePrompt'),
+      t('projectAssets.noteTitle'),
+      { inputType: 'textarea', inputValue: current },
+    )
+    note = String(response.value ?? '')
+  } catch {
+    return
+  }
+  if (note === current) return
+  try {
+    const result = await projectAssets.setAnnotation({
+      targetId,
+      kind,
+      note,
+      relativePath: relativePath || undefined,
+    }, project)
+    const next = new Map(annotationIndex.value)
+    if (result) {
+      next.set(targetId, result)
+    } else {
+      next.delete(targetId)
+    }
+    annotationIndex.value = next
+  } catch (error) {
+    showMutationToast(formatError(error))
+  }
+}
+
 const searchQuery = ref('')
 const sortPreference = loadProjectAssetSortPreference()
-const sortKey = ref<ProjectAssetSortKey>(sortPreference.key)
+const sortKey = ref<ProjectAssetSortKeySetting>(sortPreference.key)
 const sortDir = ref<ProjectAssetSortDir>(sortPreference.dir)
 const viewMode = ref<ProjectAssetViewMode>(loadProjectAssetViewMode('other'))
 const selection = ref<ProjectAssetSelectionState>(emptyProjectAssetSelection())
@@ -259,8 +381,11 @@ const contextMenu = ref<{ x: number; y: number } | null>(null)
 const contextMenuKind = ref<'cell' | 'background' | 'folder' | 'tree'>('cell')
 const contextFolderId = ref<string | null>(null)
 
-/** In-app clipboard: mutation-target snapshot taken at copy time (carries the source category). */
-const assetClipboard = ref<{ targets: ProjectAssetDeleteTargetInput[] } | null>(null)
+/** In-app clipboard: mutation-target snapshot taken at copy/cut time (carries the source category). */
+const assetClipboard = ref<{ mode: 'copy' | 'move'; targets: ProjectAssetDeleteTargetInput[] } | null>(null)
+
+/** In-app folder clipboard for Explorer-style cut of an MZ pictures subfolder. */
+const folderClipboard = ref<{ nodeId: string } | null>(null)
 
 const referencesDialog = ref<{
   name: string
@@ -421,6 +546,85 @@ const sortMenuItems = computed(() => ([
   { key: 'bytes' as const, label: t('projectAssets.sortSize') },
 ]))
 
+/** Details header columns share the sort keys with the toolbar menu. */
+const detailHeaderColumns = computed(() => {
+  const columns: Array<{
+    key: ProjectAssetSortKey | 'duration' | 'note'
+    label: string
+    className: string
+    sortable: boolean
+  }> = [
+    { key: 'name', label: t('projectAssets.columnName'), className: 'col-name', sortable: true },
+    { key: 'type', label: t('projectAssets.columnType'), className: 'col-type', sortable: true },
+    { key: 'bytes', label: t('projectAssets.columnSize'), className: 'col-size', sortable: true },
+  ]
+  if (detailsShowsDuration.value) {
+    columns.push({ key: 'duration', label: t('projectAssets.columnDuration'), className: 'col-duration', sortable: false })
+  }
+  columns.push({ key: 'mtimeMs', label: t('projectAssets.columnModified'), className: 'col-mtime', sortable: true })
+  columns.push({ key: 'note', label: t('projectAssets.columnNote'), className: 'col-note', sortable: false })
+  return columns
+})
+
+/** Header click cycles the column: ascending → descending → natural order. */
+function onHeaderSortClick(column: ProjectAssetSortKey) {
+  const next = nextProjectAssetHeaderSort(sortKey.value, sortDir.value, column)
+  sortKey.value = next.key
+  sortDir.value = next.dir
+}
+
+// ── Audio durations (lazy, viewport-driven; the user accepts delayed display) ──
+
+/** Bumped whenever a probe settles so cached labels re-render. */
+const audioDurationVersion = ref(0)
+
+function isAudioEntry(entry: ProjectAssetBrowseEntry): boolean {
+  return projectAssetMediaKind(entryCategoryId(entry)) === 'audio'
+}
+
+/** The duration column only appears when the listing actually contains audio files. */
+const detailsShowsDuration = computed(() => sortedEntries.value.some((entry) => isAudioEntry(entry)))
+
+function requestAudioDuration(entry: ProjectAssetBrowseEntry): void {
+  if (!isAudioEntry(entry) || !entry.url) return
+  if (getCachedProjectAssetAudioDuration(entry.url) !== undefined) return
+  void loadProjectAssetAudioDuration(entry.url).then(() => {
+    audioDurationVersion.value += 1
+  })
+}
+
+function entryDurationLabel(entry: ProjectAssetBrowseEntry): string {
+  void audioDurationVersion.value
+  if (!isAudioEntry(entry) || !entry.url) return '—'
+  const cached = getCachedProjectAssetAudioDuration(entry.url)
+  if (cached === undefined) return '…'
+  if (Number.isNaN(cached)) return '—'
+  return formatPluginAudioClock(cached)
+}
+
+// ── Docked audio player (selection → right-click Play; Stop hides the bar) ──
+
+const audioPlaylist = ref<AssetsAudioBarItem[] | null>(null)
+
+const selectedAudioEntries = computed(() =>
+  selectedFileEntries.value.filter((entry) => isAudioEntry(entry) && Boolean(entry.url)),
+)
+
+function playSelectedAudio(): void {
+  const entries = selectedAudioEntries.value
+  closeContextMenu()
+  if (entries.length === 0) return
+  audioPlaylist.value = entries.map((entry) => ({
+    id: entry.id,
+    name: displayAssetName(entry.name),
+    url: entry.url as string,
+  }))
+}
+
+function closeAudioPlayer(): void {
+  audioPlaylist.value = null
+}
+
 /** Explorer-style View menu icon-size presets (labels localized). */
 const iconSizePresets = computed(() => ([
   { key: 'xl', size: 256, label: t('projectAssets.viewIcons.xl') },
@@ -467,9 +671,12 @@ const displayAbsoluteDirectory = computed(() => {
 })
 
 const searchPlaceholder = computed(() => {
-  const label = selectedCategoryId.value
-    ? projectAssetCategoryLabel(selectedCategoryId.value, language.value)
-    : ''
+  // The favorites node is frontend-only; projectAssetCategoryLabel would throw for it.
+  const label = isFavoritesSelection.value
+    ? t('projectAssets.favoritesNode')
+    : selectedCategoryId.value
+      ? projectAssetCategoryLabel(selectedCategoryId.value, language.value)
+      : ''
   if (!label) return t('projectAssets.searchPlaceholder')
   return t('projectAssets.searchInFolder', { name: label })
 })
@@ -1204,10 +1411,16 @@ function openTreeContextMenu(event: MouseEvent, nodeId: string) {
 
 function onGridBackgroundContextMenu(event: MouseEvent) {
   if (isEventOnGridCell(event.target)) return
-  const canPaste = Boolean(assetClipboard.value) && !isGroupSelection.value && !isFavoritesSelection.value
+  const canPaste = (Boolean(assetClipboard.value) || canPasteFolderHere.value)
+    && !isGroupSelection.value && !isFavoritesSelection.value
   if (!canPaste && !canImport.value) return
   event.preventDefault()
   clearAllSelection()
+  // Probe the system clipboard so a "paste import" item can appear when Explorer files are copied.
+  systemClipboardFiles.value = []
+  if (canImport.value && !assetClipboard.value && !folderClipboard.value) {
+    void probeSystemClipboardFiles()
+  }
   contextMenuKind.value = 'background'
   contextMenu.value = { x: event.clientX, y: event.clientY }
 }
@@ -1298,17 +1511,30 @@ function fileTooltipLines(entry: ProjectAssetBrowseEntry): string[] {
       height: dims.height,
     }))
   }
+  if (isAudioEntry(entry) && entry.url) {
+    const duration = getCachedProjectAssetAudioDuration(entry.url)
+    if (duration !== undefined && !Number.isNaN(duration)) {
+      lines.push(t('projectAssets.tooltipDuration', { duration: formatPluginAudioClock(duration) }))
+    }
+  }
+  const note = entryNote(entry.id)
+  if (note) lines.push(t('projectAssets.tooltipNote', { note }))
   return lines
 }
 
 function folderTooltipLines(item: FolderGridItem): string[] {
-  return [t('projectAssets.tooltipEntryCount', { count: item.entryCount })]
+  const lines = [t('projectAssets.tooltipEntryCount', { count: item.entryCount })]
+  const note = entryNote(item.id)
+  if (note) lines.push(t('projectAssets.tooltipNote', { note }))
+  return lines
 }
 
 // Explorer-style metadata tooltip: shows below the pointer after a short hover delay.
 const META_TOOLTIP_DELAY_MS = 400
 const metaTooltip = ref<{ lines: string[]; left: number; top: number } | null>(null)
 let metaTooltipTimer: ReturnType<typeof setTimeout> | null = null
+/** Live pointer position while the show-delay runs, so the tooltip opens under the cursor's final spot. */
+let metaTooltipAnchor = { x: 0, y: 0 }
 
 function clearMetaTooltip() {
   if (metaTooltipTimer) {
@@ -1319,20 +1545,28 @@ function clearMetaTooltip() {
 }
 
 function onItemMouseEnter(event: MouseEvent, item: GridItem) {
-  if (item.kind === 'file') void ensureImageDimensions(item.entry)
+  if (item.kind === 'file') {
+    void ensureImageDimensions(item.entry)
+    requestAudioDuration(item.entry)
+  }
   clearMetaTooltip()
-  const anchorX = event.clientX
-  const anchorY = event.clientY
+  metaTooltipAnchor = { x: event.clientX, y: event.clientY }
   metaTooltipTimer = setTimeout(() => {
     metaTooltipTimer = null
     const lines = item.kind === 'folder' ? folderTooltipLines(item) : fileTooltipLines(item.entry)
     if (!lines.length) return
+    // Windows-native placement: directly below the cursor (y+20), viewport-clamped, fixed once shown.
     metaTooltip.value = {
       lines,
-      left: Math.max(0, Math.min(anchorX + 12, window.innerWidth - 300)),
-      top: Math.max(0, Math.min(anchorY + 20, window.innerHeight - 120)),
+      left: Math.max(0, Math.min(metaTooltipAnchor.x, window.innerWidth - 300)),
+      top: Math.max(0, Math.min(metaTooltipAnchor.y + 20, window.innerHeight - 120)),
     }
   }, META_TOOLTIP_DELAY_MS)
+}
+
+function onItemMouseMove(event: MouseEvent) {
+  // Only track while the delay is pending; a visible tooltip must not follow the mouse.
+  if (metaTooltipTimer) metaTooltipAnchor = { x: event.clientX, y: event.clientY }
 }
 
 async function ensureImageDimensions(entry: ProjectAssetBrowseEntry) {
@@ -1388,7 +1622,8 @@ function copySelection() {
     .map((entry) => entryMutationTarget(entry))
     .filter((target): target is NonNullable<typeof target> => Boolean(target))
   if (!targets.length) return
-  assetClipboard.value = { targets }
+  assetClipboard.value = { mode: 'copy', targets }
+  folderClipboard.value = null
   closeContextMenu()
 
   // Also write files to the system clipboard (Windows) so they can be pasted in Explorer etc.
@@ -1400,6 +1635,116 @@ function copySelection() {
       project: projectStore.currentProject,
       relativePaths,
     })
+  }
+}
+
+/** Explorer-style cut: in-app only; pasting into another category performs a move. */
+function cutSelection() {
+  const targets = selectedFileEntries.value
+    .map((entry) => entryMutationTarget(entry))
+    .filter((target): target is NonNullable<typeof target> => Boolean(target))
+  if (!targets.length) return
+  assetClipboard.value = { mode: 'move', targets }
+  folderClipboard.value = null
+  closeContextMenu()
+}
+
+/** Directory of the folder node currently under the context menu (empty for group nodes). */
+const contextFolderDirectory = computed(() => {
+  if (!contextFolderId.value) return ''
+  return findTreeNode(treeNodes.value, contextFolderId.value)?.directory || ''
+})
+
+/** Folder copy: write the whole directory to the system clipboard (CF_HDROP handles directories). */
+async function copyContextFolder() {
+  const directory = contextFolderDirectory.value
+  closeContextMenu()
+  if (!directory || !projectStore.currentProject) return
+  try {
+    await clipboard.writeFiles({
+      project: projectStore.currentProject,
+      relativePaths: [directory],
+    })
+    ElMessage.success(t('projectAssets.folderCopied'))
+  } catch (error) {
+    showMutationToast(formatError(error))
+  }
+}
+
+/** Folder cut: in-app only; pasting into another pictures node moves the whole subfolder. */
+function cutContextFolder() {
+  const folderId = contextFolderId.value
+  closeContextMenu()
+  if (!folderId || !isProjectAssetUserPictureSubfolder(folderId)) return
+  folderClipboard.value = { nodeId: folderId }
+  assetClipboard.value = null
+}
+
+/** A cut folder may be pasted into the pictures root or any pictures subfolder outside its own subtree. */
+const canPasteFolderHere = computed(() => {
+  const pending = folderClipboard.value
+  if (!pending || isGroupSelection.value || isFavoritesSelection.value) return false
+  const target = selectedCategoryId.value
+  if (!target) return false
+  try {
+    if (parseProjectAssetBrowserNodeId(target).categoryId !== PROJECT_ASSET_PICTURES_CATEGORY_ID) return false
+  } catch {
+    return false
+  }
+  if (target === pending.nodeId || target.startsWith(`${pending.nodeId}/`)) return false
+  const parentId = pending.nodeId.slice(0, pending.nodeId.lastIndexOf('/'))
+  return target !== parentId
+})
+
+async function pasteFolderClipboard() {
+  const pending = folderClipboard.value
+  closeContextMenu()
+  if (!pending || !canPasteFolderHere.value || !projectStore.currentProject || mutationBusy.value) return
+  mutationBusy.value = true
+  mutationError.value = ''
+  try {
+    const result = await projectAssets.moveSubfolder(
+      pending.nodeId,
+      selectedCategoryId.value,
+      projectStore.currentProject,
+    )
+    folderClipboard.value = null // a cut clipboard is single-use
+    ElMessage.success(t('projectAssets.folderMoved'))
+    await loadTree(result.nextNodeId)
+  } catch (error) {
+    showMutationToast(formatError(error))
+  } finally {
+    mutationBusy.value = false
+  }
+}
+
+/** File paths found on the system clipboard, probed when the background context menu opens. */
+const systemClipboardFiles = ref<string[]>([])
+
+async function probeSystemClipboardFiles() {
+  try {
+    const result = await clipboard.readFiles()
+    systemClipboardFiles.value = result.ok ? (result.paths || []).filter(Boolean) : []
+  } catch {
+    systemClipboardFiles.value = []
+  }
+}
+
+/** Paste files copied in Explorer etc. into the current category via the regular import flow. */
+async function pasteFromSystemClipboard() {
+  closeContextMenu()
+  if (!canImport.value || !projectStore.currentProject || mutationBusy.value) return
+  mutationBusy.value = true
+  mutationError.value = ''
+  try {
+    const result = await clipboard.readFiles()
+    const paths = result.ok ? (result.paths || []).filter(Boolean) : []
+    if (paths.length === 0) return
+    await runImportForSourceFiles(paths)
+  } catch (error) {
+    mutationError.value = formatError(error)
+  } finally {
+    mutationBusy.value = false
   }
 }
 
@@ -1435,10 +1780,18 @@ function formatCopyResultMessage(results: ProjectAssetCopyItemResult[]): string 
 }
 
 async function pasteClipboard() {
+  if (folderClipboard.value) {
+    await pasteFolderClipboard()
+    return
+  }
   const clipboard = assetClipboard.value
   if (!clipboard || !projectStore.currentProject || mutationBusy.value) return
   if (!selectedCategoryId.value || isGroupSelection.value || isFavoritesSelection.value) return
   closeContextMenu()
+  if (clipboard.mode === 'move') {
+    await pasteMoveClipboard(clipboard.targets)
+    return
+  }
   mutationBusy.value = true
   mutationError.value = ''
   try {
@@ -1457,6 +1810,87 @@ async function pasteClipboard() {
     }
     const firstCopied = batch.results.find((item) => item.status === 'copied' && item.detail)
     await afterMutation(firstCopied?.detail || null)
+  } catch (error) {
+    mutationError.value = formatError(error)
+  } finally {
+    mutationBusy.value = false
+  }
+}
+
+function assertMoveResultsShape(
+  batch: unknown,
+  expected: number,
+): asserts batch is ProjectAssetMoveBatchResult {
+  const results = (batch as ProjectAssetMoveBatchResult | null | undefined)?.results
+  if (!Array.isArray(results) || results.length !== expected) {
+    throw new Error(t('projectAssets.moveResultShapeError', {
+      expected,
+      actual: Array.isArray(results) ? results.length : typeof results,
+    }))
+  }
+}
+
+function formatMoveResultMessage(results: ProjectAssetMoveItemResult[]): string {
+  const moved = results.filter((item) => item.status === 'moved')
+  const failed = results.filter((item) => item.status !== 'moved')
+  if (failed.length === 0) {
+    return moved.length === 1
+      ? t('projectAssets.moveResultAllMovedOne')
+      : t('projectAssets.moveResultAllMovedMany', { moved: moved.length })
+  }
+  const lines = [t('projectAssets.moveResultMixed', { moved: moved.length, failed: failed.length })]
+  for (const item of failed) {
+    lines.push(t('projectAssets.copyResultFailedItem', {
+      name: item.target.name,
+      reason: item.error || t('projectAssets.copyResultUnknownReason'),
+    }))
+  }
+  return lines.join('\n')
+}
+
+/** Cut + paste: move the clipboard targets into the current category; references prompt once for force. */
+async function pasteMoveClipboard(targets: ProjectAssetDeleteTargetInput[]) {
+  if (!projectStore.currentProject || !selectedCategoryId.value) return
+  mutationBusy.value = true
+  mutationError.value = ''
+  try {
+    let batch = await projectAssets.move(
+      { targets, targetCategory: selectedCategoryId.value },
+      projectStore.currentProject,
+    )
+    assertMoveResultsShape(batch, targets.length)
+    const blocked = batch.results.filter((item) => item.status === 'blocked')
+    if (blocked.length > 0) {
+      let confirmed = true
+      try {
+        await ElMessageBox.confirm(
+          t('projectAssets.moveConfirmReferences', { count: blocked.length }),
+          t('projectAssets.cut'),
+          { type: 'warning' },
+        )
+      } catch {
+        confirmed = false
+      }
+      if (confirmed) {
+        batch = await projectAssets.move(
+          { targets, targetCategory: selectedCategoryId.value, force: true },
+          projectStore.currentProject,
+        )
+        assertMoveResultsShape(batch, targets.length)
+      }
+    }
+    const summary = formatMoveResultMessage(batch.results)
+    const hasProblems = batch.results.some((item) => item.status !== 'moved')
+    if (hasProblems) {
+      mutationError.value = summary
+    } else {
+      mutationError.value = ''
+      ElMessage.success(summary)
+    }
+    const anyMoved = batch.results.some((item) => item.status === 'moved')
+    if (anyMoved) assetClipboard.value = null // a cut clipboard is single-use
+    const firstMoved = batch.results.find((item) => item.status === 'moved' && item.detail)
+    await afterMutation(firstMoved?.detail || null)
   } catch (error) {
     mutationError.value = formatError(error)
   } finally {
@@ -1676,10 +2110,20 @@ function onGridKeydown(event: KeyboardEvent) {
     }
     return
   }
-  if (ctrl && (event.key === 'v' || event.key === 'V')) {
-    if (assetClipboard.value) {
+  if (ctrl && (event.key === 'x' || event.key === 'X')) {
+    if (selectedFileEntries.value.length > 0) {
       event.preventDefault()
+      cutSelection()
+    }
+    return
+  }
+  if (ctrl && (event.key === 'v' || event.key === 'V')) {
+    event.preventDefault()
+    if (assetClipboard.value || folderClipboard.value) {
       void pasteClipboard()
+    } else if (canImport.value) {
+      // No in-app clipboard: fall back to importing files copied on the system clipboard.
+      void pasteFromSystemClipboard()
     }
     return
   }
@@ -2443,6 +2887,9 @@ watch(
   () => projectStore.currentProject,
   (newProject) => {
     clearAllSelection()
+    closeAudioPlayer()
+    assetClipboard.value = null
+    folderClipboard.value = null
     void loadTree()
     void refreshStagingStatus()
     refreshFavorites()
@@ -2459,6 +2906,35 @@ watch(thumbnailBucket, (bucket, previous) => {
   if (!selectedCategoryId.value || isGroupSelection.value) return
   void loadCategory(selectedCategoryId.value)
 })
+
+/** Viewport-driven duration probing for the details list (rows are not virtualized). */
+let audioDurationObserver: IntersectionObserver | null = null
+
+function rebindAudioDurationObserver() {
+  audioDurationObserver?.disconnect()
+  audioDurationObserver = null
+  const host = gridHost.value
+  if (!host || !showDetailsView.value || !detailsShowsDuration.value) return
+  if (typeof IntersectionObserver === 'undefined') return
+  audioDurationObserver = new IntersectionObserver((observed) => {
+    for (const record of observed) {
+      if (!record.isIntersecting) continue
+      const url = (record.target as HTMLElement).dataset.durationUrl
+      audioDurationObserver?.unobserve(record.target)
+      if (!url || getCachedProjectAssetAudioDuration(url) !== undefined) continue
+      void loadProjectAssetAudioDuration(url).then(() => {
+        audioDurationVersion.value += 1
+      })
+    }
+  }, { root: host, rootMargin: '160px 0px' })
+  for (const element of host.querySelectorAll('[data-duration-url]')) {
+    audioDurationObserver.observe(element)
+  }
+}
+
+watch([showDetailsView, detailsShowsDuration, gridItems, gridHost], () => {
+  void nextTick(() => rebindAudioDurationObserver())
+}, { immediate: true })
 
 onMounted(() => {
   measureGrid()
@@ -2485,6 +2961,8 @@ onUnmounted(() => {
   window.removeEventListener('dragover', preventWindowFileNavigation)
   window.removeEventListener('drop', preventWindowFileNavigation)
   clearMetaTooltip()
+  audioDurationObserver?.disconnect()
+  audioDurationObserver = null
   resizeObserver?.disconnect()
   resizeObserver = null
   unsubscribeAssetWatcher?.()
@@ -2834,6 +3312,7 @@ watch(gridHost, (el, previous) => {
               @dblclick="onCellDoubleClick(cell.item)"
               @keydown="onCellKeydown($event, cell.item)"
               @mouseenter="onItemMouseEnter($event, cell.item)"
+              @mousemove="onItemMouseMove"
               @mouseleave="clearMetaTooltip"
               @contextmenu="cell.item.kind === 'file'
                 ? openContextMenu($event, cell.item.entry.id)
@@ -2853,7 +3332,10 @@ watch(gridHost, (el, previous) => {
                       : t('projectAssets.favorite')"
                     @click.stop="toggleFavorite(cell.item.id)"
                   >
-                    <el-icon :size="14"><Star /></el-icon>
+                    <el-icon :size="14">
+                      <StarFilled v-if="isFavorite(cell.item.id)" />
+                      <Star v-else />
+                    </el-icon>
                   </button>
                   <PluginFileFolderThumb
                     :urls="folderPreviews.get(cell.item.id) ?? []"
@@ -2886,7 +3368,10 @@ watch(gridHost, (el, previous) => {
                       : t('projectAssets.favorite')"
                     @click.stop="toggleFavorite(cell.item.entry.id)"
                   >
-                    <el-icon :size="14"><Star /></el-icon>
+                    <el-icon :size="14">
+                      <StarFilled v-if="isFavorite(cell.item.entry.id)" />
+                      <Star v-else />
+                    </el-icon>
                   </button>
                   <img
                     v-if="isProjectAssetImageCategory(entryCategoryId(cell.item.entry))
@@ -2945,11 +3430,24 @@ watch(gridHost, (el, previous) => {
           class="project-assets-details"
           data-ui-id="project-assets-details"
         >
-          <div class="project-assets-details-header">
-            <span>{{ t('projectAssets.columnName') }}</span>
-            <span>{{ t('projectAssets.columnType') }}</span>
-            <span>{{ t('projectAssets.columnSize') }}</span>
-            <span>{{ t('projectAssets.columnModified') }}</span>
+          <div class="project-assets-details-header" :class="{ 'has-duration': detailsShowsDuration }">
+            <template v-for="column in detailHeaderColumns" :key="column.key">
+              <button
+                v-if="column.sortable"
+                type="button"
+                class="project-assets-details-header-cell"
+                :class="column.className"
+                :data-ui-id="`project-assets-sort-header-${column.key}`"
+                @click="onHeaderSortClick(column.key as ProjectAssetSortKey)"
+              >
+                <span>{{ column.label }}</span>
+                <el-icon v-if="sortKey === column.key" :size="12" class="project-assets-sort-caret">
+                  <CaretTop v-if="sortDir === 'asc'" />
+                  <CaretBottom v-else />
+                </el-icon>
+              </button>
+              <span v-else :class="column.className">{{ column.label }}</span>
+            </template>
           </div>
           <button
             v-for="item in gridItems"
@@ -2957,16 +3455,21 @@ watch(gridHost, (el, previous) => {
             type="button"
             class="project-assets-details-row"
             :class="{
+              'has-duration': detailsShowsDuration,
               selected: item.kind === 'folder'
                 ? isFolderSelected(item.id)
                 : isFileSelected(item.entry.id),
             }"
+            :data-duration-url="item.kind === 'file' && isAudioEntry(item.entry) && item.entry.url
+              ? item.entry.url
+              : undefined"
             :data-ui-id="item.kind === 'folder'
               ? `project-assets-folder-${item.id}`
               : `project-assets-cell-${item.entry.id}`"
             @click="onCellClick($event, item)"
             @dblclick="onCellDoubleClick(item)"
             @mouseenter="onItemMouseEnter($event, item)"
+            @mousemove="onItemMouseMove"
             @mouseleave="clearMetaTooltip"
             @contextmenu="item.kind === 'file'
               ? openContextMenu($event, item.entry.id)
@@ -2988,15 +3491,26 @@ watch(gridHost, (el, previous) => {
                   : t('projectAssets.favorite')"
                 @click.stop="toggleFavorite(item.kind === 'folder' ? item.id : item.entry.id)"
               >
-                <el-icon :size="12"><Star /></el-icon>
+                <el-icon :size="12">
+                  <StarFilled v-if="isFavorite(item.kind === 'folder' ? item.id : item.entry.id)" />
+                  <Star v-else />
+                </el-icon>
               </button>
             </span>
             <span class="col-type">{{ item.kind === 'folder' ? '—' : entryTypeLabel(item.entry) }}</span>
             <span class="col-size">{{ item.kind === 'folder' ? '—' : formatSize(item.entry.bytes) }}</span>
+            <span v-if="detailsShowsDuration" class="col-duration">{{ item.kind === 'folder' ? '—' : entryDurationLabel(item.entry) }}</span>
             <span class="col-mtime">{{ item.kind === 'folder' ? '—' : formatModified(item.entry.mtimeMs) }}</span>
+            <span class="col-note">{{ entryNote(item.kind === 'folder' ? item.id : item.entry.id) || '—' }}</span>
           </button>
         </div>
       </div>
+
+      <ProjectAssetsAudioBar
+        v-if="audioPlaylist"
+        :items="audioPlaylist"
+        @close="closeAudioPlayer"
+      />
 
       <div
         v-if="selectionStats"
@@ -3089,6 +3603,11 @@ watch(gridHost, (el, previous) => {
         >
           <template v-if="contextMenuKind === 'cell'">
             <li
+              v-if="selectedAudioEntries.length > 0"
+              data-ui-id="project-assets-ctx-play"
+              @click="playSelectedAudio"
+            >{{ t('projectAssets.play') }}</li>
+            <li
               v-if="singleSelectedFile"
               @click="previewFromContextMenu"
             >{{ t('projectAssets.preview') }}</li>
@@ -3100,6 +3619,11 @@ watch(gridHost, (el, previous) => {
               v-if="selectedFileEntries.length > 0"
               @click="copySelection"
             >{{ t('projectAssets.copy') }}</li>
+            <li
+              v-if="selectedFileEntries.length > 0"
+              data-ui-id="project-assets-ctx-cut"
+              @click="cutSelection"
+            >{{ t('projectAssets.cut') }}</li>
             <li
               v-if="singleSelectedFile"
               @click="revealInFolderForSelection"
@@ -3120,6 +3644,11 @@ watch(gridHost, (el, previous) => {
               : t('projectAssets.favorite') }}</li>
             <li
               v-if="singleSelectedFile"
+              data-ui-id="project-assets-ctx-edit-note"
+              @click="editNoteForSelection"
+            >{{ t('projectAssets.editNote') }}</li>
+            <li
+              v-if="singleSelectedFile"
               @click="renameSelectedEntry"
             >{{ t('projectAssets.rename') }}</li>
             <li
@@ -3134,11 +3663,26 @@ watch(gridHost, (el, previous) => {
               @click="revealFolderInExplorer(contextFolderId)"
             >{{ t('projectAssets.revealInFolder') }}</li>
             <li
+              v-if="contextFolderDirectory"
+              data-ui-id="project-assets-ctx-folder-copy"
+              @click="copyContextFolder"
+            >{{ t('projectAssets.copy') }}</li>
+            <li
+              v-if="contextFolderId && isProjectAssetUserPictureSubfolder(contextFolderId)"
+              data-ui-id="project-assets-ctx-folder-cut"
+              @click="cutContextFolder"
+            >{{ t('projectAssets.cut') }}</li>
+            <li
               v-if="contextFolderId"
               @click="toggleFavoriteForContextFolder"
             >{{ contextFolderId && isFavorite(contextFolderId)
               ? t('projectAssets.unfavorite')
               : t('projectAssets.favorite') }}</li>
+            <li
+              v-if="contextFolderId"
+              data-ui-id="project-assets-ctx-folder-edit-note"
+              @click="editNoteForContextFolder"
+            >{{ t('projectAssets.editNote') }}</li>
             <li
               v-if="contextFolderId && isProjectAssetUserPictureSubfolder(contextFolderId)"
               @click="renameContextFolder"
@@ -3151,9 +3695,14 @@ watch(gridHost, (el, previous) => {
           </template>
           <template v-else>
             <li
-              v-if="assetClipboard && !isGroupSelection"
+              v-if="(assetClipboard || canPasteFolderHere) && !isGroupSelection"
               @click="pasteClipboard"
             >{{ t('projectAssets.paste') }}</li>
+            <li
+              v-if="!assetClipboard && !canPasteFolderHere && systemClipboardFiles.length > 0 && canImport"
+              data-ui-id="project-assets-ctx-paste-import"
+              @click="pasteFromSystemClipboard"
+            >{{ t('projectAssets.pasteImport', { count: systemClipboardFiles.length }) }}</li>
             <li
               v-if="canImport"
               @click="importFile"
@@ -3736,12 +4285,24 @@ watch(gridHost, (el, previous) => {
 .project-assets-details-header,
 .project-assets-details-row {
   display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(72px, 0.7fr) minmax(72px, 0.7fr) minmax(120px, 1fr);
+  grid-template-columns: minmax(0, 2.2fr) minmax(72px, 0.7fr) minmax(72px, 0.7fr) minmax(120px, 1fr) minmax(90px, 0.9fr);
   gap: 8px;
   align-items: center;
   width: 100%;
   box-sizing: border-box;
   text-align: left;
+}
+
+.project-assets-details-header.has-duration,
+.project-assets-details-row.has-duration {
+  grid-template-columns: minmax(0, 2.2fr) minmax(72px, 0.7fr) minmax(72px, 0.7fr) minmax(56px, 0.5fr) minmax(120px, 1fr) minmax(90px, 0.9fr);
+}
+
+.project-assets-details-row .col-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--app-ink-muted);
 }
 
 .project-assets-details-header {
@@ -3754,6 +4315,29 @@ watch(gridHost, (el, previous) => {
   color: var(--app-ink-muted);
   font-size: 11px;
   font-weight: 600;
+}
+
+.project-assets-details-header-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-assets-details-header-cell:hover {
+  color: var(--app-ink);
+}
+
+.project-assets-sort-caret {
+  flex: none;
+  color: var(--app-accent);
 }
 
 .project-assets-details-row {

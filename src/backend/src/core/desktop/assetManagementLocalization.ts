@@ -8,6 +8,13 @@ export function assetManagementAssetMissing(language?: ProductLanguage | null): 
   });
 }
 
+export function assetManagementMoveSameLocation(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '目标位置与当前位置相同',
+    'en-US': 'The destination is the same as the current location',
+  });
+}
+
 export function assetManagementMissingParams(language?: ProductLanguage | null): string {
   return pickByLocale(resolveLanguage(language), {
     'zh-CN': '缺少参数',

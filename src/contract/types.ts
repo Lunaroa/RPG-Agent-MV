@@ -687,6 +687,59 @@ export interface ProjectAssetCopyBatchResult {
   results: ProjectAssetCopyItemResult[];
 }
 
+export interface ProjectAssetMoveBatchInput {
+  /** Assets to move; same target shape as delete (logical asset name or a variant relativePath). */
+  targets: ProjectAssetDeleteTargetInput[];
+  /** Destination category (cut + paste always names a destination). */
+  targetCategory: string;
+  /** Move even when references exist (the caller confirmed the breakage). */
+  force?: boolean;
+}
+
+export type ProjectAssetMoveItemStatus = 'moved' | 'blocked' | 'failed';
+
+export interface ProjectAssetMoveItemResult {
+  target: {
+    category: string;
+    name: string;
+    relativePath: string | null;
+  };
+  status: ProjectAssetMoveItemStatus;
+  /** References that would break; present when status is 'blocked' (or moved with force). */
+  references: ProjectAssetReference[];
+  /** Name inside the destination category and every variant path written there. */
+  movedName?: string;
+  movedRelativePaths?: string[];
+  detail?: ManagedAssetDetail;
+  error?: string;
+}
+
+export interface ProjectAssetMoveBatchResult {
+  results: ProjectAssetMoveItemResult[];
+}
+
+/**
+ * Persistent note/favorite for an asset browser target or a map.
+ * target ids: `pictures:ui/foo` (file), `pictures/ui` (disk subfolder), `map:12` (map).
+ */
+export interface ProjectAssetAnnotation {
+  targetId: string;
+  kind: 'asset' | 'folder' | 'map';
+  note: string;
+  favorite: boolean;
+  updatedAt: string;
+}
+
+/** Partial annotation write; omitted fields keep their stored value. */
+export interface ProjectAssetAnnotationInput {
+  targetId: string;
+  kind?: 'asset' | 'folder' | 'map';
+  note?: string;
+  favorite?: boolean;
+  /** Project-relative file path; when given, notes are also embedded into PNG/OGG files. */
+  relativePath?: string | null;
+}
+
 
 export interface ProjectAssetReplaceMissingReferenceInput {
   category: string;
@@ -1808,6 +1861,8 @@ export interface WorkspaceSettings {
   composer?: WorkspaceComposerState;
   projects?: Record<string, WorkspaceEditorProjectState>;
   mapOverviewProjects?: Record<string, WorkspaceMapOverviewProjectState>;
+  /** Per project path: plugin names excluded from map preview (plugins.js stays untouched). */
+  previewDisabledPlugins?: Record<string, string[]>;
 }
 
 export interface ActivateInvocationResult {

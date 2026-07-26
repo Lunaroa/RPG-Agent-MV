@@ -23,6 +23,9 @@ import type {
   ProjectAssetImportItemResult,
   ProjectAssetImportLocalFileInput,
   ProjectAssetImportLocalFilesInput,
+  ProjectAssetMoveBatchInput,
+  ProjectAssetMoveBatchResult,
+  ProjectAssetMoveItemResult,
   ProjectAssetMutationSafetyCheck,
   ProjectAssetReference,
   ProjectAssetReferenceGraph,
@@ -48,6 +51,7 @@ import {
   assetManagementInvalidName,
   assetManagementInvalidPath,
   assetManagementMissingParams,
+  assetManagementMoveSameLocation,
   assetManagementNotMissingReference,
   assetManagementOverwriteMustBeBoolean,
   assetManagementOverwriteRequired,
@@ -795,10 +799,46 @@ export function renameProjectAssetSubfolder(
 ): ProjectAssetSubfolderMutationResult {
   const { subpath } = requireUserPictureSubfolder(project, nodeId);
   const segments = subpath.split('/').filter(Boolean);
-  const leaf = segments[segments.length - 1]!;
   const parentSubpath = segments.slice(0, -1).join('/');
   const nextLeaf = normalizeFolderLeafName(nextFolderNameValue);
   const nextSubpath = parentSubpath ? `${parentSubpath}/${nextLeaf}` : nextLeaf;
+  return relocateUserPictureSubfolder(workflowRoot, project, nodeId, subpath, nextSubpath);
+}
+
+/**
+ * Move an MZ pictures disk subfolder under another pictures node (root or subfolder),
+ * keeping its own folder name. Shares the rename relocation core.
+ */
+export function moveProjectAssetSubfolder(
+  workflowRoot: string,
+  project: string,
+  nodeId: string,
+  targetNodeIdValue: string,
+): ProjectAssetSubfolderMutationResult {
+  const { subpath } = requireUserPictureSubfolder(project, nodeId);
+  const target = parseProjectAssetBrowserNodeId(targetNodeIdValue);
+  if (target.categoryId !== PROJECT_ASSET_PICTURES_CATEGORY_ID) {
+    throw new Error(assetManagementSubfolderUnsupported(targetNodeIdValue));
+  }
+  if (target.subpath && (target.subpath === subpath || target.subpath.startsWith(`${subpath}/`))) {
+    throw new Error(assetManagementMoveSameLocation());
+  }
+  const leaf = subpath.split('/').filter(Boolean).pop()!;
+  const nextSubpath = target.subpath ? `${target.subpath}/${leaf}` : leaf;
+  if (nextSubpath === subpath) {
+    throw new Error(assetManagementMoveSameLocation());
+  }
+  return relocateUserPictureSubfolder(workflowRoot, project, nodeId, subpath, nextSubpath);
+}
+
+/** Shared relocation core: rewrite nested asset names/references, then move the directory on disk. */
+function relocateUserPictureSubfolder(
+  workflowRoot: string,
+  project: string,
+  nodeId: string,
+  subpath: string,
+  nextSubpath: string,
+): ProjectAssetSubfolderMutationResult {
   const nextNodeId = projectAssetBrowserNodeId(PROJECT_ASSET_PICTURES_CATEGORY_ID, nextSubpath);
   const relativeRoot = projectAssetRelativeDirectory(workflowRoot, project, PROJECT_ASSET_PICTURES_CATEGORY_ID);
   const oldDirectory = `${relativeRoot}/${subpath}`;
@@ -809,11 +849,11 @@ export function renameProjectAssetSubfolder(
   assertInside(projectRoot, oldAbsolute);
   assertInside(projectRoot, newAbsolute);
 
-  if (nextLeaf === leaf) {
+  if (nextSubpath === subpath) {
     return { previousNodeId: nodeId, nextNodeId: nodeId, directory: oldDirectory };
   }
   if (fs.existsSync(newAbsolute)) {
-    throw new Error(assetManagementSubfolderNameOccupied(nextLeaf));
+    throw new Error(assetManagementSubfolderNameOccupied(nextSubpath.split('/').pop()!));
   }
 
   const graph = getProjectAssetReferenceGraph(workflowRoot, project);
@@ -1304,6 +1344,194 @@ function nextAvailableCopyName(
     candidate = `${baseName}_${suffix}`;
   }
   return candidate;
+}
+
+/** Moves keep the original name when it is free in the destination; only clashes get "_2" suffixes. */
+function nextAvailableMoveName(
+  graph: ProjectAssetReferenceGraph,
+  category: RmmvAssetCategory,
+  baseName: string,
+  claimedNames: ReadonlySet<string>,
+): string {
+  const isTaken = (candidate: string): boolean =>
+    claimedNames.has(candidate)
+    || graph.assets.some((asset) => asset.category === category && asset.name === candidate);
+  if (!isTaken(baseName)) return baseName;
+  return nextAvailableCopyName(graph, category, baseName, claimedNames);
+}
+
+/**
+ * Move logical assets (all variants) into another category: destination writes and
+ * source deletions land in one atomic apply. References to the source block the
+ * move unless request.force confirms the breakage (mirrors delete's safety flow).
+ */
+export function moveProjectAssets(
+  workflowRoot: string,
+  project: string,
+  request: ProjectAssetMoveBatchInput,
+): ProjectAssetMoveBatchResult {
+  if (!request || !Array.isArray(request.targets) || request.targets.length === 0 || !request.targetCategory) {
+    throw new Error(assetManagementMissingParams());
+  }
+  const requestedTarget = parseProjectAssetBrowserNodeId(request.targetCategory);
+  if (requestedTarget.subpath) {
+    const engine = inspectRmmvProject(project).engine;
+    if (
+      requestedTarget.categoryId !== PROJECT_ASSET_PICTURES_CATEGORY_ID
+      || !projectAssetBrowserAllowsPictureSubfolders(engine)
+    ) {
+      throw new Error(
+        `Project asset move into subfolders is only supported for MZ pictures; got: ${request.targetCategory}`,
+      );
+    }
+  }
+  const category = requireAssetCategory(requestedTarget.categoryId);
+  const targetSubpath = requestedTarget.subpath;
+  const force = request.force === true;
+  const graph = getProjectAssetReferenceGraph(workflowRoot, project);
+  const results: ProjectAssetMoveItemResult[] = [];
+  const pending: Array<{
+    result: ProjectAssetMoveItemResult;
+    movedRelativePaths: string[];
+    mutations: StagedProjectFileMutation[];
+  }> = [];
+  const claimedNames = new Set<string>();
+
+  for (const rawTarget of request.targets) {
+    const sourceCategory = requireAssetCategory(rawTarget.category);
+    const failWith = (error: string, name = String(rawTarget.name || '')): void => {
+      results.push({
+        target: { category: sourceCategory, name, relativePath: rawTarget.relativePath || null },
+        status: 'failed',
+        references: [],
+        error,
+      });
+    };
+
+    let name: string;
+    try {
+      name = rawTarget.name?.trim()
+        ? normalizeAssetName(rawTarget.name)
+        : assetNameFromRelative(
+          workflowRoot,
+          project,
+          sourceCategory,
+          normalizeRelative(rawTarget.relativePath || defaultRelative(workflowRoot, project, sourceCategory)),
+        );
+    } catch (error) {
+      failWith(error instanceof Error ? error.message : String(error));
+      continue;
+    }
+
+    const variants = findLogicalAssetVariants(graph, sourceCategory, name, rawTarget.relativePath);
+    if (!variants.length) {
+      failWith(assetManagementAssetMissing(), name);
+      continue;
+    }
+
+    const leafName = name.includes('/') ? name.split('/').pop()! : name;
+    const movedBaseName = targetSubpath ? `${targetSubpath}/${leafName}` : leafName;
+    if (sourceCategory === category && movedBaseName === name) {
+      failWith(assetManagementMoveSameLocation(), name);
+      continue;
+    }
+
+    const safety = checkAssetDeleteSafetyAgainstGraph(graph, {
+      category: sourceCategory,
+      name,
+      relativePath: rawTarget.relativePath,
+    });
+    const references = safety.references.map(mapGraphReference);
+    if (references.length && !force) {
+      results.push({ target: safety.target, status: 'blocked', references });
+      continue;
+    }
+
+    const movedName = nextAvailableMoveName(graph, category, movedBaseName, claimedNames);
+    const directory = projectAssetRelativeDirectory(workflowRoot, project, category);
+    const movedRelativePaths = variants.map(
+      (variant) => `${directory}/${movedName}${path.extname(variant.relativePath)}`,
+    );
+    try {
+      for (const relativePath of movedRelativePaths) assertProjectRelativeTarget(project, relativePath);
+    } catch (error) {
+      failWith(error instanceof Error ? error.message : String(error), name);
+      continue;
+    }
+
+    const stagedConflict = findProjectStagingPathConflict(workflowRoot, project, [
+      ...variants.map((variant) => variant.relativePath),
+      ...movedRelativePaths,
+    ]);
+    if (stagedConflict?.kind === 'draft') {
+      failWith(stagingUnappliedDraftBlocksAssetMutation(stagedConflict.relativePath), name);
+      continue;
+    }
+    if (stagedConflict?.kind === 'operation') {
+      failWith(
+        stagingOperationReservationBlocksAssetMutation(stagedConflict.relativePath, stagedConflict.operationId),
+        name,
+      );
+      continue;
+    }
+
+    const mutations: StagedProjectFileMutation[] = [];
+    let readError: string | null = null;
+    for (let index = 0; index < variants.length; index += 1) {
+      const variant = variants[index]!;
+      const absolute = path.resolve(project, ...variant.relativePath.split('/'));
+      try {
+        assertInside(path.resolve(project), absolute);
+        mutations.push({ relativePath: movedRelativePaths[index]!, content: fs.readFileSync(absolute) });
+      } catch (error) {
+        readError = error instanceof Error ? error.message : String(error);
+        break;
+      }
+    }
+    if (readError) {
+      failWith(readError, name);
+      continue;
+    }
+    for (const variant of variants) {
+      mutations.push({ relativePath: variant.relativePath, delete: true });
+    }
+
+    claimedNames.add(movedName);
+    const result: ProjectAssetMoveItemResult = {
+      target: { category: sourceCategory, name, relativePath: rawTarget.relativePath || null },
+      status: 'moved',
+      references,
+      movedName,
+      movedRelativePaths,
+    };
+    results.push(result);
+    pending.push({ result, movedRelativePaths, mutations });
+  }
+
+  if (pending.length) {
+    try {
+      applyProjectFilesAtomically(workflowRoot, project, pending.flatMap((item) => item.mutations));
+      invalidateProjectAssetBrowserCache(project);
+      invalidateProjectAssetReferenceGraphCache(project);
+      invalidateProjectAssetListingCache(project);
+      for (const item of pending) {
+        item.result.detail = getAssetDetail(workflowRoot, project, {
+          scope: 'project',
+          category,
+          relativePath: item.movedRelativePaths[0]!,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      for (const item of pending) {
+        item.result.status = 'failed';
+        item.result.error = message;
+        delete item.result.detail;
+      }
+    }
+  }
+
+  return { results };
 }
 
 function resolveAssetPath(workflowRoot: string, project: string, target: AssetTarget): { absolute: string; relativePath: string; category: RmmvAssetCategory } {

@@ -164,6 +164,9 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('maps:setSystemPosition', target, mapId, x, y, project),
     playtest: (mapId: number, startX: number, startY: number, project?: string) =>
       ipcRenderer.invoke('maps:playtest', mapId, startX, startY, project),
+    editorNotes: (project?: string) => ipcRenderer.invoke('maps:editorNotes', project),
+    setEditorNote: (mapId: number, note: string, project?: string) =>
+      ipcRenderer.invoke('maps:setEditorNote', mapId, note, project),
   },
 
   events: {

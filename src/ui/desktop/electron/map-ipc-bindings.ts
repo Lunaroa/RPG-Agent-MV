@@ -75,6 +75,8 @@ export const MAP_IPC_CHANNELS = [
   'maps:setStartPosition',
   'maps:setSystemPosition',
   'maps:playtest',
+  'maps:editorNotes',
+  'maps:setEditorNote',
   'events:create',
   'events:createFromPlacement',
   'events:update',
@@ -342,6 +344,9 @@ export function registerMapIpcHandlers(
   handle('maps:setSystemPosition', (_event, target: string, mapId: number, x: number, y: number, value?: string) =>
     desktop.maps.setSystemPositionDraft(workflowRoot, project(value), target, mapId, x, y));
   handle('maps:playtest', (_event, mapId: number, startX?: number, startY?: number, value?: string) => desktop.maps.createPlaytestArtifact(workflowRoot, project(value), mapId, startX, startY));
+  handle('maps:editorNotes', (_event, value?: string) => desktop.maps.listEditorMapNotes(project(value)));
+  handle('maps:setEditorNote', (_event, mapId: number, note: string, value?: string) =>
+    desktop.maps.setEditorMapNote(project(value), mapId, note));
 
   handle('events:create', (_event, mapId: number, event: Record<string, unknown>, value?: string) =>
     invokeDesktop(() => desktop.events.createEvent(workflowRoot, project(value), mapId, event)));

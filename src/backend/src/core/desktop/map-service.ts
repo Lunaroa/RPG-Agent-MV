@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type {
+  EditorMapNotes,
   EventSearchOptions,
   EventSearchResult,
   MapIndex,
@@ -1263,4 +1264,49 @@ function copyParallaxIfAvailable(workflowRoot: string, project: string, entry: R
   const source = resolveLibraryAssetPath(entry, 'parallaxes', map.parallaxName, workflowRoot);
   if (source) writeStagedProjectBuffer(workflowRoot, project, relative, fs.readFileSync(source));
   else warnings.push(mapParallaxImageMissing(map.parallaxName));
+}
+
+// ---- Editor-only map notes (sidecar JSON) ----
+// The product's own per-map notes deliberately do NOT live inside MapXXX.json:
+// the stock RM editor rewrites map files on save and would drop custom fields.
+// They live in a product-prefixed sidecar at the project root so they travel
+// with the project and stay readable without this product installed.
+const EDITOR_MAP_NOTES_FILE = 'rpgagent-map-notes.json';
+
+function editorMapNotesFilePath(project: string): string {
+  return path.join(path.resolve(project), EDITOR_MAP_NOTES_FILE);
+}
+
+function readEditorMapNotesFile(project: string): Record<string, { note: string }> {
+  const file = editorMapNotesFilePath(project);
+  if (!fs.existsSync(file)) return {};
+  // A corrupt sidecar must surface instead of being silently replaced.
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { maps?: Record<string, { note?: unknown }> };
+  const maps: Record<string, { note: string }> = {};
+  for (const [id, entry] of Object.entries(parsed?.maps || {})) {
+    const note = typeof entry?.note === 'string' ? entry.note : '';
+    if (note) maps[id] = { note };
+  }
+  return maps;
+}
+
+export function listEditorMapNotes(project: string): EditorMapNotes {
+  return { project, maps: readEditorMapNotesFile(project) };
+}
+
+export function setEditorMapNote(project: string, mapId: number, note: string): EditorMapNotes {
+  const id = Math.trunc(Number(mapId));
+  if (!Number.isFinite(id) || id <= 0) throw new Error('A valid map id is required to save an editor map note.');
+  const maps = readEditorMapNotesFile(project);
+  const next = String(note ?? '');
+  if (next.trim()) maps[String(id)] = { note: next };
+  else delete maps[String(id)];
+  const file = editorMapNotesFilePath(project);
+  if (Object.keys(maps).length) {
+    fs.writeFileSync(file, `${JSON.stringify({ maps }, null, 2)}\n`, 'utf8');
+  } else if (fs.existsSync(file)) {
+    // Keep projects clean: no notes left means no sidecar file.
+    fs.rmSync(file);
+  }
+  return { project, maps };
 }

@@ -49,6 +49,15 @@ export interface MapIndex {
   maps: MapTreeNode[];
 }
 
+/**
+ * Editor-only per-map notes. Stored in a product-prefixed sidecar JSON at the
+ * project root (never inside MapXXX.json, which the stock RM editor rewrites).
+ */
+export interface EditorMapNotes {
+  project: string;
+  maps: Record<string, { note: string }>;
+}
+
 export type WorkspaceSurfaceId = 'editor' | 'projectManagement' | 'mapOverview';
 
 export interface WorkspaceSurfaceVersionRequest {

@@ -14,12 +14,14 @@ const emit = defineEmits<{
   reject: [contractId: string];
   backChat: [];
   saveNote: [mapId: number, note: string];
+  saveEditorNote: [mapId: number, note: string];
 }>();
 const props = defineProps<{
   mode: 'map' | 'event' | 'preview';
   catalog: EditorProjectCatalog | null;
   currentMapId?: number | null;
   currentMapNote?: string;
+  currentEditorNote?: string;
 }>();
 const placementAsk = useEventPlacementAskStore();
 const ui = useWorkbenchUiStore();
@@ -47,16 +49,30 @@ const noteDraft = ref(props.currentMapNote ?? '');
 let noteTimer: ReturnType<typeof setTimeout> | null = null;
 let noteEditMapId: number | null = null;
 
+// Editor note: same debounce pattern, saved to the project sidecar instead.
+const editorNoteDraft = ref(props.currentEditorNote ?? '');
+let editorNoteTimer: ReturnType<typeof setTimeout> | null = null;
+let editorNoteEditMapId: number | null = null;
+
 watch(() => props.currentMapNote, (note) => {
   if (noteTimer) return;
   noteDraft.value = note ?? '';
 });
+watch(() => props.currentEditorNote, (note) => {
+  if (editorNoteTimer) return;
+  editorNoteDraft.value = note ?? '';
+});
 watch(() => props.currentMapId, () => {
   flushNoteSave();
+  flushEditorNoteSave();
   noteDraft.value = props.currentMapNote ?? '';
+  editorNoteDraft.value = props.currentEditorNote ?? '';
 });
 watch(() => props.mode, (next) => {
-  if (next !== 'event') flushNoteSave();
+  if (next !== 'event') {
+    flushNoteSave();
+    flushEditorNoteSave();
+  }
 });
 
 function queueNoteSave() {
@@ -75,6 +91,24 @@ function flushNoteSave() {
   noteEditMapId = null;
   if (noteDraft.value === (props.currentMapNote ?? '')) return;
   emit('saveNote', mapId, noteDraft.value);
+}
+
+function queueEditorNoteSave() {
+  editorNoteEditMapId = props.currentMapId ?? null;
+  if (editorNoteTimer) clearTimeout(editorNoteTimer);
+  editorNoteTimer = setTimeout(flushEditorNoteSave, 800);
+}
+
+function flushEditorNoteSave() {
+  if (editorNoteTimer) {
+    clearTimeout(editorNoteTimer);
+    editorNoteTimer = null;
+  }
+  if (editorNoteEditMapId == null) return;
+  const mapId = editorNoteEditMapId;
+  editorNoteEditMapId = null;
+  if (editorNoteDraft.value === (props.currentEditorNote ?? '')) return;
+  emit('saveEditorNote', mapId, editorNoteDraft.value);
 }
 </script>
 
@@ -120,6 +154,17 @@ function flushNoteSave() {
           @blur="flushNoteSave"
         />
       </label>
+      <label class="map-note-box">
+        <span>{{ t('editor.bottom.editorNote') }}</span>
+        <textarea
+          v-model="editorNoteDraft"
+          :placeholder="t('editor.bottom.editorNotePlaceholder')"
+          :disabled="props.currentMapId == null"
+          :aria-label="t('editor.bottom.editorNote')"
+          @input="queueEditorNoteSave"
+          @blur="flushEditorNoteSave"
+        />
+      </label>
     </div>
   </EditorBottomWorkbench>
 </template>
@@ -130,8 +175,8 @@ function flushNoteSave() {
 .placement-empty{padding:8px 0;color:var(--app-ink-muted);font-size:11px}
 .placement-grid{min-height:0;flex:1;display:flex;align-items:flex-start;gap:8px;padding:2px 2px 4px;overflow-x:auto;overflow-y:hidden}
 .placement-summary{flex-shrink:0;padding:2px 2px 0;color:var(--app-ink-muted);font-size:9px;line-height:1.2}
-.map-note-box{flex:0 0 220px;display:flex;flex-direction:column;gap:3px;padding:2px 2px 4px}
-.map-note-box span{color:var(--app-ink-soft);font-size:10px;font-weight:600}
+.map-note-box{flex:0 0 200px;display:flex;flex-direction:column;gap:0;margin-left:2px;padding:2px 2px 4px 10px;border-left:1px solid var(--app-border)}
+.map-note-box span{padding:1px 0 4px;margin-bottom:5px;border-bottom:1px solid var(--app-border);color:var(--app-ink-soft);font-size:10px;font-weight:600;letter-spacing:.02em}
 .map-note-box textarea{min-height:0;flex:1;padding:5px 6px;border:1px solid var(--app-border);border-radius:4px;background:var(--app-bg);color:var(--app-ink);font-family:inherit;font-size:11px;line-height:1.4;resize:none}
 .map-note-box textarea:focus{outline:0;border-color:var(--app-accent);box-shadow:0 0 0 1px var(--app-accent)}
 .map-note-box textarea:disabled{opacity:.55;cursor:not-allowed}

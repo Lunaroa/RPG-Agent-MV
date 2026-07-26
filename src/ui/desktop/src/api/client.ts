@@ -165,6 +165,8 @@ declare global {
         setStartPosition(mapId: number, x: number, y: number, project?: string): Promise<unknown>;
         setSystemPosition(target: RmmvSystemPositionTarget, mapId: number, x: number, y: number, project?: string): Promise<unknown>;
         playtest(mapId: number, startX?: number, startY?: number, project?: string): Promise<unknown>;
+        editorNotes(project?: string): Promise<unknown>;
+        setEditorNote(mapId: number, note: string, project?: string): Promise<unknown>;
       };
       events: {
         create(mapId: number, event: Record<string, unknown>, project?: string): Promise<unknown>;
@@ -334,6 +336,7 @@ function desktopApi(): Window['api'] {
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  EditorMapNotes,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput, ProjectAssetDeleteItemResult,
@@ -363,6 +366,7 @@ import type {
 } from '@contract/types';
 export type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  EditorMapNotes,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
@@ -718,6 +722,13 @@ export const maps = {
   },
   playtest(mapId: number, startX = 0, startY = 0, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.playtest(mapId, startX, startY, project);
+  },
+  /** Editor-only per-map notes stored in the project's sidecar JSON (not RM data). */
+  editorNotes(project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.editorNotes(project) as Promise<EditorMapNotes>;
+  },
+  setEditorNote(mapId: number, note: string, project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.setEditorNote(mapId, note, project) as Promise<EditorMapNotes>;
   },
   projectStaging(project: string = DEFAULT_PROJECT) {
     return desktopApi().staging.projectStatus(project);

@@ -159,11 +159,13 @@
           :catalog="editorCatalog"
           :current-map-id="selectedMapId"
           :current-map-note="currentMapNote"
+          :current-editor-note="currentEditorMapNote"
           @select="onPlacementSelect"
           @place="onPlacementPlace"
           @reject="onPlacementReject"
           @back-chat="goBackToChatPlacement"
           @save-note="saveMapNote"
+          @save-editor-note="saveEditorMapNote"
         />
         <PreviewConsolePanel
           v-if="mode === 'preview'"
@@ -407,6 +409,11 @@ const eventSearchLoading = ref(false);
 const eventSearchTruncated = ref(false);
 const currentMapName = ref('');
 const currentMapNote = ref('');
+// Editor-only notes from the project's sidecar JSON, keyed by map id.
+const editorMapNotes = ref<Record<string, { note: string }>>({});
+const currentEditorMapNote = computed(() => (
+  selectedMapId.value == null ? '' : editorMapNotes.value[String(selectedMapId.value)]?.note || ''
+));
 const currentTileSize = ref(48);
 const currentEngine = ref<RpgMakerEngine>('rpg-maker-mv');
 const currentTilesetMode = ref<number | null>(null);
@@ -1432,9 +1439,10 @@ async function loadTree() {
   mapTreeError.value = '';
   mapTree.value = [];
   try {
-    const [indexResult, tilesetResult] = await Promise.allSettled([
+    const [indexResult, tilesetResult, editorNotesResult] = await Promise.allSettled([
       mapsApi.tree(project),
       mapsApi.tilesets(project),
+      mapsApi.editorNotes(project),
     ]);
     if (!mapTreeLoadCoordinator.isCurrent(token) || projectStore.currentProject !== project) return false;
     if (indexResult.status === 'rejected') throw indexResult.reason;
@@ -1442,6 +1450,11 @@ async function loadTree() {
     mapTree.value = buildTree(index.maps);
     if (editorCatalog.value) editorCatalog.value = { ...editorCatalog.value, maps: index.maps };
     tilesets.value = tilesetResult.status === 'fulfilled' ? tilesetResult.value.tilesets : [];
+    if (editorNotesResult.status === 'fulfilled') {
+      editorMapNotes.value = editorNotesResult.value.maps;
+    } else {
+      ElMessage.error(t('editor.map.editorNoteLoadFailed', { message: (editorNotesResult.reason as Error).message }));
+    }
     await refreshStagingStatus();
     return true;
   } catch (error) {
@@ -2127,6 +2140,16 @@ async function saveMapNote(mapId: number, note: string) {
     setStatus(t('editor.map.propertiesSavedStaged'), 'saved');
   } catch (error) {
     ElMessage.error(t('editor.map.savePropertiesFailed', { message: (error as Error).message }));
+  }
+}
+
+async function saveEditorMapNote(mapId: number, note: string) {
+  try {
+    const result = await mapsApi.setEditorNote(mapId, note, projectStore.currentProject);
+    editorMapNotes.value = result.maps;
+    setStatus(t('editor.map.editorNoteSaved'), 'saved');
+  } catch (error) {
+    ElMessage.error(t('editor.map.editorNoteSaveFailed', { message: (error as Error).message }));
   }
 }
 

@@ -1,30 +1,27 @@
-// Tileset image slot list. Stock MV hardcodes nine sheets (A1-A5, B, C, D, E);
-// the unlimited-map plugin planned for a later release may extend sheets up to Z.
-// UNLIMITED_TILESET_SLOTS_ENABLED only gates *adding* slots beyond the stock nine;
-// existing project data beyond nine slots is always rendered so nothing is hidden.
+// Tileset image slot list. Stock MV hardcodes nine sheets (A1-A5, B, C, D, E).
+// Project-level extended mode unlocks an unbounded editor-side list. Existing
+// extended data always renders even while the project switch is off.
 
 export const MV_TILESET_SLOT_COUNT = 9;
 
-export const EXTENDED_TILESET_SLOT_LIMIT = MV_TILESET_SLOT_COUNT + 21; // F..Z
-
-export const UNLIMITED_TILESET_SLOTS_ENABLED = false;
-
 const STOCK_SLOT_LABELS = ['A1', 'A2', 'A3', 'A4', 'A5', 'B', 'C', 'D', 'E'] as const;
+const FIRST_EXTENDED_SLOT_INDEX = STOCK_SLOT_LABELS.length;
+const LETTERED_EXTENDED_SLOT_COUNT = 21; // F..Z
 
 export function tilesetSlotLabel(index: number): string {
   if (index < 0) return '';
   if (index < STOCK_SLOT_LABELS.length) return STOCK_SLOT_LABELS[index];
-  const extended = index - STOCK_SLOT_LABELS.length;
-  if (index >= EXTENDED_TILESET_SLOT_LIMIT) return '';
-  // Extended sheets continue after E: F, G, ... Z.
-  return String.fromCharCode('F'.charCodeAt(0) + extended);
+  const extended = index - FIRST_EXTENDED_SLOT_INDEX;
+  if (extended < LETTERED_EXTENDED_SLOT_COUNT) {
+    return String.fromCharCode('F'.charCodeAt(0) + extended);
+  }
+  return `F${extended - LETTERED_EXTENDED_SLOT_COUNT + 1}`;
 }
 
 export function tilesetSlotCount(dataLength: number): number {
-  const clampedData = Math.min(Math.max(dataLength, 0), EXTENDED_TILESET_SLOT_LIMIT);
-  return Math.max(MV_TILESET_SLOT_COUNT, clampedData);
+  return Math.max(MV_TILESET_SLOT_COUNT, Number.isSafeInteger(dataLength) ? dataLength : 0);
 }
 
-export function canAppendTilesetSlot(dataLength: number, extensionEnabled = UNLIMITED_TILESET_SLOTS_ENABLED): boolean {
-  return extensionEnabled && dataLength < EXTENDED_TILESET_SLOT_LIMIT;
+export function canAppendTilesetSlot(_dataLength: number, extensionEnabled: boolean): boolean {
+  return extensionEnabled;
 }

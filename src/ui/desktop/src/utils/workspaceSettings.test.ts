@@ -45,6 +45,38 @@ describe('workspaceSettings', () => {
     expect(merged.suppressProjectCompatibilityWarnings).toBe(true)
   })
 
+  it('normalizes and independently clears project-level extended tileset switches', () => {
+    const normalized = normalizeWorkspaceSettings({
+      extendedTilesetProjects: {
+        'projects/alpha': true,
+        'projects/disabled': false,
+        '': true,
+        'projects/invalid': 'yes',
+      },
+    })
+    expect(normalized.extendedTilesetProjects).toEqual({
+      'projects/alpha': true,
+    })
+
+    const enabled = mergeWorkspaceSettings(
+      { lastProjectPath: 'projects/alpha' },
+      { extendedTilesetProjects: { 'projects/alpha': true, 'projects/beta': true } },
+    )
+    expect(enabled.extendedTilesetProjects).toEqual({
+      'projects/alpha': true,
+      'projects/beta': true,
+    })
+
+    const disabled = mergeWorkspaceSettings(
+      enabled,
+      { extendedTilesetProjects: { 'projects/alpha': false } },
+    )
+    expect(disabled.extendedTilesetProjects).toEqual({
+      'projects/beta': true,
+    })
+    expect(disabled.lastProjectPath).toBe('projects/alpha')
+  })
+
   it('normalizes and independently preserves MV and MZ playtest runtime selections', () => {
     const normalized = normalizeWorkspaceSettings({
       playtestRuntimes: {

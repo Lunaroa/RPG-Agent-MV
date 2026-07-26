@@ -320,6 +320,7 @@ export function normalizeWorkspaceSettings(raw: unknown): WorkspaceSettings {
     projects: Object.keys(projects).length ? projects : undefined,
     mapOverviewProjects: Object.keys(mapOverviewProjects).length ? mapOverviewProjects : undefined,
     previewDisabledPlugins: normalizePreviewDisabledPlugins(source.previewDisabledPlugins, false),
+    extendedTilesetProjects: normalizeExtendedTilesetProjects(source.extendedTilesetProjects, false),
   }
 }
 
@@ -423,6 +424,15 @@ export function normalizeWorkspacePatch(raw: unknown): WorkspaceSettings {
     if (previewDisabledPlugins) patch.previewDisabledPlugins = previewDisabledPlugins
   }
 
+  if (source.extendedTilesetProjects && typeof source.extendedTilesetProjects === 'object') {
+    // False stays in the patch so a project-level true flag can be cleared on merge.
+    const extendedTilesetProjects = normalizeExtendedTilesetProjects(
+      source.extendedTilesetProjects,
+      true,
+    )
+    if (extendedTilesetProjects) patch.extendedTilesetProjects = extendedTilesetProjects
+  }
+
   return patch
 }
 
@@ -436,6 +446,19 @@ function normalizePreviewDisabledPlugins(
     if (!Array.isArray(list)) continue
     const names = [...new Set(list.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map((item) => item.trim()))]
     if (names.length || keepEmpty) result[projectPath] = names
+  }
+  return Object.keys(result).length ? result : undefined
+}
+
+function normalizeExtendedTilesetProjects(
+  value: unknown,
+  keepFalse: boolean,
+): Record<string, boolean> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const result: Record<string, boolean> = {}
+  for (const [projectPath, enabled] of Object.entries(value as Record<string, unknown>)) {
+    if (!projectPath.trim() || typeof enabled !== 'boolean') continue
+    if (enabled || keepFalse) result[projectPath] = enabled
   }
   return Object.keys(result).length ? result : undefined
 }
@@ -547,6 +570,13 @@ export function mergeWorkspaceSettings(
     merged.previewDisabledPlugins = {
       ...(base.previewDisabledPlugins || {}),
       ...next.previewDisabledPlugins,
+    }
+  }
+  if (next.extendedTilesetProjects) {
+    // Per-project replace; false patch entries clear the flag via the final normalize.
+    merged.extendedTilesetProjects = {
+      ...(base.extendedTilesetProjects || {}),
+      ...next.extendedTilesetProjects,
     }
   }
   return normalizeWorkspaceSettings(merged)

@@ -436,7 +436,7 @@ export interface EditorEnemyCatalogEntry extends NamedCatalogEntry {
   battlerHue: number;
 }
 
-/** Tileset DB row; tilesetNames[0..8] map to A1–A5, B, C, D, E sheets. */
+/** Tileset DB row; slots 0..8 map to A1–A5/B–E, with optional extended sheets after E. */
 export interface EditorTilesetCatalogEntry extends NamedCatalogEntry {
   tilesetNames: string[];
 }
@@ -1863,6 +1863,8 @@ export interface WorkspaceSettings {
   mapOverviewProjects?: Record<string, WorkspaceMapOverviewProjectState>;
   /** Per project path: plugin names excluded from map preview (plugins.js stays untouched). */
   previewDisabledPlugins?: Record<string, string[]>;
+  /** Per project path: unlock editor-side tileset image slots beyond stock A1-E. */
+  extendedTilesetProjects?: Record<string, boolean>;
 }
 
 export interface ActivateInvocationResult {

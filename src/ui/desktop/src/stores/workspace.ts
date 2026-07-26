@@ -82,6 +82,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         ...(current.previewDisabledPlugins || {}),
         ...(patch.previewDisabledPlugins || {}),
       },
+      extendedTilesetProjects: {
+        ...(current.extendedTilesetProjects || {}),
+        ...(patch.extendedTilesetProjects || {}),
+      },
     }
   }
 
@@ -193,6 +197,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       current.add(pluginName)
     }
     return patch({ previewDisabledPlugins: { [projectPath]: [...current] } })
+  }
+
+  /** Whether this project may edit tileset image slots beyond stock A1-E. */
+  function readExtendedTilesets(projectPath: string): boolean {
+    return settings.value.extendedTilesetProjects?.[projectPath] === true
+  }
+
+  function setExtendedTilesets(projectPath: string, enabled: boolean): Promise<void> {
+    return patch({ extendedTilesetProjects: { [projectPath]: enabled } })
   }
 
   function patchMapOverviewPositions(projectPath: string, positions: Record<string, { x: number; y: number }>): void {
@@ -461,6 +474,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     readProjectEditor,
     readPreviewDisabledPlugins,
     setPluginPreviewEnabled,
+    readExtendedTilesets,
+    setExtendedTilesets,
     patchMapOverviewPositions,
     readMapOverviewPositions,
     patchMapOverviewThumbnailQuality,

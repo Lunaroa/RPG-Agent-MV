@@ -80,8 +80,11 @@ export type PluginAudioPlaybackBundle = {
  * Fetch audio once into a blob object URL (so the media element can seek and
  * usually reports a finite duration). Also decode duration and waveform peaks.
  */
-export async function createPluginAudioPlaybackBundle(src: string): Promise<PluginAudioPlaybackBundle> {
-  const response = await fetch(src);
+export async function createPluginAudioPlaybackBundle(
+  src: string,
+  signal?: AbortSignal,
+): Promise<PluginAudioPlaybackBundle> {
+  const response = await fetch(src, { signal });
   if (!response.ok) {
     throw new Error(`Failed to load audio preview (${response.status})`);
   }

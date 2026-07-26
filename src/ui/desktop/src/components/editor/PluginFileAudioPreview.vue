@@ -15,15 +15,15 @@
       @error="onAudioError"
     />
 
-    <button
-      type="button"
+    <AudioWaveformSeek
       class="audio-wave"
+      :peaks="waveformPeaks"
+      :current-time="currentTime"
+      :duration="duration"
       :disabled="!canSeek || loadFailed"
       :aria-label="t('pluginFilePicker.audioSeek')"
-      @click="onWaveformClick"
-    >
-      <canvas ref="waveCanvas" class="audio-wave-canvas" aria-hidden="true" />
-    </button>
+      @seek="seekTo"
+    />
 
     <div class="audio-bar">
       <button
@@ -43,18 +43,6 @@
         <span class="clock-sep">/</span>
         {{ formatPluginAudioClock(duration) }}
       </span>
-
-      <el-slider
-        class="audio-seek"
-        :model-value="seekValue"
-        :min="0"
-        :max="seekMax"
-        :step="0.01"
-        :disabled="!canSeek"
-        :show-tooltip="false"
-        :aria-label="t('pluginFilePicker.audioSeek')"
-        @input="onSeekInput"
-      />
 
       <el-popover
         v-model:visible="volumeOpen"
@@ -104,16 +92,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { Pause, Play, Volume2, VolumeX } from '@lucide/vue';
+import AudioWaveformSeek from '../AudioWaveformSeek.vue';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import {
   createPluginAudioPlaybackBundle,
   formatPluginAudioClock,
   getRememberedPluginAudioVolume,
-  pluginAudioProgressRatio,
   readFiniteAudioDuration,
   rememberPluginAudioVolume,
-  seekTimeFromWaveformPointer,
 } from '../../utils/pluginFileAudioPreview';
 
 const props = withDefaults(defineProps<{
@@ -128,7 +115,6 @@ const { t } = useI18n();
 /** Above file-picker subDialog (2500) so the volume popover is clickable. */
 const volumeZ = LAYER_Z.contextMenu;
 const audioEl = ref<HTMLAudioElement | null>(null);
-const waveCanvas = ref<HTMLCanvasElement | null>(null);
 const playbackSrc = ref('');
 const playing = ref(false);
 const currentTime = ref(0);
@@ -141,6 +127,7 @@ const volumeOpen = ref(false);
 const seeking = ref(false);
 const loadFailed = ref(false);
 let objectUrl: string | null = null;
+let loadController: AbortController | null = null;
 let bindToken = 0;
 let pendingAutoplay = false;
 let rafId: number | null = null;
@@ -165,8 +152,6 @@ function stopProgressRaf(): void {
 }
 
 const canSeek = computed(() => Number.isFinite(duration.value) && duration.value > 0);
-const seekMax = computed(() => (canSeek.value ? duration.value : 1));
-const seekValue = computed(() => (canSeek.value ? currentTime.value : 0));
 
 watch(
   () => props.src,
@@ -175,10 +160,6 @@ watch(
   },
   { immediate: true },
 );
-
-watch([waveformPeaks, currentTime, duration], () => {
-  drawWaveform();
-});
 
 watch(playing, (isPlaying) => {
   if (isPlaying) startProgressRaf();
@@ -202,11 +183,14 @@ async function bindSource(src: string): Promise<void> {
   loadFailed.value = false;
   pendingAutoplay = false;
   playbackSrc.value = '';
+  loadController?.abort();
+  loadController = null;
   revokeObjectUrl();
   if (!src) return;
 
   try {
-    const bundle = await createPluginAudioPlaybackBundle(src);
+    loadController = new AbortController();
+    const bundle = await createPluginAudioPlaybackBundle(src, loadController.signal);
     if (token !== bindToken) {
       URL.revokeObjectURL(bundle.objectUrl);
       return;
@@ -220,7 +204,6 @@ async function bindSource(src: string): Promise<void> {
     pendingAutoplay = props.autoplay;
     await nextTick();
     applyRememberedVolume();
-    drawWaveform();
     await tryAutoplay(token);
   } catch {
     if (token !== bindToken) return;
@@ -229,69 +212,13 @@ async function bindSource(src: string): Promise<void> {
   }
 }
 
-function drawWaveform(): void {
-  const canvas = waveCanvas.value;
-  if (!canvas) return;
-  const cssWidth = Math.max(1, canvas.clientWidth || 480);
-  const cssHeight = Math.max(1, canvas.clientHeight || 64);
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(cssWidth * dpr);
-  canvas.height = Math.round(cssHeight * dpr);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cssWidth, cssHeight);
-
-  const peaks = waveformPeaks.value;
-  const midY = cssHeight / 2;
-  const progress = pluginAudioProgressRatio(currentTime.value, duration.value);
-  const progressX = cssWidth * progress;
-
-  ctx.fillStyle = '#d7dee5';
-  ctx.fillRect(0, 0, cssWidth, cssHeight);
-
-  if (peaks.length === 0) {
-    ctx.strokeStyle = '#9aa3ad';
-    ctx.beginPath();
-    ctx.moveTo(0, midY);
-    ctx.lineTo(cssWidth, midY);
-    ctx.stroke();
-  } else {
-    const barWidth = cssWidth / peaks.length;
-    for (let i = 0; i < peaks.length; i += 1) {
-      const peak = peaks[i] ?? 0;
-      const barHeight = Math.max(2, peak * (cssHeight - 8));
-      const x = i * barWidth;
-      const played = x + barWidth * 0.5 <= progressX;
-      ctx.fillStyle = played ? '#2a3138' : '#8a939e';
-      ctx.fillRect(
-        x + barWidth * 0.15,
-        midY - barHeight / 2,
-        Math.max(1, barWidth * 0.7),
-        barHeight,
-      );
-    }
-  }
-
-  ctx.strokeStyle = '#c45c26';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(progressX, 0);
-  ctx.lineTo(progressX, cssHeight);
-  ctx.stroke();
-}
-
-function onWaveformClick(event: MouseEvent): void {
-  const canvas = waveCanvas.value;
+function seekTo(next: number): void {
   const el = audioEl.value;
-  if (!canvas || !el || !canSeek.value) return;
-  const rect = canvas.getBoundingClientRect();
-  const next = seekTimeFromWaveformPointer(event.clientX, rect.left, rect.width, duration.value);
+  if (!el || !canSeek.value) return;
   seeking.value = true;
   currentTime.value = next;
   el.currentTime = next;
   seeking.value = false;
-  drawWaveform();
 }
 
 function applyRememberedVolume(): void {
@@ -365,17 +292,6 @@ function onEnded(): void {
   syncFromElement();
 }
 
-function onSeekInput(value: number | number[]): void {
-  const el = audioEl.value;
-  if (!el || !canSeek.value) return;
-  const next = Array.isArray(value) ? value[0] : value;
-  if (!Number.isFinite(next)) return;
-  seeking.value = true;
-  currentTime.value = next;
-  el.currentTime = next;
-  seeking.value = false;
-}
-
 function onVolumeInput(value: number | number[]): void {
   const el = audioEl.value;
   if (!el) return;
@@ -391,6 +307,8 @@ function onVolumeInput(value: number | number[]): void {
 
 onUnmounted(() => {
   bindToken += 1;
+  loadController?.abort();
+  loadController = null;
   stopProgressRaf();
   audioEl.value?.pause();
   revokeObjectUrl();
@@ -410,28 +328,8 @@ defineExpose({
   justify-items: stretch;
 }
 .audio-wave {
-  display: block;
-  width: 100%;
   height: 72px;
-  padding: 0;
-  border: 1px solid #c9d0d7;
   border-radius: 8px;
-  background: #d7dee5;
-  cursor: pointer;
-  overflow: hidden;
-}
-.audio-wave:disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-.audio-wave:focus-visible {
-  outline: 2px solid var(--app-accent, #c45c26);
-  outline-offset: 1px;
-}
-.audio-wave-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
 }
 .audio-bar {
   display: flex;
@@ -480,31 +378,6 @@ defineExpose({
   margin: 0 3px;
   color: #8a939e;
   font-weight: 500;
-}
-.audio-seek {
-  flex: 1 1 auto;
-  min-width: 80px;
-  margin: 0 4px;
-}
-.audio-seek :deep(.el-slider__runway) {
-  height: 4px;
-  margin: 0;
-  background: #c9d0d7;
-}
-.audio-seek :deep(.el-slider__bar) {
-  height: 4px;
-  background: #2a3138;
-}
-.audio-seek :deep(.el-slider__button-wrapper) {
-  width: 16px;
-  height: 16px;
-  top: -6px;
-}
-.audio-seek :deep(.el-slider__button) {
-  width: 12px;
-  height: 12px;
-  border: 0;
-  background: #2a3138;
 }
 .volume-popup-body {
   display: grid;

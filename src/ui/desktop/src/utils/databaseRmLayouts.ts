@@ -133,6 +133,42 @@ export const DATABASE_RM_LAYOUTS: Partial<Record<string, RmPanelLayout[]>> = {
     { titleKey: '', column: 'side', rows: [['traits']] },
     { titleKey: '', column: 'side', rows: [['note']] },
   ],
+  // Stock RM System tab: game/party/vehicles/title/battle on the left, options,
+  // music, sounds and menu chrome on the right. Switches/variables/types/terms
+  // are filtered out of this group entirely (they have their own pages).
+  System: [
+    { titleKey: 'db.panelBasic', column: 'main', rows: [['gameTitle', 'currencyUnit']] },
+    { titleKey: 'db.panelStartingParty', column: 'main', rows: [['partyMembers']] },
+    { titleKey: '', column: 'main', rows: [['boat'], ['ship'], ['airship']] },
+    { titleKey: 'db.panelTitleScreen', column: 'main', rows: [['title1Name', 'title2Name'], ['optDrawTitle']] },
+    {
+      titleKey: 'db.panelBattleScreen',
+      column: 'main',
+      rows: [
+        ['optSideView'],
+        ['battleback1Name', 'battleback2Name'],
+        ['battlerName', 'battlerHue'],
+        ['testTroopId'],
+        ['testBattlers'],
+      ],
+    },
+    { titleKey: 'db.panelStartPosition', column: 'main', rows: [['startMapId', 'startX', 'startY'], ['editMapId']] },
+    {
+      titleKey: 'db.panelOptions',
+      column: 'side',
+      rows: [
+        ['optTransparent'], ['optFollowers'], ['optSlipDeath'],
+        ['optFloorDeath'], ['optDisplayTp'], ['optExtraExp'],
+      ],
+    },
+    {
+      titleKey: 'db.panelMusic',
+      column: 'side',
+      rows: [['titleBgm'], ['battleBgm'], ['victoryMe'], ['defeatMe'], ['gameoverMe']],
+    },
+    { titleKey: '', column: 'side', rows: [['sounds']] },
+    { titleKey: '', column: 'side', rows: [['menuCommands'], ['windowTone']] },
+  ],
 };
 
 /** Fields never routed to the leftover panel: the id is already shown in the detail header. */

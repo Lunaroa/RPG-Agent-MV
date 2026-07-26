@@ -1,8 +1,7 @@
 import type { DatabaseCategoryId } from './consoleStoryLocalization'
 
-// Switches/variables no longer live on the database page; legacy deep links fall back to 'database'.
 const DATABASE_SECTION_IDS = new Set<DatabaseCategoryId>([
-  'database', 'commonEvents',
+  'database', 'commonEvents', 'switches', 'variables',
 ])
 
 export type AppRailItemId = 'workbench' | 'database' | 'project-assets' | 'map-overview' | 'plugins' | 'console'

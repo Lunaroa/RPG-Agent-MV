@@ -23,19 +23,28 @@ import { usePmEventEditor } from '../composables/usePmEventEditor';
 import StructuredFieldsEditor from '../components/console/StructuredFieldsEditor.vue';
 import CommonEventDetailEditor from '../components/console/CommonEventDetailEditor.vue';
 import DatabaseEntryDetailEditor from '../components/console/DatabaseEntryDetailEditor.vue';
+import SystemNamedEntryDetailEditor from '../components/console/SystemNamedEntryDetailEditor.vue';
 import BattleTestSetupDialog from '../components/console/BattleTestSetupDialog.vue';
 import StagedEntryInspection from '../components/console/StagedEntryInspection.vue';
 import ConsoleSearchInput from '../components/console/ConsoleSearchInput.vue';
 import { useI18n } from '../i18n';
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
 import {
+  DATABASE_CATEGORY_LABELS,
   MANAGED_KIND_LABELS,
   newCommonEventName,
 } from '../utils/consoleStoryLocalization';
-import { databaseFieldLabel, databaseGroupLabel } from '../utils/rmmvDatabaseLocalization';
+import { databaseGroupLabel } from '../utils/rmmvDatabaseLocalization';
 import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
 import { LatestAsyncCoordinator } from '../utils/latestAsyncCoordinator';
 import { normalizeDatabaseSection } from '../utils/projectManagementRoute';
+import {
+  DATABASE_DOCUMENT_PAGES,
+  databaseDocumentPageKey,
+  databaseDocumentStorageGroup,
+  isDatabaseDocumentPage,
+  isSharedSystemDocumentPage,
+} from '../utils/databaseDocumentPages';
 
 type PmDetail = { kind: 'managed'; entry: ProjectManagedEntry };
 
@@ -144,10 +153,8 @@ async function revertCurrentStagedEntry() {
     } else {
       closeDetail();
     }
-    if (current.kind === 'database' || current.kind === 'commonEvent') {
-      resetCatalog();
-      await ensureCatalog();
-    }
+    resetCatalog();
+    await ensureCatalog();
     await loadData();
     await refreshStagingStatus();
   } catch (revertError) {
@@ -225,7 +232,6 @@ const {
 
 const searchQuery = ref('');
 const selectedDbGroup = ref('Actors');
-const selectedDbSubField = ref('');
 const showUnnamed = ref(false);
 
 const dbContextMenu = ref<{
@@ -240,12 +246,17 @@ let dbClipboard: { group: string; value: Record<string, unknown> } | null = null
 const DB_GROUP_ORDER = [
   'Actors', 'Classes', 'Skills', 'Items', 'Weapons', 'Armors',
   'Enemies', 'Troops', 'States', 'Animations', 'Tilesets', 'CommonEvents',
-  'System', 'Types', 'Terms',
+  'Switches', 'Variables',
+  ...DATABASE_DOCUMENT_PAGES,
 ] as const;
 
-const DOCUMENT_DATABASE_GROUPS = new Set(['System', 'Types', 'Terms']);
-const TYPES_SUBFIELD_ORDER = ['elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes'] as const;
-const TERMS_SUBFIELD_ORDER = ['basic', 'params', 'commands', 'messages'] as const;
+const DOCUMENT_DATABASE_GROUPS = new Set<string>(DATABASE_DOCUMENT_PAGES);
+const documentDatabasePage = computed(() => databaseDocumentPageKey(selectedDbGroup.value));
+const isDocumentDatabaseGroup = computed(() => Boolean(documentDatabasePage.value));
+
+function storageGroupForUiGroup(group: string): string {
+  return isDatabaseDocumentPage(group) ? databaseDocumentStorageGroup(group) : group;
+}
 
 const pmDetail = ref<PmDetail | null>(null);
 const detailDraft = ref<unknown>(null);
@@ -374,9 +385,7 @@ function handleDraftHistoryShortcut(event: KeyboardEvent): void {
 watch(() => projectStore.currentProject, (project) => {
   activationSequence += 1;
   overviewCoordinator.invalidate({ project });
-  if (normalizeDatabaseSection(route.query.section) === 'commonEvents') {
-    selectedDbGroup.value = 'CommonEvents';
-  }
+  selectedDbGroup.value = dbGroupForSection(normalizeDatabaseSection(route.query.section));
   closeDetail();
   resetCatalog();
   stagingDirty.value = false;
@@ -420,9 +429,7 @@ function setProjectManagementActive(active: boolean): void {
     validating.value = false;
     return;
   }
-  if (normalizeDatabaseSection(route.query.section) === 'commonEvents') {
-    selectDbGroup('CommonEvents');
-  }
+  selectDbGroup(dbGroupForSection(normalizeDatabaseSection(route.query.section)), false);
   void activateProjectManagement();
 }
 
@@ -468,6 +475,8 @@ watch(() => projectStore.currentProject, (project) => {
 });
 
 const scan = computed(() => overview.value?.scan);
+const switches = computed(() => scan.value?.switches || []);
+const variables = computed(() => scan.value?.variables || []);
 const commonEvents = computed(() => scan.value?.commonEvents || []);
 const database = computed(() => scan.value?.database || {});
 const readIssues = computed(() => overview.value?.readIssues || []);
@@ -500,11 +509,14 @@ watch(readIssues, (issues) => {
 });
 
 function databaseReadIssueText(group: string): string {
-  const issue = databaseReadIssue(group);
+  const issue = databaseReadIssue(storageGroupForUiGroup(group));
   return issue ? formatReadIssue(issue) : '';
 }
 
-const selectedDatabaseReadIssue = computed(() => databaseReadIssue(selectedDbGroup.value));
+const selectedDatabaseReadIssue = computed(() =>
+  databaseReadIssue(isSystemNamedGroup(selectedDbGroup.value)
+    ? 'System'
+    : storageGroupForUiGroup(selectedDbGroup.value)));
 const commonEventsReadIssue = computed(() => databaseReadIssue('CommonEvents'));
 
 const selectedCommonEventId = computed(() => (
@@ -535,6 +547,17 @@ const filteredCommonEvents = computed(() => {
   return base.filter((item) => matchesQuery(item.id, item.name, item.trigger, item.switchName, item.searchText));
 });
 
+const activeSystemNamedEntries = computed(() => (
+  selectedDbGroup.value === 'Switches' ? switches.value : variables.value
+));
+
+const filteredSystemNamedEntries = computed(() => {
+  const base = showUnnamed.value
+    ? activeSystemNamedEntries.value
+    : activeSystemNamedEntries.value.filter((entry) => entry.name);
+  return base.filter((entry) => matchesQuery(entry.id, entry.name));
+});
+
 const filteredDatabase = computed(() => {
   const db = database.value;
   const query = normalizedSearchQuery();
@@ -558,38 +581,71 @@ const filteredDatabase = computed(() => {
 
 const dbGroupOptions = computed(() =>
   DB_GROUP_ORDER.map((key) => {
-    const group = database.value[key];
-    const count = isDocumentSubFieldGroup(key)
-      ? dbSubFieldOrder(key).length
-      : (group?.named.length ?? group?.count ?? 0);
-    return { key, label: dbLabel(key), count: group?.readState && group.readState !== 'ready' ? '!' : count, readState: group?.readState ?? 'missing' };
+    if (key === 'Switches' || key === 'Variables') {
+      const entries = key === 'Switches' ? switches.value : variables.value;
+      const systemState = database.value.System?.readState ?? 'missing';
+      return {
+        key,
+        label: dbLabel(key),
+        count: systemState !== 'ready' ? '!' : entries.length,
+        readState: systemState,
+      };
+    }
+    const storageGroup = storageGroupForUiGroup(key);
+    const group = database.value[storageGroup];
+    const count = group?.named.length ?? group?.count ?? 0;
+    return {
+      key,
+      label: dbLabel(key),
+      count: isDatabaseDocumentPage(key) ? null : (group?.readState && group.readState !== 'ready' ? '!' : count),
+      readState: group?.readState ?? 'missing',
+    };
   }),
 );
 
 const activeDbGroup = computed((): ProjectOverviewDbGroup => {
-  return filteredDatabase.value[selectedDbGroup.value] ?? { exists: false, readState: 'missing', count: 0, named: [] };
+  return filteredDatabase.value[storageGroupForUiGroup(selectedDbGroup.value)]
+    ?? { exists: false, readState: 'missing', count: 0, named: [] };
 });
 
 const selectedDbGroupMetadata = computed((): ProjectOverviewDbGroup => {
-  return database.value[selectedDbGroup.value] ?? { exists: false, readState: 'missing', count: 0, named: [] };
+  if (isSystemNamedGroup(selectedDbGroup.value)) {
+    const system = database.value.System;
+    return {
+      exists: system?.exists ?? false,
+      readState: system?.readState ?? 'missing',
+      count: activeSystemNamedEntries.value.length,
+      capacity: activeSystemNamedEntries.value.reduce((highest, entry) => Math.max(highest, entry.id), 0),
+      maxEntries: 5000,
+      named: activeSystemNamedEntries.value,
+    };
+  }
+  return database.value[storageGroupForUiGroup(selectedDbGroup.value)]
+    ?? { exists: false, readState: 'missing', count: 0, named: [] };
 });
 
 const visibleDbEntries = computed(() =>
   visibleGroupSlice('database', selectedDbGroup.value, activeDbGroup.value.named),
 );
 
+const visibleSystemNamedEntries = computed(() =>
+  visibleGroupSlice('database', selectedDbGroup.value, filteredSystemNamedEntries.value));
+
 const activeDbKey = computed(() => {
   if (pmDetail.value?.kind !== 'managed' || pmDetail.value.entry.kind !== 'database') return '';
   const entry = pmDetail.value.entry;
-  if (isDocumentSubFieldGroup(String(entry.group)) && selectedDbSubField.value) {
-    return `${entry.group}:${entry.id}:${selectedDbSubField.value}`;
-  }
   return `${entry.group}:${entry.id}`;
 });
 
 const hasMoreDbEntries = computed(() =>
   hasMoreGroupItems('database', selectedDbGroup.value, activeDbGroup.value.named.length),
 );
+
+const hasMoreSystemNamedEntries = computed(() =>
+  hasMoreGroupItems('database', selectedDbGroup.value, filteredSystemNamedEntries.value.length));
+
+const remainingSystemNamedEntries = computed(() =>
+  remainingGroupItems('database', selectedDbGroup.value, filteredSystemNamedEntries.value.length));
 
 const remainingDbEntries = computed(() =>
   remainingGroupItems('database', selectedDbGroup.value, activeDbGroup.value.named.length),
@@ -636,6 +692,10 @@ function showMoreGroupItems(tab: PmGroupTab, groupKey: string, total: number): v
 }
 
 function dbLabel(key: string): string {
+  if (key === 'Switches') return DATABASE_CATEGORY_LABELS.switches[language.value];
+  if (key === 'Variables') return DATABASE_CATEGORY_LABELS.variables[language.value];
+  if (key === 'System1') return t('db.document.system1');
+  if (key === 'System2') return t('db.document.system2');
   return databaseGroupLabel(key, language.value);
 }
 
@@ -659,57 +719,30 @@ function isCommonEventsGroup(group?: string): boolean {
   return group === 'CommonEvents';
 }
 
+function isSystemNamedGroup(group?: string): boolean {
+  return group === 'Switches' || group === 'Variables';
+}
+
+function systemNamedKind(group = selectedDbGroup.value): 'switch' | 'variable' {
+  return group === 'Switches' ? 'switch' : 'variable';
+}
+
+function dbGroupForSection(section: ReturnType<typeof normalizeDatabaseSection>): string {
+  if (section === 'commonEvents') return 'CommonEvents';
+  if (section === 'switches') return 'Switches';
+  if (section === 'variables') return 'Variables';
+  return 'Actors';
+}
+
+function sectionForDbGroup(group: string): ReturnType<typeof normalizeDatabaseSection> {
+  if (group === 'CommonEvents') return 'commonEvents';
+  if (group === 'Switches') return 'switches';
+  if (group === 'Variables') return 'variables';
+  return 'database';
+}
+
 function canCreateDatabaseGroup(key: string): boolean {
-  return !DOCUMENT_DATABASE_GROUPS.has(key);
-}
-
-function isDocumentSubFieldGroup(group: string): boolean {
-  return group === 'Types' || group === 'Terms';
-}
-
-function dbSubFieldOrder(group: string): readonly string[] {
-  if (group === 'Types') return TYPES_SUBFIELD_ORDER;
-  if (group === 'Terms') return TERMS_SUBFIELD_ORDER;
-  return [];
-}
-
-function dbFieldLabel(path: string): string {
-  return databaseFieldLabel(path, language.value);
-}
-
-function dbSubFieldItemCount(path: string): string {
-  const draft = detailDraft.value;
-  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) return '—';
-  const value = (draft as Record<string, unknown>)[path];
-  if (path === 'messages' && value && typeof value === 'object' && !Array.isArray(value)) {
-    return String(Object.keys(value as Record<string, unknown>).length);
-  }
-  if (Array.isArray(value)) {
-    return String(value.filter((item) => item != null && item !== '').length);
-  }
-  return '—';
-}
-
-function isDocumentSubFieldDetailLoaded(): boolean {
-  return pmDetail.value?.kind === 'managed'
-    && pmDetail.value.entry.kind === 'database'
-    && pmDetail.value.entry.group === selectedDbGroup.value
-    && pmDetail.value.entry.id === 0;
-}
-
-async function openDocumentSubFieldGroup(group: string): Promise<void> {
-  const fields = dbSubFieldOrder(group);
-  if (!fields.length) return;
-  selectedDbSubField.value = fields[0];
-  await openManaged('database', 0, group);
-}
-
-function selectDbSubField(path: string): void {
-  if (selectedDbSubField.value === path && isDocumentSubFieldDetailLoaded()) return;
-  selectedDbSubField.value = path;
-  if (!isDocumentSubFieldDetailLoaded()) {
-    void openManaged('database', 0, selectedDbGroup.value);
-  }
+  return !DOCUMENT_DATABASE_GROUPS.has(key) && !isSystemNamedGroup(key);
 }
 
 const canCreateSelectedDbGroup = computed(() => selectedDbGroupMetadata.value.readState === 'ready' && canCreateDatabaseGroup(selectedDbGroup.value));
@@ -726,37 +759,56 @@ function closeDetail() {
   detailError.value = '';
 }
 
-function selectDbGroup(key: string): void {
+function selectDbGroup(key: string, syncRoute = true): void {
   const sameGroup = selectedDbGroup.value === key;
-  if (sameGroup && !isDocumentSubFieldGroup(key)) return;
+  if (sameGroup) {
+    if (
+      DOCUMENT_DATABASE_GROUPS.has(key)
+      && !pmDetail.value
+      && !detailBusy.value
+      && database.value[storageGroupForUiGroup(key)]?.readState === 'ready'
+    ) {
+      const storageGroup = storageGroupForUiGroup(key);
+      const first = database.value[storageGroup]?.named[0];
+      if (first) void openManaged('database', first.id, storageGroup);
+    }
+    return;
+  }
+  const previousGroup = selectedDbGroup.value;
+  const preserveSharedSystemDraft = isSharedSystemDocumentPage(previousGroup)
+    && isSharedSystemDocumentPage(key)
+    && pmDetail.value?.kind === 'managed'
+    && pmDetail.value.entry.kind === 'database'
+    && pmDetail.value.entry.group === 'System';
   selectedDbGroup.value = key;
+  if (syncRoute && route.path === '/database') {
+    const section = sectionForDbGroup(key);
+    if (route.query.section !== section) {
+      void router.replace({ path: '/database', query: { ...route.query, section } });
+    }
+  }
   resetGroupVisibleLimits();
-  if (database.value[key]?.readState !== 'ready') {
-    selectedDbSubField.value = '';
-    if (!sameGroup) closeDetail();
-    return;
-  }
-  if (isDocumentSubFieldGroup(key)) {
-    if (!sameGroup) closeDetail();
-    void openDocumentSubFieldGroup(key);
-    return;
-  }
-  selectedDbSubField.value = '';
-  if (!sameGroup) closeDetail();
-  // System is a single-document group: open its entry directly like the stock RM editor.
-  if (key === 'System') {
-    const first = database.value[key]?.named[0];
-    if (first) void openManaged('database', first.id, key);
+  if (preserveSharedSystemDraft) return;
+  closeDetail();
+  if (isSystemNamedGroup(key)) return;
+  const storageGroup = storageGroupForUiGroup(key);
+  if (database.value[storageGroup]?.readState !== 'ready') return;
+  // System 1/System 2/Types/Terms are single-document pages: open their shared
+  // storage document directly instead of asking for an entry selection.
+  // Switching between System 1 and System 2 above preserves the same draft.
+  // the stock RM editor tabs instead of asking for a sub-field first.
+  if (DOCUMENT_DATABASE_GROUPS.has(key)) {
+    const first = database.value[storageGroup]?.named[0];
+    if (first) void openManaged('database', first.id, storageGroup);
   }
 }
 
 watch(() => route.query.section, (section) => {
   if (!surfaceActive || route.path !== '/database') return;
-  if (normalizeDatabaseSection(section) === 'commonEvents') {
-    selectDbGroup('CommonEvents');
-  }
-  if (section !== 'database') {
-    void router.replace({ path: '/database', query: { section: 'database' } });
+  const normalized = normalizeDatabaseSection(section);
+  selectDbGroup(dbGroupForSection(normalized), false);
+  if (section !== normalized) {
+    void router.replace({ path: '/database', query: { ...route.query, section: normalized } });
   }
 }, { immediate: true });
 
@@ -923,7 +975,12 @@ async function changeSelectedDatabaseMaximum() {
     if (maximum === selectedDbCapacity.value) return;
     detailBusy.value = true;
     detailError.value = '';
-    await projectManagement.resizeDatabase({ kind: 'database', group, maximum }, projectStore.currentProject);
+    const kind = isSystemNamedGroup(group) ? systemNamedKind(group) : 'database';
+    await projectManagement.resizeDatabase({
+      kind,
+      group: kind === 'database' ? group : undefined,
+      maximum,
+    }, projectStore.currentProject);
     resetCatalog();
     await ensureCatalog();
     await loadData();
@@ -1029,10 +1086,8 @@ async function saveDetail() {
         pmDetail.value = { kind: 'managed', entry: updated };
         resetDetailDraft(cloneDraft(updated.value));
       }
-      if (entry.kind === 'database' || entry.kind === 'commonEvent') {
-        resetCatalog();
-        await ensureCatalog();
-      }
+      resetCatalog();
+      await ensureCatalog();
     }
     await loadData();
     await refreshStagingStatus();
@@ -1133,10 +1188,8 @@ async function startParticlePreview(): Promise<void> {
 
 function detailTitle(): string {
   if (!pmDetail.value) return '';
+  if (documentDatabasePage.value) return dbLabel(documentDatabasePage.value);
   const entry = pmDetail.value.entry;
-  if (entry.kind === 'database' && isDocumentSubFieldGroup(String(entry.group || '')) && selectedDbSubField.value) {
-    return `${dbLabel(String(entry.group || ''))} · ${dbFieldLabel(selectedDbSubField.value)}`;
-  }
   return `${entry.kind === 'database' ? dbLabel(String(entry.group || '')) : managedKindLabel(entry.kind)} · #${entry.id}`;
 }
 </script>
@@ -1159,7 +1212,10 @@ function detailTitle(): string {
     </div>
     <div
       class="console-split pm-split"
-      :class="{ 'write-locked': surfaceInteractionLocked }"
+      :class="{
+        'write-locked': surfaceInteractionLocked,
+        'is-document-group': isDocumentDatabaseGroup,
+      }"
       :inert="surfaceInteractionLocked"
       :aria-disabled="surfaceInteractionLocked"
     >
@@ -1178,13 +1234,13 @@ function detailTitle(): string {
             @click="selectDbGroup(opt.key)"
           >
             <span>{{ opt.label }}</span>
-            <b>{{ opt.count }}</b>
+            <b v-if="opt.count !== null">{{ opt.count }}</b>
           </button>
         </div>
       </aside>
 
       <!-- Entry list -->
-      <main class="console-panel pm-entry-list">
+      <main v-if="!isDocumentDatabaseGroup" class="console-panel pm-entry-list">
         <div class="console-list-header">
           <span>{{ pmListHeaderTitle }}</span>
         </div>
@@ -1222,48 +1278,77 @@ function detailTitle(): string {
               <div v-if="!filteredCommonEvents.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
             </div>
           </template>
-          <template v-else>
+          <template v-else-if="isSystemNamedGroup(selectedDbGroup)">
             <div class="list-toolbar database-toolbar">
-              <span>{{ selectedDatabaseReadIssue ? t('story.databaseReadFailed') : itemCountLabel(isDocumentSubFieldGroup(selectedDbGroup) ? dbSubFieldOrder(selectedDbGroup).length : activeDbGroup.named.length) }}</span>
-              <template v-if="!isDocumentSubFieldGroup(selectedDbGroup)">
-                <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
-                <button
-                  v-if="canCreateSelectedDbGroup"
-                  type="button"
-                  class="link-button"
-                  :disabled="detailBusy || stagingBusy"
-                  @click="createSelectedDatabaseEntry"
-                >
-                  {{ t('story.addNew') }}
-                </button>
-                <button
-                  v-if="canResizeSelectedDbGroup"
-                  type="button"
-                  class="link-button"
-                  :disabled="detailBusy || stagingBusy"
-                  @click="changeSelectedDatabaseMaximum"
-                >
-                  {{ t('story.databaseMaximum', { maximum: selectedDbCapacity }) }}
-                </button>
-              </template>
+              <span>{{ itemCountLabel(filteredSystemNamedEntries.length) }}</span>
+              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
+              <button
+                type="button"
+                class="link-button"
+                :disabled="detailBusy || stagingBusy || Boolean(selectedDatabaseReadIssue)"
+                @click="changeSelectedDatabaseMaximum"
+              >
+                {{ t('story.databaseMaximum', { maximum: selectedDbCapacity }) }}
+              </button>
             </div>
             <div v-if="selectedDatabaseReadIssue" class="read-issue-detail" role="alert">
               <strong>{{ t('story.databaseReadFailed') }}</strong>
               <span>{{ formatReadIssue(selectedDatabaseReadIssue) }}</span>
             </div>
-            <div v-else-if="isDocumentSubFieldGroup(selectedDbGroup)" class="id-list db-subfield-list">
+            <div v-else class="id-list">
               <button
-                v-for="path in dbSubFieldOrder(selectedDbGroup)"
-                :key="path"
+                v-for="entry in visibleSystemNamedEntries"
+                :key="entry.id"
                 type="button"
-                class="id-row db-subfield-row"
-                :class="{ active: activeDbKey === `${selectedDbGroup}:0:${path}` }"
-                @click="selectDbSubField(path)"
+                :data-ui-id="`database-entry-${selectedDbGroup}-${entry.id}`"
+                class="id-row"
+                :class="{ active: pmDetail?.kind === 'managed'
+                  && pmDetail.entry.kind === systemNamedKind()
+                  && pmDetail.entry.id === entry.id }"
+                @click="openManaged(systemNamedKind(), entry.id)"
               >
-                <span class="row-name">{{ dbFieldLabel(path) }}</span>
-                <span class="row-meta">{{ dbSubFieldItemCount(path) }}</span>
+                <span class="row-id">{{ String(entry.id).padStart(4, '0') }}</span>
+                <span class="row-name">{{ entry.name || unnamedLabel() }}</span>
               </button>
-              <div v-if="!pmDetail && !detailBusy" class="empty-hint">{{ t('story.selectDbSubFieldHint') }}</div>
+              <button
+                v-if="hasMoreSystemNamedEntries"
+                type="button"
+                class="load-more"
+                @click="showMoreGroupItems('database', selectedDbGroup, filteredSystemNamedEntries.length)"
+              >
+                {{ showMoreLabel(remainingSystemNamedEntries) }}
+              </button>
+              <div v-if="!visibleSystemNamedEntries.length" class="empty-hint">
+                {{ t('story.noMatchEntries') }}
+              </div>
+            </div>
+          </template>
+          <template v-else>
+            <div class="list-toolbar database-toolbar">
+              <span>{{ selectedDatabaseReadIssue ? t('story.databaseReadFailed') : itemCountLabel(activeDbGroup.named.length) }}</span>
+              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
+              <button
+                v-if="canCreateSelectedDbGroup"
+                type="button"
+                class="link-button"
+                :disabled="detailBusy || stagingBusy"
+                @click="createSelectedDatabaseEntry"
+              >
+                {{ t('story.addNew') }}
+              </button>
+              <button
+                v-if="canResizeSelectedDbGroup"
+                type="button"
+                class="link-button"
+                :disabled="detailBusy || stagingBusy"
+                @click="changeSelectedDatabaseMaximum"
+              >
+                {{ t('story.databaseMaximum', { maximum: selectedDbCapacity }) }}
+              </button>
+            </div>
+            <div v-if="selectedDatabaseReadIssue" class="read-issue-detail" role="alert">
+              <strong>{{ t('story.databaseReadFailed') }}</strong>
+              <span>{{ formatReadIssue(selectedDatabaseReadIssue) }}</span>
             </div>
             <div v-else class="id-list">
               <button
@@ -1303,7 +1388,11 @@ function detailTitle(): string {
               <span v-if="pmDetail">{{ detailTitle() }}</span>
               <span v-else>{{ t('story.selectEntryHint') }}</span>
             </div>
-            <button v-if="pmDetail || detailError" type="button" @click="clearDetailPanel">×</button>
+            <button
+              v-if="(pmDetail || detailError) && !isDocumentDatabaseGroup"
+              type="button"
+              @click="clearDetailPanel"
+            >×</button>
           </header>
           <div v-if="detailBusy && !pmDetail" class="empty-hint">{{ t('story.loadingEntry') }}</div>
           <div
@@ -1332,9 +1421,9 @@ function detailTitle(): string {
             <DatabaseEntryDetailEditor
               :model-value="detailDraft"
               :group="pmDetail.entry.group"
+              :document-page="documentDatabasePage || undefined"
               :catalog="editorCatalog"
               :schema="pmDetail.entry.schema"
-              :focus-field="pmDetail.entry.group && isDocumentSubFieldGroup(pmDetail.entry.group) ? selectedDbSubField : undefined"
               :load-image="loadImage"
               :battleback1-name="temporaryBattleback1Name"
               :battleback2-name="temporaryBattleback2Name"
@@ -1343,6 +1432,19 @@ function detailTitle(): string {
               @update:battleback2-name="temporaryBattleback2Name = $event"
               @request-battle-test="openBattleTestSetup"
               @request-particle-preview="startParticlePreview"
+            />
+          </div>
+          <div
+            v-else-if="pmDetail?.kind === 'managed'
+              && (pmDetail.entry.kind === 'switch' || pmDetail.entry.kind === 'variable')"
+            class="pm-detail-body"
+          >
+            <StagedEntryInspection :inspection="pmDetail.entry.inspection" />
+            <SystemNamedEntryDetailEditor
+              :model-value="detailDraft"
+              :id-label="t('story.systemNamedId')"
+              :name-label="t('story.systemNamedName')"
+              @update:model-value="updateDetailDraft"
             />
           </div>
           <div v-else-if="pmDetail && detailEditable" class="pm-detail-body">
@@ -1472,6 +1574,9 @@ function detailTitle(): string {
   padding: 14px 40px 34px;
   gap: 22px;
   overflow: hidden;
+}
+.pm-split.is-document-group {
+  grid-template-columns: 172px minmax(0, 1fr);
 }
 
 /* Sidebar data-type list */
@@ -1648,7 +1753,6 @@ function detailTitle(): string {
 .row-id { font-family: var(--app-font-mono); font-weight: 600; font-size: 10px; color: var(--console-accent,#be5630); min-width: 40px; }
 .row-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-meta { font-size: 10px; color: var(--console-muted,#8a7f72); min-width: 24px; text-align: right; }
-.db-subfield-row { justify-content: space-between; }
 .audio-row .row-name,
 .image-row .row-name { flex: 1; min-width: 0; }
 .load-more {
@@ -1831,6 +1935,9 @@ function detailTitle(): string {
     grid-template-columns: 150px 208px minmax(0, 1fr);
     padding-inline: 28px;
     gap: 16px;
+  }
+  .pm-split.is-document-group {
+    grid-template-columns: 150px minmax(0, 1fr);
   }
   .map-split { grid-template-columns: 190px minmax(0, 1fr); }
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
 import type {
   EditorProjectCatalog,
   NamedCatalogEntry,
@@ -70,7 +71,9 @@ import DatabaseEffectEditor from './DatabaseEffectEditor.vue';
 import DatabaseTraitEditor from './DatabaseTraitEditor.vue';
 import TilesetFlagCanvasEditor from './TilesetFlagCanvasEditor.vue';
 import TroopFormationCanvas from './TroopFormationCanvas.vue';
+import DatabaseDocumentEditor from './DatabaseDocumentEditor.vue';
 import { enemyBattlerAssetKind } from '../../utils/rmmvBattleAssets.ts';
+import type { DatabaseDocumentPage } from '../../utils/databaseDocumentPages';
 import {
   ANIMATION_POSITION_OPTIONS,
   DAMAGE_TYPE_OPTIONS,
@@ -103,7 +106,9 @@ import {
   RM_LAYOUT_HIDDEN_PATHS,
   type RmPanelLayout,
 } from '../../utils/databaseRmLayouts';
-import { tilesetSlotCount, tilesetSlotLabel } from '../../utils/tilesetSlots';
+import { canAppendTilesetSlot, tilesetSlotCount, tilesetSlotLabel } from '../../utils/tilesetSlots';
+import { useWorkspaceStore } from '../../stores/workspace';
+import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 
 type DbRecord = Record<string, unknown>;
 type DbArrayRecord = Record<string, unknown>[];
@@ -122,7 +127,7 @@ const props = defineProps<{
   group?: string;
   catalog: EditorProjectCatalog | null;
   schema?: RmmvDatabaseEntrySchema;
-  focusField?: string;
+  documentPage?: DatabaseDocumentPage;
   loadImage?: (url: string) => Promise<HTMLImageElement | null>;
   battleback1Name?: string;
   battleback2Name?: string;
@@ -136,6 +141,7 @@ const emit = defineEmits<{
   'requestParticlePreview': [];
 }>();
 const { language, t } = useI18n();
+const workspaceStore = useWorkspaceStore();
 
 const jsonErrors = reactive<Record<string, string>>({});
 const facePreviewCanvas = ref<HTMLCanvasElement | null>(null);
@@ -163,6 +169,13 @@ const MV_ANIMATION_FIELDS = new Set([
   'animation1Name', 'animation1Hue', 'animation2Name', 'animation2Hue', 'position', 'frames', 'timings',
 ]);
 const PARTICLE_ROTATION_AXES = ['x', 'y', 'z'] as const;
+// Stock RM keeps these out of the System tab: switches/variables have their own
+// sidebar categories, and types/terms live on their own database pages.
+const SYSTEM_FIELDS_EDITED_ELSEWHERE = new Set([
+  'switches', 'variables',
+  'elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes',
+  'terms',
+]);
 const isMZParticleAnimation = computed(() => props.group === 'Animations'
   && props.catalog?.engine === 'rpg-maker-mz'
   && (Object.hasOwn(record.value, 'effectName') || Object.hasOwn(record.value, 'displayType')));
@@ -180,8 +193,10 @@ const schemaFields = computed(() => {
       ? !MV_ANIMATION_FIELDS.has(field.path)
       : !MZ_ANIMATION_FIELDS.has(field.path));
   }
-  if (!props.focusField) return fields;
-  return fields.filter((field) => field.path === props.focusField);
+  if (props.group === 'System') {
+    fields = fields.filter((field) => !SYSTEM_FIELDS_EDITED_ELSEWHERE.has(field.path));
+  }
+  return fields;
 });
 const references = computed(() => props.schema?.references || []);
 const schemaDriven = computed(() => schemaFields.value.length > 0);
@@ -903,7 +918,42 @@ function appendArrayValue(path: string, value: unknown): void {
   writePath(path, [...arrayValue(path), value]);
 }
 
-// Slot list stays data-driven so plugin-extended sheets (F..Z) render instead of being clipped at E.
+const extendedTilesetsEnabled = computed(() => {
+  const projectPath = props.catalog?.project;
+  return projectPath ? workspaceStore.readExtendedTilesets(projectPath) : false;
+});
+const extendedTilesetsBusy = ref(false);
+
+async function setExtendedTilesetsEnabled(enabled: boolean): Promise<void> {
+  const projectPath = props.catalog?.project;
+  if (!projectPath || extendedTilesetsBusy.value) return;
+  extendedTilesetsBusy.value = true;
+  try {
+    await workspaceStore.setExtendedTilesets(projectPath, enabled);
+  } catch (error) {
+    ElMessage.error(t('db.extendedTilesetsSaveFailed', {
+      message: formatUserFacingErrorMessage(error, 'general', language.value),
+    }));
+  } finally {
+    extendedTilesetsBusy.value = false;
+  }
+}
+
+function appendTilesetSlot(path: string): void {
+  const current = arrayValue(path);
+  const padded = Array.from(
+    { length: tilesetSlotCount(current.length) },
+    (_entry, index) => current[index] ?? '',
+  );
+  writePath(path, [...padded, '']);
+}
+
+function canRemoveTilesetSlot(path: string, index: number): boolean {
+  const length = arrayValue(path).length;
+  return extendedTilesetsEnabled.value && index >= 9 && index === length - 1;
+}
+
+// Slot list stays data-driven so plugin-extended sheets render instead of being clipped at E.
 function tilesetSlotIndexes(path: string): number[] {
   return Array.from({ length: tilesetSlotCount(arrayValue(path).length) }, (_entry, index) => index);
 }
@@ -1354,8 +1404,25 @@ function updateSound(index: number, key: string, value: unknown): void {
 </script>
 
 <template>
-  <div class="db-editor db-editor--compact" :class="{ 'db-editor--actors-rm': isActorImageEditor }">
-    <section v-if="schemaDriven && isActorImageEditor" class="editor-section actor-rm-section">
+  <div
+    class="db-editor db-editor--compact"
+    :class="{
+      'db-editor--actors-rm': isActorImageEditor,
+      'db-editor--types': group === 'Types',
+      'db-editor--terms': group === 'Terms',
+      'db-editor--document': Boolean(documentPage),
+    }"
+  >
+    <DatabaseDocumentEditor
+      v-if="documentPage"
+      :model-value="modelValue"
+      :page="documentPage"
+      :catalog="catalog"
+      :schema="schema"
+      :load-image="loadImage"
+      @update:model-value="emit('update:modelValue', $event)"
+    />
+    <section v-else-if="schemaDriven && isActorImageEditor" class="editor-section actor-rm-section">
       <div class="actor-rm-grid">
         <div class="actor-rm-left">
           <div class="rm-panel">
@@ -1627,11 +1694,6 @@ function updateSound(index: number, key: string, value: unknown): void {
                 </tbody>
               </table>
             </div>
-            <details class="advanced-json">
-              <summary>{{ t('db.advancedJson') }}</summary>
-              <textarea :value="jsonText(field)" rows="7" spellcheck="false" @input="updateJson(field, ($event.target as HTMLTextAreaElement).value)" />
-              <em v-if="jsonErrors[field.path]">{{ jsonErrors[field.path] }}</em>
-            </details>
           </section>
 
           <section v-else-if="isEnemyBattlerField(field)" class="field full complex-editor image-field-editor">
@@ -1975,12 +2037,41 @@ function updateSound(index: number, key: string, value: unknown): void {
           </section>
 
           <section v-else-if="field.path === 'tilesetNames'" class="field full complex-editor">
-            <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
+            <div class="complex-title">
+              <span>{{ fieldLabel(field) }}</span>
+              <div class="tileset-extension-actions">
+                <label class="inline-check">
+                  <input
+                    type="checkbox"
+                    :checked="extendedTilesetsEnabled"
+                    :disabled="!catalog?.project || extendedTilesetsBusy"
+                    @change="setExtendedTilesetsEnabled(($event.target as HTMLInputElement).checked)"
+                  />
+                  {{ t('db.extendedTilesets') }}
+                </label>
+                <button
+                  v-if="canAppendTilesetSlot(arrayValue(field.path).length, extendedTilesetsEnabled)"
+                  type="button"
+                  :disabled="extendedTilesetsBusy"
+                  @click="appendTilesetSlot(field.path)"
+                >
+                  {{ t('db.addTilesetSheet') }}
+                </button>
+              </div>
+            </div>
             <div class="complex-row param-row">
               <label v-for="index in tilesetSlotIndexes(field.path)" :key="`tileset-slot-${index}`">
                 <span>{{ tilesetSlotLabel(index) }}</span>
                 <button type="button" class="image-picker-inline" @click="openArrayImagePicker(field.path, index, 'tilesets', t('db.chooseTilesetImage', { label: tilesetSlotLabel(index) }))">
                   {{ imageValueLabel(textValue(field.path, index)) }}
+                </button>
+                <button
+                  v-if="canRemoveTilesetSlot(field.path, index)"
+                  type="button"
+                  class="danger tileset-slot-remove"
+                  @click="removeArrayIndex(field.path, index)"
+                >
+                  {{ t('db.removeTilesetSheet') }}
                 </button>
               </label>
             </div>
@@ -2402,7 +2493,7 @@ function updateSound(index: number, key: string, value: unknown): void {
       </div>
     </section>
 
-    <section v-if="references.length" class="editor-section">
+    <section v-if="!documentPage && references.length" class="editor-section">
       <div class="section-title">
         <strong>{{ t('db.references') }}</strong>
         <span>{{ t('db.referenceCount', { count: references.length }) }}</span>
@@ -2416,11 +2507,11 @@ function updateSound(index: number, key: string, value: unknown): void {
       </div>
     </section>
 
-    <section v-if="!schemaDriven" class="editor-section">
+    <section v-if="!documentPage && !schemaDriven" class="editor-section">
       <div class="section-title"><strong>{{ t('db.groupFields', { group: groupLabel }) }}</strong></div>
       <StructuredFieldsEditor :model-value="modelValue" :label="t('sf.field')" @update:model-value="$emit('update:modelValue', $event)" />
     </section>
-    <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="safeLoadImage" @commit="commitImageSelection" />
+    <ImageAssetPickerDialog v-if="!documentPage" ref="imagePicker" :catalog="catalog" :load-image="safeLoadImage" @commit="commitImageSelection" />
     <el-dialog
       :model-value="Boolean(longTextDialog)"
       :title="longTextDialog?.label"
@@ -2852,20 +2943,6 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 input:disabled { color: var(--console-text-muted,#9a8e7e); opacity: .7; }
 textarea { resize: vertical; line-height: 1.45; }
 .json-field textarea { font-family: var(--app-font-mono); font-size: 11px; }
-.advanced-json {
-  border: 1px dashed var(--console-border,#e4dcce);
-  border-radius: 7px;
-  padding: 8px;
-  background: var(--console-paper-soft,#faf5ec);
-}
-.advanced-json summary {
-  color: var(--console-text-soft,#5a5247);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
-}
-.advanced-json textarea { width: 100%; margin-top: 8px; font-family: var(--app-font-mono); font-size: 11px; }
-.advanced-json em { color: var(--app-danger); font-style: normal; font-size: 11px; }
 .json-field small,
 .complex-editor small { color: var(--console-text-muted,#9a8e7e); line-height: 1.4; }
 .json-field em { color: var(--app-danger); font-style: normal; font-size: 11px; }
@@ -3013,9 +3090,9 @@ textarea { resize: vertical; line-height: 1.45; }
 .drop-row { grid-template-columns: 120px minmax(0,1fr) 100px auto; }
 .damage-row { grid-template-columns: 100px 160px minmax(0,1fr) 100px 110px; }
 .param-row { grid-template-columns: repeat(4,minmax(0,1fr)); align-items: start; }
-.audio-row { grid-template-columns: minmax(0,1.4fr) 90px 90px 90px; }
+.audio-row { grid-template-columns: minmax(110px,1.4fr) 90px 90px 90px; }
 .vehicle-row { grid-template-columns: minmax(0,1.4fr) 90px minmax(0,1.2fr) 70px 70px minmax(0,1.2fr); }
-.sound-row { grid-template-columns: minmax(0,1.4fr) 78px 78px 78px; }
+.sound-row { grid-template-columns: minmax(110px,1.4fr) 78px 78px 78px; }
 .wide { grid-column: span 1; }
 .inline-check {
   min-width: 0;
@@ -3181,6 +3258,38 @@ textarea { resize: vertical; line-height: 1.45; }
   align-items: stretch;
   gap: 4px;
 }
+.tileset-extension-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.tileset-extension-actions > button {
+  margin-left: 0;
+}
+.tileset-slot-remove {
+  justify-self: end;
+}
+.db-editor--types .field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  align-items: start;
+  column-count: auto;
+}
+.db-editor--types .field-grid > .field.full {
+  grid-column: auto;
+}
+.db-editor--terms .field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  column-count: auto;
+}
+.db-editor--terms .field-grid > .terms-message-editor {
+  grid-column: 1 / -1;
+}
 .rmmv-type-name-list {
   border: 1px solid var(--console-border,#e4dcce);
   border-radius: 6px;
@@ -3269,6 +3378,11 @@ textarea { resize: vertical; line-height: 1.45; }
     margin-bottom: 6px;
     break-inside: avoid;
   }
+  /* Tall grouped editors (system sounds, vehicles, music) must never be sliced
+     across CSS columns: a split grid renders as overlapping squeezed labels. */
+  .field-grid > .complex-editor {
+    break-inside: avoid;
+  }
   .field-grid > .stacked-complex-editor,
   .field-grid > .tileset-flags-editor,
   .field-grid > .readonly-summary,
@@ -3295,6 +3409,12 @@ textarea { resize: vertical; line-height: 1.45; }
   }
   .rmmv-terms-grid--pairs { grid-template-columns: 1fr; }
   .rmmv-terms-grid--quad { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .db-editor--terms .field-grid { grid-template-columns: minmax(0, 1fr); }
+  .tileset-extension-actions {
+    flex: 1 1 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
   .field-grid,
   .actor-image-grid,
   .reference-row,

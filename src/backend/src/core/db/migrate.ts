@@ -594,6 +594,25 @@ function getMigrations(): Migration[] {
       name: 'event_contract_engine_backfill',
       up: backfillEventContractEngines,
     },
+    {
+      // 资产备注/收藏落库（素材库与地图收藏共用一张表）。target_id 形如
+      // `pictures:ui/foo`（文件）、`pictures/ui`（文件夹）、`map:12`（地图）。
+      // note 同时会内嵌写入 PNG/OGG 文件（见 asset-note-embedding），DB 是查询主索引。
+      version: 12,
+      name: 'asset_annotations',
+      up: `
+        CREATE TABLE IF NOT EXISTS asset_annotations (
+          project TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'asset',
+          note TEXT NOT NULL DEFAULT '',
+          favorite INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (project, target_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_asset_annotations_favorite ON asset_annotations(project, favorite);
+      `,
+    },
   ];
 }
 

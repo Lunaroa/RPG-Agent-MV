@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { EditorProjectCatalog, NamedCatalogEntry } from '../../api/client';
 import { useI18n } from '../../i18n';
 import {
@@ -21,6 +21,7 @@ import {
   type MvNumericEditorSpec,
   type MvTraitRecord,
 } from '../../utils/rmmvDatabaseSemantics';
+import { mvSemanticRawSummary, mvTraitContentSummary } from '../../utils/rmmvDatabaseSummaries';
 
 type CatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'engine' | 'tileSize' | 'screenWidth' | 'screenHeight' | 'assets' | 'battle'>;
 type SelectOption = { value: number; label: string };
@@ -38,6 +39,8 @@ const emit = defineEmits<{
 const { language, t } = useI18n();
 const localizedTraitCodes = computed(() => localizeDatabaseOptions(TRAIT_CODES, language.value));
 const traits = computed(() => Array.isArray(props.modelValue) ? props.modelValue : []);
+// Stock RM interaction: rows show "type | content", double-click opens the edit dialog.
+const dialog = ref<{ index: number | null; draft: MvTraitRecord } | null>(null);
 const NUMERIC_LABEL_KEYS = {
   rate: 'db.semantic.rate',
   amount: 'db.semantic.amount',
@@ -156,31 +159,66 @@ function references(): MvSemanticReferences {
   };
 }
 
-function addTrait(): void {
-  emit('update:modelValue', [...traits.value, createStandardMvTrait(21, references())]);
+function traitTypeLabel(traitValue: unknown): string {
+  const trait = normalizeMvTrait(traitValue);
+  if (!isStandardMvTraitCode(trait.code)) return t('db.pluginTraitCode', { code: trait.code });
+  return localizedTraitCodes.value.find((option) => option.value === trait.code)?.label || String(trait.code);
 }
 
-function replaceTrait(index: number, trait: MvTraitRecord): void {
+function traitContent(traitValue: unknown): string {
+  const trait = normalizeMvTrait(traitValue);
+  if (!isStandardMvTraitCode(trait.code)) return mvSemanticRawSummary(trait.code, trait.dataId, [trait.value]);
+  const targetLabel = needsTarget(trait.code)
+    ? stripIdPrefix(traitTargetOptions(traitValue).find((option) => option.value === trait.dataId)?.label || String(trait.dataId))
+    : '';
+  return mvTraitContentSummary(traitValue, targetLabel);
+}
+
+// Selects keep the 0001-prefixed labels; the stock RM content column shows plain names.
+function stripIdPrefix(label: string): string {
+  return label.replace(/^\d{4} /, '');
+}
+
+function openEditor(index: number): void {
+  const trait = normalizeMvTrait(traits.value[index]);
+  if (!isStandardMvTraitCode(trait.code)) return;
+  dialog.value = { index, draft: trait };
+}
+
+function openCreator(): void {
+  dialog.value = { index: null, draft: createStandardMvTrait(21, references()) };
+}
+
+function changeDraftCode(code: number): void {
+  if (!dialog.value || !isStandardMvTraitCode(code)) return;
+  dialog.value.draft = setStandardMvTraitCode(dialog.value.draft, code, references());
+}
+
+function changeDraftTarget(dataId: number): void {
+  if (!dialog.value) return;
+  dialog.value.draft = { ...dialog.value.draft, dataId };
+}
+
+function changeDraftValue(amount: unknown): void {
+  if (!dialog.value) return;
+  dialog.value.draft = setMvTraitEditorValue(dialog.value.draft, amount);
+}
+
+function confirmDialog(): void {
+  if (!dialog.value) return;
   const next = [...traits.value];
-  next[index] = trait;
+  if (dialog.value.index === null) next.push(dialog.value.draft);
+  else next[dialog.value.index] = dialog.value.draft;
   emit('update:modelValue', next);
-}
-
-function changeTraitCode(index: number, value: unknown, code: number): void {
-  if (!isStandardMvTraitCode(code)) return;
-  replaceTrait(index, setStandardMvTraitCode(value, code, references()));
-}
-
-function changeTraitTarget(index: number, value: unknown, dataId: number): void {
-  replaceTrait(index, { ...normalizeMvTrait(value), dataId });
-}
-
-function changeTraitValue(index: number, value: unknown, amount: unknown): void {
-  replaceTrait(index, setMvTraitEditorValue(value, amount));
+  dialog.value = null;
 }
 
 function removeTrait(index: number): void {
   emit('update:modelValue', traits.value.filter((_trait, traitIndex) => traitIndex !== index));
+}
+
+function draftNumericSpec(): MvNumericEditorSpec | null {
+  return dialog.value ? mvTraitNumericSpec(dialog.value.draft.code) : null;
 }
 
 function numericLabel(code: number): string {
@@ -190,81 +228,130 @@ function numericLabel(code: number): string {
 </script>
 
 <template>
-  <div class="semantic-list" :class="{ compact }">
-    <div class="semantic-list-head">
-      <span>{{ t('db.traitCount', { count: traits.length }) }}</span>
-      <button type="button" @click="addTrait">{{ t('cmdList.add') }}</button>
-    </div>
-    <div v-if="!traits.length" class="semantic-empty">{{ t('db.noTraits') }}</div>
-    <div
-      v-for="(traitValue, index) in traits"
-      :key="`trait-${index}`"
-      class="semantic-row"
-      :class="{ plugin: !isStandardMvTraitCode(normalizeMvTrait(traitValue).code) }"
+  <div class="semantic-table" :class="{ compact }">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ t('eventEditorDialog.type') }}</th>
+          <th>{{ t('db.semanticContent') }}</th>
+          <th class="row-tools" aria-hidden="true" />
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          v-for="(traitValue, index) in traits"
+          :key="`trait-${index}`"
+          :data-ui-id="`trait-row-${index}`"
+          :class="{ plugin: !isStandardMvTraitCode(normalizeMvTrait(traitValue).code) }"
+          :title="t('db.semanticRowHint')"
+          @dblclick="openEditor(index)"
+        >
+          <td>{{ traitTypeLabel(traitValue) }}</td>
+          <td>{{ traitContent(traitValue) }}</td>
+          <td class="row-tools">
+            <button type="button" class="row-remove" :aria-label="t('cmdList.delete')" @click.stop="removeTrait(index)">×</button>
+          </td>
+        </tr>
+        <tr class="semantic-add-row" data-ui-id="trait-add-row" :title="t('db.semanticAddHint')" @dblclick="openCreator">
+          <td colspan="3" />
+        </tr>
+      </tbody>
+    </table>
+
+    <el-dialog
+      :model-value="Boolean(dialog)"
+      :title="dialog ? traitTypeLabel(dialog.draft) : ''"
+      width="min(420px, calc(100vw - 48px))"
+      append-to-body
+      :close-on-click-modal="false"
+      @update:model-value="dialog = null"
     >
-      <template v-if="isStandardMvTraitCode(normalizeMvTrait(traitValue).code)">
+      <div v-if="dialog" class="semantic-dialog-body">
         <label>
           <span>{{ t('eventEditorDialog.type') }}</span>
-          <select
-            :value="normalizeMvTrait(traitValue).code"
-            @change="changeTraitCode(index, traitValue, Number(($event.target as HTMLSelectElement).value))"
-          >
+          <select :value="dialog.draft.code" @change="changeDraftCode(Number(($event.target as HTMLSelectElement).value))">
             <option v-for="option in localizedTraitCodes" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
-        <label v-if="needsTarget(normalizeMvTrait(traitValue).code)">
+        <label v-if="needsTarget(dialog.draft.code)">
           <span>{{ t('db.target') }}</span>
-          <select
-            :value="normalizeMvTrait(traitValue).dataId"
-            @change="changeTraitTarget(index, traitValue, Number(($event.target as HTMLSelectElement).value))"
-          >
-            <option v-for="option in traitTargetOptions(traitValue)" :key="option.value" :value="option.value">{{ option.label }}</option>
+          <select :value="dialog.draft.dataId" @change="changeDraftTarget(Number(($event.target as HTMLSelectElement).value))">
+            <option v-for="option in traitTargetOptions(dialog.draft)" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
-        <label v-if="mvTraitNumericSpec(normalizeMvTrait(traitValue).code)">
-          <span>{{ numericLabel(normalizeMvTrait(traitValue).code) }}</span>
+        <label v-if="draftNumericSpec()">
+          <span>{{ numericLabel(dialog.draft.code) }}</span>
           <span class="numeric-input">
             <input
               type="number"
-              :min="mvTraitNumericSpec(normalizeMvTrait(traitValue).code)!.minimum"
-              :max="mvTraitNumericSpec(normalizeMvTrait(traitValue).code)!.maximum"
-              :step="mvTraitNumericSpec(normalizeMvTrait(traitValue).code)!.step"
-              :value="mvTraitEditorValue(traitValue)"
-              @input="changeTraitValue(index, traitValue, ($event.target as HTMLInputElement).value)"
+              :min="draftNumericSpec()!.minimum"
+              :max="draftNumericSpec()!.maximum"
+              :step="draftNumericSpec()!.step"
+              :value="mvTraitEditorValue(dialog.draft)"
+              @input="changeDraftValue(($event.target as HTMLInputElement).value)"
             />
-            <b v-if="mvTraitNumericSpec(normalizeMvTrait(traitValue).code)!.kind === 'percent'">%</b>
+            <b v-if="draftNumericSpec()!.kind === 'percent'">%</b>
           </span>
         </label>
-        <span v-else class="semantic-fixed">{{ t('db.semanticFixedValue') }}</span>
-        <button type="button" class="danger" @click="removeTrait(index)">{{ t('cmdList.delete') }}</button>
+      </div>
+      <template #footer>
+        <button type="button" @click="dialog = null">{{ t('eventcmd.cancel') }}</button>
+        <button type="button" class="semantic-dialog-confirm" data-ui-id="trait-dialog-confirm" @click="confirmDialog">{{ t('eventcmd.ok') }}</button>
       </template>
-      <template v-else>
-        <div class="plugin-summary">
-          <strong>{{ t('db.pluginTraitCode', { code: normalizeMvTrait(traitValue).code }) }}</strong>
-          <span>{{ t('db.pluginSemanticReadonly') }}</span>
-          <code>dataId {{ normalizeMvTrait(traitValue).dataId }} · value {{ normalizeMvTrait(traitValue).value }}</code>
-        </div>
-      </template>
-    </div>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.semantic-list { display: grid; gap: 7px; min-width: 0; }
-.semantic-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--el-text-color-secondary); font-size: 12px; }
-.semantic-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; align-items: end; padding: 8px; border: 1px solid var(--console-border, #e4dcce); border-radius: 5px; background: var(--console-paper-soft, #faf5ec); }
-.semantic-row label { display: grid; gap: 3px; min-width: 0; }
-.semantic-row label > span:first-child { color: var(--el-text-color-secondary); font-size: 11px; }
-.semantic-row select, .semantic-row input { width: 100%; min-width: 0; }
+.semantic-table { min-width: 0; }
+.semantic-table table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--console-border, #e4dcce);
+  background: var(--console-paper, #fffdfa);
+  font-size: 11px;
+  table-layout: fixed;
+}
+.semantic-table th {
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--console-border-strong, #ddd3c2);
+  background: var(--console-paper-soft, #faf5ec);
+  color: var(--console-text-muted, #9a8e7e);
+  font-weight: 650;
+  text-align: left;
+}
+.semantic-table th:first-child { width: 38%; }
+.semantic-table td {
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--console-border, #e4dcce);
+  color: var(--console-text-soft, #5a5247);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.semantic-table tbody tr { cursor: default; user-select: none; }
+.semantic-table tbody tr:hover td { background: var(--console-paper-soft, #faf5ec); }
+.row-tools { width: 22px; padding: 0; text-align: center; }
+.row-remove {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--console-text-muted, #9a8e7e);
+  font-size: 12px;
+  line-height: 1;
+  visibility: hidden;
+  cursor: pointer;
+}
+.semantic-table tbody tr:hover .row-remove { visibility: visible; }
+.row-remove:hover { color: var(--el-color-danger); }
+.semantic-add-row td { height: 20px; }
+tr.plugin td { color: var(--console-text-muted, #9a8e7e); font-style: italic; }
+.semantic-dialog-body { display: grid; gap: 8px; }
+.semantic-dialog-body label { display: grid; gap: 3px; min-width: 0; }
+.semantic-dialog-body label > span:first-child { color: var(--el-text-color-secondary); font-size: 11px; }
 .numeric-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px; }
 .numeric-input b { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 500; }
-.semantic-fixed { align-self: center; color: var(--el-text-color-placeholder); font-size: 11px; }
-.semantic-empty { padding: 10px 0; color: var(--el-text-color-placeholder); font-size: 12px; }
-.semantic-row.plugin { grid-template-columns: 1fr; border-style: dashed; }
-.plugin-summary { display: grid; gap: 3px; }
-.plugin-summary strong { font-size: 12px; }
-.plugin-summary span, .plugin-summary code { color: var(--el-text-color-secondary); font-size: 11px; }
-.compact .semantic-row { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 6px; }
-button.danger { color: var(--el-color-danger); }
-.semantic-row > button { justify-self: end; }
+.semantic-dialog-confirm { border-color: var(--console-accent, #be5630); color: var(--console-accent, #be5630); }
 </style>

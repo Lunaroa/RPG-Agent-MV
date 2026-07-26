@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { EditorProjectCatalog, NamedCatalogEntry } from '../../api/client';
 import { useI18n } from '../../i18n';
 import {
@@ -19,6 +19,7 @@ import {
   type MvNumericEditorSpec,
   type MvSemanticReferences,
 } from '../../utils/rmmvDatabaseSemantics';
+import { mvEffectContentSummary, mvSemanticRawSummary } from '../../utils/rmmvDatabaseSummaries';
 
 type CatalogKey = Exclude<keyof EditorProjectCatalog, 'project' | 'engine' | 'tileSize' | 'screenWidth' | 'screenHeight' | 'assets' | 'battle'>;
 type SelectOption = { value: number; label: string };
@@ -35,6 +36,8 @@ const emit = defineEmits<{
 const { language, t } = useI18n();
 const localizedEffectCodes = computed(() => localizeDatabaseOptions(EFFECT_CODES, language.value));
 const effects = computed(() => Array.isArray(props.modelValue) ? props.modelValue : []);
+// Stock RM interaction: rows show "type | content", double-click opens the edit dialog.
+const dialog = ref<{ index: number | null; draft: MvEffectRecord } | null>(null);
 const NUMERIC_LABEL_KEYS = {
   rate: 'db.semantic.rate',
   amount: 'db.semantic.amount',
@@ -89,27 +92,60 @@ function needsTarget(code: number): boolean {
   return [21, 22, 31, 32, 33, 34, 42, 43, 44].includes(code);
 }
 
-function addEffect(): void {
-  emit('update:modelValue', [...effects.value, createStandardMvEffect(11, references())]);
+function effectTypeLabel(effectValue: unknown): string {
+  const effect = normalizeMvEffect(effectValue);
+  if (!isStandardMvEffectCode(effect.code)) return t('db.pluginEffectCode', { code: effect.code });
+  return localizedEffectCodes.value.find((option) => option.value === effect.code)?.label || String(effect.code);
 }
 
-function replaceEffect(index: number, effect: MvEffectRecord): void {
+function effectContent(effectValue: unknown): string {
+  const effect = normalizeMvEffect(effectValue);
+  if (!isStandardMvEffectCode(effect.code)) {
+    return mvSemanticRawSummary(effect.code, effect.dataId, [effect.value1, effect.value2]);
+  }
+  const targetLabel = needsTarget(effect.code)
+    ? stripIdPrefix(targetOptions(effectValue).find((option) => option.value === effect.dataId)?.label || String(effect.dataId))
+    : '';
+  return mvEffectContentSummary(effectValue, targetLabel, language.value);
+}
+
+// Selects keep the 0001-prefixed labels; the stock RM content column shows plain names.
+function stripIdPrefix(label: string): string {
+  return label.replace(/^\d{4} /, '');
+}
+
+function openEditor(index: number): void {
+  const effect = normalizeMvEffect(effects.value[index]);
+  if (!isStandardMvEffectCode(effect.code)) return;
+  dialog.value = { index, draft: effect };
+}
+
+function openCreator(): void {
+  dialog.value = { index: null, draft: createStandardMvEffect(11, references()) };
+}
+
+function changeDraftCode(code: number): void {
+  if (!dialog.value || !isStandardMvEffectCode(code)) return;
+  dialog.value.draft = setStandardMvEffectCode(dialog.value.draft, code, references());
+}
+
+function changeDraftTarget(dataId: number): void {
+  if (!dialog.value) return;
+  dialog.value.draft = { ...dialog.value.draft, dataId };
+}
+
+function changeDraftValue(field: 'value1' | 'value2', amount: unknown): void {
+  if (!dialog.value) return;
+  dialog.value.draft = setMvEffectEditorValue(dialog.value.draft, field, amount);
+}
+
+function confirmDialog(): void {
+  if (!dialog.value) return;
   const next = [...effects.value];
-  next[index] = effect;
+  if (dialog.value.index === null) next.push(dialog.value.draft);
+  else next[dialog.value.index] = dialog.value.draft;
   emit('update:modelValue', next);
-}
-
-function changeEffectCode(index: number, value: unknown, code: number): void {
-  if (!isStandardMvEffectCode(code)) return;
-  replaceEffect(index, setStandardMvEffectCode(value, code, references()));
-}
-
-function changeTarget(index: number, value: unknown, dataId: number): void {
-  replaceEffect(index, { ...normalizeMvEffect(value), dataId });
-}
-
-function changeNumeric(index: number, value: unknown, field: 'value1' | 'value2', amount: unknown): void {
-  replaceEffect(index, setMvEffectEditorValue(value, field, amount));
+  dialog.value = null;
 }
 
 function removeEffect(index: number): void {
@@ -122,39 +158,59 @@ function numericLabel(label: MvNumericEditorSpec['label']): string {
 </script>
 
 <template>
-  <div class="semantic-list">
-    <div class="semantic-list-head">
-      <span>{{ t('db.effectCount', { count: effects.length }) }}</span>
-      <button type="button" @click="addEffect">{{ t('cmdList.add') }}</button>
-    </div>
-    <div v-if="!effects.length" class="semantic-empty">{{ t('db.noEffects') }}</div>
-    <div
-      v-for="(effectValue, index) in effects"
-      :key="`effect-${index}`"
-      class="semantic-row"
-      :class="{ plugin: !isStandardMvEffectCode(normalizeMvEffect(effectValue).code) }"
+  <div class="semantic-table">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ t('eventEditorDialog.type') }}</th>
+          <th>{{ t('db.semanticContent') }}</th>
+          <th class="row-tools" aria-hidden="true" />
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          v-for="(effectValue, index) in effects"
+          :key="`effect-${index}`"
+          :data-ui-id="`effect-row-${index}`"
+          :class="{ plugin: !isStandardMvEffectCode(normalizeMvEffect(effectValue).code) }"
+          :title="t('db.semanticRowHint')"
+          @dblclick="openEditor(index)"
+        >
+          <td>{{ effectTypeLabel(effectValue) }}</td>
+          <td>{{ effectContent(effectValue) }}</td>
+          <td class="row-tools">
+            <button type="button" class="row-remove" :aria-label="t('cmdList.delete')" @click.stop="removeEffect(index)">×</button>
+          </td>
+        </tr>
+        <tr class="semantic-add-row" data-ui-id="effect-add-row" :title="t('db.semanticAddHint')" @dblclick="openCreator">
+          <td colspan="3" />
+        </tr>
+      </tbody>
+    </table>
+
+    <el-dialog
+      :model-value="Boolean(dialog)"
+      :title="dialog ? effectTypeLabel(dialog.draft) : ''"
+      width="min(420px, calc(100vw - 48px))"
+      append-to-body
+      :close-on-click-modal="false"
+      @update:model-value="dialog = null"
     >
-      <template v-if="isStandardMvEffectCode(normalizeMvEffect(effectValue).code)">
+      <div v-if="dialog" class="semantic-dialog-body">
         <label>
           <span>{{ t('eventEditorDialog.type') }}</span>
-          <select
-            :value="normalizeMvEffect(effectValue).code"
-            @change="changeEffectCode(index, effectValue, Number(($event.target as HTMLSelectElement).value))"
-          >
+          <select :value="dialog.draft.code" @change="changeDraftCode(Number(($event.target as HTMLSelectElement).value))">
             <option v-for="option in localizedEffectCodes" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
-        <label v-if="needsTarget(normalizeMvEffect(effectValue).code)">
+        <label v-if="needsTarget(dialog.draft.code)">
           <span>{{ t('db.target') }}</span>
-          <select
-            :value="normalizeMvEffect(effectValue).dataId"
-            @change="changeTarget(index, effectValue, Number(($event.target as HTMLSelectElement).value))"
-          >
-            <option v-for="option in targetOptions(effectValue)" :key="option.value" :value="option.value">{{ option.label }}</option>
+          <select :value="dialog.draft.dataId" @change="changeDraftTarget(Number(($event.target as HTMLSelectElement).value))">
+            <option v-for="option in targetOptions(dialog.draft)" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
-        <span v-else-if="normalizeMvEffect(effectValue).code === 41" class="semantic-fixed">{{ t('db.effectEscape') }}</span>
-        <label v-for="spec in mvEffectNumericSpecs(normalizeMvEffect(effectValue).code)" :key="spec.field">
+        <span v-else-if="dialog.draft.code === 41" class="semantic-fixed">{{ t('db.effectEscape') }}</span>
+        <label v-for="spec in mvEffectNumericSpecs(dialog.draft.code)" :key="spec.field">
           <span>{{ numericLabel(spec.label) }}</span>
           <span class="numeric-input">
             <input
@@ -162,40 +218,72 @@ function numericLabel(label: MvNumericEditorSpec['label']): string {
               :min="spec.minimum"
               :max="spec.maximum"
               :step="spec.step"
-              :value="mvEffectEditorValue(effectValue, spec.field)"
-              @input="changeNumeric(index, effectValue, spec.field, ($event.target as HTMLInputElement).value)"
+              :value="mvEffectEditorValue(dialog.draft, spec.field)"
+              @input="changeDraftValue(spec.field, ($event.target as HTMLInputElement).value)"
             />
             <b v-if="spec.kind === 'percent'">%</b>
           </span>
         </label>
-        <button type="button" class="danger" @click="removeEffect(index)">{{ t('cmdList.delete') }}</button>
+      </div>
+      <template #footer>
+        <button type="button" @click="dialog = null">{{ t('eventcmd.cancel') }}</button>
+        <button type="button" class="semantic-dialog-confirm" data-ui-id="effect-dialog-confirm" @click="confirmDialog">{{ t('eventcmd.ok') }}</button>
       </template>
-      <template v-else>
-        <div class="plugin-summary">
-          <strong>{{ t('db.pluginEffectCode', { code: normalizeMvEffect(effectValue).code }) }}</strong>
-          <span>{{ t('db.pluginSemanticReadonly') }}</span>
-          <code>dataId {{ normalizeMvEffect(effectValue).dataId }} · value1 {{ normalizeMvEffect(effectValue).value1 }} · value2 {{ normalizeMvEffect(effectValue).value2 }}</code>
-        </div>
-      </template>
-    </div>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.semantic-list { display: grid; gap: 7px; min-width: 0; }
-.semantic-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--el-text-color-secondary); font-size: 12px; }
-.semantic-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; align-items: end; padding: 8px; border: 1px solid var(--console-border, #e4dcce); border-radius: 5px; background: var(--console-paper-soft, #faf5ec); }
-.semantic-row label { display: grid; gap: 3px; min-width: 0; }
-.semantic-row label > span:first-child { color: var(--el-text-color-secondary); font-size: 11px; }
-.semantic-row select, .semantic-row input { width: 100%; min-width: 0; }
+.semantic-table { min-width: 0; }
+.semantic-table table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--console-border, #e4dcce);
+  background: var(--console-paper, #fffdfa);
+  font-size: 11px;
+  table-layout: fixed;
+}
+.semantic-table th {
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--console-border-strong, #ddd3c2);
+  background: var(--console-paper-soft, #faf5ec);
+  color: var(--console-text-muted, #9a8e7e);
+  font-weight: 650;
+  text-align: left;
+}
+.semantic-table th:first-child { width: 38%; }
+.semantic-table td {
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--console-border, #e4dcce);
+  color: var(--console-text-soft, #5a5247);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.semantic-table tbody tr { cursor: default; user-select: none; }
+.semantic-table tbody tr:hover td { background: var(--console-paper-soft, #faf5ec); }
+.row-tools { width: 22px; padding: 0; text-align: center; }
+.row-remove {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--console-text-muted, #9a8e7e);
+  font-size: 12px;
+  line-height: 1;
+  visibility: hidden;
+  cursor: pointer;
+}
+.semantic-table tbody tr:hover .row-remove { visibility: visible; }
+.row-remove:hover { color: var(--el-color-danger); }
+.semantic-add-row td { height: 20px; }
+tr.plugin td { color: var(--console-text-muted, #9a8e7e); font-style: italic; }
+.semantic-dialog-body { display: grid; gap: 8px; }
+.semantic-dialog-body label { display: grid; gap: 3px; min-width: 0; }
+.semantic-dialog-body label > span:first-child { color: var(--el-text-color-secondary); font-size: 11px; }
+.semantic-fixed { color: var(--el-text-color-secondary); font-size: 12px; }
 .numeric-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px; }
 .numeric-input b { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 500; }
-.semantic-fixed { align-self: center; color: var(--el-text-color-secondary); font-size: 12px; }
-.semantic-empty { padding: 10px 0; color: var(--el-text-color-placeholder); font-size: 12px; }
-.semantic-row.plugin { grid-template-columns: 1fr; border-style: dashed; }
-.plugin-summary { display: grid; gap: 3px; }
-.plugin-summary strong { font-size: 12px; }
-.plugin-summary span, .plugin-summary code { color: var(--el-text-color-secondary); font-size: 11px; }
-button.danger { color: var(--el-color-danger); }
-.semantic-row > button { justify-self: end; }
+.semantic-dialog-confirm { border-color: var(--console-accent, #be5630); color: var(--console-accent, #be5630); }
 </style>

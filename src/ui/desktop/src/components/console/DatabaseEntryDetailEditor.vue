@@ -90,7 +90,6 @@ import {
   STATE_RESTRICTION_OPTIONS,
   TERM_LABELS,
   TILESET_MODE_OPTIONS,
-  TILESET_NAME_LABELS,
   TONE_LABELS,
   TRIGGER_OPTIONS,
   databaseFieldLabel,
@@ -99,6 +98,8 @@ import {
   localizeDatabaseLabel,
   localizeDatabaseOptions,
 } from '../../utils/rmmvDatabaseLocalization';
+import { DATABASE_RM_LAYOUTS, RM_LAYOUT_HIDDEN_PATHS } from '../../utils/databaseRmLayouts';
+import { tilesetSlotCount, tilesetSlotLabel } from '../../utils/tilesetSlots';
 
 type DbRecord = Record<string, unknown>;
 type DbArrayRecord = Record<string, unknown>[];
@@ -197,15 +198,66 @@ const visibleSchemaFields = computed(() => (
     ? schemaFields.value.filter((field) => !ACTOR_IMAGE_FIELD_PATHS.has(field.path))
     : schemaFields.value
 ));
-const ACTOR_RM_BASIC_PATHS = ['id', 'name', 'nickname', 'classId', 'initialLevel', 'maxLevel', 'profile'] as const;
-const actorBasicFields = computed(() => schemaFields.value.filter((field) => (
-  ACTOR_RM_BASIC_PATHS.includes(field.path as typeof ACTOR_RM_BASIC_PATHS[number])
-)));
+
+// Stock RM composition: resolve the per-group layout into column/panel/row render
+// structure. Flat groups collapse to a single field-grid row so the template keeps
+// exactly one copy of the field branch chain.
+interface RmRenderRow { key: string; fields: RmmvDatabaseFieldSchema[] }
+interface RmRenderPanel { key: string; titleKey: string; rows: RmRenderRow[] }
+interface RmRenderColumn { key: 'main' | 'side' | 'flat'; panels: RmRenderPanel[] }
+const hasRmLayout = computed(() => Boolean(DATABASE_RM_LAYOUTS[props.group || '']));
+const rmRenderColumns = computed<RmRenderColumn[]>(() => {
+  const layout = DATABASE_RM_LAYOUTS[props.group || ''];
+  if (!layout) {
+    return [{
+      key: 'flat',
+      panels: [{ key: 'flat', titleKey: '', rows: [{ key: 'all', fields: visibleSchemaFields.value }] }],
+    }];
+  }
+  const byPath = new Map(visibleSchemaFields.value.map((field) => [field.path, field]));
+  const referenced = new Set<string>();
+  const columns: RmRenderColumn[] = [
+    { key: 'main', panels: [] },
+    { key: 'side', panels: [] },
+  ];
+  layout.forEach((panel, panelIndex) => {
+    const rows: RmRenderRow[] = [];
+    panel.rows.forEach((row, rowIndex) => {
+      const fields = row.flatMap((path) => {
+        referenced.add(path);
+        const field = byPath.get(path);
+        return field ? [field] : [];
+      });
+      if (fields.length) rows.push({ key: `${panelIndex}-${rowIndex}`, fields });
+    });
+    if (!rows.length) return;
+    const target = columns.find((column) => column.key === panel.column)!;
+    target.panels.push({ key: `panel-${panelIndex}`, titleKey: panel.titleKey, rows });
+  });
+  // Plugin-added or unmapped fields stay visible in a trailing leftover panel.
+  const leftover = visibleSchemaFields.value.filter((field) => (
+    !referenced.has(field.path) && !RM_LAYOUT_HIDDEN_PATHS.has(field.path)
+  ));
+  if (leftover.length) {
+    columns[0].panels.push({
+      key: 'panel-leftover',
+      titleKey: 'db.panelOtherFields',
+      rows: leftover.map((field, index) => ({ key: `leftover-${index}`, fields: [field] })),
+    });
+  }
+  return columns.filter((column) => column.panels.length);
+});
+// Stock RM actor rows: name+nickname share a row, class+levels share a row; id lives in the header.
+const ACTOR_RM_BASIC_ROWS = [['name', 'nickname'], ['classId', 'initialLevel', 'maxLevel']] as const;
+const actorBasicRows = computed(() => ACTOR_RM_BASIC_ROWS
+  .map((paths) => paths
+    .map((path) => schemaFields.value.find((field) => field.path === path))
+    .filter((field): field is RmmvDatabaseFieldSchema => Boolean(field)))
+  .filter((fields) => fields.length > 0));
 const actorNoteField = computed(() => schemaFields.value.find((field) => field.path === 'note'));
 const actorEquipsField = computed(() => schemaFields.value.find((field) => field.path === 'equips'));
 const actorTraitsField = computed(() => schemaFields.value.find((field) => field.path === 'traits'));
 const actorProfileField = computed(() => schemaFields.value.find((field) => field.path === 'profile'));
-const actorBasicScalarFields = computed(() => actorBasicFields.value.filter((field) => field.path !== 'profile'));
 const actorImageSignature = computed(() => [
   props.group || '',
   props.catalog?.project || '',
@@ -240,6 +292,27 @@ watch(() => props.catalog?.project, () => {
 
 function fieldLabel(field: RmmvDatabaseFieldSchema): string {
   return databaseFieldLabel(field.path, language.value);
+}
+
+const LONG_TEXT_FIELD_PATHS = new Set(['note', 'profile', 'description']);
+const longTextDialog = ref<{ path: string; label: string; draft: string } | null>(null);
+
+function isLongTextField(field: RmmvDatabaseFieldSchema): boolean {
+  return !isComplex(field) && fieldKind(field) !== 'boolean' && LONG_TEXT_FIELD_PATHS.has(field.path);
+}
+
+function openLongTextDialog(field: RmmvDatabaseFieldSchema): void {
+  longTextDialog.value = {
+    path: field.path,
+    label: fieldLabel(field),
+    draft: String(primitiveValue(field)),
+  };
+}
+
+function confirmLongTextDialog(): void {
+  if (!longTextDialog.value) return;
+  writePath(longTextDialog.value.path, longTextDialog.value.draft);
+  longTextDialog.value = null;
 }
 
 function sectionLabel(section: string): string {
@@ -611,6 +684,43 @@ function dropTargetOptions(kind: number): SelectOption[] {
   return [];
 }
 
+// Stock MV enemies always carry three drop slots; plugins may append more.
+const DROP_SLOT_COUNT = 3;
+
+function dropSlotIndexes(path: string): number[] {
+  const count = Math.max(DROP_SLOT_COUNT, arrayRecords(path).length);
+  return Array.from({ length: count }, (_slot, index) => index);
+}
+
+function dropSlotRecord(path: string, index: number): DbRecord {
+  return arrayRecords(path)[index] || { kind: 0, dataId: 1, denominator: 1 };
+}
+
+function updateDropSlot(path: string, index: number, key: string, value: unknown): void {
+  const records = arrayRecords(path);
+  const next: DbRecord[] = [];
+  const count = Math.max(DROP_SLOT_COUNT, records.length, index + 1);
+  for (let slot = 0; slot < count; slot += 1) next.push(records[slot] || { kind: 0, dataId: 1, denominator: 1 });
+  next[index] = { ...next[index], [key]: value };
+  writePath(path, next);
+}
+
+// Stock RM skill message presets (casts/does/used buttons). MV appends message1
+// after the user name (%1 = skill name); MZ formats %1 = user, %2 = skill name.
+const SKILL_MESSAGE_PRESETS = [
+  { labelKey: 'db.skillMsgCast', mvKey: 'db.skillMsgCastMv', mzKey: 'db.skillMsgCastMz' },
+  { labelKey: 'db.skillMsgEmit', mvKey: 'db.skillMsgEmitMv', mzKey: 'db.skillMsgEmitMz' },
+  { labelKey: 'db.skillMsgUse', mvKey: 'db.skillMsgUseMv', mzKey: 'db.skillMsgUseMz' },
+] as const;
+
+function applySkillMessagePreset(preset: typeof SKILL_MESSAGE_PRESETS[number]): void {
+  const key = props.catalog?.engine === 'rpg-maker-mz' ? preset.mzKey : preset.mvKey;
+  writePaths([
+    { path: 'message1', value: t(key) },
+    { path: 'message2', value: '' },
+  ]);
+}
+
 function enemyActionConditionOptions(): SelectOption[] {
   return [
     { value: 0, label: t('db.enemyCondition.always') },
@@ -787,6 +897,11 @@ function updateArrayText(path: string, index: number, value: string): void {
 
 function appendArrayValue(path: string, value: unknown): void {
   writePath(path, [...arrayValue(path), value]);
+}
+
+// Slot list stays data-driven so plugin-extended sheets (F..Z) render instead of being clipped at E.
+function tilesetSlotIndexes(path: string): number[] {
+  return Array.from({ length: tilesetSlotCount(arrayValue(path).length) }, (_entry, index) => index);
 }
 
 function updateRecord(path: string, key: string, value: unknown): void {
@@ -1242,24 +1357,24 @@ function updateSound(index: number, key: string, value: unknown): void {
           <div class="rm-panel">
             <div class="rm-panel-title">{{ t('commonEvent.basicSettings') }}</div>
             <div class="rm-rows">
-              <label v-for="field in actorBasicScalarFields" :key="field.path" class="rm-row">
-                <span>{{ fieldLabel(field) }}</span>
-                <select
-                  v-if="hasPrimitiveOptions(field)"
-                  :value="Number(primitiveValue(field))"
-                  :disabled="field.path === 'id'"
-                  @change="updatePrimitive(field, ($event.target as HTMLSelectElement).value)"
-                >
-                  <option v-for="option in primitiveOptions(field)" :key="option.value" :value="option.value">{{ option.label }}</option>
-                </select>
-                <input
-                  v-else
-                  :type="inputType(field)"
-                  :value="primitiveValue(field)"
-                  :disabled="field.path === 'id'"
-                  @input="updatePrimitive(field, ($event.target as HTMLInputElement).value)"
-                />
-              </label>
+              <div v-for="(rowFields, rowIndex) in actorBasicRows" :key="`actor-basic-${rowIndex}`" class="rm-basic-row">
+                <label v-for="field in rowFields" :key="field.path" class="rm-row">
+                  <span>{{ fieldLabel(field) }}</span>
+                  <select
+                    v-if="hasPrimitiveOptions(field)"
+                    :value="Number(primitiveValue(field))"
+                    @change="updatePrimitive(field, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="option in primitiveOptions(field)" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  </select>
+                  <input
+                    v-else
+                    :type="inputType(field)"
+                    :value="primitiveValue(field)"
+                    @input="updatePrimitive(field, ($event.target as HTMLInputElement).value)"
+                  />
+                </label>
+              </div>
               <label v-if="actorProfileField" class="rm-row rm-row-multiline">
                 <span>{{ fieldLabel(actorProfileField) }}</span>
                 <textarea
@@ -1314,8 +1429,8 @@ function updateSound(index: number, key: string, value: unknown): void {
           </div>
         </div>
 
-        <div v-if="actorTraitsField" class="actor-rm-right">
-          <div class="rm-panel rm-panel-fill">
+        <div v-if="actorTraitsField || actorNoteField" class="actor-rm-right">
+          <div v-if="actorTraitsField" class="rm-panel rm-panel-fill">
             <div class="rm-panel-head">
               <div class="rm-panel-title">{{ fieldLabel(actorTraitsField) }}</div>
             </div>
@@ -1326,17 +1441,21 @@ function updateSound(index: number, key: string, value: unknown): void {
               @update:model-value="writePath(actorTraitsField.path, $event)"
             />
           </div>
+          <div v-if="actorNoteField" class="rm-panel">
+            <div class="rm-panel-head">
+              <div class="rm-panel-title">{{ fieldLabel(actorNoteField) }}</div>
+              <button type="button" class="long-text-expand" @click="openLongTextDialog(actorNoteField)">{{ t('db.expandEditor') }}</button>
+            </div>
+            <textarea
+              class="long-text-input"
+              :value="String(primitiveValue(actorNoteField))"
+              rows="6"
+              spellcheck="false"
+              @input="updatePrimitive(actorNoteField, ($event.target as HTMLTextAreaElement).value)"
+            />
+          </div>
         </div>
       </div>
-
-      <label v-if="actorNoteField" class="rm-note">
-        <span>{{ fieldLabel(actorNoteField) }}</span>
-        <textarea
-          :value="String(primitiveValue(actorNoteField))"
-          rows="2"
-          @input="updatePrimitive(actorNoteField, ($event.target as HTMLTextAreaElement).value)"
-        />
-      </label>
     </section>
 
     <section v-else-if="schemaDriven" class="editor-section">
@@ -1372,8 +1491,25 @@ function updateSound(index: number, key: string, value: unknown): void {
           </article>
         </div>
       </section>
-      <div class="field-grid">
-        <template v-for="field in visibleSchemaFields" :key="field.path">
+      <div class="schema-field-layout" :class="{ 'rm-columns': hasRmLayout }">
+        <div
+          v-for="column in rmRenderColumns"
+          :key="column.key"
+          class="rm-column"
+          :class="`rm-column-${column.key}`"
+        >
+          <section
+            v-for="panel in column.panels"
+            :key="panel.key"
+            :class="hasRmLayout ? 'rm-panel' : 'schema-flat-panel'"
+          >
+            <div v-if="panel.titleKey" class="rm-panel-title">{{ t(panel.titleKey) }}</div>
+            <div
+              v-for="row in panel.rows"
+              :key="row.key"
+              :class="hasRmLayout ? 'rm-field-row' : 'field-grid'"
+            >
+              <template v-for="field in row.fields" :key="field.path">
           <section v-if="isTermsArrayField(field)" class="field full complex-editor rmmv-terms-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
@@ -1616,29 +1752,34 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'dropItems'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <button type="button" @click="addArrayObject(field.path, { kind: 1, dataId: catalogEntries('items')[0]?.id || 1, denominator: 1 })">{{ t('cmdList.add') }}</button>
             </div>
-            <div v-if="!arrayRecords(field.path).length" class="empty-note">{{ t('db.noDrops') }}</div>
-            <div v-for="(drop, index) in arrayRecords(field.path)" :key="`drop-${index}`" class="complex-row drop-row">
+            <div v-for="index in dropSlotIndexes(field.path)" :key="`drop-${index}`" class="complex-row drop-row">
               <label>
                 <span>{{ t('eventEditorDialog.type') }}</span>
-                <select :value="numberValue(drop, 'kind')" @change="updateArrayObject(field.path, index, 'kind', Number(($event.target as HTMLSelectElement).value))">
+                <select :value="numberValue(dropSlotRecord(field.path, index), 'kind')" @change="updateDropSlot(field.path, index, 'kind', Number(($event.target as HTMLSelectElement).value))">
                   <option v-for="option in localizedOptions(DROP_KIND_OPTIONS)" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
               </label>
               <label>
                 <span>{{ t('db.target') }}</span>
                 <select
-                  v-if="dropTargetOptions(numberValue(drop, 'kind')).length"
-                  :value="numberValue(drop, 'dataId')"
-                  @change="updateArrayObject(field.path, index, 'dataId', Number(($event.target as HTMLSelectElement).value))"
+                  v-if="dropTargetOptions(numberValue(dropSlotRecord(field.path, index), 'kind')).length"
+                  :value="numberValue(dropSlotRecord(field.path, index), 'dataId')"
+                  @change="updateDropSlot(field.path, index, 'dataId', Number(($event.target as HTMLSelectElement).value))"
                 >
-                  <option v-for="option in dropTargetOptions(numberValue(drop, 'kind'))" :key="option.value" :value="option.value">{{ option.label }}</option>
+                  <option v-for="option in dropTargetOptions(numberValue(dropSlotRecord(field.path, index), 'kind'))" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </select>
-                <input v-else type="number" :value="numberValue(drop, 'dataId')" @input="updateArrayObject(field.path, index, 'dataId', Number(($event.target as HTMLInputElement).value))" />
+                <input v-else type="number" disabled :value="numberValue(dropSlotRecord(field.path, index), 'dataId')" />
               </label>
-              <label><span>{{ t('db.denominator') }}</span><input type="number" :value="numberValue(drop, 'denominator', 1)" @input="updateArrayObject(field.path, index, 'denominator', Number(($event.target as HTMLInputElement).value))" /></label>
-              <button type="button" class="danger" @click="removeArrayIndex(field.path, index)">{{ t('cmdList.delete') }}</button>
+              <label>
+                <span>{{ t('db.denominator') }}</span>
+                <input
+                  type="number"
+                  :disabled="!numberValue(dropSlotRecord(field.path, index), 'kind')"
+                  :value="numberValue(dropSlotRecord(field.path, index), 'denominator', 1)"
+                  @input="updateDropSlot(field.path, index, 'denominator', Number(($event.target as HTMLInputElement).value))"
+                />
+              </label>
             </div>
           </section>
 
@@ -1734,7 +1875,7 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
           </section>
 
-          <section v-else-if="field.path === 'params' && group === 'Classes'" class="field full complex-editor">
+          <section v-else-if="field.path === 'params' && group === 'Classes'" class="field full complex-editor wide-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
               <small>{{ t('db.paramCurveNote') }}</small>
@@ -1832,9 +1973,9 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'tilesetNames'" class="field full complex-editor">
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <div class="complex-row param-row">
-              <label v-for="(label, index) in TILESET_NAME_LABELS" :key="label">
-                <span>{{ label }}</span>
-                <button type="button" class="image-picker-inline" @click="openArrayImagePicker(field.path, index, 'tilesets', t('db.chooseTilesetImage', { label }))">
+              <label v-for="index in tilesetSlotIndexes(field.path)" :key="`tileset-slot-${index}`">
+                <span>{{ tilesetSlotLabel(index) }}</span>
+                <button type="button" class="image-picker-inline" @click="openArrayImagePicker(field.path, index, 'tilesets', t('db.chooseTilesetImage', { label: tilesetSlotLabel(index) }))">
                   {{ imageValueLabel(textValue(field.path, index)) }}
                 </button>
               </label>
@@ -2182,16 +2323,41 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
           </section>
 
-          <label v-else-if="!isComplex(field) && fieldKind(field) !== 'boolean'" class="field" :class="{ full: field.path === 'note' || field.path === 'profile' || field.path === 'description' }">
+          <div v-else-if="group === 'Skills' && field.path === 'message2'" class="field skill-message-field">
             <span>{{ fieldLabel(field) }}</span>
+            <input
+              type="text"
+              :value="primitiveValue(field)"
+              @input="updatePrimitive(field, ($event.target as HTMLInputElement).value)"
+            />
+            <div class="skill-message-presets">
+              <button
+                v-for="preset in SKILL_MESSAGE_PRESETS"
+                :key="preset.labelKey"
+                type="button"
+                @click="applySkillMessagePreset(preset)"
+              >{{ t(preset.labelKey) }}</button>
+            </div>
+          </div>
+
+          <section v-else-if="isLongTextField(field)" class="field full long-text-field" :class="{ 'note-field': field.path === 'note' }">
+            <div class="long-text-head">
+              <span>{{ fieldLabel(field) }}</span>
+              <button type="button" class="long-text-expand" @click="openLongTextDialog(field)">{{ t('db.expandEditor') }}</button>
+            </div>
             <textarea
-              v-if="field.path === 'note' || field.path === 'profile' || field.path === 'description'"
+              class="long-text-input"
               :value="String(primitiveValue(field))"
-              rows="3"
+              :rows="field.path === 'note' ? 8 : 3"
+              spellcheck="false"
               @input="updatePrimitive(field, ($event.target as HTMLTextAreaElement).value)"
             />
+          </section>
+
+          <label v-else-if="!isComplex(field) && fieldKind(field) !== 'boolean'" class="field">
+            <span>{{ fieldLabel(field) }}</span>
             <select
-              v-else-if="hasPrimitiveOptions(field)"
+              v-if="hasPrimitiveOptions(field)"
               :value="Number(primitiveValue(field))"
               :disabled="field.path === 'id'"
               @change="updatePrimitive(field, ($event.target as HTMLSelectElement).value)"
@@ -2225,7 +2391,10 @@ function updateSound(index: number, key: string, value: unknown): void {
             <small v-if="field.note">{{ field.note }}</small>
             <em v-if="jsonErrors[field.path]">{{ jsonErrors[field.path] }}</em>
           </label>
-        </template>
+              </template>
+            </div>
+          </section>
+        </div>
       </div>
     </section>
 
@@ -2248,6 +2417,26 @@ function updateSound(index: number, key: string, value: unknown): void {
       <StructuredFieldsEditor :model-value="modelValue" :label="t('sf.field')" @update:model-value="$emit('update:modelValue', $event)" />
     </section>
     <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="safeLoadImage" @commit="commitImageSelection" />
+    <el-dialog
+      :model-value="Boolean(longTextDialog)"
+      :title="longTextDialog?.label"
+      width="min(760px, calc(100vw - 48px))"
+      append-to-body
+      :close-on-click-modal="false"
+      @update:model-value="longTextDialog = null"
+    >
+      <textarea
+        v-if="longTextDialog"
+        v-model="longTextDialog.draft"
+        class="long-text-dialog-input"
+        rows="18"
+        spellcheck="false"
+      />
+      <template #footer>
+        <button type="button" @click="longTextDialog = null">{{ t('eventcmd.cancel') }}</button>
+        <button type="button" class="long-text-dialog-confirm" @click="confirmLongTextDialog">{{ t('eventcmd.ok') }}</button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -2310,7 +2499,7 @@ function updateSound(index: number, key: string, value: unknown): void {
 }
 .actor-rm-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
   gap: 4px;
   align-items: stretch;
   min-height: 0;
@@ -2327,8 +2516,8 @@ function updateSound(index: number, key: string, value: unknown): void {
 }
 .rm-panel {
   display: grid;
-  gap: 4px;
-  padding: 4px;
+  gap: 3px;
+  padding: 3px 4px 4px;
   border: 1px solid var(--console-border,#e4dcce);
   border-radius: 4px;
   background: var(--console-paper-soft,#faf5ec);
@@ -2350,6 +2539,14 @@ function updateSound(index: number, key: string, value: unknown): void {
   gap: 6px;
 }
 .rm-rows { display: grid; gap: 3px; }
+/* Stock RM basic rows: labels above the input, multiple fields per row. */
+.rm-basic-row { display: flex; gap: 6px; }
+.rm-basic-row > .rm-row {
+  flex: 1 1 0;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
 .rm-row {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
@@ -2358,7 +2555,7 @@ function updateSound(index: number, key: string, value: unknown): void {
   color: var(--console-text-muted,#9a8e7e);
   font-size: 10px;
 }
-.rm-row-multiline { align-items: start; }
+.rm-row-multiline { align-items: start; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .rm-row>span { line-height: 1.2; }
 .rm-image-row {
   display: grid;
@@ -2442,17 +2639,48 @@ function updateSound(index: number, key: string, value: unknown): void {
   line-height: 1;
 }
 .rm-icon-button.danger { color: var(--app-danger,#b42318); }
-.rm-note {
+/* Long-text fields (note/profile/description): roomy by default, drag to resize, expandable dialog. */
+.field.long-text-field {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 4px 6px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
   align-items: start;
-  padding: 4px;
-  border: 1px solid var(--console-border,#e4dcce);
-  border-radius: 4px;
-  background: var(--console-paper-soft,#faf5ec);
-  color: var(--console-text-muted,#9a8e7e);
+}
+.long-text-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.long-text-head > span {
+  color: var(--console-text-soft,#5a5247);
+  font-weight: 700;
+}
+.long-text-expand {
+  padding: 2px 8px;
   font-size: 10px;
+  white-space: nowrap;
+}
+.long-text-input {
+  min-height: 64px;
+  resize: vertical;
+}
+.note-field .long-text-input { min-height: 140px; }
+.long-text-dialog-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 340px;
+  padding: 8px 10px;
+  border: 1px solid var(--console-border-strong,#ddd3c2);
+  border-radius: 6px;
+  background: var(--console-paper,#fffdfa);
+  color: var(--console-text,#211d17);
+  font: 12px/1.55 var(--app-font-mono);
+  resize: vertical;
+}
+.long-text-dialog-confirm {
+  border-color: var(--console-accent,#be5630);
+  color: var(--console-accent,#be5630);
 }
 .editor-section {
   display: grid;
@@ -2552,6 +2780,42 @@ function updateSound(index: number, key: string, value: unknown): void {
   align-content: start;
 }
 .field-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
+/* Stock RM composition: grouped boxes in a wide main column plus a traits/note side column. */
+.rm-columns { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 6px; align-items: start; }
+.rm-column { display: grid; gap: 4px; min-width: 0; align-content: start; }
+.rm-field-row { display: flex; gap: 4px; align-items: start; }
+.rm-field-row > .field,
+.rm-field-row > .check-field { flex: 1 1 0; min-width: 0; }
+.rm-field-row > .check-field { align-self: end; padding-bottom: 4px; }
+/* Stock RM group boxes stack the label above the control; the 72px side-label
+   grid would eat the width of three- and four-field rows. */
+.rm-field-row > .field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  align-items: start;
+}
+/* Spinner-sized numerics: RM never stretches number inputs across the column. */
+.rm-field-row > .field input[type="number"] { max-width: 120px; }
+/* Icon pickers hug their content next to the wide name input. */
+.rm-field-row > .field:has(.icon-pick-btn) { flex: 0 0 auto; }
+/* Stock RM message presets: one row of template buttons under the message inputs. */
+.skill-message-presets { display: flex; gap: 4px; }
+.skill-message-presets button { padding: 2px 8px; font-size: 10px; white-space: nowrap; }
+/* The damage box lives in the narrow side column: wrap it like the stock editor
+   (type/element row, full-width formula, variance/critical row). */
+.rm-column-side .damage-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rm-column-side .damage-row label.wide { grid-column: 1 / -1; }
+/* Inside RM rows complex editors stack title-over-rows like the stock group boxes;
+   the legacy 72px label grid would drop extra rows into the label column. */
+.rm-field-row > .field.full.complex-editor {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+/* Flat groups keep the legacy field-grid flow: the wrappers must not add layout. */
+.rm-column-flat,
+.schema-flat-panel { display: contents; }
 .field { min-width: 0; display: grid; grid-template-columns: 72px minmax(0,1fr); align-items: center; gap: 4px 6px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
 .field.full { grid-column: 1 / -1; }
 .field:has(textarea) { align-items: start; }
@@ -2986,23 +3250,30 @@ textarea { resize: vertical; line-height: 1.45; }
   text-align: right;
   font-size: 10px;
 }
-@media (max-width: 1460px) {
-  .field-grid { grid-template-columns: 1fr; }
-  .complex-row,
-  .semantic-action-row,
-  .member-row,
-  .drop-row,
-  .damage-row,
-  .param-row,
-  .audio-row,
-  .vehicle-row,
-  .sound-row,
-  .troop-page-row,
-  .troop-condition-row,
-  .animation-cell-row,
-  .timing-row { grid-template-columns: 1fr; }
-  .troop-formation-layout { grid-template-columns: minmax(0, 1fr); }
-  .check-grid { grid-template-columns: 1fr; }
+/* Wide editor area (stock RM style): let grouped cards flow into two columns;
+   canvas/command-heavy editors keep the full width. */
+@container (min-width: 900px) {
+  .field-grid {
+    display: block;
+    column-count: 2;
+    column-gap: 8px;
+  }
+  .field-grid > .field,
+  .field-grid > .check-field {
+    box-sizing: border-box;
+    width: 100%;
+    margin-bottom: 6px;
+    break-inside: avoid;
+  }
+  .field-grid > .stacked-complex-editor,
+  .field-grid > .tileset-flags-editor,
+  .field-grid > .readonly-summary,
+  .field-grid > .wide-editor {
+    column-span: all;
+  }
+}
+@container (max-width: 899px) {
+  .rm-columns { grid-template-columns: minmax(0, 1fr); }
 }
 @container (max-width: 640px) {
   .troop-formation-layout { grid-template-columns: minmax(0, 1fr); }

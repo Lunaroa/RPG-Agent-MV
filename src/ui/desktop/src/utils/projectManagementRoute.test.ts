@@ -13,7 +13,8 @@ describe('database route state', () => {
   it('normalizes supported sections and rejects arbitrary values', () => {
     expect(normalizeDatabaseSection('database')).toBe('database')
     expect(normalizeDatabaseSection('commonEvents')).toBe('commonEvents')
-    expect(normalizeDatabaseSection('switches')).toBe('switches')
+    expect(normalizeDatabaseSection('switches')).toBe('database')
+    expect(normalizeDatabaseSection('variables')).toBe('database')
     expect(normalizeDatabaseSection('unknown')).toBe('database')
     expect(normalizeDatabaseSection(['database'])).toBe('database')
   })

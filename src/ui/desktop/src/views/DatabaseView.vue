@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onActivated, onDeactivated, ref, watch } from 'vue';
-import { ArrowRight } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useProjectStore } from '../stores/project';
 import { useRoute, useRouter } from 'vue-router';
@@ -15,7 +14,6 @@ import {
   type ProjectManagedEntry,
   type ProjectOverview,
   type ProjectOverviewDbGroup,
-  type ProjectOverviewDbPreview,
   type ProjectOverviewReadIssue,
 } from '../api/client';
 import { cloneDraft } from '../utils/clone-draft';
@@ -33,8 +31,6 @@ import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
 import {
   MANAGED_KIND_LABELS,
   newCommonEventName,
-  DATABASE_CATEGORY_LABELS,
-  type DatabaseCategoryId,
 } from '../utils/consoleStoryLocalization';
 import { databaseFieldLabel, databaseGroupLabel } from '../utils/rmmvDatabaseLocalization';
 import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
@@ -42,15 +38,6 @@ import { LatestAsyncCoordinator } from '../utils/latestAsyncCoordinator';
 import { normalizeDatabaseSection } from '../utils/projectManagementRoute';
 
 type PmDetail = { kind: 'managed'; entry: ProjectManagedEntry };
-
-type DatabaseGridItem = {
-  id: number;
-  name: string;
-  preview?: ProjectOverviewDbPreview;
-  fileName: string;
-  url: string;
-  missing: boolean;
-};
 
 const projectStore = useProjectStore();
 const workbenchUi = useWorkbenchUiStore();
@@ -236,11 +223,9 @@ const {
   resetCatalog,
 } = usePmEventEditor(() => projectStore.currentProject, () => loadData());
 
-const selected = ref<DatabaseCategoryId>('database');
 const searchQuery = ref('');
 const selectedDbGroup = ref('Actors');
 const selectedDbSubField = ref('');
-const pmSubPaneExpanded = ref(true);
 const showUnnamed = ref(false);
 
 const dbContextMenu = ref<{
@@ -261,10 +246,6 @@ const DB_GROUP_ORDER = [
 const DOCUMENT_DATABASE_GROUPS = new Set(['System', 'Types', 'Terms']);
 const TYPES_SUBFIELD_ORDER = ['elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes'] as const;
 const TERMS_SUBFIELD_ORDER = ['basic', 'params', 'commands', 'messages'] as const;
-const DB_PREVIEW_GROUPS = new Set([
-  'Actors', 'Skills', 'Items', 'Weapons', 'Armors', 'Enemies', 'Troops', 'States',
-  'Animations', 'Tilesets', 'System',
-]);
 
 const pmDetail = ref<PmDetail | null>(null);
 const detailDraft = ref<unknown>(null);
@@ -393,9 +374,7 @@ function handleDraftHistoryShortcut(event: KeyboardEvent): void {
 watch(() => projectStore.currentProject, (project) => {
   activationSequence += 1;
   overviewCoordinator.invalidate({ project });
-  selected.value = normalizeDatabaseSection(route.query.section);
-  if (selected.value === 'commonEvents') {
-    selected.value = 'database';
+  if (normalizeDatabaseSection(route.query.section) === 'commonEvents') {
     selectedDbGroup.value = 'CommonEvents';
   }
   closeDetail();
@@ -441,8 +420,9 @@ function setProjectManagementActive(active: boolean): void {
     validating.value = false;
     return;
   }
-  const routeSection = normalizeDatabaseSection(route.query.section);
-  if (selected.value !== routeSection) selectCategory(routeSection);
+  if (normalizeDatabaseSection(route.query.section) === 'commonEvents') {
+    selectDbGroup('CommonEvents');
+  }
   void activateProjectManagement();
 }
 
@@ -479,29 +459,15 @@ async function activateProjectManagement(): Promise<void> {
   }
 }
 
-watch(selected, (name) => {
-  searchQuery.value = '';
-  resetGroupVisibleLimits();
-  if (name === 'database') syncSelectedDbGroup();
-  if (surfaceActive && route.path === '/database' && route.query.section !== name) {
-    void router.replace({
-      path: '/database',
-      query: { section: name },
-    });
-  }
-});
-
 watch(searchQuery, () => {
   resetGroupVisibleLimits();
 });
 
-watch([selected, () => projectStore.currentProject], ([name]) => {
-  if (name === 'database' && projectStore.currentProject) void ensureCatalog();
+watch(() => projectStore.currentProject, (project) => {
+  if (project) void ensureCatalog();
 });
 
 const scan = computed(() => overview.value?.scan);
-const switches = computed(() => scan.value?.switches || []);
-const variables = computed(() => scan.value?.variables || []);
 const commonEvents = computed(() => scan.value?.commonEvents || []);
 const database = computed(() => scan.value?.database || {});
 const readIssues = computed(() => overview.value?.readIssues || []);
@@ -523,17 +489,6 @@ function databaseReadIssueText(group: string): string {
 const selectedDatabaseReadIssue = computed(() => databaseReadIssue(selectedDbGroup.value));
 const commonEventsReadIssue = computed(() => databaseReadIssue('CommonEvents'));
 
-const dbTotal = computed(() => {
-  if (!scan.value?.database) return 0;
-  return Object.values(scan.value.database).reduce((sum, e) => sum + (e.count || 0), 0);
-});
-
-const categories = computed(() => [
-  { id: 'switches' as const, count: switches.value.filter(s => s.name).length },
-  { id: 'variables' as const, count: variables.value.filter(v => v.name).length },
-  { id: 'database' as const, count: dbTotal.value },
-]);
-
 const selectedCommonEventId = computed(() => (
   pmDetail.value?.kind === 'managed' && pmDetail.value.entry.kind === 'commonEvent'
     ? pmDetail.value.entry.id
@@ -549,32 +504,12 @@ function matchesQuery(...parts: Array<string | number | null | undefined>): bool
   return parts.some((part) => String(part ?? '').toLocaleLowerCase().includes(query));
 }
 
-const pmSearchPlaceholder = computed(() => {
-  switch (selected.value) {
-    case 'switches':
-    case 'variables':
-      return t('story.searchNameOrId');
-    case 'database':
-      return isCommonEventsGroup(selectedDbGroup.value)
-        ? t('story.searchCommonEvent')
-        : t('story.searchDatabase');
-    default:
-      return t('story.search');
-  }
-});
+const pmSearchPlaceholder = computed(() => (
+  isCommonEventsGroup(selectedDbGroup.value)
+    ? t('story.searchCommonEvent')
+    : t('story.searchDatabase')
+));
 
-const filteredSwitches = computed(() => {
-  const base = showUnnamed.value ? switches.value : switches.value.filter((item) => item.name);
-  const query = normalizedSearchQuery();
-  if (!query) return base;
-  return base.filter((item) => matchesQuery(item.id, item.name));
-});
-const filteredVariables = computed(() => {
-  const base = showUnnamed.value ? variables.value : variables.value.filter((item) => item.name);
-  const query = normalizedSearchQuery();
-  if (!query) return base;
-  return base.filter((item) => matchesQuery(item.id, item.name));
-});
 const filteredCommonEvents = computed(() => {
   const base = showUnnamed.value ? commonEvents.value : commonEvents.value.filter((item) => item.name);
   const query = normalizedSearchQuery();
@@ -625,22 +560,6 @@ const visibleDbEntries = computed(() =>
   visibleGroupSlice('database', selectedDbGroup.value, activeDbGroup.value.named),
 );
 
-const activeDbUsesGrid = computed(() => DB_PREVIEW_GROUPS.has(selectedDbGroup.value));
-
-const visibleDbGridItems = computed<DatabaseGridItem[]>(() => (
-  visibleDbEntries.value.map((entry) => {
-    const asset = entry.preview ? findDbPreviewAsset(entry.preview) : null;
-    return {
-      id: entry.id,
-      name: entry.name,
-      preview: entry.preview,
-      fileName: asset?.fileName || '',
-      url: asset?.url || '',
-      missing: Boolean(entry.preview && !asset?.url),
-    };
-  })
-));
-
 const activeDbKey = computed(() => {
   if (pmDetail.value?.kind !== 'managed' || pmDetail.value.entry.kind !== 'database') return '';
   const entry = pmDetail.value.entry;
@@ -658,10 +577,7 @@ const remainingDbEntries = computed(() =>
   remainingGroupItems('database', selectedDbGroup.value, activeDbGroup.value.named.length),
 );
 
-const pmListHeaderTitle = computed(() => {
-  if (selected.value === 'database') return `${categoryLabel('database')} · ${dbLabel(selectedDbGroup.value)}`;
-  return categoryLabel(selected.value);
-});
+const pmListHeaderTitle = computed(() => dbLabel(selectedDbGroup.value));
 
 const GROUP_PAGE_SIZE = 60;
 const groupVisibleLimits = ref<Record<string, number>>({});
@@ -699,11 +615,6 @@ function showMoreGroupItems(tab: PmGroupTab, groupKey: string, total: number): v
     ...groupVisibleLimits.value,
     [key]: Math.min(current + GROUP_PAGE_SIZE, total),
   };
-}
-
-function categoryLabel(id: DatabaseCategoryId): string {
-  if (id === 'commonEvents') return MANAGED_KIND_LABELS.commonEvent[language.value];
-  return DATABASE_CATEGORY_LABELS[id]?.[language.value] ?? id;
 }
 
 function dbLabel(key: string): string {
@@ -797,16 +708,6 @@ function closeDetail() {
   detailError.value = '';
 }
 
-function syncSelectedDbGroup(): void {
-  const options = dbGroupOptions.value;
-  if (!options.length) return;
-  const valid = options.some((option) => option.key === selectedDbGroup.value);
-  if (!valid) {
-    const withData = options.find((option) => typeof option.count === 'number' && option.count > 0);
-    selectedDbGroup.value = withData?.key ?? options[0].key;
-  }
-}
-
 function selectDbGroup(key: string): void {
   const sameGroup = selectedDbGroup.value === key;
   if (sameGroup && !isDocumentSubFieldGroup(key)) return;
@@ -824,33 +725,20 @@ function selectDbGroup(key: string): void {
   }
   selectedDbSubField.value = '';
   if (!sameGroup) closeDetail();
-}
-
-function selectCategory(id: DatabaseCategoryId) {
-  if (selected.value !== id) {
-    closeDetail();
+  // System is a single-document group: open its entry directly like the stock RM editor.
+  if (key === 'System') {
+    const first = database.value[key]?.named[0];
+    if (first) void openManaged('database', first.id, key);
   }
-  selected.value = id;
-  if (id === 'database') syncSelectedDbGroup();
 }
 
 watch(() => route.query.section, (section) => {
   if (!surfaceActive || route.path !== '/database') return;
-  const next = normalizeDatabaseSection(section);
-  if (next === 'commonEvents') {
-    selectCategory('database');
-    selectedDbGroup.value = 'CommonEvents';
-    if (section !== 'database') {
-      void router.replace({ path: '/database', query: { section: 'database' } });
-    }
-    return;
+  if (normalizeDatabaseSection(section) === 'commonEvents') {
+    selectDbGroup('CommonEvents');
   }
-  if (selected.value !== next) selectCategory(next);
-  if (section !== next) {
-    void router.replace({
-      path: '/database',
-      query: { section: next },
-    });
+  if (section !== 'database') {
+    void router.replace({ path: '/database', query: { section: 'database' } });
   }
 }, { immediate: true });
 
@@ -987,7 +875,7 @@ async function createDatabaseEntry(group: string) {
 
 async function createSelectedDatabaseEntry() {
   if (isCommonEventsGroup(selectedDbGroup.value)) {
-    await createCommonEvent('database');
+    await createCommonEvent();
     return;
   }
   await createDatabaseEntry(selectedDbGroup.value);
@@ -1032,7 +920,7 @@ async function changeSelectedDatabaseMaximum() {
   }
 }
 
-async function createCommonEvent(_targetCategory: DatabaseCategoryId = 'database') {
+async function createCommonEvent() {
   if (surfaceWriteLocked.value) return;
   detailBusy.value = true;
   detailError.value = '';
@@ -1051,7 +939,6 @@ async function createCommonEvent(_targetCategory: DatabaseCategoryId = 'database
     const entry = await projectManagement.getEntry({ kind: 'commonEvent', id: result.entry.id }, projectStore.currentProject);
     pmDetail.value = { kind: 'managed', entry };
     resetDetailDraft(cloneDraft(entry.value));
-    selected.value = 'database';
     selectedDbGroup.value = 'CommonEvents';
     showUnnamed.value = true;
     await loadData();
@@ -1074,7 +961,6 @@ async function duplicateCurrentCommonEvent() {
     const entry = await projectManagement.getEntry({ kind: 'commonEvent', id: result.entry.id }, projectStore.currentProject);
     pmDetail.value = { kind: 'managed', entry };
     resetDetailDraft(cloneDraft(entry.value));
-    selected.value = 'database';
     selectedDbGroup.value = 'CommonEvents';
     showUnnamed.value = true;
     await loadData();
@@ -1101,81 +987,6 @@ async function deleteCurrentCommonEvent() {
   } finally {
     detailBusy.value = false;
   }
-}
-
-function findDbPreviewAsset(preview: ProjectOverviewDbPreview) {
-  const entries = editorCatalog.value?.assets[preview.asset] ?? [];
-  const name = preview.name || '';
-  return entries.find((asset) => (
-    asset.name === name
-    || asset.fileName === name
-    || asset.fileName.replace(/\.[^.]+$/, '') === name
-  )) || null;
-}
-
-function dbPreviewSubtitle(item: DatabaseGridItem): string {
-  const id = `#${String(item.id).padStart(4, '0')}`;
-  if (!item.preview) return id;
-  return item.preview.label ? `${id} · ${item.preview.label}` : id;
-}
-
-function dbPreviewUsesSprite(preview?: ProjectOverviewDbPreview): boolean {
-  return Boolean(preview && ['face', 'character', 'svActor', 'icon'].includes(preview.kind));
-}
-
-function dbPreviewSpriteStyle(preview: ProjectOverviewDbPreview, url: string): Record<string, string> {
-  const image = `url("${url.replace(/"/g, '\\"')}")`;
-  if (preview.kind === 'icon') {
-    const iconIndex = Math.max(0, Math.floor(Number(preview.iconIndex || 0)));
-    const cell = 52;
-    const col = iconIndex % 16;
-    const row = Math.floor(iconIndex / 16);
-    return {
-      backgroundImage: image,
-      backgroundSize: `${16 * cell}px auto`,
-      backgroundPosition: `-${col * cell}px -${row * cell}px`,
-    };
-  }
-  if (preview.kind === 'face') {
-    const index = clampInt(preview.index, 0, 7);
-    const cell = 76;
-    return {
-      backgroundImage: image,
-      backgroundSize: `${4 * cell}px ${2 * cell}px`,
-      backgroundPosition: `-${(index % 4) * cell}px -${Math.floor(index / 4) * cell}px`,
-    };
-  }
-  if (preview.kind === 'character') {
-    const big = isBigCharacterName(preview.name || '');
-    const index = clampInt(preview.index, 0, 7);
-    const cell = 58;
-    const cols = big ? 3 : 12;
-    const rows = big ? 4 : 8;
-    const blockX = big ? 1 : (index % 4) * 3 + 1;
-    const blockY = big ? 0 : Math.floor(index / 4) * 4;
-    return {
-      backgroundImage: image,
-      backgroundSize: `${cols * cell}px ${rows * cell}px`,
-      backgroundPosition: `-${blockX * cell}px -${blockY * cell}px`,
-    };
-  }
-  const cell = 58;
-  return {
-    backgroundImage: image,
-    backgroundSize: `${9 * cell}px ${6 * cell}px`,
-    backgroundPosition: `-${cell}px 0`,
-  };
-}
-
-function clampInt(value: unknown, min: number, max: number): number {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return min;
-  return Math.max(min, Math.min(max, Math.floor(number)));
-}
-
-function isBigCharacterName(name: string): boolean {
-  const sign = String(name || '').match(/^[!$]+/);
-  return Boolean(sign && sign[0].includes('$'));
 }
 
 async function saveDetail() {
@@ -1341,120 +1152,68 @@ function detailTitle(): string {
       :inert="surfaceInteractionLocked"
       :aria-disabled="surfaceInteractionLocked"
     >
-      <!-- Sidebar -->
+      <!-- Sidebar: flat data-type list, stock RM tab order -->
       <aside class="console-panel pm-categories">
         <div class="console-panel-title">{{ t('app.nav.database') }}</div>
         <div class="pm-sidebar">
           <button
-            v-for="cat in categories"
-            :key="cat.id"
+            v-for="opt in dbGroupOptions"
+            :key="opt.key"
             type="button"
-            :data-ui-id="`database-category-${cat.id}`"
-            class="folder"
-            :class="{ active: selected === cat.id }"
-            @click="selectCategory(cat.id)"
+            :data-ui-id="`database-group-${opt.key}`"
+            class="sub-category-button"
+            :class="{ active: opt.key === selectedDbGroup, error: opt.readState !== 'ready' }"
+            :title="opt.readState === 'ready' ? undefined : databaseReadIssueText(opt.key)"
+            @click="selectDbGroup(opt.key)"
           >
-            <svg v-if="cat.id === 'switches'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M8 7h8M8 12h8m-8 5h8M5 7h.01M5 12h.01M5 17h.01" /></svg>
-            <svg v-else-if="cat.id === 'variables'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
-            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>
-            <span>{{ categoryLabel(cat.id) }}</span>
-            <b>{{ cat.count }}</b>
+            <span>{{ opt.label }}</span>
+            <b>{{ opt.count }}</b>
           </button>
-        </div>
-        <div v-if="selected === 'database'" class="pm-sub-pane">
-          <button type="button" class="pm-sub-pane-toggle" @click="pmSubPaneExpanded = !pmSubPaneExpanded">
-            <el-icon :class="{ collapsed: !pmSubPaneExpanded }"><ArrowRight /></el-icon>
-            <span>{{ t('story.dataType') }}</span>
-            <b>{{ isDocumentSubFieldGroup(selectedDbGroup) ? dbSubFieldOrder(selectedDbGroup).length : activeDbGroup.named.length }}</b>
-          </button>
-          <div v-show="pmSubPaneExpanded" class="pm-sub-list">
-            <button
-              v-for="opt in dbGroupOptions"
-              :key="opt.key"
-              type="button"
-              :data-ui-id="`database-group-${opt.key}`"
-              class="sub-category-button"
-              :class="{ active: opt.key === selectedDbGroup, error: opt.readState !== 'ready' }"
-              :title="opt.readState === 'ready' ? undefined : databaseReadIssueText(opt.key)"
-              @click="selectDbGroup(opt.key)"
-            >
-              <span>{{ opt.label }}</span>
-              <b>{{ opt.count }}</b>
-            </button>
-          </div>
         </div>
       </aside>
 
-      <!-- Main content -->
-      <main class="console-panel">
+      <!-- Entry list -->
+      <main class="console-panel pm-entry-list">
         <div class="console-list-header">
           <span>{{ pmListHeaderTitle }}</span>
+        </div>
+        <div class="pm-list-search">
           <ConsoleSearchInput v-model="searchQuery" :placeholder="pmSearchPlaceholder" />
         </div>
         <div class="console-panel-scroll pm-content">
 
-          <!-- ========== Switches ========== -->
-          <template v-if="selected === 'switches'">
+          <template v-if="isCommonEventsGroup(selectedDbGroup)">
             <div class="list-toolbar">
               <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
+              <div class="toolbar-actions">
+                <button type="button" :disabled="Boolean(commonEventsReadIssue)" @click="createCommonEvent()">{{ t('story.new') }}</button>
+                <button type="button" :disabled="selectedCommonEventId == null" @click="duplicateCurrentCommonEvent">{{ t('story.duplicate') }}</button>
+                <button type="button" class="danger" :disabled="selectedCommonEventId == null" @click="deleteCurrentCommonEvent">{{ t('cmdList.delete') }}</button>
+              </div>
             </div>
-            <div class="id-list">
-              <button v-for="s in filteredSwitches" :key="s.id" type="button" class="id-row" @click="openManaged('switch', s.id)">
-                <span class="row-id">{{ String(s.id).padStart(4, '0') }}</span>
-                <span class="row-name">{{ s.name || unnamedLabel() }}</span>
+            <div v-if="commonEventsReadIssue" class="read-issue-detail" role="alert">
+              <strong>{{ t('story.databaseReadFailed') }}</strong>
+              <span>{{ formatReadIssue(commonEventsReadIssue) }}</span>
+            </div>
+            <div v-else class="id-list">
+              <button
+                v-for="ce in filteredCommonEvents"
+                :key="ce.id"
+                type="button"
+                class="id-row ce-row"
+                :class="{ active: selectedCommonEventId === ce.id }"
+                @click="openManaged('commonEvent', ce.id)"
+                @contextmenu.prevent="openManaged('commonEvent', ce.id)"
+              >
+                <span class="row-id">{{ String(ce.id).padStart(4, '0') }}</span>
+                <span class="row-name">{{ ce.name || unnamedLabel() }}</span>
               </button>
-              <div v-if="!filteredSwitches.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
+              <div v-if="!filteredCommonEvents.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
             </div>
           </template>
-
-          <!-- ========== Variables ========== -->
-          <template v-else-if="selected === 'variables'">
-            <div class="list-toolbar">
-              <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
-            </div>
-            <div class="id-list">
-              <button v-for="v in filteredVariables" :key="v.id" type="button" class="id-row" @click="openManaged('variable', v.id)">
-                <span class="row-id">{{ String(v.id).padStart(4, '0') }}</span>
-                <span class="row-name">{{ v.name || unnamedLabel() }}</span>
-              </button>
-              <div v-if="!filteredVariables.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
-            </div>
-          </template>
-
-          <!-- ========== Database ========== -->
-          <template v-else-if="selected === 'database'">
-            <template v-if="isCommonEventsGroup(selectedDbGroup)">
-              <div class="list-toolbar">
-                <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
-                <div class="toolbar-actions">
-                  <button type="button" :disabled="Boolean(commonEventsReadIssue)" @click="createCommonEvent()">{{ t('story.new') }}</button>
-                  <button type="button" :disabled="selectedCommonEventId == null" @click="duplicateCurrentCommonEvent">{{ t('story.duplicate') }}</button>
-                  <button type="button" class="danger" :disabled="selectedCommonEventId == null" @click="deleteCurrentCommonEvent">{{ t('cmdList.delete') }}</button>
-                </div>
-              </div>
-              <div v-if="commonEventsReadIssue" class="read-issue-detail" role="alert">
-                <strong>{{ t('story.databaseReadFailed') }}</strong>
-                <span>{{ formatReadIssue(commonEventsReadIssue) }}</span>
-              </div>
-              <div v-else class="id-list">
-                <button
-                  v-for="ce in filteredCommonEvents"
-                  :key="ce.id"
-                  type="button"
-                  class="id-row ce-row"
-                  :class="{ active: selectedCommonEventId === ce.id }"
-                  @click="openManaged('commonEvent', ce.id)"
-                  @contextmenu.prevent="openManaged('commonEvent', ce.id)"
-                >
-                  <span class="row-id">{{ String(ce.id).padStart(4, '0') }}</span>
-                  <span class="row-name">{{ ce.name || unnamedLabel() }}</span>
-                </button>
-                <div v-if="!filteredCommonEvents.length" class="empty-hint">{{ t('story.noMatchItems') }}</div>
-              </div>
-            </template>
-            <template v-else>
+          <template v-else>
             <div class="list-toolbar database-toolbar">
-              <span>{{ dbLabel(selectedDbGroup) }} · {{ selectedDatabaseReadIssue ? t('story.databaseReadFailed') : itemCountLabel(isDocumentSubFieldGroup(selectedDbGroup) ? dbSubFieldOrder(selectedDbGroup).length : activeDbGroup.named.length) }}</span>
+              <span>{{ selectedDatabaseReadIssue ? t('story.databaseReadFailed') : itemCountLabel(isDocumentSubFieldGroup(selectedDbGroup) ? dbSubFieldOrder(selectedDbGroup).length : activeDbGroup.named.length) }}</span>
               <template v-if="!isDocumentSubFieldGroup(selectedDbGroup)">
                 <label class="toggle-label"><input type="checkbox" v-model="showUnnamed" /> {{ t('story.showUnnamed') }}</label>
                 <button
@@ -1495,44 +1254,6 @@ function detailTitle(): string {
               </button>
               <div v-if="!pmDetail && !detailBusy" class="empty-hint">{{ t('story.selectDbSubFieldHint') }}</div>
             </div>
-            <div v-else-if="activeDbUsesGrid" class="image-grid database-grid">
-              <button
-                v-for="entry in visibleDbGridItems"
-                :key="entry.id"
-                type="button"
-                :data-ui-id="`database-entry-${selectedDbGroup}-${entry.id}`"
-                class="image-grid-card database-grid-card"
-                :class="{ active: activeDbKey === `${selectedDbGroup}:${entry.id}`, missing: entry.missing || !entry.preview }"
-                @click="openManaged('database', entry.id, selectedDbGroup)"
-                @contextmenu.prevent="openDbContextMenu($event, entry.id)"
-              >
-                <span class="image-grid-thumb database-grid-thumb">
-                  <span
-                    v-if="entry.url && entry.preview && dbPreviewUsesSprite(entry.preview)"
-                    class="db-preview-sprite"
-                    :class="`kind-${entry.preview.kind}`"
-                    :style="dbPreviewSpriteStyle(entry.preview, entry.url)"
-                  />
-                  <img v-else-if="entry.url" :src="entry.url" :alt="entry.name" />
-                  <span v-else class="image-grid-missing">{{ t('story.noPreview') }}</span>
-                </span>
-                <span class="image-grid-meta">
-                  <strong>{{ entry.name || unnamedLabel() }}</strong>
-                  <small>{{ dbPreviewSubtitle(entry) }}</small>
-                </span>
-              </button>
-              <button
-                v-if="hasMoreDbEntries"
-                type="button"
-                class="load-more image-grid-more"
-                @click="showMoreGroupItems('database', selectedDbGroup, activeDbGroup.named.length)"
-              >
-                {{ showMoreLabel(remainingDbEntries) }}
-              </button>
-              <div v-if="!visibleDbEntries.length" class="empty-hint">
-                {{ database[selectedDbGroup] ? t('story.noMatchEntries') : t('story.noDatabaseData') }}
-              </div>
-            </div>
             <div v-else class="id-list">
               <button
                 v-for="entry in visibleDbEntries"
@@ -1540,6 +1261,7 @@ function detailTitle(): string {
                 type="button"
                 :data-ui-id="`database-entry-${selectedDbGroup}-${entry.id}`"
                 class="id-row"
+                :class="{ active: activeDbKey === `${selectedDbGroup}:${entry.id}` }"
                 @click="openManaged('database', entry.id, selectedDbGroup)"
                 @contextmenu.prevent="openDbContextMenu($event, entry.id)"
               >
@@ -1558,7 +1280,6 @@ function detailTitle(): string {
                 {{ database[selectedDbGroup] ? t('story.noMatchEntries') : t('story.noDatabaseData') }}
               </div>
             </div>
-            </template>
           </template>
 
         </div>
@@ -1734,50 +1455,22 @@ function detailTitle(): string {
 }
 .workspace-refresh-state.error { color: var(--app-danger); }
 .write-locked { opacity: .72; }
+/* Stock RM proportions: narrow type tabs, narrow entry list, wide editor. */
 .pm-split {
-  grid-template-columns: 230px minmax(0, 1fr) minmax(380px, 420px);
+  grid-template-columns: 172px 236px minmax(0, 1fr);
   padding: 14px 40px 34px;
   gap: 22px;
   overflow: hidden;
 }
 
-/* Sidebar folder buttons (same pattern as ConsoleAssetsPane) */
+/* Sidebar data-type list */
 .pm-categories {
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-.pm-sidebar { flex: 0 0 auto; min-height: 0; overflow: auto; padding: 4px; }
-.pm-sub-pane {
-  min-height: 0;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  border-top: 1px solid var(--console-border,#e4dcce);
-  overflow: hidden;
-}
-.pm-sub-pane-toggle {
-  width: 100%;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  border: 0;
-  background: transparent;
-  color: var(--console-text-muted,#9a8e7e);
-  font: inherit;
-  font-size: 10.5px;
-  font-weight: 650;
-  cursor: pointer;
-}
-.pm-sub-pane-toggle:hover { background: #f1e9db; color: var(--console-text-soft,#5a5247); }
-.pm-sub-pane-toggle b { margin-left: auto; color: var(--console-text-faint,#b3a795); font-size: 10px; font-weight: 500; }
-.pm-sub-pane-toggle .el-icon { width: 12px; transition: transform .15s ease; }
-.pm-sub-pane-toggle .el-icon.collapsed { transform: rotate(0deg); }
-.pm-sub-pane-toggle .el-icon:not(.collapsed) { transform: rotate(90deg); }
-.pm-sub-list { flex: 1; min-height: 0; overflow: auto; padding: 4px 6px 8px; }
+.pm-sidebar { flex: 1; min-height: 0; overflow: auto; padding: 4px 6px 8px; }
 .sub-category-button {
   width: 100%;
   height: 34px;
@@ -1800,17 +1493,14 @@ function detailTitle(): string {
 }
 .sub-category-button.active { font-weight: 650; }
 .sub-category-button b { margin-left: auto; color: var(--console-text-faint,#b3a795); font-size: 10px; }
-.sub-category-button:focus-visible,
-.pm-sub-pane-toggle:focus-visible { outline: none; box-shadow: var(--app-ring); }
-.folder {
-  width: 100%; height: 34px; display: flex; align-items: center; gap: 7px;
-  padding: 0 10px; border: 1px solid transparent; border-radius: 9px;
-  background: transparent; color: var(--console-text-soft,#5a5247); font: inherit; font-size: 12px; cursor: pointer;
-}
-.folder:hover, .folder.active { background: var(--console-accent-soft,#f6e3d7); color: var(--console-accent,#be5630); }
-.folder-icon { width: 13px; height: 13px; flex: 0 0 13px; }
-.folder b { margin-left: auto; color: var(--console-text-faint,#b3a795); font-size: 10px; }
+.sub-category-button:focus-visible { outline: none; box-shadow: var(--app-ring); }
 
+.pm-entry-list { min-height: 0; }
+.pm-list-search {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--console-border,#e4dcce);
+}
 .pm-content { padding: 0; }
 
 /* Overview card grid */
@@ -1912,7 +1602,7 @@ function detailTitle(): string {
 .list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--console-border,#e4dcce); }
 .asset-toolbar { color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
 .asset-toolbar button { min-height: 26px; padding: 0 9px; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 8px; background: var(--console-paper,#fffdfa); color: var(--console-accent,#be5630); font: inherit; cursor: pointer; }
-.database-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
+.database-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
 .database-toolbar .link-button:disabled { opacity: .55; cursor: wait; text-decoration: none; }
 .toggle-label {
   display: flex; align-items: center; gap: 6px;
@@ -1950,102 +1640,6 @@ function detailTitle(): string {
 .db-subfield-row { justify-content: space-between; }
 .audio-row .row-name,
 .image-row .row-name { flex: 1; min-width: 0; }
-.image-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 10px;
-  padding: 12px;
-  align-content: start;
-}
-.image-grid-card {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--console-border,#e4dcce);
-  border-radius: 10px;
-  background: var(--console-paper,#fffdfa);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.image-grid-card:hover {
-  border-color: #d2a88c;
-  background: #fbf1e9;
-}
-.image-grid-card.active {
-  border-color: var(--console-accent,#be5630);
-  box-shadow: inset 0 0 0 1px var(--console-accent,#be5630);
-}
-.image-grid-card.missing { opacity: .72; }
-.image-grid-card:focus-visible { outline: none; box-shadow: var(--app-ring); }
-.image-grid-card.active:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--console-accent,#be5630), var(--app-ring);
-}
-.image-grid-thumb {
-  position: relative;
-  aspect-ratio: 1 / 1;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid #ded4c5;
-  border-radius: 8px;
-  background-color: #ddd5ca;
-  background-image:
-    linear-gradient(45deg, rgba(255,255,255,.55) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(255,255,255,.55) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(255,255,255,.55) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.55) 75%);
-  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
-  background-size: 14px 14px;
-}
-.image-grid-thumb img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  image-rendering: pixelated;
-}
-.image-grid-missing {
-  color: var(--console-text-muted,#9a8e7e);
-  font-size: 10px;
-}
-.image-grid-meta {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.image-grid-meta strong,
-.image-grid-meta small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.image-grid-meta strong { font-size: 11.5px; font-weight: 650; }
-.image-grid-meta small { color: var(--console-text-muted,#9a8e7e); font-size: 10px; }
-.image-grid-more { grid-column: 1 / -1; }
-.database-grid .empty-hint { grid-column: 1 / -1; }
-.database-grid-thumb .db-preview-sprite {
-  display: block;
-  background-repeat: no-repeat;
-  image-rendering: pixelated;
-}
-.db-preview-sprite.kind-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 8px;
-}
-.db-preview-sprite.kind-face {
-  width: 76px;
-  height: 76px;
-}
-.db-preview-sprite.kind-character,
-.db-preview-sprite.kind-svActor {
-  width: 58px;
-  height: 58px;
-}
 .load-more {
   width: 100%;
   padding: 9px;
@@ -2224,7 +1818,7 @@ function detailTitle(): string {
 
 @media (max-width: 1320px) {
   .pm-split {
-    grid-template-columns: 210px minmax(0, 1fr) minmax(340px, 380px);
+    grid-template-columns: 150px 208px minmax(0, 1fr);
     padding-inline: 28px;
     gap: 16px;
   }

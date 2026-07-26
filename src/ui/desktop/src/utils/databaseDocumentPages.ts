@@ -65,3 +65,12 @@ export function systemDocumentPageForField(path: string): 'System1' | 'System2' 
   const root = path.split('.')[0];
   return SYSTEM_2_ROOT_PATHS.has(root) ? 'System2' : 'System1';
 }
+
+// Stock RM keeps these out of the System tabs: switches/variables have their own
+// sidebar categories, and types/terms live on their own database pages. Every
+// System render path (core fields and leftover panels) must apply this filter.
+export const SYSTEM_FIELDS_EDITED_ELSEWHERE = new Set([
+  'switches', 'variables',
+  'elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes',
+  'terms',
+]);

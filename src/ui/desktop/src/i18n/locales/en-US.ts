@@ -2460,7 +2460,7 @@ const enUS = {
     'db.tileFlagTools': 'Tileset behavior tools',
     'db.tileFlagSheets': 'Tileset sheets',
     'db.tileFlagPassage': 'Passage',
-    'db.tileFlagDirection': '4 Directions',
+    'db.tileFlagDirection': 'Passage (4 Dir)',
     'db.tileFlagLadder': 'Ladder',
     'db.tileFlagBush': 'Bush',
     'db.tileFlagCounter': 'Counter',

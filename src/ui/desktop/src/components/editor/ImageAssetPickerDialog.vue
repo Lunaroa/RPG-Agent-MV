@@ -80,7 +80,8 @@ const mode = ref<ImagePickerMode>('plain');
 const name = ref('');
 const index = ref(0);
 const search = ref('');
-const ICON_CELL_PX = 48;
+// Icons render 1:1 at the project's iconSize (RM default 32); never upscale.
+const iconCellPx = computed(() => Math.max(1, Number(props.catalog?.iconSize) || 32));
 
 const canvas = ref<HTMLCanvasElement>();
 const iconCanvas = ref<HTMLCanvasElement>();
@@ -221,8 +222,9 @@ function paintCharacterSheet() {
 
 function paintIconSheet() {
   const { cols, rows, nativeCellW, nativeCellH } = iconGridLayout();
-  const canvasW = cols * ICON_CELL_PX;
-  const canvasH = rows * ICON_CELL_PX;
+  const cell = iconCellPx.value;
+  const canvasW = cols * cell;
+  const canvasH = rows * cell;
   const el = iconCanvas.value;
   if (!el) return;
   el.width = canvasW;
@@ -239,21 +241,21 @@ function paintIconSheet() {
         context.drawImage(
           bitmap,
           c * nativeCellW, r * nativeCellH, nativeCellW, nativeCellH,
-          c * ICON_CELL_PX, r * ICON_CELL_PX, ICON_CELL_PX, ICON_CELL_PX,
+          c * cell, r * cell, cell, cell,
         );
       }
     }
   }
   context.strokeStyle = 'rgba(255,255,255,.4)';
   context.lineWidth = 1;
-  for (let x = 0; x <= cols; x += 1) drawLine(context, x * ICON_CELL_PX + 0.5, 0, x * ICON_CELL_PX + 0.5, canvasH);
-  for (let y = 0; y <= rows; y += 1) drawLine(context, 0, y * ICON_CELL_PX + 0.5, canvasW, y * ICON_CELL_PX + 0.5);
+  for (let x = 0; x <= cols; x += 1) drawLine(context, x * cell + 0.5, 0, x * cell + 0.5, canvasH);
+  for (let y = 0; y <= rows; y += 1) drawLine(context, 0, y * cell + 0.5, canvasW, y * cell + 0.5);
   const selIdx = Math.max(0, Math.floor(index.value));
   const selCol = selIdx % cols;
   const selRow = Math.floor(selIdx / cols);
   context.strokeStyle = '#fff';
   context.lineWidth = 3;
-  context.strokeRect(selCol * ICON_CELL_PX + 1.5, selRow * ICON_CELL_PX + 1.5, ICON_CELL_PX - 3, ICON_CELL_PX - 3);
+  context.strokeRect(selCol * cell + 1.5, selRow * cell + 1.5, cell - 3, cell - 3);
 }
 
 function drawLine(context: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) {
@@ -290,8 +292,8 @@ function pickIconCell(event: MouseEvent) {
   const rect = iconCanvas.value.getBoundingClientRect();
   const x = (event.clientX - rect.left) * iconCanvas.value.width / rect.width;
   const y = (event.clientY - rect.top) * iconCanvas.value.height / rect.height;
-  const col = Math.max(0, Math.min(cols - 1, Math.floor(x / ICON_CELL_PX)));
-  const row = Math.max(0, Math.min(rows - 1, Math.floor(y / ICON_CELL_PX)));
+  const col = Math.max(0, Math.min(cols - 1, Math.floor(x / iconCellPx.value)));
+  const row = Math.max(0, Math.min(rows - 1, Math.floor(y / iconCellPx.value)));
   index.value = row * cols + col;
   paintIconSheet();
 }

@@ -172,15 +172,15 @@ watch(
         </div>
         <label class="rm-type-current">
           <span>{{ t('db.document.types.selectedName') }}</span>
-          <input
-            type="text"
-            :value="listValue(field)[selectedIds[field]] || ''"
-            @input="updateSelectedName(field, ($event.target as HTMLInputElement).value)"
+          <el-input
+            size="small"
+            :model-value="listValue(field)[selectedIds[field]] || ''"
+            @update:model-value="updateSelectedName(field, $event)"
           />
         </label>
-        <button type="button" class="rm-type-maximum" @click="changeMaximum(field)">
+        <el-button size="small" class="rm-type-maximum" @click="changeMaximum(field)">
           {{ t('db.document.types.changeMaximum', { maximum: capacity(field) }) }}
-        </button>
+        </el-button>
       </section>
     </div>
   </section>

@@ -1,58 +1,62 @@
 <template>
   <div class="tileset-flag-canvas-editor" data-ui-id="tileset-flag-editor">
-    <div class="flag-tool-strip" role="toolbar" :aria-label="t('db.tileFlagTools')">
-      <button
-        v-for="tool in tools"
-        :key="tool.key"
-        type="button"
-        :class="{ active: mode === tool.key }"
-        :aria-pressed="mode === tool.key"
-        :data-ui-id="`tileset-flag-mode-${tool.key}`"
-        :title="tool.label"
-        @click="mode = tool.key"
-      >
-        <span class="tool-symbol" aria-hidden="true">{{ tool.symbol }}</span>
-        <span>{{ tool.label }}</span>
-      </button>
-    </div>
-
-    <div class="sheet-strip" role="tablist" :aria-label="t('db.tileFlagSheets')">
-      <button
-        v-for="sheet in sheets"
-        :key="sheet.key"
-        type="button"
-        role="tab"
-        :aria-selected="selectedSheetKey === sheet.key"
-        :class="{ active: selectedSheetKey === sheet.key }"
-        :data-ui-id="`tileset-flag-sheet-${sheet.key}`"
-        @click="selectedSheetKey = sheet.key"
-      >
-        {{ sheet.key }}
-      </button>
-    </div>
-
-    <div class="canvas-frame" :class="{ unavailable: currentImageState !== 'ready' }">
-      <div v-if="currentImageState !== 'ready'" class="canvas-state" role="status">
-        <strong>{{ currentSheet.key }}</strong>
-        <span>{{ imageStateMessage }}</span>
+    <!-- Stock RM tileset tab: tile list on the left, mode buttons stacked on the right,
+         sheet tabs below the list (mirrors the stock RM database tileset screenshot). -->
+    <div class="flag-editor-layout">
+      <div class="flag-canvas-column">
+        <div class="canvas-frame" :class="{ unavailable: currentImageState !== 'ready' }">
+          <div v-if="currentImageState !== 'ready'" class="canvas-state" role="status">
+            <strong>{{ currentSheet.key }}</strong>
+            <span>{{ imageStateMessage }}</span>
+          </div>
+          <canvas
+            v-show="currentImageState === 'ready'"
+            ref="canvasRef"
+            :width="currentSheet.columns * tileSize"
+            :height="currentSheet.rows * tileSize"
+            :style="canvasStyle"
+            role="application"
+            tabindex="0"
+            :aria-label="canvasAriaLabel"
+            :data-ui-id="`tileset-flag-canvas-${currentSheet.key}`"
+            @pointerdown="beginPointerPaint"
+            @pointermove="continuePointerPaint"
+            @pointerup="finishPointerPaint"
+            @pointercancel="cancelPointerPaint"
+            @contextmenu.prevent
+            @keydown="handleCanvasKeydown"
+          />
+        </div>
+        <div class="sheet-strip" role="tablist" :aria-label="t('db.tileFlagSheets')">
+          <button
+            v-for="sheet in sheets"
+            :key="sheet.key"
+            type="button"
+            role="tab"
+            :aria-selected="selectedSheetKey === sheet.key"
+            :class="{ active: selectedSheetKey === sheet.key }"
+            :data-ui-id="`tileset-flag-sheet-${sheet.key}`"
+            @click="selectedSheetKey = sheet.key"
+          >
+            {{ sheet.key }}
+          </button>
+        </div>
       </div>
-      <canvas
-        v-show="currentImageState === 'ready'"
-        ref="canvasRef"
-        :width="currentSheet.columns * tileSize"
-        :height="currentSheet.rows * tileSize"
-        :style="canvasStyle"
-        role="application"
-        tabindex="0"
-        :aria-label="canvasAriaLabel"
-        :data-ui-id="`tileset-flag-canvas-${currentSheet.key}`"
-        @pointerdown="beginPointerPaint"
-        @pointermove="continuePointerPaint"
-        @pointerup="finishPointerPaint"
-        @pointercancel="cancelPointerPaint"
-        @contextmenu.prevent
-        @keydown="handleCanvasKeydown"
-      />
+      <div class="flag-tool-strip" role="toolbar" :aria-label="t('db.tileFlagTools')">
+        <button
+          v-for="tool in tools"
+          :key="tool.key"
+          type="button"
+          :class="{ active: mode === tool.key }"
+          :aria-pressed="mode === tool.key"
+          :data-ui-id="`tileset-flag-mode-${tool.key}`"
+          :title="tool.label"
+          @click="mode = tool.key"
+        >
+          <span class="tool-symbol" aria-hidden="true">{{ tool.symbol }}</span>
+          <span>{{ tool.label }}</span>
+        </button>
+      </div>
     </div>
 
     <div class="flag-editor-status" aria-live="polite">
@@ -107,7 +111,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ 'update:flags': [flags: unknown[]] }>();
 const { t } = useI18n();
-const DISPLAY_TILE_SIZE = 28;
+// Tiles render 1:1 at the project's tileSize (RM standard 48); never downscale.
 const tileSize = computed(() => Math.max(1, Number(props.catalog?.tileSize) || 48));
 
 const sheets = MV_TILESET_SHEETS;
@@ -138,8 +142,8 @@ const currentImageState = computed(() => imageStates.value[currentSheet.value.im
 const currentImageName = computed(() => String(props.tilesetNames[currentSheet.value.imageIndex] || '').trim());
 const selectedCell = computed(() => mvTilesetFlagCell(selectedSheetKey.value, selectedRow.value, selectedColumn.value));
 const canvasStyle = computed(() => ({
-  width: `${currentSheet.value.columns * DISPLAY_TILE_SIZE}px`,
-  height: `${currentSheet.value.rows * DISPLAY_TILE_SIZE}px`,
+  width: `${currentSheet.value.columns * tileSize.value}px`,
+  height: `${currentSheet.value.rows * tileSize.value}px`,
 }));
 const canvasAriaLabel = computed(() => t('db.tileFlagCanvasAria', {
   sheet: currentSheet.value.key,
@@ -329,8 +333,8 @@ function drawOverlayToken(context: CanvasRenderingContext2D, x: number, y: numbe
   context.save();
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  context.font = '800 29px "JetBrains Mono", monospace';
-  context.lineWidth = 5;
+  context.font = `800 ${Math.round(tileSize.value * 0.6)}px "JetBrains Mono", monospace`;
+  context.lineWidth = Math.max(2, tileSize.value * 0.1);
   context.strokeStyle = 'rgba(19, 24, 28, .76)';
   context.strokeText(token, x + tileSize.value / 2, y + tileSize.value / 2 + 1);
   context.fillStyle = color;
@@ -339,27 +343,29 @@ function drawOverlayToken(context: CanvasRenderingContext2D, x: number, y: numbe
 }
 
 function drawFixedMark(context: CanvasRenderingContext2D, x: number, y: number): void {
+  const s = tileSize.value / 48;
   context.save();
   context.fillStyle = 'rgba(19, 24, 28, .78)';
-  context.fillRect(x + tileSize.value - 13, y + 2, 10, 10);
+  context.fillRect(x + tileSize.value - 13 * s, y + 2 * s, 10 * s, 10 * s);
   context.strokeStyle = '#ffe8a3';
-  context.lineWidth = 1.5;
-  context.strokeRect(x + tileSize.value - 11, y + 5, 6, 5);
+  context.lineWidth = Math.max(1, 1.5 * s);
+  context.strokeRect(x + tileSize.value - 11 * s, y + 5 * s, 6 * s, 5 * s);
   context.restore();
 }
 
 function drawDirectionOverlay(context: CanvasRenderingContext2D, x: number, y: number, state: MvTilesetFlagCellState): void {
+  const size = tileSize.value;
   const entries: Array<{ token: string; value: MvTilesetAggregate<boolean>; dx: number; dy: number }> = [
-    { token: '↑', value: state.upBlocked, dx: 24, dy: 10 },
-    { token: '→', value: state.rightBlocked, dx: 38, dy: 24 },
-    { token: '↓', value: state.downBlocked, dx: 24, dy: 39 },
-    { token: '←', value: state.leftBlocked, dx: 10, dy: 24 },
+    { token: '↑', value: state.upBlocked, dx: size * 0.5, dy: size * 0.21 },
+    { token: '→', value: state.rightBlocked, dx: size * 0.79, dy: size * 0.5 },
+    { token: '↓', value: state.downBlocked, dx: size * 0.5, dy: size * 0.81 },
+    { token: '←', value: state.leftBlocked, dx: size * 0.21, dy: size * 0.5 },
   ];
   context.save();
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  context.font = '800 16px "JetBrains Mono", monospace';
-  context.lineWidth = 3;
+  context.font = `800 ${Math.round(size / 3)}px "JetBrains Mono", monospace`;
+  context.lineWidth = Math.max(2, size * 0.06);
   for (const entry of entries) {
     if (entry.value === true) continue;
     const token = entry.value === 'mixed' ? '?' : entry.token;
@@ -570,10 +576,24 @@ function sameFlags(left: readonly unknown[], right: readonly unknown[]): boolean
   min-width: 0;
 }
 
+/* Stock RM arrangement: tile list left, mode buttons stacked right. */
+.flag-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 148px;
+  gap: 8px;
+  align-items: start;
+}
+
+.flag-canvas-column {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .flag-tool-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
+  align-content: start;
 }
 
 .flag-tool-strip button,
@@ -706,6 +726,7 @@ canvas:focus-visible {
 }
 
 @media (max-width: 1120px) {
+  .flag-editor-layout { grid-template-columns: minmax(0, 1fr); }
   .flag-tool-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>

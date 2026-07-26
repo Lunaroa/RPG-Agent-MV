@@ -123,10 +123,14 @@ describe('database switch and variable acceptance structure', () => {
   test('keeps the icon picker fixed to IconSet and removes System-owned duplicate lists', () => {
     const picker = read('components/editor/ImageAssetPickerDialog.vue');
     const editor = read('components/console/DatabaseEntryDetailEditor.vue');
+    const documentPages = read('utils/databaseDocumentPages.ts');
     assert.match(picker, /v-if="mode !== 'icon'"/);
     assert.match(picker, /picker-grid--single/);
+    // The shared filter lives in databaseDocumentPages so every System render
+    // path (core fields and leftover panels) applies the same exclusion.
     assert.match(editor, /SYSTEM_FIELDS_EDITED_ELSEWHERE/);
-    assert.match(editor, /'switches', 'variables'/);
+    assert.match(documentPages, /export const SYSTEM_FIELDS_EDITED_ELSEWHERE/);
+    assert.match(documentPages, /'switches', 'variables'/);
   });
 
   test('uses direct Types and Terms layouts without the advanced JSON editor', () => {

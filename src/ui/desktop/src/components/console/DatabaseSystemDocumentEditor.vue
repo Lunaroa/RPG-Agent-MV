@@ -13,7 +13,7 @@ import {
   localizeDatabaseLabel,
 } from '../../utils/rmmvDatabaseLocalization';
 import { cloneDraft } from '../../utils/clone-draft';
-import { systemDocumentPageForField } from '../../utils/databaseDocumentPages';
+import { systemDocumentPageForField, SYSTEM_FIELDS_EDITED_ELSEWHERE } from '../../utils/databaseDocumentPages';
 import ImageAssetPickerDialog from '../editor/ImageAssetPickerDialog.vue';
 import ActorWalkingFrameThumb from '../editor/ActorWalkingFrameThumb.vue';
 import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
@@ -345,6 +345,7 @@ const extraRoots = computed(() => {
   for (const field of props.schema?.coreFields || []) {
     const root = field.path.split('.')[0];
     if (root === 'id') continue;
+    if (SYSTEM_FIELDS_EDITED_ELSEWHERE.has(root)) continue;
     if (systemDocumentPageForField(field.path) !== props.page) continue;
     const handled = props.page === 'System1' ? SYSTEM_1_HANDLED : SYSTEM_2_HANDLED;
     if (!handled.has(root)) roots.add(root);
@@ -514,7 +515,9 @@ function updateExtraRecord(value: unknown): void {
         <section v-if="hasField('tileSize')" class="rm-document-panel">
           <h3>{{ databaseFieldLabel('tileSize', language) }}</h3>
           <div class="rm-tile-size-options">
-            <label v-for="size in [48, 32, 24, 16]" :key="size"><input type="radio" name="system-tile-size" :value="size" :checked="numberValue('tileSize') === size" @change="writePath('tileSize', size)" />{{ size }}×{{ size }}</label>
+            <el-radio-group :model-value="numberValue('tileSize')" @change="writePath('tileSize', Number($event))">
+              <el-radio v-for="size in [48, 32, 24, 16]" :key="size" :value="size">{{ size }}×{{ size }}</el-radio>
+            </el-radio-group>
           </div>
         </section>
 
@@ -522,21 +525,39 @@ function updateExtraRecord(value: unknown): void {
           <section v-if="hasField('menuCommands')" class="rm-document-panel">
             <h3>{{ databaseFieldLabel('menuCommands', language) }}</h3>
             <div class="rm-check-grid">
-              <label v-for="(label, index) in menuLabels" :key="label" class="rm-check"><input type="checkbox" :checked="Boolean(arrayValue('menuCommands')[index])" @change="updateBooleanArray('menuCommands', index, ($event.target as HTMLInputElement).checked)" />{{ label }}</label>
+              <el-checkbox
+                v-for="(label, index) in menuLabels"
+                :key="label"
+                class="rm-check"
+                :model-value="Boolean(arrayValue('menuCommands')[index])"
+                @change="updateBooleanArray('menuCommands', index, Boolean($event))"
+              >{{ label }}</el-checkbox>
             </div>
           </section>
 
           <section v-if="hasField('itemCategories')" class="rm-document-panel">
             <h3>{{ databaseFieldLabel('itemCategories', language) }}</h3>
             <div class="rm-check-grid">
-              <label v-for="(label, index) in [t('db.document.system.item'), t('db.document.system.weapon'), t('db.document.system.armor'), t('db.document.system.keyItem')]" :key="label" class="rm-check"><input type="checkbox" :checked="Boolean(arrayValue('itemCategories')[index])" @change="updateBooleanArray('itemCategories', index, ($event.target as HTMLInputElement).checked)" />{{ label }}</label>
+              <el-checkbox
+                v-for="(label, index) in [t('db.document.system.item'), t('db.document.system.weapon'), t('db.document.system.armor'), t('db.document.system.keyItem')]"
+                :key="label"
+                class="rm-check"
+                :model-value="Boolean(arrayValue('itemCategories')[index])"
+                @change="updateBooleanArray('itemCategories', index, Boolean($event))"
+              >{{ label }}</el-checkbox>
             </div>
           </section>
 
           <section v-if="hasField('magicSkills')" class="rm-document-panel">
             <h3>{{ databaseFieldLabel('magicSkills', language) }}</h3>
             <div class="rm-magic-list">
-              <label v-for="entry in catalog?.skillTypes || []" :key="entry.id" class="rm-check"><input type="checkbox" :checked="magicSkillIds.has(entry.id)" @change="toggleMagicSkill(entry.id, ($event.target as HTMLInputElement).checked)" />{{ entry.name }}</label>
+              <el-checkbox
+                v-for="entry in catalog?.skillTypes || []"
+                :key="entry.id"
+                class="rm-check"
+                :model-value="magicSkillIds.has(entry.id)"
+                @change="toggleMagicSkill(entry.id, Boolean($event))"
+              >{{ entry.name }}</el-checkbox>
             </div>
           </section>
         </div>
@@ -549,8 +570,14 @@ function updateExtraRecord(value: unknown): void {
               <tbody>
                 <tr v-for="entry in attackMotionRows" :key="entry.id">
                   <th scope="row">{{ entry.name }}</th>
-                  <td><select :value="Number(attackMotion(entry.id).type || 0)" @change="updateAttackMotion(entry.id, 'type', Number(($event.target as HTMLSelectElement).value))"><option :value="0">{{ t('db.document.system.motion.thrust') }}</option><option :value="1">{{ t('db.document.system.motion.swing') }}</option><option :value="2">{{ t('db.document.system.motion.missile') }}</option></select></td>
-                  <td><input type="number" min="0" :value="Number(attackMotion(entry.id).weaponImageId || 0)" @input="updateAttackMotion(entry.id, 'weaponImageId', Number(($event.target as HTMLInputElement).value))" /></td>
+                  <td>
+                    <el-select size="small" :model-value="Number(attackMotion(entry.id).type || 0)" @change="updateAttackMotion(entry.id, 'type', Number($event))">
+                      <el-option :value="0" :label="t('db.document.system.motion.thrust')" />
+                      <el-option :value="1" :label="t('db.document.system.motion.swing')" />
+                      <el-option :value="2" :label="t('db.document.system.motion.missile')" />
+                    </el-select>
+                  </td>
+                  <td><el-input-number size="small" :controls="false" :min="0" :model-value="Number(attackMotion(entry.id).weaponImageId || 0)" @change="updateAttackMotion(entry.id, 'weaponImageId', Number($event ?? 0))" /></td>
                 </tr>
               </tbody>
             </table>
@@ -567,7 +594,21 @@ function updateExtraRecord(value: unknown): void {
               <tbody>
                 <tr v-for="field in advancedFields" :key="field.path">
                   <th scope="row">{{ databaseFieldLabel(field.path, language) }}</th>
-                  <td><input :type="advancedInputType(field)" :value="String(readPath(field.path) ?? '')" @input="updateAdvanced(field, ($event.target as HTMLInputElement).value)" /></td>
+                  <td>
+                    <el-input-number
+                      v-if="advancedInputType(field) === 'number'"
+                      size="small"
+                      :controls="false"
+                      :model-value="Number(readPath(field.path) ?? 0)"
+                      @change="updateAdvanced(field, String($event ?? ''))"
+                    />
+                    <el-input
+                      v-else
+                      size="small"
+                      :model-value="String(readPath(field.path) ?? '')"
+                      @update:model-value="updateAdvanced(field, $event)"
+                    />
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -576,8 +617,8 @@ function updateExtraRecord(value: unknown): void {
         <section v-if="hasField('faceSize') || hasField('iconSize')" class="rm-document-panel">
           <h3>{{ t('db.document.system.assetSizes') }}</h3>
           <div class="rm-compact-fields rm-compact-fields--two">
-            <label v-if="hasField('faceSize')"><span>{{ databaseFieldLabel('faceSize', language) }}</span><input type="number" min="1" :value="numberValue('faceSize')" @input="writePath('faceSize', Number(($event.target as HTMLInputElement).value))" /></label>
-            <label v-if="hasField('iconSize')"><span>{{ databaseFieldLabel('iconSize', language) }}</span><input type="number" min="1" :value="numberValue('iconSize')" @input="writePath('iconSize', Number(($event.target as HTMLInputElement).value))" /></label>
+            <label v-if="hasField('faceSize')"><span>{{ databaseFieldLabel('faceSize', language) }}</span><el-input-number size="small" :controls="false" :min="1" :model-value="numberValue('faceSize')" @change="writePath('faceSize', Number($event ?? 1))" /></label>
+            <label v-if="hasField('iconSize')"><span>{{ databaseFieldLabel('iconSize', language) }}</span><el-input-number size="small" :controls="false" :min="1" :model-value="numberValue('iconSize')" @change="writePath('iconSize', Number($event ?? 1))" /></label>
           </div>
         </section>
       </div>
@@ -829,6 +870,19 @@ function updateExtraRecord(value: unknown): void {
   font-size: 10px;
 }
 .rm-settings-table th:first-child { width: 21%; }
+/* Element Plus controls inside compact tables/fields fill their cell. */
+.rm-settings-table .el-select,
+.rm-settings-table .el-input-number,
+.rm-settings-table .el-input,
+.rm-compact-fields .el-input-number {
+  width: 100%;
+}
+.rm-check-grid .rm-check.el-checkbox,
+.rm-magic-list .rm-check.el-checkbox {
+  height: auto;
+  min-height: 24px;
+  margin-right: 0;
+}
 .rm-sound-panel .rm-table-scroll { max-height: min(48vh, 560px); }
 .rm-system-two-small-grid {
   display: grid;

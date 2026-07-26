@@ -74,6 +74,7 @@ import TroopFormationCanvas from './TroopFormationCanvas.vue';
 import DatabaseDocumentEditor from './DatabaseDocumentEditor.vue';
 import { enemyBattlerAssetKind } from '../../utils/rmmvBattleAssets.ts';
 import type { DatabaseDocumentPage } from '../../utils/databaseDocumentPages';
+import { SYSTEM_FIELDS_EDITED_ELSEWHERE } from '../../utils/databaseDocumentPages';
 import {
   ANIMATION_POSITION_OPTIONS,
   DAMAGE_TYPE_OPTIONS,
@@ -169,13 +170,6 @@ const MV_ANIMATION_FIELDS = new Set([
   'animation1Name', 'animation1Hue', 'animation2Name', 'animation2Hue', 'position', 'frames', 'timings',
 ]);
 const PARTICLE_ROTATION_AXES = ['x', 'y', 'z'] as const;
-// Stock RM keeps these out of the System tab: switches/variables have their own
-// sidebar categories, and types/terms live on their own database pages.
-const SYSTEM_FIELDS_EDITED_ELSEWHERE = new Set([
-  'switches', 'variables',
-  'elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes',
-  'terms',
-]);
 const isMZParticleAnimation = computed(() => props.group === 'Animations'
   && props.catalog?.engine === 'rpg-maker-mz'
   && (Object.hasOwn(record.value, 'effectName') || Object.hasOwn(record.value, 'displayType')));
@@ -194,7 +188,7 @@ const schemaFields = computed(() => {
       : !MZ_ANIMATION_FIELDS.has(field.path));
   }
   if (props.group === 'System') {
-    fields = fields.filter((field) => !SYSTEM_FIELDS_EDITED_ELSEWHERE.has(field.path));
+    fields = fields.filter((field) => !SYSTEM_FIELDS_EDITED_ELSEWHERE.has(field.path.split('.')[0]));
   }
   return fields;
 });

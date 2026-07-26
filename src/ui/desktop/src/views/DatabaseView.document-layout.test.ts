@@ -84,7 +84,7 @@ describe('DatabaseView single-document layout', () => {
     assert.match(source, /:document-page="documentDatabasePage \|\| undefined"/);
     assert.match(
       source,
-      /\.pm-split\s*\{\s*grid-template-columns:\s*172px 236px minmax\(0, 1fr\)/,
+      /\.pm-split\s*\{\s*grid-template-columns:\s*172px 300px minmax\(0, 1fr\)/,
     );
     assert.match(source, /v-if="!isDocumentDatabaseGroup"/);
   });

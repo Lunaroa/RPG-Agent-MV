@@ -1568,9 +1568,9 @@ function detailTitle(): string {
 }
 .workspace-refresh-state.error { color: var(--app-danger); }
 .write-locked { opacity: .72; }
-/* Stock RM proportions: narrow type tabs, narrow entry list, wide editor. */
+/* Stock RM proportions: narrow type tabs, entry list wide enough for id + name, wide editor. */
 .pm-split {
-  grid-template-columns: 172px 236px minmax(0, 1fr);
+  grid-template-columns: 172px 300px minmax(0, 1fr);
   padding: 14px 40px 34px;
   gap: 22px;
   overflow: hidden;
@@ -1718,7 +1718,7 @@ function detailTitle(): string {
 .list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--console-border,#e4dcce); }
 .asset-toolbar { color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
 .asset-toolbar button { min-height: 26px; padding: 0 9px; border: 1px solid var(--console-border-strong,#ddd3c2); border-radius: 8px; background: var(--console-paper,#fffdfa); color: var(--console-accent,#be5630); font: inherit; cursor: pointer; }
-.database-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; }
+.database-toolbar { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 6px 10px; color: var(--console-text-muted,#9a8e7e); font-size: 11px; white-space: nowrap; }
 .database-toolbar .link-button:disabled { opacity: .55; cursor: wait; text-decoration: none; }
 .toggle-label {
   display: flex; align-items: center; gap: 6px;
@@ -1932,7 +1932,7 @@ function detailTitle(): string {
 
 @media (max-width: 1320px) {
   .pm-split {
-    grid-template-columns: 150px 208px minmax(0, 1fr);
+    grid-template-columns: 150px 260px minmax(0, 1fr);
     padding-inline: 28px;
     gap: 16px;
   }

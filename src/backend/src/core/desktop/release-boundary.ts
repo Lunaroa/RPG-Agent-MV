@@ -138,7 +138,7 @@ const INTERNAL_CONTEXT_PATTERNS: readonly { label: string; pattern: RegExp }[] =
       "\\u65e7\\u4ed3\\u5e93\\u540d",
       "\\u6784\\u5efa\\u672c\\u5de5\\u4f5c\\u6d41\\u7684\\u4ed3\\u5e93",
       "\\u5185\\u5c42\\s*agent",
-      "parent\\s+(?:workspace|repo)",
+      "parent\\s+(?:workspace|repo)\\b",
       "workspace\\s+source",
       ["side", "Query"].join(""),
     ].join("|"), "i"),

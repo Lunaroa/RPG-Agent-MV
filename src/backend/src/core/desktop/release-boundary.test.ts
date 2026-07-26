@@ -121,10 +121,12 @@ test("source release content scan blocks internal development context", () => {
 test("source release content scan allows normal meta identifiers", () => {
   const root = makeTempRoot();
   writeText(root, "src/component.ts", "const metadata = import.meta.url; if (event.metaKey) return;\n");
+  writeText(root, "src/worker.ts", "// The parent reports the missing response.\n");
   writeText(root, "docs/readme.md", "Package metadata is checked before release.\n");
 
   const issues = inspectSourceReleaseContent(root, [
     "src/component.ts",
+    "src/worker.ts",
     "docs/readme.md",
   ]);
 

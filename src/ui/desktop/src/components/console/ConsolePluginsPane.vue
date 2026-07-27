@@ -9,6 +9,7 @@ import {
   pluginTranslation as pluginTranslationApi,
   projectAssets,
   projectConfig as projectConfigApi,
+  settings as settingsApi,
   system,
   type EditorProjectCatalog,
   type ManagedPluginEntry,
@@ -19,6 +20,9 @@ import {
   type PluginTranslationRecord,
   type PluginValidationIssue,
 } from '../../api/client';
+import { DEFAULT_AGENT_EXECUTION_ENGINE } from '@contract/types';
+import { buildConfiguredModelPickerOptions, type ChatProviderOption } from '../../utils/chatProviderOptions';
+import ModelPicker from '../model-picker/ModelPicker.vue';
 import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
@@ -227,14 +231,90 @@ const translationBusy = ref(false);
 const showTranslated = ref(true);
 const activeTranslation = computed(() => (showTranslated.value ? translation.value : null));
 
+/** User-level translation preferences (model + target language) survive restarts. */
+const TRANSLATION_PREFS_STORAGE_KEY = 'agent-rpg:plugin-translation-prefs';
+const TRANSLATION_LANGS = ['zh-CN', 'en-US', 'ja-JP'] as const;
+
+function loadTranslationPrefs(): { providerId?: string; modelId?: string; targetLang?: string } {
+  try {
+    return JSON.parse(localStorage.getItem(TRANSLATION_PREFS_STORAGE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+const translationPrefs = loadTranslationPrefs();
+const translatePopoverOpen = ref(false);
+const translateProviderId = ref(translationPrefs.providerId || '');
+const translateModelId = ref(translationPrefs.modelId || '');
+const targetLang = ref<string>(
+  TRANSLATION_LANGS.includes(translationPrefs.targetLang as typeof TRANSLATION_LANGS[number])
+    ? translationPrefs.targetLang as string
+    : language.value,
+);
+const translateProviderOptions = ref<ChatProviderOption[]>([]);
+const translateOptionsLoading = ref(false);
+
+function persistTranslationPrefs(): void {
+  localStorage.setItem(TRANSLATION_PREFS_STORAGE_KEY, JSON.stringify({
+    providerId: translateProviderId.value,
+    modelId: translateModelId.value,
+    targetLang: targetLang.value,
+  }));
+}
+
+function translationLangLabel(lang: string): string {
+  if (lang === 'zh-CN') return t('plugins.langZhCN');
+  if (lang === 'ja-JP') return t('plugins.langJaJP');
+  return t('plugins.langEnUS');
+}
+
+function translateModelAvailable(providerId: string, modelId: string): boolean {
+  const provider = translateProviderOptions.value.find((option) => option.id === providerId);
+  return Boolean(provider?.models.some((model) => model.id === modelId));
+}
+
+/** Load configured models for the picker; default to the agent execution binding when unset. */
+async function loadTranslateModelOptions(): Promise<void> {
+  if (translateOptionsLoading.value) return;
+  translateOptionsLoading.value = true;
+  try {
+    const result = await settingsApi.listCompatibleProviders();
+    translateProviderOptions.value = buildConfiguredModelPickerOptions(result.providers || []);
+    if (!translateModelAvailable(translateProviderId.value, translateModelId.value)) {
+      translateProviderId.value = '';
+      translateModelId.value = '';
+      const exec = await settingsApi.getAgentExecution();
+      const binding = exec.bindings?.[DEFAULT_AGENT_EXECUTION_ENGINE];
+      if (binding?.providerId && binding.modelId && translateModelAvailable(binding.providerId, binding.modelId)) {
+        translateProviderId.value = binding.providerId;
+        translateModelId.value = binding.modelId;
+      }
+    }
+  } catch (optionsError) {
+    error.value = formatPluginActionError(optionsError);
+  } finally {
+    translateOptionsLoading.value = false;
+  }
+}
+
+function onTranslateModelSelect(payload: { providerId: string; modelId: string }): void {
+  translateProviderId.value = payload.providerId;
+  translateModelId.value = payload.modelId;
+  persistTranslationPrefs();
+}
+
 async function loadTranslation(): Promise<void> {
   translation.value = null;
   const name = selectedName.value;
   const project = projectStore.currentProject;
+  const lang = targetLang.value;
   if (!name || !project) return;
   try {
-    const record = await pluginTranslationApi.get(name, language.value, project);
-    if (selectedName.value === name && projectStore.currentProject === project) translation.value = record;
+    const record = await pluginTranslationApi.get(name, lang, project);
+    if (selectedName.value === name && projectStore.currentProject === project && targetLang.value === lang) {
+      translation.value = record;
+    }
   } catch (translationError) {
     console.warn('[plugins] failed to load plugin translation', translationError);
   }
@@ -243,12 +323,15 @@ async function loadTranslation(): Promise<void> {
 async function translateSelectedPlugin(): Promise<void> {
   const name = selectedName.value;
   const project = projectStore.currentProject;
-  if (!name || !project || translationBusy.value) return;
+  const lang = targetLang.value;
+  const model = { providerId: translateProviderId.value, modelId: translateModelId.value };
+  if (!name || !project || !model.providerId || !model.modelId || translationBusy.value) return;
   translationBusy.value = true;
+  translatePopoverOpen.value = false;
   error.value = '';
   try {
-    const record = await pluginTranslationApi.translate(name, language.value, project);
-    if (selectedName.value === name && projectStore.currentProject === project) {
+    const record = await pluginTranslationApi.translate(name, lang, model, project);
+    if (selectedName.value === name && projectStore.currentProject === project && targetLang.value === lang) {
       translation.value = record;
       showTranslated.value = true;
     }
@@ -284,10 +367,16 @@ function applyTranslationToPluginEntry(entry: ManagedPluginEntry): ManagedPlugin
 }
 
 watch(
-  () => [selectedName.value, projectStore.currentProject, language.value] as const,
+  () => [selectedName.value, projectStore.currentProject, targetLang.value] as const,
   () => { void loadTranslation(); },
   { immediate: true },
 );
+
+watch(targetLang, () => persistTranslationPrefs());
+
+watch(translatePopoverOpen, (open) => {
+  if (open) void loadTranslateModelOptions();
+});
 
 watch(() => projectStore.currentProject, () => {
   resetState();
@@ -1435,17 +1524,55 @@ function resizeKeydown(event: KeyboardEvent): void {
                   :aria-label="t('plugins.translationSwitchHint')"
                 />
               </label>
-              <button
-                v-if="selectedName && (!translation || translation.stale)"
-                type="button"
-                :disabled="translationBusy"
-                data-ui-id="console-plugin-translate"
-                @click="translateSelectedPlugin"
+              <el-popover
+                v-model:visible="translatePopoverOpen"
+                trigger="click"
+                width="300"
+                placement="bottom-end"
               >
-                {{ translationBusy
-                  ? t('plugins.translating')
-                  : (translation ? t('plugins.retranslate') : t('plugins.translate')) }}
-              </button>
+                <template #reference>
+                  <button
+                    v-if="selectedName"
+                    type="button"
+                    :disabled="translationBusy"
+                    data-ui-id="console-plugin-translate"
+                  >
+                    {{ translationBusy
+                      ? t('plugins.translating')
+                      : (translation && !translation.stale ? t('plugins.retranslate') : t('plugins.translate')) }}
+                  </button>
+                </template>
+                <div class="translate-popover" data-ui-id="console-plugin-translate-popover">
+                  <label class="translate-popover-label">{{ t('plugins.translateModel') }}</label>
+                  <ModelPicker
+                    variant="field"
+                    :providers="translateProviderOptions"
+                    :selected-provider="translateProviderId"
+                    :selected-model="translateModelId"
+                    :placeholder="translateOptionsLoading ? t('plugins.translateModelLoading') : t('plugins.translateModelPlaceholder')"
+                    @select="onTranslateModelSelect"
+                  />
+                  <label class="translate-popover-label">{{ t('plugins.translateTargetLang') }}</label>
+                  <el-select v-model="targetLang" size="small" data-ui-id="console-plugin-translate-lang">
+                    <el-option
+                      v-for="lang in TRANSLATION_LANGS"
+                      :key="lang"
+                      :value="lang"
+                      :label="translationLangLabel(lang)"
+                    />
+                  </el-select>
+                  <el-button
+                    type="primary"
+                    size="small"
+                    :loading="translationBusy"
+                    :disabled="!translateProviderId || !translateModelId"
+                    data-ui-id="console-plugin-translate-start"
+                    @click="translateSelectedPlugin"
+                  >
+                    {{ t('plugins.translateStart') }}
+                  </el-button>
+                </div>
+              </el-popover>
               <button
                 v-if="selectedPlugin && hasConfigurableParameters(selectedPlugin)"
                 type="button"
@@ -1975,6 +2102,19 @@ input:focus-visible {
   font-size: 12px;
   color: var(--console-text-muted, #6d6558);
   cursor: default;
+}
+.translate-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.translate-popover-label {
+  color: var(--console-text-muted, #6d6558);
+  font-size: 11px;
+  font-weight: 650;
+}
+.translate-popover .el-button {
+  align-self: flex-end;
 }
 .detail-actions button,
 .staging-bar button {

@@ -110,7 +110,7 @@ declare global {
       };
       pluginTranslation: {
         get(pluginName: string, lang: string, project?: string): Promise<unknown>;
-        translate(pluginName: string, lang: string, project?: string): Promise<unknown>;
+        translate(pluginName: string, lang: string, model: unknown, project?: string): Promise<unknown>;
       };
       workspaceSurfaces: {
         validate(request: WorkspaceSurfaceVersionRequest, project?: string): Promise<WorkspaceSurfaceVersionResult>;
@@ -484,8 +484,8 @@ export const pluginTranslation = {
   get(pluginName: string, lang: string, project?: string) {
     return desktopApi().pluginTranslation.get(pluginName, lang, project) as Promise<PluginTranslationRecord | null>;
   },
-  translate(pluginName: string, lang: string, project?: string) {
-    return desktopApi().pluginTranslation.translate(pluginName, lang, project) as Promise<PluginTranslationRecord>;
+  translate(pluginName: string, lang: string, model: { providerId: string; modelId: string }, project?: string) {
+    return desktopApi().pluginTranslation.translate(pluginName, lang, toPlain(model), project) as Promise<PluginTranslationRecord>;
   },
 };
 

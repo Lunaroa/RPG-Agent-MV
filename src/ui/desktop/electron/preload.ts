@@ -93,8 +93,8 @@ contextBridge.exposeInMainWorld('api', {
   pluginTranslation: {
     get: (pluginName: string, lang: string, project?: string) =>
       ipcRenderer.invoke('pluginTranslation:get', pluginName, lang, project),
-    translate: (pluginName: string, lang: string, project?: string) =>
-      ipcRenderer.invoke('pluginTranslation:translate', pluginName, lang, project),
+    translate: (pluginName: string, lang: string, model: unknown, project?: string) =>
+      ipcRenderer.invoke('pluginTranslation:translate', pluginName, lang, model, project),
   },
 
   workspaceSurfaces: {

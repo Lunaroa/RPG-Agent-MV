@@ -10,7 +10,6 @@ import {
   workspaceSurfaces,
   playtest,
   type InteractiveBattleTestBattler,
-  type InteractiveParticleAnimationPreview,
   type ProjectManagedEntry,
   type ProjectOverview,
   type ProjectOverviewDbGroup,
@@ -264,7 +263,6 @@ const detailBusy = ref(false);
 const detailError = ref('');
 const battleTestDialogVisible = ref(false);
 const battleTestBusy = ref(false);
-const particlePreviewBusy = ref(false);
 const temporaryBattleback1Name = ref('');
 const temporaryBattleback2Name = ref('');
 let battleContextProject = '';
@@ -1172,37 +1170,6 @@ async function startBattleTest(configuration: {
   }
 }
 
-async function startParticlePreview(): Promise<void> {
-  if (surfaceWriteLocked.value) return;
-  const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
-  const project = projectStore.currentProject;
-  if (!entry || entry.kind !== 'database' || entry.group !== 'Animations' || !project || particlePreviewBusy.value) return;
-  if (editorCatalog.value?.engine !== 'rpg-maker-mz') {
-    ElMessage.error(t('db.particlePreviewMZOnly'));
-    return;
-  }
-  if (!detailDraft.value || typeof detailDraft.value !== 'object' || Array.isArray(detailDraft.value)) {
-    ElMessage.error(t('db.particlePreviewInvalid'));
-    return;
-  }
-  particlePreviewBusy.value = true;
-  try {
-    const result = await playtest.start({
-      mode: 'particle_preview',
-      project,
-      animationPreview: cloneDraft(detailDraft.value) as unknown as InteractiveParticleAnimationPreview,
-    });
-    if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
-      throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'));
-    }
-    ElMessage.success(t('db.particlePreviewStarted'));
-  } catch (error) {
-    ElMessage.error(t('db.particlePreviewFailed', { message: (error as Error).message }));
-  } finally {
-    particlePreviewBusy.value = false;
-  }
-}
-
 function detailTitle(): string {
   if (!pmDetail.value) return '';
   if (documentDatabasePage.value) return dbLabel(documentDatabasePage.value);
@@ -1448,7 +1415,6 @@ function detailTitle(): string {
               @update:battleback1-name="temporaryBattleback1Name = $event"
               @update:battleback2-name="temporaryBattleback2Name = $event"
               @request-battle-test="openBattleTestSetup"
-              @request-particle-preview="startParticlePreview"
             />
           </div>
           <div

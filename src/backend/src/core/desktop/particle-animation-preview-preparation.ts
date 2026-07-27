@@ -387,6 +387,8 @@ window.RpgAgentParticlePreview = {
     const config = window.__RPG_AGENT_PARTICLE_PREVIEW__;
     if (!config || !config.animation) throw new Error("Preview configuration is missing.");
     if (!Graphics.initialize()) throw new Error("Failed to initialize MZ graphics.");
+    // Outside NW.js the MZ default is a fixed-size canvas; stretch it to the embed frame.
+    Graphics._stretchEnabled = true;
     Graphics.resize(config.screenWidth, config.screenHeight);
     Graphics.boxWidth = config.screenWidth;
     Graphics.boxHeight = config.screenHeight;
@@ -408,7 +410,6 @@ window.RpgAgentParticlePreview = {
     stage.addChild(target);
 
     let animationSprite = null;
-    let replayDelay = 0;
     const play = () => {
       if (animationSprite) {
         stage.removeChild(animationSprite);
@@ -425,12 +426,8 @@ window.RpgAgentParticlePreview = {
     Graphics.setTickHandler(() => {
       Graphics.frameCount++;
       if (Graphics.effekseer) Graphics.effekseer.update();
-      if (animationSprite && animationSprite.isPlaying()) {
-        animationSprite.update();
-      } else if (++replayDelay >= 45) {
-        replayDelay = 0;
-        play();
-      }
+      // Stock editor behavior: the animation plays once and the scene then idles.
+      if (animationSprite && animationSprite.isPlaying()) animationSprite.update();
     });
     Graphics.startGameLoop();
   }

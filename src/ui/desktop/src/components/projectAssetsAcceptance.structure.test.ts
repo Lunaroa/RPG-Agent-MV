@@ -76,12 +76,13 @@ describe('project assets acceptance structure', () => {
     assert.match(source, /window\.innerHeight - rect\.height - margin/);
   });
 
-  test('starts unencrypted effect assets through the isolated particle preview', () => {
+  test('plays unencrypted effect assets through the in-panel particle preview frame', () => {
     const source = read('views/ProjectAssetsView.vue');
     const effectPreview = read('components/AssetEffectInfoPreview.vue');
-    assert.match(source, /mode:\s*'particle_preview'/);
     assert.match(source, /buildProjectAssetEffectPreview\(entry\.name\)/);
     assert.match(source, /projectAssets\.previewEffect/);
+    assert.doesNotMatch(source, /mode:\s*'particle_preview'/);
+    assert.match(effectPreview, /<ParticleAnimationPreviewFrame/);
     assert.match(effectPreview, /:disabled="actionBusy"/);
     assert.match(effectPreview, /:aria-busy="actionBusy"/);
   });

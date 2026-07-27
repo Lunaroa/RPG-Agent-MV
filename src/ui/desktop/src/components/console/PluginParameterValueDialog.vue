@@ -3,11 +3,9 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type {
   EditorProjectCatalog,
-  InteractiveParticleAnimationPreview,
   PluginParameterSchemaField,
 } from '../../api/client';
 import {
-  playtest,
   projectAssets,
   projectManagement,
   resolveAssetUrl,
@@ -16,6 +14,7 @@ import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
 import ActorWalkingSheetThumb from '../editor/ActorWalkingSheetThumb.vue';
 import PluginParameterInput from '../editor/PluginParameterInput.vue';
+import ParticleAnimationPreviewFrame from '../ParticleAnimationPreviewFrame.vue';
 import PluginAnimationFramePreview from './PluginAnimationFramePreview.vue';
 import PluginParameterCollectionEditor from './PluginParameterCollectionEditor.vue';
 import {
@@ -85,6 +84,7 @@ const animationRecord = ref<unknown>(null);
 const animationPreviewError = ref('');
 const animationPreviewLoading = ref(false);
 const particlePreviewBusy = ref(false);
+const particleFrameRef = ref<InstanceType<typeof ParticleAnimationPreviewFrame> | null>(null);
 let animationPreviewRequestId = 0;
 
 const visible = computed({
@@ -337,15 +337,7 @@ async function startParticlePreview(): Promise<void> {
   }
   particlePreviewBusy.value = true;
   try {
-    const result = await playtest.start({
-      mode: 'particle_preview',
-      project,
-      animationPreview: clonePluginParameterValue(preview) as InteractiveParticleAnimationPreview,
-    });
-    if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
-      throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'));
-    }
-    ElMessage.success(t('db.particlePreviewStarted'));
+    await particleFrameRef.value?.play(clonePluginParameterValue(preview) as Record<string, unknown>);
   } catch (error) {
     ElMessage.error(t('db.particlePreviewFailed', { message: (error as Error).message }));
   } finally {
@@ -695,12 +687,17 @@ function arrayValue(value: unknown): unknown[] {
           v-else-if="animationPreviewKind === 'particle' && particleAnimationPreview"
           class="parameter-particle-preview"
         >
+          <ParticleAnimationPreviewFrame
+            ref="particleFrameRef"
+            class="parameter-particle-preview-host"
+            :project="projectStore.currentProject || ''"
+          />
           <el-button
             type="primary"
             :loading="particlePreviewBusy"
             @click="startParticlePreview"
           >
-            {{ t('db.previewParticle') }}
+            {{ t('db.playAnimation') }}
           </el-button>
         </div>
         <PluginAnimationFramePreview
@@ -872,7 +869,13 @@ function arrayValue(value: unknown): unknown[] {
 }
 .parameter-particle-preview {
   display: flex;
+  flex-direction: column;
   align-items: center;
+  gap: 8px;
+}
+.parameter-particle-preview-host {
+  width: 100%;
+  aspect-ratio: 4 / 3;
 }
 .parameter-validation-error {
   padding: 8px 10px;

@@ -264,7 +264,8 @@ describe('plugin manager structure', () => {
     );
     assert.match(valueDialogSource, /findCatalogImageAssetUrlByLogicalName/);
     assert.match(valueDialogSource, /databaseTable === 'Animations'/);
-    assert.match(valueDialogSource, /mode:\s*'particle_preview'/);
+    assert.match(valueDialogSource, /<ParticleAnimationPreviewFrame/);
+    assert.doesNotMatch(valueDialogSource, /mode:\s*'particle_preview'/);
     assert.match(valueDialogSource, /<PluginAnimationFramePreview/);
     assert.match(valueDialogSource, /db\.particlePreviewMZOnly/);
     assert.match(collectionEditorSource, /buildPluginParameterCollectionColumns/);

@@ -67,6 +67,7 @@ import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
 import ImageAssetPickerDialog from '../editor/ImageAssetPickerDialog.vue';
 import AnimationFrameCanvasEditor from './AnimationFrameCanvasEditor.vue';
 import PluginAnimationFramePreview from './PluginAnimationFramePreview.vue';
+import ParticleAnimationPreviewFrame from '../ParticleAnimationPreviewFrame.vue';
 import ClassParameterCurveEditor from './ClassParameterCurveEditor.vue';
 import DatabaseEffectEditor from './DatabaseEffectEditor.vue';
 import DatabaseTraitEditor from './DatabaseTraitEditor.vue';
@@ -142,7 +143,6 @@ const emit = defineEmits<{
   'update:battleback1Name': [value: string];
   'update:battleback2Name': [value: string];
   'requestBattleTest': [];
-  'requestParticlePreview': [];
 }>();
 const { language, t } = useI18n();
 const workspaceStore = useWorkspaceStore();
@@ -177,6 +177,29 @@ const isMZParticleAnimation = computed(() => props.group === 'Animations'
   && props.catalog?.engine === 'rpg-maker-mz'
   && (Object.hasOwn(record.value, 'effectName') || Object.hasOwn(record.value, 'displayType')));
 const isClassicAnimation = computed(() => props.group === 'Animations' && !isMZParticleAnimation.value);
+const particleFrameRef = ref<InstanceType<typeof ParticleAnimationPreviewFrame> | null>(null);
+const particlePreviewBusy = ref(false);
+
+/** The preview panel lives inside the rm-column v-for, where string refs become arrays. */
+function setParticleFrameRef(el: unknown): void {
+  particleFrameRef.value = el as InstanceType<typeof ParticleAnimationPreviewFrame> | null;
+}
+
+/** In-panel particle playback: plays the current draft once, like the stock editor. */
+async function playParticleAnimation(): Promise<void> {
+  const project = props.catalog?.project;
+  if (!project || particlePreviewBusy.value) return;
+  particlePreviewBusy.value = true;
+  try {
+    await particleFrameRef.value?.play(JSON.parse(JSON.stringify(record.value)) as Record<string, unknown>);
+  } catch (error) {
+    ElMessage.error(t('db.particlePreviewFailed', {
+      message: formatUserFacingErrorMessage(error, 'general', language.value),
+    }));
+  } finally {
+    particlePreviewBusy.value = false;
+  }
+}
 // Stock RM animation tab layout, resolved per entry type (particle vs frame-based).
 const animationRmLayout = computed(() => (props.group === 'Animations'
   ? (isMZParticleAnimation.value ? ANIMATION_PARTICLE_RM_LAYOUT : ANIMATION_CLASSIC_RM_LAYOUT)
@@ -1587,12 +1610,17 @@ function updateSound(index: number, key: string, value: unknown): void {
               :animation2-hue="numberPathValue('animation2Hue')"
               :load-image="loadImage"
             />
-            <div v-else-if="isMZParticleAnimation" class="particle-preview-launch">
+            <div v-else-if="isMZParticleAnimation" class="particle-preview-inline">
+              <ParticleAnimationPreviewFrame
+                :ref="setParticleFrameRef"
+                class="particle-preview-host"
+                :project="catalog?.project || ''"
+              />
               <button
                 type="button"
                 data-ui-id="database-particle-preview"
-                :disabled="!stringValue('effectName')"
-                @click="emit('requestParticlePreview')"
+                :disabled="!stringValue('effectName') || particlePreviewBusy"
+                @click="playParticleAnimation"
               >{{ t('db.playAnimation') }}</button>
             </div>
           </section>
@@ -3190,14 +3218,20 @@ textarea { resize: vertical; line-height: 1.45; }
 /* Timing tables live on the narrow side column; inputs must shrink instead of overflowing. */
 .particle-timing-editor input,
 .particle-timing-editor select { width: 100%; min-width: 0; }
-.animation-preview-panel .particle-preview-launch {
+.animation-preview-panel .particle-preview-inline {
   display: flex;
-  justify-content: center;
-  padding: 18px 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
 }
-.animation-preview-panel .particle-preview-launch button {
+.animation-preview-panel .particle-preview-host {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+}
+.animation-preview-panel .particle-preview-inline button {
+  align-self: center;
   min-width: 120px;
-  padding: 8px 18px;
+  padding: 6px 18px;
 }
 .particle-effect-controls {
   min-width: 0;

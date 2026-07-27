@@ -47,7 +47,6 @@ import type {
 import {
   clipboard,
   maps as mapsApi,
-  playtest,
   projectAssets,
   projectManagement,
   type ManagedAssetDetail,
@@ -1118,28 +1117,13 @@ function buildEffectPreviewInfo(entry: ProjectAssetBrowseEntry): NonNullable<Ass
   return {
     notice: t('projectAssets.effectPreviewDescription'),
     rows,
-    action: {
-      label: t('projectAssets.previewEffect'),
-      run: () => startEffectPreview(entry),
-    },
-  }
-}
-
-async function startEffectPreview(entry: ProjectAssetBrowseEntry): Promise<void> {
-  const project = projectStore.currentProject
-  if (!project || entry.encrypted) return
-  try {
-    const result = await playtest.start({
-      mode: 'particle_preview',
-      project,
-      animationPreview: buildProjectAssetEffectPreview(entry.name),
-    })
-    if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
-      throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'))
-    }
-    ElMessage.success(t('projectAssets.effectPreviewStarted'))
-  } catch (error) {
-    ElMessage.error(t('projectAssets.effectPreviewFailed', { message: formatError(error) }))
+    playback: entry.encrypted || !projectStore.currentProject
+      ? undefined
+      : {
+        label: t('projectAssets.previewEffect'),
+        project: projectStore.currentProject,
+        animation: buildProjectAssetEffectPreview(entry.name) as unknown as Record<string, unknown>,
+      },
   }
 }
 

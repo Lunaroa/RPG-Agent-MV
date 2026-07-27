@@ -17,6 +17,8 @@ export { MAP_PREVIEW_SCHEME } from './map-preview-protocol-policy.js';
 interface PreviewProtocolEntry {
   resourceRoot: string;
   disabledPlugins: readonly string[];
+  /** Optional pass-through root for large shared asset trees (e.g. MZ effects/). */
+  fallback?: { root: string; prefixes: readonly string[] };
 }
 
 const entries = new Map<string, PreviewProtocolEntry>();
@@ -31,8 +33,8 @@ export function registerMapPreviewProtocol(): void {
       const entry = entries.get(url.hostname.toLowerCase());
       if (!entry) return new Response('not found', { status: 404 });
       const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
-      const target = resolveConfinedMapPreviewResource(entry.resourceRoot, relative);
-      if (!fs.existsSync(target) || !fs.statSync(target).isFile()) return new Response('not found', { status: 404 });
+      const target = resolvePreviewResource(entry, relative);
+      if (!target || !fs.existsSync(target) || !fs.statSync(target).isFile()) return new Response('not found', { status: 404 });
       // Preview-only plugin toggle: rewrite the served plugins.js, never the file on disk.
       if (entry.disabledPlugins.length && isMapPreviewPluginsJsPath(relative)) {
         const filtered = filterMapPreviewPluginsJs(fs.readFileSync(target, 'utf8'), entry.disabledPlugins);
@@ -69,11 +71,29 @@ export function registerMapPreviewRoot(
   keyInput: string,
   resourceRootInput: string,
   disabledPlugins: readonly string[] = [],
+  fallback?: { root: string; prefixes: readonly string[] },
 ): string {
   const key = normalizeMapPreviewProtocolKey(keyInput);
   const resourceRoot = fs.realpathSync.native(path.resolve(resourceRootInput));
-  entries.set(key, { resourceRoot, disabledPlugins: [...disabledPlugins] });
+  entries.set(key, {
+    resourceRoot,
+    disabledPlugins: [...disabledPlugins],
+    fallback: fallback
+      ? { root: fs.realpathSync.native(path.resolve(fallback.root)), prefixes: [...fallback.prefixes] }
+      : undefined,
+  });
   return `${MAP_PREVIEW_SCHEME.scheme}://${key}/index.html`;
+}
+
+/** Isolated app files win; the fallback root only serves its allow-listed prefixes. */
+function resolvePreviewResource(entry: PreviewProtocolEntry, relative: string): string | null {
+  const primary = resolveConfinedMapPreviewResource(entry.resourceRoot, relative);
+  if (fs.existsSync(primary) && fs.statSync(primary).isFile()) return primary;
+  const fallback = entry.fallback;
+  if (!fallback) return primary;
+  const normalized = relative.replace(/\\/g, '/');
+  if (!fallback.prefixes.some((prefix) => normalized.startsWith(prefix))) return primary;
+  return resolveConfinedMapPreviewResource(fallback.root, relative);
 }
 
 export function unregisterMapPreviewRoot(keyInput: string): void {

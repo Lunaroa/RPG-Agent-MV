@@ -46,6 +46,8 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
     assert.equal(preparation.temporaryProject.startsWith(os.tmpdir()), true);
     assert.equal(preparation.appDirectory.startsWith(preparation.temporaryProject), true);
     assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'effects', 'fx', 'Spark.efkefc')), true);
+    // Shared effect resources stay in the project; the preview protocol serves them on demand.
+    assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'effects', 'Texture', 'Spark.png')), false);
     assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'audio', 'se', 'ui', 'Confirm.ogg')), true);
     assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'effects', 'fx', 'Unused.efkefc')), false);
     assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'audio', 'se', 'Unused.ogg')), false);
@@ -164,6 +166,8 @@ function writeMZProject(project: string): void {
   }
   fs.writeFileSync(path.join(project, 'effects', 'fx', 'Spark.efkefc'), 'selected effect', 'utf8');
   fs.writeFileSync(path.join(project, 'effects', 'fx', 'Unused.efkefc'), 'unused effect', 'utf8');
+  fs.mkdirSync(path.join(project, 'effects', 'Texture'), { recursive: true });
+  fs.writeFileSync(path.join(project, 'effects', 'Texture', 'Spark.png'), 'shared texture', 'utf8');
   fs.writeFileSync(path.join(project, 'audio', 'se', 'ui', 'Confirm.ogg'), 'selected sound', 'utf8');
   fs.writeFileSync(path.join(project, 'audio', 'se', 'Unused.ogg'), 'unused sound', 'utf8');
   writeJson(path.join(project, 'data', 'System.json'), {

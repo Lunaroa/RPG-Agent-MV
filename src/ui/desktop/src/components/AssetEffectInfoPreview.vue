@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { ElMessage } from 'element-plus';
+import { useI18n } from '../i18n';
+import ParticleAnimationPreviewFrame from './ParticleAnimationPreviewFrame.vue';
 import type { AssetPreviewItem } from '../utils/assetPreview';
 
 const props = defineProps<{
@@ -7,13 +10,18 @@ const props = defineProps<{
   info: NonNullable<AssetPreviewItem['info']>;
 }>();
 
+const { t } = useI18n();
 const actionBusy = ref(false);
+const frameRef = ref<InstanceType<typeof ParticleAnimationPreviewFrame> | null>(null);
 
-async function runAction(): Promise<void> {
-  if (!props.info.action || actionBusy.value) return;
+async function playEffect(): Promise<void> {
+  const playback = props.info.playback;
+  if (!playback || actionBusy.value) return;
   actionBusy.value = true;
   try {
-    await props.info.action.run();
+    await frameRef.value?.play({ ...playback.animation });
+  } catch (error) {
+    ElMessage.error(t('projectAssets.effectPreviewFailed', { message: (error as Error).message }));
   } finally {
     actionBusy.value = false;
   }
@@ -29,16 +37,22 @@ async function runAction(): Promise<void> {
         <dd :title="row.value">{{ row.value }}</dd>
       </div>
     </dl>
-    <button
-      v-if="info.action"
-      type="button"
-      class="effect-info-action"
-      :disabled="actionBusy"
-      :aria-busy="actionBusy"
-      @click="runAction"
-    >
-      {{ info.action.label }}
-    </button>
+    <template v-if="info.playback">
+      <ParticleAnimationPreviewFrame
+        ref="frameRef"
+        class="effect-info-frame"
+        :project="info.playback.project"
+      />
+      <button
+        type="button"
+        class="effect-info-action"
+        :disabled="actionBusy"
+        :aria-busy="actionBusy"
+        @click="playEffect"
+      >
+        {{ info.playback.label }}
+      </button>
+    </template>
   </div>
 </template>
 
@@ -86,6 +100,10 @@ async function runAction(): Promise<void> {
   font: 600 12px / 1.35 var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+.effect-info-frame {
+  width: 100%;
+  aspect-ratio: 4 / 3;
 }
 .effect-info-action {
   min-height: 32px;

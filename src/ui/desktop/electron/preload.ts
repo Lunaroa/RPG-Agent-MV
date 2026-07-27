@@ -97,6 +97,11 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('pluginTranslation:translate', pluginName, lang, model, project),
   },
 
+  particlePreview: {
+    prepare: (animation: unknown, project?: string) => ipcRenderer.invoke('particlePreview:prepare', animation, project),
+    dispose: (key: string) => ipcRenderer.invoke('particlePreview:dispose', key),
+  },
+
   workspaceSurfaces: {
     validate: (request: unknown, project?: string) => ipcRenderer.invoke('workspaceSurfaces:validate', request, project),
   },

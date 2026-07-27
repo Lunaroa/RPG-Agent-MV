@@ -1,4 +1,5 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, net, protocol, screen, shell } from 'electron';
+import crypto from 'node:crypto';
 import path from 'path';
 import fs from 'fs';
 import { Readable } from 'stream';
@@ -73,6 +74,8 @@ let agentSessionRuntime: any;
 let interactivePlaytestService: any;
 let mapPreviewService: any;
 let assetProtocolRegistered = false;
+/** Live in-panel particle preview sessions: protocol key -> isolated preparation. */
+const particlePreviewSessions = new Map<string, unknown>();
 let backendCoreUrl: URL | null = null;
 let backendWithProductLanguage: (<T>(language: ProductLanguage, fn: () => T) => T) | null = null;
 let workspaceSettingsSession = new WorkspaceSettingsSession(false);
@@ -430,6 +433,8 @@ async function loadBackendModules(roots: AppRoots) {
     outline: await import(new URL('desktop/outline-service.ts', coreUrl).href),
     placementQueue: await import(new URL('desktop/placement-queue-service.ts', coreUrl).href),
     interactivePlaytest: await import(new URL('desktop/interactive-playtest-service.ts', coreUrl).href),
+    particlePreview: await import(new URL('desktop/particle-animation-preview-preparation.ts', coreUrl).href),
+    isolatedPreparation: await import(new URL('desktop/isolated-project-preparation.ts', coreUrl).href),
     mapPreview: await import(new URL('desktop/map-preview-iframe-service.ts', coreUrl).href),
     playtestRuntime: await import(new URL('desktop/interactive-playtest-runtime.ts', coreUrl).href),
   };
@@ -1570,6 +1575,30 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     ));
   });
 
+  // In-panel particle animation preview: serve the prepared MZ preview app through the
+  // isolated preview protocol so renderers can embed it in an iframe.
+  ipcMain.handle('particlePreview:prepare', (_event, animation: unknown, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    const preparation = desktop.particlePreview.prepareParticleAnimationPreview(
+      workflowRoot,
+      resolved,
+      toIpcPayload(animation),
+    );
+    const key = crypto.randomBytes(32).toString('hex');
+    // Shared Effekseer resources (effects/Texture/*, …) are served straight from the
+    // project instead of being copied into the isolated app — the tree can be huge.
+    const url = registerMapPreviewRoot(key, preparation.appDirectory, [], {
+      root: resolved,
+      prefixes: ['effects/'],
+    });
+    particlePreviewSessions.set(key, preparation);
+    return toIpcPayload({ key, url });
+  });
+  ipcMain.handle('particlePreview:dispose', (_event, keyInput: string) => {
+    disposeParticlePreviewSession(String(keyInput || ''));
+    return toIpcPayload({ ok: true });
+  });
+
   ipcMain.handle('workspace:put', (_event, body: Record<string, unknown>) => {
     const plain = normalizeWorkspaceSettings(toIpcPayload(body));
     return toIpcPayload(workspaceSettingsSession.replace(plain, writePersistedWorkspaceSettings));
@@ -2084,13 +2113,24 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('workflow:getScript');
   ipcMain.removeHandler('workflow:getReport');
   ipcMain.removeHandler('workflow:approveProposal');
+  ipcMain.removeHandler('particlePreview:prepare');
+  ipcMain.removeHandler('particlePreview:dispose');
   if (assetProtocolRegistered) {
     protocol.unhandle('rmmv-asset');
     assetProtocolRegistered = false;
   }
+  for (const key of [...particlePreviewSessions.keys()]) disposeParticlePreviewSession(key);
   clearMapPreviewProtocol();
   agentSessionRuntime?.close().catch((error: Error) => console.warn('[ipc] Agent runtime close failed:', error.message));
   agentSessionRuntime = null;
   backendWithProductLanguage = null;
   console.log('[ipc] IPC handlers cleaned up');
+}
+
+function disposeParticlePreviewSession(key: string): void {
+  const preparation = particlePreviewSessions.get(key);
+  if (!preparation) return;
+  particlePreviewSessions.delete(key);
+  unregisterMapPreviewRoot(key);
+  desktop.isolatedPreparation.cleanupIsolatedProject(preparation);
 }

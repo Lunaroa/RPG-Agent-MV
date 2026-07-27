@@ -14,9 +14,11 @@ export interface AssetPreviewItem {
   info?: {
     notice: string;
     rows: Array<{ label: string; value: string }>;
-    action?: {
+    /** In-panel particle playback for effect assets. */
+    playback?: {
       label: string;
-      run: () => void | Promise<void>;
+      project: string;
+      animation: Record<string, unknown>;
     };
   };
 }

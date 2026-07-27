@@ -7,7 +7,7 @@ const source = readFileSync(new URL('./DatabaseView.vue', import.meta.url), 'utf
 describe('DatabaseView battle-test draft guard', () => {
   test('guards setup and launch with saved-baseline comparison', () => {
     const setup = source.slice(source.indexOf('async function openBattleTestSetup'), source.indexOf('async function startBattleTest'));
-    const launch = source.slice(source.indexOf('async function startBattleTest'), source.indexOf('async function startParticlePreview'));
+    const launch = source.slice(source.indexOf('async function startBattleTest'), source.indexOf('function detailTitle'));
 
     assert.match(setup, /if \(hasUnsavedDraft\.value\)/);
     assert.match(launch, /if \(hasUnsavedDraft\.value\)/);

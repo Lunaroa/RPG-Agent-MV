@@ -112,6 +112,10 @@ declare global {
         get(pluginName: string, lang: string, project?: string): Promise<unknown>;
         translate(pluginName: string, lang: string, model: unknown, project?: string): Promise<unknown>;
       };
+      particlePreview: {
+        prepare(animation: unknown, project?: string): Promise<{ key: string; url: string }>;
+        dispose(key: string): Promise<{ ok: boolean }>;
+      };
       workspaceSurfaces: {
         validate(request: WorkspaceSurfaceVersionRequest, project?: string): Promise<WorkspaceSurfaceVersionResult>;
       };
@@ -486,6 +490,16 @@ export const pluginTranslation = {
   },
   translate(pluginName: string, lang: string, model: { providerId: string; modelId: string }, project?: string) {
     return desktopApi().pluginTranslation.translate(pluginName, lang, toPlain(model), project) as Promise<PluginTranslationRecord>;
+  },
+};
+
+/** Isolated MZ particle preview sessions served for in-panel iframe playback. */
+export const particlePreview = {
+  prepare(animation: unknown, project: string = DEFAULT_PROJECT) {
+    return desktopApi().particlePreview.prepare(toPlain(animation), project);
+  },
+  dispose(key: string) {
+    return desktopApi().particlePreview.dispose(key);
   },
 };
 

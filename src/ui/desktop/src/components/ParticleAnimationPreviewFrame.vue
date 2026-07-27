@@ -56,9 +56,11 @@ defineExpose({ play, busy });
 </template>
 
 <style scoped>
+/* Height comes from the host class (aspect-ratio) set by each caller; a 100% height
+   here would resolve against the flex row that already includes the play button and
+   push siblings out of the panel. */
 .particle-preview-frame {
   width: 100%;
-  height: 100%;
   min-height: 0;
   background: #171411;
   border-radius: 4px;

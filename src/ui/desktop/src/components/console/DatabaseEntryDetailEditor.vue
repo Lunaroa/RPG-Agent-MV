@@ -66,6 +66,7 @@ import MvCommandListEditor from './MvCommandListEditor.vue';
 import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
 import ImageAssetPickerDialog from '../editor/ImageAssetPickerDialog.vue';
 import AnimationFrameCanvasEditor from './AnimationFrameCanvasEditor.vue';
+import PluginAnimationFramePreview from './PluginAnimationFramePreview.vue';
 import ClassParameterCurveEditor from './ClassParameterCurveEditor.vue';
 import DatabaseEffectEditor from './DatabaseEffectEditor.vue';
 import DatabaseTraitEditor from './DatabaseTraitEditor.vue';
@@ -103,6 +104,8 @@ import {
   localizeDatabaseOptions,
 } from '../../utils/rmmvDatabaseLocalization';
 import {
+  ANIMATION_CLASSIC_RM_LAYOUT,
+  ANIMATION_PARTICLE_RM_LAYOUT,
   DATABASE_RM_LAYOUTS,
   RM_LAYOUT_HIDDEN_PATHS,
   type RmPanelLayout,
@@ -173,6 +176,11 @@ const PARTICLE_ROTATION_AXES = ['x', 'y', 'z'] as const;
 const isMZParticleAnimation = computed(() => props.group === 'Animations'
   && props.catalog?.engine === 'rpg-maker-mz'
   && (Object.hasOwn(record.value, 'effectName') || Object.hasOwn(record.value, 'displayType')));
+const isClassicAnimation = computed(() => props.group === 'Animations' && !isMZParticleAnimation.value);
+// Stock RM animation tab layout, resolved per entry type (particle vs frame-based).
+const animationRmLayout = computed(() => (props.group === 'Animations'
+  ? (isMZParticleAnimation.value ? ANIMATION_PARTICLE_RM_LAYOUT : ANIMATION_CLASSIC_RM_LAYOUT)
+  : null));
 const projectScreenWidth = computed(() => Math.max(1, Number(props.catalog?.screenWidth) || 816));
 const projectScreenHeight = computed(() => Math.max(1, Number(props.catalog?.screenHeight) || 624));
 
@@ -218,9 +226,9 @@ const visibleSchemaFields = computed(() => (
 interface RmRenderRow { key: string; fields: RmmvDatabaseFieldSchema[] }
 interface RmRenderPanel { key: string; titleKey: RmPanelLayout['titleKey']; rows: RmRenderRow[] }
 interface RmRenderColumn { key: 'main' | 'side' | 'flat'; panels: RmRenderPanel[] }
-const hasRmLayout = computed(() => Boolean(DATABASE_RM_LAYOUTS[props.group || '']));
+const hasRmLayout = computed(() => Boolean(animationRmLayout.value || DATABASE_RM_LAYOUTS[props.group || '']));
 const rmRenderColumns = computed<RmRenderColumn[]>(() => {
-  const layout = DATABASE_RM_LAYOUTS[props.group || ''];
+  const layout = animationRmLayout.value || DATABASE_RM_LAYOUTS[props.group || ''];
   if (!layout) {
     return [{
       key: 'flat',
@@ -1563,6 +1571,22 @@ function updateSound(index: number, key: string, value: unknown): void {
           class="rm-column"
           :class="`rm-column-${column.key}`"
         >
+          <!-- Stock RM animation tab keeps the playback preview on the side column. -->
+          <section
+            v-if="column.key === 'side' && isClassicAnimation && loadImage"
+            class="rm-panel animation-preview-panel"
+          >
+            <div class="rm-panel-title">{{ t('db.panelPreview') }}</div>
+            <PluginAnimationFramePreview
+              :frames="readPath('frames')"
+              :catalog="catalog"
+              :animation1-name="stringValue('animation1Name')"
+              :animation1-hue="numberPathValue('animation1Hue')"
+              :animation2-name="stringValue('animation2Name')"
+              :animation2-hue="numberPathValue('animation2Hue')"
+              :load-image="loadImage"
+            />
+          </section>
           <section
             v-for="panel in column.panels"
             :key="panel.key"

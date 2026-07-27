@@ -171,5 +171,35 @@ export const DATABASE_RM_LAYOUTS: Partial<Record<string, RmPanelLayout[]>> = {
   ],
 };
 
+// Animations resolve per entry (MZ particle vs MV classic frames), so the two
+// layouts live outside DATABASE_RM_LAYOUTS and the editor picks one at runtime.
+// Both mirror the stock RM animation tab: basic settings + type-specific panels,
+// with the timing tables on the side column.
+export const ANIMATION_PARTICLE_RM_LAYOUT: RmPanelLayout[] = [
+  { titleKey: 'db.panelBasic', column: 'main', rows: [['name'], ['displayType'], ['alignBottom']] },
+  {
+    titleKey: 'db.panelParticleEffect',
+    column: 'main',
+    rows: [['effectName'], ['scale', 'speed'], ['rotation'], ['offsetX', 'offsetY']],
+  },
+  { titleKey: '', column: 'side', rows: [['soundTimings']] },
+  { titleKey: '', column: 'side', rows: [['flashTimings']] },
+];
+
+export const ANIMATION_CLASSIC_RM_LAYOUT: RmPanelLayout[] = [
+  {
+    titleKey: 'db.panelBasic',
+    column: 'main',
+    rows: [
+      ['name'],
+      ['animation1Name', 'animation1Hue'],
+      ['animation2Name', 'animation2Hue'],
+      ['position'],
+    ],
+  },
+  { titleKey: '', column: 'main', rows: [['frames']] },
+  { titleKey: '', column: 'side', rows: [['timings']] },
+];
+
 /** Fields never routed to the leftover panel: the id is already shown in the detail header. */
 export const RM_LAYOUT_HIDDEN_PATHS = new Set(['id']);

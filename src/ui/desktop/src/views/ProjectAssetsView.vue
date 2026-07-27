@@ -50,9 +50,6 @@ import {
   playtest,
   projectAssets,
   projectManagement,
-  resolveAssetUrl,
-  type EditorAnimationCatalogEntry,
-  type EditorProjectCatalog,
   type ManagedAssetDetail,
 } from '../api/client'
 import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'
@@ -62,7 +59,6 @@ import AssetGridVideoThumb from '../components/AssetGridVideoThumb.vue'
 import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
 import ProjectAssetsAudioBar, { type AssetsAudioBarItem } from '../components/ProjectAssetsAudioBar.vue'
 import PluginFileFolderThumb from '../components/editor/PluginFileFolderThumb.vue'
-import PluginAnimationFramePreview from '../components/console/PluginAnimationFramePreview.vue'
 import ConsoleSearchInput from '../components/console/ConsoleSearchInput.vue'
 import { useI18n } from '../i18n'
 import { useProjectStore } from '../stores/project'
@@ -150,12 +146,6 @@ import {
 import { selectProjectAssetThumbnailBucket } from '../utils/projectAssetThumbnailBucket'
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 import { buildProjectAssetEffectPreview } from '../utils/projectAssetEffectPreview'
-import { loadImageElement } from '../utils/imageLoading'
-import {
-  asParticleAnimationPreview,
-  readPluginAnimationClassicPreview,
-  resolvePluginAnimationPreviewKind,
-} from '../utils/pluginParameterAnimationPreview'
 
 /**
  * Explorer-like grid metrics. cellWidth hugs the square thumbnail;
@@ -221,40 +211,6 @@ const annotationIndex = ref<Map<string, ProjectAssetAnnotation>>(new Map())
 const FAVORITES_NODE_ID = '__favorites__'
 
 const isFavoritesSelection = computed(() => selectedCategoryId.value === FAVORITES_NODE_ID)
-
-/** Frontend-only virtual tree node listing data/Animations.json entries for preview. */
-const ANIMATIONS_NODE_ID = '__animationsDb__'
-
-const isAnimationsSelection = computed(() => selectedCategoryId.value === ANIMATIONS_NODE_ID)
-
-const animationCatalog = ref<EditorProjectCatalog | null>(null)
-const animationCatalogError = ref('')
-const animationCatalogLoading = ref(false)
-const selectedAnimationId = ref(0)
-const animationRecord = ref<Record<string, unknown> | null>(null)
-const animationRecordError = ref('')
-const animationRecordLoading = ref(false)
-const animationParticleBusy = ref(false)
-let animationRecordRequestId = 0
-
-const animationEntries = computed<EditorAnimationCatalogEntry[]>(() =>
-  animationCatalog.value?.animations ?? [])
-
-const filteredAnimationEntries = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return animationEntries.value
-  return animationEntries.value.filter((entry) =>
-    entry.name.toLowerCase().includes(query) || String(entry.id).includes(query))
-})
-
-const animationPreviewKind = computed(() =>
-  resolvePluginAnimationPreviewKind(animationRecord.value))
-const classicAnimationPreview = computed(() =>
-  animationPreviewKind.value === 'classic'
-    ? readPluginAnimationClassicPreview(animationRecord.value)
-    : null)
-const particleAnimationPreview = computed(() =>
-  asParticleAnimationPreview(animationRecord.value))
 
 /**
  * Entry ids embed their base category (`pictures:ui/foo`). The favorites view
@@ -433,7 +389,7 @@ const previewPanelMedia = computed(() => {
   return projectAssetMediaKind(entry ? entryCategoryId(entry) : selectedCategoryId.value)
 })
 const previewToggleAvailable = computed(() =>
-  previewPanelMedia.value !== 'audio' && !isAnimationsSelection.value)
+  previewPanelMedia.value !== 'audio')
 const previewPanelVisible = computed(() =>
   previewPanelRequested.value && previewToggleAvailable.value)
 const previewPanelNote = computed(() =>
@@ -594,12 +550,6 @@ const treeData = computed<TreeNodeView[]>(() => {
       id: FAVORITES_NODE_ID,
       label: t('projectAssets.favoritesNode'),
       entryCount: favorites.value.size,
-      children: undefined,
-    },
-    {
-      id: ANIMATIONS_NODE_ID,
-      label: t('projectAssets.animationsNode'),
-      entryCount: animationEntries.value.length,
       children: undefined,
     },
     ...nodes,
@@ -798,11 +748,9 @@ const searchPlaceholder = computed(() => {
   // The favorites node is frontend-only; projectAssetCategoryLabel would throw for it.
   const label = isFavoritesSelection.value
     ? t('projectAssets.favoritesNode')
-    : isAnimationsSelection.value
-      ? t('projectAssets.animationsNode')
-      : selectedCategoryId.value
-        ? projectAssetCategoryLabel(selectedCategoryId.value, language.value)
-        : ''
+    : selectedCategoryId.value
+      ? projectAssetCategoryLabel(selectedCategoryId.value, language.value)
+      : ''
   if (!label) return t('projectAssets.searchPlaceholder')
   return t('projectAssets.searchInFolder', { name: label })
 })
@@ -954,7 +902,6 @@ const canImport = computed(() =>
     && selectedCategoryId.value
     && !isGroupSelection.value
     && !isFavoritesSelection.value
-    && !isAnimationsSelection.value
     && !mutationBusy.value,
   ),
 )
@@ -1265,10 +1212,8 @@ async function loadTree(preferredCategoryId?: string) {
   try {
     const tree = await projectAssets.browseTree(projectStore.currentProject)
     treeNodes.value = tree.nodes
-    void loadAnimationCatalog()
     const nextId = preferredCategoryId
       && (preferredCategoryId === FAVORITES_NODE_ID
-        || preferredCategoryId === ANIMATIONS_NODE_ID
         || findTreeNode(tree.nodes, preferredCategoryId))
       ? preferredCategoryId
       : tree.nodes[0]?.id || ''
@@ -1295,18 +1240,6 @@ async function loadCategory(categoryId: string, options: { preserveViewState?: b
   }
   if (categoryId === FAVORITES_NODE_ID) {
     await loadFavoritesListing(options)
-    return
-  }
-  if (categoryId === ANIMATIONS_NODE_ID) {
-    categoryEntries.value = []
-    categoryDirectory.value = ''
-    categoryError.value = ''
-    categoryLoading.value = false
-    if (!options.preserveViewState) {
-      clearFileSelection()
-      selectedFolderId.value = null
-    }
-    await loadAnimationCatalog()
     return
   }
   if (isProjectAssetGroupCategory(categoryId)) {
@@ -1421,101 +1354,6 @@ async function loadFavoritesListing(options: { preserveViewState?: boolean } = {
       if (context.isCurrent()) categoryLoading.value = false
     }
   })
-}
-
-/** Load (or reuse) the editor catalog powering the virtual animations node. */
-async function loadAnimationCatalog(force = false) {
-  const project = projectStore.currentProject
-  if (!project) {
-    animationCatalog.value = null
-    return
-  }
-  if (animationCatalog.value?.project !== project) {
-    selectedAnimationId.value = 0
-    animationRecord.value = null
-    animationRecordError.value = ''
-  } else if (!force) {
-    return
-  }
-  animationCatalogLoading.value = true
-  animationCatalogError.value = ''
-  try {
-    const catalog = await projectAssets.editorCatalog(project)
-    if (projectStore.currentProject !== project) return
-    animationCatalog.value = catalog
-    if (
-      selectedAnimationId.value
-      && !catalog.animations.some((entry) => entry.id === selectedAnimationId.value)
-    ) {
-      selectedAnimationId.value = 0
-      animationRecord.value = null
-      animationRecordError.value = ''
-    }
-  } catch (error) {
-    if (projectStore.currentProject !== project) return
-    animationCatalog.value = null
-    animationCatalogError.value = t('projectAssets.animationsLoadFailed', { message: formatError(error) })
-  } finally {
-    animationCatalogLoading.value = false
-  }
-}
-
-/** Fetch the full Animations.json record for the selected entry (frames or effect). */
-async function selectAnimationEntry(id: number) {
-  selectedAnimationId.value = id
-  const project = projectStore.currentProject
-  if (!project || id <= 0) {
-    animationRecord.value = null
-    animationRecordError.value = ''
-    return
-  }
-  const requestId = ++animationRecordRequestId
-  animationRecordLoading.value = true
-  animationRecordError.value = ''
-  try {
-    const entry = await projectManagement.getEntry({ kind: 'database', group: 'Animations', id }, project)
-    if (requestId !== animationRecordRequestId) return
-    animationRecord.value = entry?.value && typeof entry.value === 'object' && !Array.isArray(entry.value)
-      ? entry.value as Record<string, unknown>
-      : null
-    if (!animationRecord.value) animationRecordError.value = t('db.particlePreviewInvalid')
-  } catch (error) {
-    if (requestId !== animationRecordRequestId) return
-    animationRecord.value = null
-    animationRecordError.value = t('projectAssets.animationsLoadFailed', { message: formatError(error) })
-  } finally {
-    if (requestId === animationRecordRequestId) animationRecordLoading.value = false
-  }
-}
-
-async function startAnimationParticlePreview() {
-  const project = projectStore.currentProject
-  const preview = particleAnimationPreview.value
-  if (!project || !preview || animationParticleBusy.value) return
-  if (animationCatalog.value?.engine !== 'rpg-maker-mz') {
-    ElMessage.error(t('db.particlePreviewMZOnly'))
-    return
-  }
-  animationParticleBusy.value = true
-  try {
-    const result = await playtest.start({
-      mode: 'particle_preview',
-      project,
-      animationPreview: preview,
-    })
-    if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
-      throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'))
-    }
-    ElMessage.success(t('db.particlePreviewStarted'))
-  } catch (error) {
-    ElMessage.error(t('db.particlePreviewFailed', { message: formatError(error) }))
-  } finally {
-    animationParticleBusy.value = false
-  }
-}
-
-async function loadAnimationSheetImage(url: string): Promise<HTMLImageElement | null> {
-  return loadImageElement(await resolveAssetUrl(url))
 }
 
 function selectCategory(categoryId: string) {
@@ -1783,8 +1621,8 @@ function openFolderContextMenu(event: MouseEvent, folderId: string) {
 function openTreeContextMenu(event: MouseEvent, nodeId: string) {
   event.preventDefault()
   event.stopPropagation()
-  // The favorites and animations nodes are virtual — no on-disk directory to reveal, rename or delete.
-  if (nodeId === FAVORITES_NODE_ID || nodeId === ANIMATIONS_NODE_ID) return
+  // The favorites node is virtual — no on-disk directory to reveal, rename or delete.
+  if (nodeId === FAVORITES_NODE_ID) return
   contextFolderId.value = nodeId
   contextMenuKind.value = 'tree'
   positionContextMenu(event.clientX, event.clientY)
@@ -2775,7 +2613,6 @@ const treeDropTargetId = ref<string | null>(null)
 function treeNodeAcceptsDrop(categoryId: string): boolean {
   return Boolean(projectStore.currentProject)
     && categoryId !== FAVORITES_NODE_ID
-    && categoryId !== ANIMATIONS_NODE_ID
     && !isProjectAssetGroupCategory(categoryId)
     && !mutationBusy.value
 }
@@ -3235,7 +3072,6 @@ async function refreshAll() {
   mutationError.value = ''
   categoryError.value = ''
   await projectAssets.invalidateBrowseCache(projectStore.currentProject)
-  if (animationCatalog.value) await loadAnimationCatalog(true)
   await loadTree(selectedCategoryId.value)
   await refreshStagingStatus()
 }
@@ -3485,13 +3321,13 @@ watch(gridHost, (el, previous) => {
         <div class="project-assets-toolbar-actions">
           <el-dropdown
             trigger="click"
-            :disabled="!projectStore.currentProject || isGroupSelection || isAnimationsSelection"
+            :disabled="!projectStore.currentProject || isGroupSelection"
             data-ui-id="project-assets-sort-menu"
           >
             <button
               type="button"
               class="project-assets-tool-btn"
-              :disabled="!projectStore.currentProject || isGroupSelection || isAnimationsSelection"
+              :disabled="!projectStore.currentProject || isGroupSelection"
             >
               <el-icon><Sort /></el-icon>
               <span>{{ t('projectAssets.sortMenu') }}</span>
@@ -3526,13 +3362,13 @@ watch(gridHost, (el, previous) => {
           </el-dropdown>
           <el-dropdown
             trigger="click"
-            :disabled="!projectStore.currentProject || isGroupSelection || isAnimationsSelection"
+            :disabled="!projectStore.currentProject || isGroupSelection"
             data-ui-id="project-assets-view-menu"
           >
             <button
               type="button"
               class="project-assets-tool-btn"
-              :disabled="!projectStore.currentProject || isGroupSelection || isAnimationsSelection"
+              :disabled="!projectStore.currentProject || isGroupSelection"
             >
               <el-icon><View /></el-icon>
               <span>{{ t('projectAssets.viewMenu') }}</span>
@@ -3614,73 +3450,6 @@ watch(gridHost, (el, previous) => {
       </div>
 
       <div
-        v-if="isAnimationsSelection"
-        class="project-assets-animations"
-        data-ui-id="project-assets-animations"
-      >
-        <aside class="project-assets-animations-list" :aria-label="t('projectAssets.animationsNode')">
-          <div v-if="animationCatalogError" class="project-assets-error" role="alert">
-            {{ animationCatalogError }}
-          </div>
-          <div
-            v-else-if="animationCatalogLoading && animationEntries.length === 0"
-            class="project-assets-state"
-          >
-            …
-          </div>
-          <div v-else-if="filteredAnimationEntries.length === 0" class="project-assets-empty">
-            {{ searchQuery.trim() ? t('projectAssets.emptySearch') : t('projectAssets.animationsEmpty') }}
-          </div>
-          <button
-            v-for="entry in filteredAnimationEntries"
-            :key="entry.id"
-            type="button"
-            class="project-assets-animation-item"
-            :class="{ selected: entry.id === selectedAnimationId }"
-            :data-ui-id="`project-assets-animation-${entry.id}`"
-            @click="selectAnimationEntry(entry.id)"
-          >
-            <span class="project-assets-animation-id">{{ String(entry.id).padStart(4, '0') }}</span>
-            <span class="project-assets-animation-name">{{ entry.name || '—' }}</span>
-          </button>
-        </aside>
-        <div class="project-assets-animation-preview">
-          <p v-if="!selectedAnimationId" class="project-assets-empty">
-            {{ t('projectAssets.animationsSelectHint') }}
-          </p>
-          <p v-else-if="animationRecordLoading" class="project-assets-empty">…</p>
-          <p v-else-if="animationRecordError" class="project-assets-error" role="alert">
-            {{ animationRecordError }}
-          </p>
-          <div
-            v-else-if="animationPreviewKind === 'particle' && particleAnimationPreview"
-            class="project-assets-animation-particle"
-          >
-            <el-button
-              type="primary"
-              :loading="animationParticleBusy"
-              @click="startAnimationParticlePreview"
-            >
-              {{ t('db.previewParticle') }}
-            </el-button>
-          </div>
-          <PluginAnimationFramePreview
-            v-else-if="animationPreviewKind === 'classic' && classicAnimationPreview"
-            :frames="classicAnimationPreview.frames"
-            :catalog="animationCatalog"
-            :animation1-name="classicAnimationPreview.animation1Name"
-            :animation1-hue="classicAnimationPreview.animation1Hue"
-            :animation2-name="classicAnimationPreview.animation2Name"
-            :animation2-hue="classicAnimationPreview.animation2Hue"
-            :load-image="loadAnimationSheetImage"
-          />
-          <p v-else class="project-assets-empty">
-            {{ t('db.particlePreviewInvalid') }}
-          </p>
-        </div>
-      </div>
-      <div
-        v-else
         ref="gridHost"
         class="project-assets-grid-host"
         :class="{ 'is-file-drop-target': fileDropActive }"
@@ -4593,75 +4362,6 @@ watch(gridHost, (el, previous) => {
   border-radius: var(--app-radius-md);
   background: var(--app-bg-elevated);
   outline: none;
-}
-
-.project-assets-animations {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  gap: 12px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-elevated);
-  overflow: hidden;
-}
-
-.project-assets-animations-list {
-  width: 240px;
-  flex: none;
-  overflow-y: auto;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-right: 1px solid var(--app-border);
-}
-
-.project-assets-animation-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border: none;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-ink);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.project-assets-animation-item:hover {
-  background: var(--app-bg-hover);
-}
-
-.project-assets-animation-item.selected {
-  background: var(--app-accent-soft);
-}
-
-.project-assets-animation-id {
-  flex: none;
-  color: var(--app-ink-soft);
-  font: 500 11px / 1.4 var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
-}
-
-.project-assets-animation-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-assets-animation-preview {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  padding: 12px;
-}
-
-.project-assets-animation-particle {
-  display: flex;
-  justify-content: center;
-  padding: 24px 0;
 }
 
 .project-assets-grid-host.is-file-drop-target {

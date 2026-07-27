@@ -1534,6 +1534,21 @@ function onTreeNodeClick(data: TreeNodeView) {
   selectCategory(data.id)
 }
 
+/** ArrowRight on a leaf (or already expanded) tree node hands focus to the grid, Explorer-style. */
+function onTreeKeydown(event: KeyboardEvent) {
+  if (event.key !== 'ArrowRight') return
+  const nodeEl = (event.target as HTMLElement | null)?.closest?.('.el-tree-node')
+  if (!nodeEl) return
+  const hasChildren = Boolean(nodeEl.querySelector(':scope > .el-tree-node__children .el-tree-node'))
+  if (hasChildren && !nodeEl.classList.contains('is-expanded')) return
+  event.preventDefault()
+  event.stopPropagation()
+  const host = gridHost.value
+  if (!host) return
+  host.focus()
+  if (currentGridFocusIndex() < 0 && gridItems.value.length) selectGridItemAt(0)
+}
+
 /** One-shot deep link (global search file hits): open the category, select the entry, then strip the params. */
 async function applyRouteAssetFocus(): Promise<void> {
   if (route.path !== '/project-assets') return
@@ -3381,6 +3396,7 @@ watch(gridHost, (el, previous) => {
         :current-node-key="selectedCategoryId || undefined"
         default-expand-all
         @node-click="onTreeNodeClick"
+        @keydown.capture="onTreeKeydown"
       >
         <template #default="{ data }">
           <span

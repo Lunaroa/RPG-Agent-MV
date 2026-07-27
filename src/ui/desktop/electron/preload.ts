@@ -90,6 +90,13 @@ contextBridge.exposeInMainWorld('api', {
     rebuild: (project?: string) => ipcRenderer.invoke('search:rebuild', project),
   },
 
+  pluginTranslation: {
+    get: (pluginName: string, lang: string, project?: string) =>
+      ipcRenderer.invoke('pluginTranslation:get', pluginName, lang, project),
+    translate: (pluginName: string, lang: string, project?: string) =>
+      ipcRenderer.invoke('pluginTranslation:translate', pluginName, lang, project),
+  },
+
   workspaceSurfaces: {
     validate: (request: unknown, project?: string) => ipcRenderer.invoke('workspaceSurfaces:validate', request, project),
   },

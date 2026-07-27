@@ -108,6 +108,10 @@ declare global {
         ensureIndex(project?: string): Promise<unknown>;
         rebuild(project?: string): Promise<unknown>;
       };
+      pluginTranslation: {
+        get(pluginName: string, lang: string, project?: string): Promise<unknown>;
+        translate(pluginName: string, lang: string, project?: string): Promise<unknown>;
+      };
       workspaceSurfaces: {
         validate(request: WorkspaceSurfaceVersionRequest, project?: string): Promise<WorkspaceSurfaceVersionResult>;
       };
@@ -351,6 +355,7 @@ import type {
   LunaRpgProjectConfig,
   LunaRpgSearchSettings,
   GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchOptions, GlobalSearchResult,
+  PluginTranslationPayload, PluginTranslationRecord,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput, ProjectAssetDeleteItemResult,
@@ -384,6 +389,7 @@ export type {
   LunaRpgProjectConfig,
   LunaRpgSearchSettings,
   GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchOptions, GlobalSearchResult,
+  PluginTranslationPayload, PluginTranslationRecord,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
@@ -470,6 +476,16 @@ export const globalSearch = {
   },
   rebuild(project?: string) {
     return desktopApi().globalSearch.rebuild(project) as Promise<GlobalSearchIndexState>;
+  },
+};
+
+/** Display-layer plugin documentation translation cached in rmmv.db; plugin .js files stay untouched. */
+export const pluginTranslation = {
+  get(pluginName: string, lang: string, project?: string) {
+    return desktopApi().pluginTranslation.get(pluginName, lang, project) as Promise<PluginTranslationRecord | null>;
+  },
+  translate(pluginName: string, lang: string, project?: string) {
+    return desktopApi().pluginTranslation.translate(pluginName, lang, project) as Promise<PluginTranslationRecord>;
   },
 };
 

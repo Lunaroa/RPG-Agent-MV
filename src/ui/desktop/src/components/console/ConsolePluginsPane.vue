@@ -6,6 +6,7 @@ import { ElMessageBox } from 'element-plus';
 import {
   maps as mapsApi,
   plugins as pluginApi,
+  pluginTranslation as pluginTranslationApi,
   projectAssets,
   projectConfig as projectConfigApi,
   system,
@@ -14,6 +15,8 @@ import {
   type ManagedPluginFile,
   type PluginConfigurationResult,
   type PluginHeaderMetadata,
+  type PluginParameterSchemaField,
+  type PluginTranslationRecord,
   type PluginValidationIssue,
 } from '../../api/client';
 import { useI18n } from '../../i18n';
@@ -152,11 +155,12 @@ async function togglePluginPreview(enabled: boolean): Promise<void> {
     error.value = err instanceof Error ? err.message : String(err);
   }
 }
-const parameterDialogPlugin = computed(() =>
-  parameterDialogPluginIndex.value == null
+const parameterDialogPlugin = computed(() => {
+  const plugin = parameterDialogPluginIndex.value == null
     ? null
-    : (plugins.value.find((plugin) => plugin.index === parameterDialogPluginIndex.value) || null),
-);
+    : (plugins.value.find((plugin) => plugin.index === parameterDialogPluginIndex.value) || null);
+  return plugin ? applyTranslationToPluginEntry(plugin) : null;
+});
 const selectedFile = computed(() =>
   selectedItem.value?.kind === 'file' ? selectedItem.value.file : null,
 );
@@ -166,7 +170,8 @@ const selectedHeader = computed<PluginHeaderMetadata | null>(() =>
 const selectedName = computed(() => selectedPlugin.value?.name || selectedFile.value?.name || '');
 const selectedPath = computed(() => selectedHeader.value?.displayPath || 'js/plugins');
 const selectedDescription = computed(() =>
-  selectedHeader.value?.plugindesc
+  activeTranslation.value?.payload.plugindesc
+  || selectedHeader.value?.plugindesc
   || selectedPlugin.value?.description
   || t('plugins.noDescription'),
 );
@@ -201,14 +206,87 @@ const deleteTargetName = computed(() => {
   if (deleteTargetIndex.value == null) return '';
   return plugins.value.find((plugin) => plugin.index === deleteTargetIndex.value)?.name || '';
 });
-const selectedHelpTabs = computed(() =>
-  (selectedHeader.value?.helpSections || []).map((section) => ({
+const selectedHelpTabs = computed(() => {
+  const tabs = (selectedHeader.value?.helpSections || []).map((section) => ({
     id: section.language
       ? `locale:${section.language.toLocaleLowerCase()}`
       : 'default',
     label: helpLanguageLabel(section.language),
     content: section.content,
-  })),
+  }));
+  const translatedHelp = activeTranslation.value?.payload.help;
+  if (translatedHelp) {
+    tabs.unshift({ id: 'translated', label: t('plugins.translatedHelpTab'), content: translatedHelp });
+  }
+  return tabs;
+});
+
+/** Display-layer plugin documentation translation (ROW10): cached per (project, plugin, lang) in rmmv.db. */
+const translation = ref<PluginTranslationRecord | null>(null);
+const translationBusy = ref(false);
+const showTranslated = ref(true);
+const activeTranslation = computed(() => (showTranslated.value ? translation.value : null));
+
+async function loadTranslation(): Promise<void> {
+  translation.value = null;
+  const name = selectedName.value;
+  const project = projectStore.currentProject;
+  if (!name || !project) return;
+  try {
+    const record = await pluginTranslationApi.get(name, language.value, project);
+    if (selectedName.value === name && projectStore.currentProject === project) translation.value = record;
+  } catch (translationError) {
+    console.warn('[plugins] failed to load plugin translation', translationError);
+  }
+}
+
+async function translateSelectedPlugin(): Promise<void> {
+  const name = selectedName.value;
+  const project = projectStore.currentProject;
+  if (!name || !project || translationBusy.value) return;
+  translationBusy.value = true;
+  error.value = '';
+  try {
+    const record = await pluginTranslationApi.translate(name, language.value, project);
+    if (selectedName.value === name && projectStore.currentProject === project) {
+      translation.value = record;
+      showTranslated.value = true;
+    }
+  } catch (translateError) {
+    error.value = formatPluginActionError(translateError);
+  } finally {
+    translationBusy.value = false;
+  }
+}
+
+/** Overlay translated labels/descriptions onto the parameter schema; values and keys stay untouched. */
+function applyTranslationToPluginEntry(entry: ManagedPluginEntry): ManagedPluginEntry {
+  const payload = activeTranslation.value?.payload;
+  if (!payload || !entry.parameterSchema || entry.name !== selectedName.value) return entry;
+  const applyFields = (fields: PluginParameterSchemaField[], prefix: string): PluginParameterSchemaField[] =>
+    fields.map((field) => {
+      const key = prefix ? `${prefix}.${field.key}` : field.key;
+      const text = payload.params[key];
+      return {
+        ...field,
+        label: text?.label || field.label,
+        description: text?.description ?? field.description,
+        fields: field.fields ? applyFields(field.fields, key) : field.fields,
+        item: field.item
+          ? { ...field.item, fields: field.item.fields ? applyFields(field.item.fields, `${key}[]`) : field.item.fields }
+          : field.item,
+      };
+    });
+  return {
+    ...entry,
+    parameterSchema: { ...entry.parameterSchema, fields: applyFields(entry.parameterSchema.fields, '') },
+  };
+}
+
+watch(
+  () => [selectedName.value, projectStore.currentProject, language.value] as const,
+  () => { void loadTranslation(); },
+  { immediate: true },
 );
 
 watch(() => projectStore.currentProject, () => {
@@ -1344,6 +1422,30 @@ function resizeKeydown(event: KeyboardEvent): void {
                   @change="togglePluginPreview(Boolean($event))"
                 />
               </label>
+              <label
+                v-if="translation"
+                class="preview-switch"
+                :title="t('plugins.translationSwitchHint')"
+                data-ui-id="console-plugin-translation-switch"
+              >
+                <span>{{ t('plugins.translationSwitch') }}</span>
+                <el-switch
+                  v-model="showTranslated"
+                  size="small"
+                  :aria-label="t('plugins.translationSwitchHint')"
+                />
+              </label>
+              <button
+                v-if="selectedName && (!translation || translation.stale)"
+                type="button"
+                :disabled="translationBusy"
+                data-ui-id="console-plugin-translate"
+                @click="translateSelectedPlugin"
+              >
+                {{ translationBusy
+                  ? t('plugins.translating')
+                  : (translation ? t('plugins.retranslate') : t('plugins.translate')) }}
+              </button>
               <button
                 v-if="selectedPlugin && hasConfigurableParameters(selectedPlugin)"
                 type="button"

@@ -613,6 +613,24 @@ function getMigrations(): Migration[] {
         CREATE INDEX IF NOT EXISTS idx_asset_annotations_favorite ON asset_annotations(project, favorite);
       `,
     },
+    {
+      // 插件文档翻译缓存（一键汉化，展示层替换，不改插件 js）。payload 为 JSON：
+      // { plugindesc, help, params: { fieldPath: { label, description } } }。
+      // source_hash 摘要插件头原文，读取侧对比后把过期翻译标记为 stale。
+      version: 13,
+      name: 'plugin_translations',
+      up: `
+        CREATE TABLE IF NOT EXISTS plugin_translations (
+          project TEXT NOT NULL,
+          plugin_name TEXT NOT NULL,
+          lang TEXT NOT NULL,
+          source_hash TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (project, plugin_name, lang)
+        );
+      `,
+    },
   ];
 }
 

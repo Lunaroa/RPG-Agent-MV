@@ -1641,6 +1641,29 @@ export interface ManagedPluginFile {
   header: PluginHeaderMetadata;
 }
 
+/** Translated label/description pair for one plugin parameter (keyed by the field path). */
+export interface PluginTranslationParamText {
+  label: string;
+  description: string;
+}
+
+/** LLM-translated plugin documentation; display-layer only, plugin .js files stay untouched. */
+export interface PluginTranslationPayload {
+  plugindesc: string;
+  help: string;
+  params: Record<string, PluginTranslationParamText>;
+}
+
+export interface PluginTranslationRecord {
+  pluginName: string;
+  lang: string;
+  sourceHash: string;
+  /** True when the plugin header changed after this translation was produced. */
+  stale: boolean;
+  payload: PluginTranslationPayload;
+  updatedAt: string;
+}
+
 export interface PluginValidationIssue {
   severity: 'error' | 'warn';
   code: string;

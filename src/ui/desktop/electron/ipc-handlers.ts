@@ -423,6 +423,7 @@ async function loadBackendModules(roots: AppRoots) {
     projectManagement: await import(new URL('desktop/project-management-service.ts', coreUrl).href),
     projectConfig: await import(new URL('desktop/project-config-service.ts', coreUrl).href),
     projectSearch: await import(new URL('desktop/project-search-service.ts', coreUrl).href),
+    pluginTranslation: await import(new URL('desktop/plugin-translation-service.ts', coreUrl).href),
     commonEvents: await import(new URL('desktop/common-event-service.ts', coreUrl).href),
     pluginManagement: await import(new URL('desktop/plugin-management-service.ts', coreUrl).href),
     storyPages: await import(new URL('desktop/story-page-sync-service.ts', coreUrl).href),
@@ -1542,6 +1543,30 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   ipcMain.handle('search:rebuild', async (_event, value?: string) => {
     const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
     return toIpcPayload(await desktop.projectSearch.rebuildGlobalSearchIndex(workflowRoot, resolved));
+  });
+
+  // Plugin documentation translation (display-layer only; results cached in rmmv.db).
+  ipcMain.handle('pluginTranslation:get', (_event, pluginName: string, lang: string, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    return toIpcPayload(desktop.pluginTranslation.getPluginTranslation(workflowRoot, resolved, pluginName, lang));
+  });
+  ipcMain.handle('pluginTranslation:translate', async (_event, pluginName: string, lang: string, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    const stored = normalizeAgentExecutionSettings(
+      toIpcPayload(ConsoleSettingsDao.get('agentExecution') || {}) as Record<string, unknown>,
+    );
+    const bindings = (stored.bindings || {}) as Record<string, { providerId?: string; modelId?: string } | undefined>;
+    const binding = bindings[DEFAULT_AGENT_EXECUTION_ENGINE];
+    if (!binding?.providerId || !binding?.modelId) {
+      throw new Error(electronText(currentProductLanguage(), 'plugins.translateNoModelBinding'));
+    }
+    return toIpcPayload(await desktop.pluginTranslation.translatePluginDocumentation(
+      workflowRoot,
+      resolved,
+      pluginName,
+      lang,
+      { providerId: binding.providerId, modelId: binding.modelId },
+    ));
   });
 
   ipcMain.handle('workspace:put', (_event, body: Record<string, unknown>) => {

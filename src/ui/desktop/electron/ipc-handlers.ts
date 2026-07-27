@@ -422,6 +422,7 @@ async function loadBackendModules(roots: AppRoots) {
     projectAssetBrowser: await import(new URL('desktop/project-asset-browser-service.ts', coreUrl).href),
     projectManagement: await import(new URL('desktop/project-management-service.ts', coreUrl).href),
     projectConfig: await import(new URL('desktop/project-config-service.ts', coreUrl).href),
+    projectSearch: await import(new URL('desktop/project-search-service.ts', coreUrl).href),
     commonEvents: await import(new URL('desktop/common-event-service.ts', coreUrl).href),
     pluginManagement: await import(new URL('desktop/plugin-management-service.ts', coreUrl).href),
     storyPages: await import(new URL('desktop/story-page-sync-service.ts', coreUrl).href),
@@ -1495,7 +1496,11 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   // Per-project product config (.luna_rpg/config.json in the game project).
   ipcMain.handle('projectConfig:get', (_event, value?: string) => {
     const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
-    return toIpcPayload({ previewDisabledPlugins: resolvePreviewDisabledPlugins(resolved) });
+    const config = desktop.projectConfig.readProjectConfig(resolved) as { search?: unknown };
+    return toIpcPayload({
+      previewDisabledPlugins: resolvePreviewDisabledPlugins(resolved),
+      ...(config.search ? { search: config.search } : {}),
+    });
   });
   ipcMain.handle('projectConfig:setPluginPreview', (_event, pluginName: string, enabled: boolean, value?: string) => {
     const name = String(pluginName || '').trim();
@@ -1506,6 +1511,37 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     else current.add(name);
     desktop.projectConfig.patchProjectConfig(resolved, { previewDisabledPlugins: [...current] });
     return toIpcPayload({ previewDisabledPlugins: [...current] });
+  });
+  ipcMain.handle('projectConfig:setSearch', (_event, settings: Record<string, unknown>, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    const current = (desktop.projectConfig.readProjectConfig(resolved) as { search?: Record<string, unknown> }).search || {};
+    const next = { ...current, ...(toIpcPayload(settings) as Record<string, unknown>) };
+    const config = desktop.projectConfig.patchProjectConfig(resolved, { search: next });
+    return toIpcPayload({ search: config.search ?? null });
+  });
+
+  // Global project search (fuse.js over documents persisted in .luna_rpg/search-index.json).
+  ipcMain.handle('search:global', async (_event, query: string, options?: Record<string, unknown>, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    return toIpcPayload(await desktop.projectSearch.searchGlobalProjectIndex(
+      workflowRoot,
+      resolved,
+      query,
+      toIpcPayload(options || {}),
+    ));
+  });
+  ipcMain.handle('search:state', (_event, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    return toIpcPayload(desktop.projectSearch.getGlobalSearchIndexState(resolved));
+  });
+  ipcMain.handle('search:ensureIndex', async (_event, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    await desktop.projectSearch.ensureGlobalSearchIndex(workflowRoot, resolved);
+    return toIpcPayload(desktop.projectSearch.getGlobalSearchIndexState(resolved));
+  });
+  ipcMain.handle('search:rebuild', async (_event, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    return toIpcPayload(await desktop.projectSearch.rebuildGlobalSearchIndex(workflowRoot, resolved));
   });
 
   ipcMain.handle('workspace:put', (_event, body: Record<string, unknown>) => {

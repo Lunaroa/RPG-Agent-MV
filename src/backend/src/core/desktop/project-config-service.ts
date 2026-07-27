@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { LunaRpgProjectConfig } from '../../../../contract/types.ts';
+import type { LunaRpgProjectConfig, LunaRpgSearchSettings } from '../../../../contract/types.ts';
 
 /**
  * `.luna_rpg/` is the product's per-project configuration folder. Everything
@@ -31,7 +31,29 @@ export function readProjectConfig(project: string): LunaRpgProjectConfig {
       .filter((name): name is string => typeof name === 'string' && name.trim() !== '');
     if (names.length) config.previewDisabledPlugins = names;
   }
+  const search = normalizeSearchSettings(parsed?.search);
+  if (search) config.search = search;
   return config;
+}
+
+function normalizeSearchSettings(value: unknown): LunaRpgSearchSettings | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const settings: LunaRpgSearchSettings = {};
+  if (Array.isArray(raw.extraFolders)) {
+    const folders = raw.extraFolders
+      .filter((folder): folder is string => typeof folder === 'string' && folder.trim() !== '');
+    if (folders.length) settings.extraFolders = folders;
+  }
+  const maxResults = Number(raw.maxResults);
+  if (Number.isInteger(maxResults) && maxResults > 0) settings.maxResults = maxResults;
+  if (Array.isArray(raw.history)) {
+    const history = raw.history
+      .filter((term): term is string => typeof term === 'string' && term.trim() !== '')
+      .slice(0, 50);
+    if (history.length) settings.history = history;
+  }
+  return Object.keys(settings).length ? settings : undefined;
 }
 
 export function patchProjectConfig(
@@ -41,6 +63,9 @@ export function patchProjectConfig(
   const config = { ...readProjectConfig(project), ...patch };
   // Drop empty fields so the config file stays minimal or disappears entirely.
   if (!config.previewDisabledPlugins?.length) delete config.previewDisabledPlugins;
+  const search = normalizeSearchSettings(config.search);
+  if (search) config.search = search;
+  else delete config.search;
   const file = projectConfigFilePath(project);
   if (Object.keys(config).length === 0) {
     if (fs.existsSync(file)) fs.rmSync(file);

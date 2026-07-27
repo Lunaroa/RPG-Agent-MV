@@ -62,6 +62,8 @@ export interface EditorMapNotes {
 export interface LunaRpgProjectConfig {
   /** Plugin names excluded from map preview (plugins.js itself is never modified). */
   previewDisabledPlugins?: string[];
+  /** Global search preferences and history. */
+  search?: LunaRpgSearchSettings;
 }
 
 export type WorkspaceSurfaceId = 'editor' | 'projectManagement' | 'mapOverview';
@@ -339,6 +341,81 @@ export interface EventSearchResult {
   query: string;
   hits: EventSearchHit[];
   truncated: boolean;
+}
+
+/** Categories the global project search can index and filter on. */
+export type GlobalSearchCategory =
+  | 'file'
+  | 'map'
+  | 'event'
+  | 'database'
+  | 'plugin'
+  | 'pluginParam';
+
+/** One indexed row of the global project search (persisted in `.luna_rpg/search-index.json`). */
+export interface GlobalSearchDocument {
+  /** Stable id, unique within the index (e.g. `map:12`, `database:Items:7`). */
+  id: string;
+  category: GlobalSearchCategory;
+  /** Primary display label (entry name / file name / plugin name). */
+  title: string;
+  /** Searchable body text: notes, command text, descriptions, parameter values. */
+  text: string;
+  /** Context line shown under the title (relative path / map name / group). */
+  context: string;
+  mapId?: number;
+  eventId?: number;
+  commonEventId?: number;
+  databaseGroup?: string;
+  databaseId?: number;
+  pluginName?: string;
+  relativePath?: string;
+  assetCategoryId?: string;
+  assetName?: string;
+}
+
+export interface GlobalSearchOptions {
+  /** Categories to include; omitted or empty means all. */
+  categories?: GlobalSearchCategory[];
+  /** Result cap after filtering (default from project config, fallback 100). */
+  maxResults?: number;
+  /** Substring matching instead of fuzzy scoring. */
+  exact?: boolean;
+}
+
+export interface GlobalSearchHit {
+  document: GlobalSearchDocument;
+  /** Fuse score (0 best) or 0 for exact matches. */
+  score: number;
+}
+
+export interface GlobalSearchResult {
+  project: string;
+  query: string;
+  hits: GlobalSearchHit[];
+  /** Matches before the maxResults cut. */
+  total: number;
+  tookMs: number;
+  indexDocCount: number;
+  indexBuiltAt: number | null;
+}
+
+export interface GlobalSearchIndexState {
+  project: string;
+  status: 'empty' | 'building' | 'ready';
+  docCount: number;
+  builtAt: number | null;
+  buildMs: number | null;
+}
+
+/** Per-project global search preferences stored in `.luna_rpg/config.json`. */
+export interface LunaRpgSearchSettings {
+  /** Extra project-relative folders whose file names join the file index. */
+  extraFolders?: string[];
+  /** Result cap shown in the search dialog. */
+  maxResults?: number;
+  /** Most recent search terms, newest first. */
+  history?: string[];
 }
 
 export interface TilesetSummary {

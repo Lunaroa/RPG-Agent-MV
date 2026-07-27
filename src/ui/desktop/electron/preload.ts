@@ -78,6 +78,16 @@ contextBridge.exposeInMainWorld('api', {
     get: (project?: string) => ipcRenderer.invoke('projectConfig:get', project),
     setPluginPreview: (pluginName: string, enabled: boolean, project?: string) =>
       ipcRenderer.invoke('projectConfig:setPluginPreview', pluginName, enabled, project),
+    setSearch: (settings: unknown, project?: string) =>
+      ipcRenderer.invoke('projectConfig:setSearch', settings, project),
+  },
+
+  globalSearch: {
+    query: (query: string, options?: unknown, project?: string) =>
+      ipcRenderer.invoke('search:global', query, options, project),
+    state: (project?: string) => ipcRenderer.invoke('search:state', project),
+    ensureIndex: (project?: string) => ipcRenderer.invoke('search:ensureIndex', project),
+    rebuild: (project?: string) => ipcRenderer.invoke('search:rebuild', project),
   },
 
   workspaceSurfaces: {

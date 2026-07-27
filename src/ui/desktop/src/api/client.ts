@@ -97,6 +97,17 @@ declare global {
         put(body: unknown): Promise<unknown>;
         patch(body: unknown): Promise<unknown>;
       };
+      projectConfig: {
+        get(project?: string): Promise<unknown>;
+        setPluginPreview(pluginName: string, enabled: boolean, project?: string): Promise<unknown>;
+        setSearch(settings: unknown, project?: string): Promise<unknown>;
+      };
+      globalSearch: {
+        query(query: string, options?: unknown, project?: string): Promise<unknown>;
+        state(project?: string): Promise<unknown>;
+        ensureIndex(project?: string): Promise<unknown>;
+        rebuild(project?: string): Promise<unknown>;
+      };
       workspaceSurfaces: {
         validate(request: WorkspaceSurfaceVersionRequest, project?: string): Promise<WorkspaceSurfaceVersionResult>;
       };
@@ -338,6 +349,8 @@ import type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorMapNotes,
   LunaRpgProjectConfig,
+  LunaRpgSearchSettings,
+  GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchOptions, GlobalSearchResult,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput, ProjectAssetDeleteItemResult,
@@ -369,6 +382,8 @@ export type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorMapNotes,
   LunaRpgProjectConfig,
+  LunaRpgSearchSettings,
+  GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchOptions, GlobalSearchResult,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
@@ -436,6 +451,25 @@ export const projectConfig = {
   },
   setPluginPreview(pluginName: string, enabled: boolean, project?: string) {
     return desktopApi().projectConfig.setPluginPreview(pluginName, enabled, project) as Promise<LunaRpgProjectConfig>;
+  },
+  setSearch(settings: Partial<LunaRpgSearchSettings>, project?: string) {
+    return desktopApi().projectConfig.setSearch(toPlain(settings), project) as Promise<{ search: LunaRpgSearchSettings | null }>;
+  },
+};
+
+/** Global project search backed by the fuse.js index in `.luna_rpg/search-index.json`. */
+export const globalSearch = {
+  query(query: string, options?: GlobalSearchOptions, project?: string) {
+    return desktopApi().globalSearch.query(query, toPlain(options || {}), project) as Promise<GlobalSearchResult>;
+  },
+  state(project?: string) {
+    return desktopApi().globalSearch.state(project) as Promise<GlobalSearchIndexState>;
+  },
+  ensureIndex(project?: string) {
+    return desktopApi().globalSearch.ensureIndex(project) as Promise<GlobalSearchIndexState>;
+  },
+  rebuild(project?: string) {
+    return desktopApi().globalSearch.rebuild(project) as Promise<GlobalSearchIndexState>;
   },
 };
 

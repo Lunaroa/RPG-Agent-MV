@@ -71,10 +71,10 @@ function updateMessage(key: string, value: string): void {
             <div class="rm-term-grid rm-term-grid--pairs">
               <label v-for="(_entry, index) in sectionValue(section)" :key="`${section}-${index}`">
                 <span>{{ cellLabel(section, index) }}</span>
-                <input
-                  type="text"
-                  :value="sectionValue(section)[index]"
-                  @input="updateSection(section, index, ($event.target as HTMLInputElement).value)"
+                <el-input
+                  size="small"
+                  :model-value="sectionValue(section)[index]"
+                  @update:model-value="updateSection(section, index, $event)"
                 />
               </label>
             </div>
@@ -90,10 +90,10 @@ function updateMessage(key: string, value: string): void {
               :class="{ 'is-group-start': index === 12 }"
             >
               <span>{{ cellLabel('commands', index) }}</span>
-              <input
-                type="text"
-                :value="sectionValue('commands')[index]"
-                @input="updateSection('commands', index, ($event.target as HTMLInputElement).value)"
+              <el-input
+                size="small"
+                :model-value="sectionValue('commands')[index]"
+                @update:model-value="updateSection('commands', index, $event)"
               />
             </label>
           </div>
@@ -114,11 +114,11 @@ function updateMessage(key: string, value: string): void {
               <tr v-for="message in messageEntries" :key="message.key">
                 <th scope="row" :title="message.key">{{ message.label }}</th>
                 <td>
-                  <input
-                    type="text"
+                  <el-input
+                    size="small"
                     :aria-label="`${message.label} (${message.key})`"
-                    :value="message.value"
-                    @input="updateMessage(message.key, ($event.target as HTMLInputElement).value)"
+                    :model-value="message.value"
+                    @update:model-value="updateMessage(message.key, $event)"
                   />
                 </td>
               </tr>
@@ -193,11 +193,8 @@ function updateMessage(key: string, value: string): void {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.rm-term-grid input {
+.rm-term-grid .el-input {
   width: 100%;
-  min-width: 0;
-  min-height: 27px;
-  box-sizing: border-box;
 }
 .rm-term-grid--commands .is-group-start {
   position: relative;
@@ -254,17 +251,17 @@ function updateMessage(key: string, value: string): void {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.rm-message-scroll input {
+/* Message inputs sit flush in their table cells; the border only shows on focus. */
+.rm-message-scroll .el-input {
   width: 100%;
-  min-width: 0;
-  min-height: 24px;
-  box-sizing: border-box;
-  border-color: transparent;
-  background: transparent;
 }
-.rm-message-scroll input:focus {
-  border-color: var(--app-accent, #be5630);
+.rm-message-scroll .el-input .el-input__wrapper {
+  background: transparent;
+  box-shadow: none;
+}
+.rm-message-scroll .el-input .el-input__wrapper.is-focus {
   background: var(--console-paper, #fffdfa);
+  box-shadow: 0 0 0 1px var(--app-accent, #be5630) inset;
 }
 @container (max-width: 900px) {
   .rm-terms-layout {

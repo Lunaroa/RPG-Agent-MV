@@ -372,20 +372,20 @@ function updateExtraRecord(value: unknown): void {
         <section class="rm-document-panel">
           <h3>{{ t('db.document.system.gameTitle') }}</h3>
           <div class="rm-compact-fields rm-compact-fields--two">
-            <label v-if="hasField('gameTitle')"><span>{{ databaseFieldLabel('gameTitle', language) }}</span><input :value="textValue('gameTitle')" @input="writePath('gameTitle', ($event.target as HTMLInputElement).value)" /></label>
-            <label v-if="hasField('currencyUnit')"><span>{{ databaseFieldLabel('currencyUnit', language) }}</span><input :value="textValue('currencyUnit')" @input="writePath('currencyUnit', ($event.target as HTMLInputElement).value)" /></label>
+            <label v-if="hasField('gameTitle')"><span>{{ databaseFieldLabel('gameTitle', language) }}</span><el-input size="small" :model-value="textValue('gameTitle')" @update:model-value="writePath('gameTitle', $event)" /></label>
+            <label v-if="hasField('currencyUnit')"><span>{{ databaseFieldLabel('currencyUnit', language) }}</span><el-input size="small" :model-value="textValue('currencyUnit')" @update:model-value="writePath('currencyUnit', $event)" /></label>
           </div>
         </section>
 
         <section v-if="hasField('partyMembers')" class="rm-document-panel">
-          <div class="rm-panel-heading"><h3>{{ t('db.panelStartingParty') }}</h3><button type="button" :disabled="!actorOptions().length" @click="addPartyMember">{{ t('cmdList.add') }}</button></div>
+          <div class="rm-panel-heading"><h3>{{ t('db.panelStartingParty') }}</h3><el-button size="small" :disabled="!actorOptions().length" @click="addPartyMember">{{ t('cmdList.add') }}</el-button></div>
           <div class="rm-party-list">
             <div v-for="(actorId, index) in arrayValue('partyMembers')" :key="`party-${index}`" class="rm-party-row">
               <span>{{ t('db.document.system.partyMember', { n: index + 1 }) }}</span>
-              <select :value="Number(actorId)" @change="updatePartyMember(index, Number(($event.target as HTMLSelectElement).value))">
-                <option v-for="option in actorOptions()" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-              <button type="button" class="danger" @click="removePartyMember(index)">{{ t('cmdList.delete') }}</button>
+              <el-select size="small" :model-value="Number(actorId)" @change="updatePartyMember(index, Number($event))">
+                <el-option v-for="option in actorOptions()" :key="option.value" :value="option.value" :label="option.label" />
+              </el-select>
+              <el-button size="small" type="danger" plain @click="removePartyMember(index)">{{ t('cmdList.delete') }}</el-button>
             </div>
           </div>
         </section>
@@ -395,7 +395,7 @@ function updateExtraRecord(value: unknown): void {
           <div class="rm-tone-grid">
             <label v-for="(label, index) in ['R', 'G', 'B', 'Gray']" :key="label">
               <span>{{ label }}</span>
-              <input type="number" min="-255" max="255" :value="Number(arrayValue('windowTone')[index] || 0)" @input="updateNumberArray('windowTone', index, Number(($event.target as HTMLInputElement).value))" />
+              <el-input-number size="small" :controls="false" :min="-255" :max="255" :model-value="Number(arrayValue('windowTone')[index] || 0)" @change="updateNumberArray('windowTone', index, Number($event ?? 0))" />
             </label>
           </div>
         </section>
@@ -416,15 +416,15 @@ function updateExtraRecord(value: unknown): void {
           <div class="rm-position-table">
             <div v-if="hasField('startMapId')" class="rm-position-row">
               <strong>{{ t('db.document.system.player') }}</strong>
-              <select :value="numberValue('startMapId')" @change="writePath('startMapId', Number(($event.target as HTMLSelectElement).value))"><option v-for="option in mapOptions()" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-              <input type="number" aria-label="X" :value="numberValue('startX')" @input="writePath('startX', Number(($event.target as HTMLInputElement).value))" />
-              <input type="number" aria-label="Y" :value="numberValue('startY')" @input="writePath('startY', Number(($event.target as HTMLInputElement).value))" />
+              <el-select size="small" :model-value="numberValue('startMapId')" @change="writePath('startMapId', Number($event))"><el-option v-for="option in mapOptions()" :key="option.value" :value="option.value" :label="option.label" /></el-select>
+              <el-input-number size="small" :controls="false" aria-label="X" :model-value="numberValue('startX')" @change="writePath('startX', Number($event ?? 0))" />
+              <el-input-number size="small" :controls="false" aria-label="Y" :model-value="numberValue('startY')" @change="writePath('startY', Number($event ?? 0))" />
             </div>
             <div v-for="vehicle in vehicles" v-show="hasField(vehicle)" :key="`position-${vehicle}`" class="rm-position-row">
               <strong>{{ vehicleLabel(vehicle) }}</strong>
-              <select :value="Number(vehicleObject(vehicle).startMapId || 0)" @change="updateRecord(vehicle, 'startMapId', Number(($event.target as HTMLSelectElement).value))"><option v-for="option in mapOptions()" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-              <input type="number" aria-label="X" :value="Number(vehicleObject(vehicle).startX || 0)" @input="updateRecord(vehicle, 'startX', Number(($event.target as HTMLInputElement).value))" />
-              <input type="number" aria-label="Y" :value="Number(vehicleObject(vehicle).startY || 0)" @input="updateRecord(vehicle, 'startY', Number(($event.target as HTMLInputElement).value))" />
+              <el-select size="small" :model-value="Number(vehicleObject(vehicle).startMapId || 0)" @change="updateRecord(vehicle, 'startMapId', Number($event))"><el-option v-for="option in mapOptions()" :key="option.value" :value="option.value" :label="option.label" /></el-select>
+              <el-input-number size="small" :controls="false" aria-label="X" :model-value="Number(vehicleObject(vehicle).startX || 0)" @change="updateRecord(vehicle, 'startX', Number($event ?? 0))" />
+              <el-input-number size="small" :controls="false" aria-label="Y" :model-value="Number(vehicleObject(vehicle).startY || 0)" @change="updateRecord(vehicle, 'startY', Number($event ?? 0))" />
             </div>
           </div>
         </section>
@@ -437,15 +437,23 @@ function updateExtraRecord(value: unknown): void {
             <label v-if="hasField('title1Name')"><span>{{ databaseFieldLabel('title1Name', language) }}</span><button type="button" @click="openSimpleImage('title1Name', 'titles1')">{{ textValue('title1Name') || t('imgPicker.none') }}</button></label>
             <label v-if="hasField('title2Name')"><span>{{ databaseFieldLabel('title2Name', language) }}</span><button type="button" @click="openSimpleImage('title2Name', 'titles2')">{{ textValue('title2Name') || t('imgPicker.none') }}</button></label>
           </div>
-          <label v-if="hasField('optDrawTitle')" class="rm-check"><input type="checkbox" :checked="Boolean(readPath('optDrawTitle'))" @change="writePath('optDrawTitle', ($event.target as HTMLInputElement).checked)" />{{ databaseFieldLabel('optDrawTitle', language) }}</label>
+          <el-checkbox v-if="hasField('optDrawTitle')" class="rm-check" :model-value="Boolean(readPath('optDrawTitle'))" @change="writePath('optDrawTitle', Boolean($event))">{{ databaseFieldLabel('optDrawTitle', language) }}</el-checkbox>
           <div v-if="hasField('titleCommandWindow')" class="rm-inline-object">
             <strong>{{ databaseFieldLabel('titleCommandWindow', language) }}</strong>
             <label v-for="key in titleCommandWindowFields" :key="key">
               <span>{{ databaseFieldLabel(`titleCommandWindow.${key}`, language) }}</span>
-              <input
-                :type="typeof objectValue('titleCommandWindow')[key] === 'number' ? 'number' : 'text'"
-                :value="String(objectValue('titleCommandWindow')[key] ?? '')"
-                @input="updateTitleCommandWindowField(key, ($event.target as HTMLInputElement).value)"
+              <el-input-number
+                v-if="typeof objectValue('titleCommandWindow')[key] === 'number'"
+                size="small"
+                :controls="false"
+                :model-value="Number(objectValue('titleCommandWindow')[key] ?? 0)"
+                @change="updateTitleCommandWindowField(key, String($event ?? ''))"
+              />
+              <el-input
+                v-else
+                size="small"
+                :model-value="String(objectValue('titleCommandWindow')[key] ?? '')"
+                @update:model-value="updateTitleCommandWindowField(key, $event)"
               />
             </label>
           </div>
@@ -453,20 +461,22 @@ function updateExtraRecord(value: unknown): void {
 
         <section class="rm-document-panel">
           <h3>{{ t('db.panelBattleScreen') }}</h3>
-          <label v-if="hasField('optSideView')" class="rm-check"><input type="checkbox" :checked="Boolean(readPath('optSideView'))" @change="writePath('optSideView', ($event.target as HTMLInputElement).checked)" />{{ databaseFieldLabel('optSideView', language) }}</label>
+          <el-checkbox v-if="hasField('optSideView')" class="rm-check" :model-value="Boolean(readPath('optSideView'))" @change="writePath('optSideView', Boolean($event))">{{ databaseFieldLabel('optSideView', language) }}</el-checkbox>
         </section>
 
         <section v-if="hasField('battleSystem')" class="rm-document-panel">
           <h3>{{ t('db.document.system.battleSystem') }}</h3>
           <div class="rm-radio-list">
-            <label v-for="option in [0, 1, 2]" :key="option"><input type="radio" name="system-battle-system" :value="option" :checked="numberValue('battleSystem') === option" @change="writePath('battleSystem', option)" />{{ battleSystemLabel(option) }}</label>
+            <el-radio-group :model-value="numberValue('battleSystem')" @change="writePath('battleSystem', Number($event))">
+              <el-radio v-for="option in [0, 1, 2]" :key="option" :value="option">{{ battleSystemLabel(option) }}</el-radio>
+            </el-radio-group>
           </div>
         </section>
 
         <section v-if="optionPaths.length" class="rm-document-panel">
           <h3>{{ t('db.panelOptions') }}</h3>
           <div class="rm-check-grid">
-            <label v-for="path in optionPaths" :key="path" class="rm-check"><input type="checkbox" :checked="Boolean(readPath(path))" @change="writePath(path, ($event.target as HTMLInputElement).checked)" />{{ databaseFieldLabel(path, language) }}</label>
+            <el-checkbox v-for="path in optionPaths" :key="path" class="rm-check" :model-value="Boolean(readPath(path))" @change="writePath(path, Boolean($event))">{{ databaseFieldLabel(path, language) }}</el-checkbox>
           </div>
         </section>
       </div>
@@ -480,10 +490,10 @@ function updateExtraRecord(value: unknown): void {
               <tbody>
                 <tr v-for="row in audioRows" :key="row.key">
                   <th scope="row">{{ row.label }}</th>
-                  <td><select :value="String(row.object.name || '')" @change="updateAudio(row, 'name', ($event.target as HTMLSelectElement).value)"><option v-for="option in audioOptions(row.kind)" :key="option.value" :value="option.value">{{ option.label }}</option></select></td>
-                  <td><input type="number" :value="Number(row.object.volume ?? 90)" @input="updateAudio(row, 'volume', Number(($event.target as HTMLInputElement).value))" /></td>
-                  <td><input type="number" :value="Number(row.object.pitch ?? 100)" @input="updateAudio(row, 'pitch', Number(($event.target as HTMLInputElement).value))" /></td>
-                  <td><input type="number" :value="Number(row.object.pan ?? 0)" @input="updateAudio(row, 'pan', Number(($event.target as HTMLInputElement).value))" /></td>
+                  <td><el-select size="small" :model-value="String(row.object.name || '')" @change="updateAudio(row, 'name', String($event))"><el-option v-for="option in audioOptions(row.kind)" :key="option.value" :value="option.value" :label="option.label" /></el-select></td>
+                  <td><el-input-number size="small" :controls="false" :model-value="Number(row.object.volume ?? 90)" @change="updateAudio(row, 'volume', Number($event ?? 0))" /></td>
+                  <td><el-input-number size="small" :controls="false" :model-value="Number(row.object.pitch ?? 100)" @change="updateAudio(row, 'pitch', Number($event ?? 0))" /></td>
+                  <td><el-input-number size="small" :controls="false" :model-value="Number(row.object.pan ?? 0)" @change="updateAudio(row, 'pan', Number($event ?? 0))" /></td>
                 </tr>
               </tbody>
             </table>
@@ -498,10 +508,10 @@ function updateExtraRecord(value: unknown): void {
               <tbody>
                 <tr v-for="(sound, index) in arrayValue('sounds')" :key="`sound-${index}`">
                   <th scope="row">{{ soundLabels[index] || `SE ${index + 1}` }}</th>
-                  <td><select :value="String((sound as DbRecord).name || '')" @change="updateSound(index, 'name', ($event.target as HTMLSelectElement).value)"><option v-for="option in audioOptions('se')" :key="option.value" :value="option.value">{{ option.label }}</option></select></td>
-                  <td><input type="number" :value="Number((sound as DbRecord).volume ?? 90)" @input="updateSound(index, 'volume', Number(($event.target as HTMLInputElement).value))" /></td>
-                  <td><input type="number" :value="Number((sound as DbRecord).pitch ?? 100)" @input="updateSound(index, 'pitch', Number(($event.target as HTMLInputElement).value))" /></td>
-                  <td><input type="number" :value="Number((sound as DbRecord).pan ?? 0)" @input="updateSound(index, 'pan', Number(($event.target as HTMLInputElement).value))" /></td>
+                  <td><el-select size="small" :model-value="String((sound as DbRecord).name || '')" @change="updateSound(index, 'name', String($event))"><el-option v-for="option in audioOptions('se')" :key="option.value" :value="option.value" :label="option.label" /></el-select></td>
+                  <td><el-input-number size="small" :controls="false" :model-value="Number((sound as DbRecord).volume ?? 90)" @change="updateSound(index, 'volume', Number($event ?? 0))" /></td>
+                  <td><el-input-number size="small" :controls="false" :model-value="Number((sound as DbRecord).pitch ?? 100)" @change="updateSound(index, 'pitch', Number($event ?? 0))" /></td>
+                  <td><el-input-number size="small" :controls="false" :model-value="Number((sound as DbRecord).pan ?? 0)" @change="updateSound(index, 'pan', Number($event ?? 0))" /></td>
                 </tr>
               </tbody>
             </table>
@@ -874,7 +884,14 @@ function updateExtraRecord(value: unknown): void {
 .rm-settings-table .el-select,
 .rm-settings-table .el-input-number,
 .rm-settings-table .el-input,
-.rm-compact-fields .el-input-number {
+.rm-compact-fields .el-input-number,
+.rm-compact-fields .el-input,
+.rm-party-row .el-select,
+.rm-position-row .el-select,
+.rm-position-row .el-input-number,
+.rm-tone-grid .el-input-number,
+.rm-inline-object .el-input,
+.rm-inline-object .el-input-number {
   width: 100%;
 }
 .rm-check-grid .rm-check.el-checkbox,

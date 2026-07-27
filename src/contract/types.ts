@@ -58,6 +58,12 @@ export interface EditorMapNotes {
   maps: Record<string, { note: string }>;
 }
 
+/** Per-project product configuration stored in `<project>/.luna_rpg/config.json`. */
+export interface LunaRpgProjectConfig {
+  /** Plugin names excluded from map preview (plugins.js itself is never modified). */
+  previewDisabledPlugins?: string[];
+}
+
 export type WorkspaceSurfaceId = 'editor' | 'projectManagement' | 'mapOverview';
 
 export interface WorkspaceSurfaceVersionRequest {

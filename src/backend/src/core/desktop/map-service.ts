@@ -24,6 +24,7 @@ import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { applyBrushEdit } from '../workflow/map/map-brush-edit.ts';
 import { projectAssetUrl } from './asset-service.ts';
 import { getMapLibraryEntry, mapLibraryIndexPath } from './library-service.ts';
+import { lunaRpgDirPath, removeLunaRpgDirIfEmpty } from './project-config-service.ts';
 import { resolveMapLibraryFilePath } from './map-library-paths.ts';
 import { resolveMapLibraryPackage } from './map-library-package.ts';
 import { resolveLibraryAssetPath } from './map-library-asset-resolver.ts';
@@ -1269,15 +1270,30 @@ function copyParallaxIfAvailable(workflowRoot: string, project: string, entry: R
 // ---- Editor-only map notes (sidecar JSON) ----
 // The product's own per-map notes deliberately do NOT live inside MapXXX.json:
 // the stock RM editor rewrites map files on save and would drop custom fields.
-// They live in a product-prefixed sidecar at the project root so they travel
-// with the project and stay readable without this product installed.
-const EDITOR_MAP_NOTES_FILE = 'rpgagent-map-notes.json';
+// They live in the project's .luna_rpg folder so they travel with the project
+// and stay readable without this product installed.
+const EDITOR_MAP_NOTES_FILE = 'map-notes.json';
+// Pre-.luna_rpg sidecar at the project root; migrated on first read.
+const LEGACY_EDITOR_MAP_NOTES_FILE = 'rpgagent-map-notes.json';
 
 function editorMapNotesFilePath(project: string): string {
-  return path.join(path.resolve(project), EDITOR_MAP_NOTES_FILE);
+  return path.join(lunaRpgDirPath(project), EDITOR_MAP_NOTES_FILE);
+}
+
+function migrateLegacyEditorMapNotes(project: string): void {
+  const legacy = path.join(path.resolve(project), LEGACY_EDITOR_MAP_NOTES_FILE);
+  if (!fs.existsSync(legacy)) return;
+  const file = editorMapNotesFilePath(project);
+  if (!fs.existsSync(file)) {
+    fs.mkdirSync(lunaRpgDirPath(project), { recursive: true });
+    fs.copyFileSync(legacy, file);
+  }
+  // The .luna_rpg copy is the single source of truth from here on.
+  fs.rmSync(legacy);
 }
 
 function readEditorMapNotesFile(project: string): Record<string, { note: string }> {
+  migrateLegacyEditorMapNotes(project);
   const file = editorMapNotesFilePath(project);
   if (!fs.existsSync(file)) return {};
   // A corrupt sidecar must surface instead of being silently replaced.
@@ -1303,10 +1319,12 @@ export function setEditorMapNote(project: string, mapId: number, note: string): 
   else delete maps[String(id)];
   const file = editorMapNotesFilePath(project);
   if (Object.keys(maps).length) {
+    fs.mkdirSync(lunaRpgDirPath(project), { recursive: true });
     fs.writeFileSync(file, `${JSON.stringify({ maps }, null, 2)}\n`, 'utf8');
   } else if (fs.existsSync(file)) {
     // Keep projects clean: no notes left means no sidecar file.
     fs.rmSync(file);
+    removeLunaRpgDirIfEmpty(project);
   }
   return { project, maps };
 }

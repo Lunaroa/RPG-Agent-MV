@@ -421,6 +421,7 @@ async function loadBackendModules(roots: AppRoots) {
     assetAnnotations: await import(new URL('desktop/asset-annotation-service.ts', coreUrl).href),
     projectAssetBrowser: await import(new URL('desktop/project-asset-browser-service.ts', coreUrl).href),
     projectManagement: await import(new URL('desktop/project-management-service.ts', coreUrl).href),
+    projectConfig: await import(new URL('desktop/project-config-service.ts', coreUrl).href),
     commonEvents: await import(new URL('desktop/common-event-service.ts', coreUrl).href),
     pluginManagement: await import(new URL('desktop/plugin-management-service.ts', coreUrl).href),
     storyPages: await import(new URL('desktop/story-page-sync-service.ts', coreUrl).href),
@@ -477,14 +478,25 @@ function publishMapPreviewStatus(session: MapPreviewSession): void {
   }
 }
 
-/** Plugins the user switched off for preview (workspace settings; path-insensitive project match). */
+/**
+ * Plugins the user switched off for preview. Source of truth is the project's
+ * .luna_rpg/config.json; a legacy workspace-settings record is migrated into it
+ * (and cleared) on first read so it can never resurrect old state.
+ */
 function resolvePreviewDisabledPlugins(sourceProject?: string): string[] {
   if (!sourceProject) return [];
+  const config = desktop.projectConfig.readProjectConfig(sourceProject) as { previewDisabledPlugins?: string[] };
+  if (config.previewDisabledPlugins) return config.previewDisabledPlugins;
   const record = getWorkspaceSettings().previewDisabledPlugins || {};
   const wanted = path.resolve(sourceProject).toLowerCase();
   for (const [projectPath, names] of Object.entries(record)) {
     if (path.resolve(projectPath).toLowerCase() !== wanted) continue;
-    return Array.isArray(names) ? names.filter((name) => typeof name === 'string' && name.trim() !== '') : [];
+    const legacy = Array.isArray(names) ? names.filter((name) => typeof name === 'string' && name.trim() !== '') : [];
+    if (legacy.length) {
+      desktop.projectConfig.patchProjectConfig(sourceProject, { previewDisabledPlugins: legacy });
+      patchWorkspaceSettings({ previewDisabledPlugins: { [projectPath]: [] } });
+    }
+    return legacy;
   }
   return [];
 }
@@ -1478,6 +1490,22 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
 
   ipcMain.handle('workspace:get', () => {
     return toIpcPayload(getWorkspaceSettings());
+  });
+
+  // Per-project product config (.luna_rpg/config.json in the game project).
+  ipcMain.handle('projectConfig:get', (_event, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    return toIpcPayload({ previewDisabledPlugins: resolvePreviewDisabledPlugins(resolved) });
+  });
+  ipcMain.handle('projectConfig:setPluginPreview', (_event, pluginName: string, enabled: boolean, value?: string) => {
+    const name = String(pluginName || '').trim();
+    if (!name) throw new Error('A plugin name is required to change its preview participation.');
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    const current = new Set(resolvePreviewDisabledPlugins(resolved));
+    if (enabled) current.delete(name);
+    else current.add(name);
+    desktop.projectConfig.patchProjectConfig(resolved, { previewDisabledPlugins: [...current] });
+    return toIpcPayload({ previewDisabledPlugins: [...current] });
   });
 
   ipcMain.handle('workspace:put', (_event, body: Record<string, unknown>) => {

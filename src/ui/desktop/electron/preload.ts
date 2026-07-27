@@ -74,6 +74,12 @@ contextBridge.exposeInMainWorld('api', {
     patch: (body: unknown) => ipcRenderer.invoke('workspace:patch', body),
   },
 
+  projectConfig: {
+    get: (project?: string) => ipcRenderer.invoke('projectConfig:get', project),
+    setPluginPreview: (pluginName: string, enabled: boolean, project?: string) =>
+      ipcRenderer.invoke('projectConfig:setPluginPreview', pluginName, enabled, project),
+  },
+
   workspaceSurfaces: {
     validate: (request: unknown, project?: string) => ipcRenderer.invoke('workspaceSurfaces:validate', request, project),
   },

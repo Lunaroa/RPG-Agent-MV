@@ -184,21 +184,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return settings.value.projects?.[projectPath] || null
   }
 
-  /** Plugins excluded from map preview for a project (plugins.js itself is never modified). */
-  function readPreviewDisabledPlugins(projectPath: string): string[] {
-    return settings.value.previewDisabledPlugins?.[projectPath] || []
-  }
-
-  function setPluginPreviewEnabled(projectPath: string, pluginName: string, enabled: boolean): Promise<void> {
-    const current = new Set(readPreviewDisabledPlugins(projectPath))
-    if (enabled) {
-      current.delete(pluginName)
-    } else {
-      current.add(pluginName)
-    }
-    return patch({ previewDisabledPlugins: { [projectPath]: [...current] } })
-  }
-
   /** Whether this project may edit tileset image slots beyond stock A1-E. */
   function readExtendedTilesets(projectPath: string): boolean {
     return settings.value.extendedTilesetProjects?.[projectPath] === true
@@ -472,8 +457,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     patchComposer,
     patchProjectEditor,
     readProjectEditor,
-    readPreviewDisabledPlugins,
-    setPluginPreviewEnabled,
     readExtendedTilesets,
     setExtendedTilesets,
     patchMapOverviewPositions,

@@ -6,6 +6,7 @@ import {
   maps as mapsApi,
   plugins as pluginApi,
   projectAssets,
+  projectConfig as projectConfigApi,
   system,
   type EditorProjectCatalog,
   type ManagedPluginEntry,
@@ -118,20 +119,29 @@ const selectedPlugin = computed(() =>
   selectedItem.value?.kind === 'configured' ? selectedItem.value.plugin : null,
 );
 
-/** Map-preview participation (stored in the app DB; plugins.js is never touched). */
+/** Map-preview participation (stored in the project's .luna_rpg config; plugins.js is never touched). */
+const previewDisabledPlugins = ref<string[]>([]);
 const previewEnabledForSelected = computed(() => {
   const plugin = selectedPlugin.value;
-  const project = projectStore.currentProject;
-  if (!plugin || !plugin.name || !project) return true;
-  return !workspaceStore.readPreviewDisabledPlugins(project).includes(plugin.name);
+  if (!plugin || !plugin.name) return true;
+  return !previewDisabledPlugins.value.includes(plugin.name);
 });
+
+async function loadPreviewDisabledPlugins(project: string): Promise<void> {
+  const config = await projectConfigApi.get(project);
+  if (projectStore.currentProject !== project) return;
+  previewDisabledPlugins.value = config.previewDisabledPlugins || [];
+}
 
 async function togglePluginPreview(enabled: boolean): Promise<void> {
   const plugin = selectedPlugin.value;
   const project = projectStore.currentProject;
   if (!plugin || !plugin.name || !project) return;
   try {
-    await workspaceStore.setPluginPreviewEnabled(project, plugin.name, enabled);
+    const config = await projectConfigApi.setPluginPreview(plugin.name, enabled, project);
+    if (projectStore.currentProject === project) {
+      previewDisabledPlugins.value = config.previewDisabledPlugins || [];
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -236,6 +246,7 @@ onBeforeUnmount(() => {
 function resetState(): void {
   config.value = null;
   editorCatalog.value = null;
+  previewDisabledPlugins.value = [];
   selectedKey.value = '';
   search.value = '';
   error.value = '';
@@ -267,14 +278,15 @@ function applyConfig(next: PluginConfigurationResult): void {
 
 async function loadPlugins(): Promise<void> {
   if (!projectStore.currentProject) return;
+  const project = projectStore.currentProject;
   loading.value = true;
   loadFailed.value = false;
   error.value = '';
   actionMessage.value = '';
   try {
     const [nextConfig, catalog] = await Promise.all([
-      pluginApi.read(projectStore.currentProject),
-      projectAssets.editorCatalog(projectStore.currentProject),
+      pluginApi.read(project),
+      projectAssets.editorCatalog(project),
     ]);
     applyConfig(nextConfig);
     editorCatalog.value = catalog;
@@ -286,6 +298,12 @@ async function loadPlugins(): Promise<void> {
     updateStatusBar();
   } finally {
     loading.value = false;
+  }
+  try {
+    await loadPreviewDisabledPlugins(project);
+  } catch (configError) {
+    // A corrupt .luna_rpg config must surface without hiding the plugin list.
+    error.value = configError instanceof Error ? configError.message : String(configError);
   }
 }
 

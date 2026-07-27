@@ -7,7 +7,8 @@ import { after, describe, test } from 'node:test';
 import { listEditorMapNotes, setEditorMapNote } from './map-service.ts';
 
 const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rpgagent-map-notes-'));
-const sidecarPath = path.join(projectRoot, 'rpgagent-map-notes.json');
+const sidecarPath = path.join(projectRoot, '.luna_rpg', 'map-notes.json');
+const legacySidecarPath = path.join(projectRoot, 'rpgagent-map-notes.json');
 
 after(() => {
   fs.rmSync(projectRoot, { recursive: true, force: true });
@@ -29,7 +30,24 @@ describe('editor map notes sidecar', () => {
   test('clearing the last note removes the sidecar file entirely', () => {
     setEditorMapNote(projectRoot, 3, '   ');
     assert.equal(fs.existsSync(sidecarPath), false);
+    assert.equal(fs.existsSync(path.join(projectRoot, '.luna_rpg')), false);
     assert.deepEqual(listEditorMapNotes(projectRoot).maps, {});
+  });
+
+  test('migrates a legacy project-root sidecar into .luna_rpg on first read', () => {
+    fs.writeFileSync(legacySidecarPath, JSON.stringify({ maps: { '7': { note: 'legacy note' } } }), 'utf8');
+    assert.deepEqual(listEditorMapNotes(projectRoot).maps, { '7': { note: 'legacy note' } });
+    assert.equal(fs.existsSync(legacySidecarPath), false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(sidecarPath, 'utf8')), { maps: { '7': { note: 'legacy note' } } });
+    setEditorMapNote(projectRoot, 7, '');
+  });
+
+  test('an existing .luna_rpg sidecar wins over a stale legacy file', () => {
+    setEditorMapNote(projectRoot, 2, 'current note');
+    fs.writeFileSync(legacySidecarPath, JSON.stringify({ maps: { '2': { note: 'stale note' } } }), 'utf8');
+    assert.deepEqual(listEditorMapNotes(projectRoot).maps, { '2': { note: 'current note' } });
+    assert.equal(fs.existsSync(legacySidecarPath), false);
+    setEditorMapNote(projectRoot, 2, '');
   });
 
   test('rejects invalid map ids instead of writing junk keys', () => {
@@ -38,6 +56,7 @@ describe('editor map notes sidecar', () => {
   });
 
   test('surfaces a corrupt sidecar instead of silently replacing it', () => {
+    fs.mkdirSync(path.dirname(sidecarPath), { recursive: true });
     fs.writeFileSync(sidecarPath, '{ not json', 'utf8');
     assert.throws(() => listEditorMapNotes(projectRoot));
     assert.throws(() => setEditorMapNote(projectRoot, 1, 'x'));

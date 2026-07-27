@@ -1573,11 +1573,12 @@ function updateSound(index: number, key: string, value: unknown): void {
         >
           <!-- Stock RM animation tab keeps the playback preview on the side column. -->
           <section
-            v-if="column.key === 'side' && isClassicAnimation && loadImage"
+            v-if="group === 'Animations' && column.key === 'side'"
             class="rm-panel animation-preview-panel"
           >
             <div class="rm-panel-title">{{ t('db.panelPreview') }}</div>
             <PluginAnimationFramePreview
+              v-if="isClassicAnimation && loadImage"
               :frames="readPath('frames')"
               :catalog="catalog"
               :animation1-name="stringValue('animation1Name')"
@@ -1586,6 +1587,14 @@ function updateSound(index: number, key: string, value: unknown): void {
               :animation2-hue="numberPathValue('animation2Hue')"
               :load-image="loadImage"
             />
+            <div v-else-if="isMZParticleAnimation" class="particle-preview-launch">
+              <button
+                type="button"
+                data-ui-id="database-particle-preview"
+                :disabled="!stringValue('effectName')"
+                @click="emit('requestParticlePreview')"
+              >{{ t('db.playAnimation') }}</button>
+            </div>
           </section>
           <section
             v-for="panel in column.panels"
@@ -2427,12 +2436,6 @@ function updateSound(index: number, key: string, value: unknown): void {
                 <option value="">{{ t('imgPicker.none') }}</option>
                 <option v-for="asset in catalog?.assets.effects || []" :key="asset.fileName" :value="asset.name">{{ asset.name }}</option>
               </select>
-              <button
-                type="button"
-                data-ui-id="database-particle-preview"
-                :disabled="!stringValue(field.path)"
-                @click="emit('requestParticlePreview')"
-              >{{ t('db.previewParticle') }}</button>
             </div>
           </section>
 
@@ -3182,12 +3185,24 @@ textarea { resize: vertical; line-height: 1.45; }
 .animation-cell-row { grid-template-columns: repeat(8,minmax(64px,1fr)) auto; }
 .timing-row { grid-template-columns: 70px minmax(0,1.3fr) repeat(3,76px) 100px repeat(4,62px) 70px auto; }
 .particle-rotation-row { grid-template-columns: repeat(3, minmax(90px, 1fr)); }
-.particle-flash-row { grid-template-columns: repeat(2, minmax(84px, .8fr)) repeat(4, minmax(58px, .55fr)) auto; }
-.particle-sound-row { grid-template-columns: 84px minmax(130px, 1.4fr) repeat(3, minmax(76px, .8fr)) auto; }
+.particle-flash-row { grid-template-columns: repeat(2, minmax(0, .9fr)) repeat(4, minmax(0, .7fr)) auto; }
+.particle-sound-row { grid-template-columns: minmax(0, .8fr) minmax(0, 1.5fr) repeat(3, minmax(0, .8fr)) auto; }
+/* Timing tables live on the narrow side column; inputs must shrink instead of overflowing. */
+.particle-timing-editor input,
+.particle-timing-editor select { width: 100%; min-width: 0; }
+.animation-preview-panel .particle-preview-launch {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0;
+}
+.animation-preview-panel .particle-preview-launch button {
+  min-width: 120px;
+  padding: 8px 18px;
+}
 .particle-effect-controls {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 .particle-effect-controls select { min-width: 0; }

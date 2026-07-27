@@ -2443,6 +2443,7 @@ const enUS = {
     'db.panelMusic': 'Music',
     'db.panelParticleEffect': 'Particle Effect',
     'db.panelPreview': 'Preview',
+    'db.playAnimation': 'Play',
     'db.document.system1': 'System 1',
     'db.document.system2': 'System 2',
     'db.document.types.pageLabel': 'Types Settings',

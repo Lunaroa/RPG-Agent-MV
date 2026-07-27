@@ -2443,6 +2443,7 @@ const zhCN = {
     'db.panelMusic': '音乐',
     'db.panelParticleEffect': '粒子效果',
     'db.panelPreview': '预览',
+    'db.playAnimation': '播放',
     'db.document.system1': '系统 1',
     'db.document.system2': '系统 2',
     'db.document.types.pageLabel': '类型设置',

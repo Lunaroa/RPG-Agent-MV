@@ -13,6 +13,7 @@ import { useSettingsStore } from '../../stores/settings';
 import { useProjectStore } from '../../stores/project';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
+import { requestGlobalSearchOpen } from '../../utils/globalSearchEvents';
 
 const ui = useWorkbenchUiStore();
 const workspace = useWorkspaceStore();
@@ -104,6 +105,9 @@ const menus = computed<{ key: string; label: string; items: { key: string; label
   { key: 'edit', label: t('topbar.menu.edit'), items: [
     { key: 'undo', label: t('topbar.menu.undo'), shortcut: 'Ctrl+Z', action: () => emitEditorCommand('undo') },
     { key: 'redo', label: t('topbar.menu.redo'), shortcut: 'Ctrl+Shift+Z', action: () => emitEditorCommand('redo') },
+  ]},
+  { key: 'tools', label: t('topbar.menu.tools'), items: [
+    { key: 'global-search', label: t('topbar.menu.search'), shortcut: 'Ctrl+P', action: () => requestGlobalSearchOpen() },
   ]},
   { key: 'help', label: t('topbar.menu.help'), items: [
     { key: 'tutorial', label: t('topbar.menu.tutorial'), action: openTutorial },

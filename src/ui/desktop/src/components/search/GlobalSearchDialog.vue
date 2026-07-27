@@ -14,7 +14,8 @@ import { useI18n } from '../../i18n'
 import { useProjectStore } from '../../stores/project'
 import { GLOBAL_SEARCH_OPEN_EVENT } from '../../utils/globalSearchEvents'
 
-const ROW_HEIGHT = 52
+const HIT_ROW_HEIGHT = 56
+const HEADER_ROW_HEIGHT = 32
 const LIST_MAX_HEIGHT = 416
 const HISTORY_LIMIT = 50
 
@@ -61,15 +62,55 @@ const categoryLabels = computed<Record<GlobalSearchCategory, string>>(() => ({
 
 const building = computed(() => indexState.value?.status === 'building')
 
-const visibleWindow = computed(() => {
-  const count = Math.ceil(LIST_MAX_HEIGHT / ROW_HEIGHT) + 2
-  const start = Math.max(0, Math.floor(scrollTop.value / ROW_HEIGHT) - 1)
-  return {
-    start,
-    items: hits.value.slice(start, start + count),
-    offsetY: start * ROW_HEIGHT,
-    totalHeight: hits.value.length * ROW_HEIGHT,
+/** Hits regrouped by category (fixed order) for the sectioned, DocSearch-style list. */
+const orderedHits = computed<GlobalSearchHit[]>(() => {
+  const groups = new Map<GlobalSearchCategory, GlobalSearchHit[]>()
+  for (const hit of hits.value) {
+    const list = groups.get(hit.document.category)
+    if (list) list.push(hit)
+    else groups.set(hit.document.category, [hit])
   }
+  return ALL_CATEGORIES.flatMap((category) => groups.get(category) || [])
+})
+
+interface DisplayRow {
+  kind: 'header' | 'hit'
+  category: GlobalSearchCategory
+  hit: GlobalSearchHit | null
+  hitIndex: number
+  top: number
+  height: number
+}
+
+/** Flat render rows (section headers + hit cards) with precomputed offsets for the virtual list. */
+const displayRows = computed<DisplayRow[]>(() => {
+  const rows: DisplayRow[] = []
+  let top = 0
+  let hitIndex = 0
+  let lastCategory: GlobalSearchCategory | null = null
+  for (const hit of orderedHits.value) {
+    if (hit.document.category !== lastCategory) {
+      lastCategory = hit.document.category
+      rows.push({ kind: 'header', category: lastCategory, hit: null, hitIndex: -1, top, height: HEADER_ROW_HEIGHT })
+      top += HEADER_ROW_HEIGHT
+    }
+    rows.push({ kind: 'hit', category: hit.document.category, hit, hitIndex, top, height: HIT_ROW_HEIGHT })
+    top += HIT_ROW_HEIGHT
+    hitIndex += 1
+  }
+  return rows
+})
+
+const listTotalHeight = computed(() => {
+  const last = displayRows.value[displayRows.value.length - 1]
+  return last ? last.top + last.height : 0
+})
+
+const visibleWindow = computed(() => {
+  const viewTop = scrollTop.value - HIT_ROW_HEIGHT
+  const viewBottom = scrollTop.value + LIST_MAX_HEIGHT + HIT_ROW_HEIGHT
+  const items = displayRows.value.filter((row) => row.top + row.height >= viewTop && row.top <= viewBottom)
+  return { items, offsetY: items[0]?.top ?? 0, totalHeight: listTotalHeight.value }
 })
 
 function hitContext(hit: GlobalSearchHit): string {
@@ -173,11 +214,11 @@ function toggleCategory(category: GlobalSearchCategory): void {
 }
 
 /** Remove one result row (non-persistent; groundwork for a future replace flow). */
-function removeHit(index: number): void {
-  hits.value = hits.value.filter((_, itemIndex) => itemIndex !== index)
+function removeHit(hit: GlobalSearchHit): void {
+  hits.value = hits.value.filter((item) => item.document.id !== hit.document.id)
   total.value = Math.max(0, total.value - 1)
-  if (activeIndex.value >= hits.value.length) {
-    activeIndex.value = Math.max(0, hits.value.length - 1)
+  if (activeIndex.value >= orderedHits.value.length) {
+    activeIndex.value = Math.max(0, orderedHits.value.length - 1)
   }
 }
 
@@ -311,25 +352,28 @@ function onListScroll(event: Event): void {
 function scrollActiveIntoView(): void {
   const host = listRef.value
   if (!host) return
-  const top = activeIndex.value * ROW_HEIGHT
-  if (top < host.scrollTop) host.scrollTop = top
-  else if (top + ROW_HEIGHT > host.scrollTop + host.clientHeight) {
-    host.scrollTop = top + ROW_HEIGHT - host.clientHeight
+  const row = displayRows.value.find((item) => item.kind === 'hit' && item.hitIndex === activeIndex.value)
+  if (!row) return
+  // Keep the section header visible when the active hit is the first in its group.
+  const top = row.top - HEADER_ROW_HEIGHT
+  if (top < host.scrollTop) host.scrollTop = Math.max(0, top)
+  else if (row.top + row.height > host.scrollTop + host.clientHeight) {
+    host.scrollTop = row.top + row.height - host.clientHeight
   }
 }
 
 function onInputKeydown(event: KeyboardEvent): void {
   if (event.key === 'ArrowDown') {
     event.preventDefault()
-    if (hits.value.length) {
-      activeIndex.value = Math.min(hits.value.length - 1, activeIndex.value + 1)
+    if (orderedHits.value.length) {
+      activeIndex.value = Math.min(orderedHits.value.length - 1, activeIndex.value + 1)
       scrollActiveIntoView()
     }
     return
   }
   if (event.key === 'ArrowUp') {
     event.preventDefault()
-    if (hits.value.length) {
+    if (orderedHits.value.length) {
       activeIndex.value = Math.max(0, activeIndex.value - 1)
       scrollActiveIntoView()
     }
@@ -337,7 +381,7 @@ function onInputKeydown(event: KeyboardEvent): void {
   }
   if (event.key === 'Enter') {
     event.preventDefault()
-    const hit = hits.value[activeIndex.value]
+    const hit = orderedHits.value[activeIndex.value]
     if (hit) navigateTo(hit)
   }
 }
@@ -393,18 +437,20 @@ onUnmounted(() => {
     >
       <div class="global-search-panel" role="dialog" :aria-label="t('search.title')">
         <div class="global-search-input-row">
-          <el-icon class="global-search-icon"><Search /></el-icon>
-          <input
-            ref="inputRef"
-            v-model="query"
-            class="global-search-input"
-            data-ui-id="global-search-input"
-            type="text"
-            :placeholder="t('search.placeholder')"
-            spellcheck="false"
-            @keydown="onInputKeydown"
-          />
-          <span v-if="building" class="global-search-building">{{ t('search.building') }}</span>
+          <div class="global-search-input-box">
+            <el-icon class="global-search-icon"><Search /></el-icon>
+            <input
+              ref="inputRef"
+              v-model="query"
+              class="global-search-input"
+              data-ui-id="global-search-input"
+              type="text"
+              :placeholder="t('search.placeholder')"
+              spellcheck="false"
+              @keydown="onInputKeydown"
+            />
+            <span v-if="building" class="global-search-building">{{ t('search.building') }}</span>
+          </div>
           <el-popover v-model:visible="settingsOpen" trigger="click" width="320" placement="bottom-end">
             <template #reference>
               <button type="button" class="global-search-tool" :title="t('search.settings')">
@@ -460,29 +506,36 @@ onUnmounted(() => {
         >
           <div class="global-search-list-spacer" :style="{ height: `${visibleWindow.totalHeight}px` }">
             <div :style="{ transform: `translateY(${visibleWindow.offsetY}px)` }">
-              <div
-                v-for="(hit, windowIndex) in visibleWindow.items"
-                :key="hit.document.id"
-                class="global-search-row"
-                :class="{ active: visibleWindow.start + windowIndex === activeIndex }"
-                :data-ui-id="`global-search-hit-${hit.document.id}`"
-                @mouseenter="activeIndex = visibleWindow.start + windowIndex"
-                @click="navigateTo(hit)"
+              <template
+                v-for="row in visibleWindow.items"
+                :key="row.hit ? row.hit.document.id : `header-${row.category}`"
               >
-                <span class="global-search-row-category">{{ categoryLabels[hit.document.category] }}</span>
-                <span class="global-search-row-main">
-                  <span class="global-search-row-title">{{ hit.document.title }}</span>
-                  <span class="global-search-row-context">{{ hitContext(hit) }}</span>
-                </span>
-                <button
-                  type="button"
-                  class="global-search-row-remove"
-                  :title="t('search.removeResult')"
-                  @click.stop="removeHit(visibleWindow.start + windowIndex)"
+                <div v-if="row.kind === 'header'" class="global-search-section-title">
+                  {{ categoryLabels[row.category] }}
+                </div>
+                <div
+                  v-else-if="row.hit"
+                  class="global-search-row"
+                  :class="{ active: row.hitIndex === activeIndex }"
+                  :data-ui-id="`global-search-hit-${row.hit.document.id}`"
+                  @mouseenter="activeIndex = row.hitIndex"
+                  @click="navigateTo(row.hit)"
                 >
-                  <el-icon><Delete /></el-icon>
-                </button>
-              </div>
+                  <span class="global-search-row-main">
+                    <span class="global-search-row-title">{{ row.hit.document.title }}</span>
+                    <span class="global-search-row-context">{{ hitContext(row.hit) }}</span>
+                  </span>
+                  <button
+                    type="button"
+                    class="global-search-row-remove"
+                    :title="t('search.removeResult')"
+                    @click.stop="removeHit(row.hit)"
+                  >
+                    <el-icon><Delete /></el-icon>
+                  </button>
+                  <span class="global-search-row-enter" aria-hidden="true">↵</span>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -525,7 +578,11 @@ onUnmounted(() => {
           >
             {{ t('search.jumpBack') }}
           </button>
-          <span class="global-search-keys">{{ t('search.keysHint') }}</span>
+          <span class="global-search-keys">
+            <span class="global-search-key-group"><kbd>↵</kbd>{{ t('search.keySelect') }}</span>
+            <span class="global-search-key-group"><kbd>↓</kbd><kbd>↑</kbd>{{ t('search.keyNavigate') }}</span>
+            <span class="global-search-key-group"><kbd>esc</kbd>{{ t('search.keyClose') }}</span>
+          </span>
         </div>
       </div>
     </div>
@@ -547,8 +604,8 @@ onUnmounted(() => {
   width: min(680px, calc(100vw - 48px));
   display: flex;
   flex-direction: column;
-  border-radius: 10px;
-  background: var(--app-bg-elevated, #fff);
+  border-radius: 12px;
+  background: var(--app-bg, #f6f4f1);
   box-shadow: 0 18px 50px rgba(20, 24, 29, .35);
   overflow: hidden;
 }
@@ -556,8 +613,19 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--app-border);
+  padding: 12px 14px 8px;
+}
+.global-search-input-box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 12px;
+  border: 2px solid var(--app-accent);
+  border-radius: 8px;
+  background: var(--app-bg-elevated, #fff);
 }
 .global-search-icon {
   color: var(--app-accent);
@@ -598,8 +666,7 @@ onUnmounted(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 0 12px;
-  padding: 4px 14px;
-  border-bottom: 1px solid var(--app-border);
+  padding: 2px 14px 6px;
 }
 .global-search-exact {
   margin-left: auto;
@@ -616,23 +683,29 @@ onUnmounted(() => {
 .global-search-list-spacer {
   position: relative;
 }
+.global-search-section-title {
+  height: 32px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 14px 6px;
+  color: var(--app-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
 .global-search-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 52px;
-  padding: 0 14px;
+  height: 48px;
+  margin: 0 14px 8px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--app-bg-elevated, #fff);
+  box-shadow: 0 1px 2px rgba(20, 24, 29, .08);
   cursor: pointer;
 }
 .global-search-row.active {
-  background: var(--app-accent-soft);
-}
-.global-search-row-category {
-  flex: none;
-  width: 64px;
-  color: var(--app-ink-muted);
-  font-size: 11px;
-  font-weight: 650;
+  background: var(--app-accent);
 }
 .global-search-row-main {
   flex: 1;
@@ -656,6 +729,19 @@ onUnmounted(() => {
   color: var(--app-ink-soft);
   font-size: 11px;
 }
+.global-search-row.active .global-search-row-title,
+.global-search-row.active .global-search-row-context {
+  color: #fff;
+}
+.global-search-row-enter {
+  flex: none;
+  display: none;
+  color: #fff;
+  font-size: 14px;
+}
+.global-search-row.active .global-search-row-enter {
+  display: inline;
+}
 .global-search-row-remove {
   flex: none;
   display: none;
@@ -674,6 +760,9 @@ onUnmounted(() => {
 }
 .global-search-row-remove:hover {
   color: var(--el-color-danger);
+}
+.global-search-row.active .global-search-row-remove {
+  color: #fff;
 }
 .global-search-empty {
   margin: 0;
@@ -724,6 +813,7 @@ onUnmounted(() => {
   gap: 12px;
   padding: 8px 14px;
   border-top: 1px solid var(--app-border);
+  background: var(--app-bg-elevated, #fff);
   color: var(--app-ink-muted);
   font-size: 11px;
 }
@@ -737,6 +827,28 @@ onUnmounted(() => {
 }
 .global-search-keys {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.global-search-key-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--app-ink-muted);
+  font-size: 11px;
+}
+.global-search-key-group kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--app-bg, #f6f4f1);
+  box-shadow: 0 1px 2px rgba(20, 24, 29, .2);
+  font-family: inherit;
+  font-size: 11px;
 }
 .global-search-settings {
   display: flex;

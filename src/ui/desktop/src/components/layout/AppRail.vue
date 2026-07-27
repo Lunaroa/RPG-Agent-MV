@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Coin, Connection, Folder, Grid, MapLocation, Monitor, Setting } from '@element-plus/icons-vue'
+import { Coin, Connection, Folder, Grid, MapLocation, Monitor, Search, Setting } from '@element-plus/icons-vue'
 import { useI18n } from '../../i18n'
 import { resolveAppRailItem } from '../../utils/projectManagementRoute'
+import { requestGlobalSearchOpen } from '../../utils/globalSearchEvents'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -41,6 +42,17 @@ const activeItem = computed(() => resolveAppRailItem(route.path, route.query))
 <template>
   <aside class="app-rail" :aria-label="t('app.nav.aria')">
     <nav class="app-rail-primary">
+      <button
+        type="button"
+        class="app-rail-item app-rail-search"
+        data-ui-id="nav-global-search"
+        :title="`${t('search.title')} (Ctrl+P)`"
+        :aria-label="t('search.title')"
+        @click="requestGlobalSearchOpen"
+      >
+        <Search />
+        <span>{{ t('search.title') }}</span>
+      </button>
       <router-link
         v-for="item in items"
         :key="item.id"
@@ -137,5 +149,12 @@ const activeItem = computed(() => resolveAppRailItem(route.path, route.query))
 .app-rail-settings {
   margin-top: auto;
   margin-bottom: 8px;
+}
+
+.app-rail-search {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
 }
 </style>

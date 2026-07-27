@@ -26,6 +26,7 @@ import {
   ref,
   watch,
 } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import type { ElTree } from 'element-plus'
 import type {
   ManagedAssetRef,
@@ -194,6 +195,8 @@ type GridItem = FolderGridItem | FileGridItem
 
 const projectStore = useProjectStore()
 const workbenchUi = useWorkbenchUiStore()
+const route = useRoute()
+const router = useRouter()
 const { language, t } = useI18n()
 
 const treeRef = ref<InstanceType<typeof ElTree> | null>(null)
@@ -1530,6 +1533,33 @@ function selectCategory(categoryId: string) {
 function onTreeNodeClick(data: TreeNodeView) {
   selectCategory(data.id)
 }
+
+/** One-shot deep link (global search file hits): open the category, select the entry, then strip the params. */
+async function applyRouteAssetFocus(): Promise<void> {
+  if (route.path !== '/project-assets') return
+  const categoryId = typeof route.query.category === 'string' ? route.query.category : ''
+  const assetName = typeof route.query.entry === 'string' ? route.query.entry : ''
+  if (!categoryId) return
+  const { category: _category, entry: _entry, ...rest } = route.query
+  void router.replace({ path: '/project-assets', query: rest })
+  if (selectedCategoryId.value !== categoryId) {
+    if (!findTreeNode(treeNodes.value, categoryId)) return
+    clearAllSelection()
+    selectedCategoryId.value = categoryId
+    searchQuery.value = ''
+    syncTreeCurrentKey(categoryId)
+    await loadCategory(categoryId)
+  }
+  if (!assetName) return
+  const entryId = `${categoryId}:${assetName}`
+  const index = gridItems.value.findIndex((item) => item.kind === 'file' && item.entry.id === entryId)
+  if (index < 0) return
+  applyFileSelection(selectProjectAssetExclusive(entryId))
+  await nextTick()
+  scrollGridIndexIntoView(index)
+}
+
+watch(() => [route.query.category, route.query.entry], () => { void applyRouteAssetFocus() })
 
 function onCellClick(event: MouseEvent, item: GridItem) {
   if (suppressNextClick) {
@@ -3283,7 +3313,8 @@ onMounted(() => {
   window.addEventListener('dragover', preventWindowFileNavigation)
   window.addEventListener('drop', preventWindowFileNavigation)
   window.addEventListener('resize', onWindowResize)
-  void loadTree()
+  const routeCategory = typeof route.query.category === 'string' ? route.query.category : undefined
+  void loadTree(routeCategory).then(() => applyRouteAssetFocus())
   void refreshStagingStatus()
   void refreshFavorites()
 

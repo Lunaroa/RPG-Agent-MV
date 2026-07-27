@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { Plus, Refresh } from '@element-plus/icons-vue';
 import { ElMessageBox } from 'element-plus';
 import {
@@ -54,7 +55,12 @@ type SelectedItem =
 const projectStore = useProjectStore();
 const workbenchUi = useWorkbenchUiStore();
 const workspaceStore = useWorkspaceStore();
+const route = useRoute();
+const router = useRouter();
 const { language, t } = useI18n();
+
+/** Whether this pane's KeepAlive subtree is attached; route focus waits for a visible DOM. */
+let paneVisible = true;
 
 const config = ref<PluginConfigurationResult | null>(null);
 const editorCatalog = ref<EditorProjectCatalog | null>(null);
@@ -305,6 +311,7 @@ async function loadPlugins(): Promise<void> {
     // A corrupt .luna_rpg config must surface without hiding the plugin list.
     error.value = configError instanceof Error ? configError.message : String(configError);
   }
+  void applyRoutePluginFocus();
 }
 
 async function refreshEditorCatalog(): Promise<void> {
@@ -427,6 +434,27 @@ async function navigateToPluginReference(name: string): Promise<void> {
   row?.focus({ preventScroll: true });
   row?.scrollIntoView({ block: 'nearest' });
 }
+
+/** One-shot deep link (global search plugin hits): focus the plugin row, then strip the param. */
+async function applyRoutePluginFocus(): Promise<void> {
+  if (route.path !== '/console') return;
+  const pluginName = typeof route.query.plugin === 'string' ? route.query.plugin : '';
+  if (!pluginName || !paneVisible || loading.value || !config.value) return;
+  const { plugin: _plugin, ...rest } = route.query;
+  void router.replace({ path: '/console', query: rest });
+  await navigateToPluginReference(pluginName);
+}
+
+watch(() => route.query.plugin, () => { void applyRoutePluginFocus(); });
+
+onActivated(() => {
+  paneVisible = true;
+  void applyRoutePluginFocus();
+});
+
+onDeactivated(() => {
+  paneVisible = false;
+});
 
 function hasConfigurableParameters(plugin: ManagedPluginEntry): boolean {
   return (plugin.parameterSchema?.fields.length ?? 0) > 0;

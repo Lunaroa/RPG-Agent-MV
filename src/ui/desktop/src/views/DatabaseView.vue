@@ -430,6 +430,7 @@ function setProjectManagementActive(active: boolean): void {
     return;
   }
   selectDbGroup(dbGroupForSection(normalizeDatabaseSection(route.query.section)), false);
+  applyRouteDatabaseFocus();
   void activateProjectManagement();
 }
 
@@ -811,6 +812,22 @@ watch(() => route.query.section, (section) => {
     void router.replace({ path: '/database', query: { ...route.query, section: normalized } });
   }
 }, { immediate: true });
+
+/** One-shot deep link (global search hits): select the group, open the entry, then strip the params. */
+function applyRouteDatabaseFocus(): void {
+  if (!surfaceActive || route.path !== '/database') return;
+  const group = typeof route.query.group === 'string' ? route.query.group : '';
+  const id = Number(route.query.id);
+  if (!group || !Number.isInteger(id) || id <= 0) return;
+  selectDbGroup(group, false);
+  if (isSystemNamedGroup(group)) void openManaged(systemNamedKind(group), id);
+  else if (isCommonEventsGroup(group)) void openManaged('commonEvent', id);
+  else void openManaged('database', id, group);
+  const { group: _group, id: _id, ...rest } = route.query;
+  void router.replace({ path: '/database', query: { ...rest, section: sectionForDbGroup(group) } });
+}
+
+watch(() => [route.query.group, route.query.id], () => applyRouteDatabaseFocus());
 
 function clearDetailPanel() {
   closeDetail();

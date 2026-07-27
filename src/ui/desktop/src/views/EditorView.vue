@@ -475,6 +475,7 @@ const previewIntentCoordinator = new LatestAsyncCoordinator<EditorPreviewIntent>
 let routeEventFocusSequence = 0;
 let routeEventFocusActiveKey = '';
 let routeEventFocusHandledKey = '';
+let routeMapFocusHandledKey = '';
 const surfaceChecking = ref(false);
 let surfaceActive = false;
 let surfaceVersion = '';
@@ -1194,6 +1195,11 @@ onActivated(() => {
   surfaceActive = true;
   bindEditorSurface();
   void activateEditorSurface();
+  // Cached reactivation skips loadEditorProject, so route focus must be re-applied here.
+  if (mapTree.value.length) {
+    void applyRouteMapFocus();
+    void applyRouteEventFocus();
+  }
 });
 
 onDeactivated(() => {
@@ -1317,8 +1323,12 @@ watch(zoom, (value) => {
   workbenchUi.setEditorZoom(value);
   persistWorkspaceSelection();
 });
-watch(() => route.query.mapId, () => { if (surfaceActive) void applyPlacementFocusFromRoute(); });
-watch(() => [route.query.mapId, route.query.eventId], () => { if (surfaceActive) void applyRouteEventFocus(); });
+watch(() => [route.query.mapId, route.query.focus], () => {
+  if (!surfaceActive) return;
+  void applyPlacementFocusFromRoute();
+  void applyRouteMapFocus();
+});
+watch(() => [route.query.mapId, route.query.eventId, route.query.focus], () => { if (surfaceActive) void applyRouteEventFocus(); });
 watch(placementFocus, (focus) => {
   if (!focus) return;
   mode.value = 'event';
@@ -1544,6 +1554,22 @@ async function applyPlacementFocusFromRoute() {
   setStatus(placementStatusHint.value, 'busy');
 }
 
+/** Open the map named by the route when no event focus owns the navigation (global search map hits). */
+async function applyRouteMapFocus() {
+  const routeMapId = Number(route.query.mapId);
+  const project = projectStore.currentProject;
+  if (
+    !project
+    || route.query.eventId != null
+    || !Number.isInteger(routeMapId)
+    || routeMapId <= 0
+  ) return;
+  const key = `${project}\u0000${routeMapId}\u0000${String(route.query.focus ?? '')}`;
+  if (routeMapFocusHandledKey === key) return;
+  routeMapFocusHandledKey = key;
+  if (selectedMapId.value !== routeMapId) await loadMap(routeMapId, { quiet: true });
+}
+
 async function applyRouteEventFocus() {
   const routeMapId = Number(route.query.mapId);
   const routeEventId = Number(route.query.eventId);
@@ -1558,7 +1584,7 @@ async function applyRouteEventFocus() {
     resetRouteEventFocusGate();
     return;
   }
-  const key = `${project}\u0000${routeMapId}\u0000${routeEventId}`;
+  const key = `${project}\u0000${routeMapId}\u0000${routeEventId}\u0000${String(route.query.focus ?? '')}`;
   if (routeEventFocusActiveKey === key || routeEventFocusHandledKey === key) return;
   const sequence = ++routeEventFocusSequence;
   routeEventFocusActiveKey = key;

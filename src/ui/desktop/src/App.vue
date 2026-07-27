@@ -7,6 +7,7 @@ import en from 'element-plus/es/locale/lang/en'
 import AppRail from './components/layout/AppRail.vue'
 import TopBar from './components/layout/TopBar.vue'
 import StatusBar from './components/layout/StatusBar.vue'
+import GlobalSearchDialog from './components/search/GlobalSearchDialog.vue'
 import LanguagePicker from './components/onboarding/LanguagePicker.vue'
 import OnboardingTour from './components/onboarding/OnboardingTour.vue'
 import { useProjectStore } from './stores/project'
@@ -253,6 +254,7 @@ onUnmounted(() => {
         </main>
       </div>
       <StatusBar />
+      <GlobalSearchDialog v-if="!booting && !bootError" />
       <LanguagePicker v-if="showLanguagePicker" @chosen="onLanguageChosen" />
       <OnboardingTour v-if="!booting && !bootError && !showLanguagePicker" />
     </div>

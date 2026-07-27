@@ -235,7 +235,35 @@ const PREVIEW_FRAME_DIAGNOSTIC_SCRIPT = `(async function () {
     out.scene = scene && scene.constructor ? scene.constructor.name : null;
     out.sceneStarted = Boolean(scene && scene._started);
     out.fade = scene ? { sign: scene._fadeSign, duration: scene._fadeDuration, opacity: scene._fadeSprite ? scene._fadeSprite.opacity : null } : null;
+    var mzApp = window.Graphics && Graphics.app;
+    out.ticker = mzApp && mzApp.ticker ? { started: mzApp.ticker.started, fps: Math.round(mzApp.ticker.FPS) } : null;
+    var probeStage = scene || (mzApp && mzApp.stage) || null;
+    out.stageChildren = probeStage ? probeStage.children.map(function (child) {
+      var bitmap = child.bitmap;
+      return {
+        type: child.constructor ? child.constructor.name : 'unknown',
+        visible: child.visible,
+        alpha: child.alpha,
+        bitmap: bitmap ? { url: String(bitmap._url || bitmap.url || ''), state: bitmap._loadingState || null, width: bitmap.width, height: bitmap.height } : null,
+      };
+    }) : null;
+    out.effekseer = Boolean(window.Graphics && Graphics.effekseer);
   } catch (error) { out.sceneError = String(error); }
+  try {
+    out.frameCount = window.Graphics ? Graphics.frameCount : null;
+    var app = window.Graphics && Graphics.app;
+    out.appStage = Boolean(app && app.stage);
+    if (app && app.ticker) {
+      try {
+        app.ticker.update(performance.now());
+        out.manualTick = 'ok';
+      } catch (tickError) {
+        out.manualTick = String(tickError && (tickError.stack || tickError.message) || tickError).slice(0, 500);
+      }
+      out.frameCountAfterTick = window.Graphics ? Graphics.frameCount : null;
+    }
+  } catch (error) { out.tickProbeError = String(error); }
+  try { out.bodyText = String(document.body && document.body.innerText || '').slice(0, 400); } catch (error) { out.bodyTextError = String(error); }
   try { out.brightness = window.$gameScreen ? $gameScreen.brightness() : null; } catch (error) { out.brightnessError = String(error); }
   try { out.transferring = Boolean(window.$gamePlayer && $gamePlayer.isTransferring && $gamePlayer.isTransferring()); } catch (error) { out.transferringError = String(error); }
   try { out.imagesReady = !window.ImageManager || !ImageManager.isReady || ImageManager.isReady(); } catch (error) { out.imagesReadyError = String(error); }
@@ -244,8 +272,12 @@ const PREVIEW_FRAME_DIAGNOSTIC_SCRIPT = `(async function () {
     out.canvas = canvas ? { width: canvas.width, height: canvas.height } : null;
     var renderer = window.Graphics && (Graphics._renderer || (Graphics.app && Graphics.app.renderer));
     var gl = renderer && renderer.gl;
-    if (renderer && gl && window.SceneManager && SceneManager._scene) {
-      renderer.render(SceneManager._scene);
+    var stage = (window.SceneManager && SceneManager._scene)
+      || (window.Graphics && Graphics.app && Graphics.app.stage)
+      || (window.Graphics && Graphics._stage)
+      || null;
+    if (renderer && gl && stage) {
+      renderer.render(stage);
       var width = gl.drawingBufferWidth;
       var height = gl.drawingBufferHeight;
       var block = 32;
@@ -274,6 +306,28 @@ const PREVIEW_FRAME_DIAGNOSTIC_SCRIPT = `(async function () {
   return out;
 }())`;
 
+/** Minimal rAF sampler for the embedder main frame, to compare against the preview OOPIF. */
+const MAIN_FRAME_RAF_SCRIPT = `(function () {
+  return new Promise(function (resolve) {
+    var frames = 0;
+    var started = performance.now();
+    var settled = false;
+    function finish(timedOut) {
+      if (settled) return;
+      settled = true;
+      var elapsed = performance.now() - started;
+      resolve({ frames: frames, elapsedMs: Math.round(elapsed), fps: Math.round(frames * 1000 / Math.max(1, elapsed)), timedOut: Boolean(timedOut) });
+    }
+    function tick() {
+      frames += 1;
+      if (performance.now() - started >= 1000) finish(false);
+      else requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    setTimeout(function () { finish(true); }, 3000);
+  });
+}())`;
+
 async function readPreviewFrameDiagnostics(win: BrowserWindow, command: UiControlCommand): Promise<unknown> {
   const frame = win.webContents.mainFrame.framesInSubtree.find(
     (candidate) => candidate.url.startsWith(`${MAP_PREVIEW_SCHEME.scheme}://`),
@@ -281,7 +335,10 @@ async function readPreviewFrameDiagnostics(win: BrowserWindow, command: UiContro
   if (!frame) throw new Error('No isolated map preview frame is loaded.');
   const timeoutMs = clampNumber(command.timeoutMs, 15000, 1000, 60000);
   const diagnostics = await Promise.race([
-    frame.executeJavaScript(PREVIEW_FRAME_DIAGNOSTIC_SCRIPT, true),
+    Promise.all([
+      frame.executeJavaScript(PREVIEW_FRAME_DIAGNOSTIC_SCRIPT, true),
+      win.webContents.executeJavaScript(MAIN_FRAME_RAF_SCRIPT, true),
+    ]).then(([frameResult, mainFrameRaf]) => Object.assign({}, frameResult as Record<string, unknown>, { mainFrameRaf })),
     new Promise((_resolve, reject) => {
       setTimeout(() => reject(new Error(`Preview frame diagnostics timed out after ${timeoutMs}ms.`)), timeoutMs);
     }),

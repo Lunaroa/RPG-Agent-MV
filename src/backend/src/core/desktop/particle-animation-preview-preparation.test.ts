@@ -72,6 +72,17 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
     assert.deepEqual(fs.readFileSync(path.join(project, 'effects', 'fx', 'Spark.efkefc')), sourceEffect);
   });
 
+  test('applies MZ editor defaults for optional keys missing from third-party Animations.json', () => {
+    const validated = validatePreviewAnimation({ effectName: 'fx/Spark' } as never, 816, 624);
+    assert.equal(validated.alignBottom, false);
+    assert.equal(validated.displayType, 0);
+    assert.equal(validated.scale, 100);
+    assert.equal(validated.speed, 100);
+    assert.deepEqual(validated.rotation, { x: 0, y: 0, z: 0 });
+    assert.deepEqual(validated.flashTimings, []);
+    assert.deepEqual(validated.soundTimings, []);
+  });
+
   test('rejects unsafe resources and malformed MZ timing structures before preparation', () => {
     assert.throws(
       () => validatePreviewAnimation({ ...animation(), effectName: '../outside' }, 816, 624),

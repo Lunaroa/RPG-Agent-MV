@@ -126,6 +126,21 @@ export function prepareParticleAnimationPreview(
   }
 }
 
+// The MZ editor writes fixed defaults for these keys; Animations.json processed by
+// third-party tools often omits them entirely. Missing keys fall back to the editor
+// defaults before validation, while effectName stays required (nothing to preview without it).
+const MZ_ANIMATION_FIELD_DEFAULTS: Record<string, unknown> = {
+  displayType: 0,
+  scale: 100,
+  speed: 100,
+  offsetX: 0,
+  offsetY: 0,
+  rotation: { x: 0, y: 0, z: 0 },
+  alignBottom: false,
+  flashTimings: [],
+  soundTimings: [],
+};
+
 export function validatePreviewAnimation(
   input: InteractiveParticleAnimationPreview,
   screenWidth: number,
@@ -134,9 +149,13 @@ export function validatePreviewAnimation(
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new ParticleAnimationPreviewPreparationError('Particle animation preview data must be an object.');
   }
-  const effectName = normalizeResourceName(input.effectName, 'particle effect');
-  const rotation = requireRecord(input.rotation, 'rotation');
-  const flashTimings = requireArray(input.flashTimings, 'flashTimings').map((entry, index) => {
+  const source = { ...input } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(MZ_ANIMATION_FIELD_DEFAULTS)) {
+    if (source[key] === undefined) source[key] = structuredClone(value);
+  }
+  const effectName = normalizeResourceName(source.effectName, 'particle effect');
+  const rotation = requireRecord(source.rotation, 'rotation');
+  const flashTimings = requireArray(source.flashTimings, 'flashTimings').map((entry, index) => {
     const timing = requireRecord(entry, `flashTimings[${index}]`);
     const color = requireArray(timing.color, `flashTimings[${index}].color`);
     if (color.length !== 4) {
@@ -153,7 +172,7 @@ export function validatePreviewAnimation(
       )),
     };
   });
-  const soundTimings = requireArray(input.soundTimings, 'soundTimings').map((entry, index) => {
+  const soundTimings = requireArray(source.soundTimings, 'soundTimings').map((entry, index) => {
     const timing = requireRecord(entry, `soundTimings[${index}]`);
     const se = requireRecord(timing.se, `soundTimings[${index}].se`);
     return {
@@ -167,18 +186,18 @@ export function validatePreviewAnimation(
     };
   });
   return {
-    displayType: requireInteger(input.displayType, 0, 2, 'displayType'),
+    displayType: requireInteger(source.displayType, 0, 2, 'displayType'),
     effectName,
-    scale: requireInteger(input.scale, 1, 1000, 'scale'),
-    speed: requireInteger(input.speed, 1, 1000, 'speed'),
-    offsetX: requireInteger(input.offsetX, -screenWidth, screenWidth, 'offsetX'),
-    offsetY: requireInteger(input.offsetY, -screenHeight, screenHeight, 'offsetY'),
+    scale: requireInteger(source.scale, 1, 1000, 'scale'),
+    speed: requireInteger(source.speed, 1, 1000, 'speed'),
+    offsetX: requireInteger(source.offsetX, -screenWidth, screenWidth, 'offsetX'),
+    offsetY: requireInteger(source.offsetY, -screenHeight, screenHeight, 'offsetY'),
     rotation: {
       x: requireInteger(rotation.x, -360, 360, 'rotation.x'),
       y: requireInteger(rotation.y, -360, 360, 'rotation.y'),
       z: requireInteger(rotation.z, -360, 360, 'rotation.z'),
     },
-    alignBottom: requireBoolean(input.alignBottom, 'alignBottom'),
+    alignBottom: requireBoolean(source.alignBottom, 'alignBottom'),
     flashTimings,
     soundTimings,
   };

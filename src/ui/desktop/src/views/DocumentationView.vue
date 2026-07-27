@@ -3,7 +3,7 @@
     <header class="documentation-toolbar">
       <button type="button" :disabled="historyIndex <= 0" :title="label.back" @click="goHistory(-1)">←</button>
       <button type="button" :disabled="historyIndex >= history.length - 1" :title="label.forward" @click="goHistory(1)">→</button>
-      <strong>RPG Agent MV</strong><span>{{ label.documentation }}</span>
+      <strong>Luna RPG Agent</strong><span>{{ label.documentation }}</span>
     </header>
     <div class="documentation-layout">
       <nav :aria-label="label.contents">

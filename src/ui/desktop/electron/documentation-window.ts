@@ -99,7 +99,7 @@ async function openDocumentationWindow(rawLanguage: ProductLanguage): Promise<{ 
     minHeight: 500,
     show: false,
     backgroundColor: '#f7f5f1',
-    title: 'RPG Agent MV Documentation',
+    title: 'Luna RPG Agent Documentation',
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

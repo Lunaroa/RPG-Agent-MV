@@ -1,4 +1,4 @@
-export const PRODUCT_WINDOW_TITLE = 'RPG Agent MV';
+export const PRODUCT_WINDOW_TITLE = 'Luna RPG Agent';
 
 export function projectWindowTitle(projectName: string | null | undefined): string {
   const normalizedName = typeof projectName === 'string' ? projectName.trim() : '';

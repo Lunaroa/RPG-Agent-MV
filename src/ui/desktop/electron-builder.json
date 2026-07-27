@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "dev.rpg-agent-mv.desktop",
-  "productName": "RPG Agent MV",
+  "productName": "Luna RPG Agent",
   "asar": false,
   "electronDist": "node_modules/electron/dist",
   "npmRebuild": false,
@@ -120,7 +120,7 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "RPG Agent MV",
+    "shortcutName": "Luna RPG Agent",
     "include": "build/installer.nsh",
     "removeDefaultUninstallWelcomePage": true,
     "differentialPackage": true

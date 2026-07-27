@@ -13,8 +13,8 @@ describe('desktop project window title', () => {
   });
 
   test('combines the selected project name with the product title', () => {
-    assert.equal(projectWindowTitle('Sample Project'), 'Sample Project - RPG Agent MV');
-    assert.equal(projectWindowTitle('  Example Game  '), 'Example Game - RPG Agent MV');
+    assert.equal(projectWindowTitle('Sample Project'), 'Sample Project - Luna RPG Agent');
+    assert.equal(projectWindowTitle('  Example Game  '), 'Example Game - Luna RPG Agent');
   });
 
   test('wires the current project identity to the document title', () => {

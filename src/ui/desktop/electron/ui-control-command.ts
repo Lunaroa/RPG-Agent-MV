@@ -11,7 +11,8 @@ export type UiControlCommandType =
   | 'input'
   | 'key'
   | 'read'
-  | 'wait';
+  | 'wait'
+  | 'frame-read';
 
 export type UiControlWaitCondition = 'present' | 'visible' | 'hidden' | 'enabled' | 'disabled' | 'text' | 'value';
 
@@ -61,6 +62,7 @@ const ALLOWED_COMMAND_TYPES = new Set<UiControlCommandType>([
   'key',
   'read',
   'wait',
+  'frame-read',
 ]);
 
 const ALLOWED_WAIT_CONDITIONS = new Set<UiControlWaitCondition>([

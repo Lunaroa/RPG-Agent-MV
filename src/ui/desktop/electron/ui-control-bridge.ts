@@ -4,6 +4,7 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { assertBackgroundWindowState, captureBackgroundPage } from './ui-control-background.js';
+import { MAP_PREVIEW_SCHEME } from './map-preview-protocol-policy.js';
 import { normalizeUiControlCommand, type UiControlCommand } from './ui-control-command.js';
 import { UI_CONTROL_WINDOW_MODE, isBackgroundUiControlMode } from './ui-control-mode.js';
 import { acquireUiControlServerLock, prepareUiControlServerInfo } from './ui-control-server-state.js';
@@ -161,7 +162,9 @@ async function runUiControlCommand(command: UiControlCommand): Promise<Record<st
   let rendererResult: unknown = null;
   let commandError: string | null = null;
   try {
-    rendererResult = await sendRendererCommand(win, command.type === 'capture-current' ? { ...command, type: 'state' } : command);
+    rendererResult = command.type === 'frame-read'
+      ? await readPreviewFrameDiagnostics(win, command)
+      : await sendRendererCommand(win, command.type === 'capture-current' ? { ...command, type: 'state' } : command);
   } catch (error) {
     if (error instanceof RendererCommandError) rendererResult = error.result;
     commandError = error instanceof Error ? error.message : String(error);
@@ -204,6 +207,86 @@ function registerRendererResultListener(): void {
   if (rendererResultListenerRegistered) return;
   ipcMain.on('ui-control:renderer-result', onRendererResult);
   rendererResultListenerRegistered = true;
+}
+
+/** Fixed, read-only diagnostics executed inside the isolated preview frame; no caller-supplied code. */
+const PREVIEW_FRAME_DIAGNOSTIC_SCRIPT = `(async function () {
+  var out = { url: String(location.href), visibility: document.visibilityState, hasFocus: document.hasFocus() };
+  out.raf = await new Promise(function (resolve) {
+    var frames = 0;
+    var started = performance.now();
+    var settled = false;
+    function finish(timedOut) {
+      if (settled) return;
+      settled = true;
+      var elapsed = performance.now() - started;
+      resolve({ frames: frames, elapsedMs: Math.round(elapsed), fps: Math.round(frames * 1000 / Math.max(1, elapsed)), timedOut: Boolean(timedOut) });
+    }
+    function tick() {
+      frames += 1;
+      if (performance.now() - started >= 1000) finish(false);
+      else requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    setTimeout(function () { finish(true); }, 3000);
+  });
+  try {
+    var scene = window.SceneManager && SceneManager._scene;
+    out.scene = scene && scene.constructor ? scene.constructor.name : null;
+    out.sceneStarted = Boolean(scene && scene._started);
+    out.fade = scene ? { sign: scene._fadeSign, duration: scene._fadeDuration, opacity: scene._fadeSprite ? scene._fadeSprite.opacity : null } : null;
+  } catch (error) { out.sceneError = String(error); }
+  try { out.brightness = window.$gameScreen ? $gameScreen.brightness() : null; } catch (error) { out.brightnessError = String(error); }
+  try { out.transferring = Boolean(window.$gamePlayer && $gamePlayer.isTransferring && $gamePlayer.isTransferring()); } catch (error) { out.transferringError = String(error); }
+  try { out.imagesReady = !window.ImageManager || !ImageManager.isReady || ImageManager.isReady(); } catch (error) { out.imagesReadyError = String(error); }
+  try {
+    var canvas = document.querySelector('canvas');
+    out.canvas = canvas ? { width: canvas.width, height: canvas.height } : null;
+    var renderer = window.Graphics && (Graphics._renderer || (Graphics.app && Graphics.app.renderer));
+    var gl = renderer && renderer.gl;
+    if (renderer && gl && window.SceneManager && SceneManager._scene) {
+      renderer.render(SceneManager._scene);
+      var width = gl.drawingBufferWidth;
+      var height = gl.drawingBufferHeight;
+      var block = 32;
+      var spots = [
+        ['center', Math.max(0, ((width - block) / 2) | 0), Math.max(0, ((height - block) / 2) | 0)],
+        ['q1', Math.max(0, ((width / 4) | 0) - block), Math.max(0, ((height / 4) | 0) - block)],
+        ['q3', Math.min(width - block, ((width * 3 / 4) | 0)), Math.min(height - block, ((height * 3 / 4) | 0))],
+      ];
+      var pixels = {};
+      for (var i = 0; i < spots.length; i += 1) {
+        var buffer = new Uint8Array(4 * block * block);
+        gl.readPixels(spots[i][1], spots[i][2], block, block, gl.RGBA, gl.UNSIGNED_BYTE, buffer);
+        var sum = 0;
+        var nonBlack = 0;
+        var total = block * block;
+        for (var p = 0; p < total; p += 1) {
+          var value = buffer[p * 4] + buffer[p * 4 + 1] + buffer[p * 4 + 2];
+          sum += value;
+          if (value > 24) nonBlack += 1;
+        }
+        pixels[spots[i][0]] = { meanBrightness: Math.round(sum / (total * 3)), nonBlackRatio: Math.round(nonBlack * 1000 / total) / 1000 };
+      }
+      out.pixels = pixels;
+    }
+  } catch (error) { out.pixelsError = String(error); }
+  return out;
+}())`;
+
+async function readPreviewFrameDiagnostics(win: BrowserWindow, command: UiControlCommand): Promise<unknown> {
+  const frame = win.webContents.mainFrame.framesInSubtree.find(
+    (candidate) => candidate.url.startsWith(`${MAP_PREVIEW_SCHEME.scheme}://`),
+  );
+  if (!frame) throw new Error('No isolated map preview frame is loaded.');
+  const timeoutMs = clampNumber(command.timeoutMs, 15000, 1000, 60000);
+  const diagnostics = await Promise.race([
+    frame.executeJavaScript(PREVIEW_FRAME_DIAGNOSTIC_SCRIPT, true),
+    new Promise((_resolve, reject) => {
+      setTimeout(() => reject(new Error(`Preview frame diagnostics timed out after ${timeoutMs}ms.`)), timeoutMs);
+    }),
+  ]);
+  return { frameUrl: frame.url, frameProcessId: frame.processId, diagnostics };
 }
 
 function onRendererResult(_event: Electron.IpcMainEvent, envelope: RendererEnvelope): void {

@@ -60,6 +60,20 @@
         <small v-if="items.length > 1">{{ currentIndex + 1 }}/{{ items.length }}</small>
       </span>
 
+      <AudioWaveformSeek
+        v-if="!loadFailed"
+        class="bar-waveform"
+        :peaks="waveformPeaks"
+        :current-time="currentTime"
+        :duration="duration"
+        :disabled="!canSeek"
+        :aria-label="t('projectAssets.playerSeek')"
+        @seek="seekTo"
+      />
+      <p v-else class="bar-error" role="alert">
+        {{ t('projectAssets.playerLoadFailed') }}
+      </p>
+
       <span class="bar-clock" aria-live="off">
         {{ formatPluginAudioClock(currentTime) }}
         <span class="bar-clock-sep">/</span>
@@ -107,20 +121,6 @@
         @input="onVolumeInput"
       />
     </div>
-
-    <AudioWaveformSeek
-      class="bar-waveform"
-      :peaks="waveformPeaks"
-      :current-time="currentTime"
-      :duration="duration"
-      :disabled="!canSeek || loadFailed"
-      :aria-label="t('projectAssets.playerSeek')"
-      @seek="seekTo"
-    />
-
-    <p v-if="loadFailed" class="bar-error" role="alert">
-      {{ t('projectAssets.playerLoadFailed') }}
-    </p>
   </div>
 </template>
 
@@ -345,11 +345,8 @@ onUnmounted(() => {
 
 <style scoped>
 .assets-audio-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  min-height: 72px;
-  padding: 7px 10px;
+  /* Single-row player: controls, waveform and volume share one line. */
+  padding: 6px 10px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-elevated);
@@ -398,7 +395,8 @@ onUnmounted(() => {
 }
 
 .bar-title {
-  min-width: 80px;
+  flex: none;
+  min-width: 60px;
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -431,11 +429,18 @@ onUnmounted(() => {
 }
 
 .bar-waveform {
-  height: 46px;
+  flex: 1;
+  min-width: 0;
+  height: 26px;
 }
 
 .bar-error {
+  flex: 1;
+  min-width: 0;
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--app-danger);
   font-size: 12px;
 }

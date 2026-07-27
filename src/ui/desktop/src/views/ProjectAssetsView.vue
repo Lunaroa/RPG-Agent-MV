@@ -53,6 +53,7 @@ import {
 import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'
 import AssetFontPreview from '../components/AssetFontPreview.vue'
 import AssetGridFontThumb from '../components/AssetGridFontThumb.vue'
+import AssetGridVideoThumb from '../components/AssetGridVideoThumb.vue'
 import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
 import ProjectAssetsAudioBar, { type AssetsAudioBarItem } from '../components/ProjectAssetsAudioBar.vue'
 import PluginFileFolderThumb from '../components/editor/PluginFileFolderThumb.vue'
@@ -1015,9 +1016,13 @@ function typeIconSizePx(size: number): number {
   return Math.max(20, Math.min(96, Math.round(size * 0.45)))
 }
 
-/** Only fonts get in-cell content previews (Windows Fonts folder). Audio/effects use icons. */
+/** Fonts and movies get in-cell content previews; both arm lazily like image thumbnails. */
 function usesArmedFontThumb(categoryId: string): boolean {
   return projectAssetMediaKind(categoryId) === 'font'
+}
+
+function usesArmedVideoThumb(categoryId: string): boolean {
+  return categoryId === 'movies'
 }
 
 function cellUsesIconFallback(entry: ProjectAssetBrowseEntry): boolean {
@@ -1027,7 +1032,7 @@ function cellUsesIconFallback(entry: ProjectAssetBrowseEntry): boolean {
   if (isProjectAssetImageCategory(categoryId)) {
     return !entry.thumbnailUrl
   }
-  if (usesArmedFontThumb(categoryId)) {
+  if (usesArmedFontThumb(categoryId) || usesArmedVideoThumb(categoryId)) {
     return !entry.url || !armedThumbnailIds.value.has(entry.id)
   }
   return true
@@ -1446,6 +1451,83 @@ function onCellKeydown(event: KeyboardEvent, item: GridItem) {
   // Prevent native button activation on Enter. Folders enter here; files bubble to the grid host.
   event.preventDefault()
   if (item.kind === 'folder') onCellDoubleClick(item)
+}
+
+/** Index of the keyboard focus inside gridItems: selected folder tile or the file selection anchor. */
+function currentGridFocusIndex(): number {
+  const items = gridItems.value
+  if (selectedFolderId.value) {
+    const index = items.findIndex((item) => item.kind === 'folder' && item.id === selectedFolderId.value)
+    if (index >= 0) return index
+  }
+  const anchor = selection.value.anchorId
+  if (anchor) {
+    const index = items.findIndex((item) => item.kind === 'file' && item.entry.id === anchor)
+    if (index >= 0) return index
+  }
+  return -1
+}
+
+function selectGridItemAt(index: number): void {
+  const item = gridItems.value[index]
+  if (!item) return
+  if (item.kind === 'folder') {
+    clearFileSelection()
+    selectedFolderId.value = item.id
+  } else {
+    applyFileSelection(selectProjectAssetExclusive(item.entry.id))
+  }
+  scrollGridIndexIntoView(index)
+}
+
+/** Keep the keyboard-focused item visible. Icon cells are virtualized, so scroll by layout math, not DOM. */
+function scrollGridIndexIntoView(index: number): void {
+  const host = gridHost.value
+  if (!host) return
+  if (showIconGrid.value) {
+    const columnCount = Math.max(1, gridWindow.value.columnCount)
+    const row = Math.floor(index / columnCount)
+    const top = GRID_INSET + row * (cellHeight.value + CELL_GAP)
+    const bottom = top + cellHeight.value
+    if (top < host.scrollTop + GRID_INSET) {
+      host.scrollTop = Math.max(0, top - GRID_INSET)
+    } else if (bottom > host.scrollTop + host.clientHeight - GRID_INSET) {
+      host.scrollTop = bottom + GRID_INSET - host.clientHeight
+    }
+    return
+  }
+  // Details rows are plain DOM; let the browser scroll the selected row into view.
+  void nextTick(() => {
+    host.querySelector('.project-assets-details-row.selected')?.scrollIntoView({ block: 'nearest' })
+  })
+}
+
+function onGridArrowNavigation(event: KeyboardEvent): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false
+  const key = event.key
+  if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key)) return false
+  const items = gridItems.value
+  if (!items.length) return false
+  event.preventDefault()
+  const columnCount = showIconGrid.value ? Math.max(1, gridWindow.value.columnCount) : 1
+  const current = currentGridFocusIndex()
+  let next: number
+  if (key === 'Home') {
+    next = 0
+  } else if (key === 'End') {
+    next = items.length - 1
+  } else if (current < 0) {
+    next = 0
+  } else {
+    const delta = key === 'ArrowLeft' ? -1
+      : key === 'ArrowRight' ? 1
+        : key === 'ArrowUp' ? -columnCount : columnCount
+    next = current + delta
+    // Explorer-like: stepping past an edge keeps the current focus.
+    if (next < 0 || next >= items.length) return true
+  }
+  selectGridItemAt(next)
+  return true
 }
 
 function onThumbnailError(entryId: string) {
@@ -2198,6 +2280,7 @@ function onGridPointerCancel(event: PointerEvent) {
 function onGridKeydown(event: KeyboardEvent) {
   if (isTypingTarget(event.target)) return
   if (previewVisible.value) return
+  if (onGridArrowNavigation(event)) return
   if (isGroupSelection.value) {
     if (event.key === 'Escape') {
       event.preventDefault()
@@ -2258,6 +2341,11 @@ function onGridKeydown(event: KeyboardEvent) {
     return
   }
   if (event.key === 'Enter' && !ctrl && !event.shiftKey && !event.altKey) {
+    if (selectedFolderId.value) {
+      event.preventDefault()
+      selectCategory(selectedFolderId.value)
+      return
+    }
     if (singleSelectedFile.value) {
       event.preventDefault()
       if (isAudioEntry(singleSelectedFile.value)) {
@@ -2625,18 +2713,24 @@ async function renameSelectedEntry() {
   const target = entry ? entryMutationTarget(entry) : null
   if (!entry || !target || !projectStore.currentProject || mutationBusy.value) return
   closeContextMenu()
+  // entry.name is the logical name and may carry an MZ picture subfolder
+  // prefix (`ui/foo`). Users rename the leaf only; the prefix is restored on
+  // submit so the file stays in its folder.
+  const slash = entry.name.lastIndexOf('/')
+  const namePrefix = slash >= 0 ? entry.name.slice(0, slash + 1) : ''
   let nextName = ''
   try {
     const response = await ElMessageBox.prompt(
       t('projectAssets.renamePrompt'),
       t('projectAssets.renameTitle'),
       {
-        inputValue: entry.name,
+        inputValue: entry.name.slice(slash + 1),
         inputPattern: /^[^<>:"/\\|?*\u0000-\u001f]+$/,
         inputErrorMessage: t('projectAssets.nameInvalid'),
       },
     )
-    nextName = String(response.value || '').trim()
+    const leaf = String(response.value || '').trim()
+    nextName = leaf ? `${namePrefix}${leaf}` : ''
   } catch {
     return
   }
@@ -3459,8 +3553,16 @@ watch(gridHost, (el, previous) => {
                     :sample-text="t('projectAssets.fontPreviewSample')"
                     @error="onThumbnailError(cell.item.entry.id)"
                   />
+                  <AssetGridVideoThumb
+                    v-else-if="usesArmedVideoThumb(entryCategoryId(cell.item.entry))
+                      && cell.item.entry.url
+                      && armedThumbnailIds.has(cell.item.entry.id)"
+                    :src="cell.item.entry.url"
+                    :alt="cell.item.entry.name"
+                    @error="onThumbnailError(cell.item.entry.id)"
+                  />
                   <template
-                    v-else-if="usesArmedFontThumb(entryCategoryId(cell.item.entry))
+                    v-else-if="(usesArmedFontThumb(entryCategoryId(cell.item.entry)) || usesArmedVideoThumb(entryCategoryId(cell.item.entry)))
                       && cell.item.entry.url
                       && !armedThumbnailIds.has(cell.item.entry.id)"
                   />
@@ -3897,7 +3999,12 @@ watch(gridHost, (el, previous) => {
   width: 100%;
   max-height: 180px;
   margin: 12px 0 0;
+  padding: 8px 10px;
   overflow-y: auto;
+  box-sizing: border-box;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-sunken);
   color: var(--app-ink-soft);
   font-size: 12px;
   line-height: 1.55;

@@ -250,7 +250,7 @@
 
     <teleport to="body">
       <div v-if="mode !== 'preview' && treeContext.visible" class="ctx-mask" @mousedown.self="closeTreeContext" @contextmenu.prevent="closeTreeContext">
-        <ul class="ctx-menu" :style="{ left: `${treeContext.x}px`, top: `${treeContext.y}px` }">
+        <ul ref="treeMenuEl" class="ctx-menu" :style="{ left: `${treeContext.x}px`, top: `${treeContext.y}px` }">
           <li @click="ctxEditProperties">{{ t('editor.ctx.editProperties') }}</li>
           <li @click="ctxNewMapUnder">{{ t('editor.ctx.newMapUnder') }}</li>
           <li @click="ctxOpenNotes">{{ t('editor.ctx.notes') }}</li>
@@ -267,7 +267,7 @@
 
     <teleport to="body">
       <div v-if="mode !== 'preview' && canvasContext.visible" class="ctx-mask" @mousedown.self="closeCanvasContext" @contextmenu.prevent="closeCanvasContext">
-        <ul class="ctx-menu canvas-menu" :style="{ left: `${canvasContext.x}px`, top: `${canvasContext.y}px` }">
+        <ul ref="canvasMenuEl" class="ctx-menu canvas-menu" :style="{ left: `${canvasContext.x}px`, top: `${canvasContext.y}px` }">
           <li :class="{ disabled: canvasContext.eventId == null }" @click="ctxEditEvent">{{ t('editor.ctx.edit') }}<span class="ctx-shortcut">Enter</span></li>
           <li :class="{ disabled: canvasContext.eventId != null }" @click="ctxNewEvent">{{ t('editor.ctx.new') }}</li>
           <li class="ctx-sep" />
@@ -449,6 +449,8 @@ const eventClipboard = ref<{ eventId: number; data: MvEditorEvent } | null>(null
 const quickCreateHover = ref(false);
 const treeContext = reactive({ visible: false, x: 0, y: 0, mapId: 0 });
 const canvasContext = reactive({ visible: false, x: 0, y: 0, cellX: 0, cellY: 0, eventId: null as number | null });
+const treeMenuEl = ref<HTMLElement | null>(null);
+const canvasMenuEl = ref<HTMLElement | null>(null);
 // Per-map notes dialog opened from the map tree context menu.
 const notesDialog = reactive({ open: false, saving: false, mapId: 0, mapName: '', mapNote: '', editorNote: '' });
 const systemData = ref<{ switches: string[]; variables: string[] } | null>(null);
@@ -2267,8 +2269,20 @@ async function discardOneMap(mapId: number) {
 function onTreeContextMenu(event: MouseEvent, node: TreeNode) {
   event.preventDefault();
   Object.assign(treeContext, { visible: true, x: event.clientX, y: event.clientY, mapId: node.id });
+  void clampContextMenu(treeContext, treeMenuEl);
 }
 function closeTreeContext() { treeContext.visible = false; }
+
+// Fixed-position context menus open at the cursor; near screen edges the menu
+// would otherwise extend past the viewport and hide its bottom entries.
+async function clampContextMenu(context: { x: number; y: number }, menuEl: { value: HTMLElement | null }) {
+  await nextTick();
+  const el = menuEl.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  context.x = Math.max(8, Math.min(context.x, window.innerWidth - rect.width - 8));
+  context.y = Math.max(8, Math.min(context.y, window.innerHeight - rect.height - 8));
+}
 
 async function ctxOpenNotes() {
   const id = treeContext.mapId;
@@ -2338,6 +2352,7 @@ function onCanvasContextMenu(event: MouseEvent) {
   const cell = canvasCell(event);
   if (!cell) return;
   Object.assign(canvasContext, { visible: true, x: event.clientX, y: event.clientY, cellX: cell.x, cellY: cell.y, eventId: eventAtCell(cell.x, cell.y)?.id ?? null });
+  void clampContextMenu(canvasContext, canvasMenuEl);
 }
 function closeCanvasContext() { canvasContext.visible = false; quickCreateHover.value = false; }
 function ctxNewEvent() { openNewEventAt(canvasContext.cellX, canvasContext.cellY); closeCanvasContext(); }

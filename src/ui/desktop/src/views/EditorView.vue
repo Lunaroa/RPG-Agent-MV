@@ -158,14 +158,10 @@
           :mode="mode"
           :catalog="editorCatalog"
           :current-map-id="selectedMapId"
-          :current-map-note="currentMapNote"
-          :current-editor-note="currentEditorMapNote"
           @select="onPlacementSelect"
           @place="onPlacementPlace"
           @reject="onPlacementReject"
           @back-chat="goBackToChatPlacement"
-          @save-note="saveMapNote"
-          @save-editor-note="saveEditorMapNote"
         />
         <PreviewConsolePanel
           v-if="mode === 'preview'"
@@ -231,11 +227,33 @@
     />
     <QuickObtainEventDialog ref="quickObtainDialog" :catalog="editorCatalog" @commit="createObtainEvent" />
 
+    <el-dialog
+      v-model="notesDialog.open"
+      :title="t('editor.notes.title', { name: notesDialog.mapName })"
+      width="560px"
+    >
+      <div class="notes-dialog-body">
+        <label class="notes-dialog-field">
+          <span>{{ t('editor.notes.mapNote') }}</span>
+          <el-input v-model="notesDialog.mapNote" type="textarea" :rows="6" :placeholder="t('editor.notes.mapNotePlaceholder')" />
+        </label>
+        <label class="notes-dialog-field">
+          <span>{{ t('editor.notes.editorNote') }}</span>
+          <el-input v-model="notesDialog.editorNote" type="textarea" :rows="6" :placeholder="t('editor.notes.editorNotePlaceholder')" />
+        </label>
+      </div>
+      <template #footer>
+        <el-button @click="notesDialog.open = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="notesDialog.saving" @click="saveNotesDialog">{{ t('editor.notes.save') }}</el-button>
+      </template>
+    </el-dialog>
+
     <teleport to="body">
       <div v-if="mode !== 'preview' && treeContext.visible" class="ctx-mask" @mousedown.self="closeTreeContext" @contextmenu.prevent="closeTreeContext">
         <ul class="ctx-menu" :style="{ left: `${treeContext.x}px`, top: `${treeContext.y}px` }">
           <li @click="ctxEditProperties">{{ t('editor.ctx.editProperties') }}</li>
           <li @click="ctxNewMapUnder">{{ t('editor.ctx.newMapUnder') }}</li>
+          <li @click="ctxOpenNotes">{{ t('editor.ctx.notes') }}</li>
           <li class="ctx-sep" />
           <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxApplyMap">{{ t('editor.ctx.applyMapStaging') }}</li>
           <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxDiscardMap">{{ t('editor.ctx.discardMapStaging') }}</li>
@@ -431,6 +449,8 @@ const eventClipboard = ref<{ eventId: number; data: MvEditorEvent } | null>(null
 const quickCreateHover = ref(false);
 const treeContext = reactive({ visible: false, x: 0, y: 0, mapId: 0 });
 const canvasContext = reactive({ visible: false, x: 0, y: 0, cellX: 0, cellY: 0, eventId: null as number | null });
+// Per-map notes dialog opened from the map tree context menu.
+const notesDialog = reactive({ open: false, saving: false, mapId: 0, mapName: '', mapNote: '', editorNote: '' });
 const systemData = ref<{ switches: string[]; variables: string[] } | null>(null);
 const editorCatalog = ref<EditorProjectCatalog | null>(null);
 const currentTilesetImages = shallowRef<(HTMLImageElement | null)[]>([]);
@@ -2244,8 +2264,39 @@ async function discardOneMap(mapId: number) {
   finally { busy.value = false; }
 }
 
-function onTreeContextMenu(event: MouseEvent, node: TreeNode) { event.preventDefault(); Object.assign(treeContext, { visible: true, x: event.clientX, y: event.clientY, mapId: node.id }); }
+function onTreeContextMenu(event: MouseEvent, node: TreeNode) {
+  event.preventDefault();
+  Object.assign(treeContext, { visible: true, x: event.clientX, y: event.clientY, mapId: node.id });
+}
 function closeTreeContext() { treeContext.visible = false; }
+
+async function ctxOpenNotes() {
+  const id = treeContext.mapId;
+  closeTreeContext();
+  if (selectedMapId.value !== id && await loadMap(id) !== 'committed') return;
+  Object.assign(notesDialog, {
+    open: true,
+    saving: false,
+    mapId: id,
+    mapName: currentMapName.value,
+    mapNote: currentMapNote.value,
+    editorNote: currentEditorMapNote.value,
+  });
+}
+
+async function saveNotesDialog() {
+  const id = notesDialog.mapId;
+  notesDialog.saving = true;
+  try {
+    if (notesDialog.mapNote !== currentMapNote.value) await saveMapNote(id, notesDialog.mapNote);
+    const savedEditorNote = editorMapNotes.value[String(id)]?.note || '';
+    if (notesDialog.editorNote !== savedEditorNote) await saveEditorMapNote(id, notesDialog.editorNote);
+    notesDialog.open = false;
+  } finally {
+    notesDialog.saving = false;
+  }
+}
+
 async function ctxEditProperties() { const id = treeContext.mapId; closeTreeContext(); await openEditProperties(id); }
 function ctxNewMapUnder() { const id = treeContext.mapId; closeTreeContext(); openCreateProperties(id); }
 function ctxCopyMap() { mapClipboard.value = treeContext.mapId; setStatus(t('editor.map.copied', { mapId: treeContext.mapId }), 'saved'); closeTreeContext(); }
@@ -2617,6 +2668,9 @@ function clearCurrentMap() {
 .ctx-menu li.disabled { color: var(--app-ink-muted); pointer-events: none; opacity: .58; }
 .ctx-menu li.ctx-danger { color: var(--el-color-danger); }
 .ctx-menu li.ctx-sep { height: 0; margin: 4px 0; padding: 0; border-top: 1px solid var(--app-border); }
+.notes-dialog-body { display: grid; gap: 12px; }
+.notes-dialog-field { display: grid; gap: 6px; }
+.notes-dialog-field > span { color: var(--app-ink-soft); font-size: 12px; font-weight: 600; }
 .ctx-shortcut { float: right; margin-left: 28px; color: var(--app-ink-muted); font-size: 12px; }
 .ctx-arrow { float: right; margin-left: 16px; color: var(--app-ink-muted); }
 .ctx-has-sub { position: relative; }

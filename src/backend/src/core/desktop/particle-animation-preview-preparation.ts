@@ -53,10 +53,20 @@ const COPY_EXCLUSIONS = [
   'movies',
 ] as const;
 
+export interface ParticleAnimationPreviewOptions {
+  /**
+   * false prepares an idle backdrop scene (battle background, no playback) so the
+   * embedding panel never shows an empty black frame; the effect and audio assets
+   * are only required when the scene actually plays.
+   */
+  autoplay?: boolean;
+}
+
 export function prepareParticleAnimationPreview(
   workflowRoot: string,
   project: string,
   animationInput: InteractiveParticleAnimationPreview,
+  options: ParticleAnimationPreviewOptions = {},
   dependencies: Partial<ParticleAnimationPreviewPreparationDependencies> = {},
 ): ParticleAnimationPreviewPreparation {
   const manifest = inspectRmmvProject(project);
@@ -64,7 +74,8 @@ export function prepareParticleAnimationPreview(
     throw new ParticleAnimationPreviewPreparationError('Particle animation preview requires an editable RPG Maker MZ project.');
   }
 
-  const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight);
+  const autoplay = options.autoplay !== false;
+  const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight, { requireEffect: autoplay });
   const prepareIsolated = dependencies.prepareIsolated || prepareIsolatedStagedProject;
   const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
   const isolated = prepareIsolated(workflowRoot, project, {
@@ -84,29 +95,36 @@ export function prepareParticleAnimationPreview(
       copyRequiredFile(path.join(manifest.resourceRoot, ...relative.split('/')), confinedPath(appDirectory, relative), relative);
     }
 
-    copyEffectiveAsset(
-      workflowRoot,
-      project,
-      getEffectiveFile,
-      `effects/${animation.effectName}`,
-      ['.efkefc'],
-      appDirectory,
-    );
-    for (const timing of animation.soundTimings) {
-      if (!timing.se.name) continue;
+    // Backdrop sessions never play, so the effect and sound assets are not needed.
+    if (autoplay) {
       copyEffectiveAsset(
         workflowRoot,
         project,
         getEffectiveFile,
-        `audio/se/${timing.se.name}`,
-        ['.ogg', '.m4a'],
+        `effects/${animation.effectName}`,
+        ['.efkefc'],
         appDirectory,
       );
+      for (const timing of animation.soundTimings) {
+        if (!timing.se.name) continue;
+        copyEffectiveAsset(
+          workflowRoot,
+          project,
+          getEffectiveFile,
+          `audio/se/${timing.se.name}`,
+          ['.ogg', '.m4a'],
+          appDirectory,
+        );
+      }
     }
+    const battlebacks = copyEditorBattlebacks(workflowRoot, project, getEffectiveFile, appDirectory);
 
     const config = {
       screenWidth: manifest.screenWidth,
       screenHeight: manifest.screenHeight,
+      autoplay,
+      battleback1: battlebacks.battleback1,
+      battleback2: battlebacks.battleback2,
       animation,
     };
     fs.writeFileSync(path.join(appDirectory, 'index.html'), previewHtml(config), 'utf8');
@@ -145,6 +163,7 @@ export function validatePreviewAnimation(
   input: InteractiveParticleAnimationPreview,
   screenWidth: number,
   screenHeight: number,
+  options: { requireEffect?: boolean } = {},
 ): InteractiveParticleAnimationPreview {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new ParticleAnimationPreviewPreparationError('Particle animation preview data must be an object.');
@@ -153,7 +172,7 @@ export function validatePreviewAnimation(
   for (const [key, value] of Object.entries(MZ_ANIMATION_FIELD_DEFAULTS)) {
     if (source[key] === undefined) source[key] = structuredClone(value);
   }
-  const effectName = normalizeResourceName(source.effectName, 'particle effect');
+  const effectName = normalizeResourceName(source.effectName, 'particle effect', options.requireEffect === false);
   const rotation = requireRecord(source.rotation, 'rotation');
   const flashTimings = requireArray(source.flashTimings, 'flashTimings').map((entry, index) => {
     const timing = requireRecord(entry, `flashTimings[${index}]`);
@@ -226,6 +245,46 @@ function copyRequiredFile(source: string, target: string, label: string): void {
   if (!isFile(source)) throw new ParticleAnimationPreviewPreparationError(`Required MZ preview runtime file is missing: ${label}`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(source, target);
+}
+
+// The stock MZ editor previews animations over a battle background. Use the
+// project's default battlebacks from System.json, falling back to the stock
+// Grassland pair the editor itself shows on fresh projects; entries without any
+// usable image keep the plain scene backdrop.
+function copyEditorBattlebacks(
+  workflowRoot: string,
+  project: string,
+  getEffectiveFile: typeof getProjectFileForRead,
+  appDirectory: string,
+): { battleback1: string; battleback2: string } {
+  const result = { battleback1: '', battleback2: '' };
+  const systemPath = getEffectiveFile(workflowRoot, project, 'data/System.json');
+  if (!systemPath || !isFile(systemPath)) return result;
+  let system: Record<string, unknown>;
+  try {
+    system = JSON.parse(fs.readFileSync(systemPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return result;
+  }
+  for (const [key, folder] of [['battleback1', 'battlebacks1'], ['battleback2', 'battlebacks2']] as const) {
+    const name = system[`${key}Name`];
+    const candidates = typeof name === 'string' && name.trim() ? [name, 'Grassland'] : ['Grassland'];
+    for (const candidate of candidates) {
+      let normalized: string;
+      try {
+        normalized = normalizeResourceName(candidate, `${key}Name`);
+      } catch {
+        continue;
+      }
+      const relative = `img/${folder}/${normalized}.png`;
+      const source = getEffectiveFile(workflowRoot, project, relative);
+      if (!source || !isFile(source)) continue;
+      copyRequiredFile(source, confinedPath(appDirectory, relative), relative);
+      result[key] = relative;
+      break;
+    }
+  }
+  return result;
 }
 
 function confinedPath(root: string, relative: string): string {
@@ -399,6 +458,21 @@ window.RpgAgentParticlePreview = {
     backgroundBitmap.gradientFillRect(0, 0, config.screenWidth, config.screenHeight, "#171411", "#2c2721", true);
     const background = new Sprite(backgroundBitmap);
     stage.addChild(background);
+    // Stock editor look: the scene idles on the project's default battle background.
+    const addBattleback = (url) => {
+      if (!url) return;
+      const bitmap = Bitmap.load(url);
+      const sprite = new Sprite(bitmap);
+      bitmap.addLoadListener(() => {
+        const scale = Math.max(config.screenWidth / bitmap.width, config.screenHeight / bitmap.height);
+        sprite.scale.set(scale, scale);
+        sprite.x = Math.round((config.screenWidth - bitmap.width * scale) / 2);
+        sprite.y = Math.round((config.screenHeight - bitmap.height * scale) / 2);
+      });
+      stage.addChild(sprite);
+    };
+    addBattleback(config.battleback1);
+    addBattleback(config.battleback2);
 
     const targetBitmap = new Bitmap(128, 128);
     targetBitmap.drawCircle(64, 64, 42, "#d4c3a6");
@@ -407,6 +481,9 @@ window.RpgAgentParticlePreview = {
     target.anchor.set(0.5, 1);
     target.x = Math.round(config.screenWidth / 2);
     target.y = Math.round(config.screenHeight * 0.68);
+    // The dummy target only matters while an animation is playing; the idle
+    // backdrop matches the stock editor and shows just the battle background.
+    target.visible = config.autoplay;
     stage.addChild(target);
 
     let animationSprite = null;
@@ -420,7 +497,7 @@ window.RpgAgentParticlePreview = {
       animationSprite.setup([target], config.animation, false, 0, null);
       stage.addChild(animationSprite);
     };
-    play();
+    if (config.autoplay) play();
 
     Graphics.setStage(stage);
     Graphics.setTickHandler(() => {

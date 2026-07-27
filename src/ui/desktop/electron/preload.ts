@@ -98,7 +98,7 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   particlePreview: {
-    prepare: (animation: unknown, project?: string) => ipcRenderer.invoke('particlePreview:prepare', animation, project),
+    prepare: (animation: unknown, autoplay: boolean, project?: string) => ipcRenderer.invoke('particlePreview:prepare', animation, autoplay, project),
     dispose: (key: string) => ipcRenderer.invoke('particlePreview:dispose', key),
   },
 

@@ -64,6 +64,11 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
     assert.match(main, /vorbisdecoder\.js/);
     assert.match(preview, /Sprite_Animation/);
     assert.match(html, /"effectName":"fx\/Spark"/);
+    // The stock editor idles on the project's default battle background.
+    assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'img', 'battlebacks1', 'Grassland.png')), true);
+    assert.match(html, /"battleback1":"img\/battlebacks1\/Grassland.png"/);
+    assert.match(html, /"battleback2":""/);
+    assert.match(html, /"autoplay":true/);
     assert.doesNotMatch(html, /UnusedPlugin/);
 
     assert.deepEqual(verifyIsolatedSourceState(root, preparation), {
@@ -113,6 +118,17 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
     assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'audio')), false);
     const main = fs.readFileSync(path.join(preparation.appDirectory, 'js', 'main.js'), 'utf8');
     assert.doesNotMatch(main, /vorbisdecoder\.js/);
+  });
+
+  test('prepares an idle backdrop without playback assets when autoplay is disabled', () => {
+    preparation = prepareParticleAnimationPreview(root, project, { effectName: '' } as never, { autoplay: false });
+
+    assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'effects')), false);
+    assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'audio')), false);
+    assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'img', 'battlebacks1', 'Grassland.png')), true);
+    const html = fs.readFileSync(path.join(preparation.appDirectory, 'index.html'), 'utf8');
+    assert.match(html, /"autoplay":false/);
+    assert.match(html, /"battleback1":"img\/battlebacks1\/Grassland.png"/);
   });
 });
 
@@ -170,11 +186,15 @@ function writeMZProject(project: string): void {
   fs.writeFileSync(path.join(project, 'effects', 'Texture', 'Spark.png'), 'shared texture', 'utf8');
   fs.writeFileSync(path.join(project, 'audio', 'se', 'ui', 'Confirm.ogg'), 'selected sound', 'utf8');
   fs.writeFileSync(path.join(project, 'audio', 'se', 'Unused.ogg'), 'unused sound', 'utf8');
+  fs.mkdirSync(path.join(project, 'img', 'battlebacks1'), { recursive: true });
+  fs.writeFileSync(path.join(project, 'img', 'battlebacks1', 'Grassland.png'), 'battleback image', 'utf8');
   writeJson(path.join(project, 'data', 'System.json'), {
     tileSize: 48,
     faceSize: 144,
     iconSize: 32,
     advanced: { screenWidth: 816, screenHeight: 624 },
+    battleback1Name: 'Grassland',
+    battleback2Name: 'MissingBack',
     startMapId: 1,
   });
   writeJson(path.join(project, 'data', 'MapInfos.json'), [null, { id: 1, name: 'Sample Map' }]);

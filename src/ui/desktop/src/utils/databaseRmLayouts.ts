@@ -182,8 +182,7 @@ export const ANIMATION_PARTICLE_RM_LAYOUT: RmPanelLayout[] = [
     column: 'main',
     rows: [['effectName'], ['scale', 'speed'], ['rotation'], ['offsetX', 'offsetY']],
   },
-  { titleKey: '', column: 'side', rows: [['soundTimings']] },
-  { titleKey: '', column: 'side', rows: [['flashTimings']] },
+  { titleKey: '', column: 'side', rows: [['soundTimings', 'flashTimings']] },
 ];
 
 export const ANIMATION_CLASSIC_RM_LAYOUT: RmPanelLayout[] = [

@@ -5,7 +5,9 @@ import { particlePreview } from '../api/client';
 /**
  * In-panel MZ particle animation playback. Each play() prepares an isolated
  * preview app session and reloads the iframe; the preview runtime plays the
- * animation once and then idles, matching the stock editor.
+ * animation once and then idles, matching the stock editor. showBackdrop()
+ * prepares the same scene without playback so the panel shows the battle
+ * background instead of an empty frame.
  */
 const props = defineProps<{ project: string }>();
 
@@ -14,11 +16,11 @@ const busy = ref(false);
 let sessionKey = '';
 let requestSeq = 0;
 
-async function play(animation: Record<string, unknown>): Promise<void> {
+async function prepareSession(animation: Record<string, unknown>, autoplay: boolean): Promise<void> {
   const seq = ++requestSeq;
   busy.value = true;
   try {
-    const session = await particlePreview.prepare(animation, props.project);
+    const session = await particlePreview.prepare(animation, autoplay, props.project);
     if (seq !== requestSeq) {
       void particlePreview.dispose(session.key);
       return;
@@ -32,6 +34,14 @@ async function play(animation: Record<string, unknown>): Promise<void> {
   }
 }
 
+async function play(animation: Record<string, unknown>): Promise<void> {
+  await prepareSession(animation, true);
+}
+
+async function showBackdrop(animation: Record<string, unknown>): Promise<void> {
+  await prepareSession(animation, false);
+}
+
 onBeforeUnmount(() => {
   requestSeq += 1;
   if (sessionKey) {
@@ -40,7 +50,7 @@ onBeforeUnmount(() => {
   }
 });
 
-defineExpose({ play, busy });
+defineExpose({ play, showBackdrop, busy });
 </script>
 
 <template>

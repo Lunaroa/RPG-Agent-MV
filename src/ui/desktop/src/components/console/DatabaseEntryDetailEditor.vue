@@ -185,6 +185,23 @@ function setParticleFrameRef(el: unknown): void {
   particleFrameRef.value = el as InstanceType<typeof ParticleAnimationPreviewFrame> | null;
 }
 
+// The stock editor idles on the battle background: whenever a particle animation
+// entry is shown, load an idle backdrop scene so the panel never sits black.
+const particleBackdropKey = computed(() => (
+  isMZParticleAnimation.value && props.catalog?.project
+    ? `${props.group}:${String(record.value.id ?? '')}`
+    : ''
+));
+watch(particleBackdropKey, async (key) => {
+  if (!key) return;
+  await nextTick();
+  try {
+    await particleFrameRef.value?.showBackdrop(JSON.parse(JSON.stringify(record.value)) as Record<string, unknown>);
+  } catch (error) {
+    console.error('[particle-preview] backdrop load failed', error);
+  }
+}, { immediate: true });
+
 /** In-panel particle playback: plays the current draft once, like the stock editor. */
 async function playParticleAnimation(): Promise<void> {
   const project = props.catalog?.project;
@@ -1587,7 +1604,7 @@ function updateSound(index: number, key: string, value: unknown): void {
           </article>
         </div>
       </section>
-      <div class="schema-field-layout" :class="{ 'rm-columns': hasRmLayout }">
+      <div class="schema-field-layout" :class="{ 'rm-columns': hasRmLayout, 'rm-columns-particle': hasRmLayout && isMZParticleAnimation }">
         <div
           v-for="column in rmRenderColumns"
           :key="column.key"
@@ -2926,6 +2943,9 @@ function updateSound(index: number, key: string, value: unknown): void {
 .field-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
 /* Stock RM composition: grouped boxes in a wide main column plus a traits/note side column. */
 .rm-columns { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 6px; align-items: start; }
+/* Particle animation tab flips the balance like the stock MZ editor: narrow form
+   column, wide preview column with the timing tables underneath. */
+.rm-columns.rm-columns-particle { grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); }
 .rm-column { display: grid; gap: 4px; min-width: 0; align-content: start; }
 .rm-field-row { display: flex; gap: 4px; align-items: start; }
 .rm-field-row > .field,

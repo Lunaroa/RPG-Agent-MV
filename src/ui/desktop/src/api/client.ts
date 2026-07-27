@@ -113,7 +113,7 @@ declare global {
         translate(pluginName: string, lang: string, model: unknown, project?: string): Promise<unknown>;
       };
       particlePreview: {
-        prepare(animation: unknown, project?: string): Promise<{ key: string; url: string }>;
+        prepare(animation: unknown, autoplay: boolean, project?: string): Promise<{ key: string; url: string }>;
         dispose(key: string): Promise<{ ok: boolean }>;
       };
       workspaceSurfaces: {
@@ -495,8 +495,9 @@ export const pluginTranslation = {
 
 /** Isolated MZ particle preview sessions served for in-panel iframe playback. */
 export const particlePreview = {
-  prepare(animation: unknown, project: string = DEFAULT_PROJECT) {
-    return desktopApi().particlePreview.prepare(toPlain(animation), project);
+  /** autoplay=false prepares an idle backdrop scene (battle background, no playback). */
+  prepare(animation: unknown, autoplay = true, project: string = DEFAULT_PROJECT) {
+    return desktopApi().particlePreview.prepare(toPlain(animation), autoplay, project);
   },
   dispose(key: string) {
     return desktopApi().particlePreview.dispose(key);

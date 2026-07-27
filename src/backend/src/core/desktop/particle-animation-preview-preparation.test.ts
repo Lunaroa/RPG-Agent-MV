@@ -14,8 +14,11 @@ import {
   verifyIsolatedSourceState,
 } from './isolated-project-preparation.ts';
 import {
+  cleanupParticleAnimationPreviewApp,
   prepareParticleAnimationPreview,
+  prepareParticleAnimationPreviewApp,
   validatePreviewAnimation,
+  type ParticleAnimationPreviewAppPreparation,
   type ParticleAnimationPreviewPreparation,
 } from './particle-animation-preview-preparation.ts';
 
@@ -23,17 +26,20 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
   let root: string;
   let project: string;
   let preparation: ParticleAnimationPreviewPreparation | null;
+  let appPreparation: ParticleAnimationPreviewAppPreparation | null;
 
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-particle-preview-test-'));
     project = path.join(root, 'projects', 'sample');
     preparation = null;
+    appPreparation = null;
     await bootstrapDatabase(root, { dbPath: path.join(root, 'data', 'test.db'), importLegacyJson: false });
     writeMZProject(project);
   });
 
   afterEach(() => {
     if (preparation && fs.existsSync(preparation.temporaryProject)) cleanupIsolatedProject(preparation);
+    if (appPreparation) cleanupParticleAnimationPreviewApp(appPreparation);
     closeDatabase();
     fs.rmSync(root, { recursive: true, force: true });
   });
@@ -130,7 +136,83 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
     assert.match(html, /"autoplay":false/);
     assert.match(html, /"battleback1":"img\/battlebacks1\/Grassland.png"/);
   });
+
+  test('serve-direct app generates only the tiny preview files and pass-through roots', () => {
+    appPreparation = prepareParticleAnimationPreviewApp(root, project, animation());
+
+    assert.equal(appPreparation.engine, 'rpg-maker-mz');
+    assert.equal(appPreparation.appDirectory.startsWith(os.tmpdir()), true);
+    assert.equal(appPreparation.passthroughRoot, fs.realpathSync.native(project));
+    assert.deepEqual([...appPreparation.passthroughPrefixes], [
+      'js/libs/',
+      'js/rmmz_',
+      'effects/',
+      'audio/se/',
+      'img/battlebacks1/',
+      'img/battlebacks2/',
+    ]);
+    // No per-session copies: runtime scripts, effect, SE and battlebacks stay in the project.
+    assert.deepEqual(listRelativeFiles(appPreparation.appDirectory), [
+      'index.html',
+      'js/main.js',
+      'js/particle-preview.js',
+    ]);
+
+    const main = fs.readFileSync(path.join(appPreparation.appDirectory, 'js', 'main.js'), 'utf8');
+    const html = fs.readFileSync(path.join(appPreparation.appDirectory, 'index.html'), 'utf8');
+    assert.match(main, /vorbisdecoder\.js/);
+    assert.match(html, /"effectName":"fx\/Spark"/);
+    assert.match(html, /"battleback1":"img\/battlebacks1\/Grassland.png"/);
+    assert.match(html, /"battleback2":""/);
+    assert.match(html, /"autoplay":true/);
+  });
+
+  test('serve-direct app overlays staged drafts so they win over the pass-through root', () => {
+    const draft = path.join(root, 'staged-Spark.efkefc');
+    fs.writeFileSync(draft, 'staged effect draft', 'utf8');
+    appPreparation = prepareParticleAnimationPreviewApp(root, project, animation(), {}, {
+      getEffectiveFile: (_workflowRoot, _project, relative) => (
+        relative === 'effects/fx/Spark.efkefc' ? draft : path.join(project, ...relative.split('/'))
+      ),
+    });
+
+    assert.equal(
+      fs.readFileSync(path.join(appPreparation.appDirectory, 'effects', 'fx', 'Spark.efkefc'), 'utf8'),
+      'staged effect draft',
+    );
+    // Untouched assets stay serve-direct.
+    assert.equal(fs.existsSync(path.join(appPreparation.appDirectory, 'audio')), false);
+    assert.equal(fs.existsSync(path.join(appPreparation.appDirectory, 'img')), false);
+  });
+
+  test('serve-direct app requires the effect only when playing and cleans up on failure', () => {
+    assert.throws(
+      () => prepareParticleAnimationPreviewApp(root, project, { ...animation(), effectName: 'fx/Missing' }),
+      /Required preview resource was not found: effects\/fx\/Missing/,
+    );
+    appPreparation = prepareParticleAnimationPreviewApp(root, project, { effectName: '' } as never, { autoplay: false });
+    const html = fs.readFileSync(path.join(appPreparation.appDirectory, 'index.html'), 'utf8');
+    assert.match(html, /"autoplay":false/);
+
+    const directory = appPreparation.appDirectory;
+    cleanupParticleAnimationPreviewApp(appPreparation);
+    appPreparation = null;
+    assert.equal(fs.existsSync(directory), false);
+  });
 });
+
+function listRelativeFiles(rootDirectory: string): string[] {
+  const out: string[] = [];
+  const visit = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else out.push(path.relative(rootDirectory, absolute).replaceAll('\\', '/'));
+    }
+  };
+  visit(rootDirectory);
+  return out.sort((left, right) => left.localeCompare(right));
+}
 
 function animation(): InteractiveParticleAnimationPreview {
   return {

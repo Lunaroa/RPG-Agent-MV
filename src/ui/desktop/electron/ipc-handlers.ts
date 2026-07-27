@@ -74,8 +74,8 @@ let agentSessionRuntime: any;
 let interactivePlaytestService: any;
 let mapPreviewService: any;
 let assetProtocolRegistered = false;
-/** Live in-panel particle preview sessions: protocol key -> isolated preparation. */
-const particlePreviewSessions = new Map<string, unknown>();
+/** Live in-panel particle preview sessions: protocol key -> generated preview app. */
+const particlePreviewSessions = new Map<string, { appDirectory: string }>();
 let backendCoreUrl: URL | null = null;
 let backendWithProductLanguage: (<T>(language: ProductLanguage, fn: () => T) => T) | null = null;
 let workspaceSettingsSession = new WorkspaceSettingsSession(false);
@@ -1575,24 +1575,24 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     ));
   });
 
-  // In-panel particle animation preview: serve the prepared MZ preview app through the
+  // In-panel particle animation preview: serve the generated MZ preview app through the
   // isolated preview protocol so renderers can embed it in an iframe.
   ipcMain.handle('particlePreview:prepare', (_event, animation: unknown, autoplay: boolean, value?: string) => {
     const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
-    const preparation = desktop.particlePreview.prepareParticleAnimationPreview(
+    const preparation = desktop.particlePreview.prepareParticleAnimationPreviewApp(
       workflowRoot,
       resolved,
       toIpcPayload(animation),
       { autoplay: autoplay !== false },
     );
     const key = crypto.randomBytes(32).toString('hex');
-    // Shared Effekseer resources (effects/Texture/*, …) are served straight from the
-    // project instead of being copied into the isolated app — the tree can be huge.
+    // Runtime scripts, Effekseer resources, SE and battlebacks are served straight
+    // from the project instead of being copied per session — the tree can be huge.
     const url = registerMapPreviewRoot(key, preparation.appDirectory, [], {
-      root: resolved,
-      prefixes: ['effects/'],
+      root: preparation.passthroughRoot,
+      prefixes: preparation.passthroughPrefixes,
     });
-    particlePreviewSessions.set(key, preparation);
+    particlePreviewSessions.set(key, { appDirectory: preparation.appDirectory });
     return toIpcPayload({ key, url });
   });
   ipcMain.handle('particlePreview:dispose', (_event, keyInput: string) => {
@@ -2133,5 +2133,5 @@ function disposeParticlePreviewSession(key: string): void {
   if (!preparation) return;
   particlePreviewSessions.delete(key);
   unregisterMapPreviewRoot(key);
-  desktop.isolatedPreparation.cleanupIsolatedProject(preparation);
+  desktop.particlePreview.cleanupParticleAnimationPreviewApp(preparation);
 }

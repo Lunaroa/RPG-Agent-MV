@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import type { InteractiveParticleAnimationPreview } from '../../../../contract/types.ts';
@@ -15,6 +16,15 @@ export interface ParticleAnimationPreviewPreparation extends IsolatedProjectPrep
   engine: Extract<RpgMakerEngine, 'rpg-maker-mz'>;
   appDirectory: string;
   effectName: string;
+}
+
+export interface ParticleAnimationPreviewAppPreparation {
+  engine: Extract<RpgMakerEngine, 'rpg-maker-mz'>;
+  appDirectory: string;
+  effectName: string;
+  /** Serve-direct root for everything the preview loads from the game project. */
+  passthroughRoot: string;
+  passthroughPrefixes: readonly string[];
 }
 
 export interface ParticleAnimationPreviewPreparationDependencies {
@@ -39,6 +49,17 @@ const REQUIRED_PREVIEW_FILES = [
 ] as const;
 
 const PREVIEW_AUDIO_DECODER = 'js/libs/vorbisdecoder.js';
+
+// Everything the generated preview page loads from the game project; served
+// straight from the project tree so no project copy is needed per session.
+const PREVIEW_PASSTHROUGH_PREFIXES = [
+  'js/libs/',
+  'js/rmmz_',
+  'effects/',
+  'audio/se/',
+  'img/battlebacks1/',
+  'img/battlebacks2/',
+] as const;
 
 const COPY_EXCLUSIONS = [
   ...RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS,
@@ -144,6 +165,97 @@ export function prepareParticleAnimationPreview(
   }
 }
 
+/**
+ * In-panel preview variant: builds only the tiny generated app (index.html plus two
+ * scripts) and serves every game asset directly from the project through the preview
+ * protocol's pass-through prefixes. No project fingerprint and no project copy, so
+ * preparing stays cheap on multi-gigabyte projects; staged drafts of the referenced
+ * assets are overlaid into the app directory, which wins over the pass-through root.
+ */
+export function prepareParticleAnimationPreviewApp(
+  workflowRoot: string,
+  project: string,
+  animationInput: InteractiveParticleAnimationPreview,
+  options: ParticleAnimationPreviewOptions = {},
+  dependencies: Partial<ParticleAnimationPreviewPreparationDependencies> = {},
+): ParticleAnimationPreviewAppPreparation {
+  const manifest = inspectRmmvProject(project);
+  if (!manifest.editable || manifest.engine !== 'rpg-maker-mz') {
+    throw new ParticleAnimationPreviewPreparationError('Particle animation preview requires an editable RPG Maker MZ project.');
+  }
+
+  const autoplay = options.autoplay !== false;
+  const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight, { requireEffect: autoplay });
+  const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
+  const appDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-mz-particle-preview-'));
+
+  try {
+    const usesAudio = animation.soundTimings.some((timing) => Boolean(timing.se.name));
+    const requiredFiles = usesAudio
+      ? [...REQUIRED_PREVIEW_FILES, PREVIEW_AUDIO_DECODER]
+      : REQUIRED_PREVIEW_FILES;
+    for (const relative of requiredFiles) {
+      if (!isFile(path.join(manifest.resourceRoot, ...relative.split('/')))) {
+        throw new ParticleAnimationPreviewPreparationError(`Required MZ preview runtime file is missing: ${relative}`);
+      }
+    }
+
+    // Backdrop sessions never play, so the effect and sound assets are not needed.
+    if (autoplay) {
+      overlayEffectiveAsset(
+        workflowRoot,
+        project,
+        manifest.resourceRoot,
+        getEffectiveFile,
+        `effects/${animation.effectName}`,
+        ['.efkefc'],
+        appDirectory,
+      );
+      for (const timing of animation.soundTimings) {
+        if (!timing.se.name) continue;
+        overlayEffectiveAsset(
+          workflowRoot,
+          project,
+          manifest.resourceRoot,
+          getEffectiveFile,
+          `audio/se/${timing.se.name}`,
+          ['.ogg', '.m4a'],
+          appDirectory,
+        );
+      }
+    }
+    const battlebacks = resolveEditorBattlebacks(workflowRoot, project, manifest.resourceRoot, getEffectiveFile, appDirectory);
+
+    const config = {
+      screenWidth: manifest.screenWidth,
+      screenHeight: manifest.screenHeight,
+      autoplay,
+      battleback1: battlebacks.battleback1,
+      battleback2: battlebacks.battleback2,
+      animation,
+    };
+    fs.writeFileSync(path.join(appDirectory, 'index.html'), previewHtml(config), 'utf8');
+    fs.mkdirSync(path.join(appDirectory, 'js'), { recursive: true });
+    fs.writeFileSync(path.join(appDirectory, 'js', 'main.js'), previewMainSource(usesAudio), 'utf8');
+    fs.writeFileSync(path.join(appDirectory, 'js', 'particle-preview.js'), PREVIEW_RUNTIME_SOURCE, 'utf8');
+
+    return {
+      engine: 'rpg-maker-mz',
+      appDirectory,
+      effectName: animation.effectName,
+      passthroughRoot: manifest.resourceRoot,
+      passthroughPrefixes: PREVIEW_PASSTHROUGH_PREFIXES,
+    };
+  } catch (error) {
+    try { fs.rmSync(appDirectory, { recursive: true, force: true }); } catch { /* Report the preparation error first. */ }
+    throw error;
+  }
+}
+
+export function cleanupParticleAnimationPreviewApp(preparation: Pick<ParticleAnimationPreviewAppPreparation, 'appDirectory'>): void {
+  fs.rmSync(preparation.appDirectory, { recursive: true, force: true });
+}
+
 // The MZ editor writes fixed defaults for these keys; Animations.json processed by
 // third-party tools often omits them entirely. Missing keys fall back to the editor
 // defaults before validation, while effectName stays required (nothing to preview without it).
@@ -245,6 +357,77 @@ function copyRequiredFile(source: string, target: string, label: string): void {
   if (!isFile(source)) throw new ParticleAnimationPreviewPreparationError(`Required MZ preview runtime file is missing: ${label}`);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(source, target);
+}
+
+/**
+ * Serve-direct variant of copyEffectiveAsset: the asset stays in the project and is
+ * read through the pass-through root; only a staged draft (whose effective path
+ * differs from the project file) is copied into the app directory so it wins.
+ */
+function overlayEffectiveAsset(
+  workflowRoot: string,
+  project: string,
+  resourceRoot: string,
+  getEffectiveFile: typeof getProjectFileForRead,
+  relativeWithoutExtension: string,
+  extensions: readonly string[],
+  appDirectory: string,
+): void {
+  const normalized = normalizeRelative(relativeWithoutExtension);
+  for (const extension of extensions) {
+    const relative = `${normalized}${extension}`;
+    const source = getEffectiveFile(workflowRoot, project, relative);
+    if (!source || !isFile(source)) continue;
+    if (path.resolve(source) !== path.resolve(resourceRoot, ...relative.split('/'))) {
+      copyRequiredFile(source, confinedPath(appDirectory, relative), relative);
+    }
+    return;
+  }
+  throw new ParticleAnimationPreviewPreparationError(`Required preview resource was not found: ${normalized}`);
+}
+
+/**
+ * Serve-direct variant of copyEditorBattlebacks: resolves the same System.json
+ * defaults (with the stock Grassland fallback) but only overlays staged drafts;
+ * untouched images are read straight from the project.
+ */
+function resolveEditorBattlebacks(
+  workflowRoot: string,
+  project: string,
+  resourceRoot: string,
+  getEffectiveFile: typeof getProjectFileForRead,
+  appDirectory: string,
+): { battleback1: string; battleback2: string } {
+  const result = { battleback1: '', battleback2: '' };
+  const systemPath = getEffectiveFile(workflowRoot, project, 'data/System.json');
+  if (!systemPath || !isFile(systemPath)) return result;
+  let system: Record<string, unknown>;
+  try {
+    system = JSON.parse(fs.readFileSync(systemPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return result;
+  }
+  for (const [key, folder] of [['battleback1', 'battlebacks1'], ['battleback2', 'battlebacks2']] as const) {
+    const name = system[`${key}Name`];
+    const candidates = typeof name === 'string' && name.trim() ? [name, 'Grassland'] : ['Grassland'];
+    for (const candidate of candidates) {
+      let normalized: string;
+      try {
+        normalized = normalizeResourceName(candidate, `${key}Name`);
+      } catch {
+        continue;
+      }
+      const relative = `img/${folder}/${normalized}.png`;
+      const source = getEffectiveFile(workflowRoot, project, relative);
+      if (!source || !isFile(source)) continue;
+      if (path.resolve(source) !== path.resolve(resourceRoot, ...relative.split('/'))) {
+        copyRequiredFile(source, confinedPath(appDirectory, relative), relative);
+      }
+      result[key] = relative;
+      break;
+    }
+  }
+  return result;
 }
 
 // The stock MZ editor previews animations over a battle background. Use the

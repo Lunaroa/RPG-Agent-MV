@@ -21,7 +21,7 @@
       :current-time="currentTime"
       :duration="duration"
       :disabled="!canSeek || loadFailed"
-      :aria-label="t('pluginFilePicker.audioSeek')"
+      :ariaLabel="t('pluginFilePicker.audioSeek')"
       @seek="seekTo"
     />
 

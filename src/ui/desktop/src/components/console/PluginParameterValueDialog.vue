@@ -337,7 +337,7 @@ async function startParticlePreview(): Promise<void> {
   }
   particlePreviewBusy.value = true;
   try {
-    await particleFrameRef.value?.play(clonePluginParameterValue(preview) as Record<string, unknown>);
+    await particleFrameRef.value?.play({ ...preview });
   } catch (error) {
     ElMessage.error(t('db.particlePreviewFailed', { message: (error as Error).message }));
   } finally {

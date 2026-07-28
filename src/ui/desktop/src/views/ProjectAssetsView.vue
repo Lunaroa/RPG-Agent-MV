@@ -48,7 +48,6 @@ import {
   clipboard,
   maps as mapsApi,
   projectAssets,
-  projectManagement,
   type ManagedAssetDetail,
 } from '../api/client'
 import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'

@@ -67,7 +67,7 @@
         :current-time="currentTime"
         :duration="duration"
         :disabled="!canSeek"
-        :aria-label="t('projectAssets.playerSeek')"
+        :ariaLabel="t('projectAssets.playerSeek')"
         @seek="seekTo"
       />
       <p v-else class="bar-error" role="alert">

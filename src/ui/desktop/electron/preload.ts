@@ -1,5 +1,9 @@
 import type {
   EventSearchOptions,
+  ExternalMapImportApplyRequest,
+  ExternalMapImportScanRequest,
+  ExternalMapReplaceApplyRequest,
+  ExternalMapReplaceScanRequest,
   MapOverviewPngExportProgressEvent,
   MapOverviewPngExportScene,
   MapOverviewScanProgressEvent,
@@ -195,6 +199,15 @@ contextBridge.exposeInMainWorld('api', {
     editorNotes: (project?: string) => ipcRenderer.invoke('maps:editorNotes', project),
     setEditorNote: (mapId: number, note: string, project?: string) =>
       ipcRenderer.invoke('maps:setEditorNote', mapId, note, project),
+    browseExternalProject: () => ipcRenderer.invoke('maps:browseExternalProject'),
+    importExternalScan: (request: ExternalMapImportScanRequest, project?: string) =>
+      ipcRenderer.invoke('maps:importExternalScan', request, project),
+    importExternalApply: (request: ExternalMapImportApplyRequest, project?: string) =>
+      ipcRenderer.invoke('maps:importExternalApply', request, project),
+    replaceExternalScan: (request: ExternalMapReplaceScanRequest, project?: string) =>
+      ipcRenderer.invoke('maps:replaceExternalScan', request, project),
+    replaceExternalApply: (request: ExternalMapReplaceApplyRequest, project?: string) =>
+      ipcRenderer.invoke('maps:replaceExternalApply', request, project),
   },
 
   events: {

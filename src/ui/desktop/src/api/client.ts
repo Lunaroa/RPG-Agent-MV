@@ -186,6 +186,11 @@ declare global {
         playtest(mapId: number, startX?: number, startY?: number, project?: string): Promise<unknown>;
         editorNotes(project?: string): Promise<unknown>;
         setEditorNote(mapId: number, note: string, project?: string): Promise<unknown>;
+        browseExternalProject(): Promise<unknown>;
+        importExternalScan(request: ExternalMapImportScanRequest, project?: string): Promise<unknown>;
+        importExternalApply(request: ExternalMapImportApplyRequest, project?: string): Promise<unknown>;
+        replaceExternalScan(request: ExternalMapReplaceScanRequest, project?: string): Promise<unknown>;
+        replaceExternalApply(request: ExternalMapReplaceApplyRequest, project?: string): Promise<unknown>;
       };
       events: {
         create(mapId: number, event: Record<string, unknown>, project?: string): Promise<unknown>;
@@ -356,6 +361,7 @@ function desktopApi(): Window['api'] {
 import type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorMapNotes,
+  ExternalProjectBrowseResult, ExternalProjectMapSummary, ExternalMapImportOptions, ExternalMapImportScanRequest, ExternalMapImportScanResult, ExternalMapImportApplyRequest, ExternalMapImportApplyResult, ExternalMapImportResourceRow, ExternalMapImportTilesetRow, ExternalMapImportMapPreview, ExternalMapImportWarning, ExternalMapResourceAction, ExternalMapResourceStatus, ExternalMapResourceResolution, ExternalMapTilesetResolution, ExternalMapReplaceOptions, ExternalMapReplaceScanRequest, ExternalMapReplaceApplyRequest,
   LunaRpgProjectConfig,
   LunaRpgSearchSettings,
   GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchOptions, GlobalSearchResult,
@@ -390,6 +396,7 @@ import type {
 export type {
   MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorMapNotes,
+  ExternalProjectBrowseResult, ExternalProjectMapSummary, ExternalMapImportOptions, ExternalMapImportScanRequest, ExternalMapImportScanResult, ExternalMapImportApplyRequest, ExternalMapImportApplyResult, ExternalMapImportResourceRow, ExternalMapImportTilesetRow, ExternalMapImportMapPreview, ExternalMapImportWarning, ExternalMapResourceAction, ExternalMapResourceStatus, ExternalMapResourceResolution, ExternalMapTilesetResolution, ExternalMapReplaceOptions, ExternalMapReplaceScanRequest, ExternalMapReplaceApplyRequest,
   LunaRpgProjectConfig,
   LunaRpgSearchSettings,
   GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchOptions, GlobalSearchResult,
@@ -806,6 +813,26 @@ export const maps = {
   },
   setEditorNote(mapId: number, note: string, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.setEditorNote(mapId, note, project) as Promise<EditorMapNotes>;
+  },
+  /** Open a directory picker, then validate + list maps in the chosen external project. */
+  browseExternalProject() {
+    return desktopApi().maps.browseExternalProject() as Promise<ExternalProjectBrowseResult>;
+  },
+  /** Read-only analysis of the maps/resources/tilesets an external import would bring in. */
+  importExternalScan(request: ExternalMapImportScanRequest, project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.importExternalScan(toPlain(request), project) as Promise<ExternalMapImportScanResult>;
+  },
+  /** Write the resolved import into a staging draft (applied/rolled back via staging APIs). */
+  importExternalApply(request: ExternalMapImportApplyRequest, project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.importExternalApply(toPlain(request), project) as Promise<ExternalMapImportApplyResult>;
+  },
+  /** Read-only analysis of a phase-2 replace (which resources/tilesets it would bring in). */
+  replaceExternalScan(request: ExternalMapReplaceScanRequest, project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.replaceExternalScan(toPlain(request), project) as Promise<ExternalMapImportScanResult>;
+  },
+  /** Write the resolved replace into a staging draft over the target map. */
+  replaceExternalApply(request: ExternalMapReplaceApplyRequest, project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.replaceExternalApply(toPlain(request), project) as Promise<ExternalMapImportApplyResult>;
   },
   projectStaging(project: string = DEFAULT_PROJECT) {
     return desktopApi().staging.projectStatus(project);

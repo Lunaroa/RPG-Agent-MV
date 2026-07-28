@@ -405,6 +405,7 @@ async function loadBackendModules(roots: AppRoots) {
   desktop = {
     project: await import(new URL('desktop/project-service.ts', coreUrl).href),
     maps: await import(new URL('desktop/map-service.ts', coreUrl).href),
+    externalMapImport: await import(new URL('desktop/external-map-import-service.ts', coreUrl).href),
     mapOverview: await import(new URL('desktop/map-overview-service.ts', coreUrl).href),
     mapOverviewExport: await import(new URL('desktop/map-overview-png-export-service.ts', coreUrl).href),
     workspaceSurfaces: await import(new URL('desktop/workspace-surface-version-service.ts', coreUrl).href),

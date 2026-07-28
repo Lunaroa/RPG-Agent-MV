@@ -2,6 +2,10 @@ import path from 'node:path';
 import { normalizeProductLanguage, type ProductLanguage } from '../../../contract/i18n.ts';
 import type {
   EventSearchOptions,
+  ExternalMapImportApplyRequest,
+  ExternalMapImportScanRequest,
+  ExternalMapReplaceApplyRequest,
+  ExternalMapReplaceScanRequest,
   MapOverviewPngExportScene,
   MapOverviewPngExportStartResult,
   MapOverviewScanProgressEvent,
@@ -77,6 +81,11 @@ export const MAP_IPC_CHANNELS = [
   'maps:playtest',
   'maps:editorNotes',
   'maps:setEditorNote',
+  'maps:browseExternalProject',
+  'maps:importExternalScan',
+  'maps:importExternalApply',
+  'maps:replaceExternalScan',
+  'maps:replaceExternalApply',
   'events:create',
   'events:createFromPlacement',
   'events:update',
@@ -347,6 +356,36 @@ export function registerMapIpcHandlers(
   handle('maps:editorNotes', (_event, value?: string) => desktop.maps.listEditorMapNotes(project(value)));
   handle('maps:setEditorNote', (_event, mapId: number, note: string, value?: string) =>
     desktop.maps.setEditorMapNote(project(value), mapId, note));
+  // Import maps from another RPG Maker project. Browse opens a directory picker (reusing the
+  // project-add flow) and lists the source maps; scan is read-only; apply writes a staging draft.
+  handle('maps:browseExternalProject', async (event) => {
+    if (!options.selectProjectDirectory) {
+      throw new Error(electronText(options.productLanguage?.(), 'projects.selectDirectoryUnsupported'));
+    }
+    const selectedPath = await options.selectProjectDirectory(event);
+    if (!selectedPath) {
+      return { canceled: true, sourceProjectPath: null, name: null, engine: null, maps: [] };
+    }
+    return { canceled: false, ...desktop.externalMapImport.inspectExternalProjectForImport(selectedPath) };
+  });
+  handle('maps:importExternalScan', (_event, request: ExternalMapImportScanRequest, value?: string) =>
+    desktop.externalMapImport.scanExternalMapImport(workflowRoot, project(value), request));
+  handle('maps:importExternalApply', (_event, request: ExternalMapImportApplyRequest, value?: string) => {
+    const resolved = project(value);
+    const result = desktop.externalMapImport.applyExternalMapImport(workflowRoot, resolved, request);
+    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
+    return result;
+  });
+  // Replace one existing map's body with an external source map (phase 2). Scan is read-only;
+  // apply writes a staging draft over the target map id and invalidates the asset browser cache.
+  handle('maps:replaceExternalScan', (_event, request: ExternalMapReplaceScanRequest, value?: string) =>
+    desktop.externalMapImport.scanExternalMapReplace(workflowRoot, project(value), request));
+  handle('maps:replaceExternalApply', (_event, request: ExternalMapReplaceApplyRequest, value?: string) => {
+    const resolved = project(value);
+    const result = desktop.externalMapImport.applyExternalMapReplace(workflowRoot, resolved, request);
+    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
+    return result;
+  });
 
   handle('events:create', (_event, mapId: number, event: Record<string, unknown>, value?: string) =>
     invokeDesktop(() => desktop.events.createEvent(workflowRoot, project(value), mapId, event)));

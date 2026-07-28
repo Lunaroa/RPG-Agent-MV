@@ -63,6 +63,8 @@ const PREVIEW_PASSTHROUGH_PREFIXES = [
   'audio/se/',
   'img/battlebacks1/',
   'img/battlebacks2/',
+  'img/enemies/',
+  'img/sv_enemies/',
 ] as const;
 
 const COPY_EXCLUSIONS = [
@@ -94,6 +96,12 @@ export interface ParticleAnimationPreviewOptions {
    * are only required when the scene actually plays.
    */
   autoplay?: boolean;
+  /**
+   * Backdrop-with-effect: prepares the idle scene (autoplay false) but still overlays
+   * the effect/audio and keeps the animation ready, so the embedding panel can start
+   * playback in-place via a postMessage 'play' command without reloading the iframe.
+   */
+  armed?: boolean;
   /**
    * When > 0, prepares an offscreen capture session: forces autoplay, drops the
    * battle background for a clean frame, and injects the number of played frames
@@ -205,8 +213,12 @@ export function prepareParticleAnimationPreviewApp(
   }
 
   const capturing = typeof options.captureFrameCount === 'number' && options.captureFrameCount > 0;
+  // Armed backdrops load the effect but wait for a 'play' message; used by the detail
+  // dialog so playback starts in-place with no iframe reload.
+  const armed = !capturing && options.armed === true;
   const autoplay = capturing ? true : options.autoplay !== false;
-  const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight, { requireEffect: autoplay });
+  const requireEffect = autoplay || armed;
+  const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight, { requireEffect });
   const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
   const appDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-mz-particle-preview-'));
 
@@ -221,8 +233,9 @@ export function prepareParticleAnimationPreviewApp(
       }
     }
 
-    // Backdrop sessions never play, so the effect and sound assets are not needed.
-    if (autoplay) {
+    // Plain backdrops never play, so the effect and sound assets are only overlaid
+    // when the scene will play (autoplay) or is armed to play on demand.
+    if (requireEffect) {
       overlayEffectiveAsset(
         workflowRoot,
         project,
@@ -250,14 +263,21 @@ export function prepareParticleAnimationPreviewApp(
     const battlebacks = capturing
       ? { battleback1: '', battleback2: '' }
       : resolveEditorBattlebacks(workflowRoot, project, manifest.resourceRoot, getEffectiveFile, appDirectory);
+    // Interactive sessions target the project's first enemy battler (front/side per
+    // System.json); capture keeps the target hidden so it never resolves an enemy.
+    const enemyBattler = capturing
+      ? ''
+      : resolveDefaultEnemyBattler(workflowRoot, project, manifest.resourceRoot, getEffectiveFile, appDirectory);
 
     const config = {
       screenWidth: manifest.screenWidth,
       screenHeight: manifest.screenHeight,
       autoplay,
+      armed,
       battleback1: battlebacks.battleback1,
       battleback2: battlebacks.battleback2,
       animation,
+      enemyBattler,
       captureFrameCount: capturing ? options.captureFrameCount : 0,
     };
     fs.writeFileSync(path.join(appDirectory, 'index.html'), previewHtml(config), 'utf8');
@@ -456,6 +476,66 @@ function resolveEditorBattlebacks(
     }
   }
   return result;
+}
+
+/**
+ * Resolve the project's first enemy battler image so the interactive preview shows a
+ * real monster as the effect's target (matching the editor) instead of the dummy
+ * circle. Follows the project's front/side view to pick img/enemies or img/sv_enemies;
+ * only staged drafts are overlaid, untouched images stream from the pass-through root.
+ * Returns '' when no usable enemy image exists (the runtime then draws the dummy target).
+ */
+function resolveDefaultEnemyBattler(
+  workflowRoot: string,
+  project: string,
+  resourceRoot: string,
+  getEffectiveFile: typeof getProjectFileForRead,
+  appDirectory: string,
+): string {
+  const folder = readOptSideView(workflowRoot, project, getEffectiveFile) ? 'sv_enemies' : 'enemies';
+  const enemiesPath = getEffectiveFile(workflowRoot, project, 'data/Enemies.json');
+  if (!enemiesPath || !isFile(enemiesPath)) return '';
+  let enemies: unknown;
+  try {
+    enemies = JSON.parse(fs.readFileSync(enemiesPath, 'utf8'));
+  } catch {
+    return '';
+  }
+  if (!Array.isArray(enemies)) return '';
+  for (const entry of enemies) {
+    if (!entry || typeof entry !== 'object') continue;
+    const battlerName = (entry as Record<string, unknown>).battlerName;
+    if (typeof battlerName !== 'string' || !battlerName.trim()) continue;
+    let normalized: string;
+    try {
+      normalized = normalizeResourceName(battlerName, 'enemy battlerName');
+    } catch {
+      continue;
+    }
+    const relative = `img/${folder}/${normalized}.png`;
+    const source = getEffectiveFile(workflowRoot, project, relative);
+    if (!source || !isFile(source)) continue;
+    if (path.resolve(source) !== path.resolve(resourceRoot, ...relative.split('/'))) {
+      copyRequiredFile(source, confinedPath(appDirectory, relative), relative);
+    }
+    return relative;
+  }
+  return '';
+}
+
+function readOptSideView(
+  workflowRoot: string,
+  project: string,
+  getEffectiveFile: typeof getProjectFileForRead,
+): boolean {
+  const systemPath = getEffectiveFile(workflowRoot, project, 'data/System.json');
+  if (!systemPath || !isFile(systemPath)) return false;
+  try {
+    const system = JSON.parse(fs.readFileSync(systemPath, 'utf8')) as Record<string, unknown>;
+    return system.optSideView === true;
+  } catch {
+    return false;
+  }
 }
 
 // The stock MZ editor previews animations over a battle background. Use the
@@ -685,17 +765,23 @@ window.RpgAgentParticlePreview = {
     addBattleback(config.battleback1);
     addBattleback(config.battleback2);
 
-    const targetBitmap = new Bitmap(128, 128);
-    targetBitmap.drawCircle(64, 64, 42, "#d4c3a6");
-    targetBitmap.drawCircle(64, 64, 34, "#5d554a");
-    const target = new Sprite(targetBitmap);
+    // Editor look: the effect plays on a target sprite. Use the project's default
+    // enemy battler when available so the target is a real monster; otherwise fall
+    // back to a neutral dummy circle. Capture sessions hide the target entirely so
+    // only the effect appears in the thumbnail.
+    const target = new Sprite();
+    if (config.enemyBattler) {
+      target.bitmap = Bitmap.load(config.enemyBattler);
+    } else {
+      const dummy = new Bitmap(128, 128);
+      dummy.drawCircle(64, 64, 42, "#d4c3a6");
+      dummy.drawCircle(64, 64, 34, "#5d554a");
+      target.bitmap = dummy;
+    }
     target.anchor.set(0.5, 1);
     target.x = Math.round(config.screenWidth / 2);
     target.y = Math.round(config.screenHeight * 0.68);
-    // The dummy target only matters while an animation is playing; the idle
-    // backdrop matches the stock editor and shows just the battle background.
-    // Capture sessions hide it so only the effect appears in the thumbnail.
-    target.visible = config.autoplay && !config.captureFrameCount;
+    target.visible = !config.captureFrameCount;
     stage.addChild(target);
 
     let animationSprite = null;
@@ -710,6 +796,16 @@ window.RpgAgentParticlePreview = {
       stage.addChild(animationSprite);
     };
     if (config.autoplay) play();
+    // Armed backdrops load the scene but wait for a 'play' message so the panel can
+    // start playback in-place without reloading the iframe (no black reload flash).
+    window.addEventListener("message", (event) => {
+      if (event && event.data && event.data.type === "play") play();
+    });
+    // Tell the embedder the 'play' listener is live so a play requested before this
+    // point is delivered rather than lost; skipped for the top-level capture window.
+    try {
+      if (window.parent && window.parent !== window) window.parent.postMessage({ type: "rpg-agent-preview-ready" }, "*");
+    } catch (error) { /* no embedder to notify */ }
 
     Graphics.setStage(stage);
     // Capture mode: advance a fixed number of played frames, freeze on that
@@ -720,7 +816,7 @@ window.RpgAgentParticlePreview = {
     let capturePlayedFrames = 0;
     let captureTotalTicks = 0;
     let captureFrozen = false;
-    const captureMaxTicks = captureTarget ? Math.max(600, captureTarget * 30) : 0;
+    const captureMaxTicks = captureTarget ? Math.max(180, captureTarget * 12) : 0;
     Graphics.setTickHandler(() => {
       Graphics.frameCount++;
       if (captureFrozen) return;

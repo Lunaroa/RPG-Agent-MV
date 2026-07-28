@@ -245,6 +245,60 @@
               </div>
             </section>
 
+            <!-- TAB: shortcuts -->
+            <section v-if="activeName === 'shortcuts'" class="settings-tab-content">
+              <header class="shortcuts-head">
+                <div>
+                  <h3>{{ t('settings.shortcuts.title') }}</h3>
+                  <p class="desc">{{ t('settings.shortcuts.description') }}</p>
+                </div>
+                <button
+                  class="workbench-button"
+                  data-ui-id="settings-shortcuts-reset-all"
+                  :disabled="!shortcutsStore.hasOverrides"
+                  @click="onResetAllShortcuts"
+                >{{ t('settings.shortcuts.resetAll') }}</button>
+              </header>
+
+              <div v-if="shortcutConflict" class="alert alert-warn" data-ui-id="settings-shortcut-conflict">
+                <span class="alert-icon">!</span>
+                <span class="alert-body">{{ shortcutConflict }}</span>
+              </div>
+
+              <div v-for="group in shortcutsStore.groups" :key="group.group" class="shortcuts-group">
+                <div class="shortcuts-group-title">{{ shortcutGroupTitle(group.group) }}</div>
+                <div class="shortcuts-list">
+                  <div
+                    v-for="row in group.rows"
+                    :key="row.command.id"
+                    class="shortcut-row"
+                    :class="{ recording: shortcutRecordingId === row.command.id }"
+                    :data-ui-id="`settings-shortcut-${row.command.id}`"
+                  >
+                    <span class="shortcut-name">{{ t(row.command.labelKey) }}</span>
+                    <span class="shortcut-binding">
+                      <span v-if="shortcutRecordingId === row.command.id" class="shortcut-recording">{{ t('settings.shortcuts.recording') }}</span>
+                      <kbd v-else-if="row.binding" class="shortcut-kbd">{{ row.binding }}</kbd>
+                      <span v-else class="shortcut-unset">{{ t('settings.shortcuts.unset') }}</span>
+                    </span>
+                    <span class="shortcut-actions">
+                      <button
+                        class="workbench-button"
+                        :data-ui-id="`settings-shortcut-rebind-${row.command.id}`"
+                        @click="onStartShortcutRecording(row.command.id)"
+                      >{{ t('settings.shortcuts.rebind') }}</button>
+                      <button
+                        class="workbench-button"
+                        :data-ui-id="`settings-shortcut-reset-${row.command.id}`"
+                        :disabled="row.isDefault"
+                        @click="onResetShortcut(row.command.id)"
+                      >{{ t('settings.shortcuts.reset') }}</button>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
             <!-- TAB: tools-mcp -->
             <section v-if="activeName === 'tools-mcp'" class="settings-tab-content"><SettingsToolsMcpTab :engine="agentExecForm.engine" /></section>
 
@@ -472,9 +526,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
+import { useShortcutsStore } from '../stores/shortcuts'
+import { eventToBinding } from '../shortcuts/keymap'
 import {
   appInfo,
   settings as settingsApi,
@@ -532,6 +588,7 @@ const SETTINGS_TABS = new Set([
   'model-engine',
   'providers',
   'ui',
+  'shortcuts',
   ...(PERMISSIONS_SETTINGS_TAB_ENABLED ? (['permissions'] as const) : []),
   'tools-mcp',
   'rules-skills',
@@ -544,11 +601,67 @@ const tabList: Array<{ name: string; labelKey: MessageKey }> = [
   { name: 'model-engine', labelKey: 'settings.tabs.model' },
   { name: 'providers', labelKey: 'settings.tabs.providers' },
   { name: 'ui', labelKey: 'settings.tabs.ui' },
+  { name: 'shortcuts', labelKey: 'settings.tabs.shortcuts' },
   { name: 'tools-mcp', labelKey: 'settings.tabs.toolsMcp' },
   { name: 'rules-skills', labelKey: 'settings.tabs.rulesSkills' },
   { name: 'memory', labelKey: 'settings.tabs.memory' },
   ...permissionTabs,
 ]
+
+const shortcutsStore = useShortcutsStore()
+const shortcutRecordingId = ref<string | null>(null)
+const shortcutConflict = ref('')
+let shortcutRecordingListener: ((event: KeyboardEvent) => void) | null = null
+
+function shortcutGroupTitle(group: string): string {
+  return group === 'editor' ? t('settings.shortcuts.group.editor') : t('settings.shortcuts.group.app')
+}
+
+function stopShortcutRecording() {
+  if (shortcutRecordingListener) {
+    window.removeEventListener('keydown', shortcutRecordingListener, true)
+    shortcutRecordingListener = null
+  }
+  shortcutRecordingId.value = null
+}
+
+function onStartShortcutRecording(id: string) {
+  if (shortcutRecordingId.value === id) { stopShortcutRecording(); return }
+  stopShortcutRecording()
+  shortcutConflict.value = ''
+  shortcutRecordingId.value = id
+  shortcutRecordingListener = (event: KeyboardEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Escape') { shortcutConflict.value = ''; stopShortcutRecording(); return }
+    const binding = eventToBinding(event)
+    if (!binding) return
+    const conflict = shortcutsStore.findConflict(binding, id)
+    if (conflict) {
+      shortcutConflict.value = t('settings.shortcuts.conflict', { command: t(conflict.labelKey) })
+      return
+    }
+    shortcutConflict.value = ''
+    void shortcutsStore.setBinding(id, binding)
+    stopShortcutRecording()
+  }
+  window.addEventListener('keydown', shortcutRecordingListener, true)
+}
+
+async function onResetShortcut(id: string) {
+  stopShortcutRecording()
+  shortcutConflict.value = ''
+  await shortcutsStore.resetBinding(id)
+}
+
+async function onResetAllShortcuts() {
+  stopShortcutRecording()
+  shortcutConflict.value = ''
+  await shortcutsStore.resetAll()
+}
+
+watch(activeName, (name) => { if (name !== 'shortcuts') { stopShortcutRecording(); shortcutConflict.value = '' } })
+onBeforeUnmount(stopShortcutRecording)
 
 const compatibleProviders = ref<ProviderSummary[]>([])
 const bindingProviderId = ref('')
@@ -1345,6 +1458,22 @@ async function onProviderDeleted() { await store.loadProviders() }
 .alert-warn .alert-icon { background: var(--app-warn); color: var(--app-bg) }
 .alert-info { background: var(--app-accent-soft); color: var(--app-accent) }
 .alert-info .alert-icon { background: var(--app-accent); color: var(--app-accent-ink) }
+
+/* Shortcuts */
+.shortcuts-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 8px }
+.shortcuts-head .desc { margin-bottom: 0 }
+.shortcuts-group { margin-top: 18px }
+.shortcuts-group-title { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.04em; color: var(--app-ink-soft); margin-bottom: 8px }
+.shortcuts-list { border: 1px solid var(--console-border,#e4dcce); border-radius: 12px; background: var(--console-paper,#fffdfa); overflow: hidden }
+.shortcut-row { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(140px, 220px) auto; align-items: center; gap: 16px; padding: 12px 18px }
+.shortcut-row + .shortcut-row { border-top: 1px solid var(--app-border) }
+.shortcut-row.recording { background: var(--console-accent-soft,#f6e3d7) }
+.shortcut-name { color: var(--app-ink); font-size: 14px; font-weight: 500; min-width: 0 }
+.shortcut-binding { min-width: 0 }
+.shortcut-kbd { display: inline-flex; align-items: center; padding: 2px 9px; border: 1px solid var(--app-border); border-bottom-width: 2px; border-radius: 6px; background: var(--app-bg-soft); color: var(--app-ink); font-family: var(--app-font-mono); font-size: 12px; line-height: 1.6 }
+.shortcut-recording { color: var(--console-accent,#be5630); font-size: 13px; font-weight: 600 }
+.shortcut-unset { color: var(--app-ink-soft); font-size: 13px }
+.shortcut-actions { display: flex; gap: 8px; justify-content: flex-end }
 
 /* Pills */
 .pill { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: var(--app-radius-pill); font-size: 12px; line-height: 1.5; border: 1px solid var(--app-border); color: var(--app-ink-soft); background: var(--app-bg-soft); white-space: nowrap }

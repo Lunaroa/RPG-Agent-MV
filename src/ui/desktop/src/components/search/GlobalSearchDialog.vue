@@ -13,6 +13,7 @@ import {
 } from '../../api/client'
 import { useI18n } from '../../i18n'
 import { useProjectStore } from '../../stores/project'
+import { useShortcutsStore } from '../../stores/shortcuts'
 import { GLOBAL_SEARCH_OPEN_EVENT } from '../../utils/globalSearchEvents'
 
 const HIT_ROW_HEIGHT = 56
@@ -22,6 +23,7 @@ const HISTORY_LIMIT = 50
 
 const router = useRouter()
 const projectStore = useProjectStore()
+const shortcuts = useShortcutsStore()
 const { t } = useI18n()
 
 const visible = ref(false)
@@ -402,7 +404,7 @@ function onInputKeydown(event: KeyboardEvent): void {
 }
 
 function onWindowKeydown(event: KeyboardEvent): void {
-  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'p') {
+  if (shortcuts.matches(event, 'app.globalSearch')) {
     event.preventDefault()
     if (visible.value) closeDialog()
     else openDialog()

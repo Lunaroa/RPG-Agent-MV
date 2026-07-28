@@ -2038,6 +2038,8 @@ export interface UiSettings {
   fontSize?: number;
   chatWidth?: number;
   language?: ProductLanguage;
+  /** Current-window keyboard shortcut overrides: command id -> canonical combo (e.g. "Ctrl+S"). */
+  shortcuts?: Record<string, string>;
   [key: string]: unknown;
 }
 

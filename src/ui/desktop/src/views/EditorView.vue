@@ -342,6 +342,7 @@ import { useSessionStream } from '../composables/useSessionStream';
 import { useEventPlacementAskStore, type PlacementListEvent } from '../stores/eventPlacementAsk';
 import { useWorkbenchUiStore } from '../stores/workbenchUi';
 import { useProjectStore } from '../stores/project';
+import { useShortcutsStore } from '../stores/shortcuts';
 import { placeContractAtCell } from '../composables/usePlacementAtCell';
 import type { MvEvent, MvMap } from '../composables/useMapRenderer';
 import { isPlacedStatus } from '../utils/placementStatus';
@@ -378,6 +379,7 @@ const router = useRouter();
 const eventPlacementAsk = useEventPlacementAskStore();
 const workbenchUi = useWorkbenchUiStore();
 const projectStore = useProjectStore();
+const shortcuts = useShortcutsStore();
 const { language, t } = useI18n();
 
 // 聊天浮层盖住的是顶部工具栏（满宽不挤压）；地图区按浮层宽度右移让出可见空间。
@@ -2645,7 +2647,7 @@ async function saveCurrentEditorWork() {
 }
 
 function onEditorKeyDown(event: KeyboardEvent) {
-  if (event.key === 'F12' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && mode.value === 'preview' && previewSession.value) {
+  if (shortcuts.matches(event, 'editor.togglePreviewConsole') && mode.value === 'preview' && previewSession.value) {
     event.preventDefault();
     togglePreviewConsole();
     return;

@@ -13,9 +13,11 @@ import { useSettingsStore } from '../../stores/settings';
 import { useProjectStore } from '../../stores/project';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
+import { useShortcutsStore } from '../../stores/shortcuts';
 import { requestGlobalSearchOpen } from '../../utils/globalSearchEvents';
 
 const ui = useWorkbenchUiStore();
+const shortcuts = useShortcutsStore();
 const workspace = useWorkspaceStore();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
@@ -99,7 +101,7 @@ function openTutorial() {
 
 const menus = computed<{ key: string; label: string; items: { key: string; label: string; shortcut?: string; disabled?: boolean; action: MenuAction }[] }[]>(() => [
   { key: 'file', label: t('topbar.menu.file'), items: [
-    { key: 'save', label: t('topbar.menu.save'), shortcut: 'Ctrl+S', action: () => emitEditorCommand('save') },
+    { key: 'save', label: t('topbar.menu.save'), shortcut: shortcuts.bindingLabel('app.save'), action: () => emitEditorCommand('save') },
     { key: 'open-project-folder', label: t('topbar.menu.openProjectFolder'), disabled: !projectStore.currentProject, action: openProjectFolder },
   ]},
   { key: 'edit', label: t('topbar.menu.edit'), items: [
@@ -107,7 +109,7 @@ const menus = computed<{ key: string; label: string; items: { key: string; label
     { key: 'redo', label: t('topbar.menu.redo'), shortcut: 'Ctrl+Shift+Z', action: () => emitEditorCommand('redo') },
   ]},
   { key: 'tools', label: t('topbar.menu.tools'), items: [
-    { key: 'global-search', label: t('topbar.menu.search'), shortcut: 'Ctrl+P', action: () => requestGlobalSearchOpen() },
+    { key: 'global-search', label: t('topbar.menu.search'), shortcut: shortcuts.bindingLabel('app.globalSearch'), action: () => requestGlobalSearchOpen() },
   ]},
   { key: 'help', label: t('topbar.menu.help'), items: [
     { key: 'tutorial', label: t('topbar.menu.tutorial'), action: openTutorial },
@@ -310,10 +312,10 @@ async function stopPlaytest() {
 function onKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape' && (openMenu.value || playtestRuntimeMenuOpen.value)) {
     closeAllMenus();
-  } else if (e.ctrlKey && e.key === 'l') {
+  } else if (shortcuts.matches(e, 'app.toggleAgentPanel')) {
     e.preventDefault();
     ui.toggleAgentPanel();
-  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+  } else if (shortcuts.matches(e, 'app.save')) {
     e.preventDefault();
     emitEditorCommand('save');
   }

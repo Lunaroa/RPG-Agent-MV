@@ -33,9 +33,9 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
 
   try {
     await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
-    const preparing = await service.start(project, 1, { switches: { '2': true }, variables: { '3': 8 }, selfSwitches: {} });
-    assert.equal(preparing.session?.status, 'preparing');
-    assert.equal(preparing.session?.loadProgress?.stage, 'starting-worker');
+    // Serve-direct preparation is synchronous: start already returns 'starting'.
+    const startResult = await service.start(project, 1, { switches: { '2': true }, variables: { '3': 8 }, selfSwitches: {} });
+    assert.equal(startResult.session?.status, 'starting');
     await waitForPreviewStatus(service, 'starting');
     const started = service.current();
     assert.equal(started.session?.status, 'starting');
@@ -138,7 +138,7 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
   }
 });
 
-test('retargets an in-progress isolation preparation without starting another copy', async () => {
+test('retargets a freshly started preview to a newer map without another registration', async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-workflow-'));
   const project = createMZProject(workflowRoot);
   let isolatedRoot = '';
@@ -154,7 +154,7 @@ test('retargets an in-progress isolation preparation without starting another co
   try {
     await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
     const first = await service.start(project, 1);
-    const firstTaskId = first.session?.loadProgress?.taskId;
+    assert.equal(first.session?.status, 'starting');
     const firstSessionId = first.session?.sessionId;
 
     const retargeted = await service.resume({
@@ -163,16 +163,63 @@ test('retargets an in-progress isolation preparation without starting another co
       overrides: { switches: {}, variables: {}, selfSwitches: {} },
     });
 
-    assert.equal(retargeted.session?.status, 'preparing');
+    assert.equal(retargeted.session?.status, 'resuming');
     assert.equal(retargeted.session?.sessionId, firstSessionId);
-    assert.equal(retargeted.session?.loadProgress?.taskId, firstTaskId);
     assert.equal(retargeted.session?.mapId, 2);
-    await waitForPreviewStatus(service, 'starting');
-    assert.equal(service.current().session?.mapId, 2);
     assert.equal(service.current().session?.mapPixelWidth, 720);
     assert.equal(service.current().session?.mapPixelHeight, 480);
     assert.equal(injectedConfig(isolatedRoot).mapId, 2);
     await service.stop();
+  } finally {
+    service.shutdownSync();
+    closeDatabase();
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
+test('serves the project directly and only generates the app shell and staged overlays', async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-workflow-'));
+  const project = createMZProject(workflowRoot);
+  let captured: { resourceRoot?: string; options?: { fallback?: { root: string; prefixes: readonly string[] }; deniedPaths?: readonly string[] } } = {};
+  const service = new MapPreviewIframeService(workflowRoot, {
+    registerPreviewRoot(key, resourceRoot, _sourceProject, options) {
+      captured = { resourceRoot, options };
+      return `rpg-agent-preview://${key}/index.html`;
+    },
+    unregisterPreviewRoot() {},
+    verifyFrameIsolation: () => true,
+  });
+
+  try {
+    await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
+    writeStagedProjectJson(workflowRoot, project, 'data/Map001.json', {
+      width: 21,
+      height: 15,
+      tilesetId: 1,
+      events: [null],
+      data: [],
+    });
+    await service.start(project, 1);
+    const appDir = captured.resourceRoot!;
+
+    // No project copy: only the generated shell plus the staged draft overlay.
+    assert.deepEqual(listRelativeFiles(appDir), [
+      'data/Map001.json',
+      'index.html',
+      'js/main.js',
+      'js/rpg-agent-preview-iframe.js',
+      'js/rpg-agent-preview-marker.js',
+    ]);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(appDir, 'data', 'Map001.json'), 'utf8')).width, 21);
+    assert.equal(captured.options?.fallback?.root, fs.realpathSync.native(project));
+    assert.deepEqual([...(captured.options?.fallback?.prefixes ?? [])], ['']);
+    assert.equal(captured.options?.deniedPaths?.includes('save/'), true);
+    assert.equal(captured.options?.deniedPaths?.includes('.git/'), true);
+    // Staged map geometry wins over the untouched source file.
+    assert.equal(service.current().session?.mapPixelWidth, 21 * 48);
+
+    await service.stop();
+    assert.equal(fs.existsSync(appDir), false);
   } finally {
     service.shutdownSync();
     closeDatabase();
@@ -369,6 +416,19 @@ test('keeps a successful warm preview untouched when staging becomes conflicted'
 function injectedIdentity(resourceRoot: string): { sessionId: string; channelToken: string } {
   const config = injectedConfig(resourceRoot);
   return { sessionId: config.sessionId, channelToken: config.channelToken };
+}
+
+function listRelativeFiles(rootDirectory: string): string[] {
+  const out: string[] = [];
+  const visit = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(absolute);
+      else out.push(path.relative(rootDirectory, absolute).replaceAll('\\', '/'));
+    }
+  };
+  visit(rootDirectory);
+  return out.sort((left, right) => left.localeCompare(right));
 }
 
 function injectedConfig(resourceRoot: string): { sessionId: string; channelToken: string; mapId: number; operationId: number } {

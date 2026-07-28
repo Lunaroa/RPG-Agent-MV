@@ -434,6 +434,7 @@ async function loadBackendModules(roots: AppRoots) {
     placementQueue: await import(new URL('desktop/placement-queue-service.ts', coreUrl).href),
     interactivePlaytest: await import(new URL('desktop/interactive-playtest-service.ts', coreUrl).href),
     particlePreview: await import(new URL('desktop/particle-animation-preview-preparation.ts', coreUrl).href),
+    playtestPreparation: await import(new URL('desktop/playtest-preparation.ts', coreUrl).href),
     isolatedPreparation: await import(new URL('desktop/isolated-project-preparation.ts', coreUrl).href),
     mapPreview: await import(new URL('desktop/map-preview-iframe-service.ts', coreUrl).href),
     playtestRuntime: await import(new URL('desktop/interactive-playtest-runtime.ts', coreUrl).href),
@@ -459,6 +460,12 @@ async function loadBackendModules(roots: AppRoots) {
           officialRuntimeRoots: officialPlaytestRuntimeRoots(engine),
         })
       ),
+      // Isolated preparation copies + fingerprints run in a worker process so the
+      // Electron main process (and the whole editor UI) never blocks on them.
+      prepareBattleTest: (workflowRoot: string, project: string, configuration: unknown) =>
+        desktop.playtestPreparation.prepareBattleTestInWorker(workflowRoot, project, configuration),
+      prepareParticlePreview: (workflowRoot: string, project: string, animation: unknown) =>
+        desktop.playtestPreparation.prepareParticlePreviewInWorker(workflowRoot, project, animation),
     },
   );
   mapPreviewService = new desktop.mapPreview.MapPreviewIframeService(
@@ -470,8 +477,13 @@ async function loadBackendModules(roots: AppRoots) {
       },
       onStatus: publishMapPreviewStatus,
       onCommand: publishMapPreviewRuntimeCommand,
-      registerPreviewRoot: (key: string, resourceRoot: string, sourceProject?: string) =>
-        registerMapPreviewRoot(key, resourceRoot, resolvePreviewDisabledPlugins(sourceProject)),
+      registerPreviewRoot: (
+        key: string,
+        resourceRoot: string,
+        sourceProject?: string,
+        options?: { fallback?: { root: string; prefixes: readonly string[] }; deniedPaths?: readonly string[] },
+      ) =>
+        registerMapPreviewRoot(key, resourceRoot, resolvePreviewDisabledPlugins(sourceProject), options?.fallback, options?.deniedPaths),
       unregisterPreviewRoot: unregisterMapPreviewRoot,
       verifyFrameIsolation: verifyMapPreviewFrameIsolation,
     },

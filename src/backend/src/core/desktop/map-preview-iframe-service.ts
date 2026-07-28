@@ -26,21 +26,19 @@ import {
   parseMapPreviewSelfSwitchKey,
 } from '../../../../contract/map-preview-state.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
+import type { IsolatedStagingSnapshot } from './isolated-project-preparation.ts';
 import {
-  cleanupIsolatedProject,
-  type IsolatedProjectPreparation,
-  type IsolatedStagingSnapshot,
-  verifyIsolatedSourceState,
-} from './isolated-project-preparation.ts';
+  cleanupMapPreviewApp,
+  MAP_PREVIEW_DENIED_PREFIXES,
+  MAP_PREVIEW_PASSTHROUGH_PREFIXES,
+  prepareMapPreviewApp,
+  type MapPreviewAppPreparation,
+} from './map-preview-app-preparation.ts';
+import { writeMapPreviewIframeHarness } from './map-preview-iframe-harness.ts';
 import {
-  MapPreviewPreparationCancelledError,
-  MapPreviewPreparationFailedError,
-  startMapPreviewPreparation,
-  type MapPreviewPreparationTask,
-} from './map-preview-preparation.ts';
-import { injectMapPreviewIframeHarness, writeMapPreviewIframeHarness } from './map-preview-iframe-harness.ts';
-import {
+  captureWarmProjectSnapshot,
   effectiveMapRevision,
+  effectivePreviewMapGeometry,
   inspectWarmProjectChanges,
   mapPreviewLoadPurpose,
   mapPreviewRequiresReload,
@@ -59,7 +57,15 @@ export interface MapPreviewIframeServiceDependencies {
   isPlaytestActive?(): boolean;
   onStatus?(session: MapPreviewSession): void;
   onCommand?(command: MapPreviewRuntimeCommand): void;
-  registerPreviewRoot(key: string, resourceRoot: string, sourceProject?: string): string;
+  registerPreviewRoot(
+    key: string,
+    resourceRoot: string,
+    sourceProject?: string,
+    options?: {
+      fallback?: { root: string; prefixes: readonly string[] };
+      deniedPaths?: readonly string[];
+    },
+  ): string;
   unregisterPreviewRoot(key: string): void;
   verifyFrameIsolation(url: string): boolean;
 }
@@ -68,7 +74,6 @@ interface PreparedRuntimeTarget {
   revision: string;
   reload: boolean;
   geometry: ReturnType<typeof previewMapGeometry>;
-  runtime: ReturnType<typeof inspectRmmvProject>;
 }
 
 export class MapPreviewIframeService {
@@ -76,9 +81,7 @@ export class MapPreviewIframeService {
   readonly #dependencies: MapPreviewIframeServiceDependencies;
   #session: MapPreviewSession | null = null;
   #sourceProject = '';
-  #preparation: IsolatedProjectPreparation | null = null;
-  #preparationTask: MapPreviewPreparationTask | null = null;
-  #preparationGeneration = 0;
+  #preparation: MapPreviewAppPreparation | null = null;
   #sourceSnapshot: ProjectFileSnapshot | null = null;
   #stagingSnapshot: IsolatedStagingSnapshot | null = null;
   #pendingMapSyncIds = new Set<number>();
@@ -124,7 +127,6 @@ export class MapPreviewIframeService {
     if (preflightFailure) return { preflightFailure };
     const mapRevision = effectiveMapRevision(this.#workflowRoot, project, mapId);
     const now = new Date().toISOString();
-    const taskId = crypto.randomUUID();
     this.#nextOperationId = 1;
     this.#activeOperationId = 1;
     this.#activeLoadStartedAt = now;
@@ -144,87 +146,36 @@ export class MapPreviewIframeService {
       eventExecutionEnabled: false,
       inputWait: { kind: 'none' },
       mapChangeSource: 'editor',
-      loadProgress: loadProgress(taskId, 'isolation', 'starting-worker', now),
       startedAt: now,
       updatedAt: now,
     };
     this.#publish();
-    const generation = ++this.#preparationGeneration;
     try {
-      const task = startMapPreviewPreparation(this.#workflowRoot, project, {
-        taskId,
-        onProgress: (progress) => this.#handlePreparationProgress(generation, progress),
-      });
-      this.#preparationTask = task;
-      void this.#completeStart(generation, task, mapId, mapRevision, overrides);
-      return this.current();
-    } catch (error) {
-      await this.#failPreparation(error, mapId);
-      return this.current();
-    }
-  }
-
-  async #completeStart(
-    generation: number,
-    task: MapPreviewPreparationTask,
-    mapId: number,
-    mapRevision: string,
-    overrides: MapPreviewOverrides,
-  ): Promise<void> {
-    try {
-      const prepared = await task.result;
-      if (this.#preparationTask === task) this.#preparationTask = null;
-      if (!this.#startIsCurrent(generation)) {
-        cleanupIsolatedProject(prepared);
-        return;
-      }
+      // Serve-direct: only the tiny app shell and staged overlays are generated;
+      // everything else streams straight from the project, so this is instant.
+      const prepared = prepareMapPreviewApp(this.#workflowRoot, project);
       this.#preparation = prepared;
-      const pendingResume = this.#pendingResume;
-      const targetMapId = pendingResume?.mapId ?? mapId;
-      const targetMapRevision = pendingResume
-        ? effectiveMapRevision(this.#workflowRoot, prepared.sourceProject, targetMapId)
-        : mapRevision;
-      const targetOverrides = pendingResume?.overrides ?? overrides;
-      this.#pendingResume = null;
-      const progressNow = new Date().toISOString();
-      this.#update({
-        mapId: targetMapId,
-        mapRevision: targetMapRevision,
-        loadProgress: loadProgress(
-          task.taskId,
-          'isolation',
-          'preparing-runtime',
-          progressNow,
-          this.#session.loadProgress?.taskStartedAt || this.#session.startedAt,
-        ),
-      });
-      this.#sourceSnapshot = new Map(prepared.sourceSnapshot.map((entry) => [entry.relativePath, {
-        size: entry.size,
-        mtimeMs: entry.mtimeMs,
-        hash: entry.hash,
-      }]));
+      this.#sourceSnapshot = captureWarmProjectSnapshot(project);
       this.#stagingSnapshot = prepared.staging;
-      const copied = inspectRmmvProject(prepared.temporaryProject);
-      const geometry = previewMapGeometry(prepared.temporaryProject, targetMapId, copied.tileSize);
+      const geometry = effectivePreviewMapGeometry(this.#workflowRoot, project, mapId, prepared.tileSize);
       this.#channelToken = crypto.randomBytes(32).toString('hex');
       this.#protocolKey = crypto.randomBytes(32).toString('hex');
-      injectMapPreviewIframeHarness(copied.resourceRoot, {
+      writeMapPreviewIframeHarness(prepared.appDirectory, {
         sessionId: this.#session.sessionId,
         channelToken: this.#channelToken,
-        mapId: targetMapId,
-        mapRevision: targetMapRevision,
+        mapId,
+        mapRevision,
         operationId: this.#activeOperationId,
-        viewportWidth: copied.screenWidth,
-        viewportHeight: copied.screenHeight,
-        tileSize: copied.tileSize,
+        viewportWidth: prepared.screenWidth,
+        viewportHeight: prepared.screenHeight,
+        tileSize: prepared.tileSize,
         geometry,
-        overrides: targetOverrides,
+        overrides,
       });
-      const iframeUrl = this.#dependencies.registerPreviewRoot(
-        this.#protocolKey,
-        copied.resourceRoot,
-        prepared.sourceProject,
-      );
+      const iframeUrl = this.#dependencies.registerPreviewRoot(this.#protocolKey, prepared.appDirectory, project, {
+        fallback: { root: prepared.resourceRoot, prefixes: MAP_PREVIEW_PASSTHROUGH_PREFIXES },
+        deniedPaths: [...prepared.deniedPaths, ...MAP_PREVIEW_DENIED_PREFIXES],
+      });
       this.#update({
         status: 'starting',
         iframeUrl,
@@ -234,48 +185,22 @@ export class MapPreviewIframeService {
         actualFps: undefined,
       });
       this.#armRuntimeTimeout('iframe-runtime-startup');
+      return this.current();
     } catch (error) {
-      if (this.#preparationTask === task) this.#preparationTask = null;
-      if (error instanceof MapPreviewPreparationCancelledError || !this.#startIsCurrent(generation)) return;
-      await this.#failPreparation(error, this.#session?.mapId ?? mapId);
+      await this.#failPreparation(error, mapId);
+      return this.current();
     }
-  }
-
-  #handlePreparationProgress(generation: number, progress: MapPreviewLoadProgress): void {
-    if (!this.#startIsCurrent(generation) || this.#session?.status !== 'preparing') return;
-    if (this.#session.loadProgress?.taskId !== progress.taskId) return;
-    this.#update({ loadProgress: progress });
   }
 
   async #failPreparation(error: unknown, mapId: number): Promise<void> {
-    const preflightFailure = error instanceof MapPreviewPreparationFailedError
-      ? error.preflightFailure
-      : undefined;
-    if (preflightFailure) {
-      await this.#fail(
-        `Staging preflight found ${preflightFailure.conflictCount} conflicted file(s).`,
-        'staging-conflict',
-        {
-          stage: preflightFailure.stage,
-          operationId: this.#activeOperationId,
-          targetMapId: mapId,
-          message: `Staging preflight found ${preflightFailure.conflictCount} conflicted file(s).`,
-          stagingConflicts: preflightFailure.conflicts,
-        },
-      );
-      return;
-    }
     await this.#fail(
       errorMessage(error),
-      error instanceof MapPreviewPreparationFailedError ? 'isolation-preparation-failed' : 'map-render-failed',
+      'map-render-failed',
       {
-        stage: error instanceof MapPreviewPreparationFailedError ? error.stage : 'iframe-runtime-preparation',
+        stage: 'map-preview-app-preparation',
         operationId: this.#activeOperationId,
         targetMapId: mapId,
         message: errorMessage(error),
-        ...(error instanceof MapPreviewPreparationFailedError && error.runtimeOutput
-          ? { runtimeOutput: error.runtimeOutput }
-          : {}),
       },
     );
   }
@@ -654,15 +579,15 @@ export class MapPreviewIframeService {
     this.#activeLoadStartedAt = now;
     this.#pendingResume = null;
     this.#clearRuntimeTimeout();
-    writeMapPreviewIframeHarness(target.runtime.resourceRoot, {
+    writeMapPreviewIframeHarness(this.#preparation.appDirectory, {
       sessionId: this.#session.sessionId,
       channelToken: this.#channelToken,
       mapId: request.mapId,
       mapRevision: target.revision,
       operationId,
-      viewportWidth: target.runtime.screenWidth,
-      viewportHeight: target.runtime.screenHeight,
-      tileSize: target.runtime.tileSize,
+      viewportWidth: this.#preparation.screenWidth,
+      viewportHeight: this.#preparation.screenHeight,
+      tileSize: this.#preparation.tileSize,
       geometry: target.geometry,
       overrides: request.overrides,
     });
@@ -696,7 +621,7 @@ export class MapPreviewIframeService {
     this.#sourceSnapshot = changes.sourceSnapshot;
     this.#stagingSnapshot = changes.stagingSnapshot;
     for (const mapId of changes.changedMapIds) this.#pendingMapSyncIds.add(mapId);
-    if (changes.mapInfosChanged) syncEffectiveMapInfos(this.#workflowRoot, request.project, this.#preparation.temporaryProject);
+    if (changes.mapInfosChanged) syncEffectiveMapInfos(this.#workflowRoot, request.project, this.#preparation.appDirectory);
     const revision = effectiveMapRevision(this.#workflowRoot, request.project, request.mapId);
     const reload = mapPreviewRequiresReload(
       this.#session.mapId,
@@ -707,12 +632,13 @@ export class MapPreviewIframeService {
       request.forceReload,
     );
     if (reload) {
-      syncEffectiveMap(this.#workflowRoot, request.project, this.#preparation.temporaryProject, request.mapId);
+      // Pin the effective map into the app overlay so the primary root always
+      // wins over the live project file while this revision is loaded.
+      syncEffectiveMap(this.#workflowRoot, request.project, this.#preparation.appDirectory, request.mapId);
       this.#pendingMapSyncIds.delete(request.mapId);
     }
-    const runtime = inspectRmmvProject(this.#preparation.temporaryProject);
-    const geometry = previewMapGeometry(this.#preparation.temporaryProject, request.mapId, runtime.tileSize);
-    return { revision, reload, geometry, runtime };
+    const geometry = effectivePreviewMapGeometry(this.#workflowRoot, request.project, request.mapId, this.#preparation.tileSize);
+    return { revision, reload, geometry };
   }
 
   #sendCommand(command: MapPreviewRuntimeCommandPayload): void {
@@ -739,27 +665,28 @@ export class MapPreviewIframeService {
     if (!this.#session || this.#session.status === 'failed' || this.#cleanupInProgress) return;
     this.#cleanupInProgress = true;
     const preparation = this.#preparation;
+    const redactionRoots = preparation
+      ? { sourceProject: preparation.sourceProject, temporaryProject: preparation.appDirectory }
+      : null;
     const normalized = normalizeMapPreviewFailureDetail({
       stage: detail?.stage || 'iframe-runtime',
       operationId: detail?.operationId ?? this.#activeOperationId,
       targetMapId: detail?.targetMapId ?? this.#session.mapId,
       ...detail,
       message: detail?.message || message,
-    }, preparation);
+    }, redactionRoots);
     const cleanupError = await this.#cleanup();
-    this.#finish('failed', sanitizeMapPreviewDiagnosticText([message, cleanupError].filter(Boolean).join(' '), preparation), code, normalized);
+    this.#finish('failed', sanitizeMapPreviewDiagnosticText([message, cleanupError].filter(Boolean).join(' '), redactionRoots), code, normalized);
     this.#cleanupInProgress = false;
   }
 
   async #cleanup(): Promise<string> {
     this.#clearRuntimeTimeout();
-    await this.#cancelPreparation();
     return this.#cleanupIsolation();
   }
 
   #cleanupSync(): string {
     this.#clearRuntimeTimeout();
-    this.#cancelPreparationSync();
     return this.#cleanupIsolation();
   }
 
@@ -769,13 +696,10 @@ export class MapPreviewIframeService {
     this.#channelToken = '';
     let error = '';
     if (this.#preparation) {
-      const preparation = this.#preparation;
-      const evidence = verifyIsolatedSourceState(this.#workflowRoot, preparation);
-      if (!evidence.sourceUnchanged || !evidence.savesUnchanged || !evidence.stagingUnchanged) {
-        console.warn('[map-preview] Source or staging changed while the isolated iframe preview was warm.');
-      }
-      try { cleanupIsolatedProject(preparation); }
-      catch (cleanupError) { error = `Preview temporary project cleanup failed: ${errorMessage(cleanupError)}`; }
+      // Serve-direct previews never write to the project (the protocol is
+      // read-only), so there is no isolation evidence to verify at teardown.
+      try { cleanupMapPreviewApp(this.#preparation); }
+      catch (cleanupError) { error = `Preview app cleanup failed: ${errorMessage(cleanupError)}`; }
     }
     this.#preparation = null;
     this.#sourceProject = '';
@@ -828,21 +752,6 @@ export class MapPreviewIframeService {
   }
 
   #publish(): void { if (this.#session) this.#dependencies.onStatus?.({ ...this.#session }); }
-  #startIsCurrent(generation: number): boolean {
-    return generation === this.#preparationGeneration && Boolean(this.#session) && !['stopping', 'stopped', 'failed'].includes(this.#session!.status);
-  }
-  async #cancelPreparation(): Promise<void> {
-    this.#preparationGeneration += 1;
-    const task = this.#preparationTask;
-    this.#preparationTask = null;
-    if (task) await task.cancel();
-  }
-  #cancelPreparationSync(): void {
-    this.#preparationGeneration += 1;
-    const task = this.#preparationTask;
-    this.#preparationTask = null;
-    task?.cancelSync();
-  }
 }
 
 function runtimeEvent(value: MapPreviewRuntimeEvent): MapPreviewRuntimeEvent {

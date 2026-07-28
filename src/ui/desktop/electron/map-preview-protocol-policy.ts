@@ -34,3 +34,26 @@ export function resolveConfinedMapPreviewResource(rootInput: string, relativeInp
   }
   return realTarget;
 }
+
+export interface MapPreviewResolutionEntry {
+  resourceRoot: string;
+  /** Optional pass-through root for shared asset trees served straight from the project. */
+  fallback?: { root: string; prefixes: readonly string[] };
+  /** Paths that must 404 (staged deletions, save data); prefixes deny whole trees. */
+  denied?: { exact: Set<string>; prefixes: readonly string[] };
+}
+
+/** Isolated app files win; the fallback root only serves its allow-listed prefixes; denied paths always 404. */
+export function resolveMapPreviewResource(entry: MapPreviewResolutionEntry, relative: string): string | null {
+  const normalized = relative.replace(/\\/g, '/');
+  const lower = normalized.toLowerCase();
+  if (entry.denied && (entry.denied.exact.has(lower) || entry.denied.prefixes.some((prefix) => lower.startsWith(prefix)))) {
+    return null;
+  }
+  const primary = resolveConfinedMapPreviewResource(entry.resourceRoot, relative);
+  if (fs.existsSync(primary) && fs.statSync(primary).isFile()) return primary;
+  const fallback = entry.fallback;
+  if (!fallback) return primary;
+  if (!fallback.prefixes.some((prefix) => normalized.startsWith(prefix))) return primary;
+  return resolveConfinedMapPreviewResource(fallback.root, relative);
+}

@@ -49,6 +49,37 @@ export function writeMapPreviewIframeHarness(resourceRootInput: string, options:
   fs.writeFileSync(path.join(resourceRoot, 'js', 'rpg-agent-preview-iframe.js'), iframeHarnessSource(options), 'utf8');
 }
 
+/**
+ * Serve-direct variant of injectMapPreviewIframeHarness: instead of rewriting a
+ * copied project in place, this generates the tiny preview app shell (marker,
+ * injected index.html and — when the engine loads plugins dynamically — an
+ * injected js/main.js) into the app directory. The effective index.html and
+ * js/main.js contents are provided by the caller so staged drafts win; the
+ * harness script itself is written separately via writeMapPreviewIframeHarness.
+ */
+export function writeMapPreviewIframeAppShell(appDirectoryInput: string, indexHtml: string, mainJs: string): void {
+  const appDirectory = path.resolve(appDirectoryInput);
+  const scriptDirectory = path.join(appDirectory, 'js');
+  const markerName = 'rpg-agent-preview-marker.js';
+  const harnessName = 'rpg-agent-preview-iframe.js';
+  fs.mkdirSync(scriptDirectory, { recursive: true });
+  fs.writeFileSync(path.join(scriptDirectory, markerName), markerSource(), 'utf8');
+
+  const firstScript = /<script\b/i;
+  if (!firstScript.test(indexHtml)) throw new Error('Cannot find an RPG Maker script entry in the map preview app.');
+  let index = indexHtml.replace(firstScript, `<script src="js/${markerName}"></script>\n<script`);
+
+  const dynamicPluginsEntry = /(["']js\/plugins\.js["'])(\s*\])/;
+  if (dynamicPluginsEntry.test(mainJs)) {
+    fs.writeFileSync(path.join(scriptDirectory, 'main.js'), mainJs.replace(dynamicPluginsEntry, `$1,\n    "js/${harnessName}"$2`), 'utf8');
+  } else {
+    const mainEntry = /(<script\b[^>]*\bsrc=["']js\/main\.js["'][^>]*><\/script>)/i;
+    if (!mainEntry.test(index)) throw new Error('Cannot find the RPG Maker main script in the map preview app.');
+    index = index.replace(mainEntry, `<script src="js/${harnessName}"></script>\n$1`);
+  }
+  fs.writeFileSync(path.join(appDirectory, 'index.html'), index, 'utf8');
+}
+
 function markerSource(): string {
   return `/* Generated only inside an isolated RPG Agent map preview. */
 (function () {

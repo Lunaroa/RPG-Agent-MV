@@ -2153,6 +2153,10 @@ function captureProjectSnapshot(project: string, previous?: ProjectFileSnapshot)
         snapshot.set(relative, prior);
         continue;
       }
+      if (!warmSnapshotContentPath(relative)) {
+        snapshot.set(relative, { size: stat.size, mtimeMs: stat.mtimeMs, hash: `meta:${stat.size}:${stat.mtimeMs}` });
+        continue;
+      }
       const body = entry.isSymbolicLink() ? Buffer.from(fs.readlinkSync(absolute), 'utf8') : fs.readFileSync(absolute);
       snapshot.set(relative, { size: stat.size, mtimeMs: stat.mtimeMs, hash: sha256(body) });
     }
@@ -2231,6 +2235,26 @@ function excludedWarmSnapshotPath(relative: string): boolean {
     || lower === 'www/save' || lower.startsWith('www/save/');
 }
 
+/**
+ * Only data/js trees are worth reading for warm-change detection; asset files
+ * use a metadata pseudo-hash so a fresh snapshot never reads multi-gigabyte
+ * audio/img/effects trees. An asset rewritten in place with a preserved size
+ * and mtime is deliberately not detected (same tradeoff as the isolation
+ * fingerprint).
+ */
+function warmSnapshotContentPath(relative: string): boolean {
+  const lower = normalizeRelativePath(relative).toLowerCase();
+  return lower.startsWith('data/')
+    || lower.startsWith('js/')
+    || lower.startsWith('www/data/')
+    || lower.startsWith('www/js/');
+}
+
+/** Fresh warm-change baseline for serve-direct previews (no isolated copy to snapshot). */
+export function captureWarmProjectSnapshot(project: string): ProjectFileSnapshot {
+  return captureProjectSnapshot(project);
+}
+
 function normalizeRelativePath(value: string): string {
   return value.split(path.sep).join('/').replace(/^\.\//, '');
 }
@@ -2252,6 +2276,29 @@ function revisionString(value: unknown, label: string): string {
 export function previewMapGeometry(project: string, mapId: number, tileSizeInput: number): PreviewMapGeometry {
   const tileSize = positiveInteger(tileSizeInput, 'tile size');
   const file = path.join(resolveDataDir(project), `Map${String(mapId).padStart(3, '0')}.json`);
+  const map = readJson(file) as Record<string, unknown>;
+  const widthTiles = positiveInteger(map.width, 'map width');
+  const heightTiles = positiveInteger(map.height, 'map height');
+  return {
+    mapId,
+    widthTiles,
+    heightTiles,
+    tileSize,
+    pixelWidth: widthTiles * tileSize,
+    pixelHeight: heightTiles * tileSize,
+  };
+}
+
+/** Staged-aware variant of previewMapGeometry for serve-direct previews. */
+export function effectivePreviewMapGeometry(
+  workflowRoot: string,
+  project: string,
+  mapId: number,
+  tileSizeInput: number,
+): PreviewMapGeometry {
+  const tileSize = positiveInteger(tileSizeInput, 'tile size');
+  const file = getMapFileForRead(workflowRoot, project, mapId);
+  if (!file || !fs.existsSync(file)) throw new Error(`Map${String(mapId).padStart(3, '0')}.json does not exist.`);
   const map = readJson(file) as Record<string, unknown>;
   const widthTiles = positiveInteger(map.width, 'map width');
   const heightTiles = positiveInteger(map.height, 'map height');
@@ -2359,9 +2406,12 @@ function waitForProcessExitSync(pid: number, timeoutMs: number): boolean {
   return !isProcessAlive(pid);
 }
 
+/** Roots used purely for path redaction in diagnostics. */
+type MapPreviewRedactionRoots = Pick<IsolatedProjectPreparation, 'sourceProject' | 'temporaryProject'>;
+
 export function normalizeMapPreviewFailureDetail(
   detail: MapPreviewFailureDetail,
-  preparation: IsolatedProjectPreparation | null,
+  preparation: MapPreviewRedactionRoots | null,
 ): MapPreviewFailureDetail {
   const resources = [...new Set((detail.resources || [])
     .map((resource) => sanitizeMapPreviewResource(resource, preparation))
@@ -2393,7 +2443,7 @@ export function normalizeMapPreviewFailureDetail(
 
 export function sanitizeMapPreviewDiagnosticText(
   message: string,
-  preparation: IsolatedProjectPreparation | null,
+  preparation: MapPreviewRedactionRoots | null,
 ): string {
   let sanitized = String(message || 'Map preview failed.').slice(0, MAX_DIAGNOSTIC_TEXT_LENGTH);
   const roots = [preparation?.sourceProject, preparation?.temporaryProject]
@@ -2417,7 +2467,7 @@ export function sanitizeMapPreviewDiagnosticText(
 
 function sanitizeMapPreviewResource(
   resource: string,
-  preparation: IsolatedProjectPreparation | null,
+  preparation: MapPreviewRedactionRoots | null,
 ): string {
   let value = decodeUriSafely(String(resource || '').trim()).replace(/\\/g, '/');
   if (!value) return '';

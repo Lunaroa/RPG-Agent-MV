@@ -226,6 +226,16 @@
       @save="saveEvent"
     />
     <QuickObtainEventDialog ref="quickObtainDialog" :catalog="editorCatalog" @commit="createObtainEvent" />
+    <ExternalMapImportDialog
+      :visible="externalImportDialog.open"
+      :project="projectStore.currentProject"
+      :anchor-parent-id="externalImportDialog.anchorParentId"
+      :mode="externalImportDialog.mode"
+      :target-map-id="externalImportDialog.targetMapId"
+      :target-map-name="externalImportDialog.targetMapName"
+      @close="externalImportDialog.open = false"
+      @applied="onExternalMapImportApplied"
+    />
 
     <el-dialog
       v-model="notesDialog.open"
@@ -253,6 +263,8 @@
         <ul ref="treeMenuEl" class="ctx-menu" :style="{ left: `${treeContext.x}px`, top: `${treeContext.y}px` }">
           <li @click="ctxEditProperties">{{ t('editor.ctx.editProperties') }}</li>
           <li @click="ctxNewMapUnder">{{ t('editor.ctx.newMapUnder') }}</li>
+          <li @click="ctxImportExternalMap">{{ t('editor.ctx.importExternalMap') }}</li>
+          <li @click="ctxReplaceMap">{{ t('editor.ctx.replaceMap') }}</li>
           <li @click="ctxOpenNotes">{{ t('editor.ctx.notes') }}</li>
           <li class="ctx-sep" />
           <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxApplyMap">{{ t('editor.ctx.applyMapStaging') }}</li>
@@ -307,6 +319,7 @@ import LeftDock from '../components/layout/LeftDock.vue';
 import EventEditorDialog from '../components/editor/EventEditorDialog.vue';
 import QuickObtainEventDialog from '../components/editor/QuickObtainEventDialog.vue';
 import MapPropertiesDialog from '../components/editor/MapPropertiesDialog.vue';
+import ExternalMapImportDialog from '../components/editor/ExternalMapImportDialog.vue';
 import BottomPanel from '../components/editor/BottomPanel.vue';
 import MapRuntimePreview from '../components/editor/MapRuntimePreview.vue';
 import MapPreviewInspector from '../components/editor/MapPreviewInspector.vue';
@@ -453,6 +466,8 @@ const treeMenuEl = ref<HTMLElement | null>(null);
 const canvasMenuEl = ref<HTMLElement | null>(null);
 // Per-map notes dialog opened from the map tree context menu.
 const notesDialog = reactive({ open: false, saving: false, mapId: 0, mapName: '', mapNote: '', editorNote: '' });
+// External-project map import dialog (a standalone popup that also hosts phase-2 replace).
+const externalImportDialog = reactive({ open: false, anchorParentId: 0, mode: 'import' as 'import' | 'replace', targetMapId: 0, targetMapName: '' });
 const systemData = ref<{ switches: string[]; variables: string[] } | null>(null);
 const editorCatalog = ref<EditorProjectCatalog | null>(null);
 const currentTilesetImages = shallowRef<(HTMLImageElement | null)[]>([]);
@@ -2313,6 +2328,38 @@ async function saveNotesDialog() {
 
 async function ctxEditProperties() { const id = treeContext.mapId; closeTreeContext(); await openEditProperties(id); }
 function ctxNewMapUnder() { const id = treeContext.mapId; closeTreeContext(); openCreateProperties(id); }
+function ctxImportExternalMap() {
+  const parentId = treeContext.mapId;
+  closeTreeContext();
+  externalImportDialog.mode = 'import';
+  externalImportDialog.anchorParentId = parentId;
+  externalImportDialog.open = true;
+}
+function mapNameById(id: number): string {
+  const find = (nodes: TreeNode[]): TreeNode | undefined => {
+    for (const node of nodes) {
+      if (node.id === id) return node;
+      const hit = node.children ? find(node.children) : undefined;
+      if (hit) return hit;
+    }
+    return undefined;
+  };
+  return find(mapTree.value)?.name || `Map${String(id).padStart(3, '0')}`;
+}
+function ctxReplaceMap() {
+  const mapId = treeContext.mapId;
+  closeTreeContext();
+  externalImportDialog.mode = 'replace';
+  externalImportDialog.targetMapId = mapId;
+  externalImportDialog.targetMapName = mapNameById(mapId);
+  externalImportDialog.open = true;
+}
+async function onExternalMapImportApplied(payload: { mapIds: number[] }) {
+  externalImportDialog.open = false;
+  await loadTree();
+  const firstMapId = payload.mapIds[0];
+  if (firstMapId) await loadMap(firstMapId);
+}
 function ctxCopyMap() { mapClipboard.value = treeContext.mapId; setStatus(t('editor.map.copied', { mapId: treeContext.mapId }), 'saved'); closeTreeContext(); }
 async function ctxPasteMap() {
   if (mapClipboard.value == null) return;

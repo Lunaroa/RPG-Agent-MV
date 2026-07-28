@@ -82,9 +82,9 @@ function draw(): void {
       const x = index * barWidth;
       context.fillStyle = x + barWidth * 0.5 <= progressX ? '#2a3138' : '#8a939e';
       context.fillRect(
-        x + barWidth * 0.15,
+        x + barWidth * 0.25,
         middle - barHeight / 2,
-        Math.max(1, barWidth * 0.7),
+        Math.max(1, barWidth * 0.5),
         barHeight,
       );
     });

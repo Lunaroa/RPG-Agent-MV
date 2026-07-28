@@ -113,7 +113,7 @@ declare global {
         translate(pluginName: string, lang: string, model: unknown, project?: string): Promise<unknown>;
       };
       particlePreview: {
-        prepare(animation: unknown, autoplay: boolean, project?: string): Promise<{ key: string; url: string }>;
+        prepare(animation: unknown, autoplay: boolean, project?: string, armed?: boolean): Promise<{ key: string; url: string }>;
         dispose(key: string): Promise<{ ok: boolean }>;
         ensureThumbnail(effectName: string, sizeBucket: number, project?: string): Promise<{ url: string; filePath: string; fromCache: boolean }>;
       };
@@ -503,9 +503,13 @@ export const pluginTranslation = {
 
 /** Isolated MZ particle preview sessions served for in-panel iframe playback. */
 export const particlePreview = {
-  /** autoplay=false prepares an idle backdrop scene (battle background, no playback). */
-  prepare(animation: unknown, autoplay = true, project: string = DEFAULT_PROJECT) {
-    return desktopApi().particlePreview.prepare(toPlain(animation), autoplay, project);
+  /**
+   * autoplay=false prepares an idle backdrop scene (battle background, target monster).
+   * armed=true additionally loads the effect but leaves it paused, so play() can start it
+   * in-place via postMessage without reloading the iframe.
+   */
+  prepare(animation: unknown, autoplay = true, project: string = DEFAULT_PROJECT, armed = false) {
+    return desktopApi().particlePreview.prepare(toPlain(animation), autoplay, project, armed);
   },
   dispose(key: string) {
     return desktopApi().particlePreview.dispose(key);

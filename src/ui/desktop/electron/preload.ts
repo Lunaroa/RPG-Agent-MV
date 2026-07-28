@@ -102,7 +102,7 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   particlePreview: {
-    prepare: (animation: unknown, autoplay: boolean, project?: string) => ipcRenderer.invoke('particlePreview:prepare', animation, autoplay, project),
+    prepare: (animation: unknown, autoplay: boolean, project?: string, armed?: boolean) => ipcRenderer.invoke('particlePreview:prepare', animation, autoplay, project, armed),
     dispose: (key: string) => ipcRenderer.invoke('particlePreview:dispose', key),
     ensureThumbnail: (effectName: string, sizeBucket: number, project?: string) => ipcRenderer.invoke('particlePreview:ensureThumbnail', effectName, sizeBucket, project),
   },

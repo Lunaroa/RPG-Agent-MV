@@ -1595,13 +1595,13 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
 
   // In-panel particle animation preview: serve the generated MZ preview app through the
   // isolated preview protocol so renderers can embed it in an iframe.
-  ipcMain.handle('particlePreview:prepare', (_event, animation: unknown, autoplay: boolean, value?: string) => {
+  ipcMain.handle('particlePreview:prepare', (_event, animation: unknown, autoplay: boolean, value?: string, armed?: boolean) => {
     const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
     const preparation = desktop.particlePreview.prepareParticleAnimationPreviewApp(
       workflowRoot,
       resolved,
       toIpcPayload(animation),
-      { autoplay: autoplay !== false },
+      { autoplay: autoplay !== false, armed: armed === true },
     );
     const key = crypto.randomBytes(32).toString('hex');
     // Runtime scripts, Effekseer resources, SE and battlebacks are served straight

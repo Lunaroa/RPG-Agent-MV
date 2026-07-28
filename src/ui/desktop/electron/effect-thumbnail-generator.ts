@@ -15,14 +15,14 @@ import {
  * Offscreen effect-thumbnail generation.
  *
  * Effekseer effects are animations that cannot be rasterized statically, so a
- * representative frame is produced by playing the effect in a hidden window and
- * capturing it. The backend prepares a tiny capture app (autoplay, no battle
+ * representative frame is produced by playing the effect in an off-screen window
+ * and capturing it. The backend prepares a tiny capture app (autoplay, no battle
  * background) whose runtime freezes on a representative frame and signals via
- * document.title; here we host it in an unshown BrowserWindow, capturePage the
+ * document.title; here we host it in an off-screen BrowserWindow, capturePage the
  * frozen frame, crop-and-resize to a square bucket, and content-address the PNG.
  *
  * Generation is fully IPC-driven: the asset protocol only ever serves a cache
- * that already exists. Runs are serialized (one hidden window at a time) and
+ * that already exists. Runs are serialized (one off-screen window at a time) and
  * de-duplicated by cache path so concurrent callers share one capture.
  */
 
@@ -61,9 +61,10 @@ export interface EffectThumbnailResult {
   fromCache: boolean;
 }
 
-// Generous ceiling: the capture runtime signals within ~10s (600-tick cap), so
-// this only fires if navigation or WebGL init wedges. Keep above the runtime cap.
-const CAPTURE_READY_TIMEOUT_MS = 20_000;
+// Once the capture window renders at full frame rate its runtime freezes on a
+// representative frame within ~3s (180-tick cap), so this only fires if navigation
+// or WebGL init wedges. Keep above the runtime cap so a healthy capture never times out.
+const CAPTURE_READY_TIMEOUT_MS = 6_000;
 
 let generationTail: Promise<unknown> = Promise.resolve();
 const inFlightByCachePath = new Map<string, Promise<EffectThumbnailResult>>();
@@ -106,7 +107,7 @@ export async function ensureEffectThumbnail(
     return { filePath: cachePath, fromCache: false };
   };
 
-  // Serialize generation so only one hidden capture window exists at a time.
+  // Serialize generation so only one off-screen capture window exists at a time.
   const queued = generationTail.then(run, run);
   generationTail = queued.then(() => undefined, () => undefined);
   const tracked = queued.finally(() => {
@@ -132,11 +133,17 @@ async function captureEffectRepresentativeFrame(input: EnsureEffectThumbnailInpu
       root: preparation.passthroughRoot,
       prefixes: preparation.passthroughPrefixes,
     });
+    // The window must be shown (not show:false) or the compositor pauses the page's
+    // requestAnimationFrame loop, so the MZ game loop never advances to a representative
+    // frame and every capture waits out the timeout. Position it far off-screen and keep
+    // it non-focusable / off the taskbar so it renders at full frame rate yet stays invisible.
     win = new BrowserWindow({
-      show: false,
+      show: true,
+      x: -32_000,
+      y: -32_000,
       skipTaskbar: true,
       focusable: false,
-      paintWhenInitiallyHidden: true,
+      minimizable: false,
       useContentSize: true,
       width: Math.max(1, Math.round(preparation.screenWidth)),
       height: Math.max(1, Math.round(preparation.screenHeight)),

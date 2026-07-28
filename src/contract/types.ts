@@ -509,6 +509,149 @@ export interface MapPayload {
   staging: unknown;
 }
 
+// ---- External map import (from another RPG Maker project) ----
+// A single standalone editor dialog hosts both map import (phase 1) and, later,
+// replace-current-map (phase 2). The types below cover the import flow; the
+// dialog is designed mode-aware so replace slots into the same popup.
+
+export type ExternalMapResourceAction = 'ignore' | 'overwrite' | 'add';
+export type ExternalMapResourceStatus = 'missing' | 'same' | 'conflict';
+
+export interface ExternalProjectMapSummary {
+  id: number;
+  name: string;
+  parentId: number;
+  order: number;
+}
+
+export interface ExternalProjectBrowseResult {
+  canceled: boolean;
+  sourceProjectPath: string | null;
+  name: string | null;
+  engine: RpgMakerEngine | null;
+  maps: ExternalProjectMapSummary[];
+  /** Populated when the chosen directory cannot be imported from as-is. */
+  blocked?: { reason: 'encrypted' | 'invalid'; message: string };
+}
+
+export interface ExternalMapImportOptions {
+  /** Import event data into the new maps (off => empty event lists). */
+  includeEvents: boolean;
+  /** Scan static asset references inside event commands. */
+  validateEventResources: boolean;
+}
+
+export interface ExternalMapImportResourceRow {
+  /** Stable identity `${category}:${name}`. */
+  key: string;
+  category: string;
+  name: string;
+  sourceRelativePath: string;
+  targetRelativePath: string;
+  sourceHash: string | null;
+  targetHash: string | null;
+  status: ExternalMapResourceStatus;
+  defaultAction: ExternalMapResourceAction;
+  /** True when the referenced source file could not be found on disk. */
+  sourceMissing: boolean;
+  /** Set when this row is one image slot of a source tileset. */
+  tilesetSourceId?: number;
+  /** Human-readable impact hint (e.g. overwrite affects other maps). */
+  risk?: string;
+}
+
+export interface ExternalMapImportTilesetRow {
+  sourceTilesetId: number;
+  name: string;
+  /** Resource-row keys for this tileset's image slots. */
+  imageKeys: string[];
+  defaultAction: ExternalMapResourceAction;
+}
+
+export interface ExternalMapImportMapPreview {
+  sourceMapId: number;
+  newMapId: number;
+  name: string;
+  parentId: number;
+  width: number;
+  height: number;
+  sourceTilesetId: number;
+}
+
+export interface ExternalMapImportWarning {
+  code: string;
+  message: string;
+}
+
+export interface ExternalMapImportScanRequest {
+  sourceProjectPath: string;
+  sourceMapIds: number[];
+  options: ExternalMapImportOptions;
+}
+
+export interface ExternalMapImportScanResult {
+  sourceProjectPath: string;
+  engine: RpgMakerEngine;
+  maps: ExternalMapImportMapPreview[];
+  resources: ExternalMapImportResourceRow[];
+  tilesets: ExternalMapImportTilesetRow[];
+  warnings: ExternalMapImportWarning[];
+}
+
+export interface ExternalMapResourceResolution {
+  key: string;
+  action: ExternalMapResourceAction;
+}
+
+export interface ExternalMapTilesetResolution {
+  sourceTilesetId: number;
+  action: ExternalMapResourceAction;
+  /** Required for `ignore` (reuse existing) and `overwrite` (which row). */
+  targetTilesetId?: number;
+}
+
+export interface ExternalMapImportApplyRequest {
+  sourceProjectPath: string;
+  sourceMapIds: number[];
+  anchorParentId: number;
+  options: ExternalMapImportOptions;
+  resources: ExternalMapResourceResolution[];
+  tilesets: ExternalMapTilesetResolution[];
+}
+
+export interface ExternalMapImportApplyResult {
+  mapIds: number[];
+  warnings: ExternalMapImportWarning[];
+  staging: unknown;
+}
+
+// ---- Replace current map (phase 2) ----
+// Replaces one target map's body with an external source map while preserving the
+// target's id, tree position, tree name and displayName. Reuses the import engine
+// for resource/tileset resolution; result shapes are shared with import.
+export interface ExternalMapReplaceOptions {
+  /** Replace the target map's events with the source map's events. */
+  overwriteEvents: boolean;
+  /** Scan static asset references inside event commands. */
+  validateEventResources: boolean;
+}
+
+export interface ExternalMapReplaceScanRequest {
+  sourceProjectPath: string;
+  sourceMapId: number;
+  targetMapId: number;
+  options: ExternalMapReplaceOptions;
+}
+
+export interface ExternalMapReplaceApplyRequest {
+  sourceProjectPath: string;
+  sourceMapId: number;
+  targetMapId: number;
+  options: ExternalMapReplaceOptions;
+  resources: ExternalMapResourceResolution[];
+  tilesets: ExternalMapTilesetResolution[];
+}
+
 export interface NamedCatalogEntry {
   id: number;
   name: string;

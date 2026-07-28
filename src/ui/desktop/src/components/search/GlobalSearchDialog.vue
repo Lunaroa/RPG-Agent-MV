@@ -476,7 +476,7 @@ onUnmounted(() => {
             </template>
             <div class="global-search-settings">
               <label class="global-search-settings-label">{{ t('search.matchPrecision') }}</label>
-              <el-select v-model="matchPrecision" size="small" @change="onMatchPrecisionChange">
+              <el-select v-model="matchPrecision" size="small" popper-class="global-search-select-popper" @change="onMatchPrecisionChange">
                 <el-option value="loose" :label="t('search.matchPrecisionLoose')" />
                 <el-option value="medium" :label="t('search.matchPrecisionMedium')" />
                 <el-option value="strict" :label="t('search.matchPrecisionStrict')" />
@@ -894,5 +894,10 @@ onUnmounted(() => {
 /* Teleported to body; must sit above the search overlay (z-index 4000). */
 .global-search-settings-popper {
   z-index: 4100 !important;
+}
+/* The match-precision select dropdown teleports to body too and opens from inside the
+   settings popover, so it must sit above both the popover (4100) and the overlay. */
+.global-search-select-popper {
+  z-index: 4200 !important;
 }
 </style>

@@ -10,9 +10,12 @@ import {
   ensureProjectAssetThumbnailSync,
   planProjectAssetThumbnail,
   PROJECT_ASSET_THUMBNAIL_SCHEMA_VERSION,
+  PROJECT_EFFECT_THUMBNAIL_SCHEMA_VERSION,
   projectAssetThumbnailCachePath,
   projectAssetThumbnailContentVersion,
   projectAssetThumbnailNeedsDownscale,
+  projectEffectThumbnailCachePath,
+  projectEffectThumbnailContentVersion,
   type ProjectAssetThumbnailCodec,
 } from './project-asset-thumbnail-cache-core.ts';
 
@@ -200,6 +203,50 @@ describe('project asset thumbnail cache core', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('project effect thumbnail cache core', () => {
+  const base = {
+    effectRelativePath: 'effects/Recovery1.efkefc',
+    sourceBytes: 2048,
+    sourceMtimeMs: 5000,
+    sizeBucket: 256 as const,
+  };
+
+  test('effect content version is stable and changes with each fingerprint input', () => {
+    const versionA = projectEffectThumbnailContentVersion(base);
+    assert.equal(versionA, projectEffectThumbnailContentVersion(base));
+    assert.match(versionA, /^[a-f0-9]{40}$/);
+
+    assert.notEqual(versionA, projectEffectThumbnailContentVersion({ ...base, sourceBytes: 4096 }));
+    assert.notEqual(versionA, projectEffectThumbnailContentVersion({ ...base, sourceMtimeMs: 6000 }));
+    assert.notEqual(versionA, projectEffectThumbnailContentVersion({ ...base, sizeBucket: 128 }));
+    assert.notEqual(versionA, projectEffectThumbnailContentVersion({ ...base, effectRelativePath: 'effects/Recovery2.efkefc' }));
+    assert.notEqual(
+      versionA,
+      projectEffectThumbnailContentVersion({ ...base, schemaVersion: PROJECT_EFFECT_THUMBNAIL_SCHEMA_VERSION + 1 }),
+    );
+  });
+
+  test('effect cache path is isolated from image thumbnails via the effect segment', () => {
+    const workflowRoot = path.join('C:', 'workflow');
+    const project = path.join(workflowRoot, 'projects', 'demo_mod');
+    const version = projectEffectThumbnailContentVersion(base);
+    const effectPath = projectEffectThumbnailCachePath(workflowRoot, project, 256, version);
+    assert.match(
+      effectPath.replace(/\\/g, '/'),
+      /runtime\/asset-thumbnails\/[a-f0-9]{20}\/effect\/256\/[a-f0-9]{40}\.png$/,
+    );
+    // Must never collide with the image thumbnail path (which has no `effect` segment).
+    assert.notEqual(effectPath, projectAssetThumbnailCachePath(workflowRoot, project, 256, version));
+  });
+
+  test('effect and image content versions never collide for identical fingerprint inputs', () => {
+    const shared = { sourceBytes: 1024, sourceMtimeMs: 1000, sizeBucket: 128 as const };
+    const effectVersion = projectEffectThumbnailContentVersion({ ...shared, effectRelativePath: 'effects/A.efkefc' });
+    const imageVersion = projectAssetThumbnailContentVersion({ ...shared, relativePath: 'effects/A.efkefc' });
+    assert.notEqual(effectVersion, imageVersion);
   });
 });
 

@@ -9,6 +9,7 @@ import {
   type GlobalSearchCategory,
   type GlobalSearchHit,
   type GlobalSearchIndexState,
+  type GlobalSearchMatchPrecision,
 } from '../../api/client'
 import { useI18n } from '../../i18n'
 import { useProjectStore } from '../../stores/project'
@@ -36,6 +37,7 @@ const indexState = ref<GlobalSearchIndexState | null>(null)
 const history = ref<string[]>([])
 const maxResults = ref(100)
 const extraFoldersText = ref('')
+const matchPrecision = ref<GlobalSearchMatchPrecision>('loose')
 const settingsOpen = ref(false)
 const rebuildBusy = ref(false)
 const scrollTop = ref(0)
@@ -142,8 +144,20 @@ async function loadSettings(): Promise<void> {
     history.value = config.search?.history || []
     maxResults.value = config.search?.maxResults || 100
     extraFoldersText.value = (config.search?.extraFolders || []).join('\n')
+    matchPrecision.value = config.search?.matchPrecision || 'loose'
   } catch {
     // Config read failures surface on save; the dialog stays usable.
+  }
+}
+
+async function onMatchPrecisionChange(): Promise<void> {
+  const project = projectStore.currentProject
+  scheduleSearch(0)
+  if (!project) return
+  try {
+    await projectConfig.setSearch({ matchPrecision: matchPrecision.value }, project)
+  } catch {
+    // Precision persistence is best effort; the live search already reflects the change.
   }
 }
 
@@ -185,6 +199,7 @@ async function runSearch(): Promise<void> {
       categories: [...enabledCategories.value],
       exact: exact.value,
       maxResults: maxResults.value,
+      matchPrecision: matchPrecision.value,
     }, project)
     if (sequence !== searchSequence) return
     hits.value = result.hits
@@ -451,13 +466,19 @@ onUnmounted(() => {
             />
             <span v-if="building" class="global-search-building">{{ t('search.building') }}</span>
           </div>
-          <el-popover v-model:visible="settingsOpen" trigger="click" width="320" placement="bottom-end">
+          <el-popover v-model:visible="settingsOpen" trigger="click" width="320" placement="bottom-end" popper-class="global-search-settings-popper">
             <template #reference>
               <button type="button" class="global-search-tool" :title="t('search.settings')">
                 <el-icon><Setting /></el-icon>
               </button>
             </template>
             <div class="global-search-settings">
+              <label class="global-search-settings-label">{{ t('search.matchPrecision') }}</label>
+              <el-select v-model="matchPrecision" size="small" @change="onMatchPrecisionChange">
+                <el-option value="loose" :label="t('search.matchPrecisionLoose')" />
+                <el-option value="medium" :label="t('search.matchPrecisionMedium')" />
+                <el-option value="strict" :label="t('search.matchPrecisionStrict')" />
+              </el-select>
               <label class="global-search-settings-label">{{ t('search.maxResults') }}</label>
               <el-input-number v-model="maxResults" size="small" :min="10" :max="1000" :step="10" :controls="false" />
               <label class="global-search-settings-label">{{ t('search.extraFolders') }}</label>
@@ -864,5 +885,12 @@ onUnmounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+</style>
+
+<style>
+/* Teleported to body; must sit above the search overlay (z-index 4000). */
+.global-search-settings-popper {
+  z-index: 4100 !important;
 }
 </style>

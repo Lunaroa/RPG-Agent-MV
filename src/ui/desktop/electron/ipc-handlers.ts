@@ -19,6 +19,11 @@ import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
 import { parseAssetRangeHeader, withAssetCanvasCors } from './asset-protocol-policy.js';
 import { ensureProjectAssetThumbnail } from './project-asset-thumbnail-cache.js';
+import { ensureEffectThumbnail } from './effect-thumbnail-generator.ts';
+import {
+  projectEffectThumbnailCachePath,
+  projectEffectThumbnailContentVersion,
+} from './project-asset-thumbnail-cache-core.ts';
 import {
   clearMapPreviewProtocol,
   registerMapPreviewProtocol,
@@ -1612,6 +1617,38 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     disposeParticlePreviewSession(String(keyInput || ''));
     return toIpcPayload({ ok: true });
   });
+  // Effect thumbnails are generated on demand by playing the effect offscreen and
+  // capturing a representative frame; the result is content-addressed on disk and
+  // then served (by URL) through the rmmv-asset protocol.
+  ipcMain.handle('particlePreview:ensureThumbnail', async (_event, effectName: string, sizeBucket: number, value?: string) => {
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    const { relativePath, sourceFilePath } = desktop.assets.resolveProjectEffectThumbnailSource(
+      workflowRoot,
+      resolved,
+      String(effectName || ''),
+    );
+    const result = await ensureEffectThumbnail({
+      workflowRoot,
+      project: resolved,
+      effectName: String(effectName || ''),
+      relativePath,
+      sourceFilePath,
+      sizeBucket: Number(sizeBucket),
+      captureFrameCount: desktop.particlePreview.DEFAULT_EFFECT_CAPTURE_FRAME_COUNT,
+      readyTitle: desktop.particlePreview.EFFECT_CAPTURE_READY_TITLE,
+      prepareCaptureApp: (input) => desktop.particlePreview.prepareParticleAnimationPreviewApp(
+        input.workflowRoot,
+        input.project,
+        { effectName: input.effectName },
+        { captureFrameCount: input.captureFrameCount },
+      ),
+      cleanupCaptureApp: (preparation) => desktop.particlePreview.cleanupParticleAnimationPreviewApp(preparation),
+    });
+    const url = desktop.assets.projectEffectThumbnailUrl(resolved, String(effectName || ''), Number(sizeBucket));
+    // Version query busts the renderer cache when a regenerated thumbnail reuses the same URL.
+    const version = path.basename(String(result.filePath)).replace(/\.png$/i, '');
+    return toIpcPayload({ url: `${url}?v=${version}`, filePath: result.filePath, fromCache: result.fromCache });
+  });
 
   ipcMain.handle('workspace:put', (_event, body: Record<string, unknown>) => {
     const plain = normalizeWorkspaceSettings(toIpcPayload(body));
@@ -2039,6 +2076,28 @@ function registerAssetProtocol(): void {
         const response = await net.fetch(pathToFileURL(thumbnail.filePath).toString());
         return withAssetCanvasCors(response, { filePath: thumbnail.filePath });
       }
+      if (requestUrl.hostname === 'project-effect-thumbnail') {
+        // Generation is IPC-driven; the protocol only serves an existing cache.
+        const resolved = desktop.assets.resolveProjectEffectThumbnailRequest(workflowRoot, request.url);
+        const stat = fs.statSync(resolved.sourceFilePath);
+        const contentVersion = projectEffectThumbnailContentVersion({
+          effectRelativePath: resolved.relativePath,
+          sourceBytes: stat.size,
+          sourceMtimeMs: stat.mtimeMs,
+          sizeBucket: resolved.sizeBucket,
+        });
+        const cachePath = projectEffectThumbnailCachePath(
+          workflowRoot,
+          resolved.project,
+          resolved.sizeBucket,
+          contentVersion,
+        );
+        if (!fs.existsSync(cachePath) || !fs.statSync(cachePath).isFile()) {
+          return withAssetCanvasCors(new Response('not generated', { status: 404 }));
+        }
+        const response = await net.fetch(pathToFileURL(cachePath).toString());
+        return withAssetCanvasCors(response, { filePath: cachePath });
+      }
       const absolutePath = desktop.assets.resolveAssetRequest(workflowRoot, request.url);
       // net.fetch(file://) ignores Range headers, so serve partial content ourselves:
       // Chromium's media stack needs real 206 responses to resolve audio durations.
@@ -2129,6 +2188,7 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('workflow:approveProposal');
   ipcMain.removeHandler('particlePreview:prepare');
   ipcMain.removeHandler('particlePreview:dispose');
+  ipcMain.removeHandler('particlePreview:ensureThumbnail');
   if (assetProtocolRegistered) {
     protocol.unhandle('rmmv-asset');
     assetProtocolRegistered = false;

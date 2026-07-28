@@ -115,6 +115,7 @@ declare global {
       particlePreview: {
         prepare(animation: unknown, autoplay: boolean, project?: string): Promise<{ key: string; url: string }>;
         dispose(key: string): Promise<{ ok: boolean }>;
+        ensureThumbnail(effectName: string, sizeBucket: number, project?: string): Promise<{ url: string; filePath: string; fromCache: boolean }>;
       };
       workspaceSurfaces: {
         validate(request: WorkspaceSurfaceVersionRequest, project?: string): Promise<WorkspaceSurfaceVersionResult>;
@@ -364,7 +365,7 @@ import type {
   ExternalProjectBrowseResult, ExternalProjectMapSummary, ExternalMapImportOptions, ExternalMapImportScanRequest, ExternalMapImportScanResult, ExternalMapImportApplyRequest, ExternalMapImportApplyResult, ExternalMapImportResourceRow, ExternalMapImportTilesetRow, ExternalMapImportMapPreview, ExternalMapImportWarning, ExternalMapResourceAction, ExternalMapResourceStatus, ExternalMapResourceResolution, ExternalMapTilesetResolution, ExternalMapReplaceOptions, ExternalMapReplaceScanRequest, ExternalMapReplaceApplyRequest,
   LunaRpgProjectConfig,
   LunaRpgSearchSettings,
-  GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchOptions, GlobalSearchResult,
+  GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchMatchPrecision, GlobalSearchOptions, GlobalSearchResult,
   PluginTranslationPayload, PluginTranslationRecord,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
@@ -399,7 +400,7 @@ export type {
   ExternalProjectBrowseResult, ExternalProjectMapSummary, ExternalMapImportOptions, ExternalMapImportScanRequest, ExternalMapImportScanResult, ExternalMapImportApplyRequest, ExternalMapImportApplyResult, ExternalMapImportResourceRow, ExternalMapImportTilesetRow, ExternalMapImportMapPreview, ExternalMapImportWarning, ExternalMapResourceAction, ExternalMapResourceStatus, ExternalMapResourceResolution, ExternalMapTilesetResolution, ExternalMapReplaceOptions, ExternalMapReplaceScanRequest, ExternalMapReplaceApplyRequest,
   LunaRpgProjectConfig,
   LunaRpgSearchSettings,
-  GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchOptions, GlobalSearchResult,
+  GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchMatchPrecision, GlobalSearchOptions, GlobalSearchResult,
   PluginTranslationPayload, PluginTranslationRecord,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
@@ -508,6 +509,10 @@ export const particlePreview = {
   },
   dispose(key: string) {
     return desktopApi().particlePreview.dispose(key);
+  },
+  /** Generate (or reuse a cached) representative-frame thumbnail for an effect. */
+  ensureThumbnail(effectName: string, sizeBucket: number, project: string = DEFAULT_PROJECT) {
+    return desktopApi().particlePreview.ensureThumbnail(effectName, sizeBucket, project);
   },
 };
 

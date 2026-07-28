@@ -53,6 +53,9 @@ function normalizeSearchSettings(value: unknown): LunaRpgSearchSettings | undefi
       .slice(0, 50);
     if (history.length) settings.history = history;
   }
+  if (raw.matchPrecision === 'loose' || raw.matchPrecision === 'medium' || raw.matchPrecision === 'strict') {
+    settings.matchPrecision = raw.matchPrecision;
+  }
   return Object.keys(settings).length ? settings : undefined;
 }
 

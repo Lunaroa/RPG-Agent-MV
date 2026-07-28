@@ -54,6 +54,8 @@ import AssetPreviewDialog from '../components/AssetPreviewDialog.vue'
 import AssetFontPreview from '../components/AssetFontPreview.vue'
 import AssetGridFontThumb from '../components/AssetGridFontThumb.vue'
 import AssetGridVideoThumb from '../components/AssetGridVideoThumb.vue'
+import AssetGridEffectThumb from '../components/AssetGridEffectThumb.vue'
+import AssetVideoViewer from '../components/AssetVideoViewer.vue'
 import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
 import ProjectAssetsAudioBar, { type AssetsAudioBarItem } from '../components/ProjectAssetsAudioBar.vue'
 import PluginFileFolderThumb from '../components/editor/PluginFileFolderThumb.vue'
@@ -372,6 +374,9 @@ const previewIndex = ref(0)
 const imageViewerVisible = ref(false)
 const imageViewerUrls = ref<string[]>([])
 const imageViewerIndex = ref(0)
+const videoViewerVisible = ref(false)
+const videoViewerUrls = ref<string[]>([])
+const videoViewerIndex = ref(0)
 
 const pageHost = ref<HTMLElement | null>(null)
 const previewPanelRequested = ref(false)
@@ -764,6 +769,15 @@ const previewableImageEntries = computed(() => {
   })
 })
 
+const previewableVideoEntries = computed(() => {
+  return sortedEntries.value.filter((entry) => {
+    const categoryId = entryCategoryId(entry)
+    return projectAssetMediaKind(categoryId) === 'movie'
+      && projectAssetCanPreview(categoryId, entry.encrypted)
+      && entry.url
+  })
+})
+
 function onGridWheel(event: WheelEvent) {
   if (!showIconGrid.value || !event.ctrlKey) return
   event.preventDefault()
@@ -1028,6 +1042,10 @@ function usesArmedVideoThumb(categoryId: string): boolean {
   return categoryId === 'movies'
 }
 
+function usesArmedEffectThumb(categoryId: string): boolean {
+  return categoryId === 'effects'
+}
+
 function cellUsesIconFallback(entry: ProjectAssetBrowseEntry): boolean {
   if (entry.encrypted) return true
   if (failedThumbnails.value.has(entry.id)) return true
@@ -1037,6 +1055,11 @@ function cellUsesIconFallback(entry: ProjectAssetBrowseEntry): boolean {
   }
   if (usesArmedFontThumb(categoryId) || usesArmedVideoThumb(categoryId)) {
     return !entry.url || !armedThumbnailIds.value.has(entry.id)
+  }
+  if (usesArmedEffectThumb(categoryId)) {
+    // Armed → thumbnail (or blank while generating); unarmed → blank pending cell.
+    // Encrypted / failed cases already returned true above.
+    return false
   }
   return true
 }
@@ -1444,6 +1467,7 @@ function openPreviewForEntry(entryId: string) {
     const imageEntries = previewableImageEntries.value
     const viewerIndex = imageEntries.findIndex((item) => item.id === entryId)
     if (viewerIndex >= 0) {
+      videoViewerVisible.value = false
       imageViewerUrls.value = imageEntries.map((item) => item.url)
       imageViewerIndex.value = viewerIndex
       imageViewerVisible.value = true
@@ -1451,7 +1475,20 @@ function openPreviewForEntry(entryId: string) {
       return
     }
   }
+  if (media === 'movie' && projectAssetCanPreview(entryCategory, entry.encrypted) && entry.url) {
+    const videoEntries = previewableVideoEntries.value
+    const viewerIndex = videoEntries.findIndex((item) => item.id === entryId)
+    if (viewerIndex >= 0) {
+      imageViewerVisible.value = false
+      videoViewerUrls.value = videoEntries.map((item) => item.url)
+      videoViewerIndex.value = viewerIndex
+      videoViewerVisible.value = true
+      previewVisible.value = false
+      return
+    }
+  }
   imageViewerVisible.value = false
+  videoViewerVisible.value = false
   previewIndex.value = index
   previewVisible.value = true
 }
@@ -1467,6 +1504,17 @@ function closeImageViewer() {
 function onImageViewerSwitch(index: number) {
   imageViewerIndex.value = index
   const url = imageViewerUrls.value[index]
+  const entry = sortedEntries.value.find((item) => item.url === url)
+  if (entry) applyFileSelection(selectProjectAssetExclusive(entry.id))
+}
+
+function closeVideoViewer() {
+  videoViewerVisible.value = false
+}
+
+function onVideoViewerSwitch(index: number) {
+  videoViewerIndex.value = index
+  const url = videoViewerUrls.value[index]
   const entry = sortedEntries.value.find((item) => item.url === url)
   if (entry) applyFileSelection(selectProjectAssetExclusive(entry.id))
 }
@@ -3594,6 +3642,20 @@ watch(gridHost, (el, previous) => {
                     :alt="cell.item.entry.name"
                     @error="onThumbnailError(cell.item.entry.id)"
                   />
+                  <AssetGridEffectThumb
+                    v-else-if="usesArmedEffectThumb(entryCategoryId(cell.item.entry))
+                      && !cell.item.entry.encrypted
+                      && armedThumbnailIds.has(cell.item.entry.id)"
+                    :effect-name="cell.item.entry.name"
+                    :project="projectStore.currentProject || undefined"
+                    :alt="cell.item.entry.name"
+                    @error="onThumbnailError(cell.item.entry.id)"
+                  />
+                  <template
+                    v-else-if="usesArmedEffectThumb(entryCategoryId(cell.item.entry))
+                      && !cell.item.entry.encrypted
+                      && !armedThumbnailIds.has(cell.item.entry.id)"
+                  />
                   <template
                     v-else-if="(usesArmedFontThumb(entryCategoryId(cell.item.entry)) || usesArmedVideoThumb(entryCategoryId(cell.item.entry)))
                       && cell.item.entry.url
@@ -3766,6 +3828,17 @@ watch(gridHost, (el, previous) => {
             :sample-text="t('projectAssets.fontPreviewSample')"
             :load-failed-label="t('projectAssets.fontPreviewFailed')"
           />
+          <AssetGridEffectThumb
+            v-else-if="previewPanelMedia === 'effect'
+              && !previewPanelEntry.encrypted
+              && !failedThumbnails.has(previewPanelEntry.id)"
+            class="project-assets-preview-panel-img"
+            :effect-name="previewPanelEntry.name"
+            :project="projectStore.currentProject || undefined"
+            :size-bucket="512"
+            :alt="previewPanelEntry.name"
+            @error="onThumbnailError(previewPanelEntry.id)"
+          />
           <div v-else class="project-assets-preview-panel-type">
             {{ entryTypeLabel(previewPanelEntry) }}
           </div>
@@ -3792,6 +3865,14 @@ watch(gridHost, (el, previous) => {
       hide-on-click-modal
       @close="closeImageViewer"
       @switch="onImageViewerSwitch"
+    />
+
+    <AssetVideoViewer
+      v-if="videoViewerVisible"
+      :url-list="videoViewerUrls"
+      :initial-index="videoViewerIndex"
+      @close="closeVideoViewer"
+      @switch="onVideoViewerSwitch"
     />
 
     <AssetPreviewDialog

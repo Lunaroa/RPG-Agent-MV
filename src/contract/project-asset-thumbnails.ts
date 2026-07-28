@@ -10,6 +10,13 @@ export const DEFAULT_PROJECT_ASSET_THUMBNAIL_SIZE_BUCKET: ProjectAssetThumbnailS
 
 export const PROJECT_ASSET_THUMBNAIL_SCHEMA_VERSION = 1;
 
+/**
+ * Independent version for effect (.efkefc) representative-frame thumbnails.
+ * Bump to invalidate every cached effect thumbnail when the offscreen capture
+ * pipeline changes (frame count, resolution handling, cropping, etc.).
+ */
+export const PROJECT_EFFECT_THUMBNAIL_SCHEMA_VERSION = 1;
+
 export function assertProjectAssetThumbnailSizeBucket(
   sizeBucket: number,
 ): asserts sizeBucket is ProjectAssetThumbnailSizeBucket {

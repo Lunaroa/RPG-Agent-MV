@@ -23,6 +23,9 @@ export interface ParticleAnimationPreviewAppPreparation {
   engine: Extract<RpgMakerEngine, 'rpg-maker-mz'>;
   appDirectory: string;
   effectName: string;
+  /** Project screen resolution; offscreen capture hosts size their window to this. */
+  screenWidth: number;
+  screenHeight: number;
   /** Serve-direct root for everything the preview loads from the game project. */
   passthroughRoot: string;
   passthroughPrefixes: readonly string[];
@@ -75,6 +78,15 @@ const COPY_EXCLUSIONS = [
   'movies',
 ] as const;
 
+/** Frames of active playback the capture runtime advances before freezing the representative frame. */
+export const DEFAULT_EFFECT_CAPTURE_FRAME_COUNT = 12;
+
+/**
+ * document.title the capture runtime sets once the representative frame is frozen
+ * and ready for capturePage. Must match the literal embedded in PREVIEW_RUNTIME_SOURCE.
+ */
+export const EFFECT_CAPTURE_READY_TITLE = '__RPG_AGENT_EFFECT_CAPTURE_READY__';
+
 export interface ParticleAnimationPreviewOptions {
   /**
    * false prepares an idle backdrop scene (battle background, no playback) so the
@@ -82,6 +94,13 @@ export interface ParticleAnimationPreviewOptions {
    * are only required when the scene actually plays.
    */
   autoplay?: boolean;
+  /**
+   * When > 0, prepares an offscreen capture session: forces autoplay, drops the
+   * battle background for a clean frame, and injects the number of played frames
+   * the runtime advances before freezing on a representative frame and signalling
+   * readiness via document.title. Backend-internal (not part of the IPC contract).
+   */
+  captureFrameCount?: number;
 }
 
 export function prepareParticleAnimationPreview(
@@ -185,7 +204,8 @@ export function prepareParticleAnimationPreviewApp(
     throw new ParticleAnimationPreviewPreparationError('Particle animation preview requires an editable RPG Maker MZ project.');
   }
 
-  const autoplay = options.autoplay !== false;
+  const capturing = typeof options.captureFrameCount === 'number' && options.captureFrameCount > 0;
+  const autoplay = capturing ? true : options.autoplay !== false;
   const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight, { requireEffect: autoplay });
   const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
   const appDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-mz-particle-preview-'));
@@ -225,7 +245,11 @@ export function prepareParticleAnimationPreviewApp(
         );
       }
     }
-    const battlebacks = resolveEditorBattlebacks(workflowRoot, project, manifest.resourceRoot, getEffectiveFile, appDirectory);
+    // Capture sessions drop the battle background so the representative frame is a
+    // clean effect over the runtime's neutral gradient.
+    const battlebacks = capturing
+      ? { battleback1: '', battleback2: '' }
+      : resolveEditorBattlebacks(workflowRoot, project, manifest.resourceRoot, getEffectiveFile, appDirectory);
 
     const config = {
       screenWidth: manifest.screenWidth,
@@ -234,6 +258,7 @@ export function prepareParticleAnimationPreviewApp(
       battleback1: battlebacks.battleback1,
       battleback2: battlebacks.battleback2,
       animation,
+      captureFrameCount: capturing ? options.captureFrameCount : 0,
     };
     fs.writeFileSync(path.join(appDirectory, 'index.html'), previewHtml(config), 'utf8');
     fs.mkdirSync(path.join(appDirectory, 'js'), { recursive: true });
@@ -244,6 +269,8 @@ export function prepareParticleAnimationPreviewApp(
       engine: 'rpg-maker-mz',
       appDirectory,
       effectName: animation.effectName,
+      screenWidth: manifest.screenWidth,
+      screenHeight: manifest.screenHeight,
       passthroughRoot: manifest.resourceRoot,
       passthroughPrefixes: PREVIEW_PASSTHROUGH_PREFIXES,
     };
@@ -667,7 +694,8 @@ window.RpgAgentParticlePreview = {
     target.y = Math.round(config.screenHeight * 0.68);
     // The dummy target only matters while an animation is playing; the idle
     // backdrop matches the stock editor and shows just the battle background.
-    target.visible = config.autoplay;
+    // Capture sessions hide it so only the effect appears in the thumbnail.
+    target.visible = config.autoplay && !config.captureFrameCount;
     stage.addChild(target);
 
     let animationSprite = null;
@@ -684,11 +712,31 @@ window.RpgAgentParticlePreview = {
     if (config.autoplay) play();
 
     Graphics.setStage(stage);
+    // Capture mode: advance a fixed number of played frames, freeze on that
+    // representative frame, then signal readiness once via document.title so the
+    // offscreen host can capturePage without an injected preload. A tick ceiling
+    // guarantees the signal even if the effect stalls or fails to load.
+    const captureTarget = config.captureFrameCount || 0;
+    let capturePlayedFrames = 0;
+    let captureTotalTicks = 0;
+    let captureFrozen = false;
+    const captureMaxTicks = captureTarget ? Math.max(600, captureTarget * 30) : 0;
     Graphics.setTickHandler(() => {
       Graphics.frameCount++;
+      if (captureFrozen) return;
       if (Graphics.effekseer) Graphics.effekseer.update();
       // Stock editor behavior: the animation plays once and the scene then idles.
       if (animationSprite && animationSprite.isPlaying()) animationSprite.update();
+      if (!captureTarget) return;
+      captureTotalTicks++;
+      const ready = animationSprite && animationSprite.isPlaying()
+        && (typeof animationSprite.isReady !== "function" || animationSprite.isReady());
+      if (ready) capturePlayedFrames++;
+      const finished = animationSprite && !animationSprite.isPlaying() && capturePlayedFrames > 0;
+      if (capturePlayedFrames >= captureTarget || finished || captureTotalTicks >= captureMaxTicks) {
+        captureFrozen = true;
+        document.title = "__RPG_AGENT_EFFECT_CAPTURE_READY__";
+      }
     });
     Graphics.startGameLoop();
   }

@@ -9,6 +9,7 @@ import type {
   GlobalSearchDocument,
   GlobalSearchHit,
   GlobalSearchIndexState,
+  GlobalSearchMatchPrecision,
   GlobalSearchOptions,
   GlobalSearchResult,
 } from '../../../../contract/types.ts';
@@ -32,6 +33,14 @@ const MAX_EXTRA_FOLDER_FILES = 5000;
 const DEFAULT_MAX_RESULTS = 100;
 const MAX_RESULTS_CAP = 1000;
 
+/** Fuzzy match tightness thresholds; lower = closer matches only. */
+export const MATCH_PRECISION_THRESHOLDS: Record<GlobalSearchMatchPrecision, number> = {
+  loose: 0.35,
+  medium: 0.22,
+  strict: 0.12,
+};
+export const DEFAULT_MATCH_PRECISION: GlobalSearchMatchPrecision = 'loose';
+
 /** Database JSON files whose rows join the `database` category (id + name + note-ish fields). */
 const SEARCHABLE_DATABASE_FILES = [
   'Actors', 'Classes', 'Skills', 'Items', 'Weapons', 'Armors',
@@ -46,6 +55,8 @@ interface SearchIndexCacheEntry {
   revision: string;
   documents: GlobalSearchDocument[];
   fuse: Fuse<GlobalSearchDocument>;
+  /** Lazily built Fuse instances for non-default thresholds (precision buckets). */
+  fuseByThreshold?: Map<number, Fuse<GlobalSearchDocument>>;
   builtAt: number;
   buildMs: number;
 }
@@ -69,7 +80,10 @@ function searchIndexFilePath(project: string): string {
   return path.join(lunaRpgDirPath(project), SEARCH_INDEX_FILE);
 }
 
-function createFuse(documents: GlobalSearchDocument[]): Fuse<GlobalSearchDocument> {
+function createFuse(
+  documents: GlobalSearchDocument[],
+  threshold: number = MATCH_PRECISION_THRESHOLDS.loose,
+): Fuse<GlobalSearchDocument> {
   return new Fuse(documents, {
     keys: [
       { name: 'title', weight: 0.6 },
@@ -78,7 +92,7 @@ function createFuse(documents: GlobalSearchDocument[]): Fuse<GlobalSearchDocumen
     ],
     includeScore: true,
     ignoreLocation: true,
-    threshold: 0.35,
+    threshold,
     minMatchCharLength: 1,
   });
 }
@@ -512,6 +526,39 @@ function resolveMaxResults(project: string, requested?: number): number {
   return DEFAULT_MAX_RESULTS;
 }
 
+/** Pure precedence: an explicit request wins, else the project config, else the loose default. */
+export function pickMatchPrecision(
+  requested?: GlobalSearchMatchPrecision,
+  configured?: GlobalSearchMatchPrecision,
+): GlobalSearchMatchPrecision {
+  if (requested && requested in MATCH_PRECISION_THRESHOLDS) return requested;
+  if (configured && configured in MATCH_PRECISION_THRESHOLDS) return configured;
+  return DEFAULT_MATCH_PRECISION;
+}
+
+function resolveMatchPrecision(
+  project: string,
+  requested?: GlobalSearchMatchPrecision,
+): GlobalSearchMatchPrecision {
+  return pickMatchPrecision(requested, readProjectConfig(project).search?.matchPrecision);
+}
+
+/** Reuse the default Fuse for loose; lazily build+cache tighter-threshold instances. */
+function resolveFuseForPrecision(
+  entry: SearchIndexCacheEntry,
+  precision: GlobalSearchMatchPrecision,
+): Fuse<GlobalSearchDocument> {
+  const threshold = MATCH_PRECISION_THRESHOLDS[precision];
+  if (threshold === MATCH_PRECISION_THRESHOLDS.loose) return entry.fuse;
+  if (!entry.fuseByThreshold) entry.fuseByThreshold = new Map();
+  let fuse = entry.fuseByThreshold.get(threshold);
+  if (!fuse) {
+    fuse = createFuse(entry.documents, threshold);
+    entry.fuseByThreshold.set(threshold, fuse);
+  }
+  return fuse;
+}
+
 const GLOBAL_SEARCH_CATEGORIES = new Set<GlobalSearchCategory>([
   'file', 'map', 'event', 'database', 'plugin', 'pluginParam',
 ]);
@@ -544,7 +591,8 @@ export async function searchGlobalProjectIndex(
         }
       }
     } else {
-      for (const result of entry.fuse.search(query)) {
+      const fuse = resolveFuseForPrecision(entry, resolveMatchPrecision(project, options.matchPrecision));
+      for (const result of fuse.search(query)) {
         if (categories && !categories.has(result.item.category)) continue;
         matches.push({ document: result.item, score: result.score ?? 0 });
       }

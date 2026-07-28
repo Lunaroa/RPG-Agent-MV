@@ -23,6 +23,21 @@ export function projectAssetThumbnailUrl(
   return `rmmv-asset://project-thumbnail/${token}/${sizeBucket}/${relative.split('/').map(encodeURIComponent).join('/')}`;
 }
 
+/**
+ * Effect (.efkefc) representative-frame thumbnail URL. The effect name carries no
+ * extension; the `.efkefc` file is implied and resolved on the main process.
+ */
+export function projectEffectThumbnailUrl(
+  project: string,
+  effectName: string,
+  sizeBucket: number,
+): string {
+  assertProjectAssetThumbnailSizeBucket(sizeBucket);
+  const token = Buffer.from(path.resolve(project), 'utf8').toString('base64url');
+  const relative = normalizeEffectName(effectName);
+  return `rmmv-asset://project-effect-thumbnail/${token}/${sizeBucket}/${relative.split('/').map(encodeURIComponent).join('/')}`;
+}
+
 export function librarySourceAssetUrl(sourceSlug: string, relativePath: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(sourceSlug)) throw new Error('Invalid library asset source.');
   const relative = normalizeRelativePath(relativePath);
@@ -51,6 +66,46 @@ export function resolveProjectThumbnailRequest(
   const relative = normalizeRelativePath(parts.map(decodeURIComponent).join('/'));
   const sourceFilePath = assertReadableProjectAsset(workflowRoot, project, relative);
   return { project, relativePath: relative, sizeBucket, sourceFilePath };
+}
+
+export interface ResolvedProjectEffectThumbnailRequest {
+  project: string;
+  effectName: string;
+  relativePath: string;
+  sizeBucket: number;
+  sourceFilePath: string;
+}
+
+export function resolveProjectEffectThumbnailRequest(
+  workflowRoot: string,
+  requestUrl: string,
+): ResolvedProjectEffectThumbnailRequest {
+  const url = new URL(requestUrl);
+  if (url.protocol !== 'rmmv-asset:') throw new Error('Unsupported asset protocol.');
+  if (url.hostname !== 'project-effect-thumbnail') throw new Error('Invalid project effect thumbnail asset URL.');
+  const [token, sizeBucketRaw, ...parts] = url.pathname.replace(/^\/+/, '').split('/');
+  if (!token || !sizeBucketRaw || !parts.length) throw new Error('Invalid project effect thumbnail asset URL.');
+  const sizeBucket = Number(sizeBucketRaw);
+  assertProjectAssetThumbnailSizeBucket(sizeBucket);
+  const project = path.resolve(Buffer.from(token, 'base64url').toString('utf8'));
+  const effectName = normalizeEffectName(parts.map(decodeURIComponent).join('/'));
+  const { relativePath, sourceFilePath } = resolveProjectEffectThumbnailSource(workflowRoot, project, effectName);
+  return { project, effectName, relativePath, sizeBucket, sourceFilePath };
+}
+
+/**
+ * Resolve the effective `.efkefc` for an effect name (staged drafts win) so the
+ * generator and the protocol handler compute the same content-addressed cache path.
+ */
+export function resolveProjectEffectThumbnailSource(
+  workflowRoot: string,
+  project: string,
+  effectName: string,
+): { relativePath: string; sourceFilePath: string } {
+  const normalized = normalizeEffectName(effectName);
+  const relativePath = `effects/${normalized}.efkefc`;
+  const sourceFilePath = assertReadableProjectAsset(workflowRoot, project, relativePath);
+  return { relativePath, sourceFilePath };
 }
 
 export function resolveAssetRequest(workflowRoot: string, requestUrl: string): string {
@@ -150,4 +205,9 @@ function normalizeRelativePath(value: string): string {
   const relative = String(value || '').replace(/\\/g, '/').replace(/^\/+/, '');
   if (!relative || relative.split('/').includes('..') || path.isAbsolute(relative)) throw new Error(`Unsafe asset path: ${value}`);
   return relative;
+}
+
+function normalizeEffectName(effectName: string): string {
+  const withoutExtension = String(effectName || '').replace(/\.efkefc$/i, '');
+  return normalizeRelativePath(withoutExtension);
 }

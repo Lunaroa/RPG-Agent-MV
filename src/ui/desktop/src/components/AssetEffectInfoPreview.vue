@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { nextTick, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useI18n } from '../i18n';
 import ParticleAnimationPreviewFrame from './ParticleAnimationPreviewFrame.vue';
+import { useEffectThumbnail } from '../composables/useEffectThumbnail';
 import type { AssetPreviewItem } from '../utils/assetPreview';
 
 const props = defineProps<{
@@ -12,13 +13,27 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const actionBusy = ref(false);
+const playing = ref(false);
 const frameRef = ref<InstanceType<typeof ParticleAnimationPreviewFrame> | null>(null);
+
+// Default view is the static representative-frame thumbnail; the live playback
+// frame is only mounted once the user asks to play the full animation.
+const { url: thumbnailUrl } = useEffectThumbnail(
+  () => props.displayName,
+  {
+    sizeBucket: 512,
+    project: () => props.info.playback?.project,
+    enabled: () => Boolean(props.info.playback),
+  },
+);
 
 async function playEffect(): Promise<void> {
   const playback = props.info.playback;
   if (!playback || actionBusy.value) return;
   actionBusy.value = true;
+  playing.value = true;
   try {
+    await nextTick();
     await frameRef.value?.play({ ...playback.animation });
   } catch (error) {
     ElMessage.error(t('projectAssets.effectPreviewFailed', { message: (error as Error).message }));
@@ -38,11 +53,22 @@ async function playEffect(): Promise<void> {
       </div>
     </dl>
     <template v-if="info.playback">
-      <ParticleAnimationPreviewFrame
-        ref="frameRef"
-        class="effect-info-frame"
-        :project="info.playback.project"
-      />
+      <div class="effect-info-stage">
+        <ParticleAnimationPreviewFrame
+          v-if="playing"
+          ref="frameRef"
+          class="effect-info-frame"
+          :project="info.playback.project"
+        />
+        <img
+          v-else-if="thumbnailUrl"
+          class="effect-info-thumb"
+          :src="thumbnailUrl"
+          :alt="displayName"
+          draggable="false"
+        />
+        <div v-else class="effect-info-thumb-empty" aria-hidden="true" />
+      </div>
       <button
         type="button"
         class="effect-info-action"
@@ -103,7 +129,26 @@ async function playEffect(): Promise<void> {
 }
 .effect-info-frame {
   width: 100%;
+  height: 100%;
+}
+.effect-info-stage {
+  width: 100%;
   aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #171411;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.effect-info-thumb {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.effect-info-thumb-empty {
+  width: 100%;
+  height: 100%;
 }
 .effect-info-action {
   min-height: 32px;

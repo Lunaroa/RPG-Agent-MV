@@ -374,6 +374,9 @@ export interface GlobalSearchDocument {
   assetName?: string;
 }
 
+/** Fuzzy match tightness: loose (widest), medium, strict (fewest, closest). */
+export type GlobalSearchMatchPrecision = 'loose' | 'medium' | 'strict';
+
 export interface GlobalSearchOptions {
   /** Categories to include; omitted or empty means all. */
   categories?: GlobalSearchCategory[];
@@ -381,6 +384,8 @@ export interface GlobalSearchOptions {
   maxResults?: number;
   /** Substring matching instead of fuzzy scoring. */
   exact?: boolean;
+  /** Fuzzy match tightness (ignored when exact); default from project config, fallback 'loose'. */
+  matchPrecision?: GlobalSearchMatchPrecision;
 }
 
 export interface GlobalSearchHit {
@@ -416,6 +421,8 @@ export interface LunaRpgSearchSettings {
   maxResults?: number;
   /** Most recent search terms, newest first. */
   history?: string[];
+  /** Fuzzy match tightness applied to non-exact searches. */
+  matchPrecision?: GlobalSearchMatchPrecision;
 }
 
 export interface TilesetSummary {

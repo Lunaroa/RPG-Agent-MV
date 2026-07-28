@@ -10,7 +10,10 @@ import { patchProjectConfig } from './project-config-service.ts';
 import {
   buildGlobalSearchDocuments,
   computeGlobalSearchRevision,
+  DEFAULT_MATCH_PRECISION,
   getGlobalSearchIndexState,
+  MATCH_PRECISION_THRESHOLDS,
+  pickMatchPrecision,
   rebuildGlobalSearchIndex,
   searchGlobalProjectIndex,
 } from './project-search-service.ts';
@@ -143,5 +146,31 @@ describe('project global search index', () => {
     }]);
     const after_ = computeGlobalSearchRevision(projectRoot);
     assert.notEqual(before, after_);
+  });
+});
+
+describe('match precision mapping', () => {
+  test('thresholds tighten from loose to strict', () => {
+    assert.equal(MATCH_PRECISION_THRESHOLDS.loose, 0.35);
+    assert.equal(MATCH_PRECISION_THRESHOLDS.medium, 0.22);
+    assert.equal(MATCH_PRECISION_THRESHOLDS.strict, 0.12);
+    assert.ok(MATCH_PRECISION_THRESHOLDS.loose > MATCH_PRECISION_THRESHOLDS.medium);
+    assert.ok(MATCH_PRECISION_THRESHOLDS.medium > MATCH_PRECISION_THRESHOLDS.strict);
+    assert.equal(DEFAULT_MATCH_PRECISION, 'loose');
+  });
+
+  test('pickMatchPrecision prefers explicit request, then config, then the loose default', () => {
+    assert.equal(pickMatchPrecision('strict', 'medium'), 'strict');
+    assert.equal(pickMatchPrecision(undefined, 'medium'), 'medium');
+    assert.equal(pickMatchPrecision(undefined, undefined), DEFAULT_MATCH_PRECISION);
+    // Unknown values are ignored at each level so a bad config never breaks search.
+    assert.equal(pickMatchPrecision('bogus' as never, 'strict'), 'strict');
+    assert.equal(pickMatchPrecision(undefined, 'nope' as never), DEFAULT_MATCH_PRECISION);
+  });
+
+  test('strict precision never returns more fuzzy hits than loose for a typo query', async () => {
+    const loose = await searchGlobalProjectIndex(workflowRoot, projectRoot, 'Potiom', { matchPrecision: 'loose' });
+    const strict = await searchGlobalProjectIndex(workflowRoot, projectRoot, 'Potiom', { matchPrecision: 'strict' });
+    assert.ok(strict.hits.length <= loose.hits.length);
   });
 });

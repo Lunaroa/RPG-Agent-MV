@@ -6,6 +6,7 @@ import {
   assertProjectAssetThumbnailSizeBucket,
   PROJECT_ASSET_THUMBNAIL_SCHEMA_VERSION,
   PROJECT_ASSET_THUMBNAIL_SIZE_BUCKETS,
+  PROJECT_EFFECT_THUMBNAIL_SCHEMA_VERSION,
   type ProjectAssetThumbnailSizeBucket,
 } from '../../../contract/project-asset-thumbnails.ts';
 
@@ -13,6 +14,7 @@ export {
   assertProjectAssetThumbnailSizeBucket,
   PROJECT_ASSET_THUMBNAIL_SCHEMA_VERSION,
   PROJECT_ASSET_THUMBNAIL_SIZE_BUCKETS,
+  PROJECT_EFFECT_THUMBNAIL_SCHEMA_VERSION,
   type ProjectAssetThumbnailSizeBucket,
 };
 
@@ -72,6 +74,59 @@ export function projectAssetThumbnailCachePath(
     'runtime',
     'asset-thumbnails',
     projectAssetThumbnailProjectKey(project),
+    String(sizeBucket),
+    `${contentVersion}.png`,
+  );
+}
+
+/**
+ * Content version for an effect (.efkefc) representative-frame thumbnail.
+ *
+ * v1 fingerprints ONLY the .efkefc entry file (bytes + mtime). Referenced
+ * textures live in sibling files that are not tracked here, so editing a
+ * referenced texture alone will NOT invalidate the cached thumbnail — an
+ * accepted trade-off for a representative-frame preview. Bump
+ * PROJECT_EFFECT_THUMBNAIL_SCHEMA_VERSION to force a global refresh.
+ */
+export function projectEffectThumbnailContentVersion(input: {
+  effectRelativePath: string;
+  sourceBytes: number;
+  sourceMtimeMs: number;
+  sizeBucket: number;
+  schemaVersion?: number;
+}): string {
+  const schemaVersion = input.schemaVersion ?? PROJECT_EFFECT_THUMBNAIL_SCHEMA_VERSION;
+  return crypto
+    .createHash('sha256')
+    .update([
+      'effect',
+      normalizeRelativePath(input.effectRelativePath),
+      String(input.sourceBytes),
+      String(input.sourceMtimeMs),
+      String(input.sizeBucket),
+      String(schemaVersion),
+    ].join('\0'))
+    .digest('hex')
+    .slice(0, 40);
+}
+
+/**
+ * Cache path for an effect thumbnail. The extra `effect` path segment keeps
+ * effect captures isolated from image thumbnails even at the same size bucket.
+ */
+export function projectEffectThumbnailCachePath(
+  workflowRoot: string,
+  project: string,
+  sizeBucket: number,
+  contentVersion: string,
+): string {
+  assertProjectAssetThumbnailSizeBucket(sizeBucket);
+  return path.join(
+    path.resolve(workflowRoot),
+    'runtime',
+    'asset-thumbnails',
+    projectAssetThumbnailProjectKey(project),
+    'effect',
     String(sizeBucket),
     `${contentVersion}.png`,
   );

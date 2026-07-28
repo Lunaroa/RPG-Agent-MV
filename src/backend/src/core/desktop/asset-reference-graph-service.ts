@@ -530,6 +530,129 @@ function scanCommonEvents(context: ScanContext, value: unknown, file: string): v
   });
 }
 
+export interface CollectedAssetReference {
+  category: RmmvAssetCategory;
+  name: string;
+  jsonPath: string;
+  source: string;
+}
+
+export interface CollectMapReferenceOptions {
+  /** Include event-command asset references ("validate event resources"). */
+  includeEventCommands: boolean;
+  /** Include the map's own autoplay BGM/BGS names. */
+  includeAutoplayAudio: boolean;
+}
+
+/**
+ * Pure command-list asset scan shared by the reference graph and the external
+ * map importer, so the command-code -> asset mapping stays a single source of
+ * truth and never drifts between reading references and rewriting them.
+ */
+export function collectCommandListAssetReferences(
+  value: unknown,
+  jsonPath: string,
+  source: string,
+): CollectedAssetReference[] {
+  const refs: CollectedAssetReference[] = [];
+  if (!Array.isArray(value)) return refs;
+  const push = (category: RmmvAssetCategory, rawName: unknown, subPath: string, label: string): void => {
+    const name = normalizeAssetReferenceName(rawName);
+    if (name) refs.push({ category, name, jsonPath: subPath, source: label });
+  };
+  const pushAudio = (category: RmmvAssetCategory, audio: unknown, subPath: string, label: string): void => {
+    if (isRecord(audio)) push(category, audio.name, `${subPath}.name`, label);
+  };
+  value.forEach((command, index) => {
+    if (!isRecord(command)) return;
+    const params = Array.isArray(command.parameters) ? command.parameters : [];
+    const code = Number(command.code || 0);
+    const base = `${jsonPath}[${index}]`;
+    switch (code) {
+      case 101: push('faces', params[0], `${base}.parameters[0]`, `${source} text face`); break;
+      case 132: pushAudio('bgm', params[0], `${base}.parameters[0]`, `${source} battle BGM`); break;
+      case 133:
+      case 139: pushAudio('me', params[0], `${base}.parameters[0]`, `${source} system ME`); break;
+      case 205: {
+        const route = params[1];
+        if (isRecord(route) && Array.isArray(route.list)) {
+          route.list.forEach((routeCommand, routeIndex) => {
+            if (!isRecord(routeCommand)) return;
+            const routeParams = Array.isArray(routeCommand.parameters) ? routeCommand.parameters : [];
+            const routeCode = Number(routeCommand.code || 0);
+            const routePath = `${base}.parameters[1].list[${routeIndex}].parameters[0]`;
+            if (routeCode === 41) push('characters', routeParams[0], routePath, `${source} move route image`);
+            if (routeCode === 44) pushAudio('se', routeParams[0], routePath, `${source} move route SE`);
+          });
+        }
+        break;
+      }
+      case 231: push('pictures', params[1], `${base}.parameters[1]`, `${source} picture`); break;
+      case 241: pushAudio('bgm', params[0], `${base}.parameters[0]`, `${source} BGM`); break;
+      case 245: pushAudio('bgs', params[0], `${base}.parameters[0]`, `${source} BGS`); break;
+      case 249: pushAudio('me', params[0], `${base}.parameters[0]`, `${source} ME`); break;
+      case 250: pushAudio('se', params[0], `${base}.parameters[0]`, `${source} SE`); break;
+      case 261: push('movies', params[0], `${base}.parameters[0]`, `${source} movie`); break;
+      case 283:
+        push('battlebacks1', params[0], `${base}.parameters[0]`, `${source} battleback`);
+        push('battlebacks2', params[1], `${base}.parameters[1]`, `${source} battleback`);
+        break;
+      case 284: push('parallaxes', params[0], `${base}.parameters[0]`, `${source} parallax`); break;
+      case 322:
+        push('characters', params[1], `${base}.parameters[1]`, `${source} actor character image`);
+        push('faces', params[3], `${base}.parameters[3]`, `${source} actor face image`);
+        push('svActors', params[5], `${base}.parameters[5]`, `${source} actor side-view image`);
+        break;
+      case 323: push('characters', params[1], `${base}.parameters[1]`, `${source} vehicle image`); break;
+      default: break;
+    }
+  });
+  return refs;
+}
+
+/**
+ * Pure map asset scan reused by the reference graph (events always scanned, no
+ * autoplay audio) and the external map importer (event scan and autoplay audio
+ * are toggled per import options).
+ */
+export function collectMapAssetReferences(
+  value: unknown,
+  options: CollectMapReferenceOptions,
+): CollectedAssetReference[] {
+  const refs: CollectedAssetReference[] = [];
+  if (!isRecord(value)) return refs;
+  const push = (category: RmmvAssetCategory, rawName: unknown, jsonPath: string, label: string): void => {
+    const name = normalizeAssetReferenceName(rawName);
+    if (name) refs.push({ category, name, jsonPath, source: label });
+  };
+  push('parallaxes', value.parallaxName, '$.parallaxName', 'Map parallax');
+  push('battlebacks1', value.battleback1Name, '$.battleback1Name', 'Map battleback');
+  push('battlebacks2', value.battleback2Name, '$.battleback2Name', 'Map battleback');
+  if (options.includeAutoplayAudio) {
+    if (isRecord(value.bgm)) push('bgm', value.bgm.name, '$.bgm.name', 'Map autoplay BGM');
+    if (isRecord(value.bgs)) push('bgs', value.bgs.name, '$.bgs.name', 'Map autoplay BGS');
+  }
+  if (!Array.isArray(value.events)) return refs;
+  value.events.forEach((event, eventIndex) => {
+    if (!isRecord(event) || !Array.isArray(event.pages)) return;
+    event.pages.forEach((page, pageIndex) => {
+      if (!isRecord(page)) return;
+      const pagePath = `$.events[${eventIndex}].pages[${pageIndex}]`;
+      if (isRecord(page.image)) push('characters', page.image.characterName, `${pagePath}.image.characterName`, 'Map event page image');
+      if (options.includeEventCommands) {
+        refs.push(...collectCommandListAssetReferences(page.list, `${pagePath}.list`, 'Map event command'));
+      }
+    });
+  });
+  return refs;
+}
+
+/** The nine tileset image slots (A1-A5, B-E); empty string means an unused slot. */
+export function collectMapTilesetImageNames(tileset: unknown): string[] {
+  if (!isRecord(tileset) || !Array.isArray(tileset.tilesetNames)) return [];
+  return tileset.tilesetNames.map((name) => (typeof name === 'string' ? name : ''));
+}
+
 function scanMapReferences(context: ScanContext): void {
   const mapInfosFile = readDataJson(context, 'MapInfos');
   const mapIds = new Set<number>();
@@ -551,92 +674,15 @@ function scanMapReferences(context: ScanContext): void {
 }
 
 function scanMap(context: ScanContext, value: unknown, file: string): void {
-  if (!isRecord(value)) return;
-  addReference(context, 'parallaxes', value.parallaxName, file, '$.parallaxName', 'Map parallax');
-  addReference(context, 'battlebacks1', value.battleback1Name, file, '$.battleback1Name', 'Map battleback');
-  addReference(context, 'battlebacks2', value.battleback2Name, file, '$.battleback2Name', 'Map battleback');
-  if (!Array.isArray(value.events)) return;
-  value.events.forEach((event, eventIndex) => {
-    if (!isRecord(event) || !Array.isArray(event.pages)) return;
-    event.pages.forEach((page, pageIndex) => {
-      if (!isRecord(page)) return;
-      if (isRecord(page.image)) {
-        addReference(context, 'characters', page.image.characterName, file, `$.events[${eventIndex}].pages[${pageIndex}].image.characterName`, 'Map event page image');
-      }
-      scanCommandList(context, page.list, file, `$.events[${eventIndex}].pages[${pageIndex}].list`, 'Map event command');
-    });
-  });
+  for (const ref of collectMapAssetReferences(value, { includeEventCommands: true, includeAutoplayAudio: false })) {
+    addReference(context, ref.category, ref.name, file, ref.jsonPath, ref.source);
+  }
 }
 
 function scanCommandList(context: ScanContext, value: unknown, file: string, jsonPath: string, source: string): void {
-  if (!Array.isArray(value)) return;
-  value.forEach((command, index) => {
-    if (!isRecord(command)) return;
-    const params = Array.isArray(command.parameters) ? command.parameters : [];
-    const code = Number(command.code || 0);
-    const base = `${jsonPath}[${index}]`;
-    switch (code) {
-      case 101:
-        addReference(context, 'faces', params[0], file, `${base}.parameters[0]`, `${source} text face`);
-        break;
-      case 132:
-        addAudioReference(context, 'bgm', params[0], file, `${base}.parameters[0]`, `${source} battle BGM`);
-        break;
-      case 133:
-      case 139:
-        addAudioReference(context, 'me', params[0], file, `${base}.parameters[0]`, `${source} system ME`);
-        break;
-      case 205:
-        scanMoveRoute(context, params[1], file, `${base}.parameters[1]`, source);
-        break;
-      case 231:
-        addReference(context, 'pictures', params[1], file, `${base}.parameters[1]`, `${source} picture`);
-        break;
-      case 241:
-        addAudioReference(context, 'bgm', params[0], file, `${base}.parameters[0]`, `${source} BGM`);
-        break;
-      case 245:
-        addAudioReference(context, 'bgs', params[0], file, `${base}.parameters[0]`, `${source} BGS`);
-        break;
-      case 249:
-        addAudioReference(context, 'me', params[0], file, `${base}.parameters[0]`, `${source} ME`);
-        break;
-      case 250:
-        addAudioReference(context, 'se', params[0], file, `${base}.parameters[0]`, `${source} SE`);
-        break;
-      case 261:
-        addReference(context, 'movies', params[0], file, `${base}.parameters[0]`, `${source} movie`);
-        break;
-      case 283:
-        addReference(context, 'battlebacks1', params[0], file, `${base}.parameters[0]`, `${source} battleback`);
-        addReference(context, 'battlebacks2', params[1], file, `${base}.parameters[1]`, `${source} battleback`);
-        break;
-      case 284:
-        addReference(context, 'parallaxes', params[0], file, `${base}.parameters[0]`, `${source} parallax`);
-        break;
-      case 322:
-        addReference(context, 'characters', params[1], file, `${base}.parameters[1]`, `${source} actor character image`);
-        addReference(context, 'faces', params[3], file, `${base}.parameters[3]`, `${source} actor face image`);
-        addReference(context, 'svActors', params[5], file, `${base}.parameters[5]`, `${source} actor side-view image`);
-        break;
-      case 323:
-        addReference(context, 'characters', params[1], file, `${base}.parameters[1]`, `${source} vehicle image`);
-        break;
-      default:
-        break;
-    }
-  });
-}
-
-function scanMoveRoute(context: ScanContext, value: unknown, file: string, jsonPath: string, source: string): void {
-  if (!isRecord(value) || !Array.isArray(value.list)) return;
-  value.list.forEach((command, index) => {
-    if (!isRecord(command)) return;
-    const params = Array.isArray(command.parameters) ? command.parameters : [];
-    const code = Number(command.code || 0);
-    if (code === 41) addReference(context, 'characters', params[0], file, `${jsonPath}.list[${index}].parameters[0]`, `${source} move route image`);
-    if (code === 44) addAudioReference(context, 'se', params[0], file, `${jsonPath}.list[${index}].parameters[0]`, `${source} move route SE`);
-  });
+  for (const ref of collectCommandListAssetReferences(value, jsonPath, source)) {
+    addReference(context, ref.category, ref.name, file, ref.jsonPath, ref.source);
+  }
 }
 
 function scanPluginConfiguration(context: ScanContext): void {

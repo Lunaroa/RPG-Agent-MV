@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { removeTemporaryProjectTreeSafely } from './isolated-project-preparation.ts';
 import type { IsolatedMapPreviewPreparation } from './isolated-project-preparation.ts';
 import type {
   MapPreviewLoadProgress,
@@ -185,7 +186,11 @@ export function startMapPreviewPreparation(
 
 function removeDirectory(directory: string, label: string): Error | null {
   try {
-    fs.rmSync(directory, { recursive: true, force: true });
+    // The temporary preview project is a full copy that replicates any symlinks
+    // present in the source. Electron's bundled Node follows links inside a
+    // recursive fs.rmSync and can erase the link target, so detach links via
+    // lstat instead of trusting recursive removal.
+    removeTemporaryProjectTreeSafely(directory);
     if (fs.existsSync(directory)) return new Error(`The ${label} could not be removed.`);
     return null;
   } catch (error) {

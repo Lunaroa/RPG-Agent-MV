@@ -8,6 +8,7 @@ import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import {
   type IsolatedProjectPreparation,
   prepareIsolatedStagedProject,
+  removeTemporaryProjectTreeSafely,
 } from './isolated-project-preparation.ts';
 import { RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS } from './rpg-maker-mz-runtime.ts';
 import { getProjectFileForRead } from './staging-service.ts';
@@ -160,7 +161,7 @@ export function prepareParticleAnimationPreview(
       effectName: animation.effectName,
     };
   } catch (error) {
-    try { fs.rmSync(isolated.temporaryProject, { recursive: true, force: true }); } catch { /* Report the preparation error first. */ }
+    try { removeTemporaryProjectTreeSafely(isolated.temporaryProject); } catch { /* Report the preparation error first. */ }
     throw error;
   }
 }

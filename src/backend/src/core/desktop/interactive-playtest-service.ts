@@ -78,12 +78,12 @@ export interface InteractivePlaytestDependencies {
     workflowRoot: string,
     project: string,
     configuration: BattleTestConfiguration,
-  ) => BattleTestProjectPreparation;
+  ) => BattleTestProjectPreparation | Promise<BattleTestProjectPreparation>;
   prepareParticlePreview: (
     workflowRoot: string,
     project: string,
     animation: InteractiveParticleAnimationPreview,
-  ) => ParticleAnimationPreviewPreparation;
+  ) => ParticleAnimationPreviewPreparation | Promise<ParticleAnimationPreviewPreparation>;
   verifyIsolatedSource: typeof verifyIsolatedSourceState;
   cleanupIsolated: typeof cleanupIsolatedProject;
   randomUUID: () => string;
@@ -130,6 +130,7 @@ export class InteractivePlaytestService {
   #stopRequested = false;
   #stopPromise: Promise<InteractivePlaytestResult> | null = null;
   #battlePreparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | null = null;
+  #preparingIsolation = false;
 
   constructor(
     workflowRoot: string,
@@ -203,6 +204,12 @@ export class InteractivePlaytestService {
       return {
         ...this.current(),
         error: `Interactive playtest ${this.#currentRun?.runId || ''} is already running.`,
+      };
+    }
+    if (this.#preparingIsolation) {
+      return {
+        ...this.current(),
+        error: 'Another interactive playtest is already being prepared.',
       };
     }
     if (this.#battlePreparation) {
@@ -286,8 +293,10 @@ export class InteractivePlaytestService {
     }
 
     if (mode === 'battle_test') {
+      this.#preparingIsolation = true;
       try {
-        battlePreparation = this.#dependencies.prepareBattleTest(this.#workflowRoot, project, {
+        // Preparation may run in a worker process; never block the caller thread.
+        battlePreparation = await this.#dependencies.prepareBattleTest(this.#workflowRoot, project, {
           troopId: requirePositiveInteger(options.troopId, 'Battle Test troopId'),
           battlers: Array.isArray(options.battlers) ? options.battlers : [],
           battleback1Name: String(options.battleback1Name || ''),
@@ -295,6 +304,8 @@ export class InteractivePlaytestService {
         });
       } catch (error) {
         return { confirmationRequired: false, error: errorMessage(error) };
+      } finally {
+        this.#preparingIsolation = false;
       }
       launchProject = battlePreparation.temporaryProject;
       if (battlePreparation.engine !== engine) {
@@ -313,14 +324,17 @@ export class InteractivePlaytestService {
       if (!options.animationPreview) {
         return { confirmationRequired: false, error: 'Particle animation preview data is required.' };
       }
+      this.#preparingIsolation = true;
       try {
-        particlePreparation = this.#dependencies.prepareParticlePreview(
+        particlePreparation = await this.#dependencies.prepareParticlePreview(
           this.#workflowRoot,
           project,
           options.animationPreview,
         );
       } catch (error) {
         return { confirmationRequired: false, error: errorMessage(error) };
+      } finally {
+        this.#preparingIsolation = false;
       }
       launchProject = particlePreparation.appDirectory;
       if (particlePreparation.engine !== engine) {

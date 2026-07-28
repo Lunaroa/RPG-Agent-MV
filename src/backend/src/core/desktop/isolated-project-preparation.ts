@@ -93,7 +93,12 @@ export function prepareIsolatedStagedProject(
   const staging = snapshotProjectStaging(workflowRoot, sourceProject);
   const temporaryProject = (options.createTemporaryProject || (() => defaultCreateTemporaryProject(options.temporaryPrefix)))();
   try {
-    copyProjectExcludingSaves(sourceProject, temporaryProject, options.excludeRelativePaths || []);
+    copyProjectExcludingSaves(
+      sourceProject,
+      temporaryProject,
+      options.excludeRelativePaths || [],
+      staging.files.map((entry) => entry.relativePath),
+    );
     overlayStagedProjectFiles(workflowRoot, sourceProject, temporaryProject, staging.files);
     const savesExcluded = candidateSavePaths(temporaryProject).every((candidate) => !fs.existsSync(candidate));
     if (!savesExcluded) throw new IsolatedProjectPreparationError('Temporary project copy still contains a save directory.');
@@ -222,6 +227,13 @@ export function cleanupIsolatedProject(
   preparation: IsolatedProjectPreparation,
   removeTemporaryProject: (project: string) => void = defaultRemoveTemporaryProject,
 ): void {
+  // Belt-and-braces: never let a bad preparation record point deletion at the
+  // source project itself or one of its ancestors.
+  const source = path.resolve(preparation.sourceProject).toLowerCase();
+  const temporary = path.resolve(preparation.temporaryProject).toLowerCase();
+  if (temporary === source || source.startsWith(`${temporary}${path.sep}`)) {
+    throw new Error(`Refusing to delete a temporary project that contains the source project: ${preparation.temporaryProject}`);
+  }
   removeTemporaryProject(preparation.temporaryProject);
   if (fs.existsSync(preparation.temporaryProject)) {
     throw new Error(`Temporary project could not be removed: ${preparation.temporaryProject}`);
@@ -304,31 +316,113 @@ function overlayStagedProjectFiles(
   }
 }
 
+/**
+ * Directory trees that always stay physical copies in the isolated project:
+ * they are small, the product writes into them (battle test System.json, staged
+ * overlays), and they carry byte-level isolation evidence.
+ */
+const PHYSICAL_COPY_DIRECTORIES = new Set(['data', 'js']);
+
+/**
+ * Builds the isolated project without copying multi-gigabyte asset trees: root
+ * files plus the data/js trees are copied physically, while every other
+ * untouched directory (audio, img, effects, fonts, ...) becomes a Windows
+ * directory junction pointing at the source. Directories that receive staged
+ * overlays or contain nested exclusions are materialized as physical copies so
+ * overlay writes and deletions never reach the source project through a link.
+ */
 function copyProjectExcludingSaves(
   sourceProject: string,
   temporaryProject: string,
   excludedRelativePaths: readonly string[],
+  stagedRelativePaths: readonly string[] = [],
 ): void {
   const source = fs.realpathSync.native(path.resolve(sourceProject));
   const exclusions = excludedRelativePaths.map((relative) => normalizeRelative(relative).toLowerCase());
-  fs.rmSync(temporaryProject, { recursive: true, force: true });
-  fs.mkdirSync(temporaryProject, { recursive: true });
-  fs.cpSync(source, temporaryProject, {
-    recursive: true,
-    preserveTimestamps: true,
-    filter: (sourcePath) => {
-      const relative = normalizeRelative(path.relative(source, sourcePath));
-      if (!relative) return true;
+  const staged = stagedRelativePaths.map((relative) => normalizeRelative(relative).toLowerCase());
+  const excluded = (lower: string) => (
+    exclusions.some((candidate) => lower === candidate || lower.startsWith(`${candidate}/`))
+      || lower === '.git'
+      || lower.startsWith('.git/')
+      || lower === 'save'
+      || lower.startsWith('save/')
+      || lower === 'www/save'
+      || lower.startsWith('www/save/')
+  );
+  const requiresMaterialization = (lower: string) => (
+    exclusions.some((candidate) => candidate.startsWith(`${lower}/`))
+      || staged.some((candidate) => candidate === lower || candidate.startsWith(`${lower}/`))
+  );
+  const copySubtree = (relative: string): void => {
+    fs.cpSync(path.join(source, ...relative.split('/')), path.join(temporaryProject, ...relative.split('/')), {
+      recursive: true,
+      preserveTimestamps: true,
+      filter: (sourcePath) => {
+        const entryRelative = normalizeRelative(path.relative(source, sourcePath));
+        return !entryRelative || !excluded(entryRelative.toLowerCase());
+      },
+    });
+  };
+  const copyLevel = (prefix: '' | 'www/'): void => {
+    const directory = prefix ? path.join(source, 'www') : source;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const relative = `${prefix}${entry.name}`;
       const lower = relative.toLowerCase();
-      return !exclusions.some((excluded) => lower === excluded || lower.startsWith(`${excluded}/`))
-        && lower !== '.git'
-        && !lower.startsWith('.git/')
-        && lower !== 'save'
-        && !lower.startsWith('save/')
-        && lower !== 'www/save'
-        && !lower.startsWith('www/save/');
-    },
-  });
+      if (excluded(lower)) continue;
+      const sourcePath = path.join(source, ...relative.split('/'));
+      const targetPath = path.join(temporaryProject, ...relative.split('/'));
+      if (!entry.isDirectory()) {
+        fs.cpSync(sourcePath, targetPath, { preserveTimestamps: true, verbatimSymlinks: true });
+        continue;
+      }
+      if (!prefix && lower === 'www') {
+        // RPG Maker MV layout: apply the same physical/junction split inside www/.
+        fs.mkdirSync(targetPath, { recursive: true });
+        copyLevel('www/');
+        continue;
+      }
+      if (PHYSICAL_COPY_DIRECTORIES.has(entry.name.toLowerCase()) || requiresMaterialization(lower)) {
+        copySubtree(relative);
+      } else {
+        fs.symlinkSync(sourcePath, targetPath, 'junction');
+      }
+    }
+  };
+  removeTemporaryProjectTreeSafely(temporaryProject);
+  fs.mkdirSync(temporaryProject, { recursive: true });
+  copyLevel('');
+}
+
+/**
+ * Removes a temporary project tree without ever descending into linked
+ * directories. Electron's bundled Node has been observed to follow directory
+ * junctions inside fs.rmSync({ recursive: true }) and erase the link *target*
+ * contents, so recursive deletion must detach links explicitly via lstat.
+ */
+export function removeTemporaryProjectTreeSafely(root: string): void {
+  let stats: fs.Stats;
+  try {
+    stats = fs.lstatSync(root);
+  } catch {
+    return;
+  }
+  if (stats.isSymbolicLink()) {
+    // Delete only the link itself; the target must stay untouched.
+    try {
+      fs.rmdirSync(root);
+    } catch {
+      fs.unlinkSync(root);
+    }
+    return;
+  }
+  if (stats.isDirectory()) {
+    for (const entry of fs.readdirSync(root)) {
+      removeTemporaryProjectTreeSafely(path.join(root, entry));
+    }
+    fs.rmdirSync(root);
+    return;
+  }
+  fs.rmSync(root, { force: true });
 }
 
 interface SourceTreeMetadataEntry {
@@ -361,7 +455,7 @@ async function copyProjectAndCaptureSnapshot(
       || lower === 'www/save'
       || lower.startsWith('www/save/');
   };
-  fs.rmSync(temporaryProject, { recursive: true, force: true });
+  removeTemporaryProjectTreeSafely(temporaryProject);
   fs.mkdirSync(temporaryProject, { recursive: true });
   let scannedFiles = 0;
   onProgress?.({ stage: 'scanning-project', completed: 0 });
@@ -613,6 +707,21 @@ function sameSourceTreeMetadata(
   return true;
 }
 
+/**
+ * Only the data/js trees (both MZ root and MV www layouts) carry byte-level
+ * isolation evidence; asset files are fingerprinted by path + size + mtime
+ * alone, so multi-gigabyte audio/img/effects trees are never read. An asset
+ * rewritten in place with a preserved size and mtime is deliberately not
+ * detectable — accepted to keep fingerprints proportional to the data the
+ * product actually edits.
+ */
+function contentFingerprinted(relativeLower: string): boolean {
+  return relativeLower.startsWith('data/')
+    || relativeLower.startsWith('js/')
+    || relativeLower.startsWith('www/data/')
+    || relativeLower.startsWith('www/js/');
+}
+
 function fingerprintProjectSource(project: string): string {
   const root = fs.realpathSync.native(path.resolve(project));
   const snapshot: IsolatedProjectSourceSnapshotEntry[] = [];
@@ -628,14 +737,18 @@ function fingerprintProjectSource(project: string): string {
     if (!relative || excluded) continue;
     const stat = fs.lstatSync(entry);
     if (stat.isDirectory()) continue;
-    const body = stat.isSymbolicLink()
-      ? Buffer.from(fs.readlinkSync(entry), 'utf8')
-      : fs.readFileSync(entry);
+    let hash = '';
+    if (contentFingerprinted(lower)) {
+      const body = stat.isSymbolicLink()
+        ? Buffer.from(fs.readlinkSync(entry), 'utf8')
+        : fs.readFileSync(entry);
+      hash = sha256(body);
+    }
     snapshot.push({
       relativePath: relative,
       size: stat.size,
       mtimeMs: stat.mtimeMs,
-      hash: sha256(body),
+      hash,
     });
   }
   return fingerprintSourceSnapshot(snapshot);
@@ -645,9 +758,12 @@ function fingerprintSourceSnapshot(
   entries: readonly IsolatedProjectSourceSnapshotEntry[],
 ): string {
   const hash = crypto.createHash('sha256');
-  hash.update('rpg-agent-source-snapshot-v2\n');
+  hash.update('rpg-agent-source-snapshot-v3\n');
   for (const entry of [...entries].sort((left, right) => left.relativePath.localeCompare(right.relativePath))) {
-    hash.update(`${entry.relativePath}\0${entry.size}\0${entry.mtimeMs}\0${entry.hash}\n`);
+    // Content hashes only participate for data/js paths so producers that do
+    // hash everything (the map preview copy snapshot) stay digest-compatible.
+    const contentHash = contentFingerprinted(entry.relativePath.toLowerCase()) ? entry.hash : '-';
+    hash.update(`${entry.relativePath}\0${entry.size}\0${entry.mtimeMs}\0${contentHash}\n`);
   }
   return hash.digest('hex');
 }
@@ -698,7 +814,7 @@ function defaultCreateTemporaryProject(prefix = 'rmmv-agent-isolated-'): string 
 }
 
 function defaultRemoveTemporaryProject(project: string): void {
-  fs.rmSync(project, { recursive: true, force: true });
+  removeTemporaryProjectTreeSafely(project);
 }
 
 function candidateSavePaths(project: string): string[] {

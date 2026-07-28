@@ -2356,7 +2356,12 @@ function ctxReplaceMap() {
 }
 async function onExternalMapImportApplied(payload: { mapIds: number[] }) {
   externalImportDialog.open = false;
-  await loadTree();
+  // A staged import/replace can bring in new event assets (character sprites, faces, ...).
+  // Event sprites resolve through the editor catalog cache (characterAssetUrls), so refresh
+  // it before opening the map; otherwise the freshly imported sprite reads as missing until
+  // the next project reload. Tileset/parallax URLs come from the backend map payload and are
+  // already staging-aware, so they are unaffected.
+  await Promise.all([loadTree(), loadEditorCatalog()]);
   const firstMapId = payload.mapIds[0];
   if (firstMapId) await loadMap(firstMapId);
 }

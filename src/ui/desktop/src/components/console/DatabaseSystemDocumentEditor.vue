@@ -136,6 +136,13 @@ function openSimpleImage(path: string, asset: ImageAssetKind): void {
   }, (selection) => writePath(path, selection.name));
 }
 
+function titleImageUrl(path: string, kind: 'titles1' | 'titles2'): string | null {
+  const name = textValue(path);
+  if (!name) return null;
+  const asset = (props.catalog?.assets[kind] || []).find((entry) => entry.name === name);
+  return asset?.url || null;
+}
+
 function openVehicleImage(path: 'boat' | 'ship' | 'airship'): void {
   const current = objectValue(path);
   openImagePicker({
@@ -434,8 +441,18 @@ function updateExtraRecord(value: unknown): void {
         <section class="rm-document-panel">
           <h3>{{ t('db.panelTitleScreen') }}</h3>
           <div class="rm-compact-fields rm-compact-fields--two">
-            <label v-if="hasField('title1Name')"><span>{{ databaseFieldLabel('title1Name', language) }}</span><button type="button" @click="openSimpleImage('title1Name', 'titles1')">{{ textValue('title1Name') || t('imgPicker.none') }}</button></label>
-            <label v-if="hasField('title2Name')"><span>{{ databaseFieldLabel('title2Name', language) }}</span><button type="button" @click="openSimpleImage('title2Name', 'titles2')">{{ textValue('title2Name') || t('imgPicker.none') }}</button></label>
+            <label v-if="hasField('title1Name')"><span>{{ databaseFieldLabel('title1Name', language) }}</span>
+              <button type="button" class="rm-title-image" @click="openSimpleImage('title1Name', 'titles1')">
+                <span class="rm-title-preview"><img v-if="titleImageUrl('title1Name', 'titles1')" :src="titleImageUrl('title1Name', 'titles1')!" :alt="textValue('title1Name')" /></span>
+                <small>{{ textValue('title1Name') || t('imgPicker.none') }}</small>
+              </button>
+            </label>
+            <label v-if="hasField('title2Name')"><span>{{ databaseFieldLabel('title2Name', language) }}</span>
+              <button type="button" class="rm-title-image" @click="openSimpleImage('title2Name', 'titles2')">
+                <span class="rm-title-preview"><img v-if="titleImageUrl('title2Name', 'titles2')" :src="titleImageUrl('title2Name', 'titles2')!" :alt="textValue('title2Name')" /></span>
+                <small>{{ textValue('title2Name') || t('imgPicker.none') }}</small>
+              </button>
+            </label>
           </div>
           <el-checkbox v-if="hasField('optDrawTitle')" class="rm-check" :model-value="Boolean(readPath('optDrawTitle'))" @change="writePath('optDrawTitle', Boolean($event))">{{ databaseFieldLabel('optDrawTitle', language) }}</el-checkbox>
           <div v-if="hasField('titleCommandWindow')" class="rm-inline-object">
@@ -787,6 +804,41 @@ function updateExtraRecord(value: unknown): void {
   overflow: hidden;
 }
 .rm-vehicle-image small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-title-image {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  padding: 5px;
+}
+/* Small title-screen preview; the checker marks transparent regions like the asset library. */
+.rm-title-preview {
+  width: 96px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--console-border, #e4dcce);
+  border-radius: 4px;
+  background-color: #f5efe6;
+  background-image:
+    linear-gradient(45deg, #ded6c8 25%, transparent 25%),
+    linear-gradient(-45deg, #ded6c8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ded6c8 75%),
+    linear-gradient(-45deg, transparent 75%, #ded6c8 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+}
+.rm-title-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.rm-title-image small {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;

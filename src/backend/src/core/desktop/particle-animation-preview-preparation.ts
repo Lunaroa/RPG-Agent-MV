@@ -103,6 +103,11 @@ export interface ParticleAnimationPreviewOptions {
    */
   armed?: boolean;
   /**
+   * Loop playback: once the animation finishes the runtime replays it immediately, so
+   * autoplay previews keep looping like a video. Ignored for capture sessions.
+   */
+  loop?: boolean;
+  /**
    * When > 0, prepares an offscreen capture session: forces autoplay, drops the
    * battle background for a clean frame, and injects the number of played frames
    * the runtime advances before freezing on a representative frame and signalling
@@ -217,6 +222,7 @@ export function prepareParticleAnimationPreviewApp(
   // dialog so playback starts in-place with no iframe reload.
   const armed = !capturing && options.armed === true;
   const autoplay = capturing ? true : options.autoplay !== false;
+  const loop = !capturing && options.loop === true;
   const requireEffect = autoplay || armed;
   const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight, { requireEffect });
   const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
@@ -274,6 +280,7 @@ export function prepareParticleAnimationPreviewApp(
       screenHeight: manifest.screenHeight,
       autoplay,
       armed,
+      loop,
       battleback1: battlebacks.battleback1,
       battleback2: battlebacks.battleback2,
       animation,
@@ -804,11 +811,16 @@ window.RpgAgentParticlePreview = {
     // Sprite_Animation anchors the effect on the target's current height, so neither
     // autoplay nor the embedder may start playback until the battler bitmap is loaded;
     // autoplay and the ready handshake both wait for it (a canvas-backed dummy bitmap
-    // resolves immediately, so the top-level capture window is not delayed).
+    // resolves immediately, so the top-level capture window is not delayed). The ready
+    // message reports the effect's target point (screen px) so the embedder can center
+    // its 1:1 crop on it regardless of the battler's measured size.
     targetBitmap.addLoadListener(() => {
       if (config.autoplay) play();
       try {
-        if (window.parent && window.parent !== window) window.parent.postMessage({ type: "rpg-agent-preview-ready" }, "*");
+        if (window.parent && window.parent !== window) {
+          const targetY = config.animation.alignBottom ? target.y : target.y - target.height / 2;
+          window.parent.postMessage({ type: "rpg-agent-preview-ready", targetX: target.x, targetY: targetY }, "*");
+        }
       } catch (error) { /* no embedder to notify */ }
     });
 
@@ -827,7 +839,9 @@ window.RpgAgentParticlePreview = {
       if (captureFrozen) return;
       if (Graphics.effekseer) Graphics.effekseer.update();
       // Stock editor behavior: the animation plays once and the scene then idles.
+      // Loop mode instead replays it as soon as it finishes, like a video preview.
       if (animationSprite && animationSprite.isPlaying()) animationSprite.update();
+      else if (config.loop && animationSprite) play();
       if (!captureTarget) return;
       captureTotalTicks++;
       const ready = animationSprite && animationSprite.isPlaying()

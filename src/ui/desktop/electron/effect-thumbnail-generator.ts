@@ -133,17 +133,13 @@ async function captureEffectRepresentativeFrame(input: EnsureEffectThumbnailInpu
       root: preparation.passthroughRoot,
       prefixes: preparation.passthroughPrefixes,
     });
-    // The window must be shown (not show:false) or the compositor pauses the page's
-    // requestAnimationFrame loop, so the MZ game loop never advances to a representative
-    // frame and every capture waits out the timeout. Position it far off-screen and keep
-    // it non-focusable / off the taskbar so it renders at full frame rate yet stays invisible.
+    // Hidden-window contract: captureBackgroundPage refuses visible windows, and the
+    // capture runtime drives its ticks with a timer (not rAF, which the compositor
+    // pauses for hidden pages), so the window stays hidden for its whole lifetime.
+    // backgroundThrottling:false keeps that timer at full rate while hidden.
     win = new BrowserWindow({
-      show: true,
-      x: -32_000,
-      y: -32_000,
-      skipTaskbar: true,
-      focusable: false,
-      minimizable: false,
+      show: false,
+      paintWhenInitiallyHidden: true,
       useContentSize: true,
       width: Math.max(1, Math.round(preparation.screenWidth)),
       height: Math.max(1, Math.round(preparation.screenHeight)),

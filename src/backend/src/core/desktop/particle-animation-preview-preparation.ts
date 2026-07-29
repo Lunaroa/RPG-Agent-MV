@@ -814,7 +814,44 @@ window.RpgAgentParticlePreview = {
     // resolves immediately, so the top-level capture window is not delayed). The ready
     // message reports the effect's target point (screen px) so the embedder can center
     // its 1:1 crop on it regardless of the battler's measured size.
+    // Trim a battler's transparent margins so the sprite's geometric center (which MZ
+    // anchors the effect to via height/2) coincides with the monster's visible center;
+    // large battlers with heavy padding otherwise land the effect above the creature.
+    const cropOpaqueBitmap = (bitmap) => {
+      const width = bitmap.width;
+      const height = bitmap.height;
+      if (!width || !height) return bitmap;
+      let data;
+      try {
+        data = bitmap.context.getImageData(0, 0, width, height).data;
+      } catch (error) {
+        return bitmap; // tainted/unavailable pixels: keep the full bitmap
+      }
+      const alphaThreshold = 16;
+      let minX = width, minY = height, maxX = -1, maxY = -1;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (data[(y * width + x) * 4 + 3] > alphaThreshold) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (maxX < minX || maxY < minY) return bitmap; // fully transparent
+      const cropW = maxX - minX + 1;
+      const cropH = maxY - minY + 1;
+      if (cropW === width && cropH === height) return bitmap; // already tight
+      const cropped = new Bitmap(cropW, cropH);
+      cropped.blt(bitmap, minX, minY, cropW, cropH, 0, 0);
+      return cropped;
+    };
     targetBitmap.addLoadListener(() => {
+      if (config.enemyBattler) {
+        const trimmed = cropOpaqueBitmap(targetBitmap);
+        if (trimmed !== targetBitmap) target.bitmap = trimmed;
+      }
       if (config.autoplay) play();
       try {
         if (window.parent && window.parent !== window) {
@@ -856,11 +893,28 @@ window.RpgAgentParticlePreview = {
     // Capture windows are hidden, so the compositor never drives requestAnimationFrame
     // and startGameLoop would stall; drive ticks with a timer instead (_onTick runs the
     // tick handler and renders). backgroundThrottling:false on the host window keeps
-    // the interval at full rate. Interactive embeds keep the stock rAF game loop.
+    // the interval at full rate. Interactive embeds run a fixed-60fps rAF loop below.
     if (captureTarget) {
       setInterval(() => Graphics._onTick(1), 16);
     } else {
-      Graphics.startGameLoop();
+      // Interactive embeds render on rAF for smoothness but advance animation logic at a
+      // fixed 60fps, so playback speed does not scale with the monitor refresh rate
+      // (120/144Hz displays otherwise play effects 2-2.4x too fast). At most one logic
+      // tick per rAF frame: under load playback may slow, but it never speeds up.
+      const stepMs = 1000 / 60;
+      let previousTime = performance.now();
+      let accumulator = 0;
+      const tick = (now) => {
+        requestAnimationFrame(tick);
+        accumulator += now - previousTime;
+        previousTime = now;
+        if (accumulator > 100) accumulator = 100;
+        if (accumulator >= stepMs) {
+          accumulator -= stepMs;
+          Graphics._onTick(1);
+        }
+      };
+      requestAnimationFrame(tick);
     }
   }
 };

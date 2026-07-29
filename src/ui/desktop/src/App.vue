@@ -7,6 +7,7 @@ import en from 'element-plus/es/locale/lang/en'
 import AppRail from './components/layout/AppRail.vue'
 import TopBar from './components/layout/TopBar.vue'
 import StatusBar from './components/layout/StatusBar.vue'
+import RouteErrorBoundary from './components/layout/RouteErrorBoundary.vue'
 import GlobalSearchDialog from './components/search/GlobalSearchDialog.vue'
 import LanguagePicker from './components/onboarding/LanguagePicker.vue'
 import OnboardingTour from './components/onboarding/OnboardingTour.vue'
@@ -247,9 +248,11 @@ onUnmounted(() => {
           <div v-if="booting" class="app-state-card">{{ t('app.loadingProject') }}</div>
           <div v-else-if="bootError" class="app-state-card error">{{ bootError }}</div>
           <router-view v-else v-slot="{ Component, route: currentRoute }">
-            <KeepAlive :max="3">
-              <component :is="Component" :key="workspaceCacheKey(currentRoute)" />
-            </KeepAlive>
+            <RouteErrorBoundary>
+              <KeepAlive :max="3">
+                <component :is="Component" :key="workspaceCacheKey(currentRoute)" />
+              </KeepAlive>
+            </RouteErrorBoundary>
           </router-view>
         </main>
       </div>

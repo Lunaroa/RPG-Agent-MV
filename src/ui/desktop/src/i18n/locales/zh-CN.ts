@@ -1,5 +1,7 @@
 const zhCN = {
     'app.loadingProject': '正在读取项目…',
+    'app.viewCrashed': '此页面渲染出错，已被错误边界拦截；请重试或切换其他页面。',
+    'app.retry': '重试',
     'ui.searchPlaceholder': '搜索',
     'ui.separator.list': '、',
     'ui.separator.semicolon': '；',

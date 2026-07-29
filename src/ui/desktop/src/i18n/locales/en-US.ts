@@ -1,5 +1,7 @@
 const enUS = {
     'app.loadingProject': 'Loading project...',
+    'app.viewCrashed': 'This view failed to render and was caught by the error boundary. Retry or switch pages.',
+    'app.retry': 'Retry',
     'ui.searchPlaceholder': 'Search',
     'ui.separator.list': ', ',
     'ui.separator.semicolon': '; ',

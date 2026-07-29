@@ -111,7 +111,7 @@ import {
   RM_LAYOUT_HIDDEN_PATHS,
   type RmPanelLayout,
 } from '../../utils/databaseRmLayouts';
-import { canAppendTilesetSlot, tilesetSlotCount, tilesetSlotLabel } from '../../utils/tilesetSlots';
+import { EXTENDED_TILESET_UI_VISIBLE, canAppendTilesetSlot, tilesetSlotCount, tilesetSlotLabel } from '../../utils/tilesetSlots';
 import { useWorkspaceStore } from '../../stores/workspace';
 import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 
@@ -996,6 +996,7 @@ function appendTilesetSlot(path: string): void {
 }
 
 function canRemoveTilesetSlot(path: string, index: number): boolean {
+  if (!EXTENDED_TILESET_UI_VISIBLE) return false;
   const length = arrayValue(path).length;
   return extendedTilesetsEnabled.value && index >= 9 && index === length - 1;
 }
@@ -2118,7 +2119,7 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'tilesetNames'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <div class="tileset-extension-actions">
+              <div v-if="EXTENDED_TILESET_UI_VISIBLE" class="tileset-extension-actions">
                 <label class="inline-check">
                   <input
                     type="checkbox"

@@ -221,14 +221,15 @@ async function runSearch(): Promise<void> {
   }
 }
 
-function toggleCategory(category: GlobalSearchCategory): void {
-  const next = new Set(enabledCategories.value)
-  if (next.has(category)) next.delete(category)
-  else next.add(category)
-  if (next.size === 0) return // At least one category stays active.
-  enabledCategories.value = next
-  scheduleSearch(0)
-}
+/** Checkbox-group model over the enabled-category set; at least one stays active. */
+const enabledCategoriesModel = computed<GlobalSearchCategory[]>({
+  get: () => ALL_CATEGORIES.filter((category) => enabledCategories.value.has(category)),
+  set: (next) => {
+    if (!next.length) return // At least one category stays active.
+    enabledCategories.value = new Set(next)
+    scheduleSearch(0)
+  },
+})
 
 /** Remove one result row (non-persistent; groundwork for a future replace flow). */
 function removeHit(hit: GlobalSearchHit): void {
@@ -261,6 +262,19 @@ async function clearHistory(): Promise<void> {
   const project = projectStore.currentProject
   history.value = []
   if (project) await projectConfig.setSearch({ history: [] }, project)
+}
+
+/** Remove one recent-search term (persisted); the tag list drops it immediately. */
+async function removeHistoryTerm(term: string): Promise<void> {
+  const project = projectStore.currentProject
+  const next = history.value.filter((item) => item !== term)
+  history.value = next
+  if (!project) return
+  try {
+    await projectConfig.setSearch({ history: next }, project)
+  } catch {
+    // History persistence is best effort; the search flow must not break.
+  }
 }
 
 /** DatabaseView keeps its section param in sync; derive it so the sidebar lands on the right tab. */
@@ -504,15 +518,19 @@ onUnmounted(() => {
         </div>
 
         <div class="global-search-filters">
-          <el-checkbox
-            v-for="category in ALL_CATEGORIES"
-            :key="category"
+          <el-checkbox-group
+            v-model="enabledCategoriesModel"
             size="small"
-            :model-value="enabledCategories.has(category)"
-            @change="toggleCategory(category)"
+            class="global-search-filter-group"
           >
-            {{ categoryLabels[category] }}
-          </el-checkbox>
+            <el-checkbox
+              v-for="category in ALL_CATEGORIES"
+              :key="category"
+              :value="category"
+            >
+              {{ categoryLabels[category] }}
+            </el-checkbox>
+          </el-checkbox-group>
           <el-checkbox size="small" class="global-search-exact" :model-value="exact" @change="exact = !exact">
             {{ t('search.exact') }}
           </el-checkbox>
@@ -573,15 +591,20 @@ onUnmounted(() => {
                 {{ t('search.clearHistory') }}
               </button>
             </div>
-            <button
-              v-for="term in history.slice(0, 10)"
-              :key="term"
-              type="button"
-              class="global-search-history-term"
-              @click="applyHistoryTerm(term)"
-            >
-              {{ term }}
-            </button>
+            <div class="global-search-history-tags">
+              <el-tag
+                v-for="term in history.slice(0, 12)"
+                :key="term"
+                class="global-search-history-tag"
+                type="info"
+                size="small"
+                closable
+                @click="applyHistoryTerm(term)"
+                @close="removeHistoryTerm(term)"
+              >
+                {{ term }}
+              </el-tag>
+            </div>
           </template>
           <p v-else class="global-search-empty">{{ t('search.hint') }}</p>
         </div>
@@ -691,6 +714,16 @@ onUnmounted(() => {
   gap: 0 12px;
   padding: 2px 14px 6px;
 }
+.global-search-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+}
+/* The group's own gap controls spacing; drop Element Plus's default right margin. */
+.global-search-filter-group :deep(.el-checkbox) {
+  margin-right: 0;
+}
 .global-search-exact {
   margin-left: auto;
 }
@@ -797,13 +830,13 @@ onUnmounted(() => {
 .global-search-history {
   display: flex;
   flex-direction: column;
-  padding: 6px 0;
+  padding: 2px 0 4px;
 }
 .global-search-history-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 14px;
+  padding: 2px 14px;
   color: var(--app-ink-muted);
   font-size: 11px;
   font-weight: 650;
@@ -818,17 +851,14 @@ onUnmounted(() => {
 .global-search-history-clear:hover {
   color: var(--app-accent);
 }
-.global-search-history-term {
-  padding: 7px 14px;
-  border: none;
-  background: transparent;
-  color: var(--app-ink);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
+.global-search-history-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 14px 2px;
 }
-.global-search-history-term:hover {
-  background: var(--app-bg-hover);
+.global-search-history-tag {
+  cursor: pointer;
 }
 .global-search-footer {
   display: flex;

@@ -10,19 +10,24 @@ import { particlePreview } from '../api/client';
  * ready handshake, so repeated plays of the same animation are always in-place.
  *
  * nativeWidth/nativeHeight switch the iframe to the editor-style 1:1 crop: the game
- * screen renders at native pixel size and the host viewport crops it around the target
- * (anchored at 50% width / 68% height of the screen). Without them the iframe fills the
- * host and the runtime letterboxes the whole screen.
+ * screen renders at native pixel size and the host viewport crops it centered on the
+ * effect's target point (reported by the runtime once the battler is measured). Without
+ * them the iframe fills the host and the runtime letterboxes the whole screen.
  */
 const props = defineProps<{
   project: string;
   nativeWidth?: number;
   nativeHeight?: number;
+  /** Replay the animation as soon as it finishes; used by autoplay() previews. */
+  loop?: boolean;
 }>();
 
 const url = ref('');
 const busy = ref(false);
 const iframeEl = ref<HTMLIFrameElement | null>(null);
+// The effect's target point (native screen px) reported by the runtime once the battler
+// bitmap is measured; the 1:1 crop centers on it so any battler size stays framed.
+const targetAnchor = ref<{ x: number; y: number } | null>(null);
 let sessionKey = '';
 let requestSeq = 0;
 // The animation an armed backdrop was prepared for; play() reuses that loaded scene.
@@ -44,8 +49,12 @@ function postPlay(): void {
 
 function onWindowMessage(event: MessageEvent): void {
   if (!iframeEl.value || event.source !== iframeEl.value.contentWindow) return;
-  if ((event.data as { type?: string } | null)?.type === 'rpg-agent-preview-ready') {
+  const data = event.data as { type?: string; targetX?: number; targetY?: number } | null;
+  if (data?.type === 'rpg-agent-preview-ready') {
     sceneReady = true;
+    if (typeof data.targetX === 'number' && typeof data.targetY === 'number') {
+      targetAnchor.value = { x: data.targetX, y: data.targetY };
+    }
     if (pendingPlay) {
       pendingPlay = false;
       postPlay();
@@ -55,14 +64,15 @@ function onWindowMessage(event: MessageEvent): void {
 
 async function prepareSession(
   animation: Record<string, unknown>,
-  options: { autoplay: boolean; armed?: boolean },
+  options: { autoplay: boolean; armed?: boolean; loop?: boolean },
 ): Promise<void> {
   const seq = ++requestSeq;
   busy.value = true;
   sceneReady = false;
   pendingPlay = false;
+  targetAnchor.value = null;
   try {
-    const session = await particlePreview.prepare(animation, options.autoplay, props.project, options.armed === true);
+    const session = await particlePreview.prepare(animation, options.autoplay, props.project, options.armed === true, options.loop === true);
     if (seq !== requestSeq) {
       void particlePreview.dispose(session.key);
       return;
@@ -99,6 +109,12 @@ async function showBackdrop(
   await prepareSession(animation, { autoplay: false, armed: options.armed === true });
 }
 
+// Fire-and-forget playback for previews with no play button (side panel, immersive
+// viewer): loads the scene and starts immediately, looping when the loop prop is set.
+async function autoplay(animation: Record<string, unknown>): Promise<void> {
+  await prepareSession(animation, { autoplay: true, loop: props.loop === true });
+}
+
 onMounted(() => window.addEventListener('message', onWindowMessage));
 onUnmounted(() => window.removeEventListener('message', onWindowMessage));
 onBeforeUnmount(() => {
@@ -110,20 +126,23 @@ onBeforeUnmount(() => {
 });
 
 // Editor-style crop: size the iframe to the native game screen and offset it so the
-// target anchor (screen 50% x / 68% y) lands at 50% width / 70% height of the host.
+// effect's target point lands at the host center. The runtime reports that point once
+// the battler is measured; until then fall back to screen center so the first frame is
+// framed sensibly and only nudges when the precise anchor arrives.
 const cropStyle = computed(() => {
   const width = props.nativeWidth;
   const height = props.nativeHeight;
   if (!width || !height || width < 1 || height < 1) return null;
+  const anchor = targetAnchor.value ?? { x: width / 2, y: height / 2 };
   return {
     width: `${width}px`,
     height: `${height}px`,
-    left: `calc(50% - ${width / 2}px)`,
-    top: `calc(70% - ${Math.round(height * 0.68)}px)`,
+    left: `calc(50% - ${Math.round(anchor.x)}px)`,
+    top: `calc(50% - ${Math.round(anchor.y)}px)`,
   };
 });
 
-defineExpose({ play, showBackdrop, busy });
+defineExpose({ play, showBackdrop, autoplay, busy });
 </script>
 
 <template>

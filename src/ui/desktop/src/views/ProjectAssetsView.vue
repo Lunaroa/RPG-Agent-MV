@@ -56,6 +56,8 @@ import AssetGridFontThumb from '../components/AssetGridFontThumb.vue'
 import AssetGridVideoThumb from '../components/AssetGridVideoThumb.vue'
 import AssetGridEffectThumb from '../components/AssetGridEffectThumb.vue'
 import AssetVideoViewer from '../components/AssetVideoViewer.vue'
+import AssetEffectViewer from '../components/AssetEffectViewer.vue'
+import ParticleAnimationPreviewFrame from '../components/ParticleAnimationPreviewFrame.vue'
 import AssetReferencesDialog from '../components/AssetReferencesDialog.vue'
 import ProjectAssetsAudioBar, { type AssetsAudioBarItem } from '../components/ProjectAssetsAudioBar.vue'
 import PluginFileFolderThumb from '../components/editor/PluginFileFolderThumb.vue'
@@ -378,6 +380,10 @@ const videoViewerVisible = ref(false)
 const videoViewerUrls = ref<string[]>([])
 const videoViewerIndex = ref(0)
 
+const effectViewerVisible = ref(false)
+const effectViewerNames = ref<string[]>([])
+const effectViewerIndex = ref(0)
+
 const pageHost = ref<HTMLElement | null>(null)
 const previewPanelRequested = ref(false)
 const previewPanelWidth = ref(loadProjectAssetPreviewPanelWidth())
@@ -397,6 +403,21 @@ const previewPanelVisible = computed(() =>
   previewPanelRequested.value && previewToggleAvailable.value)
 const previewPanelNote = computed(() =>
   previewPanelEntry.value ? entryNote(previewPanelEntry.value.id).trim() : '')
+
+// Side-panel effect playback: autoplay + loop the effect whenever an effect entry is
+// shown, so the panel reads like the looping video preview instead of a static thumbnail.
+const previewPanelEffectFrameRef = ref<InstanceType<typeof ParticleAnimationPreviewFrame> | null>(null)
+const previewPanelEffectName = computed(() =>
+  previewPanelVisible.value
+    && previewPanelMedia.value === 'effect'
+    && previewPanelEntry.value
+    && !previewPanelEntry.value.encrypted
+    ? previewPanelEntry.value.name
+    : '')
+watch(previewPanelEffectName, (name) => {
+  if (!name) return
+  void nextTick(() => previewPanelEffectFrameRef.value?.autoplay({ effectName: name }))
+}, { immediate: true })
 
 let previewResizeStartX = 0
 let previewResizeStartWidth = 0
@@ -775,6 +796,14 @@ const previewableVideoEntries = computed(() => {
     return projectAssetMediaKind(categoryId) === 'movie'
       && projectAssetCanPreview(categoryId, entry.encrypted)
       && entry.url
+  })
+})
+
+/** Effect assets previewable in the immersive viewer; keyed by name (no direct URL). */
+const previewableEffectEntries = computed(() => {
+  return sortedEntries.value.filter((entry) => {
+    const categoryId = entryCategoryId(entry)
+    return projectAssetMediaKind(categoryId) === 'effect' && !entry.encrypted
   })
 })
 
@@ -1487,6 +1516,19 @@ function openPreviewForEntry(entryId: string) {
       return
     }
   }
+  if (media === 'effect' && !entry.encrypted) {
+    const effectEntries = previewableEffectEntries.value
+    const viewerIndex = effectEntries.findIndex((item) => item.id === entryId)
+    if (viewerIndex >= 0) {
+      imageViewerVisible.value = false
+      videoViewerVisible.value = false
+      effectViewerNames.value = effectEntries.map((item) => item.name)
+      effectViewerIndex.value = viewerIndex
+      effectViewerVisible.value = true
+      previewVisible.value = false
+      return
+    }
+  }
   imageViewerVisible.value = false
   videoViewerVisible.value = false
   previewIndex.value = index
@@ -1516,6 +1558,17 @@ function onVideoViewerSwitch(index: number) {
   videoViewerIndex.value = index
   const url = videoViewerUrls.value[index]
   const entry = sortedEntries.value.find((item) => item.url === url)
+  if (entry) applyFileSelection(selectProjectAssetExclusive(entry.id))
+}
+
+function closeEffectViewer() {
+  effectViewerVisible.value = false
+}
+
+function onEffectViewerSwitch(index: number) {
+  effectViewerIndex.value = index
+  const name = effectViewerNames.value[index]
+  const entry = previewableEffectEntries.value.find((item) => item.name === name)
   if (entry) applyFileSelection(selectProjectAssetExclusive(entry.id))
 }
 
@@ -3828,16 +3881,14 @@ watch(gridHost, (el, previous) => {
             :sample-text="t('projectAssets.fontPreviewSample')"
             :load-failed-label="t('projectAssets.fontPreviewFailed')"
           />
-          <AssetGridEffectThumb
+          <ParticleAnimationPreviewFrame
             v-else-if="previewPanelMedia === 'effect'
               && !previewPanelEntry.encrypted
               && !failedThumbnails.has(previewPanelEntry.id)"
-            class="project-assets-preview-panel-img"
-            :effect-name="previewPanelEntry.name"
-            :project="projectStore.currentProject || undefined"
-            :size-bucket="512"
-            :alt="previewPanelEntry.name"
-            @error="onThumbnailError(previewPanelEntry.id)"
+            ref="previewPanelEffectFrameRef"
+            class="project-assets-preview-panel-effect"
+            :project="projectStore.currentProject || ''"
+            loop
           />
           <div v-else class="project-assets-preview-panel-type">
             {{ entryTypeLabel(previewPanelEntry) }}
@@ -3873,6 +3924,15 @@ watch(gridHost, (el, previous) => {
       :initial-index="videoViewerIndex"
       @close="closeVideoViewer"
       @switch="onVideoViewerSwitch"
+    />
+
+    <AssetEffectViewer
+      v-if="effectViewerVisible"
+      :name-list="effectViewerNames"
+      :project="projectStore.currentProject || ''"
+      :initial-index="effectViewerIndex"
+      @close="closeEffectViewer"
+      @switch="onEffectViewerSwitch"
     />
 
     <AssetPreviewDialog
@@ -4141,6 +4201,11 @@ watch(gridHost, (el, previous) => {
   max-height: min(360px, 60vh);
   border-radius: var(--app-radius-sm);
   background: #000;
+}
+.project-assets-preview-panel-effect {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--app-radius-sm);
 }
 
 .project-assets-preview-panel-font {

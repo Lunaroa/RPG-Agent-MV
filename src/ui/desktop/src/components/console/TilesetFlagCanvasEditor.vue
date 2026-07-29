@@ -70,7 +70,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
 import type { EditorProjectCatalog } from '../../api/client';
-import { drawTile } from '../../composables/useMapRenderer';
+import { drawCheckerboard, drawTile } from '../../composables/useMapRenderer';
 import { useI18n } from '../../i18n';
 import {
   MV_TILESET_FLAG_BITS,
@@ -255,12 +255,13 @@ function paintCanvas(): void {
   const flags = activeFlags();
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.imageSmoothingEnabled = false;
+  // Standard fine transparency checker, matching the map editor; never per-tile blocks.
+  drawCheckerboard(context, sheet.columns * tileSize.value, sheet.rows * tileSize.value);
 
   for (let row = 0; row < sheet.rows; row += 1) {
     for (let column = 0; column < sheet.columns; column += 1) {
       const x = column * tileSize.value;
       const y = row * tileSize.value;
-      drawChecker(context, x, y, row, column);
       const cell = mvTilesetFlagCell(sheet.key, row, column);
       drawTile(context, tilesetImages, cell.representativeTileId, x, y, tileSize.value);
       drawModeOverlay(context, cell, inspectMvTilesetFlagCell(flags, cell), x, y);
@@ -272,11 +273,6 @@ function paintCanvas(): void {
   context.lineWidth = 3;
   context.strokeRect(selectedColumn.value * tileSize.value + 1.5, selectedRow.value * tileSize.value + 1.5, tileSize.value - 3, tileSize.value - 3);
   context.restore();
-}
-
-function drawChecker(context: CanvasRenderingContext2D, x: number, y: number, row: number, column: number): void {
-  context.fillStyle = (row + column) % 2 === 0 ? '#d8d5ce' : '#c7c3bb';
-  context.fillRect(x, y, tileSize.value, tileSize.value);
 }
 
 function drawCellGrid(context: CanvasRenderingContext2D, columns: number, rows: number): void {

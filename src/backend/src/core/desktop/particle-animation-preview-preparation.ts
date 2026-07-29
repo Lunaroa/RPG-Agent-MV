@@ -770,14 +770,15 @@ window.RpgAgentParticlePreview = {
     // back to a neutral dummy circle. Capture sessions hide the target entirely so
     // only the effect appears in the thumbnail.
     const target = new Sprite();
+    let targetBitmap;
     if (config.enemyBattler) {
-      target.bitmap = Bitmap.load(config.enemyBattler);
+      targetBitmap = Bitmap.load(config.enemyBattler);
     } else {
-      const dummy = new Bitmap(128, 128);
-      dummy.drawCircle(64, 64, 42, "#d4c3a6");
-      dummy.drawCircle(64, 64, 34, "#5d554a");
-      target.bitmap = dummy;
+      targetBitmap = new Bitmap(128, 128);
+      targetBitmap.drawCircle(64, 64, 42, "#d4c3a6");
+      targetBitmap.drawCircle(64, 64, 34, "#5d554a");
     }
+    target.bitmap = targetBitmap;
     target.anchor.set(0.5, 1);
     target.x = Math.round(config.screenWidth / 2);
     target.y = Math.round(config.screenHeight * 0.68);
@@ -795,17 +796,21 @@ window.RpgAgentParticlePreview = {
       animationSprite.setup([target], config.animation, false, 0, null);
       stage.addChild(animationSprite);
     };
-    if (config.autoplay) play();
     // Armed backdrops load the scene but wait for a 'play' message so the panel can
     // start playback in-place without reloading the iframe (no black reload flash).
     window.addEventListener("message", (event) => {
       if (event && event.data && event.data.type === "play") play();
     });
-    // Tell the embedder the 'play' listener is live so a play requested before this
-    // point is delivered rather than lost; skipped for the top-level capture window.
-    try {
-      if (window.parent && window.parent !== window) window.parent.postMessage({ type: "rpg-agent-preview-ready" }, "*");
-    } catch (error) { /* no embedder to notify */ }
+    // Sprite_Animation anchors the effect on the target's current height, so neither
+    // autoplay nor the embedder may start playback until the battler bitmap is loaded;
+    // autoplay and the ready handshake both wait for it (a canvas-backed dummy bitmap
+    // resolves immediately, so the top-level capture window is not delayed).
+    targetBitmap.addLoadListener(() => {
+      if (config.autoplay) play();
+      try {
+        if (window.parent && window.parent !== window) window.parent.postMessage({ type: "rpg-agent-preview-ready" }, "*");
+      } catch (error) { /* no embedder to notify */ }
+    });
 
     Graphics.setStage(stage);
     // Capture mode: advance a fixed number of played frames, freeze on that
@@ -834,7 +839,15 @@ window.RpgAgentParticlePreview = {
         document.title = "__RPG_AGENT_EFFECT_CAPTURE_READY__";
       }
     });
-    Graphics.startGameLoop();
+    // Capture windows are hidden, so the compositor never drives requestAnimationFrame
+    // and startGameLoop would stall; drive ticks with a timer instead (_onTick runs the
+    // tick handler and renders). backgroundThrottling:false on the host window keeps
+    // the interval at full rate. Interactive embeds keep the stock rAF game loop.
+    if (captureTarget) {
+      setInterval(() => Graphics._onTick(1), 16);
+    } else {
+      Graphics.startGameLoop();
+    }
   }
 };
 `;

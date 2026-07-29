@@ -2269,8 +2269,8 @@ function onGridPointerDown(event: PointerEvent) {
   if (event.button !== 0) return
   clearMetaTooltip()
   if (isGroupSelection.value) return
-  // Marquee geometry is icon-grid math; the details list selects by plain clicks only.
-  if (!showIconGrid.value) return
+  // The details view's sticky header hosts sort buttons; never start a marquee from it.
+  if (event.target instanceof Element && event.target.closest('.project-assets-details-header')) return
   const host = requireGridHostFromEvent(event)
 
   if (isEventOnGridCell(event.target)) {
@@ -2306,19 +2306,51 @@ function applyMarqueeSelection(draft: MarqueeState) {
     right: draft.currentX,
     bottom: draft.currentY,
   })
-  applyFileSelection(selectProjectAssetsByMarquee(
-    orderedFileIds.value,
-    {
-      columnCount: gridWindow.value.columnCount,
-      cellWidth: cellWidth.value,
-      cellHeight: cellHeight.value,
-      gap: CELL_GAP,
-      originX: GRID_INSET,
-      originY: GRID_INSET,
-      leadingItemCount: gridItems.value.length - orderedFileIds.value.length,
-    },
-    rect,
-  ))
+  if (showIconGrid.value) {
+    applyFileSelection(selectProjectAssetsByMarquee(
+      orderedFileIds.value,
+      {
+        columnCount: gridWindow.value.columnCount,
+        cellWidth: cellWidth.value,
+        cellHeight: cellHeight.value,
+        gap: CELL_GAP,
+        originX: GRID_INSET,
+        originY: GRID_INSET,
+        leadingItemCount: gridItems.value.length - orderedFileIds.value.length,
+      },
+      rect,
+    ))
+    return
+  }
+  applyFileSelection(selectDetailsRowsByMarquee(rect))
+}
+
+/**
+ * Marquee hit-test for the details/list view. Rows are plain (non-virtualized) DOM in
+ * gridItems order, so intersect each rendered file row's rect (converted to the grid
+ * host's content coordinates) with the marquee vertically; folders are skipped, matching
+ * the icon-grid marquee which only selects files.
+ */
+function selectDetailsRowsByMarquee(
+  rect: { left: number; right: number; top: number; bottom: number },
+): ProjectAssetSelectionState {
+  const host = gridHost.value
+  if (!host) return emptyProjectAssetSelection()
+  const hostRect = host.getBoundingClientRect()
+  const scrollTop = host.scrollTop
+  const rows = host.querySelectorAll<HTMLElement>('.project-assets-details-row')
+  const items = gridItems.value
+  const ids: string[] = []
+  rows.forEach((row, index) => {
+    const item = items[index]
+    if (!item || item.kind !== 'file') return
+    const rowRect = row.getBoundingClientRect()
+    const top = rowRect.top - hostRect.top + scrollTop
+    const bottom = rowRect.bottom - hostRect.top + scrollTop
+    if (bottom >= rect.top && top <= rect.bottom) ids.push(item.entry.id)
+  })
+  if (!ids.length) return emptyProjectAssetSelection()
+  return { selectedIds: Object.freeze(ids), anchorId: ids[ids.length - 1]! }
 }
 
 function onGridPointerMove(event: PointerEvent) {
@@ -3806,6 +3838,11 @@ watch(gridHost, (el, previous) => {
             <span class="col-mtime">{{ item.kind === 'folder' ? '—' : formatModified(item.entry.mtimeMs) }}</span>
             <span class="col-note">{{ entryNote(item.kind === 'folder' ? item.id : item.entry.id) || '—' }}</span>
           </button>
+          <div
+            v-if="marqueeStyle"
+            class="project-assets-marquee"
+            :style="marqueeStyle"
+          />
         </div>
       </div>
 
@@ -4730,6 +4767,8 @@ watch(gridHost, (el, previous) => {
   flex-direction: column;
   min-height: 100%;
   padding: 8px 12px 12px;
+  /* Positioning context for the marquee overlay (content-coordinate absolute box). */
+  position: relative;
 }
 
 .project-assets-details-header,

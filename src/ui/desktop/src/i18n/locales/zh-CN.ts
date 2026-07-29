@@ -1838,7 +1838,7 @@ const zhCN = {
     'eventcmd.noSearchResults': '没有匹配的事件指令。',
     'eventcmd.choose': '选择...',
     'eventcmd.text': '文本',
-    'eventcmd.speakerName': '说话人名称',
+    'eventcmd.speakerName': '名称',
     'eventcmd.background': '背景',
     'eventcmd.bgWindow': '窗口',
     'eventcmd.bgDim': '暗淡',

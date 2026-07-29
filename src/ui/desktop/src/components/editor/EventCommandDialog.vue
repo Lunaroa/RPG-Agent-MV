@@ -1,7 +1,15 @@
 <template>
   <teleport to="body">
     <div v-if="visible" class="ev-modal-overlay editor-modal-overlay" :data-editor-dialog-layer="LAYER_Z.commandDialog" @mousedown.self="close">
-      <section class="cmd-dialog editor-modal-shell" role="dialog" aria-modal="true" aria-labelledby="command-dialog-title">
+      <section
+        class="cmd-dialog editor-modal-shell"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="command-dialog-title"
+        :style="{
+          width: pickerViewMode === 'table' ? 'min(1400px,calc(100vw - 32px))' : 'min(700px,calc(100vw - 32px))'
+        }"
+      >
         <header class="editor-modal-header">
           <strong id="command-dialog-title" class="editor-modal-title">{{ dialogTitle }}</strong>
           <button type="button" class="editor-modal-close" :aria-label="t('eventcmd.closeEditor')" :title="t('eventcmd.close')" @click="close">×</button>
@@ -28,7 +36,6 @@
             </div>
           </div>
           <label class="picker-search">
-            <span>{{ t('eventcmd.searchLabel') }}</span>
             <input
               ref="pickerSearchRef"
               v-model="pickerQuery"
@@ -41,8 +48,24 @@
               :aria-activedescendant="activePickerOptionId || undefined"
             />
           </label>
-          <div :id="pickerListId" ref="pickerListRef" class="picker" :class="{ 'picker--table': pickerViewMode === 'table' }" role="listbox" :aria-label="t('eventcmd.commandList')">
-            <section v-for="category in currentCategories" :key="`${category.page}:${category.group}`" class="picker-group" role="group" :aria-label="category.group">
+          <div :id="pickerListId"
+            ref="pickerListRef"
+            class="picker"
+            :class="{ 'picker--table': pickerViewMode === 'table' }" role="listbox" :aria-label="t('eventcmd.commandList')"
+            :style="{
+              columns: pickerViewMode === 'table' ? '6' : '2'
+            }"
+          >
+            <section
+              v-for="category in currentCategories"
+              :key="`${category.page}:${category.group}`"
+              class="picker-group"
+              role="group"
+              :aria-label="category.group"
+              :style="{
+                gridRow: category.group == '角色' ? 'span 2' : ''
+              }"
+            >
               <h4>
                 <span>{{ category.group }}</span>
                 <small v-if="pickerQuery.trim()">{{ t('eventcmd.pageN', { n: category.page }) }}</small>
@@ -68,21 +91,35 @@
           </div>
         </div>
 
-        <div v-else-if="draft" class="editor-body">
+        <div v-else-if="draft" class="editor-body" style="overflow: hidden;">
           <div class="fields">
             <template v-if="draft.code === 101">
               <div class="text-cmd-layout">
                 <div class="text-cmd-face">
                   <span>{{ t('eventcmd.face') }}</span>
                   <canvas ref="facePreviewRef" class="face-preview" :width="faceSize" :height="faceSize" @click="openTextFacePicker" />
-                  <button type="button" class="editor-btn" @click="openTextFacePicker">{{ t('eventcmd.choose') }}</button>
+                  <!-- <button type="button" class="editor-btn" @click="openTextFacePicker">{{ t('eventcmd.choose') }}</button> -->
                 </div>
                 <label class="text-cmd-text">{{ t('eventcmd.text') }}<span class="text-cmd-input-wrap"><textarea v-model="multiText" rows="5" /><span class="text-guide-line" :style="{ left: `${textGuideLeft}px` }" aria-hidden="true" /></span></label>
               </div>
               <div class="text-cmd-options">
-                <label>{{ t('eventcmd.background') }}<select :value="numberParam(2)" @change="setParam(2, numberValue($event))"><option :value="0">{{ t('eventcmd.bgWindow') }}</option><option :value="1">{{ t('eventcmd.bgDim') }}</option><option :value="2">{{ t('eventcmd.bgTransparent') }}</option></select></label>
-                <label>{{ t('eventcmd.windowPosition') }}<select :value="numberParam(3,2)" @change="setParam(3, numberValue($event))"><option :value="0">{{ t('eventcmd.posTop') }}</option><option :value="1">{{ t('eventcmd.posMiddle') }}</option><option :value="2">{{ t('eventcmd.posBottom') }}</option></select></label>
-                <label v-if="currentEngine === 'rpg-maker-mz'">{{ t('eventcmd.speakerName') }}<input :value="stringParam(4)" @input="setParam(4,inputValue($event))" /></label>
+                <label v-if="currentEngine === 'rpg-maker-mz'">
+                  <span class="text-cmd-label">{{ t('eventcmd.speakerName') }}</span>
+                  <input :value="stringParam(4)" @input="setParam(4,inputValue($event))" /></label>
+                <label>
+                  <span class="text-cmd-label">{{ t('eventcmd.background') }}</span>
+                  <select :value="numberParam(2)" @change="setParam(2, numberValue($event))">
+                    <option :value="0">{{ t('eventcmd.bgWindow') }}</option>
+                    <option :value="1">{{ t('eventcmd.bgDim') }}</option><option :value="2">{{ t('eventcmd.bgTransparent') }}</option>
+                  </select>
+                </label>
+                <label>
+                  <span class="text-cmd-label">{{ t('eventcmd.windowPosition') }}</span>
+                  <select :value="numberParam(3,2)" @change="setParam(3, numberValue($event))">
+                    <option :value="0">{{ t('eventcmd.posTop') }}</option>
+                    <option :value="1">{{ t('eventcmd.posMiddle') }}</option><option :value="2">{{ t('eventcmd.posBottom') }}</option>
+                  </select>
+                </label>
                 <button type="button" class="editor-btn text-cmd-preview" @click="openMessagePreview">{{ t('eventcmd.preview') }}</button>
               </div>
               <label class="check text-cmd-batch"><input v-model="batchInput" type="checkbox" />{{ t('eventcmd.batchEntry') }}</label>
@@ -442,7 +479,47 @@ defineExpose({openPicker,openEditor});
 </script>
 
 <style scoped>
-.ev-modal-overlay{z-index:v-bind(commandDialogZ);background:transparent}.cmd-dialog{width:min(620px,calc(100vw - 32px));height:auto;max-height:min(560px,calc(100vh - 32px))}.picker-shell{min-height:0;display:flex;flex-direction:column}.picker-modebar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px 0}.picker-modebar-spacer{flex:1}.command-page-tabs button{min-width:36px}.picker-view-toggle{display:flex}.picker-view-toggle button{white-space:nowrap}.picker-search{display:grid;gap:5px;padding:8px 12px;color:var(--app-ink-soft);font-size:12px}.picker-search input{width:100%;min-height:32px}.picker{min-height:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:8px;padding:0 12px 12px;overflow:auto}.picker--table{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}.picker-group{padding:7px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}.picker h4{margin:0 0 5px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--app-ink);font-size:12px}.picker h4 small{color:var(--app-ink-muted);font-size:10px;font-weight:500}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{min-height:0;padding:12px;overflow:auto}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
+.ev-modal-overlay{z-index:v-bind(commandDialogZ);background:transparent}
+.cmd-dialog{
+  height:auto;
+  max-height:min(850px,calc(100vh - 32px))
+}
+  .picker-shell{
+    min-height:0;
+    display:flex;
+    flex-direction:column;
+  }.picker-modebar{display:flex;align-items:center;justify-content:space-between;gap:0px;padding:8px 12px 0}.picker-modebar-spacer{flex:1}.command-page-tabs button{min-width:36px}
+  .picker-view-toggle{
+    display:flex;
+    width: 100%;
+    justify-content: end;
+  }.picker-view-toggle button{white-space:nowrap}.picker-search{display:grid;gap:5px;padding:8px 12px;color:var(--app-ink-soft);font-size:12px}.picker-search input{width:100%;min-height:32px}
+.picker{
+  min-height:0;
+  align-items:start;
+  gap:12px;
+  padding:0 12px 12px;
+  overflow:auto;
+}
+
+.picker--table{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.picker-group{
+  padding:7px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft);
+  align-self: stretch;
+  margin-bottom: 10px;
+  break-inside: avoid;
+}
+.picker-group:last-child{
+  height: 100%;
+  margin-bottom: 0px;
+}
+.text-cmd-label {
+  display: inline-flex;
+  margin: 4px;
+  color: var(--app-ink-soft);
+  font-size: 12px;
+}
+.picker h4{margin:0 0 5px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--app-ink);font-size:12px}.picker h4 small{color:var(--app-ink-muted);font-size:10px;font-weight:500}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{min-height:0;padding:12px;overflow:auto}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
 .plugin-command-editor{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.plugin-command-editor label{min-width:0;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.plugin-command-editor .full{grid-column:1 / -1}.plugin-command-editor textarea{min-height:96px}.plugin-command-warning{grid-column:1 / -1;padding:8px 10px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:12px;line-height:1.45}.plugin-command-hints{grid-column:1 / -1;display:grid;gap:5px}.plugin-command-hints button{display:grid;gap:3px;padding:7px 9px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft);color:var(--app-ink);font:inherit;text-align:left;cursor:pointer}.plugin-command-hints button:hover{border-color:var(--app-accent);background:var(--app-accent-soft)}.plugin-command-hints strong{font-size:12px}.plugin-command-hints small{overflow:hidden;color:var(--app-ink-muted);font-family:var(--app-font-mono);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
 .plugin-command-argument small{color:var(--app-ink-muted);font-size:11px;line-height:1.35}
 .text-cmd-layout{width:100%;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}.text-cmd-face{display:flex;flex-direction:column;align-items:flex-start;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-face .editor-btn{align-self:center}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background-color:#f5efe6;background-image:linear-gradient(45deg,#ded6c8 25%,transparent 25%),linear-gradient(-45deg,#ded6c8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ded6c8 75%),linear-gradient(-45deg,transparent 75%,#ded6c8 75%);background-position:0 0,0 6px,6px -6px,-6px 0;background-size:12px 12px}.text-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-input-wrap{position:relative;display:block}.text-cmd-input-wrap textarea{width:100%;min-height:144px;box-sizing:border-box}.text-guide-line{position:absolute;top:1px;bottom:1px;width:1px;background:var(--app-border-strong);pointer-events:none}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:flex-end}.text-cmd-preview{margin-left:auto}.text-cmd-batch{width:100%;margin-top:2px;gap:5px}

@@ -35,7 +35,7 @@ export function readFiniteAudioDuration(seconds: number): number {
 }
 
 /** Default bar count for the preview waveform canvas. */
-export const PLUGIN_AUDIO_WAVEFORM_BAR_COUNT = 160;
+export const PLUGIN_AUDIO_WAVEFORM_BAR_COUNT = 300;
 
 /**
  * Downsample a mono channel into normalized peak bars in [0, 1].

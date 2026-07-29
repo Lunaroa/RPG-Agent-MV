@@ -107,6 +107,13 @@
   background-color: var(--app-border);
 }
 
+/* 复选框：方框语义固定，不吃 app 的软圆角 token。
+ * --el-checkbox-border-radius 默认引用 --el-border-radius-small，而本主题把它放大到 6px，
+ * 会把 14px 的小方框渲染成近圆形；这里钉回 2px 保持标准方框（单选框仍是原生圆形，不受影响）。 */
+.el-checkbox {
+  --el-checkbox-border-radius: 2px;
+}
+
 /* 卡片 / 对话框：低阴影，无生硬边框 */
 .el-card {
   border: none;

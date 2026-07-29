@@ -139,6 +139,24 @@ describe('project global search index', () => {
     assert.ok(result.hits.some((hit) => hit.document.relativePath === 'notes/todo-list.txt'));
   });
 
+  test('absolute extra folders index files outside the project', async () => {
+    const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rpgagent-search-ext-'));
+    try {
+      fs.writeFileSync(path.join(externalRoot, 'external-notes.md'), 'design', 'utf8');
+      const absolute = externalRoot.replace(/\\/g, '/');
+      patchProjectConfig(projectRoot, { search: { extraFolders: [absolute] } });
+      const state = await rebuildGlobalSearchIndex(workflowRoot, projectRoot);
+      assert.equal(state.status, 'ready');
+      const result = await searchGlobalProjectIndex(workflowRoot, projectRoot, 'external-notes', { exact: true });
+      assert.ok(
+        result.hits.some((hit) => hit.document.title === 'external-notes.md'),
+        'expected the external file to join the index',
+      );
+    } finally {
+      fs.rmSync(externalRoot, { recursive: true, force: true });
+    }
+  });
+
   test('revision changes when project data changes', () => {
     const before = computeGlobalSearchRevision(projectRoot);
     writeJson('data/Items.json', [null, {

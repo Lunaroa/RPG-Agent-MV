@@ -387,7 +387,7 @@ const enUS = {
     'search.jumpBack': 'Back to previous location',
     'search.settings': 'Search settings',
     'search.maxResults': 'Max results',
-    'search.extraFolders': 'Extra indexed folders (one per line, project-relative)',
+    'search.extraFolders': 'Extra indexed folders (one per line, project-relative or absolute)',
     'search.extraFoldersPlaceholder': 'e.g. notes/design',
     'search.rebuild': 'Rebuild index',
     'search.failed': 'Search failed: {{message}}',

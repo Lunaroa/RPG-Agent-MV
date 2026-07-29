@@ -415,7 +415,7 @@ export interface GlobalSearchIndexState {
 
 /** Per-project global search preferences stored in `.luna_rpg/config.json`. */
 export interface LunaRpgSearchSettings {
-  /** Extra project-relative folders whose file names join the file index. */
+  /** Extra folders (project-relative or absolute) whose file names join the file index. */
   extraFolders?: string[];
   /** Result cap shown in the search dialog. */
   maxResults?: number;

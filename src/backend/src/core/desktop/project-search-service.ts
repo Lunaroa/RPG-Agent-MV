@@ -97,6 +97,14 @@ function createFuse(
   });
 }
 
+/** Resolve an extra index folder to an absolute root. Absolute entries index outside the
+ * project (user opt-in); relative entries stay project-anchored by their `/`-split segments. */
+function resolveExtraFolderRoot(project: string, folder: string): string {
+  return path.isAbsolute(folder)
+    ? path.normalize(folder)
+    : path.join(path.resolve(project), ...folder.split('/'));
+}
+
 /** Cheap change fingerprint: data/plugin file mtimes + asset directory mtimes + sidecars. */
 export function computeGlobalSearchRevision(project: string): string {
   const layout = resolveRmmvLayout(project);
@@ -123,7 +131,7 @@ export function computeGlobalSearchRevision(project: string): string {
   const config = readProjectConfig(project);
   for (const folder of config.search?.extraFolders || []) {
     parts.push(`extra:${folder}`);
-    pushDirStat(path.join(path.resolve(project), ...folder.split('/')));
+    pushDirStat(resolveExtraFolderRoot(project, folder));
   }
   const notesFile = path.join(lunaRpgDirPath(project), 'map-notes.json');
   if (fs.existsSync(notesFile)) parts.push(`map-notes:${fs.statSync(notesFile).mtimeMs}`);
@@ -221,7 +229,7 @@ export function buildGlobalSearchDocuments(
   }
   for (const folder of config.search?.extraFolders || []) {
     const files: Array<{ relativePath: string; fileName: string }> = [];
-    walkFiles(path.join(projectRoot, ...folder.split('/')), folder, files);
+    walkFiles(resolveExtraFolderRoot(project, folder), folder, files);
     for (const file of files) {
       documents.push({
         id: `file:${file.relativePath}`,

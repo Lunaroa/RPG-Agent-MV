@@ -385,7 +385,7 @@ const zhCN = {
     'search.jumpBack': '返回跳转前位置',
     'search.settings': '搜索设置',
     'search.maxResults': '最大结果数',
-    'search.extraFolders': '额外索引文件夹（每行一个，工程内相对路径）',
+    'search.extraFolders': '额外索引文件夹（每行一个，相对工程路径或绝对路径）',
     'search.extraFoldersPlaceholder': '例如 notes/design',
     'search.rebuild': '重建索引',
     'search.failed': '搜索失败：{{message}}',

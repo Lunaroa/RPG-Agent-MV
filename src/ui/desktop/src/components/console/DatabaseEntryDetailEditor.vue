@@ -196,7 +196,12 @@ watch(particleBackdropKey, async (key) => {
   if (!key) return;
   await nextTick();
   try {
-    await particleFrameRef.value?.showBackdrop(JSON.parse(JSON.stringify(record.value)) as Record<string, unknown>);
+    // Arm the backdrop when the entry has an effect so pressing play starts in-place
+    // (no iframe reload flash); entries without an effect keep the plain idle scene.
+    await particleFrameRef.value?.showBackdrop(
+      JSON.parse(JSON.stringify(record.value)) as Record<string, unknown>,
+      { armed: Boolean(record.value.effectName) },
+    );
   } catch (error) {
     console.error('[particle-preview] backdrop load failed', error);
   }
@@ -1632,6 +1637,8 @@ function updateSound(index: number, key: string, value: unknown): void {
                 :ref="setParticleFrameRef"
                 class="particle-preview-host"
                 :project="catalog?.project || ''"
+                :native-width="projectScreenWidth"
+                :native-height="projectScreenHeight"
               />
               <button
                 type="button"

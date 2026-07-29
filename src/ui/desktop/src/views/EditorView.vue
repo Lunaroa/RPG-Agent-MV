@@ -225,6 +225,8 @@
       @close="closeEventEditor"
       @save="saveEvent"
     />
+    <EventTextPasteDialog ref="eventTextPasteDialog" @confirm="applyPastedEventText" />
+    <EventTextPasteDialog ref="eventTextPasteDialog" @confirm="applyPastedEventText" />
     <QuickObtainEventDialog ref="quickObtainDialog" :catalog="editorCatalog" @commit="createObtainEvent" />
     <ExternalMapImportDialog
       :visible="externalImportDialog.open"
@@ -288,6 +290,9 @@
           <li :class="{ disabled: !eventClipboard || canvasContext.eventId != null }" @click="ctxPasteEvent">{{ t('editor.ctx.paste') }}<span class="ctx-shortcut">Ctrl+V</span></li>
           <li :class="{ disabled: canvasContext.eventId == null }" class="ctx-danger" @click="ctxDeleteEvent">{{ t('editor.ctx.delete') }}<span class="ctx-shortcut">Del</span></li>
           <li class="ctx-sep" />
+          <li :class="{ disabled: canvasContext.eventId == null }" @click="ctxCopyEventAsText">{{ t('editor.ctx.copyAsText') }}</li>
+          <li :class="{ disabled: canvasContext.eventId != null }" @click="ctxPasteEventFromText">{{ t('editor.ctx.pasteFromText') }}</li>
+          <li class="ctx-sep" />
           <li class="ctx-has-sub" :class="{ disabled: canvasContext.eventId != null }" @mouseenter="quickCreateHover = true" @mouseleave="quickCreateHover = false">
             {{ t('editor.ctx.quickCreateEvent') }}<span class="ctx-arrow">▶</span>
             <ul v-show="quickCreateHover" class="ctx-submenu">
@@ -317,6 +322,7 @@ import { useRoute, useRouter } from 'vue-router';
 import EditorToolbar from '../components/editor/EditorToolbar.vue';
 import LeftDock from '../components/layout/LeftDock.vue';
 import EventEditorDialog from '../components/editor/EventEditorDialog.vue';
+import EventTextPasteDialog from '../components/editor/EventTextPasteDialog.vue';
 import QuickObtainEventDialog from '../components/editor/QuickObtainEventDialog.vue';
 import MapPropertiesDialog from '../components/editor/MapPropertiesDialog.vue';
 import ExternalMapImportDialog from '../components/editor/ExternalMapImportDialog.vue';
@@ -455,12 +461,14 @@ const propertiesDialogMode = ref<'create' | 'edit'>('edit');
 const properties = reactive<MapPropertiesForm>(defaultMapPropertiesForm());
 const eventDialogOpen = ref(false);
 const eventDialogRef = ref<InstanceType<typeof EventEditorDialog>>();
+const eventTextPasteDialog = ref<InstanceType<typeof EventTextPasteDialog>>();
 const quickObtainDialog = ref<InstanceType<typeof QuickObtainEventDialog>>();
 const eventDraft = ref<MvEditorEvent | null>(null);
 const eventOverview = ref<StoryEventOverview | null>(null);
 const eventSaving = ref(false);
 const mapClipboard = ref<number | null>(null);
 const eventClipboard = ref<{ eventId: number; data: MvEditorEvent } | null>(null);
+const pendingPasteEventCell = ref<{ x: number; y: number } | null>(null);
 const quickCreateHover = ref(false);
 const treeContext = reactive({ visible: false, x: 0, y: 0, mapId: 0 });
 const canvasContext = reactive({ visible: false, x: 0, y: 0, cellX: 0, cellY: 0, eventId: null as number | null });
@@ -2414,6 +2422,8 @@ function ctxEditEvent() { if (canvasContext.eventId != null) openEventEditor(can
 function ctxCopyEvent() { if (canvasContext.eventId != null) copyEvent(canvasContext.eventId); closeCanvasContext(); }
 async function ctxCutEvent() { if (canvasContext.eventId != null) await cutEvent(canvasContext.eventId); closeCanvasContext(); }
 async function ctxPasteEvent() { await pasteEvent(canvasContext.cellX, canvasContext.cellY); closeCanvasContext(); }
+function ctxCopyEventAsText() { if (canvasContext.eventId != null) void copyEventAsText(canvasContext.eventId); closeCanvasContext(); }
+function ctxPasteEventFromText() { pendingPasteEventCell.value = { x: canvasContext.cellX, y: canvasContext.cellY }; eventTextPasteDialog.value?.open(t('eventText.pasteEventTitle'), t('eventText.eventPlaceholder')); closeCanvasContext(); }
 async function ctxDeleteEvent() { if (canvasContext.eventId != null) await deleteEvent(canvasContext.eventId); closeCanvasContext(); }
 const systemPositionLabelKeys: Record<RmmvSystemPositionTarget, MessageKey> = {
   player: 'editor.systemPosition.player',
@@ -2583,6 +2593,35 @@ async function pasteEvent(x?: number, y?: number) {
     ElMessage.success(t('editor.event.pasted'));
   } catch (error) { ElMessage.error(t('editor.event.pasteFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
+}
+function isMvEventShape(value: unknown): value is MvEditorEvent {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+    && Array.isArray((value as MvEditorEvent).pages);
+}
+async function copyEventAsText(eventId: number) {
+  const event = currentMap?.events?.find((item) => item?.id === eventId);
+  if (!event) return;
+  try {
+    await clipboardApi.writeText(JSON.stringify(event, null, 2));
+    setStatus(t('editor.event.copiedAsText', { eventId }), 'saved');
+  } catch (error) { ElMessage.error(t('editor.event.copyTextFailed', { message: (error as Error).message })); }
+}
+// Paste a whole event from RM-native JSON. Malformed input is rejected loudly, never coerced.
+async function applyPastedEventText(text: string) {
+  if (selectedMapId.value == null) { pendingPasteEventCell.value = null; return; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); }
+  catch { ElMessage.error(t('eventText.invalidJson')); return; }
+  if (!isMvEventShape(parsed)) { ElMessage.error(t('eventText.invalidEvent')); return; }
+  const cell = pendingPasteEventCell.value;
+  const event = { ...clone(parsed), id: 0, ...(cell ? { x: cell.x, y: cell.y } : {}) };
+  busy.value = true;
+  try {
+    await eventsApi.create(selectedMapId.value, event as unknown as Record<string, unknown>, projectStore.currentProject);
+    await reloadCurrentMap();
+    ElMessage.success(t('editor.event.pasted'));
+  } catch (error) { ElMessage.error(t('editor.event.pasteFailed', { message: (error as Error).message })); }
+  finally { busy.value = false; pendingPasteEventCell.value = null; }
 }
 async function deleteEvent(eventId: number) {
   if (selectedMapId.value == null) return;

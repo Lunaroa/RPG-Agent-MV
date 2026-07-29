@@ -8,9 +8,12 @@
         </header>
         <template v-if="draft">
           <div class="ev-meta-bar">
-            <label class="ev-inline-field name"><span>{{ t('commonEvent.name') }}</span><input v-model="draft.name" data-ui-id="event-editor-name" :disabled="shellLocked" @input="markDirty" /></label>
-            <label class="ev-inline-field coord"><span>X</span><input v-model.number="draft.x" data-ui-id="event-editor-x" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
-            <label class="ev-inline-field coord"><span>Y</span><input v-model.number="draft.y" data-ui-id="event-editor-y" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
+            <div class="ev-meta-fields">
+              <label class="ev-stack-field name"><span>{{ t('commonEvent.name') }}</span><input v-model="draft.name" data-ui-id="event-editor-name" :disabled="shellLocked" @input="markDirty" /></label>
+              <label class="ev-stack-field note"><span>{{ t('eventEditorDialog.note') }}</span><input v-model="draft.note" data-ui-id="event-editor-note" :disabled="shellLocked" @input="markDirty" /></label>
+              <label class="ev-stack-field coord"><span>X</span><input v-model.number="draft.x" data-ui-id="event-editor-x" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
+              <label class="ev-stack-field coord"><span>Y</span><input v-model.number="draft.y" data-ui-id="event-editor-y" :disabled="shellLocked" type="number" min="0" @input="markDirty" /></label>
+            </div>
             <div class="ev-toolbar-group page-tools" :aria-label="t('eventEditorDialog.pageActions')">
               <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-add" @click="addPage">{{ t('eventEditorDialog.newPage') }}</button>
               <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-copy" @click="copyPage">{{ t('eventEditorDialog.copyPage') }}</button>
@@ -18,7 +21,6 @@
               <button type="button" class="ev-tool-btn" data-ui-id="event-editor-page-clear" :disabled="currentPageLocked" @click="clearPage">{{ t('eventEditorDialog.clearPage') }}</button>
               <button type="button" class="ev-tool-btn danger" data-ui-id="event-editor-page-delete" :disabled="currentPageLocked || draft.pages.length <= 1" @click="deletePage">{{ t('eventEditorDialog.deletePage') }}</button>
             </div>
-            <label class="ev-inline-field note"><span>{{ t('eventEditorDialog.note') }}</span><textarea v-model="draft.note" rows="2" data-ui-id="event-editor-note" :disabled="shellLocked" @input="markDirty" /></label>
           </div>
           <div v-if="shellLocked || currentPageLocked" class="ev-lock-banner">
             {{ currentPageLocked ? t('eventEditorDialog.protectedPage') : t('eventEditorDialog.protectedFields') }}
@@ -126,6 +128,9 @@
           <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(deleteSelectedCommands)">{{ t('cmdList.delete') }}<span>Del</span></button></li>
           <li class="separator" />
           <li><button type="button" :disabled="!spans.length" @click="runCommandMenu(selectAllCommands)">{{ t('eventEditorDialog.selectAll') }}<span>Ctrl+A</span></button></li>
+          <li class="separator" />
+          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(copySelectedCommandsAsText)">{{ t('eventEditorDialog.copyAsText') }}</button></li>
+          <li><button type="button" :disabled="currentPageLocked" @click="runCommandMenu(openPasteCommandsFromText)">{{ t('eventEditorDialog.pasteFromText') }}</button></li>
         </ul>
       </div>
     </div>
@@ -133,6 +138,7 @@
   <EventImagePickerDialog ref="imagePicker" :catalog="catalog" :tileset-images="tilesetImages" :load-image="loadImage" @commit="setImage" />
   <MoveRouteDialog ref="routeDialog" :preview-x="draft?.x" :preview-y="draft?.y" @commit="setPageRoute" />
   <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="loadImage" :event-x="draft?.x" :event-y="draft?.y" :current-events="currentEvents" @commit="commitCommand" />
+  <EventTextPasteDialog ref="textPasteDialog" @confirm="applyPastedCommandsText" />
 </template>
 
 <script setup lang="ts">
@@ -142,10 +148,13 @@ import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { confirmAboveModal } from '../../utils/confirmAboveModal';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
-import type { EditorProjectCatalog, StoryEventOverview, StoryEventPageOverview } from '../../api/client';
+import { clipboard as clipboardApi, type EditorProjectCatalog, type StoryEventOverview, type StoryEventPageOverview } from '../../api/client';
+import { useProjectStore } from '../../stores/project';
+import { normalizeEventCommandParameters } from '../../composables/eventCommandCatalog';
 import ConditionSelect from './EventConditionSelect.vue';
 import EventCommandDialog from './EventCommandDialog.vue';
 import EventImagePickerDialog from './EventImagePickerDialog.vue';
+import EventTextPasteDialog from './EventTextPasteDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
 import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, editableCommandSpans, ensureTerminator, imageSummary, type MvCommand, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
 import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer';
@@ -154,10 +163,11 @@ import type { EditorEventListItem } from './editorTypes';
 const props = withDefaults(defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null; currentEvents?: EditorEventListItem[] }>(), { currentEvents: () => [] });
 const emit = defineEmits<{ close: []; save: [closeAfterSave: boolean] }>();
 const { language, t } = useI18n();
+const projectStore = useProjectStore();
 const eventEditorZ = String(LAYER_Z.eventEditor);
 const dirty = ref(false), closing = ref(false), pageIndex = ref(0), selectedSpans = ref<number[]>([]), selectionAnchor = ref<number | null>(null), pageClipboard = ref<MvEventPage | null>(null), commandClipboard = ref<MvCommand[] | null>(null);
 const pageIdentities = ref<Array<StoryEventPageOverview | undefined>>([]);
-const modalRef = ref<HTMLElement>(), previewCanvas = ref<HTMLCanvasElement>(), imagePicker = ref<InstanceType<typeof EventImagePickerDialog>>(), routeDialog = ref<InstanceType<typeof MoveRouteDialog>>(), commandDialog = ref<InstanceType<typeof EventCommandDialog>>();
+const modalRef = ref<HTMLElement>(), previewCanvas = ref<HTMLCanvasElement>(), imagePicker = ref<InstanceType<typeof EventImagePickerDialog>>(), routeDialog = ref<InstanceType<typeof MoveRouteDialog>>(), commandDialog = ref<InstanceType<typeof EventCommandDialog>>(), textPasteDialog = ref<InstanceType<typeof EventTextPasteDialog>>();
 const currentPage = computed(() => props.draft?.pages[pageIndex.value] || null), spans = computed(() => currentPage.value ? editableCommandSpans(currentPage.value) : []);
 // Pre-render each span as a command head plus continuation lines.
 const spanViews = computed(() => spans.value.map((span) => {
@@ -316,6 +326,43 @@ function pasteSelectedCommand() {
   clearCommandSelection();
   markDirty();
 }
+function isMvCommandShape(value: unknown): value is MvCommand {
+  return Boolean(value) && typeof value === 'object'
+    && typeof (value as MvCommand).code === 'number'
+    && typeof (value as MvCommand).indent === 'number'
+    && Array.isArray((value as MvCommand).parameters);
+}
+async function copySelectedCommandsAsText() {
+  if (!selectedIndices.value.length) return;
+  const commands = commandBlockSpanIndices(spans.value, selectedIndices.value).flatMap((index) => spans.value[index]?.commands || []);
+  if (!commands.length) return;
+  try {
+    await clipboardApi.writeText(JSON.stringify(commands, null, 2));
+    ElMessage.success(t('eventEditorDialog.copiedAsText'));
+  } catch (error) {
+    ElMessage.error(t('eventEditorDialog.copyTextFailed', { message: (error as Error).message }));
+  }
+}
+function openPasteCommandsFromText() {
+  if (currentPageLocked.value) return;
+  textPasteDialog.value?.open(t('eventText.pasteCommandsTitle'), t('eventText.commandsPlaceholder'));
+}
+// Paste RM-native command JSON. Reject malformed input loudly instead of guessing a shape.
+function applyPastedCommandsText(text: string) {
+  if (!currentPage.value || currentPageLocked.value) return;
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); }
+  catch { ElMessage.error(t('eventText.invalidJson')); return; }
+  if (!Array.isArray(parsed) || !parsed.length || !parsed.every(isMvCommandShape)) { ElMessage.error(t('eventText.invalidCommands')); return; }
+  const engine = projectStore.currentProjectInfo?.engine || 'rpg-maker-mv';
+  const commands = (parsed as MvCommand[]).map((command) => normalizeEventCommandParameters(clone(command), engine));
+  const selected = selectedIndices.value, next = selected.length ? selected[selected.length - 1] + 1 : spans.value.length;
+  const at = next >= spans.value.length ? currentPage.value.list.length - 1 : spans.value[next].index;
+  currentPage.value.list.splice(at, 0, ...commands);
+  ensureTerminator(currentPage.value.list);
+  clearCommandSelection();
+  markDirty();
+}
 function openCommandContext(event: MouseEvent, index: number | null) {
   if (currentPageLocked.value) return;
   if (index == null) clearCommandSelection();
@@ -359,13 +406,18 @@ defineExpose({ markSaved });
 }
 
 .ev-meta-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  align-items: center;
-  padding: 5px 8px;
+  display: grid;
+  gap: 6px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--app-border);
   background: var(--app-bg);
+}
+
+/* RM-native top rows: name/note labels above their inputs, page tools on their own row. */
+.ev-meta-fields {
+  display: flex;
+  gap: 8px;
+  align-items: end;
 }
 
 .ev-lock-banner {
@@ -380,29 +432,27 @@ defineExpose({ markSaved });
   opacity: 0.68;
 }
 
-.ev-inline-field {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.ev-stack-field {
+  display: grid;
+  gap: 2px;
   min-width: 0;
   color: var(--app-ink-soft);
   font-size: var(--text-xs);
 }
 
-.ev-inline-field.name {
-  flex: 0 1 190px;
+.ev-stack-field.name {
+  flex: 0 1 200px;
 }
 
-.ev-inline-field.note {
-  flex: 1 0 100%;
-  align-items: flex-start;
+.ev-stack-field.note {
+  flex: 1 1 auto;
 }
 
-.ev-inline-field.coord {
+.ev-stack-field.coord {
   flex: 0 0 62px;
 }
 
-.ev-inline-field input {
+.ev-stack-field input {
   width: 100%;
   min-width: 0;
   height: 24px;
@@ -414,25 +464,8 @@ defineExpose({ markSaved });
   font-size: var(--text-sm);
 }
 
-.ev-inline-field textarea {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  min-height: 42px;
-  max-height: 96px;
-  padding: 5px 6px;
-  resize: vertical;
-  border: 1px solid var(--app-border-strong);
-  border-radius: var(--app-radius-sm);
-  background: var(--app-bg);
-  color: var(--app-ink);
-  font: inherit;
-  font-size: var(--text-sm);
-  line-height: 1.4;
-}
-
 .page-tools {
-  margin-left: auto;
+  justify-self: start;
 }
 
 .ev-page-tabs {

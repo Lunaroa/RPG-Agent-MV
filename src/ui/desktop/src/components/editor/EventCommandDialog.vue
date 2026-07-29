@@ -8,18 +8,25 @@
         </header>
 
         <div v-if="pickerOpen" class="picker-shell" @keydown="onPickerKeyDown">
-          <nav class="command-page-tabs editor-tab-strip" :aria-label="t('eventcmd.pages')">
-            <button
-              v-for="page in 3"
-              :key="page"
-              type="button"
-              :class="{ active: pickerPage === page && !pickerQuery.trim() }"
-              :aria-pressed="pickerPage === page && !pickerQuery.trim()"
-              @click="selectPickerPage(page)"
-            >
-              {{ page }}
-            </button>
-          </nav>
+          <div class="picker-modebar">
+            <nav v-if="pickerViewMode === 'paged'" class="command-page-tabs editor-tab-strip" :aria-label="t('eventcmd.pages')">
+              <button
+                v-for="page in 3"
+                :key="page"
+                type="button"
+                :class="{ active: pickerPage === page && !pickerQuery.trim() }"
+                :aria-pressed="pickerPage === page && !pickerQuery.trim()"
+                @click="selectPickerPage(page)"
+              >
+                {{ page }}
+              </button>
+            </nav>
+            <div v-else class="picker-modebar-spacer" aria-hidden="true" />
+            <div class="picker-view-toggle editor-tab-strip" role="group" :aria-label="t('eventcmd.viewMode')">
+              <button type="button" :class="{ active: pickerViewMode === 'paged' }" :aria-pressed="pickerViewMode === 'paged'" @click="setPickerViewMode('paged')">{{ t('eventcmd.viewPaged') }}</button>
+              <button type="button" :class="{ active: pickerViewMode === 'table' }" :aria-pressed="pickerViewMode === 'table'" @click="setPickerViewMode('table')">{{ t('eventcmd.viewTable') }}</button>
+            </div>
+          </div>
           <label class="picker-search">
             <span>{{ t('eventcmd.searchLabel') }}</span>
             <input
@@ -34,7 +41,7 @@
               :aria-activedescendant="activePickerOptionId || undefined"
             />
           </label>
-          <div :id="pickerListId" ref="pickerListRef" class="picker" role="listbox" :aria-label="t('eventcmd.commandList')">
+          <div :id="pickerListId" ref="pickerListRef" class="picker" :class="{ 'picker--table': pickerViewMode === 'table' }" role="listbox" :aria-label="t('eventcmd.commandList')">
             <section v-for="category in currentCategories" :key="`${category.page}:${category.group}`" class="picker-group" role="group" :aria-label="category.group">
               <h4>
                 <span>{{ category.group }}</span>
@@ -62,24 +69,23 @@
         </div>
 
         <div v-else-if="draft" class="editor-body">
-          <div class="editor-heading">
-            <strong>{{ commandTitle }}</strong>
-          </div>
-
           <div class="fields">
             <template v-if="draft.code === 101">
               <div class="text-cmd-layout">
                 <div class="text-cmd-face">
+                  <span>{{ t('eventcmd.face') }}</span>
                   <canvas ref="facePreviewRef" class="face-preview" :width="faceSize" :height="faceSize" @click="openTextFacePicker" />
                   <button type="button" class="editor-btn" @click="openTextFacePicker">{{ t('eventcmd.choose') }}</button>
                 </div>
-                <label class="text-cmd-text">{{ t('eventcmd.text') }}<textarea v-model="multiText" rows="5" /></label>
+                <label class="text-cmd-text">{{ t('eventcmd.text') }}<span class="text-cmd-input-wrap"><textarea v-model="multiText" rows="5" /><span class="text-guide-line" :style="{ left: `${textGuideLeft}px` }" aria-hidden="true" /></span></label>
               </div>
               <div class="text-cmd-options">
                 <label>{{ t('eventcmd.background') }}<select :value="numberParam(2)" @change="setParam(2, numberValue($event))"><option :value="0">{{ t('eventcmd.bgWindow') }}</option><option :value="1">{{ t('eventcmd.bgDim') }}</option><option :value="2">{{ t('eventcmd.bgTransparent') }}</option></select></label>
-                <label>{{ t('eventcmd.position') }}<select :value="numberParam(3,2)" @change="setParam(3, numberValue($event))"><option :value="0">{{ t('eventcmd.posTop') }}</option><option :value="1">{{ t('eventcmd.posMiddle') }}</option><option :value="2">{{ t('eventcmd.posBottom') }}</option></select></label>
+                <label>{{ t('eventcmd.windowPosition') }}<select :value="numberParam(3,2)" @change="setParam(3, numberValue($event))"><option :value="0">{{ t('eventcmd.posTop') }}</option><option :value="1">{{ t('eventcmd.posMiddle') }}</option><option :value="2">{{ t('eventcmd.posBottom') }}</option></select></label>
                 <label v-if="currentEngine === 'rpg-maker-mz'">{{ t('eventcmd.speakerName') }}<input :value="stringParam(4)" @input="setParam(4,inputValue($event))" /></label>
+                <button type="button" class="editor-btn text-cmd-preview" @click="openMessagePreview">{{ t('eventcmd.preview') }}</button>
               </div>
+              <label class="check text-cmd-batch"><input v-model="batchInput" type="checkbox" />{{ t('eventcmd.batchEntry') }}</label>
             </template>
             <template v-else-if="draft.code === 102">
               <label class="full">{{ t('eventcmd.choices') }}<textarea :value="choicesText" rows="6" @input="setChoices" /></label>
@@ -168,6 +174,7 @@
   </teleport>
   <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="loadImage" @commit="setTextFace" />
   <MoveRouteDialog ref="routeDialog" :preview-x="eventX" :preview-y="eventY" @commit="setRoute" />
+  <MessagePreviewDialog ref="messagePreview" :catalog="catalog" :load-image="loadImage" />
 </template>
 
 <script setup lang="ts">
@@ -184,6 +191,7 @@ import { localizeCommandGroups, localizeCommandLabel } from '../../utils/eventCo
 import { mvFaceSourceRect } from '../../utils/rmmvFace';
 import EventCommandFields from './EventCommandFields.vue';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
+import MessagePreviewDialog from './MessagePreviewDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
 import PluginParameterInput from './PluginParameterInput.vue';
 import type { EditorEventListItem } from './editorTypes';
@@ -192,10 +200,16 @@ const emit = defineEmits<{ commit:[payload:{commands:MvCommand[];editSpan:number
 const projectStore = useProjectStore();
 const { language, t } = useI18n();
 const commandDialogZ = String(LAYER_Z.commandDialog);
-const visible=ref(false),pickerOpen=ref(false),pickerPage=ref(1),draft=ref<MvCommand|null>(null),draftSpan=ref<MvCommand[]>([]),editSpan=ref<number|null>(null),insertSpan=ref<number|null>(null),insertIndent=ref(0),multiText=ref('');
-const imagePicker=ref<InstanceType<typeof ImageAssetPickerDialog>>(),routeDialog=ref<InstanceType<typeof MoveRouteDialog>>(),facePreviewRef=ref<HTMLCanvasElement>();
+const visible=ref(false),pickerOpen=ref(false),pickerPage=ref(1),draft=ref<MvCommand|null>(null),draftSpan=ref<MvCommand[]>([]),editSpan=ref<number|null>(null),insertSpan=ref<number|null>(null),insertIndent=ref(0),multiText=ref(''),batchInput=ref(false);
+const imagePicker=ref<InstanceType<typeof ImageAssetPickerDialog>>(),routeDialog=ref<InstanceType<typeof MoveRouteDialog>>(),facePreviewRef=ref<HTMLCanvasElement>(),messagePreview=ref<InstanceType<typeof MessagePreviewDialog>>();
 const pickerSearchRef=ref<HTMLInputElement>(),pickerListRef=ref<HTMLElement>(),pickerQuery=ref(''),activePickerIndex=ref(0);
 const pickerListId='event-command-picker-list';
+// Picker layout: 'paged' keeps the RM-native three-page grouping; 'table' consolidates
+// every command group into one scrollable panel. The choice persists across sessions.
+const PICKER_MODE_KEY='rpgmv.eventCommandPickerMode';
+const pickerViewMode=ref<'paged'|'table'>(readPickerViewMode());
+function readPickerViewMode():'paged'|'table'{try{return localStorage.getItem(PICKER_MODE_KEY)==='table'?'table':'paged';}catch{return 'paged';}}
+function setPickerViewMode(mode:'paged'|'table'){pickerViewMode.value=mode;try{localStorage.setItem(PICKER_MODE_KEY,mode);}catch{/* persistence is best-effort */}}
 const pluginCommandPlugins = ref<ManagedPluginEntry[]>([]);
 const pluginCommandPlugin = ref('');
 const pluginCommandError = ref('');
@@ -207,7 +221,7 @@ const commandPageCategories=computed(()=>commandPages(currentEngine.value).map((
 ));
 const currentCategories=computed(()=>{
   const query=pickerQuery.value.trim().toLocaleLowerCase(language.value);
-  const categories=query
+  const categories=query||pickerViewMode.value==='table'
     ? commandPageCategories.value.flat()
     : commandPageCategories.value[pickerPage.value-1]||[];
   if(!query)return categories;
@@ -221,7 +235,7 @@ const currentPickerItems=computed(()=>currentCategories.value.flatMap((category)
 const activePickerItem=computed(()=>currentPickerItems.value[activePickerIndex.value]||null);
 const activePickerCode=computed(()=>activePickerItem.value?.code??null);
 const activePickerOptionId=computed(()=>activePickerItem.value?pickerOptionId(activePickerItem.value.code):'');
-const dialogTitle=computed(()=>pickerOpen.value?t('eventcmd.title'):editSpan.value!=null?t('eventcmd.editTitle'):t('eventcmd.newTitle'));
+const dialogTitle=computed(()=>pickerOpen.value?t('eventcmd.title'):commandTitle.value||(editSpan.value!=null?t('eventcmd.editTitle'):t('eventcmd.newTitle')));
 const commandTitle=computed(()=>{
   if (!draft.value) return '';
   const definition = commandDefinition(draft.value.code,currentEngine.value);
@@ -230,6 +244,10 @@ const commandTitle=computed(()=>{
 const choicesText=computed(()=>((draft.value?.parameters[0] as string[])||[]).join('\n'));
 const routeParam=computed<MvMoveRoute>(()=>(draft.value?.parameters[1] as MvMoveRoute)||defaultMoveRoute());
 const routeSummary=computed(()=>t('eventcmd.routeSteps', { count: routeParam.value.list.filter((item)=>item.code!==0).length }));
+// RM guide line: usable game text width is screen width minus 18px paddings, minus 168px when a face is set;
+// scaled from the 28px game font down to the 13px textarea font, plus the textarea's left padding+border.
+const textFaceName=computed(()=>draft.value?.code===101?String(draft.value.parameters[0]||''):'');
+const textGuideLeft=computed(()=>Math.round(((Number(props.catalog?.screenWidth)||816)-36-(textFaceName.value?168:0))*13/28)+7);
 const enabledPluginEntries=computed(()=>pluginCommandPlugins.value.filter((plugin)=>plugin.status&&plugin.fileExists&&plugin.name));
 const visiblePluginCommandHints=computed(()=>enabledPluginEntries.value
   .filter((plugin)=>!pluginCommandPlugin.value||plugin.name===pluginCommandPlugin.value)
@@ -270,8 +288,8 @@ onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
 function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());void loadPluginCommandMetadata();}
-function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;syncMultiText();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
-function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;syncMultiText();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
+function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
+function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;batchInput.value=false;syncMultiText();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
 function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];}
 function selectPickerPage(page:number){pickerPage.value=page;pickerQuery.value='';}
 function pickerOptionId(code:number){return `event-command-option-${code}`;}
@@ -300,7 +318,7 @@ function onPickerKeyDown(event:KeyboardEvent){
 function commit(){if(!draft.value)return;emit('commit',{commands:buildSpan(),editSpan:editSpan.value,insertSpan:insertSpan.value});close();}
 function buildSpan(){
   if(!draft.value)return[];
-  if(draft.value.code===101)return [clone(draft.value),...splitText(401)];
+  if(draft.value.code===101)return batchInput.value?buildBatchTextSpan():[clone(draft.value),...splitText(401)];
   if(draft.value.code===105)return [clone(draft.value),...splitText(405)];
   if(draft.value.code===108)return splitText(108,408);
   if(draft.value.code===205)return [clone(draft.value),...routeParam.value.list.filter((step)=>step.code!==0).map((step)=>({code:505,indent:draft.value!.indent,parameters:[clone(step)]}))];
@@ -314,6 +332,16 @@ function buildChoiceBlock(){
   const choices=(head.parameters[0] as string[])||[];
   return [head,...choices.map((choice,index)=>({code:402,indent:head.indent,parameters:[index,choice]})),{code:404,indent:head.indent,parameters:[]}];
 }
+// RM-native batch entry: every 4 lines of text become one 101+401xN message span.
+function buildBatchTextSpan(){
+  const lines=multiText.value.split(/\r?\n/);
+  const span:MvCommand[]=[];
+  for(let start=0;start<lines.length;start+=4){
+    span.push(clone(draft.value!));
+    for(const line of lines.slice(start,start+4))span.push({code:401,indent:draft.value!.indent,parameters:[line]});
+  }
+  return span;
+}
 function splitText(firstCode:number,nextCode=firstCode){const lines=multiText.value.split(/\r?\n/);return lines.map((line,index)=>({code:index?nextCode:firstCode,indent:draft.value?.indent||0,parameters:[line]}));}
 function syncMultiText(){if(!draft.value)return;multiText.value=draft.value.code===101||draft.value.code===105?draftSpan.value.slice(1).map((item)=>String(item.parameters[0]||'')).join('\n'):draft.value.code===108||draft.value.code===355?draftSpan.value.map((item)=>String(item.parameters[0]||'')).join('\n'):String(draft.value.parameters[0]||'');}
 function touchCommand(){if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);}
@@ -324,7 +352,9 @@ function boolParam(index:number,fallback=false){return Boolean(draft.value?.para
 function setChoices(event:Event){setParam(0,inputValue(event).split('\n').map((value)=>value.trim()).filter(Boolean));}
 function openTextFacePicker(){imagePicker.value?.open({asset:'faces',mode:'face',title:t('eventcmd.chooseFace'),name:stringParam(0),index:numberParam(1)});}
 function setTextFace(selection:{name:string;index:number}){setParam(0,selection.name);setParam(1,selection.name?selection.index:0);void nextTick(paintFacePreview);}
-async function paintFacePreview(){const el=facePreviewRef.value;if(!el)return;const w=el.width,h=el.height,ctx=el.getContext('2d')!;ctx.clearRect(0,0,w,h);ctx.imageSmoothingEnabled=false;const faceName=stringParam(0);if(!faceName){ctx.fillStyle='#e0ddd6';ctx.fillRect(0,0,w,h);return;}const asset=props.catalog?.assets.faces.find(e=>e.name===faceName);if(!asset){ctx.fillStyle='#e0ddd6';ctx.fillRect(0,0,w,h);return;}const img=await props.loadImage(asset.url);if(!img){ctx.fillStyle='#e0ddd6';ctx.fillRect(0,0,w,h);return;}const source=mvFaceSourceRect(numberParam(1),faceSize.value);ctx.drawImage(img,source.sx,source.sy,source.sw,source.sh,0,0,w,h);}
+function openMessagePreview(){if(!draft.value)return;messagePreview.value?.open({faceName:stringParam(0),faceIndex:numberParam(1),background:numberParam(2),positionType:numberParam(3,2),lines:multiText.value.split(/\r?\n/).slice(0,4)});}
+// Empty/missing faces leave the canvas transparent so the CSS checkerboard shows through.
+async function paintFacePreview(){const el=facePreviewRef.value;if(!el)return;const w=el.width,h=el.height,ctx=el.getContext('2d')!;ctx.clearRect(0,0,w,h);ctx.imageSmoothingEnabled=false;const faceName=stringParam(0);if(!faceName)return;const asset=props.catalog?.assets.faces.find(e=>e.name===faceName);if(!asset)return;const img=await props.loadImage(asset.url);if(!img)return;const source=mvFaceSourceRect(numberParam(1),faceSize.value);ctx.drawImage(img,source.sx,source.sy,source.sw,source.sh,0,0,w,h);}
 function setRoute(route:MvMoveRoute){setParam(1,route);}
 function inputValue(event:Event){return(event.target as HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement).value;}
 function numberValue(event:Event){return Number(inputValue(event));}
@@ -412,8 +442,8 @@ defineExpose({openPicker,openEditor});
 </script>
 
 <style scoped>
-.ev-modal-overlay{z-index:v-bind(commandDialogZ);background:transparent}.cmd-dialog{width:min(620px,calc(100vw - 32px));height:auto;max-height:min(560px,calc(100vh - 32px))}.picker-shell{min-height:0;display:flex;flex-direction:column}.command-page-tabs{padding:8px 12px 0}.command-page-tabs button{min-width:36px}.picker-search{display:grid;gap:5px;padding:8px 12px;color:var(--app-ink-soft);font-size:12px}.picker-search input{width:100%;min-height:32px}.picker{min-height:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:8px;padding:0 12px 12px;overflow:auto}.picker-group{padding:7px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}.picker h4{margin:0 0 5px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--app-ink);font-size:12px}.picker h4 small{color:var(--app-ink-muted);font-size:10px;font-weight:500}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{min-height:0;padding:12px;overflow:auto}.editor-heading{display:flex;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--app-border)}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
+.ev-modal-overlay{z-index:v-bind(commandDialogZ);background:transparent}.cmd-dialog{width:min(620px,calc(100vw - 32px));height:auto;max-height:min(560px,calc(100vh - 32px))}.picker-shell{min-height:0;display:flex;flex-direction:column}.picker-modebar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px 0}.picker-modebar-spacer{flex:1}.command-page-tabs button{min-width:36px}.picker-view-toggle{display:flex}.picker-view-toggle button{white-space:nowrap}.picker-search{display:grid;gap:5px;padding:8px 12px;color:var(--app-ink-soft);font-size:12px}.picker-search input{width:100%;min-height:32px}.picker{min-height:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:8px;padding:0 12px 12px;overflow:auto}.picker--table{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}.picker-group{padding:7px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}.picker h4{margin:0 0 5px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--app-ink);font-size:12px}.picker h4 small{color:var(--app-ink-muted);font-size:10px;font-weight:500}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{min-height:0;padding:12px;overflow:auto}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
 .plugin-command-editor{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.plugin-command-editor label{min-width:0;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.plugin-command-editor .full{grid-column:1 / -1}.plugin-command-editor textarea{min-height:96px}.plugin-command-warning{grid-column:1 / -1;padding:8px 10px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:12px;line-height:1.45}.plugin-command-hints{grid-column:1 / -1;display:grid;gap:5px}.plugin-command-hints button{display:grid;gap:3px;padding:7px 9px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft);color:var(--app-ink);font:inherit;text-align:left;cursor:pointer}.plugin-command-hints button:hover{border-color:var(--app-accent);background:var(--app-accent-soft)}.plugin-command-hints strong{font-size:12px}.plugin-command-hints small{overflow:hidden;color:var(--app-ink-muted);font-family:var(--app-font-mono);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
 .plugin-command-argument small{color:var(--app-ink-muted);font-size:11px;line-height:1.35}
-.text-cmd-layout{width:100%;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}.text-cmd-face{display:flex;flex-direction:column;align-items:center;gap:6px}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background:#e0ddd6}.text-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-text textarea{min-height:144px}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px}
+.text-cmd-layout{width:100%;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}.text-cmd-face{display:flex;flex-direction:column;align-items:flex-start;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-face .editor-btn{align-self:center}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background-color:#f5efe6;background-image:linear-gradient(45deg,#ded6c8 25%,transparent 25%),linear-gradient(-45deg,#ded6c8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ded6c8 75%),linear-gradient(-45deg,transparent 75%,#ded6c8 75%);background-position:0 0,0 6px,6px -6px,-6px 0;background-size:12px 12px}.text-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-input-wrap{position:relative;display:block}.text-cmd-input-wrap textarea{width:100%;min-height:144px;box-sizing:border-box}.text-guide-line{position:absolute;top:1px;bottom:1px;width:1px;background:var(--app-border-strong);pointer-events:none}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:flex-end}.text-cmd-preview{margin-left:auto}.text-cmd-batch{width:100%;margin-top:2px;gap:5px}
 </style>

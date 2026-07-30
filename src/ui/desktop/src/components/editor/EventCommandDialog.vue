@@ -125,8 +125,18 @@
               <label class="check text-cmd-batch"><input v-model="batchInput" type="checkbox" />{{ t('eventcmd.batchEntry') }}</label>
             </template>
             <template v-else-if="draft.code === 102">
-              <label class="full">{{ t('eventcmd.choices') }}<textarea :value="choicesText" rows="6" @input="setChoices" /></label>
-              <p class="form-note">{{ t('eventcmd.choicesNote') }}</p>
+              <div class="choice-cmd-layout">
+                <div class="choice-cmd-list">
+                  <span class="choice-cmd-title">{{ t('eventcmd.choicesTitle') }}</span>
+                  <label v-for="n in 6" :key="n" class="choice-cmd-row"><span>#{{ n }}:</span><input v-model="choiceInputs[n - 1]" /></label>
+                </div>
+                <div class="choice-cmd-side">
+                  <label>{{ t('eventcmd.background') }}<select :value="numberParam(4)" @change="setParam(4, numberValue($event))"><option :value="0">{{ t('eventcmd.bgWindow') }}</option><option :value="1">{{ t('eventcmd.bgDim') }}</option><option :value="2">{{ t('eventcmd.bgTransparent') }}</option></select></label>
+                  <label>{{ t('eventcmd.windowPosition') }}<select :value="numberParam(3,2)" @change="setParam(3, numberValue($event))"><option :value="0">{{ t('eventcmd.posLeft') }}</option><option :value="1">{{ t('eventcmd.posMiddle') }}</option><option :value="2">{{ t('eventcmd.posRight') }}</option></select></label>
+                  <label>{{ t('eventcmd.defaultChoice') }}<select :value="numberParam(2)" @change="setParam(2, numberValue($event))"><option :value="-1">{{ t('eventcmd.choiceNone') }}</option><option v-for="n in 6" :key="n" :value="n - 1">{{ t('eventcmd.choiceItem', { n }) }}</option></select></label>
+                  <label>{{ t('eventcmd.cancelChoice') }}<select :value="numberParam(1,1)" @change="setParam(1, numberValue($event))"><option :value="-2">{{ t('eventcmd.choiceBranch') }}</option><option :value="-1">{{ t('eventcmd.choiceDisallow') }}</option><option v-for="n in 6" :key="n" :value="n - 1">{{ t('eventcmd.choiceItem', { n }) }}</option></select></label>
+                </div>
+              </div>
             </template>
             <template v-else-if="draft.code === 105">
               <label>{{ t('eventcmd.speed') }}<input :value="numberParam(0,2)" type="number" min="1" @input="setParam(0, numberValue($event))" /></label>
@@ -216,6 +226,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
 import type { RpgMakerEngine } from '@contract/types';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
@@ -238,6 +249,8 @@ const projectStore = useProjectStore();
 const { language, t } = useI18n();
 const commandDialogZ = String(LAYER_Z.commandDialog);
 const visible=ref(false),pickerOpen=ref(false),pickerPage=ref(1),draft=ref<MvCommand|null>(null),draftSpan=ref<MvCommand[]>([]),editSpan=ref<number|null>(null),insertSpan=ref<number|null>(null),insertIndent=ref(0),multiText=ref(''),batchInput=ref(false);
+// RM-native Show Choices rows: six fixed inputs mirrored into parameters[0] on commit.
+const choiceInputs=ref<string[]>(['','','','','','']);
 const imagePicker=ref<InstanceType<typeof ImageAssetPickerDialog>>(),routeDialog=ref<InstanceType<typeof MoveRouteDialog>>(),facePreviewRef=ref<HTMLCanvasElement>(),messagePreview=ref<InstanceType<typeof MessagePreviewDialog>>();
 const pickerSearchRef=ref<HTMLInputElement>(),pickerListRef=ref<HTMLElement>(),pickerQuery=ref(''),activePickerIndex=ref(0);
 const pickerListId='event-command-picker-list';
@@ -278,7 +291,6 @@ const commandTitle=computed(()=>{
   const definition = commandDefinition(draft.value.code,currentEngine.value);
   return definition ? localizeCommandLabel(definition, language.value) : t('eventcmd.unknownCommand', { code: draft.value.code });
 });
-const choicesText=computed(()=>((draft.value?.parameters[0] as string[])||[]).join('\n'));
 const routeParam=computed<MvMoveRoute>(()=>(draft.value?.parameters[1] as MvMoveRoute)||defaultMoveRoute());
 const routeSummary=computed(()=>t('eventcmd.routeSteps', { count: routeParam.value.list.filter((item)=>item.code!==0).length }));
 // RM guide line: usable game text width is screen width minus 18px paddings, minus 168px when a face is set;
@@ -325,8 +337,8 @@ onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
 function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());void loadPluginCommandMetadata();}
-function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
-function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;batchInput.value=false;syncMultiText();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
+function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
+function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
 function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];}
 function selectPickerPage(page:number){pickerPage.value=page;pickerQuery.value='';}
 function pickerOptionId(code:number){return `event-command-option-${code}`;}
@@ -352,7 +364,16 @@ function onPickerKeyDown(event:KeyboardEvent){
     pick(activePickerItem.value.kind);
   }
 }
-function commit(){if(!draft.value)return;emit('commit',{commands:buildSpan(),editSpan:editSpan.value,insertSpan:insertSpan.value});close();}
+function commit(){
+  if(!draft.value)return;
+  if(draft.value.code===102){
+    // Compact the six fixed rows; an all-empty list is a hard error, never silently defaulted.
+    const choices=choiceInputs.value.map((value)=>value.trim()).filter(Boolean);
+    if(!choices.length){ElMessage.error(t('eventcmd.choicesEmpty'));return;}
+    draft.value.parameters[0]=choices;
+  }
+  emit('commit',{commands:buildSpan(),editSpan:editSpan.value,insertSpan:insertSpan.value});close();
+}
 function buildSpan(){
   if(!draft.value)return[];
   if(draft.value.code===101)return batchInput.value?buildBatchTextSpan():[clone(draft.value),...splitText(401)];
@@ -361,13 +382,61 @@ function buildSpan(){
   if(draft.value.code===205)return [clone(draft.value),...routeParam.value.list.filter((step)=>step.code!==0).map((step)=>({code:505,indent:draft.value!.indent,parameters:[clone(step)]}))];
   if(draft.value.code===355)return splitText(355,655);
   if(draft.value.code===357)return [clone(draft.value),...Object.entries(currentMZPluginArguments.value).map(([name,value])=>({code:657,indent:draft.value!.indent,parameters:[`${name} = ${value}`]}))];
-  if(draft.value.code===102&&editSpan.value==null)return buildChoiceBlock();
+  if(draft.value.code===102)return editSpan.value==null?buildChoiceBlock():buildChoiceEditSpan();
   return clone(draftSpan.value.length?draftSpan.value:[draft.value]);
 }
 function buildChoiceBlock(){
   const head=clone(draft.value!);
   const choices=(head.parameters[0] as string[])||[];
-  return [head,...choices.map((choice,index)=>({code:402,indent:head.indent,parameters:[index,choice]})),{code:404,indent:head.indent,parameters:[]}];
+  const span:MvCommand[]=[head,...choices.map((choice,index)=>({code:402,indent:head.indent,parameters:[index,choice]}))];
+  if(Number(head.parameters[1])===-2)span.push({code:403,indent:head.indent,parameters:[]});
+  span.push({code:404,indent:head.indent,parameters:[]});
+  return span;
+}
+// Editing Show Choices rebuilds the 402/403 skeleton while keeping branch bodies:
+// same-text branches are reused first, leftovers are matched by position (rename case),
+// removed choices drop their branch, and the 403 cancel branch follows cancelType === -2.
+function buildChoiceEditSpan(){
+  const head=clone(draft.value!);
+  const headIndent=head.indent;
+  const oldBranches:{text:string;body:MvCommand[]}[]=[];
+  let cancelBody:MvCommand[]|null=null;
+  let current:MvCommand[]|null=null;
+  for(const command of draftSpan.value.slice(1)){
+    if(command.indent===headIndent&&(command.code===402||command.code===403||command.code===404)){
+      if(command.code===402){current=[];oldBranches.push({text:String(command.parameters[1]??''),body:current});}
+      else if(command.code===403){current=[];cancelBody=current;}
+      else current=null;
+    }else if(current){
+      current.push(clone(command));
+    }
+  }
+  const choices=(head.parameters[0] as string[])||[];
+  const used=new Set<number>();
+  const picks=choices.map((choice)=>{
+    const index=oldBranches.findIndex((branch,i)=>!used.has(i)&&branch.text===choice);
+    if(index<0)return null;
+    used.add(index);
+    return oldBranches[index];
+  });
+  for(let i=0;i<picks.length;i+=1){
+    if(picks[i])continue;
+    const index=oldBranches.findIndex((_,j)=>!used.has(j));
+    if(index<0)break;
+    used.add(index);
+    picks[i]=oldBranches[index];
+  }
+  const span:MvCommand[]=[head];
+  choices.forEach((choice,index)=>{
+    span.push({code:402,indent:headIndent,parameters:[index,choice]});
+    span.push(...(picks[index]?.body||[]));
+  });
+  if(Number(head.parameters[1])===-2){
+    span.push({code:403,indent:headIndent,parameters:[]});
+    span.push(...(cancelBody||[]));
+  }
+  span.push({code:404,indent:headIndent,parameters:[]});
+  return span;
 }
 // RM-native batch entry: every 4 lines of text become one 101+401xN message span.
 function buildBatchTextSpan(){
@@ -386,7 +455,7 @@ function setParam(index:number,value:unknown){if(draft.value){draft.value.parame
 function numberParam(index:number,fallback=0){return Number(draft.value?.parameters[index]??fallback);}
 function stringParam(index:number,fallback=''){return String(draft.value?.parameters[index]??fallback);}
 function boolParam(index:number,fallback=false){return Boolean(draft.value?.parameters[index]??fallback);}
-function setChoices(event:Event){setParam(0,inputValue(event).split('\n').map((value)=>value.trim()).filter(Boolean));}
+function syncChoiceInputs(){const choices=draft.value?.code===102?(draft.value.parameters[0] as string[])||[]:[];choiceInputs.value=Array.from({length:6},(_,index)=>String(choices[index]??''));}
 function openTextFacePicker(){imagePicker.value?.open({asset:'faces',mode:'face',title:t('eventcmd.chooseFace'),name:stringParam(0),index:numberParam(1)});}
 function setTextFace(selection:{name:string;index:number}){setParam(0,selection.name);setParam(1,selection.name?selection.index:0);void nextTick(paintFacePreview);}
 function openMessagePreview(){if(!draft.value)return;messagePreview.value?.open({faceName:stringParam(0),faceIndex:numberParam(1),background:numberParam(2),positionType:numberParam(3,2),lines:multiText.value.split(/\r?\n/).slice(0,4)});}
@@ -523,4 +592,5 @@ defineExpose({openPicker,openEditor});
 .plugin-command-editor{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.plugin-command-editor label{min-width:0;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.plugin-command-editor .full{grid-column:1 / -1}.plugin-command-editor textarea{min-height:96px}.plugin-command-warning{grid-column:1 / -1;padding:8px 10px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:12px;line-height:1.45}.plugin-command-hints{grid-column:1 / -1;display:grid;gap:5px}.plugin-command-hints button{display:grid;gap:3px;padding:7px 9px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft);color:var(--app-ink);font:inherit;text-align:left;cursor:pointer}.plugin-command-hints button:hover{border-color:var(--app-accent);background:var(--app-accent-soft)}.plugin-command-hints strong{font-size:12px}.plugin-command-hints small{overflow:hidden;color:var(--app-ink-muted);font-family:var(--app-font-mono);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
 .plugin-command-argument small{color:var(--app-ink-muted);font-size:11px;line-height:1.35}
 .text-cmd-layout{width:100%;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}.text-cmd-face{display:flex;flex-direction:column;align-items:flex-start;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-face .editor-btn{align-self:center}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background-color:#f5efe6;background-image:linear-gradient(45deg,#ded6c8 25%,transparent 25%),linear-gradient(-45deg,#ded6c8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ded6c8 75%),linear-gradient(-45deg,transparent 75%,#ded6c8 75%);background-position:0 0,0 6px,6px -6px,-6px 0;background-size:12px 12px}.text-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-input-wrap{position:relative;display:block}.text-cmd-input-wrap textarea{width:100%;min-height:144px;box-sizing:border-box}.text-guide-line{position:absolute;top:1px;bottom:1px;width:1px;background:var(--app-border-strong);pointer-events:none}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:flex-end}.text-cmd-preview{margin-left:auto}.text-cmd-batch{width:100%;margin-top:2px;gap:5px}
+.choice-cmd-layout{width:100%;display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:16px;align-items:start}.choice-cmd-list{display:grid;gap:6px}.choice-cmd-title{color:var(--app-ink-soft);font-size:12px;font-weight:600}.choice-cmd-row{display:flex;align-items:center;gap:6px;color:var(--app-ink-soft);font-size:12px}.choice-cmd-row span{flex:0 0 24px;text-align:right}.choice-cmd-row input{flex:1;min-width:0}.choice-cmd-side{display:grid;gap:8px;align-content:start}.choice-cmd-side label{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}
 </style>

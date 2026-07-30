@@ -460,6 +460,14 @@ export function defaultCommandParams(code: number, engine: RpgMakerEngine = 'rpg
 export function normalizeEventCommandParameters(command: MvCommand, engine: RpgMakerEngine = 'rpg-maker-mv'): MvCommand {
   const p = command.parameters;
   if (command.code === 101 && engine === 'rpg-maker-mz') ensureStringAt(p, 4, '');
+  if (command.code === 102) {
+    // RM stores [choices, cancelType, defaultType, positionType, background]; old data may omit the tail.
+    if (!Array.isArray(p[0])) p[0] = [];
+    ensureNumberAt(p, 1, 1);
+    ensureNumberAt(p, 2, 0);
+    ensureNumberAt(p, 3, 2);
+    ensureNumberAt(p, 4, 0);
+  }
   if (command.code === 357 && engine === 'rpg-maker-mz') {
     ensureStringAt(p, 0, '');
     ensureStringAt(p, 1, '');

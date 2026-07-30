@@ -2,13 +2,12 @@
   <teleport to="body">
     <div v-if="visible" class="ev-modal-overlay editor-modal-overlay" :data-editor-dialog-layer="LAYER_Z.commandDialog" @mousedown.self="close">
       <section
+        ref="dialogShellRef"
         class="cmd-dialog editor-modal-shell"
         role="dialog"
         aria-modal="true"
         aria-labelledby="command-dialog-title"
-        :style="{
-          width: pickerViewMode === 'table' ? 'min(1400px,calc(100vw - 32px))' : 'min(700px,calc(100vw - 32px))'
-        }"
+        :style="dialogStyle"
       >
         <header class="editor-modal-header">
           <strong id="command-dialog-title" class="editor-modal-title">{{ dialogTitle }}</strong>
@@ -91,7 +90,7 @@
           </div>
         </div>
 
-        <div v-else-if="draft" class="editor-body" style="overflow: hidden;">
+        <div v-else-if="draft" class="editor-body" style="overflow: auto;">
           <div class="fields">
             <template v-if="draft.code === 101">
               <div class="text-cmd-layout">
@@ -566,6 +565,7 @@
           <button type="button" class="editor-btn" @click="close">{{ t('eventcmd.cancel') }}</button>
           <button type="button" class="editor-btn primary" @click="commit">{{ t('eventcmd.ok') }}</button>
         </footer>
+        <span v-if="!pickerOpen && draft" class="dialog-resize-handle" role="separator" :aria-label="t('eventcmd.resizeHandle')" :title="t('eventcmd.resizeHandle')" @pointerdown.prevent="onDialogResizeStart" @pointermove="onDialogResizeMove" @pointerup="onDialogResizeEnd" @dblclick="resetDialogSize" />
       </section>
     </div>
   </teleport>
@@ -655,6 +655,26 @@ const PICKER_MODE_KEY='rpgmv.eventCommandPickerMode';
 const pickerViewMode=ref<'paged'|'table'>(readPickerViewMode());
 function readPickerViewMode():'paged'|'table'{try{return localStorage.getItem(PICKER_MODE_KEY)==='table'?'table':'paged';}catch{return 'paged';}}
 function setPickerViewMode(mode:'paged'|'table'){pickerViewMode.value=mode;try{localStorage.setItem(PICKER_MODE_KEY,mode);}catch{/* persistence is best-effort */}}
+// Per-command dialog size memory: the resize handle writes it, double-click clears it.
+const SIZE_KEY='rpgmv.eventCommandDialogSize';
+const dialogShellRef=ref<HTMLElement>();
+const dialogSize=ref<{w:number;h:number}|null>(null);
+let dialogResizeStart:{x:number;y:number;w:number;h:number;pointer:number}|null=null;
+const clampDialogW=(w:number)=>Math.round(Math.max(480,Math.min(window.innerWidth-32,w)));
+const clampDialogH=(h:number)=>Math.round(Math.max(320,Math.min(window.innerHeight-32,h)));
+function readDialogSizes():Record<string,{w:number;h:number}>{try{const parsed=JSON.parse(localStorage.getItem(SIZE_KEY)||'{}');return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed as Record<string,{w:number;h:number}>:{};}catch{return{};}}
+function loadDialogSize(code:number){const entry=readDialogSizes()[String(code)];dialogSize.value=entry&&Number.isFinite(entry?.w)&&Number.isFinite(entry?.h)?{w:clampDialogW(entry.w),h:clampDialogH(entry.h)}:null;}
+function saveDialogSize(){if(!draft.value)return;const sizes=readDialogSizes();if(dialogSize.value)sizes[String(draft.value.code)]=dialogSize.value;else delete sizes[String(draft.value.code)];try{localStorage.setItem(SIZE_KEY,JSON.stringify(sizes));}catch{/* persistence is best-effort */}}
+function resetDialogSize(){dialogSize.value=null;saveDialogSize();}
+function onDialogResizeStart(event:PointerEvent){const rect=dialogShellRef.value?.getBoundingClientRect();if(!rect)return;dialogResizeStart={x:event.clientX,y:event.clientY,w:rect.width,h:rect.height,pointer:event.pointerId};dialogSize.value={w:Math.round(rect.width),h:Math.round(rect.height)};(event.target as HTMLElement).setPointerCapture(event.pointerId);}
+// The overlay keeps the shell centered, so a corner drag moves half the size delta.
+function onDialogResizeMove(event:PointerEvent){if(dialogResizeStart?.pointer!==event.pointerId)return;dialogSize.value={w:clampDialogW(dialogResizeStart.w+(event.clientX-dialogResizeStart.x)*2),h:clampDialogH(dialogResizeStart.h+(event.clientY-dialogResizeStart.y)*2)};}
+function onDialogResizeEnd(event:PointerEvent){if(dialogResizeStart?.pointer!==event.pointerId)return;dialogResizeStart=null;saveDialogSize();}
+const dialogStyle=computed(()=>{
+  if(pickerOpen.value)return{width:pickerViewMode.value==='table'?'min(1400px,calc(100vw - 32px))':'min(700px,calc(100vw - 32px))'};
+  if(dialogSize.value)return{width:`${dialogSize.value.w}px`,height:`${dialogSize.value.h}px`,maxHeight:'calc(100vh - 32px)'};
+  return{width:'min(700px,calc(100vw - 32px))'};
+});
 const pluginCommandPlugins = ref<ManagedPluginEntry[]>([]);
 const pluginCommandPlugin = ref('');
 const pluginCommandError = ref('');
@@ -734,8 +754,8 @@ onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
 function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());void loadPluginCommandMetadata();}
-function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
-function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
 function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];}
 function selectPickerPage(page:number){pickerPage.value=page;pickerQuery.value='';}
 function pickerOptionId(code:number){return `event-command-option-${code}`;}
@@ -991,9 +1011,11 @@ defineExpose({openPicker,openEditor});
 <style scoped>
 .ev-modal-overlay{z-index:v-bind(commandDialogZ);background:transparent}
 .cmd-dialog{
+  position:relative;
   height:auto;
   max-height:min(850px,calc(100vh - 32px))
 }
+.dialog-resize-handle{position:absolute;right:2px;bottom:2px;width:14px;height:14px;border-radius:2px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 0 45%,var(--app-border-strong) 45% 55%,transparent 55% 68%,var(--app-border-strong) 68% 78%,transparent 78%)}
   .picker-shell{
     min-height:0;
     display:flex;
@@ -1029,7 +1051,7 @@ defineExpose({openPicker,openEditor});
   color: var(--app-ink-soft);
   font-size: 12px;
 }
-.picker h4{margin:0 0 5px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--app-ink);font-size:12px}.picker h4 small{color:var(--app-ink-muted);font-size:10px;font-weight:500}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{min-height:0;padding:12px;overflow:auto}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
+.picker h4{margin:0 0 5px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--app-ink);font-size:12px}.picker h4 small{color:var(--app-ink-muted);font-size:10px;font-weight:500}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{flex:1 1 auto;min-height:0;padding:12px;overflow:auto}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
 .plugin-command-editor{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.plugin-command-editor label{min-width:0;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.plugin-command-editor .full{grid-column:1 / -1}.plugin-command-editor textarea{min-height:96px}.plugin-command-warning{grid-column:1 / -1;padding:8px 10px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:12px;line-height:1.45}.plugin-command-hints{grid-column:1 / -1;display:grid;gap:5px}.plugin-command-hints button{display:grid;gap:3px;padding:7px 9px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft);color:var(--app-ink);font:inherit;text-align:left;cursor:pointer}.plugin-command-hints button:hover{border-color:var(--app-accent);background:var(--app-accent-soft)}.plugin-command-hints strong{font-size:12px}.plugin-command-hints small{overflow:hidden;color:var(--app-ink-muted);font-family:var(--app-font-mono);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
 .plugin-command-argument small{color:var(--app-ink-muted);font-size:11px;line-height:1.35}
 .text-cmd-layout{width:100%;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}.text-cmd-face{display:flex;flex-direction:column;align-items:flex-start;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-face .editor-btn{align-self:center}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background-color:#f5efe6;background-image:linear-gradient(45deg,#ded6c8 25%,transparent 25%),linear-gradient(-45deg,#ded6c8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ded6c8 75%),linear-gradient(-45deg,transparent 75%,#ded6c8 75%);background-position:0 0,0 6px,6px -6px,-6px 0;background-size:12px 12px}.text-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-input-wrap{position:relative;display:block}.text-cmd-input-wrap textarea{width:100%;min-height:144px;box-sizing:border-box}.text-guide-line{position:absolute;top:1px;bottom:1px;width:1px;background:var(--app-border-strong);pointer-events:none}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:flex-end}.text-cmd-preview{margin-left:auto}.text-cmd-batch{width:100%;margin-top:2px;gap:5px}

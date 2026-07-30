@@ -1969,6 +1969,7 @@ const enUS = {
     'eventcmd.charImage': 'Character',
     'eventcmd.battlerImage': 'SV Battler',
     'eventcmd.vehicle': 'Vehicle',
+    'eventcmd.resizeHandle': 'Resize dialog',
     'eventcmd.comment': 'Comment',
     'eventcmd.target': 'Target',
     'eventcmd.editRoute': 'Edit Route...',

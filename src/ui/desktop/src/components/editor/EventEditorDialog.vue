@@ -96,14 +96,19 @@
                   type="button"
                   :disabled="currentPageLocked"
                   class="cmd-row"
-                  :class="{ selected: selectedSpanSet.has(index), even: index % 2 === 0, [`tone-${view.tone}`]: true }"
+                  :class="{ selected: selectedSpanSet.has(index), even: index % 2 === 0, 'drop-before': dropIndicator === index, [`tone-${view.tone}`]: true }"
                   :style="{ '--cmd-indent': `${Math.min(view.indent, 8) * 18}px` }"
                   :aria-pressed="selectedSpanSet.has(index)"
+                  :draggable="!currentPageLocked"
                   @click="selectCommand(index, $event)"
                   @dblclick="openCommand(index)"
                   @contextmenu.stop.prevent="openCommandContext($event, index)"
+                  @dragstart="onRowDragStart(index, $event)"
+                  @dragover.prevent="onRowDragOver(index, $event)"
+                  @drop.prevent="onRowDrop"
+                  @dragend="resetRowDrag"
                 ><span class="cmd-line cmd-head">{{ view.head }}</span><span v-for="(line, lineIndex) in view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span></button>
-                <button type="button" class="cmd-row terminator" :disabled="currentPageLocked" :class="{ even: spans.length % 2 === 0 }" @click="clearCommandSelection" @dblclick="openCommandPicker" @contextmenu.stop.prevent="openCommandContext($event, null)"><span class="cmd-line">◆</span></button>
+                <button type="button" class="cmd-row terminator" :disabled="currentPageLocked" :class="{ even: spans.length % 2 === 0, 'drop-before': dropIndicator === spans.length }" @click="clearCommandSelection" @dblclick="openCommandPicker" @contextmenu.stop.prevent="openCommandContext($event, null)" @dragover.prevent="onTerminatorDragOver" @drop.prevent="onRowDrop"><span class="cmd-line">◆</span></button>
               </div>
             </section>
           </div>
@@ -121,6 +126,8 @@
         <ul class="cmd-context-menu" :style="{ left: `${cmdContext.x}px`, top: `${cmdContext.y}px` }" role="menu" :aria-label="t('eventEditorDialog.commandActions')">
           <li><button type="button" @click="runCommandMenu(openCommandPicker)">{{ t('eventEditorDialog.newCmd') }}<span>Return</span></button></li>
           <li><button type="button" :disabled="selectedIndices.length !== 1" @click="runCommandMenu(openSelectedCommand)">{{ t('eventEditorDialog.editCmd') }}<span>Enter</span></button></li>
+          <li><button type="button" :disabled="selectedIndices.length !== 1" @click="runCommandMenu(() => moveSelectedCommandBlock(-1))">{{ t('cmdList.moveUp') }}<span>Alt+↑</span></button></li>
+          <li><button type="button" :disabled="selectedIndices.length !== 1" @click="runCommandMenu(() => moveSelectedCommandBlock(1))">{{ t('cmdList.moveDown') }}<span>Alt+↓</span></button></li>
           <li class="separator" />
           <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(cutSelectedCommands)">{{ t('eventEditorDialog.cut') }}<span>Ctrl+X</span></button></li>
           <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(() => copySelectedCommands())">{{ t('eventEditorDialog.copy') }}<span>Ctrl+C</span></button></li>
@@ -156,7 +163,7 @@ import EventCommandDialog from './EventCommandDialog.vue';
 import EventImagePickerDialog from './EventImagePickerDialog.vue';
 import EventTextPasteDialog from './EventTextPasteDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
-import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, editableCommandSpans, ensureTerminator, imageSummary, type MvCommand, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
+import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, dropCommandSpanBlock, editableCommandSpans, ensureTerminator, imageSummary, moveCommandSpanBlock, type MvCommand, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
 import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
 import type { EditorEventListItem } from './editorTypes';
@@ -185,6 +192,8 @@ const shellLocked = computed(() => Boolean(props.overview && !props.overview.she
 const selectedIndices = computed(() => selectedSpans.value.filter((index) => index >= 0 && index < spans.value.length).sort((a, b) => a - b));
 const selectedSpanSet = computed(() => new Set(selectedIndices.value));
 const cmdContext = reactive({ visible: false, x: 0, y: 0 });
+// Drag reorder state: source span plus the insert-before slot (spans.length = drop at end).
+const dragSourceIndex = ref<number | null>(null), dropIndicator = ref<number | null>(null);
 const eventEditorTitle = computed(() => props.draft?.id
   ? t('eventEditorDialog.title', { id: String(props.draft.id).padStart(3, '0') })
   : t('eventEditorDialog.newEvent'));
@@ -238,6 +247,12 @@ function onKeyDown(event: KeyboardEvent) {
   } else if (ctrl && event.key.toLowerCase() === 'a' && spans.value.length) {
     event.preventDefault();
     selectAllCommands();
+  } else if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    event.preventDefault();
+    moveSelectedCommandBlock(event.key === 'ArrowUp' ? -1 : 1);
+  } else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !ctrl) {
+    event.preventDefault();
+    stepCommandSelection(event.key === 'ArrowUp' ? -1 : 1, event.shiftKey);
   }
 }
 onMounted(() => window.addEventListener('keydown', onKeyDown));
@@ -295,6 +310,57 @@ function selectCommand(index: number, event: MouseEvent) {
 }
 function clearCommandSelection() { selectedSpans.value = []; selectionAnchor.value = null; closeCommandContext(); }
 function selectAllCommands() { selectedSpans.value = spans.value.map((_, index) => index); selectionAnchor.value = selectedSpans.value[0] ?? null; }
+function applyCommandListMutation(result: { list: MvCommand[]; headIndex: number } | null) {
+  if (!result || !currentPage.value) return;
+  currentPage.value.list.splice(0, currentPage.value.list.length, ...result.list);
+  ensureTerminator(currentPage.value.list);
+  const spanIndex = spans.value.findIndex((span) => span.index === result.headIndex);
+  selectedSpans.value = spanIndex >= 0 ? [spanIndex] : [];
+  selectionAnchor.value = spanIndex >= 0 ? spanIndex : null;
+  markDirty();
+}
+function moveSelectedCommandBlock(offset: -1 | 1) {
+  if (!currentPage.value || currentPageLocked.value || selectedIndices.value.length !== 1) return;
+  applyCommandListMutation(moveCommandSpanBlock(currentPage.value.list, spans.value, selectedIndices.value[0], offset));
+}
+function stepCommandSelection(offset: -1 | 1, extend: boolean) {
+  const count = spans.value.length;
+  if (!count) return;
+  const focus = selectedIndices.value.length ? (offset > 0 ? selectedIndices.value[selectedIndices.value.length - 1] : selectedIndices.value[0]) : (offset > 0 ? -1 : count);
+  const next = Math.max(0, Math.min(count - 1, focus + offset));
+  if (extend && selectionAnchor.value != null) {
+    const start = Math.min(selectionAnchor.value, next), end = Math.max(selectionAnchor.value, next);
+    selectedSpans.value = Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  } else {
+    selectedSpans.value = [next];
+    selectionAnchor.value = next;
+  }
+  modalRef.value?.querySelectorAll('.command-list .cmd-row')[next]?.scrollIntoView({ block: 'nearest' });
+}
+function onRowDragStart(index: number, event: DragEvent) {
+  if (currentPageLocked.value) { event.preventDefault(); return; }
+  if (!selectedSpanSet.value.has(index)) { selectedSpans.value = [index]; selectionAnchor.value = index; }
+  dragSourceIndex.value = index;
+  if (event.dataTransfer) { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(index)); }
+}
+function onRowDragOver(index: number, event: DragEvent) {
+  if (dragSourceIndex.value == null) return;
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  dropIndicator.value = event.clientY < rect.top + rect.height / 2 ? index : index + 1;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+}
+function onTerminatorDragOver(event: DragEvent) {
+  if (dragSourceIndex.value == null) return;
+  dropIndicator.value = spans.value.length;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+}
+function onRowDrop() {
+  const source = dragSourceIndex.value, target = dropIndicator.value;
+  resetRowDrag();
+  if (source == null || target == null || !currentPage.value || currentPageLocked.value) return;
+  applyCommandListMutation(dropCommandSpanBlock(currentPage.value.list, spans.value, source, target));
+}
+function resetRowDrag() { dragSourceIndex.value = null; dropIndicator.value = null; }
 function deleteSelectedCommands() {
   if (!currentPage.value || currentPageLocked.value || !selectedIndices.value.length) return;
   const list = currentPage.value.list;
@@ -368,7 +434,7 @@ function openCommandContext(event: MouseEvent, index: number | null) {
   if (index == null) clearCommandSelection();
   else if (!selectedSpanSet.value.has(index)) { selectedSpans.value = [index]; selectionAnchor.value = index; }
   const rect = modalRef.value?.getBoundingClientRect();
-  const width = 214, height = 266, margin = 8;
+  const width = 214, height = 330, margin = 8;
   cmdContext.x = rect ? Math.max(rect.left + margin, Math.min(event.clientX, rect.right - width - margin)) : event.clientX;
   cmdContext.y = rect ? Math.max(rect.top + margin, Math.min(event.clientY, rect.bottom - height - margin)) : event.clientY;
   cmdContext.visible = true;
@@ -788,19 +854,49 @@ defineExpose({ markSaved });
 }
 
 .cmd-row {
+  position: relative;
   width: 100%;
   min-height: 22px;
   height: auto;
   flex: 0 0 auto;
   display: block;
-  padding: 1px 8px 1px calc(14px + var(--cmd-indent, 0px));
+  padding: 3px 8px 3px calc(14px + var(--cmd-indent, 0px));
   border: 1px solid transparent;
+  border-bottom-color: var(--app-border);
   background: var(--app-bg);
   color: var(--app-ink);
   text-align: left;
   cursor: pointer;
   appearance: none;
   border-radius: 0;
+}
+
+.cmd-row:not(.terminator):not(:disabled) {
+  cursor: grab;
+}
+
+.cmd-row:not(.terminator):not(:disabled):active {
+  cursor: grabbing;
+}
+
+/* 缩进层级参考线：按 --cmd-indent 宽度每 18px 画一条淡竖线 */
+.cmd-row::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  width: var(--cmd-indent, 0px);
+  background: repeating-linear-gradient(to right, var(--app-border) 0 1px, transparent 1px 18px);
+  pointer-events: none;
+}
+
+.cmd-row.selected::before {
+  display: none;
+}
+
+.cmd-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--app-accent);
 }
 
 .cmd-row.even {
@@ -833,7 +929,7 @@ defineExpose({ markSaved });
 
 /* 续行（台词、移动步骤等）：正文色、缩进一级，与命令头拉开层次 */
 .cmd-sub {
-  padding-left: 18px;
+  padding-left: calc(1em + 2px);
   color: var(--app-ink);
 }
 

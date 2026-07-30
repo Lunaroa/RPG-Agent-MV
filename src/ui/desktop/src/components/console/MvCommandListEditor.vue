@@ -10,6 +10,7 @@ import {
   commandTone,
   editableCommandSpans,
   ensureTerminator,
+  moveCommandSpanBlock,
   type MvCommand,
   type MvCommandSpan,
 } from '../../composables/useEventEditor';
@@ -149,27 +150,11 @@ function deleteSelectedCommands(): void {
 function moveSelectedCommand(offset: -1 | 1): void {
   if (selectedIndices.value.length !== 1) return;
   const selected = selectedIndices.value[0];
-  const expanded = commandBlockSpanIndices(spans.value, [selected]);
-  const first = expanded[0];
-  const last = expanded[expanded.length - 1];
-  if (offset < 0 && first <= 0) return;
-  if (offset > 0 && last >= spans.value.length - 1) return;
-
-  const list = clone(commandList.value);
-  const start = spans.value[first].index;
-  const end = spans.value[last].index + spans.value[last].commands.length;
-  const block = list.splice(start, end - start);
-  if (offset < 0) {
-    list.splice(spans.value[first - 1].index, 0, ...block);
-    selectedSpans.value = [selected - 1];
-    selectionAnchor.value = selected - 1;
-  } else {
-    const targetEnd = spans.value[last + 1].index + spans.value[last + 1].commands.length;
-    list.splice(targetEnd - block.length, 0, ...block);
-    selectedSpans.value = [selected + 1];
-    selectionAnchor.value = selected + 1;
-  }
-  commitList(list);
+  const result = moveCommandSpanBlock(commandList.value, spans.value, selected, offset);
+  if (!result) return;
+  selectedSpans.value = [selected + offset];
+  selectionAnchor.value = selected + offset;
+  commitList(result.list);
 }
 
 function commitCommand(payload: { commands: MvCommand[]; editSpan: number | null; insertSpan: number | null }): void {

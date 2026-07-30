@@ -1969,6 +1969,7 @@ const zhCN = {
     'eventcmd.charImage': '角色图',
     'eventcmd.battlerImage': '战斗图',
     'eventcmd.vehicle': '交通工具',
+    'eventcmd.resizeHandle': '调整窗口大小',
     'eventcmd.comment': '注释',
     'eventcmd.target': '目标',
     'eventcmd.editRoute': '编辑路线...',

@@ -296,6 +296,50 @@ export function commandInsertIndent(list: MvCommand[], rawIndex: number): number
   return indent;
 }
 
+export interface CommandBlockMove {
+  list: MvCommand[];
+  headIndex: number;
+}
+
+/** Move the full structure block containing `selectedIndex` one span up or down. */
+export function moveCommandSpanBlock(list: MvCommand[], spans: MvCommandSpan[], selectedIndex: number, offset: -1 | 1): CommandBlockMove | null {
+  const expanded = commandBlockSpanIndices(spans, [selectedIndex]);
+  const first = expanded[0];
+  const last = expanded[expanded.length - 1];
+  if (first == null || last == null) return null;
+  if (offset < 0 && first <= 0) return null;
+  if (offset > 0 && last >= spans.length - 1) return null;
+  const next = clone(list);
+  const start = spans[first].index;
+  const end = spans[last].index + spans[last].commands.length;
+  const block = next.splice(start, end - start);
+  const headIndex = offset < 0 ? spans[first - 1].index : spans[last + 1].index + spans[last + 1].commands.length - block.length;
+  next.splice(headIndex, 0, ...block);
+  return { list: next, headIndex };
+}
+
+/** Drop the block containing `sourceIndex` before span `targetIndex` (`spans.length` drops at the end). */
+export function dropCommandSpanBlock(list: MvCommand[], spans: MvCommandSpan[], sourceIndex: number, targetIndex: number): CommandBlockMove | null {
+  const expanded = commandBlockSpanIndices(spans, [sourceIndex]);
+  const first = expanded[0];
+  const last = expanded[expanded.length - 1];
+  if (first == null || last == null) return null;
+  // Dropping inside (or right around) the block itself is a no-op.
+  if (targetIndex >= first && targetIndex <= last + 1) return null;
+  const next = clone(list);
+  const start = spans[first].index;
+  const end = spans[last].index + spans[last].commands.length;
+  const block = next.splice(start, end - start);
+  let headIndex: number;
+  if (targetIndex >= spans.length) headIndex = next.length && next[next.length - 1].code === 0 ? next.length - 1 : next.length;
+  else headIndex = targetIndex > last ? spans[targetIndex].index - block.length : spans[targetIndex].index;
+  // Re-anchor indent to the landing slot so cross-level drags stay structurally valid.
+  const delta = commandInsertIndent(next, headIndex) - block[0].indent;
+  if (delta) for (const command of block) command.indent = Math.max(0, command.indent + delta);
+  next.splice(headIndex, 0, ...block);
+  return { list: next, headIndex };
+}
+
 // ---- Command display ----
 
 export interface CommandDisplayResult {

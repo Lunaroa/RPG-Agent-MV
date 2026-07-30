@@ -348,6 +348,26 @@
                 <label class="check"><input :checked="boolParam(3,true)" type="checkbox" @change="setParam(3,checkedValue($event))" />{{ t('eventcmd.waitForCompletion') }}</label>
               </div>
             </template>
+            <template v-else-if="draft.code === 322">
+              <label class="var-cmd-field">
+                <span class="text-cmd-label">{{ t('eventcmd.actor') }}</span>
+                <select :value="numberParam(0,1)" @change="setParam(0,numberValue($event))"><option v-for="entry in catalog?.actors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+              </label>
+              <div class="img-cell-row">
+                <div class="img-cell"><span>{{ t('eventcmd.face') }}</span><canvas ref="faceCellRef" class="face-preview img-cell-canvas" width="96" height="96" @click="openActorImagePicker('face')" /></div>
+                <div class="img-cell"><span>{{ t('eventcmd.charImage') }}</span><canvas ref="charCellRef" class="face-preview img-cell-canvas" width="96" height="96" @click="openActorImagePicker('character')" /></div>
+                <div class="img-cell"><span>{{ t('eventcmd.battlerImage') }}</span><canvas ref="battlerCellRef" class="face-preview img-cell-canvas" width="96" height="96" @click="openActorImagePicker('battler')" /></div>
+              </div>
+            </template>
+            <template v-else-if="draft.code === 323">
+              <label class="var-cmd-field">
+                <span class="text-cmd-label">{{ t('eventcmd.vehicle') }}</span>
+                <select :value="numberParam(0)" @change="setParam(0,numberValue($event))"><option :value="0">{{ t('eventcmd.vehicleBoat') }}</option><option :value="1">{{ t('eventcmd.vehicleShip') }}</option><option :value="2">{{ t('eventcmd.vehicleAirship') }}</option></select>
+              </label>
+              <div class="img-cell-row">
+                <div class="img-cell"><span>{{ t('eventcmd.charImage') }}</span><canvas ref="charCellRef" class="face-preview img-cell-canvas" width="96" height="96" @click="openVehicleImagePicker" /></div>
+              </div>
+            </template>
             <template v-else-if="draft.code === 121 || draft.code === 122">
               <div class="cond-cmd-layout">
                 <fieldset class="cond-group">
@@ -549,7 +569,7 @@
       </section>
     </div>
   </teleport>
-  <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="loadImage" @commit="setTextFace" />
+  <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="loadImage" @commit="commitImageSelection" />
   <MoveRouteDialog ref="routeDialog" :preview-x="eventX" :preview-y="eventY" @commit="setRoute" />
   <MessagePreviewDialog ref="messagePreview" :catalog="catalog" :load-image="loadImage" />
   <ScrollTextPreviewDialog ref="scrollPreview" :catalog="catalog" />
@@ -570,6 +590,7 @@ import { commandPages, applyCommandIndent, commandDefinition, commandTemplate, n
 import { clone, defaultMoveRoute, type MvCommand, type MvMoveRoute } from '../../composables/useEventEditor';
 import { localizeCommandGroups, localizeCommandLabel } from '../../utils/eventCommandLocalization';
 import { mvFaceSourceRect } from '../../utils/rmmvFace';
+import { isBigCharacterName } from '../../composables/useMapRenderer';
 import { formatSystemNamedEntryId } from '../../utils/systemNamedEntryRanges';
 import EventCommandFields from './EventCommandFields.vue';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
@@ -595,6 +616,10 @@ const scrollPreview=ref<InstanceType<typeof ScrollTextPreviewDialog>>(),namedEnt
 const shopGoodsDialog=ref<InstanceType<typeof ShopGoodsDialog>>(),shopGoods=ref<ShopGoodsEntry[]>([]),shopGoodsIndex=ref<number|null>(null),shopGoodsEditIndex=ref<number|null>(null);
 // RM-native Conditional Branch: four tabs of radio rows; switching a type resets its params.
 const condTab=ref(1),createElseBranch=ref(false);
+// Change Actor/Vehicle Images (322/323): clickable preview cells; MZ stores the face slots first.
+const faceCellRef=ref<HTMLCanvasElement>(),charCellRef=ref<HTMLCanvasElement>(),battlerCellRef=ref<HTMLCanvasElement>();
+const pendingImageTarget=ref<{nameIndex:number;indexIndex?:number}|null>(null);
+const actorImageSlots=computed(()=>currentEngine.value==='rpg-maker-mz'?{face:1,faceIndex:2,character:3,characterIndex:4,battler:5}:{character:1,characterIndex:2,face:3,faceIndex:4,battler:5});
 // Control Switches/Variables: single mode mirrors start id into the end id.
 // Tone/color commands keep an RGBA-like array inside a single parameter slot.
 const toneChannels=computed(()=>[{label:t('eventcmd.colorRed'),min:-255,max:255},{label:t('eventcmd.colorGreen'),min:-255,max:255},{label:t('eventcmd.colorBlue'),min:-255,max:255},{label:t('eventcmd.colorGray'),min:0,max:255}]);
@@ -709,8 +734,8 @@ onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
 function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());void loadPluginCommandMetadata();}
-function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
-function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();if(draft.value?.code===101)void nextTick(paintFacePreview);}
+function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
 function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];}
 function selectPickerPage(page:number){pickerPage.value=page;pickerQuery.value='';}
 function pickerOptionId(code:number){return `event-command-option-${code}`;}
@@ -859,12 +884,21 @@ function commitShopGoods(entry:ShopGoodsEntry){
   else{shopGoods.value[shopGoodsEditIndex.value]=entry;shopGoodsIndex.value=shopGoodsEditIndex.value;}
   shopGoodsEditIndex.value=null;
 }
-function openTextFacePicker(){imagePicker.value?.open({asset:'faces',mode:'face',title:t('eventcmd.chooseFace'),name:stringParam(0),index:numberParam(1)});}
+function openTextFacePicker(){pendingImageTarget.value={nameIndex:0,indexIndex:1};imagePicker.value?.open({asset:'faces',mode:'face',title:t('eventcmd.chooseFace'),name:stringParam(0),index:numberParam(1)});}
+function openActorImagePicker(slot:'face'|'character'|'battler'){const s=actorImageSlots.value;if(slot==='face'){pendingImageTarget.value={nameIndex:s.face,indexIndex:s.faceIndex};imagePicker.value?.open({asset:'faces',mode:'face',title:t('eventcmd.chooseFace'),name:stringParam(s.face),index:numberParam(s.faceIndex)});}else if(slot==='character'){pendingImageTarget.value={nameIndex:s.character,indexIndex:s.characterIndex};imagePicker.value?.open({asset:'characters',mode:'character',name:stringParam(s.character),index:numberParam(s.characterIndex)});}else{pendingImageTarget.value={nameIndex:s.battler};imagePicker.value?.open({asset:'svActors',mode:'plain',name:stringParam(s.battler)});}}
+function openVehicleImagePicker(){pendingImageTarget.value={nameIndex:1,indexIndex:2};imagePicker.value?.open({asset:'characters',mode:'character',name:stringParam(1),index:numberParam(2)});}
+async function assetImage(kind:'faces'|'characters'|'svActors',name:string){if(!name)return null;const asset=props.catalog?.assets[kind].find((entry)=>entry.name===name);return asset?await props.loadImage(asset.url):null;}
+function cellContext(el?:HTMLCanvasElement){if(!el)return null;const ctx=el.getContext('2d');if(!ctx)return null;ctx.clearRect(0,0,el.width,el.height);ctx.imageSmoothingEnabled=false;return ctx;}
+async function paintFaceCell(){const el=faceCellRef.value,ctx=cellContext(el);if(!el||!ctx)return;const s=actorImageSlots.value;const img=await assetImage('faces',stringParam(s.face));if(!img)return;const source=mvFaceSourceRect(numberParam(s.faceIndex),faceSize.value);ctx.drawImage(img,source.sx,source.sy,source.sw,source.sh,0,0,el.width,el.height);}
+// Standing frame: middle pattern facing down, drawn at the largest integer scale that fits.
+async function paintCharCell(){const el=charCellRef.value,ctx=cellContext(el);if(!el||!ctx)return;const is323=draft.value?.code===323;const s=actorImageSlots.value;const name=stringParam(is323?1:s.character),index=numberParam(is323?2:s.characterIndex);const img=await assetImage('characters',name);if(!img)return;const big=isBigCharacterName(name);const pw=img.naturalWidth/(big?3:12),ph=img.naturalHeight/(big?4:8);if(!(pw>0&&ph>0))return;const sx=Math.floor(((big?0:(index%4)*3)+1)*pw),sy=Math.floor((big?0:Math.floor(index/4)*4)*ph),sw=Math.floor(pw),sh=Math.floor(ph);const scale=Math.max(1,Math.floor(Math.min(el.width/sw,el.height/sh)));ctx.drawImage(img,sx,sy,sw,sh,Math.floor((el.width-sw*scale)/2),Math.floor((el.height-sh*scale)/2),sw*scale,sh*scale);}
+async function paintBattlerCell(){const el=battlerCellRef.value,ctx=cellContext(el);if(!el||!ctx)return;const img=await assetImage('svActors',stringParam(actorImageSlots.value.battler));if(!img)return;const sw=Math.floor(img.naturalWidth/9),sh=Math.floor(img.naturalHeight/6);if(!(sw>0&&sh>0))return;const scale=Math.max(1,Math.floor(Math.min(el.width/sw,el.height/sh)));ctx.drawImage(img,0,0,sw,sh,Math.floor((el.width-sw*scale)/2),Math.floor((el.height-sh*scale)/2),sw*scale,sh*scale);}
+async function paintImagePreviews(){if(draft.value?.code===101){await paintFacePreview();return;}if(draft.value?.code===322){await paintFaceCell();await paintCharCell();await paintBattlerCell();return;}if(draft.value?.code===323)await paintCharCell();}
 function variableDisplay(id:number){return namedEntryDisplay('variable',id);}
 function openVariableSelector(index:number){openNamedEntry('variable',index);}
 function commitNamedEntrySelection(payload:{kind:string;id:number}){if(payload.kind!==pendingNamedEntry.value.kind)return;setParam(pendingNamedEntry.value.index,payload.id);if(pendingNamedEntry.value.mirror!=null)setParam(pendingNamedEntry.value.mirror,payload.id);}
 function openScrollPreview(){if(!draft.value)return;scrollPreview.value?.open({lines:multiText.value.split(/\r?\n/),speed:numberParam(0,2)});}
-function setTextFace(selection:{name:string;index:number}){setParam(0,selection.name);setParam(1,selection.name?selection.index:0);void nextTick(paintFacePreview);}
+function commitImageSelection(selection:{name:string;index:number}){const target=pendingImageTarget.value;if(!target)return;setParam(target.nameIndex,selection.name);if(target.indexIndex!=null)setParam(target.indexIndex,selection.name?selection.index:0);void nextTick(paintImagePreviews);}
 function openMessagePreview(){if(!draft.value)return;messagePreview.value?.open({faceName:stringParam(0),faceIndex:numberParam(1),background:numberParam(2),positionType:numberParam(3,2),lines:multiText.value.split(/\r?\n/).slice(0,4)});}
 // Empty/missing faces leave the canvas transparent so the CSS checkerboard shows through.
 async function paintFacePreview(){const el=facePreviewRef.value;if(!el)return;const w=el.width,h=el.height,ctx=el.getContext('2d')!;ctx.clearRect(0,0,w,h);ctx.imageSmoothingEnabled=false;const faceName=stringParam(0);if(!faceName)return;const asset=props.catalog?.assets.faces.find(e=>e.name===faceName);if(!asset)return;const img=await props.loadImage(asset.url);if(!img)return;const source=mvFaceSourceRect(numberParam(1),faceSize.value);ctx.drawImage(img,source.sx,source.sy,source.sw,source.sh,0,0,w,h);}
@@ -1006,4 +1040,5 @@ defineExpose({openPicker,openEditor});
 .cond-cmd-layout{width:100%;display:grid;gap:8px}.cond-tabs{display:flex;gap:2px}.cond-tabs button{min-width:36px}.cond-tab{display:grid;gap:6px}.cond-row{display:flex;align-items:center;gap:8px}.cond-row.cond-sub{padding-left:26px}.cond-pick{flex:0 0 128px;display:flex;align-items:center;gap:5px;color:var(--app-ink);font-size:12px}.cond-sub .cond-pick{flex-basis:102px}.cond-main{flex:1;min-width:0}.cond-inline{display:flex;align-items:center;gap:5px}.cond-inline input{width:64px}.cond-unit{color:var(--app-ink-soft);font-size:12px}.cond-check{flex:0 0 auto;gap:5px}.cond-else{width:100%;margin-top:4px;gap:5px}
 .cond-group{margin:0;padding:8px 10px 10px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);display:grid;gap:6px}.cond-group legend{padding:0 4px;color:var(--app-ink-soft);font-size:12px}.cond-radios{flex-wrap:wrap;gap:12px}.cond-radios label{display:flex;align-items:center;gap:5px;color:var(--app-ink);font-size:12px}.gp-gamedata select{flex:1;min-width:0}.gp-gamedata input{width:72px}
 .tone-group{width:100%}.dur-row{width:100%;display:flex;align-items:center;gap:8px}.dur-row input[type=number]{width:72px}.dur-row .check{margin-left:12px;gap:5px}
+.img-cell-row{width:100%;display:flex;gap:14px}.img-cell{display:grid;gap:4px;justify-items:start;color:var(--app-ink-soft);font-size:12px}.img-cell-canvas{width:96px;height:96px}
 </style>

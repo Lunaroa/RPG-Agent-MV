@@ -1610,6 +1610,15 @@ function selectGridItemAt(index: number): void {
     applyFileSelection(selectProjectAssetExclusive(item.entry.id))
   }
   scrollGridIndexIntoView(index)
+  // Roving focus: virtualization unmounts the previously focused cell, which would drop
+  // keyboard events to <body>. Keep focus on the new cell, or on the grid host as fallback.
+  void nextTick(() => {
+    const host = gridHost.value
+    if (!host) return
+    const cell = host.querySelector<HTMLElement>(`[data-grid-index="${index}"]`)
+    if (cell) cell.focus({ preventScroll: true })
+    else host.focus({ preventScroll: true })
+  })
 }
 
 /** Keep the keyboard-focused item visible. Icon cells are virtualized, so scroll by layout math, not DOM. */
@@ -3618,6 +3627,7 @@ watch(gridHost, (el, previous) => {
                   ? isFolderSelected(cell.item.id)
                   : isFileSelected(cell.item.entry.id),
               }"
+              :data-grid-index="cell.index"
               :data-ui-id="cell.item.kind === 'folder'
                 ? `project-assets-folder-${cell.item.id}`
                 : `project-assets-cell-${cell.item.entry.id}`"

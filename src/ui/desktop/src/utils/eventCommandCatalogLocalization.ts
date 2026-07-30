@@ -31,6 +31,7 @@ export interface CommandField {
   min?: number;
   max?: number;
   visibleWhen?: CommandFieldVisibility | CommandFieldVisibility[];
+  enabledWhen?: CommandFieldVisibility | CommandFieldVisibility[];
 }
 
 export interface CommandDefinition {
@@ -52,6 +53,7 @@ const variableOperandType: [unknown, string][] = [[0, '常量'], [1, '变量'], 
 const actorTarget: [unknown, string][] = [[0, '固定角色'], [1, '队伍角色']];
 const direction: [unknown, string][] = [[0, '保持'], [2, '下'], [4, '左'], [6, '右'], [8, '上']];
 const vehicle: [unknown, string][] = [[0, '小船'], [1, '大船'], [2, '飞艇']];
+const scrollSpeeds: [unknown, string][] = [[1, '1: x8 慢'], [2, '2: x4 慢'], [3, '3: x2 慢'], [4, '4: 标准'], [5, '5: x2 快'], [6, '6: x4 快']];
 const locationOperand: [unknown, string][] = [[0, '直接指定'], [1, '变量指定']];
 const pictureOrigin: [unknown, string][] = [[0, '左上'], [1, '中心']];
 const blendMode: [unknown, string][] = [[0, '普通'], [1, '加法'], [2, '乘法'], [3, '滤色']];
@@ -150,7 +152,7 @@ const PAGE_2: { group: string; items: Def[] }[] = [
     { code: 201, kind: 'transfer', label: '场所移动', fields: transferPlayerFields() },
     { code: 202, kind: 'vehicleLocation', label: '设置交通工具位置', fields: vehicleLocationFields() },
     { code: 203, kind: 'eventLocation', label: '设置事件位置', fields: eventLocationFields() },
-    { code: 204, kind: 'scrollMap', label: '滚动地图', fields: [{ label: '方向', path: [0], kind: 'select', options: direction.filter(([value]) => value !== 0) }, { label: '距离', path: [1], kind: 'number', min: 1 }, { label: '速度', path: [2], kind: 'number', min: 1, max: 6 }, { label: '等待结束', path: [3], kind: 'boolean' }] },
+    { code: 204, kind: 'scrollMap', label: '滚动地图', fields: [{ label: '方向', path: [0], kind: 'select', options: direction.filter(([value]) => value !== 0) }, { label: '距离', path: [1], kind: 'number', min: 1 }, { label: '速度', path: [2], kind: 'select', options: scrollSpeeds }, { label: '等待结束', path: [3], kind: 'boolean' }] },
     { code: 205, kind: 'moveRoute', label: '设置移动路线', fields: [{ label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true } }] },
     { code: 206, kind: 'vehicle', label: '上下交通工具', fields: [] },
   ] },
@@ -159,7 +161,7 @@ const PAGE_2: { group: string; items: Def[] }[] = [
     { code: 216, kind: 'followers', label: '更改队列行进', fields: [{ label: '队列行进', path: [0], kind: 'select', options: onOff }] },
     { code: 217, kind: 'gatherFollowers', label: '集合队列成员', fields: [] },
     { code: 212, kind: 'animation', label: '显示动画', fields: [{ label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true } }, { label: '动画', path: [1], kind: 'database', catalog: 'animations' }, { label: '等待结束', path: [2], kind: 'boolean' }] },
-    { code: 213, kind: 'balloon', label: '显示气泡图标', fields: [{ label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true } }, { label: '气泡', path: [1], kind: 'select', options: [[1, '惊叹'], [2, '问号'], [3, '音符'], [4, '爱心'], [5, '愤怒'], [6, '汗'], [7, '纠结'], [8, '沉默'], [9, '灯泡'], [10, 'Zzz']] }, { label: '等待结束', path: [2], kind: 'boolean' }] },
+    { code: 213, kind: 'balloon', label: '显示气泡图标', fields: [{ label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true } }, { label: '气泡', path: [1], kind: 'select', options: [[1, '惊叹'], [2, '问号'], [3, '音符'], [4, '爱心'], [5, '愤怒'], [6, '汗'], [7, '纠结'], [8, '沉默'], [9, '灯泡'], [10, 'Zzz'], [11, '自定义 1'], [12, '自定义 2'], [13, '自定义 3'], [14, '自定义 4'], [15, '自定义 5']] }, { label: '等待结束', path: [2], kind: 'boolean' }] },
     { code: 214, kind: 'eraseEvent', label: '暂时消除事件', fields: [] },
   ] },
   { group: '图片', items: [
@@ -221,7 +223,7 @@ const PAGE_3: { group: string; items: Def[] }[] = [
     { code: 281, kind: 'mapName', label: '更改地图名称显示', fields: [{ label: '地图名称', path: [0], kind: 'select', options: [[0, '显示'], [1, '隐藏']] }] },
     { code: 282, kind: 'tileset', label: '更改图块组', fields: [{ label: '图块组', path: [0], kind: 'database', catalog: 'tilesets' }] },
     { code: 283, kind: 'battleback', label: '更改战斗背景', fields: [{ label: '背景 1', path: [0], kind: 'asset', asset: 'battlebacks1' }, { label: '背景 2', path: [1], kind: 'asset', asset: 'battlebacks2' }] },
-    { code: 284, kind: 'parallax', label: '更改远景', fields: [{ label: '远景', path: [0], kind: 'asset', asset: 'parallaxes' }, { label: '横向循环', path: [1], kind: 'boolean' }, { label: '纵向循环', path: [2], kind: 'boolean' }, { label: '横向滚动', path: [3], kind: 'number' }, { label: '纵向滚动', path: [4], kind: 'number' }] },
+    { code: 284, kind: 'parallax', label: '更改远景', fields: [{ label: '远景', path: [0], kind: 'asset', asset: 'parallaxes' }, { label: '横向循环', path: [1], kind: 'boolean' }, { label: '纵向循环', path: [2], kind: 'boolean' }, { label: '横向滚动', path: [3], kind: 'number', enabledWhen: when([1], true) }, { label: '纵向滚动', path: [4], kind: 'number', enabledWhen: when([2], true) }] },
     { code: 285, kind: 'locationInfo', label: '获取位置信息', fields: locationInfoFields() },
   ] },
   { group: '战斗', items: [

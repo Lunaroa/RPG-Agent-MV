@@ -2,20 +2,20 @@
   <div v-if="definition" class="command-fields">
     <label v-for="field in visibleFields" :key="field.label + field.path.join('.')">
       <span>{{ field.label }}</span>
-      <input v-if="field.kind === 'text'" :value="displayValue(field)" @input="setField(field, inputValue($event))" />
+      <input v-if="field.kind === 'text'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @input="setField(field, inputValue($event))" />
       <textarea v-else-if="field.kind === 'multiline'" :value="displayValue(field)" rows="4" @input="setField(field, inputValue($event))" />
-      <input v-else-if="field.kind === 'number'" :value="displayValue(field)" type="number" :min="field.min" :max="field.max" @input="setField(field, numberValue($event))" />
-      <input v-else-if="field.kind === 'boolean'" :checked="Boolean(fieldValue(field))" type="checkbox" @change="setField(field, checkedValue($event))" />
-      <select v-else-if="field.kind === 'select'" :value="displayValue(field)" @change="setField(field, optionValue(field, inputValue($event)))">
+      <input v-else-if="field.kind === 'number'" :value="displayValue(field)" type="number" :min="field.min" :max="field.max" :disabled="fieldDisabled(field)" @input="setField(field, numberValue($event))" />
+      <input v-else-if="field.kind === 'boolean'" :checked="Boolean(fieldValue(field))" type="checkbox" :disabled="fieldDisabled(field)" @change="setField(field, checkedValue($event))" />
+      <select v-else-if="field.kind === 'select'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @change="setField(field, optionValue(field, inputValue($event)))">
         <option v-for="[value, label] in field.options || []" :key="String(value)" :value="String(value)">{{ label }}</option>
       </select>
-      <select v-else-if="field.kind === 'eventTarget'" :value="displayValue(field)" @change="setField(field, numberValue($event))">
+      <select v-else-if="field.kind === 'eventTarget'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @change="setField(field, numberValue($event))">
         <option v-for="[value, label] in eventTargetOptions(field)" :key="value" :value="value">{{ label }}</option>
       </select>
-      <select v-else-if="field.kind === 'database'" :value="displayValue(field)" @change="setField(field, numberValue($event))">
+      <select v-else-if="field.kind === 'database'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @change="setField(field, numberValue($event))">
         <option v-for="entry in databaseOptions(field)" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4, '0') }} {{ entry.name }}</option>
       </select>
-      <select v-else-if="field.kind === 'equipItem'" :value="displayValue(field)" @change="setField(field, numberValue($event))">
+      <select v-else-if="field.kind === 'equipItem'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @change="setField(field, numberValue($event))">
         <option :value="0">{{ t('cmdFields.none') }}</option>
         <option v-for="entry in equipItemOptions()" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4, '0') }} {{ entry.name }}</option>
       </select>
@@ -25,7 +25,7 @@
       <button v-else-if="isAudioAssetField(field)" type="button" class="asset-picker-button" @click="openAudioField(field)">
         {{ displayValue(field) || t('imgPicker.none') }}
       </button>
-      <select v-else-if="field.kind === 'asset'" :value="displayValue(field)" @change="setField(field, inputValue($event))">
+      <select v-else-if="field.kind === 'asset'" :value="displayValue(field)" :size="field.asset === 'movies' ? 8 : undefined" :disabled="fieldDisabled(field)" @change="setField(field, inputValue($event))">
         <option value="">{{ t('imgPicker.none') }}</option>
         <option v-for="asset in assetOptions(field)" :key="asset.fileName" :value="asset.name">{{ asset.name }}</option>
       </select>
@@ -143,6 +143,11 @@ function matchesVisibility(condition: CommandFieldVisibility) {
   const actual = fieldValue({ label: '', path: condition.path, kind: 'text' });
   const expected = Array.isArray(condition.equals) ? condition.equals : [condition.equals];
   return expected.some((value) => value === actual || String(value) === String(actual));
+}
+// RM greys out gated controls (e.g. parallax scroll without looping) instead of hiding them.
+function fieldDisabled(field: CommandField) {
+  const conditions = Array.isArray(field.enabledWhen) ? field.enabledWhen : field.enabledWhen ? [field.enabledWhen] : [];
+  return !conditions.every(matchesVisibility);
 }
 function setPath(path: CommandField['path'], value: unknown) {
   let target: unknown[] | Record<string, unknown> = props.command.parameters;

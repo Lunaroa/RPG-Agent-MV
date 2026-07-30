@@ -256,6 +256,22 @@
                 <label class="check"><input :checked="boolParam(4)" type="checkbox" @change="setParam(4, checkedValue($event))" />{{ t('eventcmd.shopPurchaseOnly') }}</label>
               </div>
             </template>
+            <template v-else-if="draft.code === 124">
+              <fieldset class="cond-group">
+                <legend>{{ t('eventcmd.operationTitle') }}</legend>
+                <div class="cond-row cond-radios">
+                  <label><input type="radio" name="timer-op" :checked="numberParam(0)===0" @change="setParam(0,0)" />{{ t('eventcmd.timerStart') }}</label>
+                  <label><input type="radio" name="timer-op" :checked="numberParam(0)===1" @change="setParam(0,1)" />{{ t('eventcmd.timerStop') }}</label>
+                </div>
+              </fieldset>
+              <fieldset class="cond-group">
+                <legend>{{ t('eventcmd.timeTitle') }}</legend>
+                <div class="cond-row cond-inline">
+                  <input :value="Math.floor(numberParam(1,60)/60)" type="number" min="0" :disabled="numberParam(0)!==0" @input="setCondTimer(numberValue($event),numberParam(1,60)%60)" /><span class="cond-unit">{{ t('eventcmd.timerMin') }}</span>
+                  <input :value="numberParam(1,60)%60" type="number" min="0" max="59" :disabled="numberParam(0)!==0" @input="setCondTimer(Math.floor(numberParam(1,60)/60),numberValue($event))" /><span class="cond-unit">{{ t('eventcmd.timerSec') }}</span>
+                </div>
+              </fieldset>
+            </template>
             <template v-else-if="draft.code === 223">
               <fieldset class="cond-group tone-group">
                 <legend>{{ t('eventcmd.toneTitle') }}</legend>

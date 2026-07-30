@@ -224,6 +224,7 @@
       :current-events="currentEvents"
       @close="closeEventEditor"
       @save="saveEvent"
+      @catalog-changed="loadEditorCatalog"
     />
     <EventTextPasteDialog ref="eventTextPasteDialog" @confirm="applyPastedEventText" />
     <EventTextPasteDialog ref="eventTextPasteDialog" @confirm="applyPastedEventText" />

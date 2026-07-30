@@ -137,7 +137,7 @@
   </teleport>
   <EventImagePickerDialog ref="imagePicker" :catalog="catalog" :tileset-images="tilesetImages" :load-image="loadImage" @commit="setImage" />
   <MoveRouteDialog ref="routeDialog" :preview-x="draft?.x" :preview-y="draft?.y" @commit="setPageRoute" />
-  <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="loadImage" :event-x="draft?.x" :event-y="draft?.y" :current-events="currentEvents" @commit="commitCommand" />
+  <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="loadImage" :event-x="draft?.x" :event-y="draft?.y" :current-events="currentEvents" @commit="commitCommand" @catalog-changed="emit('catalog-changed')" />
   <EventTextPasteDialog ref="textPasteDialog" @confirm="applyPastedCommandsText" />
 </template>
 
@@ -161,7 +161,7 @@ import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer'
 import { eventEditorText } from '../../utils/eventEditorLocalization';
 import type { EditorEventListItem } from './editorTypes';
 const props = withDefaults(defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null; currentEvents?: EditorEventListItem[] }>(), { currentEvents: () => [] });
-const emit = defineEmits<{ close: []; save: [closeAfterSave: boolean] }>();
+const emit = defineEmits<{ close: []; save: [closeAfterSave: boolean]; 'catalog-changed': [] }>();
 const { language, t } = useI18n();
 const projectStore = useProjectStore();
 const eventEditorZ = String(LAYER_Z.eventEditor);

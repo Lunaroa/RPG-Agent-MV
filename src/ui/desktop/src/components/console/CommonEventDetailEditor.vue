@@ -23,7 +23,7 @@ const props = defineProps<{
   loadImage: (url: string) => Promise<HTMLImageElement | null>;
 }>();
 
-const emit = defineEmits<{ 'update:modelValue': [value: unknown] }>();
+const emit = defineEmits<{ 'update:modelValue': [value: unknown]; 'catalog-changed': [] }>();
 const { t } = useI18n();
 
 const draft = computed<CommonEventDraft>(() => {
@@ -98,6 +98,7 @@ function updateList(list: MvCommand[]) {
         :load-image="loadImage"
         :empty-text="t('commonEvent.emptyHint')"
         @update:model-value="updateList"
+        @catalog-changed="emit('catalog-changed')"
       />
     </section>
   </div>

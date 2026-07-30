@@ -229,6 +229,12 @@ const {
   resetCatalog,
 } = usePmEventEditor(() => projectStore.currentProject, () => loadData());
 
+// Variable/switch selector edits (rename, capacity) must refetch the shared catalog.
+function reloadEditorCatalog() {
+  resetCatalog();
+  void ensureCatalog();
+}
+
 const searchQuery = ref('');
 const selectedDbGroup = ref('Actors');
 const showUnnamed = ref(false);
@@ -1392,6 +1398,7 @@ function detailTitle(): string {
               :catalog="editorCatalog"
               :load-image="loadImage"
               @update:model-value="updateDetailDraft"
+              @catalog-changed="reloadEditorCatalog"
             />
           </div>
           <div
@@ -1415,6 +1422,7 @@ function detailTitle(): string {
               @update:battleback1-name="temporaryBattleback1Name = $event"
               @update:battleback2-name="temporaryBattleback2Name = $event"
               @request-battle-test="openBattleTestSetup"
+              @catalog-changed="reloadEditorCatalog"
             />
           </div>
           <div

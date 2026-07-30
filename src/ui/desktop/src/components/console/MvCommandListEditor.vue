@@ -34,7 +34,7 @@ const props = withDefaults(defineProps<{
   emptyText: '',
 });
 
-const emit = defineEmits<{ 'update:modelValue': [value: MvCommand[]] }>();
+const emit = defineEmits<{ 'update:modelValue': [value: MvCommand[]]; 'catalog-changed': [] }>();
 const { language, t } = useI18n();
 
 const commandDialog = ref<InstanceType<typeof EventCommandDialog> | null>(null);
@@ -220,7 +220,7 @@ function commitCommand(payload: { commands: MvCommand[]; editSpan: number | null
         <span class="cmd-line">◆</span>
       </button>
     </div>
-    <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="imageLoader" @commit="commitCommand" />
+    <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="imageLoader" @commit="commitCommand" @catalog-changed="emit('catalog-changed')" />
   </section>
 </template>
 

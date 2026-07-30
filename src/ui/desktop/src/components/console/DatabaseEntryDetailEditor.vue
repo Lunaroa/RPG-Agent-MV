@@ -143,6 +143,7 @@ const emit = defineEmits<{
   'update:battleback1Name': [value: string];
   'update:battleback2Name': [value: string];
   'requestBattleTest': [];
+  'catalog-changed': [];
 }>();
 const { language, t } = useI18n();
 const workspaceStore = useWorkspaceStore();
@@ -2351,6 +2352,7 @@ function updateSound(index: number, key: string, value: unknown): void {
                   :load-image="loadImage"
                   :empty-text="t('db.emptyBattleCommands')"
                   @update:model-value="updateTroopPageCommands(index, $event)"
+                  @catalog-changed="emit('catalog-changed')"
                 />
               </div>
             </article>

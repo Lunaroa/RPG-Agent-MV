@@ -86,28 +86,30 @@
             </aside>
             <section class="ev-commands" :class="{ locked: currentPageLocked }">
               <strong class="ev-cmd-title">{{ t('commonEvent.contents') }}</strong>
-              <div class="command-list" @contextmenu.prevent="openCommandContext($event, null)">
+              <div ref="listHost" class="command-list" @scroll.passive="onListScroll" @contextmenu.prevent="openCommandContext($event, null)">
                 <div v-if="!spans.length" class="command-empty">
                   {{ t('eventEditorDialog.emptyHint') }}
                 </div>
+                <div class="cmd-virtual-pad" :style="{ height: `${virtualWindow.top}px` }" />
                 <button
-                  v-for="(view, index) in spanViews"
-                  :key="view.key"
+                  v-for="row in virtualWindow.rows"
+                  :key="row.view.key"
                   type="button"
                   :disabled="currentPageLocked"
                   class="cmd-row"
-                  :class="{ selected: selectedSpanSet.has(index), even: index % 2 === 0, 'drop-before': dropIndicator === index, [`tone-${view.tone}`]: true }"
-                  :style="{ '--cmd-indent': `${Math.min(view.indent, 8) * 18}px` }"
-                  :aria-pressed="selectedSpanSet.has(index)"
+                  :class="{ selected: selectedSpanSet.has(row.index), even: row.index % 2 === 0, 'drop-before': dropIndicator === row.index, [`tone-${row.view.tone}`]: true }"
+                  :style="{ '--cmd-indent': `${Math.min(row.view.indent, 8) * 18}px` }"
+                  :aria-pressed="selectedSpanSet.has(row.index)"
                   :draggable="!currentPageLocked"
-                  @click="selectCommand(index, $event)"
-                  @dblclick="openCommand(index)"
-                  @contextmenu.stop.prevent="openCommandContext($event, index)"
-                  @dragstart="onRowDragStart(index, $event)"
-                  @dragover.prevent="onRowDragOver(index, $event)"
+                  @click="selectCommand(row.index, $event)"
+                  @dblclick="openCommand(row.index)"
+                  @contextmenu.stop.prevent="openCommandContext($event, row.index)"
+                  @dragstart="onRowDragStart(row.index, $event)"
+                  @dragover.prevent="onRowDragOver(row.index, $event)"
                   @drop.prevent="onRowDrop"
                   @dragend="resetRowDrag"
-                ><span class="cmd-line cmd-head">{{ view.head }}</span><span v-for="(line, lineIndex) in view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span></button>
+                ><span class="cmd-line cmd-head">{{ row.view.head }}</span><span v-for="(line, lineIndex) in row.view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span></button>
+                <div class="cmd-virtual-pad" :style="{ height: `${virtualWindow.bottom}px` }" />
                 <button type="button" class="cmd-row terminator" :disabled="currentPageLocked" :class="{ even: spans.length % 2 === 0, 'drop-before': dropIndicator === spans.length }" @click="clearCommandSelection" @dblclick="openCommandPicker" @contextmenu.stop.prevent="openCommandContext($event, null)" @dragover.prevent="onTerminatorDragOver" @drop.prevent="onRowDrop"><span class="cmd-line">◆</span></button>
               </div>
             </section>
@@ -163,7 +165,7 @@ import EventCommandDialog from './EventCommandDialog.vue';
 import EventImagePickerDialog from './EventImagePickerDialog.vue';
 import EventTextPasteDialog from './EventTextPasteDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
-import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, dropCommandSpanBlock, editableCommandSpans, ensureTerminator, imageSummary, moveCommandSpanBlock, type MvCommand, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
+import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, dropCommandSpanBlock, editableCommandSpans, ensureTerminator, imageSummary, moveCommandSpanBlock, type MvCommand, type MvCommandSpan, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
 import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
 import type { EditorEventListItem } from './editorTypes';
@@ -176,8 +178,13 @@ const dirty = ref(false), closing = ref(false), pageIndex = ref(0), selectedSpan
 const pageIdentities = ref<Array<StoryEventPageOverview | undefined>>([]);
 const modalRef = ref<HTMLElement>(), previewCanvas = ref<HTMLCanvasElement>(), imagePicker = ref<InstanceType<typeof EventImagePickerDialog>>(), routeDialog = ref<InstanceType<typeof MoveRouteDialog>>(), commandDialog = ref<InstanceType<typeof EventCommandDialog>>(), textPasteDialog = ref<InstanceType<typeof EventTextPasteDialog>>();
 const currentPage = computed(() => props.draft?.pages[pageIndex.value] || null), spans = computed(() => currentPage.value ? editableCommandSpans(currentPage.value) : []);
-// Pre-render each span as a command head plus continuation lines.
-const spanViews = computed(() => spans.value.map((span) => {
+// Virtualized command list. Every span row has a deterministic height
+// (line-height 20px per command line + 8px row chrome), so we window by
+// prefix-summed pixel offsets and only localize the spans in the viewport.
+const CMD_LINE_H = 20, CMD_ROW_CHROME = 8, CMD_OVERSCAN = 8;
+const listHost = ref<HTMLElement>();
+const listScrollTop = ref(0), listViewportH = ref(0);
+function buildSpanView(span: MvCommandSpan) {
   const head = commandDisplay(span.commands[0], props.systemData, language.value);
   return {
     key: span.index,
@@ -186,7 +193,50 @@ const spanViews = computed(() => spans.value.map((span) => {
     head: head.label,
     lines: span.commands.slice(1).map((cmd) => commandDisplay(cmd, props.systemData, language.value).label),
   };
-}));
+}
+// rowOffsets[i] is the pixel top of span i; the final entry is the total height.
+const rowOffsets = computed(() => {
+  const offsets = new Array<number>(spans.value.length + 1);
+  offsets[0] = 0;
+  for (let index = 0; index < spans.value.length; index += 1) {
+    offsets[index + 1] = offsets[index] + spans.value[index].commands.length * CMD_LINE_H + CMD_ROW_CHROME;
+  }
+  return offsets;
+});
+// Last span whose top offset is at or before `y` (i.e. the span covering pixel y).
+function spanAtOffset(y: number): number {
+  const offsets = rowOffsets.value;
+  let lo = 0, hi = spans.value.length;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (offsets[mid] <= y) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+const virtualWindow = computed(() => {
+  const total = spans.value.length;
+  const offsets = rowOffsets.value;
+  const totalHeight = offsets[total];
+  const rows: Array<{ index: number; view: ReturnType<typeof buildSpanView> }> = [];
+  if (!total) return { rows, top: 0, bottom: 0 };
+  const viewport = listViewportH.value || 400;
+  const top = Math.max(0, Math.min(listScrollTop.value, Math.max(0, totalHeight - viewport)));
+  let start = spanAtOffset(top) - CMD_OVERSCAN;
+  if (start < 0) start = 0;
+  let end = spanAtOffset(top + viewport) + CMD_OVERSCAN + 1;
+  if (end > total) end = total;
+  for (let index = start; index < end; index += 1) rows.push({ index, view: buildSpanView(spans.value[index]) });
+  return { rows, top: offsets[start], bottom: totalHeight - offsets[end] };
+});
+function onListScroll() { if (listHost.value) listScrollTop.value = listHost.value.scrollTop; }
+function measureListViewport() { if (listHost.value) listViewportH.value = listHost.value.clientHeight; }
+// Scroll the container so span `index` is visible, without relying on a rendered node.
+function scrollSpanIntoView(index: number) {
+  const host = listHost.value;
+  if (!host) return;
+  const offsets = rowOffsets.value;
+  const top = offsets[index] ?? 0, bottom = offsets[index + 1] ?? top;
+  if (top < host.scrollTop) host.scrollTop = top;
+  else if (bottom > host.scrollTop + host.clientHeight) host.scrollTop = bottom - host.clientHeight;
+  listScrollTop.value = host.scrollTop;
+}
 const currentPageLocked = computed(() => pageIdentities.value[pageIndex.value]?.origin === 'baseline');
 const shellLocked = computed(() => Boolean(props.overview && !props.overview.shellEditable));
 const selectedIndices = computed(() => selectedSpans.value.filter((index) => index >= 0 && index < spans.value.length).sort((a, b) => a - b));
@@ -255,8 +305,8 @@ function onKeyDown(event: KeyboardEvent) {
     stepCommandSelection(event.key === 'ArrowUp' ? -1 : 1, event.shiftKey);
   }
 }
-onMounted(() => window.addEventListener('keydown', onKeyDown));
-onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
+onMounted(() => { window.addEventListener('keydown', onKeyDown); window.addEventListener('resize', measureListViewport); });
+onUnmounted(() => { window.removeEventListener('keydown', onKeyDown); window.removeEventListener('resize', measureListViewport); });
 watch(() => props.visible, (value) => {
   if (value) {
     dirty.value = props.draft?.id === 0;
@@ -264,10 +314,11 @@ watch(() => props.visible, (value) => {
     pageIdentities.value = (props.draft?.pages || []).map((_, index) =>
       props.overview?.pages.find((page) => page.pageIndex === index));
     clearCommandSelection();
-    void nextTick(paintPreview);
+    listScrollTop.value = 0;
+    void nextTick(() => { measureListViewport(); paintPreview(); });
   }
 });
-watch(currentPage, () => { clearCommandSelection(); void nextTick(paintPreview); });
+watch(currentPage, () => { clearCommandSelection(); listScrollTop.value = 0; if (listHost.value) listHost.value.scrollTop = 0; void nextTick(() => { measureListViewport(); paintPreview(); }); });
 function markDirty() { dirty.value = true; void nextTick(paintPreview); }
 async function requestClose() {
   if (closing.value) return;
@@ -335,7 +386,7 @@ function stepCommandSelection(offset: -1 | 1, extend: boolean) {
     selectedSpans.value = [next];
     selectionAnchor.value = next;
   }
-  modalRef.value?.querySelectorAll('.command-list .cmd-row')[next]?.scrollIntoView({ block: 'nearest' });
+  scrollSpanIntoView(next);
 }
 function onRowDragStart(index: number, event: DragEvent) {
   if (currentPageLocked.value) { event.preventDefault(); return; }
@@ -851,6 +902,11 @@ defineExpose({ markSaved });
   font-size: var(--text-sm);
   border-bottom: 1px solid var(--app-border);
   background: var(--app-bg-soft);
+}
+
+.cmd-virtual-pad {
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 
 .cmd-row {

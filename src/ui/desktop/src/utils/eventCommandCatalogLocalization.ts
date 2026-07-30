@@ -23,7 +23,7 @@ export interface CommandEventTargetOptions {
 export interface CommandField {
   label: string;
   path: CommandFieldPath;
-  kind: 'text' | 'multiline' | 'number' | 'boolean' | 'select' | 'database' | 'asset' | 'eventTarget' | 'equipItem';
+  kind: 'text' | 'multiline' | 'number' | 'boolean' | 'select' | 'radio' | 'database' | 'asset' | 'eventTarget' | 'equipItem';
   options?: [unknown, string][];
   catalog?: CommandCatalogKey;
   asset?: CommandAssetKey;
@@ -76,8 +76,8 @@ const audioFields = (asset: CommandAssetKey): CommandField[] => [
 ];
 const when = (path: CommandFieldPath, equals: unknown | readonly unknown[]): CommandFieldVisibility => ({ path, equals });
 const basicOperandFields = (offset = 0): CommandField[] => [
-  { label: '操作', path: [offset], kind: 'select', options: increaseDecrease },
-  { label: '值类型', path: [offset + 1], kind: 'select', options: constantVariable },
+  { label: '操作', path: [offset], kind: 'radio', options: increaseDecrease },
+  { label: '值类型', path: [offset + 1], kind: 'radio', options: constantVariable },
   { label: '常量', path: [offset + 2], kind: 'number', visibleWhen: when([offset + 1], 0) },
   { label: '变量', path: [offset + 2], kind: 'database', catalog: 'variables', visibleWhen: when([offset + 1], 1) },
 ];
@@ -93,7 +93,7 @@ const controlVariableOperandFields = (): CommandField[] => [
   { label: '脚本', path: [4], kind: 'multiline', visibleWhen: when([3], 4) },
 ];
 const actorFields = (): CommandField[] => [
-  { label: '目标类型', path: [0], kind: 'select', options: actorTarget },
+  { label: '目标类型', path: [0], kind: 'radio', options: actorTarget },
   { label: '角色', path: [1], kind: 'database', catalog: 'actors', visibleWhen: when([0], 0) },
   { label: '队伍位置', path: [1], kind: 'number', min: 1, visibleWhen: when([0], 1) },
 ];
@@ -133,7 +133,7 @@ const PAGE_1: { group: string; items: Def[] }[] = [
     { code: 311, kind: 'changeHp', label: '增减 HP', fields: [...actorFields(), ...basicOperandFields(2), { label: '允许死亡', path: [5], kind: 'boolean' }] },
     { code: 312, kind: 'changeMp', label: '增减 MP', fields: [...actorFields(), ...basicOperandFields(2)] },
     { code: 326, kind: 'changeTp', label: '增减 TP', fields: [...actorFields(), ...basicOperandFields(2)] },
-    { code: 313, kind: 'changeState', label: '更改状态', fields: [...actorFields(), { label: '操作', path: [2], kind: 'select', options: [[0, '附加'], [1, '解除']] }, { label: '状态', path: [3], kind: 'database', catalog: 'states' }] },
+    { code: 313, kind: 'changeState', label: '更改状态', fields: [...actorFields(), { label: '操作', path: [2], kind: 'radio', options: [[0, '附加'], [1, '解除']] }, { label: '状态', path: [3], kind: 'database', catalog: 'states' }] },
     { code: 314, kind: 'recoverAll', label: '完全恢复', fields: actorFields() },
     { code: 315, kind: 'changeExp', label: '增减经验值', fields: [...actorFields(), ...basicOperandFields(2), { label: '显示升级', path: [5], kind: 'boolean' }] },
     { code: 316, kind: 'changeLevel', label: '增减等级', fields: [...actorFields(), ...basicOperandFields(2), { label: '显示升级', path: [5], kind: 'boolean' }] },
@@ -286,7 +286,7 @@ function conditionFields(): CommandField[] {
 
 function transferPlayerFields(): CommandField[] {
   return [
-    { label: '位置指定', path: [0], kind: 'select', options: locationOperand },
+    { label: '位置指定', path: [0], kind: 'radio', options: locationOperand },
     { label: '地图', path: [1], kind: 'database', catalog: 'maps', visibleWhen: when([0], 0) },
     { label: 'X', path: [2], kind: 'number', min: 0, visibleWhen: when([0], 0) },
     { label: 'Y', path: [3], kind: 'number', min: 0, visibleWhen: when([0], 0) },
@@ -301,7 +301,7 @@ function transferPlayerFields(): CommandField[] {
 function vehicleLocationFields(): CommandField[] {
   return [
     { label: '交通工具', path: [0], kind: 'select', options: vehicle },
-    { label: '位置指定', path: [1], kind: 'select', options: locationOperand },
+    { label: '位置指定', path: [1], kind: 'radio', options: locationOperand },
     { label: '地图', path: [2], kind: 'database', catalog: 'maps', visibleWhen: when([1], 0) },
     { label: 'X', path: [3], kind: 'number', min: 0, visibleWhen: when([1], 0) },
     { label: 'Y', path: [4], kind: 'number', min: 0, visibleWhen: when([1], 0) },
@@ -314,7 +314,7 @@ function vehicleLocationFields(): CommandField[] {
 function eventLocationFields(): CommandField[] {
   return [
     { label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: false, allowMapEvents: true } },
-    { label: '位置指定', path: [1], kind: 'select', options: [[0, '直接指定'], [1, '变量指定'], [2, '与角色/事件交换']] },
+    { label: '位置指定', path: [1], kind: 'radio', options: [[0, '直接指定'], [1, '变量指定'], [2, '与角色/事件交换']] },
     { label: 'X', path: [2], kind: 'number', min: 0, visibleWhen: when([1], 0) },
     { label: 'Y', path: [3], kind: 'number', min: 0, visibleWhen: when([1], 0) },
     { label: 'X 变量', path: [2], kind: 'database', catalog: 'variables', visibleWhen: when([1], 1) },
@@ -328,7 +328,7 @@ function locationInfoFields(): CommandField[] {
   return [
     { label: '写入变量', path: [0], kind: 'database', catalog: 'variables' },
     { label: '信息类型', path: [1], kind: 'select', options: [[0, '地形标记'], [1, '事件编号'], [2, '图块编号（层 1）'], [3, '图块编号（层 2）'], [4, '图块编号（层 3）'], [5, '区域编号']] },
-    { label: '位置指定', path: [2], kind: 'select', options: locationOperand },
+    { label: '位置指定', path: [2], kind: 'radio', options: locationOperand },
     { label: 'X', path: [3], kind: 'number', min: 0, visibleWhen: when([2], 0) },
     { label: 'Y', path: [4], kind: 'number', min: 0, visibleWhen: when([2], 0) },
     { label: 'X 变量', path: [3], kind: 'database', catalog: 'variables', visibleWhen: when([2], 1) },
@@ -363,7 +363,7 @@ function pictureFields(includeName: boolean): CommandField[] {
     { label: '图片编号', path: [0], kind: 'number', min: 1 },
     ...(includeName ? [{ label: '图片', path: [1], kind: 'asset', asset: 'pictures' } as CommandField] : []),
     { label: '原点', path: [2], kind: 'select', options: pictureOrigin },
-    { label: '位置指定', path: [3], kind: 'select', options: locationOperand },
+    { label: '位置指定', path: [3], kind: 'radio', options: locationOperand },
     { label: 'X', path: [4], kind: 'number', visibleWhen: when([3], 0) },
     { label: 'Y', path: [5], kind: 'number', visibleWhen: when([3], 0) },
     { label: 'X 变量', path: [4], kind: 'database', catalog: 'variables', visibleWhen: when([3], 1) },

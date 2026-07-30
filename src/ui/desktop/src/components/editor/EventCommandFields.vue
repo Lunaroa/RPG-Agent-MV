@@ -1,8 +1,11 @@
 <template>
   <div v-if="definition" class="command-fields">
-    <label v-for="field in visibleFields" :key="field.label + field.path.join('.')">
+    <component :is="field.kind === 'radio' ? 'div' : 'label'" v-for="field in visibleFields" :key="field.label + field.path.join('.')" class="cmd-field">
       <span>{{ field.label }}</span>
-      <input v-if="field.kind === 'text'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @input="setField(field, inputValue($event))" />
+      <span v-if="field.kind === 'radio'" class="radio-row">
+        <label v-for="[value, label] in field.options || []" :key="String(value)"><input type="radio" :name="radioGroupName(field)" :checked="String(fieldValue(field)) === String(value)" :disabled="fieldDisabled(field)" @change="setField(field, value)" />{{ label }}</label>
+      </span>
+      <input v-else-if="field.kind === 'text'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @input="setField(field, inputValue($event))" />
       <textarea v-else-if="field.kind === 'multiline'" :value="displayValue(field)" rows="4" @input="setField(field, inputValue($event))" />
       <input v-else-if="field.kind === 'number'" :value="displayValue(field)" type="number" :min="field.min" :max="field.max" :disabled="fieldDisabled(field)" @input="setField(field, numberValue($event))" />
       <input v-else-if="field.kind === 'boolean'" :checked="Boolean(fieldValue(field))" type="checkbox" :disabled="fieldDisabled(field)" @change="setField(field, checkedValue($event))" />
@@ -29,7 +32,7 @@
         <option value="">{{ t('imgPicker.none') }}</option>
         <option v-for="asset in assetOptions(field)" :key="asset.fileName" :value="asset.name">{{ asset.name }}</option>
       </select>
-    </label>
+    </component>
     <button v-if="coordinateMode" type="button" class="coordinate-picker-button" @click="openCoordinatePicker">
       {{ t(coordinateMode === 'screen' ? 'coordinate.chooseScreen' : 'coordinate.chooseMap') }}
       <span>{{ coordinateSummary }}</span>
@@ -149,6 +152,7 @@ function fieldDisabled(field: CommandField) {
   const conditions = Array.isArray(field.enabledWhen) ? field.enabledWhen : field.enabledWhen ? [field.enabledWhen] : [];
   return !conditions.every(matchesVisibility);
 }
+function radioGroupName(field: CommandField) { return `cmd-${props.command.code}-${field.path.join('-')}`; }
 function setPath(path: CommandField['path'], value: unknown) {
   let target: unknown[] | Record<string, unknown> = props.command.parameters;
   for (let index = 0; index < path.length - 1; index += 1) {
@@ -344,12 +348,14 @@ function checkedValue(event: Event) { return (event.target as HTMLInputElement).
 
 <style scoped>
 .command-fields { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-label { min-width: 0; display: grid; gap: 4px; color: var(--app-ink-soft); font-size: 12px; }
-input:not([type="checkbox"]), select, textarea { min-width: 0; padding: 5px 6px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-bg); color: var(--app-ink); font-size: 13px; }
+.cmd-field { min-width: 0; display: grid; gap: 4px; color: var(--app-ink-soft); font-size: 12px; }
+input:not([type="checkbox"]):not([type="radio"]), select, textarea { min-width: 0; padding: 5px 6px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-bg); color: var(--app-ink); font-size: 13px; }
 .asset-picker-button { min-width: 0; min-height: 30px; overflow: hidden; padding: 5px 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-bg); color: var(--app-ink); font-size: 13px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .asset-picker-button:hover { border-color: var(--app-accent); background: var(--app-accent-soft); }
 textarea { grid-column: 1 / -1; font-family: var(--app-font-mono); resize: vertical; }
-label:has(textarea) { grid-column: 1 / -1; }
+.cmd-field:has(textarea), .cmd-field:has(.radio-row) { grid-column: 1 / -1; }
+.radio-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 30px; }
+.radio-row label { display: flex; align-items: center; gap: 5px; color: var(--app-ink); font-size: 13px; }
 input[type="checkbox"] { justify-self: start; }
 .no-fields { grid-column: 1 / -1; margin: 0; color: var(--app-ink-muted); font-size: 12px; }
 .coordinate-picker-button { grid-column:1 / -1; min-height:30px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 8px; border:1px solid var(--app-border); border-radius:var(--app-radius-sm); background:var(--app-bg-soft); color:var(--app-ink); cursor:pointer; }

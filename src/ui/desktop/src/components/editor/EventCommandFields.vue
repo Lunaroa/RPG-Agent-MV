@@ -18,6 +18,9 @@
       <button v-else-if="isImageAssetField(field)" type="button" class="asset-picker-button" @click="openImageField(field)">
         {{ displayValue(field) || t('imgPicker.none') }}
       </button>
+      <button v-else-if="isAudioAssetField(field)" type="button" class="asset-picker-button" @click="openAudioField(field)">
+        {{ displayValue(field) || t('imgPicker.none') }}
+      </button>
       <select v-else-if="field.kind === 'asset'" :value="displayValue(field)" @change="setField(field, inputValue($event))">
         <option value="">{{ t('imgPicker.none') }}</option>
         <option v-for="asset in assetOptions(field)" :key="asset.fileName" :value="asset.name">{{ asset.name }}</option>
@@ -33,6 +36,7 @@
     </div>
     <p v-if="!visibleFields.length" class="no-fields">{{ t('cmdFields.noParams') }}</p>
     <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="loadImage" @commit="commitImageField" />
+    <AudioAssetPickerDialog ref="audioPicker" :catalog="catalog" @commit="commitAudioField" />
     <CoordinatePickerDialog ref="coordinatePicker" :catalog="catalog" @commit="commitCoordinate" />
   </div>
 </template>
@@ -47,6 +51,7 @@ import { commandDefinition, type CommandAssetKey, type CommandField, type Comman
 import { localizeCommandField } from '../../utils/eventCommandLocalization';
 import type { MvCommand } from '../../composables/useEventEditor';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
+import AudioAssetPickerDialog from './AudioAssetPickerDialog.vue';
 import CoordinatePickerDialog from './CoordinatePickerDialog.vue';
 
 const props = defineProps<{
@@ -64,6 +69,7 @@ const visibleFields = computed(() => (definition.value?.fields || [])
   .filter((field) => isFieldVisible(field) && !isPairedImageIndexField(field))
   .map((field) => localizeCommandField(field, language.value)));
 const imagePicker = ref<InstanceType<typeof ImageAssetPickerDialog> | null>(null);
+const audioPicker = ref<InstanceType<typeof AudioAssetPickerDialog> | null>(null);
 const coordinatePicker = ref<InstanceType<typeof CoordinatePickerDialog> | null>(null);
 const balloonCanvas = ref<HTMLCanvasElement | null>(null);
 const balloonImage = ref<HTMLImageElement | null>(null);
@@ -71,6 +77,9 @@ const balloonAssetAvailable = ref(false);
 let balloonFrame = 0;
 let balloonTimer: ReturnType<typeof setInterval> | null = null;
 const pendingImageField = ref<CommandField | null>(null);
+const pendingAudioField = ref<CommandField | null>(null);
+// Audio assets open the listen-and-pick dialog instead of a bare select.
+const audioAssetKinds = new Set<CommandAssetKey>(['bgm', 'bgs', 'me', 'se']);
 const imageAssetKinds = new Set<CommandAssetKey>([
   'characters',
   'faces',
@@ -200,6 +209,25 @@ function commitImageField(selection: { name: string; index: number }): void {
   const indexPath = pairedImageIndexPath(field);
   if (indexPath) setPath(indexPath, selection.name ? selection.index : 0);
   pendingImageField.value = null;
+  emit('change');
+}
+function isAudioAssetField(field: CommandField): boolean {
+  return field.kind === 'asset' && Boolean(field.asset && audioAssetKinds.has(field.asset));
+}
+function openAudioField(field: CommandField): void {
+  if (!field.asset || !isAudioAssetField(field)) return;
+  pendingAudioField.value = field;
+  audioPicker.value?.open({
+    asset: field.asset,
+    title: t('cmdFields.chooseField', { field: String(field.label) }),
+    name: String(fieldValue(field) || ''),
+  });
+}
+function commitAudioField(selection: { name: string }): void {
+  const field = pendingAudioField.value;
+  if (!field) return;
+  setPath(field.path, selection.name);
+  pendingAudioField.value = null;
   emit('change');
 }
 function openCoordinatePicker(): void {

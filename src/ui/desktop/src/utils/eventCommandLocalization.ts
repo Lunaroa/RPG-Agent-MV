@@ -313,7 +313,7 @@ const COMMAND_TEXT_BY_SOURCE_LABEL_BY_LOCALE: Record<ProductLanguage, Record<str
   '以下': 'or Below',
   '小于': 'Less than',
   '普通物品': 'Regular Item',
-  '关键物品': 'Key Item',
+  '重要物品': 'Key Item',
   '隐藏物品 A': 'Hidden Item A',
   '隐藏物品 B': 'Hidden Item B',
   '代入': 'Set',

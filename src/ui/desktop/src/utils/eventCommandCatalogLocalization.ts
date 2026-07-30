@@ -98,7 +98,7 @@ const PAGE_1: { group: string; items: Def[] }[] = [
     { code: 101, kind: 'text', label: '显示文字', fields: [] },
     { code: 102, kind: 'choice', label: '显示选项', fields: [] },
     { code: 103, kind: 'inputNumber', label: '数值输入处理', fields: [{ label: '变量', path: [0], kind: 'database', catalog: 'variables' }, { label: '位数', path: [1], kind: 'number', min: 1, max: 8 }] },
-    { code: 104, kind: 'selectItem', label: '物品选择处理', fields: [{ label: '变量', path: [0], kind: 'database', catalog: 'variables' }, { label: '物品类型', path: [1], kind: 'select', options: [[1, '普通物品'], [2, '关键物品'], [3, '隐藏物品 A'], [4, '隐藏物品 B']] }] },
+    { code: 104, kind: 'selectItem', label: '物品选择处理', fields: [{ label: '变量', path: [0], kind: 'database', catalog: 'variables' }, { label: '物品类型', path: [1], kind: 'select', options: [[1, '普通物品'], [2, '重要物品'], [3, '隐藏物品 A'], [4, '隐藏物品 B']] }] },
     { code: 105, kind: 'scrollText', label: '显示滚动文字', fields: [] },
   ] },
   { group: '游戏进程', items: [
@@ -492,7 +492,7 @@ function toMZCommandDefinition(definition: CommandDefinition): CommandDefinition
   if (definition.code === 104) {
     return withFields(definition, [
       { label: '变量', path: [0], kind: 'database', catalog: 'variables' },
-      { label: '物品类型', path: [1], kind: 'select', options: [[1, '普通物品'], [2, '关键物品'], [3, '隐藏物品 A'], [4, '隐藏物品 B']] },
+      { label: '物品类型', path: [1], kind: 'select', options: [[1, '普通物品'], [2, '重要物品'], [3, '隐藏物品 A'], [4, '隐藏物品 B']] },
     ]);
   }
   if (definition.code === 232) {

@@ -2206,6 +2206,7 @@ const zhCN = {
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': '该指令不需要额外参数。',
     'cmdFields.chooseField': '选择{{field}}',
+    'cmdFields.none': '无',
     'cmdFields.thisEvent': '本事件',
     'cmdFields.player': '玩家',
     'cmdFields.mapEvent': 'EV{{id}} · {{name}}',

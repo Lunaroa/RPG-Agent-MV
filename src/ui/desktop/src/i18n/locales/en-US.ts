@@ -2206,6 +2206,7 @@ const enUS = {
     // ── Batch 5: EventCommandFields ──
     'cmdFields.noParams': 'This command does not need additional parameters.',
     'cmdFields.chooseField': 'Choose {{field}}',
+    'cmdFields.none': 'None',
     'cmdFields.thisEvent': 'This Event',
     'cmdFields.player': 'Player',
     'cmdFields.mapEvent': 'EV{{id}} · {{name}}',

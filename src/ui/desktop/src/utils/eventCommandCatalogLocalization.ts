@@ -23,7 +23,7 @@ export interface CommandEventTargetOptions {
 export interface CommandField {
   label: string;
   path: CommandFieldPath;
-  kind: 'text' | 'multiline' | 'number' | 'boolean' | 'select' | 'database' | 'asset' | 'eventTarget';
+  kind: 'text' | 'multiline' | 'number' | 'boolean' | 'select' | 'database' | 'asset' | 'eventTarget' | 'equipItem';
   options?: [unknown, string][];
   catalog?: CommandCatalogKey;
   asset?: CommandAssetKey;
@@ -61,6 +61,9 @@ const buttonOptions: [unknown, string][] = [[2, '下'], [4, '左'], [6, '右'], 
 const conditionTypes: [unknown, string][] = [[0, '开关'], [1, '变量'], [2, '独立开关'], [3, '计时器'], [4, '角色'], [5, '敌人'], [6, '角色/事件朝向'], [7, '金钱'], [8, '物品'], [9, '武器'], [10, '防具'], [11, '按键'], [12, '脚本'], [13, '交通工具']];
 const actorConditionTypes: [unknown, string][] = [[0, '在队伍中'], [1, '名字'], [2, '职业'], [3, '技能'], [4, '武器'], [5, '防具'], [6, '状态']];
 const enemyConditionTypes: [unknown, string][] = [[0, '出现'], [1, '状态']];
+const troopMemberIndexes: [unknown, string][] = Array.from({ length: 8 }, (_, index) => [index, `#${index + 1}`]);
+const enemyIndexTargets: [unknown, string][] = [[-1, '整个敌群'], ...troopMemberIndexes];
+const forceActionTargets: [unknown, string][] = [[-2, '最后目标'], [-1, '随机'], ...troopMemberIndexes];
 const timerComparison: [unknown, string][] = [[0, '以上'], [1, '以下']];
 const goldComparison: [unknown, string][] = [[0, '以上'], [1, '以下'], [2, '小于']];
 const audioFields = (asset: CommandAssetKey): CommandField[] => [
@@ -134,7 +137,7 @@ const PAGE_1: { group: string; items: Def[] }[] = [
     { code: 316, kind: 'changeLevel', label: '增减等级', fields: [...actorFields(), ...basicOperandFields(2), { label: '显示升级', path: [5], kind: 'boolean' }] },
     { code: 317, kind: 'changeParam', label: '增减能力值', fields: [...actorFields(), { label: '能力值', path: [2], kind: 'select', options: [[0, '最大 HP'], [1, '最大 MP'], [2, '攻击力'], [3, '防御力'], [4, '魔法力'], [5, '魔法防御'], [6, '敏捷'], [7, '幸运']] }, ...basicOperandFields(3)] },
     { code: 318, kind: 'changeSkill', label: '增减技能', fields: [...actorFields(), { label: '操作', path: [2], kind: 'select', options: [[0, '学会'], [1, '忘记']] }, { label: '技能', path: [3], kind: 'database', catalog: 'skills' }] },
-    { code: 319, kind: 'changeEquip', label: '更改装备', fields: [{ label: '角色', path: [0], kind: 'database', catalog: 'actors' }, { label: '装备类型', path: [1], kind: 'database', catalog: 'equipTypes' }, { label: '装备 ID', path: [2], kind: 'number', min: 0 }] },
+    { code: 319, kind: 'changeEquip', label: '更改装备', fields: [{ label: '角色', path: [0], kind: 'database', catalog: 'actors' }, { label: '装备类型', path: [1], kind: 'database', catalog: 'equipTypes' }, { label: '装备', path: [2], kind: 'equipItem' }] },
     { code: 320, kind: 'changeName', label: '更改名字', fields: [{ label: '角色', path: [0], kind: 'database', catalog: 'actors' }, { label: '名字', path: [1], kind: 'text' }] },
     { code: 321, kind: 'changeClass', label: '更改职业', fields: [{ label: '角色', path: [0], kind: 'database', catalog: 'actors' }, { label: '职业', path: [1], kind: 'database', catalog: 'classes' }, { label: '保留等级', path: [2], kind: 'boolean' }] },
     { code: 324, kind: 'changeNickname', label: '更改昵称', fields: [{ label: '角色', path: [0], kind: 'database', catalog: 'actors' }, { label: '昵称', path: [1], kind: 'text' }] },
@@ -225,12 +228,12 @@ const PAGE_3: { group: string; items: Def[] }[] = [
     { code: 331, kind: 'enemyHp', label: '增减敌人 HP', fields: enemyOperandFields(true) },
     { code: 332, kind: 'enemyMp', label: '增减敌人 MP', fields: enemyOperandFields(false) },
     { code: 342, kind: 'enemyTp', label: '增减敌人 TP', fields: enemyOperandFields(false) },
-    { code: 333, kind: 'enemyState', label: '更改敌人状态', fields: [{ label: '敌人序号', path: [0], kind: 'number', min: -1 }, { label: '操作', path: [1], kind: 'select', options: [[0, '附加'], [1, '解除']] }, { label: '状态', path: [2], kind: 'database', catalog: 'states' }] },
-    { code: 334, kind: 'enemyRecover', label: '敌人完全恢复', fields: [{ label: '敌人序号', path: [0], kind: 'number', min: -1 }] },
-    { code: 335, kind: 'enemyAppear', label: '敌人出现', fields: [{ label: '敌人序号', path: [0], kind: 'number', min: 0 }] },
-    { code: 336, kind: 'enemyTransform', label: '敌人变身', fields: [{ label: '敌人序号', path: [0], kind: 'number', min: 0 }, { label: '敌人', path: [1], kind: 'database', catalog: 'enemies' }] },
-    { code: 337, kind: 'battleAnimation', label: '显示战斗动画', fields: [{ label: '敌人序号', path: [0], kind: 'number', min: -1 }, { label: '动画', path: [1], kind: 'database', catalog: 'animations' }, { label: '镜像', path: [2], kind: 'boolean' }] },
-    { code: 339, kind: 'forceAction', label: '强制行动', fields: [{ label: '主体类型', path: [0], kind: 'select', options: [[0, '敌人'], [1, '角色']] }, { label: '主体编号', path: [1], kind: 'number' }, { label: '技能', path: [2], kind: 'database', catalog: 'skills' }, { label: '目标序号', path: [3], kind: 'number' }] },
+    { code: 333, kind: 'enemyState', label: '更改敌人状态', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets }, { label: '操作', path: [1], kind: 'select', options: [[0, '附加'], [1, '解除']] }, { label: '状态', path: [2], kind: 'database', catalog: 'states' }] },
+    { code: 334, kind: 'enemyRecover', label: '敌人完全恢复', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets }] },
+    { code: 335, kind: 'enemyAppear', label: '敌人出现', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: troopMemberIndexes }] },
+    { code: 336, kind: 'enemyTransform', label: '敌人变身', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: troopMemberIndexes }, { label: '敌人', path: [1], kind: 'database', catalog: 'enemies' }] },
+    { code: 337, kind: 'battleAnimation', label: '显示战斗动画', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets }, { label: '动画', path: [1], kind: 'database', catalog: 'animations' }, { label: '镜像', path: [2], kind: 'boolean' }] },
+    { code: 339, kind: 'forceAction', label: '强制行动', fields: [{ label: '主体类型', path: [0], kind: 'select', options: [[0, '敌人'], [1, '角色']] }, { label: '敌人', path: [1], kind: 'select', options: troopMemberIndexes, visibleWhen: when([0], 0) }, { label: '角色', path: [1], kind: 'database', catalog: 'actors', visibleWhen: when([0], 1) }, { label: '技能', path: [2], kind: 'database', catalog: 'skills' }, { label: '目标序号', path: [3], kind: 'select', options: forceActionTargets }] },
     { code: 340, kind: 'abortBattle', label: '中止战斗', fields: [] },
   ] },
   { group: '高级', items: [
@@ -376,7 +379,7 @@ function colorFields(index: number): CommandField[] {
   return [['红', 0], ['绿', 1], ['蓝', 2], ['强度', 3]].map(([label, child]) => ({ label: String(label), path: [index, Number(child)], kind: 'number' }));
 }
 function enemyOperandFields(allowDeath: boolean): CommandField[] {
-  return [{ label: '敌人序号', path: [0], kind: 'number', min: -1 }, ...basicOperandFields(1), ...(allowDeath ? [{ label: '允许死亡', path: [4], kind: 'boolean' } as CommandField] : [])];
+  return [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets }, ...basicOperandFields(1), ...(allowDeath ? [{ label: '允许死亡', path: [4], kind: 'boolean' } as CommandField] : [])];
 }
 
 export const COMMAND_PAGES = [PAGE_1, PAGE_2, PAGE_3].map((groups, pageIndex) => groups.map((group) => ({
@@ -438,7 +441,7 @@ export function commandTemplate(kind: string, mapId = 1, engine: RpgMakerEngine 
     125: [0, 0, 50], 126: [1, 0, 0, 1], 127: [1, 0, 0, 1, false], 128: [1, 0, 0, 1, false], 129: [1, 0, false],
     311: [0, 1, 0, 0, 0, false], 312: [0, 1, 0, 0, 0], 326: [0, 1, 0, 0, 0], 313: [0, 1, 0, 1], 314: [0, 1],
     315: [0, 1, 0, 0, 0, false], 316: [0, 1, 0, 0, 0, false], 317: [0, 1, 0, 0, 0, 0], 318: [0, 1, 0, 1],
-    319: [1, 0, 0], 320: [1, ''], 321: [1, 1, false], 324: [1, ''], 325: [1, ''],
+    319: [1, 1, 0], 320: [1, ''], 321: [1, 1, false], 324: [1, ''], 325: [1, ''],
     201: [0, mapId, 0, 0, 2, 0], 202: [0, 0, mapId, 0, 0], 203: [0, 0, 0, 0, 0], 204: [2, 1, 4, false], 206: [],
     211: [0], 216: [0], 217: [], 212: [0, 1, true], 213: [0, 1, true], 214: [],
     230: [60], 231: [1, '', 0, 0, 0, 0, 100, 100, 255, 0], 232: [1, 0, 0, 0, 0, 0, 100, 100, 255, 0, 60, true, ...(engine === 'rpg-maker-mz' ? [0] : [])],

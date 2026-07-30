@@ -15,6 +15,10 @@
       <select v-else-if="field.kind === 'database'" :value="displayValue(field)" @change="setField(field, numberValue($event))">
         <option v-for="entry in databaseOptions(field)" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4, '0') }} {{ entry.name }}</option>
       </select>
+      <select v-else-if="field.kind === 'equipItem'" :value="displayValue(field)" @change="setField(field, numberValue($event))">
+        <option :value="0">{{ t('cmdFields.none') }}</option>
+        <option v-for="entry in equipItemOptions()" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4, '0') }} {{ entry.name }}</option>
+      </select>
       <button v-else-if="isImageAssetField(field)" type="button" class="asset-picker-button" @click="openImageField(field)">
         {{ displayValue(field) || t('imgPicker.none') }}
       </button>
@@ -152,6 +156,8 @@ function setPath(path: CommandField['path'], value: unknown) {
 }
 function setField(field: CommandField, value: unknown) {
   setPath(field.path, value);
+  // RM clears the equip item when its equip type changes (319).
+  if (props.command.code === 319 && field.path[0] === 1) setPath([2], 0);
   emit('change');
 }
 function optionValue(field: CommandField, value: string) {
@@ -183,6 +189,13 @@ function eventTargetOptions(field: CommandField): [number, string][] {
 function databaseOptions(field: CommandField): NamedCatalogEntry[] {
   if (!field.catalog || !props.catalog) return [];
   return (props.catalog[field.catalog] || []) as NamedCatalogEntry[];
+}
+// Change Equipment (319) keeps its equip type in params[1]; type 1 lists weapons, other types list armors.
+function equipItemOptions() {
+  if (!props.catalog) return [];
+  const etypeId = Number(props.command.parameters[1]) || 0;
+  const source = etypeId === 1 ? props.catalog.weapons : props.catalog.armors;
+  return source.filter((entry) => entry.etypeId === etypeId);
 }
 function assetOptions(field: CommandField): ProjectAssetEntry[] {
   return field.asset && props.catalog ? props.catalog.assets[field.asset] || [] : [];

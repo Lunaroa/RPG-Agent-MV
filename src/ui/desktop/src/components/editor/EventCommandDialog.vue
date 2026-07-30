@@ -256,6 +256,82 @@
                 <label class="check"><input :checked="boolParam(4)" type="checkbox" @change="setParam(4, checkedValue($event))" />{{ t('eventcmd.shopPurchaseOnly') }}</label>
               </div>
             </template>
+            <template v-else-if="draft.code === 223">
+              <fieldset class="cond-group tone-group">
+                <legend>{{ t('eventcmd.toneTitle') }}</legend>
+                <ToneColorSliders :channels="toneChannels" :values="arrayParam(0)" :presets="tonePresets" preview="tone" @change="(i, v) => setArrayItem(0, i, v)" @apply="(vals) => setArrayParam(0, vals)" />
+              </fieldset>
+              <div class="dur-row">
+                <span class="text-cmd-label">{{ t('eventcmd.durationLabel') }}</span>
+                <input :value="numberParam(1,60)" type="number" min="1" @input="setParam(1,numberValue($event))" />
+                <span class="cond-unit">{{ t('eventcmd.framesUnit') }}</span>
+                <label class="check"><input :checked="boolParam(2,true)" type="checkbox" @change="setParam(2,checkedValue($event))" />{{ t('eventcmd.waitForCompletion') }}</label>
+              </div>
+            </template>
+            <template v-else-if="draft.code === 234">
+              <label class="var-cmd-field">
+                <span class="text-cmd-label">{{ t('eventcmd.pictureNumber') }}</span>
+                <input :value="numberParam(0,1)" type="number" min="1" max="100" @input="setParam(0,numberValue($event))" />
+              </label>
+              <fieldset class="cond-group tone-group">
+                <legend>{{ t('eventcmd.toneTitle') }}</legend>
+                <ToneColorSliders :channels="toneChannels" :values="arrayParam(1)" :presets="tonePresets" preview="tone" @change="(i, v) => setArrayItem(1, i, v)" @apply="(vals) => setArrayParam(1, vals)" />
+              </fieldset>
+              <div class="dur-row">
+                <span class="text-cmd-label">{{ t('eventcmd.durationLabel') }}</span>
+                <input :value="numberParam(2,60)" type="number" min="1" @input="setParam(2,numberValue($event))" />
+                <span class="cond-unit">{{ t('eventcmd.framesUnit') }}</span>
+                <label class="check"><input :checked="boolParam(3,true)" type="checkbox" @change="setParam(3,checkedValue($event))" />{{ t('eventcmd.waitForCompletion') }}</label>
+              </div>
+            </template>
+            <template v-else-if="draft.code === 224">
+              <fieldset class="cond-group tone-group">
+                <legend>{{ t('eventcmd.flashColorTitle') }}</legend>
+                <ToneColorSliders :channels="flashChannels" :values="arrayParam(0)" preview="flash" @change="(i, v) => setArrayItem(0, i, v)" />
+              </fieldset>
+              <div class="dur-row">
+                <span class="text-cmd-label">{{ t('eventcmd.durationLabel') }}</span>
+                <input :value="numberParam(1,60)" type="number" min="1" @input="setParam(1,numberValue($event))" />
+                <span class="cond-unit">{{ t('eventcmd.framesUnit') }}</span>
+                <label class="check"><input :checked="boolParam(2,true)" type="checkbox" @change="setParam(2,checkedValue($event))" />{{ t('eventcmd.waitForCompletion') }}</label>
+              </div>
+            </template>
+            <template v-else-if="draft.code === 138">
+              <fieldset class="cond-group tone-group">
+                <legend>{{ t('eventcmd.windowColorTitle') }}</legend>
+                <ToneColorSliders :channels="rgbChannels" :values="arrayParam(0).slice(0, 3)" preview="rgb" @change="(i, v) => setArrayItem(0, i, v)" />
+              </fieldset>
+            </template>
+            <template v-else-if="draft.code === 225">
+              <fieldset class="cond-group tone-group">
+                <legend>{{ t('eventcmd.shakeTitle') }}</legend>
+                <ToneColorSliders :channels="shakeChannels" :values="[numberParam(0,5), numberParam(1,5)]" @change="(i, v) => setParam(i, v)" />
+              </fieldset>
+              <div class="dur-row">
+                <span class="text-cmd-label">{{ t('eventcmd.durationLabel') }}</span>
+                <input :value="numberParam(2,60)" type="number" min="1" @input="setParam(2,numberValue($event))" />
+                <span class="cond-unit">{{ t('eventcmd.framesUnit') }}</span>
+                <label class="check"><input :checked="boolParam(3,true)" type="checkbox" @change="setParam(3,checkedValue($event))" />{{ t('eventcmd.waitForCompletion') }}</label>
+              </div>
+            </template>
+            <template v-else-if="draft.code === 236">
+              <fieldset class="cond-group tone-group">
+                <legend>{{ t('eventcmd.weatherTitle') }}</legend>
+                <label class="var-cmd-field">
+                  <span class="text-cmd-label">{{ t('eventcmd.weatherType') }}</span>
+                  <select :value="stringParam(0,'none')" @change="setParam(0,inputValue($event))">
+                    <option value="none">{{ t('eventcmd.weatherNone') }}</option><option value="rain">{{ t('eventcmd.weatherRain') }}</option><option value="storm">{{ t('eventcmd.weatherStorm') }}</option><option value="snow">{{ t('eventcmd.weatherSnow') }}</option>
+                  </select>
+                </label>
+                <ToneColorSliders :channels="weatherChannels" :values="[numberParam(1,5)]" @change="(_, v) => setParam(1, v)" />
+              </fieldset>
+              <div class="dur-row">
+                <span class="text-cmd-label">{{ t('eventcmd.durationLabel') }}</span>
+                <input :value="numberParam(2,60)" type="number" min="1" @input="setParam(2,numberValue($event))" />
+                <span class="cond-unit">{{ t('eventcmd.framesUnit') }}</span>
+                <label class="check"><input :checked="boolParam(3,true)" type="checkbox" @change="setParam(3,checkedValue($event))" />{{ t('eventcmd.waitForCompletion') }}</label>
+              </div>
+            </template>
             <template v-else-if="draft.code === 121 || draft.code === 122">
               <div class="cond-cmd-layout">
                 <fieldset class="cond-group">
@@ -486,6 +562,7 @@ import MoveRouteDialog from './MoveRouteDialog.vue';
 import PluginParameterInput from './PluginParameterInput.vue';
 import ScrollTextPreviewDialog from './ScrollTextPreviewDialog.vue';
 import ShopGoodsDialog, { type ShopGoodsEntry } from './ShopGoodsDialog.vue';
+import ToneColorSliders from './ToneColorSliders.vue';
 import SystemNamedEntrySelectorDialog from './SystemNamedEntrySelectorDialog.vue';
 import type { EditorEventListItem } from './editorTypes';
 const props = withDefaults(defineProps<{ mapId:number|null; catalog:EditorProjectCatalog|null; loadImage:(url:string)=>Promise<HTMLImageElement|null>; eventX?:number; eventY?:number; currentEvents?:EditorEventListItem[] }>(), { eventX: 0, eventY: 0 });
@@ -503,6 +580,17 @@ const shopGoodsDialog=ref<InstanceType<typeof ShopGoodsDialog>>(),shopGoods=ref<
 // RM-native Conditional Branch: four tabs of radio rows; switching a type resets its params.
 const condTab=ref(1),createElseBranch=ref(false);
 // Control Switches/Variables: single mode mirrors start id into the end id.
+// Tone/color commands keep an RGBA-like array inside a single parameter slot.
+const toneChannels=computed(()=>[{label:t('eventcmd.colorRed'),min:-255,max:255},{label:t('eventcmd.colorGreen'),min:-255,max:255},{label:t('eventcmd.colorBlue'),min:-255,max:255},{label:t('eventcmd.colorGray'),min:0,max:255}]);
+const flashChannels=computed(()=>[{label:t('eventcmd.colorRed'),min:0,max:255},{label:t('eventcmd.colorGreen'),min:0,max:255},{label:t('eventcmd.colorBlue'),min:0,max:255},{label:t('eventcmd.colorIntensity'),min:0,max:255}]);
+const rgbChannels=computed(()=>[{label:t('eventcmd.colorRed'),min:-255,max:255},{label:t('eventcmd.colorGreen'),min:-255,max:255},{label:t('eventcmd.colorBlue'),min:-255,max:255}]);
+const shakeChannels=computed(()=>[{label:t('eventcmd.shakePower'),min:1,max:9},{label:t('eventcmd.shakeSpeed'),min:1,max:9}]);
+const weatherChannels=computed(()=>[{label:t('eventcmd.shakePower'),min:0,max:9}]);
+// RM editor tone presets: Normal / Dark / Sepia / Sunset / Night.
+const tonePresets=computed(()=>[{label:t('eventcmd.presetNormal'),values:[0,0,0,0]},{label:t('eventcmd.presetDark'),values:[-68,-68,-68,0]},{label:t('eventcmd.presetSepia'),values:[34,-34,-68,170]},{label:t('eventcmd.presetSunset'),values:[68,-34,-34,0]},{label:t('eventcmd.presetNight'),values:[-68,-68,0,68]}]);
+function arrayParam(index:number):number[]{const value=draft.value?.parameters[index];return Array.isArray(value)?value.map((item)=>Number(item)||0):[];}
+function setArrayItem(index:number,channel:number,value:number){if(!draft.value)return;const current=Array.isArray(draft.value.parameters[index])?[...(draft.value.parameters[index] as unknown[])]:[];current[channel]=value;draft.value.parameters[index]=current;touchCommand();}
+function setArrayParam(index:number,values:number[]){if(!draft.value)return;const current=Array.isArray(draft.value.parameters[index])?[...(draft.value.parameters[index] as unknown[])]:[];values.forEach((item,channel)=>{current[channel]=item;});draft.value.parameters[index]=current;touchCommand();}
 const gpRangeMode=ref(false);
 const gpOpKeys=['eventcmd.opSet','eventcmd.opAdd','eventcmd.opSub','eventcmd.opMul','eventcmd.opDiv','eventcmd.opMod'] as const;
 const gpGameDataKeys=['eventcmd.gameData0','eventcmd.gameData1','eventcmd.gameData2','eventcmd.gameData3','eventcmd.gameData4','eventcmd.gameData5','eventcmd.gameData6','eventcmd.gameData7'] as const;
@@ -901,4 +989,5 @@ defineExpose({openPicker,openEditor});
 .shop-cmd-layout{width:100%;display:grid;gap:8px}.shop-goods-table{width:100%;border-collapse:collapse;border:1px solid var(--app-border-strong);background:var(--app-bg);font-size:12px}.shop-goods-table th{background:var(--app-bg-soft);color:var(--app-ink-soft);font-weight:600}.shop-goods-table th,.shop-goods-table td{padding:4px 8px;border-bottom:1px solid var(--app-border);text-align:left}.shop-price-col{width:110px;text-align:right}.shop-goods-table tbody tr{cursor:default;user-select:none}.shop-goods-table tbody tr.active{background:var(--app-accent-soft)}.shop-goods-empty td{height:26px}.shop-goods-table:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}
 .cond-cmd-layout{width:100%;display:grid;gap:8px}.cond-tabs{display:flex;gap:2px}.cond-tabs button{min-width:36px}.cond-tab{display:grid;gap:6px}.cond-row{display:flex;align-items:center;gap:8px}.cond-row.cond-sub{padding-left:26px}.cond-pick{flex:0 0 128px;display:flex;align-items:center;gap:5px;color:var(--app-ink);font-size:12px}.cond-sub .cond-pick{flex-basis:102px}.cond-main{flex:1;min-width:0}.cond-inline{display:flex;align-items:center;gap:5px}.cond-inline input{width:64px}.cond-unit{color:var(--app-ink-soft);font-size:12px}.cond-check{flex:0 0 auto;gap:5px}.cond-else{width:100%;margin-top:4px;gap:5px}
 .cond-group{margin:0;padding:8px 10px 10px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);display:grid;gap:6px}.cond-group legend{padding:0 4px;color:var(--app-ink-soft);font-size:12px}.cond-radios{flex-wrap:wrap;gap:12px}.cond-radios label{display:flex;align-items:center;gap:5px;color:var(--app-ink);font-size:12px}.gp-gamedata select{flex:1;min-width:0}.gp-gamedata input{width:72px}
+.tone-group{width:100%}.dur-row{width:100%;display:flex;align-items:center;gap:8px}.dur-row input[type=number]{width:72px}.dur-row .check{margin-left:12px;gap:5px}
 </style>

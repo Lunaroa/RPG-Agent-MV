@@ -578,7 +578,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { RpgMakerEngine } from '@contract/types';
 import { LAYER_Z } from '../../constants/layerZIndex';
@@ -675,7 +675,7 @@ const dialogStyle=computed(()=>{
   if(dialogSize.value)return{width:`${dialogSize.value.w}px`,height:`${dialogSize.value.h}px`,maxHeight:'calc(100vh - 32px)'};
   return{width:'min(700px,calc(100vw - 32px))'};
 });
-const pluginCommandPlugins = ref<ManagedPluginEntry[]>([]);
+const pluginCommandPlugins = shallowRef<ManagedPluginEntry[]>([]);
 const pluginCommandPlugin = ref('');
 const pluginCommandError = ref('');
 const pluginCommandLoading = ref(false);
@@ -753,8 +753,8 @@ function onKeyDown(event: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
-function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());void loadPluginCommandMetadata();}
-function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
+function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
 function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
 function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];}
 function selectPickerPage(page:number){pickerPage.value=page;pickerQuery.value='';}

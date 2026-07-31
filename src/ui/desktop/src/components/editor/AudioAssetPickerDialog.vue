@@ -9,13 +9,14 @@
         <div class="audio-picker-grid">
           <aside>
             <input v-model="search" :placeholder="t('imgPicker.searchPlaceholder')" />
-            <button type="button" :class="{ active: !name }" @click="name = ''">{{ t('imgPicker.none') }}</button>
+            <button type="button" :class="{ active: !name }" @click="name = ''" @dblclick="pickAndCommit('')">{{ t('imgPicker.none') }}</button>
             <button
               v-for="asset in filteredAssets"
               :key="asset.fileName"
               type="button"
               :class="{ active: name === asset.name }"
               @click="name = asset.name"
+              @dblclick="pickAndCommit(asset.name)"
             >
               {{ asset.name }}
             </button>
@@ -80,6 +81,11 @@ function commit() {
   close();
 }
 
+function pickAndCommit(assetName: string) {
+  name.value = assetName;
+  commit();
+}
+
 function onKeyDown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
   event.preventDefault();
@@ -102,5 +108,8 @@ aside button { width: 100%; min-height: 28px; padding: 0 8px; border: 0; border-
 aside button:hover { background: var(--app-bg-sunken); }
 aside button.active { background: var(--app-accent-soft); color: var(--app-accent); font-weight: 600; }
 main { min-width: 0; display: grid; align-content: center; padding: 14px; }
+/* Slim waveform in this picker, matching the asset-library audio bar look. */
+main :deep(.audio-shell) { width: 100%; margin: 0; }
+main :deep(.audio-wave) { height: 26px; border-radius: var(--app-radius-sm); }
 .audio-picker-empty { margin: 0; color: var(--app-ink-muted); font-size: 12px; text-align: center; }
 </style>

@@ -222,6 +222,7 @@
       :load-image="loadImage"
       :overview="eventOverview"
       :current-events="currentEvents"
+      modeless
       @close="closeEventEditor"
       @save="saveEvent"
       @catalog-changed="loadEditorCatalog"
@@ -568,6 +569,7 @@ const canvasEditor = useMapCanvasEditor({
   tileFlags: tilesetFlags,
   selectedEventId,
   hoveredEventId,
+  eventViewOnly: eventDialogOpen,
   busy,
   placementActive,
   placementDirection,
@@ -2411,7 +2413,8 @@ async function ctxApplyMap() { const id = treeContext.mapId; closeTreeContext();
 async function ctxDiscardMap() { const id = treeContext.mapId; closeTreeContext(); await discardOneMap(id); }
 
 function onCanvasContextMenu(event: MouseEvent) {
-  if (mode.value !== 'event') return;
+  // While the event editor is open the map is inspect-only: no context menu.
+  if (mode.value !== 'event' || eventDialogOpen.value) return;
   const cell = canvasCell(event);
   if (!cell) return;
   Object.assign(canvasContext, { visible: true, x: event.clientX, y: event.clientY, cellX: cell.x, cellY: cell.y, eventId: eventAtCell(cell.x, cell.y)?.id ?? null });

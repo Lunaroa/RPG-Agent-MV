@@ -1,8 +1,8 @@
 <template>
   <teleport to="body">
-    <div v-if="visible" class="ev-modal-overlay editor-modal-overlay" data-ui-id="event-editor-overlay" :data-editor-dialog-layer="LAYER_Z.eventEditor" @mousedown.self="requestClose">
-      <section ref="modalRef" class="ev-modal editor-modal-shell" data-ui-id="event-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="event-editor-title">
-        <header class="ev-title-bar editor-modal-header">
+    <div v-if="visible" class="ev-modal-overlay editor-modal-overlay" :class="{ modeless }" data-ui-id="event-editor-overlay" :data-editor-dialog-layer="LAYER_Z.eventEditor" @mousedown.self="onOverlayMouseDown">
+      <section ref="modalRef" class="ev-modal editor-modal-shell" data-ui-id="event-editor-dialog" role="dialog" :aria-modal="!modeless" aria-labelledby="event-editor-title" :style="dragStyle">
+        <header class="ev-title-bar editor-modal-header" @pointerdown="onDragStart" @pointermove="onDragMove" @pointerup="onDragEnd" @pointercancel="onDragEnd">
           <h3 id="event-editor-title" class="editor-modal-title">{{ eventEditorTitle }}</h3>
           <button type="button" class="editor-modal-close" data-ui-id="event-editor-close" :aria-label="t('eventEditorDialog.closeTitle')" :title="t('eventcmd.close')" @click="requestClose">×</button>
         </header>
@@ -127,9 +127,9 @@
       <div v-if="cmdContext.visible" class="cmd-context-mask" @mousedown.self="closeCommandContext" @contextmenu.self.prevent="closeCommandContext">
         <ul class="cmd-context-menu" :style="{ left: `${cmdContext.x}px`, top: `${cmdContext.y}px` }" role="menu" :aria-label="t('eventEditorDialog.commandActions')">
           <li><button type="button" @click="runCommandMenu(openCommandPicker)">{{ t('eventEditorDialog.newCmd') }}<span>Return</span></button></li>
-          <li><button type="button" :disabled="selectedIndices.length !== 1" @click="runCommandMenu(openSelectedCommand)">{{ t('eventEditorDialog.editCmd') }}<span>Enter</span></button></li>
-          <li><button type="button" :disabled="selectedIndices.length !== 1" @click="runCommandMenu(() => moveSelectedCommandBlock(-1))">{{ t('cmdList.moveUp') }}<span>Alt+↑</span></button></li>
-          <li><button type="button" :disabled="selectedIndices.length !== 1" @click="runCommandMenu(() => moveSelectedCommandBlock(1))">{{ t('cmdList.moveDown') }}<span>Alt+↓</span></button></li>
+          <li><button type="button" :disabled="anchorBlockSelection == null" @click="runCommandMenu(openSelectedCommand)">{{ t('eventEditorDialog.editCmd') }}<span>Enter</span></button></li>
+          <li><button type="button" :disabled="anchorBlockSelection == null" @click="runCommandMenu(() => moveSelectedCommandBlock(-1))">{{ t('cmdList.moveUp') }}<span>Alt+↑</span></button></li>
+          <li><button type="button" :disabled="anchorBlockSelection == null" @click="runCommandMenu(() => moveSelectedCommandBlock(1))">{{ t('cmdList.moveDown') }}<span>Alt+↓</span></button></li>
           <li class="separator" />
           <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(cutSelectedCommands)">{{ t('eventEditorDialog.cut') }}<span>Ctrl+X</span></button></li>
           <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(() => copySelectedCommands())">{{ t('eventEditorDialog.copy') }}<span>Ctrl+C</span></button></li>
@@ -165,11 +165,11 @@ import EventCommandDialog from './EventCommandDialog.vue';
 import EventImagePickerDialog from './EventImagePickerDialog.vue';
 import EventTextPasteDialog from './EventTextPasteDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
-import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, dropCommandSpanBlock, editableCommandSpans, ensureTerminator, imageSummary, moveCommandSpanBlock, type MvCommand, type MvCommandSpan, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
+import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandDisplay, commandInsertIndent, commandTone, defaultPage, dropCommandSpanBlock, editableCommandSpans, ensureTerminator, imageSummary, moveCommandSpanBlock, skipTerminatorIndices, type MvCommand, type MvCommandSpan, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute } from '../../composables/useEventEditor';
 import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
 import type { EditorEventListItem } from './editorTypes';
-const props = withDefaults(defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null; currentEvents?: EditorEventListItem[] }>(), { currentEvents: () => [] });
+const props = withDefaults(defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null; currentEvents?: EditorEventListItem[]; modeless?: boolean }>(), { currentEvents: () => [], modeless: false });
 const emit = defineEmits<{ close: []; save: [closeAfterSave: boolean]; 'catalog-changed': [] }>();
 const { language, t } = useI18n();
 const projectStore = useProjectStore();
@@ -177,7 +177,36 @@ const eventEditorZ = String(LAYER_Z.eventEditor);
 const dirty = ref(false), closing = ref(false), pageIndex = ref(0), selectedSpans = ref<number[]>([]), selectionAnchor = ref<number | null>(null), pageClipboard = ref<MvEventPage | null>(null), commandClipboard = ref<MvCommand[] | null>(null);
 const pageIdentities = ref<Array<StoryEventPageOverview | undefined>>([]);
 const modalRef = ref<HTMLElement>(), previewCanvas = ref<HTMLCanvasElement>(), imagePicker = ref<InstanceType<typeof EventImagePickerDialog>>(), routeDialog = ref<InstanceType<typeof MoveRouteDialog>>(), commandDialog = ref<InstanceType<typeof EventCommandDialog>>(), textPasteDialog = ref<InstanceType<typeof EventTextPasteDialog>>();
+// RM-style title-bar drag. The offset is session-less: it resets on close so the
+// dialog always reopens centered.
+const dragOffset = ref<{ x: number; y: number } | null>(null);
+let dragStart: { x: number; y: number; ox: number; oy: number; pointer: number } | null = null;
+const dragStyle = computed(() => (dragOffset.value ? { transform: `translate(${dragOffset.value.x}px, ${dragOffset.value.y}px)` } : undefined));
+function onDragStart(event: PointerEvent) {
+  if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
+  const offset = dragOffset.value || { x: 0, y: 0 };
+  dragStart = { x: event.clientX, y: event.clientY, ox: offset.x, oy: offset.y, pointer: event.pointerId };
+  // Pointer capture keeps move events flowing while the cursor leaves the bar.
+  // It throws for synthetic pointers (no active pointer), so guard it.
+  try { (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); } catch { /* capture is best-effort */ }
+}
+function onDragMove(event: PointerEvent) {
+  if (dragStart?.pointer !== event.pointerId) return;
+  const shell = modalRef.value;
+  if (!shell) return;
+  const rect = shell.getBoundingClientRect();
+  const current = dragOffset.value || { x: 0, y: 0 };
+  const baseLeft = rect.left - current.x, baseTop = rect.top - current.y;
+  // Keep the title bar reachable: never above the viewport, always 48px visible.
+  const minVisible = 48;
+  const nx = Math.min(Math.max(dragStart.ox + (event.clientX - dragStart.x), minVisible - baseLeft - rect.width), window.innerWidth - baseLeft - minVisible);
+  const ny = Math.min(Math.max(dragStart.oy + (event.clientY - dragStart.y), -baseTop), window.innerHeight - baseTop - minVisible);
+  dragOffset.value = { x: Math.round(nx), y: Math.round(ny) };
+}
+function onDragEnd(event: PointerEvent) { if (dragStart?.pointer === event.pointerId) dragStart = null; }
+function onOverlayMouseDown() { if (!props.modeless) void requestClose(); }
 const currentPage = computed(() => props.draft?.pages[pageIndex.value] || null), spans = computed(() => currentPage.value ? editableCommandSpans(currentPage.value) : []);
+const skipTerminatorSet = computed(() => currentPage.value ? skipTerminatorIndices(currentPage.value.list) : new Set<number>());
 // Virtualized command list. Every span row has a deterministic height
 // (line-height 20px per command line + 8px row chrome), so we window by
 // prefix-summed pixel offsets and only localize the spans in the viewport.
@@ -185,6 +214,16 @@ const CMD_LINE_H = 20, CMD_ROW_CHROME = 8, CMD_OVERSCAN = 8;
 const listHost = ref<HTMLElement>();
 const listScrollTop = ref(0), listViewportH = ref(0);
 function buildSpanView(span: MvCommandSpan) {
+  // Skip-block terminators read as the RM ":End" marker instead of an empty row.
+  if (skipTerminatorSet.value.has(span.index)) {
+    return {
+      key: span.index,
+      tone: commandTone(109),
+      indent: Math.min(span.commands[0].indent, 12),
+      head: `${t('eventEditor.colon')}${t('eventEditor.command.skipEnd')}`,
+      lines: [],
+    };
+  }
   const head = commandDisplay(span.commands[0], props.systemData, language.value);
   return {
     key: span.index,
@@ -241,6 +280,16 @@ const currentPageLocked = computed(() => pageIdentities.value[pageIndex.value]?.
 const shellLocked = computed(() => Boolean(props.overview && !props.overview.shellEditable));
 const selectedIndices = computed(() => selectedSpans.value.filter((index) => index >= 0 && index < spans.value.length).sort((a, b) => a - b));
 const selectedSpanSet = computed(() => new Set(selectedIndices.value));
+// The anchor span when the selection is exactly the anchor row or its whole structure
+// block; block-selection clicks keep edit/move/insert targeting the clicked row.
+const anchorBlockSelection = computed(() => {
+  const anchor = selectionAnchor.value;
+  if (anchor == null || anchor < 0 || anchor >= spans.value.length || !selectedSpanSet.value.has(anchor)) return null;
+  const selected = selectedIndices.value;
+  if (selected.length === 1 && selected[0] === anchor) return anchor;
+  const block = commandBlockSpanIndices(spans.value, [anchor]);
+  return block.length === selected.length && block.every((value, index) => value === selected[index]) ? anchor : null;
+});
 const cmdContext = reactive({ visible: false, x: 0, y: 0 });
 // Drag reorder state: source span plus the insert-before slot (spans.length = drop at end).
 const dragSourceIndex = ref<number | null>(null), dropIndicator = ref<number | null>(null);
@@ -279,7 +328,7 @@ function onKeyDown(event: KeyboardEvent) {
   if (currentPageLocked.value) return;
   if (!isCommandShortcutTarget(event.target)) return;
   const ctrl = event.ctrlKey || event.metaKey;
-  if (event.key === 'Enter' && selectedIndices.value.length === 1) {
+  if (event.key === 'Enter' && anchorBlockSelection.value != null) {
     event.preventDefault();
     openSelectedCommand();
   } else if (event.key === 'Delete' && selectedIndices.value.length) {
@@ -316,6 +365,9 @@ watch(() => props.visible, (value) => {
     clearCommandSelection();
     listScrollTop.value = 0;
     void nextTick(() => { measureListViewport(); paintPreview(); });
+  } else {
+    dragOffset.value = null;
+    dragStart = null;
   }
 });
 watch(currentPage, () => { clearCommandSelection(); listScrollTop.value = 0; if (listHost.value) listHost.value.scrollTop = 0; void nextTick(() => { measureListViewport(); paintPreview(); }); });
@@ -342,9 +394,9 @@ function addPage() { if (!props.draft) return; props.draft.pages.push(defaultPag
 function copyPage() { if (currentPage.value) { pageClipboard.value = clone(currentPage.value); ElMessage.success(t('eventEditorDialog.pageCopied')); } }
 function pastePage() { if (!props.draft || !pageClipboard.value) return; props.draft.pages.push(clone(pageClipboard.value)); pageIdentities.value.push(undefined); pageIndex.value = props.draft.pages.length - 1; markDirty(); }
 async function clearPage() { if (!currentPage.value || currentPageLocked.value) return; try { await confirmAboveModal(t('eventEditorDialog.clearPageConfirm'), t('eventEditorDialog.clearPageTitle')); } catch { return; } props.draft!.pages[pageIndex.value] = defaultPage(); markDirty(); }
-async function deletePage() { if (!props.draft || currentPageLocked.value || props.draft.pages.length <= 1) return; try { await confirmAboveModal(t('eventEditorDialog.deletePageConfirm'), t('eventEditorDialog.deletePageTitle')); } catch { return; } props.draft.pages.splice(pageIndex.value, 1); pageIdentities.value.splice(pageIndex.value, 1); pageIndex.value = Math.max(0, pageIndex.value - 1); markDirty(); }function openCommandPicker() { if (currentPageLocked.value) return; const selected = selectedIndices.value, next = selected.length ? selected[selected.length - 1] + 1 : spans.value.length; commandDialog.value?.openPicker(next, currentPage.value ? commandInsertIndent(currentPage.value.list, rawIndexForSpan(next)) : 0); }
+async function deletePage() { if (!props.draft || currentPageLocked.value || props.draft.pages.length <= 1) return; try { await confirmAboveModal(t('eventEditorDialog.deletePageConfirm'), t('eventEditorDialog.deletePageTitle')); } catch { return; } props.draft.pages.splice(pageIndex.value, 1); pageIdentities.value.splice(pageIndex.value, 1); pageIndex.value = Math.max(0, pageIndex.value - 1); markDirty(); }function openCommandPicker() { if (currentPageLocked.value) return; const anchor = anchorBlockSelection.value, selected = selectedIndices.value, next = anchor != null ? anchor + 1 : selected.length ? selected[selected.length - 1] + 1 : spans.value.length; commandDialog.value?.openPicker(next, currentPage.value ? commandInsertIndent(currentPage.value.list, rawIndexForSpan(next)) : 0); }
 function openCommand(index: number) { if (currentPageLocked.value) return; const span = spans.value[index]; if (span) commandDialog.value?.openEditor(span.commands, index); }
-function openSelectedCommand() { if (selectedIndices.value.length === 1) openCommand(selectedIndices.value[0]); }
+function openSelectedCommand() { const anchor = anchorBlockSelection.value; if (anchor != null) openCommand(anchor); }
 function rawIndexForSpan(index: number) { return index >= spans.value.length ? Math.max(0, (currentPage.value?.list.length || 1) - 1) : spans.value[index]?.index || 0; }
 function commitCommand(payload: { commands: MvCommand[]; editSpan: number | null; insertSpan: number | null }) { if (!currentPage.value || currentPageLocked.value) return; const list = currentPage.value.list; if (payload.editSpan == null) { const at = payload.insertSpan == null || payload.insertSpan >= spans.value.length ? list.length - 1 : spans.value[payload.insertSpan].index; list.splice(at, 0, ...payload.commands); } else { const span = spans.value[payload.editSpan]; if (span) list.splice(span.index, span.commands.length, ...payload.commands); } ensureTerminator(list); clearCommandSelection(); markDirty(); }
 function selectCommand(index: number, event: MouseEvent) {
@@ -355,7 +407,8 @@ function selectCommand(index: number, event: MouseEvent) {
     selectedSpans.value = selectedSpanSet.value.has(index) ? selectedIndices.value.filter((item) => item !== index) : [...selectedIndices.value, index];
     selectionAnchor.value = index;
   } else {
-    selectedSpans.value = [index];
+    // RM-like block selection: clicking a structure head or marker highlights the whole block.
+    selectedSpans.value = commandBlockSpanIndices(spans.value, [index]);
     selectionAnchor.value = index;
   }
 }
@@ -371,8 +424,9 @@ function applyCommandListMutation(result: { list: MvCommand[]; headIndex: number
   markDirty();
 }
 function moveSelectedCommandBlock(offset: -1 | 1) {
-  if (!currentPage.value || currentPageLocked.value || selectedIndices.value.length !== 1) return;
-  applyCommandListMutation(moveCommandSpanBlock(currentPage.value.list, spans.value, selectedIndices.value[0], offset));
+  const anchor = anchorBlockSelection.value;
+  if (!currentPage.value || currentPageLocked.value || anchor == null) return;
+  applyCommandListMutation(moveCommandSpanBlock(currentPage.value.list, spans.value, anchor, offset));
 }
 function stepCommandSelection(offset: -1 | 1, extend: boolean) {
   const count = spans.value.length;
@@ -513,6 +567,18 @@ defineExpose({ markSaved });
   z-index: v-bind(eventEditorZ);
 }
 
+/* Modeless mode: the backdrop lets clicks fall through to the map canvas so
+ * other events stay inspectable while editing (RM cannot do this). */
+.ev-modal-overlay.modeless {
+  pointer-events: none;
+  background: transparent;
+  animation: none;
+}
+
+.ev-modal-overlay.modeless .ev-modal {
+  pointer-events: auto;
+}
+
 .ev-modal {
   width: min(1040px, calc(100vw - 32px));
   height: min(720px, calc(100vh - 32px));
@@ -520,6 +586,9 @@ defineExpose({ markSaved });
 
 .ev-title-bar {
   flex: 0 0 auto;
+  cursor: move;
+  touch-action: none;
+  user-select: none;
 }
 
 .ev-meta-bar {

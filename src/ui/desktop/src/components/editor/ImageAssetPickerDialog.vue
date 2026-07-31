@@ -10,23 +10,24 @@
           <!-- Icon indexes always reference the fixed IconSet sheet; no asset switching. -->
           <aside v-if="mode !== 'icon'">
             <input v-model="search" :placeholder="t('imgPicker.searchPlaceholder')" />
-            <button type="button" :class="{ active: !name }" @click="selectAsset('')">{{ t('imgPicker.none') }}</button>
+            <button type="button" :class="{ active: !name }" @click="selectAsset('')" @dblclick="confirmAsset('')">{{ t('imgPicker.none') }}</button>
             <button
               v-for="asset in filteredAssets"
               :key="asset.fileName"
               type="button"
               :class="{ active: name === asset.name }"
               @click="selectAsset(asset.name)"
+              @dblclick="confirmAsset(asset.name)"
             >
               {{ asset.name }}
             </button>
           </aside>
           <main>
-            <canvas v-if="mode === 'face' || mode === 'character'" ref="canvas" @click="pickCell" />
+            <canvas v-if="mode === 'face' || mode === 'character'" ref="canvas" @click="pickCell" @dblclick="commit" />
             <div v-else-if="mode === 'icon'" class="icon-grid-main">
               <div v-if="!selectedAsset" class="icon-grid-empty">{{ t('imgPicker.iconSetMissing') }}</div>
               <div v-else class="icon-grid-scroll">
-                <canvas ref="iconCanvas" @click="pickIconCell" />
+                <canvas ref="iconCanvas" @click="pickIconCell" @dblclick="commit" />
               </div>
             </div>
             <div v-else class="plain-preview">
@@ -42,6 +43,16 @@
       </section>
     </div>
   </teleport>
+  <!-- Plain image picking delegates to the plugin-manager file picker (folder tree, list/gallery views, double-click confirm). -->
+  <PluginParameterFilePickerDialog
+    ref="plainPicker"
+    :title="title"
+    :directory="plainDirectory"
+    media="image"
+    :assets="plainAssets"
+    :folders="plainFolders"
+    @commit="commitPlainSelection"
+  />
 </template>
 
 <script setup lang="ts">
@@ -52,6 +63,12 @@ import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import type { EditorProjectCatalog, ProjectAssetEntry } from '../../api/client';
 import { MV_FACE_COLUMNS, MV_FACE_ROWS, mvFaceIndexFromCanvasPoint, normalizeFaceSize, normalizeMvFaceIndex } from '../../utils/rmmvFace';
 import { isBigCharacterName } from '../../composables/useMapRenderer';
+import {
+  foldersFromAssetNames,
+  PLUGIN_FILE_DIRECTORY_BUCKETS,
+  type PluginFileAssetOption,
+} from '../../utils/pluginParameterFileAssets';
+import PluginParameterFilePickerDialog from './PluginParameterFilePickerDialog.vue';
 
 type ImageAssetKind = keyof EditorProjectCatalog['assets'];
 type ImagePickerMode = 'plain' | 'face' | 'character' | 'icon';
@@ -85,8 +102,19 @@ const iconCellPx = computed(() => Math.max(1, Number(props.catalog?.iconSize) ||
 
 const canvas = ref<HTMLCanvasElement>();
 const iconCanvas = ref<HTMLCanvasElement>();
+const plainPicker = ref<InstanceType<typeof PluginParameterFilePickerDialog> | null>(null);
 let bitmap: HTMLImageElement | null = null;
 const imageCache = new Map<string, HTMLImageElement | null>();
+
+// Plain mode feeds the plugin-manager picker straight from the catalog bucket.
+const plainDirectory = computed(() =>
+  PLUGIN_FILE_DIRECTORY_BUCKETS.find((bucket) => bucket.key === assetKind.value)?.directory
+  || `img/${String(assetKind.value)}`);
+const plainAssets = computed<PluginFileAssetOption[]>(() => (props.catalog?.assets[assetKind.value] || [])
+  .map((asset) => ({ name: String(asset.name || '').replace(/\\/g, '/'), fileName: asset.fileName, url: asset.url }))
+  .filter((asset) => Boolean(asset.name) && !asset.name.includes('..'))
+  .sort((left, right) => left.name.localeCompare(right.name)));
+const plainFolders = computed(() => foldersFromAssetNames(plainAssets.value.map((asset) => asset.name)));
 
 function iconGridLayout(): { cols: number; rows: number; nativeCellW: number; nativeCellH: number } {
   const iconSize = Math.max(1, Number(props.catalog?.iconSize) || 32);
@@ -126,6 +154,11 @@ function open(options: OpenOptions) {
   assetKind.value = options.asset;
   mode.value = options.mode || 'plain';
   title.value = options.title || t('imgPicker.chooseImage');
+  if (mode.value === 'plain') {
+    name.value = options.name || '';
+    plainPicker.value?.open(String(options.name || ''));
+    return;
+  }
   name.value = options.name || '';
   index.value = mode.value === 'face'
     ? normalizeMvFaceIndex(options.index)
@@ -309,6 +342,17 @@ function commit() {
   close();
 }
 
+function confirmAsset(value: string) {
+  name.value = value;
+  index.value = 0;
+  commit();
+}
+
+function commitPlainSelection(selection: string) {
+  name.value = selection;
+  emit('commit', { asset: assetKind.value, mode: 'plain', name: selection, index: 0 });
+}
+
 
 defineExpose({ open });
 </script>
@@ -316,7 +360,7 @@ defineExpose({ open });
 <style scoped>
 .sub-overlay { z-index: v-bind(subDialogZ); }
 .sub-dialog { width: min(820px, 86vw); max-height: min(82vh, 700px); }
-.picker-grid { min-height: 0; display: grid; grid-template-columns: 190px 1fr; flex: 1; }
+.picker-grid { min-height: 0; display: grid; grid-template-columns: 240px 1fr; flex: 1; }
 .picker-grid--single { grid-template-columns: 1fr; }
 aside { overflow: auto; border-right: 1px solid var(--app-border); }
 aside input { box-sizing: border-box; width: calc(100% - 16px); margin: 8px; padding: 5px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-bg); color: var(--app-ink); }

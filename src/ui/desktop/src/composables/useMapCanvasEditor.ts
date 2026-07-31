@@ -250,6 +250,9 @@ interface CanvasEditorOptions {
   tileFlags: Ref<number[]>;
   selectedEventId: Ref<number | null>;
   hoveredEventId?: Ref<number | null>;
+  // When set, event-mode clicks only select (inspect) events: no drag-move,
+  // no double-click open/create. Used while the event editor dialog is open.
+  eventViewOnly?: Ref<boolean>;
   busy: Ref<boolean>;
   postTiles: (edits: TileEdit[]) => Promise<{ changedCells: number; changes: TileEdit[] }>;
   reloadMap: () => Promise<void>;
@@ -1223,7 +1226,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (options.mode.value === 'event') {
       const existing = eventAtCell(cell.x, cell.y);
       options.selectEvent(existing?.id ?? null);
-      if (existing) draggingEvent = { event: existing, originalX: existing.x, originalY: existing.y, moved: false };
+      if (existing && !options.eventViewOnly?.value) draggingEvent = { event: existing, originalX: existing.x, originalY: existing.y, moved: false };
       renderOverlay();
       return;
     }
@@ -1311,7 +1314,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     renderOverlay();
   }
   function onCanvasDoubleClick(event: MouseEvent) {
-    if (options.mode.value !== 'event') return;
+    if (options.mode.value !== 'event' || options.eventViewOnly?.value) return;
     const cell = canvasCell(event);
     if (!cell) return;
     const existing = eventAtCell(cell.x, cell.y);

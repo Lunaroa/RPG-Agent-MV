@@ -168,19 +168,18 @@
               </div>
             </template>
             <label v-else-if="draft.code === 108" class="full">{{ t('eventcmd.comment') }}<textarea v-model="multiText" rows="7" /></label>
-            <template v-else-if="draft.code === 205">
-              <EventCommandFields :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" @change="touchCommand" />
-              <div class="route-field"><span>{{ routeSummary }}</span><button type="button" class="editor-btn" @click="routeDialog?.open(routeParam)">{{ t('eventcmd.editRoute') }}</button></div>
-            </template>
             <label v-else-if="draft.code === 355" class="full">{{ t('eventcmd.script') }}<textarea v-model="multiText" rows="11" spellcheck="false" /></label>
             <template v-else-if="draft.code === 356 || draft.code === 357">
               <div class="plugin-command-editor">
                 <label>
                   {{ t('eventcmd.enabledPlugins') }}
-                  <select :value="pluginCommandPlugin" @change="selectPluginForCommand">
-                    <option value="">{{ t('eventcmd.allPlugins') }}</option>
-                    <option v-for="plugin in enabledPluginEntries" :key="plugin.name" :value="plugin.name">{{ plugin.name }}</option>
-                  </select>
+                  <el-select :model-value="pluginCommandPlugin" filterable popper-class="plugin-command-popper" @update:model-value="selectPluginForCommand">
+                    <el-option value="" :label="t('eventcmd.allPlugins')" />
+                    <el-option v-for="plugin in commandCapablePluginEntries" :key="plugin.name" :value="plugin.name" :label="plugin.name">
+                      <span class="plugin-option-name">{{ plugin.name }}</span>
+                      <span class="plugin-option-desc">{{ plugin.description }}</span>
+                    </el-option>
+                  </el-select>
                 </label>
                 <label>
                   {{ t('eventcmd.sourceHints') }}
@@ -196,36 +195,34 @@
                   <textarea :value="stringParam(0)" rows="5" spellcheck="false" @input="setParam(0,inputValue($event))" />
                 </label>
                 <template v-else>
-                  <label class="full">
-                    {{ t('eventcmd.pluginCommand') }}
-                    <input :value="stringParam(2) || stringParam(1)" readonly />
-                  </label>
-                  <label v-for="argument in selectedMZPluginHint?.arguments || []" :key="argument.name" class="full plugin-command-argument">
-                    <span>{{ argument.label || argument.name }}</span>
-                    <PluginParameterInput
-                      :field="argument"
-                      :model-value="mzPluginArgument(argument.name)"
-                      :catalog="catalog"
-                      @update:model-value="setMZPluginArgument(argument, $event)"
-                    />
-                    <small v-if="argument.description">{{ argument.description }}</small>
-                  </label>
+                  <div class="full plugin-command-name-row">
+                    <span>{{ t('eventcmd.pluginCommand') }}</span>
+                    <el-tag effect="plain" class="plugin-command-name">{{ stringParam(2) || stringParam(1) || t('eventcmd.selectHint') }}</el-tag>
+                  </div>
+                  <div v-if="selectedMZPluginHint?.arguments?.length" class="full plugin-args-wrap">
+                    <table class="plugin-args-table">
+                      <thead><tr><th>{{ t('eventcmd.argName') }}</th><th>{{ t('eventcmd.argValue') }}</th></tr></thead>
+                      <tbody>
+                        <tr v-for="argument in selectedMZPluginHint.arguments" :key="argument.name" @dblclick="openPluginArgumentEditor(argument)">
+                          <td class="plugin-arg-name">
+                            <span>{{ argument.label || argument.name }}</span>
+                            <small v-if="argument.description">{{ argument.description }}</small>
+                          </td>
+                          <td class="plugin-arg-value">
+                            <el-switch v-if="argument.kind === 'boolean'" size="small" :model-value="['true','on','1'].includes(mzPluginArgument(argument.name).toLowerCase())" @update:model-value="setMZPluginArgument(argument, $event)" @dblclick.stop />
+                            <template v-else>
+                              <span class="plugin-arg-preview">{{ mzPluginArgument(argument.name) }}</span>
+                              <button type="button" class="editor-btn plugin-arg-edit" :aria-label="t('eventEditorDialog.editCmd')" @click.stop="openPluginArgumentEditor(argument)">…</button>
+                            </template>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </template>
-                <p class="form-note">{{ pluginCommandPreview }}</p>
                 <div v-if="pluginCommandError" class="plugin-command-warning">{{ pluginCommandError }}</div>
                 <div v-else-if="!visiblePluginCommandHints.length" class="plugin-command-warning">
                   {{ t('eventcmd.unsupported') }}
-                </div>
-                <div v-else class="plugin-command-hints">
-                  <button
-                    v-for="hint in visiblePluginCommandHints.slice(0, 6)"
-                    :key="pluginCommandHintKey(hint)"
-                    type="button"
-                    @click="applyPluginCommandHintValue(hint)"
-                  >
-                    <strong>{{ hint.command }}</strong>
-                    <small>{{ hint.evidence }}</small>
-                  </button>
                 </div>
               </div>
             </template>
@@ -554,7 +551,7 @@
               </div>
               <label v-if="editSpan==null" class="check cond-else"><input v-model="createElseBranch" type="checkbox" />{{ t('eventcmd.createElse') }}</label>
             </template>
-            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" @change="touchCommand" />
+            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" :troop-members="troopMembers" @change="touchCommand" />
             <p v-else class="form-note unsupported-command">
               {{ t('eventcmd.unsupportedEditor') }}
             </p>
@@ -570,7 +567,8 @@
     </div>
   </teleport>
   <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="loadImage" @commit="commitImageSelection" />
-  <MoveRouteDialog ref="routeDialog" :preview-x="eventX" :preview-y="eventY" @commit="setRoute" />
+  <MoveRouteDialog ref="routeDialog" :preview-x="eventX" :preview-y="eventY" @commit="setRoute" @cancel="cancelMergedRoute" />
+  <PluginParameterValueDialog v-model="pluginArgumentEditorOpen" :field="pluginArgumentEditing" :value="pluginArgumentEditing ? mzPluginArgument(pluginArgumentEditing.name) : ''" :catalog="catalog" allow-unchanged-commit @commit="commitPluginArgumentValue" @catalog-changed="emit('catalog-changed')" />
   <MessagePreviewDialog ref="messagePreview" :catalog="catalog" :load-image="loadImage" />
   <ScrollTextPreviewDialog ref="scrollPreview" :catalog="catalog" />
   <SystemNamedEntrySelectorDialog ref="namedEntrySelector" :catalog="catalog" @commit="commitNamedEntrySelection" @catalog-changed="emit('catalog-changed')" />
@@ -596,13 +594,13 @@ import EventCommandFields from './EventCommandFields.vue';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 import MessagePreviewDialog from './MessagePreviewDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
-import PluginParameterInput from './PluginParameterInput.vue';
+import PluginParameterValueDialog from '../console/PluginParameterValueDialog.vue';
 import ScrollTextPreviewDialog from './ScrollTextPreviewDialog.vue';
 import ShopGoodsDialog, { type ShopGoodsEntry } from './ShopGoodsDialog.vue';
 import ToneColorSliders from './ToneColorSliders.vue';
 import SystemNamedEntrySelectorDialog from './SystemNamedEntrySelectorDialog.vue';
 import type { EditorEventListItem } from './editorTypes';
-const props = withDefaults(defineProps<{ mapId:number|null; catalog:EditorProjectCatalog|null; loadImage:(url:string)=>Promise<HTMLImageElement|null>; eventX?:number; eventY?:number; currentEvents?:EditorEventListItem[] }>(), { eventX: 0, eventY: 0 });
+const props = withDefaults(defineProps<{ mapId:number|null; catalog:EditorProjectCatalog|null; loadImage:(url:string)=>Promise<HTMLImageElement|null>; eventX?:number; eventY?:number; currentEvents?:EditorEventListItem[]; troopMembers?:string[] }>(), { eventX: 0, eventY: 0 });
 const emit = defineEmits<{ commit:[payload:{commands:MvCommand[];editSpan:number|null;insertSpan:number|null}]; 'catalog-changed':[] }>();
 const projectStore = useProjectStore();
 const { language, t } = useI18n();
@@ -707,7 +705,6 @@ const commandTitle=computed(()=>{
   return definition ? localizeCommandLabel(definition, language.value) : t('eventcmd.unknownCommand', { code: draft.value.code });
 });
 const routeParam=computed<MvMoveRoute>(()=>(draft.value?.parameters[1] as MvMoveRoute)||defaultMoveRoute());
-const routeSummary=computed(()=>t('eventcmd.routeSteps', { count: routeParam.value.list.filter((item)=>item.code!==0).length }));
 // RM guide line: usable game text width is screen width minus 18px paddings, minus 168px when a face is set;
 // scaled from the 28px game font down to the 13px textarea font, plus the textarea's left padding+border.
 const textFaceName=computed(()=>draft.value?.code===101?String(draft.value.parameters[0]||''):'');
@@ -715,10 +712,13 @@ const textGuideLeft=computed(()=>Math.round(((Number(props.catalog?.screenWidth)
 // Scroll text spans the full screen width, so its guide never reserves face space.
 const scrollGuideLeft=computed(()=>Math.round(((Number(props.catalog?.screenWidth)||816)-36)*13/28)+7);
 const enabledPluginEntries=computed(()=>pluginCommandPlugins.value.filter((plugin)=>plugin.status&&plugin.fileExists&&plugin.name));
+const pluginHintMatchesEngine=(hint:PluginCommandHint)=>currentEngine.value==='rpg-maker-mz'?hint.source==='mz-command-header':hint.source!=='mz-command-header';
+// The plugin dropdown only lists plugins that actually expose commands for this engine.
+const commandCapablePluginEntries=computed(()=>enabledPluginEntries.value.filter((plugin)=>(plugin.commandHints||[]).some(pluginHintMatchesEngine)));
 const visiblePluginCommandHints=computed(()=>enabledPluginEntries.value
   .filter((plugin)=>!pluginCommandPlugin.value||plugin.name===pluginCommandPlugin.value)
   .flatMap((plugin)=>plugin.commandHints||[])
-  .filter((hint)=>currentEngine.value==='rpg-maker-mz'?hint.source==='mz-command-header':hint.source!=='mz-command-header'));
+  .filter(pluginHintMatchesEngine));
 const currentPluginCommandText=computed(()=>String(draft.value?.parameters[draft.value?.code===357?1:0]||'').trim());
 const currentPluginCommandToken=computed(()=>currentPluginCommandText.value.split(/\s+/).filter(Boolean)[0]||'');
 const matchedPluginCommandHints=computed(()=>enabledPluginEntries.value
@@ -732,17 +732,6 @@ const currentMZPluginArguments=computed<Record<string,string>>(()=>{
   if(!value||Array.isArray(value)||typeof value!=='object')return{};
   return Object.fromEntries(Object.entries(value as Record<string,unknown>).map(([key,entry])=>[key,String(entry??'')]));
 });
-const pluginCommandPreview=computed(()=>{
-  if (pluginCommandLoading.value) return t('eventcmd.pluginLoading');
-  const token = currentPluginCommandToken.value;
-  if (!token) return t('eventcmd.pluginHint');
-  if (matchedPluginCommandHints.value.length) {
-    return t('eventcmd.pluginMatched', { token, plugins: matchedPluginCommandHints.value.map((hint)=>hint.pluginName).join(' / ') });
-  }
-  const enabled = enabledPluginEntries.value.find((plugin)=>plugin.name.toLowerCase()===token.toLowerCase());
-  if (enabled) return t('eventcmd.pluginNoBranch', { name: enabled.name });
-  return t('eventcmd.pluginNoMatch', { token });
-});
 watch(currentPickerItems,()=>{activePickerIndex.value=currentPickerItems.value.length?0:-1;});
 
 function onKeyDown(event: KeyboardEvent) {
@@ -754,8 +743,33 @@ onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
 function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
-function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
-function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+// Keep in sync with the bespoke editor templates dispatched by draft.code above.
+const CUSTOM_EDITOR_CODES=new Set([101,102,103,104,105,108,111,124,138,205,223,224,225,234,236,302,322,323,355,356,357]);
+// RM inserts parameterless commands directly; no editor page is shown for them.
+function commandHasNoEditorParams(code:number){
+  if(CUSTOM_EDITOR_CODES.has(code))return false;
+  const definition=commandDefinition(code,currentEngine.value);
+  return definition!=null&&definition.fields.length===0;
+}
+function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value&&commandHasNoEditorParams(draft.value.code)){draft.value=null;draftSpan.value=[];return;}editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+// Set Movement Route (205) merges the target dropdown into the route editor: the
+// command dialog shell never shows, MoveRouteDialog commits or cancels the draft.
+function openMergedRouteDialog(){pickerOpen.value=false;visible.value=false;const current=numberParam(0,0);routeDialog.value?.open(routeParam.value,{target:current,targetOptions:moveRouteTargetOptions(current)});}
+function moveRouteTargetOptions(current:number):[number,string][]{
+  const options:[number,string][]=[[0,t('cmdFields.thisEvent')],[-1,t('cmdFields.player')]];
+  const seen=new Set<number>();
+  for(const event of [...(props.currentEvents||[])].sort((left,right)=>left.id-right.id)){
+    if(!Number.isInteger(event.id)||event.id<=0||seen.has(event.id))continue;
+    seen.add(event.id);
+    options.push([event.id,t('cmdFields.mapEvent',{id:String(event.id).padStart(3,'0'),name:event.name})]);
+  }
+  if(Number.isFinite(current)&&!options.some(([value])=>value===current)){
+    options.unshift([current,current>0?t(props.currentEvents?'cmdFields.missingEvent':'cmdFields.eventReference',{id:String(current).padStart(3,'0')}):t('cmdFields.unavailableTarget',{id:String(current)})]);
+  }
+  return options;
+}
+function cancelMergedRoute(){if(draft.value?.code===205&&!visible.value)close();}
 function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];}
 function selectPickerPage(page:number){pickerPage.value=page;pickerQuery.value='';}
 function pickerOptionId(code:number){return `event-command-option-${code}`;}
@@ -922,7 +936,7 @@ function commitImageSelection(selection:{name:string;index:number}){const target
 function openMessagePreview(){if(!draft.value)return;messagePreview.value?.open({faceName:stringParam(0),faceIndex:numberParam(1),background:numberParam(2),positionType:numberParam(3,2),lines:multiText.value.split(/\r?\n/).slice(0,4)});}
 // Empty/missing faces leave the canvas transparent so the CSS checkerboard shows through.
 async function paintFacePreview(){const el=facePreviewRef.value;if(!el)return;const w=el.width,h=el.height,ctx=el.getContext('2d')!;ctx.clearRect(0,0,w,h);ctx.imageSmoothingEnabled=false;const faceName=stringParam(0);if(!faceName)return;const asset=props.catalog?.assets.faces.find(e=>e.name===faceName);if(!asset)return;const img=await props.loadImage(asset.url);if(!img)return;const source=mvFaceSourceRect(numberParam(1),faceSize.value);ctx.drawImage(img,source.sx,source.sy,source.sw,source.sh,0,0,w,h);}
-function setRoute(route:MvMoveRoute){setParam(1,route);}
+function setRoute(route:MvMoveRoute,target:number|null){if(!draft.value)return;if(target!=null)setParam(0,target);setParam(1,route);if(draft.value.code===205&&!visible.value)commit();}
 function inputValue(event:Event){return(event.target as HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement).value;}
 function numberValue(event:Event){return Number(inputValue(event));}
 function checkedValue(event:Event){return(event.target as HTMLInputElement).checked;}
@@ -954,8 +968,7 @@ function syncPluginCommandSelection(){
   const named = enabledPluginEntries.value.find((plugin)=>plugin.name.toLowerCase()===token);
   if (named) pluginCommandPlugin.value=named.name;
 }
-function selectPluginForCommand(event:Event){
-  const name=inputValue(event);
+function selectPluginForCommand(name:string){
   pluginCommandPlugin.value=name;
   if (!draft.value||!name) return;
   if (draft.value.code===356&&!currentPluginCommandText.value) setParam(0,name);
@@ -989,6 +1002,18 @@ function setMZPluginArgument(argument:PluginCommandArgument,value:unknown){
   if(!draft.value||draft.value.code!==357)return;
   draft.value.parameters[3]={...currentMZPluginArguments.value,[argument.name]:serializePluginArgumentValue(argument,value)};
   touchCommand();
+}
+// Complex argument values reuse the plugin manager's value editor dialog.
+const pluginArgumentEditorOpen=ref(false);
+const pluginArgumentEditing=shallowRef<PluginCommandArgument|null>(null);
+function openPluginArgumentEditor(argument:PluginCommandArgument){
+  if(argument.kind==='boolean')return;
+  pluginArgumentEditing.value=argument;
+  pluginArgumentEditorOpen.value=true;
+}
+function commitPluginArgumentValue(value:unknown){
+  const argument=pluginArgumentEditing.value;
+  if(argument)setMZPluginArgument(argument,value);
 }
 function serializePluginArgumentValue(field:PluginParameterSchemaField,value:unknown):string{
   if(field.kind==='boolean')return value===true||['true','on','1'].includes(String(value).toLowerCase())?'true':'false';
@@ -1052,8 +1077,16 @@ defineExpose({openPicker,openEditor});
   font-size: 12px;
 }
 .picker h4{margin:0 0 5px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--app-ink);font-size:12px}.picker h4 small{color:var(--app-ink-muted);font-size:10px;font-weight:500}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{flex:1 1 auto;min-height:0;padding:12px;overflow:auto}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
-.plugin-command-editor{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.plugin-command-editor label{min-width:0;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.plugin-command-editor .full{grid-column:1 / -1}.plugin-command-editor textarea{min-height:96px}.plugin-command-warning{grid-column:1 / -1;padding:8px 10px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:12px;line-height:1.45}.plugin-command-hints{grid-column:1 / -1;display:grid;gap:5px}.plugin-command-hints button{display:grid;gap:3px;padding:7px 9px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft);color:var(--app-ink);font:inherit;text-align:left;cursor:pointer}.plugin-command-hints button:hover{border-color:var(--app-accent);background:var(--app-accent-soft)}.plugin-command-hints strong{font-size:12px}.plugin-command-hints small{overflow:hidden;color:var(--app-ink-muted);font-family:var(--app-font-mono);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
-.plugin-command-argument small{color:var(--app-ink-muted);font-size:11px;line-height:1.35}
+.plugin-command-editor{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.plugin-command-editor label{min-width:0;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.plugin-command-editor .full{grid-column:1 / -1}.plugin-command-editor textarea{min-height:96px}.plugin-command-warning{grid-column:1 / -1;padding:8px 10px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:12px;line-height:1.45}
+.plugin-command-name-row{display:flex;align-items:center;gap:8px;color:var(--app-ink-soft);font-size:12px}.plugin-command-name{max-width:100%;overflow:hidden;font-family:var(--app-font-mono);text-overflow:ellipsis}
+.plugin-args-wrap{max-height:320px;overflow:auto;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm)}
+.plugin-args-table{width:100%;border-collapse:collapse;background:var(--app-bg);font-size:12px}.plugin-args-table th{position:sticky;top:0;padding:5px 8px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-weight:600;text-align:left}.plugin-args-table td{padding:5px 8px;border-top:1px solid var(--app-border);vertical-align:middle}.plugin-args-table tbody tr{cursor:default}.plugin-args-table tbody tr:hover{background:var(--app-bg-soft)}
+.plugin-arg-name{width:45%}.plugin-arg-name span{display:block;color:var(--app-ink)}.plugin-arg-name small{display:block;overflow:hidden;color:var(--app-ink-muted);font-size:11px;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
+.plugin-arg-value{color:var(--app-ink)}.plugin-arg-value .plugin-arg-preview{display:inline-block;max-width:calc(100% - 40px);overflow:hidden;font-family:var(--app-font-mono);text-overflow:ellipsis;vertical-align:middle;white-space:nowrap}.plugin-arg-edit{min-width:28px;margin-left:6px;padding:1px 6px}
+.plugin-option-name{float:left;max-width:55%;overflow:hidden;text-overflow:ellipsis}.plugin-option-desc{float:right;max-width:42%;overflow:hidden;color:var(--app-ink-muted);font-size:12px;text-overflow:ellipsis}
+/* Element Plus teleports its popper/dialog to body; lift them above the command dialog overlay. */
+:global(.plugin-command-popper){z-index:2600 !important}
+:global(.el-overlay:has(.plugin-parameter-value-dialog)){z-index:2600 !important}
 .text-cmd-layout{width:100%;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}.text-cmd-face{display:flex;flex-direction:column;align-items:flex-start;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-face .editor-btn{align-self:center}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background-color:#f5efe6;background-image:linear-gradient(45deg,#ded6c8 25%,transparent 25%),linear-gradient(-45deg,#ded6c8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ded6c8 75%),linear-gradient(-45deg,transparent 75%,#ded6c8 75%);background-position:0 0,0 6px,6px -6px,-6px 0;background-size:12px 12px}.text-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-input-wrap{position:relative;display:block}.text-cmd-input-wrap textarea{width:100%;min-height:144px;box-sizing:border-box}.text-guide-line{position:absolute;top:1px;bottom:1px;width:1px;background:var(--app-border-strong);pointer-events:none}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:flex-end}.text-cmd-preview{margin-left:auto}.text-cmd-batch{width:100%;margin-top:2px;gap:5px}
 .choice-cmd-layout{width:100%;display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:16px;align-items:start}.choice-cmd-list{display:grid;gap:6px}.choice-cmd-title{color:var(--app-ink-soft);font-size:12px;font-weight:600}.choice-cmd-row{display:flex;align-items:center;gap:6px;color:var(--app-ink-soft);font-size:12px}.choice-cmd-row span{flex:0 0 24px;text-align:right}.choice-cmd-row input{flex:1;min-width:0}.choice-cmd-side{display:grid;gap:8px;align-content:start}.choice-cmd-side label{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}
 .var-cmd-field{width:100%;max-width:280px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.var-cmd-field .text-cmd-label{margin:0}.var-cmd-row{display:flex;gap:6px}.var-cmd-row input{flex:1;min-width:0;cursor:pointer}.var-cmd-row .editor-btn{flex:0 0 auto;min-width:32px}

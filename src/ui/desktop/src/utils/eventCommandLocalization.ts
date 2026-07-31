@@ -214,7 +214,7 @@ const COMMAND_TEXT_BY_SOURCE_LABEL_BY_LOCALE: Record<ProductLanguage, Record<str
   '速度': 'Speed',
   '等待结束': 'Wait for Completion',
   '镜像': 'Mirror',
-  '透明': 'Transparency',
+  '透明状态': 'Transparency',
   '队列行进': 'Followers',
   '动画': 'Animation',
   '气泡': 'Balloon',

@@ -18,12 +18,16 @@
           <span v-if="mode === 'map' && mapPayload" class="coordinate-size">{{ mapPayload.map.width }} × {{ mapPayload.map.height }}</span>
           <span v-else-if="mode === 'screen'" class="coordinate-size">{{ screenWidth }} × {{ screenHeight }}</span>
         </div>
-        <div class="coordinate-stage" :class="{ loading }">
+        <div ref="stageRef" class="coordinate-stage" :class="{ loading, 'map-stage': mode === 'map' }">
           <canvas
             ref="canvasRef"
             :width="canvasWidth"
             :height="canvasHeight"
             :aria-label="t('coordinate.canvasLabel')"
+            @pointerdown="onStagePointerDown"
+            @pointermove="onStagePointerMove"
+            @pointerup="onStagePointerUp"
+            @pointercancel="onStagePointerUp"
             @click="pickCanvasCoordinate"
             @dblclick="commit"
           />
@@ -69,27 +73,29 @@ const y = ref(0);
 const mapPayload = ref<MapPayload | null>(null);
 const tilesetImages = ref<(HTMLImageElement | null)[]>([]);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
-const VIEW_COLUMNS = 15;
-const VIEW_ROWS = 9;
+const stageRef = ref<HTMLElement | null>(null);
+// Full-map rendering: cap the backing canvas edge and downscale instead of cropping.
+const MAX_CANVAS_EDGE = 4096;
+let mapBaseCanvas: HTMLCanvasElement | null = null;
 
 const mapOptions = computed(() => (props.catalog?.maps || []).filter((map) => Number(map.id) > 0));
 const screenWidth = computed(() => Math.max(1, Number(props.catalog?.screenWidth) || 816));
 const screenHeight = computed(() => Math.max(1, Number(props.catalog?.screenHeight) || 624));
 const tileSize = computed(() => Math.max(1, Number(mapPayload.value?.tileSize || props.catalog?.tileSize) || 48));
-const viewport = computed(() => {
+const mapScale = computed(() => {
   const map = mapPayload.value?.map;
-  if (!map) return { left: 0, top: 0, width: 1, height: 1 };
-  const width = Math.min(VIEW_COLUMNS, map.width);
-  const height = Math.min(VIEW_ROWS, map.height);
-  return {
-    left: clamp(x.value - Math.floor(width / 2), 0, Math.max(0, map.width - width)),
-    top: clamp(y.value - Math.floor(height / 2), 0, Math.max(0, map.height - height)),
-    width,
-    height,
-  };
+  if (!map) return 1;
+  const fullWidth = map.width * tileSize.value;
+  const fullHeight = map.height * tileSize.value;
+  return Math.min(1, MAX_CANVAS_EDGE / Math.max(1, fullWidth), MAX_CANVAS_EDGE / Math.max(1, fullHeight));
 });
-const canvasWidth = computed(() => mode.value === 'screen' ? screenWidth.value : viewport.value.width * tileSize.value);
-const canvasHeight = computed(() => mode.value === 'screen' ? screenHeight.value : viewport.value.height * tileSize.value);
+const cellSize = computed(() => tileSize.value * mapScale.value);
+const canvasWidth = computed(() => mode.value === 'screen'
+  ? screenWidth.value
+  : Math.max(1, Math.round((mapPayload.value?.map.width || 1) * cellSize.value)));
+const canvasHeight = computed(() => mode.value === 'screen'
+  ? screenHeight.value
+  : Math.max(1, Math.round((mapPayload.value?.map.height || 1) * cellSize.value)));
 const maxX = computed(() => mode.value === 'screen' ? screenWidth.value - 1 : Math.max(0, Number(mapPayload.value?.map.width || 1) - 1));
 const maxY = computed(() => mode.value === 'screen' ? screenHeight.value - 1 : Math.max(0, Number(mapPayload.value?.map.height || 1) - 1));
 
@@ -135,10 +141,13 @@ async function loadMap() {
     tilesetImages.value = await Promise.all(urls.map(async (url) => url ? loadImageElement(await resolveAssetUrl(url)) : null));
     normalizeSelection();
     await nextTick();
+    buildMapBase();
     paint();
+    scrollSelectionIntoView();
   } catch (cause) {
     mapPayload.value = null;
     tilesetImages.value = [];
+    mapBaseCanvas = null;
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
     loading.value = false;
@@ -147,7 +156,10 @@ async function loadMap() {
 
 function normalizeAndPaint() {
   normalizeSelection();
-  void nextTick(paint);
+  void nextTick(() => {
+    paint();
+    scrollSelectionIntoView();
+  });
 }
 
 function normalizeSelection() {
@@ -165,22 +177,42 @@ function paint() {
   else paintMap(context);
 }
 
-function paintMap(context: CanvasRenderingContext2D) {
+// Render the whole map once into an offscreen canvas; selection repaints just blit it.
+function buildMapBase() {
   const payload = mapPayload.value;
-  if (!payload) return;
-  const cropped = cropMap(payload.map as MvMap, viewport.value);
-  drawMapContent(context, cropped, {
+  if (!payload) {
+    mapBaseCanvas = null;
+    return;
+  }
+  const base = document.createElement('canvas');
+  base.width = canvasWidth.value;
+  base.height = canvasHeight.value;
+  const context = base.getContext('2d');
+  if (!context) {
+    mapBaseCanvas = null;
+    return;
+  }
+  context.imageSmoothingEnabled = false;
+  context.save();
+  context.scale(mapScale.value, mapScale.value);
+  drawMapContent(context, payload.map as MvMap, {
     tilesetImages: tilesetImages.value,
     tilesetFlags: payload.tileset?.flags || [],
     tileSize: tileSize.value,
     showGrid: true,
   });
-  const localX = x.value - viewport.value.left;
-  const localY = y.value - viewport.value.top;
+  context.restore();
+  mapBaseCanvas = base;
+}
+
+function paintMap(context: CanvasRenderingContext2D) {
+  if (!mapBaseCanvas) return;
+  context.clearRect(0, 0, canvasWidth.value, canvasHeight.value);
+  context.drawImage(mapBaseCanvas, 0, 0);
   context.save();
   context.strokeStyle = '#ffcc4d';
-  context.lineWidth = Math.max(2, tileSize.value / 16);
-  context.strokeRect(localX * tileSize.value + 1, localY * tileSize.value + 1, tileSize.value - 2, tileSize.value - 2);
+  context.lineWidth = Math.max(2, cellSize.value / 16);
+  context.strokeRect(x.value * cellSize.value + 1, y.value * cellSize.value + 1, cellSize.value - 2, cellSize.value - 2);
   context.restore();
 }
 
@@ -200,6 +232,11 @@ function paintScreen(context: CanvasRenderingContext2D, width: number, height: n
 }
 
 function pickCanvasCoordinate(event: MouseEvent) {
+  // A drag-pan gesture must not change the selection when the button is released.
+  if (panMoved) {
+    panMoved = false;
+    return;
+  }
   const canvas = canvasRef.value;
   if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
@@ -209,35 +246,67 @@ function pickCanvasCoordinate(event: MouseEvent) {
     x.value = clamp(Math.round(px), 0, maxX.value);
     y.value = clamp(Math.round(py), 0, maxY.value);
   } else {
-    x.value = clamp(viewport.value.left + Math.floor(px / tileSize.value), 0, maxX.value);
-    y.value = clamp(viewport.value.top + Math.floor(py / tileSize.value), 0, maxY.value);
+    x.value = clamp(Math.floor(px / cellSize.value), 0, maxX.value);
+    y.value = clamp(Math.floor(py / cellSize.value), 0, maxY.value);
   }
   paint();
+}
+
+// Drag panning for the map stage; short presses fall through to click selection.
+const PAN_THRESHOLD = 4;
+let panPointerId: number | null = null;
+let panMoved = false;
+let panStartX = 0;
+let panStartY = 0;
+let panScrollLeft = 0;
+let panScrollTop = 0;
+
+function onStagePointerDown(event: PointerEvent) {
+  if (mode.value !== 'map' || event.button !== 0) return;
+  const stage = stageRef.value;
+  if (!stage) return;
+  panPointerId = event.pointerId;
+  panMoved = false;
+  panStartX = event.clientX;
+  panStartY = event.clientY;
+  panScrollLeft = stage.scrollLeft;
+  panScrollTop = stage.scrollTop;
+  canvasRef.value?.setPointerCapture(event.pointerId);
+}
+
+function onStagePointerMove(event: PointerEvent) {
+  if (panPointerId !== event.pointerId) return;
+  const stage = stageRef.value;
+  if (!stage) return;
+  const dx = event.clientX - panStartX;
+  const dy = event.clientY - panStartY;
+  if (!panMoved && Math.hypot(dx, dy) < PAN_THRESHOLD) return;
+  panMoved = true;
+  stage.scrollLeft = panScrollLeft - dx;
+  stage.scrollTop = panScrollTop - dy;
+}
+
+function onStagePointerUp(event: PointerEvent) {
+  if (panPointerId !== event.pointerId) return;
+  panPointerId = null;
+  const canvas = canvasRef.value;
+  if (canvas?.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+}
+
+function scrollSelectionIntoView() {
+  if (mode.value !== 'map') return;
+  const stage = stageRef.value;
+  if (!stage) return;
+  const centerX = (x.value + 0.5) * cellSize.value;
+  const centerY = (y.value + 0.5) * cellSize.value;
+  stage.scrollLeft = centerX - stage.clientWidth / 2;
+  stage.scrollTop = centerY - stage.clientHeight / 2;
 }
 
 function commit() {
   if (loading.value || error.value) return;
   emit('commit', { mapId: mapId.value, x: x.value, y: y.value });
   close();
-}
-
-function cropMap(map: MvMap, view: { left: number; top: number; width: number; height: number }): MvMap {
-  const layerSize = map.width * map.height;
-  const layerCount = Math.max(1, Math.floor(map.data.length / Math.max(1, layerSize)));
-  const data: number[] = [];
-  for (let layer = 0; layer < layerCount; layer += 1) {
-    for (let localY = 0; localY < view.height; localY += 1) {
-      for (let localX = 0; localX < view.width; localX += 1) {
-        const source = layer * layerSize + (view.top + localY) * map.width + view.left + localX;
-        data.push(Number(map.data[source]) || 0);
-      }
-    }
-  }
-  const events = (map.events || []).map((event) => {
-    if (!event || event.x < view.left || event.y < view.top || event.x >= view.left + view.width || event.y >= view.top + view.height) return null;
-    return { ...event, x: event.x - view.left, y: event.y - view.top };
-  });
-  return { ...map, width: view.width, height: view.height, data, events };
 }
 
 function positiveMapId(value: unknown): number {
@@ -258,8 +327,11 @@ defineExpose({ open });
 .coordinate-controls label { display:grid; gap:4px; color:var(--app-ink-muted); font-size:11px; }
 .coordinate-controls input,.coordinate-controls select { min-width:0; padding:5px 6px; border:1px solid var(--app-border); border-radius:var(--app-radius-sm); background:var(--app-bg); color:var(--app-ink); }
 .coordinate-size { align-self:center; color:var(--app-ink-muted); font:11px var(--app-font-mono); }
-.coordinate-stage { position:relative; min-height:220px; display:grid; place-items:center; padding:12px; overflow:auto; background:var(--app-bg-sunken); }
+.coordinate-stage { position:relative; min-height:220px; max-height:min(62vh, 560px); display:grid; place-items:center; padding:12px; overflow:auto; background:var(--app-bg-sunken); }
 .coordinate-stage canvas { display:block; max-width:100%; max-height:440px; border:1px solid var(--app-border-strong); background:#171a1f; cursor:crosshair; image-rendering:pixelated; }
+/* Map mode scrolls the full-size map; drag pans, click selects. */
+.coordinate-stage.map-stage { place-items:start; }
+.coordinate-stage.map-stage canvas { max-width:none; max-height:none; touch-action:none; }
 .coordinate-stage.loading canvas { opacity:.4; }
 .coordinate-status { position:absolute; inset:0; display:grid; place-items:center; padding:20px; color:var(--app-ink-muted); background:color-mix(in srgb,var(--app-bg) 72%,transparent); text-align:center; }
 .coordinate-status.error { color:var(--app-danger); }

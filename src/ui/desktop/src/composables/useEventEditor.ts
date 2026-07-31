@@ -209,7 +209,29 @@ export function commandSpanLength(list: MvCommand[], index: number): number {
 }
 
 export function ensureTerminator(list: MvCommand[]): void {
-  while (list.length && list[list.length - 1].code === 0) list.pop();
+  // Trailing code-0 rows that close open skip (109) blocks are structure, not page
+  // terminators; naively popping every trailing 0 used to eat skip-block terminators.
+  const skipIndents: number[] = [];
+  let lastStructural = -1;
+  for (let index = 0; index < list.length; index += 1) {
+    const command = list[index];
+    if (command.code === 109) {
+      skipIndents.push(command.indent);
+      lastStructural = index;
+      continue;
+    }
+    if (command.code === 0) {
+      if (skipIndents.length && skipIndents[skipIndents.length - 1] === command.indent) {
+        skipIndents.pop();
+        lastStructural = index;
+      }
+      continue;
+    }
+    lastStructural = index;
+  }
+  list.splice(lastStructural + 1);
+  // Repair skip blocks whose terminator was lost by earlier mutations.
+  while (skipIndents.length) list.push({ code: 0, indent: skipIndents.pop()!, parameters: [] });
   list.push({ code: 0, indent: 0, parameters: [] });
 }
 
@@ -218,6 +240,7 @@ const STRUCTURE_OPEN = new Set(Object.keys(STRUCTURE_END).map(Number));
 const STRUCTURE_CLOSE = new Set(Object.values(STRUCTURE_END));
 const STRUCTURE_BRANCH = new Set([402, 403, 411, 601, 602, 603]);
 const STRUCTURE_MARKER_START: Record<number, number> = {
+  0: 109,
   402: 102,
   403: 102,
   404: 102,
@@ -255,21 +278,34 @@ export function commandBlockSpanIndices(spans: MvCommandSpan[], selected: number
   }
 
   for (const selectedIndex of [...expanded]) {
-    const endCode = STRUCTURE_END[spans[selectedIndex]?.commands[0]?.code];
-    if (!endCode) continue;
-    let depth = 0;
+    const head = spans[selectedIndex]?.commands[0];
+    const endCode = head ? STRUCTURE_END[head.code] : undefined;
+    // `=== undefined`: the skip (109) block ends with code 0, which is falsy.
+    if (endCode === undefined) continue;
     for (let index = selectedIndex + 1; index < spans.length; index += 1) {
       const command = spans[index].commands[0];
-      const code = command?.code;
       expanded.add(index);
-      if (code === spans[selectedIndex].commands[0].code) depth += 1;
-      else if (code === endCode && command?.indent === spans[selectedIndex].commands[0].indent) {
-        if (!depth) break;
-        depth -= 1;
-      }
+      // Nested same-code blocks sit at a deeper indent, so the first end marker
+      // matching the head indent always closes this block.
+      if (command?.code === endCode && command.indent === head.indent) break;
     }
   }
   return [...expanded].sort((a, b) => a - b);
+}
+
+/** Raw list indices of code-0 rows that terminate a skip (109) block. */
+export function skipTerminatorIndices(list: MvCommand[]): Set<number> {
+  const result = new Set<number>();
+  const skips: number[] = [];
+  for (let index = 0; index < list.length; index += 1) {
+    const command = list[index];
+    if (command.code === 109) { skips.push(command.indent); continue; }
+    if (command.code === 0 && skips.length && skips[skips.length - 1] === command.indent) {
+      skips.pop();
+      result.add(index);
+    }
+  }
+  return result;
 }
 
 export function commandInsertIndent(list: MvCommand[], rawIndex: number): number {
@@ -283,9 +319,13 @@ export function commandInsertIndent(list: MvCommand[], rawIndex: number): number
       indent = command.indent + 1;
       continue;
     }
-    if (code === 0 && skipIndents[skipIndents.length - 1] === command?.indent) {
-      skipIndents.pop();
-      indent = command.indent;
+    if (code === 0) {
+      // Only a code 0 matching the innermost open skip closes it; branch-body
+      // placeholder rows never change the nesting level.
+      if (skipIndents[skipIndents.length - 1] === command?.indent) {
+        skipIndents.pop();
+        indent = command.indent;
+      }
       continue;
     }
     if (STRUCTURE_CLOSE.has(code)) indent = Math.max(0, indent - 1);
@@ -434,14 +474,19 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 404) return line(translate('eventEditor.command.endChoices', language), 'control');
   if (command.code === 108 || command.code === 408) return line(translate('eventEditor.command.comment', language, { text: String(p[0] || '') }), 'normal');
   if (command.code === 109) return line(translate('eventEditor.command.skip', language), 'control');
+  // RM branch bodies end with a placeholder code-0 row; skip-block terminators are
+  // re-labelled as "End" by the list views via skipTerminatorIndices.
+  if (command.code === 0) return { label: '◆', tone: 'normal', indent };
   if (command.code === 111) return line(translate('eventEditor.command.if', language, { cond: conditionBranchDisplay(system || null, p, language) }), 'text');
   if (command.code === 112) return line(translate('eventEditor.command.loop', language), 'control');
   if (command.code === 113) return line(translate('eventEditor.command.breakLoop', language), 'control');
+  if (command.code === 118) return line(translate('eventEditor.command.label', language, { name: String(p[0] || '') }), 'control');
+  if (command.code === 119) return line(translate('eventEditor.command.jumpLabel', language, { name: String(p[0] || '') }), 'control');
   if (command.code === 121) return line(translate('eventEditor.command.controlSwitches', language, { range: namedSystemRange(system || null, 'switches', p[0], p[1]), val: p[2] === 1 ? 'OFF' : 'ON' }), 'control');
   if (command.code === 122) return line(translate('eventEditor.command.controlVariables', language, { range: namedSystemRange(system || null, 'variables', p[0], p[1]) }), 'control');
   if (command.code === 123) return line(translate('eventEditor.command.controlSelfSwitch', language, { ch: String(p[0]), val: p[1] === 1 ? 'OFF' : 'ON' }), 'control');
   if (command.code === 201) return line(translate('eventEditor.command.transferPlayer', language, { mapId: String(p[1]), x: String(p[2]), y: String(p[3]) }), 'control');
-  if (command.code === 205) return line(translate('eventEditor.command.setMovementRoute', language), 'control');
+  if (command.code === 205) return line(translate('eventEditor.command.setMovementRoute', language, { target: eventTargetLabel(p[0], language), suffix: (p[1] as MvMoveRoute | undefined)?.wait ? translate('eventEditor.command.waitSuffix', language) : '' }), 'control');
   if (command.code === 212) return line(translate('eventEditor.command.showAnimation', language, { target: eventTargetLabel(p[0], language), id: String(p[1] || 0) }), 'control');
   if (command.code === 213) return line(translate('eventEditor.command.showBalloonIcon', language, { target: eventTargetLabel(p[0], language), icon: balloonIconLabel(p[1], language) }), 'control');
   if (command.code === 221) return line(translate('eventEditor.command.fadeoutScreen', language), 'control');
@@ -459,7 +504,7 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 411) return line(translate('eventEditor.command.else', language), 'control');
   if (command.code === 412) return line(translate('eventEditor.command.branchEnd', language), 'control');
   if (command.code === 413) return line(translate('eventEditor.command.repeatAbove', language), 'control');
-  if (command.code === 505) return { label: `${translate('eventEditor.colon', language)}${moveRouteCommandLabel(p[0], language)}`, tone: 'control', indent: Math.min(indent + 1, 12) };
+  if (command.code === 505) return { label: `${translate('eventEditor.colon', language)}◇${moveRouteCommandLabel(p[0], language)}`, tone: 'control', indent: Math.min(indent + 1, 12) };
   if (command.code === 405 || command.code === 408 || command.code === 605 || command.code === 655 || command.code === 657) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
   const standardLabel = standardCommandLabel(command.code, language);
   if (!standardLabel.startsWith('Raw command ')) return line(`${standardLabel}${p.length ? `${translate('eventEditor.colon', language)} ${JSON.stringify(p)}` : ''}`, 'control');

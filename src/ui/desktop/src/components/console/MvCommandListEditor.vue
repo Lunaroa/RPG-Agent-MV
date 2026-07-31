@@ -11,6 +11,7 @@ import {
   editableCommandSpans,
   ensureTerminator,
   moveCommandSpanBlock,
+  skipTerminatorIndices,
   type MvCommand,
   type MvCommandSpan,
 } from '../../composables/useEventEditor';
@@ -30,6 +31,8 @@ const props = withDefaults(defineProps<{
   loadImage?: (url: string) => Promise<HTMLImageElement | null>;
   mapId?: number | null;
   emptyText?: string;
+  /** Enemy names of the owning troop, in member order; enables member-aware enemy index options. */
+  troopMembers?: string[];
 }>(), {
   mapId: null,
   emptyText: '',
@@ -44,6 +47,7 @@ const selectionAnchor = ref<number | null>(null);
 
 const commandList = computed<MvCommand[]>(() => normalizeCommandList(props.modelValue));
 const spans = computed(() => editableCommandSpans({ list: commandList.value } as never));
+const skipTerminatorSet = computed(() => skipTerminatorIndices(commandList.value));
 const selectedIndices = computed(() => selectedSpans.value
   .filter((index) => index >= 0 && index < spans.value.length)
   .sort((a, b) => a - b));
@@ -76,6 +80,16 @@ function normalizeCommandList(value: unknown): MvCommand[] {
 }
 
 function displaySpan(span: MvCommandSpan): SpanView {
+  // Skip-block terminators read as the RM ":End" marker instead of an empty row.
+  if (skipTerminatorSet.value.has(span.index)) {
+    return {
+      key: span.index,
+      tone: commandTone(109),
+      indent: Math.min(span.commands[0].indent, 12),
+      head: `${t('eventEditor.colon')}${t('eventEditor.command.skipEnd')}`,
+      lines: [],
+    };
+  }
   const head = commandDisplay(span.commands[0], systemData.value, language.value);
   return {
     key: span.index,
@@ -205,7 +219,7 @@ function commitCommand(payload: { commands: MvCommand[]; editSpan: number | null
         <span class="cmd-line">◆</span>
       </button>
     </div>
-    <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="imageLoader" @commit="commitCommand" @catalog-changed="emit('catalog-changed')" />
+    <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="imageLoader" :troop-members="troopMembers" @commit="commitCommand" @catalog-changed="emit('catalog-changed')" />
   </section>
 </template>
 

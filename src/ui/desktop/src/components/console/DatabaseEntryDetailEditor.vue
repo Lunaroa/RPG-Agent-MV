@@ -1370,6 +1370,15 @@ function troopEnemyIndexOptions(): SelectOption[] {
   });
 }
 
+// Member enemy names for command dialogs (enemy index selects mirror RM's troop list).
+function troopMemberNames(): string[] {
+  return arrayRecords('members').map((member) => {
+    const enemyId = numberValue(member, 'enemyId');
+    const enemy = catalogEntries('enemies').find((entry) => entry.id === enemyId);
+    return enemy?.name || t('db.enemyN', { id: enemyId });
+  });
+}
+
 function animationTimings(path: string) {
   return normalizeAnimationTimings(readPath(path));
 }
@@ -2351,6 +2360,7 @@ function updateSound(index: number, key: string, value: unknown): void {
                   :catalog="catalog"
                   :load-image="loadImage"
                   :empty-text="t('db.emptyBattleCommands')"
+                  :troop-members="troopMemberNames()"
                   @update:model-value="updateTroopPageCommands(index, $event)"
                   @catalog-changed="emit('catalog-changed')"
                 />

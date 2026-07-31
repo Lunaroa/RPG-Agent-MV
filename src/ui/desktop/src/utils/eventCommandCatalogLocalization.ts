@@ -30,6 +30,10 @@ export interface CommandField {
   eventTarget?: CommandEventTargetOptions;
   min?: number;
   max?: number;
+  /** Render hint for number fields; 'slider' shows a track slider beside the input. */
+  control?: 'slider';
+  /** Member entries (values >= 0) are rebuilt from the current troop when context is available. */
+  troopMemberOptions?: boolean;
   visibleWhen?: CommandFieldVisibility | CommandFieldVisibility[];
   enabledWhen?: CommandFieldVisibility | CommandFieldVisibility[];
 }
@@ -70,9 +74,9 @@ const timerComparison: [unknown, string][] = [[0, '以上'], [1, '以下']];
 const goldComparison: [unknown, string][] = [[0, '以上'], [1, '以下'], [2, '小于']];
 const audioFields = (asset: CommandAssetKey): CommandField[] => [
   { label: '文件', path: [0, 'name'], kind: 'asset', asset },
-  { label: '音量', path: [0, 'volume'], kind: 'number', min: 0, max: 100 },
-  { label: '音调', path: [0, 'pitch'], kind: 'number', min: 50, max: 150 },
-  { label: '声像', path: [0, 'pan'], kind: 'number', min: -100, max: 100 },
+  { label: '音量', path: [0, 'volume'], kind: 'number', min: 0, max: 100, control: 'slider' },
+  { label: '音调', path: [0, 'pitch'], kind: 'number', min: 50, max: 150, control: 'slider' },
+  { label: '声像', path: [0, 'pan'], kind: 'number', min: -100, max: 100, control: 'slider' },
 ];
 const when = (path: CommandFieldPath, equals: unknown | readonly unknown[]): CommandFieldVisibility => ({ path, equals });
 const basicOperandFields = (offset = 0): CommandField[] => [
@@ -157,7 +161,7 @@ const PAGE_2: { group: string; items: Def[] }[] = [
     { code: 206, kind: 'vehicle', label: '上下交通工具', fields: [] },
   ] },
   { group: '人物', items: [
-    { code: 211, kind: 'transparency', label: '更改透明状态', fields: [{ label: '透明', path: [0], kind: 'select', options: onOff }] },
+    { code: 211, kind: 'transparency', label: '更改透明状态', fields: [{ label: '透明状态', path: [0], kind: 'select', options: onOff }] },
     { code: 216, kind: 'followers', label: '更改队列行进', fields: [{ label: '队列行进', path: [0], kind: 'select', options: onOff }] },
     { code: 217, kind: 'gatherFollowers', label: '集合队列成员', fields: [] },
     { code: 212, kind: 'animation', label: '显示动画', fields: [{ label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true } }, { label: '动画', path: [1], kind: 'database', catalog: 'animations' }, { label: '等待结束', path: [2], kind: 'boolean' }] },
@@ -230,12 +234,12 @@ const PAGE_3: { group: string; items: Def[] }[] = [
     { code: 331, kind: 'enemyHp', label: '增减敌人 HP', fields: enemyOperandFields(true) },
     { code: 332, kind: 'enemyMp', label: '增减敌人 MP', fields: enemyOperandFields(false) },
     { code: 342, kind: 'enemyTp', label: '增减敌人 TP', fields: enemyOperandFields(false) },
-    { code: 333, kind: 'enemyState', label: '更改敌人状态', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets }, { label: '操作', path: [1], kind: 'select', options: [[0, '附加'], [1, '解除']] }, { label: '状态', path: [2], kind: 'database', catalog: 'states' }] },
-    { code: 334, kind: 'enemyRecover', label: '敌人完全恢复', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets }] },
-    { code: 335, kind: 'enemyAppear', label: '敌人出现', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: troopMemberIndexes }] },
-    { code: 336, kind: 'enemyTransform', label: '敌人变身', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: troopMemberIndexes }, { label: '敌人', path: [1], kind: 'database', catalog: 'enemies' }] },
-    { code: 337, kind: 'battleAnimation', label: '显示战斗动画', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets }, { label: '动画', path: [1], kind: 'database', catalog: 'animations' }, { label: '镜像', path: [2], kind: 'boolean' }] },
-    { code: 339, kind: 'forceAction', label: '强制行动', fields: [{ label: '主体类型', path: [0], kind: 'select', options: [[0, '敌人'], [1, '角色']] }, { label: '敌人', path: [1], kind: 'select', options: troopMemberIndexes, visibleWhen: when([0], 0) }, { label: '角色', path: [1], kind: 'database', catalog: 'actors', visibleWhen: when([0], 1) }, { label: '技能', path: [2], kind: 'database', catalog: 'skills' }, { label: '目标序号', path: [3], kind: 'select', options: forceActionTargets }] },
+    { code: 333, kind: 'enemyState', label: '更改敌人状态', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets, troopMemberOptions: true }, { label: '操作', path: [1], kind: 'select', options: [[0, '附加'], [1, '解除']] }, { label: '状态', path: [2], kind: 'database', catalog: 'states' }] },
+    { code: 334, kind: 'enemyRecover', label: '敌人完全恢复', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets, troopMemberOptions: true }] },
+    { code: 335, kind: 'enemyAppear', label: '敌人出现', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: troopMemberIndexes, troopMemberOptions: true }] },
+    { code: 336, kind: 'enemyTransform', label: '敌人变身', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: troopMemberIndexes, troopMemberOptions: true }, { label: '敌人', path: [1], kind: 'database', catalog: 'enemies' }] },
+    { code: 337, kind: 'battleAnimation', label: '显示战斗动画', fields: [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets, troopMemberOptions: true }, { label: '动画', path: [1], kind: 'database', catalog: 'animations' }, { label: '镜像', path: [2], kind: 'boolean' }] },
+    { code: 339, kind: 'forceAction', label: '强制行动', fields: [{ label: '主体类型', path: [0], kind: 'select', options: [[0, '敌人'], [1, '角色']] }, { label: '敌人', path: [1], kind: 'select', options: troopMemberIndexes, troopMemberOptions: true, visibleWhen: when([0], 0) }, { label: '角色', path: [1], kind: 'database', catalog: 'actors', visibleWhen: when([0], 1) }, { label: '技能', path: [2], kind: 'database', catalog: 'skills' }, { label: '目标序号', path: [3], kind: 'select', options: forceActionTargets, troopMemberOptions: true }] },
     { code: 340, kind: 'abortBattle', label: '中止战斗', fields: [] },
   ] },
   { group: '高级', items: [
@@ -381,7 +385,7 @@ function colorFields(index: number): CommandField[] {
   return [['红', 0], ['绿', 1], ['蓝', 2], ['强度', 3]].map(([label, child]) => ({ label: String(label), path: [index, Number(child)], kind: 'number' }));
 }
 function enemyOperandFields(allowDeath: boolean): CommandField[] {
-  return [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets }, ...basicOperandFields(1), ...(allowDeath ? [{ label: '允许死亡', path: [4], kind: 'boolean' } as CommandField] : [])];
+  return [{ label: '敌人序号', path: [0], kind: 'select', options: enemyIndexTargets, troopMemberOptions: true }, ...basicOperandFields(1), ...(allowDeath ? [{ label: '允许死亡', path: [4], kind: 'boolean' } as CommandField] : [])];
 }
 
 export const COMMAND_PAGES = [PAGE_1, PAGE_2, PAGE_3].map((groups, pageIndex) => groups.map((group) => ({

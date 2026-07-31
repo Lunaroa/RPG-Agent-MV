@@ -7,10 +7,22 @@
       </span>
       <input v-else-if="field.kind === 'text'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @input="setField(field, inputValue($event))" />
       <textarea v-else-if="field.kind === 'multiline'" :value="displayValue(field)" rows="4" @input="setField(field, inputValue($event))" />
+      <span v-else-if="field.kind === 'number' && field.control === 'slider'" class="slider-row">
+        <el-slider
+          size="small"
+          :min="field.min"
+          :max="field.max"
+          :model-value="sliderValue(field)"
+          :show-tooltip="false"
+          :disabled="fieldDisabled(field)"
+          @update:model-value="setSliderField(field, $event)"
+        />
+        <input :value="displayValue(field)" type="number" :min="field.min" :max="field.max" :disabled="fieldDisabled(field)" @input="setField(field, clampedNumberValue(field, $event))" />
+      </span>
       <input v-else-if="field.kind === 'number'" :value="displayValue(field)" type="number" :min="field.min" :max="field.max" :disabled="fieldDisabled(field)" @input="setField(field, numberValue($event))" />
       <input v-else-if="field.kind === 'boolean'" :checked="Boolean(fieldValue(field))" type="checkbox" :disabled="fieldDisabled(field)" @change="setField(field, checkedValue($event))" />
       <select v-else-if="field.kind === 'select'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @change="setField(field, optionValue(field, inputValue($event)))">
-        <option v-for="[value, label] in field.options || []" :key="String(value)" :value="String(value)">{{ label }}</option>
+        <option v-for="[value, label] in selectOptions(field)" :key="String(value)" :value="String(value)">{{ label }}</option>
       </select>
       <select v-else-if="field.kind === 'eventTarget'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @change="setField(field, numberValue($event))">
         <option v-for="[value, label] in eventTargetOptions(field)" :key="value" :value="value">{{ label }}</option>
@@ -68,6 +80,8 @@ const props = defineProps<{
   loadImage: (url: string) => Promise<HTMLImageElement | null>;
   mapId?: number | null;
   currentEvents?: EditorEventListItem[];
+  /** Enemy names of the current troop, in member order; enables member-aware enemy index options. */
+  troopMembers?: string[];
 }>();
 const emit = defineEmits<{ change: [] }>();
 const { language, t } = useI18n();
@@ -170,7 +184,24 @@ function setField(field: CommandField, value: unknown) {
   emit('change');
 }
 function optionValue(field: CommandField, value: string) {
-  return field.options?.find(([entry]) => String(entry) === value)?.[0] ?? value;
+  return selectOptions(field).find(([entry]) => String(entry) === value)?.[0] ?? value;
+}
+// RM lists the actual troop members ("#1 Bat"); fall back to #1..#8 without troop context.
+function selectOptions(field: CommandField): [unknown, string][] {
+  const options = field.options || [];
+  if (!field.troopMemberOptions) return options;
+  const members = props.troopMembers;
+  if (!members || !members.length) return options;
+  const special = options.filter(([value]) => Number(value) < 0);
+  const result: [unknown, string][] = [
+    ...special,
+    ...members.map((memberName, memberIndex): [unknown, string] => [memberIndex, `#${memberIndex + 1} ${memberName}`.trim()]),
+  ];
+  const current = Number(fieldValue(field));
+  if (Number.isFinite(current) && current >= 0 && !result.some(([value]) => Number(value) === current)) {
+    result.push([current, `#${current + 1}`]);
+  }
+  return result;
 }
 function eventTargetOptions(field: CommandField): [number, string][] {
   const config = field.eventTarget;
@@ -344,6 +375,20 @@ function samePath(left: CommandField['path'], right: CommandField['path']): bool
 function inputValue(event: Event) { return (event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value; }
 function numberValue(event: Event) { return Number(inputValue(event)); }
 function checkedValue(event: Event) { return (event.target as HTMLInputElement).checked; }
+function sliderValue(field: CommandField) {
+  const value = Number(fieldValue(field));
+  return Number.isFinite(value) ? value : field.min ?? 0;
+}
+function setSliderField(field: CommandField, value: number | number[] | undefined) {
+  const single = Array.isArray(value) ? value[0] ?? 0 : value ?? 0;
+  setField(field, single);
+}
+function clampedNumberValue(field: CommandField, event: Event) {
+  const raw = numberValue(event);
+  const min = field.min ?? Number.NEGATIVE_INFINITY;
+  const max = field.max ?? Number.POSITIVE_INFINITY;
+  return Math.max(min, Math.min(max, Number.isFinite(raw) ? raw : 0));
+}
 </script>
 
 <style scoped>
@@ -356,6 +401,9 @@ textarea { grid-column: 1 / -1; font-family: var(--app-font-mono); resize: verti
 .cmd-field:has(textarea), .cmd-field:has(.radio-row) { grid-column: 1 / -1; }
 .radio-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 30px; }
 .radio-row label { display: flex; align-items: center; gap: 5px; color: var(--app-ink); font-size: 13px; }
+.slider-row { min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 30px; }
+.slider-row .el-slider { flex: 1; min-width: 0; }
+.slider-row input { flex: 0 0 64px; width: 64px; }
 input[type="checkbox"] { justify-self: start; }
 .no-fields { grid-column: 1 / -1; margin: 0; color: var(--app-ink-muted); font-size: 12px; }
 .coordinate-picker-button { grid-column:1 / -1; min-height:30px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 8px; border:1px solid var(--app-border); border-radius:var(--app-radius-sm); background:var(--app-bg-soft); color:var(--app-ink); cursor:pointer; }

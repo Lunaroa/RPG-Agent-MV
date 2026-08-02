@@ -97,7 +97,7 @@
                     type="button"
                     :disabled="currentPageLocked"
                     class="cmd-row cmd-blank"
-                    :class="{ even: row.slot.spanIndex % 2 === 0, terminator: row.slot.spanIndex === spans.length, focused: insertionFocus === row.slot.spanIndex, 'drop-before': dropIndicator === row.slot.spanIndex }"
+                    :class="{ even: row.slot.spanIndex % 2 === 0, terminator: row.slot.spanIndex === spans.length, 'always-show': row.slot.spanIndex === spans.length, focused: insertionFocus === row.slot.spanIndex, 'drop-before': dropIndicator === row.slot.spanIndex }"
                     :style="{ '--cmd-indent': `${Math.min(row.slot.indent, 8) * 18}px` }"
                     :aria-label="t('eventEditorDialog.newCmd')"
                     :draggable="false"
@@ -253,11 +253,14 @@ const commandRows = computed<CommandRenderRow[]>(() => {
 });
 function commandRowHeight(row: CommandRenderRow): number {
   if (row.kind === 'blank') {
-    // RM-native compact list: an insertion slot occupies no vertical space
-    // unless it is the focused insertion point or the active drop target, so
-    // command rows sit flush against each other instead of being spaced out.
+    // RM MV-native list: commands sit flush against each other; only the
+    // trailing slot (the "◆" row at the end, used to double-click-append a
+    // new command) plus the focused insertion point and active drop target
+    // occupy any vertical space. Intermediate slots collapse to 0 so there
+    // are no blank rows between commands.
     const slotIndex = row.slot.spanIndex;
-    const active = insertionFocus.value === slotIndex || dropIndicator.value === slotIndex;
+    const isTrailing = slotIndex === spans.value.length;
+    const active = isTrailing || insertionFocus.value === slotIndex || dropIndicator.value === slotIndex;
     return active ? CMD_BLANK_H : 0;
   }
   return row.view.lines.length * CMD_LINE_H + CMD_LINE_H + CMD_ROW_CHROME;
@@ -1066,12 +1069,10 @@ defineExpose({ markSaved });
 }
 
 .cmd-row.cmd-blank {
-  /* RM-native compact list: insertion slots are hidden by default and occupy
-     no vertical space (the virtual list also reports 0 height for them unless
-     they are the focused insertion point or the active drop target). Insert a
-     command via the toolbar, Enter, or the context menu instead of clicking a
-     gap. display:none cannot be hovered, so :hover only styles the revealed
-     focused/drop-before slot. */
+  /* RM MV-native list: only the trailing "◆" row (always-show), the focused
+     insertion point, and the active drop target are visible. Intermediate
+     insertion slots are display:none and report 0 height in the virtual list
+     so commands sit flush with no blank rows between them. */
   display: none;
   min-height: 22px;
   color: var(--app-ink-muted);
@@ -1079,6 +1080,7 @@ defineExpose({ markSaved });
   user-select: none;
 }
 
+.cmd-row.cmd-blank.always-show,
 .cmd-row.cmd-blank.focused,
 .cmd-row.cmd-blank.drop-before {
   display: block;

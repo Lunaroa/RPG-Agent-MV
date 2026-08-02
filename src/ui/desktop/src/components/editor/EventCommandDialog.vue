@@ -465,11 +465,11 @@
                   </div>
                 </div>
                 <div v-show="condTab === 2" class="cond-tab">
+                  <div class="cond-row">
+                    <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===4" @change="setConditionType(4)" />{{ t('eventcmd.condActor') }}</label>
+                    <select class="cond-main" :value="conditionalNumberParam(4,1,1)" :disabled="numberParam(0)!==4" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.actors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                  </div>
                   <template v-if="numberParam(0)===4">
-                    <div class="cond-row">
-                      <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===4" @change="setConditionType(4)" />{{ t('eventcmd.condActor') }}</label>
-                      <select class="cond-main" :value="conditionalNumberParam(4,1,1)" :disabled="numberParam(0)!==4" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.actors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
-                    </div>
                     <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(4,2)!==0 }">
                       <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===0" :disabled="numberParam(0)!==4" @change="setActorCondition(0)" />{{ t('eventcmd.condInParty') }}</label>
                     </div>

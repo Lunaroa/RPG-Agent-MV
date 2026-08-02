@@ -349,20 +349,37 @@ function openCoordinatePicker(): void {
 }
 
 function screenPicturePreview() {
-  if (props.command.code !== 231) return undefined;
   const p = props.command.parameters;
-  const assetName = String(p[1] || '');
-  if (!assetName) return undefined;
-  const asset = props.catalog?.assets.pictures.find((entry) => entry.name === assetName);
-  return {
-    assetName,
-    assetUrl: asset?.url || '',
-    origin: Number(p[2]) === 1 ? 1 as const : 0 as const,
-    scaleX: finiteNumber(p[6], 100),
-    scaleY: finiteNumber(p[7], 100),
-    opacity: finiteNumber(p[8], 255),
-    blendMode: finiteNumber(p[9], 0),
-  };
+  if (props.command.code === 231) {
+    const assetName = String(p[1] || '');
+    if (!assetName) return undefined;
+    const asset = props.catalog?.assets.pictures.find((entry) => entry.name === assetName);
+    return {
+      assetName,
+      assetUrl: asset?.url || '',
+      origin: Number(p[2]) === 1 ? 1 as const : 0 as const,
+      scaleX: finiteNumber(p[6], 100),
+      scaleY: finiteNumber(p[7], 100),
+      opacity: finiteNumber(p[8], 255),
+      blendMode: finiteNumber(p[9], 0),
+    };
+  }
+  // Move Picture (232) operates on a picture slot set earlier by Show Picture;
+  // the asset name is not stored on the command, so we expose the slot number
+  // (empty assetUrl) for the picker to draw a placeholder target frame.
+  if (props.command.code === 232) {
+    const slot = Math.max(1, finiteNumber(p[0], 1));
+    return {
+      assetName: `#${slot}`,
+      assetUrl: '',
+      origin: Number(p[2]) === 1 ? 1 as const : 0 as const,
+      scaleX: finiteNumber(p[6], 100),
+      scaleY: finiteNumber(p[7], 100),
+      opacity: finiteNumber(p[8], 255),
+      blendMode: finiteNumber(p[9], 0),
+    };
+  }
+  return undefined;
 }
 function commitCoordinate(selection: { mapId: number; x: number; y: number }): void {
   if (props.command.code === 201) {

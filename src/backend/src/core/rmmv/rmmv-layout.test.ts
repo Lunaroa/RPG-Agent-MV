@@ -261,7 +261,7 @@ function writeMZProject(
           tileSize,
           faceSize: 144,
           iconSize: 32,
-          advanced: { screenWidth, screenHeight, uiAreaWidth: screenWidth },
+          advanced: { screenWidth, screenHeight, uiAreaWidth: screenWidth, uiAreaHeight: screenHeight },
         }
       : []), 'utf8');
   }

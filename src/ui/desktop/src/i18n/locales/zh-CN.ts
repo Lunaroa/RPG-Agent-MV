@@ -2299,6 +2299,7 @@ const zhCN = {
     'coordinate.mapHint': '单击选择，双击确定；拖曳或滚动可平移地图。',
     'coordinate.screenHint': '画布尺寸来自当前项目的屏幕设置。',
     'coordinate.pictureUnavailable': '图片“{name}”无法读取，仍可继续选择坐标。',
+    'coordinate.picturePlaceholder': '图片 {name}（移动目标，运行时显示）',
     'coordinate.chooseMap': '在地图上选择',
     'coordinate.chooseScreen': '在画面上选择',
     'systemNamedEntry.switchTitle': '开关选择器',

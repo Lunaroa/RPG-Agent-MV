@@ -49,11 +49,15 @@ describe('show-picture coordinate preview', () => {
     assert.equal(pictureBlendOperation(3), 'screen');
   });
 
-  test('keeps preview integration exclusive to Show Picture', () => {
+  test('lets Show Picture render its asset and Move Picture draw a placeholder only', () => {
     const fieldsSource = readFileSync(new URL('../components/editor/EventCommandFields.vue', import.meta.url), 'utf8');
-    assert.match(fieldsSource, /props\.command\.code !== 231/);
+    // Show Picture (231) and Move Picture (232) both feed the picker.
+    assert.match(fieldsSource, /props\.command\.code === 231/);
+    assert.match(fieldsSource, /props\.command\.code === 232/);
     assert.match(fieldsSource, /picture:\s*screenPicturePreview\(\)/);
-    assert.doesNotMatch(fieldsSource, /props\.command\.code === 232[^\n]+screenPicturePreview/);
+    // 232 carries only a slot number; its preview must use a placeholder name
+    // (#slot) and an empty assetUrl so the picker never tries to draw a real image.
+    assert.match(fieldsSource, /props\.command\.code === 232[\s\S]*?assetName:\s*`#\$\{slot\}`[\s\S]*?assetUrl:\s*''/);
   });
 
   test('coalesces picture dragging through one RAF and caches the screen grid', () => {
@@ -67,6 +71,9 @@ describe('show-picture coordinate preview', () => {
     assert.match(pickerSource, /picturePreview\.value/);
     assert.match(pickerSource, /if \(mode\.value === 'map'\)/);
     assert.match(pickerSource, /if \(!picturePreview\.value\) return/);
+    // A slot-only preview (232) draws a placeholder frame instead of erroring.
+    assert.match(pickerSource, /drawScreenPicturePlaceholder/);
+    assert.match(pickerSource, /if \(picturePreview\.value && !pictureImage\.value\) drawScreenPicturePlaceholder/);
     assert.doesNotMatch(pickerSource, /function onStagePointerMove[\s\S]*?loadScreenPicture\(\)/);
   });
 });

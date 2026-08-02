@@ -386,7 +386,7 @@ function onCommandKeyDown(event: KeyboardEvent): void {
           type="button"
           :disabled="locked"
           class="cmd-row cmd-blank"
-          :class="{ even: slot.spanIndex % 2 === 0, terminator: slot.spanIndex === spans.length, 'drop-before': dropIndicator === slot.spanIndex }"
+          :class="{ even: slot.spanIndex % 2 === 0, terminator: slot.spanIndex === spans.length, focused: insertionFocus === slot.spanIndex, 'drop-before': dropIndicator === slot.spanIndex }"
           :style="{ '--cmd-indent': `${Math.min(slot.indent, 8) * 16}px` }"
           :aria-label="t('eventEditorDialog.newCmd')"
           :draggable="false"
@@ -507,10 +507,27 @@ button.danger {
   cursor: pointer;
 }
 .cmd-row.cmd-blank {
-  min-height: 20px;
+  min-height: 6px;
+  padding-top: 0;
+  padding-bottom: 0;
   color: var(--console-text-muted,#9a8e7e);
   cursor: default;
   user-select: none;
+}
+.cmd-row.cmd-blank .cmd-line {
+  visibility: hidden;
+}
+.cmd-row.cmd-blank.focused,
+.cmd-row.cmd-blank:hover:not(:disabled),
+.cmd-row.cmd-blank.drop-before {
+  min-height: 20px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.cmd-row.cmd-blank.focused .cmd-line,
+.cmd-row.cmd-blank:hover:not(:disabled) .cmd-line,
+.cmd-row.cmd-blank.drop-before .cmd-line {
+  visibility: visible;
 }
 .cmd-row.cmd-blank:hover:not(:disabled) {
   background: var(--console-accent-soft,#f6e3d7);

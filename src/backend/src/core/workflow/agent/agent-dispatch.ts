@@ -306,6 +306,7 @@ interface AgentProjectEngineContext {
   tileSize: number;
   screenWidth: number;
   uiAreaWidth: number;
+  uiAreaHeight: number;
   screenHeight: number;
   faceSize: number;
   iconSize: number;
@@ -862,6 +863,7 @@ function buildAgentScopeEnv(dispatch: DispatchResult, _agentCwd: string): Record
     env.AGENT_RPG_TILE_SIZE = String(projectEngine.tileSize);
     env.AGENT_RPG_SCREEN_WIDTH = String(projectEngine.screenWidth);
     env.AGENT_RPG_UI_AREA_WIDTH = String(projectEngine.uiAreaWidth);
+    env.AGENT_RPG_UI_AREA_HEIGHT = String(projectEngine.uiAreaHeight);
     env.AGENT_RPG_SCREEN_HEIGHT = String(projectEngine.screenHeight);
     env.AGENT_RPG_FACE_SIZE = String(projectEngine.faceSize);
     env.AGENT_RPG_ICON_SIZE = String(projectEngine.iconSize);
@@ -879,6 +881,7 @@ function readAgentProjectEngineContext(project: string | null | undefined): Agen
       tileSize: manifest.tileSize,
       screenWidth: manifest.screenWidth,
       uiAreaWidth: manifest.uiAreaWidth,
+      uiAreaHeight: manifest.uiAreaHeight,
       screenHeight: manifest.screenHeight,
       faceSize: manifest.faceSize,
       iconSize: manifest.iconSize,

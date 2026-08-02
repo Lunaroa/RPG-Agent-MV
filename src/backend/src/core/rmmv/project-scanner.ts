@@ -115,6 +115,7 @@ interface ScanResult {
   tileSize: number;
   screenWidth: number;
   uiAreaWidth: number;
+  uiAreaHeight: number;
   screenHeight: number;
   faceSize: number;
   iconSize: number;
@@ -149,6 +150,7 @@ export interface ScanProjectOptions {
     tileSize: number;
     screenWidth: number;
     uiAreaWidth: number;
+    uiAreaHeight: number;
     screenHeight: number;
     faceSize: number;
     iconSize: number;
@@ -171,6 +173,7 @@ export function scanProject(projectRoot: string, options?: ScanProjectOptions): 
       tileSize: manifest.tileSize,
       screenWidth: manifest.screenWidth,
       uiAreaWidth: manifest.uiAreaWidth,
+      uiAreaHeight: manifest.uiAreaHeight,
       screenHeight: manifest.screenHeight,
       faceSize: manifest.faceSize,
       iconSize: manifest.iconSize,
@@ -193,6 +196,7 @@ export function scanProjectWithReader(
       tileSize: manifest.tileSize,
       screenWidth: manifest.screenWidth,
       uiAreaWidth: manifest.uiAreaWidth,
+      uiAreaHeight: manifest.uiAreaHeight,
       screenHeight: manifest.screenHeight,
       faceSize: manifest.faceSize,
       iconSize: manifest.iconSize,

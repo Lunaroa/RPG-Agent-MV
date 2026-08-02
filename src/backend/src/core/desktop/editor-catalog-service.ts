@@ -106,6 +106,7 @@ export function buildEditorProjectCatalog(workflowRoot: string, project: string)
     screenWidth: manifest.screenWidth,
     uiAreaWidth: manifest.uiAreaWidth,
     screenHeight: manifest.screenHeight,
+    uiAreaHeight: manifest.uiAreaHeight,
     faceSize: manifest.faceSize,
     iconSize: manifest.iconSize,
     maps: buildMapIndex(workflowRoot, project).maps,

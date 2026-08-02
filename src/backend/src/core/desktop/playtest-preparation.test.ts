@@ -121,7 +121,7 @@ function writeMZProject(project: string): void {
     tileSize: 48,
     faceSize: 144,
     iconSize: 32,
-    advanced: { screenWidth: 816, screenHeight: 624, uiAreaWidth: 816 },
+    advanced: { screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624 },
     battleback1Name: 'Grassland',
     battleback2Name: '',
     startMapId: 1,

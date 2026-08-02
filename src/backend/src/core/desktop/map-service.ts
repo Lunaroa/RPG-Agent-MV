@@ -133,6 +133,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
     screenWidth: manifest.screenWidth,
     uiAreaWidth: manifest.uiAreaWidth,
     screenHeight: manifest.screenHeight,
+    uiAreaHeight: manifest.uiAreaHeight,
     faceSize: manifest.faceSize,
     iconSize: manifest.iconSize,
     info,

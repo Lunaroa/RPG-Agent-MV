@@ -88,7 +88,7 @@ function writeMzProject(projectPath: string): void {
     tileSize: 48,
     faceSize: 144,
     iconSize: 32,
-    advanced: { screenWidth: 816, screenHeight: 624, uiAreaWidth: 816 },
+    advanced: { screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624 },
   });
   writeJson(path.join(projectPath, 'data', 'MapInfos.json'), [null]);
 }

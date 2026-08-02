@@ -48,6 +48,8 @@ const payload = ref<MessagePreviewPayload | null>(null);
 
 const screenWidth = computed(() => Math.max(1, Number(props.catalog?.screenWidth) || 816));
 const screenHeight = computed(() => Math.max(1, Number(props.catalog?.screenHeight) || 624));
+const uiAreaWidth = computed(() => Math.max(1, Number(props.catalog?.uiAreaWidth) || screenWidth.value));
+const uiAreaHeight = computed(() => Math.max(1, Number(props.catalog?.uiAreaHeight) || screenHeight.value));
 const faceSize = computed(() => normalizeFaceSize(props.catalog?.faceSize));
 
 // RM message window metrics: 18px padding, 36px line height, up to 4 lines.
@@ -75,6 +77,10 @@ async function paint() {
   if (!context) return;
   const width = screenWidth.value;
   const height = screenHeight.value;
+  const areaW = uiAreaWidth.value;
+  const areaH = uiAreaHeight.value;
+  const areaX = Math.round((width - areaW) / 2);
+  const areaY = Math.round((height - areaH) / 2);
   context.clearRect(0, 0, width, height);
   context.imageSmoothingEnabled = false;
 
@@ -82,29 +88,36 @@ async function paint() {
   context.fillStyle = '#26262b';
   context.fillRect(0, 0, width, height);
 
-  const windowY = data.positionType === 0
+  // Subtle UI area boundary.
+  if (areaW < width || areaH < height) {
+    context.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    context.lineWidth = 1;
+    context.strokeRect(areaX + 0.5, areaY + 0.5, areaW - 1, areaH - 1);
+  }
+
+  const windowY = areaY + (data.positionType === 0
     ? 0
     : data.positionType === 1
-      ? Math.round((height - WINDOW_HEIGHT) / 2)
-      : height - WINDOW_HEIGHT;
+      ? Math.round((areaH - WINDOW_HEIGHT) / 2)
+      : areaH - WINDOW_HEIGHT);
 
   if (data.background === 0) {
     const skin = await loadWindowSkin();
     // Missing skin is surfaced via the banner; never substitute another window style.
     skinMissing.value = !skin;
-    if (skin) drawWindowSkin(context, skin, 0, windowY, width, WINDOW_HEIGHT);
+    if (skin) drawWindowSkin(context, skin, areaX, windowY, areaW, WINDOW_HEIGHT);
   } else if (data.background === 1) {
-    drawDimWindow(context, 0, windowY, width, WINDOW_HEIGHT);
+    drawDimWindow(context, areaX, windowY, areaW, WINDOW_HEIGHT);
   }
 
-  if (data.faceName) await drawFace(context, data.faceName, data.faceIndex, windowY);
+  if (data.faceName) await drawFace(context, data.faceName, data.faceIndex, windowY, areaX);
 
   context.font = '28px sans-serif';
   context.textBaseline = 'middle';
   context.fillStyle = '#ffffff';
-  const textX = WINDOW_PADDING + (data.faceName ? faceSize.value + 24 : 0);
+  const textX = areaX + WINDOW_PADDING + (data.faceName ? faceSize.value + 24 : 0);
   data.lines.slice(0, MESSAGE_LINES).forEach((line, index) => {
-    context.fillText(line, textX, windowY + WINDOW_PADDING + index * LINE_HEIGHT + LINE_HEIGHT / 2, width - textX - WINDOW_PADDING);
+    context.fillText(line, textX, windowY + WINDOW_PADDING + index * LINE_HEIGHT + LINE_HEIGHT / 2, areaW - WINDOW_PADDING - (data.faceName ? faceSize.value + 24 : 0) - WINDOW_PADDING);
   });
 }
 
@@ -167,13 +180,13 @@ function drawDimWindow(context: CanvasRenderingContext2D, x: number, y: number, 
   context.restore();
 }
 
-async function drawFace(context: CanvasRenderingContext2D, faceName: string, faceIndex: number, windowY: number) {
+async function drawFace(context: CanvasRenderingContext2D, faceName: string, faceIndex: number, windowY: number, areaX: number) {
   const asset = (props.catalog?.assets.faces || []).find((entry) => entry.name === faceName);
   if (!asset) return;
   const image = await props.loadImage(asset.url);
   if (!image) return;
   const source = mvFaceSourceRect(faceIndex, faceSize.value);
-  context.drawImage(image, source.sx, source.sy, source.sw, source.sh, WINDOW_PADDING, windowY + WINDOW_PADDING, faceSize.value, faceSize.value);
+  context.drawImage(image, source.sx, source.sy, source.sw, source.sh, areaX + WINDOW_PADDING, windowY + WINDOW_PADDING, faceSize.value, faceSize.value);
 }
 
 function onKeyDown(event: KeyboardEvent) {

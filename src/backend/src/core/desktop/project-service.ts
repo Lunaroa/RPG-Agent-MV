@@ -217,6 +217,7 @@ function listWorkspaceProjects(workflowRoot: string): ProjectInfo[] {
       screenWidth: validation.manifest.screenWidth,
       uiAreaWidth: validation.manifest.uiAreaWidth,
       screenHeight: validation.manifest.screenHeight,
+      uiAreaHeight: validation.manifest.uiAreaHeight,
       faceSize: validation.manifest.faceSize,
       iconSize: validation.manifest.iconSize,
     });
@@ -274,6 +275,7 @@ function toProjectInfo(input: {
     screenWidth: input.validation.manifest.screenWidth,
     uiAreaWidth: input.validation.manifest.uiAreaWidth,
     screenHeight: input.validation.manifest.screenHeight,
+    uiAreaHeight: input.validation.manifest.uiAreaHeight,
     faceSize: input.validation.manifest.faceSize,
     iconSize: input.validation.manifest.iconSize,
   };

@@ -9,12 +9,25 @@
               <option v-for="[value, label] in targetOptions" :key="value" :value="value">{{ label }}</option>
             </select>
             <div class="route-list">
-              <button v-for="(step, index) in steps" :key="index" type="button" :class="{ active: selected === index }" @click="selected = index" @dblclick="editStep(index)">◇{{ localizedMoveRouteCommandLabel(step) }}</button>
+              <button
+                v-for="(step, index) in steps"
+                :key="index"
+                type="button"
+                draggable="true"
+                :class="{ active: selectedSet.has(index), 'drag-over': dragOverIndex === index }"
+                @click="selectIndex(index, $event)"
+                @dblclick="editStep(index)"
+                @dragstart="onDragStart(index, $event)"
+                @dragover.prevent="onDragOver(index)"
+                @dragleave="onDragLeave(index)"
+                @drop="onDrop(index)"
+                @dragend="onDragEnd"
+              >◇{{ localizedMoveRouteCommandLabel(step) }}</button>
             </div>
             <div class="route-actions">
-              <el-button size="small" :disabled="selected == null || selected <= 0" @click="move(-1)">{{ t('cmdList.moveUp') }}</el-button>
-              <el-button size="small" :disabled="selected == null || selected >= steps.length - 1" @click="move(1)">{{ t('cmdList.moveDown') }}</el-button>
-              <el-button size="small" type="danger" :disabled="selected == null" @click="remove">{{ t('cmdList.delete') }}</el-button>
+              <el-button size="small" :disabled="!selectedSet.size || Math.min(...selectedSet) <= 0" @click="move(-1)">{{ t('cmdList.moveUp') }}</el-button>
+              <el-button size="small" :disabled="!selectedSet.size || Math.max(...selectedSet) >= steps.length - 1" @click="move(1)">{{ t('cmdList.moveDown') }}</el-button>
+              <el-button size="small" type="danger" :disabled="!selectedSet.size" @click="remove">{{ t('cmdList.delete') }}</el-button>
             </div>
             <div class="route-options">
               <label><input v-model="draft.repeat" type="checkbox" /> {{ t('moveRoute.repeat') }}</label>
@@ -170,7 +183,14 @@ type MoveRouteStep = MvMoveRoute['list'][number];
 const PARAM_CODES = new Set([14, 15, 27, 28, 29, 30, 41, 42, 43, 44, 45]);
 const visible = ref(false);
 const draft = ref<MvMoveRoute>(defaultMoveRoute());
-const selected = ref<number | null>(null);
+const selectedSet = ref<Set<number>>(new Set());
+const selected = computed<number | null>(() => {
+  const indices = [...selectedSet.value].sort((a, b) => a - b);
+  return indices.length ? indices[indices.length - 1] : null;
+});
+const anchorIndex = ref<number | null>(null);
+const dragOverIndex = ref<number | null>(null);
+let dragSourceIndices: number[] = [];
 // Merged Set Movement Route (205) mode: the target dropdown lives in this dialog.
 const target = ref(0);
 const targetOptions = ref<[number, string][] | null>(null);
@@ -214,7 +234,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 function open(route: MvMoveRoute, options?: { target?: number; targetOptions?: [number, string][] }) {
   draft.value = clone(route || defaultMoveRoute());
   draft.value.list = draft.value.list.filter((step) => step.code !== 0);
-  selected.value = null;
+  selectedSet.value = new Set();
+  anchorIndex.value = null;
   targetOptions.value = options?.targetOptions ?? null;
   target.value = options?.target ?? 0;
   paramStep.value = null;
@@ -238,7 +259,8 @@ function pickOperation(code: number) {
 function insertStep(step: MoveRouteStep) {
   const at = selected.value == null ? draft.value.list.length : selected.value + 1;
   draft.value.list.splice(at, 0, step);
-  selected.value = at;
+  selectedSet.value = new Set([at]);
+  anchorIndex.value = at;
 }
 function editStep(index: number) {
   const step = draft.value.list[index];
@@ -257,17 +279,87 @@ function closeParamEditor() {
   paramEditIndex.value = null;
 }
 function move(offset: number) {
-  if (selected.value == null) return;
-  const next = selected.value + offset;
-  if (next < 0 || next >= draft.value.list.length) return;
-  const [step] = draft.value.list.splice(selected.value, 1);
-  draft.value.list.splice(next, 0, step);
-  selected.value = next;
+  const indices = [...selectedSet.value].sort((a, b) => a - b);
+  if (!indices.length) return;
+  if (offset < 0 && indices[0] <= 0) return;
+  if (offset > 0 && indices[indices.length - 1] >= draft.value.list.length - 1) return;
+  const items = indices.map((i) => draft.value.list[i]);
+  // Remove from highest index first to preserve lower indices
+  for (let i = indices.length - 1; i >= 0; i--) draft.value.list.splice(indices[i], 1);
+  const newIndices = indices.map((i) => i + offset);
+  for (let i = 0; i < items.length; i++) draft.value.list.splice(newIndices[i], 0, items[i]);
+  selectedSet.value = new Set(newIndices);
+  anchorIndex.value = newIndices[0];
 }
 function remove() {
-  if (selected.value == null) return;
-  draft.value.list.splice(selected.value, 1);
-  selected.value = draft.value.list.length ? Math.min(selected.value, draft.value.list.length - 1) : null;
+  const indices = [...selectedSet.value].sort((a, b) => b - a);
+  if (!indices.length) return;
+  for (const i of indices) draft.value.list.splice(i, 1);
+  const remaining = draft.value.list.length;
+  if (remaining) {
+    const anchor = Math.min(indices[indices.length - 1], remaining - 1);
+    selectedSet.value = new Set([anchor]);
+    anchorIndex.value = anchor;
+  } else {
+    selectedSet.value = new Set();
+    anchorIndex.value = null;
+  }
+}
+function selectIndex(index: number, event: MouseEvent) {
+  if (event.ctrlKey || event.metaKey) {
+    const next = new Set(selectedSet.value);
+    if (next.has(index)) next.delete(index); else next.add(index);
+    selectedSet.value = next;
+    anchorIndex.value = index;
+  } else if (event.shiftKey && anchorIndex.value != null) {
+    const lo = Math.min(anchorIndex.value, index);
+    const hi = Math.max(anchorIndex.value, index);
+    const next = new Set<number>();
+    for (let i = lo; i <= hi; i++) next.add(i);
+    selectedSet.value = next;
+  } else {
+    selectedSet.value = new Set([index]);
+    anchorIndex.value = index;
+  }
+}
+function onDragStart(index: number, event: DragEvent) {
+  if (!selectedSet.value.has(index)) {
+    selectedSet.value = new Set([index]);
+    anchorIndex.value = index;
+  }
+  dragSourceIndices = [...selectedSet.value].sort((a, b) => a - b);
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(index));
+  }
+}
+function onDragOver(index: number) {
+  dragOverIndex.value = index;
+}
+function onDragLeave(index: number) {
+  if (dragOverIndex.value === index) dragOverIndex.value = null;
+}
+function onDrop(index: number) {
+  dragOverIndex.value = null;
+  if (!dragSourceIndices.length) return;
+  // Determine target position: drop before the hovered index
+  const sources = dragSourceIndices;
+  const items = sources.map((i) => draft.value.list[i]);
+  // Remove from highest index first
+  for (let i = sources.length - 1; i >= 0; i--) draft.value.list.splice(sources[i], 1);
+  // Compute adjusted target after removal
+  let target = index;
+  for (const s of sources) { if (s < index) target--; }
+  target = Math.max(0, Math.min(target, draft.value.list.length));
+  for (let i = 0; i < items.length; i++) draft.value.list.splice(target + i, 0, items[i]);
+  const newIndices = items.map((_, i) => target + i);
+  selectedSet.value = new Set(newIndices);
+  anchorIndex.value = newIndices[0];
+  dragSourceIndices = [];
+}
+function onDragEnd() {
+  dragOverIndex.value = null;
+  dragSourceIndices = [];
 }
 function setParam(index: number, value: unknown) {
   if (!paramStep.value) return;
@@ -354,6 +446,9 @@ select, textarea, input { padding: 5px; border: 1px solid var(--app-border); bor
 .route-list button:nth-child(even) { background: var(--app-bg-soft); }
 .route-list button:hover { background: var(--app-bg-sunken); }
 .route-list button.active { background: var(--app-accent); color: var(--app-accent-ink); }
+.route-list button.drag-over { border-top: 2px solid var(--app-accent); }
+.route-list button[draggable] { cursor: grab; }
+.route-list button[draggable]:active { cursor: grabbing; }
 .route-actions { display: flex; gap: 6px; }
 .route-options { display: grid; gap: 4px; color: var(--app-ink); font-size: 13px; }
 .route-commands { min-width: 0; padding: 12px; display: flex; flex-direction: column; gap: 8px; }

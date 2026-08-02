@@ -30,6 +30,7 @@ export interface RmmvProjectManifest extends RmmvProjectLayout {
   screenWidth: number;
   uiAreaWidth: number;
   screenHeight: number;
+  uiAreaHeight: number;
   faceSize: number;
   iconSize: number;
   projectMarker: {
@@ -215,6 +216,7 @@ export function inspectRmmvProject(projectRoot: string): RmmvProjectManifest {
     screenWidth: engineInspection.canvas.screenWidth,
     uiAreaWidth: engineInspection.canvas.uiAreaWidth,
     screenHeight: engineInspection.canvas.screenHeight,
+    uiAreaHeight: engineInspection.canvas.uiAreaHeight,
     faceSize: engineInspection.canvas.faceSize,
     iconSize: engineInspection.canvas.iconSize,
     projectMarker,

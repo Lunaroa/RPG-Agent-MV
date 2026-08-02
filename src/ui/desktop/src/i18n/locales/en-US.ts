@@ -2299,6 +2299,7 @@ const enUS = {
     'coordinate.mapHint': 'Click to select, double-click to confirm. Drag or scroll to pan the map.',
     'coordinate.screenHint': 'The canvas size comes from the current project screen settings.',
     'coordinate.pictureUnavailable': 'Picture “{name}” is unavailable. You can still choose coordinates.',
+    'coordinate.picturePlaceholder': 'Picture {name} (move target, shown at runtime)',
     'coordinate.chooseMap': 'Choose on Map',
     'coordinate.chooseScreen': 'Choose on Screen',
     'systemNamedEntry.switchTitle': 'Switch Selector',

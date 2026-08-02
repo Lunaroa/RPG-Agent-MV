@@ -243,7 +243,6 @@ export class InteractivePlaytestService {
       return { confirmationRequired: false, error: errorMessage(error) };
     }
 
-    let mzRuntime: RpgMakerMZProjectRuntime | null = null;
     let projectRuntime: InteractiveProjectRuntime | null = null;
     let launchProject = project;
     let executable = '';
@@ -279,13 +278,15 @@ export class InteractivePlaytestService {
       }
     } else {
       if (engine === 'rpg-maker-mz') {
-        try {
-          mzRuntime = this.#dependencies.resolveMZRuntime(project);
-          executable = mzRuntime.executable;
-          evidenceExecutable = 'project-local-rpg-maker-mz-nwjs';
-        } catch (error) {
-          return { confirmationRequired: false, error: errorMessage(error) };
+        const resolution = this.#dependencies.resolveProjectRuntime(project, engine);
+        if (resolution.selectionRequired) {
+          return { confirmationRequired: false, runtimeSelectionRequired: resolution.selectionRequired };
         }
+        if (!resolution.runtime) return { confirmationRequired: false, error: 'The RPG Maker playtest runtime could not be resolved.' };
+        projectRuntime = resolution.runtime;
+        executable = projectRuntime.executable;
+        evidenceExecutable = projectRuntime.evidenceExecutable;
+        privateExecutable = projectRuntime.privateExecutable || '';
       } else {
         executable = path.join(project, 'Game.exe');
         evidenceExecutable = executable;
@@ -411,12 +412,12 @@ export class InteractivePlaytestService {
           stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch (error) {
-        this.#finishWithIsolation('failed', { error: redactRuntimePath(errorMessage(error), privateExecutable || mzRuntime?.executable || '') });
+        this.#finishWithIsolation('failed', { error: redactRuntimePath(errorMessage(error), privateExecutable || '') });
         resolveStart();
         return;
       }
       this.#child = child;
-      const outputRuntimeExecutable = privateExecutable || mzRuntime?.executable || '';
+      const outputRuntimeExecutable = privateExecutable || '';
       const flushStdout = attachOutput(child.stdout, run.stdoutPath, run.logPath, outputRuntimeExecutable);
       const flushStderr = attachOutput(child.stderr, run.stderrPath, run.logPath, outputRuntimeExecutable);
       const flushOutput = () => {

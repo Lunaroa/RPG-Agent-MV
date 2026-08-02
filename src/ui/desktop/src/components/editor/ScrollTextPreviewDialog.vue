@@ -41,6 +41,8 @@ const payload = ref<ScrollTextPreviewPayload | null>(null);
 
 const screenWidth = computed(() => Math.max(1, Number(props.catalog?.screenWidth) || 816));
 const screenHeight = computed(() => Math.max(1, Number(props.catalog?.screenHeight) || 624));
+const uiAreaWidth = computed(() => Math.max(1, Number(props.catalog?.uiAreaWidth) || screenWidth.value));
+const uiAreaHeight = computed(() => Math.max(1, Number(props.catalog?.uiAreaHeight) || screenHeight.value));
 
 // RM scroll text metrics: 18px side padding, 36px line height, speed/2 px per 60fps frame.
 const SIDE_PADDING = 18;
@@ -86,7 +88,7 @@ function step(timestamp: number) {
   lastTimestamp = timestamp;
   const totalHeight = data.lines.length * LINE_HEIGHT;
   // Loop the playback once the whole text has scrolled past the top edge.
-  if (scrollOffset > totalHeight + screenHeight.value) scrollOffset = 0;
+  if (scrollOffset > totalHeight + uiAreaHeight.value) scrollOffset = 0;
   paint(canvas, data, scrollOffset);
   animationHandle = window.requestAnimationFrame(step);
 }
@@ -96,20 +98,37 @@ function paint(canvas: HTMLCanvasElement, data: ScrollTextPreviewPayload, offset
   if (!context) return;
   const width = screenWidth.value;
   const height = screenHeight.value;
+  const areaW = uiAreaWidth.value;
+  const areaH = uiAreaHeight.value;
+  const areaX = Math.round((width - areaW) / 2);
+  const areaY = Math.round((height - areaH) / 2);
 
   // Dark stand-in for the running game screen behind the scrolling text.
   context.fillStyle = '#26262b';
   context.fillRect(0, 0, width, height);
 
+  // Subtle UI area boundary.
+  if (areaW < width || areaH < height) {
+    context.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    context.lineWidth = 1;
+    context.strokeRect(areaX + 0.5, areaY + 0.5, areaW - 1, areaH - 1);
+  }
+
+  context.save();
+  context.beginPath();
+  context.rect(areaX, areaY, areaW, areaH);
+  context.clip();
+
   context.font = '28px sans-serif';
   context.textBaseline = 'middle';
   context.fillStyle = '#ffffff';
-  const topY = height - offset;
+  const topY = areaY + areaH - offset;
   data.lines.forEach((line, index) => {
     const lineY = topY + index * LINE_HEIGHT + LINE_HEIGHT / 2;
-    if (lineY < -LINE_HEIGHT || lineY > height + LINE_HEIGHT) return;
-    context.fillText(line, SIDE_PADDING, lineY, width - SIDE_PADDING * 2);
+    if (lineY < areaY - LINE_HEIGHT || lineY > areaY + areaH + LINE_HEIGHT) return;
+    context.fillText(line, areaX + SIDE_PADDING, lineY, areaW - SIDE_PADDING * 2);
   });
+  context.restore();
 }
 
 function onKeyDown(event: KeyboardEvent) {

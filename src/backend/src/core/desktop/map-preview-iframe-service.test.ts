@@ -492,7 +492,7 @@ function createMZProject(workflowRoot: string): string {
     tileSize: 48,
     faceSize: 144,
     iconSize: 32,
-    advanced: { screenWidth: 816, screenHeight: 624, uiAreaWidth: 816 },
+    advanced: { screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624 },
   }), 'utf8');
   fs.writeFileSync(path.join(data, 'MapInfos.json'), JSON.stringify([
     null,

@@ -428,32 +428,34 @@
                   <button v-for="n in 4" :key="n" type="button" :class="{ active: condTab === n }" @click="condTab = n">{{ n }}</button>
                 </nav>
                 <div v-show="condTab === 1" class="cond-tab">
-                  <div class="cond-row">
+                  <div v-show="numberParam(0)===0" class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===0" @change="setConditionType(0)" />{{ t('eventcmd.condSwitch') }}</label>
                     <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('switch',1,0)" readonly :disabled="numberParam(0)!==0" @click="numberParam(0)===0&&openNamedEntry('switch',1)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==0" @click="openNamedEntry('switch',1)">…</button></span>
                     <select :value="conditionalNumberParam(0,2)" :disabled="numberParam(0)!==0" @change="setParam(2,numberValue($event))"><option :value="0">ON</option><option :value="1">OFF</option></select>
                   </div>
-                  <div class="cond-row">
-                    <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===1" @change="setConditionType(1)" />{{ t('eventcmd.variable') }}</label>
-                    <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('variable',1,1)" readonly :disabled="numberParam(0)!==1" @click="numberParam(0)===1&&openNamedEntry('variable',1)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1" @click="openNamedEntry('variable',1)">…</button></span>
-                    <select :value="conditionalNumberParam(1,4)" :disabled="numberParam(0)!==1" @change="setParam(4,numberValue($event))">
-                      <option :value="0">=</option><option :value="1">≥</option><option :value="2">≤</option><option :value="3">&gt;</option><option :value="4">&lt;</option><option :value="5">≠</option>
-                    </select>
-                  </div>
-                  <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-var-operand" :checked="conditionalNumberParam(1,2)===0" :disabled="numberParam(0)!==1" @change="setVarOperand(0)" />{{ t('eventcmd.condConstant') }}</label>
-                    <input class="cond-main" :value="conditionalNumberParam(1,3)" type="number" :disabled="numberParam(0)!==1||conditionalNumberParam(1,2)!==0" @input="setParam(3,numberValue($event))" />
-                  </div>
-                  <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-var-operand" :checked="conditionalNumberParam(1,2)===1" :disabled="numberParam(0)!==1" @change="setVarOperand(1)" />{{ t('eventcmd.variable') }}</label>
-                    <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('variable',3,1)" readonly :disabled="numberParam(0)!==1||conditionalNumberParam(1,2)!==1" @click="numberParam(0)===1&&conditionalNumberParam(1,2)===1&&openNamedEntry('variable',3)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1||conditionalNumberParam(1,2)!==1" @click="openNamedEntry('variable',3)">…</button></span>
-                  </div>
-                  <div class="cond-row">
+                  <template v-if="numberParam(0)===1">
+                    <div class="cond-row">
+                      <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===1" @change="setConditionType(1)" />{{ t('eventcmd.variable') }}</label>
+                      <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('variable',1,1)" readonly :disabled="numberParam(0)!==1" @click="numberParam(0)===1&&openNamedEntry('variable',1)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1" @click="openNamedEntry('variable',1)">…</button></span>
+                      <select :value="conditionalNumberParam(1,4)" :disabled="numberParam(0)!==1" @change="setParam(4,numberValue($event))">
+                        <option :value="0">=</option><option :value="1">≥</option><option :value="2">≤</option><option :value="3">&gt;</option><option :value="4">&lt;</option><option :value="5">≠</option>
+                      </select>
+                    </div>
+                    <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(1,2)!==0 }">
+                      <label class="cond-pick"><input type="radio" name="cond-var-operand" :checked="conditionalNumberParam(1,2)===0" :disabled="numberParam(0)!==1" @change="setVarOperand(0)" />{{ t('eventcmd.condConstant') }}</label>
+                      <input class="cond-main" :value="conditionalNumberParam(1,3)" type="number" :disabled="numberParam(0)!==1||conditionalNumberParam(1,2)!==0" @input="setParam(3,numberValue($event))" />
+                    </div>
+                    <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(1,2)!==1 }">
+                      <label class="cond-pick"><input type="radio" name="cond-var-operand" :checked="conditionalNumberParam(1,2)===1" :disabled="numberParam(0)!==1" @change="setVarOperand(1)" />{{ t('eventcmd.variable') }}</label>
+                      <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('variable',3,1)" readonly :disabled="numberParam(0)!==1||conditionalNumberParam(1,2)!==1" @click="numberParam(0)===1&&conditionalNumberParam(1,2)===1&&openNamedEntry('variable',3)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1||conditionalNumberParam(1,2)!==1" @click="openNamedEntry('variable',3)">…</button></span>
+                    </div>
+                  </template>
+                  <div v-show="numberParam(0)===2" class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===2" @change="setConditionType(2)" />{{ t('eventcmd.condSelfSwitch') }}</label>
                     <select class="cond-main" :value="conditionalStringParam(2,1,'A')" :disabled="numberParam(0)!==2" @change="setParam(1,inputValue($event))"><option v-for="s in ['A','B','C','D']" :key="s" :value="s">{{ s }}</option></select>
                     <select :value="conditionalNumberParam(2,2)" :disabled="numberParam(0)!==2" @change="setParam(2,numberValue($event))"><option :value="0">ON</option><option :value="1">OFF</option></select>
                   </div>
-                  <div class="cond-row">
+                  <div v-show="numberParam(0)===3" class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===3" @change="setConditionType(3)" />{{ t('eventcmd.condTimer') }}</label>
                     <span class="cond-main cond-inline">
                       <select :value="conditionalNumberParam(3,2)" :disabled="numberParam(0)!==3" @change="setParam(2,numberValue($event))"><option :value="0">{{ t('eventcmd.condAtLeast') }}</option><option :value="1">{{ t('eventcmd.condAtMost') }}</option></select>
@@ -463,37 +465,39 @@
                   </div>
                 </div>
                 <div v-show="condTab === 2" class="cond-tab">
-                  <div class="cond-row">
-                    <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===4" @change="setConditionType(4)" />{{ t('eventcmd.condActor') }}</label>
-                    <select class="cond-main" :value="conditionalNumberParam(4,1,1)" :disabled="numberParam(0)!==4" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.actors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
-                  </div>
-                  <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===0" :disabled="numberParam(0)!==4" @change="setActorCondition(0)" />{{ t('eventcmd.condInParty') }}</label>
-                  </div>
-                  <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===1" :disabled="numberParam(0)!==4" @change="setActorCondition(1)" />{{ t('eventcmd.condName') }}</label>
-                    <input class="cond-main" :value="conditionalStringParam(4,3)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==1" @input="setParam(3,inputValue($event))" />
-                  </div>
-                  <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===2" :disabled="numberParam(0)!==4" @change="setActorCondition(2)" />{{ t('eventcmd.condClass') }}</label>
-                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==2" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.classes||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
-                  </div>
-                  <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===3" :disabled="numberParam(0)!==4" @change="setActorCondition(3)" />{{ t('eventcmd.condSkill') }}</label>
-                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==3" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.skills||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
-                  </div>
-                  <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===4" :disabled="numberParam(0)!==4" @change="setActorCondition(4)" />{{ t('eventcmd.goodsWeapon') }}</label>
-                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==4" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.weapons||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
-                  </div>
-                  <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===5" :disabled="numberParam(0)!==4" @change="setActorCondition(5)" />{{ t('eventcmd.goodsArmor') }}</label>
-                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==5" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.armors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
-                  </div>
-                  <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===6" :disabled="numberParam(0)!==4" @change="setActorCondition(6)" />{{ t('eventcmd.condState') }}</label>
-                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==6" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.states||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
-                  </div>
+                  <template v-if="numberParam(0)===4">
+                    <div class="cond-row">
+                      <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===4" @change="setConditionType(4)" />{{ t('eventcmd.condActor') }}</label>
+                      <select class="cond-main" :value="conditionalNumberParam(4,1,1)" :disabled="numberParam(0)!==4" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.actors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    </div>
+                    <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(4,2)!==0 }">
+                      <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===0" :disabled="numberParam(0)!==4" @change="setActorCondition(0)" />{{ t('eventcmd.condInParty') }}</label>
+                    </div>
+                    <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(4,2)!==1 }">
+                      <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===1" :disabled="numberParam(0)!==4" @change="setActorCondition(1)" />{{ t('eventcmd.condName') }}</label>
+                      <input class="cond-main" :value="conditionalStringParam(4,3)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==1" @input="setParam(3,inputValue($event))" />
+                    </div>
+                    <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(4,2)!==2 }">
+                      <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===2" :disabled="numberParam(0)!==4" @change="setActorCondition(2)" />{{ t('eventcmd.condClass') }}</label>
+                      <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==2" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.classes||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    </div>
+                    <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(4,2)!==3 }">
+                      <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===3" :disabled="numberParam(0)!==4" @change="setActorCondition(3)" />{{ t('eventcmd.condSkill') }}</label>
+                      <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==3" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.skills||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    </div>
+                    <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(4,2)!==4 }">
+                      <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===4" :disabled="numberParam(0)!==4" @change="setActorCondition(4)" />{{ t('eventcmd.goodsWeapon') }}</label>
+                      <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==4" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.weapons||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    </div>
+                    <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(4,2)!==5 }">
+                      <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===5" :disabled="numberParam(0)!==4" @change="setActorCondition(5)" />{{ t('eventcmd.goodsArmor') }}</label>
+                      <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==5" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.armors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    </div>
+                    <div class="cond-row cond-sub" :class="{ inactive: conditionalNumberParam(4,2)!==6 }">
+                      <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===6" :disabled="numberParam(0)!==4" @change="setActorCondition(6)" />{{ t('eventcmd.condState') }}</label>
+                      <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==6" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.states||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    </div>
+                  </template>
                 </div>
                 <div v-show="condTab === 3" class="cond-tab">
                   <div class="cond-row">
@@ -1316,7 +1320,7 @@ defineExpose({openPicker,openEditor});
 .var-cmd-field{width:100%;max-width:280px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.var-cmd-field .text-cmd-label{margin:0}.var-cmd-row{display:flex;gap:6px}.var-cmd-row input{flex:1;min-width:0;cursor:pointer}.var-cmd-row .editor-btn{flex:0 0 auto;min-width:32px}
 .scroll-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:center}.scroll-cmd-speed{display:flex!important;align-items:center;gap:6px}.scroll-cmd-speed input{width:64px}.scroll-cmd-preview{margin-left:auto}
 .shop-cmd-layout{width:100%;display:grid;gap:8px}.shop-goods-table{width:100%;border-collapse:collapse;border:1px solid var(--app-border-strong);background:var(--app-bg);font-size:12px}.shop-goods-table th{background:var(--app-bg-soft);color:var(--app-ink-soft);font-weight:600}.shop-goods-table th,.shop-goods-table td{padding:4px 8px;border-bottom:1px solid var(--app-border);text-align:left}.shop-price-col{width:110px;text-align:right}.shop-goods-table tbody tr{cursor:default;user-select:none}.shop-goods-table tbody tr.active{background:var(--app-accent-soft)}.shop-goods-empty td{height:26px}.shop-goods-table:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}
-.cond-cmd-layout{width:100%;display:grid;gap:8px}.cond-tabs{display:flex;gap:2px}.cond-tabs button{min-width:36px}.cond-tab{display:grid;gap:6px}.cond-row{display:flex;align-items:center;gap:8px}.cond-row.cond-sub{padding-left:26px}.cond-pick{flex:0 0 128px;display:flex;align-items:center;gap:5px;color:var(--app-ink);font-size:12px}.cond-sub .cond-pick{flex-basis:102px}.cond-main{flex:1;min-width:0}.cond-inline{display:flex;align-items:center;gap:5px}.cond-inline input{width:64px}.cond-unit{color:var(--app-ink-soft);font-size:12px}.cond-check{flex:0 0 auto;gap:5px}.cond-else{width:100%;margin-top:4px;gap:5px}
+.cond-cmd-layout{width:100%;display:grid;gap:8px}.cond-tabs{display:flex;gap:2px}.cond-tabs button{min-width:36px}.cond-tab{display:grid;gap:6px}.cond-row{display:flex;align-items:center;gap:8px}.cond-row.cond-sub{padding-left:26px}.cond-row.inactive{opacity:.4}.cond-pick{flex:0 0 128px;display:flex;align-items:center;gap:5px;color:var(--app-ink);font-size:12px}.cond-sub .cond-pick{flex-basis:102px}.cond-main{flex:1;min-width:0}.cond-inline{display:flex;align-items:center;gap:5px}.cond-inline input{width:64px}.cond-unit{color:var(--app-ink-soft);font-size:12px}.cond-check{flex:0 0 auto;gap:5px}.cond-else{width:100%;margin-top:4px;gap:5px}
 .cond-group{margin:0;padding:8px 10px 10px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);display:grid;gap:6px}.cond-group legend{padding:0 4px;color:var(--app-ink-soft);font-size:12px}.cond-radios{flex-wrap:wrap;gap:12px}.cond-radios label{display:flex;align-items:center;gap:5px;color:var(--app-ink);font-size:12px}.gp-gamedata select{flex:1;min-width:0}.gp-gamedata input{width:72px}
 .tone-group{width:100%}.dur-row{width:100%;display:flex;align-items:center;gap:8px}.dur-row input[type=number]{width:72px}.dur-row .check{margin-left:12px;gap:5px}
 .img-cell-row{width:100%;display:flex;gap:14px}.img-cell{display:grid;gap:4px;justify-items:start;color:var(--app-ink-soft);font-size:12px}.img-cell-canvas{width:96px;height:96px}

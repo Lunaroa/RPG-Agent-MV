@@ -1154,21 +1154,29 @@ async function startBattleTest(configuration: {
   }
   battleTestBusy.value = true;
   try {
-    const result = await playtest.start({
-      mode: 'battle_test',
-      project,
-      troopId: entry.id,
-      battlers: configuration.battlers,
-      battleback1Name: configuration.battleback1Name,
-      battleback2Name: configuration.battleback2Name,
-    });
-    if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
-      throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'));
+    for (;;) {
+      const result = await playtest.start({
+        mode: 'battle_test',
+        project,
+        troopId: entry.id,
+        battlers: configuration.battlers,
+        battleback1Name: configuration.battleback1Name,
+        battleback2Name: configuration.battleback2Name,
+      });
+      if (result.runtimeSelectionRequired) {
+        const selection = await playtest.selectRuntime(result.runtimeSelectionRequired);
+        if (selection.canceled) return;
+        continue;
+      }
+      if (result.error || !result.run || result.run.status === 'failed' || result.run.status === 'stop_failed') {
+        throw new Error(result.run?.error || result.error || t('topbar.playtest.launchFailed'));
+      }
+      temporaryBattleback1Name.value = configuration.battleback1Name;
+      temporaryBattleback2Name.value = configuration.battleback2Name;
+      battleTestDialogVisible.value = false;
+      ElMessage.success(t('battleTest.started'));
+      break;
     }
-    temporaryBattleback1Name.value = configuration.battleback1Name;
-    temporaryBattleback2Name.value = configuration.battleback2Name;
-    battleTestDialogVisible.value = false;
-    ElMessage.success(t('battleTest.started'));
   } catch (error) {
     ElMessage.error(t('battleTest.failed', { message: (error as Error).message }));
   } finally {
@@ -1447,26 +1455,6 @@ function detailTitle(): string {
           <footer v-if="pmDetail">
               <span>{{ t('story.saveStagingNote') }}</span>
               <div class="pm-detail-footer-actions">
-                <button
-                  v-if="supportsDraftHistory"
-                  type="button"
-                  class="secondary-button"
-                  data-ui-id="database-draft-undo"
-                  :disabled="detailBusy || stagingBusy || !canUndoDraft"
-                  @click="undoDetailDraft"
-                >
-                  {{ t('editor.toolbar.undo') }}
-                </button>
-                <button
-                  v-if="supportsDraftHistory"
-                  type="button"
-                  class="secondary-button"
-                  data-ui-id="database-draft-redo"
-                  :disabled="detailBusy || stagingBusy || !canRedoDraft"
-                  @click="redoDetailDraft"
-                >
-                  {{ t('editor.toolbar.redo') }}
-                </button>
                 <button
                   v-if="canRevertCurrentStagedEntry"
                   type="button"

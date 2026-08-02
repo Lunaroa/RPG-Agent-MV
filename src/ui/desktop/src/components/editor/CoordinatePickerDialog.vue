@@ -188,7 +188,10 @@ async function loadScreenPicture() {
   const preview = picturePreview.value;
   if (!preview) return;
   if (!preview.assetUrl) {
-    pictureError.value = t('coordinate.pictureUnavailable', { name: preview.assetName });
+    // Move Picture (232) only carries a slot number; there is no asset to load.
+    // Keep pictureImage null so paintScreen draws a placeholder target frame.
+    pictureImage.value = null;
+    pictureError.value = '';
     return;
   }
   try {
@@ -329,10 +332,36 @@ function paintScreen(context: CanvasRenderingContext2D, width: number, height: n
   context.clearRect(0, 0, width, height);
   if (screenGridCanvas) context.drawImage(screenGridCanvas, 0, 0);
   drawScreenPicture(context);
+  // Move Picture (232) has no resolvable asset in the editor; draw a dashed
+  // target frame at the chosen origin so the user sees the placement range
+  // instead of an empty grid.
+  if (picturePreview.value && !pictureImage.value) drawScreenPicturePlaceholder(context);
   context.strokeStyle = '#ffcc4d';
   context.lineWidth = 2;
   context.beginPath(); context.moveTo(x.value - 10, y.value); context.lineTo(x.value + 10, y.value); context.stroke();
   context.beginPath(); context.moveTo(x.value, y.value - 10); context.lineTo(x.value, y.value + 10); context.stroke();
+}
+
+function drawScreenPicturePlaceholder(context: CanvasRenderingContext2D) {
+  const preview = picturePreview.value;
+  if (!preview) return;
+  // Without a real image we cannot know its pixel size; show a representative
+  // box (scaled relative to a 200x200 nominal picture) anchored at the origin.
+  const baseW = 200 * (preview.scaleX / 100);
+  const baseH = 200 * (preview.scaleY / 100);
+  const ox = preview.origin === 1 ? x.value - baseW / 2 : x.value;
+  const oy = preview.origin === 1 ? y.value - baseH / 2 : y.value;
+  context.save();
+  context.globalAlpha = Math.max(0, Math.min(1, preview.opacity / 255)) * 0.5;
+  context.strokeStyle = '#ffcc4d';
+  context.lineWidth = 2;
+  context.setLineDash([6, 4]);
+  context.strokeRect(ox, oy, baseW, baseH);
+  context.setLineDash([]);
+  context.fillStyle = '#ffcc4d';
+  context.font = '12px sans-serif';
+  context.fillText(t('coordinate.picturePlaceholder', { name: preview.assetName }), ox + 6, oy + 16);
+  context.restore();
 }
 
 function drawScreenPicture(context: CanvasRenderingContext2D) {

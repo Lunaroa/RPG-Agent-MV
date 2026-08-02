@@ -641,6 +641,18 @@ function mergeManagedPluginEntry(entry: ManagedPluginEntry): void {
   updateStatusBar();
 }
 
+async function openSelectedPluginInSystemEditor(): Promise<void> {
+  const project = projectStore.currentProject;
+  if (!project) return;
+  const relativePath = selectedPlugin.value?.fileRelativePath || selectedFile.value?.relativePath;
+  if (!relativePath) return;
+  try {
+    await projectAssets.openFile({ relativePath }, project);
+  } catch (err) {
+    error.value = formatUserFacingErrorMessage(err);
+  }
+}
+
 async function openParameterDialog(plugin: ManagedPluginEntry): Promise<void> {
   if (!plugin.name || busyKey.value || !projectStore.currentProject) return;
   selectPlugin(plugin);
@@ -1573,6 +1585,15 @@ function resizeKeydown(event: KeyboardEvent): void {
                   </el-button>
                 </div>
               </el-popover>
+              <button
+                v-if="selectedPlugin || selectedFile"
+                type="button"
+                :disabled="Boolean(busyKey)"
+                data-ui-id="console-plugin-open-in-editor"
+                @click="openSelectedPluginInSystemEditor"
+              >
+                {{ t('plugins.openInEditor') }}
+              </button>
               <button
                 v-if="selectedPlugin && hasConfigurableParameters(selectedPlugin)"
                 type="button"

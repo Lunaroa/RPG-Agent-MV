@@ -221,7 +221,7 @@ function writeMZProject(project: string): void {
         tileSize: 32,
         faceSize: 144,
         iconSize: 32,
-        advanced: { screenWidth: 960, screenHeight: 540, uiAreaWidth: 960 },
+        advanced: { screenWidth: 960, screenHeight: 540, uiAreaWidth: 960, uiAreaHeight: 540 },
       };
     } else if (fileName === "MapInfos.json") {
       value = [

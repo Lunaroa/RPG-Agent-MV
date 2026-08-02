@@ -31,6 +31,7 @@ export interface ProjectInfo {
   screenWidth: number;
   uiAreaWidth: number;
   screenHeight: number;
+  uiAreaHeight: number;
   faceSize: number;
   iconSize: number;
 }
@@ -487,6 +488,7 @@ export interface MapPayload {
   screenWidth: number;
   uiAreaWidth: number;
   screenHeight: number;
+  uiAreaHeight: number;
   faceSize: number;
   iconSize: number;
   info: { id: number; name: string; parentId?: number; [key: string]: unknown };
@@ -1630,6 +1632,7 @@ export interface EditorProjectCatalog {
   screenWidth: number;
   uiAreaWidth: number;
   screenHeight: number;
+  uiAreaHeight: number;
   faceSize: number;
   iconSize: number;
   maps: MapTreeNode[];

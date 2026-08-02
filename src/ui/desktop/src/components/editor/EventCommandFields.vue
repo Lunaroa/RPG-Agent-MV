@@ -107,6 +107,14 @@ const props = defineProps<{
   currentEvents?: EditorEventListItem[];
   /** Enemy names of the current troop, in member order; enables member-aware enemy index options. */
   troopMembers?: string[];
+  /**
+   * Sibling commands of the event that owns the current command, in execution
+   * order. Used to resolve runtime context the command itself does not carry,
+   * e.g. a Move Picture (232) slot references a picture shown earlier by a
+   * Show Picture (231) command. Optional; when absent, slot-only previews fall
+   * back to a placeholder frame.
+   */
+  eventCommands?: MvCommand[];
 }>();
 const emit = defineEmits<{ change: [] }>();
 const { language, t } = useI18n();
@@ -365,10 +373,25 @@ function screenPicturePreview() {
     };
   }
   // Move Picture (232) operates on a picture slot set earlier by Show Picture;
-  // the asset name is not stored on the command, so we expose the slot number
-  // (empty assetUrl) for the picker to draw a placeholder target frame.
+  // the asset name is not stored on the command, so we scan the owning event's
+  // command list for the most recent prior Show Picture (231) on the same slot
+  // and reuse its picture name. If none is found (or no sibling list was
+  // provided), we fall back to a slot-only placeholder (empty assetUrl) so the
+  // picker draws a dashed target frame instead of a real image.
   if (props.command.code === 232) {
     const slot = Math.max(1, finiteNumber(p[0], 1));
+    const resolved = resolveShowPictureAssetForSlot(slot);
+    if (resolved) {
+      return {
+        assetName: resolved.assetName,
+        assetUrl: resolved.assetUrl,
+        origin: Number(p[2]) === 1 ? 1 as const : 0 as const,
+        scaleX: finiteNumber(p[6], 100),
+        scaleY: finiteNumber(p[7], 100),
+        opacity: finiteNumber(p[8], 255),
+        blendMode: finiteNumber(p[9], 0),
+      };
+    }
     return {
       assetName: `#${slot}`,
       assetUrl: '',
@@ -380,6 +403,31 @@ function screenPicturePreview() {
     };
   }
   return undefined;
+}
+
+/**
+ * For a Move Picture (232) slot, find the picture asset of the most recent
+ * prior Show Picture (231) command on the same slot within the owning event.
+ * Returns {assetName, assetUrl} when found, or null when no sibling list is
+ * available or no matching Show Picture precedes the current command.
+ */
+function resolveShowPictureAssetForSlot(slot: number): { assetName: string; assetUrl: string } | null {
+  const siblings = props.eventCommands;
+  if (!siblings || !siblings.length) return null;
+  // Locate the current command within the sibling list by reference so we only
+  // consider commands that execute before it.
+  const currentIndex = siblings.indexOf(props.command);
+  const upperBound = currentIndex === -1 ? siblings.length : currentIndex;
+  for (let i = upperBound - 1; i >= 0; i -= 1) {
+    const sibling = siblings[i];
+    if (!sibling || sibling.code !== 231) continue;
+    if (Math.max(1, finiteNumber(sibling.parameters?.[0], 1)) !== slot) continue;
+    const assetName = String(sibling.parameters?.[1] || '');
+    if (!assetName) continue;
+    const asset = props.catalog?.assets.pictures.find((entry) => entry.name === assetName);
+    return { assetName, assetUrl: asset?.url || '' };
+  }
+  return null;
 }
 function commitCoordinate(selection: { mapId: number; x: number; y: number }): void {
   if (props.command.code === 201) {

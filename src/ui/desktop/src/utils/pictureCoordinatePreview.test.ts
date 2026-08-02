@@ -49,14 +49,18 @@ describe('show-picture coordinate preview', () => {
     assert.equal(pictureBlendOperation(3), 'screen');
   });
 
-  test('lets Show Picture render its asset and Move Picture draw a placeholder only', () => {
+  test('Move Picture resolves the prior Show Picture asset, falling back to a placeholder', () => {
     const fieldsSource = readFileSync(new URL('../components/editor/EventCommandFields.vue', import.meta.url), 'utf8');
     // Show Picture (231) and Move Picture (232) both feed the picker.
     assert.match(fieldsSource, /props\.command\.code === 231/);
     assert.match(fieldsSource, /props\.command\.code === 232/);
     assert.match(fieldsSource, /picture:\s*screenPicturePreview\(\)/);
-    // 232 carries only a slot number; its preview must use a placeholder name
-    // (#slot) and an empty assetUrl so the picker never tries to draw a real image.
+    // 232 must look up the owning event's prior Show Picture on the same slot
+    // and reuse its resolved asset URL when available.
+    assert.match(fieldsSource, /resolveShowPictureAssetForSlot/);
+    assert.match(fieldsSource, /sibling\.code !== 231/);
+    // When no prior Show Picture is found, 232 falls back to a slot-only
+    // placeholder name (#slot) with an empty assetUrl.
     assert.match(fieldsSource, /props\.command\.code === 232[\s\S]*?assetName:\s*`#\$\{slot\}`[\s\S]*?assetUrl:\s*''/);
   });
 

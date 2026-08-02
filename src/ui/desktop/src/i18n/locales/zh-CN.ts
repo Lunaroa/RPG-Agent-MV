@@ -2328,6 +2328,7 @@ const zhCN = {
     'balloon.assetMissing': '工程缺少 Balloon 气泡素材',
 
     // ── Batch 5: ConsolePluginsPane ──
+    'plugins.openInEditor': '在编辑器中打开',
     'plugins.blocked': '有阻断',
     'plugins.warnings': '有警告',
     'plugins.available': '插件可用',

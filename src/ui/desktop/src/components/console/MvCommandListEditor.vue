@@ -142,7 +142,7 @@ function openCommand(index: number): void {
   if (!span) return;
   const block = commandBlockSpanIndices(spans.value, [index]);
   const commands = block.length > 1 ? block.flatMap((spanIndex) => spans.value[spanIndex]?.commands || []) : span.commands;
-  commandDialog.value?.openEditor(commands, index);
+  commandDialog.value?.openEditor(commands, index, commandList.value);
 }
 
 function openSelectedCommand(): void {
@@ -507,25 +507,27 @@ button.danger {
   cursor: pointer;
 }
 .cmd-row.cmd-blank {
-  min-height: 6px;
-  padding-top: 0;
-  padding-bottom: 0;
+  /* RM-native compact list: insertion slots are hidden by default and only
+     revealed when focused or targeted by a drag. This keeps the command list
+     tight (one row per command) instead of spacing every pair. Hover does not
+     reveal a slot (display:none cannot be hovered); use the toolbar Add button,
+     Enter, or the context menu to insert between commands. */
+  display: none;
+  min-height: 20px;
+  padding-top: 2px;
+  padding-bottom: 2px;
   color: var(--console-text-muted,#9a8e7e);
   cursor: default;
   user-select: none;
 }
+.cmd-row.cmd-blank.focused,
+.cmd-row.cmd-blank.drop-before {
+  display: block;
+}
 .cmd-row.cmd-blank .cmd-line {
   visibility: hidden;
 }
-.cmd-row.cmd-blank.focused,
-.cmd-row.cmd-blank:hover:not(:disabled),
-.cmd-row.cmd-blank.drop-before {
-  min-height: 20px;
-  padding-top: 2px;
-  padding-bottom: 2px;
-}
 .cmd-row.cmd-blank.focused .cmd-line,
-.cmd-row.cmd-blank:hover:not(:disabled) .cmd-line,
 .cmd-row.cmd-blank.drop-before .cmd-line {
   visibility: visible;
 }

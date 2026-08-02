@@ -97,7 +97,7 @@
                     type="button"
                     :disabled="currentPageLocked"
                     class="cmd-row cmd-blank"
-                    :class="{ even: row.slot.spanIndex % 2 === 0, terminator: row.slot.spanIndex === spans.length, 'drop-before': dropIndicator === row.slot.spanIndex }"
+                    :class="{ even: row.slot.spanIndex % 2 === 0, terminator: row.slot.spanIndex === spans.length, focused: insertionFocus === row.slot.spanIndex, 'drop-before': dropIndicator === row.slot.spanIndex }"
                     :style="{ '--cmd-indent': `${Math.min(row.slot.indent, 8) * 18}px` }"
                     :aria-label="t('eventEditorDialog.newCmd')"
                     :draggable="false"
@@ -252,7 +252,15 @@ const commandRows = computed<CommandRenderRow[]>(() => {
   return rows;
 });
 function commandRowHeight(row: CommandRenderRow): number {
-  return row.kind === 'blank' ? CMD_BLANK_H : row.view.lines.length * CMD_LINE_H + CMD_LINE_H + CMD_ROW_CHROME;
+  if (row.kind === 'blank') {
+    // RM-native compact list: an insertion slot occupies no vertical space
+    // unless it is the focused insertion point or the active drop target, so
+    // command rows sit flush against each other instead of being spaced out.
+    const slotIndex = row.slot.spanIndex;
+    const active = insertionFocus.value === slotIndex || dropIndicator.value === slotIndex;
+    return active ? CMD_BLANK_H : 0;
+  }
+  return row.view.lines.length * CMD_LINE_H + CMD_LINE_H + CMD_ROW_CHROME;
 }
 // rowOffsets[i] is the pixel top of rendered row i; the final entry is total height.
 const rowOffsets = computed(() => {
@@ -429,7 +437,7 @@ function openCommand(index: number) {
   if (!span) return;
   const block = commandBlockSpanIndices(spans.value, [index]);
   const commands = block.length > 1 ? block.flatMap((spanIndex) => spans.value[spanIndex]?.commands || []) : span.commands;
-  commandDialog.value?.openEditor(commands, index);
+  commandDialog.value?.openEditor(commands, index, currentPage.value?.list);
 }
 function openSelectedCommand() { const anchor = anchorBlockSelection.value; if (anchor != null) openCommand(anchor); }
 function commitCommand(payload: { commands: MvCommand[]; editSpan: number | null; insertSpan: number | null }) {
@@ -1058,13 +1066,26 @@ defineExpose({ markSaved });
 }
 
 .cmd-row.cmd-blank {
+  /* RM-native compact list: insertion slots are hidden by default and occupy
+     no vertical space (the virtual list also reports 0 height for them unless
+     they are the focused insertion point or the active drop target). Insert a
+     command via the toolbar, Enter, or the context menu instead of clicking a
+     gap. display:none cannot be hovered, so :hover only styles the revealed
+     focused/drop-before slot. */
+  display: none;
   min-height: 22px;
   color: var(--app-ink-muted);
   cursor: default;
   user-select: none;
 }
 
-.cmd-row.cmd-blank:hover:not(:disabled) {
+.cmd-row.cmd-blank.focused,
+.cmd-row.cmd-blank.drop-before {
+  display: block;
+}
+
+.cmd-row.cmd-blank.focused:not(:disabled),
+.cmd-row.cmd-blank.drop-before:not(:disabled) {
   background: var(--app-accent-soft);
   color: var(--app-accent);
 }

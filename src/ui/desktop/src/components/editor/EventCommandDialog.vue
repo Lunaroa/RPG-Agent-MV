@@ -563,7 +563,7 @@
               </div>
               <label class="check cond-else"><input :checked="elseBranchEnabled" type="checkbox" @change="toggleElseBranch" />{{ t('eventcmd.createElse') }}</label>
             </template>
-            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" :troop-members="troopMembers" @change="touchCommand" />
+            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" :troop-members="troopMembers" :event-commands="eventCommandsForFields" @change="touchCommand" />
             <p v-else class="form-note unsupported-command">
               {{ t('eventcmd.unsupportedEditor') }}
             </p>
@@ -632,6 +632,9 @@ const projectStore = useProjectStore();
 const { language, t } = useI18n();
 const commandDialogZ = String(LAYER_Z.commandDialog);
 const visible=ref(false),pickerOpen=ref(false),pickerPage=ref(1),draft=ref<MvCommand|null>(null),draftSpan=ref<MvCommand[]>([]),editSpan=ref<number|null>(null),insertSpan=ref<number|null>(null),insertIndent=ref(0),multiText=ref(''),batchInput=ref(false);
+// Full sibling-command list of the event being edited; lets field editors
+// resolve cross-command runtime context (e.g. 232 -> prior 231 picture slot).
+const eventCommandsForFields=ref<MvCommand[]>([]);
 // RM-native Show Choices uses one line per option. Blank lines are ignored, but
 // a seventh non-empty line is rejected rather than silently discarded.
 const choiceText=ref('');
@@ -937,7 +940,7 @@ function commandHasNoEditorParams(code:number){
   const definition=commandDefinition(code,currentEngine.value);
   return definition!=null&&definition.fields.length===0;
 }
-function openEditor(commands:MvCommand[],index:number){
+function openEditor(commands:MvCommand[],index:number,eventCommands?:MvCommand[]){
   const nextSpan=clone(commands);
   if(nextSpan[0]?.code===111){
     try{
@@ -948,6 +951,10 @@ function openEditor(commands:MvCommand[],index:number){
       return;
     }
   }
+  // Sibling commands of the owning event let field editors resolve runtime
+  // context the current command cannot see on its own (e.g. Move Picture 232
+  // needs the prior Show Picture 231 to know which asset a slot holds).
+  eventCommandsForFields.value=eventCommands&&eventCommands.length?clone(eventCommands):[];
   draftSpan.value=nextSpan;draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value&&commandHasNoEditorParams(draft.value.code)){draft.value=null;draftSpan.value=[];conditionalTypeDrafts.value={};return;}editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void nextTick(measureTextGuide);if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);
 }
 function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();void nextTick(measureTextGuide);if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}

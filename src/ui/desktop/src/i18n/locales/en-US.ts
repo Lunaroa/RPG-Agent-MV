@@ -2328,6 +2328,7 @@ const enUS = {
     'balloon.assetMissing': 'The project Balloon asset is missing',
 
     // ── Batch 5: ConsolePluginsPane ──
+    'plugins.openInEditor': 'Open in Editor',
     'plugins.blocked': 'Blocked',
     'plugins.warnings': 'Warnings',
     'plugins.available': 'Plugin available',

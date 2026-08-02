@@ -331,26 +331,29 @@ function paintScreen(context: CanvasRenderingContext2D, width: number, height: n
   buildScreenGrid(width, height);
   context.clearRect(0, 0, width, height);
   if (screenGridCanvas) context.drawImage(screenGridCanvas, 0, 0);
-  drawScreenPicture(context);
-  // Move Picture (232) has no resolvable asset in the editor; draw a dashed
-  // target frame at the chosen origin so the user sees the placement range
-  // instead of an empty grid.
-  if (picturePreview.value && !pictureImage.value) drawScreenPicturePlaceholder(context);
+  const realBounds = drawScreenPicture(context);
+  // Always draw a dashed target frame at the chosen origin so the user can see
+  // the placement range — overlaid on top of the real image when one resolves
+  // (Move Picture 232 reusing a prior Show Picture 231 asset), or standing in
+  // for the missing image (232 with no resolvable 231) using a nominal size.
+  if (picturePreview.value) drawScreenPicturePlaceholder(context, realBounds);
   context.strokeStyle = '#ffcc4d';
   context.lineWidth = 2;
   context.beginPath(); context.moveTo(x.value - 10, y.value); context.lineTo(x.value + 10, y.value); context.stroke();
   context.beginPath(); context.moveTo(x.value, y.value - 10); context.lineTo(x.value, y.value + 10); context.stroke();
 }
 
-function drawScreenPicturePlaceholder(context: CanvasRenderingContext2D) {
+function drawScreenPicturePlaceholder(context: CanvasRenderingContext2D, realBounds: { x: number; y: number; w: number; h: number } | null) {
   const preview = picturePreview.value;
   if (!preview) return;
-  // Without a real image we cannot know its pixel size; show a representative
-  // box (scaled relative to a 200x200 nominal picture) anchored at the origin.
-  const baseW = 200 * (preview.scaleX / 100);
-  const baseH = 200 * (preview.scaleY / 100);
-  const ox = preview.origin === 1 ? x.value - baseW / 2 : x.value;
-  const oy = preview.origin === 1 ? y.value - baseH / 2 : y.value;
+  // When a real image was drawn, frame its actual rendered bounds so the dashed
+  // outline matches what the user sees. Without a real image (232 with no
+  // resolvable prior 231), fall back to a representative box scaled from a
+  // 200x200 nominal picture anchored at the origin.
+  const ox = realBounds ? realBounds.x : (preview.origin === 1 ? x.value - (200 * preview.scaleX / 100) / 2 : x.value);
+  const oy = realBounds ? realBounds.y : (preview.origin === 1 ? y.value - (200 * preview.scaleY / 100) / 2 : y.value);
+  const baseW = realBounds ? realBounds.w : 200 * (preview.scaleX / 100);
+  const baseH = realBounds ? realBounds.h : 200 * (preview.scaleY / 100);
   context.save();
   context.globalAlpha = Math.max(0, Math.min(1, preview.opacity / 255)) * 0.5;
   context.strokeStyle = '#ffcc4d';
@@ -364,11 +367,13 @@ function drawScreenPicturePlaceholder(context: CanvasRenderingContext2D) {
   context.restore();
 }
 
-function drawScreenPicture(context: CanvasRenderingContext2D) {
+function drawScreenPicture(context: CanvasRenderingContext2D): { x: number; y: number; w: number; h: number } | null {
   const preview = picturePreview.value;
   const image = pictureImage.value;
-  if (!preview || !image) return;
-  const state = screenPictureDrawState(preview, image.naturalWidth || image.width, image.naturalHeight || image.height);
+  if (!preview || !image) return null;
+  const iw = image.naturalWidth || image.width;
+  const ih = image.naturalHeight || image.height;
+  const state = screenPictureDrawState(preview, iw, ih);
   context.save();
   context.globalAlpha = state.alpha;
   context.globalCompositeOperation = state.operation;
@@ -376,6 +381,13 @@ function drawScreenPicture(context: CanvasRenderingContext2D) {
   context.scale(state.scaleX, state.scaleY);
   context.drawImage(image, state.originX, state.originY);
   context.restore();
+  // Bounds of the drawn image in screen-canvas space (post-scale, pre-alpha).
+  return {
+    x: x.value + state.originX * state.scaleX,
+    y: y.value + state.originY * state.scaleY,
+    w: iw * state.scaleX,
+    h: ih * state.scaleY,
+  };
 }
 
 function pickCanvasCoordinate(event: MouseEvent) {

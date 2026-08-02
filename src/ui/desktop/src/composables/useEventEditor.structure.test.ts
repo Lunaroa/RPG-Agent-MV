@@ -63,6 +63,17 @@ test('projects choice insertion slots after the first branch marker', () => {
   assert.equal(slots.find((slot) => slot.spanIndex === 4)?.indent, 0);
   assert.equal(slots.at(-1)?.key, 'insert:5');
   assert.equal(slots.every((slot) => !('code' in slot)), true);
+  // blockBottom marks the foot of a structure body: slot 2 sits before the
+  // cancel branch (402 body foot), slot 3 before End (403 body foot), and
+  // slot 5 is the trailing slot. Slot 0 (before the head) and slot 4 (after
+  // End, a top-level sequential gap) are not body feet.
+  assert.deepEqual(slots.map((slot) => [slot.spanIndex, slot.blockBottom]), [
+    [0, false],
+    [2, true],
+    [3, true],
+    [4, false],
+    [5, true],
+  ]);
 });
 
 test('does not expose a no-choice head-to-end insertion boundary', () => {
@@ -84,7 +95,7 @@ test('keeps the first battle branch insertion slot after its marker', () => {
 test('keeps an empty page to one terminator insertion slot', () => {
   const list = [command(0)];
   const slots = commandInsertionSlots(list, spansFor(list));
-  assert.deepEqual(slots, [{ key: 'insert:0', spanIndex: 0, rawIndex: 0, indent: 0 }]);
+  assert.deepEqual(slots, [{ key: 'insert:0', spanIndex: 0, rawIndex: 0, indent: 0, blockBottom: true }]);
 });
 
 test('models choices, branches, nested conditional and their complete selection boundaries', () => {

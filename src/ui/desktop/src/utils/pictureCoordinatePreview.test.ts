@@ -75,9 +75,13 @@ describe('show-picture coordinate preview', () => {
     assert.match(pickerSource, /picturePreview\.value/);
     assert.match(pickerSource, /if \(mode\.value === 'map'\)/);
     assert.match(pickerSource, /if \(!picturePreview\.value\) return/);
-    // A slot-only preview (232) draws a placeholder frame instead of erroring.
+    // A dashed placeholder frame is always drawn when a picture preview exists
+    // — overlaid on the real image when one resolves (232 reusing a prior 231),
+    // or standing in for the missing image (232 with no resolvable 231). The
+    // frame follows the real image bounds when available.
     assert.match(pickerSource, /drawScreenPicturePlaceholder/);
-    assert.match(pickerSource, /if \(picturePreview\.value && !pictureImage\.value\) drawScreenPicturePlaceholder/);
+    assert.match(pickerSource, /if \(picturePreview\.value\) drawScreenPicturePlaceholder/);
+    assert.match(pickerSource, /drawScreenPicturePlaceholder\(context, realBounds\)/);
     assert.doesNotMatch(pickerSource, /function onStagePointerMove[\s\S]*?loadScreenPicture\(\)/);
   });
 });

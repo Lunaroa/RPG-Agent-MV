@@ -63,7 +63,7 @@ export function prepareBattleTestProject(
     const system = readRecord(systemPath, 'System.json');
     const troops = readArray(troopsPath, 'Troops.json');
     const actors = readArray(actorsPath, 'Actors.json');
-    const validationBaseline = captureEffectiveRmmvDatabaseValidationState(workflowRoot, isolated.temporaryProject);
+    const validationBaseline = captureEffectiveRmmvDatabaseValidationState(workflowRoot, isolated.temporaryProject, { allowUnreadableMaps: true });
     const baselineSystemValue = validationBaseline.snapshot.system;
     if (!baselineSystemValue || typeof baselineSystemValue !== 'object' || Array.isArray(baselineSystemValue)) {
       throw new BattleTestPreparationError('System.json must contain an object.');
@@ -94,6 +94,7 @@ export function prepareBattleTestProject(
       workflowRoot,
       isolated.temporaryProject,
       validationBaseline,
+      { allowUnreadableMaps: true },
     );
     const errors = validation.issues.filter((issue) => issue.severity === 'error');
     if (errors.length > 0) {

@@ -198,6 +198,15 @@ export interface MvCommandInsertionSlot {
   spanIndex: number;
   rawIndex: number;
   indent: number;
+  /**
+   * True when this slot sits at the bottom of a structure body — i.e. the next
+   * span is a branch marker (else / when / battle branch) or a block terminator
+   * (End), or the slot is the trailing one at the end of the list. RM-native
+   * lists keep these slots visible as insertion affordances while collapsing
+   * same-level sequential-command gaps, so commands sit flush but every body
+   * still has exactly one insert entry at its foot.
+   */
+  blockBottom: boolean;
 }
 
 export type MvCommandSpanRole = 'command' | 'head' | 'branch' | 'terminator';
@@ -517,11 +526,19 @@ export function commandInsertionSlots(
     // boundary unique so an empty list has exactly one blank row.
     if (rawIndex === previousRawIndex) continue;
     previousRawIndex = rawIndex;
+    // A slot is a "block bottom" insertion affordance when the span that
+    // follows it is a branch marker (else/when/battle branch) or a block
+    // terminator (End), or when it is the trailing slot at the end of the
+    // list. RM-native lists show these as the one visible insert entry per
+    // body while keeping same-level sequential commands flush.
+    const nextSpan = spanIndex < spans.length ? spans[spanIndex] : undefined;
+    const blockBottom = !nextSpan || nextSpan.role === 'branch' || nextSpan.role === 'terminator';
     slots.push({
       key: `insert:${rawIndex}`,
       spanIndex,
       rawIndex,
       indent: commandInsertIndent(list, rawIndex),
+      blockBottom,
     });
   }
   return slots;

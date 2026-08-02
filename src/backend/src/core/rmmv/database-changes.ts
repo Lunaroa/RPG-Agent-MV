@@ -238,8 +238,9 @@ export function validateEffectiveRmmvDatabaseState(
 export function captureEffectiveRmmvDatabaseValidationState(
   workflowRoot: string,
   project: string,
+  options: Pick<LoadProjectInputOptions, "allowUnreadableMaps"> = {},
 ): RmmvEffectiveDatabaseValidationState {
-  const loaded = loadProjectInputs(workflowRoot, path.resolve(project));
+  const loaded = loadProjectInputs(workflowRoot, path.resolve(project), options);
   return {
     snapshot: structuredClone(loaded.snapshot),
     maps: structuredClone(loaded.maps),
@@ -250,8 +251,9 @@ export function validateEffectiveRmmvDatabaseTransition(
   workflowRoot: string,
   project: string,
   before: RmmvEffectiveDatabaseValidationState,
+  options: Pick<LoadProjectInputOptions, "allowUnreadableMaps"> = {},
 ): RmmvDatabaseSemanticValidationResult {
-  const after = loadProjectInputs(workflowRoot, path.resolve(project));
+  const after = loadProjectInputs(workflowRoot, path.resolve(project), options);
   return validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
     beforeMaps: before.maps,
     maps: after.maps,

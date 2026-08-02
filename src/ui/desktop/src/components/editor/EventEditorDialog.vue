@@ -1,7 +1,7 @@
 <template>
   <teleport to="body">
     <div v-if="visible" class="ev-modal-overlay editor-modal-overlay" :class="{ modeless }" data-ui-id="event-editor-overlay" :data-editor-dialog-layer="LAYER_Z.eventEditor" @mousedown.self="onOverlayMouseDown">
-      <section ref="modalRef" class="ev-modal editor-modal-shell" data-ui-id="event-editor-dialog" role="dialog" :aria-modal="!modeless" aria-labelledby="event-editor-title" :style="dragStyle">
+      <section ref="modalRef" class="ev-modal editor-modal-shell" data-ui-id="event-editor-dialog" role="dialog" :aria-modal="!modeless" aria-labelledby="event-editor-title" :style="dialogStyle">
         <header class="ev-title-bar editor-modal-header" @pointerdown="onDragStart" @pointermove="onDragMove" @pointerup="onDragEnd" @pointercancel="onDragEnd">
           <h3 id="event-editor-title" class="editor-modal-title">{{ eventEditorTitle }}</h3>
           <button type="button" class="editor-modal-close" data-ui-id="event-editor-close" :aria-label="t('eventEditorDialog.closeTitle')" :title="t('eventcmd.close')" @click="requestClose">×</button>
@@ -97,7 +97,7 @@
                     type="button"
                     :disabled="currentPageLocked"
                     class="cmd-row cmd-blank"
-                    :class="{ even: row.slot.spanIndex % 2 === 0, terminator: row.slot.spanIndex === spans.length, 'always-show': row.slot.spanIndex === spans.length, focused: insertionFocus === row.slot.spanIndex, 'drop-before': dropIndicator === row.slot.spanIndex }"
+                    :class="{ even: row.slot.spanIndex % 2 === 0, terminator: row.slot.spanIndex === spans.length, 'block-bottom': row.slot.blockBottom, focused: insertionFocus === row.slot.spanIndex, 'drop-before': dropIndicator === row.slot.spanIndex }"
                     :style="{ '--cmd-indent': `${Math.min(row.slot.indent, 8) * 18}px` }"
                     :aria-label="t('eventEditorDialog.newCmd')"
                     :draggable="false"
@@ -139,22 +139,23 @@
             </div>
           </footer>
         </template>
+        <span class="dialog-resize-handle" role="separator" :aria-label="t('eventcmd.resizeHandle')" :title="t('eventcmd.resizeHandle')" @pointerdown.prevent="onEditorResizeStart" @pointermove="onEditorResizeMove" @pointerup="onEditorResizeEnd" @pointercancel="onEditorResizeEnd" @dblclick="resetEditorDialogSize" />
       </section>
       <div v-if="cmdContext.visible" class="cmd-context-mask" @mousedown.self="closeCommandContext" @contextmenu.self.prevent="closeCommandContext">
         <ul class="cmd-context-menu" :style="{ left: `${cmdContext.x}px`, top: `${cmdContext.y}px` }" role="menu" :aria-label="t('eventEditorDialog.commandActions')">
           <li><button type="button" @click="runCommandMenu(openCommandPicker)">{{ t('eventEditorDialog.newCmd') }}<span>Enter</span></button></li>
-          <li><button type="button" :disabled="anchorBlockSelection == null" @click="runCommandMenu(openSelectedCommand)">{{ t('eventEditorDialog.editCmd') }}<span>Space</span></button></li>
-          <li><button type="button" :disabled="anchorBlockSelection == null" @click="runCommandMenu(() => moveSelectedCommandBlock(-1))">{{ t('cmdList.moveUp') }}<span>Alt+↑</span></button></li>
-          <li><button type="button" :disabled="anchorBlockSelection == null" @click="runCommandMenu(() => moveSelectedCommandBlock(1))">{{ t('cmdList.moveDown') }}<span>Alt+↓</span></button></li>
-          <li class="separator" />
-          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(cutSelectedCommands)">{{ t('eventEditorDialog.cut') }}<span>Ctrl+X</span></button></li>
-          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(() => copySelectedCommands())">{{ t('eventEditorDialog.copy') }}<span>Ctrl+C</span></button></li>
+          <li v-if="!cmdContext.onSlot"><button type="button" :disabled="anchorBlockSelection == null" @click="runCommandMenu(openSelectedCommand)">{{ t('eventEditorDialog.editCmd') }}<span>Space</span></button></li>
+          <li v-if="!cmdContext.onSlot"><button type="button" :disabled="anchorBlockSelection == null" @click="runCommandMenu(() => moveSelectedCommandBlock(-1))">{{ t('cmdList.moveUp') }}<span>Alt+↑</span></button></li>
+          <li v-if="!cmdContext.onSlot"><button type="button" :disabled="anchorBlockSelection == null" @click="runCommandMenu(() => moveSelectedCommandBlock(1))">{{ t('cmdList.moveDown') }}<span>Alt+↓</span></button></li>
+          <li v-if="!cmdContext.onSlot" class="separator" />
+          <li v-if="!cmdContext.onSlot"><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(cutSelectedCommands)">{{ t('eventEditorDialog.cut') }}<span>Ctrl+X</span></button></li>
+          <li v-if="!cmdContext.onSlot"><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(() => copySelectedCommands())">{{ t('eventEditorDialog.copy') }}<span>Ctrl+C</span></button></li>
           <li><button type="button" :disabled="!commandClipboard" @click="runCommandMenu(pasteSelectedCommand)">{{ t('eventEditorDialog.paste') }}<span>Ctrl+V</span></button></li>
-          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(deleteSelectedCommands)">{{ t('cmdList.delete') }}<span>Del</span></button></li>
-          <li class="separator" />
-          <li><button type="button" :disabled="!spans.length" @click="runCommandMenu(selectAllCommands)">{{ t('eventEditorDialog.selectAll') }}<span>Ctrl+A</span></button></li>
-          <li class="separator" />
-          <li><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(copySelectedCommandsAsText)">{{ t('eventEditorDialog.copyAsText') }}</button></li>
+          <li v-if="!cmdContext.onSlot"><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(deleteSelectedCommands)">{{ t('cmdList.delete') }}<span>Del</span></button></li>
+          <li v-if="!cmdContext.onSlot" class="separator" />
+          <li v-if="!cmdContext.onSlot"><button type="button" :disabled="!spans.length" @click="runCommandMenu(selectAllCommands)">{{ t('eventEditorDialog.selectAll') }}<span>Ctrl+A</span></button></li>
+          <li v-if="!cmdContext.onSlot" class="separator" />
+          <li v-if="!cmdContext.onSlot"><button type="button" :disabled="!selectedIndices.length" @click="runCommandMenu(copySelectedCommandsAsText)">{{ t('eventEditorDialog.copyAsText') }}</button></li>
           <li><button type="button" :disabled="currentPageLocked" @click="runCommandMenu(openPasteCommandsFromText)">{{ t('eventEditorDialog.pasteFromText') }}</button></li>
         </ul>
       </div>
@@ -175,7 +176,7 @@ import { confirmAboveModal } from '../../utils/confirmAboveModal';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import { clipboard as clipboardApi, type EditorProjectCatalog, type StoryEventOverview, type StoryEventPageOverview } from '../../api/client';
 import { useProjectStore } from '../../stores/project';
-import { normalizeEventCommandParameters } from '../../composables/eventCommandCatalog';
+import { commandDefinition, normalizeEventCommandParameters } from '../../composables/eventCommandCatalog';
 import ConditionSelect from './EventConditionSelect.vue';
 import EventCommandDialog from './EventCommandDialog.vue';
 import EventImagePickerDialog from './EventImagePickerDialog.vue';
@@ -197,7 +198,8 @@ const modalRef = ref<HTMLElement>(), previewCanvas = ref<HTMLCanvasElement>(), i
 // dialog always reopens centered.
 const dragOffset = ref<{ x: number; y: number } | null>(null);
 let dragStart: { x: number; y: number; ox: number; oy: number; pointer: number } | null = null;
-const dragStyle = computed(() => (dragOffset.value ? { transform: `translate(${dragOffset.value.x}px, ${dragOffset.value.y}px)` } : undefined));
+// dialogStyle (declared after the resize block) merges the drag transform with
+// an optional resized width/height; the template binds it.
 function onDragStart(event: PointerEvent) {
   if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
   const offset = dragOffset.value || { x: 0, y: 0 };
@@ -220,6 +222,53 @@ function onDragMove(event: PointerEvent) {
   dragOffset.value = { x: Math.round(nx), y: Math.round(ny) };
 }
 function onDragEnd(event: PointerEvent) { if (dragStart?.pointer === event.pointerId) dragStart = null; }
+// Optional dialog resize handle. Unlike EventCommandDialog (which assumes the
+// overlay keeps the shell centered and so applies half the drag delta), this
+// dialog can be title-bar dragged via transform, so the centering assumption
+// does not hold — apply the full delta instead.
+const EDITOR_SIZE_KEY = 'rpgmv.eventEditorDialogSize';
+const editorDialogSize = ref<{ w: number; h: number } | null>(null);
+let editorResizeStart: { x: number; y: number; w: number; h: number; pointer: number } | null = null;
+const clampEditorW = (w: number) => Math.round(Math.max(640, Math.min(window.innerWidth - 32, w)));
+const clampEditorH = (h: number) => Math.round(Math.max(420, Math.min(window.innerHeight - 32, h)));
+function loadEditorDialogSize() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(EDITOR_SIZE_KEY) || 'null');
+    editorDialogSize.value = parsed && Number.isFinite(parsed.w) && Number.isFinite(parsed.h)
+      ? { w: clampEditorW(parsed.w), h: clampEditorH(parsed.h) }
+      : null;
+  } catch { editorDialogSize.value = null; }
+}
+function saveEditorDialogSize() {
+  try {
+    if (editorDialogSize.value) localStorage.setItem(EDITOR_SIZE_KEY, JSON.stringify(editorDialogSize.value));
+    else localStorage.removeItem(EDITOR_SIZE_KEY);
+  } catch { /* persistence is best-effort */ }
+}
+function resetEditorDialogSize() { editorDialogSize.value = null; saveEditorDialogSize(); }
+function onEditorResizeStart(event: PointerEvent) {
+  const rect = modalRef.value?.getBoundingClientRect();
+  if (!rect) return;
+  editorResizeStart = { x: event.clientX, y: event.clientY, w: rect.width, h: rect.height, pointer: event.pointerId };
+  editorDialogSize.value = { w: Math.round(rect.width), h: Math.round(rect.height) };
+  try { (event.target as HTMLElement).setPointerCapture(event.pointerId); } catch { /* capture is best-effort */ }
+}
+function onEditorResizeMove(event: PointerEvent) {
+  if (editorResizeStart?.pointer !== event.pointerId) return;
+  editorDialogSize.value = {
+    w: clampEditorW(editorResizeStart.w + (event.clientX - editorResizeStart.x)),
+    h: clampEditorH(editorResizeStart.h + (event.clientY - editorResizeStart.y)),
+  };
+}
+function onEditorResizeEnd(event: PointerEvent) {
+  if (editorResizeStart?.pointer !== event.pointerId) return;
+  editorResizeStart = null;
+  saveEditorDialogSize();
+}
+const dialogStyle = computed(() => ({
+  ...(editorDialogSize.value ? { width: `${editorDialogSize.value.w}px`, height: `${editorDialogSize.value.h}px` } : {}),
+  ...(dragOffset.value ? { transform: `translate(${dragOffset.value.x}px, ${dragOffset.value.y}px)` } : {}),
+}));
 function onOverlayMouseDown() { if (!props.modeless) void requestClose(); }
 const currentPage = computed(() => props.draft?.pages[pageIndex.value] || null), spans = computed(() => currentPage.value ? editableCommandSpans(currentPage.value) : []);
 const skipTerminatorSet = computed(() => currentPage.value ? skipTerminatorIndices(currentPage.value.list) : new Set<number>());
@@ -253,14 +302,14 @@ const commandRows = computed<CommandRenderRow[]>(() => {
 });
 function commandRowHeight(row: CommandRenderRow): number {
   if (row.kind === 'blank') {
-    // RM MV-native list: commands sit flush against each other; only the
-    // trailing slot (the "◆" row at the end, used to double-click-append a
-    // new command) plus the focused insertion point and active drop target
-    // occupy any vertical space. Intermediate slots collapse to 0 so there
-    // are no blank rows between commands.
+    // RM MV-native list: commands sit flush against each other, but each
+    // structure body (if/else/choice/loop/...) keeps one visible insertion
+    // slot at its foot (blockBottom), and the trailing slot at the end of
+    // the list stays open for double-click-append. The focused insertion
+    // point and the active drop target also expand. Same-level sequential
+    // gaps collapse to 0 so there are no blank rows between sibling commands.
     const slotIndex = row.slot.spanIndex;
-    const isTrailing = slotIndex === spans.value.length;
-    const active = isTrailing || insertionFocus.value === slotIndex || dropIndicator.value === slotIndex;
+    const active = row.slot.blockBottom || insertionFocus.value === slotIndex || dropIndicator.value === slotIndex;
     return active ? CMD_BLANK_H : 0;
   }
   return row.view.lines.length * CMD_LINE_H + CMD_LINE_H + CMD_ROW_CHROME;
@@ -324,7 +373,7 @@ const anchorBlockSelection = computed(() => {
   const block = commandBlockSpanIndices(spans.value, [anchor]);
   return block.length === selected.length && block.every((value, index) => value === selected[index]) ? anchor : null;
 });
-const cmdContext = reactive({ visible: false, x: 0, y: 0 });
+const cmdContext = reactive({ visible: false, x: 0, y: 0, onSlot: false });
 // Drag reorder state: source span plus the insert-before slot (spans.length = drop at end).
 const dragSourceIndices = ref<number[]>([]), dropIndicator = ref<number | null>(null);
 const eventEditorTitle = computed(() => props.draft?.id
@@ -397,6 +446,7 @@ watch(() => props.visible, (value) => {
   if (value) {
     dirty.value = props.draft?.id === 0;
     pageIndex.value = 0;
+    loadEditorDialogSize();
     pageIdentities.value = (props.draft?.pages || []).map((_, index) =>
       props.overview?.pages.find((page) => page.pageIndex === index));
     clearCommandSelection();
@@ -438,6 +488,12 @@ function openCommand(index: number) {
   insertionFocus.value = null;
   const span = spans.value[index];
   if (!span) return;
+  // Structural placeholders (code=0 branch/loop/choice/battle/skip End, and
+  // other codes with no graphical editor) have nothing to edit; double-click,
+  // the context-menu Edit action, and the Space shortcut all route here, so
+  // guarding once avoids the "unknown command" fallback dialog.
+  const engine = projectStore.currentProjectInfo?.engine || 'rpg-maker-mv';
+  if (!commandDefinition(span.commands[0]?.code, engine)) return;
   const block = commandBlockSpanIndices(spans.value, [index]);
   const commands = block.length > 1 ? block.flatMap((spanIndex) => spans.value[spanIndex]?.commands || []) : span.commands;
   commandDialog.value?.openEditor(commands, index, currentPage.value?.list);
@@ -573,7 +629,7 @@ async function copySelectedCommandsAsText() {
   const commands = commandBlockSpanIndices(spans.value, selectedIndices.value).flatMap((index) => spans.value[index]?.commands || []);
   if (!commands.length) return;
   try {
-    await clipboardApi.writeText(JSON.stringify(commands, null, 2));
+    await clipboardApi.writeText('◆' + JSON.stringify(commands));
     ElMessage.success(t('eventEditorDialog.copiedAsText'));
   } catch (error) {
     ElMessage.error(t('eventEditorDialog.copyTextFailed', { message: (error as Error).message }));
@@ -587,7 +643,8 @@ function openPasteCommandsFromText() {
 function applyPastedCommandsText(text: string) {
   if (!currentPage.value || currentPageLocked.value) return;
   let parsed: unknown;
-  try { parsed = JSON.parse(text); }
+  const json = text.startsWith('◆') ? text.slice(1) : text;
+  try { parsed = JSON.parse(json); }
   catch { ElMessage.error(t('eventText.invalidJson')); return; }
   if (!Array.isArray(parsed) || !parsed.length || !parsed.every(isMvCommandShape)) { ElMessage.error(t('eventText.invalidCommands')); return; }
   const engine = projectStore.currentProjectInfo?.engine || 'rpg-maker-mv';
@@ -601,6 +658,10 @@ function applyPastedCommandsText(text: string) {
 }
 function openCommandContext(event: MouseEvent, index: number | null, slot: MvCommandInsertionSlot | null = null) {
   if (currentPageLocked.value) return;
+  // A blank insertion slot is an insert-only affordance: it cannot be edited,
+  // moved, copied, cut, or deleted. Track the context origin so the menu can
+  // hide those command-targeted actions and keep only New / Paste entries.
+  cmdContext.onSlot = Boolean(slot);
   if (slot) {
     selectedSpans.value = [];
     selectionAnchor.value = null;
@@ -610,8 +671,16 @@ function openCommandContext(event: MouseEvent, index: number | null, slot: MvCom
   else if (!selectedSpanSet.value.has(index)) { selectedSpans.value = [index]; selectionAnchor.value = index; }
   const rect = modalRef.value?.getBoundingClientRect();
   const width = 214, height = 330, margin = 8;
-  cmdContext.x = rect ? Math.max(rect.left + margin, Math.min(event.clientX, rect.right - width - margin)) : event.clientX;
-  cmdContext.y = rect ? Math.max(rect.top + margin, Math.min(event.clientY, rect.bottom - height - margin)) : event.clientY;
+  if (rect) {
+    // When the dialog has a CSS transform (e.g. from dragging), position:fixed
+    // children use the transformed element as their containing block.  Convert
+    // viewport-space mouse coordinates to dialog-local coordinates.
+    cmdContext.x = Math.max(margin, Math.min(event.clientX - rect.left, rect.width - width - margin));
+    cmdContext.y = Math.max(margin, Math.min(event.clientY - rect.top, rect.height - height - margin));
+  } else {
+    cmdContext.x = event.clientX;
+    cmdContext.y = event.clientY;
+  }
   cmdContext.visible = true;
 }
 function closeCommandContext() { cmdContext.visible = false; }
@@ -652,8 +721,24 @@ defineExpose({ markSaved });
 }
 
 .ev-modal {
+  position: relative;
   width: min(1040px, calc(100vw - 32px));
   height: min(720px, calc(100vh - 32px));
+}
+
+/* Mirrors .dialog-resize-handle in EventCommandDialog. Kept duplicated (not
+ * moved to shared CSS) per scope discipline: only this dialog and that one
+ * resize, and lifting it would touch the working dialog. */
+.dialog-resize-handle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(135deg, transparent 0 45%, var(--app-border-strong) 45% 55%, transparent 55% 68%, var(--app-border-strong) 68% 78%, transparent 78%);
 }
 
 .ev-title-bar {
@@ -1069,10 +1154,10 @@ defineExpose({ markSaved });
 }
 
 .cmd-row.cmd-blank {
-  /* RM MV-native list: only the trailing "◆" row (always-show), the focused
-     insertion point, and the active drop target are visible. Intermediate
-     insertion slots are display:none and report 0 height in the virtual list
-     so commands sit flush with no blank rows between them. */
+  /* RM MV-native list: only block-bottom slots (the foot of each structure
+     body and the trailing "◆" row), the focused insertion point, and the
+     active drop target are visible. Other intermediate slots are display:none
+     and report 0 height in the virtual list so sibling commands sit flush. */
   display: none;
   min-height: 22px;
   color: var(--app-ink-muted);
@@ -1080,7 +1165,7 @@ defineExpose({ markSaved });
   user-select: none;
 }
 
-.cmd-row.cmd-blank.always-show,
+.cmd-row.cmd-blank.block-bottom,
 .cmd-row.cmd-blank.focused,
 .cmd-row.cmd-blank.drop-before {
   display: block;

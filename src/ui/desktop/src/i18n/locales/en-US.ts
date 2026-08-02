@@ -341,8 +341,8 @@ const enUS = {
     'mapOverview.inspector.outgoing': 'Outgoing',
     'mapOverview.inspector.unresolved': 'Unresolved transfers',
     'mapOverview.inspector.issues': 'Read and relationship issues',
-    'mapOverview.openEditor': 'Open in editor',
-    'mapOverview.openEditorUnavailable': 'The map file is missing or damaged and cannot be opened in the editor.',
+    'mapOverview.openEditor': 'Open file',
+    'mapOverview.openEditorUnavailable': 'The map file is missing or damaged and cannot be opened.',
     'mapOverview.openEvent': 'Open in event editor',
     'mapOverview.source.location': 'Page {{page}} · command {{command}}',
     'mapOverview.source.target': 'Target: {{x}}, {{y}}',
@@ -2328,7 +2328,7 @@ const enUS = {
     'balloon.assetMissing': 'The project Balloon asset is missing',
 
     // ── Batch 5: ConsolePluginsPane ──
-    'plugins.openInEditor': 'Open in Editor',
+    'plugins.openInEditor': 'Open file',
     'plugins.blocked': 'Blocked',
     'plugins.warnings': 'Warnings',
     'plugins.available': 'Plugin available',

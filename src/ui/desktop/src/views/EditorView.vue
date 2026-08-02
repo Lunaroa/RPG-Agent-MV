@@ -2608,7 +2608,7 @@ async function copyEventAsText(eventId: number) {
   const event = currentMap?.events?.find((item) => item?.id === eventId);
   if (!event) return;
   try {
-    await clipboardApi.writeText(JSON.stringify(event, null, 2));
+    await clipboardApi.writeText('◆' + JSON.stringify(event));
     setStatus(t('editor.event.copiedAsText', { eventId }), 'saved');
   } catch (error) { ElMessage.error(t('editor.event.copyTextFailed', { message: (error as Error).message })); }
 }
@@ -2616,7 +2616,8 @@ async function copyEventAsText(eventId: number) {
 async function applyPastedEventText(text: string) {
   if (selectedMapId.value == null) { pendingPasteEventCell.value = null; return; }
   let parsed: unknown;
-  try { parsed = JSON.parse(text); }
+  const json = text.startsWith('◆') ? text.slice(1) : text;
+  try { parsed = JSON.parse(json); }
   catch { ElMessage.error(t('eventText.invalidJson')); return; }
   if (!isMvEventShape(parsed)) { ElMessage.error(t('eventText.invalidEvent')); return; }
   const cell = pendingPasteEventCell.value;

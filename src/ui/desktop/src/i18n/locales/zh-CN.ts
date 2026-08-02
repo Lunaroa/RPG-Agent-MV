@@ -339,8 +339,8 @@ const zhCN = {
     'mapOverview.inspector.outgoing': '传出关系',
     'mapOverview.inspector.unresolved': '未解析转移',
     'mapOverview.inspector.issues': '读取与关系问题',
-    'mapOverview.openEditor': '在编辑器中打开',
-    'mapOverview.openEditorUnavailable': '地图文件缺失或损坏，无法在编辑器中打开。',
+    'mapOverview.openEditor': '打开文件',
+    'mapOverview.openEditorUnavailable': '地图文件缺失或损坏，无法打开。',
     'mapOverview.openEvent': '在事件编辑器中打开',
     'mapOverview.source.location': '第 {{page}} 页 · 第 {{command}} 条指令',
     'mapOverview.source.target': '目标坐标：{{x}}, {{y}}',
@@ -2328,7 +2328,7 @@ const zhCN = {
     'balloon.assetMissing': '工程缺少 Balloon 气泡素材',
 
     // ── Batch 5: ConsolePluginsPane ──
-    'plugins.openInEditor': '在编辑器中打开',
+    'plugins.openInEditor': '打开文件',
     'plugins.blocked': '有阻断',
     'plugins.warnings': '有警告',
     'plugins.available': '插件可用',

@@ -9,7 +9,7 @@ const CELL_SIZE = 192;
 const PALETTE_COLUMNS = 5;
 const FRAME_MS = 1000 / 15;
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   frames: unknown;
   catalog: EditorProjectCatalog | null;
   animation1Name: string;
@@ -17,7 +17,11 @@ const props = defineProps<{
   animation2Name: string;
   animation2Hue: number;
   loadImage: (url: string) => Promise<HTMLImageElement | null>;
-}>();
+  /** Automatically play one pass after the first complete render and changes. */
+  autoPlayOnReady?: boolean;
+}>(), {
+  autoPlayOnReady: true,
+});
 
 const { t } = useI18n();
 const width = computed(() => Math.max(1, Number(props.catalog?.screenWidth) || 816));
@@ -30,6 +34,8 @@ const imageCache = new Map<string, Promise<HTMLImageElement | null>>();
 const hueCache = new Map<string, HTMLCanvasElement>();
 let renderVersion = 0;
 let playTimer: ReturnType<typeof setInterval> | null = null;
+let playbackToken = 0;
+let playbackIntentToken = 0;
 
 const normalizedFrames = computed(() => normalizeAnimationFrames(props.frames));
 const hasFrames = computed(() => normalizedFrames.value.length > 0);
@@ -49,7 +55,8 @@ watch(
   () => {
     frameIndex.value = 0;
     stopPlayback();
-    void renderCanvas();
+    const autoPlayIntent = ++playbackIntentToken;
+    void renderCanvas(true, autoPlayIntent);
   },
   { deep: true, immediate: true },
 );
@@ -64,23 +71,18 @@ onBeforeUnmount(() => {
 });
 
 function togglePlayback(): void {
+  playbackIntentToken += 1;
   if (playing.value) {
     stopPlayback();
     return;
   }
   if (!hasFrames.value) return;
-  playing.value = true;
-  playTimer = setInterval(() => {
-    const total = normalizedFrames.value.length;
-    if (total <= 0) {
-      stopPlayback();
-      return;
-    }
-    frameIndex.value = (frameIndex.value + 1) % total;
-  }, FRAME_MS);
+  if (frameIndex.value >= normalizedFrames.value.length - 1) frameIndex.value = 0;
+  startPlayback();
 }
 
 function stopPlayback(): void {
+  playbackToken += 1;
   playing.value = false;
   if (playTimer) {
     clearInterval(playTimer);
@@ -88,7 +90,28 @@ function stopPlayback(): void {
   }
 }
 
-async function renderCanvas(): Promise<void> {
+function startPlayback(): void {
+  const total = normalizedFrames.value.length;
+  if (total <= 1) return;
+  if (playTimer) {
+    clearInterval(playTimer);
+    playTimer = null;
+  }
+  const token = ++playbackToken;
+  playing.value = true;
+  playTimer = setInterval(() => {
+    if (token !== playbackToken) return;
+    const next = frameIndex.value + 1;
+    if (next >= total) {
+      frameIndex.value = total - 1;
+      stopPlayback();
+      return;
+    }
+    frameIndex.value = next;
+  }, FRAME_MS);
+}
+
+async function renderCanvas(autoPlay = false, autoPlayIntent = -1): Promise<void> {
   const version = ++renderVersion;
   await nextTick();
   const target = canvas.value;
@@ -110,6 +133,12 @@ async function renderCanvas(): Promise<void> {
     drawCell(context, cell, sheets);
   }
   errors.value = [...new Set(nextErrors)];
+  if (
+    autoPlay
+    && autoPlayIntent === playbackIntentToken
+    && props.autoPlayOnReady
+    && nextErrors.length === 0
+  ) startPlayback();
 }
 
 function drawCanvasBackground(context: CanvasRenderingContext2D): void {

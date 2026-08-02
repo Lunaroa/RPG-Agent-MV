@@ -185,6 +185,21 @@ export interface MvCommandSpan {
   role?: MvCommandSpanRole;
 }
 
+/**
+ * A UI-only insertion boundary in an MV command list.
+ *
+ * `spanIndex` is the display-list boundary consumed by EventCommandDialog
+ * (`0` means before the first span and `spans.length` means before the page
+ * terminator). `rawIndex` and `indent` are derived from the current list for
+ * opening the picker; no command is materialized for this row.
+ */
+export interface MvCommandInsertionSlot {
+  key: string;
+  spanIndex: number;
+  rawIndex: number;
+  indent: number;
+}
+
 export type MvCommandSpanRole = 'command' | 'head' | 'branch' | 'terminator';
 
 export type MvCommandStructureKind = 'choices' | 'conditional' | 'loop' | 'battle' | 'skip';
@@ -460,6 +475,58 @@ export function commandInsertIndent(list: MvCommand[], rawIndex: number): number
   return Math.max(0, indent);
 }
 
+/**
+ * Return every legal RM-style insertion boundary in display order.
+ *
+ * Boundaries are emitted before every editable span and once before the page
+ * terminator, except for the synthetic gap between a choices/battle head and
+ * its first explicit branch marker (or direct end marker). Empty choice/battle
+ * branches start after their marker, while ordinary Then/Else/loop bodies,
+ * same-level gaps, and the final terminator gap remain available. Continuation
+ * commands stay inside their owning span, so no illegal mid-span row is offered.
+ */
+export function commandInsertionSlots(
+  list: MvCommand[],
+  spans: MvCommandSpan[],
+): MvCommandInsertionSlot[] {
+  const terminatorIndex = list.length > 0 && list[list.length - 1]?.code === 0
+    ? list.length - 1
+    : list.length;
+  const blockedBoundaries = new Set<number>();
+  for (const block of commandStructureBlocks(spans)) {
+    // Choices and battle processing start each branch with an explicit marker;
+    // there is no branch body before that first marker. Do not project the
+    // boundary immediately after the head as an insertion/drop target. An
+    // empty branch remains editable through the slot after its marker and
+    // before the next marker/end. With no marker at all (for example an empty
+    // choices list ending directly at 404), the direct head-to-end boundary is
+    // likewise not a legal body slot.
+    if (block.kind !== 'choices' && block.kind !== 'battle') continue;
+    const firstBranchOrEnd = block.branchSpanIndices[0] ?? block.endSpanIndex;
+    if (firstBranchOrEnd === block.headSpanIndex + 1) blockedBoundaries.add(firstBranchOrEnd);
+  }
+  const slots: MvCommandInsertionSlot[] = [];
+  const boundaries = [...spans.map((_span, index) => index), spans.length];
+  let previousRawIndex = -1;
+  for (const spanIndex of boundaries) {
+    if (blockedBoundaries.has(spanIndex)) continue;
+    const rawIndex = spanIndex < spans.length
+      ? spans[spanIndex]?.index ?? terminatorIndex
+      : terminatorIndex;
+    // A malformed list may expose duplicate span indexes. Keep the visual
+    // boundary unique so an empty list has exactly one blank row.
+    if (rawIndex === previousRawIndex) continue;
+    previousRawIndex = rawIndex;
+    slots.push({
+      key: `insert:${rawIndex}`,
+      spanIndex,
+      rawIndex,
+      indent: commandInsertIndent(list, rawIndex),
+    });
+  }
+  return slots;
+}
+
 export interface CommandBlockMove {
   list: MvCommand[];
   headIndex: number;
@@ -556,29 +623,37 @@ function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.floor(n)));
 }
 
-function namedSystemEntry(system: SystemData | null, kind: 'switches' | 'variables', id: unknown): string {
-  const num = Number(id || 0);
+function hasInvalidNamedSystemId(value: unknown): boolean {
+  if (value === null || value === undefined || value === '') return false;
+  const num = Number(value);
+  return !Number.isFinite(num) || !Number.isInteger(num) || num < 0;
+}
+
+function namedSystemEntry(system: SystemData | null, kind: 'switches' | 'variables', id: unknown, language: ProductLanguage): string {
+  if (hasInvalidNamedSystemId(id)) return translate('eventcmd.invalidEntryId', language);
+  const num = Number(id ?? 0);
   if (!num) return '0000';
   const list = system && Array.isArray(system[kind]) ? system[kind] : [];
   const name = list[num] || '';
   return `${String(num).padStart(4, '0')}${name ? ` ${name}` : ''}`;
 }
 
-function namedSystemRange(system: SystemData | null, kind: 'switches' | 'variables', start: unknown, end: unknown): string {
-  const first = Number(start || 0);
-  const last = Number(end || start || 0);
+function namedSystemRange(system: SystemData | null, kind: 'switches' | 'variables', start: unknown, end: unknown, language: ProductLanguage): string {
+  if (hasInvalidNamedSystemId(start) || hasInvalidNamedSystemId(end)) return translate('eventcmd.invalidEntryId', language);
+  const first = Number(start ?? 0);
+  const last = Number(end ?? start ?? 0);
   if (!first) return '0000';
-  if (first === last) return namedSystemEntry(system, kind, first);
-  return `${namedSystemEntry(system, kind, first)}..${namedSystemEntry(system, kind, last)}`;
+  if (first === last) return namedSystemEntry(system, kind, first, language);
+  return `${namedSystemEntry(system, kind, first, language)}..${namedSystemEntry(system, kind, last, language)}`;
 }
 
 function conditionBranchDisplay(system: SystemData | null, params: unknown[], language: ProductLanguage): string {
   const type = Number(params[0] || 0);
-  if (type === 0) return `${namedSystemEntry(system, 'switches', params[1])} ${translate('eventEditor.helper.is', language)} ${params[2] === 1 ? 'OFF' : 'ON'}`;
+  if (type === 0) return `${namedSystemEntry(system, 'switches', params[1], language)} ${translate('eventEditor.helper.is', language)} ${params[2] === 1 ? 'OFF' : 'ON'}`;
   if (type === 1) {
     const ops = ['=', '≥', '≤', '>', '<', '!='];
     const op = ops[Number(params[4] || 0)] || String(params[4]);
-    return `${namedSystemEntry(system, 'variables', params[1])} ${op} ${params[2] === 1 ? namedSystemEntry(system, 'variables', params[3]) : params[3]}`;
+    return `${namedSystemEntry(system, 'variables', params[1], language)} ${op} ${params[2] === 1 ? namedSystemEntry(system, 'variables', params[3], language) : params[3]}`;
   }
   if (type === 2) return `${translate('eventEditor.helper.selfSwitch', language)} ${params[1]} ${translate('eventEditor.helper.is', language)} ${params[2] === 1 ? 'OFF' : 'ON'}`;
   return translate('eventEditor.helper.conditionType', language, { type, detail: JSON.stringify(params) });
@@ -629,7 +704,7 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 402) return { label: `:${translate('eventEditor.command.whenChoice', language, { val: String(p[1] || p[0] || '') })}`, tone: 'text', indent };
   if (command.code === 403) return { label: `:${translate('eventEditor.command.whenCancel', language)}`, tone: 'text', indent };
   if (command.code === 404) return { label: `:${translate('eventEditor.command.endChoices', language)}`, tone: 'control', indent };
-  if (command.code === 108 || command.code === 408) return line(translate('eventEditor.command.comment', language, { text: String(p[0] || '') }), 'normal');
+  if (command.code === 108) return line(translate('eventEditor.command.comment', language, { text: String(p[0] || '') }), 'normal');
   if (command.code === 109) return line(translate('eventEditor.command.skip', language), 'control');
   // RM branch bodies end with a placeholder code-0 row; skip-block terminators are
   // re-labelled as "End" by the list views via skipTerminatorIndices.
@@ -639,8 +714,8 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 113) return line(translate('eventEditor.command.breakLoop', language), 'control');
   if (command.code === 118) return line(translate('eventEditor.command.label', language, { name: String(p[0] || '') }), 'control');
   if (command.code === 119) return line(translate('eventEditor.command.jumpLabel', language, { name: String(p[0] || '') }), 'control');
-  if (command.code === 121) return line(translate('eventEditor.command.controlSwitches', language, { range: namedSystemRange(system || null, 'switches', p[0], p[1]), val: p[2] === 1 ? 'OFF' : 'ON' }), 'control');
-  if (command.code === 122) return line(translate('eventEditor.command.controlVariables', language, { range: namedSystemRange(system || null, 'variables', p[0], p[1]) }), 'control');
+  if (command.code === 121) return line(translate('eventEditor.command.controlSwitches', language, { range: namedSystemRange(system || null, 'switches', p[0], p[1], language), val: p[2] === 1 ? 'OFF' : 'ON' }), 'control');
+  if (command.code === 122) return line(translate('eventEditor.command.controlVariables', language, { range: namedSystemRange(system || null, 'variables', p[0], p[1], language) }), 'control');
   if (command.code === 123) return line(translate('eventEditor.command.controlSelfSwitch', language, { ch: String(p[0]), val: p[1] === 1 ? 'OFF' : 'ON' }), 'control');
   if (command.code === 201) return line(translate('eventEditor.command.transferPlayer', language, { mapId: String(p[1]), x: String(p[2]), y: String(p[3]) }), 'control');
   if (command.code === 205) return line(translate('eventEditor.command.setMovementRoute', language, { target: eventTargetLabel(p[0], language), suffix: (p[1] as MvMoveRoute | undefined)?.wait ? translate('eventEditor.command.waitSuffix', language) : '' }), 'control');

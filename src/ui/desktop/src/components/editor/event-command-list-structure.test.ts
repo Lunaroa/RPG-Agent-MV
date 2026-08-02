@@ -12,6 +12,7 @@ describe('MV event command list structure contract', () => {
     assert.match(sharedListSource, /export function commandStructureBlocks\(/);
     assert.match(sharedListSource, /export function commandBranchScope\(/);
     assert.match(sharedListSource, /export function commandSpanDisplay\(/);
+    assert.match(sharedListSource, /export function commandInsertionSlots\(/);
     assert.match(sharedListSource, /export function dropCommandSpanBlocks\(/);
     assert.match(eventEditorSource, /commandSpanDisplay/);
     assert.match(eventEditorSource, /commandBlockSpanIndices/);
@@ -31,6 +32,10 @@ describe('MV event command list structure contract', () => {
       assert.match(source, /@dragover\.prevent="onRowDragOver/);
       assert.match(source, /@drop\.prevent="onRowDrop/);
       assert.match(source, /drop-before/);
+      assert.match(source, /cmd-blank/);
+      assert.match(source, /openCommandPickerAt/);
+      assert.match(source, /event\.key === 'Enter'/);
+      assert.match(source, /event\.code === 'Space'/);
     }
   });
 

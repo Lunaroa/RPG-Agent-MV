@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 import {
   commandBlockSpanIndices,
   commandDisplay,
+  commandSpanDisplay,
   commandInsertIndent,
   editableCommandSpans,
   ensureTerminator,
@@ -83,6 +84,12 @@ describe('commandBlockSpanIndices with skip blocks', () => {
 });
 
 describe('commandDisplay code-0 rows and skip terminators', () => {
+  test('renders comment continuation rows with a colon instead of a command head', () => {
+    assert.equal(commandDisplay(cmd(408, 1, ['continued'])).label, ':continued');
+    const span = spansOf([cmd(108, 0, ['comment']), cmd(408, 1, ['continued']), cmd(0)])[0]!;
+    assert.deepEqual(commandSpanDisplay(span, null, 'en-US').lines, [':continued']);
+  });
+
   test('renders code 0 as an RM placeholder row keeping its indent', () => {
     const view = commandDisplay(cmd(0, 1));
     assert.equal(view.label, '◆');
@@ -107,6 +114,16 @@ describe('commandDisplay code-0 rows and skip terminators', () => {
     const route = { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: true };
     assert.equal(commandDisplay(cmd(205, 0, [-1, route])).label, '◆Set Movement Route: Player (Wait)');
     assert.equal(commandDisplay(cmd(505, 0, [{ code: 4 }])).label, ':◇Move Up');
+  });
+
+  test('renders an explicit invalid marker instead of 0NaN for condition IDs', () => {
+    const switchCondition = commandDisplay(cmd(111, 0, [0, 'NaN', 0]), { switches: [] }, 'en-US');
+    assert.match(switchCondition.label, /Invalid entry ID/);
+    assert.doesNotMatch(switchCondition.label, /0NaN/);
+
+    const variableCondition = commandDisplay(cmd(111, 0, [1, 1, 1, 'NaN', 0]), { variables: [] }, 'en-US');
+    assert.match(variableCondition.label, /Invalid entry ID/);
+    assert.doesNotMatch(variableCondition.label, /0NaN/);
   });
 });
 

@@ -507,7 +507,7 @@ export function validateEventCommandBasic(
     }
     throw new Error(`${label}.code ${commandObject.code} is not valid for RPG Maker MZ`);
   }
-  validateEventCommandParameters(definition, commandObject.parameters, label);
+  validateEventCommandParameters(definition, commandObject.parameters, label, engine);
 }
 
 export function validateEventCommandList(
@@ -613,7 +613,12 @@ function validateStructuralCommand(
   if (definition.block.kind === "terminator") openBlocks.pop();
 }
 
-export function validateEventCommandParameters(definition: EventCommandDefinition, parameters: unknown[], label = `eventCommand:${definition.code}`): void {
+export function validateEventCommandParameters(
+  definition: EventCommandDefinition,
+  parameters: unknown[],
+  label = `eventCommand:${definition.code}`,
+  engine: RpgMakerEngine = "rpg-maker-mv",
+): void {
   const expectedLength = definition.parameters.length
     ? Math.max(...definition.parameters.filter((parameter) => !parameter.optional).map((parameter) => parameter.index)) + 1
     : 0;
@@ -630,7 +635,7 @@ export function validateEventCommandParameters(definition: EventCommandDefinitio
     }
     validateParameter(schema, parameters[schema.index], `${label}.parameters[${schema.index}]`);
   }
-  validateVariantParameterShape(definition.code, parameters, label);
+  validateVariantParameterShape(definition.code, parameters, label, engine);
 }
 
 function startsStructuredBlock(
@@ -663,20 +668,35 @@ const CONDITIONAL_BRANCH_PARAMETER_LENGTHS: Readonly<Record<number, readonly num
   8: [2],
   9: [3],
   10: [3],
-  11: [3],
+  11: [2],
   12: [2],
   13: [2],
 });
 const ACTOR_TARGET_EVENT_CODES = new Set([311, 312, 313, 314, 315, 316, 317, 318, 326]);
 
-function validateVariantParameterShape(code: number, parameters: unknown[], label: string): void {
+function validateVariantParameterShape(
+  code: number,
+  parameters: unknown[],
+  label: string,
+  engine: RpgMakerEngine,
+): void {
   if (code === 111) {
     const conditionType = Number(parameters[0]);
-    const allowedLengths = CONDITIONAL_BRANCH_PARAMETER_LENGTHS[conditionType];
+    const allowedLengths = conditionType === 11 && engine === "rpg-maker-mz"
+      ? [3]
+      : CONDITIONAL_BRANCH_PARAMETER_LENGTHS[conditionType];
     if (allowedLengths && !allowedLengths.includes(parameters.length)) {
       throw new Error(
         `${label}.parameters for conditional branch type ${conditionType} must have ${allowedLengths.join(" or ")} value(s); got ${parameters.length}`,
       );
+    }
+    if (conditionType === 11) {
+      if (typeof parameters[1] !== "string" || !parameters[1].trim()) {
+        throw new Error(`${label}.parameters[1] for a button condition must be a non-empty input key name`);
+      }
+      if (parameters.length === 3 && ![0, 1, 2].includes(Number(parameters[2]))) {
+        throw new Error(`${label}.parameters[2] for a button condition must be 0, 1, or 2`);
+      }
     }
   }
   if (code === 124) {

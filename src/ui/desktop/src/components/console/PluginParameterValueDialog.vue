@@ -90,6 +90,7 @@ const animationPreviewLoading = ref(false);
 const particlePreviewBusy = ref(false);
 const particleFrameRef = ref<InstanceType<typeof ParticleAnimationPreviewFrame> | null>(null);
 let animationPreviewRequestId = 0;
+let particlePreviewRequestId = 0;
 
 const visible = computed({
   get: () => props.modelValue,
@@ -274,6 +275,7 @@ async function refreshFilePreview(): Promise<void> {
 
 function resetAnimationPreview(): void {
   animationPreviewRequestId += 1;
+  particlePreviewRequestId += 1;
   animationRecord.value = null;
   animationPreviewError.value = '';
   animationPreviewLoading.value = false;
@@ -285,6 +287,9 @@ async function refreshAnimationPreview(): Promise<void> {
     resetAnimationPreview();
     return;
   }
+  const requestId = ++animationPreviewRequestId;
+  particlePreviewRequestId += 1;
+  particlePreviewBusy.value = false;
   const id = selectedAnimationId.value;
   if (!id) {
     animationRecord.value = null;
@@ -300,7 +305,6 @@ async function refreshAnimationPreview(): Promise<void> {
     });
     return;
   }
-  const requestId = ++animationPreviewRequestId;
   animationPreviewLoading.value = true;
   animationPreviewError.value = '';
   try {
@@ -318,6 +322,17 @@ async function refreshAnimationPreview(): Promise<void> {
       return;
     }
     animationRecord.value = entry.value;
+    // The particle preview is an in-panel one-shot player. Start it only after
+    // the record is current and the preview branch has mounted; a newer request
+    // may supersede this one while the database entry is loading.
+    await nextTick();
+    if (
+      requestId === animationPreviewRequestId
+      && props.modelValue
+      && props.catalog?.engine === 'rpg-maker-mz'
+    ) {
+      await startParticlePreview({ force: true });
+    }
   } catch (error) {
     if (requestId !== animationPreviewRequestId) return;
     animationRecord.value = null;
@@ -331,21 +346,24 @@ async function refreshAnimationPreview(): Promise<void> {
   }
 }
 
-async function startParticlePreview(): Promise<void> {
+async function startParticlePreview(options: { force?: boolean } = {}): Promise<void> {
   const project = projectStore.currentProject;
   const preview = particleAnimationPreview.value;
-  if (!project || !preview || particlePreviewBusy.value) return;
+  if (!project || !preview || (!options.force && particlePreviewBusy.value)) return;
   if (props.catalog?.engine !== 'rpg-maker-mz') {
     ElMessage.error(t('db.particlePreviewMZOnly'));
     return;
   }
+  const requestId = ++particlePreviewRequestId;
   particlePreviewBusy.value = true;
   try {
     await particleFrameRef.value?.play({ ...preview });
   } catch (error) {
-    ElMessage.error(t('db.particlePreviewFailed', { message: (error as Error).message }));
+    if (requestId === particlePreviewRequestId) {
+      ElMessage.error(t('db.particlePreviewFailed', { message: (error as Error).message }));
+    }
   } finally {
-    particlePreviewBusy.value = false;
+    if (requestId === particlePreviewRequestId) particlePreviewBusy.value = false;
   }
 }
 

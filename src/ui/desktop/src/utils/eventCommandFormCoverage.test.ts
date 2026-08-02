@@ -38,6 +38,18 @@ describe('event command form coverage', () => {
     normalizeEventCommandParameters(command);
     assert.equal(command.parameters[1], 1);
     assert.equal(command.parameters[3], 1);
+
+    const [mvButton] = commandTemplate('conditional', 1, 'rpg-maker-mv');
+    assert.ok(mvButton);
+    mvButton.parameters = [11];
+    normalizeEventCommandParameters(mvButton, 'rpg-maker-mv');
+    assert.deepEqual(mvButton.parameters, [11, 'down']);
+
+    const [mzButton] = commandTemplate('conditional', 1, 'rpg-maker-mz');
+    assert.ok(mzButton);
+    mzButton.parameters = [11];
+    normalizeEventCommandParameters(mzButton, 'rpg-maker-mz');
+    assert.deepEqual(mzButton.parameters, [11, 'down', 0]);
   });
 
   test('normalizes control variables operand modes', () => {

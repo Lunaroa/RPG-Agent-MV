@@ -484,7 +484,7 @@ export function normalizeEventCommandParameters(command: MvCommand, engine: RpgM
     if (!p[3] || Array.isArray(p[3]) || typeof p[3] !== 'object') p[3] = {};
   }
   if (command.code === 111) {
-    normalizeConditionalBranchParameters(p);
+    normalizeConditionalBranchParameters(p, engine);
   } else if (command.code === 122) {
     normalizeControlVariablesParameters(p);
   } else if ([125, 126, 127, 128, 311, 312, 315, 316, 317, 326, 331, 332, 342].includes(command.code)) {
@@ -549,7 +549,7 @@ function defaultMoveRoute() {
 function defaultAudio() {
   return { name: '', volume: 90, pitch: 100, pan: 0 };
 }
-function normalizeConditionalBranchParameters(params: unknown[]) {
+function normalizeConditionalBranchParameters(params: unknown[], engine: RpgMakerEngine = 'rpg-maker-mv') {
   const type = ensureNumberAt(params, 0, 0);
   if (type === 2) {
     ensureStringAt(params, 1, 'A');
@@ -566,8 +566,16 @@ function normalizeConditionalBranchParameters(params: unknown[]) {
     ensureNumberAt(params, 1, 0);
     ensureNumberAt(params, 2, 2);
   } else if ([8, 9, 10, 11, 13].includes(type)) {
-    ensureNumberAt(params, 1, type === 11 ? 2 : 1);
-    if (type === 9 || type === 10) ensureBooleanAt(params, 2, false);
+    if (type === 11) {
+      // Only fill omitted fields for a newly selected condition. Existing
+      // non-string/non-enum values stay visible so the strict editor validator
+      // can reject them instead of silently migrating old wire data.
+      if (params[1] === undefined || params[1] === null || params[1] === '') params[1] = 'down';
+      if (engine === 'rpg-maker-mz' && (params[2] === undefined || params[2] === null || params[2] === '')) params[2] = 0;
+    } else {
+      ensureNumberAt(params, 1, 1);
+      if (type === 9 || type === 10) ensureBooleanAt(params, 2, false);
+    }
   } else if (type === 12) {
     ensureStringAt(params, 1, '');
   } else {

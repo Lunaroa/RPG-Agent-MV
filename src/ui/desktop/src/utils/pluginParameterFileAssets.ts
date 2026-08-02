@@ -108,6 +108,17 @@ export function inferPluginFileMediaKind(directory: string): PluginFileMediaKind
   return 'other';
 }
 
+/** Audio roots use the compact list browser by default; other media keep the runtime preference. */
+export function isPluginFileAudioDirectory(directory: unknown): boolean {
+  const normalized = normalizePluginFileDirectory(directory);
+  return normalized === 'audio' || normalized.startsWith('audio/');
+}
+
+/** Audio picker view changes are transient; other media may persist the shared preference. */
+export function shouldPersistPluginFileBrowserViewMode(directory: unknown): boolean {
+  return !isPluginFileAudioDirectory(directory);
+}
+
 /**
  * Sync catalog snapshot for quick checks. Prefer `resolvePluginParameterFileAssets`
  * when opening the picker so folders/files reflect the live project disk.

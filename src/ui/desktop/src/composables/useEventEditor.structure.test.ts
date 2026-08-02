@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   commandBlockSpanIndices,
   commandBranchScope,
+  commandInsertionSlots,
   commandSpanLength,
   commandSpanDisplay,
   commandStructureBlocks,
@@ -41,6 +42,49 @@ test('groups every MV continuation family without changing raw parameter payload
   ]);
   assert.deepEqual(spans[4]?.commands[1]?.parameters, ['raw params']);
   assert.deepEqual(spans[5]?.commands[0]?.parameters, ['unknown', { keep: true }]);
+});
+
+test('projects choice insertion slots after the first branch marker', () => {
+  const list = [
+    command(102, 0, [['Yes', 'No']]),
+    command(402, 0, [0, 0, 'Yes']),
+    command(403, 0, [1]),
+    command(404, 0),
+    command(230, 0, [1]),
+    command(0),
+  ];
+  const spans = spansFor(list);
+  const slots = commandInsertionSlots(list, spans);
+  assert.deepEqual(slots.map((slot) => slot.spanIndex), [0, 2, 3, 4, 5]);
+  assert.deepEqual(slots.map((slot) => slot.rawIndex), [0, 2, 3, 4, 5]);
+  assert.equal(slots.some((slot) => slot.spanIndex === 1), false);
+  assert.equal(slots.find((slot) => slot.spanIndex === 2)?.indent, 1);
+  assert.equal(slots.find((slot) => slot.spanIndex === 3)?.indent, 1);
+  assert.equal(slots.find((slot) => slot.spanIndex === 4)?.indent, 0);
+  assert.equal(slots.at(-1)?.key, 'insert:5');
+  assert.equal(slots.every((slot) => !('code' in slot)), true);
+});
+
+test('does not expose a no-choice head-to-end insertion boundary', () => {
+  const list = [command(102, 0, [[]]), command(404, 0), command(230, 0, [1]), command(0)];
+  const slots = commandInsertionSlots(list, spansFor(list));
+  assert.deepEqual(slots.map((slot) => slot.spanIndex), [0, 2, 3]);
+  assert.equal(slots.some((slot) => slot.spanIndex === 1), false);
+  assert.equal(slots.find((slot) => slot.spanIndex === 2)?.rawIndex, 2);
+});
+
+test('keeps the first battle branch insertion slot after its marker', () => {
+  const list = [command(301, 0, [0, false, false]), command(601, 0), command(604, 0), command(0)];
+  const slots = commandInsertionSlots(list, spansFor(list));
+  assert.deepEqual(slots.map((slot) => slot.spanIndex), [0, 2, 3]);
+  assert.equal(slots.some((slot) => slot.spanIndex === 1), false);
+  assert.equal(slots.find((slot) => slot.spanIndex === 2)?.indent, 1);
+});
+
+test('keeps an empty page to one terminator insertion slot', () => {
+  const list = [command(0)];
+  const slots = commandInsertionSlots(list, spansFor(list));
+  assert.deepEqual(slots, [{ key: 'insert:0', spanIndex: 0, rawIndex: 0, indent: 0 }]);
 });
 
 test('models choices, branches, nested conditional and their complete selection boundaries', () => {

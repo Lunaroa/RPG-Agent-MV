@@ -6,7 +6,7 @@ import {
   clone,
   commandBlockSpanIndices,
   commandBranchScope,
-  commandInsertIndent,
+  commandInsertionSlots,
   commandSpanDisplay,
   dropCommandSpanBlocks,
   editableCommandSpans,
@@ -14,6 +14,7 @@ import {
   moveCommandSpanBlock,
   skipTerminatorIndices,
   type MvCommand,
+  type MvCommandInsertionSlot,
   type MvCommandSpanView,
 } from '../../composables/useEventEditor';
 import EventCommandDialog from '../editor/EventCommandDialog.vue';
@@ -45,6 +46,7 @@ const commandClipboard = ref<MvCommand[] | null>(null);
 const commandContext = reactive({ visible: false, x: 0, y: 0 });
 const dragSourceIndices = ref<number[]>([]);
 const dropIndicator = ref<number | null>(null);
+const insertionFocus = ref<number | null>(null);
 
 const commandList = computed<MvCommand[]>(() => normalizeCommandList(props.modelValue));
 const spans = computed(() => editableCommandSpans({ list: commandList.value } as never));
@@ -64,6 +66,7 @@ const systemData = computed(() => ({
   variables: namedArray(props.catalog?.variables || []),
 }));
 const spanViews = computed<SpanView[]>(() => spans.value.map((span) => displaySpan(span)));
+const insertionSlots = computed(() => commandInsertionSlots(commandList.value, spans.value));
 const canMoveUp = computed(() => anchorBlockSelection.value != null && commandBlockSpanIndices(spans.value, [anchorBlockSelection.value])[0] > 0);
 const canMoveDown = computed(() => {
   if (anchorBlockSelection.value == null) return false;
@@ -72,6 +75,11 @@ const canMoveDown = computed(() => {
 });
 const imageLoader = computed(() => props.loadImage || missingImageLoader);
 const resolvedEmptyText = computed(() => props.emptyText || t('cmdList.emptyHint'));
+
+function slotViews(slot: MvCommandInsertionSlot): SpanView[] {
+  const view = spanViews.value[slot.spanIndex];
+  return view ? [view] : [];
+}
 
 function missingImageLoader(): Promise<HTMLImageElement | null> {
   return Promise.resolve(null);
@@ -106,21 +114,30 @@ function commitList(value: MvCommand[]): void {
   emit('update:modelValue', next);
 }
 
-function rawIndexForSpan(index: number): number {
-  return index >= spans.value.length
-    ? Math.max(0, commandList.value.length - 1)
-    : spans.value[index]?.index || 0;
-}
-
 function openCommandPicker(): void {
   if (props.locked) return;
+  const focusedSlot = insertionFocus.value == null
+    ? null
+    : insertionSlots.value.find((slot) => slot.spanIndex === insertionFocus.value) || null;
+  if (focusedSlot) {
+    openCommandPickerAt(focusedSlot);
+    return;
+  }
   const selected = selectedIndices.value;
   const next = selected.length ? selected[selected.length - 1] + 1 : spans.value.length;
-  commandDialog.value?.openPicker(next, commandInsertIndent(commandList.value, rawIndexForSpan(next)));
+  const slot = insertionSlots.value.find((item) => item.spanIndex === next) || insertionSlots.value.at(-1);
+  if (slot) openCommandPickerAt(slot);
+}
+
+function openCommandPickerAt(slot: MvCommandInsertionSlot): void {
+  if (props.locked) return;
+  insertionFocus.value = null;
+  commandDialog.value?.openPicker(slot.spanIndex, slot.indent);
 }
 
 function openCommand(index: number): void {
   if (props.locked) return;
+  insertionFocus.value = null;
   const span = spans.value[index];
   if (!span) return;
   const block = commandBlockSpanIndices(spans.value, [index]);
@@ -133,6 +150,7 @@ function openSelectedCommand(): void {
 }
 
 function selectCommand(index: number, event: MouseEvent): void {
+  insertionFocus.value = null;
   if (event.shiftKey && selectionAnchor.value != null) {
     if (commandBranchScope(spans.value, selectionAnchor.value) !== commandBranchScope(spans.value, index)) return;
     const start = Math.min(selectionAnchor.value, index);
@@ -159,6 +177,14 @@ function selectAllCommands(): void {
 function clearSelection(): void {
   selectedSpans.value = [];
   selectionAnchor.value = null;
+  insertionFocus.value = null;
+  closeCommandContext();
+}
+
+function focusInsertionSlot(slot: MvCommandInsertionSlot): void {
+  selectedSpans.value = [];
+  selectionAnchor.value = null;
+  insertionFocus.value = slot.spanIndex;
   closeCommandContext();
 }
 
@@ -208,6 +234,7 @@ function moveSelectedCommand(offset: -1 | 1): void {
 
 function commitCommand(payload: { commands: MvCommand[]; editSpan: number | null; insertSpan: number | null }): void {
   if (props.locked) return;
+  insertionFocus.value = null;
   const list = clone(commandList.value);
   if (payload.editSpan == null) {
     const at = payload.insertSpan == null || payload.insertSpan >= spans.value.length
@@ -225,9 +252,14 @@ function commitCommand(payload: { commands: MvCommand[]; editSpan: number | null
   commitList(list);
 }
 
-function openCommandContext(event: MouseEvent, index: number | null): void {
+function openCommandContext(event: MouseEvent, index: number | null, slot: MvCommandInsertionSlot | null = null): void {
   if (props.locked) return;
-  if (index == null) clearSelection();
+  if (slot) {
+    selectedSpans.value = [];
+    selectionAnchor.value = null;
+    insertionFocus.value = slot.spanIndex;
+    closeCommandContext();
+  } else if (index == null) clearSelection();
   else if (!selectedSpanSet.value.has(index)) {
     selectedSpans.value = commandBlockSpanIndices(spans.value, [index]);
     selectionAnchor.value = index;
@@ -252,6 +284,7 @@ function runCommandContext(action: () => void): void {
 
 function onRowDragStart(index: number, event: DragEvent): void {
   if (props.locked) { event.preventDefault(); return; }
+  insertionFocus.value = null;
   if (!selectedSpanSet.value.has(index)) {
     selectedSpans.value = [index];
     selectionAnchor.value = index;
@@ -270,9 +303,9 @@ function onRowDragOver(index: number, event: DragEvent): void {
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
 }
 
-function onTerminatorDragOver(event: DragEvent): void {
+function onInsertionDragOver(index: number, event: DragEvent): void {
   if (!dragSourceIndices.value.length) return;
-  dropIndicator.value = spans.value.length;
+  dropIndicator.value = index;
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
 }
 
@@ -291,14 +324,55 @@ function resetRowDrag(): void {
   dragSourceIndices.value = [];
   dropIndicator.value = null;
 }
+
+function isCommandShortcutTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  if (!element) return false;
+  if (element.isContentEditable || element.closest('[contenteditable]')) return false;
+  if (element.closest('input, textarea, select, button:not(.cmd-row), .cmd-context-menu, .editor-modal-overlay')) return false;
+  return true;
+}
+
+function onCommandKeyDown(event: KeyboardEvent): void {
+  if (props.locked || !isCommandShortcutTarget(event.target)) return;
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    openCommandPicker();
+    return;
+  }
+  if (event.code === 'Space' && anchorBlockSelection.value != null) {
+    event.preventDefault();
+    openSelectedCommand();
+    return;
+  }
+  if (event.key === 'Delete' && selectedIndices.value.length) {
+    event.preventDefault();
+    deleteSelectedCommands();
+    return;
+  }
+  const ctrl = event.ctrlKey || event.metaKey;
+  if (ctrl && event.key.toLowerCase() === 'x' && selectedIndices.value.length) {
+    event.preventDefault();
+    cutSelectedCommands();
+  } else if (ctrl && event.key.toLowerCase() === 'c' && selectedIndices.value.length) {
+    event.preventDefault();
+    copySelectedCommands();
+  } else if (ctrl && event.key.toLowerCase() === 'v' && commandClipboard.value) {
+    event.preventDefault();
+    pasteSelectedCommand();
+  } else if (ctrl && event.key.toLowerCase() === 'a' && spans.value.length) {
+    event.preventDefault();
+    selectAllCommands();
+  }
+}
 </script>
 
 <template>
-  <section class="mv-command-editor">
+  <section class="mv-command-editor" @keydown="onCommandKeyDown">
     <div class="command-toolbar">
       <span>{{ t('cmdList.commandCount', { count: spans.length }) }}</span>
       <div>
-        <button type="button" :disabled="locked" @click="openCommandPicker">{{ t('cmdList.add') }}</button>
+        <button type="button" :disabled="locked" @click="insertionFocus = null; openCommandPicker()">{{ t('cmdList.add') }}</button>
         <button type="button" :disabled="locked || anchorBlockSelection == null" @click="openSelectedCommand">{{ t('cmdList.edit') }}</button>
         <button type="button" :disabled="locked || !canMoveUp" @click="moveSelectedCommand(-1)">{{ t('cmdList.moveUp') }}</button>
         <button type="button" :disabled="locked || !canMoveDown" @click="moveSelectedCommand(1)">{{ t('cmdList.moveDown') }}</button>
@@ -307,30 +381,44 @@ function resetRowDrag(): void {
     </div>
     <div class="command-list" @click.self="clearSelection" @dblclick.self="openCommandPicker" @contextmenu.prevent="openCommandContext($event, null)">
       <div v-if="!spans.length" class="command-empty">{{ resolvedEmptyText }}</div>
-      <button
-        v-for="(view, index) in spanViews"
-        :key="view.key"
-        type="button"
-        :disabled="locked"
-        class="cmd-row"
-        :class="{ selected: selectedSpanSet.has(index), even: index % 2 === 0, 'drop-before': dropIndicator === index, [`tone-${view.tone}`]: true, [`role-${view.role}`]: true }"
-        :style="{ '--cmd-indent': `${Math.min(view.indent, 8) * 16}px` }"
-        :aria-pressed="selectedSpanSet.has(index)"
-        :draggable="!locked"
-        @click="selectCommand(index, $event)"
-        @dblclick="openCommand(index)"
-        @contextmenu.stop.prevent="openCommandContext($event, index)"
-        @dragstart="onRowDragStart(index, $event)"
-        @dragover.prevent="onRowDragOver(index, $event)"
-        @drop.prevent="onRowDrop"
-        @dragend="resetRowDrag"
-      >
-        <span class="cmd-line cmd-head">{{ view.head }}</span>
-        <span v-for="(line, lineIndex) in view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span>
-      </button>
-      <button type="button" :disabled="locked" class="cmd-row terminator" :class="{ even: spans.length % 2 === 0, 'drop-before': dropIndicator === spans.length }" @click="clearSelection" @dblclick="openCommandPicker" @contextmenu.stop.prevent="openCommandContext($event, null)" @dragover.prevent="onTerminatorDragOver" @drop.prevent="onRowDrop">
-        <span class="cmd-line">◆</span>
-      </button>
+      <template v-for="slot in insertionSlots" :key="slot.key">
+        <button
+          type="button"
+          :disabled="locked"
+          class="cmd-row cmd-blank"
+          :class="{ even: slot.spanIndex % 2 === 0, terminator: slot.spanIndex === spans.length, 'drop-before': dropIndicator === slot.spanIndex }"
+          :style="{ '--cmd-indent': `${Math.min(slot.indent, 8) * 16}px` }"
+          :aria-label="t('eventEditorDialog.newCmd')"
+          :draggable="false"
+          @focus="focusInsertionSlot(slot)"
+          @click.stop="focusInsertionSlot(slot)"
+          @dblclick.stop.prevent="openCommandPickerAt(slot)"
+          @contextmenu.stop.prevent="openCommandContext($event, null, slot)"
+          @dragover.prevent="onInsertionDragOver(slot.spanIndex, $event)"
+          @drop.prevent="onRowDrop"
+        ><span class="cmd-line">◆</span></button>
+        <button
+          v-for="view in slotViews(slot)"
+          :key="view.key"
+          type="button"
+          :disabled="locked"
+          class="cmd-row"
+          :class="{ selected: selectedSpanSet.has(slot.spanIndex), even: slot.spanIndex % 2 === 0, 'drop-before': dropIndicator === slot.spanIndex, [`tone-${view.tone}`]: true, [`role-${view.role}`]: true }"
+          :style="{ '--cmd-indent': `${Math.min(view.indent, 8) * 16}px` }"
+          :aria-pressed="selectedSpanSet.has(slot.spanIndex)"
+          :draggable="!locked"
+          @click="selectCommand(slot.spanIndex, $event)"
+          @dblclick="openCommand(slot.spanIndex)"
+          @contextmenu.stop.prevent="openCommandContext($event, slot.spanIndex)"
+          @dragstart="onRowDragStart(slot.spanIndex, $event)"
+          @dragover.prevent="onRowDragOver(slot.spanIndex, $event)"
+          @drop.prevent="onRowDrop"
+          @dragend="resetRowDrag"
+        >
+          <span class="cmd-line cmd-head">{{ view.head }}</span>
+          <span v-for="(line, lineIndex) in view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span>
+        </button>
+      </template>
     </div>
     <div v-if="commandContext.visible" class="cmd-context-mask" @mousedown.self="closeCommandContext" @contextmenu.self.prevent="closeCommandContext">
       <ul class="cmd-context-menu" :style="{ left: `${commandContext.x}px`, top: `${commandContext.y}px` }" role="menu" :aria-label="t('eventEditorDialog.commandActions')">
@@ -418,7 +506,21 @@ button.danger {
   text-align: left;
   cursor: pointer;
 }
+.cmd-row.cmd-blank {
+  min-height: 20px;
+  color: var(--console-text-muted,#9a8e7e);
+  cursor: default;
+  user-select: none;
+}
+.cmd-row.cmd-blank:hover:not(:disabled) {
+  background: var(--console-accent-soft,#f6e3d7);
+  color: var(--console-accent,#be5630);
+}
+.cmd-row.cmd-blank::before {
+  opacity: .55;
+}
 .cmd-row:not(:disabled) { cursor: grab; }
+.cmd-row.cmd-blank:not(:disabled) { cursor: default; }
 .cmd-row:not(:disabled):active { cursor: grabbing; }
 .cmd-row::before {
   content: '';

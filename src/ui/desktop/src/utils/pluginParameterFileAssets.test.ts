@@ -3,10 +3,16 @@ import { describe, test } from 'node:test';
 import type { EditorProjectCatalog, ProjectRelativeDirectoryListResult } from '../../api/client';
 import {
   inferPluginFileMediaKind,
+  isPluginFileAudioDirectory,
   normalizePluginFileDirectory,
   resolvePluginParameterFileAssets,
   resolvePluginParameterFileAssetsFromCatalog,
+  shouldPersistPluginFileBrowserViewMode,
 } from './pluginParameterFileAssets';
+import {
+  getRuntimePluginFileBrowserViewMode,
+  setRuntimePluginFileBrowserViewMode,
+} from './pluginParameterFileBrowser';
 
 function catalogWith(
   assets: Partial<EditorProjectCatalog['assets']>,
@@ -82,6 +88,32 @@ describe('pluginParameterFileAssets', () => {
     assert.equal(inferPluginFileMediaKind('audio/bgm'), 'audio');
     assert.equal(inferPluginFileMediaKind('movies'), 'movie');
     assert.equal(inferPluginFileMediaKind('effects'), 'other');
+  });
+
+  test('recognizes only audio roots for the audio picker default view', () => {
+    assert.equal(isPluginFileAudioDirectory('audio'), true);
+    assert.equal(isPluginFileAudioDirectory('audio/se'), true);
+    assert.equal(isPluginFileAudioDirectory(' AUDIO\\BGM/ '), true);
+    assert.equal(isPluginFileAudioDirectory('audio-archive'), false);
+    assert.equal(isPluginFileAudioDirectory('img/pictures'), false);
+  });
+
+  test('does not let an audio picker view change overwrite the shared media preference', () => {
+    const previous = getRuntimePluginFileBrowserViewMode();
+    try {
+      setRuntimePluginFileBrowserViewMode('list');
+      if (shouldPersistPluginFileBrowserViewMode('audio/se')) {
+        setRuntimePluginFileBrowserViewMode('gallery');
+      }
+      assert.equal(getRuntimePluginFileBrowserViewMode(), 'list');
+
+      if (shouldPersistPluginFileBrowserViewMode('img/pictures')) {
+        setRuntimePluginFileBrowserViewMode('gallery');
+      }
+      assert.equal(getRuntimePluginFileBrowserViewMode(), 'gallery');
+    } finally {
+      setRuntimePluginFileBrowserViewMode(previous);
+    }
   });
 
   test('normalizes @dir and fails fast when directory is missing', () => {

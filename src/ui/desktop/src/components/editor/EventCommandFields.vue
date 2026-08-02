@@ -344,7 +344,25 @@ function openCoordinatePicker(): void {
     x: spec.x,
     y: spec.y,
     allowMapChange: spec.allowMapChange,
+    picture: screenPicturePreview(),
   });
+}
+
+function screenPicturePreview() {
+  if (props.command.code !== 231) return undefined;
+  const p = props.command.parameters;
+  const assetName = String(p[1] || '');
+  if (!assetName) return undefined;
+  const asset = props.catalog?.assets.pictures.find((entry) => entry.name === assetName);
+  return {
+    assetName,
+    assetUrl: asset?.url || '',
+    origin: Number(p[2]) === 1 ? 1 as const : 0 as const,
+    scaleX: finiteNumber(p[6], 100),
+    scaleY: finiteNumber(p[7], 100),
+    opacity: finiteNumber(p[8], 255),
+    blendMode: finiteNumber(p[9], 0),
+  };
 }
 function commitCoordinate(selection: { mapId: number; x: number; y: number }): void {
   if (props.command.code === 201) {
@@ -368,6 +386,11 @@ function coordinateParameterSpec(): { mode: 'map' | 'screen'; mapId: number; x: 
   if (props.command.code === 285 && Number(p[2]) === 0) return { mode: 'map', mapId: Number(props.mapId) || 1, x: Number(p[3]) || 0, y: Number(p[4]) || 0, allowMapChange: false };
   if ((props.command.code === 231 || props.command.code === 232) && Number(p[3]) === 0) return { mode: 'screen', mapId: Number(props.mapId) || 1, x: Number(p[4]) || 0, y: Number(p[5]) || 0, allowMapChange: false };
   return null;
+}
+
+function finiteNumber(value: unknown, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
 }
 async function loadBalloonPreview(): Promise<void> {
   if (props.command.code !== 213) return;

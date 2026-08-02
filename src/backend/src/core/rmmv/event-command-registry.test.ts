@@ -88,6 +88,20 @@ describe("RPG Maker MV event command registry", () => {
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 111, indent: 0, parameters: [12, "true"] }));
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 111, indent: 0, parameters: [4, 1, 0] }));
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 111, indent: 0, parameters: [4, 1, 1, 2] }));
+    assert.doesNotThrow(() => validateEventCommandBasic({ code: 111, indent: 0, parameters: [11, "ok"] }, "eventCommand", "rpg-maker-mv"));
+    assert.doesNotThrow(() => validateEventCommandBasic({ code: 111, indent: 0, parameters: [11, "ok", 2] }, "eventCommand", "rpg-maker-mz"));
+    assert.throws(
+      () => validateEventCommandBasic({ code: 111, indent: 0, parameters: [11, 2] }),
+      /input key name/,
+    );
+    assert.throws(
+      () => validateEventCommandBasic({ code: 111, indent: 0, parameters: [11, "ok"] }, "eventCommand", "rpg-maker-mz"),
+      /must have 3 value/,
+    );
+    assert.throws(
+      () => validateEventCommandBasic({ code: 111, indent: 0, parameters: [11, "ok", 3] }, "eventCommand", "rpg-maker-mz"),
+      /must be 0, 1, or 2/,
+    );
     assert.throws(
       () => validateEventCommandBasic({ code: 111, indent: 0, parameters: [8, 1, 0] }),
       /conditional branch type 8 must have 2 value/,

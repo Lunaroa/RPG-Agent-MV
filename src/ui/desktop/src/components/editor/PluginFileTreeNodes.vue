@@ -21,6 +21,7 @@
         :expanded-ids="expandedIds"
         :selected-name="selectedName"
         :current-path="currentPath"
+        :file-duration-labels="fileDurationLabels"
         @activate-folder="emit('activate-folder', $event)"
         @select-file="emit('select-file', $event)"
         @confirm-file="emit('confirm-file', $event)"
@@ -33,11 +34,15 @@
       :class="{ active: selectedName === node.id }"
       :style="{ paddingLeft: `${24 + depth * 14}px` }"
       :data-list-nav-id="`file:${node.id}`"
+      :data-audio-duration-url="fileDurationLabels?.has(node.asset.url) ? node.asset.url : undefined"
       :title="node.asset.name"
       @click="emit('select-file', node.asset.name)"
       @dblclick.prevent="emit('confirm-file', node.asset.name)"
     >
       <span class="tree-label">{{ node.label }}</span>
+      <span v-if="fileDurationLabels?.has(node.asset.url)" class="tree-duration">
+        {{ fileDurationLabels?.get(node.asset.url) }}
+      </span>
     </button>
   </template>
 </template>
@@ -53,6 +58,7 @@ defineProps<{
   expandedIds: Set<string>;
   selectedName: string;
   currentPath: string;
+  fileDurationLabels?: ReadonlyMap<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -106,5 +112,11 @@ const emit = defineEmits<{
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tree-duration {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--app-ink-muted);
+  font: 10px var(--app-font-mono, "Cascadia Mono", Consolas, monospace);
 }
 </style>

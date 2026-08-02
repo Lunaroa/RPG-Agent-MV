@@ -84,6 +84,7 @@
                 :expanded-ids="expandedFolderIds"
                 :selected-name="name"
                 :current-path="currentPath"
+                :file-duration-labels="audioDurationLabels"
                 @activate-folder="activateFolder"
                 @select-file="selectAsset"
                 @confirm-file="confirmAsset"
@@ -204,6 +205,15 @@ import {
   type PluginFileBrowserViewMode,
   type PluginFileGalleryEntry,
 } from '../../utils/pluginParameterFileBrowser';
+import {
+  isPluginFileAudioDirectory,
+  shouldPersistPluginFileBrowserViewMode,
+} from '../../utils/pluginParameterFileAssets';
+import {
+  getCachedProjectAssetAudioDuration,
+  loadProjectAssetAudioDuration,
+} from '../../utils/projectAssetAudioDurations';
+import { formatPluginAudioClock } from '../../utils/pluginFileAudioPreview';
 import PluginFileTreeNodes from './PluginFileTreeNodes.vue';
 import PluginFileFolderThumb from './PluginFileFolderThumb.vue';
 import AssetPreviewSurface from '../AssetPreviewSurface.vue';
@@ -237,6 +247,8 @@ const previewUrl = ref('');
 const previewFailed = ref(false);
 const spaceHeld = ref(false);
 const previewSurfaceRef = ref<{ restartFromBeginning: () => void; resetView: () => void } | null>(null);
+const audioDurationVersion = ref(0);
+let audioDurationObserver: IntersectionObserver | null = null;
 
 const previewSurfaceLabels = computed<AssetPreviewSurfaceLabels>(() => ({
   previewFailed: t('pluginFilePicker.previewFailed'),
@@ -262,6 +274,25 @@ const galleryEntries = computed(() =>
     folders: filteredFolders.value,
   }),
 );
+const audioDurationLabels = computed<ReadonlyMap<string, string> | undefined>(() => {
+  if (!isPluginFileAudioDirectory(props.directory)) return undefined;
+  // Re-read the shared cache when any visible probe settles.
+  void audioDurationVersion.value;
+  const labels = new Map<string, string>();
+  for (const asset of filteredAssets.value) {
+    if (!asset.url) continue;
+    const cached = getCachedProjectAssetAudioDuration(asset.url);
+    labels.set(
+      asset.url,
+      cached === undefined
+        ? '…'
+        : Number.isNaN(cached)
+          ? '—'
+          : formatPluginAudioClock(cached),
+    );
+  }
+  return labels;
+});
 const galleryNavIds = computed(() => buildPluginFileGalleryNavIds(galleryEntries.value));
 const selectedAsset = computed(() =>
   props.assets.find((asset) => asset.name === name.value) || null,
@@ -286,6 +317,20 @@ watch(
     if (!galleryNavIds.value.includes(galleryFocusId.value)) {
       galleryFocusId.value = resolvePluginFileGalleryFocusId(name.value, galleryEntries.value);
     }
+  },
+);
+
+watch(
+  () => [
+    visible.value,
+    viewMode.value,
+    search.value,
+    treeNodes.value,
+    currentPath.value,
+    [...expandedFolderIds.value].sort().join('\0'),
+  ] as const,
+  () => {
+    void nextTick(() => rebindAudioDurationObserver());
   },
 );
 
@@ -353,6 +398,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown, true);
   window.removeEventListener('keyup', onKeyUp, true);
+  audioDurationObserver?.disconnect();
+  audioDurationObserver = null;
 });
 
 function open(currentName = '') {
@@ -362,23 +409,31 @@ function open(currentName = '') {
   failedImageUrls.value = new Set();
   currentPath.value = folderPathOfAssetName(normalized);
   expandedFolderIds.value = new Set(ancestorPluginFileFolderPaths(normalized));
-  viewMode.value = getRuntimePluginFileBrowserViewMode();
+  viewMode.value = isPluginFileAudioDirectory(props.directory)
+    ? 'list'
+    : getRuntimePluginFileBrowserViewMode();
   visible.value = true;
   void nextTick(() => {
     galleryFocusId.value = resolvePluginFileGalleryFocusId(normalized, galleryEntries.value);
     void refreshPreview(selectedAsset.value);
     scrollGalleryFocusIntoView();
+    rebindAudioDurationObserver();
   });
 }
 
 function close() {
   visible.value = false;
   previewUrl.value = '';
+  audioDurationObserver?.disconnect();
+  audioDurationObserver = null;
 }
 
 function setViewMode(mode: PluginFileBrowserViewMode): void {
   viewMode.value = mode;
-  setRuntimePluginFileBrowserViewMode(mode);
+  if (shouldPersistPluginFileBrowserViewMode(props.directory)) {
+    setRuntimePluginFileBrowserViewMode(mode);
+  }
+  void nextTick(() => rebindAudioDurationObserver());
 }
 
 function markImageFailed(url: string): void {
@@ -546,6 +601,38 @@ function scrollGalleryFocusIntoView(): void {
     ) as HTMLElement | null;
     target?.scrollIntoView({ block: 'nearest' });
   });
+}
+
+function requestAudioDuration(url: string): void {
+  if (!url || !isPluginFileAudioDirectory(props.directory)) return;
+  if (getCachedProjectAssetAudioDuration(url) !== undefined) return;
+  void loadProjectAssetAudioDuration(url).then(() => {
+    audioDurationVersion.value += 1;
+  });
+}
+
+function rebindAudioDurationObserver(): void {
+  audioDurationObserver?.disconnect();
+  audioDurationObserver = null;
+  const root = listEl.value;
+  if (
+    !visible.value
+    || viewMode.value !== 'list'
+    || !isPluginFileAudioDirectory(props.directory)
+    || !root
+    || typeof IntersectionObserver === 'undefined'
+  ) return;
+  audioDurationObserver = new IntersectionObserver((records) => {
+    for (const record of records) {
+      if (!record.isIntersecting) continue;
+      const url = (record.target as HTMLElement).dataset.audioDurationUrl || '';
+      audioDurationObserver?.unobserve(record.target);
+      requestAudioDuration(url);
+    }
+  }, { root, rootMargin: '120px 0px' });
+  for (const element of root.querySelectorAll<HTMLElement>('[data-audio-duration-url]')) {
+    audioDurationObserver.observe(element);
+  }
 }
 
 async function refreshPreview(asset: PluginFileAssetOption | null) {

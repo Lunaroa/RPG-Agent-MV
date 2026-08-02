@@ -65,4 +65,41 @@ describe('event command catalog controls', () => {
     assert.match(fieldsSource, /Number\.isInteger\(numeric\)/);
     assert.match(fieldsSource, /setField\(field, numeric\)/);
   });
+
+  test('keeps code-111 variable operand updates atomic and preserves branch markers', () => {
+    assert.match(dialogSource, /updateConditionalVariableOperand/);
+    assert.match(dialogSource, /draft\.value\.parameters=updateConditionalVariableOperand\(draft\.value\.parameters,operand as 0\|1\)/);
+    assert.match(dialogSource, /applyConditionalBranchElse\(draftSpan\.value\.length\?draftSpan\.value:\[draft\.value\],elseBranchEnabled\.value,currentEngine\.value\)/);
+    assert.match(dialogSource, /:checked="elseBranchEnabled"/);
+    assert.match(dialogSource, /@change="toggleElseBranch"/);
+    assert.match(dialogSource, /eventcmd\.removeElseConfirm/);
+    assert.match(dialogSource, /const input=event\.target as HTMLInputElement\|null/);
+    assert.match(dialogSource, /if\(input\)input\.checked=true/);
+    assert.match(dialogSource, /isCode111NamedId/);
+    assert.match(dialogSource, /isFinitePositiveInteger\(payload\.id\)/);
+    assert.match(dialogSource, /const nextSpan=clone\(commands\)/);
+    assert.match(dialogSource, /draftSpan\.value=\[\]/);
+    assert.match(dialogSource, /conditionalTypeDrafts/);
+    assert.match(dialogSource, /initializeConditionalBranchDraftMap/);
+    assert.match(dialogSource, /switchConditionalBranchDraft/);
+    assert.match(dialogSource, /conditionalNumberParam\(7,1\)/);
+    assert.match(dialogSource, /conditionalNumberParam\(8,1,1\)/);
+    assert.match(dialogSource, /conditionalNumberParam\(9,1,1\)/);
+    assert.match(dialogSource, /conditionalNumberParam\(10,1,1\)/);
+    assert.match(dialogSource, /conditionalStringParam\(11,1,'down'\)/);
+    assert.match(dialogSource, /conditionalStringParam\(12,1\)/);
+    assert.match(dialogSource, /conditionalBooleanParam\(9,2\)/);
+    assert.match(dialogSource, /conditionalBooleanParam\(10,2\)/);
+    assert.match(dialogSource, /conditionalButtonKeys/);
+    assert.match(dialogSource, /currentEngine==='rpg-maker-mz'/);
+    assert.match(dialogSource, /conditionalButtonModes/);
+  });
+
+  test('guards asynchronous code-111 named-entry callbacks by opening scope', () => {
+    assert.match(dialogSource, /type PendingNamedEntry = \{kind:ConditionalNamedEntryKind;index:number;mirror\?:number;conditionType:number\|null\}/);
+    assert.match(dialogSource, /const conditionType=draft\.value\?\.code===111\?activeConditionalType\(\):null/);
+    assert.match(dialogSource, /if\(pending\.conditionType!==null\)/);
+    assert.match(dialogSource, /if\(!visible\.value\|\|draft\.value\?\.code!==111\|\|activeConditionalType\(\)!==pending\.conditionType\)return/);
+    assert.match(dialogSource, /isConditionalNamedEntryTarget\(draft\.value\.parameters,pending\.kind,pending\.index\)/);
+  });
 });

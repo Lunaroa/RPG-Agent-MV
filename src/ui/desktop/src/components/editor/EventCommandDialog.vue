@@ -430,132 +430,134 @@
                 <div v-show="condTab === 1" class="cond-tab">
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===0" @change="setConditionType(0)" />{{ t('eventcmd.condSwitch') }}</label>
-                    <span class="var-cmd-row cond-main"><input :value="namedEntryDisplay('switch', numberParam(1,1))" readonly :disabled="numberParam(0)!==0" @click="numberParam(0)===0&&openNamedEntry('switch',1)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==0" @click="openNamedEntry('switch',1)">…</button></span>
-                    <select :value="numberParam(2)" :disabled="numberParam(0)!==0" @change="setParam(2,numberValue($event))"><option :value="0">ON</option><option :value="1">OFF</option></select>
+                    <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('switch',1,0)" readonly :disabled="numberParam(0)!==0" @click="numberParam(0)===0&&openNamedEntry('switch',1)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==0" @click="openNamedEntry('switch',1)">…</button></span>
+                    <select :value="conditionalNumberParam(0,2)" :disabled="numberParam(0)!==0" @change="setParam(2,numberValue($event))"><option :value="0">ON</option><option :value="1">OFF</option></select>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===1" @change="setConditionType(1)" />{{ t('eventcmd.variable') }}</label>
-                    <span class="var-cmd-row cond-main"><input :value="namedEntryDisplay('variable', numberParam(1,1))" readonly :disabled="numberParam(0)!==1" @click="numberParam(0)===1&&openNamedEntry('variable',1)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1" @click="openNamedEntry('variable',1)">…</button></span>
-                    <select :value="numberParam(4)" :disabled="numberParam(0)!==1" @change="setParam(4,numberValue($event))">
+                    <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('variable',1,1)" readonly :disabled="numberParam(0)!==1" @click="numberParam(0)===1&&openNamedEntry('variable',1)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1" @click="openNamedEntry('variable',1)">…</button></span>
+                    <select :value="conditionalNumberParam(1,4)" :disabled="numberParam(0)!==1" @change="setParam(4,numberValue($event))">
                       <option :value="0">=</option><option :value="1">≥</option><option :value="2">≤</option><option :value="3">&gt;</option><option :value="4">&lt;</option><option :value="5">≠</option>
                     </select>
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-var-operand" :checked="numberParam(2)===0" :disabled="numberParam(0)!==1" @change="setVarOperand(0)" />{{ t('eventcmd.condConstant') }}</label>
-                    <input class="cond-main" :value="numberParam(3)" type="number" :disabled="numberParam(0)!==1||numberParam(2)!==0" @input="setParam(3,numberValue($event))" />
+                    <label class="cond-pick"><input type="radio" name="cond-var-operand" :checked="conditionalNumberParam(1,2)===0" :disabled="numberParam(0)!==1" @change="setVarOperand(0)" />{{ t('eventcmd.condConstant') }}</label>
+                    <input class="cond-main" :value="conditionalNumberParam(1,3)" type="number" :disabled="numberParam(0)!==1||conditionalNumberParam(1,2)!==0" @input="setParam(3,numberValue($event))" />
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-var-operand" :checked="numberParam(2)===1" :disabled="numberParam(0)!==1" @change="setVarOperand(1)" />{{ t('eventcmd.variable') }}</label>
-                    <span class="var-cmd-row cond-main"><input :value="namedEntryDisplay('variable', numberParam(3,1))" readonly :disabled="numberParam(0)!==1||numberParam(2)!==1" @click="numberParam(0)===1&&numberParam(2)===1&&openNamedEntry('variable',3)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1||numberParam(2)!==1" @click="openNamedEntry('variable',3)">…</button></span>
+                    <label class="cond-pick"><input type="radio" name="cond-var-operand" :checked="conditionalNumberParam(1,2)===1" :disabled="numberParam(0)!==1" @change="setVarOperand(1)" />{{ t('eventcmd.variable') }}</label>
+                    <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('variable',3,1)" readonly :disabled="numberParam(0)!==1||conditionalNumberParam(1,2)!==1" @click="numberParam(0)===1&&conditionalNumberParam(1,2)===1&&openNamedEntry('variable',3)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1||conditionalNumberParam(1,2)!==1" @click="openNamedEntry('variable',3)">…</button></span>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===2" @change="setConditionType(2)" />{{ t('eventcmd.condSelfSwitch') }}</label>
-                    <select class="cond-main" :value="stringParam(1,'A')" :disabled="numberParam(0)!==2" @change="setParam(1,inputValue($event))"><option v-for="s in ['A','B','C','D']" :key="s" :value="s">{{ s }}</option></select>
-                    <select :value="numberParam(2)" :disabled="numberParam(0)!==2" @change="setParam(2,numberValue($event))"><option :value="0">ON</option><option :value="1">OFF</option></select>
+                    <select class="cond-main" :value="conditionalStringParam(2,1,'A')" :disabled="numberParam(0)!==2" @change="setParam(1,inputValue($event))"><option v-for="s in ['A','B','C','D']" :key="s" :value="s">{{ s }}</option></select>
+                    <select :value="conditionalNumberParam(2,2)" :disabled="numberParam(0)!==2" @change="setParam(2,numberValue($event))"><option :value="0">ON</option><option :value="1">OFF</option></select>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===3" @change="setConditionType(3)" />{{ t('eventcmd.condTimer') }}</label>
                     <span class="cond-main cond-inline">
-                      <select :value="numberParam(2)" :disabled="numberParam(0)!==3" @change="setParam(2,numberValue($event))"><option :value="0">{{ t('eventcmd.condAtLeast') }}</option><option :value="1">{{ t('eventcmd.condAtMost') }}</option></select>
-                      <input :value="Math.floor(numberParam(1)/60)" type="number" min="0" :disabled="numberParam(0)!==3" @input="setCondTimer(numberValue($event),numberParam(1)%60)" /><span class="cond-unit">{{ t('eventcmd.timerMin') }}</span>
-                      <input :value="numberParam(1)%60" type="number" min="0" max="59" :disabled="numberParam(0)!==3" @input="setCondTimer(Math.floor(numberParam(1)/60),numberValue($event))" /><span class="cond-unit">{{ t('eventcmd.timerSec') }}</span>
+                      <select :value="conditionalNumberParam(3,2)" :disabled="numberParam(0)!==3" @change="setParam(2,numberValue($event))"><option :value="0">{{ t('eventcmd.condAtLeast') }}</option><option :value="1">{{ t('eventcmd.condAtMost') }}</option></select>
+                      <input :value="activeConditionalType()===3?Math.floor(Number(conditionalNumberParam(3,1,0))/60):''" type="number" min="0" :disabled="numberParam(0)!==3" @input="setCondTimer(numberValue($event),Number(conditionalNumberParam(3,1,0))%60)" /><span class="cond-unit">{{ t('eventcmd.timerMin') }}</span>
+                      <input :value="activeConditionalType()===3?Number(conditionalNumberParam(3,1,0))%60:''" type="number" min="0" max="59" :disabled="numberParam(0)!==3" @input="setCondTimer(Math.floor(Number(conditionalNumberParam(3,1,0))/60),numberValue($event))" /><span class="cond-unit">{{ t('eventcmd.timerSec') }}</span>
                     </span>
                   </div>
                 </div>
                 <div v-show="condTab === 2" class="cond-tab">
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===4" @change="setConditionType(4)" />{{ t('eventcmd.condActor') }}</label>
-                    <select class="cond-main" :value="numberParam(1,1)" :disabled="numberParam(0)!==4" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.actors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <select class="cond-main" :value="conditionalNumberParam(4,1,1)" :disabled="numberParam(0)!==4" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.actors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="numberParam(2)===0" :disabled="numberParam(0)!==4" @change="setActorCondition(0)" />{{ t('eventcmd.condInParty') }}</label>
+                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===0" :disabled="numberParam(0)!==4" @change="setActorCondition(0)" />{{ t('eventcmd.condInParty') }}</label>
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="numberParam(2)===1" :disabled="numberParam(0)!==4" @change="setActorCondition(1)" />{{ t('eventcmd.condName') }}</label>
-                    <input class="cond-main" :value="stringParam(3)" :disabled="numberParam(0)!==4||numberParam(2)!==1" @input="setParam(3,inputValue($event))" />
+                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===1" :disabled="numberParam(0)!==4" @change="setActorCondition(1)" />{{ t('eventcmd.condName') }}</label>
+                    <input class="cond-main" :value="conditionalStringParam(4,3)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==1" @input="setParam(3,inputValue($event))" />
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="numberParam(2)===2" :disabled="numberParam(0)!==4" @change="setActorCondition(2)" />{{ t('eventcmd.condClass') }}</label>
-                    <select class="cond-main" :value="numberParam(3,1)" :disabled="numberParam(0)!==4||numberParam(2)!==2" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.classes||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===2" :disabled="numberParam(0)!==4" @change="setActorCondition(2)" />{{ t('eventcmd.condClass') }}</label>
+                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==2" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.classes||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="numberParam(2)===3" :disabled="numberParam(0)!==4" @change="setActorCondition(3)" />{{ t('eventcmd.condSkill') }}</label>
-                    <select class="cond-main" :value="numberParam(3,1)" :disabled="numberParam(0)!==4||numberParam(2)!==3" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.skills||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===3" :disabled="numberParam(0)!==4" @change="setActorCondition(3)" />{{ t('eventcmd.condSkill') }}</label>
+                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==3" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.skills||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="numberParam(2)===4" :disabled="numberParam(0)!==4" @change="setActorCondition(4)" />{{ t('eventcmd.goodsWeapon') }}</label>
-                    <select class="cond-main" :value="numberParam(3,1)" :disabled="numberParam(0)!==4||numberParam(2)!==4" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.weapons||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===4" :disabled="numberParam(0)!==4" @change="setActorCondition(4)" />{{ t('eventcmd.goodsWeapon') }}</label>
+                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==4" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.weapons||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="numberParam(2)===5" :disabled="numberParam(0)!==4" @change="setActorCondition(5)" />{{ t('eventcmd.goodsArmor') }}</label>
-                    <select class="cond-main" :value="numberParam(3,1)" :disabled="numberParam(0)!==4||numberParam(2)!==5" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.armors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===5" :disabled="numberParam(0)!==4" @change="setActorCondition(5)" />{{ t('eventcmd.goodsArmor') }}</label>
+                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==5" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.armors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="numberParam(2)===6" :disabled="numberParam(0)!==4" @change="setActorCondition(6)" />{{ t('eventcmd.condState') }}</label>
-                    <select class="cond-main" :value="numberParam(3,1)" :disabled="numberParam(0)!==4||numberParam(2)!==6" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.states||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <label class="cond-pick"><input type="radio" name="cond-actor" :checked="conditionalNumberParam(4,2)===6" :disabled="numberParam(0)!==4" @change="setActorCondition(6)" />{{ t('eventcmd.condState') }}</label>
+                    <select class="cond-main" :value="conditionalNumberParam(4,3,1)" :disabled="numberParam(0)!==4||conditionalNumberParam(4,2)!==6" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.states||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
                 </div>
                 <div v-show="condTab === 3" class="cond-tab">
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===5" @change="setConditionType(5)" />{{ t('eventcmd.condEnemy') }}</label>
-                    <select class="cond-main" :value="numberParam(1)" :disabled="numberParam(0)!==5" @change="setParam(1,numberValue($event))"><option v-for="n in 8" :key="n" :value="n-1">#{{ n }}</option></select>
+                    <select class="cond-main" :value="conditionalNumberParam(5,1)" :disabled="numberParam(0)!==5" @change="setParam(1,numberValue($event))"><option v-for="n in 8" :key="n" :value="n-1">#{{ n }}</option></select>
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-enemy" :checked="numberParam(2)===0" :disabled="numberParam(0)!==5" @change="setEnemyCondition(0)" />{{ t('eventcmd.condAppeared') }}</label>
+                    <label class="cond-pick"><input type="radio" name="cond-enemy" :checked="conditionalNumberParam(5,2)===0" :disabled="numberParam(0)!==5" @change="setEnemyCondition(0)" />{{ t('eventcmd.condAppeared') }}</label>
                   </div>
                   <div class="cond-row cond-sub">
-                    <label class="cond-pick"><input type="radio" name="cond-enemy" :checked="numberParam(2)===1" :disabled="numberParam(0)!==5" @change="setEnemyCondition(1)" />{{ t('eventcmd.condState') }}</label>
-                    <select class="cond-main" :value="numberParam(3,1)" :disabled="numberParam(0)!==5||numberParam(2)!==1" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.states||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <label class="cond-pick"><input type="radio" name="cond-enemy" :checked="conditionalNumberParam(5,2)===1" :disabled="numberParam(0)!==5" @change="setEnemyCondition(1)" />{{ t('eventcmd.condState') }}</label>
+                    <select class="cond-main" :value="conditionalNumberParam(5,3,1)" :disabled="numberParam(0)!==5||conditionalNumberParam(5,2)!==1" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.states||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===6" @change="setConditionType(6)" />{{ t('eventcmd.condCharacter') }}</label>
-                    <select class="cond-main" :value="numberParam(1)" :disabled="numberParam(0)!==6" @change="setParam(1,numberValue($event))">
+                    <select class="cond-main" :value="conditionalNumberParam(6,1)" :disabled="numberParam(0)!==6" @change="setParam(1,numberValue($event))">
                       <option :value="-1">{{ t('cmdFields.player') }}</option><option :value="0">{{ t('cmdFields.thisEvent') }}</option>
                       <option v-for="event in sortedCurrentEvents" :key="event.id" :value="event.id">{{ t('cmdFields.mapEvent',{id:String(event.id).padStart(3,'0'),name:event.name}) }}</option>
                     </select>
-                    <select :value="numberParam(2,2)" :disabled="numberParam(0)!==6" @change="setParam(2,numberValue($event))">
+                    <select :value="conditionalNumberParam(6,2,2)" :disabled="numberParam(0)!==6" @change="setParam(2,numberValue($event))">
                       <option :value="2">{{ t('eventcmd.dirDown') }}</option><option :value="4">{{ t('eventcmd.dirLeft') }}</option><option :value="6">{{ t('eventcmd.dirRight') }}</option><option :value="8">{{ t('eventcmd.dirUp') }}</option>
                     </select>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===13" @change="setConditionType(13)" />{{ t('eventcmd.condVehicle') }}</label>
-                    <select class="cond-main" :value="numberParam(1)" :disabled="numberParam(0)!==13" @change="setParam(1,numberValue($event))"><option :value="0">{{ t('eventcmd.vehicleBoat') }}</option><option :value="1">{{ t('eventcmd.vehicleShip') }}</option><option :value="2">{{ t('eventcmd.vehicleAirship') }}</option></select>
+                    <select class="cond-main" :value="conditionalNumberParam(13,1)" :disabled="numberParam(0)!==13" @change="setParam(1,numberValue($event))"><option :value="0">{{ t('eventcmd.vehicleBoat') }}</option><option :value="1">{{ t('eventcmd.vehicleShip') }}</option><option :value="2">{{ t('eventcmd.vehicleAirship') }}</option></select>
                   </div>
                 </div>
                 <div v-show="condTab === 4" class="cond-tab">
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===7" @change="setConditionType(7)" />{{ t('eventcmd.condGold') }}</label>
-                    <input class="cond-main" :value="numberParam(1)" type="number" min="0" :disabled="numberParam(0)!==7" @input="setParam(1,numberValue($event))" />
-                    <select :value="numberParam(2)" :disabled="numberParam(0)!==7" @change="setParam(2,numberValue($event))"><option :value="0">{{ t('eventcmd.condAtLeast') }}</option><option :value="1">{{ t('eventcmd.condAtMost') }}</option><option :value="2">{{ t('eventcmd.condBelow') }}</option></select>
+                    <input class="cond-main" :value="conditionalNumberParam(7,1)" type="number" min="0" :disabled="numberParam(0)!==7" @input="setParam(1,numberValue($event))" />
+                    <select :value="conditionalNumberParam(7,2)" :disabled="numberParam(0)!==7" @change="setParam(2,numberValue($event))"><option :value="0">{{ t('eventcmd.condAtLeast') }}</option><option :value="1">{{ t('eventcmd.condAtMost') }}</option><option :value="2">{{ t('eventcmd.condBelow') }}</option></select>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===8" @change="setConditionType(8)" />{{ t('eventcmd.goodsItem') }}</label>
-                    <select class="cond-main" :value="numberParam(1,1)" :disabled="numberParam(0)!==8" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.items||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <select class="cond-main" :value="conditionalNumberParam(8,1,1)" :disabled="numberParam(0)!==8" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.items||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===9" @change="setConditionType(9)" />{{ t('eventcmd.goodsWeapon') }}</label>
-                    <select class="cond-main" :value="numberParam(1,1)" :disabled="numberParam(0)!==9" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.weapons||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
-                    <label class="check cond-check"><input :checked="boolParam(2)" type="checkbox" :disabled="numberParam(0)!==9" @change="setParam(2,checkedValue($event))" />{{ t('eventcmd.includeEquip') }}</label>
+                    <select class="cond-main" :value="conditionalNumberParam(9,1,1)" :disabled="numberParam(0)!==9" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.weapons||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <label class="check cond-check"><input :checked="conditionalBooleanParam(9,2)" type="checkbox" :disabled="numberParam(0)!==9" @change="setParam(2,checkedValue($event))" />{{ t('eventcmd.includeEquip') }}</label>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===10" @change="setConditionType(10)" />{{ t('eventcmd.goodsArmor') }}</label>
-                    <select class="cond-main" :value="numberParam(1,1)" :disabled="numberParam(0)!==10" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.armors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
-                    <label class="check cond-check"><input :checked="boolParam(2)" type="checkbox" :disabled="numberParam(0)!==10" @change="setParam(2,checkedValue($event))" />{{ t('eventcmd.includeEquip') }}</label>
+                    <select class="cond-main" :value="conditionalNumberParam(10,1,1)" :disabled="numberParam(0)!==10" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.armors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
+                    <label class="check cond-check"><input :checked="conditionalBooleanParam(10,2)" type="checkbox" :disabled="numberParam(0)!==10" @change="setParam(2,checkedValue($event))" />{{ t('eventcmd.includeEquip') }}</label>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===11" @change="setConditionType(11)" />{{ t('eventcmd.condButton') }}</label>
-                    <select class="cond-main" :value="numberParam(1,2)" :disabled="numberParam(0)!==11" @change="setParam(1,numberValue($event))">
-                      <option :value="2">{{ t('eventcmd.dirDown') }}</option><option :value="4">{{ t('eventcmd.dirLeft') }}</option><option :value="6">{{ t('eventcmd.dirRight') }}</option><option :value="8">{{ t('eventcmd.dirUp') }}</option>
-                      <option v-for="[value,label] in [[11,'A'],[12,'B'],[13,'C'],[14,'X'],[15,'Y'],[16,'Z'],[17,'L'],[18,'R']]" :key="String(value)" :value="value">{{ label }}</option>
+                    <select class="cond-main" :value="conditionalStringParam(11,1,'down')" :disabled="numberParam(0)!==11" @change="setParam(1,inputValue($event))">
+                      <option v-for="entry in conditionalButtonKeys" :key="entry.value" :value="entry.value">{{ t(entry.label) }}</option>
+                    </select>
+                    <select v-if="currentEngine==='rpg-maker-mz'" :value="conditionalNumberParam(11,2,0)" :disabled="numberParam(0)!==11" @change="setParam(2,numberValue($event))">
+                      <option v-for="entry in conditionalButtonModes" :key="entry.value" :value="entry.value">{{ t(entry.label) }}</option>
                     </select>
                   </div>
                   <div class="cond-row">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===12" @change="setConditionType(12)" />{{ t('eventcmd.script') }}</label>
-                    <input class="cond-main" :value="stringParam(1)" spellcheck="false" :disabled="numberParam(0)!==12" @input="setParam(1,inputValue($event))" />
+                    <input class="cond-main" :value="conditionalStringParam(12,1)" spellcheck="false" :disabled="numberParam(0)!==12" @input="setParam(1,inputValue($event))" />
                   </div>
                 </div>
               </div>
-              <label v-if="editSpan==null" class="check cond-else"><input v-model="createElseBranch" type="checkbox" />{{ t('eventcmd.createElse') }}</label>
+              <label class="check cond-else"><input :checked="elseBranchEnabled" type="checkbox" @change="toggleElseBranch" />{{ t('eventcmd.createElse') }}</label>
             </template>
             <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" :troop-members="troopMembers" @change="touchCommand" />
             <p v-else class="form-note unsupported-command">
@@ -588,6 +590,7 @@ import type { RpgMakerEngine } from '@contract/types';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
+import { confirmAboveModal } from '../../utils/confirmAboveModal';
 import { plugins as pluginApi, type EditorProjectCatalog, type ManagedPluginEntry, type PluginCommandArgument, type PluginCommandHint, type PluginParameterSchemaField } from '../../api/client';
 import { useProjectStore } from '../../stores/project';
 import { commandPages, applyCommandIndent, commandDefinition, commandTemplate, normalizeEventCommandParameters } from '../../composables/eventCommandCatalog';
@@ -596,6 +599,18 @@ import { localizeCommandGroups, localizeCommandLabel } from '../../utils/eventCo
 import { mvFaceSourceRect } from '../../utils/rmmvFace';
 import { isBigCharacterName } from '../../composables/useMapRenderer';
 import { formatSystemNamedEntryId } from '../../utils/systemNamedEntryRanges';
+import {
+  applyConditionalBranchElse,
+  conditionalElseBodyCommandCount,
+  initializeConditionalBranchDraftMap,
+  inspectConditionalBranchSpan,
+  isConditionalNamedEntryTarget,
+  isFinitePositiveInteger,
+  switchConditionalBranchDraft,
+  updateConditionalVariableOperand,
+  validateConditionalBranchParameters,
+  type ConditionalNamedEntryKind,
+} from '../../utils/conditionalBranchEditor';
 import { formatPluginParameterTypeLabel } from '../../utils/pluginParameterTypeLabel';
 import EventCommandFields from './EventCommandFields.vue';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
@@ -644,11 +659,30 @@ const choiceError=computed(()=>{
 });
 function scheduleChoiceValidation(){/* computed validation follows choiceText */}
 const imagePicker=ref<InstanceType<typeof ImageAssetPickerDialog>>(),routeDialog=ref<InstanceType<typeof MoveRouteDialog>>(),facePreviewRef=ref<HTMLCanvasElement>(),messagePreview=ref<InstanceType<typeof MessagePreviewDialog>>();
-const scrollPreview=ref<InstanceType<typeof ScrollTextPreviewDialog>>(),namedEntrySelector=ref<InstanceType<typeof SystemNamedEntrySelectorDialog>>(),pendingNamedEntry=ref<{kind:'switch'|'variable';index:number;mirror?:number}>({kind:'variable',index:0});
+type PendingNamedEntry = {kind:ConditionalNamedEntryKind;index:number;mirror?:number;conditionType:number|null};
+const scrollPreview=ref<InstanceType<typeof ScrollTextPreviewDialog>>(),namedEntrySelector=ref<InstanceType<typeof SystemNamedEntrySelectorDialog>>(),pendingNamedEntry=ref<PendingNamedEntry>({kind:'variable',index:0,conditionType:null});
 // RM-native Shop Processing: rows mirror head params + 605 continuations, rebuilt on commit.
 const shopGoodsDialog=ref<InstanceType<typeof ShopGoodsDialog>>(),shopGoods=ref<ShopGoodsEntry[]>([]),shopGoodsIndex=ref<number|null>(null),shopGoodsEditIndex=ref<number|null>(null);
-// RM-native Conditional Branch: four tabs of radio rows; switching a type resets its params.
-const condTab=ref(1),createElseBranch=ref(false);
+// RM-native Conditional Branch: four tabs of radio rows; each type keeps an isolated draft.
+// Else is tracked separately from the raw span so canceling its removal leaves
+// the original Then/Else commands untouched until the command is committed.
+const condTab=ref(1),elseBranchEnabled=ref(false),conditionalTypeDrafts=ref<Record<number,unknown[]>>({});
+const conditionalButtonKeys=[
+  {value:'down',label:'eventcmd.dirDown'},
+  {value:'left',label:'eventcmd.dirLeft'},
+  {value:'right',label:'eventcmd.dirRight'},
+  {value:'up',label:'eventcmd.dirUp'},
+  {value:'ok',label:'eventcmd.buttonOk'},
+  {value:'cancel',label:'eventcmd.buttonCancel'},
+  {value:'shift',label:'eventcmd.buttonShift'},
+  {value:'pageup',label:'eventcmd.buttonPageUp'},
+  {value:'pagedown',label:'eventcmd.buttonPageDown'},
+] as const;
+const conditionalButtonModes=[
+  {value:0,label:'eventcmd.buttonPressed'},
+  {value:1,label:'eventcmd.buttonTriggered'},
+  {value:2,label:'eventcmd.buttonRepeated'},
+] as const;
 // Change Actor/Vehicle Images (322/323): clickable preview cells; MZ stores the face slots first.
 const faceCellRef=ref<HTMLCanvasElement>(),charCellRef=ref<HTMLCanvasElement>(),battlerCellRef=ref<HTMLCanvasElement>();
 const pendingImageTarget=ref<{nameIndex:number;indexIndex?:number}|null>(null);
@@ -672,14 +706,93 @@ function syncGpRangeMode(){gpRangeMode.value=(draft.value?.code===121||draft.val
 function setGpRangeMode(range:boolean){gpRangeMode.value=range;if(!range)setParam(1,numberParam(0,1));}
 function setVariableOperand(type:number){if(!draft.value||draft.value.code!==122)return;draft.value.parameters=draft.value.parameters.slice(0,3).concat([type]);touchCommand();}
 const sortedCurrentEvents=computed(()=>[...(props.currentEvents||[])].filter((event)=>Number.isInteger(event.id)&&event.id>0).sort((left,right)=>left.id-right.id));
-function syncCondState(){createElseBranch.value=false;const type=draft.value?.code===111?Number(draft.value.parameters[0])||0:0;condTab.value=type<=3?1:type===4?2:type===5||type===6||type===13?3:4;}
-function setConditionType(type:number){if(!draft.value||draft.value.code!==111||numberParam(0)===type)return;draft.value.parameters=[type];touchCommand();}
-function setVarOperand(operand:number){setParam(2,operand);setParam(3,operand===1?1:0);}
+function syncCondState(){const type=draft.value?.code===111?Number(draft.value.parameters[0])||0:0;condTab.value=type<=3?1:type===4?2:type===5||type===6||type===13?3:4;}
+function activeConditionalType(){return draft.value?.code===111&&Number.isInteger(Number(draft.value.parameters[0]))?Number(draft.value.parameters[0]):-1;}
+function initializeConditionalTypeDraft(){
+  if(draft.value?.code!==111){conditionalTypeDrafts.value={};return;}
+  conditionalTypeDrafts.value=initializeConditionalBranchDraftMap(draft.value.parameters);
+}
+function createConditionalTypeDraft(type:number){
+  const next:MvCommand={code:111,indent:draft.value?.indent||0,parameters:[type]};
+  normalizeEventCommandParameters(next,currentEngine.value);
+  return next.parameters;
+}
+function setConditionType(type:number){
+  if(!draft.value||draft.value.code!==111||activeConditionalType()===type)return;
+  const switched=switchConditionalBranchDraft(
+    conditionalTypeDrafts.value,
+    draft.value.parameters,
+    type,
+    createConditionalTypeDraft,
+  );
+  conditionalTypeDrafts.value=switched.drafts;
+  draft.value.parameters=switched.parameters;
+  touchCommand();
+}
+function conditionalParam(type:number,index:number):unknown{return activeConditionalType()===type?draft.value?.parameters[index]:undefined;}
+function conditionalNumberParam(type:number,index:number,fallback?:number):number|string{
+  if(activeConditionalType()!==type)return '';
+  const value=conditionalParam(type,index);
+  if(value===undefined||value===null||value==='')return fallback??'';
+  const number=Number(value);
+  return Number.isFinite(number)?number:(fallback??'');
+}
+function conditionalStringParam(type:number,index:number,fallback=''){if(activeConditionalType()!==type)return '';const value=conditionalParam(type,index);return value===undefined||value===null?fallback:String(value);}
+function conditionalBooleanParam(type:number,index:number,fallback=false){if(activeConditionalType()!==type)return false;const value=conditionalParam(type,index);return value===undefined||value===null?fallback:Boolean(value);}
+function syncConditionalBranchState(){
+  elseBranchEnabled.value=false;
+  if(draft.value?.code!==111||draftSpan.value.length<2)return;
+  elseBranchEnabled.value=inspectConditionalBranchSpan(draftSpan.value,currentEngine.value).elseIndex!==null;
+}
+function setVarOperand(operand:number){
+  if(!draft.value||draft.value.code!==111||!Number.isInteger(operand)||operand<0||operand>1)return;
+  try {
+    draft.value.parameters=updateConditionalVariableOperand(draft.value.parameters,operand as 0|1);
+    touchCommand();
+  } catch (error) {
+    ElMessage.error(`${t('eventcmd.invalidConditional')}: ${(error as Error).message}`);
+  }
+}
 function setActorCondition(sub:number){setParam(2,sub);if(sub===1)setParam(3,'');else if(sub>=2)setParam(3,1);else setParam(3,0);}
 function setEnemyCondition(sub:number){setParam(2,sub);setParam(3,sub===1?1:0);}
 function setCondTimer(minutes:number,seconds:number){setParam(1,Math.max(0,minutes)*60+Math.max(0,Math.min(59,seconds)));}
 function namedEntryDisplay(kind:'switch'|'variable',id:number){const list=kind==='switch'?props.catalog?.switches:props.catalog?.variables;const entry=(list||[]).find((item)=>item.id===id);const name=String(entry?.name||'').trim();return `${formatSystemNamedEntryId(id)}${name?` ${name}`:''}`;}
-function openNamedEntry(kind:'switch'|'variable',index:number,mirror?:number){pendingNamedEntry.value={kind,index,mirror};namedEntrySelector.value?.open({kind,selectedId:numberParam(index,1),allowNone:false});}
+function conditionalNamedEntryDisplay(kind:'switch'|'variable',index:number,type:number){
+  if(activeConditionalType()!==type)return '';
+  const id=Number(conditionalParam(type,index));
+  return isFinitePositiveInteger(id)?namedEntryDisplay(kind,id):t('eventcmd.invalidEntryId');
+}
+function openNamedEntry(kind:ConditionalNamedEntryKind,index:number,mirror?:number){
+  const conditionType=draft.value?.code===111?activeConditionalType():null;
+  pendingNamedEntry.value={kind,index,mirror,conditionType};
+  namedEntrySelector.value?.open({kind,selectedId:numberParam(index,1),allowNone:false});
+}
+async function toggleElseBranch(event:Event){
+  if(!draft.value||draft.value.code!==111)return;
+  const checked=checkedValue(event);
+  if(checked){elseBranchEnabled.value=true;return;}
+  if(editSpan.value==null||!elseBranchEnabled.value){elseBranchEnabled.value=false;return;}
+  let bodyCommandCount=0;
+  try {
+    bodyCommandCount=conditionalElseBodyCommandCount(draftSpan.value,currentEngine.value);
+  } catch (error) {
+    ElMessage.error(`${t('eventcmd.invalidConditional')}: ${(error as Error).message}`);
+    const input=event.target as HTMLInputElement|null;
+    if(input)input.checked=true;
+    elseBranchEnabled.value=true;
+    return;
+  }
+  if(bodyCommandCount===0){elseBranchEnabled.value=false;return;}
+  try {
+    await confirmAboveModal(t('eventcmd.removeElseConfirm',{count:bodyCommandCount}),t('eventcmd.removeElseTitle'));
+    elseBranchEnabled.value=false;
+  } catch {
+    // Keep the original checked state and raw branch body when confirmation is canceled.
+    const input=event.target as HTMLInputElement|null;
+    if(input)input.checked=true;
+    elseBranchEnabled.value=true;
+  }
+}
 const pickerSearchRef=ref<HTMLInputElement>(),pickerListRef=ref<HTMLElement>(),pickerQuery=ref(''),activePickerIndex=ref(0);
 const pickerListId='event-command-picker-list';
 // Picker layout: 'paged' keeps the RM-native three-page grouping; 'table' consolidates
@@ -811,7 +924,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', scheduleTextGuideMeasure);
 });
 
-function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
+function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
 // Keep in sync with the bespoke editor templates dispatched by draft.code above.
 const CUSTOM_EDITOR_CODES=new Set([101,102,103,104,105,108,111,124,138,205,223,224,225,234,236,302,322,323,355,356,357]);
 // RM inserts parameterless commands directly; no editor page is shown for them.
@@ -820,8 +933,20 @@ function commandHasNoEditorParams(code:number){
   const definition=commandDefinition(code,currentEngine.value);
   return definition!=null&&definition.fields.length===0;
 }
-function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value&&commandHasNoEditorParams(draft.value.code)){draft.value=null;draftSpan.value=[];return;}editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void nextTick(measureTextGuide);if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
-function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();void nextTick(measureTextGuide);if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function openEditor(commands:MvCommand[],index:number){
+  const nextSpan=clone(commands);
+  if(nextSpan[0]?.code===111){
+    try{
+      validateConditionalBranchParameters(nextSpan[0].parameters,currentEngine.value);
+      if(nextSpan.length>1)inspectConditionalBranchSpan(nextSpan,currentEngine.value);
+    }catch(error){
+      ElMessage.error(`${t('eventcmd.invalidConditional')}: ${(error as Error).message}`);
+      return;
+    }
+  }
+  draftSpan.value=nextSpan;draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value&&commandHasNoEditorParams(draft.value.code)){draft.value=null;draftSpan.value=[];conditionalTypeDrafts.value={};return;}editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void nextTick(measureTextGuide);if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);
+}
+function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();void nextTick(measureTextGuide);if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
 // Set Movement Route (205) merges the target dropdown into the route editor: the
 // command dialog shell never shows, MoveRouteDialog commits or cancels the draft.
 function openMergedRouteDialog(){pickerOpen.value=false;visible.value=false;const current=numberParam(0,0);routeDialog.value?.open(routeParam.value,{target:current,targetOptions:moveRouteTargetOptions(current)});}
@@ -839,7 +964,7 @@ function moveRouteTargetOptions(current:number):[number,string][]{
   return options;
 }
 function cancelMergedRoute(){if(draft.value?.code===205&&!visible.value)close();}
-function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];}
+function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};}
 function selectPickerPage(page:number){pickerPage.value=page;pickerQuery.value='';}
 function pickerOptionId(code:number){return `event-command-option-${code}`;}
 function activatePickerItem(code:number){const index=currentPickerItems.value.findIndex((item)=>item.code===code);if(index>=0)activePickerIndex.value=index;}
@@ -881,7 +1006,10 @@ function commit(){
     draft.value.parameters[2]=first.priceType;draft.value.parameters[3]=first.price;
     draft.value.parameters[4]=Boolean(draft.value.parameters[4]);
   }
-  emit('commit',{commands:buildSpan(),editSpan:editSpan.value,insertSpan:insertSpan.value});close();
+  let commands:MvCommand[];
+  try{commands=buildSpan();}
+  catch(error){ElMessage.error(`${t('eventcmd.invalidConditional')}: ${(error as Error).message}`);return;}
+  emit('commit',{commands,editSpan:editSpan.value,insertSpan:insertSpan.value});close();
 }
 function buildSpan(){
   if(!draft.value)return[];
@@ -893,8 +1021,9 @@ function buildSpan(){
   if(draft.value.code===357)return [clone(draft.value),...Object.entries(currentMZPluginArguments.value).map(([name,value])=>({code:657,indent:draft.value!.indent,parameters:[`${name} = ${value}`]}))];
   if(draft.value.code===102)return editSpan.value==null?buildChoiceBlock():buildChoiceEditSpan();
   if(draft.value.code===302)return [clone(draft.value),...shopGoods.value.slice(1).map((entry)=>({code:605,indent:draft.value!.indent,parameters:[entry.goodsType,entry.id,entry.priceType,entry.price]}))];
-  // New conditional branches may opt into an Else section; edits keep existing 411/412 siblings.
-  if(draft.value.code===111&&editSpan.value==null&&createElseBranch.value)return [clone(draft.value),{code:411,indent:draft.value.indent,parameters:[]},{code:412,indent:draft.value.indent,parameters:[]}];
+  if(draft.value.code===111){
+    return applyConditionalBranchElse(draftSpan.value.length?draftSpan.value:[draft.value],elseBranchEnabled.value,currentEngine.value) as MvCommand[];
+  }
   return clone(draftSpan.value.length?draftSpan.value:[draft.value]);
 }
 function buildChoiceBlock(){
@@ -1001,7 +1130,26 @@ async function paintBattlerCell(){const el=battlerCellRef.value,ctx=cellContext(
 async function paintImagePreviews(){if(draft.value?.code===101){await paintFacePreview();return;}if(draft.value?.code===322){await paintFaceCell();await paintCharCell();await paintBattlerCell();return;}if(draft.value?.code===323)await paintCharCell();}
 function variableDisplay(id:number){return namedEntryDisplay('variable',id);}
 function openVariableSelector(index:number){openNamedEntry('variable',index);}
-function commitNamedEntrySelection(payload:{kind:string;id:number}){if(payload.kind!==pendingNamedEntry.value.kind)return;setParam(pendingNamedEntry.value.index,payload.id);if(pendingNamedEntry.value.mirror!=null)setParam(pendingNamedEntry.value.mirror,payload.id);}
+function commitNamedEntrySelection(payload:{kind:string;id:number}){
+  const pending=pendingNamedEntry.value;
+  if(payload.kind!==pending.kind)return;
+  if(pending.conditionType!==null){
+    if(!visible.value||draft.value?.code!==111||activeConditionalType()!==pending.conditionType)return;
+    if(!isConditionalNamedEntryTarget(draft.value.parameters,pending.kind,pending.index))return;
+  }
+  const index=pending.index;
+  const conditionType=numberParam(0);
+  const isCode111NamedId=draft.value?.code===111&&(
+    (index===1&&(conditionType===0||conditionType===1))
+    ||(index===3&&conditionType===1&&numberParam(2)===1)
+  );
+  if(isCode111NamedId&&!isFinitePositiveInteger(payload.id)){
+    ElMessage.error(t('eventcmd.invalidEntryId'));
+    return;
+  }
+  setParam(index,payload.id);
+  if(pending.mirror!=null)setParam(pending.mirror,payload.id);
+}
 function openScrollPreview(){if(!draft.value)return;scrollPreview.value?.open({lines:multiText.value.split(/\r?\n/),speed:numberParam(0,2)});}
 function commitImageSelection(selection:{name:string;index:number}){const target=pendingImageTarget.value;if(!target)return;setParam(target.nameIndex,selection.name);if(target.indexIndex!=null)setParam(target.indexIndex,selection.name?selection.index:0);void nextTick(paintImagePreviews);}
 function openMessagePreview(){if(!draft.value)return;messagePreview.value?.open({faceName:stringParam(0),faceIndex:numberParam(1),background:numberParam(2),positionType:numberParam(3,2),lines:multiText.value.split(/\r?\n/).slice(0,4)});}

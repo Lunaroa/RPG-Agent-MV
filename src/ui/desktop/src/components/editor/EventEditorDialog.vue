@@ -669,18 +669,12 @@ function openCommandContext(event: MouseEvent, index: number | null, slot: MvCom
     closeCommandContext();
   } else if (index == null) clearCommandSelection();
   else if (!selectedSpanSet.value.has(index)) { selectedSpans.value = [index]; selectionAnchor.value = index; }
-  const rect = modalRef.value?.getBoundingClientRect();
+  // The context menu is a sibling of the dialog section (not a child), so any
+  // CSS transform on the dialog does NOT create a containing block for the
+  // menu's position:fixed.  The menu is always viewport-relative.
   const width = 214, height = 330, margin = 8;
-  if (rect) {
-    // When the dialog has a CSS transform (e.g. from dragging), position:fixed
-    // children use the transformed element as their containing block.  Convert
-    // viewport-space mouse coordinates to dialog-local coordinates.
-    cmdContext.x = Math.max(margin, Math.min(event.clientX - rect.left, rect.width - width - margin));
-    cmdContext.y = Math.max(margin, Math.min(event.clientY - rect.top, rect.height - height - margin));
-  } else {
-    cmdContext.x = event.clientX;
-    cmdContext.y = event.clientY;
-  }
+  cmdContext.x = Math.max(margin, Math.min(event.clientX, window.innerWidth - width - margin));
+  cmdContext.y = Math.max(margin, Math.min(event.clientY, window.innerHeight - height - margin));
   cmdContext.visible = true;
 }
 function closeCommandContext() { cmdContext.visible = false; }

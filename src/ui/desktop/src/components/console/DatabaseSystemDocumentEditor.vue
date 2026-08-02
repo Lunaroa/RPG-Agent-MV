@@ -340,8 +340,11 @@ const SYSTEM_1_HANDLED = new Set([
   'optDisplayTp', 'optExtraExp', 'optAutosave', 'optKeyItemsNumber',
   'optSplashScreen', 'optMessageSkip', 'titleBgm', 'battleBgm',
   'victoryMe', 'defeatMe', 'gameoverMe', 'sounds',
-  // Non-RM-native editor metadata — hide from the "extra fields" catch-all.
+  // Non-RM-native editor metadata and battle-test runtime state —
+  // hide from the "extra fields" catch-all.
   'locale', 'versionId', 'editMapId',
+  'testBattlers', 'testTroopId', 'battleback1Name', 'battleback2Name',
+  'battlerName', 'battlerHue',
 ]);
 
 const SYSTEM_2_HANDLED = new Set([

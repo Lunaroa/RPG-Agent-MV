@@ -596,7 +596,7 @@ defineExpose({ open });
 .coordinate-controls input,.coordinate-controls select { min-width:0; padding:5px 6px; border:1px solid var(--app-border); border-radius:var(--app-radius-sm); background:var(--app-bg); color:var(--app-ink); }
 .coordinate-size { align-self:center; color:var(--app-ink-muted); font:11px var(--app-font-mono); }
 .coordinate-stage { position:relative; min-height:220px; max-height:min(62vh, 560px); display:grid; place-items:center; padding:12px; overflow:auto; background:var(--app-bg-sunken); }
-.coordinate-stage canvas { display:block; max-width:100%; max-height:440px; border:1px solid var(--app-border-strong); background:#171a1f; cursor:crosshair; image-rendering:pixelated; }
+.coordinate-stage canvas { display:block; max-width:100%; border:1px solid var(--app-border-strong); background:#171a1f; cursor:crosshair; image-rendering:pixelated; }
 /* Map mode scrolls the full-size map; drag pans, click selects. */
 .coordinate-stage.map-stage { place-items:start; }
 .coordinate-stage.map-stage canvas { max-width:none; max-height:none; touch-action:none; }

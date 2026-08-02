@@ -371,6 +371,7 @@ import {
   serializeMapPreviewDiagnostic,
   type MapPreviewDiagnostic,
 } from '../utils/mapPreviewDiagnostics';
+import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
 import { useI18n, type MessageKey } from '../i18n';
 import type {
   MapPreviewPreflightFailure,
@@ -2249,7 +2250,8 @@ async function applyStaging() {
     ElMessage.success(t('editor.staging.applied'));
   } catch (error) {
     const err = error as ApiError;
-    ElMessage.error(err.status === 409 ? t('editor.staging.conflict') : t('editor.staging.applyFailed', { message: err.message }));
+    const message = formatUserFacingErrorMessage(error, 'general', language.value);
+    ElMessage.error(err.status === 409 ? t('editor.staging.conflict') : t('editor.staging.applyFailed', { message }));
   } finally { busy.value = false; }
 }
 async function discardStaging() {
@@ -2274,7 +2276,7 @@ async function applyOneMap(mapId: number) {
     if (selectedMapId.value === mapId) await reloadCurrentMap();
     await loadTree();
     ElMessage.success(t('editor.staging.mapApplied', { mapId }));
-  } catch (error) { ElMessage.error(t('editor.staging.applyFailed', { message: (error as Error).message })); }
+  } catch (error) { ElMessage.error(t('editor.staging.applyFailed', { message: formatUserFacingErrorMessage(error, 'general', language.value) })); }
   finally { busy.value = false; }
 }
 async function discardOneMap(mapId: number) {

@@ -6,6 +6,8 @@ export type RpgMakerEngine = 'rpg-maker-mv' | 'rpg-maker-mz';
 export interface RpgMakerCanvasSettings {
   tileSize: number;
   screenWidth: number;
+  /** MZ's UI area width; MV has no separate UI area and uses screenWidth. */
+  uiAreaWidth: number;
   screenHeight: number;
   faceSize: number;
   iconSize: number;
@@ -125,7 +127,7 @@ export function inspectRpgMakerEngine(
       engineVersionSupported: true,
       encryption: inspectRpgMakerEncryption(resources, system),
       profile: RPG_MAKER_ENGINE_PROFILES['rpg-maker-mv'],
-      canvas: { tileSize: 48, screenWidth: 816, screenHeight: 624, faceSize: 144, iconSize: 32 },
+      canvas: { tileSize: 48, screenWidth: 816, uiAreaWidth: 816, screenHeight: 624, faceSize: 144, iconSize: 32 },
     };
   }
 
@@ -203,6 +205,7 @@ function readMZCanvasSettings(system: unknown): RpgMakerCanvasSettings {
   const advanced = asRecord(record?.advanced);
   const tileSize = Number(record?.tileSize);
   const screenWidth = Number(advanced?.screenWidth);
+  const uiAreaWidth = Number(advanced?.uiAreaWidth);
   const screenHeight = Number(advanced?.screenHeight);
   const faceSize = Number(record?.faceSize);
   const iconSize = Number(record?.iconSize);
@@ -213,10 +216,13 @@ function readMZCanvasSettings(system: unknown): RpgMakerCanvasSettings {
   if (!Number.isInteger(screenWidth) || screenWidth <= 0 || !Number.isInteger(screenHeight) || screenHeight <= 0) {
     throw new Error('RPG Maker MZ System.json must define positive advanced.screenWidth and advanced.screenHeight values.');
   }
+  if (!Number.isInteger(uiAreaWidth) || uiAreaWidth <= 0) {
+    throw new Error('RPG Maker MZ System.json must define positive advanced.uiAreaWidth.');
+  }
   if (!Number.isInteger(faceSize) || faceSize <= 0 || !Number.isInteger(iconSize) || iconSize <= 0) {
     throw new Error('RPG Maker MZ System.json must define positive faceSize and iconSize values.');
   }
-  return { tileSize, screenWidth, screenHeight, faceSize, iconSize };
+  return { tileSize, screenWidth, uiAreaWidth, screenHeight, faceSize, iconSize };
 }
 
 function readMVVersion(projectRoot: string, resourceRoot: string): string | null {

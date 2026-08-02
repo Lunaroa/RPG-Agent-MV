@@ -13,6 +13,7 @@ export const STAGING_ERROR_CODES = {
   operationFileMismatch: 'STAGING_OPERATION_FILE_MISMATCH',
   operationNotFound: 'STAGING_OPERATION_NOT_FOUND',
   operationOwned: 'STAGING_OPERATION_OWNED',
+  rmmvMapPreflight: 'STAGING_RMMV_MAP_PREFLIGHT',
   ownerRequired: 'STAGING_OWNER_REQUIRED',
   unsafePath: 'STAGING_UNSAFE_PATH',
   unownedDraft: 'STAGING_UNOWNED_DRAFT',

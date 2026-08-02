@@ -215,6 +215,8 @@ let resizeObserver: ResizeObserver | null = null;
 let viewFrame = 0;
 let elapsedTimer: ReturnType<typeof setInterval> | null = null;
 
+const PREVIEW_MAX_SCALE = 4;
+
 const mapWidth = computed(() => Math.max(1, Number(props.mapPixelWidth) || 1));
 const mapHeight = computed(() => Math.max(1, Number(props.mapPixelHeight) || 1));
 const fitScale = computed(() => {
@@ -225,7 +227,10 @@ const fitScale = computed(() => {
     Math.max(1, viewportHeight.value - 40) / mapHeight.value,
   );
 });
-const actualScale = computed(() => fitScale.value * displayScale.value);
+// 100% is the runtime's native CSS pixel scale. Fit is only the lower bound
+// for zooming out; it must not silently change the meaning of the percentage.
+const minimumScale = computed(() => Math.min(1, fitScale.value));
+const actualScale = computed(() => displayScale.value);
 const hasDisplayablePreview = computed(() => Boolean(
   props.iframeUrl
   && runtimeReady.value
@@ -335,8 +340,11 @@ const diagnosticRows = computed(() => {
 });
 
 function setScale(value: number, anchor?: { x: number; y: number }) {
-  const maximum = Math.max(2, 4 / Math.max(.01, fitScale.value));
-  const nextDisplayScale = Math.max(.5, Math.min(maximum, Math.round(value * 100) / 100));
+  const rounded = Math.round(value * 100) / 100;
+  const nextDisplayScale = Math.max(
+    minimumScale.value,
+    Math.min(PREVIEW_MAX_SCALE, rounded),
+  );
   const viewport = viewportRef.value;
   if (viewport) {
     const point = anchor || { x: viewport.clientWidth / 2, y: viewport.clientHeight / 2 };
@@ -348,7 +356,7 @@ function setScale(value: number, anchor?: { x: number; y: number }) {
       viewportWidth: viewport.clientWidth,
       viewportHeight: viewport.clientHeight,
       oldScale: actualScale.value,
-      newScale: fitScale.value * nextDisplayScale,
+      newScale: nextDisplayScale,
     });
     offsetX.value = next.x;
     offsetY.value = next.y;
@@ -363,6 +371,7 @@ function resetView() {
   displayScale.value = 1;
   offsetX.value = 0;
   offsetY.value = 0;
+  clampOffsets();
 }
 function focusSelectedEvent() {
   const event = props.selectedEvent;
@@ -469,8 +478,31 @@ function queueViewUpdate() {
 function updateViewportSize() {
   viewportWidth.value = viewportRef.value?.clientWidth || 0;
   viewportHeight.value = viewportRef.value?.clientHeight || 0;
-  clampOffsets();
+  syncScaleBounds();
   queueViewUpdate();
+}
+
+function syncScaleBounds() {
+  const nextScale = Math.max(minimumScale.value, Math.min(PREVIEW_MAX_SCALE, displayScale.value));
+  if (nextScale !== displayScale.value) {
+    const viewport = viewportRef.value;
+    if (viewport) {
+      const next = previewZoomAtAnchor({
+        x: offsetX.value,
+        y: offsetY.value,
+        anchorX: viewport.clientWidth / 2,
+        anchorY: viewport.clientHeight / 2,
+        viewportWidth: viewport.clientWidth,
+        viewportHeight: viewport.clientHeight,
+        oldScale: actualScale.value,
+        newScale: nextScale,
+      });
+      offsetX.value = next.x;
+      offsetY.value = next.y;
+    }
+    displayScale.value = nextScale;
+  }
+  clampOffsets();
 }
 
 function onIframeLoad() {
@@ -554,7 +586,7 @@ watch(
 watch(() => props.runtimeCommand, sendRuntimeCommand, { deep: false });
 watch(() => [props.error, props.diagnostic, props.preflightFailure], () => { detailsOpen.value = false; });
 watch(() => [mapWidth.value, mapHeight.value, viewportWidth.value, viewportHeight.value, displayScale.value, offsetX.value, offsetY.value], queueViewUpdate);
-watch(() => [mapWidth.value, mapHeight.value, viewportWidth.value, viewportHeight.value], clampOffsets);
+watch(() => [mapWidth.value, mapHeight.value, viewportWidth.value, viewportHeight.value], syncScaleBounds);
 watch(() => props.eventFocusEpoch, focusSelectedEvent);
 watch(() => props.inputWait?.kind, (kind) => {
   if (kind === 'message' || kind === 'choice') void nextTick(() => viewportRef.value?.focus());

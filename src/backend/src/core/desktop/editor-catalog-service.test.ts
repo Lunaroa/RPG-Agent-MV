@@ -20,6 +20,7 @@ describe('editor catalog service', () => {
 
       const catalog = buildEditorProjectCatalog(root, project);
 
+      assert.equal(catalog.uiAreaWidth, catalog.screenWidth);
       assert.equal(catalog.switches[0].name, 'Intro');
       assert.equal(catalog.variables[0].name, 'Progress');
       assert.equal(catalog.elements[0].name, 'Fire');

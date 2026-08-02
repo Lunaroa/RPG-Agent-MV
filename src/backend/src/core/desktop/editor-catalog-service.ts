@@ -104,6 +104,7 @@ export function buildEditorProjectCatalog(workflowRoot: string, project: string)
     engine: manifest.engine,
     tileSize: manifest.tileSize,
     screenWidth: manifest.screenWidth,
+    uiAreaWidth: manifest.uiAreaWidth,
     screenHeight: manifest.screenHeight,
     faceSize: manifest.faceSize,
     iconSize: manifest.iconSize,

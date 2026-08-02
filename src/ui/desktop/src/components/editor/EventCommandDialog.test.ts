@@ -37,4 +37,32 @@ describe('event command catalog controls', () => {
     assert.match(fieldsSource, /cmdFields\.missingEvent/);
     assert.match(fieldsSource, /options\.unshift\(\[current, label\]\)/);
   });
+
+  test('keeps plugin name and command name separate while preserving MZ argument metadata', () => {
+    assert.match(dialogSource, /eventcmd\.pluginName/);
+    assert.match(dialogSource, /eventcmd\.commandName/);
+    assert.match(dialogSource, /pluginCommandHintLabel\(hint\)/);
+    assert.match(dialogSource, /eventcmd\.argLabel/);
+    assert.match(dialogSource, /eventcmd\.argKey/);
+    assert.match(dialogSource, /eventcmd\.argType/);
+    assert.match(dialogSource, /pluginArgumentTypeLabel\(argument\)/);
+    assert.match(dialogSource, /parameters=\[hint\.pluginName,hint\.command,hint\.displayName\|\|hint\.command,args\]/);
+  });
+
+  test('routes plugin command child dialogs through explicit layers', () => {
+    assert.match(dialogSource, /dialog-z-index="LAYER_Z\.pluginParameterDialog"/);
+    assert.match(dialogSource, /popper-style="\{ zIndex: LAYER_Z\.pluginParameterPopover \}"/);
+    assert.doesNotMatch(dialogSource, /el-overlay:has\(\.plugin-parameter-value-dialog\)/);
+  });
+
+  test('opens the shared animation value dialog for event animation IDs', () => {
+    assert.match(fieldsSource, /PluginParameterValueDialog/);
+    assert.match(fieldsSource, /v-model="animationPreviewOpen"/);
+    assert.match(fieldsSource, /dialog-z-index="LAYER_Z\.pluginParameterDialog"/);
+    assert.match(fieldsSource, /@commit="commitAnimationPreview"/);
+    assert.match(fieldsSource, /props\.command\.code === 212/);
+    assert.match(fieldsSource, /props\.command\.code === 337/);
+    assert.match(fieldsSource, /Number\.isInteger\(numeric\)/);
+    assert.match(fieldsSource, /setField\(field, numeric\)/);
+  });
 });

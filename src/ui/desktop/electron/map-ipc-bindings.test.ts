@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
 
+import { STAGING_ERROR_CODES, StagingError } from '../../../backend/src/core/desktop/staging-errors.ts';
+import { parseIpcStructuredError } from '../../../contract/desktop-errors.ts';
 import { registerMapIpcHandlers } from './map-ipc-bindings.ts';
 
 const WORKSPACE_PATH = path.join(os.tmpdir(), 'rpg-agent-mv-workspace');
@@ -219,6 +221,40 @@ describe('map IPC project compatibility warnings', () => {
 
     assert.equal(confirmations, 1);
     assert.equal(applied, true);
+  });
+
+  test('keeps structured map preflight code and details in the IPC error message', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const details = {
+      kind: 'rmmv-map-preflight',
+      transactionStarted: false,
+      sourceFilesChanged: false,
+      missingMaps: [{ mapId: 2, relativePath: 'www/data/Map002.json', reason: 'missing' }],
+    };
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
+      warning: encryptionWarning(),
+      apply: () => {
+        throw new StagingError(
+          STAGING_ERROR_CODES.rmmvMapPreflight,
+          'backend detail',
+          details,
+        );
+      },
+    }), ipcOptions());
+
+    await assert.rejects(
+      handlers.get('staging:applyProject')!({}, PROJECT_PATH, []),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /\[STAGING_RMMV_MAP_PREFLIGHT\]/);
+        assert.deepEqual(parseIpcStructuredError(error.message), {
+          message: "[STAGING_RMMV_MAP_PREFLIGHT] backend detail",
+          code: STAGING_ERROR_CODES.rmmvMapPreflight,
+          details,
+        });
+        return true;
+      },
+    );
   });
 });
 

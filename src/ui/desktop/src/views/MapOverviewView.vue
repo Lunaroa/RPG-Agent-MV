@@ -354,6 +354,7 @@ async function loadOverview(startVersion?: string): Promise<void> {
     surfaceVersion = settled.version
     const previous = snapshot.value
     const changed = !previous || previous.snapshotVersion !== next.snapshotVersion || !hasPresentedGraph.value
+    reconcileSnapshotState(next, project)
     if (changed) {
       if (!previous) {
         snapshot.value = next
@@ -419,6 +420,40 @@ async function loadOverview(startVersion?: string): Promise<void> {
       refreshing.value = false
       validating.value = false
     }
+  }
+}
+
+function reconcileSnapshotState(next: MapOverviewSnapshot, project: string): void {
+  const nodeIds = new Set(next.nodes.map((node) => node.id))
+  const edgeIds = new Set(next.edges.map((edge) => edge.id))
+  const nextSelectedNodeId = selectedNodeId.value != null && nodeIds.has(selectedNodeId.value)
+    ? selectedNodeId.value
+    : null
+  const nextSelectedEdgeId = selectedEdgeId.value && edgeIds.has(selectedEdgeId.value)
+    ? selectedEdgeId.value
+    : null
+  const selectionChanged = nextSelectedNodeId !== selectedNodeId.value
+    || nextSelectedEdgeId !== selectedEdgeId.value
+  selectedNodeId.value = nextSelectedNodeId
+  selectedEdgeId.value = nextSelectedEdgeId
+  if (selectionChanged) {
+    contextMenu.value = null
+    workspaceStore.patchMapOverviewSelection(project, {
+      selectedNodeId: nextSelectedNodeId,
+      selectedEdgeId: nextSelectedEdgeId,
+    })
+  }
+
+  const stored = workspaceStore.readMapOverviewPositions(project)
+  const validStored = Object.fromEntries(Object.entries(stored).filter(([id, position]) => (
+    nodeIds.has(Number(id))
+    && Number.isFinite(position.x)
+    && Number.isFinite(position.y)
+  )))
+  const storedKeys = Object.keys(stored)
+  const validKeys = Object.keys(validStored)
+  if (storedKeys.length !== validKeys.length || storedKeys.some((id) => !Object.hasOwn(validStored, id))) {
+    workspaceStore.patchMapOverviewPositions(project, validStored)
   }
 }
 

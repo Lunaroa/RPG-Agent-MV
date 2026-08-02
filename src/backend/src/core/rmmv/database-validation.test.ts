@@ -618,6 +618,19 @@ describe("RMMV prospective database validation", () => {
     assert.equal(result.ok, true, result.issues.map((issue) => `${issue.code}: ${issue.message}`).join("\n"));
   });
 
+  test("attaches structured target metadata to missing map references", () => {
+    const snapshot = validSnapshot();
+    (snapshot.system as Record<string, unknown>).startMapId = 2;
+
+    const result = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    const issue = result.issues.find((candidate) =>
+      candidate.code === "DB_REFERENCE_MISSING" && candidate.source.path === "system.startMapId"
+    );
+
+    assert.ok(issue);
+    assert.deepEqual(issue.reference, { table: "maps", id: 2 });
+  });
+
   test("validates command and page-condition references in common events, troop pages, and maps", () => {
     const snapshot = validSnapshot();
     const commonEvent = (snapshot.commonEvents as Array<Record<string, unknown> | null>)[1]!;

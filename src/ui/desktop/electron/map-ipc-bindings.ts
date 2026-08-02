@@ -695,10 +695,10 @@ export function registerMapIpcHandlers(
   handle('staging:applyProject', async (event, value?: string, expectedOperationIds?: string[]) => {
     const resolved = project(value);
     if (!await confirmProjectCompatibility(event, resolved, 'write')) return { canceled: true };
-    const result = desktop.staging.applyProjectStaging(workflowRoot, resolved, {
+    const result = invokeDesktop(() => desktop.staging.applyProjectStaging(workflowRoot, resolved, {
       expectedOperationIds: expectedOperationIds || [],
       validate: () => desktop.projectManagement.preflightProjectManagedStagingApply(workflowRoot, resolved),
-    });
+    }));
     desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
     return result;
   });

@@ -28,6 +28,7 @@ export interface RmmvProjectManifest extends RmmvProjectLayout {
   encryptedAudio: boolean;
   tileSize: number;
   screenWidth: number;
+  uiAreaWidth: number;
   screenHeight: number;
   faceSize: number;
   iconSize: number;
@@ -212,6 +213,7 @@ export function inspectRmmvProject(projectRoot: string): RmmvProjectManifest {
     encryptedAudio: engineInspection.encryption.encryptedAudio,
     tileSize: engineInspection.canvas.tileSize,
     screenWidth: engineInspection.canvas.screenWidth,
+    uiAreaWidth: engineInspection.canvas.uiAreaWidth,
     screenHeight: engineInspection.canvas.screenHeight,
     faceSize: engineInspection.canvas.faceSize,
     iconSize: engineInspection.canvas.iconSize,

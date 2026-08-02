@@ -236,6 +236,7 @@ describe("renderOpencodeUserPrompt plan path injection", () => {
         engineVersion: "1.10.0",
         tileSize: 24,
         screenWidth: 960,
+        uiAreaWidth: 960,
         screenHeight: 540,
         faceSize: 144,
         iconSize: 32,

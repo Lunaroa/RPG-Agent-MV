@@ -3,7 +3,7 @@
     <div
       v-if="visible"
       class="sub-overlay editor-modal-overlay"
-      :data-editor-dialog-layer="LAYER_Z.subDialog"
+      :data-editor-dialog-layer="tilesetPickerLayerZ"
       @mousedown.self="close"
     >
       <section
@@ -132,6 +132,7 @@ import {
 const props = defineProps<{
   title?: string;
   catalog?: EditorProjectCatalog | null;
+  zIndex?: number;
 }>();
 
 const emit = defineEmits<{
@@ -145,7 +146,8 @@ const selectedId = ref(0);
 const failedUrls = ref(new Set<string>());
 const previewFailed = ref(false);
 const galleryEl = ref<HTMLElement | null>(null);
-const subDialogZ = String(LAYER_Z.subDialog);
+const tilesetPickerLayerZ = computed(() => props.zIndex ?? LAYER_Z.subDialog);
+const subDialogZ = computed(() => String(tilesetPickerLayerZ.value));
 
 const title = computed(() => props.title || t('pluginTilesetPicker.title'));
 const options = computed(() => buildPluginParameterTilesetOptions(props.catalog));
@@ -196,7 +198,7 @@ function markFailed(url: string | null): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (!visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
+  if (!visible.value || !isTopmostEditorDialog(tilesetPickerLayerZ.value)) return;
   const inTextField = event.target instanceof HTMLInputElement
     || event.target instanceof HTMLTextAreaElement;
   const isArrowKey = event.key === 'ArrowLeft'

@@ -140,9 +140,9 @@ describe('map overview snapshot', () => {
     assert.equal(snapshot.nodes[0].issues[0].targetMapId, 99);
   });
 
-  test('keeps missing and invalid map nodes and scans the remaining maps', () => {
+  test('skips missing and invalid map nodes while retaining diagnostics', () => {
     writeInfos(3);
-    writeMap(1, [event(1, 'Gate', 0, 0, [page({}, [transfer(1, 1, 1)])])]);
+    writeMap(1, [event(1, 'Gate', 0, 0, [page({}, [transfer(1, 1, 1), transfer(2, 0, 0)])])]);
     fs.mkdirSync(dataDir, { recursive: true });
     fs.writeFileSync(path.join(dataDir, 'Map003.json'), '{', 'utf8');
 
@@ -150,9 +150,20 @@ describe('map overview snapshot', () => {
 
     assert.equal(snapshot.edges.length, 1);
     assert.equal(snapshot.edges[0].id, '1:0,0->1:1,1');
-    assert.equal(snapshot.nodes.find((node) => node.id === 2)?.readState, 'missing');
-    assert.equal(snapshot.nodes.find((node) => node.id === 3)?.readState, 'invalid');
-    assert.deepEqual(snapshot.issues.map((issue) => issue.code).sort(), ['map-invalid', 'map-missing']);
+    assert.deepEqual(snapshot.nodes.map((node) => node.id), [1]);
+    assert.equal(snapshot.invalidTargetCount, 1);
+    assert.deepEqual(snapshot.issues.map((issue) => issue.code).sort(), ['invalid-target', 'map-invalid', 'map-missing']);
+  });
+
+  test('skips a structurally unreadable map instead of exposing a thumbnail node', () => {
+    writeInfos(2);
+    writeMap(1, []);
+    writeJson(path.join(dataDir, 'Map002.json'), { width: 0, height: 2, data: [] });
+
+    const snapshot = buildMapOverviewSnapshot(root, project);
+
+    assert.deepEqual(snapshot.nodes.map((node) => node.id), [1]);
+    assert.equal(snapshot.issues.find((issue) => issue.mapId === 2)?.code, 'map-invalid');
   });
 
   test('returns all 999 registered maps without overlapping relationship identities', () => {
@@ -206,7 +217,7 @@ describe('map overview snapshot', () => {
     writeMap(2, []);
 
     const first = buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v5.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v6.json');
     const cacheMtime = fs.statSync(cacheFile).mtimeMs;
     const second = buildMapOverviewSnapshot(root, project);
     assert.equal(second.generatedAt, first.generatedAt);
@@ -258,7 +269,7 @@ describe('map overview snapshot', () => {
     writeInfos(1);
     writeMap(1, []);
     const first = buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v5.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v6.json');
     fs.writeFileSync(cacheFile, '{', 'utf8');
     writeJson(path.join(dataDir, 'Map001.json'), {
       width: 3,
@@ -278,7 +289,7 @@ describe('map overview snapshot', () => {
     writeInfos(1);
     writeMap(1, []);
     buildMapOverviewSnapshot(root, project);
-    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v5.json');
+    const cacheFile = findFile(path.join(root, 'runtime', 'map-overview-cache'), 'snapshot-v6.json');
     const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8')) as {
       thumbnailRendererVersion: number;
       snapshot: MapOverviewSnapshot;

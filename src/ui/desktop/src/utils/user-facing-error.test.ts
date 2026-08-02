@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { appendIpcStructuredError } from '../../../../contract/desktop-errors.ts';
 import { formatUserFacingError, formatUserFacingErrorMessage } from './user-facing-error.ts';
 
 describe('formatUserFacingError', () => {
@@ -11,6 +12,35 @@ describe('formatUserFacingError', () => {
       'en-US',
     );
     assert.equal(result.message, 'Project directory does not exist: /tmp/missing');
+  });
+
+  test('localizes structured RMMV map preflight details after IPC serialization', () => {
+    const details = {
+      kind: 'rmmv-map-preflight',
+      transactionStarted: false,
+      sourceFilesChanged: false,
+      missingMaps: [{ mapId: 2, relativePath: 'www/data/Map002.json', reason: 'missing' }],
+    };
+    const error = new Error(appendIpcStructuredError(
+      "Error invoking remote method 'staging:applyProject': [STAGING_RMMV_MAP_PREFLIGHT] backend detail",
+      'STAGING_RMMV_MAP_PREFLIGHT',
+      details,
+    ));
+
+    const en = formatUserFacingError(error, 'general', 'en-US');
+    assert.equal(en.code, 'rmmv-map-preflight');
+    assert.equal(en.message, 'Apply was blocked because staged changes require readable RMMV map files.');
+    assert.match(en.detail || '', /Map 2 \(www\/data\/Map002\.json\): the file is missing/);
+    assert.match(en.detail || '', /No transaction was started and source project files were not changed/);
+    assert.match(en.detail || '', /Restore or repair.*retry.*discard/i);
+    assert.doesNotMatch(`${en.message}\n${en.detail || ''}`, /remote method|STAGING_RMMV_MAP_PREFLIGHT|backend detail/i);
+
+    const zh = formatUserFacingError(error, 'general', 'zh-CN');
+    assert.equal(zh.code, 'rmmv-map-preflight');
+    assert.equal(zh.message, '由于暂存修改依赖可读取的 RMMV 地图文件，已阻止应用。');
+    assert.match(zh.detail || '', /地图 2（www\/data\/Map002\.json）：文件缺失/);
+    assert.match(zh.detail || '', /事务未开始，源工程文件未修改/);
+    assert.match(zh.detail || '', /恢复或修复.*重试.*丢弃/);
   });
 
   test('passes through localized backend errors without regex remapping', () => {

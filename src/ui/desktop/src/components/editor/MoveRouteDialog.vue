@@ -100,9 +100,17 @@
                 </select>
               </label>
               <template v-else-if="paramStep.code === 44">
-                <label>{{ t('moveRoute.seName') }}
-                  <input :value="seParam().name ? String(seParam().name) : ''" @input="setSeParam('name', inputValue($event))" />
-                </label>
+                <div class="route-se-picker-field">
+                  <span>{{ t('moveRoute.seName') }}</span>
+                  <div class="route-se-picker-row">
+                    <input
+                      :value="seParam().name ? String(seParam().name) : t('pluginFilePicker.none')"
+                      readonly
+                      @click="openSePicker"
+                    />
+                    <button type="button" class="editor-btn" @click="openSePicker">…</button>
+                  </div>
+                </div>
                 <label>{{ t('moveRoute.volume') }}
                   <input type="number" min="0" max="100" :value="Number(seParam().volume ?? 90)" @input="setSeParam('volume', numberValue($event))" />
                 </label>
@@ -123,17 +131,37 @@
       </section>
     </div>
   </teleport>
+  <PluginParameterFilePickerDialog
+    ref="sePicker"
+    :title="t('moveRoute.seName')"
+    directory="audio/se"
+    media="audio"
+    :assets="seAssets"
+    :folders="seFolders"
+    :z-index="LAYER_Z.pluginParameterDialog"
+    @commit="commitSeSelection"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import type { EditorProjectCatalog } from '../../api/client';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import { clone, defaultMoveRoute, moveRouteCommandLabel, type MvMoveRoute } from '../../composables/useEventEditor';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
 import { simulateMoveRoute } from '../../utils/moveRoutePreview';
-const props = withDefaults(defineProps<{ previewX?: number; previewY?: number }>(), { previewX: 0, previewY: 0 });
+import {
+  foldersFromAssetNames,
+  type PluginFileAssetOption,
+} from '../../utils/pluginParameterFileAssets';
+import PluginParameterFilePickerDialog from './PluginParameterFilePickerDialog.vue';
+const props = withDefaults(defineProps<{
+  previewX?: number;
+  previewY?: number;
+  catalog?: EditorProjectCatalog | null;
+}>(), { previewX: 0, previewY: 0, catalog: null });
 const emit = defineEmits<{ commit: [route: MvMoveRoute, target: number | null]; cancel: [] }>();
 const { language, t } = useI18n();
 const subDialogZ = String(LAYER_Z.subDialog);
@@ -148,8 +176,14 @@ const target = ref(0);
 const targetOptions = ref<[number, string][] | null>(null);
 const paramStep = ref<MoveRouteStep | null>(null);
 const paramEditIndex = ref<number | null>(null);
+const sePicker = ref<InstanceType<typeof PluginParameterFilePickerDialog> | null>(null);
 let committing = false;
 const steps = computed(() => draft.value.list);
+const seAssets = computed<PluginFileAssetOption[]>(() => (props.catalog?.assets.se || [])
+  .map((asset) => ({ name: asset.name, fileName: asset.fileName, url: asset.url }))
+  .filter((asset) => Boolean(asset.name))
+  .sort((left, right) => left.name.localeCompare(right.name)));
+const seFolders = computed(() => foldersFromAssetNames(seAssets.value.map((asset) => asset.name)));
 const paramTitle = computed(() => paramStep.value ? eventEditorText(language.value).moveRouteLabels[paramStep.value.code] || '' : '');
 const BLEND_OPTIONS = computed(() => eventEditorText(language.value).blendModes);
 const localizedMoveSpeeds = computed(() => eventEditorText(language.value).moveSpeeds);
@@ -252,6 +286,14 @@ function seParam(): Record<string, unknown> {
 function setSeParam(key: string, value: unknown) {
   setParam(0, { name: '', volume: 90, pitch: 100, pan: 0, ...seParam(), [key]: value });
 }
+function openSePicker(): void {
+  if (!paramStep.value || paramStep.value.code !== 44) return;
+  sePicker.value?.open(String(seParam().name || ''));
+}
+function commitSeSelection(name: string): void {
+  if (!paramStep.value || paramStep.value.code !== 44) return;
+  setSeParam('name', name);
+}
 function inputValue(event: Event) {
   return (event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value;
 }
@@ -335,6 +377,10 @@ select, textarea, input { padding: 5px; border: 1px solid var(--app-border); bor
 .route-param-dialog { width: min(380px, 90%); border: 1px solid var(--app-border-strong); border-radius: var(--app-radius); background: var(--app-bg); box-shadow: var(--app-shadow-lg, 0 12px 32px rgba(0, 0, 0, .25)); }
 .route-params { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px; color: var(--app-ink-muted); font-size: 12px; }
 .route-params label { min-width: 0; display: grid; gap: 4px; margin: 0; }
+.route-se-picker-field { min-width: 0; display: grid; gap: 4px; }
+.route-se-picker-row { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.route-se-picker-row input { min-width: 0; flex: 1; cursor: pointer; }
+.route-se-picker-row .editor-btn { flex: 0 0 auto; min-width: 30px; }
 .route-params textarea, .route-params .route-param-wide { grid-column: 1 / -1; }
 @media (max-width: 720px) { .route-body { grid-template-columns: 1fr; } .route-side { border-right: 0; border-bottom: 1px solid var(--app-border); } }
 </style>

@@ -94,10 +94,26 @@ describe('RMMV layout resolver', () => {
       assert.equal(manifest.engineVersion, '1.10.0');
       assert.equal(manifest.tileSize, 24);
       assert.equal(manifest.screenWidth, 1280);
+      assert.equal(manifest.uiAreaWidth, 1280);
       assert.equal(manifest.screenHeight, 720);
       assert.equal(manifest.projectMarker.gameRmmzProject, true);
       assert.equal(manifest.editable, true);
       assert.equal(manifest.runnableStructure, true);
+    } finally {
+      removeRoot(root);
+    }
+  });
+
+  test('requires the MZ UI area width instead of inferring it from screen width', () => {
+    const root = tempRoot();
+    try {
+      writeMZProject(root, '1.10.0', 48, 816, 624);
+      const systemPath = path.join(root, 'data', 'System.json');
+      const system = JSON.parse(fs.readFileSync(systemPath, 'utf8')) as Record<string, unknown>;
+      const advanced = { ...(system.advanced as Record<string, unknown>) };
+      delete advanced.uiAreaWidth;
+      fs.writeFileSync(systemPath, JSON.stringify({ ...system, advanced }), 'utf8');
+      assert.throws(() => inspectRmmvProject(root), /advanced\.uiAreaWidth/);
     } finally {
       removeRoot(root);
     }
@@ -245,7 +261,7 @@ function writeMZProject(
           tileSize,
           faceSize: 144,
           iconSize: 32,
-          advanced: { screenWidth, screenHeight },
+          advanced: { screenWidth, screenHeight, uiAreaWidth: screenWidth },
         }
       : []), 'utf8');
   }

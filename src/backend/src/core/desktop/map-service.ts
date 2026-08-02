@@ -131,6 +131,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
     engineVersion: manifest.engineVersion,
     tileSize: manifest.tileSize,
     screenWidth: manifest.screenWidth,
+    uiAreaWidth: manifest.uiAreaWidth,
     screenHeight: manifest.screenHeight,
     faceSize: manifest.faceSize,
     iconSize: manifest.iconSize,

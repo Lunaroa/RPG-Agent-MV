@@ -265,7 +265,7 @@ function writeMZProject(projectRoot: string, gameTitle: string, version = '1.10.
     tileSize: 32,
     faceSize: 144,
     iconSize: 32,
-    advanced: { screenWidth: 960, screenHeight: 540 },
+    advanced: { screenWidth: 960, screenHeight: 540, uiAreaWidth: 960 },
   }), 'utf8');
 }
 

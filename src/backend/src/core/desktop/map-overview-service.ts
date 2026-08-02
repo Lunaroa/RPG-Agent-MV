@@ -25,7 +25,7 @@ import {
 import { mapOverviewEdgeAggregateKey } from '../../../../contract/map-overview-edge-key.ts';
 import { createProjectReadFileIndex, type ProjectReadFileIndex } from './staging-service.ts';
 
-const SNAPSHOT_CACHE_SCHEMA_VERSION = 5;
+const SNAPSHOT_CACHE_SCHEMA_VERSION = 6;
 const THUMBNAIL_CACHE_SCHEMA_VERSION = 1;
 const THUMBNAIL_RENDERER_VERSION = 2;
 const THUMBNAIL_SCALE_DIVISOR = 4 as const;
@@ -136,7 +136,8 @@ function buildMapOverviewSnapshotFresh(
   reportProgress?: (progress: MapOverviewScanProgress) => void,
 ): { snapshot: MapOverviewSnapshot; context: OverviewBuildContext } {
   const context = buildContext(workflowRoot, project);
-  const knownMapIds = new Set<number>();
+  const declaredMapIds = new Set<number>();
+  const readableMapIds = new Set<number>();
   const nodes: MapOverviewNode[] = [];
   const edgesByKey = new Map<string, MapOverviewEdge>();
   const issues: MapOverviewIssue[] = [];
@@ -157,7 +158,7 @@ function buildMapOverviewSnapshotFresh(
   const mapInfos = context.mapInfos.filter(Boolean);
   for (const info of mapInfos) {
     const id = Number(info.id);
-    if (Number.isInteger(id) && id > 0) knownMapIds.add(id);
+    if (Number.isInteger(id) && id > 0) declaredMapIds.add(id);
   }
 
   reportProgress?.({ phase: 'reading-maps', completed: 0, total: mapInfos.length });
@@ -186,7 +187,19 @@ function buildMapOverviewSnapshotFresh(
       });
     } else {
       try {
-        map = readJson(mapFile) as MapDocument;
+        const parsed = readJson(mapFile);
+        if (!isPreviewableMapDocument(parsed)) {
+          readState = 'invalid';
+          nodeIssues.push({
+            code: 'map-invalid',
+            mapId,
+            relativePath: mapLogicalPath,
+            message: `Map file is not previewable for Map${String(mapId).padStart(3, '0')}.`,
+          });
+        } else {
+          map = parsed;
+          readableMapIds.add(mapId);
+        }
       } catch (error) {
         readState = 'invalid';
         nodeIssues.push({
@@ -250,13 +263,15 @@ function buildMapOverviewSnapshotFresh(
               loaded.nodeUnresolved += 1;
               return;
             }
-            if (!knownMapIds.has(targetMapId)) {
+            if (!readableMapIds.has(targetMapId)) {
               invalidTargetCount += 1;
               loaded.nodeIssues.push({
                 code: 'invalid-target',
                 mapId,
                 targetMapId,
-                message: `Transfer targets missing map ${targetMapId}.`,
+                message: declaredMapIds.has(targetMapId)
+                  ? `Transfer targets an unreadable map ${targetMapId}.`
+                  : `Transfer targets missing map ${targetMapId}.`,
               });
               return;
             }
@@ -350,6 +365,11 @@ function buildMapOverviewSnapshotFresh(
       ? buildThumbnailContentVersion(context, loaded.mapId, loaded.mapFile, loaded.map)
       : null;
     issues.push(...loaded.nodeIssues);
+    if (loaded.readState !== 'ready' || !loaded.map) {
+      completedMaps += 1;
+      reportProgress?.({ phase: 'preparing-images', completed: completedMaps, total: loadedMaps.length });
+      continue;
+    }
     nodes.push({
       id: loaded.mapId,
       name: loaded.name,
@@ -1123,6 +1143,13 @@ function array(value: unknown): any[] {
 
 function record(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isPreviewableMapDocument(value: unknown): value is MapDocument {
+  return record(value)
+    && positiveInteger(value.width) !== null
+    && positiveInteger(value.height) !== null
+    && Array.isArray(value.data);
 }
 
 function positiveInteger(value: unknown): number | null {

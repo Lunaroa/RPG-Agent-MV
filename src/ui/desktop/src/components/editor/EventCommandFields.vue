@@ -1,6 +1,6 @@
 <template>
   <div v-if="definition" class="command-fields">
-    <component :is="field.kind === 'radio' ? 'div' : 'label'" v-for="field in visibleFields" :key="field.label + field.path.join('.')" class="cmd-field">
+    <component :is="field.kind === 'radio' || shouldUsePluginParameterField(field) ? 'div' : 'label'" v-for="field in visibleFields" :key="field.label + field.path.join('.')" class="cmd-field">
       <span>{{ field.label }}</span>
       <span v-if="field.kind === 'radio'" class="radio-row">
         <label v-for="[value, label] in field.options || []" :key="String(value)"><input type="radio" :name="radioGroupName(field)" :checked="String(fieldValue(field)) === String(value)" :disabled="fieldDisabled(field)" @change="setField(field, value)" />{{ label }}</label>
@@ -27,6 +27,24 @@
       <select v-else-if="field.kind === 'eventTarget'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @change="setField(field, numberValue($event))">
         <option v-for="[value, label] in eventTargetOptions(field)" :key="value" :value="value">{{ label }}</option>
       </select>
+      <div v-else-if="shouldUsePluginParameterField(field)" class="plugin-param-field-row">
+        <PluginParameterInput
+          :field="pluginParameterField(field)!"
+          :model-value="fieldValue(field)"
+          :catalog="catalog"
+          @update:model-value="setPluginParameterField(field, $event)"
+        />
+        <button
+          v-if="isAnimationDatabaseField(field)"
+          type="button"
+          class="editor-btn plugin-param-preview-button"
+          :aria-label="t('eventcmd.preview')"
+          :title="t('eventcmd.preview')"
+          @click="openAnimationPreview(field)"
+        >
+          …
+        </button>
+      </div>
       <select v-else-if="field.kind === 'database'" :value="displayValue(field)" :disabled="fieldDisabled(field)" @change="setField(field, numberValue($event))">
         <option v-for="entry in databaseOptions(field)" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4, '0') }} {{ entry.name }}</option>
       </select>
@@ -35,9 +53,6 @@
         <option v-for="entry in equipItemOptions()" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4, '0') }} {{ entry.name }}</option>
       </select>
       <button v-else-if="isImageAssetField(field)" type="button" class="asset-picker-button" @click="openImageField(field)">
-        {{ displayValue(field) || t('imgPicker.none') }}
-      </button>
-      <button v-else-if="isAudioAssetField(field)" type="button" class="asset-picker-button" @click="openAudioField(field)">
         {{ displayValue(field) || t('imgPicker.none') }}
       </button>
       <select v-else-if="field.kind === 'asset'" :value="displayValue(field)" :size="field.asset === 'movies' ? 8 : undefined" :disabled="fieldDisabled(field)" @change="setField(field, inputValue($event))">
@@ -55,8 +70,15 @@
     </div>
     <p v-if="!visibleFields.length" class="no-fields">{{ t('cmdFields.noParams') }}</p>
     <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="loadImage" @commit="commitImageField" />
-    <AudioAssetPickerDialog ref="audioPicker" :catalog="catalog" @commit="commitAudioField" />
     <CoordinatePickerDialog ref="coordinatePicker" :catalog="catalog" @commit="commitCoordinate" />
+    <PluginParameterValueDialog
+      v-model="animationPreviewOpen"
+      :field="animationPreviewField"
+      :value="animationPreviewValue"
+      :catalog="catalog"
+      :dialog-z-index="LAYER_Z.pluginParameterDialog"
+      @commit="commitAnimationPreview"
+    />
   </div>
 </template>
 
@@ -66,12 +88,15 @@ import type { RpgMakerEngine } from '@contract/types';
 import type { EditorProjectCatalog, NamedCatalogEntry, ProjectAssetEntry } from '../../api/client';
 import type { EditorEventListItem } from './editorTypes';
 import { useI18n } from '../../i18n';
+import { LAYER_Z } from '../../constants/layerZIndex';
 import { commandDefinition, type CommandAssetKey, type CommandField, type CommandFieldVisibility } from '../../composables/eventCommandCatalog';
 import { localizeCommandField } from '../../utils/eventCommandLocalization';
+import { commandFieldToPluginParameterField } from '../../utils/eventCommandPluginField';
 import type { MvCommand } from '../../composables/useEventEditor';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
-import AudioAssetPickerDialog from './AudioAssetPickerDialog.vue';
 import CoordinatePickerDialog from './CoordinatePickerDialog.vue';
+import PluginParameterInput from './PluginParameterInput.vue';
+import PluginParameterValueDialog from '../console/PluginParameterValueDialog.vue';
 
 const props = defineProps<{
   command: MvCommand;
@@ -90,17 +115,15 @@ const visibleFields = computed(() => (definition.value?.fields || [])
   .filter((field) => isFieldVisible(field) && !isPairedImageIndexField(field))
   .map((field) => localizeCommandField(field, language.value)));
 const imagePicker = ref<InstanceType<typeof ImageAssetPickerDialog> | null>(null);
-const audioPicker = ref<InstanceType<typeof AudioAssetPickerDialog> | null>(null);
 const coordinatePicker = ref<InstanceType<typeof CoordinatePickerDialog> | null>(null);
+const animationPreviewOpen = ref(false);
+const pendingAnimationField = ref<CommandField | null>(null);
 const balloonCanvas = ref<HTMLCanvasElement | null>(null);
 const balloonImage = ref<HTMLImageElement | null>(null);
 const balloonAssetAvailable = ref(false);
 let balloonFrame = 0;
 let balloonTimer: ReturnType<typeof setInterval> | null = null;
 const pendingImageField = ref<CommandField | null>(null);
-const pendingAudioField = ref<CommandField | null>(null);
-// Audio assets open the listen-and-pick dialog instead of a bare select.
-const audioAssetKinds = new Set<CommandAssetKey>(['bgm', 'bgs', 'me', 'se']);
 const imageAssetKinds = new Set<CommandAssetKey>([
   'characters',
   'faces',
@@ -131,6 +154,14 @@ const coordinateSummary = computed(() => {
   if (!spec) return '';
   const map = spec.mode === 'map' ? `${String(spec.mapId).padStart(3, '0')} · ` : '';
   return `${map}(${spec.x}, ${spec.y})`;
+});
+const animationPreviewField = computed(() => {
+  const field = pendingAnimationField.value;
+  return field && isAnimationDatabaseField(field) ? commandFieldToPluginParameterField(field) : null;
+});
+const animationPreviewValue = computed(() => {
+  const field = pendingAnimationField.value;
+  return field ? fieldValue(field) : 0;
 });
 watch([
   () => props.command.code,
@@ -165,6 +196,46 @@ function matchesVisibility(condition: CommandFieldVisibility) {
 function fieldDisabled(field: CommandField) {
   const conditions = Array.isArray(field.enabledWhen) ? field.enabledWhen : field.enabledWhen ? [field.enabledWhen] : [];
   return !conditions.every(matchesVisibility);
+}
+
+function pluginParameterField(field: CommandField) {
+  return commandFieldToPluginParameterField(field);
+}
+
+function shouldUsePluginParameterField(field: CommandField): boolean {
+  if (fieldDisabled(field)) return false;
+  if (field.kind === 'asset' && isImageAssetField(field)) return false;
+  return Boolean(pluginParameterField(field));
+}
+
+function isAnimationDatabaseField(field: CommandField): boolean {
+  return props.command.code === 212
+    || props.command.code === 337
+    ? field.kind === 'database' && field.catalog === 'animations'
+    : false;
+}
+
+function openAnimationPreview(field: CommandField): void {
+  if (!isAnimationDatabaseField(field)) return;
+  pendingAnimationField.value = field;
+  animationPreviewOpen.value = true;
+}
+
+function commitAnimationPreview(value: unknown): void {
+  const field = pendingAnimationField.value;
+  if (!field || !isAnimationDatabaseField(field)) return;
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric < 0) return;
+  setField(field, numeric);
+}
+
+function setPluginParameterField(field: CommandField, value: unknown): void {
+  if (field.kind === 'database') {
+    const numeric = Number(value);
+    setField(field, Number.isFinite(numeric) ? numeric : 0);
+    return;
+  }
+  setField(field, value == null ? '' : String(value));
 }
 function radioGroupName(field: CommandField) { return `cmd-${props.command.code}-${field.path.join('-')}`; }
 function setPath(path: CommandField['path'], value: unknown) {
@@ -262,25 +333,6 @@ function commitImageField(selection: { name: string; index: number }): void {
   const indexPath = pairedImageIndexPath(field);
   if (indexPath) setPath(indexPath, selection.name ? selection.index : 0);
   pendingImageField.value = null;
-  emit('change');
-}
-function isAudioAssetField(field: CommandField): boolean {
-  return field.kind === 'asset' && Boolean(field.asset && audioAssetKinds.has(field.asset));
-}
-function openAudioField(field: CommandField): void {
-  if (!field.asset || !isAudioAssetField(field)) return;
-  pendingAudioField.value = field;
-  audioPicker.value?.open({
-    asset: field.asset,
-    title: t('cmdFields.chooseField', { field: String(field.label) }),
-    name: String(fieldValue(field) || ''),
-  });
-}
-function commitAudioField(selection: { name: string }): void {
-  const field = pendingAudioField.value;
-  if (!field) return;
-  setPath(field.path, selection.name);
-  pendingAudioField.value = null;
   emit('change');
 }
 function openCoordinatePicker(): void {
@@ -404,6 +456,9 @@ textarea { grid-column: 1 / -1; font-family: var(--app-font-mono); resize: verti
 .slider-row { min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 30px; }
 .slider-row .el-slider { flex: 1; min-width: 0; }
 .slider-row input { flex: 0 0 64px; width: 64px; }
+.plugin-param-field-row { min-width: 0; display: flex; align-items: flex-start; gap: 5px; }
+.plugin-param-field-row :deep(.plugin-param-input) { flex: 1; min-width: 0; }
+.plugin-param-preview-button { flex: 0 0 auto; min-width: 30px; min-height: 30px; padding: 3px 7px; }
 input[type="checkbox"] { justify-self: start; }
 .no-fields { grid-column: 1 / -1; margin: 0; color: var(--app-ink-muted); font-size: 12px; }
 .coordinate-picker-button { grid-column:1 / -1; min-height:30px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:5px 8px; border:1px solid var(--app-border); border-radius:var(--app-radius-sm); background:var(--app-bg-soft); color:var(--app-ink); cursor:pointer; }

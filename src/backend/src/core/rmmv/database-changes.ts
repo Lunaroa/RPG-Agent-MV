@@ -11,6 +11,7 @@ import {
   stageDatabaseStagingOperationDrafts,
   type StagingOperation,
 } from "../desktop/staging-service.ts";
+import { STAGING_ERROR_CODES, StagingError } from "../desktop/staging-errors.ts";
 import { applyRmmvDatabasePatch, type RmmvDatabaseFieldDiff, type RmmvJsonPatchOperation } from "./database-patch.ts";
 import { readEffectiveRmmvDatabaseTable } from "./database-read.ts";
 import {
@@ -135,6 +136,55 @@ export interface RmmvEffectiveDatabaseValidationState {
 
 interface LoadProjectInputOptions {
   sourceOnlyRelativePaths?: ReadonlySet<string>;
+  allowUnreadableMaps?: boolean;
+}
+
+type LoadedMapReadState =
+  | {
+    mapId: number;
+    relativePath: string;
+    readable: true;
+    sourceHash: string | null;
+  }
+  | {
+    mapId: number;
+    relativePath: string;
+    readable: false;
+    sourceHash: string | null;
+    reason: "missing" | "invalid";
+    error?: string;
+  };
+
+interface LoadedProjectInputs {
+  snapshot: RmmvDatabaseSnapshot;
+  maps: RmmvDatabaseMapDocument[];
+  physical: Map<RmmvArrayDatabaseTableKey | "system", LoadedPhysicalTable>;
+  inputHashes: RmmvDatabaseInputHash[];
+  engine: RpgMakerEngine;
+  mapReadStates: LoadedMapReadState[];
+}
+
+interface UnreadableMapApplyBlocker {
+  mapId: number;
+  relativePath: string;
+  reason: "missing" | "invalid";
+  error?: string;
+  relationSources: string[];
+}
+
+const MISSING_EFFECTIVE_HASH = "<missing-rmmv-map>";
+
+class RmmvJsonInputReadError extends Error {
+  readonly reason: "missing" | "invalid";
+
+  constructor(
+    reason: "missing" | "invalid",
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.reason = reason;
+  }
 }
 
 const ARRAY_TABLES: readonly RmmvArrayDatabaseTableKey[] = [
@@ -217,7 +267,13 @@ export function preflightRmmvDatabaseProjectApply(
   const status = getProjectStagingStatus(workflowRoot, project);
   if (status.conflict) throw new Error("Database staging conflict blocks apply.");
   const operations = status.operations as StagingOperation[];
-  const after = loadProjectInputs(workflowRoot, project);
+  const after = loadProjectInputs(workflowRoot, project, { allowUnreadableMaps: true });
+  const sourceOnlyRelativePaths = new Set(status.files.map((file) => file.relativePath));
+  const before = loadProjectInputs(workflowRoot, project, {
+    sourceOnlyRelativePaths,
+    allowUnreadableMaps: true,
+  });
+  assertUnreadableMapApplySafe(project, status, before, after);
   const actualHashes = new Map(after.inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
 
   for (const operation of operations) {
@@ -229,8 +285,6 @@ export function preflightRmmvDatabaseProjectApply(
     }
   }
 
-  const sourceOnlyRelativePaths = new Set(status.files.map((file) => file.relativePath));
-  const before = loadProjectInputs(workflowRoot, project, { sourceOnlyRelativePaths });
   const validation = validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
     beforeMaps: before.maps,
     maps: after.maps,
@@ -238,6 +292,93 @@ export function preflightRmmvDatabaseProjectApply(
   });
   assertSemanticValidationOk(validation);
   return validation;
+}
+
+function assertUnreadableMapApplySafe(
+  project: string,
+  status: ReturnType<typeof getProjectStagingStatus>,
+  before: LoadedProjectInputs,
+  after: LoadedProjectInputs,
+  touchedPaths: ReadonlySet<string> = new Set(status.files.map((file) => file.relativePath)),
+): void {
+  const stagedPaths = new Set(touchedPaths);
+  const beforeById = new Map(before.mapReadStates.map((state) => [state.mapId, state]));
+  const blockers = new Map<number, UnreadableMapApplyBlocker>();
+
+  for (const state of after.mapReadStates) {
+    if (state.readable) continue;
+    const previous = beforeById.get(state.mapId);
+    if (!previous || previous.readable || stagedPaths.has(state.relativePath)) {
+      blockers.set(state.mapId, {
+        mapId: state.mapId,
+        relativePath: state.relativePath,
+        reason: unreadableMapReason(state),
+        ...(state.error ? { error: state.error } : {}),
+        relationSources: [],
+      });
+    }
+  }
+
+  const unreadableById = new Map(
+    after.mapReadStates
+      .filter((state) => !state.readable)
+      .map((state) => [state.mapId, state]),
+  );
+  const afterValidation = validateRmmvDatabaseSnapshot(after.snapshot, {
+    maps: after.maps,
+    engine: after.engine,
+  });
+  for (const issue of afterValidation.issues) {
+    if (issue.severity !== "error" || issue.code !== "DB_REFERENCE_MISSING") continue;
+    if (issue.reference?.table !== "maps") continue;
+    const targetMapId = issue.reference.id;
+    if (!unreadableById.has(targetMapId)) continue;
+    const sourcePath = databaseIssueRelativePath(project, issue.source.table, issue.source.id);
+    if (!sourcePath || !stagedPaths.has(sourcePath)) continue;
+    const state = unreadableById.get(targetMapId)!;
+    const blocker = blockers.get(targetMapId) || {
+      mapId: targetMapId,
+      relativePath: state.relativePath,
+      reason: unreadableMapReason(state),
+      ...(state.error ? { error: state.error } : {}),
+      relationSources: [],
+    };
+    if (!blocker.relationSources.includes(sourcePath)) blocker.relationSources.push(sourcePath);
+    blockers.set(targetMapId, blocker);
+  }
+
+  if (blockers.size === 0) return;
+  const entries = [...blockers.values()].sort((left, right) => left.mapId - right.mapId);
+  const paths = entries.map((entry) => entry.relativePath).join(", ");
+  throw new StagingError(
+    STAGING_ERROR_CODES.rmmvMapPreflight,
+    `Apply was blocked before the project transaction started because these staged changes require readable RMMV map files: ${paths}. Source project files were not changed. Restore or repair the listed map files, then retry; otherwise discard the staged changes.`,
+    {
+      kind: "rmmv-map-preflight",
+      transactionStarted: false,
+      sourceFilesChanged: false,
+      missingMaps: entries,
+      stagedPaths: [...stagedPaths].sort(),
+    },
+  );
+}
+
+function unreadableMapReason(state: LoadedMapReadState): "missing" | "invalid" {
+  if (state.readable) throw new Error("Readable map state cannot be reported as unreadable.");
+  return state.reason;
+}
+
+function databaseIssueRelativePath(
+  project: string,
+  table: RmmvDatabaseSemanticValidationResult["issues"][number]["source"]["table"],
+  id?: number,
+): string | null {
+  const layout = resolveRmmvLayout(project);
+  if (table === "maps") {
+    if (!Number.isInteger(id) || Number(id) <= 0) return null;
+    return dataRelativePath(layout, `Map${String(id).padStart(3, "0")}.json`);
+  }
+  return dataRelativePath(layout, getRmmvDatabaseSchemaByKey(table).fileName);
 }
 
 export function stageRmmvDatabaseChanges(
@@ -304,7 +445,7 @@ function validateStagedOperationState(
   const project = path.resolve(projectRoot);
   const { inputHashes, outputs } = parseAndVerifyOperationMetadata(project, operation);
 
-  const after = loadProjectInputs(workflowRoot, project);
+  const after = loadProjectInputs(workflowRoot, project, { allowUnreadableMaps: true });
   const actual = new Map(after.inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
   const approvedInputs = new Map(inputHashes.map((entry) => [entry.relativePath, entry]));
   for (const output of outputs) {
@@ -318,7 +459,17 @@ function validateStagedOperationState(
   }
 
   const sourceOnlyRelativePaths = new Set(outputs.map((output) => output.relativePath));
-  const before = loadProjectInputs(workflowRoot, project, { sourceOnlyRelativePaths });
+  const before = loadProjectInputs(workflowRoot, project, {
+    sourceOnlyRelativePaths,
+    allowUnreadableMaps: true,
+  });
+  assertUnreadableMapApplySafe(
+    project,
+    getProjectStagingStatus(workflowRoot, project),
+    before,
+    after,
+    sourceOnlyRelativePaths,
+  );
   for (const output of outputs) {
     const approvedSourceHash = approvedInputs.get(output.relativePath)!.sourceHash;
     const currentSourceHash = before.inputHashes.find((entry) => entry.relativePath === output.relativePath)?.sourceHash;
@@ -602,18 +753,13 @@ function loadProjectInputs(
   workflowRoot: string,
   project: string,
   options: LoadProjectInputOptions = {},
-): {
-  snapshot: RmmvDatabaseSnapshot;
-  maps: RmmvDatabaseMapDocument[];
-  physical: Map<RmmvArrayDatabaseTableKey | "system", LoadedPhysicalTable>;
-  inputHashes: RmmvDatabaseInputHash[];
-  engine: RpgMakerEngine;
-} {
+): LoadedProjectInputs {
   const snapshot: RmmvDatabaseSnapshot = {};
   const physical = new Map<RmmvArrayDatabaseTableKey | "system", LoadedPhysicalTable>();
   const inputHashes: RmmvDatabaseInputHash[] = [];
   const layout = resolveRmmvLayout(project);
   const engine = inspectRmmvProject(project).engine;
+  const mapReadStates: LoadedMapReadState[] = [];
   for (const table of PHYSICAL_TABLES) {
     const schema = getRmmvDatabaseSchemaByKey(table);
     const relativePath = dataRelativePath(layout, schema.fileName);
@@ -650,17 +796,67 @@ function loadProjectInputs(
     const mapId = Number(info.id);
     if (!Number.isInteger(mapId) || mapId <= 0) throw new Error(`${mapInfosRelative} contains an invalid map id.`);
     const relativePath = dataRelativePath(layout, `Map${String(mapId).padStart(3, "0")}.json`);
-    const loaded = readEffectiveJsonInput(
-      workflowRoot,
-      project,
-      relativePath,
-      options.sourceOnlyRelativePaths?.has(relativePath) ?? false,
-    );
-    maps.push({ mapId, value: loaded.value });
-    inputHashes.push(loaded.hashes);
+    const sourceOnly = options.sourceOnlyRelativePaths?.has(relativePath) ?? false;
+    try {
+      const loaded = readEffectiveJsonInput(workflowRoot, project, relativePath, sourceOnly);
+      if (options.allowUnreadableMaps && !isReadableMapDocument(loaded.value)) {
+        const sourceHash = loaded.hashes.sourceHash;
+        mapReadStates.push({
+          mapId,
+          relativePath,
+          readable: false,
+          sourceHash,
+          reason: "invalid",
+          error: `Invalid RMMV map structure at ${relativePath}.`,
+        });
+        inputHashes.push({
+          relativePath,
+          sourceHash,
+          effectiveHash: MISSING_EFFECTIVE_HASH,
+        });
+        continue;
+      }
+      maps.push({ mapId, value: loaded.value });
+      inputHashes.push(loaded.hashes);
+      mapReadStates.push({
+        mapId,
+        relativePath,
+        readable: true,
+        sourceHash: loaded.hashes.sourceHash,
+      });
+    } catch (error) {
+      if (!options.allowUnreadableMaps) throw error;
+      const sourceHash = sourceFileHash(project, relativePath);
+      const detail = error instanceof Error ? error.message : String(error);
+      mapReadStates.push({
+        mapId,
+        relativePath,
+        readable: false,
+        sourceHash,
+        reason: error instanceof RmmvJsonInputReadError ? error.reason : "invalid",
+        error: detail,
+      });
+      inputHashes.push({
+        relativePath,
+        sourceHash,
+        effectiveHash: MISSING_EFFECTIVE_HASH,
+      });
+    }
   }
   inputHashes.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-  return { snapshot, maps, physical, inputHashes, engine };
+  return { snapshot, maps, physical, inputHashes, engine, mapReadStates };
+}
+
+function isReadableMapDocument(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const width = Number(record.width);
+  const height = Number(record.height);
+  return Number.isInteger(width)
+    && width > 0
+    && Number.isInteger(height)
+    && height > 0
+    && Array.isArray(record.data);
 }
 
 function readEffectiveJsonInput(
@@ -675,14 +871,25 @@ function readEffectiveJsonInput(
   const effectiveFile = sourceOnly
     ? path.resolve(project, ...relativePath.split("/"))
     : getProjectFileForRead(workflowRoot, project, relativePath);
-  if (!effectiveFile) throw new Error(`Required RMMV project file is missing: ${relativePath}`);
-  const content = fs.readFileSync(effectiveFile);
+  if (!effectiveFile) throw new RmmvJsonInputReadError("missing", `Required RMMV project file is missing: ${relativePath}`);
+  let content: Buffer;
+  try {
+    content = fs.readFileSync(effectiveFile);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+    const reason = code === "ENOENT" ? "missing" : "invalid";
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = reason === "missing"
+      ? `Required RMMV project file is missing: ${relativePath}`
+      : `Unable to read RMMV project file ${relativePath}: ${detail}`;
+    throw new RmmvJsonInputReadError(reason, message, { cause: error });
+  }
   let value: unknown;
   try {
     value = JSON.parse(content.toString("utf8").replace(/^\uFEFF/, ""));
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Invalid RMMV JSON at ${relativePath}: ${detail}`, { cause: error });
+    throw new RmmvJsonInputReadError("invalid", `Invalid RMMV JSON at ${relativePath}: ${detail}`, { cause: error });
   }
   return {
     value,

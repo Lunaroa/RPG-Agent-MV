@@ -8,11 +8,14 @@ import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
 import {
   applyProjectStaging,
+  deleteStagedProjectFile,
   getDatabaseStagingOperation,
   getProjectFileForRead,
+  getProjectStagingStatus,
   listDatabaseStagingOperations,
   writeStagedProjectJson,
 } from "../desktop/staging-service.ts";
+import { STAGING_ERROR_CODES, StagingError } from "../desktop/staging-errors.ts";
 import { readJson, writeJson } from "./json.ts";
 import { createDefaultRmmvDatabaseEntry } from "./database-schema.ts";
 import {
@@ -259,6 +262,89 @@ describe("controlled RMMV database changes", { concurrency: false }, () => {
     });
     assert.equal(applied.applied, true);
     assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Desktop Applied Item");
+  });
+
+  test("allows an unrelated staged apply when a pre-existing map file is missing", () => {
+    const changes: RmmvDatabaseChange[] = [{
+      op: "patch",
+      table: "items",
+      id: 1,
+      patches: [{ op: "replace", path: "/name", value: "Applied With Legacy Missing Map" }],
+    }];
+    const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
+    const staged = stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash });
+    const mapInfos = readJson(path.join(dataDir, "MapInfos.json")) as unknown[];
+    mapInfos.push({ id: 2, name: "Missing Map", parentId: 0, order: 2, expanded: true });
+    writeJson(path.join(dataDir, "MapInfos.json"), mapInfos);
+
+    const applied = applyProjectStaging(workflowRoot, project, {
+      expectedOperationIds: [staged.operationId],
+      validate: () => preflightRmmvDatabaseProjectApply(workflowRoot, project),
+    });
+
+    assert.equal(applied.applied, true);
+    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Applied With Legacy Missing Map");
+    assert.equal(fs.existsSync(path.join(dataDir, "Map002.json")), false);
+  });
+
+  test("blocks a staged deletion of a declared map before the transaction starts", () => {
+    const mapFile = path.join(dataDir, "Map001.json");
+    const sourceBefore = fs.readFileSync(mapFile);
+    deleteStagedProjectFile(workflowRoot, project, "www/data/Map001.json");
+
+    assert.throws(
+      () => applyProjectStaging(workflowRoot, project, {
+        expectedOperationIds: [],
+        validate: () => preflightRmmvDatabaseProjectApply(workflowRoot, project),
+      }),
+      (error: unknown) => error instanceof StagingError
+        && error.code === STAGING_ERROR_CODES.rmmvMapPreflight
+        && (error.details as { transactionStarted?: boolean })?.transactionStarted === false,
+    );
+    assert.deepEqual(fs.readFileSync(mapFile), sourceBefore);
+    assert.equal(getProjectStagingStatus(workflowRoot, project).files.length, 1);
+  });
+
+  test("blocks a touched map that transfers into an unreadable declared map", () => {
+    const mapInfos = readJson(path.join(dataDir, "MapInfos.json")) as unknown[];
+    mapInfos.push({ id: 2, name: "Missing Map", parentId: 0, order: 2, expanded: true });
+    writeJson(path.join(dataDir, "MapInfos.json"), mapInfos);
+    const map = readJson(path.join(dataDir, "Map001.json")) as Record<string, unknown>;
+    map.events = [null, {
+      id: 1,
+      name: "Gate",
+      x: 0,
+      y: 0,
+      pages: [{ conditions: {}, image: {}, list: [
+        { code: 201, indent: 0, parameters: [0, 2, 0, 0, 2, 0] },
+        { code: 0, indent: 0, parameters: [] },
+      ] }],
+    }];
+    writeStagedProjectJson(workflowRoot, project, "www/data/Map001.json", map);
+
+    let thrown: unknown;
+    try {
+      applyProjectStaging(workflowRoot, project, {
+        expectedOperationIds: [],
+        validate: () => preflightRmmvDatabaseProjectApply(workflowRoot, project),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    assert.ok(thrown instanceof StagingError);
+    assert.equal(thrown.code, STAGING_ERROR_CODES.rmmvMapPreflight);
+    const details = thrown.details as {
+      missingMaps?: Array<{ mapId: number; reason: string; relationSources: string[] }>;
+    };
+    assert.deepEqual(details.missingMaps, [{
+      mapId: 2,
+      relativePath: "www/data/Map002.json",
+      reason: "missing",
+      error: "Required RMMV project file is missing: www/data/Map002.json",
+      relationSources: ["www/data/Map001.json"],
+    }]);
+    assert.equal(getProjectStagingStatus(workflowRoot, project).files.length, 1);
+    assert.deepEqual((readJson(path.join(dataDir, "Map001.json")) as Record<string, unknown>).events, [null]);
   });
 
   test("allows unrelated source changes made after staging", () => {

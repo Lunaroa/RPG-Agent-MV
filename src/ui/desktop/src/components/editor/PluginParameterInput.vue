@@ -220,6 +220,7 @@
           :field="child"
           :model-value="structValue[child.key]"
           :catalog="catalog"
+          :overlay-z-index="pickerLayerZ"
           @update:model-value="setStructValue(child.key, $event)"
         />
       </label>
@@ -232,6 +233,7 @@
           :field="field.item"
           :model-value="item"
           :catalog="catalog"
+          :overlay-z-index="pickerLayerZ"
           @update:model-value="setArrayValue(index, $event)"
         />
         <el-button
@@ -263,11 +265,13 @@
     <CoordinatePickerDialog
       ref="coordinatePicker"
       :catalog="catalog || null"
+      :z-index="pickerLayerZ"
       @commit="commitLocation"
     />
     <SystemNamedEntrySelectorDialog
       ref="systemNamedEntrySelector"
       :catalog="catalog || null"
+      :z-index="pickerLayerZ"
       @commit="commitSystemNamedEntry"
       @catalog-changed="emit('catalog-changed')"
     />
@@ -278,12 +282,14 @@
       :media="fileResolution.ok ? fileResolution.media : 'other'"
       :assets="filePickerAssets"
       :folders="filePickerFolders"
+      :z-index="pickerLayerZ"
       @commit="commitFileSelection"
     />
     <PluginParameterTilesetPickerDialog
       ref="tilesetPicker"
       :title="field.label || field.key"
       :catalog="catalog"
+      :z-index="pickerLayerZ"
       @commit="commitTilesetSelection"
     />
   </div>
@@ -299,6 +305,7 @@ import type {
   PluginParameterSchemaField,
 } from '../../api/client';
 import { projectAssets } from '../../api/client';
+import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
 import {
@@ -332,6 +339,8 @@ const props = defineProps<{
   field: PluginParameterSchemaField;
   modelValue: unknown;
   catalog?: EditorProjectCatalog | null;
+  /** Layer for pickers opened from a nested value dialog. */
+  overlayZIndex?: number;
 }>();
 const emit = defineEmits<{
   'update:modelValue': [value: unknown];
@@ -343,6 +352,7 @@ const coordinatePicker = ref<InstanceType<typeof CoordinatePickerDialog> | null>
 const systemNamedEntrySelector = ref<InstanceType<typeof SystemNamedEntrySelectorDialog> | null>(null);
 const filePicker = ref<InstanceType<typeof PluginParameterFilePickerDialog> | null>(null);
 const tilesetPicker = ref<InstanceType<typeof PluginParameterTilesetPickerDialog> | null>(null);
+const pickerLayerZ = computed(() => props.overlayZIndex ?? LAYER_Z.subDialog);
 const fileResolution = ref<PluginFileAssetResolution>({
   ok: false,
   reason: 'missing-directory',
@@ -943,6 +953,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 </style>
 
 <style>
+.plugin-parameter-select-popper,
+.plugin-parameter-media-popper {
+  z-index: 2800 !important;
+}
 .plugin-parameter-actor-popper .el-select-dropdown__item,
 .plugin-parameter-media-popper .el-select-dropdown__item {
   height: auto;

@@ -3,7 +3,7 @@
     <div
       v-if="visible"
       class="sub-overlay editor-modal-overlay"
-      :data-editor-dialog-layer="LAYER_Z.subDialog"
+      :data-editor-dialog-layer="filePickerLayerZ"
       @mousedown.self="close"
     >
       <section
@@ -215,12 +215,14 @@ const props = defineProps<{
   media: PluginFileMediaKind;
   assets: PluginFileAssetOption[];
   folders?: string[];
+  zIndex?: number;
 }>();
 
 const emit = defineEmits<{ commit: [name: string] }>();
 
 const { t } = useI18n();
-const subDialogZ = String(LAYER_Z.subDialog);
+const filePickerLayerZ = computed(() => props.zIndex ?? LAYER_Z.subDialog);
+const subDialogZ = computed(() => String(filePickerLayerZ.value));
 const visible = ref(false);
 const search = ref('');
 const name = ref('');
@@ -288,7 +290,7 @@ watch(
 );
 
 function onKeyDown(event: KeyboardEvent) {
-  if (!visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
+  if (!visible.value || !isTopmostEditorDialog(filePickerLayerZ.value)) return;
   const inTextField = event.target instanceof HTMLInputElement
     || event.target instanceof HTMLTextAreaElement;
   const isArrowKey = event.key === 'ArrowLeft'

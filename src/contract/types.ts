@@ -29,6 +29,7 @@ export interface ProjectInfo {
   encryptedAudio?: boolean;
   tileSize: number;
   screenWidth: number;
+  uiAreaWidth: number;
   screenHeight: number;
   faceSize: number;
   iconSize: number;
@@ -484,6 +485,7 @@ export interface MapPayload {
   engineVersion: string | null;
   tileSize: number;
   screenWidth: number;
+  uiAreaWidth: number;
   screenHeight: number;
   faceSize: number;
   iconSize: number;
@@ -1626,6 +1628,7 @@ export interface EditorProjectCatalog {
   engine: RpgMakerEngine;
   tileSize: number;
   screenWidth: number;
+  uiAreaWidth: number;
   screenHeight: number;
   faceSize: number;
   iconSize: number;

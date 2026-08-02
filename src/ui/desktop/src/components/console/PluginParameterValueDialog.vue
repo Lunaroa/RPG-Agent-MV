@@ -10,6 +10,7 @@ import {
   projectManagement,
   resolveAssetUrl,
 } from '../../api/client';
+import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
 import ActorWalkingSheetThumb from '../editor/ActorWalkingSheetThumb.vue';
@@ -52,6 +53,8 @@ const props = defineProps<{
   catalog: EditorProjectCatalog | null;
   title?: string;
   allowUnchangedCommit?: boolean;
+  /** Explicit layer for nested command editors; standalone plugin dialogs use the sub-dialog layer. */
+  dialogZIndex?: number;
 }>();
 
 const emit = defineEmits<{
@@ -69,6 +72,7 @@ interface ChildEditorState {
 }
 
 const { t } = useI18n();
+const dialogLayerZ = computed(() => props.dialogZIndex ?? LAYER_Z.subDialog);
 const projectStore = useProjectStore();
 const editorBody = ref<HTMLElement | null>(null);
 const draft = ref<unknown>('');
@@ -545,6 +549,7 @@ function arrayValue(value: unknown): unknown[] {
         ? 'min(720px, calc(100vw - 48px))'
         : 'min(560px, calc(100vw - 48px))'"
     top="7vh"
+    :z-index="dialogLayerZ"
     append-to-body
     destroy-on-close
     :close-on-click-modal="true"
@@ -585,6 +590,7 @@ function arrayValue(value: unknown): unknown[] {
             :field="field"
             :model-value="draft"
             :catalog="catalog"
+            :overlay-z-index="dialogLayerZ + 100"
             @update:model-value="draft = $event"
             @catalog-changed="emit('catalog-changed')"
           />
@@ -738,6 +744,7 @@ function arrayValue(value: unknown): unknown[] {
     :catalog="catalog"
     :title="childTitle"
     :allow-unchanged-commit="childEditor.pendingAppend"
+    :dialog-z-index="dialogLayerZ + 100"
     @commit="commitChild"
     @catalog-changed="emit('catalog-changed')"
   />

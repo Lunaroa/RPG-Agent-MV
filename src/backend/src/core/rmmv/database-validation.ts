@@ -30,11 +30,17 @@ export interface RmmvDatabaseIssueSource {
   path: string;
 }
 
+export interface RmmvDatabaseIssueReference {
+  table: RmmvDatabaseIssueTable;
+  id: number;
+}
+
 export interface RmmvDatabaseSemanticIssue {
   code: string;
   severity: RmmvDatabaseIssueSeverity;
   source: RmmvDatabaseIssueSource;
   message: string;
+  reference?: RmmvDatabaseIssueReference;
 }
 
 export interface RmmvDatabaseSemanticValidationResult {
@@ -1520,6 +1526,8 @@ class SnapshotValidator {
         path,
         `Referenced map id ${String(value)} does not exist.`,
         sourceId,
+        "error",
+        mapId !== null && mapId > 0 ? { table: "maps", id: mapId } : undefined,
       );
     }
   }
@@ -1605,8 +1613,15 @@ class SnapshotValidator {
     message: string,
     id?: number,
     severity: RmmvDatabaseIssueSeverity = "error",
+    reference?: RmmvDatabaseIssueReference,
   ): void {
-    this.#issues.push({ code, severity, source: { table, ...(id === undefined ? {} : { id }), path }, message });
+    this.#issues.push({
+      code,
+      severity,
+      source: { table, ...(id === undefined ? {} : { id }), path },
+      message,
+      ...(reference ? { reference } : {}),
+    });
   }
 }
 

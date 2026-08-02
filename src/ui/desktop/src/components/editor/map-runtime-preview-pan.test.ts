@@ -5,7 +5,7 @@ import test from 'node:test';
 const previewSource = readFileSync(new URL('./MapRuntimePreview.vue', import.meta.url), 'utf8');
 
 test('uses the shared bounded pan calculation at every preview scale', () => {
-  assert.match(previewSource, /import \{ clampPreviewPan, previewVisibleRegion \} from '\.\.\/\.\.\/utils\/mapPreviewViewport'/);
+  assert.match(previewSource, /import \{[\s\S]*clampPreviewPan[\s\S]*previewVisibleRegion[\s\S]*previewZoomAtAnchor[\s\S]*\} from '\.\.\/\.\.\/utils\/mapPreviewViewport'/);
   assert.match(previewSource, /const clamped = clampPreviewPan\(\{/);
   assert.match(previewSource, /renderedWidth: mapWidth\.value \* actualScale\.value/);
   assert.match(previewSource, /renderedHeight: mapHeight\.value \* actualScale\.value/);
@@ -19,7 +19,13 @@ test('accepts primary and middle-button panning but rejects other buttons', () =
   assert.match(previewSource, /@auxclick\.prevent/);
 });
 
-test('reset restores the fitted centered preview', () => {
+test('keeps 100% as native scale and uses fit only as the zoom-out bound', () => {
+  assert.match(previewSource, /const minimumScale = computed\(\(\) => Math\.min\(1, fitScale\.value\)\)/);
+  assert.match(previewSource, /const actualScale = computed\(\(\) => displayScale\.value\)/);
+  assert.match(previewSource, /oldScale: actualScale\.value,[\s\S]{0,120}newScale: nextDisplayScale/);
+});
+
+test('reset restores the native centered preview', () => {
   assert.match(previewSource, /function resetView\(\) \{[\s\S]{0,160}displayScale\.value = 1/);
   assert.match(previewSource, /function resetView\(\) \{[\s\S]{0,200}offsetX\.value = 0/);
   assert.match(previewSource, /function resetView\(\) \{[\s\S]{0,240}offsetY\.value = 0/);

@@ -99,7 +99,7 @@
                   <canvas ref="facePreviewRef" class="face-preview" :width="faceSize" :height="faceSize" @click="openTextFacePicker" />
                   <!-- <button type="button" class="editor-btn" @click="openTextFacePicker">{{ t('eventcmd.choose') }}</button> -->
                 </div>
-                <label class="text-cmd-text">{{ t('eventcmd.text') }}<span class="text-cmd-input-wrap"><textarea v-model="multiText" rows="5" /><span class="text-guide-line" :style="{ left: `${textGuideLeft}px` }" aria-hidden="true" /></span></label>
+                <label class="text-cmd-text">{{ t('eventcmd.text') }}<span ref="textInputWrapRef" class="text-cmd-input-wrap"><textarea ref="textAreaRef" v-model="multiText" rows="5" @input="scheduleTextGuideMeasure" /><span class="text-guide-line" :style="{ left: `${textGuideLeft}px` }" aria-hidden="true" /></span></label>
               </div>
               <div class="text-cmd-options">
                 <label v-if="currentEngine === 'rpg-maker-mz'">
@@ -126,14 +126,18 @@
             <template v-else-if="draft.code === 102">
               <div class="choice-cmd-layout">
                 <div class="choice-cmd-list">
-                  <span class="choice-cmd-title">{{ t('eventcmd.choicesTitle') }}</span>
-                  <label v-for="n in 6" :key="n" class="choice-cmd-row"><span>#{{ n }}:</span><input v-model="choiceInputs[n - 1]" /></label>
+                  <label class="choice-cmd-text">
+                    <span class="choice-cmd-title">{{ t('eventcmd.choicesTitle') }}</span>
+                    <textarea v-model="choiceText" rows="8" @input="scheduleChoiceValidation" />
+                    <small class="choice-cmd-hint">{{ t('eventcmd.choiceInputHint') }}</small>
+                  </label>
+                  <p v-if="choiceError" class="choice-cmd-warning" role="alert">{{ choiceError }}</p>
                 </div>
                 <div class="choice-cmd-side">
                   <label>{{ t('eventcmd.background') }}<select :value="numberParam(4)" @change="setParam(4, numberValue($event))"><option :value="0">{{ t('eventcmd.bgWindow') }}</option><option :value="1">{{ t('eventcmd.bgDim') }}</option><option :value="2">{{ t('eventcmd.bgTransparent') }}</option></select></label>
                   <label>{{ t('eventcmd.windowPosition') }}<select :value="numberParam(3,2)" @change="setParam(3, numberValue($event))"><option :value="0">{{ t('eventcmd.posLeft') }}</option><option :value="1">{{ t('eventcmd.posMiddle') }}</option><option :value="2">{{ t('eventcmd.posRight') }}</option></select></label>
-                  <label>{{ t('eventcmd.defaultChoice') }}<select :value="numberParam(2)" @change="setParam(2, numberValue($event))"><option :value="-1">{{ t('eventcmd.choiceNone') }}</option><option v-for="n in 6" :key="n" :value="n - 1">{{ t('eventcmd.choiceItem', { n }) }}</option></select></label>
-                  <label>{{ t('eventcmd.cancelChoice') }}<select :value="numberParam(1,1)" @change="setParam(1, numberValue($event))"><option :value="-2">{{ t('eventcmd.choiceBranch') }}</option><option :value="-1">{{ t('eventcmd.choiceDisallow') }}</option><option v-for="n in 6" :key="n" :value="n - 1">{{ t('eventcmd.choiceItem', { n }) }}</option></select></label>
+                  <label>{{ t('eventcmd.defaultChoice') }}<select :value="rawChoiceParam(2, -1)" @change="setParam(2, numberValue($event))"><option v-if="invalidChoiceDefault" :value="rawChoiceParam(2)">{{ t('eventcmd.choiceInvalid', { index: String(rawChoiceParam(2)) }) }}</option><option :value="-1">{{ t('eventcmd.choiceNone') }}</option><option v-for="option in choiceItemOptions" :key="`default-${option.value}`" :value="option.value">{{ option.label }}</option></select></label>
+                  <label>{{ t('eventcmd.cancelChoice') }}<select :value="rawChoiceParam(1, -1)" @change="setParam(1, numberValue($event))"><option v-if="invalidChoiceCancel" :value="rawChoiceParam(1)">{{ t('eventcmd.choiceInvalid', { index: String(rawChoiceParam(1)) }) }}</option><option :value="-2">{{ t('eventcmd.choiceBranch') }}</option><option :value="-1">{{ t('eventcmd.choiceDisallow') }}</option><option v-for="option in choiceItemOptions" :key="`cancel-${option.value}`" :value="option.value">{{ option.label }}</option></select></label>
                 </div>
               </div>
             </template>
@@ -160,7 +164,7 @@
               </label>
             </template>
             <template v-else-if="draft.code === 105">
-              <label class="full">{{ t('eventcmd.text') }}<span class="text-cmd-input-wrap"><textarea v-model="multiText" rows="10" /><span class="text-guide-line" :style="{ left: `${scrollGuideLeft}px` }" aria-hidden="true" /></span></label>
+              <label class="full">{{ t('eventcmd.text') }}<span ref="textInputWrapRef" class="text-cmd-input-wrap"><textarea ref="textAreaRef" v-model="multiText" rows="10" @input="scheduleTextGuideMeasure" /><span class="text-guide-line" :style="{ left: `${scrollGuideLeft}px` }" aria-hidden="true" /></span></label>
               <div class="scroll-cmd-options">
                 <label class="scroll-cmd-speed">{{ t('eventcmd.speed') }}<input :value="numberParam(0,2)" type="number" min="1" max="8" @input="setParam(0, numberValue($event))" /></label>
                 <label class="check"><input :checked="boolParam(1)" type="checkbox" @change="setParam(1, checkedValue($event))" />{{ t('eventcmd.disableFastForward') }}</label>
@@ -172,8 +176,8 @@
             <template v-else-if="draft.code === 356 || draft.code === 357">
               <div class="plugin-command-editor">
                 <label>
-                  {{ t('eventcmd.enabledPlugins') }}
-                  <el-select :model-value="pluginCommandPlugin" filterable popper-class="plugin-command-popper" @update:model-value="selectPluginForCommand">
+                  {{ t('eventcmd.pluginName') }}
+                  <el-select :model-value="pluginCommandPlugin" filterable popper-class="plugin-command-popper" :popper-style="{ zIndex: LAYER_Z.pluginParameterPopover }" @update:model-value="selectPluginForCommand">
                     <el-option value="" :label="t('eventcmd.allPlugins')" />
                     <el-option v-for="plugin in commandCapablePluginEntries" :key="plugin.name" :value="plugin.name" :label="plugin.name">
                       <span class="plugin-option-name">{{ plugin.name }}</span>
@@ -186,7 +190,7 @@
                   <select :value="matchedPluginCommandHintKey" @change="applyPluginCommandHint">
                     <option value="">{{ t('eventcmd.selectHint') }}</option>
                     <option v-for="hint in visiblePluginCommandHints" :key="pluginCommandHintKey(hint)" :value="pluginCommandHintKey(hint)">
-                      {{ hint.command }} · {{ hint.pluginName }}
+                      {{ pluginCommandHintLabel(hint) }}
                     </option>
                   </select>
                 </label>
@@ -196,18 +200,20 @@
                 </label>
                 <template v-else>
                   <div class="full plugin-command-name-row">
-                    <span>{{ t('eventcmd.pluginCommand') }}</span>
+                    <span>{{ t('eventcmd.commandName') }}</span>
                     <el-tag effect="plain" class="plugin-command-name">{{ stringParam(2) || stringParam(1) || t('eventcmd.selectHint') }}</el-tag>
                   </div>
                   <div v-if="selectedMZPluginHint?.arguments?.length" class="full plugin-args-wrap">
                     <table class="plugin-args-table">
-                      <thead><tr><th>{{ t('eventcmd.argName') }}</th><th>{{ t('eventcmd.argValue') }}</th></tr></thead>
+                      <thead><tr><th>{{ t('eventcmd.argLabel') }}</th><th>{{ t('eventcmd.argKey') }}</th><th>{{ t('eventcmd.argType') }}</th><th>{{ t('eventcmd.argValue') }}</th></tr></thead>
                       <tbody>
                         <tr v-for="argument in selectedMZPluginHint.arguments" :key="argument.name" @dblclick="openPluginArgumentEditor(argument)">
                           <td class="plugin-arg-name">
                             <span>{{ argument.label || argument.name }}</span>
                             <small v-if="argument.description">{{ argument.description }}</small>
                           </td>
+                          <td class="plugin-arg-key"><code>{{ argument.name }}</code></td>
+                          <td class="plugin-arg-type">{{ pluginArgumentTypeLabel(argument) }}</td>
                           <td class="plugin-arg-value">
                             <el-switch v-if="argument.kind === 'boolean'" size="small" :model-value="['true','on','1'].includes(mzPluginArgument(argument.name).toLowerCase())" @update:model-value="setMZPluginArgument(argument, $event)" @dblclick.stop />
                             <template v-else>
@@ -560,15 +566,15 @@
 
         <footer v-if="!pickerOpen" class="editor-modal-footer">
           <button type="button" class="editor-btn" @click="close">{{ t('eventcmd.cancel') }}</button>
-          <button type="button" class="editor-btn primary" @click="commit">{{ t('eventcmd.ok') }}</button>
+          <button type="button" class="editor-btn primary" :disabled="draft?.code === 102 && Boolean(choiceError)" @click="commit">{{ t('eventcmd.ok') }}</button>
         </footer>
         <span v-if="!pickerOpen && draft" class="dialog-resize-handle" role="separator" :aria-label="t('eventcmd.resizeHandle')" :title="t('eventcmd.resizeHandle')" @pointerdown.prevent="onDialogResizeStart" @pointermove="onDialogResizeMove" @pointerup="onDialogResizeEnd" @dblclick="resetDialogSize" />
       </section>
     </div>
   </teleport>
   <ImageAssetPickerDialog ref="imagePicker" :catalog="catalog" :load-image="loadImage" @commit="commitImageSelection" />
-  <MoveRouteDialog ref="routeDialog" :preview-x="eventX" :preview-y="eventY" @commit="setRoute" @cancel="cancelMergedRoute" />
-  <PluginParameterValueDialog v-model="pluginArgumentEditorOpen" :field="pluginArgumentEditing" :value="pluginArgumentEditing ? mzPluginArgument(pluginArgumentEditing.name) : ''" :catalog="catalog" allow-unchanged-commit @commit="commitPluginArgumentValue" @catalog-changed="emit('catalog-changed')" />
+  <MoveRouteDialog ref="routeDialog" :preview-x="eventX" :preview-y="eventY" :catalog="catalog" @commit="setRoute" @cancel="cancelMergedRoute" />
+  <PluginParameterValueDialog v-model="pluginArgumentEditorOpen" :field="pluginArgumentEditing" :value="pluginArgumentEditing ? mzPluginArgument(pluginArgumentEditing.name) : ''" :catalog="catalog" :dialog-z-index="LAYER_Z.pluginParameterDialog" allow-unchanged-commit @commit="commitPluginArgumentValue" @catalog-changed="emit('catalog-changed')" />
   <MessagePreviewDialog ref="messagePreview" :catalog="catalog" :load-image="loadImage" />
   <ScrollTextPreviewDialog ref="scrollPreview" :catalog="catalog" />
   <SystemNamedEntrySelectorDialog ref="namedEntrySelector" :catalog="catalog" @commit="commitNamedEntrySelection" @catalog-changed="emit('catalog-changed')" />
@@ -590,6 +596,7 @@ import { localizeCommandGroups, localizeCommandLabel } from '../../utils/eventCo
 import { mvFaceSourceRect } from '../../utils/rmmvFace';
 import { isBigCharacterName } from '../../composables/useMapRenderer';
 import { formatSystemNamedEntryId } from '../../utils/systemNamedEntryRanges';
+import { formatPluginParameterTypeLabel } from '../../utils/pluginParameterTypeLabel';
 import EventCommandFields from './EventCommandFields.vue';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 import MessagePreviewDialog from './MessagePreviewDialog.vue';
@@ -606,8 +613,36 @@ const projectStore = useProjectStore();
 const { language, t } = useI18n();
 const commandDialogZ = String(LAYER_Z.commandDialog);
 const visible=ref(false),pickerOpen=ref(false),pickerPage=ref(1),draft=ref<MvCommand|null>(null),draftSpan=ref<MvCommand[]>([]),editSpan=ref<number|null>(null),insertSpan=ref<number|null>(null),insertIndent=ref(0),multiText=ref(''),batchInput=ref(false);
-// RM-native Show Choices rows: six fixed inputs mirrored into parameters[0] on commit.
-const choiceInputs=ref<string[]>(['','','','','','']);
+// RM-native Show Choices uses one line per option. Blank lines are ignored, but
+// a seventh non-empty line is rejected rather than silently discarded.
+const choiceText=ref('');
+function parseChoiceLines(value:string):string[]{
+  return value.split(/\r?\n/).map((line)=>line.trim()).filter(Boolean);
+}
+const choiceLines=computed(()=>parseChoiceLines(choiceText.value));
+const choiceItemOptions=computed(()=>choiceLines.value.slice(0,6).map((label,value)=>({value,label:t('eventcmd.choiceItem',{n:value+1})})));
+const invalidChoiceDefault=computed(()=>{
+  if(draft.value?.code!==102)return false;
+  const raw=draft.value.parameters[2];
+  if(raw==null||raw==='')return false;
+  const value=Number(raw);
+  return !Number.isInteger(value)||value < -1 || value >= choiceLines.value.length;
+});
+const invalidChoiceCancel=computed(()=>{
+  if(draft.value?.code!==102)return false;
+  const raw=draft.value.parameters[1];
+  if(raw==null||raw==='')return false;
+  const value=Number(raw);
+  return !Number.isInteger(value)||value < -2 || value >= choiceLines.value.length;
+});
+const choiceError=computed(()=>{
+  if(draft.value?.code!==102)return '';
+  if(!choiceLines.value.length)return t('eventcmd.choicesEmpty');
+  if(choiceLines.value.length>6)return t('eventcmd.choiceTooMany');
+  if(invalidChoiceDefault.value||invalidChoiceCancel.value)return t('eventcmd.choiceInvalidBlock');
+  return '';
+});
+function scheduleChoiceValidation(){/* computed validation follows choiceText */}
 const imagePicker=ref<InstanceType<typeof ImageAssetPickerDialog>>(),routeDialog=ref<InstanceType<typeof MoveRouteDialog>>(),facePreviewRef=ref<HTMLCanvasElement>(),messagePreview=ref<InstanceType<typeof MessagePreviewDialog>>();
 const scrollPreview=ref<InstanceType<typeof ScrollTextPreviewDialog>>(),namedEntrySelector=ref<InstanceType<typeof SystemNamedEntrySelectorDialog>>(),pendingNamedEntry=ref<{kind:'switch'|'variable';index:number;mirror?:number}>({kind:'variable',index:0});
 // RM-native Shop Processing: rows mirror head params + 605 continuations, rebuilt on commit.
@@ -656,6 +691,9 @@ function setPickerViewMode(mode:'paged'|'table'){pickerViewMode.value=mode;try{l
 // Per-command dialog size memory: the resize handle writes it, double-click clears it.
 const SIZE_KEY='rpgmv.eventCommandDialogSize';
 const dialogShellRef=ref<HTMLElement>();
+const textInputWrapRef=ref<HTMLElement>();
+const textAreaRef=ref<HTMLTextAreaElement>();
+const measuredTextGuideLeft=ref(0);
 const dialogSize=ref<{w:number;h:number}|null>(null);
 let dialogResizeStart:{x:number;y:number;w:number;h:number;pointer:number}|null=null;
 const clampDialogW=(w:number)=>Math.round(Math.max(480,Math.min(window.innerWidth-32,w)));
@@ -705,12 +743,36 @@ const commandTitle=computed(()=>{
   return definition ? localizeCommandLabel(definition, language.value) : t('eventcmd.unknownCommand', { code: draft.value.code });
 });
 const routeParam=computed<MvMoveRoute>(()=>(draft.value?.parameters[1] as MvMoveRoute)||defaultMoveRoute());
-// RM guide line: usable game text width is screen width minus 18px paddings, minus 168px when a face is set;
-// scaled from the 28px game font down to the 13px textarea font, plus the textarea's left padding+border.
+// The guide line is measured against the rendered textarea instead of trusting
+// the dialog's nominal width. This keeps it inside the actual UI area when a
+// project uses a wide screen or the dialog has been resized.
 const textFaceName=computed(()=>draft.value?.code===101?String(draft.value.parameters[0]||''):'');
-const textGuideLeft=computed(()=>Math.round(((Number(props.catalog?.screenWidth)||816)-36-(textFaceName.value?168:0))*13/28)+7);
-// Scroll text spans the full screen width, so its guide never reserves face space.
-const scrollGuideLeft=computed(()=>Math.round(((Number(props.catalog?.screenWidth)||816)-36)*13/28)+7);
+function measureTextGuide(){
+  const wrap=textInputWrapRef.value;
+  const area=textAreaRef.value;
+  if(!wrap||!area){measuredTextGuideLeft.value=0;return;}
+  const wrapWidth=Math.max(0,wrap.getBoundingClientRect().width);
+  const areaWidth=Math.max(0,Math.min(area.getBoundingClientRect().width,area.clientWidth||area.getBoundingClientRect().width));
+  const measuredWidth=Math.max(0,Math.min(wrapWidth,areaWidth));
+  const uiAreaWidth=Number(props.catalog?.uiAreaWidth);
+  if(!Number.isInteger(uiAreaWidth)||uiAreaWidth<=0){measuredTextGuideLeft.value=0;return;}
+  const reserved= draft.value?.code===101&&textFaceName.value ? 168 : 0;
+  const usableGameWidth=Math.max(0,uiAreaWidth-36-reserved);
+  const css=window.getComputedStyle(area);
+  const textareaFontSize=Number.parseFloat(css.fontSize);
+  if(!Number.isFinite(textareaFontSize)||textareaFontSize<=0){measuredTextGuideLeft.value=0;return;}
+  // RMMV's message text is measured at the native 28px font. Map that
+  // logical width into the measured textarea's actual font/padding box.
+  const inlineInset=area.offsetLeft+area.clientLeft+(Number.parseFloat(css.paddingLeft)||0);
+  const target=inlineInset+(usableGameWidth*textareaFontSize/28);
+  const maxGuide=Math.max(0,Math.min(Math.max(0,wrapWidth-1),area.offsetLeft+measuredWidth-1));
+  measuredTextGuideLeft.value=Math.round(Math.max(0,Math.min(maxGuide,target)));
+}
+function scheduleTextGuideMeasure(){void nextTick(measureTextGuide);}
+const textGuideLeft=computed(()=>measuredTextGuideLeft.value);
+// Scroll text spans the full screen width, but uses the same measured/clamped
+// pixel slot as the message editor because only one of these templates is mounted.
+const scrollGuideLeft=computed(()=>measuredTextGuideLeft.value);
 const enabledPluginEntries=computed(()=>pluginCommandPlugins.value.filter((plugin)=>plugin.status&&plugin.fileExists&&plugin.name));
 const pluginHintMatchesEngine=(hint:PluginCommandHint)=>currentEngine.value==='rpg-maker-mz'?hint.source==='mz-command-header':hint.source!=='mz-command-header';
 // The plugin dropdown only lists plugins that actually expose commands for this engine.
@@ -733,14 +795,21 @@ const currentMZPluginArguments=computed<Record<string,string>>(()=>{
   return Object.fromEntries(Object.entries(value as Record<string,unknown>).map(([key,entry])=>[key,String(entry??'')]));
 });
 watch(currentPickerItems,()=>{activePickerIndex.value=currentPickerItems.value.length?0:-1;});
+watch([visible,()=>draft.value?.code,textFaceName,()=>props.catalog?.uiAreaWidth],()=>scheduleTextGuideMeasure());
 
 function onKeyDown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(LAYER_Z.commandDialog)) return;
   event.preventDefault();
   close();
 }
-onMounted(() => window.addEventListener('keydown', onKeyDown));
-onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
+onMounted(() => {
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('resize', scheduleTextGuideMeasure);
+});
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeyDown);
+  window.removeEventListener('resize', scheduleTextGuideMeasure);
+});
 
 function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
 // Keep in sync with the bespoke editor templates dispatched by draft.code above.
@@ -751,8 +820,8 @@ function commandHasNoEditorParams(code:number){
   const definition=commandDefinition(code,currentEngine.value);
   return definition!=null&&definition.fields.length===0;
 }
-function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value&&commandHasNoEditorParams(draft.value.code)){draft.value=null;draftSpan.value=[];return;}editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
-function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceInputs();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function openEditor(commands:MvCommand[],index:number){draftSpan.value=clone(commands);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value&&commandHasNoEditorParams(draft.value.code)){draft.value=null;draftSpan.value=[];return;}editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void nextTick(measureTextGuide);if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncGpRangeMode();syncPluginCommandSelection();void nextTick(measureTextGuide);if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
 // Set Movement Route (205) merges the target dropdown into the route editor: the
 // command dialog shell never shows, MoveRouteDialog commits or cancels the draft.
 function openMergedRouteDialog(){pickerOpen.value=false;visible.value=false;const current=numberParam(0,0);routeDialog.value?.open(routeParam.value,{target:current,targetOptions:moveRouteTargetOptions(current)});}
@@ -798,9 +867,10 @@ function onPickerKeyDown(event:KeyboardEvent){
 function commit(){
   if(!draft.value)return;
   if(draft.value.code===102){
-    // Compact the six fixed rows; an all-empty list is a hard error, never silently defaulted.
-    const choices=choiceInputs.value.map((value)=>value.trim()).filter(Boolean);
-    if(!choices.length){ElMessage.error(t('eventcmd.choicesEmpty'));return;}
+    // Compact one choice per line; blank lines are ignored, while overflow and
+    // stale default/cancel indices remain explicit errors.
+    const choices=choiceLines.value;
+    if(choiceError.value){ElMessage.error(choiceError.value);return;}
     draft.value.parameters[0]=choices;
   }
   if(draft.value.code===302){
@@ -829,7 +899,7 @@ function buildSpan(){
 }
 function buildChoiceBlock(){
   const head=clone(draft.value!);
-  const choices=(head.parameters[0] as string[])||[];
+  const choices=Array.isArray(head.parameters[0])?(head.parameters[0] as unknown[]).map((choice)=>String(choice??'')):[];
   const span:MvCommand[]=[head,...choices.map((choice,index)=>({code:402,indent:head.indent,parameters:[index,choice]}))];
   if(Number(head.parameters[1])===-2)span.push({code:403,indent:head.indent,parameters:[]});
   span.push({code:404,indent:head.indent,parameters:[]});
@@ -853,7 +923,7 @@ function buildChoiceEditSpan(){
       current.push(clone(command));
     }
   }
-  const choices=(head.parameters[0] as string[])||[];
+  const choices=Array.isArray(head.parameters[0])?(head.parameters[0] as unknown[]).map((choice)=>String(choice??'')):[];
   const used=new Set<number>();
   const picks=choices.map((choice)=>{
     const index=oldBranches.findIndex((branch,i)=>!used.has(i)&&branch.text===choice);
@@ -895,9 +965,10 @@ function syncMultiText(){if(!draft.value)return;multiText.value=draft.value.code
 function touchCommand(){if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);}
 function setParam(index:number,value:unknown){if(draft.value){draft.value.parameters[index]=value;if((draft.value.code===356&&index===0)||(draft.value.code===357&&(index===0||index===1)))syncPluginCommandSelection();touchCommand();}}
 function numberParam(index:number,fallback=0){return Number(draft.value?.parameters[index]??fallback);}
+function rawChoiceParam(index:number,fallback=-1):unknown{return draft.value?.parameters[index]??fallback;}
 function stringParam(index:number,fallback=''){return String(draft.value?.parameters[index]??fallback);}
 function boolParam(index:number,fallback=false){return Boolean(draft.value?.parameters[index]??fallback);}
-function syncChoiceInputs(){const choices=draft.value?.code===102?(draft.value.parameters[0] as string[])||[]:[];choiceInputs.value=Array.from({length:6},(_,index)=>String(choices[index]??''));}
+function syncChoiceText(){const choices=draft.value?.code===102&&Array.isArray(draft.value.parameters[0])?draft.value.parameters[0] as unknown[]:[];choiceText.value=choices.map((choice)=>String(choice??'').trim()).filter(Boolean).join('\n');}
 // Shop rows live in [head params, ...605 params]; every row is [goodsType, id, priceType, price].
 function syncShopGoods(){
   shopGoodsIndex.value=null;shopGoodsEditIndex.value=null;
@@ -980,6 +1051,14 @@ function selectPluginForCommand(name:string){
   }
 }
 function pluginCommandHintKey(hint:PluginCommandHint){return `${hint.pluginName}\u0000${hint.source}\u0000${hint.command}`;}
+function pluginCommandHintLabel(hint:PluginCommandHint):string{
+  const displayName=String(hint.displayName||'').trim();
+  const command=String(hint.command||'').trim();
+  return displayName&&displayName!==command?`${displayName} · ${command}`:(displayName||command);
+}
+function pluginArgumentTypeLabel(argument:PluginCommandArgument):string{
+  return formatPluginParameterTypeLabel(argument.rawType, argument.kind, t);
+}
 function applyPluginCommandHint(event:Event){
   const key=inputValue(event);
   const hint=visiblePluginCommandHints.value.find((item)=>pluginCommandHintKey(item)===key);
@@ -1081,14 +1160,11 @@ defineExpose({openPicker,openEditor});
 .plugin-command-name-row{display:flex;align-items:center;gap:8px;color:var(--app-ink-soft);font-size:12px}.plugin-command-name{max-width:100%;overflow:hidden;font-family:var(--app-font-mono);text-overflow:ellipsis}
 .plugin-args-wrap{max-height:320px;overflow:auto;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm)}
 .plugin-args-table{width:100%;border-collapse:collapse;background:var(--app-bg);font-size:12px}.plugin-args-table th{position:sticky;top:0;padding:5px 8px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-weight:600;text-align:left}.plugin-args-table td{padding:5px 8px;border-top:1px solid var(--app-border);vertical-align:middle}.plugin-args-table tbody tr{cursor:default}.plugin-args-table tbody tr:hover{background:var(--app-bg-soft)}
-.plugin-arg-name{width:45%}.plugin-arg-name span{display:block;color:var(--app-ink)}.plugin-arg-name small{display:block;overflow:hidden;color:var(--app-ink-muted);font-size:11px;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
+.plugin-arg-name{width:32%}.plugin-arg-name span{display:block;color:var(--app-ink)}.plugin-arg-name small{display:block;overflow:hidden;color:var(--app-ink-muted);font-size:11px;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}.plugin-arg-key{width:22%;font-family:var(--app-font-mono);color:var(--app-ink-muted)}.plugin-arg-key code{font:inherit;overflow-wrap:anywhere}.plugin-arg-type{width:18%;color:var(--app-ink-muted);white-space:nowrap}
 .plugin-arg-value{color:var(--app-ink)}.plugin-arg-value .plugin-arg-preview{display:inline-block;max-width:calc(100% - 40px);overflow:hidden;font-family:var(--app-font-mono);text-overflow:ellipsis;vertical-align:middle;white-space:nowrap}.plugin-arg-edit{min-width:28px;margin-left:6px;padding:1px 6px}
 .plugin-option-name{float:left;max-width:55%;overflow:hidden;text-overflow:ellipsis}.plugin-option-desc{float:right;max-width:42%;overflow:hidden;color:var(--app-ink-muted);font-size:12px;text-overflow:ellipsis}
-/* Element Plus teleports its popper/dialog to body; lift them above the command dialog overlay. */
-:global(.plugin-command-popper){z-index:2600 !important}
-:global(.el-overlay:has(.plugin-parameter-value-dialog)){z-index:2600 !important}
 .text-cmd-layout{width:100%;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}.text-cmd-face{display:flex;flex-direction:column;align-items:flex-start;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-face .editor-btn{align-self:center}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background-color:#f5efe6;background-image:linear-gradient(45deg,#ded6c8 25%,transparent 25%),linear-gradient(-45deg,#ded6c8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ded6c8 75%),linear-gradient(-45deg,transparent 75%,#ded6c8 75%);background-position:0 0,0 6px,6px -6px,-6px 0;background-size:12px 12px}.text-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-input-wrap{position:relative;display:block}.text-cmd-input-wrap textarea{width:100%;min-height:144px;box-sizing:border-box}.text-guide-line{position:absolute;top:1px;bottom:1px;width:1px;background:var(--app-border-strong);pointer-events:none}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:flex-end}.text-cmd-preview{margin-left:auto}.text-cmd-batch{width:100%;margin-top:2px;gap:5px}
-.choice-cmd-layout{width:100%;display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:16px;align-items:start}.choice-cmd-list{display:grid;gap:6px}.choice-cmd-title{color:var(--app-ink-soft);font-size:12px;font-weight:600}.choice-cmd-row{display:flex;align-items:center;gap:6px;color:var(--app-ink-soft);font-size:12px}.choice-cmd-row span{flex:0 0 24px;text-align:right}.choice-cmd-row input{flex:1;min-width:0}.choice-cmd-side{display:grid;gap:8px;align-content:start}.choice-cmd-side label{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}
+.choice-cmd-layout{width:100%;display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:16px;align-items:start}.choice-cmd-list{display:grid;gap:6px}.choice-cmd-title{color:var(--app-ink-soft);font-size:12px;font-weight:600}.choice-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.choice-cmd-text textarea{width:100%;min-height:150px;box-sizing:border-box;resize:vertical}.choice-cmd-hint{color:var(--app-ink-muted);font-size:11px;line-height:1.4}.choice-cmd-warning{margin:0;padding:6px 8px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:11px;line-height:1.4}.choice-cmd-row{display:flex;align-items:center;gap:6px;color:var(--app-ink-soft);font-size:12px}.choice-cmd-row span{flex:0 0 24px;text-align:right}.choice-cmd-row input{flex:1;min-width:0}.choice-cmd-side{display:grid;gap:8px;align-content:start}.choice-cmd-side label{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}
 .var-cmd-field{width:100%;max-width:280px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.var-cmd-field .text-cmd-label{margin:0}.var-cmd-row{display:flex;gap:6px}.var-cmd-row input{flex:1;min-width:0;cursor:pointer}.var-cmd-row .editor-btn{flex:0 0 auto;min-width:32px}
 .scroll-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:center}.scroll-cmd-speed{display:flex!important;align-items:center;gap:6px}.scroll-cmd-speed input{width:64px}.scroll-cmd-preview{margin-left:auto}
 .shop-cmd-layout{width:100%;display:grid;gap:8px}.shop-goods-table{width:100%;border-collapse:collapse;border:1px solid var(--app-border-strong);background:var(--app-bg);font-size:12px}.shop-goods-table th{background:var(--app-bg-soft);color:var(--app-ink-soft);font-weight:600}.shop-goods-table th,.shop-goods-table td{padding:4px 8px;border-bottom:1px solid var(--app-border);text-align:left}.shop-price-col{width:110px;text-align:right}.shop-goods-table tbody tr{cursor:default;user-select:none}.shop-goods-table tbody tr.active{background:var(--app-accent-soft)}.shop-goods-empty td{height:26px}.shop-goods-table:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}

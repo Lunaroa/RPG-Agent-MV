@@ -3,7 +3,7 @@
     <div
       v-if="visible"
       class="system-named-overlay editor-modal-overlay"
-      :data-editor-dialog-layer="LAYER_Z.subDialog"
+      :data-editor-dialog-layer="subDialogLayerZ"
       @mousedown.self="close"
     >
       <section
@@ -133,6 +133,7 @@ interface OpenOptions {
 
 const props = defineProps<{
   catalog: EditorProjectCatalog | null;
+  zIndex?: number;
 }>();
 
 const emit = defineEmits<{
@@ -153,7 +154,8 @@ const draftName = ref('');
 const activeRangeStart = ref(1);
 const localEntries = ref<NamedCatalogEntry[]>([]);
 const titleId = 'system-named-entry-title';
-const subDialogZ = String(LAYER_Z.subDialog);
+const subDialogLayerZ = computed(() => props.zIndex ?? LAYER_Z.subDialog);
+const subDialogZ = computed(() => String(subDialogLayerZ.value));
 
 const dialogTitle = computed(() =>
   titleOverride.value
@@ -203,7 +205,7 @@ watch(() => props.catalog, () => {
 });
 
 function onKeyDown(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
+  if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(subDialogLayerZ.value)) return;
   event.preventDefault();
   close();
 }

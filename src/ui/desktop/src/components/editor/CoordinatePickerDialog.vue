@@ -1,6 +1,6 @@
 <template>
   <teleport to="body">
-    <div v-if="visible" class="coordinate-overlay editor-modal-overlay" :data-editor-dialog-layer="LAYER_Z.subDialog" @mousedown.self="close">
+    <div v-if="visible" class="coordinate-overlay editor-modal-overlay" :data-editor-dialog-layer="coordinateLayerZ" @mousedown.self="close">
       <section class="coordinate-dialog editor-modal-shell" role="dialog" aria-modal="true" aria-labelledby="coordinate-picker-title">
         <header class="editor-modal-header">
           <strong id="coordinate-picker-title" class="editor-modal-title">{{ title || t(mode === 'map' ? 'coordinate.mapTitle' : 'coordinate.screenTitle') }}</strong>
@@ -58,7 +58,7 @@ type PickerMode = 'map' | 'screen';
 interface CoordinateSelection { mapId: number; x: number; y: number }
 interface OpenOptions extends Partial<CoordinateSelection> { mode?: PickerMode; allowMapChange?: boolean; title?: string }
 
-const props = defineProps<{ catalog: EditorProjectCatalog | null }>();
+const props = defineProps<{ catalog: EditorProjectCatalog | null; zIndex?: number }>();
 const emit = defineEmits<{ commit: [selection: CoordinateSelection] }>();
 const { t } = useI18n();
 const visible = ref(false);
@@ -74,6 +74,7 @@ const mapPayload = ref<MapPayload | null>(null);
 const tilesetImages = ref<(HTMLImageElement | null)[]>([]);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const stageRef = ref<HTMLElement | null>(null);
+const coordinateLayerZ = computed(() => props.zIndex ?? LAYER_Z.subDialog);
 // Full-map rendering: cap the backing canvas edge and downscale instead of cropping.
 const MAX_CANVAS_EDGE = 4096;
 let mapBaseCanvas: HTMLCanvasElement | null = null;
@@ -100,7 +101,7 @@ const maxX = computed(() => mode.value === 'screen' ? screenWidth.value - 1 : Ma
 const maxY = computed(() => mode.value === 'screen' ? screenHeight.value - 1 : Math.max(0, Number(mapPayload.value?.map.height || 1) - 1));
 
 function onKeyDown(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(LAYER_Z.subDialog)) return;
+  if (event.key !== 'Escape' || !visible.value || !isTopmostEditorDialog(coordinateLayerZ.value)) return;
   event.preventDefault();
   close();
 }
@@ -321,7 +322,7 @@ defineExpose({ open });
 </script>
 
 <style scoped>
-.coordinate-overlay { z-index: 2500; }
+.coordinate-overlay { z-index: v-bind(coordinateLayerZ); }
 .coordinate-dialog { width: min(760px, calc(100vw - 32px)); }
 .coordinate-controls { display: grid; grid-template-columns:minmax(180px, 1fr) 92px 92px auto; align-items:end; gap:8px; padding:10px 12px; border-bottom:1px solid var(--app-border); }
 .coordinate-controls label { display:grid; gap:4px; color:var(--app-ink-muted); font-size:11px; }

@@ -178,6 +178,135 @@ export function editableCommands(page: MvEventPage): MvCommand[] {
 export interface MvCommandSpan {
   index: number;
   commands: MvCommand[];
+  /** Display/selection metadata derived from the raw command list. */
+  structureId?: number;
+  parentStructureId?: number;
+  branchId?: number;
+  role?: MvCommandSpanRole;
+}
+
+export type MvCommandSpanRole = 'command' | 'head' | 'branch' | 'terminator';
+
+export type MvCommandStructureKind = 'choices' | 'conditional' | 'loop' | 'battle' | 'skip';
+
+export interface MvCommandStructureBlock {
+  id: number;
+  kind: MvCommandStructureKind;
+  headCode: number;
+  headSpanIndex: number;
+  endSpanIndex: number;
+  indent: number;
+  parentId?: number;
+  branchSpanIndices: number[];
+}
+
+interface StructureDefinition {
+  kind: MvCommandStructureKind;
+  endCode: number;
+  branchCodes: readonly number[];
+}
+
+const STRUCTURE_DEFINITIONS: Readonly<Record<number, StructureDefinition>> = Object.freeze({
+  102: { kind: 'choices', endCode: 404, branchCodes: [402, 403] },
+  109: { kind: 'skip', endCode: 0, branchCodes: [] },
+  111: { kind: 'conditional', endCode: 412, branchCodes: [411] },
+  112: { kind: 'loop', endCode: 413, branchCodes: [] },
+  301: { kind: 'battle', endCode: 604, branchCodes: [601, 602, 603] },
+});
+
+function structureDefinition(code: number): StructureDefinition | undefined {
+  return STRUCTURE_DEFINITIONS[code];
+}
+
+function matchingStructureEnd(spans: MvCommandSpan[], headSpanIndex: number, definition: StructureDefinition): number {
+  const head = spans[headSpanIndex]?.commands[0];
+  if (!head) return Math.max(headSpanIndex, spans.length - 1);
+  let nested = 0;
+  for (let index = headSpanIndex + 1; index < spans.length; index += 1) {
+    const command = spans[index]?.commands[0];
+    if (!command) continue;
+    if (command.code === head.code && command.indent === head.indent) {
+      nested += 1;
+      continue;
+    }
+    if (command.code === definition.endCode && command.indent === head.indent) {
+      if (nested === 0) return index;
+      nested -= 1;
+    }
+  }
+  // Malformed/open structures remain selectable through the last editable row;
+  // no raw command is discarded merely because its closing marker is missing.
+  return Math.max(headSpanIndex, spans.length - 1);
+}
+
+function buildStructureAnalysis(spans: MvCommandSpan[]): MvCommandStructureBlock[] {
+  const blocks: MvCommandStructureBlock[] = [];
+  for (let index = 0; index < spans.length; index += 1) {
+    const command = spans[index]?.commands[0];
+    const definition = command ? structureDefinition(command.code) : undefined;
+    if (!command || !definition) continue;
+    const endSpanIndex = matchingStructureEnd(spans, index, definition);
+    const parent = blocks
+      .filter((block) => block.headSpanIndex < index && block.endSpanIndex >= endSpanIndex && block.indent < command.indent)
+      .sort((a, b) => b.headSpanIndex - a.headSpanIndex)[0];
+    const branchSpanIndices: number[] = [];
+    for (let branchIndex = index + 1; branchIndex <= endSpanIndex; branchIndex += 1) {
+      const branchCommand = spans[branchIndex]?.commands[0];
+      if (branchCommand && branchCommand.indent === command.indent && definition.branchCodes.includes(branchCommand.code)) {
+        branchSpanIndices.push(branchIndex);
+      }
+    }
+    blocks.push({
+      id: blocks.length,
+      kind: definition.kind,
+      headCode: command.code,
+      headSpanIndex: index,
+      endSpanIndex,
+      indent: command.indent,
+      ...(parent ? { parentId: parent.id } : {}),
+      branchSpanIndices,
+    });
+  }
+  return blocks;
+}
+
+function annotateStructureSpans(spans: MvCommandSpan[]): MvCommandStructureBlock[] {
+  const blocks = buildStructureAnalysis(spans);
+  const byHead = new Map(blocks.map((block) => [block.headSpanIndex, block]));
+  const byMarker = new Map<number, MvCommandStructureBlock>();
+  const byTerminator = new Map<number, MvCommandStructureBlock>();
+  for (const block of blocks) {
+    for (const marker of block.branchSpanIndices) byMarker.set(marker, block);
+    const end = spans[block.endSpanIndex]?.commands[0];
+    if (end?.indent === block.indent && end.code === STRUCTURE_DEFINITIONS[block.headCode].endCode) byTerminator.set(block.endSpanIndex, block);
+  }
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index];
+    const head = span.commands[0];
+    const headBlock = byHead.get(index);
+    const markerBlock = byMarker.get(index);
+    const terminatorBlock = byTerminator.get(index);
+    const role: MvCommandSpanRole = headBlock ? 'head' : terminatorBlock ? 'terminator' : markerBlock ? 'branch' : 'command';
+    const owner = headBlock || markerBlock || terminatorBlock || blocks
+      .filter((block) => block.headSpanIndex < index && block.endSpanIndex >= index && block.indent < head.indent)
+      .sort((a, b) => b.headSpanIndex - a.headSpanIndex)[0];
+    const branchPath = blocks
+      .filter((block) => block.headSpanIndex <= index && block.endSpanIndex >= index)
+      .sort((a, b) => a.indent - b.indent)
+      .map((block) => {
+        const marker = block.branchSpanIndices.filter((candidate) => candidate <= index).at(-1);
+        return marker === undefined ? block.headSpanIndex : marker;
+      });
+    const branchId = branchPath.at(-1);
+    spans[index] = {
+      ...span,
+      ...(owner ? { structureId: owner.id } : {}),
+      ...(owner?.parentId !== undefined ? { parentStructureId: owner.parentId } : {}),
+      ...(branchId !== undefined ? { branchId } : {}),
+      role,
+    };
+  }
+  return blocks;
 }
 
 export function editableCommandSpans(page: MvEventPage): MvCommandSpan[] {
@@ -189,6 +318,7 @@ export function editableCommandSpans(page: MvEventPage): MvCommandSpan[] {
     spans.push({ index, commands: list.slice(index, index + length) });
     index += length;
   }
+  annotateStructureSpans(spans);
   return spans;
 }
 
@@ -206,6 +336,28 @@ export function commandSpanLength(list: MvCommand[], index: number): number {
   let length = 1;
   while (list[index + length]?.code === follower) length += 1;
   return length;
+}
+
+/** Return the complete structural blocks represented by a display span list. */
+export function commandStructureBlocks(spans: MvCommandSpan[]): MvCommandStructureBlock[] {
+  // Callers may construct spans themselves in tests; annotate a copy so this
+  // helper never mutates a caller-owned array.
+  return buildStructureAnalysis(spans.map((span) => ({ ...span, commands: span.commands.map((command) => ({ ...command, parameters: [...command.parameters] })) })));
+}
+
+/** Stable branch scope used by Shift-selection. Empty means the top-level list. */
+export function commandBranchScope(spans: MvCommandSpan[], index: number): string {
+  const span = spans[index];
+  if (!span) return '';
+  const blocks = commandStructureBlocks(spans);
+  const path = blocks
+    .filter((block) => block.headSpanIndex <= index && block.endSpanIndex >= index)
+    .sort((a, b) => a.indent - b.indent)
+    .map((block) => {
+      const marker = block.branchSpanIndices.filter((candidate) => candidate <= index).at(-1);
+      return `${block.id}:${marker === undefined ? 'body' : marker}`;
+    });
+  return path.join('/');
 }
 
 export function ensureTerminator(list: MvCommand[]): void {
@@ -235,60 +387,22 @@ export function ensureTerminator(list: MvCommand[]): void {
   list.push({ code: 0, indent: 0, parameters: [] });
 }
 
-const STRUCTURE_END: Record<number, number> = { 102: 404, 109: 0, 111: 412, 112: 413, 301: 604 };
-const STRUCTURE_OPEN = new Set(Object.keys(STRUCTURE_END).map(Number));
-const STRUCTURE_CLOSE = new Set(Object.values(STRUCTURE_END));
-const STRUCTURE_BRANCH = new Set([402, 403, 411, 601, 602, 603]);
-const STRUCTURE_MARKER_START: Record<number, number> = {
-  0: 109,
-  402: 102,
-  403: 102,
-  404: 102,
-  411: 111,
-  412: 111,
-  413: 112,
-  601: 301,
-  602: 301,
-  603: 301,
-  604: 301,
-};
-
-function structureStartForMarker(spans: MvCommandSpan[], selectedIndex: number, startCode: number): number {
-  const marker = spans[selectedIndex]?.commands[0];
-  if (!marker) return -1;
-
-  for (let index = selectedIndex - 1; index >= 0; index -= 1) {
-    const head = spans[index]?.commands[0];
-    if (!head || head.indent !== marker.indent) continue;
-    if (head.code === startCode) return index;
-    if (head.code === STRUCTURE_END[startCode]) break;
-  }
-
-  return -1;
-}
-
 export function commandBlockSpanIndices(spans: MvCommandSpan[], selected: number[]): number[] {
-  const expanded = new Set(selected);
-  for (const selectedIndex of [...expanded]) {
-    const code = spans[selectedIndex]?.commands[0]?.code;
-    const markerStartCode = STRUCTURE_MARKER_START[code];
-    if (markerStartCode === undefined) continue;
-    const markerStartIndex = structureStartForMarker(spans, selectedIndex, markerStartCode);
-    if (markerStartIndex >= 0) expanded.add(markerStartIndex);
-  }
-
-  for (const selectedIndex of [...expanded]) {
-    const head = spans[selectedIndex]?.commands[0];
-    const endCode = head ? STRUCTURE_END[head.code] : undefined;
-    // `=== undefined`: the skip (109) block ends with code 0, which is falsy.
-    if (endCode === undefined) continue;
-    for (let index = selectedIndex + 1; index < spans.length; index += 1) {
-      const command = spans[index].commands[0];
-      expanded.add(index);
-      // Nested same-code blocks sit at a deeper indent, so the first end marker
-      // matching the head indent always closes this block.
-      if (command?.code === endCode && command.indent === head.indent) break;
-    }
+  const blocks = commandStructureBlocks(spans);
+  const expanded = new Set<number>();
+  for (const selectedIndex of selected) {
+    if (selectedIndex < 0 || selectedIndex >= spans.length) continue;
+    const command = spans[selectedIndex]?.commands[0];
+    if (!command) continue;
+    const ownBlock = blocks.find((block) => block.headSpanIndex === selectedIndex);
+    const markerBlock = blocks.find((block) => block.branchSpanIndices.includes(selectedIndex) || block.endSpanIndex === selectedIndex);
+    // Clicking a structure head or one of its branch markers selects the full
+    // RM structure. Ordinary commands inside a branch remain independently
+    // movable/editable, matching the stock editor's ◆ rows.
+    const block = ownBlock || markerBlock;
+    if (block) {
+      for (let index = block.headSpanIndex; index <= block.endSpanIndex; index += 1) expanded.add(index);
+    } else expanded.add(selectedIndex);
   }
   return [...expanded].sort((a, b) => a - b);
 }
@@ -309,31 +423,41 @@ export function skipTerminatorIndices(list: MvCommand[]): Set<number> {
 }
 
 export function commandInsertIndent(list: MvCommand[], rawIndex: number): number {
+  const limit = Math.max(0, Math.min(list.length, Math.floor(rawIndex)));
+  const open: Array<{ code: number; indent: number; definition: StructureDefinition }> = [];
   let indent = 0;
-  const skipIndents: number[] = [];
-  for (let index = 0; index < rawIndex; index += 1) {
+  for (let index = 0; index < limit; index += 1) {
     const command = list[index];
-    const code = command?.code;
-    if (code === 109) {
-      skipIndents.push(command.indent);
+    if (!command) continue;
+    const code = command.code;
+    const top = open.at(-1);
+    if (top && code === top.definition.endCode && command.indent === top.indent) {
+      open.pop();
+      indent = open.at(-1)?.indent !== undefined ? open.at(-1)!.indent + 1 : command.indent;
+      continue;
+    }
+    if (top && top.definition.branchCodes.includes(code) && command.indent === top.indent) {
+      // Branch markers close the previous body and immediately open the next
+      // body at the same nesting depth.
       indent = command.indent + 1;
       continue;
     }
-    if (code === 0) {
-      // Only a code 0 matching the innermost open skip closes it; branch-body
-      // placeholder rows never change the nesting level.
-      if (skipIndents[skipIndents.length - 1] === command?.indent) {
-        skipIndents.pop();
-        indent = command.indent;
-      }
+    const definition = structureDefinition(code);
+    if (definition) {
+      open.push({ code, indent: command.indent, definition });
+      indent = command.indent + 1;
       continue;
     }
-    if (STRUCTURE_CLOSE.has(code)) indent = Math.max(0, indent - 1);
-    if (STRUCTURE_BRANCH.has(code)) indent = Math.max(0, indent - 1);
-    if (STRUCTURE_OPEN.has(code)) indent += 1;
-    if (STRUCTURE_BRANCH.has(code)) indent += 1;
+    if (code === 0 && top?.code === 109 && command.indent === top.indent) {
+      open.pop();
+      indent = open.at(-1)?.indent !== undefined ? open.at(-1)!.indent + 1 : command.indent;
+      continue;
+    }
+    // Preserve the explicit indentation of malformed/unknown rows rather than
+    // attempting to repair their shape while calculating the insertion slot.
+    if (command.indent > indent) indent = command.indent;
   }
-  return indent;
+  return Math.max(0, indent);
 }
 
 export interface CommandBlockMove {
@@ -349,34 +473,56 @@ export function moveCommandSpanBlock(list: MvCommand[], spans: MvCommandSpan[], 
   if (first == null || last == null) return null;
   if (offset < 0 && first <= 0) return null;
   if (offset > 0 && last >= spans.length - 1) return null;
-  const next = clone(list);
-  const start = spans[first].index;
-  const end = spans[last].index + spans[last].commands.length;
-  const block = next.splice(start, end - start);
-  const headIndex = offset < 0 ? spans[first - 1].index : spans[last + 1].index + spans[last + 1].commands.length - block.length;
-  next.splice(headIndex, 0, ...block);
-  return { list: next, headIndex };
+  const target = offset < 0 ? first - 1 : last + 2;
+  return dropCommandSpanBlocks(list, spans, expanded, target);
 }
 
 /** Drop the block containing `sourceIndex` before span `targetIndex` (`spans.length` drops at the end). */
 export function dropCommandSpanBlock(list: MvCommand[], spans: MvCommandSpan[], sourceIndex: number, targetIndex: number): CommandBlockMove | null {
-  const expanded = commandBlockSpanIndices(spans, [sourceIndex]);
+  return dropCommandSpanBlocks(list, spans, commandBlockSpanIndices(spans, [sourceIndex]), targetIndex);
+}
+
+/**
+ * Move multiple selected rows as one ordered group. Selection is expanded to
+ * complete structure blocks before raw commands are removed, so a choice,
+ * branch, loop, battle branch, skip, or nested continuation cannot be split.
+ */
+export function dropCommandSpanBlocks(
+  list: MvCommand[],
+  spans: MvCommandSpan[],
+  selectedIndices: number[],
+  targetIndex: number,
+): CommandBlockMove | null {
+  const expanded = commandBlockSpanIndices(spans, selectedIndices);
+  if (!expanded.length || targetIndex < 0 || targetIndex > spans.length) return null;
   const first = expanded[0];
   const last = expanded[expanded.length - 1];
-  if (first == null || last == null) return null;
-  // Dropping inside (or right around) the block itself is a no-op.
   if (targetIndex >= first && targetIndex <= last + 1) return null;
-  const next = clone(list);
-  const start = spans[first].index;
-  const end = spans[last].index + spans[last].commands.length;
-  const block = next.splice(start, end - start);
-  let headIndex: number;
-  if (targetIndex >= spans.length) headIndex = next.length && next[next.length - 1].code === 0 ? next.length - 1 : next.length;
-  else headIndex = targetIndex > last ? spans[targetIndex].index - block.length : spans[targetIndex].index;
-  // Re-anchor indent to the landing slot so cross-level drags stay structurally valid.
-  const delta = commandInsertIndent(next, headIndex) - block[0].indent;
-  if (delta) for (const command of block) command.indent = Math.max(0, command.indent + delta);
-  next.splice(headIndex, 0, ...block);
+
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const spanIndex of expanded) {
+    const span = spans[spanIndex];
+    if (!span) continue;
+    const range = { start: span.index, end: span.index + span.commands.length };
+    const previous = ranges.at(-1);
+    if (previous && range.start <= previous.end) previous.end = Math.max(previous.end, range.end);
+    else ranges.push(range);
+  }
+  if (!ranges.length) return null;
+  const targetRaw = targetIndex >= spans.length
+    ? (list.length && list[list.length - 1].code === 0 ? list.length - 1 : list.length)
+    : spans[targetIndex]?.index;
+  if (targetRaw === undefined) return null;
+  if (ranges.some((range) => targetRaw >= range.start && targetRaw <= range.end)) return null;
+  const moved = ranges.flatMap((range) => list.slice(range.start, range.end).map((command) => clone(command)));
+  const removedBeforeTarget = ranges.filter((range) => range.end <= targetRaw).reduce((sum, range) => sum + range.end - range.start, 0);
+  const next = clone(list) as MvCommand[];
+  for (const range of [...ranges].reverse()) next.splice(range.start, range.end - range.start);
+  let headIndex = targetRaw - removedBeforeTarget;
+  headIndex = Math.max(0, Math.min(headIndex, next.length));
+  const delta = commandInsertIndent(next, headIndex) - (moved[0]?.indent || 0);
+  if (delta) for (const command of moved) command.indent = Math.max(0, command.indent + delta);
+  next.splice(headIndex, 0, ...moved);
   return { list: next, headIndex };
 }
 
@@ -388,9 +534,20 @@ export interface CommandDisplayResult {
   indent: number;
 }
 
-interface SystemData {
+export interface SystemData {
   switches?: string[];
   variables?: string[];
+}
+
+export interface MvCommandSpanView {
+  key: number;
+  tone: string;
+  indent: number;
+  head: string;
+  lines: string[];
+  role: MvCommandSpanRole;
+  structureId?: number;
+  branchId?: number;
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -469,9 +626,9 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 101) return line(translate('eventEditor.command.text', language, { face: messageFaceLabel(p, language), bg: messageBackgroundLabel(p[2], language), pos: messagePositionLabel(p[3], language) }), 'text');
   if (command.code === 401) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
   if (command.code === 102) return line(translate('eventEditor.command.showChoices', language, { choices: (p[0] as string[] || []).join(' / ') }), 'control');
-  if (command.code === 402) return line(translate('eventEditor.command.whenChoice', language, { val: String(p[1] || p[0] || '') }), 'text');
-  if (command.code === 403) return line(translate('eventEditor.command.whenCancel', language), 'text');
-  if (command.code === 404) return line(translate('eventEditor.command.endChoices', language), 'control');
+  if (command.code === 402) return { label: `:${translate('eventEditor.command.whenChoice', language, { val: String(p[1] || p[0] || '') })}`, tone: 'text', indent };
+  if (command.code === 403) return { label: `:${translate('eventEditor.command.whenCancel', language)}`, tone: 'text', indent };
+  if (command.code === 404) return { label: `:${translate('eventEditor.command.endChoices', language)}`, tone: 'control', indent };
   if (command.code === 108 || command.code === 408) return line(translate('eventEditor.command.comment', language, { text: String(p[0] || '') }), 'normal');
   if (command.code === 109) return line(translate('eventEditor.command.skip', language), 'control');
   // RM branch bodies end with a placeholder code-0 row; skip-block terminators are
@@ -501,9 +658,12 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 117) return line(translate('eventEditor.command.commonEvent', language, { id: String(p[0] || 0) }), 'control');
   if (command.code === 356) return line(translate('eventEditor.command.pluginCommand', language, { cmd: String(p[0] || '') }), 'control');
   if (command.code === 357) return line(translate('eventEditor.command.pluginCommand', language, { cmd: `${String(p[0] || '')}:${String(p[2] || p[1] || '')}` }), 'control');
-  if (command.code === 411) return line(translate('eventEditor.command.else', language), 'control');
-  if (command.code === 412) return line(translate('eventEditor.command.branchEnd', language), 'control');
-  if (command.code === 413) return line(translate('eventEditor.command.repeatAbove', language), 'control');
+  if (command.code === 411) return { label: `:${translate('eventEditor.command.else', language)}`, tone: 'control', indent };
+  if (command.code === 412) return { label: `:${translate('eventEditor.command.branchEnd', language)}`, tone: 'control', indent };
+  if (command.code === 413) return { label: `:${translate('eventEditor.command.repeatAbove', language)}`, tone: 'control', indent };
+  if (command.code === 601 || command.code === 602 || command.code === 603 || command.code === 604) {
+    return { label: `:${standardCommandLabel(command.code, language)}`, tone: 'control', indent };
+  }
   if (command.code === 505) return { label: `${translate('eventEditor.colon', language)}◇${moveRouteCommandLabel(p[0], language)}`, tone: 'control', indent: Math.min(indent + 1, 12) };
   if (command.code === 405 || command.code === 408 || command.code === 605 || command.code === 655 || command.code === 657) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
   const standardLabel = standardCommandLabel(command.code, language);
@@ -532,6 +692,40 @@ export function commandTone(code: number): string {
   if (TONE_STAGE.has(code)) return 'stage';
   if (TONE_RAW.has(code)) return 'raw';
   return 'normal';
+}
+
+/** Shared RM-style row projection used by map, common-event, and battle lists. */
+export function commandSpanDisplay(
+  span: MvCommandSpan,
+  system?: SystemData | null,
+  language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE,
+  skipTerminator = false,
+  skipLabel = 'End',
+): MvCommandSpanView {
+  const first = span.commands[0];
+  if (skipTerminator) {
+    return {
+      key: span.index,
+      tone: commandTone(109),
+      indent: Math.min(first?.indent || 0, 12),
+      head: `:${skipLabel}`,
+      lines: [],
+      role: 'terminator',
+      ...(span.structureId !== undefined ? { structureId: span.structureId } : {}),
+      ...(span.branchId !== undefined ? { branchId: span.branchId } : {}),
+    };
+  }
+  const head = commandDisplay(first, system, language);
+  return {
+    key: span.index,
+    tone: commandTone(first.code),
+    indent: head.indent,
+    head: head.label,
+    lines: span.commands.slice(1).map((command) => commandDisplay(command, system, language).label),
+    role: span.role || 'command',
+    ...(span.structureId !== undefined ? { structureId: span.structureId } : {}),
+    ...(span.branchId !== undefined ? { branchId: span.branchId } : {}),
+  };
 }
 
 export function moveRouteCommandLabel(command: unknown, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {

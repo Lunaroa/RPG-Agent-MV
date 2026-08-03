@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import type { EditorProjectCatalog } from '../../api/client';
 import { useI18n } from '../../i18n';
 import {
@@ -8,6 +8,7 @@ import {
   commandBranchScope,
   commandInsertionSlots,
   commandSpanDisplay,
+  commandStructureBlocks,
   dropCommandSpanBlocks,
   editableCommandSpans,
   ensureTerminator,
@@ -55,6 +56,11 @@ const selectedIndices = computed(() => selectedSpans.value
   .filter((index) => index >= 0 && index < spans.value.length)
   .sort((a, b) => a - b));
 const selectedSpanSet = computed(() => new Set(selectedIndices.value));
+// Blank insertion slots follow the visual selection when both adjacent spans
+// are selected (whole-block click or Shift range); they stay non-editable.
+function slotSelected(slot: MvCommandInsertionSlot): boolean {
+  return selectedSpanSet.value.has(slot.spanIndex) && selectedSpanSet.value.has(slot.spanIndex - 1);
+}
 const anchorBlockSelection = computed(() => {
   const anchor = selectionAnchor.value;
   if (anchor == null || !selectedSpanSet.value.has(anchor)) return null;
@@ -67,6 +73,46 @@ const systemData = computed(() => ({
 }));
 const spanViews = computed<SpanView[]>(() => spans.value.map((span) => displaySpan(span)));
 const insertionSlots = computed(() => commandInsertionSlots(commandList.value, spans.value));
+// Structure-block collapse mirrors the event editor contract: keyed by the
+// head span index; body spans and their insertion slots stay hidden while
+// collapsed, the head row remains as the expand handle.
+const collapsedStructureHeads = ref<Set<number>>(new Set());
+const collapsedHiddenSpans = computed(() => {
+  const hidden = new Set<number>();
+  if (!collapsedStructureHeads.value.size) return hidden;
+  for (const block of commandStructureBlocks(spans.value)) {
+    if (!collapsedStructureHeads.value.has(block.headSpanIndex)) continue;
+    for (let index = block.headSpanIndex + 1; index <= block.endSpanIndex; index += 1) hidden.add(index);
+  }
+  return hidden;
+});
+const visibleInsertionSlots = computed(() => insertionSlots.value.filter((slot) => !collapsedHiddenSpans.value.has(slot.spanIndex)));
+function toggleStructureCollapse(headSpanIndex: number) {
+  const next = new Set(collapsedStructureHeads.value);
+  if (next.has(headSpanIndex)) next.delete(headSpanIndex);
+  else next.add(headSpanIndex);
+  collapsedStructureHeads.value = next;
+  if (insertionFocus.value != null && collapsedHiddenSpans.value.has(insertionFocus.value)) insertionFocus.value = null;
+}
+/** Remap insertion targets inside a collapsed block to the visible boundary right after it. */
+function visibleInsertionTarget(index: number): number {
+  if (!collapsedHiddenSpans.value.has(index)) return index;
+  for (const block of commandStructureBlocks(spans.value)) {
+    if (collapsedStructureHeads.value.has(block.headSpanIndex) && index > block.headSpanIndex && index <= block.endSpanIndex) {
+      return block.endSpanIndex + 1;
+    }
+  }
+  return index;
+}
+watch(spans, (nextSpans) => {
+  if (!collapsedStructureHeads.value.size) return;
+  const valid = new Set<number>();
+  for (const head of collapsedStructureHeads.value) {
+    if (head < nextSpans.length && nextSpans[head]?.role === 'head') valid.add(head);
+  }
+  if (valid.size !== collapsedStructureHeads.value.size) collapsedStructureHeads.value = valid;
+});
+watch(() => props.modelValue, () => { collapsedStructureHeads.value = new Set(); });
 const canMoveUp = computed(() => anchorBlockSelection.value != null && commandBlockSpanIndices(spans.value, [anchorBlockSelection.value])[0] > 0);
 const canMoveDown = computed(() => {
   if (anchorBlockSelection.value == null) return false;
@@ -124,7 +170,7 @@ function openCommandPicker(): void {
     return;
   }
   const selected = selectedIndices.value;
-  const next = selected.length ? selected[selected.length - 1] + 1 : spans.value.length;
+  const next = visibleInsertionTarget(selected.length ? selected[selected.length - 1] + 1 : spans.value.length);
   const slot = insertionSlots.value.find((item) => item.spanIndex === next) || insertionSlots.value.at(-1);
   if (slot) openCommandPickerAt(slot);
 }
@@ -142,7 +188,8 @@ function openCommand(index: number): void {
   if (!span) return;
   const block = commandBlockSpanIndices(spans.value, [index]);
   const commands = block.length > 1 ? block.flatMap((spanIndex) => spans.value[spanIndex]?.commands || []) : span.commands;
-  commandDialog.value?.openEditor(commands, index, commandList.value);
+  const headSpan = spans.value[block[0] ?? index];
+  commandDialog.value?.openEditor(commands, index, commandList.value, headSpan?.index ?? null);
 }
 
 function openSelectedCommand(): void {
@@ -215,7 +262,7 @@ function pasteSelectedCommand(): void {
   if (props.locked || !commandClipboard.value) return;
   const list = clone(commandList.value);
   const selected = selectedIndices.value;
-  const next = selected.length ? selected[selected.length - 1] + 1 : spans.value.length;
+  const next = visibleInsertionTarget(selected.length ? selected[selected.length - 1] + 1 : spans.value.length);
   const at = next >= spans.value.length ? list.length - 1 : spans.value[next].index;
   list.splice(at, 0, ...clone(commandClipboard.value));
   clearSelection();
@@ -299,7 +346,8 @@ function onRowDragStart(index: number, event: DragEvent): void {
 function onRowDragOver(index: number, event: DragEvent): void {
   if (!dragSourceIndices.value.length) return;
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  dropIndicator.value = event.clientY < rect.top + rect.height / 2 ? index : index + 1;
+  const raw = event.clientY < rect.top + rect.height / 2 ? index : index + 1;
+  dropIndicator.value = visibleInsertionTarget(raw);
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
 }
 
@@ -381,12 +429,12 @@ function onCommandKeyDown(event: KeyboardEvent): void {
     </div>
     <div class="command-list" @click.self="clearSelection" @dblclick.self="openCommandPicker" @contextmenu.prevent="openCommandContext($event, null)">
       <div v-if="!spans.length" class="command-empty">{{ resolvedEmptyText }}</div>
-      <template v-for="slot in insertionSlots" :key="slot.key">
+      <template v-for="slot in visibleInsertionSlots" :key="slot.key">
         <button
           type="button"
           :disabled="locked"
           class="cmd-row cmd-blank"
-          :class="{ even: slot.spanIndex % 2 === 0, terminator: slot.spanIndex === spans.length, focused: insertionFocus === slot.spanIndex, 'drop-before': dropIndicator === slot.spanIndex }"
+          :class="{ even: slot.spanIndex % 2 === 0, terminator: slot.spanIndex === spans.length, focused: insertionFocus === slot.spanIndex, 'drop-before': dropIndicator === slot.spanIndex, selected: slotSelected(slot) }"
           :style="{ '--cmd-indent': `${Math.min(slot.indent, 8) * 16}px` }"
           :aria-label="t('eventEditorDialog.newCmd')"
           :draggable="false"
@@ -415,6 +463,15 @@ function onCommandKeyDown(event: KeyboardEvent): void {
           @drop.prevent="onRowDrop"
           @dragend="resetRowDrag"
         >
+          <span
+            v-if="view.role === 'head'"
+            class="cmd-caret"
+            :class="{ collapsed: collapsedStructureHeads.has(slot.spanIndex) }"
+            role="button"
+            :aria-label="collapsedStructureHeads.has(slot.spanIndex) ? t('eventEditorDialog.expandBlock') : t('eventEditorDialog.collapseBlock')"
+            @click.stop="toggleStructureCollapse(slot.spanIndex)"
+            @dblclick.stop
+          />
           <span class="cmd-line cmd-head">{{ view.head }}</span>
           <span v-for="(line, lineIndex) in view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span>
         </button>
@@ -506,6 +563,32 @@ button.danger {
   text-align: left;
   cursor: pointer;
 }
+.cmd-caret {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 11px;
+  height: 12px;
+  transform: translateY(-50%);
+  color: var(--console-text-muted,#9a8e7e);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+.cmd-row.role-head {
+  padding-left: calc(15px + var(--cmd-indent, 0px));
+}
+.cmd-caret::before {
+  content: '\25BE';
+}
+.cmd-caret.collapsed::before {
+  content: '\25B8';
+}
+.cmd-row.selected .cmd-caret {
+  color: inherit;
+}
 .cmd-row.cmd-blank {
   /* RM-native compact list: insertion slots are hidden by default and only
      revealed when focused or targeted by a drag. This keeps the command list
@@ -521,15 +604,21 @@ button.danger {
   user-select: none;
 }
 .cmd-row.cmd-blank.focused,
-.cmd-row.cmd-blank.drop-before {
+.cmd-row.cmd-blank.drop-before,
+.cmd-row.cmd-blank.selected {
   display: block;
 }
 .cmd-row.cmd-blank .cmd-line {
   visibility: hidden;
 }
 .cmd-row.cmd-blank.focused .cmd-line,
-.cmd-row.cmd-blank.drop-before .cmd-line {
+.cmd-row.cmd-blank.drop-before .cmd-line,
+.cmd-row.cmd-blank.selected .cmd-line {
   visibility: visible;
+}
+.cmd-row.cmd-blank.selected {
+  background: var(--console-accent,#be5630);
+  color: #fff;
 }
 .cmd-row.cmd-blank:hover:not(:disabled) {
   background: var(--console-accent-soft,#f6e3d7);

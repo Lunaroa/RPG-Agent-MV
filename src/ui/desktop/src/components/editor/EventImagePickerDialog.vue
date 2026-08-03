@@ -131,9 +131,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 function clampPreviewZoom(value: number): number {
   return Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, Math.round(value * 100) / 100));
 }
+// HiDPI displays enlarge CSS pixels, so a 48px tile spans ~72 physical pixels
+// at 150% scaling. The standard baseline renders one game pixel onto one
+// physical pixel; plain 100% screens keep zoom at 1.
+function standardPreviewZoom(): number {
+  const ratio = Number(window.devicePixelRatio) || 1;
+  return clampPreviewZoom(1 / Math.max(1, ratio));
+}
 function zoomIn() { previewZoom.value = clampPreviewZoom(previewZoom.value * 1.25); }
 function zoomOut() { previewZoom.value = clampPreviewZoom(previewZoom.value / 1.25); }
-function resetZoom() { previewZoom.value = 1; }
+function resetZoom() { previewZoom.value = standardPreviewZoom(); }
 function onPreviewWheel(event: WheelEvent) {
   if (event.deltaY < 0) zoomIn();
   else zoomOut();
@@ -143,7 +150,7 @@ function open(image: MvEventImage) {
   draft.value = clone(image || defaultImage());
   tab.value = draft.value.tileId ? 'tile' : 'character';
   if (draft.value.tileId) tileTab.value = tileTabForId(Number(draft.value.tileId));
-  previewZoom.value = 1;
+  previewZoom.value = standardPreviewZoom();
   visible.value = true;
   void nextTick(paint);
 }

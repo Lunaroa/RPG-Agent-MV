@@ -151,6 +151,39 @@ test('keeps battle branches, loop ends, skip ends, and unknown structure rows vi
   assert.equal(commandSpanDisplay(spans[11]!, null, 'en-US', skipTerminators.has(spans[11]!.index), 'End').head, ':End');
 });
 
+test('selects the full nested conditional block from its head, else marker, or terminator', () => {
+  // Regression sample from user testing: outer conditional branch containing a
+  // message, an else branch with a switch op and a nested conditional branch.
+  const spans = spansFor([
+    command(111, 0, [0, 1, 0]),
+    command(101, 1, ['', 0, 0, 2, '']), command(401, 1, ['123123']),
+    command(411, 0),
+    command(121, 1, [1, 1, 0]),
+    command(111, 1, [5, 1, 0]),
+    command(412, 1),
+    command(412, 0),
+    command(0),
+  ]);
+  const all = Array.from({ length: 7 }, (_item, index) => index);
+  assert.deepEqual(commandBlockSpanIndices(spans, [0]), all);
+  assert.deepEqual(commandBlockSpanIndices(spans, [2]), all);
+  assert.deepEqual(commandBlockSpanIndices(spans, [6]), all);
+  // The nested conditional remains its own selectable block.
+  assert.deepEqual(commandBlockSpanIndices(spans, [4]), [4, 5]);
+});
+
+test('renders picture commands as RM-style summaries instead of raw parameter arrays', () => {
+  const show = commandSpanDisplay({ index: 0, commands: [command(231, 0, [4, 'Fire', 0, 0, 2, 0, 100, 100, 255, 0])] } as never, null, 'zh-CN');
+  assert.equal(show.head, '◆显示图片：#4, Fire, 左上 (2,0), (100%,100%), 255, 普通');
+  // MV-shaped Move Picture (12 params, no easing slot) still renders Linear.
+  const moveMv = commandSpanDisplay({ index: 0, commands: [command(232, 0, [4, 0, 0, 0, 471, 353, 100, 100, 255, 0, 60, true])] } as never, null, 'zh-CN');
+  assert.equal(moveMv.head, '◆移动图片：#4, 匀速, 左上 (471,353), (100%,100%), 255, 普通, 60帧 (等待)');
+  // MZ-shaped Move Picture carries the easing type at index 12.
+  const moveMz = commandSpanDisplay({ index: 0, commands: [command(232, 0, [5, 0, 1, 0, 344, 320, 100, 100, 255, 2, 30, false, 2])] } as never, null, 'zh-CN');
+  assert.equal(moveMz.head, '◆移动图片：#5, 慢速结束, 中心 (344,320), (100%,100%), 255, 正片叠底, 30帧');
+  assert.equal(commandSpanDisplay({ index: 0, commands: [command(232, 0, [5, 0, 0, 0, 1, 2, 100, 100, 255, 0, 10, false])] } as never, null, 'en-US').head, '◆Move Picture: #5, Linear, Upper Left (1,2), (100%,100%), 255, Normal, 10 frames');
+});
+
 test('multi-selection drag moves complete spans as one group and rejects self-drops', () => {
   const list = [
     command(230, 0, [1]), command(250, 0, [{ name: 'A' }]), command(999, 0, ['keep']), command(777, 0, ['anchor']), command(0),

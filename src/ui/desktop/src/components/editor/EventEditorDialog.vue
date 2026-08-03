@@ -97,7 +97,7 @@
                     type="button"
                     :disabled="currentPageLocked"
                     class="cmd-row cmd-blank"
-                    :class="{ even: row.slot.spanIndex % 2 === 0, terminator: row.slot.spanIndex === spans.length, 'block-bottom': row.slot.blockBottom, focused: insertionFocus === row.slot.spanIndex, 'drop-before': dropIndicator === row.slot.spanIndex }"
+                    :class="{ even: row.slot.spanIndex % 2 === 0, terminator: row.slot.spanIndex === spans.length, 'block-bottom': row.slot.blockBottom, focused: insertionFocus === row.slot.spanIndex, 'drop-before': dropIndicator === row.slot.spanIndex, selected: slotSelected(row.slot) }"
                     :style="{ '--cmd-indent': `${Math.min(row.slot.indent, 8) * 18}px` }"
                     :aria-label="t('eventEditorDialog.newCmd')"
                     :draggable="false"
@@ -124,7 +124,15 @@
                     @dragover.prevent="onRowDragOver(row.index, $event)"
                     @drop.prevent="onRowDrop"
                     @dragend="resetRowDrag"
-                  ><span class="cmd-line cmd-head">{{ row.view.head }}</span><span v-for="(line, lineIndex) in row.view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span></button>
+                  ><span
+                    v-if="row.view.role === 'head'"
+                    class="cmd-caret"
+                    :class="{ collapsed: collapsedStructureHeads.has(row.index) }"
+                    role="button"
+                    :aria-label="collapsedStructureHeads.has(row.index) ? t('eventEditorDialog.expandBlock') : t('eventEditorDialog.collapseBlock')"
+                    @click.stop="toggleStructureCollapse(row.index)"
+                    @dblclick.stop
+                  /><span class="cmd-line cmd-head">{{ row.view.head }}</span><span v-for="(line, lineIndex) in row.view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span></button>
                 </template>
                 <div class="cmd-virtual-pad" :style="{ height: `${virtualWindow.bottom}px` }" />
               </div>
@@ -182,7 +190,7 @@ import EventCommandDialog from './EventCommandDialog.vue';
 import EventImagePickerDialog from './EventImagePickerDialog.vue';
 import EventTextPasteDialog from './EventTextPasteDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
-import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandBranchScope, commandInsertionSlots, commandSpanDisplay, defaultPage, dropCommandSpanBlocks, editableCommandSpans, ensureTerminator, imageSummary, moveCommandSpanBlock, skipTerminatorIndices, type MvCommandInsertionSlot, type MvCommandSpanView, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute, type MvCommand } from '../../composables/useEventEditor';
+import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandBranchScope, commandInsertionSlots, commandSpanDisplay, commandStructureBlocks, defaultPage, dropCommandSpanBlocks, editableCommandSpans, ensureTerminator, imageSummary, moveCommandSpanBlock, skipTerminatorIndices, type MvCommandInsertionSlot, type MvCommandSpanView, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute, type MvCommand } from '../../composables/useEventEditor';
 import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
 import type { EditorEventListItem } from './editorTypes';
@@ -273,6 +281,46 @@ function onOverlayMouseDown() { if (!props.modeless) void requestClose(); }
 const currentPage = computed(() => props.draft?.pages[pageIndex.value] || null), spans = computed(() => currentPage.value ? editableCommandSpans(currentPage.value) : []);
 const skipTerminatorSet = computed(() => currentPage.value ? skipTerminatorIndices(currentPage.value.list) : new Set<number>());
 const insertionSlots = computed(() => currentPage.value ? commandInsertionSlots(currentPage.value.list, spans.value) : []);
+// Structure-block collapse: keyed by the head span index. While a block is
+// collapsed every span after its head up to the terminator is hidden together
+// with the insertion slots inside the body, leaving the head row as handle.
+const collapsedStructureHeads = ref<Set<number>>(new Set());
+const collapsedHiddenSpans = computed(() => {
+  const hidden = new Set<number>();
+  if (!collapsedStructureHeads.value.size) return hidden;
+  for (const block of commandStructureBlocks(spans.value)) {
+    if (!collapsedStructureHeads.value.has(block.headSpanIndex)) continue;
+    for (let index = block.headSpanIndex + 1; index <= block.endSpanIndex; index += 1) hidden.add(index);
+  }
+  return hidden;
+});
+function toggleStructureCollapse(headSpanIndex: number) {
+  const next = new Set(collapsedStructureHeads.value);
+  if (next.has(headSpanIndex)) next.delete(headSpanIndex);
+  else next.add(headSpanIndex);
+  collapsedStructureHeads.value = next;
+  // A focused insertion slot swallowed by the newly collapsed body is invisible;
+  // drop it so Enter/new-command cannot target the hidden region.
+  if (insertionFocus.value != null && collapsedHiddenSpans.value.has(insertionFocus.value)) insertionFocus.value = null;
+}
+/** Remap insertion targets inside a collapsed block to the visible boundary right after it. */
+function visibleInsertionTarget(index: number): number {
+  if (!collapsedHiddenSpans.value.has(index)) return index;
+  for (const block of commandStructureBlocks(spans.value)) {
+    if (collapsedStructureHeads.value.has(block.headSpanIndex) && index > block.headSpanIndex && index <= block.endSpanIndex) {
+      return block.endSpanIndex + 1;
+    }
+  }
+  return index;
+}
+watch(spans, (nextSpans) => {
+  if (!collapsedStructureHeads.value.size) return;
+  const valid = new Set<number>();
+  for (const head of collapsedStructureHeads.value) {
+    if (head < nextSpans.length && nextSpans[head]?.role === 'head') valid.add(head);
+  }
+  if (valid.size !== collapsedStructureHeads.value.size) collapsedStructureHeads.value = valid;
+});
 // Virtualized command list. Every span row has a deterministic height
 // (line-height 20px per command line + 8px row chrome), so we window by
 // prefix-summed pixel offsets and only localize the spans in the viewport.
@@ -293,7 +341,9 @@ type CommandRenderRow =
   | { kind: 'command'; key: string; index: number; view: MvCommandSpanView };
 const commandRows = computed<CommandRenderRow[]>(() => {
   const rows: CommandRenderRow[] = [];
+  const hidden = collapsedHiddenSpans.value;
   for (const slot of insertionSlots.value) {
+    if (hidden.has(slot.spanIndex)) continue;
     rows.push({ kind: 'blank', key: slot.key, slot });
     const span = spans.value[slot.spanIndex];
     if (span) rows.push({ kind: 'command', key: `command:${span.index}`, index: slot.spanIndex, view: buildSpanView(span) });
@@ -309,7 +359,7 @@ function commandRowHeight(row: CommandRenderRow): number {
     // point and the active drop target also expand. Same-level sequential
     // gaps collapse to 0 so there are no blank rows between sibling commands.
     const slotIndex = row.slot.spanIndex;
-    const active = row.slot.blockBottom || insertionFocus.value === slotIndex || dropIndicator.value === slotIndex;
+    const active = row.slot.blockBottom || insertionFocus.value === slotIndex || dropIndicator.value === slotIndex || slotSelected(row.slot);
     return active ? CMD_BLANK_H : 0;
   }
   return row.view.lines.length * CMD_LINE_H + CMD_LINE_H + CMD_ROW_CHROME;
@@ -363,6 +413,13 @@ const currentPageLocked = computed(() => pageIdentities.value[pageIndex.value]?.
 const shellLocked = computed(() => Boolean(props.overview && !props.overview.shellEditable));
 const selectedIndices = computed(() => selectedSpans.value.filter((index) => index >= 0 && index < spans.value.length).sort((a, b) => a - b));
 const selectedSpanSet = computed(() => new Set(selectedIndices.value));
+// A blank insertion slot belongs to the visual selection when both adjacent
+// spans are selected (whole-block click or Shift range). The slot itself stays
+// non-editable/non-deletable — this only makes RM-like block selection cover
+// the placeholder rows inside if/else bodies.
+function slotSelected(slot: MvCommandInsertionSlot): boolean {
+  return selectedSpanSet.value.has(slot.spanIndex) && selectedSpanSet.value.has(slot.spanIndex - 1);
+}
 // The anchor span when the selection is exactly the anchor row or its whole structure
 // block; block-selection clicks keep edit/move/insert targeting the clicked row.
 const anchorBlockSelection = computed(() => {
@@ -446,6 +503,7 @@ watch(() => props.visible, (value) => {
   if (value) {
     dirty.value = props.draft?.id === 0;
     pageIndex.value = 0;
+    collapsedStructureHeads.value = new Set();
     loadEditorDialogSize();
     pageIdentities.value = (props.draft?.pages || []).map((_, index) =>
       props.overview?.pages.find((page) => page.pageIndex === index));
@@ -457,7 +515,7 @@ watch(() => props.visible, (value) => {
     dragStart = null;
   }
 });
-watch(currentPage, () => { clearCommandSelection(); listScrollTop.value = 0; if (listHost.value) listHost.value.scrollTop = 0; void nextTick(() => { measureListViewport(); paintPreview(); }); });
+watch(currentPage, () => { collapsedStructureHeads.value = new Set(); clearCommandSelection(); listScrollTop.value = 0; if (listHost.value) listHost.value.scrollTop = 0; void nextTick(() => { measureListViewport(); paintPreview(); }); });
 function markDirty() { dirty.value = true; void nextTick(paintPreview); }
 async function requestClose() {
   if (closing.value) return;
@@ -481,7 +539,7 @@ function addPage() { if (!props.draft) return; props.draft.pages.push(defaultPag
 function copyPage() { if (currentPage.value) { pageClipboard.value = clone(currentPage.value); ElMessage.success(t('eventEditorDialog.pageCopied')); } }
 function pastePage() { if (!props.draft || !pageClipboard.value) return; props.draft.pages.push(clone(pageClipboard.value)); pageIdentities.value.push(undefined); pageIndex.value = props.draft.pages.length - 1; markDirty(); }
 async function clearPage() { if (!currentPage.value || currentPageLocked.value) return; try { await confirmAboveModal(t('eventEditorDialog.clearPageConfirm'), t('eventEditorDialog.clearPageTitle')); } catch { return; } props.draft!.pages[pageIndex.value] = defaultPage(); markDirty(); }
-async function deletePage() { if (!props.draft || currentPageLocked.value || props.draft.pages.length <= 1) return; try { await confirmAboveModal(t('eventEditorDialog.deletePageConfirm'), t('eventEditorDialog.deletePageTitle')); } catch { return; } props.draft.pages.splice(pageIndex.value, 1); pageIdentities.value.splice(pageIndex.value, 1); pageIndex.value = Math.max(0, pageIndex.value - 1); markDirty(); }function openCommandPicker() { if (currentPageLocked.value) return; const focusedSlot = insertionFocus.value == null ? null : insertionSlots.value.find((slot) => slot.spanIndex === insertionFocus.value) || null; if (focusedSlot) { openCommandPickerAt(focusedSlot); return; } const anchor = anchorBlockSelection.value, selected = selectedIndices.value, next = anchor != null ? anchor + 1 : selected.length ? selected[selected.length - 1] + 1 : spans.value.length; const slot = insertionSlots.value.find((item) => item.spanIndex === next) || insertionSlots.value.at(-1); if (slot) openCommandPickerAt(slot); }
+async function deletePage() { if (!props.draft || currentPageLocked.value || props.draft.pages.length <= 1) return; try { await confirmAboveModal(t('eventEditorDialog.deletePageConfirm'), t('eventEditorDialog.deletePageTitle')); } catch { return; } props.draft.pages.splice(pageIndex.value, 1); pageIdentities.value.splice(pageIndex.value, 1); pageIndex.value = Math.max(0, pageIndex.value - 1); markDirty(); }function openCommandPicker() { if (currentPageLocked.value) return; const focusedSlot = insertionFocus.value == null ? null : insertionSlots.value.find((slot) => slot.spanIndex === insertionFocus.value) || null; if (focusedSlot) { openCommandPickerAt(focusedSlot); return; } const anchor = anchorBlockSelection.value, selected = selectedIndices.value, next = visibleInsertionTarget(anchor != null ? anchor + 1 : selected.length ? selected[selected.length - 1] + 1 : spans.value.length); const slot = insertionSlots.value.find((item) => item.spanIndex === next) || insertionSlots.value.at(-1); if (slot) openCommandPickerAt(slot); }
 function openCommandPickerAt(slot: MvCommandInsertionSlot) { if (currentPageLocked.value) return; insertionFocus.value = null; commandDialog.value?.openPicker(slot.spanIndex, slot.indent); }
 function openCommand(index: number) {
   if (currentPageLocked.value) return;
@@ -496,7 +554,8 @@ function openCommand(index: number) {
   if (!commandDefinition(span.commands[0]?.code, engine)) return;
   const block = commandBlockSpanIndices(spans.value, [index]);
   const commands = block.length > 1 ? block.flatMap((spanIndex) => spans.value[spanIndex]?.commands || []) : span.commands;
-  commandDialog.value?.openEditor(commands, index, currentPage.value?.list);
+  const headSpan = spans.value[block[0] ?? index];
+  commandDialog.value?.openEditor(commands, index, currentPage.value?.list, headSpan?.index ?? null);
 }
 function openSelectedCommand() { const anchor = anchorBlockSelection.value; if (anchor != null) openCommand(anchor); }
 function commitCommand(payload: { commands: MvCommand[]; editSpan: number | null; insertSpan: number | null }) {
@@ -551,7 +610,15 @@ function stepCommandSelection(offset: -1 | 1, extend: boolean) {
   const count = spans.value.length;
   if (!count) return;
   const focus = selectedIndices.value.length ? (offset > 0 ? selectedIndices.value[selectedIndices.value.length - 1] : selectedIndices.value[0]) : (offset > 0 ? -1 : count);
-  const next = Math.max(0, Math.min(count - 1, focus + offset));
+  let next = Math.max(0, Math.min(count - 1, focus + offset));
+  // Collapsed block bodies are invisible; step across them so the selection
+  // never lands on a hidden span (it would vanish from the UI).
+  const hidden = collapsedHiddenSpans.value;
+  while (hidden.has(next)) {
+    const stepped = next + offset;
+    if (stepped < 0 || stepped >= count) return;
+    next = stepped;
+  }
   if (extend && selectionAnchor.value != null) {
     if (commandBranchScope(spans.value, selectionAnchor.value) !== commandBranchScope(spans.value, next)) return;
     const start = Math.min(selectionAnchor.value, next), end = Math.max(selectionAnchor.value, next);
@@ -572,7 +639,8 @@ function onRowDragStart(index: number, event: DragEvent) {
 function onRowDragOver(index: number, event: DragEvent) {
   if (!dragSourceIndices.value.length) return;
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  dropIndicator.value = event.clientY < rect.top + rect.height / 2 ? index : index + 1;
+  const raw = event.clientY < rect.top + rect.height / 2 ? index : index + 1;
+  dropIndicator.value = visibleInsertionTarget(raw);
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
 }
 function onInsertionDragOver(index: number, event: DragEvent) {
@@ -611,7 +679,7 @@ function cutSelectedCommands() {
 }
 function pasteSelectedCommand() {
   if (!commandClipboard.value || !currentPage.value || currentPageLocked.value) return;
-  const selected = selectedIndices.value, next = selected.length ? selected[selected.length - 1] + 1 : spans.value.length;
+  const selected = selectedIndices.value, next = visibleInsertionTarget(selected.length ? selected[selected.length - 1] + 1 : spans.value.length);
   const at = next >= spans.value.length ? currentPage.value.list.length - 1 : spans.value[next].index;
   currentPage.value.list.splice(at, 0, ...clone(commandClipboard.value));
   ensureTerminator(currentPage.value.list);
@@ -649,7 +717,7 @@ function applyPastedCommandsText(text: string) {
   if (!Array.isArray(parsed) || !parsed.length || !parsed.every(isMvCommandShape)) { ElMessage.error(t('eventText.invalidCommands')); return; }
   const engine = projectStore.currentProjectInfo?.engine || 'rpg-maker-mv';
   const commands = (parsed as MvCommand[]).map((command) => normalizeEventCommandParameters(clone(command), engine));
-  const selected = selectedIndices.value, next = selected.length ? selected[selected.length - 1] + 1 : spans.value.length;
+  const selected = selectedIndices.value, next = visibleInsertionTarget(selected.length ? selected[selected.length - 1] + 1 : spans.value.length);
   const at = next >= spans.value.length ? currentPage.value.list.length - 1 : spans.value[next].index;
   currentPage.value.list.splice(at, 0, ...commands);
   ensureTerminator(currentPage.value.list);
@@ -1161,7 +1229,8 @@ defineExpose({ markSaved });
 
 .cmd-row.cmd-blank.block-bottom,
 .cmd-row.cmd-blank.focused,
-.cmd-row.cmd-blank.drop-before {
+.cmd-row.cmd-blank.drop-before,
+.cmd-row.cmd-blank.selected {
   display: block;
 }
 
@@ -1169,6 +1238,11 @@ defineExpose({ markSaved });
 .cmd-row.cmd-blank.drop-before:not(:disabled) {
   background: var(--app-accent-soft);
   color: var(--app-accent);
+}
+
+.cmd-row.cmd-blank.selected {
+  background: var(--app-accent);
+  color: var(--app-accent-ink);
 }
 
 .cmd-row.cmd-blank::before {
@@ -1201,6 +1275,33 @@ defineExpose({ markSaved });
 
 .cmd-row.selected::before {
   display: none;
+}
+
+.cmd-caret {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 11px;
+  height: 12px;
+  transform: translateY(-50%);
+  color: var(--app-ink-muted);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cmd-caret::before {
+  content: '\25BE';
+}
+
+.cmd-caret.collapsed::before {
+  content: '\25B8';
+}
+
+.cmd-row.selected .cmd-caret {
+  color: var(--app-accent-ink);
 }
 
 .cmd-row.drop-before {

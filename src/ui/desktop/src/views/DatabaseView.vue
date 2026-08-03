@@ -503,14 +503,31 @@ watch(readIssues, (issues) => {
     return;
   }
   lastReadIssueSignature = signature;
-  ElNotification({
-    type: 'error',
-    title: t('story.readIssues', { count: issues.length }),
-    message: issues.map((issue) => formatReadIssue(issue)).join('\n'),
-    duration: 0,
-    position: 'bottom-right',
-    customClass: 'read-issue-notification',
-  });
+  // Missing map files never block the workspace: report them as a transient
+  // warning (skipped) instead of a sticky error, while other failures stay errors.
+  const isSkippedMapIssue = (issue: ProjectOverviewReadIssue) => issue.scope === 'map' && issue.code === 'missing-file';
+  const skippedMapIssues = issues.filter(isSkippedMapIssue);
+  const blockingIssues = issues.filter((issue) => !isSkippedMapIssue(issue));
+  if (skippedMapIssues.length) {
+    ElNotification({
+      type: 'warning',
+      title: t('story.readIssuesSkipped', { count: skippedMapIssues.length }),
+      message: skippedMapIssues.map((issue) => issue.relativePath).join('\n'),
+      duration: 8000,
+      position: 'bottom-right',
+      customClass: 'read-issue-notification',
+    });
+  }
+  if (blockingIssues.length) {
+    ElNotification({
+      type: 'error',
+      title: t('story.readIssues', { count: blockingIssues.length }),
+      message: blockingIssues.map((issue) => formatReadIssue(issue)).join('\n'),
+      duration: 0,
+      position: 'bottom-right',
+      customClass: 'read-issue-notification',
+    });
+  }
 });
 
 function databaseReadIssueText(group: string): string {

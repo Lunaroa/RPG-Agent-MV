@@ -141,7 +141,13 @@ function start(): void {
   }
   error.value = '';
   emit('start', {
-    battlers: battlers.value.map((entry) => ({ ...entry, equips: [...entry.equips] })),
+    battlers: battlers.value.map((entry) => {
+      const actor = profile(entry.actorId);
+      const normalized = actor
+        ? normalizedEquips(actor, entry.equips)
+        : entry.equips.map((equipId) => (Number.isInteger(equipId) && equipId >= 0 ? equipId : 0));
+      return { ...entry, equips: normalized };
+    }),
     battleback1Name: battleback1Name.value,
     battleback2Name: battleback2Name.value,
   });
@@ -150,7 +156,18 @@ function start(): void {
 function normalizedEquips(actor: EditorActorBattleProfile, value: readonly number[]): number[] {
   const equips = [...value];
   while (equips.length < actor.equipSlotTypeIds.length) equips.push(0);
-  return equips;
+  return equips.map((equipId, slotIndex) => {
+    // Sparse actor data can carry null/undefined slots; they mean "no equipment".
+    const numeric = Number.isInteger(equipId) && equipId >= 0 ? equipId : 0;
+    return slotIndex < actor.equipSlotTypeIds.length && !isValidEquipForSlot(actor, slotIndex, numeric) ? 0 : numeric;
+  });
+}
+
+function isValidEquipForSlot(actor: EditorActorBattleProfile, slotIndex: number, equipId: number): boolean {
+  if (!equipId) return true;
+  const typeId = actor.equipSlotTypeIds[slotIndex];
+  const entries = typeId === 1 ? (props.catalog?.weapons || []) : (props.catalog?.armors || []);
+  return entries.some((entry) => entry.id === equipId && entry.etypeId === typeId);
 }
 
 function clamp(value: unknown, minimum: number, maximum: number): number {

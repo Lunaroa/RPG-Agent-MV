@@ -158,10 +158,12 @@
           :mode="mode"
           :catalog="editorCatalog"
           :current-map-id="selectedMapId"
+          :editor-note="currentEditorMapNote"
           @select="onPlacementSelect"
           @place="onPlacementPlace"
           @reject="onPlacementReject"
           @back-chat="goBackToChatPlacement"
+          @note-commit="onBottomNoteCommit"
         />
         <PreviewConsolePanel
           v-if="mode === 'preview'"
@@ -2220,14 +2222,23 @@ async function saveMapNote(mapId: number, note: string) {
   }
 }
 
+let editorNoteSaveSeq = 0;
 async function saveEditorMapNote(mapId: number, note: string) {
+  const seq = ++editorNoteSaveSeq;
   try {
     const result = await mapsApi.setEditorNote(mapId, note, projectStore.currentProject);
+    if (seq !== editorNoteSaveSeq) return;
     editorMapNotes.value = result.maps;
     setStatus(t('editor.map.editorNoteSaved'), 'saved');
   } catch (error) {
+    if (seq !== editorNoteSaveSeq) return;
     ElMessage.error(t('editor.map.editorNoteSaveFailed', { message: (error as Error).message }));
   }
+}
+
+function onBottomNoteCommit(note: string) {
+  if (selectedMapId.value == null) return;
+  void saveEditorMapNote(selectedMapId.value, note);
 }
 
 async function applyStaging() {

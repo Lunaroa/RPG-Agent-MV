@@ -31,6 +31,7 @@ interface MessagePreviewPayload {
   faceIndex: number;
   background: number;
   positionType: number;
+  name: string;
   lines: string[];
 }
 
@@ -57,6 +58,8 @@ const WINDOW_PADDING = 18;
 const LINE_HEIGHT = 36;
 const MESSAGE_LINES = 4;
 const WINDOW_HEIGHT = WINDOW_PADDING * 2 + LINE_HEIGHT * MESSAGE_LINES;
+// RM speaker name box: one line plus padding, sitting on top of the window.
+const NAME_BOX_HEIGHT = WINDOW_PADDING * 2 + LINE_HEIGHT;
 
 function open(next: MessagePreviewPayload) {
   payload.value = next;
@@ -101,10 +104,34 @@ async function paint() {
       ? Math.round((areaH - WINDOW_HEIGHT) / 2)
       : areaH - WINDOW_HEIGHT);
 
+  const speakerName = (data.name || '').trim();
+  let skin: HTMLImageElement | null = null;
   if (data.background === 0) {
-    const skin = await loadWindowSkin();
+    skin = await loadWindowSkin();
     // Missing skin is surfaced via the banner; never substitute another window style.
     skinMissing.value = !skin;
+  }
+
+  context.font = '28px sans-serif';
+  context.textBaseline = 'middle';
+  context.fillStyle = '#ffffff';
+
+  // Speaker name box: left-aligned above the message window, mirroring its
+  // background; when the window sits at the top edge RM flips it below.
+  if (speakerName) {
+    const nameWidth = Math.ceil(context.measureText(speakerName).width) + WINDOW_PADDING * 2;
+    const nameY = data.positionType === 0
+      ? windowY + WINDOW_HEIGHT
+      : windowY - NAME_BOX_HEIGHT;
+    if (data.background === 0) {
+      if (skin) drawWindowSkin(context, skin, areaX, nameY, nameWidth, NAME_BOX_HEIGHT);
+    } else if (data.background === 1) {
+      drawDimWindow(context, areaX, nameY, nameWidth, NAME_BOX_HEIGHT);
+    }
+    context.fillText(speakerName, areaX + WINDOW_PADDING, nameY + NAME_BOX_HEIGHT / 2);
+  }
+
+  if (data.background === 0) {
     if (skin) drawWindowSkin(context, skin, areaX, windowY, areaW, WINDOW_HEIGHT);
   } else if (data.background === 1) {
     drawDimWindow(context, areaX, windowY, areaW, WINDOW_HEIGHT);
@@ -112,9 +139,6 @@ async function paint() {
 
   if (data.faceName) await drawFace(context, data.faceName, data.faceIndex, windowY, areaX);
 
-  context.font = '28px sans-serif';
-  context.textBaseline = 'middle';
-  context.fillStyle = '#ffffff';
   const textX = areaX + WINDOW_PADDING + (data.faceName ? faceSize.value + 24 : 0);
   data.lines.slice(0, MESSAGE_LINES).forEach((line, index) => {
     context.fillText(line, textX, windowY + WINDOW_PADDING + index * LINE_HEIGHT + LINE_HEIGHT / 2, areaW - WINDOW_PADDING - (data.faceName ? faceSize.value + 24 : 0) - WINDOW_PADDING);

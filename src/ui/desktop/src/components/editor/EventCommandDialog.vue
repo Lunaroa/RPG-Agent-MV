@@ -563,7 +563,7 @@
               </div>
               <label class="check cond-else"><input :checked="elseBranchEnabled" type="checkbox" @change="toggleElseBranch" />{{ t('eventcmd.createElse') }}</label>
             </template>
-            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" :troop-members="troopMembers" :event-commands="eventCommandsForFields" @change="touchCommand" />
+            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" :troop-members="troopMembers" :event-commands="eventCommandsForFields" :event-command-index="eventCommandIndexForFields" @change="touchCommand" />
             <p v-else class="form-note unsupported-command">
               {{ t('eventcmd.unsupportedEditor') }}
             </p>
@@ -635,6 +635,10 @@ const visible=ref(false),pickerOpen=ref(false),pickerPage=ref(1),draft=ref<MvCom
 // Full sibling-command list of the event being edited; lets field editors
 // resolve cross-command runtime context (e.g. 232 -> prior 231 picture slot).
 const eventCommandsForFields=ref<MvCommand[]>([]);
+// Raw index of the edited command inside eventCommandsForFields. The lists are
+// deep-cloned independently, so identity-based indexOf cannot locate the draft;
+// the caller supplies the position instead.
+const eventCommandIndexForFields=ref<number|null>(null);
 // RM-native Show Choices uses one line per option. Blank lines are ignored, but
 // a seventh non-empty line is rejected rather than silently discarded.
 const choiceText=ref('');
@@ -642,7 +646,7 @@ function parseChoiceLines(value:string):string[]{
   return value.split(/\r?\n/).map((line)=>line.trim()).filter(Boolean);
 }
 const choiceLines=computed(()=>parseChoiceLines(choiceText.value));
-const choiceItemOptions=computed(()=>choiceLines.value.slice(0,6).map((label,value)=>({value,label:t('eventcmd.choiceItem',{n:value+1})})));
+const choiceItemOptions=computed(()=>choiceLines.value.slice(0,6).map((_line,value)=>({value,label:t('eventcmd.choiceItem',{n:value+1})})));
 const invalidChoiceDefault=computed(()=>{
   if(draft.value?.code!==102)return false;
   const raw=draft.value.parameters[2];
@@ -940,7 +944,7 @@ function commandHasNoEditorParams(code:number){
   const definition=commandDefinition(code,currentEngine.value);
   return definition!=null&&definition.fields.length===0;
 }
-function openEditor(commands:MvCommand[],index:number,eventCommands?:MvCommand[]){
+function openEditor(commands:MvCommand[],index:number,eventCommands?:MvCommand[],eventCommandRawIndex?:number|null){
   const nextSpan=clone(commands);
   if(nextSpan[0]?.code===111){
     try{
@@ -955,9 +959,10 @@ function openEditor(commands:MvCommand[],index:number,eventCommands?:MvCommand[]
   // context the current command cannot see on its own (e.g. Move Picture 232
   // needs the prior Show Picture 231 to know which asset a slot holds).
   eventCommandsForFields.value=eventCommands&&eventCommands.length?clone(eventCommands):[];
+  eventCommandIndexForFields.value=Number.isInteger(eventCommandRawIndex)&&eventCommandRawIndex!=null&&eventCommandRawIndex>=0?eventCommandRawIndex:null;
   draftSpan.value=nextSpan;draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value&&commandHasNoEditorParams(draft.value.code)){draft.value=null;draftSpan.value=[];conditionalTypeDrafts.value={};return;}editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void nextTick(measureTextGuide);if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);
 }
-function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();void nextTick(measureTextGuide);if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];eventCommandsForFields.value=[];eventCommandIndexForFields.value=null;if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();void nextTick(measureTextGuide);if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
 // Set Movement Route (205) merges the target dropdown into the route editor: the
 // command dialog shell never shows, MoveRouteDialog commits or cancels the draft.
 function openMergedRouteDialog(){pickerOpen.value=false;visible.value=false;const current=numberParam(0,0);routeDialog.value?.open(routeParam.value,{target:current,targetOptions:moveRouteTargetOptions(current)});}
@@ -1163,7 +1168,7 @@ function commitNamedEntrySelection(payload:{kind:string;id:number}){
 }
 function openScrollPreview(){if(!draft.value)return;scrollPreview.value?.open({lines:multiText.value.split(/\r?\n/),speed:numberParam(0,2)});}
 function commitImageSelection(selection:{name:string;index:number}){const target=pendingImageTarget.value;if(!target)return;setParam(target.nameIndex,selection.name);if(target.indexIndex!=null)setParam(target.indexIndex,selection.name?selection.index:0);void nextTick(paintImagePreviews);}
-function openMessagePreview(){if(!draft.value)return;messagePreview.value?.open({faceName:stringParam(0),faceIndex:numberParam(1),background:numberParam(2),positionType:numberParam(3,2),lines:multiText.value.split(/\r?\n/).slice(0,4)});}
+function openMessagePreview(){if(!draft.value)return;messagePreview.value?.open({faceName:stringParam(0),faceIndex:numberParam(1),background:numberParam(2),positionType:numberParam(3,2),name:stringParam(4),lines:multiText.value.split(/\r?\n/).slice(0,4)});}
 // Empty/missing faces leave the canvas transparent so the CSS checkerboard shows through.
 async function paintFacePreview(){const el=facePreviewRef.value;if(!el)return;const w=el.width,h=el.height,ctx=el.getContext('2d')!;ctx.clearRect(0,0,w,h);ctx.imageSmoothingEnabled=false;const faceName=stringParam(0);if(!faceName)return;const asset=props.catalog?.assets.faces.find(e=>e.name===faceName);if(!asset)return;const img=await props.loadImage(asset.url);if(!img)return;const source=mvFaceSourceRect(numberParam(1),faceSize.value);ctx.drawImage(img,source.sx,source.sy,source.sw,source.sh,0,0,w,h);}
 function setRoute(route:MvMoveRoute,target:number|null){if(!draft.value)return;if(target!=null)setParam(0,target);setParam(1,route);if(draft.value.code===205&&!visible.value)commit();}

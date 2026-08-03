@@ -709,6 +709,59 @@ function standardCommandLabel(code: number, language: ProductLanguage): string {
   return localizeCommandCodeLabel(code, language, catalogCommandLabel(code));
 }
 
+function pictureInt(value: unknown, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+/** "(x,y)" segment; variable designation renders named variable references. */
+function pictureCoordinatePair(system: SystemData | null, p: unknown[], language: ProductLanguage): string {
+  if (Number(p[3]) === 1) {
+    const x = namedSystemEntry(system, 'variables', p[4], language);
+    const y = namedSystemEntry(system, 'variables', p[5], language);
+    return `{${x}},{${y}}`;
+  }
+  return `${pictureInt(p[4], 0)},${pictureInt(p[5], 0)}`;
+}
+
+function pictureCommandSummary(command: MvCommand, system: SystemData | null, language: ProductLanguage): string {
+  const p = command.parameters || [];
+  const text = eventEditorText(language);
+  const origin = text.pictureOrigins[Number(p[2]) === 1 ? 1 : 0];
+  const blendValue = pictureInt(p[9], 0);
+  const blend = text.blendModes.find(([value]) => value === blendValue)?.[1] ?? String(blendValue);
+  const coords = pictureCoordinatePair(system, p, language);
+  const scaleX = String(pictureInt(p[6], 100));
+  const scaleY = String(pictureInt(p[7], 100));
+  const opacity = String(pictureInt(p[8], 255));
+  if (command.code === 232) {
+    const easing = text.pictureEasings[Math.max(0, Math.min(3, pictureInt(p[12], 0)))];
+    const wait = p[11] ? translate('eventEditor.command.pictureWait', language) : '';
+    return translate('eventEditor.command.movePicture', language, {
+      id: String(pictureInt(p[0], 0)),
+      easing,
+      origin,
+      coords,
+      scaleX,
+      scaleY,
+      opacity,
+      blend,
+      duration: String(pictureInt(p[10], 0)),
+      wait,
+    });
+  }
+  return translate('eventEditor.command.showPicture', language, {
+    id: String(pictureInt(p[0], 0)),
+    name: String(p[1] || ''),
+    origin,
+    coords,
+    scaleX,
+    scaleY,
+    opacity,
+    blend,
+  });
+}
+
 export function commandDisplay(command: MvCommand, system?: SystemData | null, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): CommandDisplayResult {
   language = normalizeProductLanguage(language)
   const p = command.parameters || [];
@@ -744,6 +797,7 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 224) return line(translate('eventEditor.command.flashScreen', language, { json: JSON.stringify(p[0] || []) }), 'control');
   if (command.code === 225) return line(translate('eventEditor.command.shakeScreen', language, { power: String(p[0] || 0) }), 'control');
   if (command.code === 230) return line(translate('eventEditor.command.wait', language, { frames: String(p[0] || 0) }), 'control');
+  if (command.code === 231 || command.code === 232) return line(pictureCommandSummary(command, system || null, language), 'control');
   if (command.code === 250) return line(translate('eventEditor.command.playSE', language, { name: (p[0] as { name?: string })?.name || '' }), 'control');
   if (command.code === 125) return line(translate('eventEditor.command.changeGold', language, { sign: p[0] === 1 ? '-' : '+', amount: String(p[2] || 0) }), 'control');
   if (command.code === 314) return line(translate('eventEditor.command.recoverAll', language), 'control');

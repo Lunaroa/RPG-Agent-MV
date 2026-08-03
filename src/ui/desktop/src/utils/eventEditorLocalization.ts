@@ -13,6 +13,8 @@ export interface EventEditorLocaleText {
   moveSpeeds: readonly StringOption[];
   moveFrequencies: readonly StringOption[];
   blendModes: readonly NumberOption[];
+  pictureOrigins: readonly string[];
+  pictureEasings: readonly string[];
   moveRouteOperations: readonly NumberOption[];
   moveRouteLabels: Readonly<Record<number, string>>;
   balloonIconLabels: Readonly<Record<number, string>>;
@@ -73,6 +75,8 @@ export const EVENT_EDITOR_TEXT_BY_LOCALE = {
       [2, '正片叠底'],
       [3, '滤色'],
     ],
+    pictureOrigins: ['左上', '中心'],
+    pictureEasings: ['匀速', '慢速开始', '慢速结束', '慢速开始和结束'],
     moveRouteOperations: [
       [1, '向下移动'], [2, '向左移动'], [3, '向右移动'], [4, '向上移动'],
       [5, '左下移动'], [6, '右下移动'], [7, '左上移动'], [8, '右上移动'],
@@ -164,6 +168,8 @@ export const EVENT_EDITOR_TEXT_BY_LOCALE = {
       [2, 'Multiply'],
       [3, 'Screen'],
     ],
+    pictureOrigins: ['Upper Left', 'Center'],
+    pictureEasings: ['Linear', 'Ease In', 'Ease Out', 'Ease In Out'],
     moveRouteOperations: [
       [1, 'Move Down'], [2, 'Move Left'], [3, 'Move Right'], [4, 'Move Up'],
       [5, 'Move Lower Left'], [6, 'Move Lower Right'], [7, 'Move Upper Left'], [8, 'Move Upper Right'],

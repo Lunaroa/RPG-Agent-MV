@@ -81,7 +81,7 @@ export function formatMapOverviewEdgeConditionLabel(
     }
   }
   let label = detailSet.size
-    ? [...detailSet].join('；')
+    ? [...detailSet].join(t('mapOverview.tooltip.detailSeparator'))
     : types.size > 1
       ? t('mapOverview.tooltip.combinedCondition')
       : t('mapOverview.tooltip.noTrackedCondition')

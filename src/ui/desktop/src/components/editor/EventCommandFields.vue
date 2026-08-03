@@ -115,6 +115,12 @@ const props = defineProps<{
    * back to a placeholder frame.
    */
   eventCommands?: MvCommand[];
+  /**
+   * Raw index of the current command inside eventCommands. Callers clone both
+   * lists independently, so identity lookup cannot locate the command; the
+   * caller supplies its position instead.
+   */
+  eventCommandIndex?: number | null;
 }>();
 const emit = defineEmits<{ change: [] }>();
 const { language, t } = useI18n();
@@ -126,6 +132,7 @@ const imagePicker = ref<InstanceType<typeof ImageAssetPickerDialog> | null>(null
 const coordinatePicker = ref<InstanceType<typeof CoordinatePickerDialog> | null>(null);
 const animationPreviewOpen = ref(false);
 const pendingAnimationField = ref<CommandField | null>(null);
+let skipNextAnimationAutoPreview = false;
 const balloonCanvas = ref<HTMLCanvasElement | null>(null);
 const balloonImage = ref<HTMLImageElement | null>(null);
 const balloonAssetAvailable = ref(false);
@@ -234,6 +241,7 @@ function commitAnimationPreview(value: unknown): void {
   if (!field || !isAnimationDatabaseField(field)) return;
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric < 0) return;
+  skipNextAnimationAutoPreview = true;
   setField(field, numeric);
 }
 
@@ -260,7 +268,14 @@ function setField(field: CommandField, value: unknown) {
   setPath(field.path, value);
   // RM clears the equip item when its equip type changes (319).
   if (props.command.code === 319 && field.path[0] === 1) setPath([2], 0);
+  // Picking an animation auto-plays it once (the preview plays on ready); skip
+  // when the change originates from the preview dialog's own commit.
+  const autoPreviewAnimation = isAnimationDatabaseField(field)
+    && !skipNextAnimationAutoPreview
+    && Number(value) > 0;
+  skipNextAnimationAutoPreview = false;
   emit('change');
+  if (autoPreviewAnimation) openAnimationPreview(field);
 }
 function optionValue(field: CommandField, value: string) {
   return selectOptions(field).find(([entry]) => String(entry) === value)?.[0] ?? value;
@@ -346,6 +361,7 @@ function commitImageField(selection: { name: string; index: number }): void {
 function openCoordinatePicker(): void {
   const spec = coordinateParameterSpec();
   if (!spec) return;
+  const parameters = props.command.parameters;
   coordinatePicker.value?.open({
     mode: spec.mode,
     mapId: spec.mapId,
@@ -353,6 +369,7 @@ function openCoordinatePicker(): void {
     y: spec.y,
     allowMapChange: spec.allowMapChange,
     picture: screenPicturePreview(),
+    ...(spec.mode === 'screen' ? { scaleX: finiteNumber(parameters[6], 100), scaleY: finiteNumber(parameters[7], 100) } : {}),
   });
 }
 
@@ -414,9 +431,14 @@ function screenPicturePreview() {
 function resolveShowPictureAssetForSlot(slot: number): { assetName: string; assetUrl: string } | null {
   const siblings = props.eventCommands;
   if (!siblings || !siblings.length) return null;
-  // Locate the current command within the sibling list by reference so we only
-  // consider commands that execute before it.
-  const currentIndex = siblings.indexOf(props.command);
+  // Locate the current command within the sibling list so only commands that
+  // execute before it are considered. The caller-provided raw index is the
+  // reliable source (both lists are independent clones, so reference identity
+  // never matches); indexOf stays as a fallback for direct in-place usage.
+  const providedIndex = props.eventCommandIndex;
+  const currentIndex = providedIndex != null && providedIndex >= 0 && providedIndex < siblings.length
+    ? providedIndex
+    : siblings.indexOf(props.command);
   const upperBound = currentIndex === -1 ? siblings.length : currentIndex;
   for (let i = upperBound - 1; i >= 0; i -= 1) {
     const sibling = siblings[i];
@@ -429,7 +451,7 @@ function resolveShowPictureAssetForSlot(slot: number): { assetName: string; asse
   }
   return null;
 }
-function commitCoordinate(selection: { mapId: number; x: number; y: number }): void {
+function commitCoordinate(selection: { mapId: number; x: number; y: number; scaleX?: number; scaleY?: number }): void {
   if (props.command.code === 201) {
     setPath([1], selection.mapId); setPath([2], selection.x); setPath([3], selection.y);
   } else if (props.command.code === 202) {
@@ -440,6 +462,8 @@ function commitCoordinate(selection: { mapId: number; x: number; y: number }): v
     setPath([3], selection.x); setPath([4], selection.y);
   } else if (props.command.code === 231 || props.command.code === 232) {
     setPath([4], selection.x); setPath([5], selection.y);
+    if (selection.scaleX !== undefined) setPath([6], selection.scaleX);
+    if (selection.scaleY !== undefined) setPath([7], selection.scaleY);
   }
   emit('change');
 }

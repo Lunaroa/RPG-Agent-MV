@@ -6,7 +6,7 @@
           <strong id="coordinate-picker-title" class="editor-modal-title">{{ title || t(mode === 'map' ? 'coordinate.mapTitle' : 'coordinate.screenTitle') }}</strong>
           <button type="button" class="editor-modal-close" :aria-label="t('eventcmd.close')" @click="close">×</button>
         </header>
-        <div class="coordinate-controls">
+        <div class="coordinate-controls" :class="{ 'screen-controls': mode === 'screen' }">
           <label v-if="mode === 'map' && allowMapChange">
             <span>{{ t('coordinate.map') }}</span>
             <select v-model.number="mapId" @change="loadMap">
@@ -15,6 +15,10 @@
           </label>
           <label><span>X</span><input v-model.number="x" type="number" :min="mode === 'map' ? 0 : SCREEN_COORDINATE_MIN" :max="mode === 'map' ? maxX : SCREEN_COORDINATE_MAX" @change="normalizeAndPaint" /></label>
           <label><span>Y</span><input v-model.number="y" type="number" :min="mode === 'map' ? 0 : SCREEN_COORDINATE_MIN" :max="mode === 'map' ? maxY : SCREEN_COORDINATE_MAX" @change="normalizeAndPaint" /></label>
+          <template v-if="mode === 'screen'">
+            <label><span>{{ t('coordinate.scaleX') }}</span><input v-model.number="scaleX" type="number" :min="PICTURE_SCALE_MIN" :max="PICTURE_SCALE_MAX" @change="normalizeAndPaint" /></label>
+            <label><span>{{ t('coordinate.scaleY') }}</span><input v-model.number="scaleY" type="number" :min="PICTURE_SCALE_MIN" :max="PICTURE_SCALE_MAX" @change="normalizeAndPaint" /></label>
+          </template>
           <span v-if="mode === 'map' && mapPayload" class="coordinate-size">{{ mapPayload.map.width }} × {{ mapPayload.map.height }}</span>
           <span v-else-if="mode === 'screen'" class="coordinate-size">{{ screenWidth }} × {{ screenHeight }}</span>
         </div>
@@ -46,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { EditorProjectCatalog, MapPayload } from '../../api/client';
 import { maps, resolveAssetUrl } from '../../api/client';
 import { LAYER_Z } from '../../constants/layerZIndex';
@@ -65,7 +69,7 @@ import {
 } from '../../utils/pictureCoordinatePreview';
 
 type PickerMode = 'map' | 'screen';
-interface CoordinateSelection { mapId: number; x: number; y: number }
+interface CoordinateSelection { mapId: number; x: number; y: number; scaleX?: number; scaleY?: number }
 interface OpenOptions extends Partial<CoordinateSelection> { mode?: PickerMode; allowMapChange?: boolean; title?: string; picture?: ScreenPicturePreview }
 
 const props = defineProps<{ catalog: EditorProjectCatalog | null; zIndex?: number }>();
@@ -80,6 +84,10 @@ const allowMapChange = ref(true);
 const mapId = ref(1);
 const x = ref(0);
 const y = ref(0);
+const scaleX = ref(100);
+const scaleY = ref(100);
+const PICTURE_SCALE_MIN = 5;
+const PICTURE_SCALE_MAX = 1000;
 const mapPayload = ref<MapPayload | null>(null);
 const tilesetImages = ref<(HTMLImageElement | null)[]>([]);
 const picturePreview = ref<ScreenPicturePreview | null>(null);
@@ -94,6 +102,8 @@ let mapBaseCanvas: HTMLCanvasElement | null = null;
 let screenGridCanvas: HTMLCanvasElement | null = null;
 let screenGridKey = '';
 let pictureLoadRequest = 0;
+let initialScaleX = 100;
+let initialScaleY = 100;
 
 interface MapPanState {
   pointerId: number;
@@ -147,9 +157,28 @@ function onKeyDown(event: KeyboardEvent) {
   event.preventDefault();
   close();
 }
+// Wheel zooms the picture in screen mode. Vue registers wheel listeners as
+// passive by default, which would swallow preventDefault, so attach manually.
+function onCanvasWheel(event: WheelEvent) {
+  if (mode.value !== 'screen' || !visible.value) return;
+  event.preventDefault();
+  const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+  scaleX.value = clampScale(Math.round(scaleX.value * factor));
+  scaleY.value = clampScale(Math.round(scaleY.value * factor));
+  paint();
+}
+watch(visible, (shown) => {
+  void nextTick(() => {
+    const canvas = canvasRef.value;
+    if (!canvas) return;
+    canvas.removeEventListener('wheel', onCanvasWheel);
+    if (shown) canvas.addEventListener('wheel', onCanvasWheel, { passive: false });
+  });
+});
 onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown);
+  canvasRef.value?.removeEventListener('wheel', onCanvasWheel);
   cancelPointerInteraction();
   pictureLoadRequest += 1;
 });
@@ -163,6 +192,12 @@ async function open(options: OpenOptions = {}) {
   mapId.value = positiveMapId(options.mapId);
   x.value = finiteInteger(options.x, 0);
   y.value = finiteInteger(options.y, 0);
+  // Keep untouched scales exactly as stored (even out of the input's clamp
+  // range); they only normalize once the user actually edits them.
+  scaleX.value = finiteInteger(options.scaleX ?? options.picture?.scaleX, 100);
+  scaleY.value = finiteInteger(options.scaleY ?? options.picture?.scaleY, 100);
+  initialScaleX = scaleX.value;
+  initialScaleY = scaleY.value;
   picturePreview.value = options.picture || null;
   pictureImage.value = null;
   pictureError.value = '';
@@ -170,7 +205,7 @@ async function open(options: OpenOptions = {}) {
   visible.value = true;
   if (mode.value === 'map') await loadMap();
   else {
-    normalizeSelection();
+    normalizeSelection(false);
     await nextTick();
     paint();
     void loadScreenPicture();
@@ -244,14 +279,22 @@ function normalizeAndPaint() {
   });
 }
 
-function normalizeSelection() {
+function normalizeSelection(clampScales = true) {
   if (mode.value === 'screen') {
     x.value = clampScreenCoordinate(finiteInteger(x.value, 0));
     y.value = clampScreenCoordinate(finiteInteger(y.value, 0));
+    if (clampScales) {
+      scaleX.value = clampScale(finiteInteger(scaleX.value, 100));
+      scaleY.value = clampScale(finiteInteger(scaleY.value, 100));
+    }
     return;
   }
   x.value = clamp(finiteInteger(x.value, 0), 0, maxX.value);
   y.value = clamp(finiteInteger(y.value, 0), 0, maxY.value);
+}
+
+function clampScale(value: unknown): number {
+  return clamp(finiteInteger(value, 100), PICTURE_SCALE_MIN, PICTURE_SCALE_MAX);
 }
 
 function paint() {
@@ -337,14 +380,24 @@ function paintScreen(context: CanvasRenderingContext2D, width: number, height: n
   // (Move Picture 232 reusing a prior Show Picture 231 asset), or standing in
   // for the missing image (232 with no resolvable 231) using a nominal size.
   if (picturePreview.value) drawScreenPicturePlaceholder(context, realBounds);
+  // Crosshair arms scale with the canvas so they stay pickable when the
+  // full-resolution backing store is downscaled on HiDPI screens.
+  const crosshairArm = Math.max(12, Math.round(width / 64));
   context.strokeStyle = '#ffcc4d';
   context.lineWidth = 2;
-  context.beginPath(); context.moveTo(x.value - 10, y.value); context.lineTo(x.value + 10, y.value); context.stroke();
-  context.beginPath(); context.moveTo(x.value, y.value - 10); context.lineTo(x.value, y.value + 10); context.stroke();
+  context.beginPath(); context.moveTo(x.value - crosshairArm, y.value); context.lineTo(x.value + crosshairArm, y.value); context.stroke();
+  context.beginPath(); context.moveTo(x.value, y.value - crosshairArm); context.lineTo(x.value, y.value + crosshairArm); context.stroke();
+}
+
+/** Preview snapshot overridden with the live scale inputs so edits repaint immediately. */
+function livePicturePreview(): ScreenPicturePreview | null {
+  const preview = picturePreview.value;
+  if (!preview) return null;
+  return { ...preview, scaleX: scaleX.value, scaleY: scaleY.value };
 }
 
 function drawScreenPicturePlaceholder(context: CanvasRenderingContext2D, realBounds: { x: number; y: number; w: number; h: number } | null) {
-  const preview = picturePreview.value;
+  const preview = livePicturePreview();
   if (!preview) return;
   // When a real image was drawn, frame its actual rendered bounds so the dashed
   // outline matches what the user sees. Without a real image (232 with no
@@ -361,14 +414,11 @@ function drawScreenPicturePlaceholder(context: CanvasRenderingContext2D, realBou
   context.setLineDash([6, 4]);
   context.strokeRect(ox, oy, baseW, baseH);
   context.setLineDash([]);
-  context.fillStyle = '#ffcc4d';
-  context.font = '12px sans-serif';
-  context.fillText(t('coordinate.picturePlaceholder', { name: preview.assetName }), ox + 6, oy + 16);
   context.restore();
 }
 
 function drawScreenPicture(context: CanvasRenderingContext2D): { x: number; y: number; w: number; h: number } | null {
-  const preview = picturePreview.value;
+  const preview = livePicturePreview();
   const image = pictureImage.value;
   if (!preview || !image) return null;
   const iw = image.naturalWidth || image.width;
@@ -438,9 +488,10 @@ function onStagePointerDown(event: PointerEvent) {
     captureCanvasPointer(event.pointerId);
     return;
   }
-  // Only Show Picture (code 231) supplies a picture preview. Screen-only
-  // coordinate pickers, including code 232, keep click positioning without
-  // gaining a drag gesture.
+  // Screen-mode pickers drag the picture anchor whenever a picture preview is
+  // attached: Show Picture (231) always supplies one, and Move Picture (232)
+  // reuses the most recent prior Show Picture on the same slot. Only a 232
+  // with no resolvable prior 231 falls back to click positioning.
   if (!picturePreview.value) return;
   pictureDrag = {
     pointerId: event.pointerId,
@@ -519,12 +570,52 @@ function flushPictureDrag() {
     canvas.width,
     canvas.height,
   );
-  const nextX = clampScreenCoordinate(Math.round(drag.startX + delta.x));
-  const nextY = clampScreenCoordinate(Math.round(drag.startY + delta.y));
+  const snapped = snapPictureCoordinate(drag.startX + delta.x, drag.startY + delta.y);
+  const nextX = clampScreenCoordinate(Math.round(snapped.x));
+  const nextY = clampScreenCoordinate(Math.round(snapped.y));
   if (nextX === x.value && nextY === y.value) return;
   x.value = nextX;
   y.value = nextY;
   paint();
+}
+
+// PS-style snapping: while dragging, stick the picture's edges/center to the
+// canvas edges/center lines when they come within a few logical pixels.
+const PICTURE_SNAP_THRESHOLD = 5;
+
+function pictureBoundsAt(px: number, py: number): { left: number; top: number; right: number; bottom: number } | null {
+  const preview = livePicturePreview();
+  if (!preview) return null;
+  const image = pictureImage.value;
+  const width = (image ? (image.naturalWidth || image.width) : 200) * preview.scaleX / 100;
+  const height = (image ? (image.naturalHeight || image.height) : 200) * preview.scaleY / 100;
+  const left = preview.origin === 1 ? px - width / 2 : px;
+  const top = preview.origin === 1 ? py - height / 2 : py;
+  return { left, top, right: left + width, bottom: top + height };
+}
+
+function snapPictureCoordinate(px: number, py: number): { x: number; y: number } {
+  const bounds = pictureBoundsAt(px, py);
+  if (!bounds) return { x: px, y: py };
+  const snapAxis = (edges: number[], targets: number[]): number => {
+    let best = 0;
+    let bestDistance = PICTURE_SNAP_THRESHOLD + 1;
+    for (const edge of edges) {
+      for (const target of targets) {
+        const delta = target - edge;
+        if (Math.abs(delta) <= PICTURE_SNAP_THRESHOLD && Math.abs(delta) < bestDistance) {
+          bestDistance = Math.abs(delta);
+          best = delta;
+        }
+      }
+    }
+    return best;
+  };
+  const width = screenWidth.value;
+  const height = screenHeight.value;
+  const dx = snapAxis([bounds.left, (bounds.left + bounds.right) / 2, bounds.right], [0, width / 2, width]);
+  const dy = snapAxis([bounds.top, (bounds.top + bounds.bottom) / 2, bounds.bottom], [0, height / 2, height]);
+  return { x: px + dx, y: py + dy };
 }
 
 function releaseCanvasPointer(pointerId: number) {
@@ -573,7 +664,15 @@ function scrollSelectionIntoView() {
 
 function commit() {
   if (loading.value || error.value) return;
-  emit('commit', { mapId: mapId.value, x: x.value, y: y.value });
+  emit('commit', {
+    mapId: mapId.value,
+    x: x.value,
+    y: y.value,
+    ...(mode.value === 'screen' ? {
+      ...(scaleX.value !== initialScaleX ? { scaleX: scaleX.value } : {}),
+      ...(scaleY.value !== initialScaleY ? { scaleY: scaleY.value } : {}),
+    } : {}),
+  });
   close();
 }
 
@@ -592,6 +691,7 @@ defineExpose({ open });
 .coordinate-overlay { z-index: v-bind(coordinateLayerZ); }
 .coordinate-dialog { width: min(760px, calc(100vw - 32px)); }
 .coordinate-controls { display: grid; grid-template-columns:minmax(180px, 1fr) 92px 92px auto; align-items:end; gap:8px; padding:10px 12px; border-bottom:1px solid var(--app-border); }
+.coordinate-controls.screen-controls { grid-template-columns:repeat(4, 84px) auto minmax(0, 1fr); }
 .coordinate-controls label { display:grid; gap:4px; color:var(--app-ink-muted); font-size:11px; }
 .coordinate-controls input,.coordinate-controls select { min-width:0; padding:5px 6px; border:1px solid var(--app-border); border-radius:var(--app-radius-sm); background:var(--app-bg); color:var(--app-ink); }
 .coordinate-size { align-self:center; color:var(--app-ink-muted); font:11px var(--app-font-mono); }
@@ -600,7 +700,7 @@ defineExpose({ open });
 /* Map mode scrolls the full-size map; drag pans, click selects. */
 .coordinate-stage.map-stage { place-items:start; }
 .coordinate-stage.map-stage canvas { max-width:none; max-height:none; touch-action:none; }
-/* Show Picture screen mode drags the picture anchor; code 232 has no picture-stage class. */
+/* Screen mode with a picture preview drags the picture anchor (231 always, 232 when a prior 231 resolved). */
 .coordinate-stage.picture-stage canvas { touch-action:none; cursor:grab; }
 .coordinate-stage.picture-stage canvas:active { cursor:grabbing; }
 .coordinate-stage.loading canvas { opacity:.4; }
@@ -608,5 +708,5 @@ defineExpose({ open });
 .coordinate-status.error { color:var(--app-danger); }
 .coordinate-preview-warning { position:absolute; left:20px; top:20px; max-width:calc(100% - 40px); padding:6px 8px; border:1px solid color-mix(in srgb,var(--app-warn) 48%,var(--app-border)); border-radius:var(--app-radius-sm); background:color-mix(in srgb,var(--app-bg-elevated) 88%,transparent); color:var(--app-warn); font-size:11px; pointer-events:none; }
 .coordinate-hint { margin:0; padding:7px 12px; border-top:1px solid var(--app-border); color:var(--app-ink-muted); font-size:11px; }
-@media (max-width:620px) { .coordinate-controls { grid-template-columns:1fr 72px 72px; }.coordinate-size { display:none; } }
+@media (max-width:620px) { .coordinate-controls { grid-template-columns:1fr 72px 72px; }.coordinate-controls.screen-controls { grid-template-columns:repeat(4, 72px) auto; }.coordinate-size { display:none; } }
 </style>

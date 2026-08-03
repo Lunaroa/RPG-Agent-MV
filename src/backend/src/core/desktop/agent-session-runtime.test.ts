@@ -859,7 +859,7 @@ describe("AgentSessionRuntime", () => {
 
   test("opencode plan ASK responses are reflected in plan state", async () => {
     const harness = await createHarness();
-    const session = await harness.runtime.create({ intent: "plan work" });
+    const session = await harness.runtime.create({ intent: "plan work", project: "projects/Project" });
     const sessionId = String(session.id);
     await waitForSessionStatus(harness.runtime, sessionId, "running");
     (harness.runtime as unknown as { sessions: Map<string, { opencodeSessionId: string | null }> }).sessions.get(sessionId)!.opencodeSessionId = "opencode-test-session";
@@ -889,7 +889,7 @@ describe("AgentSessionRuntime", () => {
 
   test("opencode plan ASK default rejection message follows English product language", async () => {
     const harness = await createHarness();
-    const session = await harness.runtime.create({ intent: "plan work", productLanguage: "en-US" });
+    const session = await harness.runtime.create({ intent: "plan work", project: "projects/Project", productLanguage: "en-US" });
     const sessionId = String(session.id);
     await waitForSessionStatus(harness.runtime, sessionId, "running");
     (harness.runtime as unknown as { sessions: Map<string, { opencodeSessionId: string | null }> }).sessions.get(sessionId)!.opencodeSessionId = "opencode-test-session";
@@ -947,7 +947,7 @@ describe("AgentSessionRuntime", () => {
       replyPermission: async () => false,
       replyQuestion: async () => false,
     });
-    const session = await harness.runtime.create({ intent: "plan work" });
+    const session = await harness.runtime.create({ intent: "plan work", project: "projects/Project" });
     const sessionId = String(session.id);
     await waitForSessionStatus(harness.runtime, sessionId, "running");
     (harness.runtime as unknown as { sessions: Map<string, { opencodeSessionId: string | null }> }).sessions.get(sessionId)!.opencodeSessionId = "opencode-test-session";
@@ -995,6 +995,7 @@ describe("AgentSessionRuntime", () => {
     });
     const project = "projects/PlanIsolation";
     const projectDir = path.join((harness.runtime as unknown as { workflowRoot: string }).workflowRoot, project);
+    scaffoldRmmvProject(projectDir);
     fs.mkdirSync(path.join(projectDir, ".opencode", "plans", "conversations"), { recursive: true });
 
     const root = await harness.runtime.create({ intent: "plan root", project });
@@ -1024,7 +1025,7 @@ describe("AgentSessionRuntime", () => {
 
   test("opencode AskUserQuestion responses are projected as native answers", async () => {
     const harness = await createHarness();
-    const session = await harness.runtime.create({ intent: "ask user" });
+    const session = await harness.runtime.create({ intent: "ask user", project: "projects/Project" });
     const sessionId = String(session.id);
     await waitForSessionStatus(harness.runtime, sessionId, "running");
     (harness.runtime as unknown as { sessions: Map<string, { opencodeSessionId: string | null }> }).sessions.get(sessionId)!.opencodeSessionId = "opencode-test-session";
@@ -1740,14 +1741,17 @@ async function createPreparingHarness() {
 function makeRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "rmmv-agent-runtime-"));
   roots.push(root);
-  const project = path.join(root, "projects", "Project");
+  scaffoldRmmvProject(path.join(root, "projects", "Project"));
+  return root;
+}
+
+function scaffoldRmmvProject(project: string): void {
   const data = path.join(project, "www", "data");
   fs.mkdirSync(data, { recursive: true });
   fs.writeFileSync(path.join(project, "Game.rpgproject"), "RPGMV 1.6.2", "utf8");
   fs.writeFileSync(path.join(data, "System.json"), JSON.stringify({ gameTitle: "Example Game", startMapId: 1, startX: 0, startY: 0 }), "utf8");
   fs.writeFileSync(path.join(data, "MapInfos.json"), JSON.stringify([null, { id: 1, name: "Example Map" }]), "utf8");
   fs.writeFileSync(path.join(data, "Map001.json"), JSON.stringify({ width: 10, height: 10, data: [], events: [null] }), "utf8");
-  return root;
 }
 
 function fakeWorkflowRecord(runId: string): WorkflowRunRecord {

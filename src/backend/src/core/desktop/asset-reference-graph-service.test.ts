@@ -236,11 +236,13 @@ describe('asset reference graph service', { concurrency: false }, () => {
       category: 'pictures',
       sourceFile: 'Unsafe.png',
     })), /绝对路径/);
-    assert.throws(() => withTestLanguage(() => importLocalAssetFile(root, project, {
+    // Traversal segments are stripped to the leaf name; the import stays inside the category directory.
+    const sanitized = withTestLanguage(() => importLocalAssetFile(root, project, {
       category: 'pictures',
       sourceFile: localFile,
       targetName: '../Unsafe',
-    })), /资产名称无效/);
+    }));
+    assert.equal(sanitized.relativePath, 'www/img/pictures/Unsafe.png');
     assert.throws(() => withTestLanguage(() => importLocalAssetFile(root, project, {
       category: 'pictures',
       sourceFile: localFile,

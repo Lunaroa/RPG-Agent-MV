@@ -25,7 +25,7 @@ test('preview lifecycle is driven by one latest intent queue', () => {
 
 test('restart checks the latest intent after stopping the old session', () => {
   const restart = source.slice(source.indexOf('async function restartPreview()'), source.indexOf('async function setPreviewSwitch'));
-  assert.match(restart, /previewIntentCoordinator\.begin\(currentPreviewIntent\(\)\)/);
+  assert.match(restart, /previewIntentCoordinator\.begin\(intent/);
   assert.match(restart, /await stopPreviewSession\(\)/);
   assert.match(restart, /if \(!isCurrent\(\) \|\| !token\.value\.active\) return/);
 });

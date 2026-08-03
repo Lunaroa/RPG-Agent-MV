@@ -37,7 +37,7 @@ describe('map canvas live paint wiring', () => {
   });
 
   test('renders only the hovered shadow quarter with a white high-contrast frame', () => {
-    assert.match(source, /paintMode\.value === 'shadow' && shadowHoverQuarter[\s\S]{0,120}drawShadowQuarterFrame\(context, shadowHoverQuarter\)/);
+    assert.match(source, /paintMode\.value === 'shadow'\) \{[\s\S]{0,40}if \(shadowHoverQuarter\) drawShadowQuarterFrame\(context, shadowHoverQuarter\)/);
     assert.match(source, /function drawShadowQuarterFrame[\s\S]{0,360}const size = tileSize\.value \/ 2/);
     assert.match(source, /strokeStyle = 'rgba\(255, 255, 255, \.99\)'/);
     assert.doesNotMatch(source, /function drawShadowQuarterFrame[\s\S]{0,500}fillRect/);

@@ -8,7 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const desktopSrc = join(here, '..');
 
 describe('asset grid media thumbs', () => {
-  test('font thumb exists; audio/effects stay icon-only in the grid', () => {
+  test('font thumb exists; audio stays icon-only; effects use an armed thumb', () => {
     const font = readFileSync(join(desktopSrc, 'components/AssetGridFontThumb.vue'), 'utf8');
     assert.match(font, /FontFace/);
     assert.match(font, /emit\('error'\)/);
@@ -16,7 +16,7 @@ describe('asset grid media thumbs', () => {
     const view = readFileSync(join(desktopSrc, 'views/ProjectAssetsView.vue'), 'utf8');
     assert.match(view, /AssetGridFontThumb/);
     assert.doesNotMatch(view, /AssetGridAudioThumb/);
-    assert.doesNotMatch(view, /AssetGridEffectThumb/);
+    assert.match(view, /AssetGridEffectThumb/);
     assert.match(view, /typeIconSizePx/);
   });
 });

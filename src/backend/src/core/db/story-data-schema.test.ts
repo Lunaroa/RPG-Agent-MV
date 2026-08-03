@@ -30,7 +30,7 @@ test('fresh database directly uses the current story schema and query indexes', 
     migrate();
     assert.equal(
       (db.prepare('SELECT MAX(version) AS version FROM migrations').get() as { version: number }).version,
-      12,
+      13,
     );
     assert.equal(tableExists(db, 'story_tasks'), false);
     assert.equal(tableExists(db, 'story_task_contracts'), false);

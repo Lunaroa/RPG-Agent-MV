@@ -39,6 +39,10 @@ const ALLOWED_CHINESE_SOURCE_FILES = new Set([
   'src/ui/desktop/src/config/known-issues-i18n.ts',
   'src/ui/desktop/src/utils/agentIntent.ts',
   'src/ui/desktop/src/utils/pluginDiagnosticsI18n.ts',
+  // Font preview sample intentionally mixes CJK glyphs to prove glyph coverage; not a UI label.
+  'src/ui/desktop/src/utils/assetPreview.ts',
+  // Bilingual toolbar labels keyed on the documentation view's own language toggle.
+  'src/ui/desktop/src/views/DocumentationView.vue',
   'src/ui/desktop/electron/electronLocalization.ts',
   'src/ui/desktop/src/i18n/locales/en-US.ts',
   'src/ui/desktop/src/i18n/locales/zh-CN.ts',
@@ -47,6 +51,8 @@ const ALLOWED_CHINESE_SOURCE_FILES = new Set([
   'src/backend/src/core/i18n/locales/en-US.ts',
   'src/backend/src/core/i18n/locales/zh-CN.ts',
   'src/backend/src/core/rmmv/event-page-compiler.ts',
+  // Bilingual asset category label dictionary ('zh-CN' / 'en-US' pairs).
+  'src/contract/project-asset-category-labels.ts',
 ]);
 
 /** Additional directory-based localization boundaries that must stay Chinese-allowed. */

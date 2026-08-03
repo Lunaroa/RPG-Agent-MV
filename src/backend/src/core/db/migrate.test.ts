@@ -453,7 +453,7 @@ test("migration v10 drops structured outline tables and old story board artifact
   assert.ok(!tableExists(db, "story_block_contracts"), "old story board link table dropped");
   const anchorCols = (db.prepare("PRAGMA table_info(story_event_anchors)").all() as { name: string }[]).map((col) => col.name);
   assert.equal(anchorCols.includes("block_id"), false);
-  assert.equal((db.prepare("SELECT MAX(version) AS version FROM migrations").get() as { version: number }).version, 12);
+  assert.equal((db.prepare("SELECT MAX(version) AS version FROM migrations").get() as { version: number }).version, 13);
 
   closeDatabase();
   fs.rmSync(v8Root, { recursive: true, force: true });

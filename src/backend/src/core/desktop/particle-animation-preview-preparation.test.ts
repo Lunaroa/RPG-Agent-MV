@@ -150,6 +150,8 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
       'audio/se/',
       'img/battlebacks1/',
       'img/battlebacks2/',
+      'img/enemies/',
+      'img/sv_enemies/',
     ]);
     // No per-session copies: runtime scripts, effect, SE and battlebacks stay in the project.
     assert.deepEqual(listRelativeFiles(appPreparation.appDirectory), [

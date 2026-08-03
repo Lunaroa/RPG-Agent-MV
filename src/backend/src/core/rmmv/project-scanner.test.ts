@@ -110,7 +110,7 @@ describe("project-scanner", () => {
 
     test("throws when no data dir found", () => {
       const root = tmpDir("scanner-empty-");
-      assert.throws(() => resolveDataDir(root), /Cannot find RPG Maker MV data folder/);
+      assert.throws(() => resolveDataDir(root), /Cannot find an RPG Maker data folder/);
       fs.rmSync(root, { recursive: true, force: true });
     });
   });

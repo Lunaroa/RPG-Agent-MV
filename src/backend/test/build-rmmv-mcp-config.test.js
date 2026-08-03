@@ -26,6 +26,8 @@ describe('build-rmmv-mcp-config', () => {
         AGENT_RPG_INSTALL_ROOT: root,
         AIWF_WORKFLOW_ROOT: root,
         RMMV_PRODUCT_LANGUAGE: 'en-US',
+        AIWF_PROJECT_BINDING_STATUS: 'none',
+        AIWF_PROJECT_BINDING_VERSION: '0',
         ELECTRON_RUN_AS_NODE: '1',
       });
 

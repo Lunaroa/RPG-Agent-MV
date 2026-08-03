@@ -16,10 +16,9 @@ const pluginPaneSource = readFileSync(new URL('../console/ConsolePluginsPane.vue
 const topBarSource = readFileSync(new URL('../layout/TopBar.vue', import.meta.url), 'utf8');
 
 describe('editor semantic controls', () => {
-  test('uses multiline resizable controls for map and event notes', () => {
+  test('uses a resizable textarea for the map note and a single-line input for the event note', () => {
     assert.match(mapPropertiesSource, /v-model="form\.note" type="textarea" :rows="4" resize="vertical"/);
-    assert.match(eventEditorSource, /<textarea v-model="draft\.note" rows="2"[^>]+data-ui-id="event-editor-note"/);
-    assert.match(eventEditorSource, /max-height:\s*96px/);
+    assert.match(eventEditorSource, /<input v-model="draft\.note" data-ui-id="event-editor-note"/);
     assert.match(eventEditorSource, /class="behavior-groups"/);
     assert.match(eventEditorSource, /data-ui-id="event-editor-trigger"/);
     assert.match(eventEditorSource, /\.ev-settings[^}]+overflow-y:\s*auto/s);
@@ -93,7 +92,7 @@ describe('editor semantic controls', () => {
     assert.match(mapCanvasEditorSource, /strokeStyle = 'rgba\(255, 255, 255, \.99\)'/);
     assert.match(mapCanvasEditorSource, /highlightPaletteHover[\s\S]{0,260}drawPaletteFrame\(/);
     assert.match(mapCanvasEditorSource, /highlightPaletteDrag[\s\S]{0,360}drawPaletteFrame\(/);
-    assert.match(mapCanvasEditorSource, /highlightPaletteSelection[\s\S]{0,260}drawPaletteFrame\(/);
+    assert.match(mapCanvasEditorSource, /highlightPaletteSelection[\s\S]{0,400}drawPaletteFrame\(/);
     assert.doesNotMatch(mapCanvasEditorSource, /function highlightPaletteHover[\s\S]{0,500}rgba\(255, 230, 89/);
     assert.doesNotMatch(mapCanvasEditorSource, /function highlightPaletteDrag[\s\S]{0,500}rgba\(79, 70, 229, \.18\)|setLineDash\(\[6, 3\]\)/);
   });
@@ -104,7 +103,8 @@ describe('editor semantic controls', () => {
     assert.match(projectAccessSource, /project-icon-placeholder/);
     assert.match(leftDockSource, /:class="\{ active: entry\.tab === tileTab, unavailable: !entry\.available \}"/);
     assert.doesNotMatch(leftDockSource, /:disabled="!entry\.available/);
-    assert.match(leftDockSource, /:class="treeNodeDragClasses\(data\.id\)"/);
+    // Element Plus tree drag contract replaced the custom pointer projection classes.
+    assert.doesNotMatch(leftDockSource, /treeNodeDragClasses/);
     assert.match(leftDockSource, /v-if="!data\.mapFileExists" class="node-missing"/);
     assert.match(mapCanvasEditorSource, /const regionPalette = tileTab\.value === 'R'/);
     assert.match(mapCanvasEditorSource, /MV_REGION_PALETTE_ROWS/);
@@ -165,8 +165,8 @@ describe('editor semantic controls', () => {
 
   test('links event list navigation, notes, hover preview, and scoped search', () => {
     assert.match(leftDockSource, /scrollIntoView\(\{ block: 'nearest' \}\)/);
-    assert.match(leftDockSource, /v-if="event\.note" class="event-row-note"/);
-    assert.match(leftDockSource, /@mouseenter="\$emit\('hover-event', event\.id\)"/);
+    assert.match(leftDockSource, /v-else-if="event\.note" class="event-row-note"/);
+    assert.match(leftDockSource, /@mouseenter="mode === 'event' && \$emit\('hover-event', event\.id\)"/);
     assert.match(leftDockSource, /\$emit\('search-all-maps'\)/);
     assert.match(leftDockSource, /@dblclick="\$emit\('open-search-hit', hit\)"/);
     assert.doesNotMatch(leftDockSource, /@click="\$emit\('open-search-hit', hit\)"/);
@@ -226,8 +226,9 @@ describe('editor semantic controls', () => {
     assert.match(editorViewSource, /if \(value === 'preview' \|\| previous === 'preview'\) schedulePreviewIntentReconcile\(\)/);
     assert.match(editorViewSource, /previewIntentCoordinator\.runExclusive\(token,/);
     assert.match(editorViewSource, /mapPreview\.resume\([\s\S]{0,220}intent\.mapRevision/);
-    assert.match(editorViewSource, /frame\.operationId !== previewSession\.value\.operationId/);
-    assert.match(editorViewSource, /frame\.mapId !== selectedMapId\.value/);
+    // Stale runtime frames are dropped by matching the live session's operation and map revision.
+    assert.match(editorViewSource, /event\.operationId !== session\.operationId/);
+    assert.match(editorViewSource, /event\.mapId !== session\.mapId \|\| event\.mapRevision !== session\.mapRevision/);
     assert.match(mapCanvasEditorSource, /function setCanvasElement[\s\S]{0,180}if \(canvas\) renderMap\(\)/);
     assert.match(mapCanvasEditorSource, /function setOverlayElement[\s\S]{0,180}if \(canvas\) renderOverlay\(\)/);
   });

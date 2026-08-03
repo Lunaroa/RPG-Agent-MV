@@ -52,6 +52,11 @@ describe('isolated Battle Test preparation', { concurrency: false }, () => {
     assert.deepEqual(temporarySystem.testBattlers, [{ actorId: 1, level: 12, equips: [1, 1] }]);
     assert.equal(temporarySystem.battleback1Name, 'Field');
     assert.equal(temporarySystem.battleback2Name, 'Forest');
+    const temporaryTestSystem = readJson(path.join(preparation.temporaryProject, 'data', 'Test_System.json'));
+    assert.equal(temporaryTestSystem.testTroopId, 1);
+    assert.deepEqual(temporaryTestSystem.testBattlers, [{ actorId: 1, level: 12, equips: [1, 1] }]);
+    assert.equal(fs.existsSync(path.join(preparation.temporaryProject, 'data', 'Test_Actors.json')), true);
+    assert.equal(fs.existsSync(path.join(preparation.temporaryProject, 'data', 'Test_MapInfos.json')), true);
     assert.equal(sourceSystem.testBattlers[0].level, 1);
     assert.equal(readJson(path.join(project, 'data', 'System.json')).testBattlers[0].level, 1);
     assert.deepEqual(verifyIsolatedSourceState(root, preparation), {
@@ -111,6 +116,35 @@ describe('isolated Battle Test preparation', { concurrency: false }, () => {
     });
 
     assert.equal(preparation.troopId, 1);
+    cleanupIsolatedProject(preparation);
+  });
+
+  test('treats empty equipment slots as unequipped instead of failing the launch', () => {
+    const preparation = prepareBattleTestProject(root, project, {
+      troopId: 1,
+      battlers: [{ actorId: 1, level: 10, equips: [1, null, undefined] as unknown as number[] }],
+      battleback1Name: 'Field',
+      battleback2Name: 'Forest',
+    });
+
+    const temporarySystem = readJson(path.join(preparation.temporaryProject, 'data', 'System.json'));
+    assert.deepEqual(temporarySystem.testBattlers, [{ actorId: 1, level: 10, equips: [1, 0, 0] }]);
+    assert.deepEqual(preparation.battlers[0].equips, [1, 0, 0]);
+    cleanupIsolatedProject(preparation);
+  });
+
+  test('writes empty Test_ copies for standard database files missing from the source', () => {
+    const preparation = prepareBattleTestProject(root, project, {
+      troopId: 1,
+      battlers: [{ actorId: 1, level: 10, equips: [1, 1] }],
+      battleback1Name: 'Field',
+      battleback2Name: 'Forest',
+    });
+
+    // The fixture project has no Types.json/Terms.json, yet the launched game
+    // requests Test_Types.json and Test_Terms.json unconditionally.
+    assert.deepEqual(readJson(path.join(preparation.temporaryProject, 'data', 'Test_Types.json')), []);
+    assert.deepEqual(readJson(path.join(preparation.temporaryProject, 'data', 'Test_Terms.json')), {});
     cleanupIsolatedProject(preparation);
   });
 });

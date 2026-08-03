@@ -8,7 +8,7 @@ import {
   validateEffectiveRmmvDatabaseTransition,
 } from '../rmmv/database-changes.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
-import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
+import { inspectRmmvProject, RMMV_STANDARD_DATABASE_FILES } from '../rmmv/rmmv-layout.ts';
 import {
   cleanupIsolatedProject,
   prepareIsolatedStagedProject,
@@ -84,7 +84,7 @@ export function prepareBattleTestProject(
     system.testBattlers = configuration.battlers.map((battler) => ({
       actorId: battler.actorId,
       level: battler.level,
-      equips: [...battler.equips],
+      equips: sanitizeEquips(battler.equips),
     }));
     system.battleback1Name = configuration.battleback1Name;
     system.battleback2Name = configuration.battleback2Name;
@@ -101,6 +101,7 @@ export function prepareBattleTestProject(
       const detail = errors.slice(0, 5).map((issue) => `${issue.source.path}: ${issue.message}`).join(' ');
       throw new BattleTestPreparationError(`Battle Test database validation failed with ${errors.length} error(s). ${detail}`);
     }
+    writeBattleTestDatabaseCopies(layout.dataDir);
     const executable = layout.engine === 'rpg-maker-mv'
       ? path.join(isolated.temporaryProject, 'Game.exe')
       : undefined;
@@ -115,7 +116,7 @@ export function prepareBattleTestProject(
       ...(executable ? { executable } : {}),
       troopId: configuration.troopId,
       troopName: String(troop.name || `#${configuration.troopId}`),
-      battlers: configuration.battlers.map((entry) => ({ ...entry, equips: [...entry.equips] })),
+      battlers: configuration.battlers.map((entry) => ({ ...entry, equips: sanitizeEquips(entry.equips) })),
       battleback1Name: configuration.battleback1Name,
       battleback2Name: configuration.battleback2Name,
     };
@@ -126,6 +127,28 @@ export function prepareBattleTestProject(
 }
 
 export class BattleTestPreparationError extends Error {}
+
+/**
+ * RPG Maker engines launched with `test&btest` load every database file with a
+ * `Test_` prefix (see DataManager.loadDatabase), including Test_System.json
+ * which carries the Battle Test troop and party configuration. The isolated
+ * copy only ships the regular database files, so mirror every standard file
+ * that exists into its Test_ counterpart right after validation passes.
+ * Standard files absent from the source project still get an empty Test_
+ * fallback, because the engine requests the full Test_ set unconditionally
+ * and a missing file aborts the launched game with a load error.
+ */
+function writeBattleTestDatabaseCopies(dataDir: string): void {
+  for (const fileName of RMMV_STANDARD_DATABASE_FILES) {
+    const sourcePath = path.join(dataDir, fileName);
+    const targetPath = path.join(dataDir, `Test_${fileName}`);
+    if (isFile(sourcePath)) {
+      fs.copyFileSync(sourcePath, targetPath);
+      continue;
+    }
+    writeJsonAtomic(targetPath, fileName === 'Terms.json' ? {} : []);
+  }
+}
 
 function validateConfigurationShape(configuration: BattleTestConfiguration): void {
   if (!Number.isInteger(configuration.troopId) || configuration.troopId <= 0) {
@@ -152,10 +175,18 @@ function validateBattlers(battlers: InteractiveBattleTestBattler[], actors: unkn
     if (!Number.isInteger(battler.level) || battler.level < 1 || battler.level > 99) {
       throw new BattleTestPreparationError(`Battle Test actor #${battler.actorId} level must be from 1 to 99.`);
     }
-    if (!Array.isArray(battler.equips) || battler.equips.some((equipId) => !Number.isInteger(equipId) || equipId < 0)) {
+    // Empty slots arrive as null/undefined from sparse actor data; they mean
+    // "no equipment" (0) instead of being a launch-blocking error.
+    if (!Array.isArray(battler.equips) || battler.equips.some((equipId) => equipId != null && (!Number.isInteger(equipId) || equipId < 0))) {
       throw new BattleTestPreparationError(`Battle Test actor #${battler.actorId} equipment must contain nonnegative integer IDs.`);
     }
   }
+}
+
+function sanitizeEquips(equips: readonly unknown[]): number[] {
+  return equips.map((equipId) => (
+    typeof equipId === 'number' && Number.isInteger(equipId) && equipId >= 0 ? equipId : 0
+  ));
 }
 
 function assertBattleback(resourceRoot: string, bucket: 'battlebacks1' | 'battlebacks2', name: string): void {

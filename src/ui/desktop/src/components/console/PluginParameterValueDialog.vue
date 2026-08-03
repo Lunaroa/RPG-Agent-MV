@@ -536,6 +536,24 @@ async function focusFirstControl(): Promise<void> {
   )?.focus();
 }
 
+// refreshAnimationPreview() fires from watch(modelValue) the instant the dialog
+// opens, but with destroy-on-close + append-to-body the ParticleAnimationPreviewFrame
+// only mounts once el-dialog's open transition completes (@opened). The watch's
+// startParticlePreview({force:true}) therefore races ahead of the ref and silently
+// no-ops (particleFrameRef.value?.play is null). Restart the particle preview once
+// the dialog body is truly available so the animation auto-plays at least once.
+async function onDialogOpened(): Promise<void> {
+  await focusFirstControl();
+  if (
+    props.modelValue
+    && props.catalog?.engine === 'rpg-maker-mz'
+    && animationPreviewKind.value === 'particle'
+    && particleAnimationPreview.value
+  ) {
+    await startParticlePreview({ force: true });
+  }
+}
+
 function focusRawText(): void {
   document.querySelector<HTMLElement>(
     '.plugin-parameter-value-dialog .parameter-raw-input textarea',
@@ -572,7 +590,7 @@ function arrayValue(value: unknown): unknown[] {
     destroy-on-close
     :close-on-click-modal="true"
     :before-close="confirmClose"
-    @opened="focusFirstControl"
+    @opened="onDialogOpened"
   >
     <div
       v-if="field"

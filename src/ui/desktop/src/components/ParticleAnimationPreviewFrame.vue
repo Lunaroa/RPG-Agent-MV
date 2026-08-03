@@ -57,6 +57,7 @@ function onWindowMessage(event: MessageEvent): void {
     }
     if (pendingPlay) {
       pendingPlay = false;
+      clearPendingPlayTimer();
       postPlay();
     }
   }
@@ -70,6 +71,7 @@ async function prepareSession(
   busy.value = true;
   sceneReady = false;
   pendingPlay = false;
+  clearPendingPlayTimer();
   targetAnchor.value = null;
   try {
     const session = await particlePreview.prepare(animation, options.autoplay, props.project, options.armed === true, options.loop === true);
@@ -93,13 +95,40 @@ async function play(animation: Record<string, unknown>): Promise<void> {
   const key = animationKey(animation);
   if (armedAnimationKey && armedAnimationKey === key && url.value) {
     if (sceneReady) postPlay();
-    else pendingPlay = true;
+    else armPendingPlay();
     return;
   }
   // No armed scene for this animation yet (first play, or the draft changed): arm a
   // fresh one and play on its ready handshake, so later identical plays are in-place.
   await prepareSession(animation, { autoplay: false, armed: true });
-  if (armedAnimationKey === key && url.value) pendingPlay = true;
+  if (armedAnimationKey === key && url.value) armPendingPlay();
+}
+
+// The armed scene normally signals readiness via the 'rpg-agent-preview-ready'
+// postMessage, which clears pendingPlay and posts 'play'. That handshake can stall
+// (battler bitmap slow/missing, iframe swapped under :key, message lost in a
+// background window), leaving the auto-play silently stuck. Guard it with a timeout
+// so the animation always plays at least once even if the ready message never lands.
+const PENDING_PLAY_TIMEOUT_MS = 4000;
+let pendingPlayTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearPendingPlayTimer(): void {
+  if (pendingPlayTimer !== null) {
+    clearTimeout(pendingPlayTimer);
+    pendingPlayTimer = null;
+  }
+}
+
+function armPendingPlay(): void {
+  pendingPlay = true;
+  clearPendingPlayTimer();
+  const seq = requestSeq;
+  pendingPlayTimer = setTimeout(() => {
+    pendingPlayTimer = null;
+    if (seq !== requestSeq || !pendingPlay) return;
+    pendingPlay = false;
+    postPlay();
+  }, PENDING_PLAY_TIMEOUT_MS);
 }
 
 async function showBackdrop(
@@ -119,6 +148,7 @@ onMounted(() => window.addEventListener('message', onWindowMessage));
 onUnmounted(() => window.removeEventListener('message', onWindowMessage));
 onBeforeUnmount(() => {
   requestSeq += 1;
+  clearPendingPlayTimer();
   if (sessionKey) {
     void particlePreview.dispose(sessionKey);
     sessionKey = '';

@@ -131,16 +131,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 function clampPreviewZoom(value: number): number {
   return Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, Math.round(value * 100) / 100));
 }
-// HiDPI displays enlarge CSS pixels, so a 48px tile spans ~72 physical pixels
-// at 150% scaling. The standard baseline renders one game pixel onto one
-// physical pixel; plain 100% screens keep zoom at 1.
-function standardPreviewZoom(): number {
-  const ratio = Number(window.devicePixelRatio) || 1;
-  return clampPreviewZoom(1 / Math.max(1, ratio));
-}
 function zoomIn() { previewZoom.value = clampPreviewZoom(previewZoom.value * 1.25); }
 function zoomOut() { previewZoom.value = clampPreviewZoom(previewZoom.value / 1.25); }
-function resetZoom() { previewZoom.value = standardPreviewZoom(); }
+function resetZoom() { previewZoom.value = 1; }
 function onPreviewWheel(event: WheelEvent) {
   if (event.deltaY < 0) zoomIn();
   else zoomOut();
@@ -150,7 +143,7 @@ function open(image: MvEventImage) {
   draft.value = clone(image || defaultImage());
   tab.value = draft.value.tileId ? 'tile' : 'character';
   if (draft.value.tileId) tileTab.value = tileTabForId(Number(draft.value.tileId));
-  previewZoom.value = standardPreviewZoom();
+  previewZoom.value = 1;
   visible.value = true;
   void nextTick(paint);
 }
@@ -172,61 +165,95 @@ async function characterBitmap(name: string) {
   return image;
 }
 async function paint() { if (tab.value === 'character') await paintCharacterSheet(); else paintTileSheet(); }
+interface CharacterSheetLayout {
+  big: boolean;
+  cols: number;
+  rows: number;
+  scale: number;
+  dw: number;
+  dh: number;
+  dx: number;
+  dy: number;
+  canvasWidth: number;
+  canvasHeight: number;
+}
+// 100% zoom means one source pixel lands on one CSS pixel, the same contract
+// as the tile tab and the map editor: a standard 48×48 character frame covers
+// exactly one tile. Big ($) characters keep their natural in-game size.
+function characterSheetLayout(image: HTMLImageElement, name: string, zoom: number): CharacterSheetLayout {
+  const big = isBigCharacterName(name);
+  const cols = big ? 3 : 12;
+  const rows = big ? 4 : 8;
+  const dw = image.naturalWidth * zoom;
+  const dh = image.naturalHeight * zoom;
+  const canvasWidth = Math.max(CHARACTER_CANVAS_WIDTH, Math.ceil(dw + 20));
+  const canvasHeight = Math.max(CHARACTER_CANVAS_HEIGHT, Math.ceil(dh + 20));
+  return {
+    big,
+    cols,
+    rows,
+    scale: zoom,
+    dw,
+    dh,
+    dx: Math.max(10, (canvasWidth - dw) / 2),
+    dy: Math.max(10, (canvasHeight - dh) / 2),
+    canvasWidth,
+    canvasHeight,
+  };
+}
+function sizeCharacterCanvas(canvas: HTMLCanvasElement, cssWidth: number, cssHeight: number): void {
+  const ratio = Math.max(1, Number(window.devicePixelRatio) || 1);
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  canvas.width = Math.max(1, Math.round(cssWidth * ratio));
+  canvas.height = Math.max(1, Math.round(cssHeight * ratio));
+}
+function characterContext(canvas: HTMLCanvasElement, cssWidth: number, cssHeight: number): CanvasRenderingContext2D {
+  const context = canvas.getContext('2d')!;
+  context.setTransform(canvas.width / cssWidth, 0, 0, canvas.height / cssHeight, 0, 0);
+  return context;
+}
 async function paintCharacterSheet() {
   const canvas = characterCanvas.value;
   if (!canvas) return;
   if (!draft.value.characterName) {
-    canvas.width = CHARACTER_CANVAS_WIDTH;
-    canvas.height = CHARACTER_CANVAS_HEIGHT;
-    const empty = canvas.getContext('2d')!;
-    empty.clearRect(0, 0, canvas.width, canvas.height);
+    sizeCharacterCanvas(canvas, CHARACTER_CANVAS_WIDTH, CHARACTER_CANVAS_HEIGHT);
+    const empty = characterContext(canvas, CHARACTER_CANVAS_WIDTH, CHARACTER_CANVAS_HEIGHT);
+    empty.clearRect(0, 0, CHARACTER_CANVAS_WIDTH, CHARACTER_CANVAS_HEIGHT);
     empty.fillStyle = '#aeb9c3';
-    empty.fillRect(0, 0, canvas.width, canvas.height);
+    empty.fillRect(0, 0, CHARACTER_CANVAS_WIDTH, CHARACTER_CANVAS_HEIGHT);
     return;
   }
   const image = await characterBitmap(draft.value.characterName);
   if (!image) return;
-  const fit = Math.min(
-    1,
-    (CHARACTER_CANVAS_WIDTH - 20) / image.naturalWidth,
-    (CHARACTER_CANVAS_HEIGHT - 20) / image.naturalHeight,
-  );
-  const scale = fit * previewZoom.value;
-  const dw = image.naturalWidth * scale;
-  const dh = image.naturalHeight * scale;
-  canvas.width = Math.max(CHARACTER_CANVAS_WIDTH, Math.ceil(dw + 20));
-  canvas.height = Math.max(CHARACTER_CANVAS_HEIGHT, Math.ceil(dh + 20));
-  const context = canvas.getContext('2d')!;
-  context.clearRect(0, 0, canvas.width, canvas.height);
+  const layout = characterSheetLayout(image, draft.value.characterName, previewZoom.value);
+  sizeCharacterCanvas(canvas, layout.canvasWidth, layout.canvasHeight);
+  const context = characterContext(canvas, layout.canvasWidth, layout.canvasHeight);
+  context.clearRect(0, 0, layout.canvasWidth, layout.canvasHeight);
   context.fillStyle = '#aeb9c3';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  const dx = Math.max(10, (canvas.width - dw) / 2);
-  const dy = Math.max(10, (canvas.height - dh) / 2);
+  context.fillRect(0, 0, layout.canvasWidth, layout.canvasHeight);
   context.imageSmoothingEnabled = false;
-  context.drawImage(image, dx, dy, dw, dh);
-  const big = isBigCharacterName(draft.value.characterName);
-  const cols = big ? 3 : 12;
-  const rows = big ? 4 : 8;
-  const cw = dw / cols;
-  const ch = dh / rows;
+  context.drawImage(image, layout.dx, layout.dy, layout.dw, layout.dh);
+  const cw = layout.dw / layout.cols;
+  const ch = layout.dh / layout.rows;
   context.strokeStyle = 'rgba(255,255,255,.55)';
-  for (let x = 0; x <= cols; x++) {
+  for (let x = 0; x <= layout.cols; x++) {
     context.beginPath();
-    context.moveTo(dx + x * cw, dy);
-    context.lineTo(dx + x * cw, dy + dh);
+    context.moveTo(layout.dx + x * cw, layout.dy);
+    context.lineTo(layout.dx + x * cw, layout.dy + layout.dh);
     context.stroke();
   }
-  for (let y = 0; y <= rows; y++) {
+  for (let y = 0; y <= layout.rows; y++) {
     context.beginPath();
-    context.moveTo(dx, dy + y * ch);
-    context.lineTo(dx + dw, dy + y * ch);
+    context.moveTo(layout.dx, layout.dy + y * ch);
+    context.lineTo(layout.dx + layout.dw, layout.dy + y * ch);
     context.stroke();
   }
   const frame = eventCharacterFrame(image, draft.value)!;
-  const sx = dx + frame.sx * scale;
-  const sy = dy + frame.sy * scale;
-  const sw = frame.sw * scale;
-  const sh = frame.sh * scale;
+  const sx = layout.dx + frame.sx * layout.scale;
+  const sy = layout.dy + frame.sy * layout.scale;
+  const sw = frame.sw * layout.scale;
+  const sh = frame.sh * layout.scale;
   context.strokeStyle = 'rgba(0,0,0,.88)';
   context.lineWidth = 5;
   context.strokeRect(sx, sy, sw, sh);
@@ -239,27 +266,16 @@ async function pickCharacterCell(event: MouseEvent): Promise<boolean> {
   const image = draft.value.characterName ? await characterBitmap(draft.value.characterName) : null;
   if (!canvas || !image) return false;
   const rect = canvas.getBoundingClientRect();
-  const fit = Math.min(
-    1,
-    (CHARACTER_CANVAS_WIDTH - 20) / image.naturalWidth,
-    (CHARACTER_CANVAS_HEIGHT - 20) / image.naturalHeight,
-  );
-  const scale = fit * previewZoom.value;
-  const dw = image.naturalWidth * scale;
-  const dh = image.naturalHeight * scale;
-  const dx = Math.max(10, (canvas.width - dw) / 2);
-  const dy = Math.max(10, (canvas.height - dh) / 2);
-  const x = ((event.clientX - rect.left) * canvas.width / rect.width - dx) / scale;
-  const y = ((event.clientY - rect.top) * canvas.height / rect.height - dy) / scale;
-  const big = isBigCharacterName(draft.value.characterName);
-  const cols = big ? 3 : 12;
-  const rows = big ? 4 : 8;
-  const col = Math.floor(x / (image.naturalWidth / cols));
-  const row = Math.floor(y / (image.naturalHeight / rows));
-  if (col < 0 || row < 0 || col >= cols || row >= rows) return false;
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  const layout = characterSheetLayout(image, draft.value.characterName, previewZoom.value);
+  const x = ((event.clientX - rect.left) * layout.canvasWidth / rect.width - layout.dx) / layout.scale;
+  const y = ((event.clientY - rect.top) * layout.canvasHeight / rect.height - layout.dy) / layout.scale;
+  const col = Math.floor(x / (image.naturalWidth / layout.cols));
+  const row = Math.floor(y / (image.naturalHeight / layout.rows));
+  if (col < 0 || row < 0 || col >= layout.cols || row >= layout.rows) return false;
   Object.assign(
     draft.value,
-    big
+    layout.big
       ? { characterIndex: 0, pattern: col, direction: [2, 4, 6, 8][row] }
       : {
           characterIndex: Math.floor(col / 3) + Math.floor(row / 4) * 4,
@@ -267,7 +283,7 @@ async function pickCharacterCell(event: MouseEvent): Promise<boolean> {
           direction: [2, 4, 6, 8][row % 4],
         },
   );
-  paintCharacterSheet();
+  void paintCharacterSheet();
   return true;
 }
 async function confirmCharacterCell(event: MouseEvent): Promise<void> {
@@ -372,7 +388,7 @@ defineExpose({ open });
   position: relative;
   flex: 0 0 auto;
 }
-.picker-surface canvas,
+.picker-surface canvas { margin: auto; }
 .tile-canvas-scroll canvas { margin: 0; }
 .picker-zoom {
   position: absolute;

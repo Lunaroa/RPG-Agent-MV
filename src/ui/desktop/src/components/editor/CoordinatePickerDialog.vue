@@ -380,6 +380,22 @@ function paintScreen(context: CanvasRenderingContext2D, width: number, height: n
   // (Move Picture 232 reusing a prior Show Picture 231 asset), or standing in
   // for the missing image (232 with no resolvable 231) using a nominal size.
   if (picturePreview.value) drawScreenPicturePlaceholder(context, realBounds);
+  // Snap guide lines: while dragging, a vertical/horizontal line marks the
+  // canvas edge or center the picture just snapped to. Drawn above the picture
+  // so the magnet effect is visible even over a large opaque image.
+  const guide = snapGuide.value;
+  if (guide.x !== null || guide.y !== null) {
+    context.save();
+    context.strokeStyle = '#22c55e';
+    context.lineWidth = 1;
+    context.setLineDash([4, 4]);
+    context.beginPath();
+    if (guide.x !== null) { context.moveTo(guide.x + 0.5, 0); context.lineTo(guide.x + 0.5, height); }
+    if (guide.y !== null) { context.moveTo(0, guide.y + 0.5); context.lineTo(width, guide.y + 0.5); }
+    context.stroke();
+    context.setLineDash([]);
+    context.restore();
+  }
   // Crosshair arms scale with the canvas so they stay pickable when the
   // full-resolution backing store is downscaled on HiDPI screens.
   const crosshairArm = Math.max(12, Math.round(width / 64));
@@ -542,6 +558,13 @@ function onStagePointerUp(event: PointerEvent) {
   suppressNextClick = drag.moved;
   releaseCanvasPointer(event.pointerId);
   pictureDrag = null;
+  clearSnapGuide();
+}
+
+function clearSnapGuide() {
+  if (snapGuide.value.x === null && snapGuide.value.y === null) return;
+  snapGuide.value = { x: null, y: null };
+  paint();
 }
 
 function schedulePictureDragFrame() {
@@ -571,17 +594,28 @@ function flushPictureDrag() {
     canvas.height,
   );
   const snapped = snapPictureCoordinate(drag.startX + delta.x, drag.startY + delta.y);
+  const nextGuide = snapped.guide;
   const nextX = clampScreenCoordinate(Math.round(snapped.x));
   const nextY = clampScreenCoordinate(Math.round(snapped.y));
-  if (nextX === x.value && nextY === y.value) return;
+  const guideChanged = nextGuide.x !== snapGuide.value.x || nextGuide.y !== snapGuide.value.y;
+  // Repaint when the position OR the snap guide changes: the guide line must
+  // appear/disappear as the picture crosses a snap threshold even if the
+  // clamped coordinate ends up identical to the previous frame.
+  if (nextX === x.value && nextY === y.value && !guideChanged) return;
   x.value = nextX;
   y.value = nextY;
+  snapGuide.value = nextGuide;
   paint();
 }
 
 // PS-style snapping: while dragging, stick the picture's edges/center to the
-// canvas edges/center lines when they come within a few logical pixels.
-const PICTURE_SNAP_THRESHOLD = 5;
+// canvas edges/center lines when they come within a few logical pixels. The
+// threshold is generous so the snap feels magnetic rather than fiddly, and the
+// chosen target line is reported back so the caller can draw a guide line.
+const PICTURE_SNAP_THRESHOLD = 12;
+
+interface SnapGuide { x: number | null; y: number | null }
+const snapGuide = ref<SnapGuide>({ x: null, y: null });
 
 function pictureBoundsAt(px: number, py: number): { left: number; top: number; right: number; bottom: number } | null {
   const preview = livePicturePreview();
@@ -594,11 +628,13 @@ function pictureBoundsAt(px: number, py: number): { left: number; top: number; r
   return { left, top, right: left + width, bottom: top + height };
 }
 
-function snapPictureCoordinate(px: number, py: number): { x: number; y: number } {
+function snapPictureCoordinate(px: number, py: number): { x: number; y: number; guide: SnapGuide } {
   const bounds = pictureBoundsAt(px, py);
-  if (!bounds) return { x: px, y: py };
-  const snapAxis = (edges: number[], targets: number[]): number => {
+  const guide: SnapGuide = { x: null, y: null };
+  if (!bounds) return { x: px, y: py, guide };
+  const snapAxis = (edges: number[], targets: number[]): { delta: number; target: number | null } => {
     let best = 0;
+    let bestTarget: number | null = null;
     let bestDistance = PICTURE_SNAP_THRESHOLD + 1;
     for (const edge of edges) {
       for (const target of targets) {
@@ -606,16 +642,19 @@ function snapPictureCoordinate(px: number, py: number): { x: number; y: number }
         if (Math.abs(delta) <= PICTURE_SNAP_THRESHOLD && Math.abs(delta) < bestDistance) {
           bestDistance = Math.abs(delta);
           best = delta;
+          bestTarget = target;
         }
       }
     }
-    return best;
+    return { delta: best, target: bestTarget };
   };
   const width = screenWidth.value;
   const height = screenHeight.value;
-  const dx = snapAxis([bounds.left, (bounds.left + bounds.right) / 2, bounds.right], [0, width / 2, width]);
-  const dy = snapAxis([bounds.top, (bounds.top + bounds.bottom) / 2, bounds.bottom], [0, height / 2, height]);
-  return { x: px + dx, y: py + dy };
+  const xSnap = snapAxis([bounds.left, (bounds.left + bounds.right) / 2, bounds.right], [0, width / 2, width]);
+  const ySnap = snapAxis([bounds.top, (bounds.top + bounds.bottom) / 2, bounds.bottom], [0, height / 2, height]);
+  guide.x = xSnap.target;
+  guide.y = ySnap.target;
+  return { x: px + xSnap.delta, y: py + ySnap.delta, guide };
 }
 
 function releaseCanvasPointer(pointerId: number) {
@@ -650,6 +689,7 @@ function cancelPointerInteraction() {
   mapPan = null;
   pictureDrag = null;
   suppressNextClick = false;
+  clearSnapGuide();
 }
 
 function scrollSelectionIntoView() {

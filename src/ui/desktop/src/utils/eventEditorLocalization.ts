@@ -20,6 +20,8 @@ export interface EventEditorLocaleText {
   balloonIconLabels: Readonly<Record<number, string>>;
   messageBackgroundLabels: readonly string[];
   messagePositionLabels: readonly string[];
+  /** Show Choices uses left/middle/right positions, unlike the message window. */
+  choicePositionLabels: readonly string[];
 }
 
 export const EVENT_EDITOR_TEXT_BY_LOCALE = {
@@ -115,6 +117,7 @@ export const EVENT_EDITOR_TEXT_BY_LOCALE = {
     },
     messageBackgroundLabels: ['窗口', '暗淡', '透明'],
     messagePositionLabels: ['顶部', '中部', '底部'],
+    choicePositionLabels: ['左侧', '中间', '右侧'],
   },
   'en-US': {
     triggers: [
@@ -208,6 +211,7 @@ export const EVENT_EDITOR_TEXT_BY_LOCALE = {
     },
     messageBackgroundLabels: ['Window', 'Dim', 'Transparent'],
     messagePositionLabels: ['Top', 'Middle', 'Bottom'],
+    choicePositionLabels: ['Left', 'Middle', 'Right'],
   },
 } as const satisfies Record<ProductLanguage, EventEditorLocaleText>;
 

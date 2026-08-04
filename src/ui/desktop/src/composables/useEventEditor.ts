@@ -705,6 +705,12 @@ function messagePositionLabel(value: unknown, language: ProductLanguage): string
   return labels[pos] || translate('eventEditor.helper.position', language, { value: String(value) });
 }
 
+function choicePositionLabel(value: unknown, language: ProductLanguage): string {
+  const pos = Number.isFinite(Number(value)) ? Number(value) : 2;
+  const labels = eventEditorText(language).choicePositionLabels;
+  return labels[pos] || translate('eventEditor.helper.position', language, { value: String(value) });
+}
+
 function standardCommandLabel(code: number, language: ProductLanguage): string {
   return localizeCommandCodeLabel(code, language, catalogCommandLabel(code));
 }
@@ -770,7 +776,26 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
 
   if (command.code === 101) return line(translate('eventEditor.command.text', language, { face: messageFaceLabel(p, language), bg: messageBackgroundLabel(p[2], language), pos: messagePositionLabel(p[3], language) }), 'text');
   if (command.code === 401) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
-  if (command.code === 102) return line(translate('eventEditor.command.showChoices', language, { choices: (p[0] as string[] || []).join(' / ') }), 'control');
+  if (command.code === 102) {
+    // RM-native summary: Show Choices: A, B, C (Window, Right, #1, Branch).
+    // Parameter layout follows MV ([choices, cancelType, defaultType, positionType,
+    // background]); MZ drops the trailing background, which then renders as the
+    // default "Window" label — display-only until commandDisplay gains engine info.
+    const choices = (p[0] as string[] || []).map((choice) => String(choice ?? '')).join(', ');
+    const cancelType = Number.isFinite(Number(p[1])) ? Number(p[1]) : -1;
+    const defaultType = Number.isFinite(Number(p[2])) ? Number(p[2]) : -1;
+    const details = translate('eventEditor.command.showChoicesDetails', language, {
+      background: messageBackgroundLabel(p[4], language),
+      position: choicePositionLabel(p[3], language),
+      default: defaultType >= 0 ? `#${defaultType + 1}` : translate('eventEditor.helper.none', language),
+      cancel: cancelType === -2
+        ? translate('eventEditor.command.choiceBranch', language)
+        : cancelType >= 0
+          ? `#${cancelType + 1}`
+          : translate('eventEditor.helper.none', language),
+    });
+    return line(translate('eventEditor.command.showChoices', language, { choices, details }), 'control');
+  }
   if (command.code === 402) return { label: `:${translate('eventEditor.command.whenChoice', language, { val: String(p[1] || p[0] || '') })}`, tone: 'text', indent };
   if (command.code === 403) return { label: `:${translate('eventEditor.command.whenCancel', language)}`, tone: 'text', indent };
   if (command.code === 404) return { label: `:${translate('eventEditor.command.endChoices', language)}`, tone: 'control', indent };

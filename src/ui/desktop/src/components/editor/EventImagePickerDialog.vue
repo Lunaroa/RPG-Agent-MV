@@ -46,8 +46,8 @@
             <div
               class="tile-zoom-space"
               :style="{
-                width: `${Math.ceil(tileNaturalWidth * previewZoom)}px`,
-                height: `${Math.ceil(tileNaturalHeight * previewZoom)}px`,
+                width: `${Math.ceil(tileNaturalWidth * tilePreviewScale)}px`,
+                height: `${Math.ceil(tileNaturalHeight * tilePreviewScale)}px`,
               }"
             >
               <canvas
@@ -56,7 +56,7 @@
                 height="768"
                 :aria-label="t('eventImgPicker.pickHint')"
                 :title="t('eventImgPicker.pickHint')"
-                :style="{ transform: `scale(${previewZoom})`, transformOrigin: '0 0' }"
+                :style="{ transform: `scale(${tilePreviewScale})`, transformOrigin: '0 0' }"
                 @click="pickTileCell"
                 @dblclick.prevent="confirmTileCell"
               />
@@ -131,6 +131,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 function clampPreviewZoom(value: number): number {
   return Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, Math.round(value * 100) / 100));
 }
+// "True pixel scale" must anchor on physical pixels: HiDPI screens expand CSS
+// pixels (150% scaling = 1.5 physical px per CSS px), so drawing one source
+// pixel per CSS pixel makes 100% render devicePixelRatio times larger than an
+// image viewer and a standard 48×48 frame measure bigger than 48 on screen.
+const physicalPixelCompensation = computed(() => 1 / Math.max(1, Number(window.devicePixelRatio) || 1));
+const tilePreviewScale = computed(() => previewZoom.value * physicalPixelCompensation.value);
 function zoomIn() { previewZoom.value = clampPreviewZoom(previewZoom.value * 1.25); }
 function zoomOut() { previewZoom.value = clampPreviewZoom(previewZoom.value / 1.25); }
 function resetZoom() { previewZoom.value = 1; }
@@ -177,22 +183,23 @@ interface CharacterSheetLayout {
   canvasWidth: number;
   canvasHeight: number;
 }
-// 100% zoom means one source pixel lands on one CSS pixel, the same contract
-// as the tile tab and the map editor: a standard 48×48 character frame covers
-// exactly one tile. Big ($) characters keep their natural in-game size.
+// 100% zoom means one source pixel lands on one physical pixel (image-viewer
+// parity), compensated for HiDPI scaling. Big ($) characters keep their
+// natural in-game size; standard frames measure exactly their pixel count.
 function characterSheetLayout(image: HTMLImageElement, name: string, zoom: number): CharacterSheetLayout {
   const big = isBigCharacterName(name);
   const cols = big ? 3 : 12;
   const rows = big ? 4 : 8;
-  const dw = image.naturalWidth * zoom;
-  const dh = image.naturalHeight * zoom;
+  const scale = zoom * physicalPixelCompensation.value;
+  const dw = image.naturalWidth * scale;
+  const dh = image.naturalHeight * scale;
   const canvasWidth = Math.max(CHARACTER_CANVAS_WIDTH, Math.ceil(dw + 20));
   const canvasHeight = Math.max(CHARACTER_CANVAS_HEIGHT, Math.ceil(dh + 20));
   return {
     big,
     cols,
     rows,
-    scale: zoom,
+    scale,
     dw,
     dh,
     dx: Math.max(10, (canvasWidth - dw) / 2),

@@ -322,9 +322,11 @@ async function refreshAnimationPreview(): Promise<void> {
       return;
     }
     animationRecord.value = entry.value;
-    // The particle preview is an in-panel one-shot player. Start it only after
-    // the record is current and the preview branch has mounted; a newer request
-    // may supersede this one while the database entry is loading.
+    // The particle preview is an in-panel one-shot player. The preview frame only
+    // mounts once the loading branch yields, so clear the loading flag before
+    // nextTick; otherwise play() runs against an unmounted ref and silently
+    // no-ops (auto-play worked only on first open via the @opened hook).
+    animationPreviewLoading.value = false;
     await nextTick();
     if (
       requestId === animationPreviewRequestId

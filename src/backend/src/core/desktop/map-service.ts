@@ -18,6 +18,7 @@ import type {
   TileEdit,
 } from '../../../../contract/types.ts';
 import { readJson } from '../rmmv/json.ts';
+import { repairMapEventChoiceSkeletons } from '../rmmv/choice-skeleton-repair.ts';
 import { validateEventCommandList } from '../rmmv/event-command-registry.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
@@ -124,6 +125,11 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
   const tileset = tilesets[map.tilesetId] || null;
   const names = tileset && Array.isArray(tileset.tilesetNames) ? tileset.tilesetNames : [];
   const parallax = resolveProjectParallaxImage(workflowRoot, project, map);
+  // Corrupted choice skeletons (missing 402 rows) render as dangling branches
+  // at runtime and missing rows in every preview; heal them on read so the
+  // editor always works with a complete skeleton.
+  const events = Array.isArray(map.events) ? map.events : [];
+  repairMapEventChoiceSkeletons(events);
   return {
     project,
     effectiveMapRevision,
@@ -143,7 +149,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
       height: Number(map.height),
       tilesetId: Number(map.tilesetId),
       data: Array.isArray(map.data) ? map.data : [],
-      events: Array.isArray(map.events) ? map.events : [],
+      events,
     },
     parallaxImageUrl: parallax.url,
     resourceWarnings: parallax.warnings,

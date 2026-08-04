@@ -330,6 +330,10 @@
                 <input :value="numberParam(2,60)" type="number" min="1" @input="setParam(2,numberValue($event))" />
                 <span class="cond-unit">{{ t('eventcmd.framesUnit') }}</span>
                 <label class="check"><input :checked="boolParam(3,true)" type="checkbox" @change="setParam(3,checkedValue($event))" />{{ t('eventcmd.waitForCompletion') }}</label>
+                <button type="button" class="editor-btn shake-cmd-preview" @click="playShakePreview">{{ t('eventcmd.preview') }}</button>
+              </div>
+              <div v-if="shakePreviewVisible" class="shake-cmd-preview">
+                <canvas ref="shakeCanvasRef" class="shake-cmd-canvas" width="256" height="96" />
               </div>
             </template>
             <template v-else-if="draft.code === 236">
@@ -428,12 +432,12 @@
                   <button v-for="n in 4" :key="n" type="button" :class="{ active: condTab === n }" @click="condTab = n">{{ n }}</button>
                 </nav>
                 <div v-show="condTab === 1" class="cond-tab">
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==0 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===0" @change="setConditionType(0)" />{{ t('eventcmd.condSwitch') }}</label>
                     <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('switch',1,0)" readonly :disabled="numberParam(0)!==0" @click="numberParam(0)===0&&openNamedEntry('switch',1)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==0" @click="openNamedEntry('switch',1)">…</button></span>
                     <select :value="conditionalNumberParam(0,2,0)" :disabled="numberParam(0)!==0" @change="setParam(2,numberValue($event))"><option :value="0">ON</option><option :value="1">OFF</option></select>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==1 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===1" @change="setConditionType(1)" />{{ t('eventcmd.variable') }}</label>
                     <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('variable',1,1)" readonly :disabled="numberParam(0)!==1" @click="numberParam(0)===1&&openNamedEntry('variable',1)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1" @click="openNamedEntry('variable',1)">…</button></span>
                     <select :value="conditionalNumberParam(1,4,0)" :disabled="numberParam(0)!==1" @change="setParam(4,numberValue($event))">
@@ -448,12 +452,12 @@
                     <label class="cond-pick"><input type="radio" name="cond-var-operand" :checked="numberParam(0)===1&&conditionalNumberParam(1,2,0)===1" :disabled="numberParam(0)!==1" @change="setVarOperand(1)" />{{ t('eventcmd.variable') }}</label>
                     <span class="var-cmd-row cond-main"><input :value="conditionalNamedEntryDisplay('variable',3,1)" readonly :disabled="numberParam(0)!==1||conditionalNumberParam(1,2,0)!==1" @click="numberParam(0)===1&&conditionalNumberParam(1,2,0)===1&&openNamedEntry('variable',3)" /><button type="button" class="editor-btn" :disabled="numberParam(0)!==1||conditionalNumberParam(1,2,0)!==1" @click="openNamedEntry('variable',3)">…</button></span>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==2 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===2" @change="setConditionType(2)" />{{ t('eventcmd.condSelfSwitch') }}</label>
                     <select class="cond-main" :value="conditionalStringParam(2,1,'A')" :disabled="numberParam(0)!==2" @change="setParam(1,inputValue($event))"><option v-for="s in ['A','B','C','D']" :key="s" :value="s">{{ s }}</option></select>
                     <select :value="conditionalNumberParam(2,2,0)" :disabled="numberParam(0)!==2" @change="setParam(2,numberValue($event))"><option :value="0">ON</option><option :value="1">OFF</option></select>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==3 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===3" @change="setConditionType(3)" />{{ t('eventcmd.condTimer') }}</label>
                     <span class="cond-main cond-inline">
                       <select :value="conditionalNumberParam(3,2,0)" :disabled="numberParam(0)!==3" @change="setParam(2,numberValue($event))"><option :value="0">{{ t('eventcmd.condAtLeast') }}</option><option :value="1">{{ t('eventcmd.condAtMost') }}</option></select>
@@ -463,7 +467,7 @@
                   </div>
                 </div>
                 <div v-show="condTab === 2" class="cond-tab">
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==4 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===4" @change="setConditionType(4)" />{{ t('eventcmd.condActor') }}</label>
                     <select class="cond-main" :value="conditionalNumberParam(4,1,1)" :disabled="numberParam(0)!==4" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.actors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
@@ -496,18 +500,18 @@
                   </div>
                 </div>
                 <div v-show="condTab === 3" class="cond-tab">
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==5 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===5" @change="setConditionType(5)" />{{ t('eventcmd.condEnemy') }}</label>
                     <select class="cond-main" :value="conditionalNumberParam(5,1)" :disabled="numberParam(0)!==5" @change="setParam(1,numberValue($event))"><option v-for="n in 8" :key="n" :value="n-1">#{{ n }}</option></select>
                   </div>
-                  <div class="cond-row cond-sub">
+                  <div class="cond-row cond-sub" :class="{ inactive: numberParam(0)!==5 }">
                     <label class="cond-pick"><input type="radio" name="cond-enemy" :checked="conditionalNumberParam(5,2)===0" :disabled="numberParam(0)!==5" @change="setEnemyCondition(0)" />{{ t('eventcmd.condAppeared') }}</label>
                   </div>
-                  <div class="cond-row cond-sub">
+                  <div class="cond-row cond-sub" :class="{ inactive: numberParam(0)!==5 }">
                     <label class="cond-pick"><input type="radio" name="cond-enemy" :checked="conditionalNumberParam(5,2)===1" :disabled="numberParam(0)!==5" @change="setEnemyCondition(1)" />{{ t('eventcmd.condState') }}</label>
                     <select class="cond-main" :value="conditionalNumberParam(5,3,1)" :disabled="numberParam(0)!==5||conditionalNumberParam(5,2)!==1" @change="setParam(3,numberValue($event))"><option v-for="entry in catalog?.states||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==6 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===6" @change="setConditionType(6)" />{{ t('eventcmd.condCharacter') }}</label>
                     <select class="cond-main" :value="conditionalNumberParam(6,1)" :disabled="numberParam(0)!==6" @change="setParam(1,numberValue($event))">
                       <option :value="-1">{{ t('cmdFields.player') }}</option><option :value="0">{{ t('cmdFields.thisEvent') }}</option>
@@ -517,32 +521,32 @@
                       <option :value="2">{{ t('eventcmd.dirDown') }}</option><option :value="4">{{ t('eventcmd.dirLeft') }}</option><option :value="6">{{ t('eventcmd.dirRight') }}</option><option :value="8">{{ t('eventcmd.dirUp') }}</option>
                     </select>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==13 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===13" @change="setConditionType(13)" />{{ t('eventcmd.condVehicle') }}</label>
                     <select class="cond-main" :value="conditionalNumberParam(13,1)" :disabled="numberParam(0)!==13" @change="setParam(1,numberValue($event))"><option :value="0">{{ t('eventcmd.vehicleBoat') }}</option><option :value="1">{{ t('eventcmd.vehicleShip') }}</option><option :value="2">{{ t('eventcmd.vehicleAirship') }}</option></select>
                   </div>
                 </div>
                 <div v-show="condTab === 4" class="cond-tab">
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==7 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===7" @change="setConditionType(7)" />{{ t('eventcmd.condGold') }}</label>
                     <input class="cond-main" :value="conditionalNumberParam(7,1)" type="number" min="0" :disabled="numberParam(0)!==7" @input="setParam(1,numberValue($event))" />
                     <select :value="conditionalNumberParam(7,2)" :disabled="numberParam(0)!==7" @change="setParam(2,numberValue($event))"><option :value="0">{{ t('eventcmd.condAtLeast') }}</option><option :value="1">{{ t('eventcmd.condAtMost') }}</option><option :value="2">{{ t('eventcmd.condBelow') }}</option></select>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==8 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===8" @change="setConditionType(8)" />{{ t('eventcmd.goodsItem') }}</label>
                     <select class="cond-main" :value="conditionalNumberParam(8,1,1)" :disabled="numberParam(0)!==8" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.items||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==9 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===9" @change="setConditionType(9)" />{{ t('eventcmd.goodsWeapon') }}</label>
                     <select class="cond-main" :value="conditionalNumberParam(9,1,1)" :disabled="numberParam(0)!==9" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.weapons||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                     <label class="check cond-check"><input :checked="conditionalBooleanParam(9,2)" type="checkbox" :disabled="numberParam(0)!==9" @change="setParam(2,checkedValue($event))" />{{ t('eventcmd.includeEquip') }}</label>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==10 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===10" @change="setConditionType(10)" />{{ t('eventcmd.goodsArmor') }}</label>
                     <select class="cond-main" :value="conditionalNumberParam(10,1,1)" :disabled="numberParam(0)!==10" @change="setParam(1,numberValue($event))"><option v-for="entry in catalog?.armors||[]" :key="entry.id" :value="entry.id">{{ String(entry.id).padStart(4,'0') }} {{ entry.name }}</option></select>
                     <label class="check cond-check"><input :checked="conditionalBooleanParam(10,2)" type="checkbox" :disabled="numberParam(0)!==10" @change="setParam(2,checkedValue($event))" />{{ t('eventcmd.includeEquip') }}</label>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==11 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===11" @change="setConditionType(11)" />{{ t('eventcmd.condButton') }}</label>
                     <select class="cond-main" :value="conditionalStringParam(11,1,'down')" :disabled="numberParam(0)!==11" @change="setParam(1,inputValue($event))">
                       <option v-for="entry in conditionalButtonKeys" :key="entry.value" :value="entry.value">{{ t(entry.label) }}</option>
@@ -551,7 +555,7 @@
                       <option v-for="entry in conditionalButtonModes" :key="entry.value" :value="entry.value">{{ t(entry.label) }}</option>
                     </select>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(0)!==12 }">
                     <label class="cond-pick"><input type="radio" name="cond-type" :checked="numberParam(0)===12" @change="setConditionType(12)" />{{ t('eventcmd.script') }}</label>
                     <input class="cond-main" :value="conditionalStringParam(12,1)" spellcheck="false" :disabled="numberParam(0)!==12" @input="setParam(1,inputValue($event))" />
                   </div>
@@ -936,6 +940,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown);
   window.removeEventListener('resize', scheduleTextGuideMeasure);
+  stopShakePreview();
 });
 
 function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
@@ -1170,6 +1175,13 @@ function commitNamedEntrySelection(payload:{kind:string;id:number}){
   if(pending.mirror!=null)setParam(pending.mirror,payload.id);
 }
 function openScrollPreview(){if(!draft.value)return;scrollPreview.value?.open({lines:multiText.value.split(/\r?\n/),speed:numberParam(0,2)});}
+// 225 Shake Screen preview: a tiny mock scene that replays the current
+// power/speed/duration once with an RM-style damped sine offset.
+const shakeCanvasRef=ref<HTMLCanvasElement|null>(null);
+const shakePreviewVisible=ref(false);
+let shakePreviewRaf=0;
+function stopShakePreview(){if(shakePreviewRaf)cancelAnimationFrame(shakePreviewRaf);shakePreviewRaf=0;}
+function playShakePreview(){if(!draft.value)return;stopShakePreview();shakePreviewVisible.value=true;void nextTick(()=>{const canvas=shakeCanvasRef.value;if(!canvas)return;const context=canvas.getContext('2d');if(!context)return;const power=Math.max(0,Math.min(9,numberParam(0,5)));const speed=Math.max(1,Math.min(10,numberParam(1,5)));const duration=Math.max(1,Math.round(numberParam(2,60)));const total=duration*1000/60;const start=performance.now();const paintFrame=()=>{const elapsed=performance.now()-start;const remaining=Math.max(0,1-elapsed/total);const shakeX=remaining>0?power*Math.sin(elapsed*(0.02+speed*0.012))*remaining:0;context.fillStyle='#dbeafe';context.fillRect(0,0,256,96);context.save();context.translate(shakeX,0);context.fillStyle='#86efac';context.fillRect(-16,72,288,24);context.fillStyle='#f59e0b';context.fillRect(104,40,48,32);context.fillStyle='#b45309';context.fillRect(122,56,12,16);context.fillStyle='#78350f';context.fillRect(98,32,60,8);context.restore();if(elapsed<total)shakePreviewRaf=requestAnimationFrame(paintFrame);else shakePreviewRaf=0;};paintFrame();});}
 function commitImageSelection(selection:{name:string;index:number}){const target=pendingImageTarget.value;if(!target)return;setParam(target.nameIndex,selection.name);if(target.indexIndex!=null)setParam(target.indexIndex,selection.name?selection.index:0);void nextTick(paintImagePreviews);}
 function openMessagePreview(){if(!draft.value)return;messagePreview.value?.open({faceName:stringParam(0),faceIndex:numberParam(1),background:numberParam(2),positionType:numberParam(3,2),name:stringParam(4),lines:multiText.value.split(/\r?\n/).slice(0,4)});}
 // Empty/missing faces leave the canvas transparent so the CSS checkerboard shows through.
@@ -1337,6 +1349,6 @@ defineExpose({openPicker,openEditor});
 .shop-cmd-layout{width:100%;display:grid;gap:8px}.shop-goods-table{width:100%;border-collapse:collapse;border:1px solid var(--app-border-strong);background:var(--app-bg);font-size:12px}.shop-goods-table th{background:var(--app-bg-soft);color:var(--app-ink-soft);font-weight:600}.shop-goods-table th,.shop-goods-table td{padding:4px 8px;border-bottom:1px solid var(--app-border);text-align:left}.shop-price-col{width:110px;text-align:right}.shop-goods-table tbody tr{cursor:default;user-select:none}.shop-goods-table tbody tr.active{background:var(--app-accent-soft)}.shop-goods-empty td{height:26px}.shop-goods-table:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}
 .cond-cmd-layout{width:100%;display:grid;gap:8px}.cond-tabs{display:flex;gap:2px}.cond-tabs button{min-width:36px}.cond-tab{display:grid;gap:6px}.cond-row{display:flex;align-items:center;gap:8px}.cond-row.cond-sub{padding-left:26px}.cond-row.inactive{opacity:.4}.cond-pick{flex:0 0 128px;display:flex;align-items:center;gap:5px;color:var(--app-ink);font-size:12px}.cond-sub .cond-pick{flex-basis:102px}.cond-main{flex:1;min-width:0}.cond-inline{display:flex;align-items:center;gap:5px}.cond-inline input{width:64px}.cond-unit{color:var(--app-ink-soft);font-size:12px}.cond-check{flex:0 0 auto;gap:5px}.cond-else{width:100%;margin-top:4px;gap:5px}
 .cond-group{margin:0;padding:8px 10px 10px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);display:grid;gap:6px}.cond-group legend{padding:0 4px;color:var(--app-ink-soft);font-size:12px}.cond-radios{flex-wrap:wrap;gap:12px}.cond-radios label{display:flex;align-items:center;gap:5px;color:var(--app-ink);font-size:12px}.gp-gamedata select{flex:1;min-width:0}.gp-gamedata input{width:72px}
-.tone-group{width:100%}.dur-row{width:100%;display:flex;align-items:center;gap:8px}.dur-row input[type=number]{width:72px}.dur-row .check{margin-left:12px;gap:5px}
+.tone-group{width:100%}.dur-row{width:100%;display:flex;align-items:center;gap:8px}.dur-row input[type=number]{width:72px}.dur-row .check{margin-left:12px;gap:5px}.shake-cmd-preview{width:100%;margin-top:2px}.shake-cmd-canvas{width:100%;max-width:256px;height:96px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:#dbeafe}
 .img-cell-row{width:100%;display:flex;gap:14px}.img-cell{display:grid;gap:4px;justify-items:start;color:var(--app-ink-soft);font-size:12px}.img-cell-canvas{width:96px;height:96px}
 </style>

@@ -87,9 +87,6 @@
             <section class="ev-commands" :class="{ locked: currentPageLocked }">
               <strong class="ev-cmd-title">{{ t('commonEvent.contents') }}</strong>
               <div ref="listHost" class="command-list" @scroll.passive="onListScroll" @contextmenu.prevent="openCommandContext($event, null)">
-                <div v-if="!spans.length" class="command-empty">
-                  {{ t('eventEditorDialog.emptyHint') }}
-                </div>
                 <div class="cmd-virtual-pad" :style="{ height: `${virtualWindow.top}px` }" />
                 <template v-for="row in virtualWindow.rows" :key="row.key">
                   <button
@@ -1182,14 +1179,6 @@ defineExpose({ markSaved });
   border: 1px solid var(--app-border-strong);
   border-radius: var(--app-radius-sm);
   background: var(--app-bg);
-}
-
-.command-empty {
-  padding: 7px 10px;
-  color: var(--app-ink-muted);
-  font-size: var(--text-sm);
-  border-bottom: 1px solid var(--app-border);
-  background: var(--app-bg-soft);
 }
 
 .cmd-virtual-pad {

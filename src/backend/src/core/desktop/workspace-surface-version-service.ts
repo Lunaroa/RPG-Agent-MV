@@ -10,6 +10,7 @@ import type {
 import { StagingManifestDao } from '../db/dao/staging-manifest-dao.ts';
 import { resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import { projectHash } from './staging-service.ts';
+import type { FileEntry } from './staging-service.ts';
 
 const SURFACES = new Set<WorkspaceSurfaceId>(['editor', 'projectManagement', 'mapOverview']);
 const MAP_FILE_PATTERN = /^Map\d{3}\.json$/i;
@@ -120,15 +121,29 @@ export function computeWorkspaceSurfaceVersion(
 ): string {
   const layout = resolveRmmvLayout(project);
   const entries = surfaceDependencies(layout.projectRoot, layout.dataDir, layout.resourceRoot, surface, mapId);
-  const stagingId = projectHash(layout.projectRoot);
-  const stagingMetadata = StagingManifestDao.getLatestMetadataByProject(stagingId);
-  const stagingRoot = path.join(path.resolve(workflowRoot), 'runtime', 'agent-console-staging', stagingId, 'draft');
-  collectPathMetadata(stagingRoot, stagingRoot, entries, true, undefined, 'staging');
+  const excludeMapFiles = surface === 'projectManagement' ? MAP_FILE_PATTERN : undefined;
   const digest = crypto.createHash('sha256');
-  digest.update(`workspace-surface:v1:${surface}\n`);
-  digest.update(`staging:${stagingMetadata?.id || 0}:${stagingMetadata?.updated_at || ''}\n`);
+  digest.update(`workspace-surface:v2:${surface}\n`);
   for (const entry of [...entries.values()].sort((left, right) => left.relativePath.localeCompare(right.relativePath))) {
+    if (excludeMapFiles && MAP_FILE_PATTERN.test(path.basename(entry.relativePath))) continue;
     digest.update(`${entry.relativePath}\0${entry.kind}\0${entry.size ?? ''}\0${entry.mtimeMs ?? ''}\n`);
+  }
+  // Staging contributes only the files this surface actually depends on. A map edit
+  // stages Map###.json (plus shared context files copied for the patcher); hashing the
+  // whole draft tree or the project-wide manifest timestamp used to invalidate the
+  // database surface even when no database content changed, forcing the database tab
+  // to reload + lock its first click on re-entry. By filtering manifest.files to the
+  // surface's own dependency set, a pure map edit no longer bumps projectManagement.
+  const stagingId = projectHash(layout.projectRoot);
+  const manifest = StagingManifestDao.getLatestByProject(stagingId)?.manifest as
+    | { files?: Record<string, FileEntry> }
+    | undefined;
+  const files = manifest?.files ?? {};
+  for (const relativePath of Object.keys(files).sort()) {
+    if (!entries.has(relativePath)) continue;
+    if (excludeMapFiles && MAP_FILE_PATTERN.test(path.basename(relativePath))) continue;
+    const entry = files[relativePath];
+    digest.update(`staged:${relativePath}\0${entry?.draftHash ?? ''}\0${entry?.delete ? 1 : 0}\0${entry?.updatedAt ?? ''}\n`);
   }
   return digest.digest('hex').slice(0, 24);
 }

@@ -209,7 +209,9 @@ async function loadData(startVersion?: string) {
     surfaceVersion = settled.version;
     await refreshStagingStatus();
     if (!overviewCoordinator.isCurrent(token) || projectStore.currentProject !== project) return;
+    const wasInitialLoad = !overview.value;
     overview.value = nextOverview;
+    if (wasInitialLoad) openInitialEntryIfNeeded();
   } catch (e) {
     if (!overviewCoordinator.isCurrent(token) || projectStore.currentProject !== project) return;
     error.value = (e as Error).message;
@@ -833,6 +835,31 @@ watch(() => route.query.section, (section) => {
     void router.replace({ path: '/database', query: { ...route.query, section: normalized } });
   }
 }, { immediate: true });
+
+/**
+ * On first load (overview goes from null -> populated) the initial selectDbGroup
+ * ran while data was still pending and silently returned at the readState guard,
+ * so the right pane stayed empty and the user's first sidebar/list click felt
+ * dead ("click twice before anything happens"). Re-run the auto-open now that the
+ * data is ready, but only if nothing is open or in flight yet (the user hasn't
+ * clicked anything, and no deep link is being served).
+ */
+function openInitialEntryIfNeeded(): void {
+  if (!surfaceActive) return;
+  if (pmDetail.value || detailBusy.value) return;
+  if (typeof route.query.group === 'string' && Number.isInteger(Number(route.query.id))) return;
+  const group = selectedDbGroup.value;
+  if (isSystemNamedGroup(group) || isCommonEventsGroup(group)) return;
+  const storageGroup = storageGroupForUiGroup(group);
+  if (database.value[storageGroup]?.readState !== 'ready') return;
+  if (DOCUMENT_DATABASE_GROUPS.has(group)) {
+    const first = database.value[storageGroup]?.named[0];
+    if (first) void openManaged('database', first.id, storageGroup);
+  } else {
+    const first = activeDbGroup.value.named[0];
+    if (first) void openManaged('database', first.id, group);
+  }
+}
 
 /** One-shot deep link (global search hits): select the group, open the entry, then strip the params. */
 function applyRouteDatabaseFocus(): void {

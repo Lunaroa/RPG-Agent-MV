@@ -192,29 +192,29 @@ function clamp(value: unknown, minimum: number, maximum: number): number {
     <div class="battle-test-setup">
       <div class="battle-test-heading">
         <span>{{ t('battleTest.members') }}</span>
-        <button type="button" :disabled="!canAdd || busy" @click="addBattler">{{ t('cmdList.add') }}</button>
+        <el-button size="small" :disabled="!canAdd || busy" @click="addBattler">{{ t('cmdList.add') }}</el-button>
       </div>
       <div class="battle-test-members">
         <article v-for="(battler, index) in battlers" :key="`battle-test-${index}`" class="battle-test-member">
           <div class="battle-test-member-head">
             <label>
               <span>{{ t('mapPreview.actor') }}</span>
-              <select :value="battler.actorId" :disabled="busy" @change="changeActor(index, Number(($event.target as HTMLSelectElement).value))">
-                <option v-for="actor in actorOptions(index)" :key="actor.id" :value="actor.id">{{ actor.name }}</option>
-              </select>
+              <el-select size="small" :model-value="battler.actorId" :disabled="busy" @change="(value: number) => changeActor(index, Number(value))">
+                <el-option v-for="actor in actorOptions(index)" :key="actor.id" :value="actor.id" :label="actor.name" />
+              </el-select>
             </label>
             <label>
               <span>{{ t('db.level') }}</span>
-              <input type="number" min="1" max="99" :value="battler.level" :disabled="busy" @input="updateLevel(index, ($event.target as HTMLInputElement).value)" />
-            </label>
-            <button type="button" class="danger" :disabled="busy" @click="removeBattler(index)">{{ t('cmdList.delete') }}</button>
+              <el-input-number size="small" :min="1" :max="99" :step="1" :step-strictly="true" controls-position="right" :model-value="battler.level" :disabled="busy" @change="(value: number | undefined) => updateLevel(index, value)" />
+          </label>
+            <el-button size="small" type="danger" plain :disabled="busy" @click="removeBattler(index)">{{ t('cmdList.delete') }}</el-button>
           </div>
           <div class="battle-test-equips">
             <label v-for="slotIndex in equipRows(battler)" :key="`battle-equip-${index}-${slotIndex}`">
               <span>{{ slotLabel(battler, slotIndex) }}</span>
-              <select v-if="isStandardSlot(battler, slotIndex)" :value="battler.equips[slotIndex] || 0" :disabled="busy" @change="updateEquip(index, slotIndex, Number(($event.target as HTMLSelectElement).value))">
-                <option v-for="option in equipmentOptions(battler, slotIndex)" :key="option.id" :value="option.id">{{ option.name }}</option>
-              </select>
+              <el-select v-if="isStandardSlot(battler, slotIndex)" size="small" :model-value="battler.equips[slotIndex] || 0" :disabled="busy" @change="(value: number) => updateEquip(index, slotIndex, Number(value))">
+                <el-option v-for="option in equipmentOptions(battler, slotIndex)" :key="option.id" :value="option.id" :label="option.name" />
+              </el-select>
               <small v-else>{{ battler.equips[slotIndex] || 0 }} · {{ t('db.pluginEquipSlotReadonly') }}</small>
             </label>
           </div>
@@ -223,27 +223,27 @@ function clamp(value: unknown, minimum: number, maximum: number): number {
       <div class="battle-test-backgrounds">
         <label>
           <span>{{ t('db.battleback1') }}</span>
-          <select v-model="battleback1Name" :disabled="busy">
-            <option value="">{{ t('imgPicker.none') }}</option>
-            <option v-for="asset in catalog?.assets.battlebacks1 || []" :key="asset.name" :value="asset.name">{{ asset.name }}</option>
-          </select>
+          <el-select size="small" v-model="battleback1Name" :disabled="busy">
+            <el-option :value="''" :label="t('imgPicker.none')" />
+            <el-option v-for="asset in catalog?.assets.battlebacks1 || []" :key="asset.name" :value="asset.name" :label="asset.name" />
+          </el-select>
         </label>
         <label>
           <span>{{ t('db.battleback2') }}</span>
-          <select v-model="battleback2Name" :disabled="busy">
-            <option value="">{{ t('imgPicker.none') }}</option>
-            <option v-for="asset in catalog?.assets.battlebacks2 || []" :key="asset.name" :value="asset.name">{{ asset.name }}</option>
-          </select>
+          <el-select size="small" v-model="battleback2Name" :disabled="busy">
+            <el-option :value="''" :label="t('imgPicker.none')" />
+            <el-option v-for="asset in catalog?.assets.battlebacks2 || []" :key="asset.name" :value="asset.name" :label="asset.name" />
+          </el-select>
         </label>
       </div>
       <p class="battle-test-note">{{ t('battleTest.isolationNote') }}</p>
       <p v-if="error" class="battle-test-error">{{ error }}</p>
     </div>
     <template #footer>
-      <button type="button" :disabled="busy" @click="emit('close')">{{ t('editor.mapProperties.cancel') }}</button>
-      <button type="button" class="primary" data-ui-id="battle-test-start" :disabled="busy || !battlers.length" @click="start">
+      <el-button :disabled="busy" @click="emit('close')">{{ t('editor.mapProperties.cancel') }}</el-button>
+      <el-button type="primary" data-ui-id="battle-test-start" :disabled="busy || !battlers.length" @click="start">
         {{ busy ? t('battleTest.starting') : t('battleTest.start') }}
-      </button>
+      </el-button>
     </template>
   </el-dialog>
 </template>
@@ -290,7 +290,10 @@ label span,
 label small { color: var(--console-text-muted, #776f64); font-size: 11px; }
 .battle-test-note { margin: 0; color: var(--console-text-muted, #776f64); font-size: 11px; }
 .battle-test-error { margin: 0; color: var(--el-color-danger); font-size: 12px; }
-button.primary { border-color: var(--app-accent, #9a6a2f); background: var(--app-accent, #9a6a2f); color: #fff; }
+.battle-test-member-head :deep(.el-input-number) { width: 100%; }
+.battle-test-member-head :deep(.el-select),
+.battle-test-equips :deep(.el-select),
+.battle-test-backgrounds :deep(.el-select) { width: 100%; }
 @media (max-width: 620px) {
   .battle-test-member-head,
   .battle-test-backgrounds,

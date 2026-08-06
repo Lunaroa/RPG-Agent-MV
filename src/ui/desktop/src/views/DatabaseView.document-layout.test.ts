@@ -88,4 +88,14 @@ describe('DatabaseView single-document layout', () => {
     );
     assert.match(source, /v-if="!isDocumentDatabaseGroup"/);
   });
+
+  test('section watcher keeps same-bucket selection instead of bouncing to the bucket default', () => {
+    // selectDbGroup syncs ?section itself; the watcher must not treat that
+    // self-write as external navigation and reset the clicked category
+    // (regression: first category click after editor -> database was swallowed).
+    assert.match(
+      source,
+      /watch\(\(\) => route\.query\.section[\s\S]*?if \(sectionForDbGroup\(selectedDbGroup\.value\) === normalized\) return;[\s\S]*?selectDbGroup\(dbGroupForSection\(normalized\), false\);/,
+    );
+  });
 });

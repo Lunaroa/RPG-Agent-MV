@@ -828,10 +828,16 @@ function selectDbGroup(key: string, syncRoute = true): void {
 watch(() => route.query.section, (section) => {
   if (!surfaceActive || route.path !== '/database') return;
   const normalized = normalizeDatabaseSection(section);
-  selectDbGroup(dbGroupForSection(normalized), false);
   if (section !== normalized) {
     void router.replace({ path: '/database', query: { ...route.query, section: normalized } });
   }
+  // The section param only distinguishes four buckets, and selectDbGroup syncs it
+  // itself. When the current selection already belongs to that bucket, the route
+  // change is either our own sync or an ambiguous external write, so it must not
+  // bounce the selection back to the bucket default (that swallowed the first
+  // category click whenever the route lacked a section param).
+  if (sectionForDbGroup(selectedDbGroup.value) === normalized) return;
+  selectDbGroup(dbGroupForSection(normalized), false);
 }, { immediate: true });
 
 /** One-shot deep link (global search hits): select the group, open the entry, then strip the params. */

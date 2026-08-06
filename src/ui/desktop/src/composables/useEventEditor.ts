@@ -534,24 +534,12 @@ export function commandInsertionSlots(
     const nextSpan = spanIndex < spans.length ? spans[spanIndex] : undefined;
     const blockBottom = !nextSpan || nextSpan.role === 'branch' || nextSpan.role === 'terminator';
     const indent = commandInsertIndent(list, rawIndex);
-    // Two consecutive block-bottom slots at the same indent with no visible
-    // command row between them render as two stacked "◆" rows that look like a
-    // duplicate empty line (e.g. an empty If: the Then-body bottom and the
-    // End-before slot both sit at indent 1). They are the same insert position
-    // visually, so demote the second one: it stays a legal drop/focus target
-    // (just display:none like other intermediate slots), while the first keeps
-    // the visible RM-native "◆" affordance.
-    const previous = slots.at(-1);
-    const duplicateBottom = blockBottom
-      && previous?.blockBottom
-      && previous.indent === indent
-      && rawIndex - previous.rawIndex <= 1;
     slots.push({
       key: `insert:${rawIndex}`,
       spanIndex,
       rawIndex,
       indent,
-      blockBottom: duplicateBottom ? false : blockBottom,
+      blockBottom,
     });
   }
   return slots;

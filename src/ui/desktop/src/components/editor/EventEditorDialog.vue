@@ -91,13 +91,20 @@
                   {{ t('eventEditorDialog.emptyHint') }}
                 </div>
                 <div class="cmd-virtual-pad" :style="{ height: `${virtualWindow.top}px` }" />
-                <template v-for="row in virtualWindow.rows" :key="row.key">
+                <template v-for="(row, index) in virtualWindow.rows" :key="row.key">
                   <button
                     v-if="row.kind === 'blank'"
                     type="button"
                     :disabled="currentPageLocked"
                     class="cmd-row cmd-blank"
-                    :class="{ even: row.slot.spanIndex % 2 === 0, terminator: row.slot.spanIndex === spans.length, 'block-bottom': row.slot.blockBottom, focused: insertionFocus === row.slot.spanIndex, 'drop-before': dropIndicator === row.slot.spanIndex, selected: slotSelected(row.slot) }"
+                    :no="row.no + 1"
+                    :class="{
+                      terminator: row.slot.spanIndex === spans.length,
+                      'block-bottom': row.slot.blockBottom, 
+                      focused: insertionFocus === row.slot.spanIndex,
+                      'drop-before': dropIndicator === row.slot.spanIndex,
+                      selected: slotSelected(row.slot)
+                    }"
                     :style="{ '--cmd-indent': `${Math.min(row.slot.indent, 8) * 18}px` }"
                     :aria-label="t('eventEditorDialog.newCmd')"
                     :draggable="false"
@@ -107,13 +114,19 @@
                     @contextmenu.stop.prevent="openCommandContext($event, null, row.slot)"
                     @dragover.prevent="onInsertionDragOver(row.slot.spanIndex, $event)"
                     @drop.prevent="onRowDrop"
-                  ><span class="cmd-line">◆</span></button>
+                  ><span class="cmd-line"></span></button>
                   <button
                     v-else
                     type="button"
                     :disabled="currentPageLocked"
                     class="cmd-row"
-                    :class="{ selected: selectedSpanSet.has(row.index), even: row.index % 2 === 0, 'drop-before': dropIndicator === row.index, [`tone-${row.view.tone}`]: true, [`role-${row.view.role}`]: true }"
+                    :no="row.no + 1"
+                    :class="{
+                      selected: selectedSpanSet.has(row.index),
+                      'drop-before': dropIndicator === row.index, 
+                      [`tone-${row.view.tone}`]: true, 
+                      [`role-${row.view.role}`]: true
+                    }"
                     :style="{ '--cmd-indent': `${Math.min(row.view.indent, 8) * 18}px` }"
                     :aria-pressed="selectedSpanSet.has(row.index)"
                     :draggable="!currentPageLocked"
@@ -337,30 +350,45 @@ function buildSpanView(span: Parameters<typeof commandSpanDisplay>[0]): MvComman
   );
 }
 type CommandRenderRow =
-  | { kind: 'blank'; key: string; slot: MvCommandInsertionSlot }
-  | { kind: 'command'; key: string; index: number; view: MvCommandSpanView };
+  | { kind: 'blank'; no: number; key: string; slot: MvCommandInsertionSlot }
+  | { kind: 'command'; no: number; key: string; index: number; view: MvCommandSpanView };
 const commandRows = computed<CommandRenderRow[]>(() => {
   const rows: CommandRenderRow[] = [];
   const hidden = collapsedHiddenSpans.value;
-  for (const slot of insertionSlots.value) {
-    if (hidden.has(slot.spanIndex)) continue;
-    rows.push({ kind: 'blank', key: slot.key, slot });
-    const span = spans.value[slot.spanIndex];
-    if (span) rows.push({ kind: 'command', key: `command:${span.index}`, index: slot.spanIndex, view: buildSpanView(span) });
+  const slots = insertionSlots.value;
+  const slotBySpanIndex = new Map<number, MvCommandInsertionSlot>();
+  for (const slot of slots) slotBySpanIndex.set(slot.spanIndex, slot);
+
+  let no = 0;
+  for (let i = 0; i < spans.value.length; i += 1) {
+    const slot = slotBySpanIndex.get(i);
+
+    // blockBottom 空行：占一个行号槽，隐藏时不 push 但仍然占号
+    if (slot && slot.blockBottom) {
+      if (!hidden.has(i)) rows.push({ kind: 'blank', key: slot.key, no, slot });
+      no += 1;
+    }
+
+    // span 命令：占一个行号槽，隐藏时不 push 但仍然占号
+    if (!hidden.has(i)) {
+      const span = spans.value[i];
+      rows.push({ kind: 'command', key: `command:${span.index}`, no, index: i, view: buildSpanView(span) });
+    }
+    no += 1;
+
+    // 折叠头本身：折叠时 head 可见，但它下面隐藏的 blank/ span 都要正确跳过 no —— 已由上面的无条件 no+=1 保证
   }
+
+  const tail = slotBySpanIndex.get(spans.value.length);
+  if (tail) rows.push({ kind: 'blank', key: tail.key, no, slot: tail });
+
   return rows;
 });
+
+
 function commandRowHeight(row: CommandRenderRow): number {
   if (row.kind === 'blank') {
-    // RM MV-native list: commands sit flush against each other, but each
-    // structure body (if/else/choice/loop/...) keeps one visible insertion
-    // slot at its foot (blockBottom), and the trailing slot at the end of
-    // the list stays open for double-click-append. The focused insertion
-    // point and the active drop target also expand. Same-level sequential
-    // gaps collapse to 0 so there are no blank rows between sibling commands.
-    const slotIndex = row.slot.spanIndex;
-    const active = row.slot.blockBottom || insertionFocus.value === slotIndex || dropIndicator.value === slotIndex || slotSelected(row.slot);
-    return active ? CMD_BLANK_H : 0;
+    return CMD_BLANK_H;
   }
   return row.view.lines.length * CMD_LINE_H + CMD_LINE_H + CMD_ROW_CHROME;
 }
@@ -392,7 +420,9 @@ const virtualWindow = computed(() => {
   if (start < 0) start = 0;
   let end = rowAtOffset(top + viewport) + CMD_OVERSCAN + 1;
   if (end > total) end = total;
-  for (let index = start; index < end; index += 1) rows.push(commandRows.value[index]);
+  for (let index = start; index < end; index += 1) {
+    rows.push(commandRows.value[index]);
+  }
   return { rows, top: offsets[start], bottom: totalHeight - offsets[end] };
 });
 function onListScroll() { if (listHost.value) listScrollTop.value = listHost.value.scrollTop; }
@@ -1157,7 +1187,7 @@ defineExpose({ markSaved });
   background: var(--app-bg);
   --app-border: #cac4b6;
   --app-border-strong: #b3ab9c;
-  --app-bg-soft: #e6e2d9;
+  --app-bg-soft: #f2ece4;
   --app-bg-sunken: #d9d3c7;
   --app-ink-soft: #5c5649;
   --app-ink-muted: #7d776b;
@@ -1200,13 +1230,13 @@ defineExpose({ markSaved });
 .cmd-row {
   position: relative;
   width: 100%;
-  min-height: 22px;
+  min-height: 18px;
   height: auto;
   flex: 0 0 auto;
   display: block;
-  padding: 3px 8px 3px calc(14px + var(--cmd-indent, 0px));
+  padding: 0px 8px 0px calc(50px + var(--cmd-indent, 0px));
   border: 1px solid transparent;
-  border-bottom-color: var(--app-border);
+  /* border-bottom-color: var(--app-border); */
   background: var(--app-bg);
   color: var(--app-ink);
   text-align: left;
@@ -1215,13 +1245,32 @@ defineExpose({ markSaved });
   border-radius: 0;
 }
 
+.cmd-row::after {
+  content: attr(no);
+  position: absolute;
+  display: block;
+  width: 28px;
+  text-align: right;
+  padding-right: 6px;
+  padding-top: 2px;
+  box-sizing: border-box;
+  left: 0px;
+  top: -1px;
+  bottom: -1px;
+  line-height: 18px;
+  color: #7699b1;
+  border-right: 1px solid #CCC;
+  font-size: 10px;
+  background-color: #f2ece4;
+  font-family: ‌Consolas;
+}
+
 .cmd-row.cmd-blank {
   /* RM MV-native list: only block-bottom slots (the foot of each structure
      body and the trailing "◆" row), the focused insertion point, and the
      active drop target are visible. Other intermediate slots are display:none
      and report 0 height in the virtual list so sibling commands sit flush. */
-  display: none;
-  min-height: 22px;
+  min-height: 18px;
   color: var(--app-ink-muted);
   cursor: default;
   user-select: none;
@@ -1262,7 +1311,7 @@ defineExpose({ markSaved });
 }
 
 /* 缩进层级参考线：按 --cmd-indent 宽度每 18px 画一条淡竖线 */
-.cmd-row::before {
+/* .cmd-row::before {
   content: '';
   position: absolute;
   left: 14px;
@@ -1271,6 +1320,52 @@ defineExpose({ markSaved });
   width: var(--cmd-indent, 0px);
   background: repeating-linear-gradient(to right, var(--app-border) 0 1px, transparent 1px 18px);
   pointer-events: none;
+} */
+
+.cmd-row:not(.role-terminator):not(.role-branch) > .cmd-line:not(.cmd-sub)::before {
+  content: '◆';
+  float: left;
+  color: #5e5e5e;
+  width: 20px;
+  font-size: 23px;
+  text-align: center;
+}
+
+.cmd-row.role-branch > .cmd-head::before {
+  content: ':';
+  color: var(--app-ink);
+  display: inline-block;
+  width: 20px;
+  text-align: center;
+}
+
+.cmd-sub::before {
+  content: ':';
+  color: var(--app-ink);
+  display: inline-block;
+  width: 20px;
+  text-align: center;
+}
+
+.cmd-row.role-terminator > .cmd-head::before {
+  content: ':';
+  color: var(--app-ink);
+  display: inline-block;
+  width: 20px;
+  text-align: center;
+}
+
+
+.cmd-row.selected > .cmd-line::before {
+  color: var(--app-accent-ink) !important;
+}
+
+.cmd-row.selected .cmd-head::before {
+  color: var(--app-accent-ink);
+}
+
+.cmd-row.selected .cmd-sub::before {
+  color: var(--app-accent-ink);
 }
 
 .cmd-row.selected::before {
@@ -1279,21 +1374,26 @@ defineExpose({ markSaved });
 
 .cmd-caret {
   position: absolute;
-  left: 2px;
-  top: 50%;
-  display: grid;
+  left: 30px;
+  top: 1px;
+  display: inline-block;
   place-items: center;
-  width: 11px;
-  height: 12px;
-  transform: translateY(-50%);
-  color: var(--app-ink-muted);
-  font-size: 9px;
-  line-height: 1;
+  color: #a2a2a2;
+  font-size: 18px;
+  width: 20px;
+  height: 18px;
+  align-items: start;
+  text-align: center;
+  line-height: 18px;
   cursor: pointer;
 }
 
 .cmd-caret::before {
   content: '\25BE';
+}
+
+.cmd-caret:hover::before {
+  color: #1b4077;
 }
 
 .cmd-caret.collapsed::before {
@@ -1308,11 +1408,11 @@ defineExpose({ markSaved });
   box-shadow: inset 0 2px 0 var(--app-accent);
 }
 
-.cmd-row.even {
+.cmd-row:nth-child(2n) {
   background: var(--app-bg);
 }
 
-.cmd-row:not(.even):not(.selected) {
+.cmd-row:not(:nth-child(2n)):not(.selected) {
   background: var(--app-bg-soft);
 }
 

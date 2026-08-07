@@ -99,7 +99,13 @@
                   <canvas ref="facePreviewRef" class="face-preview" :width="faceSize" :height="faceSize" @click="openTextFacePicker" />
                   <!-- <button type="button" class="editor-btn" @click="openTextFacePicker">{{ t('eventcmd.choose') }}</button> -->
                 </div>
-                <label class="text-cmd-text">{{ t('eventcmd.text') }}<span ref="textInputWrapRef" class="text-cmd-input-wrap"><textarea ref="textAreaRef" v-model="multiText" rows="5" @input="scheduleTextGuideMeasure" /><span class="text-guide-line" :style="{ left: `${textGuideLeft}px` }" aria-hidden="true" /></span></label>
+                <label class="text-cmd-text">
+                  <span>{{ t('eventcmd.text') }}</span>
+                  <span ref="textInputWrapRef" class="text-cmd-input-wrap">
+                    <textarea ref="textAreaRef" v-model="multiText" rows="5" @input="scheduleTextGuideMeasure" />
+                    <span class="text-guide-line" :style="{ left: `${textGuideLeft}px` }" aria-hidden="true" />
+                  </span>
+                </label>
               </div>
               <div class="text-cmd-options">
                 <label v-if="currentEngine === 'rpg-maker-mz'">
@@ -205,14 +211,19 @@
                   </div>
                   <div v-if="selectedMZPluginHint?.arguments?.length" class="full plugin-args-wrap">
                     <table class="plugin-args-table">
-                      <thead><tr><th>{{ t('eventcmd.argLabel') }}</th><th>{{ t('eventcmd.argKey') }}</th><th>{{ t('eventcmd.argType') }}</th><th>{{ t('eventcmd.argValue') }}</th></tr></thead>
+                      <thead><tr>
+                        <th>{{ t('eventcmd.argLabel') }}</th>
+                        <th>{{ t('eventcmd.argType') }}</th>
+                        <th>{{ t('eventcmd.argValue') }}</th>
+                      </tr></thead>
                       <tbody>
                         <tr v-for="argument in selectedMZPluginHint.arguments" :key="argument.name" @dblclick="openPluginArgumentEditor(argument)">
                           <td class="plugin-arg-name">
-                            <span>{{ argument.label || argument.name }}</span>
+                            <div class="plugin-arg-name-key">
+                              <span>{{ argument.label || argument.name }}</span> <el-tag size="small" type="warning">{{ argument.name }}</el-tag>
+                            </div>
                             <small v-if="argument.description">{{ argument.description }}</small>
                           </td>
-                          <td class="plugin-arg-key"><code>{{ argument.name }}</code></td>
                           <td class="plugin-arg-type">{{ pluginArgumentTypeLabel(argument) }}</td>
                           <td class="plugin-arg-value">
                             <el-switch v-if="argument.kind === 'boolean'" size="small" :model-value="['true','on','1'].includes(mzPluginArgument(argument.name).toLowerCase())" @update:model-value="setMZPluginArgument(argument, $event)" @dblclick.stop />
@@ -1334,15 +1345,51 @@ defineExpose({openPicker,openEditor});
   color: var(--app-ink-soft);
   font-size: 12px;
 }
-.picker h4{margin:0 0 5px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--app-ink);font-size:12px}.picker h4 small{color:var(--app-ink-muted);font-size:10px;font-weight:500}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{flex:1 1 auto;min-height:0;padding:12px;overflow:auto}.fields{display:flex;flex-wrap:wrap;gap:8px}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
+.picker h4{margin:0 0 5px;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--app-ink);font-size:12px}.picker h4 small{color:var(--app-ink-muted);font-size:10px;font-weight:500}.picker-group div{display:grid;gap:3px}.picker button{min-height:28px;padding:3px 8px;border:1px solid var(--app-border-strong);border-radius:2px;background:linear-gradient(var(--app-bg),var(--app-bg-sunken));color:var(--app-ink);cursor:pointer;font-size:12px;text-align:left}.picker button:hover,.picker button.active{border-color:var(--app-accent);background:var(--app-accent-soft)}.picker button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.picker-empty{grid-column:1 / -1;margin:16px 0;padding:16px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);color:var(--app-ink-muted);font-size:12px;text-align:center}.editor-body{flex:1 1 auto;min-height:0;padding:12px;overflow:auto}
+.fields{
+  display:flex;
+  flex-direction: column;
+  flex-wrap:wrap;
+  gap:8px;
+}.fields>label{min-width:145px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.fields .full{width:100%}input:not([type=checkbox]),select,textarea{min-width:0;padding:5px 6px;border:1px solid var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg);color:var(--app-ink);font-size:13px}textarea{font-family:var(--app-font-mono);resize:vertical}.inline,.route-field{display:flex;align-items:center;gap:5px}.inline input{min-width:0;flex:1}.route-field{min-width:230px;justify-content:space-between;color:var(--app-ink-muted);font-size:12px}.check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.form-note{width:100%;margin:0;color:var(--app-ink-muted);font-size:12px;line-height:1.5}.unsupported-command{padding:10px;border:1px dashed var(--app-border);border-radius:var(--app-radius-sm);background:var(--app-bg-soft)}
 .plugin-command-editor{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.plugin-command-editor label{min-width:0;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.plugin-command-editor .full{grid-column:1 / -1}.plugin-command-editor textarea{min-height:96px}.plugin-command-warning{grid-column:1 / -1;padding:8px 10px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:12px;line-height:1.45}
 .plugin-command-name-row{display:flex;align-items:center;gap:8px;color:var(--app-ink-soft);font-size:12px}.plugin-command-name{max-width:100%;overflow:hidden;font-family:var(--app-font-mono);text-overflow:ellipsis}
 .plugin-args-wrap{max-height:320px;overflow:auto;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm)}
 .plugin-args-table{width:100%;border-collapse:collapse;background:var(--app-bg);font-size:12px}.plugin-args-table th{position:sticky;top:0;padding:5px 8px;background:var(--app-bg-soft);color:var(--app-ink-soft);font-weight:600;text-align:left}.plugin-args-table td{padding:5px 8px;border-top:1px solid var(--app-border);vertical-align:middle}.plugin-args-table tbody tr{cursor:default}.plugin-args-table tbody tr:hover{background:var(--app-bg-soft)}
-.plugin-arg-name{width:32%}.plugin-arg-name span{display:block;color:var(--app-ink)}.plugin-arg-name small{display:block;overflow:hidden;color:var(--app-ink-muted);font-size:11px;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}.plugin-arg-key{width:22%;font-family:var(--app-font-mono);color:var(--app-ink-muted)}.plugin-arg-key code{font:inherit;overflow-wrap:anywhere}.plugin-arg-type{width:18%;color:var(--app-ink-muted);white-space:nowrap}
+.plugin-arg-name{width:32%}
+.plugin-arg-name > .plugin-arg-name-key{display:block;color:var(--app-ink);white-space: normal;}
+.plugin-arg-name small{
+  display: block;
+  overflow: hidden;
+  color: var(--app-ink-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  max-height: 44px;
+}
+.plugin-arg-key{width:20%;font-family:var(--app-font-mono);color:var(--app-ink-muted)}
+.plugin-arg-key code{font:inherit;overflow-wrap:anywhere}
+.plugin-arg-type{width:12%;color:var(--app-ink-muted);vertical-align: middle;}
 .plugin-arg-value{color:var(--app-ink)}.plugin-arg-value .plugin-arg-preview{display:inline-block;max-width:calc(100% - 40px);overflow:hidden;font-family:var(--app-font-mono);text-overflow:ellipsis;vertical-align:middle;white-space:nowrap}.plugin-arg-edit{min-width:28px;margin-left:6px;padding:1px 6px}
 .plugin-option-name{float:left;max-width:55%;overflow:hidden;text-overflow:ellipsis}.plugin-option-desc{float:right;max-width:42%;overflow:hidden;color:var(--app-ink-muted);font-size:12px;text-overflow:ellipsis}
-.text-cmd-layout{width:100%;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}.text-cmd-face{display:flex;flex-direction:column;align-items:flex-start;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-face .editor-btn{align-self:center}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background-color:#f5efe6;background-image:linear-gradient(45deg,#ded6c8 25%,transparent 25%),linear-gradient(-45deg,#ded6c8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ded6c8 75%),linear-gradient(-45deg,transparent 75%,#ded6c8 75%);background-position:0 0,0 6px,6px -6px,-6px 0;background-size:12px 12px}.text-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.text-cmd-input-wrap{position:relative;display:block}.text-cmd-input-wrap textarea{width:100%;min-height:144px;box-sizing:border-box}.text-guide-line{position:absolute;top:1px;bottom:1px;width:1px;background:var(--app-border-strong);pointer-events:none}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:flex-end}.text-cmd-preview{margin-left:auto}.text-cmd-batch{width:100%;margin-top:2px;gap:5px}
+.text-cmd-layout{
+  width:100%;
+  display:grid;
+  grid-template-columns:auto 1fr;
+  gap:12px;
+  flex: 1;
+  align-items:start
+}
+.text-cmd-face{display:flex;flex-direction:column;align-items:flex-start;gap:4px;color:var(--app-ink-soft);font-size:12px}
+.text-cmd-face .editor-btn{align-self:center}.face-preview{width:144px;height:144px;border:1px solid var(--app-border-strong);border-radius:var(--app-radius-sm);cursor:pointer;image-rendering:pixelated;background-color:#f5efe6;background-image:linear-gradient(45deg,#ded6c8 25%,transparent 25%),linear-gradient(-45deg,#ded6c8 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ded6c8 75%),linear-gradient(-45deg,transparent 75%,#ded6c8 75%);background-position:0 0,0 6px,6px -6px,-6px 0;background-size:12px 12px}
+.text-cmd-text{
+  display:grid;
+  grid-template-rows: auto 1fr;
+  height: 100%;
+  gap:4px;color:var(--app-ink-soft);font-size:12px}
+.text-cmd-input-wrap{position:relative;display:block}
+.text-cmd-input-wrap textarea{width:100%;height: 100%;min-height:144px;box-sizing:border-box}.text-guide-line{position:absolute;top:1px;bottom:1px;width:1px;background:var(--app-border-strong);pointer-events:none}.text-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:flex-end}.text-cmd-preview{margin-left:auto}.text-cmd-batch{width:100%;margin-top:2px;gap:5px}
 .choice-cmd-layout{width:100%;display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:16px;align-items:start}.choice-cmd-list{display:grid;gap:6px}.choice-cmd-title{color:var(--app-ink-soft);font-size:12px;font-weight:600}.choice-cmd-text{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.choice-cmd-text textarea{width:100%;min-height:150px;box-sizing:border-box;resize:vertical}.choice-cmd-hint{color:var(--app-ink-muted);font-size:11px;line-height:1.4}.choice-cmd-warning{margin:0;padding:6px 8px;border-radius:var(--app-radius-sm);background:var(--app-warn-soft);color:var(--app-warn);font-size:11px;line-height:1.4}.choice-cmd-row{display:flex;align-items:center;gap:6px;color:var(--app-ink-soft);font-size:12px}.choice-cmd-row span{flex:0 0 24px;text-align:right}.choice-cmd-row input{flex:1;min-width:0}.choice-cmd-side{display:grid;gap:8px;align-content:start}.choice-cmd-side label{display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}
 .var-cmd-field{width:100%;max-width:280px;display:grid;gap:4px;color:var(--app-ink-soft);font-size:12px}.var-cmd-field .text-cmd-label{margin:0}.var-cmd-row{display:flex;gap:6px}.var-cmd-row input{flex:1;min-width:0;cursor:pointer}.var-cmd-row .editor-btn{flex:0 0 auto;min-width:32px}
 .scroll-cmd-options{width:100%;display:flex;gap:12px;margin-top:4px;align-items:center}.scroll-cmd-speed{display:flex!important;align-items:center;gap:6px}.scroll-cmd-speed input{width:64px}.scroll-cmd-preview{margin-left:auto}

@@ -341,13 +341,22 @@ const CMD_LINE_H = 20, CMD_ROW_CHROME = 8, CMD_BLANK_H = 22, CMD_OVERSCAN = 8;
 const listHost = ref<HTMLElement>();
 const listScrollTop = ref(0), listViewportH = ref(0);
 function buildSpanView(span: Parameters<typeof commandSpanDisplay>[0]): MvCommandSpanView {
-  return commandSpanDisplay(
+  const view = commandSpanDisplay(
     span,
     props.systemData,
     language.value,
     skipTerminatorSet.value.has(span.index),
     t('eventEditor.command.skipEnd'),
   );
+  // The ::before rules below already draw the RM markers (◆ for command heads,
+  // ':' for branch/continuation lines). The shared display labels embed the same
+  // glyphs for the marker-less console list, so strip them here or every row
+  // shows the marker twice (the CSS glyph plus the label glyph).
+  return {
+    ...view,
+    head: view.head.replace(/^(?:\u25C6\s*|[:\uFF1A]\s?)/, ''),
+    lines: view.lines.map((line) => line.replace(/^[:\uFF1A]\s?/, '')),
+  };
 }
 type CommandRenderRow =
   | { kind: 'blank'; no: number; key: string; slot: MvCommandInsertionSlot }

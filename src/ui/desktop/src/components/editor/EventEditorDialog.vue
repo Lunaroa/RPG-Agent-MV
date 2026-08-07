@@ -99,6 +99,7 @@
                     class="cmd-row cmd-blank"
                     :no="row.no + 1"
                     :class="{
+                      even: row.no % 2 == 0,
                       terminator: row.slot.spanIndex === spans.length,
                       'block-bottom': row.slot.blockBottom, 
                       focused: insertionFocus === row.slot.spanIndex,
@@ -122,6 +123,7 @@
                     class="cmd-row"
                     :no="row.no + 1"
                     :class="{
+                      even: row.no % 2 == 0,
                       selected: selectedSpanSet.has(row.index),
                       'drop-before': dropIndicator === row.index, 
                       [`tone-${row.view.tone}`]: true, 
@@ -1417,11 +1419,11 @@ defineExpose({ markSaved });
   box-shadow: inset 0 2px 0 var(--app-accent);
 }
 
-.cmd-row:nth-child(2n) {
+.cmd-row.even {
   background: var(--app-bg);
 }
 
-.cmd-row:not(:nth-child(2n)):not(.selected) {
+.cmd-row:not(.even):not(.selected) {
   background: var(--app-bg-soft);
 }
 

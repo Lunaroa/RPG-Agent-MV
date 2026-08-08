@@ -22,6 +22,46 @@ export interface EventEditorLocaleText {
   messagePositionLabels: readonly string[];
   /** Show Choices uses left/middle/right positions, unlike the message window. */
   choicePositionLabels: readonly string[];
+  /** ON/OFF value labels for Change Transparency / Followers / Map Name Display etc. */
+  onOffLabels: readonly string[];
+  /** Enable/Disable value labels for *Access commands. */
+  enableDisableLabels: readonly string[];
+  /** Increase/Decrease operation labels for items/gold/actor-stat commands. */
+  operationLabels: readonly string[];
+  /** Add/Remove operation labels for party membership. */
+  partyMemberOperationLabels: readonly string[];
+  /** Add/Remove operation labels for states. */
+  stateOperationLabels: readonly string[];
+  /** Learn/Forget operation labels for skills. */
+  skillOperationLabels: readonly string[];
+  /** Operand type labels for "Change X" commands (constant/variable/extra). */
+  operandTypeLabels: readonly string[];
+  /** Actor target labels: fixed actor, party member, and the actor-id 0 all-members case. */
+  actorTargetLabels: readonly string[];
+  /** Parameter id labels for Change Parameter (317): MaxHP/MaxMP/Attack/... */
+  actorParameterLabels: readonly string[];
+  /** Weather effect type labels for Set Weather Effect (236). */
+  weatherTypes: readonly string[];
+  /** Vehicle type labels: Boat/Ship/Airship. */
+  vehicleTypes: readonly string[];
+  /** Scroll direction labels for Scroll Map (204). */
+  scrollDirections: readonly string[];
+  /** Location type labels for Set Event Location / Get Location Info. */
+  locationTypeLabels: readonly string[];
+  /** Get Location Info info-type labels (285). */
+  locationInfoTypeLabels: readonly string[];
+  /** Goods type labels for Shop Processing (302): Items/Weapons/Armors. */
+  shopGoodsTypeLabels: readonly string[];
+  /** Battle troop source labels for Battle Processing (301). */
+  troopSourceLabels: readonly string[];
+  /** Force Action battler type labels (339). */
+  forceActionBattlerLabels: readonly string[];
+  /** Select Item item-type labels (104). */
+  selectItemTypeLabels: readonly string[];
+  /** Timer operation labels (124): Start / Stop. */
+  timerOperationLabels: readonly string[];
+  /** Equipment slot type labels for Change Equipment (319): Weapon/Shield/Head/Body/Accessory. */
+  equipSlotLabels: readonly string[];
 }
 
 export const EVENT_EDITOR_TEXT_BY_LOCALE = {
@@ -118,6 +158,26 @@ export const EVENT_EDITOR_TEXT_BY_LOCALE = {
     messageBackgroundLabels: ['窗口', '暗淡', '透明'],
     messagePositionLabels: ['顶部', '中部', '底部'],
     choicePositionLabels: ['左侧', '中间', '右侧'],
+    onOffLabels: ['开', '关'],
+    enableDisableLabels: ['禁用', '启用'],
+    operationLabels: ['增加', '减少'],
+    partyMemberOperationLabels: ['加入', '离开'],
+    stateOperationLabels: ['附加', '解除'],
+    skillOperationLabels: ['学会', '忘记'],
+    operandTypeLabels: ['常量', '变量', '游戏内道具', '游戏内角色', '游戏内敌人'],
+    actorTargetLabels: ['指定角色', '队伍成员', '全体成员'],
+    actorParameterLabels: ['最大HP', '最大MP', '攻击力', '防御力', '魔法攻击', '魔法防御', '敏捷', '幸运'],
+    weatherTypes: ['无', '雨', '暴风雨', '雪'],
+    vehicleTypes: ['小船', '大船', '飞艇'],
+    scrollDirections: ['向下', '向左', '向右', '向上'],
+    locationTypeLabels: ['直接指定', '变量指定', '交换'],
+    locationInfoTypeLabels: ['地形标签', '事件 ID', '图块 ID（层 1）', '图块 ID（层 2）', '图块 ID（层 3）', '区域 ID'],
+    shopGoodsTypeLabels: ['物品', '武器', '防具'],
+    troopSourceLabels: ['直接指定', '变量指定', '随机遭遇'],
+    forceActionBattlerLabels: ['敌人', '角色'],
+    selectItemTypeLabels: ['未知', '普通物品', '重要物品', '隐藏物品 A', '隐藏物品 B'],
+    timerOperationLabels: ['开始', '停止'],
+    equipSlotLabels: ['武器', '盾牌', '头部', '身体', '装饰品'],
   },
   'en-US': {
     triggers: [
@@ -212,6 +272,26 @@ export const EVENT_EDITOR_TEXT_BY_LOCALE = {
     messageBackgroundLabels: ['Window', 'Dim', 'Transparent'],
     messagePositionLabels: ['Top', 'Middle', 'Bottom'],
     choicePositionLabels: ['Left', 'Middle', 'Right'],
+    onOffLabels: ['ON', 'OFF'],
+    enableDisableLabels: ['Disable', 'Enable'],
+    operationLabels: ['Increase', 'Decrease'],
+    partyMemberOperationLabels: ['Add', 'Remove'],
+    stateOperationLabels: ['Add', 'Remove'],
+    skillOperationLabels: ['Learn', 'Forget'],
+    operandTypeLabels: ['Constant', 'Variable', 'Item', 'Actor', 'Enemy'],
+    actorTargetLabels: ['Actor', 'Party Member', 'Entire Party'],
+    actorParameterLabels: ['MaxHP', 'MaxMP', 'Attack', 'Defense', 'M.Attack', 'M.Defense', 'Agility', 'Luck'],
+    weatherTypes: ['None', 'Rain', 'Storm', 'Snow'],
+    vehicleTypes: ['Boat', 'Ship', 'Airship'],
+    scrollDirections: ['Down', 'Left', 'Right', 'Up'],
+    locationTypeLabels: ['Direct', 'Variable', 'Exchange'],
+    locationInfoTypeLabels: ['Terrain Tag', 'Event ID', 'Tile ID (Layer 1)', 'Tile ID (Layer 2)', 'Tile ID (Layer 3)', 'Region ID'],
+    shopGoodsTypeLabels: ['Items', 'Weapons', 'Armors'],
+    troopSourceLabels: ['Direct', 'Variable', 'Random Encounter'],
+    forceActionBattlerLabels: ['Enemy', 'Actor'],
+    selectItemTypeLabels: ['Unknown', 'Regular Item', 'Key Item', 'Hidden Item A', 'Hidden Item B'],
+    timerOperationLabels: ['Start', 'Stop'],
+    equipSlotLabels: ['Weapon', 'Shield', 'Head', 'Body', 'Accessory'],
   },
 } as const satisfies Record<ProductLanguage, EventEditorLocaleText>;
 

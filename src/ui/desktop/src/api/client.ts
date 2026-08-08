@@ -167,6 +167,7 @@ declare global {
       projectConfig: {
         get(project?: string): Promise<unknown>;
         setPluginPreview(pluginName: string, enabled: boolean, project?: string): Promise<unknown>;
+        setPluginColor(pluginName: string, color: string | null, project?: string): Promise<unknown>;
         setSearch(settings: unknown, project?: string): Promise<unknown>;
       };
       globalSearch: {
@@ -579,6 +580,9 @@ export const projectConfig = {
   },
   setPluginPreview(pluginName: string, enabled: boolean, project?: string) {
     return desktopApi().projectConfig.setPluginPreview(pluginName, enabled, project) as Promise<LunaRpgProjectConfig>;
+  },
+  setPluginColor(pluginName: string, color: string | null, project?: string) {
+    return desktopApi().projectConfig.setPluginColor(pluginName, color, project) as Promise<{ pluginColors: Record<string, string> | null }>;
   },
   setSearch(settings: Partial<LunaRpgSearchSettings>, project?: string) {
     return desktopApi().projectConfig.setSearch(toPlain(settings), project) as Promise<{ search: LunaRpgSearchSettings | null }>;

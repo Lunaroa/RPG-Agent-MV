@@ -27,6 +27,23 @@ describe('luna_rpg project config', () => {
     assert.deepEqual(readProjectConfig(projectRoot), result);
   });
 
+  test('normalizes plugin color overrides and drops malformed entries', () => {
+    const result = patchProjectConfig(projectRoot, {
+      pluginColors: {
+        PluginA: '#a1b2c3',
+        PluginB: '00ff88',
+        Invalid: '#123',
+        Empty: ' ',
+      },
+    });
+    assert.deepEqual(result.pluginColors, {
+      PluginA: '#A1B2C3',
+      PluginB: '#00FF88',
+    });
+    assert.deepEqual(readProjectConfig(projectRoot).pluginColors, result.pluginColors);
+    patchProjectConfig(projectRoot, { pluginColors: {} });
+  });
+
   test('clearing the last field removes the config file and empty folder', () => {
     patchProjectConfig(projectRoot, { previewDisabledPlugins: [] });
     assert.equal(fs.existsSync(configPath), false);

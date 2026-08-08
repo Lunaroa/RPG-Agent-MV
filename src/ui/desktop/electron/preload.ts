@@ -132,6 +132,8 @@ contextBridge.exposeInMainWorld('api', {
     get: (project?: string) => ipcRenderer.invoke('projectConfig:get', project),
     setPluginPreview: (pluginName: string, enabled: boolean, project?: string) =>
       ipcRenderer.invoke('projectConfig:setPluginPreview', pluginName, enabled, project),
+    setPluginColor: (pluginName: string, color: string | null, project?: string) =>
+      ipcRenderer.invoke('projectConfig:setPluginColor', pluginName, color, project),
     setSearch: (settings: unknown, project?: string) =>
       ipcRenderer.invoke('projectConfig:setSearch', settings, project),
   },

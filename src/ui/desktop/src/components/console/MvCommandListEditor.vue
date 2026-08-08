@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import type { EditorProjectCatalog } from '../../api/client';
+import { projectConfig as projectConfigApi, type EditorProjectCatalog } from '../../api/client';
 import { useI18n } from '../../i18n';
+import { useProjectStore } from '../../stores/project';
+import { resolvePluginColor } from '../../utils/pluginColor';
 import {
   clone,
   commandBlockSpanIndices,
@@ -51,6 +53,31 @@ const insertionFocus = ref<number | null>(null);
 
 const commandList = computed<MvCommand[]>(() => normalizeCommandList(props.modelValue));
 const spans = computed(() => editableCommandSpans({ list: commandList.value } as never));
+const projectStore = useProjectStore();
+const pluginColors = ref<Record<string, string>>({});
+async function loadPluginColors() {
+  const project = projectStore.currentProject;
+  if (!project) { pluginColors.value = {}; return; }
+  try {
+    const config = await projectConfigApi.get(project);
+    if (projectStore.currentProject === project) pluginColors.value = config.pluginColors || {};
+  } catch {
+    if (projectStore.currentProject === project) pluginColors.value = {};
+  }
+}
+watch(() => projectStore.currentProject, () => { void loadPluginColors(); });
+void loadPluginColors();
+function pluginNameOf(command: MvCommand | undefined): string {
+  if (!command) return '';
+  if (command.code === 357) return String(command.parameters[0] ?? '');
+  if (command.code === 356) return String(command.parameters[0] ?? '').split(/\s+/).filter(Boolean)[0] || '';
+  return '';
+}
+function pluginColorForSpan(spanIndex: number): string {
+  const span = spans.value[spanIndex];
+  const name = pluginNameOf(span?.commands[0]);
+  return name ? resolvePluginColor(name, pluginColors.value) : '';
+}
 const skipTerminatorSet = computed(() => skipTerminatorIndices(commandList.value));
 const selectedIndices = computed(() => selectedSpans.value
   .filter((index) => index >= 0 && index < spans.value.length)
@@ -472,6 +499,7 @@ function onCommandKeyDown(event: KeyboardEvent): void {
             @click.stop="toggleStructureCollapse(slot.spanIndex)"
             @dblclick.stop
           />
+          <span v-if="view.role === 'head' && pluginColorForSpan(slot.spanIndex)" class="cmd-plugin-stripe" :style="{ background: pluginColorForSpan(slot.spanIndex) }" />
           <span class="cmd-line cmd-head">{{ view.head }}</span>
           <span v-for="(line, lineIndex) in view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span>
         </button>
@@ -562,6 +590,14 @@ button.danger {
   color: var(--console-text-soft,#5a5247);
   text-align: left;
   cursor: pointer;
+}
+.cmd-plugin-stripe {
+  position: absolute;
+  left: calc(2px + var(--cmd-indent, 0px));
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: 1px;
 }
 .cmd-caret {
   position: absolute;

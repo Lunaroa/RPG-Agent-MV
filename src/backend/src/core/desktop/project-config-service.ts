@@ -33,7 +33,27 @@ export function readProjectConfig(project: string): LunaRpgProjectConfig {
   }
   const search = normalizeSearchSettings(parsed?.search);
   if (search) config.search = search;
+  const pluginColors = normalizePluginColors(parsed?.pluginColors);
+  if (pluginColors) config.pluginColors = pluginColors;
   return config;
+}
+
+/**
+ * Normalize a raw `pluginColors` payload into a clean plugin-name → `#RRGGBB`
+ * map. Invalid entries (non-string keys, malformed values) are dropped so the
+ * editor always receives well-formed colors. An empty/invalid map returns
+ * undefined so the field is omitted from the persisted config.
+ */
+function normalizePluginColors(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const result: Record<string, string> = {};
+  for (const [name, hex] of Object.entries(raw)) {
+    if (typeof name !== 'string' || name.trim() === '') continue;
+    const normalized = typeof hex === 'string' ? hex.trim().replace(/^#/, '').toUpperCase() : '';
+    if (/^[0-9A-F]{6}$/.test(normalized)) result[name] = `#${normalized}`;
+  }
+  return Object.keys(result).length ? result : undefined;
 }
 
 function normalizeSearchSettings(value: unknown): LunaRpgSearchSettings | undefined {
@@ -69,6 +89,9 @@ export function patchProjectConfig(
   const search = normalizeSearchSettings(config.search);
   if (search) config.search = search;
   else delete config.search;
+  const pluginColors = normalizePluginColors(config.pluginColors);
+  if (pluginColors) config.pluginColors = pluginColors;
+  else delete config.pluginColors;
   const file = projectConfigFilePath(project);
   if (Object.keys(config).length === 0) {
     if (fs.existsSync(file)) fs.rmSync(file);

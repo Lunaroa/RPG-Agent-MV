@@ -1577,10 +1577,11 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   // Per-project product config (.luna_rpg/config.json in the game project).
   ipcMain.handle('projectConfig:get', (_event, value?: string) => {
     const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
-    const config = desktop.projectConfig.readProjectConfig(resolved) as { search?: unknown };
+    const config = desktop.projectConfig.readProjectConfig(resolved) as { search?: unknown; pluginColors?: Record<string, string> };
     return toIpcPayload({
       previewDisabledPlugins: resolvePreviewDisabledPlugins(resolved),
       ...(config.search ? { search: config.search } : {}),
+      ...(config.pluginColors ? { pluginColors: config.pluginColors } : {}),
     });
   });
   ipcMain.handle('projectConfig:setPluginPreview', (_event, pluginName: string, enabled: boolean, value?: string) => {
@@ -1592,6 +1593,18 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     else current.add(name);
     desktop.projectConfig.patchProjectConfig(resolved, { previewDisabledPlugins: [...current] });
     return toIpcPayload({ previewDisabledPlugins: [...current] });
+  });
+  ipcMain.handle('projectConfig:setPluginColor', (_event, pluginName: string, color: string | null, value?: string) => {
+    const name = String(pluginName || '').trim();
+    if (!name) throw new Error('A plugin name is required to set its color.');
+    const resolved = desktop.project.resolveProjectPath(workflowRoot, value);
+    const current = (desktop.projectConfig.readProjectConfig(resolved) as { pluginColors?: Record<string, string> }).pluginColors || {};
+    const next = { ...current };
+    const normalized = typeof color === 'string' ? color.trim().replace(/^#/, '').toUpperCase() : '';
+    if (/^[0-9A-F]{6}$/.test(normalized)) next[name] = `#${normalized}`;
+    else delete next[name];
+    const config = desktop.projectConfig.patchProjectConfig(resolved, { pluginColors: next });
+    return toIpcPayload({ pluginColors: config.pluginColors ?? null });
   });
   ipcMain.handle('projectConfig:setSearch', (_event, settings: Record<string, unknown>, value?: string) => {
     const resolved = desktop.project.resolveProjectPath(workflowRoot, value);

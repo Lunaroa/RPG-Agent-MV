@@ -186,6 +186,7 @@
                   <el-select :model-value="pluginCommandPlugin" filterable popper-class="plugin-command-popper" :popper-style="{ zIndex: LAYER_Z.pluginParameterPopover }" @update:model-value="selectPluginForCommand">
                     <el-option value="" :label="t('eventcmd.allPlugins')" />
                     <el-option v-for="plugin in commandCapablePluginEntries" :key="plugin.name" :value="plugin.name" :label="plugin.name">
+                      <span class="plugin-option-color" :style="{ background: resolvePluginColor(plugin.name, pluginCommandColors) }" />
                       <span class="plugin-option-name">{{ plugin.name }}</span>
                       <span class="plugin-option-desc">{{ plugin.description }}</span>
                     </el-option>
@@ -606,7 +607,7 @@ import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import { confirmAboveModal } from '../../utils/confirmAboveModal';
-import { plugins as pluginApi, type EditorProjectCatalog, type ManagedPluginEntry, type PluginCommandArgument, type PluginCommandHint, type PluginParameterSchemaField } from '../../api/client';
+import { plugins as pluginApi, projectConfig as projectConfigApi, type EditorProjectCatalog, type ManagedPluginEntry, type PluginCommandArgument, type PluginCommandHint, type PluginParameterSchemaField } from '../../api/client';
 import { useProjectStore } from '../../stores/project';
 import { commandPages, applyCommandIndent, commandDefinition, commandTemplate, normalizeEventCommandParameters } from '../../composables/eventCommandCatalog';
 import { clone, defaultMoveRoute, type MvCommand, type MvMoveRoute } from '../../composables/useEventEditor';
@@ -627,6 +628,7 @@ import {
   type ConditionalNamedEntryKind,
 } from '../../utils/conditionalBranchEditor';
 import { formatPluginParameterTypeLabel } from '../../utils/pluginParameterTypeLabel';
+import { resolvePluginColor } from '../../utils/pluginColor';
 import EventCommandFields from './EventCommandFields.vue';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 import MessagePreviewDialog from './MessagePreviewDialog.vue';
@@ -857,6 +859,7 @@ const pluginCommandPlugins = shallowRef<ManagedPluginEntry[]>([]);
 const pluginCommandPlugin = ref('');
 const pluginCommandError = ref('');
 const pluginCommandLoading = ref(false);
+const pluginCommandColors = ref<Record<string, string>>({});
 const currentEngine=computed<RpgMakerEngine>(()=>projectStore.currentProjectInfo?.engine||'rpg-maker-mv');
 const faceSize=computed(()=>Math.max(1,Number(props.catalog?.faceSize)||144));
 const commandPageCategories=computed(()=>commandPages(currentEngine.value).map((groups,pageIndex)=>
@@ -1206,12 +1209,17 @@ async function loadPluginCommandMetadata(){
   pluginCommandLoading.value=true;
   pluginCommandError.value='';
   try {
-    const config = await pluginApi.read(projectStore.currentProject);
+    const [config, projectCfg] = await Promise.all([
+      pluginApi.read(projectStore.currentProject),
+      projectConfigApi.get(projectStore.currentProject),
+    ]);
     pluginCommandPlugins.value = config.plugins;
+    pluginCommandColors.value = projectCfg.pluginColors || {};
     syncPluginCommandSelection();
   } catch (error) {
     pluginCommandError.value=t('eventcmd.pluginError', { error: (error as Error).message });
     pluginCommandPlugins.value=[];
+    pluginCommandColors.value={};
   } finally {
     pluginCommandLoading.value=false;
   }
@@ -1372,7 +1380,7 @@ defineExpose({openPicker,openEditor});
 .plugin-arg-key code{font:inherit;overflow-wrap:anywhere}
 .plugin-arg-type{width:12%;color:var(--app-ink-muted);vertical-align: middle;}
 .plugin-arg-value{color:var(--app-ink)}.plugin-arg-value .plugin-arg-preview{display:inline-block;max-width:calc(100% - 40px);overflow:hidden;font-family:var(--app-font-mono);text-overflow:ellipsis;vertical-align:middle;white-space:nowrap}.plugin-arg-edit{min-width:28px;margin-left:6px;padding:1px 6px}
-.plugin-option-name{float:left;max-width:55%;overflow:hidden;text-overflow:ellipsis}.plugin-option-desc{float:right;max-width:42%;overflow:hidden;color:var(--app-ink-muted);font-size:12px;text-overflow:ellipsis}
+.plugin-option-name{float:left;max-width:55%;overflow:hidden;text-overflow:ellipsis}.plugin-option-desc{float:right;max-width:42%;overflow:hidden;color:var(--app-ink-muted);font-size:12px;text-overflow:ellipsis}.plugin-option-color{float:left;display:inline-block;width:10px;height:10px;margin:5px 6px 0 0;border-radius:2px;border:1px solid var(--app-ink-faint,rgba(0,0,0,.15));background-clip:padding-box}
 .text-cmd-layout{
   width:100%;
   display:grid;

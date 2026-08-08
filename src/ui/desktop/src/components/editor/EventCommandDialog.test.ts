@@ -43,7 +43,8 @@ describe('event command catalog controls', () => {
     assert.match(dialogSource, /eventcmd\.commandName/);
     assert.match(dialogSource, /pluginCommandHintLabel\(hint\)/);
     assert.match(dialogSource, /eventcmd\.argLabel/);
-    assert.match(dialogSource, /eventcmd\.argKey/);
+    assert.match(dialogSource, /argument\.label \|\| argument\.name/);
+    assert.match(dialogSource, /<el-tag[^>]*>\{\{ argument\.name \}\}<\/el-tag>/);
     assert.match(dialogSource, /eventcmd\.argType/);
     assert.match(dialogSource, /pluginArgumentTypeLabel\(argument\)/);
     assert.match(dialogSource, /parameters=\[hint\.pluginName,hint\.command,hint\.displayName\|\|hint\.command,args\]/);

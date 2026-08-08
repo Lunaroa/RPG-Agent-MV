@@ -19,8 +19,8 @@
           v-for="(row, rowIndex) in commandRows(page)"
           :key="`${pageIndex}-${rowIndex}`"
           class="preview-command-row"
-          :class="[`tone-${row.tone}`, { even: rowIndex % 2 === 0 }]"
-          :style="{ '--command-indent': `${Math.min(row.indent, 8) * 14}px` }"
+          :class="[`tone-${row.tone}`, { even: rowIndex % 2 === 0, 'plugin-stripe': Boolean(pluginStripeColor(row)) }]"
+          :style="{ '--command-indent': `${Math.min(row.indent, 8) * 14}px`, '--plugin-color': pluginStripeColor(row) }"
         >
           <span>{{ row.label }}</span>
         </div>
@@ -30,7 +30,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from '../../i18n';
 import {
   commandDisplay,
@@ -41,6 +41,9 @@ import {
   type MvEventPage,
 } from '../../composables/useEventEditor';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
+import { projectConfig as projectConfigApi } from '../../api/client';
+import { useProjectStore } from '../../stores/project';
+import { resolvePluginColor } from '../../utils/pluginColor';
 
 interface SystemData {
   switches?: string[];
@@ -55,19 +58,50 @@ const props = defineProps<{
 const { language, t } = useI18n();
 const pages = computed(() => Array.isArray(props.event.pages) ? props.event.pages : []);
 
-function commandRows(page: MvEventPage): CommandDisplayResult[] {
+/** Per-plugin color overrides loaded from .luna_rpg/config.json for the compact preview stripe. */
+const projectStore = useProjectStore();
+const pluginColors = ref<Record<string, string>>({});
+async function loadPluginColors() {
+  const project = projectStore.currentProject;
+  if (!project) { pluginColors.value = {}; return; }
+  try {
+    const config = await projectConfigApi.get(project);
+    if (projectStore.currentProject === project) pluginColors.value = config.pluginColors || {};
+  } catch {
+    if (projectStore.currentProject === project) pluginColors.value = {};
+  }
+}
+watch(() => projectStore.currentProject, () => { void loadPluginColors(); });
+void loadPluginColors();
+
+type PreviewRow = CommandDisplayResult & { pluginColor?: string };
+
+function commandRows(page: MvEventPage): PreviewRow[] {
   return editableCommandSpans(page).map(displaySpan);
 }
 
-function displaySpan(span: MvCommandSpan): CommandDisplayResult {
+function displaySpan(span: MvCommandSpan): PreviewRow {
   const head = commandDisplay(span.commands[0], props.systemData, language.value);
+  const pluginColor = pluginNameOf(span.commands[0]);
+  const decorated = pluginColor ? { ...head, pluginColor: resolvePluginColor(pluginColor, pluginColors.value) } : head;
   if (span.commands[0].code === 101) {
     return {
-      ...head,
-      label: `${head.label} · ${span.commands.slice(1).map((item) => item.parameters[0]).join(' / ')}`,
+      ...decorated,
+      label: `${decorated.label} · ${span.commands.slice(1).map((item) => item.parameters[0]).join(' / ')}`,
     };
   }
-  return head;
+  return decorated;
+}
+
+function pluginNameOf(command: { code: number; parameters: unknown[] } | undefined): string {
+  if (!command) return '';
+  if (command.code === 357) return String(command.parameters[0] ?? '');
+  if (command.code === 356) return String(command.parameters[0] ?? '').split(/\s+/).filter(Boolean)[0] || '';
+  return '';
+}
+
+function pluginStripeColor(row: PreviewRow): string {
+  return row.pluginColor || '';
 }
 
 function triggerLabel(value: number): string {
@@ -155,6 +189,9 @@ function named(list: string[] | undefined, id: number): string {
 }
 .preview-command-row.even {
   background: rgba(241, 233, 219, .52);
+}
+.preview-command-row.plugin-stripe {
+  border-left: 2px solid var(--plugin-color, transparent);
 }
 .preview-command-row.tone-text {
   color: var(--console-text,#211d17);

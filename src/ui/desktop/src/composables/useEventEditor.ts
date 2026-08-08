@@ -716,6 +716,69 @@ function standardCommandLabel(code: number, language: ProductLanguage): string {
   return localizeCommandCodeLabel(code, language, catalogCommandLabel(code));
 }
 
+/** Index-of-label lookup that tolerates out-of-range values by falling back to the raw number. */
+function labelAt(labels: readonly string[], value: unknown, fallback: string): string {
+  const idx = Number(value);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= labels.length) return fallback;
+  return labels[idx] || fallback;
+}
+
+/** "#N" entry id where we do not yet have the database name; mirrors RM's display when names are absent. */
+function entryId(id: unknown, language: ProductLanguage): string {
+  const n = Number(id);
+  if (!Number.isFinite(n)) return translate('eventEditor.command.unknownEntry', language, { id: String(id ?? 0) });
+  return translate('eventEditor.command.idName', language, { id: String(Math.trunc(n)) });
+}
+
+/** Audio object summary for Play BGM/BGS/ME etc.: "Theme (V90 P100)". */
+function audioSummary(value: unknown, language: ProductLanguage): string {
+  if (!value || typeof value !== 'object') return translate('eventEditor.command.audioSummary', language, { name: '', vol: 0, pitch: 0 });
+  const audio = value as { name?: unknown; volume?: unknown; pitch?: unknown; pan?: unknown };
+  return translate('eventEditor.command.audioSummary', language, {
+    name: String(audio.name ?? ''),
+    vol: String(Number(audio.volume ?? 0) || 0),
+    pitch: String(Number(audio.pitch ?? 0) || 0),
+  });
+}
+
+/** Actor target label for "Change X" actor commands: 0=fixed actor, 1=party member. Actor id 0 means all members. */
+function actorTargetDisplay(params: unknown[], language: ProductLanguage): string {
+  const text = eventEditorText(language);
+  const type = Number(params[0] ?? 0);
+  if (type === 0) {
+    if (Number(params[1] ?? 0) === 0) return text.actorTargetLabels[2] || 'Entire Party';
+    return `${text.actorTargetLabels[0] || 'Actor'} ${entryId(params[1], language)}`;
+  }
+  if (type === 1) return `${text.actorTargetLabels[1] || 'Party Member'} ${entryId(params[1], language)}`;
+  return String(params[1] ?? '');
+}
+
+/**
+ * Operand summary shared by Change Items / Gold / HP / EXP etc.
+ * `operandTypeIdx` points at the operandType field in params; the operand value sits
+ * one slot after it. operandType: 0=Constant, 1=Variable, 2+=game data reference.
+ * Returns the value side only (the +/- operation is rendered by the caller).
+ */
+function operandDisplay(params: unknown[], operandTypeIdx: number, system: SystemData | null, language: ProductLanguage): string {
+  const text = eventEditorText(language);
+  const operandType = Number(params[operandTypeIdx] ?? 0);
+  const operandValueIdx = operandTypeIdx + 1;
+  if (operandType === 1) return `{${namedSystemEntry(system, 'variables', params[operandValueIdx], language)}}`;
+  if (operandType >= 2 && operandType <= 4) {
+    const kindLabel = labelAt(text.operandTypeLabels, operandType, text.operandTypeLabels[0] || '');
+    return `${kindLabel} ${entryId(params[operandValueIdx], language)}`;
+  }
+  return String(Number(params[operandValueIdx] ?? 0) || 0);
+}
+
+/** Enemy index label: -1=Entire troop, 0+="#N+1" (RM shows enemy #1..n by position). */
+function enemyIndexDisplay(value: unknown, language: ProductLanguage): string {
+  const idx = Number(value);
+  if (idx === -1) return translate('eventEditor.command.enemyAll', language);
+  if (!Number.isFinite(idx)) return String(value ?? 0);
+  return translate('eventEditor.command.idName', language, { id: String(Math.trunc(idx) + 1) });
+}
+
 function pictureInt(value: unknown, fallback: number): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -838,6 +901,163 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   }
   if (command.code === 505) return { label: `${translate('eventEditor.colon', language)}◇${moveRouteCommandLabel(p[0], language)}`, tone: 'control', indent: Math.min(indent + 1, 12) };
   if (command.code === 405 || command.code === 408 || command.code === 605 || command.code === 655 || command.code === 657) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
+  if (command.code === 355) return line(translate('eventEditor.command.script', language, { text: String(p[0] || '') }), 'raw');
+  // ── Message ──
+  if (command.code === 103) return line(translate('eventEditor.command.inputNumber', language, { var: String(Number(p[0] ?? 0) || 0), digits: String(Number(p[1] ?? 0) || 0) }), 'text');
+  if (command.code === 104) return line(translate('eventEditor.command.selectItem', language, { var: String(Number(p[0] ?? 0) || 0), kind: labelAt(eventEditorText(language).selectItemTypeLabels, p[1], String(p[1] ?? 0)) }), 'text');
+  if (command.code === 105) return line(translate('eventEditor.command.scrollingText', language, { speed: String(Number(p[0] ?? 0) || 0) }), 'text');
+  // ── Game Progression ──
+  if (command.code === 124) {
+    const text = eventEditorText(language);
+    const op = labelAt(text.timerOperationLabels, p[0], String(p[0] ?? 0));
+    const seconds = Number(p[1] ?? 0);
+    return line(translate('eventEditor.command.controlTimer', language, { op, seconds: Number.isFinite(seconds) && seconds > 0 ? translate('eventEditor.command.timerSec', language, { sec: String(seconds) }) : '' }), 'control');
+  }
+  // ── Party (operand commands) ──
+  if (command.code === 126 || command.code === 127 || command.code === 128) {
+    const text = eventEditorText(language);
+    const op = labelAt(text.operationLabels, p[1], String(p[1] ?? 0));
+    const amount = operandDisplay(p, 2, system || null, language);
+    const idKey = command.code === 126 ? 'changeItems' : command.code === 127 ? 'changeWeapons' : 'changeArmors';
+    return line(translate(`eventEditor.command.${idKey}`, language, { name: entryId(p[0], language), op, amount }), 'data');
+  }
+  if (command.code === 129) {
+    const op = labelAt(eventEditorText(language).partyMemberOperationLabels, p[1], String(p[1] ?? 0));
+    return line(translate('eventEditor.command.changePartyMember', language, { name: entryId(p[0], language), op }), 'data');
+  }
+  // ── Actor stat commands ──
+  if (command.code === 311 || command.code === 312 || command.code === 326 || command.code === 315 || command.code === 316) {
+    const text = eventEditorText(language);
+    const target = actorTargetDisplay(p, language);
+    const op = labelAt(text.operationLabels, p[2], String(p[2] ?? 0));
+    const amount = operandDisplay(p, 3, system || null, language);
+    const key = command.code === 311 ? 'changeHP' : command.code === 312 ? 'changeMP' : command.code === 326 ? 'changeTP' : command.code === 315 ? 'changeEXP' : 'changeLevel';
+    return line(translate(`eventEditor.command.${key}`, language, { target, op, amount }), 'data');
+  }
+  if (command.code === 313 || command.code === 318) {
+    const text = eventEditorText(language);
+    const target = actorTargetDisplay(p, language);
+    const op = labelAt(command.code === 313 ? text.stateOperationLabels : text.skillOperationLabels, p[2], String(p[2] ?? 0));
+    const key = command.code === 313 ? 'changeState' : 'changeSkill';
+    return line(translate(`eventEditor.command.${key}`, language, { target, op, name: entryId(p[3], language) }), 'data');
+  }
+  if (command.code === 317) {
+    const text = eventEditorText(language);
+    const target = actorTargetDisplay(p, language);
+    const param = labelAt(text.actorParameterLabels, p[2], String(p[2] ?? 0));
+    const op = labelAt(text.operationLabels, p[3], String(p[3] ?? 0));
+    const amount = operandDisplay(p, 4, system || null, language);
+    return line(translate('eventEditor.command.changeParameter', language, { target, param, op, amount }), 'data');
+  }
+  if (command.code === 319) return line(translate('eventEditor.command.changeEquipment', language, { actor: entryId(p[0], language), slot: labelAt(eventEditorText(language).equipSlotLabels, p[1], String(p[1] ?? 0)), item: String(Number(p[2] ?? 0) || 0) }), 'data');
+  if (command.code === 320) return line(translate('eventEditor.command.changeName', language, { actor: entryId(p[0], language), name: String(p[1] ?? '') }), 'data');
+  if (command.code === 321) return line(translate('eventEditor.command.changeClass', language, { actor: entryId(p[0], language), cls: String(Number(p[1] ?? 0) || 0) }), 'data');
+  if (command.code === 322) return line(translate('eventEditor.command.changeActorImages', language, { actor: entryId(p[0], language), char: `${String(p[1] ?? '')}(${Number(p[2] ?? 0)})`, face: `${String(p[3] ?? '')}(${Number(p[4] ?? 0)})` }), 'data');
+  if (command.code === 324) return line(translate('eventEditor.command.changeNickname', language, { actor: entryId(p[0], language), name: String(p[1] ?? '') }), 'data');
+  if (command.code === 325) return line(translate('eventEditor.command.changeProfile', language, { actor: entryId(p[0], language), text: String(p[1] ?? '') }), 'data');
+  // ── Movement ──
+  if (command.code === 202) {
+    const text = eventEditorText(language);
+    const vehicle = labelAt(text.vehicleTypes, p[0], String(p[0] ?? 0));
+    const variableLocation = Number(p[1] ?? 0) === 1;
+    const x = variableLocation ? `{${namedSystemEntry(system || null, 'variables', p[3], language)}}` : String(Number(p[3] ?? 0) || 0);
+    const y = variableLocation ? `{${namedSystemEntry(system || null, 'variables', p[4], language)}}` : String(Number(p[4] ?? 0) || 0);
+    return line(translate('eventEditor.command.setVehicleLocation', language, { vehicle, x, y }), 'move');
+  }
+  if (command.code === 203) {
+    const target = eventTargetLabel(p[0], language);
+    const locType = Number(p[1] ?? 0);
+    const x = locType === 0 ? String(Number(p[2] ?? 0) || 0) : `{${namedSystemEntry(system || null, 'variables', p[2], language)}}`;
+    const y = locType === 0 ? String(Number(p[3] ?? 0) || 0) : `{${namedSystemEntry(system || null, 'variables', p[3], language)}}`;
+    return line(translate('eventEditor.command.setEventLocation', language, { target, x, y }), 'move');
+  }
+  if (command.code === 204) {
+    const text = eventEditorText(language);
+    // Direction codes 2/4/6/8 → indices 0/1/2/3 in scrollDirections.
+    const dirMap: Record<number, number> = { 2: 0, 4: 1, 6: 2, 8: 3 };
+    const dir = labelAt(text.scrollDirections, dirMap[Number(p[0])] ?? -1, String(p[0] ?? 0));
+    return line(translate('eventEditor.command.scrollMap', language, { dir, distance: String(Number(p[1] ?? 0) || 0), speed: String(Number(p[2] ?? 0) || 0) }), 'move');
+  }
+  // ── Character ──
+  if (command.code === 211) return line(translate('eventEditor.command.changeTransparency', language, { val: labelAt(eventEditorText(language).onOffLabels, p[0], String(p[0] ?? 0)) }), 'stage');
+  if (command.code === 216) return line(translate('eventEditor.command.changePlayerFollowers', language, { val: labelAt(eventEditorText(language).onOffLabels, p[0], String(p[0] ?? 0)) }), 'stage');
+  // ── Picture ──
+  if (command.code === 233) return line(translate('eventEditor.command.rotatePicture', language, { id: String(Number(p[0] ?? 0) || 0), speed: String(p[1] ?? 0) }), 'stage');
+  if (command.code === 234) return line(translate('eventEditor.command.tintPicture', language, { id: String(Number(p[0] ?? 0) || 0) }), 'stage');
+  if (command.code === 235) return line(translate('eventEditor.command.erasePicture', language, { id: String(Number(p[0] ?? 0) || 0) }), 'stage');
+  // ── Screen ──
+  if (command.code === 236) {
+    const text = eventEditorText(language);
+    const typeIdx = ['none', 'rain', 'storm', 'snow'].indexOf(String(p[0] ?? 'none'));
+    const type = typeIdx >= 0 ? text.weatherTypes[typeIdx] : String(p[0] ?? '');
+    return line(translate('eventEditor.command.setWeatherEffect', language, { type, power: String(Number(p[1] ?? 0) || 0) }), 'stage');
+  }
+  // ── Audio/Video ──
+  if (command.code === 241) return line(translate('eventEditor.command.playBgm', language, { audio: audioSummary(p[0], language) }), 'stage');
+  if (command.code === 242) return line(translate('eventEditor.command.fadeoutBgm', language, { sec: String(Number(p[0] ?? 0) || 0) }), 'stage');
+  if (command.code === 245) return line(translate('eventEditor.command.playBgs', language, { audio: audioSummary(p[0], language) }), 'stage');
+  if (command.code === 246) return line(translate('eventEditor.command.fadeoutBgs', language, { sec: String(Number(p[0] ?? 0) || 0) }), 'stage');
+  if (command.code === 249) return line(translate('eventEditor.command.playMe', language, { audio: audioSummary(p[0], language) }), 'stage');
+  if (command.code === 261) return line(translate('eventEditor.command.playMovie', language, { name: String(p[0] ?? '') }), 'stage');
+  // ── Scene Control ──
+  if (command.code === 301) {
+    const text = eventEditorText(language);
+    const src = labelAt(text.troopSourceLabels, p[0], String(p[0] ?? 0));
+    const troop = p[0] === 1 ? `{${namedSystemEntry(system || null, 'variables', p[1], language)}}` : entryId(p[1], language);
+    return line(translate('eventEditor.command.battleProcessing', language, { troop: `${src} ${troop}` }), 'flow');
+  }
+  if (command.code === 302) return line(translate('eventEditor.command.shopProcessing', language, {}), 'flow');
+  if (command.code === 303) return line(translate('eventEditor.command.nameInputProcessing', language, { actor: entryId(p[0], language), max: String(Number(p[1] ?? 0) || 0) }), 'flow');
+  // ── System Settings ──
+  if (command.code === 132) return line(translate('eventEditor.command.changeBattleBgm', language, { audio: audioSummary(p[0], language) }), 'stage');
+  if (command.code === 133) return line(translate('eventEditor.command.changeVictoryMe', language, { audio: audioSummary(p[0], language) }), 'stage');
+  if (command.code === 139) return line(translate('eventEditor.command.changeDefeatMe', language, { audio: audioSummary(p[0], language) }), 'stage');
+  if (command.code === 140) {
+    const vehicle = labelAt(eventEditorText(language).vehicleTypes, p[0], String(p[0] ?? 0));
+    return line(translate('eventEditor.command.changeVehicleBgm', language, { vehicle, audio: audioSummary(p[1], language) }), 'stage');
+  }
+  if (command.code === 134) return line(translate('eventEditor.command.changeSaveAccess', language, { val: labelAt(eventEditorText(language).enableDisableLabels, p[0], String(p[0] ?? 0)) }), 'control');
+  if (command.code === 135) return line(translate('eventEditor.command.changeMenuAccess', language, { val: labelAt(eventEditorText(language).enableDisableLabels, p[0], String(p[0] ?? 0)) }), 'control');
+  if (command.code === 136) return line(translate('eventEditor.command.changeEncounter', language, { val: labelAt(eventEditorText(language).enableDisableLabels, p[0], String(p[0] ?? 0)) }), 'control');
+  if (command.code === 137) return line(translate('eventEditor.command.changeFormationAccess', language, { val: labelAt(eventEditorText(language).enableDisableLabels, p[0], String(p[0] ?? 0)) }), 'control');
+  if (command.code === 138) return line(translate('eventEditor.command.changeWindowColor', language, {}), 'control');
+  if (command.code === 323) return line(translate('eventEditor.command.changeVehicleImage', language, { vehicle: labelAt(eventEditorText(language).vehicleTypes, p[0], String(p[0] ?? 0)), char: `${String(p[1] ?? '')}(${Number(p[2] ?? 0)})` }), 'stage');
+  // ── Map ──
+  if (command.code === 281) return line(translate('eventEditor.command.changeMapNameDisplay', language, { val: labelAt(eventEditorText(language).onOffLabels, p[0], String(p[0] ?? 0)) }), 'stage');
+  if (command.code === 282) return line(translate('eventEditor.command.changeTileset', language, { id: String(Number(p[0] ?? 0) || 0) }), 'stage');
+  if (command.code === 283) return line(translate('eventEditor.command.changeBattleBack', language, { back: `${String(p[0] ?? '')}/${String(p[1] ?? '')}` }), 'stage');
+  if (command.code === 284) return line(translate('eventEditor.command.changeParallax', language, { name: String(p[0] ?? '') }), 'stage');
+  if (command.code === 285) {
+    const text = eventEditorText(language);
+    const locType = Number(p[2] ?? 0);
+    const x = locType === 0 ? String(Number(p[3] ?? 0) || 0) : `{${namedSystemEntry(system || null, 'variables', p[3], language)}}`;
+    const y = locType === 0 ? String(Number(p[4] ?? 0) || 0) : `{${namedSystemEntry(system || null, 'variables', p[4], language)}}`;
+    return line(translate('eventEditor.command.getLocationInfo', language, { var: String(Number(p[0] ?? 0) || 0), kind: labelAt(text.locationInfoTypeLabels, p[1], String(p[1] ?? 0)), x, y }), 'data');
+  }
+  // ── Battle ──
+  if (command.code === 331 || command.code === 332 || command.code === 342) {
+    const text = eventEditorText(language);
+    const enemy = enemyIndexDisplay(p[0], language);
+    const op = labelAt(text.operationLabels, p[1], String(p[1] ?? 0));
+    const amount = operandDisplay(p, 2, system || null, language);
+    const key = command.code === 331 ? 'changeEnemyHP' : command.code === 332 ? 'changeEnemyMP' : 'changeEnemyTP';
+    return line(translate(`eventEditor.command.${key}`, language, { enemy, op, amount }), 'data');
+  }
+  if (command.code === 333) {
+    const text = eventEditorText(language);
+    return line(translate('eventEditor.command.changeEnemyState', language, { enemy: enemyIndexDisplay(p[0], language), op: labelAt(text.stateOperationLabels, p[1], String(p[1] ?? 0)), name: entryId(p[2], language) }), 'data');
+  }
+  if (command.code === 334) return line(translate('eventEditor.command.enemyRecoverAll', language, { enemy: enemyIndexDisplay(p[0], language) }), 'data');
+  if (command.code === 335) return line(translate('eventEditor.command.enemyAppear', language, { enemy: enemyIndexDisplay(p[0], language) }), 'data');
+  if (command.code === 336) return line(translate('eventEditor.command.enemyTransform', language, { enemy: enemyIndexDisplay(p[0], language), name: entryId(p[1], language) }), 'data');
+  if (command.code === 337) return line(translate('eventEditor.command.showBattleAnimation', language, { enemy: enemyIndexDisplay(p[0], language), id: String(Number(p[1] ?? 0) || 0) }), 'data');
+  if (command.code === 339) {
+    const text = eventEditorText(language);
+    const battlerType = Number(p[0] ?? 0);
+    const rawIndex = Number(p[1] ?? 0);
+    const displayIndex = Number.isFinite(rawIndex) ? rawIndex + (battlerType === 0 ? 1 : 0) : 0;
+    return line(translate('eventEditor.command.forceAction', language, { battler: labelAt(text.forceActionBattlerLabels, battlerType, String(p[0] ?? 0)), index: String(displayIndex), skill: String(Number(p[2] ?? 0) || 0) }), 'data');
+  }
   const standardLabel = standardCommandLabel(command.code, language);
   if (!standardLabel.startsWith('Raw command ')) return line(`${standardLabel}${p.length ? `${translate('eventEditor.colon', language)} ${JSON.stringify(p)}` : ''}`, 'control');
   return line(`Raw command ${command.code}: ${JSON.stringify(p)}`, 'raw');

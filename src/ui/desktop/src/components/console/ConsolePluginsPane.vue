@@ -36,6 +36,7 @@ import {
   PLUGIN_LIST_MIN_WIDTH,
 } from '../../utils/workspaceSettings';
 import { derivePluginInstallNameFromSourcePath } from '../../utils/pluginInstallPath';
+import { resolvePluginColor } from '../../utils/pluginColor';
 import {
   isExternalFileDrag,
   planDroppedPluginFiles,
@@ -140,10 +141,15 @@ const previewEnabledForSelected = computed(() => {
   return !previewDisabledPlugins.value.includes(plugin.name);
 });
 
+/** Per-plugin color overrides keyed by plugin name (also lives in .luna_rpg/config.json). */
+const pluginColors = ref<Record<string, string>>({});
+const colorPickerPlugin = ref<string | null>(null);
+
 async function loadPreviewDisabledPlugins(project: string): Promise<void> {
   const config = await projectConfigApi.get(project);
   if (projectStore.currentProject !== project) return;
   previewDisabledPlugins.value = config.previewDisabledPlugins || [];
+  pluginColors.value = config.pluginColors || {};
 }
 
 async function togglePluginPreview(enabled: boolean): Promise<void> {
@@ -154,6 +160,19 @@ async function togglePluginPreview(enabled: boolean): Promise<void> {
     const config = await projectConfigApi.setPluginPreview(plugin.name, enabled, project);
     if (projectStore.currentProject === project) {
       previewDisabledPlugins.value = config.previewDisabledPlugins || [];
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function applyPluginColor(pluginName: string, color: string | null): Promise<void> {
+  const project = projectStore.currentProject;
+  if (!pluginName || !project) return;
+  try {
+    const config = await projectConfigApi.setPluginColor(pluginName, color, project);
+    if (projectStore.currentProject === project) {
+      pluginColors.value = config.pluginColors || {};
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -1424,6 +1443,37 @@ function resizeKeydown(event: KeyboardEvent): void {
                 <span class="plugin-title-line">
                   <PluginEngineTags :targets="plugin.header.target" />
                   <strong>{{ plugin.name || `#${plugin.index + 1}` }}</strong>
+                  <el-popover
+                    v-if="plugin.name"
+                    placement="bottom"
+                    :width="220"
+                    trigger="click"
+                    :visible="colorPickerPlugin === plugin.name"
+                    @show="colorPickerPlugin = plugin.name"
+                    @hide="colorPickerPlugin = null"
+                  >
+                    <template #reference>
+                      <button
+                        type="button"
+                        class="plugin-color-swatch"
+                        :style="{ background: resolvePluginColor(plugin.name, pluginColors) }"
+                        :aria-label="t('eventcmd.pluginColor')"
+                        :title="t('eventcmd.pluginColor')"
+                        @click.stop="colorPickerPlugin = colorPickerPlugin === plugin.name ? null : plugin.name"
+                      />
+                    </template>
+                    <div class="plugin-color-picker" @click.stop>
+                      <div class="plugin-color-picker-title">{{ t('eventcmd.pluginColor') }}</div>
+                      <el-color-picker
+                        :model-value="pluginColors[plugin.name] || resolvePluginColor(plugin.name, pluginColors)"
+                        color-format="hex"
+                        @update:model-value="applyPluginColor(plugin.name, $event)"
+                      />
+                      <button type="button" class="plugin-color-reset editor-btn" @click="applyPluginColor(plugin.name, null)">
+                        {{ t('eventcmd.clearPluginColor') }}
+                      </button>
+                    </div>
+                  </el-popover>
                 </span>
                 <small v-if="plugin.name.includes('/')">{{ plugin.fileRelativePath }}</small>
                 <small>{{ plugin.header.plugindesc || plugin.description || t('plugins.noDescription') }}</small>
@@ -1979,6 +2029,29 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 5px;
+}
+.plugin-color-swatch {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 1px solid var(--el-border-color, rgba(0, 0, 0, 0.15));
+  border-radius: 3px;
+  background-clip: padding-box;
+  cursor: pointer;
+}
+.plugin-color-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.plugin-color-picker-title {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.plugin-color-reset {
+  font-size: 12px;
 }
 .plugin-main strong,
 .plugin-main small {

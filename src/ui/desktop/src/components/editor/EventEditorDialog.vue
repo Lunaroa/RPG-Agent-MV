@@ -91,7 +91,7 @@
                   {{ t('eventEditorDialog.emptyHint') }}
                 </div>
                 <div class="cmd-virtual-pad" :style="{ height: `${virtualWindow.top}px` }" />
-                <template v-for="(row, index) in virtualWindow.rows" :key="row.key">
+                <template v-for="row in virtualWindow.rows" :key="row.key">
                   <button
                     v-if="row.kind === 'blank'"
                     type="button"
@@ -147,7 +147,7 @@
                     :aria-label="collapsedStructureHeads.has(row.index) ? t('eventEditorDialog.expandBlock') : t('eventEditorDialog.collapseBlock')"
                     @click.stop="toggleStructureCollapse(row.index)"
                     @dblclick.stop
-                  /><span class="cmd-line cmd-head">{{ row.view.head }}</span><span v-for="(line, lineIndex) in row.view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span></button>
+                  /><span v-if="pluginColorForSpan(row.index)" class="cmd-plugin-stripe" :style="{ background: pluginColorForSpan(row.index) }" /><span class="cmd-line cmd-head">{{ row.view.head }}</span><span v-for="(line, lineIndex) in row.view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span></button>
                 </template>
                 <div class="cmd-virtual-pad" :style="{ height: `${virtualWindow.bottom}px` }" />
               </div>
@@ -197,7 +197,7 @@ import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { confirmAboveModal } from '../../utils/confirmAboveModal';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
-import { clipboard as clipboardApi, type EditorProjectCatalog, type StoryEventOverview, type StoryEventPageOverview } from '../../api/client';
+import { clipboard as clipboardApi, projectConfig as projectConfigApi, type EditorProjectCatalog, type StoryEventOverview, type StoryEventPageOverview } from '../../api/client';
 import { useProjectStore } from '../../stores/project';
 import { commandDefinition, normalizeEventCommandParameters } from '../../composables/eventCommandCatalog';
 import ConditionSelect from './EventConditionSelect.vue';
@@ -208,6 +208,7 @@ import MoveRouteDialog from './MoveRouteDialog.vue';
 import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandBranchScope, commandInsertionSlots, commandSpanDisplay, commandStructureBlocks, defaultPage, dropCommandSpanBlocks, editableCommandSpans, ensureTerminator, imageSummary, moveCommandSpanBlock, skipTerminatorIndices, type MvCommandInsertionSlot, type MvCommandSpanView, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute, type MvCommand } from '../../composables/useEventEditor';
 import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
+import { resolvePluginColor } from '../../utils/pluginColor';
 import type { EditorEventListItem } from './editorTypes';
 const props = withDefaults(defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null; currentEvents?: EditorEventListItem[]; modeless?: boolean }>(), { currentEvents: () => [], modeless: false });
 const emit = defineEmits<{ close: []; save: [closeAfterSave: boolean]; 'catalog-changed': [] }>();
@@ -294,6 +295,33 @@ const dialogStyle = computed(() => ({
 }));
 function onOverlayMouseDown() { if (!props.modeless) void requestClose(); }
 const currentPage = computed(() => props.draft?.pages[pageIndex.value] || null), spans = computed(() => currentPage.value ? editableCommandSpans(currentPage.value) : []);
+/** Per-plugin color overrides from .luna_rpg/config.json — drives the stripe on 356/357 rows. */
+const pluginColors = ref<Record<string, string>>({});
+async function loadPluginColors() {
+  const project = projectStore.currentProject;
+  if (!project) { pluginColors.value = {}; return; }
+  try {
+    const config = await projectConfigApi.get(project);
+    if (projectStore.currentProject === project) pluginColors.value = config.pluginColors || {};
+  } catch {
+    if (projectStore.currentProject === project) pluginColors.value = {};
+  }
+}
+watch(() => projectStore.currentProject, () => { void loadPluginColors(); });
+void loadPluginColors();
+/** Extract the plugin name from a 356 (MV) or 357 (MZ) plugin command for color lookup. */
+function pluginNameOf(command: MvCommand | undefined): string {
+  if (!command) return '';
+  if (command.code === 357) return String(command.parameters[0] ?? '');
+  if (command.code === 356) return String(command.parameters[0] ?? '').split(/\s+/).filter(Boolean)[0] || '';
+  return '';
+}
+/** Resolve the stripe color for a given span (head command), or '' when it is not a plugin command. */
+function pluginColorForSpan(spanIndex: number): string {
+  const span = spans.value[spanIndex];
+  const name = pluginNameOf(span?.commands[0]);
+  return name ? resolvePluginColor(name, pluginColors.value) : '';
+}
 const skipTerminatorSet = computed(() => currentPage.value ? skipTerminatorIndices(currentPage.value.list) : new Set<number>());
 const insertionSlots = computed(() => currentPage.value ? commandInsertionSlots(currentPage.value.list, spans.value) : []);
 // Structure-block collapse: keyed by the head span index. While a block is
@@ -1244,6 +1272,16 @@ defineExpose({ markSaved });
   cursor: pointer;
   appearance: none;
   border-radius: 0;
+}
+/* Plugin-command color stripe: a thin vertical bar at the row's left edge,
+   inline so it does not affect the compact one-row-per-command density. */
+.cmd-plugin-stripe {
+  position: absolute;
+  left: calc(var(--cmd-indent, 0px));
+  top: 1px;
+  bottom: 1px;
+  width: 3px;
+  border-radius: 1px;
 }
 
 .cmd-row::after {

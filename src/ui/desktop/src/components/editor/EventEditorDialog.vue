@@ -1196,16 +1196,6 @@ defineExpose({ markSaved });
   padding: 6px;
   overflow: hidden;
   background: var(--app-bg);
-  --app-border: #cac4b6;
-  --app-border-strong: #b3ab9c;
-  --app-bg-soft: #f2ece4;
-  --app-bg-sunken: #d9d3c7;
-  --app-ink-soft: #5c5649;
-  --app-ink-muted: #7d776b;
-  --app-accent-soft: #f5e6da;
-  --app-tone-flow: #8b5d23;
-  --app-tone-stage: #3d6d90;
-  --app-tone-move: #277772;
 }
 
 .ev-cmd-title {
@@ -1270,10 +1260,22 @@ defineExpose({ markSaved });
   bottom: -1px;
   line-height: 18px;
   color: #7699b1;
-  border-right: 1px solid #CCC;
+  border-right: 1px solid var(--app-border);
   font-size: 10px;
-  background-color: #f2ece4;
+  background-color: var(--app-accent-soft);
   font-family: ‌Consolas;
+
+  
+  /* --app-border: #cac4b6;
+  --app-border-strong: #b3ab9c;
+  --app-bg-soft: #f2ece4;
+  --app-bg-sunken: #d9d3c7;
+  --app-ink-soft: #5c5649;
+  --app-ink-muted: #7d776b;
+  --app-accent-soft: #f5e6da;
+  --app-tone-flow: #8b5d23;
+  --app-tone-stage: #3d6d90;
+  --app-tone-move: #277772; */
 }
 
 .cmd-row.cmd-blank {

@@ -19,18 +19,13 @@ const { t } = useUiDesignerI18n()
 const search = ref('')
 const editingId = ref<string | null>(null)
 const editingName = ref('')
-const templateName = ref('')
 const anchorId = ref<string>()
 const treeRef = ref<{ filter: (value: string) => void; expandAll?: () => void; collapseAll?: () => void }>()
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
 const document = computed(() => unwrap(designer.document))
 const selectedIds = computed(() => unwrap(designer.selectedIds))
 const selectedNode = computed(() => unwrap(designer.selectedNode))
-const canSave = computed(() => unwrap(designer.canSave))
 const actionError = computed(() => unwrap(designer.actionError))
-const nodeTemplates = computed(() => unwrap(designer.nodeTemplates))
-const builtInNodeTemplates = computed(() => nodeTemplates.value.filter((template) => template.name.startsWith('builtin:')))
-const customNodeTemplates = computed(() => nodeTemplates.value.filter((template) => !template.name.startsWith('builtin:')))
 
 const labels: Record<UiDesignerNodeType, UiDesignerMessageKey> = {
   container: 'nodeContainer', sprite: 'nodeSprite', nineSlice: 'nodeNineSlice', frameAnimation: 'nodeFrameAnimation', button: 'nodeButton', text: 'nodeText', progressBar: 'nodeProgressBar', overlay: 'nodeOverlay', video: 'nodeVideo', particle: 'nodeParticle',
@@ -38,10 +33,6 @@ const labels: Record<UiDesignerNodeType, UiDesignerMessageKey> = {
 
 const labelFor = (type: UiDesignerNodeType) => t(labels[type])
 const nodeLabel = (node: UiNode) => `${node.name} · ${labelFor(node.type)}`
-const templateLabels: Record<string, UiDesignerMessageKey> = {
-  'builtin:title': 'sceneTemplateTitle', 'builtin:menu': 'sceneTemplateMenu', 'builtin:dialog': 'sceneTemplateDialog', 'builtin:scrolling-credits': 'sceneTemplateScrollingCredits', 'builtin:portrait-frame': 'sceneTemplatePortraitFrame', 'builtin:status-bars': 'sceneTemplateStatusBars', 'builtin:game-over': 'sceneTemplateGameOver', 'builtin:save-slots': 'sceneTemplateSaveSlots', 'builtin:hud-bars': 'sceneTemplateHudBars', 'builtin:item-tooltip': 'sceneTemplateItemTooltip', 'builtin:choice-menu': 'sceneTemplateChoiceMenu', 'builtin:logo-animation': 'sceneTemplateLogoAnimation',
-}
-const templateLabel = (name: string) => templateLabels[name] ? t(templateLabels[name]) : name
 const flattenedEntries = computed(() => {
   const result: NodeTreeEntry[] = []
   const visit = (entries: NodeTreeEntry[]) => entries.forEach((entry) => { result.push(entry); if (entry.children) visit(entry.children) })
@@ -87,13 +78,6 @@ const addNode = (type: UiDesignerNodeType) => {
   designer.addNode(type)
 }
 
-const saveNodeGroup = async () => {
-  const name = templateName.value.trim()
-  if (!name || !selectedIds.value.length) return
-  const saved = await designer.saveNodeTemplate(name)
-  if (saved) templateName.value = ''
-}
-
 const toggleLock = (id: string) => {
   const node = document.value.nodes.find((candidate) => candidate.id === id)
   if (node) designer.setNodeLocked(id, !node.locked)
@@ -101,6 +85,28 @@ const toggleLock = (id: string) => {
 const toggleVisibility = (id: string) => {
   const node = document.value.nodes.find((candidate) => candidate.id === id)
   if (node) designer.updateNodeProperty(id, 'visible', !node.props.visible)
+}
+
+const nodeFor = (id: string) => document.value.nodes.find((node) => node.id === id)
+const siblingIds = (id: string) => {
+  const node = nodeFor(id)
+  if (!node) return []
+  if (node.parentId === null) return document.value.zOrder
+  return nodeFor(node.parentId)?.children ?? []
+}
+const canMoveStep = (id: string, direction: 'up' | 'down') => {
+  const node = nodeFor(id)
+  if (!node || id === 'node_root' || node.locked) return false
+  const siblings = siblingIds(id)
+  const index = siblings.indexOf(id)
+  return index >= 0 && (direction === 'up' ? index > 0 : index < siblings.length - 1)
+}
+const canMoveToEdge = (id: string, edge: 'top' | 'bottom') => {
+  const node = nodeFor(id)
+  if (!node || id === 'node_root' || node.locked) return false
+  const siblings = siblingIds(id)
+  const index = siblings.indexOf(id)
+  return index >= 0 && (edge === 'top' ? index < siblings.length - 1 : index > 0)
 }
 
 const startRename = (entry: NodeTreeEntry) => {
@@ -125,15 +131,13 @@ const contextCommand = (command: string, id: string) => {
   else if (command === 'duplicate') designer.duplicateSelected()
   else if (command === 'group') designer.group()
   else if (command === 'addChild') designer.addNode('text', id)
-  else if (command === 'moveTop') designer.moveToEdge(id, 'top')
-  else if (command === 'moveBottom') designer.moveToEdge(id, 'bottom')
+  else if (command === 'moveUp' && canMoveStep(id, 'up')) designer.moveStep(id, 'up')
+  else if (command === 'moveDown' && canMoveStep(id, 'down')) designer.moveStep(id, 'down')
+  else if (command === 'moveTop' && canMoveToEdge(id, 'top')) designer.moveToEdge(id, 'top')
+  else if (command === 'moveBottom' && canMoveToEdge(id, 'bottom')) designer.moveToEdge(id, 'bottom')
   else if (command === 'sameType') {
     const type = document.value.nodes.find((node) => node.id === id)?.type
     if (type) designer.selectNodes(document.value.nodes.filter((node) => node.type === type).map((node) => node.id))
-  }
-  else if (command === 'saveTemplate') {
-    if (!templateName.value.trim()) templateName.value = `${document.value.nodes.find((node) => node.id === id)?.name ?? t('nodeTemplates')}`
-    void saveNodeGroup()
   }
   else if (command === 'delete' && id !== 'node_root') designer.removeSelected()
 }
@@ -204,7 +208,7 @@ const handleKeydown = (event: KeyboardEvent) => {
             <el-button size="small" text type="danger" :disabled="data.id === 'node_root'" @click.stop="designer.selectNodes([data.id]); designer.removeSelected()">×</el-button>
           </span>
         </span>
-          <template #dropdown><el-dropdown-menu><el-dropdown-item command="copy">{{ t('copyAction') }}</el-dropdown-item><el-dropdown-item command="cut" :disabled="data.id === 'node_root' || document.nodes.find((node) => node.id === data.id)?.locked">{{ t('cutAction') }}</el-dropdown-item><el-dropdown-item command="paste" :disabled="document.nodes.find((node) => node.id === data.id)?.type !== 'container'">{{ t('pasteAction') }}</el-dropdown-item><el-dropdown-item command="addChild" :disabled="document.nodes.find((node) => node.id === data.id)?.type !== 'container'">{{ t('addChild') }}</el-dropdown-item><el-dropdown-item command="rename">{{ t('renameNode') }}</el-dropdown-item><el-dropdown-item command="duplicate">{{ t('duplicateNode') }}</el-dropdown-item><el-dropdown-item command="group" :disabled="selectedIds.length < 2">{{ t('group') }}</el-dropdown-item><el-dropdown-item command="saveTemplate" :disabled="data.id === 'node_root' || document.nodes.find((node) => node.id === data.id)?.locked">{{ t('saveTemplate') }}</el-dropdown-item><el-dropdown-item command="sameType">{{ t('selectSameType') }}</el-dropdown-item><el-dropdown-item command="moveTop">{{ t('moveTop') }}</el-dropdown-item><el-dropdown-item command="moveBottom">{{ t('moveBottom') }}</el-dropdown-item><el-dropdown-item command="expandAll">{{ t('expandAll') }}</el-dropdown-item><el-dropdown-item command="collapseAll">{{ t('collapseAll') }}</el-dropdown-item><el-dropdown-item command="toggleVisibility">{{ document.nodes.find((node) => node.id === data.id)?.props.visible ? t('hideNode') : t('showNode') }}</el-dropdown-item><el-dropdown-item command="toggleLock">{{ document.nodes.find((node) => node.id === data.id)?.locked ? t('unlockNode') : t('lockNode') }}</el-dropdown-item><el-dropdown-item divided command="delete" :disabled="data.id === 'node_root' || document.nodes.find((node) => node.id === data.id)?.locked">{{ t('deleteNode') }}</el-dropdown-item></el-dropdown-menu></template>
+          <template #dropdown><el-dropdown-menu><el-dropdown-item command="copy">{{ t('copyAction') }}</el-dropdown-item><el-dropdown-item command="cut" :disabled="data.id === 'node_root' || document.nodes.find((node) => node.id === data.id)?.locked">{{ t('cutAction') }}</el-dropdown-item><el-dropdown-item command="paste" :disabled="document.nodes.find((node) => node.id === data.id)?.type !== 'container'">{{ t('pasteAction') }}</el-dropdown-item><el-dropdown-item command="addChild" :disabled="document.nodes.find((node) => node.id === data.id)?.type !== 'container'">{{ t('addChild') }}</el-dropdown-item><el-dropdown-item command="rename">{{ t('renameNode') }}</el-dropdown-item><el-dropdown-item command="duplicate">{{ t('duplicateNode') }}</el-dropdown-item><el-dropdown-item command="group" :disabled="selectedIds.length < 2">{{ t('group') }}</el-dropdown-item><el-dropdown-item command="sameType">{{ t('selectSameType') }}</el-dropdown-item><el-dropdown-item command="moveUp" :disabled="!canMoveStep(data.id, 'up')">{{ t('moveUp') }}</el-dropdown-item><el-dropdown-item command="moveDown" :disabled="!canMoveStep(data.id, 'down')">{{ t('moveDown') }}</el-dropdown-item><el-dropdown-item command="moveTop" :disabled="!canMoveToEdge(data.id, 'top')">{{ t('moveTop') }}</el-dropdown-item><el-dropdown-item command="moveBottom" :disabled="!canMoveToEdge(data.id, 'bottom')">{{ t('moveBottom') }}</el-dropdown-item><el-dropdown-item command="expandAll">{{ t('expandAll') }}</el-dropdown-item><el-dropdown-item command="collapseAll">{{ t('collapseAll') }}</el-dropdown-item><el-dropdown-item command="toggleVisibility">{{ document.nodes.find((node) => node.id === data.id)?.props.visible ? t('hideNode') : t('showNode') }}</el-dropdown-item><el-dropdown-item command="toggleLock">{{ document.nodes.find((node) => node.id === data.id)?.locked ? t('unlockNode') : t('lockNode') }}</el-dropdown-item><el-dropdown-item divided command="delete" :disabled="data.id === 'node_root' || document.nodes.find((node) => node.id === data.id)?.locked">{{ t('deleteNode') }}</el-dropdown-item></el-dropdown-menu></template>
         </el-dropdown>
       </template>
     </el-tree>
@@ -222,34 +226,6 @@ const handleKeydown = (event: KeyboardEvent) => {
       <el-button size="small" :disabled="selectedIds.length === 0" @click="designer.group()">{{ t('group') }}</el-button>
       <el-button size="small" type="danger" plain :disabled="selectedIds.length === 0" @click="designer.removeSelected()">{{ t('deleteNode') }}</el-button>
     </div>
-    <div class="template-panel">
-      <div class="panel-heading"><span>{{ t('nodeTemplates') }}</span></div>
-      <div class="template-group">
-        <div class="template-group-title">{{ t('builtInTemplates') }}</div>
-        <div v-for="template in builtInNodeTemplates" :key="template.name" class="template-row">
-          <span :title="template.name">{{ templateLabel(template.name) }}</span>
-          <el-button size="small" text @click="void designer.insertNodeTemplate(template.name)">{{ t('loadTemplate') }}</el-button>
-        </div>
-      </div>
-      <div class="template-group">
-        <div class="template-group-title">{{ t('myTemplates') }}</div>
-        <div v-for="template in customNodeTemplates" :key="template.name" class="template-row">
-          <span :title="template.name">{{ template.name }}</span>
-          <el-button size="small" text @click="void designer.insertNodeTemplate(template.name)">{{ t('loadTemplate') }}</el-button>
-          <el-dropdown trigger="click">
-            <el-button size="small" text>⋯</el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="void designer.exportNodeTemplate(template.name)">{{ t('exportTemplate') }}</el-dropdown-item>
-                <el-dropdown-item divided @click="void designer.removeNodeTemplate(template.name)">{{ t('deleteNode') }}</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-        <span v-if="customNodeTemplates.length === 0" class="template-empty">{{ t('noCustomTemplates') }}</span>
-      </div>
-      <div class="template-save"><el-input v-model="templateName" size="small" :placeholder="t('templateNamePlaceholder')" /><el-button size="small" :disabled="!selectedIds.length || !templateName.trim()" @click="void saveNodeGroup()">{{ t('saveTemplate') }}</el-button><el-button size="small" :disabled="!canSave" @click="void designer.importNodeTemplate()">{{ t('importTemplate') }}</el-button></div>
-    </div>
     <p v-if="actionError" class="panel-error"><span>{{ t('operationError') }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ actionError }}</span></details></p>
   </section>
 </template>
@@ -258,7 +234,8 @@ const handleKeydown = (event: KeyboardEvent) => {
 .node-panel { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
 .node-tree { flex: 1; min-height: 150px; overflow: auto; background: transparent; --el-tree-node-hover-bg-color: color-mix(in srgb, var(--app-accent) 14%, transparent); --el-tree-text-color: var(--app-ink); }
-.node-tree-entry { display: inline-flex; align-items: center; gap: 7px; width: calc(100% - 6px); min-width: 0; font-size: 12px; }.node-tree-entry.locked { color: var(--app-ink-soft); }.node-row-actions { display: none; margin-left: auto; }.node-tree-entry:hover .node-row-actions { display: inline-flex; }.node-row-actions .el-button { padding: 1px 3px; }
+.node-tree :deep(.el-dropdown) { display: block; width: 100%; }
+.node-tree-entry { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; font-size: 12px; }.node-tree-entry.locked { color: var(--app-ink-soft); }.node-row-actions { display: none; margin-left: auto; }.node-tree-entry:hover .node-row-actions { display: inline-flex; }.node-row-actions .el-button { padding: 1px 3px; }
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 .node-kind { color: var(--app-ink-soft); font-size: 10px; }
 .node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -267,6 +244,5 @@ const handleKeydown = (event: KeyboardEvent) => {
 .type-heading { margin-top: 4px; }
 .node-actions { display: flex; gap: 6px; padding-top: 5px; border-top: 1px solid var(--app-border); }
 .node-actions .el-button { margin: 0; flex: 1; }
-.template-panel { display: flex; flex-direction: column; gap: 5px; max-height: 240px; overflow: auto; border-top: 1px solid var(--app-border); padding-top: 6px; }.template-group { display: flex; flex-direction: column; gap: 3px; }.template-group-title { color: var(--app-ink-soft); font-size: 10px; font-weight: 650; }.template-row { display: flex; align-items: center; gap: 5px; font-size: 10px; }.template-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.template-save { display: flex; gap: 5px; }.template-save .el-input { flex: 1; }.template-empty { color: var(--app-ink-soft); font-size: 10px; }
 .panel-error { margin: 0; color: var(--el-color-danger); font-size: 11px; line-height: 1.4; }
 </style>

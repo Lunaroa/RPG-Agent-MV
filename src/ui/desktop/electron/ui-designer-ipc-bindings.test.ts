@@ -33,13 +33,6 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
     clearRecovery: () => {},
     readPreferences: () => ({}),
     writePreferences: () => {},
-    listTemplates: () => [],
-    readTemplate: () => ({}),
-    writeTemplate: () => 'template.mzui',
-    listNodeTemplates: () => [],
-    readNodeTemplate: () => ({ format: 'mztemplate', version: '1.0.0', name: 'sample', roots: [], nodes: [], origin: { x: 0, y: 0, width: 0, height: 0 } }),
-    writeNodeTemplate: () => 'sample.mztemplate',
-    removeNodeTemplate: () => {},
   }
   registerUiDesignerIpcHandlers(ipcMain, dialog, {
     workflowRoot: 'workflow',
@@ -48,12 +41,11 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       readUiDesignerFile: (filePath) => ({ document: { meta: { sceneName: 'Scene_Sample' } }, metadata: { path: filePath, digest: 'digest', mtimeMs: 1, size: 2 } }),
       saveUiDesignerFile: () => { saved += 1; return { path: 'scene.mzui', digest: 'digest', mtimeMs: 2, size: 2 } },
       revealSource: (filePath: string) => { revealed.push(filePath) },
-      readUiDesignerNodeTemplate: () => ({ format: 'mztemplate', version: '1.0.0', name: 'sample', roots: [], nodes: [], origin: { x: 0, y: 0, width: 0, height: 0 } }),
-      writeUiDesignerNodeTemplate: () => 'sample.mztemplate',
       UiDesignerUserDataStore: class { constructor() { return userDataStore as any } } as any,
     },
     resources: {
-      inspectUiDesignerResources: () => ({ resources: [] }),
+      inspectUiDesignerResourcesAsync: async () => ({ resources: [] }),
+      inspectUiDesignerResourceReferences: () => ({ resources: [] }),
       selectUiDesignerFrameFolder: (project: string, selected: string) => [{
         id: 'image:img/frames/001.png', category: 'image', path: 'img/frames/001.png', relativePath: 'img/frames/001.png',
         previewUrl: `rmmv-asset://${project}/img/frames/001.png`, name: '001.png', exists: true, referenced: false, size: 1,

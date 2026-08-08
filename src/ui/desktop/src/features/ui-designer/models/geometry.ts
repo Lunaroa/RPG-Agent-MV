@@ -15,17 +15,37 @@ export interface UiCanvasViewportFrame {
 
 const finiteOr = (value: number, fallback: number) => Number.isFinite(value) ? value : fallback
 
+/** Convert a client-space point into the scroll viewport's content space. */
+export function viewportClientToContent(point: UiPoint, frame: Pick<UiCanvasViewportFrame, 'left' | 'top' | 'scrollLeft' | 'scrollTop'>): UiPoint {
+  return {
+    x: finiteOr(point.x, finiteOr(frame.left, 0)) - finiteOr(frame.left, 0) + finiteOr(frame.scrollLeft, 0),
+    y: finiteOr(point.y, finiteOr(frame.top, 0)) - finiteOr(frame.top, 0) + finiteOr(frame.scrollTop, 0),
+  }
+}
+
+/** Convert scroll viewport content coordinates back to client coordinates. */
+export function viewportContentToClient(point: UiPoint, frame: Pick<UiCanvasViewportFrame, 'left' | 'top' | 'scrollLeft' | 'scrollTop'>): UiPoint {
+  return {
+    x: finiteOr(frame.left, 0) + finiteOr(point.x, 0) - finiteOr(frame.scrollLeft, 0),
+    y: finiteOr(frame.top, 0) + finiteOr(point.y, 0) - finiteOr(frame.scrollTop, 0),
+  }
+}
+
+/** Return the transform-space anchor consumed by zoomViewport. */
+export function viewportClientToZoomAnchor(point: UiPoint, frame: UiCanvasViewportFrame): UiPoint {
+  const content = viewportClientToContent(point, frame)
+  const margin = Math.max(0, finiteOr(frame.stageMargin, 0))
+  return { x: content.x - margin, y: content.y - margin }
+}
+
 /** Convert a client-space pointer into the document's canvas world space. */
 export function viewportClientToWorld(point: UiPoint, frame: UiCanvasViewportFrame, viewport: UiViewport): UiPoint {
   const zoom = Math.max(0.01, finiteOr(viewport.zoom, 1))
-  const left = finiteOr(frame.left, 0)
-  const top = finiteOr(frame.top, 0)
-  const scrollLeft = finiteOr(frame.scrollLeft, 0)
-  const scrollTop = finiteOr(frame.scrollTop, 0)
   const margin = Math.max(0, finiteOr(frame.stageMargin, 0))
+  const content = viewportClientToContent(point, frame)
   return {
-    x: (finiteOr(point.x, left) - left + scrollLeft - margin - finiteOr(viewport.panX, 0)) / zoom,
-    y: (finiteOr(point.y, top) - top + scrollTop - margin - finiteOr(viewport.panY, 0)) / zoom,
+    x: (content.x - margin - finiteOr(viewport.panX, 0)) / zoom,
+    y: (content.y - margin - finiteOr(viewport.panY, 0)) / zoom,
   }
 }
 
@@ -36,6 +56,11 @@ export function worldPointToViewport(point: UiPoint, frame: Pick<UiCanvasViewpor
     x: Math.max(0, finiteOr(frame.stageMargin, 0)) + finiteOr(viewport.panX, 0) + finiteOr(point.x, 0) * zoom,
     y: Math.max(0, finiteOr(frame.stageMargin, 0)) + finiteOr(viewport.panY, 0) + finiteOr(point.y, 0) * zoom,
   }
+}
+
+/** Convert a world-space point directly to client coordinates. */
+export function worldPointToClient(point: UiPoint, frame: UiCanvasViewportFrame, viewport: UiViewport): UiPoint {
+  return viewportContentToClient(worldPointToViewport(point, frame, viewport), frame)
 }
 
 /** Convert a world rect to content coordinates (before scroll clipping). */

@@ -18,9 +18,6 @@ import type {
   UiDesignerRuntimeExportRequest,
   UiDesignerRuntimeStageResult,
   UiDesignerSceneStageRequest,
-  UiDesignerNodeTemplateExportRequest,
-  UiNodeGroup,
-  UiNodeGroupRecord,
   UiPreviewResult,
   UiRuntimeSceneExport,
   UiRuntimeStatus,
@@ -35,13 +32,12 @@ export interface UiDesignerIpcDependencies {
   file: {
     readUiDesignerFile(filePath: string): { document: UiDesignerDocument; metadata: UiDesignerFileMetadata }
     saveUiDesignerFile(filePath: string, document: UiDesignerDocument, options?: UiDesignerFileRequest): UiDesignerFileMetadata
-    readUiDesignerNodeTemplate(filePath: string): UiNodeGroup
-    writeUiDesignerNodeTemplate(filePath: string, group: UiNodeGroup): string
     revealSource(filePath: string): void
     UiDesignerUserDataStore: new (root: string) => UiDesignerUserDataStoreLike
   }
   resources: {
-    inspectUiDesignerResources(project: string, options?: UiDesignerResourceRequest): UiProjectResourceCatalog
+    inspectUiDesignerResourcesAsync(project: string, options?: UiDesignerResourceRequest): Promise<UiProjectResourceCatalog>
+    inspectUiDesignerResourceReferences(project: string, referencedPaths: string[]): UiProjectResourceCatalog | Promise<UiProjectResourceCatalog>
     selectUiDesignerFrameFolder?(project: string, selectedDirectory: string): UiResourceEntry[]
     readUiDesignerSceneData(project: string, requestedPath: string): UiDesignerSceneDataReadResult
   }
@@ -63,10 +59,6 @@ interface UiDesignerUserDataStoreLike {
   listRecentFiles(): UiDesignerRecentFileRecord[]
   recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string }): UiDesignerRecentFileRecord
   removeRecentFile(path: string): void
-  listNodeTemplates(): UiNodeGroupRecord[]
-  readNodeTemplate(name: string): UiNodeGroup
-  writeNodeTemplate(name: string, group: UiNodeGroup): string
-  removeNodeTemplate(name: string): void
   writeRecovery(document: UiDesignerDocument, sourcePath?: string, sourceMetadata?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>, key?: string): UiDesignerRecoveryRecord
   listRecovery(): UiDesignerRecoveryRecord[]
   readRecovery(id: string): { record: UiDesignerRecoveryRecord; document: UiDesignerDocument }
@@ -102,7 +94,7 @@ function operationError(operation: string, error: unknown): Record<string, unkno
 }
 
 async function selectedPath(dialog: DialogLike, parent: Parameters<Dialog['showOpenDialog']>[0], mode: 'open' | 'save', extension = 'mzui', defaultName?: string): Promise<string | null> {
-  const label = extension === 'mztemplate' ? 'UI Designer node template' : 'UI Designer'
+  const label = 'UI Designer'
   if (mode === 'open') {
     const result = await dialog.showOpenDialog(parent, { properties: ['openFile'], filters: [{ name: label, extensions: [extension] }] })
     return result.canceled ? null : result.filePaths[0] || null
@@ -158,9 +150,15 @@ export function registerUiDesignerIpcHandlers(
     } catch (error) { return operationError('reveal-source', error) }
   })
 
-  ipcMain.handle('ui-designer:resources:list', (_event, request: UiDesignerResourceRequest = {}) => {
-    try { return { status: 'success', value: dependencies.resources.inspectUiDesignerResources(dependencies.resolveProject(request.project), request), message: 'Ready.' } }
+  ipcMain.handle('ui-designer:resources:list', async (_event, request: UiDesignerResourceRequest = {}) => {
+    try { return { status: 'success', value: await dependencies.resources.inspectUiDesignerResourcesAsync(dependencies.resolveProject(request.project), request), message: 'Ready.' } }
     catch (error) { return operationError('resources:list', error) }
+  })
+  ipcMain.handle('ui-designer:resources:references', async (_event, request: UiDesignerResourceRequest = {}) => {
+    try {
+      const referencedPaths = Array.isArray(request.referencedPaths) ? request.referencedPaths : []
+      return { status: 'success', value: await dependencies.resources.inspectUiDesignerResourceReferences(dependencies.resolveProject(request.project), referencedPaths), message: 'Ready.' }
+    } catch (error) { return operationError('resources:references', error) }
   })
   ipcMain.handle('ui-designer:resources:read-scene-data', (_event, request: UiDesignerSceneDataReadRequest) => {
     try {
@@ -223,25 +221,6 @@ export function registerUiDesignerIpcHandlers(
   ipcMain.handle('ui-designer:recent:remove', (_event, filePath: string) => safeStoreCall(dependencies, 'remove-recent', (store) => { store.removeRecentFile(String(filePath)); return null }))
   ipcMain.handle('ui-designer:preferences:read', () => safeStoreCall(dependencies, 'read-preferences', (store) => store.readPreferences()))
   ipcMain.handle('ui-designer:preferences:write', (_event, value: Record<string, unknown>) => safeStoreCall(dependencies, 'write-preferences', (store) => { store.writePreferences(value); return value }))
-  ipcMain.handle('ui-designer:node-templates:list', () => safeStoreCall(dependencies, 'node-templates:list', (store) => store.listNodeTemplates()))
-  ipcMain.handle('ui-designer:node-templates:read', (_event, name: string) => safeStoreCall(dependencies, 'node-templates:read', (store) => store.readNodeTemplate(String(name))))
-  ipcMain.handle('ui-designer:node-templates:write', (_event, name: string, group: UiNodeGroup) => safeStoreCall(dependencies, 'node-templates:write', (store) => store.writeNodeTemplate(String(name), group)))
-  ipcMain.handle('ui-designer:node-templates:remove', (_event, name: string) => safeStoreCall(dependencies, 'node-templates:remove', (store) => { store.removeNodeTemplate(String(name)); return null }))
-  ipcMain.handle('ui-designer:node-templates:import', async (event) => {
-    const filePath = await selectedPath(dialog, dependencies.dialogParent?.(event.sender), 'open', 'mztemplate')
-    if (!filePath) return { status: 'idle', operation: 'node-templates:import', message: 'Canceled.' }
-    try {
-      return { status: 'success', operation: 'node-templates:import', value: dependencies.file.readUiDesignerNodeTemplate(filePath), sourcePath: filePath, message: 'Ready.' }
-    } catch (error) { return operationError('node-templates:import', error) }
-  })
-  ipcMain.handle('ui-designer:node-templates:export', async (event, request: UiDesignerNodeTemplateExportRequest) => {
-    const filePath = request?.path || await selectedPath(dialog, dependencies.dialogParent?.(event.sender), 'save', 'mztemplate')
-    if (!filePath) return { status: 'idle', operation: 'node-templates:export', message: 'Canceled.' }
-    try {
-      const savedPath = dependencies.file.writeUiDesignerNodeTemplate(filePath, request.group)
-      return { status: 'success', operation: 'node-templates:export', value: savedPath, message: 'Exported.' }
-    } catch (error) { return operationError('node-templates:export', error) }
-  })
 }
 
 function safeStoreCall(
@@ -258,10 +237,9 @@ function safeStoreCall(
 export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandler'>): void {
   for (const channel of [
     'ui-designer:file:open', 'ui-designer:file:save', 'ui-designer:file:save-as', 'ui-designer:file:reveal-source',
-    'ui-designer:resources:list', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check', 'ui-designer:runtime:install',
+    'ui-designer:resources:list', 'ui-designer:resources:references', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check', 'ui-designer:runtime:install',
     'ui-designer:scene:stage', 'ui-designer:runtime:export', 'ui-designer:preview:start', 'ui-designer:preview:current', 'ui-designer:preview:stop', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
     'ui-designer:recovery:clear', 'ui-designer:recent:list', 'ui-designer:recent:remove', 'ui-designer:preferences:read',
     'ui-designer:preferences:write',
-    'ui-designer:node-templates:list', 'ui-designer:node-templates:read', 'ui-designer:node-templates:write', 'ui-designer:node-templates:remove', 'ui-designer:node-templates:import', 'ui-designer:node-templates:export',
   ]) ipcMain.removeHandler(channel)
 }

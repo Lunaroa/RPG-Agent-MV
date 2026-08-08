@@ -7,7 +7,6 @@ import type {
   UiDesignerRuntimeStageResult,
   UiFileResult,
   UiFileStatus,
-  UiRuntimeSceneExport,
   UiRuntimeStatus,
 } from '@contract/ui-designer'
 import { exportRuntimeDocument, UiExportValidationError } from '../models/export'

@@ -10,14 +10,6 @@ import {
   assertValidUiDesignerDocument,
   UiDesignerValidationError,
 } from './ui-designer-validation.ts';
-import type { UiNodeGroup, UiNodeGroupRecord } from '../../../../contract/ui-designer.ts';
-import {
-  listUiDesignerNodeTemplates,
-  nodeTemplateFilePath,
-  readUiDesignerNodeTemplate,
-  removeUiDesignerNodeTemplate,
-  writeUiDesignerNodeTemplate,
-} from './ui-designer-node-template-service.ts';
 
 export const UI_DESIGNER_FILE_EXTENSION = '.mzui';
 export const UI_DESIGNER_RECENT_LIMIT = 10;
@@ -135,7 +127,6 @@ export function saveUiDesignerFile(
 export class UiDesignerUserDataStore {
   private readonly root: string;
   private readonly snapshotsRoot: string;
-  private readonly nodeTemplatesRoot: string;
   private readonly recentPath: string;
   private readonly recoveryPath: string;
   private readonly recentFilesPath: string;
@@ -144,7 +135,6 @@ export class UiDesignerUserDataStore {
   constructor(userDataRoot: string) {
     this.root = path.join(path.resolve(userDataRoot), 'ui-designer');
     this.snapshotsRoot = path.join(this.root, 'snapshots');
-    this.nodeTemplatesRoot = path.join(this.root, 'node-templates');
     this.recoveryPath = path.join(this.root, 'recovery.json');
     this.recentFilesPath = path.join(this.root, 'recent-files.json');
     // Keep the old filename as a read/write compatibility alias for callers
@@ -289,22 +279,6 @@ export class UiDesignerUserDataStore {
   writePreferences(value: Record<string, unknown>): void {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('UI designer preferences must be an object.');
     writeJsonAtomically(this.preferencesPath, value);
-  }
-
-  listNodeTemplates(): UiNodeGroupRecord[] {
-    return listUiDesignerNodeTemplates(this.nodeTemplatesRoot)
-  }
-
-  readNodeTemplate(name: string): UiNodeGroup {
-    return readUiDesignerNodeTemplate(nodeTemplateFilePath(this.nodeTemplatesRoot, name))
-  }
-
-  writeNodeTemplate(name: string, group: UiNodeGroup): string {
-    return writeUiDesignerNodeTemplate(nodeTemplateFilePath(this.nodeTemplatesRoot, name), group)
-  }
-
-  removeNodeTemplate(name: string): void {
-    removeUiDesignerNodeTemplate(this.nodeTemplatesRoot, name)
   }
 
   private writeRecoveryRecords(records: UiDesignerRecoveryRecord[]): void {

@@ -11,7 +11,6 @@ import type {
   UiDesignerDocument,
   UiDesignerFileRequest,
   UiDesignerFrameFolderRequest,
-  UiDesignerNodeTemplateExportRequest,
   UiDesignerPreviewStartRequest,
   UiDesignerProjectRequest,
   UiDesignerRecoveryRecord,
@@ -26,8 +25,6 @@ import type {
   UiDesignerSaveResult,
   UiDesignerSceneStageRequest,
   UiFileResult,
-  UiNodeGroup,
-  UiNodeGroupRecord,
   UiPreviewResult,
   UiProjectResourceCatalog,
   UiResourceEntry,
@@ -140,6 +137,7 @@ declare global {
         saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         revealSource(sourcePath: string): Promise<UiFileResult<null>>;
         listResources(request?: UiDesignerResourceRequest): Promise<UiFileResult<UiProjectResourceCatalog>>;
+        listResourceReferences(request?: UiDesignerResourceRequest): Promise<UiFileResult<UiProjectResourceCatalog>>;
         readSceneData(request: UiDesignerSceneDataReadRequest): Promise<UiFileResult<UiDesignerSceneDataReadResult>>;
         selectFrameFolder(request?: UiDesignerFrameFolderRequest): Promise<UiFileResult<UiResourceEntry[]>>;
         checkRuntime(request?: UiDesignerProjectRequest): Promise<UiFileResult<UiRuntimeStatus>>;
@@ -157,12 +155,6 @@ declare global {
         clearRecovery(id: string): Promise<UiFileResult<null>>;
         readPreferences(): Promise<UiFileResult<Record<string, unknown>>>;
         writePreferences(value: Record<string, unknown>): Promise<UiFileResult<Record<string, unknown>>>;
-        listNodeTemplates(): Promise<UiFileResult<UiNodeGroupRecord[]>>;
-        readNodeTemplate(name: string): Promise<UiFileResult<UiNodeGroup>>;
-        writeNodeTemplate(name: string, group: UiNodeGroup): Promise<UiFileResult<string>>;
-        removeNodeTemplate(name: string): Promise<UiFileResult<null>>;
-        importNodeTemplate(): Promise<UiFileResult<UiNodeGroup> | null>;
-        exportNodeTemplate(request: UiDesignerNodeTemplateExportRequest): Promise<UiFileResult<string>>;
       };
       projectConfig: {
         get(project?: string): Promise<unknown>;
@@ -548,6 +540,7 @@ export const uiDesigner = {
   saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument) { return desktopApi().uiDesigner.saveAs(toPlain(request), toPlain(document)) },
   revealSource(sourcePath: string) { return desktopApi().uiDesigner.revealSource(sourcePath) },
   listResources(request?: UiDesignerResourceRequest) { return desktopApi().uiDesigner.listResources(toPlain(request)) },
+  listResourceReferences(request?: UiDesignerResourceRequest) { return desktopApi().uiDesigner.listResourceReferences(toPlain(request)) },
   readSceneData(request: UiDesignerSceneDataReadRequest) { return desktopApi().uiDesigner.readSceneData(toPlain(request)) },
   selectFrameFolder(request?: UiDesignerFrameFolderRequest) { return desktopApi().uiDesigner.selectFrameFolder(toPlain(request)) },
   checkRuntime(request?: UiDesignerProjectRequest) { return desktopApi().uiDesigner.checkRuntime(toPlain(request)) },
@@ -565,12 +558,6 @@ export const uiDesigner = {
   clearRecovery(id: string) { return desktopApi().uiDesigner.clearRecovery(id) },
   readPreferences() { return desktopApi().uiDesigner.readPreferences() },
   writePreferences(value: Record<string, unknown>) { return desktopApi().uiDesigner.writePreferences(toPlain(value)) },
-  listNodeTemplates() { return desktopApi().uiDesigner.listNodeTemplates() },
-  readNodeTemplate(name: string) { return desktopApi().uiDesigner.readNodeTemplate(name) },
-  writeNodeTemplate(name: string, group: UiNodeGroup) { return desktopApi().uiDesigner.writeNodeTemplate(name, toPlain(group)) },
-  removeNodeTemplate(name: string) { return desktopApi().uiDesigner.removeNodeTemplate(name) },
-  importNodeTemplate() { return desktopApi().uiDesigner.importNodeTemplate() },
-  exportNodeTemplate(request: UiDesignerNodeTemplateExportRequest) { return desktopApi().uiDesigner.exportNodeTemplate(toPlain(request)) },
 };
 
 /** Per-project product config persisted in `<project>/.luna_rpg/config.json`. */

@@ -30,12 +30,6 @@ test('closing the only opened tab creates a fresh untitled clean scene', async (
     async writePreferences() { return success() },
     async writeRecovery() { return success({ id: 'recovery' }) },
     async exportRuntime() { return success('runtime.json') },
-    async listNodeTemplates() { return success([]) },
-    async readNodeTemplate() { return { status: 'unavailable', message: 'unused' } },
-    async writeNodeTemplate() { return success('template.mztemplate') },
-    async removeNodeTemplate() { return success() },
-    async importNodeTemplate() { return { status: 'unavailable', message: 'unused' } },
-    async exportNodeTemplate() { return success('template.mztemplate') },
   }
   const designer = useUiDesigner({ adapters: { file } })
   assert.equal(await designer.open(), true)
@@ -68,6 +62,17 @@ test('preview stop failure retains the session and polling can be retried', asyn
   assert.equal(await designer.stopPreview(), true)
   assert.equal(designer.previewSessionId.value, undefined)
   assert.equal(designer.isPreviewing.value, false)
+})
+
+test('editor preview renders the design canvas and restores the source editing mode', () => {
+  const designer = useUiDesigner()
+  designer.editingMode.value = 'code'
+  assert.equal(designer.startEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, true)
+  assert.equal(designer.editingMode.value, 'design')
+  assert.equal(designer.stopEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
 })
 
 test('preview diagnostics follow the active session and retain final cleanup diagnostics', async () => {
@@ -119,12 +124,6 @@ test('recovery cleanup failure keeps the recovery id and reports discard failure
     async writePreferences() { return success() },
     async writeRecovery() { return success({ id: 'recovery' }) },
     async exportRuntime() { return success('runtime.json') },
-    async listNodeTemplates() { return success([]) },
-    async readNodeTemplate() { return { status: 'unavailable', message: 'unused' } },
-    async writeNodeTemplate() { return success('template.mztemplate') },
-    async removeNodeTemplate() { return success() },
-    async importNodeTemplate() { return { status: 'unavailable', message: 'unused' } },
-    async exportNodeTemplate() { return success('template.mztemplate') },
   }
   const designer = useUiDesigner({ adapters: { file } })
   const scene = designer.scenes.value[0]

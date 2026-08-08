@@ -400,21 +400,6 @@ export type UiNode =
   | UiVideoNode
   | UiParticleNode
 
-/** Persisted editor node group; it is not a runtime scene/document. */
-export interface UiNodeGroup {
-  format: 'mztemplate'
-  version: '1.0.0'
-  name: string
-  roots: string[]
-  nodes: UiNode[]
-  origin: { x: number; y: number; width: number; height: number }
-}
-
-export interface UiNodeGroupRecord {
-  name: string
-  modifiedAt: string
-}
-
 export interface UiGuide {
   id: string
   type: 'vertical' | 'horizontal'
@@ -748,6 +733,11 @@ export interface UiProjectResourceCatalog {
   engine: 'MV' | 'MZ' | 'unknown'
   projectCompatibility?: UiDesignerProjectCompatibility
   resources: UiResourceEntry[]
+  /** Total matches before the bounded page returned to the renderer. */
+  total?: number
+  offset?: number
+  limit?: number
+  hasMore?: boolean
 }
 
 export interface UiDesignerExportOptions {
@@ -784,6 +774,10 @@ export interface UiDesignerProjectRequest {
 
 export interface UiDesignerResourceRequest extends UiDesignerProjectRequest {
   referencedPaths?: string[]
+  category?: UiResourceEntry['category']
+  query?: string
+  offset?: number
+  limit?: number
 }
 
 /** Explicit read of a catalog-listed Runtime scene JSON for lossy editor import. */
@@ -836,11 +830,6 @@ export interface UiDesignerRecoveryWriteRequest {
   key?: string
 }
 
-export interface UiDesignerNodeTemplateExportRequest {
-  group: UiNodeGroup
-  path?: string
-}
-
 export interface UiDesignerRuntimeExportRequest {
   scene: UiRuntimeSceneExport
   path?: string
@@ -868,12 +857,6 @@ export interface UiDesignerPersistenceAdapter {
   readPreferences(): Promise<UiFileResult<Record<string, unknown>>>
   writePreferences(value: Record<string, unknown>): Promise<UiFileResult<Record<string, unknown>>>
   exportRuntime(scene: UiRuntimeSceneExport, request?: Pick<UiDesignerRuntimeExportRequest, 'path' | 'overwrite'>): Promise<UiFileResult<string>>
-  listNodeTemplates(): Promise<UiFileResult<UiNodeGroupRecord[]>>
-  readNodeTemplate(name: string): Promise<UiFileResult<UiNodeGroup>>
-  writeNodeTemplate(name: string, group: UiNodeGroup): Promise<UiFileResult<string>>
-  removeNodeTemplate(name: string): Promise<UiFileResult<null>>
-  importNodeTemplate(): Promise<UiFileResult<UiNodeGroup> | null>
-  exportNodeTemplate(group: UiNodeGroup, request?: UiDesignerFileRequest): Promise<UiFileResult<string>>
 }
 
 export interface UiDesignerRecentFileRecord {
@@ -899,7 +882,8 @@ export interface UiDesignerRecoveryRecord {
 export type UiDesignerSnapshotRecord = UiDesignerRecoveryRecord
 
 export interface UiDesignerResourceAdapter {
-  loadProject(): Promise<UiFileResult<UiProjectResourceCatalog> | null>
+  loadProject(request?: UiDesignerResourceRequest): Promise<UiFileResult<UiProjectResourceCatalog> | null>
+  loadReferenced?(request: UiDesignerResourceRequest): Promise<UiFileResult<UiProjectResourceCatalog> | null>
   selectFrameFolder?(request?: UiDesignerFrameFolderRequest): Promise<UiFileResult<UiResourceEntry[]> | null>
   readSceneData(request: UiDesignerSceneDataReadRequest): Promise<UiFileResult<UiDesignerSceneDataReadResult>>
 }

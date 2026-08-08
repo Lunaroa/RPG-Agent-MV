@@ -12,7 +12,6 @@ import type {
   UiDesignerDocument,
   UiDesignerFileRequest,
   UiDesignerFrameFolderRequest,
-  UiDesignerNodeTemplateExportRequest,
   UiDesignerPreviewStartRequest,
   UiDesignerRecoveryWriteRequest,
   UiDesignerResourceRequest,
@@ -20,7 +19,6 @@ import type {
   UiDesignerRuntimeExportRequest,
   UiDesignerRuntimeInstallRequest,
   UiDesignerSceneStageRequest,
-  UiNodeGroup,
   UiDesignerProjectRequest,
 } from '../../../contract/ui-designer.ts';
 
@@ -103,6 +101,7 @@ contextBridge.exposeInMainWorld('api', {
     saveAs: (request: UiDesignerFileRequest, document: UiDesignerDocument) => ipcRenderer.invoke('ui-designer:file:save-as', request, document),
     revealSource: (sourcePath: string) => ipcRenderer.invoke('ui-designer:file:reveal-source', sourcePath),
     listResources: (request?: UiDesignerResourceRequest) => ipcRenderer.invoke('ui-designer:resources:list', request),
+    listResourceReferences: (request?: UiDesignerResourceRequest) => ipcRenderer.invoke('ui-designer:resources:references', request),
     readSceneData: (request: UiDesignerSceneDataReadRequest) => ipcRenderer.invoke('ui-designer:resources:read-scene-data', request),
     selectFrameFolder: (request?: UiDesignerFrameFolderRequest) => ipcRenderer.invoke('ui-designer:file:select-frame-folder', request),
     checkRuntime: (request?: UiDesignerProjectRequest) => ipcRenderer.invoke('ui-designer:runtime:check', request),
@@ -120,12 +119,6 @@ contextBridge.exposeInMainWorld('api', {
     clearRecovery: (id: string) => ipcRenderer.invoke('ui-designer:recovery:clear', id),
     readPreferences: () => ipcRenderer.invoke('ui-designer:preferences:read'),
     writePreferences: (value: Record<string, unknown>) => ipcRenderer.invoke('ui-designer:preferences:write', value),
-    listNodeTemplates: () => ipcRenderer.invoke('ui-designer:node-templates:list'),
-    readNodeTemplate: (name: string) => ipcRenderer.invoke('ui-designer:node-templates:read', name),
-    writeNodeTemplate: (name: string, group: UiNodeGroup) => ipcRenderer.invoke('ui-designer:node-templates:write', name, group),
-    removeNodeTemplate: (name: string) => ipcRenderer.invoke('ui-designer:node-templates:remove', name),
-    importNodeTemplate: () => ipcRenderer.invoke('ui-designer:node-templates:import'),
-    exportNodeTemplate: (request: UiDesignerNodeTemplateExportRequest) => ipcRenderer.invoke('ui-designer:node-templates:export', request),
   },
 
   projectConfig: {

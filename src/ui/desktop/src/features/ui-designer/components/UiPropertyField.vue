@@ -17,6 +17,8 @@ const props = withDefaults(defineProps<{
   multiline?: boolean
   options?: Array<{ label: string; value: string }>
   resourceCategory?: 'image' | 'audio' | 'video' | 'font'
+  resourcePicker?: () => Promise<string | null>
+  resourcePickerDisabled?: boolean
   min?: number
   max?: number
   step?: number
@@ -75,6 +77,11 @@ const dropResource = (event: DragEvent) => {
   if (props.resourceCategory && category && category !== props.resourceCategory) { resourceDropError.value = t('resourceDropCategory'); return }
   resourceDropError.value = ''
   emit('value', path)
+}
+const chooseResource = async () => {
+  if (!props.resourcePicker) return
+  const path = await props.resourcePicker()
+  if (path !== null) emit('value', path)
 }
 const updateCodeDraft = (value: string, sceneId?: string) => {
   pendingCode = value
@@ -139,18 +146,18 @@ onBeforeUnmount(() => { flushCode(); unregisterDraft?.() })
     >
       <el-option v-for="option in props.options ?? []" :key="option.value" :label="option.label" :value="option.value" />
     </el-select>
-    <el-select
+    <div
       v-else-if="props.mode === 'value' && props.kind === 'resource'"
-      filterable
-      clearable
-      :model-value="typeof props.value === 'string' ? props.value : undefined"
-      size="small"
+      class="resource-control"
       @dragover.prevent
       @drop.prevent="dropResource"
-      @update:model-value="emit('value', $event ?? '')"
     >
-      <el-option v-for="option in props.options ?? []" :key="option.value" :label="option.label" :value="option.value" />
-    </el-select>
+        <el-input :model-value="typeof props.value === 'string' ? props.value : ''" readonly size="small" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')">
+        <template #append><el-button size="small" :disabled="!props.resourcePicker || props.resourcePickerDisabled" @click="void chooseResource()">{{ t('chooseResource') }}</el-button></template>
+      </el-input>
+      <el-button v-if="props.value" size="small" text @click="emit('value', '')">{{ t('clearResource') }}</el-button>
+      <span v-if="props.resourcePickerDisabled" class="resource-picker-hint">{{ t('noProject') }}</span>
+    </div>
     <el-input
       v-else-if="props.mode === 'value'"
       :type="props.multiline ? 'textarea' : 'text'"
@@ -179,6 +186,7 @@ onBeforeUnmount(() => { flushCode(); unregisterDraft?.() })
 .number-control { display: grid; grid-template-columns: minmax(0, 1fr) 88px; align-items: center; gap: 8px; }.number-control :deep(.el-input-number) { width: 88px; }
 .code-field { position: relative; }
 .code-note { position: absolute; right: 6px; bottom: 4px; color: var(--app-ink-soft); font-size: 9px; pointer-events: none; }
-.resource-drop-error { margin: 0; color: var(--el-color-danger); font-size: 10px; line-height: 1.3; }
+.resource-drop-error, .resource-picker-hint { margin: 0; color: var(--app-ink-soft); font-size: 10px; line-height: 1.3; }
+.resource-control { display: flex; align-items: center; gap: 4px; }.resource-control .el-input { min-width: 0; flex: 1; }
 .property-field.has-error :deep(.el-input), .property-field.has-error :deep(.el-input-number), .property-field.has-error :deep(.el-select), .property-field.has-error :deep(.el-color-picker) { outline: 1px solid var(--el-color-danger); border-radius: 4px; }.field-error { margin: 0; color: var(--el-color-danger); font-size: 10px; line-height: 1.3; }.field-error .status-detail { color: var(--app-ink-soft); font-size: 9px; }
 </style>

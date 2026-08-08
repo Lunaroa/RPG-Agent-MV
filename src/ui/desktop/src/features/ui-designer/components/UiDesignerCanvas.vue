@@ -5,7 +5,7 @@ import type { UiDesignerDocument, UiNode, UiProjectResourceCatalog, UiRect, UiVi
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiCanvasNode from './UiCanvasNode.vue'
-import { nodeRect, nodesIntersectingRect, viewportClientToWorld, worldPointToViewport, worldRectToViewport, type UiCanvasViewportFrame } from '../models/geometry'
+import { nodeRect, nodesIntersectingRect, viewportClientToContent, viewportClientToWorld, viewportClientToZoomAnchor, worldPointToViewport, worldRectToViewport, type UiCanvasViewportFrame } from '../models/geometry'
 
 const props = defineProps<{ designer: UiDesignerController }>()
 const designer = props.designer
@@ -24,6 +24,17 @@ const draftRotations = computed<Record<string, number>>(() => unwrap(designer.dr
 const previewing = computed(() => unwrap(designer.isEditorPreviewing))
 const previewCondition = computed<'all-on' | 'all-off'>(() => unwrap(designer.editorPreviewConditionMode) as 'all-on' | 'all-off')
 const resourceCatalog = computed<UiProjectResourceCatalog | null>(() => unwrap(designer.resourceCatalog))
+const resourceByPath = computed(() => {
+  const map = new Map<string, UiProjectResourceCatalog['resources'][number]>()
+  for (const resource of resourceCatalog.value?.resources ?? []) {
+    if (resource.relativePath) {
+      map.set(resource.relativePath, resource)
+      map.set(`www/${resource.relativePath}`, resource)
+    }
+    map.set(resource.path, resource)
+  }
+  return map
+})
 const preferences = computed<Record<string, unknown>>(() => unwrap(designer.preferences))
 const gridEnabled = computed(() => typeof preferences.value.gridEnabled === 'boolean' ? preferences.value.gridEnabled : document.value.canvas.grid.enabled)
 const snapEnabled = computed(() => typeof preferences.value.snapEnabled === 'boolean' ? preferences.value.snapEnabled : document.value.canvas.snap.enabled)
@@ -82,8 +93,8 @@ const selectionStyle = computed(() => {
   const worldSelection = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) }
   const display = worldRectToViewport(worldSelection, frame, viewport.value)
   return {
-    left: `${display.x + (frame.scrollLeft ?? 0)}px`,
-    top: `${display.y + (frame.scrollTop ?? 0)}px`,
+    left: `${display.x}px`,
+    top: `${display.y}px`,
     width: `${display.width}px`,
     height: `${display.height}px`,
   }
@@ -91,7 +102,9 @@ const selectionStyle = computed(() => {
 
 const resourceUrl = (path: string) => {
   if (!path) return undefined
-  const resource = resourceCatalog.value?.resources.find((entry) => (entry.relativePath ?? entry.path) === path || entry.path === path)
+  const normalized = path.replaceAll('\\', '/')
+  const resource = resourceByPath.value.get(normalized) ?? resourceByPath.value.get(normalized.replace(/^www\//, ''))
+  if (!resource?.exists) return undefined
   return resource?.previewUrl ?? resource?.thumbnailUrl
 }
 
@@ -191,7 +204,9 @@ const zoom = (event: WheelEvent) => {
   if (!event.ctrlKey && !event.metaKey) return
   event.preventDefault()
   const factor = event.deltaY > 0 ? 0.9 : 1.1
-  designer.setZoom(viewport.value.zoom * factor, { x: event.offsetX + (viewportElement.value?.scrollLeft ?? 0), y: event.offsetY + (viewportElement.value?.scrollTop ?? 0) })
+  const frame = viewportFrame()
+  const anchor = viewportClientToZoomAnchor({ x: event.clientX, y: event.clientY }, frame)
+  designer.setZoom(viewport.value.zoom * factor, anchor)
 }
 
 const selectCanvas = () => {
@@ -267,8 +282,8 @@ const endGuide = (event?: PointerEvent) => {
   window.removeEventListener('pointermove', moveGuide)
 }
 const guideMenuPosition = (event: MouseEvent) => {
-  const bounds = viewportElement.value?.getBoundingClientRect()
-  return { x: event.clientX - (bounds?.left ?? 0) + (viewportElement.value?.scrollLeft ?? 0), y: event.clientY - (bounds?.top ?? 0) + (viewportElement.value?.scrollTop ?? 0) }
+  const point = viewportClientToContent({ x: event.clientX, y: event.clientY }, viewportFrame())
+  return { x: point.x, y: point.y }
 }
 const openGuideMenu = (event: MouseEvent, guideId?: string) => { guideMenu.value = { ...guideMenuPosition(event), guideId } }
 const closeGuideMenu = () => { guideMenu.value = undefined }

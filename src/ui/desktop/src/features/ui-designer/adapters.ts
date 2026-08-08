@@ -11,8 +11,8 @@ import type {
   UiDesignerRuntimeStageResult,
   UiDesignerSceneDataReadResult,
   UiDesignerSceneDataReadRequest,
+  UiDesignerResourceRequest,
   UiDesignerProjectCompatibility,
-  UiNodeGroup,
   UiFileResult,
   UiPreviewResult,
   UiProjectResourceCatalog,
@@ -81,29 +81,14 @@ export const unavailableFileAdapter: UiDesignerPersistenceAdapter = {
   async exportRuntime() {
     return unavailable('Runtime export adapter is not connected; no file was written.')
   },
-  async listNodeTemplates() {
-    return unavailable('Node template adapter is not connected.')
-  },
-  async readNodeTemplate() {
-    return unavailable('Node template adapter is not connected.')
-  },
-  async writeNodeTemplate() {
-    return unavailable('Node template adapter is not connected.')
-  },
-  async removeNodeTemplate() {
-    return unavailable('Node template adapter is not connected.')
-  },
-  async importNodeTemplate() {
-    return unavailable('Node template adapter is not connected.')
-  },
-  async exportNodeTemplate() {
-    return unavailable('Node template adapter is not connected.')
-  },
 }
 
 export const unavailableResourceAdapter: UiDesignerResourceAdapter = {
   async loadProject() {
     return unavailable('Resource adapter is not connected; no project catalog was loaded.')
+  },
+  async loadReferenced() {
+    return unavailable('Resource adapter is not connected; referenced resources could not be resolved.')
   },
   async selectFrameFolder() {
     return unavailable('Resource adapter is not connected; no frame folder was selected.')
@@ -233,15 +218,10 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async readPreferences() { return asResult(await api.uiDesigner.readPreferences(), 'Designer preferences are unavailable.') },
     async writePreferences(value) { return asResult(await api.uiDesigner.writePreferences(value), 'Designer preferences could not be saved.') },
     async exportRuntime(scene, request) { return asResult(await api.uiDesigner.exportRuntime({ scene, ...request }), 'The runtime JSON could not be exported.') },
-    async listNodeTemplates() { return asResult(await api.uiDesigner.listNodeTemplates(), 'Node templates are unavailable.') },
-    async readNodeTemplate(name) { return asResult<UiNodeGroup>(await api.uiDesigner.readNodeTemplate(name), 'The node template could not be read.') },
-    async writeNodeTemplate(name, group) { return asResult(await api.uiDesigner.writeNodeTemplate(name, group), 'The node template could not be saved.') },
-    async removeNodeTemplate(name) { return asResult(await api.uiDesigner.removeNodeTemplate(name), 'The node template could not be removed.') },
-    async importNodeTemplate() { return asResult<UiNodeGroup>(await api.uiDesigner.importNodeTemplate(), 'The node template could not be imported.') },
-    async exportNodeTemplate(group, request) { return asResult(await api.uiDesigner.exportNodeTemplate({ group, ...request }), 'The node template could not be exported.') },
   }
   const resource: UiDesignerResourceAdapter = {
-    async loadProject() { return asResult(await api.uiDesigner.listResources({ project: projectPath }), 'Project resources are unavailable.') as UiFileResult<UiProjectResourceCatalog> },
+    async loadProject(request?: UiDesignerResourceRequest) { return asResult(await api.uiDesigner.listResources({ ...request, project: projectPath }), 'Project resources are unavailable.') as UiFileResult<UiProjectResourceCatalog> },
+    async loadReferenced(request) { return asResult(await api.uiDesigner.listResourceReferences({ ...request, project: projectPath }), 'Referenced project resources are unavailable.') as UiFileResult<UiProjectResourceCatalog> },
     async selectFrameFolder() { return asResult<UiResourceEntry[]>(await api.uiDesigner.selectFrameFolder({ project: projectPath }), 'Frame folder selection failed.') },
     async readSceneData(request: UiDesignerSceneDataReadRequest) { return asResult<UiDesignerSceneDataReadResult>(await api.uiDesigner.readSceneData({ project: projectPath, path: request.path }), 'Scene data import failed.') },
   }

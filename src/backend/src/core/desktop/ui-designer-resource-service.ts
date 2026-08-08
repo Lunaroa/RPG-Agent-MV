@@ -20,6 +20,10 @@ import { validateUiRuntimeSceneExport } from './ui-designer-validation.ts';
 export interface UiDesignerResourceCatalogOptions {
   referencedPaths?: readonly string[];
   includeMissingReferences?: boolean;
+  category?: UiResourceEntry['category'];
+  query?: string;
+  offset?: number;
+  limit?: number;
 }
 
 const UI_DESIGNER_RUNTIME_VERSION = '>=1.0.0';
@@ -127,6 +131,109 @@ export function inspectUiDesignerResources(
     projectCompatibility: uiDesignerProjectCompatibility(manifest),
     resources,
   };
+}
+
+/**
+ * Asynchronously enumerate one bounded resource page. The renderer calls this
+ * only after the user opens a resource picker; no project-switch path uses it.
+ */
+export async function inspectUiDesignerResourcesAsync(
+  projectRoot: string,
+  options: UiDesignerResourceCatalogOptions = {},
+): Promise<UiProjectResourceCatalog> {
+  const project = path.resolve(projectRoot);
+  const manifest = inspectRmmvProject(project);
+  const layout = resolveRmmvLayout(project);
+  const referenced = new Set((options.referencedPaths || []).map((value) => normalizeResourceRelative(layout.resourceRootRelative, value)));
+  const candidates: UiResourceEntry[] = [];
+  const rules = options.category ? RESOURCE_RULES.filter((rule) => rule.category === options.category) : RESOURCE_RULES;
+
+  for (const rule of rules) {
+    const directory = path.join(layout.resourceRoot, ...rule.directory.split('/'));
+    const files = await walkFilesAsync(directory);
+    for (const filePath of files) {
+      const relativeToResource = normalizeResourceRelative('', path.relative(layout.resourceRoot, filePath));
+      const projectRelative = resourceRelativePath(layout, relativeToResource);
+      const stat = await fs.promises.stat(filePath);
+      candidates.push({
+        id: `${rule.category}:${relativeToResource}`,
+        category: rule.category,
+        path: relativeToResource,
+        relativePath: relativeToResource,
+        previewUrl: projectAssetUrl(project, projectRelative),
+        name: path.basename(filePath),
+        exists: true,
+        referenced: referenced.has(relativeToResource),
+        size: stat.size,
+        ...(rule.category === 'image' ? { thumbnailUrl: projectAssetThumbnailUrl(project, projectRelative, 128) } : {}),
+      });
+    }
+  }
+
+  if (!options.category || options.category === 'sceneData') {
+    candidates.push(...await inspectSceneDataResourcesAsync(project, layout, referenced));
+  }
+
+  if (options.includeMissingReferences !== false) {
+    for (const relativePath of referenced) {
+      if (candidates.some((entry) => entry.relativePath === relativePath)) continue;
+      const category = categoryForRelativePath(relativePath);
+      if (!category || (options.category && options.category !== category)) continue;
+      candidates.push(createMissingResourceEntry(project, layout, relativePath, category));
+    }
+  }
+
+  candidates.sort((left, right) => left.path.localeCompare(right.path));
+  return pageResourceCatalog(project, manifest, candidates, options);
+}
+
+/** Resolve only paths already referenced by the current document. This is a
+ * lightweight probe and never recursively scans project resource folders. */
+export async function inspectUiDesignerResourceReferences(
+  projectRoot: string,
+  referencedPaths: readonly string[],
+): Promise<UiProjectResourceCatalog> {
+  const project = path.resolve(projectRoot);
+  const manifest = inspectRmmvProject(project);
+  const layout = resolveRmmvLayout(project);
+  const resourceRoot = await fs.promises.realpath(layout.resourceRoot).catch(() => layout.resourceRoot);
+  const entries: UiResourceEntry[] = [];
+  const seen = new Set<string>();
+  for (const value of referencedPaths) {
+    let relativePath: string;
+    try { relativePath = normalizeResourceRelative(layout.resourceRootRelative, value); } catch { continue; }
+    if (seen.has(relativePath)) continue;
+    seen.add(relativePath);
+    const category = categoryForRelativePath(relativePath);
+    if (!category || !isSupportedResource(relativePath)) continue;
+    const filePath = path.resolve(layout.resourceRoot, ...relativePath.split('/'));
+    const projectRelative = resourceRelativePath(layout, relativePath);
+    let exists = false;
+    let size: number | undefined;
+    let mtimeMs: number | undefined;
+    try {
+      const realPath = await fs.promises.realpath(filePath);
+      if (!isContainedPath(resourceRoot, realPath)) continue;
+      const stat = await fs.promises.stat(realPath);
+      exists = stat.isFile();
+      if (exists) { size = stat.size; mtimeMs = stat.mtimeMs; }
+    } catch { exists = false; }
+    entries.push({
+      id: `${category}:${relativePath}`,
+      category,
+      path: relativePath,
+      relativePath,
+      previewUrl: projectAssetUrl(project, projectRelative),
+      ...(category === 'image' ? { thumbnailUrl: projectAssetThumbnailUrl(project, projectRelative, 128) } : {}),
+      name: path.basename(relativePath),
+      exists,
+      referenced: true,
+      ...(size === undefined ? {} : { size }),
+      ...(mtimeMs === undefined ? {} : { mtimeMs }),
+    });
+  }
+  entries.sort((left, right) => left.path.localeCompare(right.path));
+  return pageResourceCatalog(project, manifest, entries, { offset: 0, limit: entries.length || 1 });
 }
 
 /**
@@ -260,6 +367,24 @@ function walkFiles(root: string): string[] {
   return result;
 }
 
+async function walkFilesAsync(root: string): Promise<string[]> {
+  try {
+    const rootStat = await fs.promises.stat(root);
+    if (!rootStat.isDirectory()) return [];
+  } catch { return []; }
+  const result: string[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const filePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(filePath);
+      else if (entry.isFile() && isSupportedResource(filePath)) result.push(filePath);
+    }
+  };
+  await visit(root);
+  return result;
+}
+
 function walkImageFiles(root: string): string[] {
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [];
   const result: string[] = [];
@@ -272,6 +397,114 @@ function walkImageFiles(root: string): string[] {
   };
   visit(root);
   return result;
+}
+
+async function inspectSceneDataResourcesAsync(
+  project: string,
+  layout: ReturnType<typeof resolveRmmvLayout>,
+  referenced: ReadonlySet<string>,
+): Promise<UiResourceEntry[]> {
+  const directory = path.join(layout.resourceRoot, 'js', 'plugins', 'mzui-data');
+  let entries: fs.Dirent[];
+  try { entries = await fs.promises.readdir(directory, { withFileTypes: true }); } catch { return []; }
+  const files = entries
+    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.json')
+    .map((entry) => path.join(directory, entry.name))
+    .sort((left, right) => normalizeResourceRelative('', path.relative(layout.resourceRoot, left)).localeCompare(normalizeResourceRelative('', path.relative(layout.resourceRoot, right))));
+  return Promise.all(files.map(async (filePath) => {
+    const relativePath = normalizeResourceRelative('', path.relative(layout.resourceRoot, filePath));
+    const projectRelative = resourceRelativePath(layout, relativePath);
+    const stat = await fs.promises.stat(filePath);
+    const metadata = await readSceneDataMetadataAsync(filePath, path.basename(filePath, '.json'));
+    return {
+      id: `sceneData:${relativePath}`,
+      category: 'sceneData',
+      path: relativePath,
+      relativePath,
+      previewUrl: projectAssetUrl(project, projectRelative),
+      name: path.basename(filePath),
+      exists: true,
+      referenced: referenced.has(relativePath),
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ...metadata,
+    } satisfies UiResourceEntry;
+  }));
+}
+
+async function readSceneDataMetadataAsync(
+  filePath: string,
+  filenameSceneName: string,
+): Promise<Pick<UiResourceEntry, 'sceneName' | 'version' | 'runtimeVersion' | 'compatibility' | 'diagnostic'>> {
+  if (!/^Scene_[A-Za-z0-9_$]+$/.test(filenameSceneName)) {
+    return { compatibility: 'invalid', diagnostic: 'Scene data filename is not a valid Scene_* identifier.' };
+  }
+  let value: unknown;
+  try { value = JSON.parse(await fs.promises.readFile(filePath, 'utf8')) as unknown; }
+  catch { return { compatibility: 'invalid', diagnostic: 'Scene data is not valid JSON.' }; }
+  if (!isRecord(value)) return { compatibility: 'invalid', diagnostic: 'Scene data must be a JSON object.' };
+  const version = typeof value.version === 'string' ? value.version : undefined;
+  const runtimeVersion = typeof value.runtimeVersion === 'string' ? value.runtimeVersion : undefined;
+  const meta = isRecord(value.meta) ? value.meta : undefined;
+  const sceneName = typeof meta?.sceneName === 'string' ? meta.sceneName : undefined;
+  if (!version) return { sceneName, runtimeVersion, compatibility: 'invalid', diagnostic: 'Scene data is missing its version.' };
+  if (!runtimeVersion) return { sceneName, version, compatibility: 'invalid', diagnostic: 'Scene data is missing its runtime version.' };
+  const versionState = compareUiVersion(version, UI_DESIGNER_SCENE_VERSION);
+  const runtimeState = compareRuntimeVersion(runtimeVersion, UI_DESIGNER_RUNTIME_VERSION);
+  if (versionState === 'invalid' || runtimeState === 'invalid') return { sceneName, version, runtimeVersion, compatibility: 'invalid', diagnostic: 'Scene data has an invalid version declaration.' };
+  if (versionState !== 'compatible' || runtimeState !== 'compatible') return {
+    sceneName,
+    version,
+    runtimeVersion,
+    compatibility: versionState === 'unsupported-version' || runtimeState === 'unsupported-version' ? 'unsupported-version' : 'outdated',
+    diagnostic: `Scene data requires ${UI_DESIGNER_SCENE_VERSION}/${UI_DESIGNER_RUNTIME_VERSION}.`,
+  };
+  if (!sceneName || !/^Scene_[A-Za-z0-9_$]+$/.test(sceneName)) return { sceneName, version, runtimeVersion, compatibility: 'invalid', diagnostic: 'Scene data has an invalid scene name.' };
+  if (sceneName !== filenameSceneName) return { sceneName, version, runtimeVersion, compatibility: 'invalid', diagnostic: 'Scene filename and scene metadata do not match.' };
+  return { sceneName, version, runtimeVersion, compatibility: 'compatible' };
+}
+
+function createMissingResourceEntry(
+  project: string,
+  layout: ReturnType<typeof resolveRmmvLayout>,
+  relativePath: string,
+  category: UiResourceEntry['category'],
+): UiResourceEntry {
+  const projectRelative = resourceRelativePath(layout, relativePath);
+  return {
+    id: `${category}:${relativePath}`,
+    category,
+    path: relativePath,
+    relativePath,
+    previewUrl: projectAssetUrl(project, projectRelative),
+    ...(category === 'image' ? { thumbnailUrl: projectAssetThumbnailUrl(project, projectRelative, 128) } : {}),
+    name: path.basename(relativePath),
+    exists: false,
+    referenced: true,
+  };
+}
+
+function pageResourceCatalog(
+  project: string,
+  manifest: ReturnType<typeof inspectRmmvProject>,
+  resources: UiResourceEntry[],
+  options: UiDesignerResourceCatalogOptions,
+): UiProjectResourceCatalog {
+  const query = options.query?.trim().toLocaleLowerCase() ?? '';
+  const filtered = query ? resources.filter((resource) => `${resource.name} ${resource.path}`.toLocaleLowerCase().includes(query)) : resources;
+  const total = filtered.length;
+  const limit = Math.min(200, Math.max(1, Math.floor(Number(options.limit) || 100)));
+  const offset = Math.min(total, Math.max(0, Math.floor(Number(options.offset) || 0)));
+  return {
+    projectPath: project,
+    engine: manifest.engine === 'rpg-maker-mz' ? 'MZ' : manifest.engine === 'rpg-maker-mv' ? 'MV' : 'unknown',
+    projectCompatibility: uiDesignerProjectCompatibility(manifest),
+    resources: filtered.slice(offset, offset + limit),
+    total,
+    offset,
+    limit,
+    hasMore: offset + limit < total,
+  };
 }
 
 function resolveExistingDirectory(value: string): string {

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import {
   inspectUiDesignerResources,
+  inspectUiDesignerResourcesAsync,
+  inspectUiDesignerResourceReferences,
   readUiDesignerSceneData,
   selectUiDesignerFrameFolder,
   UiDesignerFrameFolderSelectionError,
@@ -24,6 +26,30 @@ afterEach(() => {
 });
 
 describe('ui designer resource catalog', () => {
+  test('loads one category asynchronously in a bounded page and resolves references without a recursive scan', async () => {
+    const project = path.join(tempRoot, 'async-project');
+    fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+    fs.mkdirSync(path.join(project, 'img', 'pictures'), { recursive: true });
+    fs.mkdirSync(path.join(project, 'audio'), { recursive: true });
+    fs.writeFileSync(path.join(project, 'Game.rpgproject'), 'RPGMV', 'utf8');
+    fs.writeFileSync(path.join(project, 'data', 'System.json'), '{}', 'utf8');
+    fs.writeFileSync(path.join(project, 'data', 'MapInfos.json'), '[null]', 'utf8');
+    fs.writeFileSync(path.join(project, 'img', 'pictures', 'one.png'), Buffer.from('png'));
+    fs.writeFileSync(path.join(project, 'img', 'pictures', 'two.png'), Buffer.from('png'));
+    fs.writeFileSync(path.join(project, 'audio', 'theme.ogg'), Buffer.from('audio'));
+
+    const page = await inspectUiDesignerResourcesAsync(project, { category: 'image', limit: 1 });
+    assert.equal(page.total, 2);
+    assert.equal(page.resources.length, 1);
+    assert.equal(page.hasMore, true);
+    assert.equal(page.resources[0]?.category, 'image');
+
+    const references = await inspectUiDesignerResourceReferences(project, ['img/pictures/one.png', 'img/pictures/missing.png']);
+    assert.equal(references.resources.length, 2);
+    assert.equal(references.resources.find((entry) => entry.relativePath === 'img/pictures/one.png')?.exists, true);
+    assert.equal(references.resources.find((entry) => entry.relativePath === 'img/pictures/missing.png')?.exists, false);
+  });
+
   test('uses the inspected root-data layout and returns project asset URLs', () => {
     const project = path.join(tempRoot, 'project');
     fs.mkdirSync(path.join(project, 'data'), { recursive: true });

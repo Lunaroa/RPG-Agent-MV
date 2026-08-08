@@ -9,6 +9,7 @@ import type {
   UiDesignerFileConflict,
   UiDesignerRecentFileRecord,
   UiDesignerRecoveryRecord,
+  UiDesignerResourceRequest,
   UiEventMap,
   UiFileStatus,
   UiPreviewState,
@@ -17,7 +18,6 @@ import type {
   UiPoint,
   UiRect,
   UiGuide,
-  UiNodeGroup,
   UiRuntimeStatus,
   UiRuntimeDiagnostic,
   UiDesignerRuntimeStageResult,
@@ -40,7 +40,6 @@ import { alignNodes, distributeNodes, fitViewport, panViewport, snapPoint, updat
 import { UiDesignerHistory } from '../models/history'
 import { analyzePerformance } from '../models/performance'
 import { copySelection, groupNodes, moveNodeStep, moveNodeToEdge, pasteClipboard, reparentNode, ungroupNodes } from '../models/tree'
-import { createNodeGroup, validateNodeGroup } from '../models/nodeGroups'
 import { validateDocument } from '../models/validation'
 import { UI_DESIGNER_BUILT_IN_TEMPLATES, createBuiltInUiDesignerTemplate, isBuiltInUiDesignerTemplate } from '../models/templates'
 import { createUiDesignerDraftCoordinator, type UiDesignerDraftCoordinator } from './draftCoordinator'
@@ -50,7 +49,6 @@ import { createUiDesignerEditorPreviewState } from './editorPreviewState'
 import { createUiDesignerSceneHistoryOperations } from './sceneHistoryOperations'
 import { createUiDesignerPersistenceOperations } from './persistenceOperations'
 import { createUiDesignerRuntimeOperations } from './runtimeOperations'
-import { createUiDesignerTemplateOperations } from './templateOperations'
 import { clearRecoverySnapshot } from './recoveryLifecycle'
 
 export interface UiDesignerSceneState {
@@ -80,7 +78,6 @@ export interface UiDesignerPreferences {
   defaultAuthor: string
   autoFormat: boolean
   leftPaneWidth: number
-  leftNodePaneHeight: number
   centerPaneWidth: number
   rightPaneWidth: number
   [key: string]: unknown
@@ -106,6 +103,27 @@ function normalizeHistoryLimit(value: unknown): number {
   return Math.min(MAX_HISTORY_LIMIT, Math.max(1, Math.floor(value)))
 }
 
+const RESOURCE_PROPERTY_KEYS = new Set([
+  'path', 'backgroundPath', 'imagePath', 'fontFile', 'hoverSe', 'clickSe', 'posterPath', 'trackImage', 'fillImage',
+])
+
+function collectReferencedResourcePaths(document: UiDesignerDocument): string[] {
+  const paths = new Set<string>()
+  const add = (value: unknown) => {
+    if (typeof value !== 'string') return
+    const normalized = value.replaceAll('\\', '/').trim()
+    if (!normalized || normalized.includes('://') || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) return
+    const lower = normalized.toLocaleLowerCase()
+    if (lower.startsWith('img/') || lower.startsWith('audio/') || lower.startsWith('movies/') || lower.startsWith('fonts/') || lower.startsWith('www/img/') || lower.startsWith('www/audio/') || lower.startsWith('www/movies/') || lower.startsWith('www/fonts/')) paths.add(normalized)
+  }
+  for (const node of document.nodes) {
+    const props = node.props as unknown as Record<string, unknown>
+    for (const [key, value] of Object.entries(props)) if (RESOURCE_PROPERTY_KEYS.has(key)) add(value)
+    if (node.type === 'frameAnimation') for (const frame of node.props.frames) add(frame.path)
+  }
+  return [...paths]
+}
+
 function createSceneState(document = createUiDocument(), id = `scene_tab_${++sceneSequence}`, metadata: { sourcePath?: string; openedMetadata?: UiDesignerFileMetadata; recoveryId?: string } = {}, historyLimit = DEFAULT_HISTORY_LIMIT): UiDesignerSceneState {
   return { id, document, history: new UiDesignerHistory(document, historyLimit), ...metadata }
 }
@@ -123,7 +141,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const draftCode = ref<Record<string, string>>({})
   const draftRects = ref<Record<string, UiRect>>({})
   const draftRotations = ref<Record<string, number>>({})
-  const activeLeftPanel = ref<'nodes' | 'resources'>('nodes')
   const editingMode = ref<'design' | 'code'>('design')
   const codeTab = ref<'ready' | 'update'>('ready')
   const isPreviewing = ref(false)
@@ -152,19 +169,11 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const recoveryRecords = ref<UiDesignerRecoveryRecord[]>([])
   const recoveryCleanupPending = ref(false)
   const templates = ref<string[]>([...UI_DESIGNER_BUILT_IN_TEMPLATES])
-  const nodeTemplates = ref<UiNodeGroup[]>([])
-  const preferences = ref<UiDesignerPreferences>({ historyLimit: DEFAULT_HISTORY_LIMIT, gridEnabled: true, snapEnabled: true, tourCompleted: false, autoSaveIntervalMinutes: 1, gridSize: 16, gridColor: '#394150', snapSensitivity: 8, defaultCanvasWidth: 816, defaultCanvasHeight: 624, codeFontFamily: 'ui-monospace', codeFontSize: 12, codeTabSize: 2, theme: 'system', defaultAuthor: '', autoFormat: false, leftPaneWidth: 260, leftNodePaneHeight: 420, centerPaneWidth: 640, rightPaneWidth: 320 })
+  const preferences = ref<UiDesignerPreferences>({ historyLimit: DEFAULT_HISTORY_LIMIT, gridEnabled: true, snapEnabled: true, tourCompleted: false, autoSaveIntervalMinutes: 1, gridSize: 16, gridColor: '#394150', snapSensitivity: 8, defaultCanvasWidth: 816, defaultCanvasHeight: 624, codeFontFamily: 'ui-monospace', codeFontSize: 12, codeTabSize: 2, theme: 'system', defaultAuthor: '', autoFormat: false, leftPaneWidth: 260, centerPaneWidth: 640, rightPaneWidth: 320 })
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const projectGeneration = ref(0)
-  const searchTerm = ref('')
   const draftCoordinator: UiDesignerDraftCoordinator = createUiDesignerDraftCoordinator()
   const previewPoller = createUiDesignerPreviewPoller(() => adapters.preview, { isPreviewing, previewStatus, previewMessage, previewSessionId, previewDiagnostics, projectGeneration })
-
-  for (const templateName of UI_DESIGNER_BUILT_IN_TEMPLATES) {
-    const templateDocument = createBuiltInUiDesignerTemplate(templateName)
-    const roots = templateDocument.nodes.find((node) => node.id === 'node_root')?.children ?? []
-    if (roots.length) nodeTemplates.value.push(createNodeGroup(templateDocument, roots, templateName))
-  }
 
   const historyLimit = () => normalizeHistoryLimit(preferences.value.historyLimit)
   const applyHistoryLimit = (limit = historyLimit()) => {
@@ -200,12 +209,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const canLoadResources = computed(() => hasProject.value && adapters.resource !== createUiDesignerAdapters().resource)
   const canPreview = computed(() => hasProject.value && adapters.preview !== createUiDesignerAdapters().preview)
   const canEditCode = computed(() => adapters.code.available)
-  const filteredResources = computed(() => {
-    const query = searchTerm.value.trim().toLocaleLowerCase()
-    if (!resourceCatalog.value) return []
-    if (!query) return resourceCatalog.value.resources
-    return resourceCatalog.value.resources.filter((resource) => `${resource.name} ${resource.path}`.toLocaleLowerCase().includes(query))
-  })
 
   const persistenceOperations = createUiDesignerPersistenceOperations({
     getFile: () => adapters.file,
@@ -220,6 +223,32 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     onRecoveryRemoved: () => { recoveryCleanupPending.value = false },
   })
   const { removeRecentFile, removeRecovery, loadPreferences, savePreferences } = persistenceOperations
+
+  const loadReferencedResources = async (sourceDocument = document.value) => {
+    const referencedPaths = collectReferencedResourcePaths(sourceDocument)
+    if (!hasProject.value || !referencedPaths.length || !adapters.resource?.loadReferenced) return true
+    const generation = projectGeneration.value
+    try {
+      const result = await adapters.resource.loadReferenced({ referencedPaths })
+      if (generation !== projectGeneration.value) return false
+      if (result?.status !== 'success' || !result.value) return false
+      const incoming = cloneCatalog(result.value)
+      const previous = resourceCatalog.value
+      const incomingIds = new Set(incoming.resources.map((resource) => resource.id))
+      resourceCatalog.value = {
+        ...incoming,
+        resources: [...(previous?.resources ?? []).filter((resource) => !incomingIds.has(resource.id)), ...incoming.resources],
+      }
+      resourceStatus.value = 'success'
+      resourceMessage.value = result.message
+      return true
+    } catch (error) {
+      if (generation !== projectGeneration.value) return false
+      resourceStatus.value = 'error'
+      resourceMessage.value = error instanceof Error ? error.message : String(error)
+      return false
+    }
+  }
 
   const setProjectContext = async (nextProjectPath: string | undefined, nextAdapters?: UiDesignerAdapterBundle) => {
     if (projectPath.value === nextProjectPath && !nextAdapters) return true
@@ -265,7 +294,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       previewPoller.start(projectGeneration.value, previousPreviewSessionId)
     }
     void loadWelcomeRecords()
-    void loadResources()
+    void loadReferencedResources()
     void checkRuntime()
     return true
   }
@@ -418,26 +447,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     clearConflictState,
     checkRuntime,
   } = runtimeOperations
-
-  const templateOperations = createUiDesignerTemplateOperations({
-    getFile: () => adapters.file,
-    canSave,
-    document,
-    selectedIds,
-    nodeTemplates,
-    getDefaultParentId: () => selectedNode.value?.type === 'container' ? selectedNode.value.id : 'node_root',
-    replaceDocument: replaceActiveDocument,
-    setSelectedIds: (ids) => { selectedIds.value = ids },
-    setActionError: (message) => { actionError.value = message },
-    flushDrafts,
-  })
-  const {
-    saveNodeTemplate,
-    insertNodeTemplate,
-    removeNodeTemplate,
-    importNodeTemplate,
-    exportNodeTemplate,
-  } = templateOperations
 
   const setGridEnabled = (enabled: boolean) => {
     const next = cloneUiDocument(document.value)
@@ -961,6 +970,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
         scene.history.markSaved()
         scenes.value.push(scene)
         activateScene(scene.id)
+        void loadReferencedResources(result.value)
         void loadWelcomeRecords()
         return true
       }
@@ -978,25 +988,14 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     if (!canSave.value) return false
     const generation = projectGeneration.value
     try {
-      const [recent, recovery, nodeTemplateList] = await Promise.all([
+      const [recent, recovery] = await Promise.all([
         adapters.file.listRecentFiles(),
         adapters.file.listRecovery(),
-        adapters.file.listNodeTemplates(),
       ])
       if (generation !== projectGeneration.value) return false
       if (recent.status === 'success' && recent.value) recentFiles.value = recent.value
       if (recovery.status === 'success' && recovery.value) recoveryRecords.value = recovery.value
-      // Scene templates are deterministic built-ins.  User persistence is
-      // intentionally handled by the separate .mztemplate node-group API.
       templates.value = [...UI_DESIGNER_BUILT_IN_TEMPLATES]
-      if (nodeTemplateList.status === 'success' && nodeTemplateList.value) {
-        const builtIns = nodeTemplates.value.filter((item) => item.name.startsWith('builtin:'))
-        const loaded = (await Promise.all(nodeTemplateList.value.map(async (record) => {
-          const read = await adapters.file.readNodeTemplate(record.name)
-          return read.status === 'success' && read.value && validateNodeGroup(read.value) ? read.value : undefined
-        }))).filter((group): group is UiNodeGroup => Boolean(group))
-        if (generation === projectGeneration.value) nodeTemplates.value = [...builtIns, ...loaded]
-      }
       return true
     } catch (error) {
       fileStatus.value = 'error'
@@ -1024,6 +1023,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       scene.document = scene.history.commit(result.value.document, 'Restore recovery draft')
       scenes.value.push(scene)
       activateScene(scene.id)
+      void loadReferencedResources(result.value.document)
       return true
     } catch (error) {
       fileMessage.value = error instanceof Error ? error.message : String(error)
@@ -1087,36 +1087,45 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
   const clearFileConflict = () => clearConflictState()
 
-  const loadResources = async () => {
+  const loadResources = async (request: UiDesignerResourceRequest = {}) => {
     if (!hasProject.value) {
       resourceStatus.value = 'unavailable'
       resourceMessage.value = 'Select a project before loading resources.'
       resourceCatalog.value = null
-      return false
+      return null
     }
     if (!canLoadResources.value) {
       resourceStatus.value = 'unavailable'
       resourceMessage.value = 'Resource adapter is not connected.'
-      return false
+      return null
     }
     resourceStatus.value = 'busy'
     const generation = projectGeneration.value
     try {
-      const result: UiDesignerResourceLoadResult = await adapters.resource.loadProject()
-      if (generation !== projectGeneration.value) return false
+      const result: UiDesignerResourceLoadResult = await adapters.resource.loadProject(request)
+      if (generation !== projectGeneration.value) return null
       if (!result) {
         resourceStatus.value = 'idle'
         resourceMessage.value = 'No project resources were selected.'
-        return false
+        return null
       }
       resourceStatus.value = result.status
       resourceMessage.value = result.message
-      if ((result.status === 'success' || result.status === 'ready') && result.value) resourceCatalog.value = cloneCatalog(result.value)
-      return Boolean(result.value)
+      if ((result.status === 'success' || result.status === 'ready') && result.value) {
+        const incoming = cloneCatalog(result.value)
+        const incomingIds = new Set(incoming.resources.map((resource) => resource.id))
+        const previous = resourceCatalog.value
+        resourceCatalog.value = {
+          ...incoming,
+          resources: [...(previous?.resources ?? []).filter((resource) => !incomingIds.has(resource.id)), ...incoming.resources],
+        }
+        return incoming
+      }
+      return null
     } catch (error) {
       resourceStatus.value = 'error'
       resourceMessage.value = error instanceof Error ? error.message : String(error)
-      return false
+      return null
     } finally {
       if (resourceStatus.value === 'busy') resourceStatus.value = 'error'
     }
@@ -1170,7 +1179,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return savePreferences({ snapEnabled: enabled })
   }
 
-  const { startPreview, stopPreview, startEditorPreview, stopEditorPreview } = createUiDesignerPreviewOperations({
+  const { startPreview, stopPreview, startEditorPreview: startRawEditorPreview, stopEditorPreview: stopRawEditorPreview } = createUiDesignerPreviewOperations({
     getPreview: () => adapters.preview,
     projectPath,
     projectGeneration,
@@ -1186,6 +1195,23 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     poller: previewPoller,
     flushDrafts,
   })
+
+  // Editor preview always renders the design canvas. Keep the user's source
+  // mode outside the document/history so leaving preview restores code mode
+  // exactly when that was the entry point.
+  let editorPreviewModeBefore: 'design' | 'code' | undefined
+  const startEditorPreview = () => {
+    if (isEditorPreviewing.value) return true
+    editorPreviewModeBefore = editingMode.value
+    editingMode.value = 'design'
+    return startRawEditorPreview()
+  }
+  const stopEditorPreview = () => {
+    const result = stopRawEditorPreview()
+    if (editorPreviewModeBefore) editingMode.value = editorPreviewModeBefore
+    editorPreviewModeBefore = undefined
+    return result
+  }
 
   const updateNodePositionWithSnap = (nodeId: string, position: { x: number; y: number }) => {
     const settings = document.value.canvas
@@ -1303,7 +1329,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     draftRects,
     draftRotations,
     draftCoordinator,
-    activeLeftPanel,
+    projectPath,
     editingMode,
     codeTab,
     isPreviewing,
@@ -1335,10 +1361,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     recoveryRecords,
     recoveryCleanupPending,
     templates,
-    nodeTemplates,
     preferences,
-    searchTerm,
-    filteredResources,
     validation,
     performance,
     isDirty,
@@ -1406,11 +1429,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     removeRecovery,
     restoreRecovery,
     loadTemplate,
-    saveNodeTemplate,
-    insertNodeTemplate,
-    removeNodeTemplate,
-    importNodeTemplate,
-    exportNodeTemplate,
     loadPreferences,
     savePreferences,
     setHistoryLimit,

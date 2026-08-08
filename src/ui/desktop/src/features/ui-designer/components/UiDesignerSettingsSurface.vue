@@ -6,10 +6,8 @@ const props = defineProps<{
   modelValue: boolean
   designer: UiDesignerController
   leftPaneWidth: number
-  leftNodePaneHeight: number
   rightPaneWidth: number
   clampPane: (side: 'left' | 'right', value: number) => number
-  clampLeftStack: (value: number) => number
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 const { t } = useUiDesignerI18n()
@@ -18,10 +16,6 @@ const updatePane = (side: 'left' | 'right', value: unknown) => {
   const fallback = side === 'left' ? 260 : 320
   const next = props.clampPane(side, Number(value ?? fallback))
   void props.designer.savePreferences(side === 'left' ? { leftPaneWidth: next } : { rightPaneWidth: next })
-}
-const updateNodePane = (value: unknown) => {
-  const next = props.clampLeftStack(Number(value ?? 420))
-  void props.designer.savePreferences({ leftNodePaneHeight: next })
 }
 </script>
 
@@ -54,7 +48,7 @@ const updateNodePane = (value: unknown) => {
         <el-form-item :label="t('theme')"><el-select :model-value="String(designer.preferences.theme ?? 'system')" @update:model-value="void designer.savePreferences({ theme: $event })"><el-option value="system" :label="t('themeSystem')" /><el-option value="light" :label="t('themeLight')" /><el-option value="dark" :label="t('themeDark')" /></el-select></el-form-item>
         <el-form-item :label="t('autoFormat')"><el-switch :model-value="Boolean(designer.preferences.autoFormat)" @update:model-value="void designer.savePreferences({ autoFormat: $event })" /></el-form-item>
         <el-divider />
-        <el-form-item :label="t('paneSizes')"><div class="inline-fields"><el-input-number :model-value="props.leftPaneWidth" :min="200" :max="500" @change="updatePane('left', $event)" /><el-input-number :model-value="props.leftNodePaneHeight" :min="180" :max="800" @change="updateNodePane($event)" /><el-input-number :model-value="props.rightPaneWidth" :min="240" :max="550" @change="updatePane('right', $event)" /></div></el-form-item>
+        <el-form-item :label="t('paneSizes')"><div class="inline-fields"><el-input-number :model-value="props.leftPaneWidth" :min="200" :max="500" @change="updatePane('left', $event)" /><el-input-number :model-value="props.rightPaneWidth" :min="240" :max="550" @change="updatePane('right', $event)" /></div></el-form-item>
       </el-form>
     </div>
   </el-dialog>

@@ -10,7 +10,6 @@ import UiDesignerCanvas from './UiDesignerCanvas.vue'
 import UiDesignerCodePanel from './UiDesignerCodePanel.vue'
 import UiDesignerInspector from './UiDesignerInspector.vue'
 import UiDesignerNodePanel from './UiDesignerNodePanel.vue'
-import UiDesignerResourcePanel from './UiDesignerResourcePanel.vue'
 import UiDesignerSceneTabs from './UiDesignerSceneTabs.vue'
 import UiDesignerStatusBar from './UiDesignerStatusBar.vue'
 import UiDesignerToolbar from './UiDesignerToolbar.vue'
@@ -36,13 +35,10 @@ const exportCompleted = ref(false)
 const newSceneDraft = reactive({ name: '', width: 816, height: 624, sceneBase: 'Scene_Base' })
 const newSceneTemplate = ref('blank')
 const leftPaneWidth = ref(260)
-const leftNodePaneHeight = ref(420)
 const centerPaneWidth = ref(640)
 const rightPaneWidth = ref(320)
 const paneDrag = ref<{ side: 'left' | 'right'; startX: number; left: number; center: number; right: number }>()
-const leftStackDrag = ref<{ startY: number; nodeHeight: number }>()
 const workspaceStyle = computed(() => ({ gridTemplateColumns: `${leftPaneWidth.value}px 5px minmax(${centerPaneWidth.value}px, 1fr) 5px ${rightPaneWidth.value}px` }))
-const leftStackStyle = computed(() => ({ gridTemplateRows: `${leftNodePaneHeight.value}px 5px minmax(160px, 1fr)` }))
 const sceneTemplateOptions = computed(() => ['blank', ...rawDesigner.templates.value])
 const sceneTemplateLabels: Record<string, UiDesignerMessageKey> = {
   'builtin:title': 'sceneTemplateTitle', 'builtin:menu': 'sceneTemplateMenu', 'builtin:dialog': 'sceneTemplateDialog', 'builtin:scrolling-credits': 'sceneTemplateScrollingCredits', 'builtin:portrait-frame': 'sceneTemplatePortraitFrame', 'builtin:status-bars': 'sceneTemplateStatusBars', 'builtin:game-over': 'sceneTemplateGameOver', 'builtin:save-slots': 'sceneTemplateSaveSlots', 'builtin:hud-bars': 'sceneTemplateHudBars', 'builtin:item-tooltip': 'sceneTemplateItemTooltip', 'builtin:choice-menu': 'sceneTemplateChoiceMenu', 'builtin:logo-animation': 'sceneTemplateLogoAnimation',
@@ -122,27 +118,9 @@ const endPaneDrag = () => {
   window.removeEventListener('pointermove', movePaneDrag)
   void rawDesigner.savePreferences({ leftPaneWidth: leftPaneWidth.value, centerPaneWidth: centerPaneWidth.value, rightPaneWidth: rightPaneWidth.value })
 }
-const clampLeftStack = (value: number) => Math.min(800, Math.max(180, value))
-const beginLeftStackDrag = (event: PointerEvent) => {
-  if (designer.isEditorPreviewing) return
-  leftStackDrag.value = { startY: event.clientY, nodeHeight: leftNodePaneHeight.value }
-  window.addEventListener('pointermove', moveLeftStackDrag)
-  window.addEventListener('pointerup', endLeftStackDrag, { once: true })
-}
-const moveLeftStackDrag = (event: PointerEvent) => {
-  if (!leftStackDrag.value) return
-  leftNodePaneHeight.value = clampLeftStack(leftStackDrag.value.nodeHeight + event.clientY - leftStackDrag.value.startY)
-}
-const endLeftStackDrag = () => {
-  if (!leftStackDrag.value) return
-  leftStackDrag.value = undefined
-  window.removeEventListener('pointermove', moveLeftStackDrag)
-  void rawDesigner.savePreferences({ leftNodePaneHeight: leftNodePaneHeight.value })
-}
-watch(() => [designer.preferences.leftPaneWidth, designer.preferences.leftNodePaneHeight, designer.preferences.centerPaneWidth, designer.preferences.rightPaneWidth], ([left, nodeHeight, center, right]) => {
+watch(() => [designer.preferences.leftPaneWidth, designer.preferences.centerPaneWidth, designer.preferences.rightPaneWidth], ([left, center, right]) => {
   if (!paneDrag.value) {
     leftPaneWidth.value = clampPane('left', Number(left ?? 260))
-    leftNodePaneHeight.value = clampLeftStack(Number(nodeHeight ?? 420))
     centerPaneWidth.value = clampPane('center', Number(center ?? 640))
     rightPaneWidth.value = clampPane('right', Number(right ?? 320))
   }
@@ -194,20 +172,16 @@ onMounted(async () => {
   await rawDesigner.loadPreferences()
   if (!Boolean(designer.preferences.tourCompleted)) openTour()
 })
-onBeforeUnmount(() => { endPaneDrag(); endLeftStackDrag(); window.removeEventListener('keydown', shortcutRegistry.handle); shortcutRegistry.unregisterAll(); void rawDesigner.stopPreview(); rawDesigner.stopEditorPreview(); void rawDesigner.flushRecovery() })
+onBeforeUnmount(() => { endPaneDrag(); window.removeEventListener('keydown', shortcutRegistry.handle); shortcutRegistry.unregisterAll(); void rawDesigner.stopPreview(); rawDesigner.stopEditorPreview(); void rawDesigner.flushRecovery() })
 </script>
 
 <template>
-    <section class="ui-designer-shell" :class="{ 'editor-preview-active': designer.isEditorPreviewing }" data-ui-id="ui-designer-shell">
+    <section class="ui-designer-shell" :class="{ 'editor-preview-active': designer.isEditorPreviewing, 'code-mode-active': designer.editingMode === 'code' && !designer.isEditorPreviewing }" data-ui-id="ui-designer-shell">
     <UiDesignerToolbar :designer="designer" @new-scene="openNewScene" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
     <UiDesignerSceneTabs :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :style="workspaceStyle">
       <aside class="left-pane">
-        <div class="left-stack" :style="leftStackStyle">
-          <section class="left-stack-pane"><UiDesignerNodePanel :designer="designer" /></section>
-          <div class="left-stack-splitter" role="separator" :aria-label="t('resources')" @pointerdown="beginLeftStackDrag" />
-          <section class="left-stack-pane"><UiDesignerResourcePanel :designer="designer" /></section>
-        </div>
+        <UiDesignerNodePanel :designer="designer" />
       </aside>
       <div class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
       <main class="center-pane">
@@ -221,7 +195,7 @@ onBeforeUnmount(() => { endPaneDrag(); endLeftStackDrag(); window.removeEventLis
     <UiDesignerStatusBar :designer="designer" />
 
     <UiDesignerNewSceneSurface v-if="surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="newSceneTemplate = $event" @create="createNewScene" @cancel="surface = null" />
-    <UiDesignerSettingsSurface v-if="surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :left-node-pane-height="leftNodePaneHeight" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" :clamp-left-stack="clampLeftStack" @update:model-value="closeSurface" />
+    <UiDesignerSettingsSurface v-if="surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
     <UiDesignerExportSurface v-if="surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
     <UiDesignerHelpSurface v-if="surface === 'help' || surface === 'shortcuts' || surface === 'tour'" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
 
@@ -243,13 +217,11 @@ onBeforeUnmount(() => { endPaneDrag(); endLeftStackDrag(); window.removeEventLis
 .designer-workspace { display: grid; grid-template-columns: 260px 5px minmax(640px, 1fr) 5px 320px; flex: 1; min-height: 0; }
 .workspace-splitter { position: relative; z-index: 3; cursor: col-resize; background: var(--app-border); }.workspace-splitter::after { position: absolute; inset: 0 -3px; content: ''; }.editor-preview-active .workspace-splitter { pointer-events: none; opacity: .55; }
 .left-pane { display: flex; min-height: 0; padding: 9px; border-right: 1px solid var(--app-border); background: var(--app-bg); }
-.left-stack { display: grid; width: 100%; min-height: 0; gap: 0; }
-.left-stack-pane { min-height: 0; overflow: hidden; }
-.left-stack-pane > :deep(*) { min-height: 0; height: 100%; }
-.left-stack-splitter { position: relative; z-index: 3; cursor: row-resize; background: var(--app-border); }.left-stack-splitter::after { position: absolute; inset: -3px 0; content: ''; }.editor-preview-active .left-stack-splitter { pointer-events: none; opacity: .55; }
 .center-pane { display: flex; min-width: 0; min-height: 0; }
 .inspector-panel { border-left: 1px solid var(--app-border); }
-.editor-preview-active .left-pane, .editor-preview-active .center-pane, .editor-preview-active .inspector-panel { opacity: .55; pointer-events: none; }
+.code-mode-active .left-pane, .code-mode-active .workspace-splitter, .code-mode-active .inspector-panel { display: none; }
+.code-mode-active .designer-workspace { grid-template-columns: minmax(0, 1fr) !important; }
+.editor-preview-active .left-pane, .editor-preview-active .inspector-panel { opacity: .55; pointer-events: none; }
 .editor-preview-active .center-pane { pointer-events: none; }
 .dialog-stack, .dialog-copy, .tour-copy { color: var(--app-ink); font-size: 13px; line-height: 1.6; }.dialog-copy p { margin: 0 0 10px; }.tour-copy p { min-height: 50px; }
 .shortcut-list { display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; margin: 0; font-size: 12px; }.shortcut-list dt { color: var(--app-ink-soft); }.shortcut-list dd { margin: 0; }

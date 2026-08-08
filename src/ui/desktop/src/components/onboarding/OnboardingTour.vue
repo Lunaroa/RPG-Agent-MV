@@ -598,8 +598,10 @@ watch(() => projectStore.currentProject, () => {
   color: var(--app-accent-ink);
 }
 
-.tour-step-btn.primary:hover {
+.tour-step-btn.primary:hover:not(:disabled),
+.tour-step-btn.primary:focus-visible:not(:disabled) {
   filter: brightness(.97);
+  color: var(--app-accent-ink);
 }
 
 .tour-step-btn:disabled {

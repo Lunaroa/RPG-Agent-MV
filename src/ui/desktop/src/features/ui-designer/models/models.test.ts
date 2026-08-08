@@ -19,17 +19,19 @@ import {
   reparentNode,
   serializeDocument,
   snapPoint,
+  viewportClientToContent,
   viewportClientToWorld,
+  viewportClientToZoomAnchor,
+  viewportContentToClient,
+  worldPointToClient,
   worldPointToViewport,
   worldRectToViewport,
+  zoomViewport,
   nodesIntersectingRect,
   validateDocument,
   validateTreeInvariants,
   UI_DESIGNER_BUILT_IN_TEMPLATES,
   createBuiltInUiDesignerTemplate,
-  createNodeGroup,
-  insertNodeGroup,
-  validateNodeGroup,
   reorderEventActions,
 } from './index'
 
@@ -172,39 +174,6 @@ describe('ui designer document model', () => {
     assert.throws(() => pasteClipboard(document, clipboard, 'button'))
   })
 
-  test('node-group mztemplate inserts at a canvas point with remapped ids and internal actions', () => {
-    const source = createUiDocument()
-    const button = createDefaultNode('button', { id: 'group_button', name: 'GroupButton', parentId: 'node_root', x: 30, y: 40 })
-    button.events.onClick = { actions: [{ type: 'toggleNode', targetNodeId: button.id }] }
-    source.nodes.push(button)
-    source.nodes[0].children.push(button.id)
-    const group = createNodeGroup(source, [button.id], 'ChoiceGroup')
-    assert.equal(group.format, 'mztemplate')
-    assert.equal(validateNodeGroup(group), true)
-    const inserted = insertNodeGroup(source, group, 'node_root', { x: 300, y: 200 })
-    assert.equal(inserted.ids.length, 1)
-    assert.notEqual(inserted.ids[0], button.id)
-    const copy = inserted.document.nodes.find((node) => node.id === inserted.ids[0])!
-    assert.equal(copy.props.x, 300)
-    if (copy.type === 'button') assert.equal(copy.events.onClick?.actions[0].type === 'toggleNode' ? copy.events.onClick.actions[0].targetNodeId : '', copy.id)
-  })
-
-  test('node-group insertion translates every nested descendant in absolute canvas coordinates', () => {
-    const source = createUiDocument()
-    const container = createDefaultNode('container', { id: 'group_container', name: 'GroupContainer', parentId: 'node_root', x: 40, y: 50, width: 300, height: 200 })
-    const child = createDefaultNode('container', { id: 'group_child', name: 'GroupChild', parentId: container.id, x: 70, y: 80, width: 180, height: 120 })
-    const grandchild = createDefaultNode('text', { id: 'group_grandchild', name: 'GroupGrandchild', parentId: child.id, x: 90, y: 100, width: 80, height: 30 })
-    source.nodes.push(container, child, grandchild)
-    source.nodes[0].children.push(container.id)
-    container.children.push(child.id)
-    child.children.push(grandchild.id)
-    const group = createNodeGroup(source, [container.id], 'NestedGroup')
-    const inserted = insertNodeGroup(source, group, 'node_root', { x: 300, y: 320 })
-    const copied = inserted.document.nodes.filter((node) => node.id !== 'node_root' && node.id !== container.id && node.id !== child.id && node.id !== grandchild.id)
-    assert.equal(copied.length, 3)
-    const positions = copied.map((node) => [node.props.x, node.props.y])
-    assert.deepEqual(positions.sort(), [[300, 320], [330, 350], [350, 370]])
-  })
 })
 
 describe('ui designer export and validation', () => {
@@ -421,6 +390,28 @@ describe('ui designer history, geometry and performance', () => {
     const content = worldPointToViewport(world, frame, viewport)
     assert.deepEqual(content, { x: 98, y: 68 })
     assert.deepEqual(worldRectToViewport({ x: 20, y: 15, width: 10, height: 5 }, frame, viewport), { x: 98, y: 68, width: 20, height: 10 })
+  })
+
+  test('keeps client/world round trips and zoom-at-cursor invariant across zoom levels', () => {
+    const frame = { left: 120, top: 70, scrollLeft: 230, scrollTop: 145, stageMargin: 46 }
+    const worldPoint = { x: 37.5, y: 18.25 }
+    for (const zoom of [0.5, 1, 2]) {
+      const viewport = { zoom, panX: -24, panY: 31, width: 800, height: 600 }
+      const content = worldPointToViewport(worldPoint, frame, viewport)
+      const client = viewportContentToClient(content, frame)
+      assert.deepEqual(viewportClientToContent(client, frame), content)
+      const roundTrip = viewportClientToWorld(client, frame, viewport)
+      assert.ok(Math.abs(roundTrip.x - worldPoint.x) < 1e-9)
+      assert.ok(Math.abs(roundTrip.y - worldPoint.y) < 1e-9)
+      assert.deepEqual(worldPointToClient(worldPoint, frame, viewport), client)
+
+      const anchor = viewportClientToZoomAnchor(client, frame)
+      const next = zoomViewport(viewport, Math.min(3, zoom * 1.5), anchor)
+      const before = { x: (anchor.x - viewport.panX) / viewport.zoom, y: (anchor.y - viewport.panY) / viewport.zoom }
+      const after = { x: (anchor.x - next.panX) / next.zoom, y: (anchor.y - next.panY) / next.zoom }
+      assert.ok(Math.abs(after.x - before.x) < 1e-9)
+      assert.ok(Math.abs(after.y - before.y) < 1e-9)
+    }
   })
 
   test('reports particle and code complexity suggestions', () => {

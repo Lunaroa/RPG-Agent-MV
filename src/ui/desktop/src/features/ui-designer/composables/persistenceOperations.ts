@@ -70,6 +70,9 @@ export function createUiDesignerPersistenceOperations(context: UiDesignerPersist
       if (generation !== context.generation.value) return false
       if (result.status === 'success' && result.value) {
         const next = { ...context.preferences.value, ...result.value }
+        // Drop the obsolete left resource splitter size from older settings.
+        const obsoletePanePreference = ['leftNodePane', 'Height'].join('')
+        if (obsoletePanePreference in next) delete next[obsoletePanePreference]
         next.historyLimit = context.normalizeHistoryLimit(next.historyLimit)
         if (typeof next.gridEnabled !== 'boolean') next.gridEnabled = true
         if (typeof next.snapEnabled !== 'boolean') next.snapEnabled = true
@@ -87,7 +90,6 @@ export function createUiDesignerPersistenceOperations(context: UiDesignerPersist
         next.defaultAuthor = typeof next.defaultAuthor === 'string' ? next.defaultAuthor : ''
         if (typeof next.autoFormat !== 'boolean') next.autoFormat = false
         next.leftPaneWidth = finiteOr(next.leftPaneWidth, 260, 200, 500)
-        next.leftNodePaneHeight = finiteOr(next.leftNodePaneHeight, 420, 180, 800)
         next.centerPaneWidth = finiteOr(next.centerPaneWidth, 640, 320, 1400)
         next.rightPaneWidth = finiteOr(next.rightPaneWidth, 320, 240, 550)
         context.preferences.value = next

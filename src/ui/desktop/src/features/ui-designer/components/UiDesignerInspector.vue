@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, isRef, ref, watch, type Ref } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
-import type { UiNode, UiRuntimeDiagnostic, UiValidationIssue } from '@contract/ui-designer'
+import type { UiNode, UiResourceEntry, UiRuntimeDiagnostic, UiValidationIssue } from '@contract/ui-designer'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiPropertyField from './UiPropertyField.vue'
 import UiDesignerConditions from './UiDesignerConditions.vue'
@@ -10,6 +10,7 @@ import UiDesignerAnimations from './UiDesignerAnimations.vue'
 import UiPaddingEditor from './UiPaddingEditor.vue'
 import UiButtonStatesEditor from './UiButtonStatesEditor.vue'
 import UiFrameListEditor from './UiFrameListEditor.vue'
+import UiDesignerResourcePicker from './UiDesignerResourcePicker.vue'
 
 interface FieldDescriptor {
   key: string
@@ -40,6 +41,31 @@ const selectedRuntimeDiagnostics = computed(() => {
 })
 const nodeNameDraft = ref('')
 watch(selectedNode, (node) => { nodeNameDraft.value = node?.name ?? '' }, { immediate: true })
+const resourcePickerVisible = ref(false)
+const resourcePickerCategory = ref<UiResourceEntry['category']>('image')
+const resourcePickerCurrentPath = ref('')
+let resolveResourcePicker: ((path: string | null) => void) | undefined
+const openResourcePicker = (category: FieldDescriptor['resourceCategory'] = 'image', currentPath = '') => new Promise<string | null>((resolve) => {
+  resolveResourcePicker?.(null)
+  resolveResourcePicker = resolve
+  resourcePickerCategory.value = category ?? 'image'
+  resourcePickerCurrentPath.value = currentPath
+  resourcePickerVisible.value = true
+})
+const selectResource = (path: string) => {
+  const resolve = resolveResourcePicker
+  resolveResourcePicker = undefined
+  resourcePickerVisible.value = false
+  resolve?.(path)
+}
+const closeResourcePicker = (visible: boolean) => {
+  resourcePickerVisible.value = visible
+  if (!visible) {
+    const resolve = resolveResourcePicker
+    resolveResourcePicker = undefined
+    resolve?.(null)
+  }
+}
 
 const labels: Record<string, UiDesignerMessageKey> = {
   x: 'x' as UiDesignerMessageKey, y: 'y' as UiDesignerMessageKey, width: 'width', height: 'height', scaleX: 'scaleX', scaleY: 'scaleY', rotate: 'rotate', opacity: 'opacity', visible: 'visible', anchorX: 'anchorX', anchorY: 'anchorY', zIndex: 'zIndex',
@@ -62,7 +88,6 @@ const enumLabels: Record<string, UiDesignerMessageKey> = {
   none: 'optionNone', stretch: 'optionStretch', cover: 'optionCover', contain: 'optionContain', tile: 'optionTile', horizontal: 'optionHorizontal', vertical: 'optionVertical', both: 'optionBoth', normal: 'optionNormal', add: 'optionAdd', multiply: 'optionMultiply', screen: 'optionScreen', overlay: 'optionOverlay', bold: 'optionBold', light: 'optionLight', left: 'optionLeft', center: 'optionCenter', right: 'optionRight', top: 'optionTop', middle: 'optionMiddle', bottom: 'optionBottom', point: 'optionPoint', rectangle: 'optionRectangle', circle: 'optionCircle', square: 'optionSquare', star: 'optionStar', leftToRight: 'optionLeftToRight', rightToLeft: 'optionRightToLeft', bottomToTop: 'optionBottomToTop', topToBottom: 'optionTopToBottom',
 }
 const enumOptions = (values: string[]): Array<{ label: string; value: string }> => values.map((value) => ({ label: enumLabels[value] ? t(enumLabels[value]) : value, value }))
-const resourceOptions = (category?: FieldDescriptor['resourceCategory']) => unwrap(designer.resourceCatalog)?.resources.filter((resource) => !category || resource.category === category).map((resource) => ({ label: `${resource.relativePath ?? resource.path}${resource.exists ? '' : ' · ' + t('missingResource')}`, value: resource.relativePath ?? resource.path })) ?? []
 const commonText: FieldDescriptor[] = [
   { key: 'content', kind: 'text', multiline: true }, { key: 'wrapWidth', kind: 'number', min: 0 }, { key: 'richText', kind: 'boolean' }, { key: 'fontFile', kind: 'resource', resourceCategory: 'font' }, { key: 'fontSize', kind: 'number', min: 1 }, { key: 'fontWeight', kind: 'enum', options: enumOptions(['normal', 'bold', 'light']) }, { key: 'italic', kind: 'boolean' }, { key: 'letterSpacing', kind: 'number' }, { key: 'textColor', kind: 'color' }, { key: 'strokeColor', kind: 'color' }, { key: 'strokeWidth', kind: 'number', min: 0 }, { key: 'shadowColor', kind: 'color' }, { key: 'shadowOffsetX', kind: 'number' }, { key: 'shadowOffsetY', kind: 'number' }, { key: 'shadowBlur', kind: 'number', min: 0 }, { key: 'align', kind: 'enum', options: enumOptions(['left', 'center', 'right']) }, { key: 'verticalAlign', kind: 'enum', options: enumOptions(['top', 'middle', 'bottom']) }, { key: 'backgroundColor', kind: 'color' },
 ]
@@ -83,7 +108,7 @@ const fields = computed<FieldDescriptor[]>(() => {
   }
   const known = new Set([...baseFields, ...special[node.type]].map((field) => field.key))
   const inferred = Object.entries(node.props as unknown as Record<string, unknown>).filter(([key, value]) => !known.has(key) && (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string')).map(([key, value]): FieldDescriptor => ({ key, kind: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : key.toLowerCase().includes('color') ? 'color' : 'text' }))
-  return [...baseFields, ...special[node.type].map((field) => field.kind === 'resource' ? { ...field, options: resourceOptions(field.resourceCategory) } : field), ...inferred].map((field) => ({ ...field, help: field.help ?? t('propertyHelpGeneric') }))
+  return [...baseFields, ...special[node.type], ...inferred].map((field) => ({ ...field, help: field.help ?? t('propertyHelpGeneric') }))
 })
 
 const propValue = (key: string): unknown => selectedNode.value ? (selectedNode.value.props as unknown as Record<string, unknown>)[key] : undefined
@@ -136,6 +161,8 @@ const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?
           :step="field.step"
           :options="field.options"
           :resource-category="field.resourceCategory"
+          :resource-picker="field.kind === 'resource' ? () => openResourcePicker(field.resourceCategory, String(propValue(field.key) ?? '')) : undefined"
+          :resource-picker-disabled="field.kind === 'resource' && !designer.hasProject"
           :issues="issuesForField(field)"
           :code-adapter="designer.adapters.code"
           :draft-coordinator="designer.draftCoordinator"
@@ -162,6 +189,8 @@ const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?
         :value="selectedNode.props.frames"
         :resources="designer.resourceCatalog?.resources ?? []"
         :load-folder="loadFrameFolder"
+        :pick-resource="designer.hasProject ? (currentPath) => openResourcePicker('image', currentPath) : undefined"
+        :resource-picker-disabled="!designer.hasProject"
         @update="updateProperty('frames', $event)"
       />
       <el-divider />
@@ -179,6 +208,14 @@ const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?
     <UiDesignerEvents v-else-if="activeSection === 'events'" :designer="designer" :node="selectedNode" />
     <UiDesignerConditions v-else-if="activeSection === 'condition'" :designer="designer" :node="selectedNode" />
     <UiDesignerAnimations v-else :designer="designer" :node="selectedNode" />
+    <UiDesignerResourcePicker
+      :model-value="resourcePickerVisible"
+      :designer="designer"
+      :category="resourcePickerCategory"
+      :current-path="resourcePickerCurrentPath"
+      @update:model-value="closeResourcePicker"
+      @select="selectResource"
+    />
   </aside>
 </template>
 

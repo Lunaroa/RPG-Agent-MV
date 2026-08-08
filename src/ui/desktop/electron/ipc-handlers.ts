@@ -17,6 +17,8 @@ import {
 import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
+import { cleanupProductPluginIpcHandlers, registerProductPluginIpcHandlers } from './product-plugin-ipc-bindings.ts';
+import { cleanupUiDesignerIpcHandlers, registerUiDesignerIpcHandlers } from './ui-designer-ipc-bindings.ts';
 import { parseAssetRangeHeader, withAssetCanvasCors } from './asset-protocol-policy.js';
 import { ensureProjectAssetThumbnail } from './project-asset-thumbnail-cache.js';
 import { ensureEffectThumbnail } from './effect-thumbnail-generator.ts';
@@ -444,6 +446,12 @@ async function loadBackendModules(roots: AppRoots) {
     isolatedPreparation: await import(new URL('desktop/isolated-project-preparation.ts', coreUrl).href),
     mapPreview: await import(new URL('desktop/map-preview-iframe-service.ts', coreUrl).href),
     playtestRuntime: await import(new URL('desktop/interactive-playtest-runtime.ts', coreUrl).href),
+    uiDesigner: {
+      file: await import(new URL('desktop/ui-designer-service.ts', coreUrl).href),
+      resources: await import(new URL('desktop/ui-designer-resource-service.ts', coreUrl).href),
+      runtime: await import(new URL('desktop/ui-designer-runtime-service.ts', coreUrl).href),
+      preview: new (await import(new URL('desktop/ui-designer-preview-service.ts', coreUrl).href)).UiDesignerPreviewService(),
+    },
   };
   desktop.mapOverviewExport.initializeMapOverviewPngExportService(roots.userDataRoot);
   const sessionRuntimeModule = await import(new URL('desktop/agent-session-runtime.ts', coreUrl).href);
@@ -474,6 +482,51 @@ async function loadBackendModules(roots: AppRoots) {
         desktop.playtestPreparation.prepareParticlePreviewInWorker(workflowRoot, project, animation),
     },
   );
+  desktop.uiDesigner.preview.setLauncher({
+    start: async (project: string, options?: { sessionId?: string }) => {
+      const result = await interactivePlaytestService.start(project, {
+        mode: 'project',
+        ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
+      });
+      const run = result.run as InteractivePlaytestRun | undefined;
+      if (run && options?.sessionId && run.sessionId !== options.sessionId) {
+        return { ...result, run: undefined, error: 'The ordinary playtest runner is already owned by another session.' };
+      }
+      return result;
+    },
+    stop: async (runnerId?: string) => {
+      const current = interactivePlaytestService.current() as { run?: InteractivePlaytestRun };
+      if (runnerId && current.run && current.run.runId !== runnerId) {
+        return { error: 'The preview runner session is no longer active.', run: current.run };
+      }
+      return interactivePlaytestService.stop();
+    },
+    current: async (sessionId?: string) => {
+      const result = interactivePlaytestService.current() as { run?: InteractivePlaytestRun; error?: string };
+      if (sessionId && result.run && result.run.sessionId !== sessionId) {
+        return { ...result, run: undefined, error: 'The preview runner session is no longer active.' };
+      }
+      return result;
+    },
+  });
+  desktop.uiDesigner.preview.setPreparationFactory(
+    (workflowRoot: string, project: string, temporaryPrefix?: string) => (
+      desktop.playtestPreparation.prepareUiDesignerPreviewInWorker(workflowRoot, project, temporaryPrefix)
+    ),
+  );
+  registerUiDesignerIpcHandlers(ipcMain, dialog, {
+    workflowRoot: roots.installRoot,
+    dialogParent: (sender) => BrowserWindow.fromWebContents(sender as Electron.WebContents) || undefined,
+    resolveProject: (project?: string) => desktop.project.resolveProjectPath(roots.installRoot, project),
+    file: {
+      ...desktop.uiDesigner.file,
+      revealSource: (filePath: string) => shell.showItemInFolder(filePath),
+    },
+    resources: desktop.uiDesigner.resources,
+    runtime: desktop.uiDesigner.runtime,
+    preview: desktop.uiDesigner.preview,
+    userDataStore: () => new desktop.uiDesigner.file.UiDesignerUserDataStore(roots.userDataRoot),
+  });
   mapPreviewService = new desktop.mapPreview.MapPreviewIframeService(
     roots.userDataRoot,
     {
@@ -1516,6 +1569,10 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   ipcMain.handle('workspace:get', () => {
     return toIpcPayload(getWorkspaceSettings());
   });
+  registerProductPluginIpcHandlers(ipcMain, {
+    readSettings: getWorkspaceSettings,
+    patchSettings: (patch) => patchWorkspaceSettings(patch as WorkspaceSettings),
+  });
 
   // Per-project product config (.luna_rpg/config.json in the game project).
   ipcMain.handle('projectConfig:get', (_event, value?: string) => {
@@ -2142,6 +2199,8 @@ export function cleanupIpcHandlers(): void {
     interactivePlaytestService = null;
   }
   cleanupSessionIpcHandlers(ipcMain);
+  cleanupProductPluginIpcHandlers(ipcMain);
+  cleanupUiDesignerIpcHandlers(ipcMain);
   cleanupMapIpcHandlers(ipcMain);
   cleanupInteractivePlaytestIpcHandlers(ipcMain);
   cleanupMapPreviewIpcHandlers(ipcMain);

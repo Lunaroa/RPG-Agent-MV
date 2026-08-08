@@ -8,6 +8,21 @@ import type {
   MapOverviewPngExportScene,
   MapOverviewScanProgressEvent,
 } from '../../../contract/types.ts';
+import type {
+  UiDesignerDocument,
+  UiDesignerFileRequest,
+  UiDesignerFrameFolderRequest,
+  UiDesignerNodeTemplateExportRequest,
+  UiDesignerPreviewStartRequest,
+  UiDesignerRecoveryWriteRequest,
+  UiDesignerResourceRequest,
+  UiDesignerSceneDataReadRequest,
+  UiDesignerRuntimeExportRequest,
+  UiDesignerRuntimeInstallRequest,
+  UiDesignerSceneStageRequest,
+  UiNodeGroup,
+  UiDesignerProjectRequest,
+} from '../../../contract/ui-designer.ts';
 
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
@@ -76,6 +91,41 @@ contextBridge.exposeInMainWorld('api', {
     get: () => ipcRenderer.invoke('workspace:get'),
     put: (body: unknown) => ipcRenderer.invoke('workspace:put', body),
     patch: (body: unknown) => ipcRenderer.invoke('workspace:patch', body),
+  },
+  productPlugin: {
+    list: () => ipcRenderer.invoke('product-plugin:list'),
+    snapshot: () => ipcRenderer.invoke('product-plugin:snapshot'),
+    setEnabled: (request: unknown) => ipcRenderer.invoke('product-plugin:set-enabled', request),
+  },
+  uiDesigner: {
+    open: (request?: Pick<UiDesignerFileRequest, 'path'>) => ipcRenderer.invoke('ui-designer:file:open', request),
+    save: (request: UiDesignerFileRequest, document: UiDesignerDocument) => ipcRenderer.invoke('ui-designer:file:save', request, document),
+    saveAs: (request: UiDesignerFileRequest, document: UiDesignerDocument) => ipcRenderer.invoke('ui-designer:file:save-as', request, document),
+    revealSource: (sourcePath: string) => ipcRenderer.invoke('ui-designer:file:reveal-source', sourcePath),
+    listResources: (request?: UiDesignerResourceRequest) => ipcRenderer.invoke('ui-designer:resources:list', request),
+    readSceneData: (request: UiDesignerSceneDataReadRequest) => ipcRenderer.invoke('ui-designer:resources:read-scene-data', request),
+    selectFrameFolder: (request?: UiDesignerFrameFolderRequest) => ipcRenderer.invoke('ui-designer:file:select-frame-folder', request),
+    checkRuntime: (request?: UiDesignerProjectRequest) => ipcRenderer.invoke('ui-designer:runtime:check', request),
+    installRuntime: (request: UiDesignerRuntimeInstallRequest) => ipcRenderer.invoke('ui-designer:runtime:install', request),
+    stageScene: (request: UiDesignerSceneStageRequest) => ipcRenderer.invoke('ui-designer:scene:stage', request),
+    exportRuntime: (request: UiDesignerRuntimeExportRequest) => ipcRenderer.invoke('ui-designer:runtime:export', request),
+    startPreview: (request: UiDesignerPreviewStartRequest) => ipcRenderer.invoke('ui-designer:preview:start', request),
+    currentPreview: () => ipcRenderer.invoke('ui-designer:preview:current'),
+    stopPreview: (sessionId?: string) => ipcRenderer.invoke('ui-designer:preview:stop', sessionId),
+    listRecentFiles: () => ipcRenderer.invoke('ui-designer:recent:list'),
+    removeRecentFile: (filePath: string) => ipcRenderer.invoke('ui-designer:recent:remove', filePath),
+    writeRecovery: (request: UiDesignerRecoveryWriteRequest) => ipcRenderer.invoke('ui-designer:recovery:write', request),
+    listRecovery: () => ipcRenderer.invoke('ui-designer:recovery:list'),
+    readRecovery: (id: string) => ipcRenderer.invoke('ui-designer:recovery:read', id),
+    clearRecovery: (id: string) => ipcRenderer.invoke('ui-designer:recovery:clear', id),
+    readPreferences: () => ipcRenderer.invoke('ui-designer:preferences:read'),
+    writePreferences: (value: Record<string, unknown>) => ipcRenderer.invoke('ui-designer:preferences:write', value),
+    listNodeTemplates: () => ipcRenderer.invoke('ui-designer:node-templates:list'),
+    readNodeTemplate: (name: string) => ipcRenderer.invoke('ui-designer:node-templates:read', name),
+    writeNodeTemplate: (name: string, group: UiNodeGroup) => ipcRenderer.invoke('ui-designer:node-templates:write', name, group),
+    removeNodeTemplate: (name: string) => ipcRenderer.invoke('ui-designer:node-templates:remove', name),
+    importNodeTemplate: () => ipcRenderer.invoke('ui-designer:node-templates:import'),
+    exportNodeTemplate: (request: UiDesignerNodeTemplateExportRequest) => ipcRenderer.invoke('ui-designer:node-templates:export', request),
   },
 
   projectConfig: {

@@ -46,4 +46,11 @@ describe('background UI control wiring', () => {
   test('allows the standalone map overview route in the background validator', () => {
     assert.match(commandSource, /'map-overview'/);
   });
+
+  test('keeps product plugin routes available through the hidden validator', () => {
+    assert.match(commandSource, /'plugin-marketplace'/);
+    assert.match(commandSource, /'ui-designer'/);
+    assert.match(readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8'), /'plugin-marketplace': \{ path: '\/plugin-marketplace' \}/);
+    assert.match(readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8'), /'ui-designer': \{ path: '\/ui-designer' \}/);
+  });
 });

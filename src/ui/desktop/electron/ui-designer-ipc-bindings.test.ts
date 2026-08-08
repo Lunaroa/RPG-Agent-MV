@@ -1,0 +1,111 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+
+import { registerUiDesignerIpcHandlers } from './ui-designer-ipc-bindings.ts'
+
+test('ui-designer IPC exposes structured file/resource/runtime boundaries', async () => {
+  const handlers = new Map<string, (...args: any[]) => any>()
+  const ipcMain = { handle(name: string, handler: (...args: any[]) => any) { handlers.set(name, handler) } }
+  let selectedFrameFolder: string | undefined
+  const dialog = {
+    async showOpenDialog(_parent: unknown, options?: { properties?: string[] }) {
+      if (options?.properties?.includes('openDirectory')) return selectedFrameFolder ? { canceled: false, filePaths: [selectedFrameFolder] } : { canceled: true, filePaths: [] }
+      return { canceled: true, filePaths: [] }
+    },
+    async showSaveDialog() { return { canceled: true, filePath: undefined } },
+  }
+  let saved = 0
+  const revealRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-ipc-'))
+  const revealPath = path.join(revealRoot, 'scene.mzui')
+  fs.writeFileSync(revealPath, '{}', 'utf8')
+  const revealed: string[] = []
+  const recent: Array<{ path: string; options?: { opened?: boolean; saved?: boolean; sceneName?: string } }> = []
+  const userDataStore = {
+    recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string }) { recent.push({ path, options }); return { sourcePath: path, lastOpenedAt: 'now', exists: true } },
+    listRecentFiles: () => [],
+    removeRecentFile: () => {},
+    writeRecovery: () => ({ id: 'recovery', sourcePath: '', snapshotPath: 'snapshot', savedAt: 'now', digest: 'digest', mtimeMs: 1 }),
+    listRecovery: () => [],
+    readRecovery: () => ({ record: { id: 'recovery', sourcePath: '', snapshotPath: 'snapshot', savedAt: 'now', digest: 'digest', mtimeMs: 1 }, document: {} }),
+    clearRecovery: () => {},
+    readPreferences: () => ({}),
+    writePreferences: () => {},
+    listTemplates: () => [],
+    readTemplate: () => ({}),
+    writeTemplate: () => 'template.mzui',
+    listNodeTemplates: () => [],
+    readNodeTemplate: () => ({ format: 'mztemplate', version: '1.0.0', name: 'sample', roots: [], nodes: [], origin: { x: 0, y: 0, width: 0, height: 0 } }),
+    writeNodeTemplate: () => 'sample.mztemplate',
+    removeNodeTemplate: () => {},
+  }
+  registerUiDesignerIpcHandlers(ipcMain, dialog, {
+    workflowRoot: 'workflow',
+    resolveProject: (project) => project || 'project',
+    file: {
+      readUiDesignerFile: (filePath) => ({ document: { meta: { sceneName: 'Scene_Sample' } }, metadata: { path: filePath, digest: 'digest', mtimeMs: 1, size: 2 } }),
+      saveUiDesignerFile: () => { saved += 1; return { path: 'scene.mzui', digest: 'digest', mtimeMs: 2, size: 2 } },
+      revealSource: (filePath: string) => { revealed.push(filePath) },
+      readUiDesignerNodeTemplate: () => ({ format: 'mztemplate', version: '1.0.0', name: 'sample', roots: [], nodes: [], origin: { x: 0, y: 0, width: 0, height: 0 } }),
+      writeUiDesignerNodeTemplate: () => 'sample.mztemplate',
+      UiDesignerUserDataStore: class { constructor() { return userDataStore as any } } as any,
+    },
+    resources: {
+      inspectUiDesignerResources: () => ({ resources: [] }),
+      selectUiDesignerFrameFolder: (project: string, selected: string) => [{
+        id: 'image:img/frames/001.png', category: 'image', path: 'img/frames/001.png', relativePath: 'img/frames/001.png',
+        previewUrl: `rmmv-asset://${project}/img/frames/001.png`, name: '001.png', exists: true, referenced: false, size: 1,
+      }],
+      readUiDesignerSceneData: (_project: string, requestedPath: string) => ({
+        scene: { version: '1.0.0', runtimeVersion: '>=1.0.0', meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 }, transitions: { enter: { type: 'none', duration: 0 }, exit: { type: 'none', duration: 0 } }, globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], code: { ready: '', update: '' } },
+        metadata: { id: `sceneData:${requestedPath}`, relativePath: requestedPath, sceneName: 'Scene_Sample', version: '1.0.0', runtimeVersion: '>=1.0.0', compatibility: 'compatible', digest: 'digest', mtimeMs: 1, size: 2 },
+        projectCompatibility: { engine: 'MV', engineVersion: null, engineVersionSupported: true, warnings: [] },
+      }),
+    },
+    runtime: {
+      inspectUiDesignerRuntime: () => ({ state: 'missing' }),
+      stageUiDesignerRuntimeInstall: () => ({ status: 'staged' }),
+      stageUiDesignerSceneExport: () => ({ status: 'staged' }),
+      writeUiDesignerRuntimeExport: () => ({ path: 'Scene_Sample.json', digest: 'digest', mtimeMs: 2, size: 2 }),
+    },
+    userDataStore: () => userDataStore as any,
+  })
+
+  const opened = await handlers.get('ui-designer:file:open')!({ sender: {} }, { path: 'scene.mzui' })
+  assert.equal(opened.status, 'ready')
+  assert.deepEqual(recent[0], { path: 'scene.mzui', options: { opened: true, sceneName: 'Scene_Sample' } })
+  const savedResult = await handlers.get('ui-designer:file:save')!({ sender: {} }, { path: 'scene.mzui' }, { meta: {} })
+  assert.equal(savedResult.status, 'success')
+  assert.equal(saved, 1)
+  assert.equal(recent[1].options?.saved, true)
+  assert.equal(recent[1].options?.opened, false)
+  const revealResult = await handlers.get('ui-designer:file:reveal-source')!(null, revealPath)
+  assert.equal(revealResult.status, 'success')
+  assert.deepEqual(revealed, [path.resolve(revealPath)])
+  const revealDenied = await handlers.get('ui-designer:file:reveal-source')!(null, path.join(revealRoot, 'missing.mzui'))
+  assert.equal(revealDenied.status, 'error')
+  const resources = await handlers.get('ui-designer:resources:list')!(null, { project: 'project' })
+  assert.equal(resources.status, 'success')
+  const sceneData = await handlers.get('ui-designer:resources:read-scene-data')!(null, { project: 'project', path: 'js/plugins/mzui-data/Scene_Sample.json' })
+  assert.equal(sceneData.status, 'success')
+  assert.equal(sceneData.value.metadata.compatibility, 'compatible')
+  assert.equal(sceneData.value.projectCompatibility.engine, 'MV')
+  selectedFrameFolder = 'project/img/frames'
+  const selected = await handlers.get('ui-designer:file:select-frame-folder')!({ sender: {} }, { project: 'project' })
+  assert.equal(selected.status, 'success')
+  assert.equal(selected.value[0].relativePath, 'img/frames/001.png')
+  const missingEnable = await handlers.get('ui-designer:runtime:install')!(null, { project: 'project' })
+  assert.equal(missingEnable.status, 'error')
+  assert.equal(missingEnable.code, 'UI_DESIGNER_RUNTIME_ENABLE_REQUIRED')
+  const runtimeExport = await handlers.get('ui-designer:runtime:export')!({ sender: {} }, {
+    path: 'Scene_Sample.json',
+    scene: { meta: { sceneName: 'Scene_Sample' } },
+  })
+  assert.equal(runtimeExport.status, 'success')
+  assert.equal(runtimeExport.value, 'Scene_Sample.json')
+  const canceled = await handlers.get('ui-designer:file:open')!({ sender: {} })
+  assert.equal(canceled.status, 'idle')
+  fs.rmSync(revealRoot, { recursive: true, force: true })
+})

@@ -1,4 +1,5 @@
 import type { ProductLanguage } from './i18n.ts';
+import type { ProductPluginSettings } from './product-plugin.ts';
 export type { ProductLanguage } from './i18n.ts';
 
 // renderer ↔ 后端 的端点单一事实来源（形状侧）。
@@ -2138,6 +2139,8 @@ export interface WorkspaceSettings {
   previewDisabledPlugins?: Record<string, string[]>;
   /** Per project path: unlock editor-side tileset image slots beyond stock A1-E. */
   extendedTilesetProjects?: Record<string, boolean>;
+  /** Product-level plugin enablement; never stored in a project config. */
+  productPlugins?: ProductPluginSettings;
 }
 
 export interface ActivateInvocationResult {

@@ -36,6 +36,52 @@ import {
 import { chatSelectionStorageKey } from '../utils/chatProviderOptions'
 import { useWorkbenchUiStore } from './workbenchUi'
 
+export function mergeWorkspacePendingPatch(
+  current: WorkspaceSettings | null,
+  patch: WorkspaceSettings,
+): WorkspaceSettings {
+  if (!current) return patch
+  const merged: WorkspaceSettings = {
+    ...current,
+    ...patch,
+    window: { ...current.window, ...patch.window },
+    layout: { ...current.layout, ...patch.layout },
+    composer: {
+      ...current.composer,
+      ...patch.composer,
+      modelsByEngine: {
+        ...(current.composer?.modelsByEngine || {}),
+        ...(patch.composer?.modelsByEngine || {}),
+      },
+    },
+    projects: {
+      ...(current.projects || {}),
+      ...(patch.projects || {}),
+    },
+    mapOverviewProjects: {
+      ...(current.mapOverviewProjects || {}),
+      ...(patch.mapOverviewProjects || {}),
+    },
+    previewDisabledPlugins: {
+      ...(current.previewDisabledPlugins || {}),
+      ...(patch.previewDisabledPlugins || {}),
+    },
+    extendedTilesetProjects: {
+      ...(current.extendedTilesetProjects || {}),
+      ...(patch.extendedTilesetProjects || {}),
+    },
+  }
+  if (current.productPlugins || patch.productPlugins) {
+    merged.productPlugins = {
+      ...(current.productPlugins || {}),
+      ...(patch.productPlugins || {}),
+    }
+  } else {
+    delete merged.productPlugins
+  }
+  return merged
+}
+
 export const useWorkspaceStore = defineStore('workspace', () => {
   const settings = ref<WorkspaceSettings>(normalizeWorkspaceSettings({}))
   const hydrated = ref(false)
@@ -55,40 +101,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return settings.value
   }
 
-  function mergePendingPatch(current: WorkspaceSettings | null, patch: WorkspaceSettings): WorkspaceSettings {
-    if (!current) return patch
-    return {
-      ...current,
-      ...patch,
-      window: { ...current.window, ...patch.window },
-      layout: { ...current.layout, ...patch.layout },
-      composer: {
-        ...current.composer,
-        ...patch.composer,
-        modelsByEngine: {
-          ...(current.composer?.modelsByEngine || {}),
-          ...(patch.composer?.modelsByEngine || {}),
-        },
-      },
-      projects: {
-        ...(current.projects || {}),
-        ...(patch.projects || {}),
-      },
-      mapOverviewProjects: {
-        ...(current.mapOverviewProjects || {}),
-        ...(patch.mapOverviewProjects || {}),
-      },
-      previewDisabledPlugins: {
-        ...(current.previewDisabledPlugins || {}),
-        ...(patch.previewDisabledPlugins || {}),
-      },
-      extendedTilesetProjects: {
-        ...(current.extendedTilesetProjects || {}),
-        ...(patch.extendedTilesetProjects || {}),
-      },
-    }
-  }
-
   function trackWrite(promise: Promise<WorkspaceSettings>): Promise<WorkspaceSettings> {
     inFlightWrites.add(promise)
     promise.then(
@@ -100,7 +112,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   function schedulePersist(patch: WorkspaceSettings): void {
     settings.value = mergeWorkspaceSettings(settings.value, patch)
-    pendingPatch = mergePendingPatch(pendingPatch, patch)
+    pendingPatch = mergeWorkspacePendingPatch(pendingPatch, patch)
     if (persistTimer) clearTimeout(persistTimer)
     persistTimer = setTimeout(() => {
       persistTimer = null

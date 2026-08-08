@@ -68,6 +68,12 @@ export interface IsolatedProjectPreparationOptions {
   temporaryPrefix?: string;
   createTemporaryProject?: () => string;
   excludeRelativePaths?: readonly string[];
+  /**
+   * UI designer previews run trusted project JavaScript in the copy.  Their
+   * asset trees must be physical copies so a junction cannot write through to
+   * the source project.  Ordinary/map previews keep the junction optimization.
+   */
+  physicalCopyAllProjectDirectories?: boolean;
 }
 
 export class IsolatedProjectPreparationError extends Error {}
@@ -98,6 +104,7 @@ export function prepareIsolatedStagedProject(
       temporaryProject,
       options.excludeRelativePaths || [],
       staging.files.map((entry) => entry.relativePath),
+      { physicalCopyAllProjectDirectories: options.physicalCopyAllProjectDirectories === true },
     );
     overlayStagedProjectFiles(workflowRoot, sourceProject, temporaryProject, staging.files);
     const savesExcluded = candidateSavePaths(temporaryProject).every((candidate) => !fs.existsSync(candidate));
@@ -336,6 +343,7 @@ function copyProjectExcludingSaves(
   temporaryProject: string,
   excludedRelativePaths: readonly string[],
   stagedRelativePaths: readonly string[] = [],
+  options: { physicalCopyAllProjectDirectories?: boolean } = {},
 ): void {
   const source = fs.realpathSync.native(path.resolve(sourceProject));
   const exclusions = excludedRelativePaths.map((relative) => normalizeRelative(relative).toLowerCase());
@@ -361,6 +369,7 @@ function copyProjectExcludingSaves(
         const entryRelative = normalizeRelative(path.relative(source, sourcePath));
         return !entryRelative || !excluded(entryRelative.toLowerCase());
       },
+      dereference: options.physicalCopyAllProjectDirectories === true,
     });
   };
   const copyLevel = (prefix: '' | 'www/'): void => {
@@ -372,7 +381,11 @@ function copyProjectExcludingSaves(
       const sourcePath = path.join(source, ...relative.split('/'));
       const targetPath = path.join(temporaryProject, ...relative.split('/'));
       if (!entry.isDirectory()) {
-        fs.cpSync(sourcePath, targetPath, { preserveTimestamps: true, verbatimSymlinks: true });
+        fs.cpSync(sourcePath, targetPath, {
+          preserveTimestamps: true,
+          verbatimSymlinks: options.physicalCopyAllProjectDirectories !== true,
+          dereference: options.physicalCopyAllProjectDirectories === true,
+        });
         continue;
       }
       if (!prefix && lower === 'www') {
@@ -381,7 +394,9 @@ function copyProjectExcludingSaves(
         copyLevel('www/');
         continue;
       }
-      if (PHYSICAL_COPY_DIRECTORIES.has(entry.name.toLowerCase()) || requiresMaterialization(lower)) {
+      if (options.physicalCopyAllProjectDirectories === true
+        || PHYSICAL_COPY_DIRECTORIES.has(entry.name.toLowerCase())
+        || requiresMaterialization(lower)) {
         copySubtree(relative);
       } else {
         fs.symlinkSync(sourcePath, targetPath, 'junction');

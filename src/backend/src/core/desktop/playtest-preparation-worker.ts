@@ -13,6 +13,10 @@ import {
   prepareParticleAnimationPreview,
   type ParticleAnimationPreviewPreparation,
 } from './particle-animation-preview-preparation.ts';
+import {
+  prepareIsolatedStagedProject,
+  type IsolatedProjectPreparation,
+} from './isolated-project-preparation.ts';
 
 export type PlaytestPreparationWorkerRequest =
   | {
@@ -26,10 +30,17 @@ export type PlaytestPreparationWorkerRequest =
     workflowRoot: string;
     project: string;
     animation: InteractiveParticleAnimationPreview;
+  }
+  | {
+    operation: 'ui_designer_preview';
+    workflowRoot: string;
+    project: string;
+    temporaryPrefix?: string;
+    physicalCopyAllProjectDirectories: true;
   };
 
 export type PlaytestPreparationWorkerResponse =
-  | { ok: true; preparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation }
+  | { ok: true; preparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | IsolatedProjectPreparation }
   | { ok: false; error: string };
 
 function errorMessage(error: unknown): string {
@@ -49,7 +60,12 @@ async function main(): Promise<void> {
     });
     const preparation = request.operation === 'battle_test'
       ? prepareBattleTestProject(request.workflowRoot, request.project, request.configuration)
-      : prepareParticleAnimationPreview(request.workflowRoot, request.project, request.animation);
+      : request.operation === 'particle_preview'
+        ? prepareParticleAnimationPreview(request.workflowRoot, request.project, request.animation)
+        : prepareIsolatedStagedProject(request.workflowRoot, request.project, {
+          temporaryPrefix: request.temporaryPrefix,
+          physicalCopyAllProjectDirectories: true,
+        });
     writeJsonAtomic(responsePath, { ok: true, preparation } satisfies PlaytestPreparationWorkerResponse);
   } catch (error) {
     writeJsonAtomic(responsePath, { ok: false, error: errorMessage(error) } satisfies PlaytestPreparationWorkerResponse);

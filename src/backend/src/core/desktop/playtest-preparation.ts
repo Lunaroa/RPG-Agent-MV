@@ -14,6 +14,7 @@ import type {
   PlaytestPreparationWorkerRequest,
   PlaytestPreparationWorkerResponse,
 } from './playtest-preparation-worker.ts';
+import type { IsolatedProjectPreparation } from './isolated-project-preparation.ts';
 
 const PREPARATION_OUTPUT_LIMIT = 32_768;
 
@@ -59,10 +60,27 @@ export async function prepareParticlePreviewInWorker(
   return preparation as ParticleAnimationPreviewPreparation;
 }
 
+/** Runs the UI designer temporary-project copy outside Electron's main thread. */
+export async function prepareUiDesignerPreviewInWorker(
+  workflowRoot: string,
+  project: string,
+  temporaryPrefix?: string,
+  dependencies: PlaytestPreparationHostDependencies = {},
+): Promise<IsolatedProjectPreparation> {
+  const preparation = await runPreparationWorker({
+    operation: 'ui_designer_preview',
+    workflowRoot: path.resolve(workflowRoot),
+    project: path.resolve(project),
+    physicalCopyAllProjectDirectories: true,
+    ...(temporaryPrefix ? { temporaryPrefix } : {}),
+  }, dependencies);
+  return preparation as IsolatedProjectPreparation;
+}
+
 async function runPreparationWorker(
   request: PlaytestPreparationWorkerRequest,
   dependencies: PlaytestPreparationHostDependencies,
-): Promise<BattleTestProjectPreparation | ParticleAnimationPreviewPreparation> {
+): Promise<BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | IsolatedProjectPreparation> {
   const controlDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-playtest-prep-'));
   const requestPath = path.join(controlDirectory, 'request.json');
   const responsePath = path.join(controlDirectory, 'response.json');

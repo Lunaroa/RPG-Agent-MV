@@ -8,6 +8,7 @@ import type {
   WorkspaceSettings,
   WorkspaceWindowState,
 } from '@contract/types'
+import { normalizeProductPluginSettings } from '@contract/product-plugin'
 import { isMapPreviewVariableValue, parseMapPreviewSelfSwitchKey } from '@contract/map-preview-state'
 import { AGENT_PANEL_DEFAULT_WIDTH } from './agentPanelWidth'
 import { CHAT_HISTORY_DEFAULT_WIDTH } from './chatHistoryWidth'
@@ -321,6 +322,7 @@ export function normalizeWorkspaceSettings(raw: unknown): WorkspaceSettings {
     mapOverviewProjects: Object.keys(mapOverviewProjects).length ? mapOverviewProjects : undefined,
     previewDisabledPlugins: normalizePreviewDisabledPlugins(source.previewDisabledPlugins, false),
     extendedTilesetProjects: normalizeExtendedTilesetProjects(source.extendedTilesetProjects, false),
+    productPlugins: normalizeProductPluginSettings(source.productPlugins, false),
   }
 }
 
@@ -431,6 +433,11 @@ export function normalizeWorkspacePatch(raw: unknown): WorkspaceSettings {
       true,
     )
     if (extendedTilesetProjects) patch.extendedTilesetProjects = extendedTilesetProjects
+  }
+
+  if (Object.prototype.hasOwnProperty.call(source, 'productPlugins')) {
+    const productPlugins = normalizeProductPluginSettings(source.productPlugins, true)
+    if (productPlugins) patch.productPlugins = productPlugins
   }
 
   return patch
@@ -578,6 +585,14 @@ export function mergeWorkspaceSettings(
       ...(base.extendedTilesetProjects || {}),
       ...next.extendedTilesetProjects,
     }
+  }
+  if (next.productPlugins) {
+    merged.productPlugins = Object.keys(next.productPlugins).length
+      ? {
+          ...(base.productPlugins || {}),
+          ...next.productPlugins,
+        }
+      : undefined
   }
   return normalizeWorkspaceSettings(merged)
 }

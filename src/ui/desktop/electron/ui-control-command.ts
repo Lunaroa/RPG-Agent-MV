@@ -48,6 +48,8 @@ const ALLOWED_TARGETS = new Set([
   'console-plugins',
   'console-logs',
   'console-settings',
+  'plugin-marketplace',
+  'ui-designer',
 ]);
 
 const ALLOWED_COMMAND_TYPES = new Set<UiControlCommandType>([

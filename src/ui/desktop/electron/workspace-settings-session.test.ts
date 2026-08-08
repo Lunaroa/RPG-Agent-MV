@@ -37,4 +37,19 @@ describe('workspace settings session', () => {
     assert.equal(next.lastProjectPath, 'projects/another');
     assert.equal(persisted.lastProjectPath, 'projects/another');
   });
+
+  test('persists product plugin enablement through the workspace settings session', () => {
+    let persisted = { productPlugins: { 'ui-designer': false } };
+    const session = new WorkspaceSettingsSession(false);
+    session.initialize(persisted);
+
+    const next = session.patch(
+      { productPlugins: { 'ui-designer': true } },
+      () => persisted,
+      (value) => { persisted = value as typeof persisted; },
+    );
+
+    assert.equal(next.productPlugins?.['ui-designer'], true);
+    assert.equal(persisted.productPlugins?.['ui-designer'], true);
+  });
 });

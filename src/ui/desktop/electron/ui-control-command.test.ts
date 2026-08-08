@@ -4,6 +4,17 @@ import { describe, test } from 'node:test';
 import { normalizeUiControlCommand } from './ui-control-command.ts';
 
 describe('UI control click command modifiers', () => {
+  test('accepts the standalone product plugin routes', () => {
+    assert.equal(
+      normalizeUiControlCommand({ type: 'navigate', target: 'plugin-marketplace' }).target,
+      'plugin-marketplace',
+    );
+    assert.equal(
+      normalizeUiControlCommand({ type: 'navigate', target: 'ui-designer' }).target,
+      'ui-designer',
+    );
+  });
+
   test('keeps a legal ctrl modifier on click after normalization', () => {
     const command = normalizeUiControlCommand({
       type: 'click',

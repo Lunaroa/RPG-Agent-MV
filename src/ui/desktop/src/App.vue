@@ -13,6 +13,7 @@ import LanguagePicker from './components/onboarding/LanguagePicker.vue'
 import OnboardingTour from './components/onboarding/OnboardingTour.vue'
 import { useProjectStore } from './stores/project'
 import { useMapOverviewExportStore } from './stores/mapOverviewExport'
+import { useProductPluginsStore } from './stores/productPlugins'
 import { useSettingsStore } from './stores/settings'
 import { useWorkbenchUiStore } from './stores/workbenchUi'
 import { useWorkspaceStore } from './stores/workspace'
@@ -31,6 +32,7 @@ import {
 } from './utils/uiControl'
 const projectStore = useProjectStore()
 const mapOverviewExportStore = useMapOverviewExportStore()
+const productPluginsStore = useProductPluginsStore()
 const settingsStore = useSettingsStore()
 const workspaceStore = useWorkspaceStore()
 const workbenchUi = useWorkbenchUiStore()
@@ -123,8 +125,12 @@ function uiControlState(extra: Record<string, unknown> = {}) {
           ? 'database'
           : route.path === '/project-assets'
             ? 'project-assets'
-            : route.path === '/map-overview'
-              ? 'map-overview'
+          : route.path === '/map-overview'
+            ? 'map-overview'
+            : route.path === '/plugin-marketplace'
+              ? 'plugin-marketplace'
+              : route.path === '/ui-designer'
+                ? 'ui-designer'
               : 'other',
     consolePage: consolePage.value,
     project: projectStore.currentProject || '',
@@ -150,6 +156,8 @@ async function navigateUiControlTarget(target: string) {
     'console-plugins': { path: '/console', query: { page: 'plugins' } },
     'console-logs': { path: '/console', query: { page: 'logs' } },
     'console-settings': { path: '/console', query: { page: 'settings' } },
+    'plugin-marketplace': { path: '/plugin-marketplace' },
+    'ui-designer': { path: '/ui-designer' },
   }
   const next = routes[target]
   if (!next) throw new Error(t('app.uiControl.unsupportedNavigationTarget', { target }))
@@ -213,6 +221,7 @@ onMounted(async () => {
   removeUiControlListener = window.api.uiControl.onCommand(handleUiControlEnvelope)
   try {
     await workspaceStore.load()
+    productPluginsStore.syncFromWorkspace()
     await workspaceStore.migrateFromBrowserStorage()
     await settingsStore.loadUi()
     applyUiTheme(settingsStore.ui)
@@ -249,7 +258,7 @@ onUnmounted(() => {
           <div v-else-if="bootError" class="app-state-card error">{{ bootError }}</div>
           <router-view v-else v-slot="{ Component, route: currentRoute }">
             <RouteErrorBoundary>
-              <KeepAlive :max="3">
+                <KeepAlive :max="3" :exclude="['UiDesignerView']">
                 <component :is="Component" :key="workspaceCacheKey(currentRoute)" />
               </KeepAlive>
             </RouteErrorBoundary>

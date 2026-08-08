@@ -68,6 +68,16 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
     assert.equal(fs.lstatSync(path.join(temp, 'audio')).isSymbolicLink(), true);
   });
 
+  test('UI designer preview copies asset trees physically before running project code', () => {
+    preparation = prepareIsolatedStagedProject(root, project, { physicalCopyAllProjectDirectories: true });
+    const temp = preparation.temporaryProject;
+    assert.equal(fs.lstatSync(path.join(temp, 'audio')).isSymbolicLink(), false);
+    assert.equal(fs.lstatSync(path.join(temp, 'img')).isSymbolicLink(), false);
+    fs.writeFileSync(path.join(temp, 'img', 'pictures', 'Hero.png'), 'preview-edit', 'utf8');
+    assert.equal(fs.readFileSync(path.join(project, 'img', 'pictures', 'Hero.png'), 'utf8'), 'png-bytes');
+    assert.equal(preparation.savesExcluded, true);
+  });
+
   test('staged deletions materialize their directory and never delete source files', () => {
     deleteStagedProjectFile(root, project, 'audio/bgm/Theme.ogg');
     preparation = prepareIsolatedStagedProject(root, project);

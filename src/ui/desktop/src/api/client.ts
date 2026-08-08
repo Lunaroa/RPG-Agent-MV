@@ -1,6 +1,38 @@
 import { unsupportedAssetUrl } from './clientLocalization';
 import { normalizeProductLanguage } from '../i18n/messages';
 import { useSettingsStore } from '../stores/settings';
+import type {
+  ProductPluginListResult,
+  ProductPluginSnapshotResult,
+  ProductPluginSetEnabledRequest,
+  ProductPluginSetEnabledResult,
+} from '@contract/product-plugin';
+import type {
+  UiDesignerDocument,
+  UiDesignerFileRequest,
+  UiDesignerFrameFolderRequest,
+  UiDesignerNodeTemplateExportRequest,
+  UiDesignerPreviewStartRequest,
+  UiDesignerProjectRequest,
+  UiDesignerRecoveryRecord,
+  UiDesignerRecoveryWriteRequest,
+  UiDesignerRecentFileRecord,
+  UiDesignerResourceRequest,
+  UiDesignerSceneDataReadRequest,
+  UiDesignerSceneDataReadResult,
+  UiDesignerRuntimeExportRequest,
+  UiDesignerRuntimeInstallRequest,
+  UiDesignerRuntimeStageResult,
+  UiDesignerSaveResult,
+  UiDesignerSceneStageRequest,
+  UiFileResult,
+  UiNodeGroup,
+  UiNodeGroupRecord,
+  UiPreviewResult,
+  UiProjectResourceCatalog,
+  UiResourceEntry,
+  UiRuntimeStatus,
+} from '@contract/ui-designer';
 
 declare global {
   interface Window {
@@ -96,6 +128,41 @@ declare global {
         get(): Promise<unknown>;
         put(body: unknown): Promise<unknown>;
         patch(body: unknown): Promise<unknown>;
+      };
+      productPlugin: {
+        list(): Promise<ProductPluginListResult>;
+        snapshot(): Promise<ProductPluginSnapshotResult>;
+        setEnabled(request: ProductPluginSetEnabledRequest): Promise<ProductPluginSetEnabledResult>;
+      };
+      uiDesigner: {
+        open(request?: Pick<UiDesignerFileRequest, 'path'>): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
+        save(request: UiDesignerFileRequest, document: UiDesignerDocument): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
+        saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
+        revealSource(sourcePath: string): Promise<UiFileResult<null>>;
+        listResources(request?: UiDesignerResourceRequest): Promise<UiFileResult<UiProjectResourceCatalog>>;
+        readSceneData(request: UiDesignerSceneDataReadRequest): Promise<UiFileResult<UiDesignerSceneDataReadResult>>;
+        selectFrameFolder(request?: UiDesignerFrameFolderRequest): Promise<UiFileResult<UiResourceEntry[]>>;
+        checkRuntime(request?: UiDesignerProjectRequest): Promise<UiFileResult<UiRuntimeStatus>>;
+        installRuntime(request: UiDesignerRuntimeInstallRequest): Promise<UiFileResult<UiDesignerRuntimeStageResult>>;
+        stageScene(request: UiDesignerSceneStageRequest): Promise<UiFileResult<UiDesignerRuntimeStageResult>>;
+        exportRuntime(request: UiDesignerRuntimeExportRequest): Promise<UiFileResult<string>>;
+        startPreview(request: UiDesignerPreviewStartRequest): Promise<UiPreviewResult | UiFileResult<never>>;
+        currentPreview(): Promise<UiPreviewResult | UiFileResult<never>>;
+        stopPreview(sessionId?: string): Promise<UiPreviewResult | UiFileResult<never>>;
+        listRecentFiles(): Promise<UiFileResult<UiDesignerRecentFileRecord[]>>;
+        removeRecentFile(filePath: string): Promise<UiFileResult<null>>;
+        writeRecovery(request: UiDesignerRecoveryWriteRequest): Promise<UiFileResult<UiDesignerRecoveryRecord>>;
+        listRecovery(): Promise<UiFileResult<UiDesignerRecoveryRecord[]>>;
+        readRecovery(id: string): Promise<UiFileResult<{ record: UiDesignerRecoveryRecord; document: UiDesignerDocument }>>;
+        clearRecovery(id: string): Promise<UiFileResult<null>>;
+        readPreferences(): Promise<UiFileResult<Record<string, unknown>>>;
+        writePreferences(value: Record<string, unknown>): Promise<UiFileResult<Record<string, unknown>>>;
+        listNodeTemplates(): Promise<UiFileResult<UiNodeGroupRecord[]>>;
+        readNodeTemplate(name: string): Promise<UiFileResult<UiNodeGroup>>;
+        writeNodeTemplate(name: string, group: UiNodeGroup): Promise<UiFileResult<string>>;
+        removeNodeTemplate(name: string): Promise<UiFileResult<null>>;
+        importNodeTemplate(): Promise<UiFileResult<UiNodeGroup> | null>;
+        exportNodeTemplate(request: UiDesignerNodeTemplateExportRequest): Promise<UiFileResult<string>>;
       };
       projectConfig: {
         get(project?: string): Promise<unknown>;
@@ -460,6 +527,49 @@ export const workspace = {
   patch(body: WorkspaceSettings) {
     return desktopApi().workspace.patch(toPlain(body)) as Promise<WorkspaceSettings>;
   },
+};
+
+export const productPlugin = {
+  list() {
+    return desktopApi().productPlugin.list() as Promise<ProductPluginListResult>;
+  },
+  snapshot() {
+    return desktopApi().productPlugin.snapshot() as Promise<ProductPluginSnapshotResult>;
+  },
+  setEnabled(request: ProductPluginSetEnabledRequest) {
+    return desktopApi().productPlugin.setEnabled(toPlain(request)) as Promise<ProductPluginSetEnabledResult>;
+  },
+};
+
+export const uiDesigner = {
+  open(request?: Pick<UiDesignerFileRequest, 'path'>) { return desktopApi().uiDesigner.open(request) },
+  save(request: UiDesignerFileRequest, document: UiDesignerDocument) { return desktopApi().uiDesigner.save(toPlain(request), toPlain(document)) },
+  saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument) { return desktopApi().uiDesigner.saveAs(toPlain(request), toPlain(document)) },
+  revealSource(sourcePath: string) { return desktopApi().uiDesigner.revealSource(sourcePath) },
+  listResources(request?: UiDesignerResourceRequest) { return desktopApi().uiDesigner.listResources(toPlain(request)) },
+  readSceneData(request: UiDesignerSceneDataReadRequest) { return desktopApi().uiDesigner.readSceneData(toPlain(request)) },
+  selectFrameFolder(request?: UiDesignerFrameFolderRequest) { return desktopApi().uiDesigner.selectFrameFolder(toPlain(request)) },
+  checkRuntime(request?: UiDesignerProjectRequest) { return desktopApi().uiDesigner.checkRuntime(toPlain(request)) },
+  installRuntime(request: UiDesignerRuntimeInstallRequest) { return desktopApi().uiDesigner.installRuntime(toPlain(request)) },
+  stageScene(request: UiDesignerSceneStageRequest) { return desktopApi().uiDesigner.stageScene(toPlain(request)) },
+  exportRuntime(request: UiDesignerRuntimeExportRequest) { return desktopApi().uiDesigner.exportRuntime(toPlain(request)) },
+  startPreview(request: UiDesignerPreviewStartRequest) { return desktopApi().uiDesigner.startPreview(toPlain(request)) },
+  currentPreview() { return desktopApi().uiDesigner.currentPreview() },
+  stopPreview(sessionId?: string) { return desktopApi().uiDesigner.stopPreview(sessionId) },
+  listRecentFiles() { return desktopApi().uiDesigner.listRecentFiles() },
+  removeRecentFile(filePath: string) { return desktopApi().uiDesigner.removeRecentFile(filePath) },
+  writeRecovery(request: UiDesignerRecoveryWriteRequest) { return desktopApi().uiDesigner.writeRecovery(toPlain(request)) },
+  listRecovery() { return desktopApi().uiDesigner.listRecovery() },
+  readRecovery(id: string) { return desktopApi().uiDesigner.readRecovery(id) },
+  clearRecovery(id: string) { return desktopApi().uiDesigner.clearRecovery(id) },
+  readPreferences() { return desktopApi().uiDesigner.readPreferences() },
+  writePreferences(value: Record<string, unknown>) { return desktopApi().uiDesigner.writePreferences(toPlain(value)) },
+  listNodeTemplates() { return desktopApi().uiDesigner.listNodeTemplates() },
+  readNodeTemplate(name: string) { return desktopApi().uiDesigner.readNodeTemplate(name) },
+  writeNodeTemplate(name: string, group: UiNodeGroup) { return desktopApi().uiDesigner.writeNodeTemplate(name, toPlain(group)) },
+  removeNodeTemplate(name: string) { return desktopApi().uiDesigner.removeNodeTemplate(name) },
+  importNodeTemplate() { return desktopApi().uiDesigner.importNodeTemplate() },
+  exportNodeTemplate(request: UiDesignerNodeTemplateExportRequest) { return desktopApi().uiDesigner.exportNodeTemplate(toPlain(request)) },
 };
 
 /** Per-project product config persisted in `<project>/.luna_rpg/config.json`. */
@@ -1776,4 +1886,4 @@ export function openSessionEventStream(
   };
 }
 
-export const api = { bootstrap, projects, workspaceSurfaces, eventRegistry, sessions, playtest, mapPreview, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, resolveAssetUrl, openSessionEventStream };
+export const api = { bootstrap, projects, workspaceSurfaces, eventRegistry, sessions, playtest, mapPreview, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, productPlugin, uiDesigner, resolveAssetUrl, openSessionEventStream };

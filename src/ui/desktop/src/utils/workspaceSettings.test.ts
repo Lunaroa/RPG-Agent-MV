@@ -45,6 +45,50 @@ describe('workspaceSettings', () => {
     expect(merged.suppressProjectCompatibilityWarnings).toBe(true)
   })
 
+  it('normalizes product plugin enablement independently from project settings', () => {
+    const normalized = normalizeWorkspaceSettings({
+      productPlugins: {
+        ' ui-designer ': true,
+        future: false,
+        invalid: 'yes',
+      },
+      projects: {
+        'projects/sample': { mapId: 1, mode: 'map' },
+      },
+    })
+
+    expect(normalized.productPlugins).toEqual({
+      'ui-designer': true,
+      future: false,
+    })
+    expect(normalized.projects).toEqual({
+      'projects/sample': { mapId: 1, mode: 'map' },
+    })
+  })
+
+  it('merges product plugin states without replacing unrelated ids', () => {
+    const enabled = mergeWorkspaceSettings(
+      { productPlugins: { 'ui-designer': true, future: false } },
+      { productPlugins: { another: true } },
+    )
+    expect(enabled.productPlugins).toEqual({
+      'ui-designer': true,
+      future: false,
+      another: true,
+    })
+
+    const disabled = mergeWorkspaceSettings(
+      enabled,
+      { productPlugins: { 'ui-designer': false } },
+    )
+    expect(disabled.productPlugins).toEqual({
+      'ui-designer': false,
+      future: false,
+      another: true,
+    })
+    expect(disabled.projects).toBeUndefined()
+  })
+
   it('normalizes and independently clears project-level extended tileset switches', () => {
     const normalized = normalizeWorkspaceSettings({
       extendedTilesetProjects: {

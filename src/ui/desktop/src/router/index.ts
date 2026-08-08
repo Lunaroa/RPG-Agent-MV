@@ -1,10 +1,14 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { useProductPluginsStore } from '../stores/productPlugins'
+import { productPluginDisabledRedirect } from '../utils/projectManagementRoute'
 
 const WorkbenchView = () => import('../views/WorkbenchView.vue')
 const DatabaseView = () => import('../views/DatabaseView.vue')
 const ProjectAssetsView = () => import('../views/ProjectAssetsView.vue')
 const MapOverviewView = () => import('../views/MapOverviewView.vue')
 const ConsoleView = () => import('../views/ConsoleView.vue')
+const PluginMarketplaceView = () => import('../views/PluginMarketplaceView.vue')
+const UiDesignerView = () => import('../views/UiDesignerView.vue')
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -32,6 +36,24 @@ const router = createRouter({
       path: '/map-overview',
       name: 'map-overview',
       component: MapOverviewView
+    },
+    {
+      path: '/plugin-marketplace',
+      name: 'plugin-marketplace',
+      component: PluginMarketplaceView,
+    },
+    {
+      path: '/ui-designer',
+      name: 'ui-designer',
+      component: UiDesignerView,
+      beforeEnter: async (to) => {
+        const productPlugins = useProductPluginsStore()
+        await productPlugins.load()
+        if (!productPlugins.isEnabled('ui-designer')) {
+          return productPluginDisabledRedirect('ui-designer', to.fullPath)
+        }
+        return true
+      },
     },
     {
       path: '/console',

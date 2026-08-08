@@ -26,6 +26,7 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@lucide/vue": "^1.18.0",
+    "codemirror": "^5.65.21",
     "d3-drag": "3.0.0",
     "d3-selection": "3.0.0",
     "d3-transition": "3.0.1",
@@ -40,6 +41,7 @@
     "vue-router": "^5.0.7"
   },
   "devDependencies": {
+    "@types/codemirror": "^5.60.18",
     "@types/d3-drag": "3.0.7",
     "@types/d3-selection": "3.0.11",
     "@types/d3-transition": "3.0.9",

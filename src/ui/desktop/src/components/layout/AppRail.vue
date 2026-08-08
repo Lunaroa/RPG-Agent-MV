@@ -1,39 +1,60 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Coin, Connection, Folder, Grid, MapLocation, Monitor, Setting } from '@element-plus/icons-vue'
+import { Brush, Coin, Connection, Folder, Grid, MapLocation, Monitor, Setting, Shop } from '@element-plus/icons-vue'
 import { useI18n } from '../../i18n'
+import { useProductPluginsStore } from '../../stores/productPlugins'
 import { resolveAppRailItem } from '../../utils/projectManagementRoute'
 
 const route = useRoute()
 const { t } = useI18n()
+const productPlugins = useProductPluginsStore()
 
-const items = computed(() => [
-  { id: 'workbench', to: '/workbench', label: t('app.nav.editor'), icon: Grid, uiId: 'nav-workbench' },
-  {
-    id: 'database',
-    to: '/database',
-    label: t('app.nav.database'),
-    icon: Coin,
-    uiId: 'nav-database',
-  },
-  {
-    id: 'project-assets',
-    to: '/project-assets',
-    label: t('app.nav.projectAssets'),
-    icon: Folder,
-    uiId: 'nav-project-assets',
-  },
-  { id: 'map-overview', to: '/map-overview', label: t('app.nav.mapOverview'), icon: MapLocation, uiId: 'nav-map-overview' },
-  {
-    id: 'plugins',
-    to: '/console?page=plugins',
-    label: t('settings.console.plugins'),
-    icon: Connection,
-    uiId: 'nav-plugins',
-  },
-  { id: 'console', to: '/console', label: t('app.nav.console'), icon: Monitor, uiId: 'nav-console' },
-])
+const items = computed(() => {
+  const base = [
+    { id: 'workbench', to: '/workbench', label: t('app.nav.editor'), icon: Grid, uiId: 'nav-workbench' },
+    {
+      id: 'database',
+      to: '/database',
+      label: t('app.nav.database'),
+      icon: Coin,
+      uiId: 'nav-database',
+    },
+    {
+      id: 'project-assets',
+      to: '/project-assets',
+      label: t('app.nav.projectAssets'),
+      icon: Folder,
+      uiId: 'nav-project-assets',
+    },
+    { id: 'map-overview', to: '/map-overview', label: t('app.nav.mapOverview'), icon: MapLocation, uiId: 'nav-map-overview' },
+    {
+      id: 'plugin-marketplace',
+      to: '/plugin-marketplace',
+      label: t('app.nav.pluginMarketplace'),
+      icon: Shop,
+      uiId: 'nav-plugin-marketplace',
+    },
+    {
+      id: 'plugins',
+      to: '/console?page=plugins',
+      label: t('settings.console.plugins'),
+      icon: Connection,
+      uiId: 'nav-plugins',
+    },
+    { id: 'console', to: '/console', label: t('app.nav.console'), icon: Monitor, uiId: 'nav-console' },
+  ]
+  if (productPlugins.isEnabled('ui-designer')) {
+    base.splice(5, 0, {
+      id: 'ui-designer',
+      to: '/ui-designer',
+      label: t('app.nav.uiDesigner'),
+      icon: Brush,
+      uiId: 'nav-ui-designer',
+    })
+  }
+  return base
+})
 
 const activeItem = computed(() => resolveAppRailItem(route.path, route.query))
 </script>

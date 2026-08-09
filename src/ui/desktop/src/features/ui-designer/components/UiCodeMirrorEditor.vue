@@ -2,6 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiCodeEditorAdapter, UiCodeEditorHandle } from '@contract/ui-designer'
 import type { UiDesignerDraftCoordinator } from '../composables/draftCoordinator'
+import { createUiDesignerCodeMirrorBlurHandler } from '../codeMirrorLifecycle'
 import { useUiDesignerI18n } from '../i18n'
 
 const props = withDefaults(defineProps<{
@@ -11,6 +12,7 @@ const props = withDefaults(defineProps<{
   rows?: number
   completionItems?: string[]
   debounceMs?: number
+  formatOnBlur?: boolean
   draftCoordinator?: UiDesignerDraftCoordinator
   /** Stable scene identity captured with a delayed edit. */
   sceneId?: string
@@ -73,6 +75,7 @@ const mountEditor = () => {
       searchReplace: true,
       completionItems: props.completionItems,
       onChange: emitChange,
+      onBlur: createUiDesignerCodeMirrorBlurHandler(() => Boolean(props.formatOnBlur), () => editor?.format?.()),
     })
     error.value = ''
   } catch (mountError) {

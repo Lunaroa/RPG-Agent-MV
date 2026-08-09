@@ -177,7 +177,7 @@ onMounted(async () => {
   await rawDesigner.loadPreferences()
   if (!Boolean(designer.preferences.tourCompleted)) openTour()
 })
-onBeforeUnmount(() => { endPaneDrag(); window.removeEventListener('keydown', shortcutRegistry.handle); shortcutRegistry.unregisterAll(); void rawDesigner.stopPreview(); rawDesigner.stopEditorPreview(); void rawDesigner.flushRecovery() })
+onBeforeUnmount(() => { endPaneDrag(); window.removeEventListener('keydown', shortcutRegistry.handle); shortcutRegistry.unregisterAll(); rawDesigner.flushDrafts(); void rawDesigner.stopPreview(); rawDesigner.stopEditorPreview(); void rawDesigner.flushRecovery() })
 </script>
 
 <template>

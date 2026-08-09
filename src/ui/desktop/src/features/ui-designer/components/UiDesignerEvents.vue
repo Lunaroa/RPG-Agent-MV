@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, isRef, ref, type Ref } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
-import type { UiEventAction, UiEventName, UiNode } from '@contract/ui-designer'
+import type { UiEventAction, UiEventName, UiNode, UiValidationIssue, UiValidationReport } from '@contract/ui-designer'
+import { UI_DESIGNER_NODE_SCRIPT_COMPLETIONS } from '@contract/ui-designer-script'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
+import UiScriptContextHint from './UiScriptContextHint.vue'
 import { reorderEventActions } from '../models/actions'
 
 const props = defineProps<{ designer: UiDesignerController; node: UiNode }>()
@@ -11,7 +13,8 @@ const designer = props.designer
 const { t } = useUiDesignerI18n()
 const eventNames: UiEventName[] = ['onClick', 'onHoverEnter', 'onHoverLeave', 'onShow', 'onHide', 'onUpdate', 'onFocus', 'onBlur']
 const activeEvent = ref<UiEventName>('onClick')
-const eventMap = computed(() => props.node.events)
+const liveNode = computed(() => designer.document.nodes.find((node) => node.id === props.node.id) ?? props.node)
+const eventMap = computed(() => liveNode.value.events)
 const actions = computed(() => eventMap.value[activeEvent.value]?.actions ?? [])
 const draggingAction = ref<number>()
 const actionTypes: UiEventAction['type'][] = ['none', 'newGame', 'continue', 'options', 'exit', 'gotoScene', 'toggleNode', 'playSe', 'url', 'script', 'setVariable', 'setSwitch', 'showMessage', 'tweenProp', 'wait']
@@ -21,11 +24,26 @@ const openedScenes = computed(() => designer.scenes.map((scene) => ({ value: sce
 const conditionLabels: Record<'switch' | 'variable' | 'code', UiDesignerMessageKey> = { switch: 'conditionSwitchOn', variable: 'conditionVariable', code: 'conditionCode' }
 const easingLabels: Record<'Linear' | 'EaseIn' | 'EaseOut' | 'EaseInOut' | 'Bounce', UiDesignerMessageKey> = { Linear: 'easingLinear', EaseIn: 'easingEaseIn', EaseOut: 'easingEaseOut', EaseInOut: 'easingEaseInOut', Bounce: 'easingBounce' }
 const switchLabels: Record<'on' | 'off' | 'toggle', UiDesignerMessageKey> = { on: 'switchOn', off: 'switchOff', toggle: 'switchToggle' }
+const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
+const validation = computed<UiValidationReport>(() => unwrap(designer.validation))
+const scriptCompletionItems = computed(() => [...UI_DESIGNER_NODE_SCRIPT_COMPLETIONS, ...designer.document.nodes.flatMap((node) => [node.id, node.name])])
+const actionPath = (index: number) => `events.${activeEvent.value}.${index}`
+const codeIssuesFor = (index: number, condition = false): UiValidationIssue[] => {
+  const path = `${actionPath(index)}${condition ? '.condition' : ''}`
+  return validation.value.issues.filter((issue) => issue.nodeId === props.node.id && issue.code === 'invalid-code' && issue.path === path)
+}
 
 const updateActions = (next: UiEventAction[]) => designer.setNodeEvents(props.node.id, { ...eventMap.value, [activeEvent.value]: { actions: next } })
-const addAction = () => updateActions([...actions.value, { type: 'none' } as UiEventAction])
-const removeAction = (index: number) => updateActions(actions.value.filter((_, actionIndex) => actionIndex !== index))
+const flushDraftContext = () => designer.flushDrafts(designer.activeSceneId)
+const selectEvent = (eventName: UiEventName) => {
+  if (eventName === activeEvent.value) return
+  flushDraftContext()
+  activeEvent.value = eventName
+}
+const addAction = () => { flushDraftContext(); updateActions([...actions.value, { type: 'none' } as UiEventAction]) }
+const removeAction = (index: number) => { flushDraftContext(); updateActions(actions.value.filter((_, actionIndex) => actionIndex !== index)) }
 const moveAction = (index: number, delta: -1 | 1) => {
+  flushDraftContext()
   const target = index + delta
   if (target < 0 || target >= actions.value.length) return
   updateActions(reorderEventActions(actions.value, index, target))
@@ -39,16 +57,18 @@ const dropAction = (targetIndex: number, event: DragEvent) => {
   const sourceIndex = draggingAction.value ?? Number(event.dataTransfer?.getData('text/ui-action-index'))
   draggingAction.value = undefined
   if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= actions.value.length || sourceIndex === targetIndex) return
+  flushDraftContext()
   updateActions(reorderEventActions(actions.value, sourceIndex, targetIndex))
 }
 const updateAction = (index: number, patch: Partial<UiEventAction>) => updateActions(actions.value.map((action, actionIndex) => actionIndex === index ? { ...action, ...patch } as UiEventAction : action))
-const addCondition = (index: number) => updateAction(index, { condition: { type: 'switch', switchId: 1 } })
-const removeCondition = (index: number) => updateAction(index, { condition: undefined })
+const addCondition = (index: number) => { flushDraftContext(); updateAction(index, { condition: { type: 'switch', switchId: 1 } }) }
+const removeCondition = (index: number) => { flushDraftContext(); updateAction(index, { condition: undefined }) }
 const updateCondition = (index: number, patch: Partial<NonNullable<UiEventAction['condition']>>) => {
   const condition = actions.value[index]?.condition
   if (condition) updateAction(index, { condition: { ...condition, ...patch } })
 }
 const setConditionType = (index: number, type: NonNullable<UiEventAction['condition']>['type']) => {
+  flushDraftContext()
   const condition: NonNullable<UiEventAction['condition']> = type === 'switch' ? { type, switchId: 1 } : type === 'variable' ? { type, variableId: 1, operator: '>=', value: 0 } : { type, code: 'true' }
   updateAction(index, { condition })
 }
@@ -57,6 +77,7 @@ const actionField = (action: UiEventAction, key: string): string | number => {
   return typeof value === 'number' || typeof value === 'string' ? value : ''
 }
 const setActionType = (index: number, type: UiEventAction['type']) => {
+  flushDraftContext()
   const base = { type } as UiEventAction
   if (type === 'gotoScene') Object.assign(base, { sceneName: openedScenes.value[0]?.value ?? '' })
   if (type === 'toggleNode') Object.assign(base, { targetNodeId: props.node.id })
@@ -81,17 +102,17 @@ const sceneOptionsFor = (action: UiEventAction) => {
 <template>
   <section class="events-panel">
     <div class="subhead">{{ t('events') }}</div>
-    <el-select v-model="activeEvent" size="small">
+    <el-select data-ui-id="ui-designer-event-select" :model-value="activeEvent" size="small" @update:model-value="selectEvent">
       <el-option v-for="eventName in eventNames" :key="eventName" :label="t(eventLabels[eventName])" :value="eventName" />
     </el-select>
     <div class="action-list">
       <div v-for="(action, index) in actions" :key="`${activeEvent}-${index}`" class="action-card" draggable="true" :aria-grabbed="draggingAction === index" @dragstart="beginActionDrag(index, $event)" @dragover.prevent @drop="dropAction(index, $event)" @dragend="draggingAction = undefined">
         <div class="action-head">
           <span>{{ index + 1 }}</span>
-          <el-select :model-value="action.type" size="small" @update:model-value="setActionType(index, $event)">
+          <el-select :data-ui-id="`ui-designer-event-${activeEvent}-${index}-type`" :model-value="action.type" size="small" @update:model-value="setActionType(index, $event)">
             <el-option v-for="type in actionTypes" :key="type" :label="t(actionLabels[type])" :value="type" />
           </el-select>
-          <el-button-group><el-button size="small" text :aria-label="t('actionMoveUp')" :disabled="index === 0" @click="moveAction(index, -1)">↑</el-button><el-button size="small" text :aria-label="t('actionMoveDown')" :disabled="index === actions.length - 1" @click="moveAction(index, 1)">↓</el-button><el-button size="small" text type="danger" :aria-label="t('deleteNode')" @click="removeAction(index)">×</el-button></el-button-group>
+          <el-button-group><el-button :data-ui-id="`ui-designer-event-${activeEvent}-${index}-move-up`" size="small" text :aria-label="t('actionMoveUp')" :disabled="index === 0" @click="moveAction(index, -1)">↑</el-button><el-button :data-ui-id="`ui-designer-event-${activeEvent}-${index}-move-down`" size="small" text :aria-label="t('actionMoveDown')" :disabled="index === actions.length - 1" @click="moveAction(index, 1)">↓</el-button><el-button size="small" text type="danger" :aria-label="t('deleteNode')" @click="removeAction(index)">×</el-button></el-button-group>
         </div>
         <template v-if="action.type === 'gotoScene'">
           <el-select :model-value="actionField(action, 'sceneName')" size="small" :placeholder="t('sceneTargetChoose')" @update:model-value="updateAction(index, { sceneName: $event })"><el-option v-for="option in sceneOptionsFor(action)" :key="option.value" :label="option.label" :value="option.value" :disabled="option.unavailable" /></el-select>
@@ -100,7 +121,10 @@ const sceneOptionsFor = (action: UiEventAction) => {
         <el-input v-else-if="action.type === 'toggleNode'" :model-value="actionField(action, 'targetNodeId')" size="small" :placeholder="t('targetNodePlaceholder')" @update:model-value="updateAction(index, { targetNodeId: $event })" />
         <el-input v-else-if="action.type === 'playSe'" :model-value="actionField(action, 'seName')" size="small" :placeholder="t('seNamePlaceholder')" @update:model-value="updateAction(index, { seName: $event })" />
         <el-input v-else-if="action.type === 'url'" :model-value="actionField(action, 'url')" size="small" :placeholder="t('urlPlaceholder')" @update:model-value="updateAction(index, { url: $event })" />
-        <UiCodeMirrorEditor v-else-if="action.type === 'script'" :adapter="designer.adapters.code" :model-value="String(actionField(action, 'code'))" :rows="4" :debounce-ms="1000" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateAction(index, { code: $event })" />
+        <template v-else-if="action.type === 'script'">
+          <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-script`" :adapter="designer.adapters.code" :model-value="String(actionField(action, 'code'))" :rows="4" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateAction(index, { code: $event })" />
+          <UiScriptContextHint kind="action" :issues="codeIssuesFor(index)" />
+        </template>
         <el-input v-else-if="action.type === 'showMessage'" :model-value="actionField(action, 'message')" size="small" @update:model-value="updateAction(index, { message: $event })" />
         <div v-else-if="action.type === 'setVariable'" class="action-params">
           <el-input-number :model-value="Number(actionField(action, 'variableId'))" :min="1" size="small" controls-position="right" @update:model-value="updateAction(index, { variableId: $event ?? 1 })" />
@@ -128,7 +152,10 @@ const sceneOptionsFor = (action: UiEventAction) => {
             <el-select :model-value="action.condition.operator ?? '>='" size="small" @update:model-value="updateCondition(index, { operator: $event })"><el-option v-for="operator in ['==', '>=', '<=', '>', '<', '!=']" :key="operator" :label="operator" :value="operator" /></el-select>
             <el-input-number :model-value="action.condition.value ?? 0" size="small" @update:model-value="updateCondition(index, { value: $event ?? 0 })" />
           </div>
-          <UiCodeMirrorEditor v-else :adapter="designer.adapters.code" :model-value="action.condition.code ?? ''" :rows="3" :debounce-ms="1000" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCondition(index, { code: $event })" />
+          <template v-else>
+            <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-condition-script`" :adapter="designer.adapters.code" :model-value="action.condition.code ?? ''" :rows="3" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCondition(index, { code: $event })" />
+            <UiScriptContextHint kind="condition" :issues="codeIssuesFor(index, true)" />
+          </template>
         </div>
         <el-button v-else size="small" text @click="addCondition(index)">＋ {{ t('condition') }}</el-button>
       </div>

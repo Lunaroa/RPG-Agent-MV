@@ -46,8 +46,8 @@ const toggleEditorPreview = () => {
       </el-button-group>
 
       <el-button-group>
-        <el-button data-testid="ui-designer-design-mode" size="small" :disabled="designer.isEditorPreviewing" :type="designer.editingMode === 'design' ? 'primary' : 'default'" @click="designer.editingMode = 'design'">{{ t('design') }}</el-button>
-        <el-button data-testid="ui-designer-code-mode" size="small" :disabled="designer.isEditorPreviewing" :type="designer.editingMode === 'code' ? 'primary' : 'default'" @click="designer.editingMode = 'code'">{{ t('code') }}</el-button>
+        <el-button data-testid="ui-designer-design-mode" size="small" :disabled="designer.isEditorPreviewing" :type="designer.editingMode === 'design' ? 'primary' : 'default'" @click="designer.setEditingMode('design')">{{ t('design') }}</el-button>
+        <el-button data-testid="ui-designer-code-mode" size="small" :disabled="designer.isEditorPreviewing" :type="designer.editingMode === 'code' ? 'primary' : 'default'" @click="designer.setEditingMode('code')">{{ t('code') }}</el-button>
       </el-button-group>
 
       <el-button data-testid="ui-designer-editor-preview-toggle" class="editor-preview-toggle" size="small" :aria-label="designer.isEditorPreviewing ? t('exitEditorPreview') : t('editorPreview')" :type="designer.isEditorPreviewing ? 'success' : 'default'" @click="toggleEditorPreview">

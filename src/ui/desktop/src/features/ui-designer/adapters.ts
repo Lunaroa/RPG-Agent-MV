@@ -40,6 +40,7 @@ import 'codemirror/addon/fold/foldgutter'
 import 'codemirror/addon/fold/foldgutter.css'
 import 'codemirror/addon/fold/brace-fold'
 import 'codemirror/mode/javascript/javascript'
+import { createUiDesignerCodeMirrorChangeHandler, formatUiDesignerCodeMirrorDocument } from './codeMirrorLifecycle'
 
 const unavailable = (message: string): UiFileResult<never> => ({ status: 'unavailable', message })
 
@@ -316,16 +317,19 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
         editor.setGutterMarker(Math.min(line, Math.max(0, editor.lineCount() - 1)), 'CodeMirror-lint-markers', marker(message))
       }
     }
-    const onChange = () => { options.onChange(editor.getValue()); lint() }
+    const onChange = createUiDesignerCodeMirrorChangeHandler(() => editor.getValue(), options.onChange, lint)
+    const onBlur = () => options.onBlur?.(editor.getValue())
     editor.on('change', onChange)
+    editor.on('blur', onBlur)
     lint()
     return {
       getValue: () => editor.getValue(),
       setValue: (value: string) => editor.setValue(value),
       focus: () => editor.focus(),
-      format: () => editor.execCommand('indentAuto'),
+      format: () => formatUiDesignerCodeMirrorDocument(editor),
       dispose: () => {
         editor.off('change', onChange)
+        editor.off('blur', onBlur)
         editor.toTextArea()
         element.innerHTML = ''
       },

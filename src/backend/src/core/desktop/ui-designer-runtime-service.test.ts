@@ -101,8 +101,10 @@ describe('ui designer runtime staging', () => {
 
   test('exports validated runtime JSON independently with explicit overwrite', () => {
     const exportPath = path.join(tempRoot, 'exports', 'Scene_Sample.json');
+    const exactSource = 'onReady(function () {\r\n  this.__exported = "onUpdate(function () is data";\r\n});';
     const runtimeWithEditorChrome = {
       ...scene(),
+      sceneScript: { version: '1.0.0', source: exactSource },
       editorVersion: '1.1.0',
       canvas: { width: 816, height: 624 },
       guides: [{ id: 'guide_1', type: 'vertical', position: 20, locked: false }],
@@ -114,6 +116,7 @@ describe('ui designer runtime staging', () => {
     assert.equal('editorVersion' in firstJson, false);
     assert.equal('canvas' in firstJson, false);
     assert.equal('guides' in firstJson, false);
+    assert.equal(firstJson.sceneScript.source, exactSource);
     assert.throws(
       () => writeUiDesignerRuntimeExport(exportPath, scene()),
       (error: unknown) => error instanceof UiDesignerRuntimeExportOverwriteRequiredError

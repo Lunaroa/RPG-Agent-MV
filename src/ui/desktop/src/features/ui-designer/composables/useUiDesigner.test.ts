@@ -268,3 +268,31 @@ test('switching scenes flushes the single-file source draft to its captured scen
   assert.equal(sceneA.document.nodes.find((node) => node.id === 'node_root')?.propCodes.x, 'return 12')
   assert.equal(designer.activeScene.value.id, sceneB.id)
 })
+
+test('undo redo and leaving code mode synchronously resolve the pending scene script draft', () => {
+  const designer = useUiDesigner()
+  const sceneId = designer.activeSceneId.value
+  const originalSource = designer.document.value.sceneScript.source
+  let pendingSource: string | undefined = 'onReady(function () { this.__pendingDraft = 1; });'
+  const unregister = designer.draftCoordinator.register(() => {
+    if (pendingSource === undefined) return
+    designer.previewSourceCode(pendingSource, sceneId)
+    pendingSource = undefined
+    designer.commitSourceCode(sceneId)
+  }, {
+    sceneId,
+    pending: () => pendingSource !== undefined,
+  })
+
+  designer.setEditingMode('code')
+  designer.undo()
+  assert.equal(designer.document.value.sceneScript.source, originalSource)
+  designer.redo()
+  assert.match(designer.document.value.sceneScript.source, /__pendingDraft = 1/)
+
+  pendingSource = 'onReady(function () { this.__pendingDraft = 2; });'
+  designer.setEditingMode('design')
+  assert.match(designer.document.value.sceneScript.source, /__pendingDraft = 2/)
+  assert.equal(designer.draftCoordinator.hasPending(sceneId), false)
+  unregister()
+})

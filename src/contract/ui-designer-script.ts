@@ -11,7 +11,39 @@ import {
 export const UI_DESIGNER_LEGACY_DOCUMENT_VERSION = '1.0.0' as const
 export const UI_DESIGNER_LEGACY_EDITOR_VERSION = '1.0.0' as const
 
-const LEGACY_LIFECYCLE_ARGUMENTS = 'runtime, context, node, props, event, self, scene, $sw, $var, $setSw, $setVar'
+export const UI_DESIGNER_SCRIPT_ARGUMENTS = [
+  'runtime',
+  'context',
+  'node',
+  'props',
+  'event',
+  'self',
+  'scene',
+  '$sw',
+  '$var',
+  '$setSw',
+  '$setVar',
+] as const
+
+export const UI_DESIGNER_NODE_SCRIPT_COMPLETIONS = [
+  ...UI_DESIGNER_SCRIPT_ARGUMENTS,
+  'nodes',
+  'getNode',
+  'showNode',
+  'hideNode',
+  'setNodeProp',
+  'tween',
+  'focusNode',
+  'blurNode',
+] as const
+
+export const UI_DESIGNER_SCENE_SCRIPT_COMPLETIONS = [
+  ...UI_DESIGNER_NODE_SCRIPT_COMPLETIONS,
+  'onReady',
+  'onUpdate',
+] as const
+
+const LEGACY_LIFECYCLE_ARGUMENTS = UI_DESIGNER_SCRIPT_ARGUMENTS.join(', ')
 
 export interface UiLegacySourceCode {
   ready: string

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { UiDesignerDocument } from '../../../../contract/ui-designer.ts';
+import { migrateLegacyUiSourceCode } from '../../../../contract/ui-designer-script.ts';
 import {
   UI_DESIGNER_RECENT_LIMIT,
   UiDesignerFileConflictError,
@@ -53,15 +54,17 @@ describe('ui designer document service', () => {
     legacy.version = '1.0.0';
     legacy.editorVersion = '1.0.0';
     delete legacy.sceneScript;
-    legacy.code = {
-      ready: 'this.__legacyReady = arguments.length;',
-      update: 'this.__legacyUpdate = true;',
+    const legacyCode = {
+      ready: 'const text = "onUpdate(function () is data";\r\nthis.__legacyReady = arguments.length;',
+      update: 'const text = "onReady(function () is data";\nthis.__legacyUpdate = true;',
     };
+    legacy.code = legacyCode;
     fs.writeFileSync(filePath, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8');
 
     const migrated = readUiDesignerFile(filePath).document;
     assert.equal(migrated.version, '1.1.0');
     assert.equal(migrated.editorVersion, '1.1.0');
+    assert.equal(migrated.sceneScript.source, migrateLegacyUiSourceCode(legacyCode));
     assert.match(migrated.sceneScript.source, /onReady\(function/);
     assert.match(migrated.sceneScript.source, /this\.__legacyReady = arguments\.length/);
     assert.match(migrated.sceneScript.source, /onUpdate\(function/);
@@ -71,6 +74,7 @@ describe('ui designer document service', () => {
     const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
     assert.equal('code' in persisted, false);
     assert.ok('sceneScript' in persisted);
+    assert.equal(readUiDesignerFile(filePath).document.sceneScript.source, migrated.sceneScript.source);
   });
 
   test('normalizes document geometry and pane preferences to shared integers on read and save', () => {

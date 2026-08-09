@@ -576,6 +576,47 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.throws(() => instance.__lateRegister(function () {}), /only be called synchronously/);
   });
 
+  test('isolates one-file setup ready and update failures across MV and MZ scene hosts', () => {
+    for (const engine of ['MV', 'MZ']) {
+      const context = makeContext();
+      context.Utils = { RPGMAKER_NAME: engine };
+      vm.runInNewContext(RUNTIME_SOURCE, context, { filename: `MZUIRuntime-lifecycle-${engine}.js` });
+      const scene = sceneDocument();
+      scene.sceneScript = {
+        version: '1.0.0',
+        source: [
+          'this.__lateRegister = onUpdate;',
+          'onReady(function () { this.__failedReadyCalls = (this.__failedReadyCalls || 0) + 1; throw new Error("ready failure"); });',
+          'onReady(function () { this.__healthyReadyCalls = (this.__healthyReadyCalls || 0) + 1; });',
+          'onUpdate(function () { this.__failedUpdateCalls = (this.__failedUpdateCalls || 0) + 1; throw new Error("update failure"); });',
+          'onUpdate(function () { this.__healthyUpdateCalls = (this.__healthyUpdateCalls || 0) + 1; });',
+          'throw new Error("setup failure");',
+        ].join('\n'),
+      };
+      const sceneName = `Scene_Lifecycle_${engine}`;
+      context.MZUIRuntime.registerScene(sceneName, 'Scene_Base', { ...scene, meta: { ...scene.meta, sceneName } });
+      const instance = new context[sceneName]();
+      const unrelated = new context.PIXI.Container();
+      instance.addChild(unrelated);
+      instance.create();
+      const runtime = instance._mzuiRuntime;
+      assert.equal(instance.__failedReadyCalls, 1);
+      assert.equal(instance.__healthyReadyCalls, 1);
+      assert.throws(() => instance.__lateRegister(function () {}), /only be called synchronously/);
+      instance.update();
+      instance.update();
+      assert.equal(instance.__failedUpdateCalls, 1);
+      assert.equal(instance.__healthyUpdateCalls, 2);
+      assert.equal(runtime.errors.filter((entry: { phase?: string }) => entry.phase === 'setup').length, 1);
+      assert.equal(runtime.errors.filter((entry: { phase?: string }) => entry.phase === 'ready').length, 1);
+      assert.equal(runtime.errors.filter((entry: { phase?: string }) => entry.phase === 'update').length, 1);
+      instance.terminate();
+      assert.equal(instance.children.includes(unrelated), true);
+      assert.equal(instance.children.length, 1);
+      assert.throws(() => instance.__lateRegister(function () {}), /only be called synchronously/);
+    }
+  });
+
   test('injects the documented self/scene and game state helper ABI once per callback', () => {
     const context = makeContext();
     context.$gameSwitches.value = (id: number) => Boolean(context.$gameSwitches._data[id]);

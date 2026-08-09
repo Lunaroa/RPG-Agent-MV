@@ -2,8 +2,10 @@
 import { computed, isRef, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import type { UiRuntimeDiagnostic, UiValidationIssue, UiValidationReport } from '@contract/ui-designer'
+import { UI_DESIGNER_SCENE_SCRIPT_COMPLETIONS } from '@contract/ui-designer-script'
 import { useUiDesignerI18n } from '../i18n'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
+import UiScriptContextHint from './UiScriptContextHint.vue'
 
 const props = defineProps<{ designer: UiDesignerController }>()
 const designer = props.designer
@@ -29,24 +31,13 @@ const runtimeCodeDiagnostics = computed<UiRuntimeDiagnostic[]>(() => {
 })
 const editorRef = ref<{ format: () => void }>()
 const formatCode = () => editorRef.value?.format()
-let commitTimer: ReturnType<typeof setTimeout> | undefined
-let pendingDraft: { sceneId: string } | undefined
-
-const commitPending = () => {
-  if (!pendingDraft) return
-  const draft = pendingDraft
-  pendingDraft = undefined
-  designer.commitSourceCode(draft.sceneId)
-}
+const completionItems = computed(() => [...UI_DESIGNER_SCENE_SCRIPT_COMPLETIONS, ...document.value.nodes.flatMap((node) => [node.id, node.name])])
 
 const updateCode = (value: string, sourceSceneId?: string) => {
   const sceneId = sourceSceneId ?? unwrap(designer.activeSceneId)
   designer.previewSourceCode(value, sceneId)
-  pendingDraft = { sceneId }
-  if (commitTimer) clearTimeout(commitTimer)
-  commitTimer = setTimeout(() => { commitPending(); commitTimer = undefined }, 1000)
+  designer.commitSourceCode(sceneId)
 }
-onBeforeUnmount(() => { if (commitTimer) clearTimeout(commitTimer); commitPending() })
 const handleFormatShortcut = () => formatCode()
 onMounted(() => window.addEventListener('agent-rpg:ui-designer-format', handleFormatShortcut))
 onBeforeUnmount(() => window.removeEventListener('agent-rpg:ui-designer-format', handleFormatShortcut))
@@ -74,7 +65,8 @@ onBeforeUnmount(() => window.removeEventListener('agent-rpg:ui-designer-format',
         </li>
       </ul>
     </el-alert>
-  <UiCodeMirrorEditor ref="editorRef" :adapter="designer.adapters.code" :model-value="code" :rows="18" :debounce-ms="1000" :scene-id="designer.activeSceneId" :completion-items="document.nodes.flatMap((node) => [node.id, node.name])" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCode" />
+    <UiScriptContextHint kind="scene" :issues="codeIssues" />
+    <UiCodeMirrorEditor ref="editorRef" :adapter="designer.adapters.code" :model-value="code" :rows="18" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :scene-id="designer.activeSceneId" :completion-items="completionItems" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCode" />
   </section>
 </template>
 

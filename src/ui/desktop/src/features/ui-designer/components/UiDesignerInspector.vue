@@ -209,6 +209,7 @@ const commitNodeName = () => { if (selectedNode.value) designer.renameNode(selec
           :resource-category="field.resourceCategory"
           :resource-picker="field.kind === 'resource' ? () => openResourceWorkspace(field.resourceCategory, String(propValue(field.key) ?? '')) : undefined"
           :resource-picker-disabled="field.kind === 'resource' && !designer.hasProject"
+          :format-on-blur="Boolean(designer.preferences.autoFormat)"
           :issues="issuesForField(field)"
           :code-adapter="designer.adapters.code"
           :draft-coordinator="designer.draftCoordinator"
@@ -254,8 +255,8 @@ const commitNodeName = () => { if (selectedNode.value) designer.renameNode(selec
         </div>
       </el-popover>
     </div>
-    <UiDesignerEvents v-else-if="activeSection === 'events'" :designer="designer" :node="selectedNode" />
-    <UiDesignerConditions v-else-if="activeSection === 'condition'" :designer="designer" :node="selectedNode" />
+    <UiDesignerEvents v-else-if="activeSection === 'events'" :key="`events-${selectedNode.id}`" :designer="designer" :node="selectedNode" />
+    <UiDesignerConditions v-else-if="activeSection === 'condition'" :key="`condition-${selectedNode.id}`" :designer="designer" :node="selectedNode" />
     <UiDesignerAnimations v-else :designer="designer" :node="selectedNode" />
     <el-dialog
       :model-value="resourceWorkspaceVisible"

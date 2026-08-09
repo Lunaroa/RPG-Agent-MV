@@ -696,6 +696,12 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return true
   }
 
+  const setEditingMode = (mode: 'design' | 'code') => {
+    if (editingMode.value === mode) return
+    if (editingMode.value === 'code') flushDrafts(activeSceneId.value)
+    editingMode.value = mode
+  }
+
   const updateNodeProperty = (nodeId: string, property: string, value: unknown) => {
     if (property === 'x' || property === 'y' || property === 'width' || property === 'height') {
       if (nodeId !== 'node_root' && !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return
@@ -917,14 +923,18 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const undo = () => {
-    const scene = activeScene.value
+    const sceneId = activeSceneId.value
+    flushDrafts(sceneId)
+    const scene = scenes.value.find((item) => item.id === sceneId)
     if (!scene || !scene.history.canUndo) return
     scene.document = scene.history.undo()
     selectedIds.value = selectedIds.value.filter((id) => Boolean(findNode(scene.document, id)))
   }
 
   const redo = () => {
-    const scene = activeScene.value
+    const sceneId = activeSceneId.value
+    flushDrafts(sceneId)
+    const scene = scenes.value.find((item) => item.id === sceneId)
     if (!scene || !scene.history.canRedo) return
     scene.document = scene.history.redo()
     selectedIds.value = selectedIds.value.filter((id) => Boolean(findNode(scene.document, id)))
@@ -1299,7 +1309,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const startEditorPreview = () => {
     if (isEditorPreviewing.value) return true
     editorPreviewModeBefore = editingMode.value
-    editingMode.value = 'design'
+    setEditingMode('design')
     return startRawEditorPreview()
   }
   const stopEditorPreview = () => {
@@ -1505,6 +1515,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     setNodeEvents,
     setSceneMeta,
     setSourceCode,
+    setEditingMode,
     previewSourceCode,
     commitSourceCode,
     flushDrafts,

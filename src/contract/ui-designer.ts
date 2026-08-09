@@ -943,6 +943,8 @@ export interface UiCodeEditorMountOptions {
   searchReplace: boolean
   completionItems?: string[]
   onChange: (value: string) => void
+  /** Called for a real editor blur after CodeMirror has finished its own focus transition. */
+  onBlur?: (value: string) => void
 }
 
 export interface UiCodeEditorHandle {

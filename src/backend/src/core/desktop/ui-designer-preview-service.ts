@@ -9,6 +9,7 @@ import type {
   UiRuntimeDiagnostic,
   UiRuntimeSceneExport,
 } from '../../../../contract/ui-designer.ts'
+import { canonicalUiRuntimeSceneExport } from '../../../../contract/ui-designer-script.ts'
 import { inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts'
 import {
   cleanupIsolatedProject,
@@ -134,6 +135,7 @@ export class UiDesignerPreviewService {
     if (!this.launcher) throw new UiDesignerPreviewUnavailableError()
     const report = validateUiRuntimeSceneExport(scene)
     if (!report.valid) throw new Error(`UI preview scene validation failed: ${report.errors.map((issue) => issue.message).join('; ')}`)
+    scene = canonicalUiRuntimeSceneExport(scene)
     if (RESERVED_ENGINE_SCENE_NAMES.has(scene.meta.sceneName)) throw new UiDesignerPreviewSceneConflictError(scene.meta.sceneName)
     const projectCompatibility = uiDesignerProjectCompatibility(inspectRmmvProject(path.resolve(projectInput)))
     this.preparing = true
@@ -172,6 +174,10 @@ export class UiDesignerPreviewService {
         return this.failStart(session, detail, launch.run?.error)
       }
       session.runnerId = runnerId
+      const startupEvidence = verifyIsolatedSourceStateForPreview(session)
+      if (!startupEvidence.sourceUnchanged || !startupEvidence.savesUnchanged || !startupEvidence.stagingUnchanged) {
+        return this.retainIsolationFailure(session, startupEvidence, 'The source project or staging changed while the isolated preview runner was starting.')
+      }
       return {
         state: 'running',
         message: 'Isolated UI designer preview is running in a temporary MV/MZ project.',
@@ -188,6 +194,38 @@ export class UiDesignerPreviewService {
       if (session) return this.failStart(session, error instanceof Error ? error.message : String(error))
       try { cleanupIsolatedProject(preparation) } catch { /* Preserve the preparation failure. */ }
       throw error
+    }
+  }
+
+  private async retainIsolationFailure(
+    session: UiDesignerPreviewSession,
+    evidence: ReturnType<typeof verifyIsolatedSourceState>,
+    message: string,
+  ): Promise<UiPreviewResult & { session: UiDesignerPreviewSession }> {
+    let runnerStatus = 'unknown'
+    let runnerError = ''
+    if (this.launcher && session.runnerId) {
+      try {
+        const stopped = await this.launcher.stop(session.runnerId)
+        runnerStatus = stopped.run?.status || runnerStatus
+        runnerError = stopped.error || stopped.run?.error || ''
+      } catch (error) {
+        runnerError = error instanceof Error ? error.message : String(error)
+      }
+    }
+    this.active = session
+    return {
+      state: 'error',
+      message: `${message} The temporary project was kept for recovery.`,
+      sessionId: session.sessionId,
+      temporaryPath: session.temporaryProject,
+      sourceProject: session.sourceProject,
+      stagingSummary: session.stagingSummary,
+      runner: { runId: session.runnerId, status: runnerStatus, ...(runnerError ? { error: runnerError } : {}) },
+      cleanup: { ok: false, message: evidence.stagingError || 'Isolation evidence changed.' },
+      diagnostics: readPreviewDiagnostics(session),
+      projectCompatibility: session.projectCompatibility,
+      session,
     }
   }
 

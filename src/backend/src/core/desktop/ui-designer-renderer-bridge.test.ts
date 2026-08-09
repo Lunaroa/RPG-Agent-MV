@@ -1,0 +1,65 @@
+import assert from 'node:assert/strict'
+import os from 'node:os'
+import path from 'node:path'
+import { test } from 'node:test'
+
+import {
+  UI_DESIGNER_RENDERER_BRIDGE_VERSION,
+  UiDesignerRendererBridgeProtocolError,
+  validateUiDesignerRendererBridgeMessage,
+} from '../../../../contract/ui-designer-renderer-bridge.ts'
+
+const baseMessage = () => ({
+  version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
+  sessionId: 'session_01',
+  generation: 3,
+  sequence: 8,
+  sceneId: 'Scene_Sample',
+})
+
+test('accepts bounded renderer bridge messages for the active session', () => {
+  const message = {
+    ...baseMessage(),
+    kind: 'bounds',
+    payload: {
+      revision: 2,
+      bounds: [{ nodeId: 'node_1', x: 10, y: 20, width: 100, height: 40, rotation: 0, visible: true, interactive: true }],
+    },
+  }
+  const validated = validateUiDesignerRendererBridgeMessage(message, {
+    sessionId: 'session_01', generation: 3, minimumSequence: 8, sceneId: 'Scene_Sample',
+  })
+  assert.equal(validated.kind, 'bounds')
+})
+
+test('rejects stale, oversized, unknown-field, and malformed mount messages', () => {
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), generation: 2, kind: 'disposed', payload: {} }, {
+      sessionId: 'session_01', generation: 3, minimumSequence: 8,
+    }),
+    UiDesignerRendererBridgeProtocolError,
+  )
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), extra: 'smuggled', kind: 'disposed', payload: {} }),
+    /Unexpected bridge message field/,
+  )
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'patch', payload: { revision: 1, nodes: [{ nodeId: 'node_1', props: { value: 'x'.repeat(4_300_000) } }] } }),
+    /exceeds/,
+  )
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'patch', payload: { revision: 1, nodes: [{ nodeId: 'node_1', props: { imagePath: path.join(os.tmpdir(), 'outside.png') } }] } }),
+    /project-relative/,
+  )
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'patch', payload: { revision: 1, nodes: [{ nodeId: 'node_1', props: { imagePath: 'https://example.invalid/outside.png' } }] } }),
+    /project-relative/,
+  )
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'mount', payload: {
+      revision: 1,
+      scene: { version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_Sample' }, nodes: [], zOrder: [], sceneScript: { version: '2.0.0', source: '' } },
+    } }),
+    /sceneScript/,
+  )
+})

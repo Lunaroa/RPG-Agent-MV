@@ -6,6 +6,7 @@ import {
   type UiRuntimeSceneMeta,
   type UiDesignerExportOptions,
 } from '@contract/ui-designer'
+import { canonicalUiRuntimeSceneExport } from '@contract/ui-designer-script'
 import { cloneUiDocument, createUiDocument } from './document'
 import { parseUiDocument } from './parser'
 import { validateDocument } from './validation'
@@ -28,8 +29,8 @@ function stripEditorNode(node: UiNode): UiNode {
 }
 
 export function exportRuntimeDocument(document: UiDesignerDocument, runtimeVersion = UI_DESIGNER_RUNTIME_VERSION, options: UiDesignerExportOptions = {}): UiRuntimeSceneExport {
-  if (!/^>=\d+\.\d+\.\d+$/.test(runtimeVersion)) {
-    throw new UiExportValidationError([{ severity: 'error', code: 'invalid-runtime-version', message: `Runtime version must be a minimum range such as >=1.0.0`, path: 'runtimeVersion' }])
+  if (runtimeVersion !== UI_DESIGNER_RUNTIME_VERSION) {
+    throw new UiExportValidationError([{ severity: 'error', code: 'invalid-runtime-version', message: `Runtime version must be ${UI_DESIGNER_RUNTIME_VERSION}`, path: 'runtimeVersion' }])
   }
   const parsed = parseUiDocument(document)
   if (!parsed.ok) throw new UiExportValidationError(parsed.issues)
@@ -52,7 +53,7 @@ export function exportRuntimeDocument(document: UiDesignerDocument, runtimeVersi
     globalFilter: source.globalFilter,
     nodes: source.nodes.map(stripEditorNode),
     zOrder: [...source.zOrder],
-    code: { ...source.code },
+    sceneScript: { ...source.sceneScript },
   }
 }
 
@@ -62,10 +63,11 @@ export function exportRuntimeDocument(document: UiDesignerDocument, runtimeVersi
  * the caller must mark the resulting tab dirty before it can be saved.
  */
 export function importRuntimeSceneDocument(runtime: UiRuntimeSceneExport): UiDesignerDocument {
-  const base = createUiDocument(runtime.meta.sceneName)
-  const width = Number.isFinite(runtime.meta.canvasWidth) && runtime.meta.canvasWidth > 0 ? runtime.meta.canvasWidth : base.canvas.width
-  const height = Number.isFinite(runtime.meta.canvasHeight) && runtime.meta.canvasHeight > 0 ? runtime.meta.canvasHeight : base.canvas.height
-  const nodes = runtime.nodes.map((node) => ({
+  const source = canonicalUiRuntimeSceneExport(runtime)
+  const base = createUiDocument(source.meta.sceneName)
+  const width = Number.isFinite(source.meta.canvasWidth) && source.meta.canvasWidth > 0 ? source.meta.canvasWidth : base.canvas.width
+  const height = Number.isFinite(source.meta.canvasHeight) && source.meta.canvasHeight > 0 ? source.meta.canvasHeight : base.canvas.height
+  const nodes = source.nodes.map((node) => ({
     ...node,
     locked: node.locked ?? false,
     children: Array.isArray(node.children) ? [...node.children] : [],
@@ -81,19 +83,19 @@ export function importRuntimeSceneDocument(runtime: UiRuntimeSceneExport): UiDes
     ...base,
     meta: {
       ...base.meta,
-      sceneName: runtime.meta.sceneName,
-      sceneBase: runtime.meta.sceneBase,
+      sceneName: source.meta.sceneName,
+      sceneBase: source.meta.sceneBase,
       canvasWidth: width,
       canvasHeight: height,
-      author: runtime.meta.author,
-      description: runtime.meta.description,
+      author: source.meta.author,
+      description: source.meta.description,
     },
-    transitions: runtime.transitions,
-    globalFilter: runtime.globalFilter,
+    transitions: source.transitions,
+    globalFilter: source.globalFilter,
     canvas: { ...base.canvas, width, height },
     nodes,
-    zOrder: [...runtime.zOrder],
-    code: { ...runtime.code },
+    zOrder: [...source.zOrder],
+    sceneScript: { ...source.sceneScript },
   }
   const root = document.nodes.find((node) => node.id === 'node_root')
   if (root && root.type === 'container') { root.props.width = width; root.props.height = height }

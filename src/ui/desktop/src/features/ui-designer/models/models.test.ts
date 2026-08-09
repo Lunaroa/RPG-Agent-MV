@@ -79,7 +79,29 @@ describe('ui designer document model', () => {
     assert.equal(imported.meta.sceneName, runtime.meta.sceneName)
     assert.equal(validateDocument(imported).valid, true)
   })
-  test('creates a v1 document with the complete ten-node factory', () => {
+  test('migrates legacy lifecycle bodies into one canonical scene script', () => {
+    const current = createUiDocument('Scene_LegacyMigration')
+    const legacy = structuredClone(current) as unknown as Record<string, unknown>
+    legacy.version = '1.0.0'
+    legacy.editorVersion = '1.0.0'
+    delete legacy.sceneScript
+    legacy.code = {
+      ready: 'this.__readyValue = arguments.length; return 1;',
+      update: 'this.__updateValue = $var(1);',
+    }
+    const parsed = parseUiDocument(legacy)
+    assert.equal(parsed.ok, true)
+    if (!parsed.ok) return
+    assert.equal(parsed.document.version, '1.1.0')
+    assert.match(parsed.document.sceneScript.source, /onReady\(function/)
+    assert.match(parsed.document.sceneScript.source, /return 1;/)
+    assert.match(parsed.document.sceneScript.source, /onUpdate\(function/)
+    assert.equal('code' in parsed.document, false)
+    const runtime = exportRuntimeDocument(parsed.document)
+    assert.equal(runtime.runtimeVersion, '>=1.1.0')
+    assert.equal(runtime.sceneScript.source, parsed.document.sceneScript.source)
+  })
+  test('creates a current document with the complete ten-node factory', () => {
     const document = createUiDocument('Scene_Test')
     const types = ['container', 'sprite', 'nineSlice', 'frameAnimation', 'button', 'text', 'progressBar', 'overlay', 'video', 'particle'] as const
     const nodes = types.map((type, index) => createDefaultNode(type, { id: `node_${index}`, name: `${type}_${index}` }))
@@ -191,13 +213,13 @@ describe('ui designer export and validation', () => {
 
   test('blocks export when user code is syntactically invalid', () => {
     const document = createUiDocument()
-    document.code.ready = 'if ('
+    document.sceneScript.source = 'onReady(function () {'
     const report = validateDocument(document)
     assert.equal(report.valid, false)
     assert.throws(() => exportRuntimeDocument(document), UiExportValidationError)
   })
 
-  test('checks property and condition code as expressions while ready/update remain function bodies', () => {
+  test('checks property and condition code as expressions alongside the scene script', () => {
     const document = createUiDocument()
     const text = createDefaultNode('text', { id: 'text_expression', name: 'ExpressionText', parentId: 'node_root' })
     text.propCodes.content = '1 + 2'

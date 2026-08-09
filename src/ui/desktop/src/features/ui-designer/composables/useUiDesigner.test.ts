@@ -76,7 +76,7 @@ test('editor preview renders the design canvas and restores the source editing m
 })
 
 test('preview diagnostics follow the active session and retain final cleanup diagnostics', async () => {
-  const startDiagnostics = [{ schemaVersion: '1.0.0' as const, sessionId: 'preview-diagnostics', scene: 'Scene_Main', file: 'code.ready', node: 'node_root', type: 'code', phase: 'ready', event: null, code: 'UI_CODE_ERROR', severity: 'error' as const, label: 'Code error', message: 'syntax error', count: 1 }]
+  const startDiagnostics = [{ schemaVersion: '1.0.0' as const, sessionId: 'preview-diagnostics', scene: 'Scene_Main', file: 'sceneScript.source', node: 'node_root', type: 'code', phase: 'ready', event: null, code: 'UI_CODE_ERROR', severity: 'error' as const, label: 'Code error', message: 'syntax error', count: 1 }]
   const stopDiagnostics = [{ ...startDiagnostics[0], message: 'cleanup complete', count: 2 }]
   const preview: UiDesignerPreviewAdapter = {
     async start(): Promise<UiPreviewResult> { return { state: 'running', message: 'running', sessionId: 'preview-diagnostics', diagnostics: startDiagnostics } },
@@ -180,16 +180,17 @@ test('scene data import creates a dirty editor copy that can be saved as a new s
   assert.equal(scene.history.isDirty, false)
 })
 
-test('switching scenes flushes source drafts to their captured tab', () => {
+test('switching scenes flushes the single-file source draft to its captured scene', () => {
   const designer = useUiDesigner()
   const sceneA = designer.activeScene.value
   designer.newScene('Scene_B')
   const sceneB = designer.activeScene.value
+  const sceneBSource = sceneB.document.sceneScript.source
   designer.selectScene(sceneA.id)
-  designer.previewSourceCode('ready', 'A draft', sceneA.id)
+  designer.previewSourceCode('onReady(function () { this.__sceneA = true; });', sceneA.id)
   assert.equal(designer.selectScene(sceneB.id), true)
-  assert.equal(sceneA.document.code.ready, 'A draft')
-  assert.equal(sceneB.document.code.ready, '')
+  assert.match(sceneA.document.sceneScript.source, /__sceneA/)
+  assert.equal(sceneB.document.sceneScript.source, sceneBSource)
 
   designer.setPropertyCode('node_root', 'x', 'return 12', sceneA.id)
   assert.equal(sceneA.document.nodes.find((node) => node.id === 'node_root')?.propCodes.x, 'return 12')

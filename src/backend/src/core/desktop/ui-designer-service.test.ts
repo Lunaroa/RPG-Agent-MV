@@ -40,11 +40,37 @@ describe('ui designer document service', () => {
 
     const invalid = structuredClone(document) as Record<string, unknown>;
     (invalid.nodes as Array<Record<string, unknown>>)[0].children = ['missing'];
-    (invalid.code as Record<string, unknown>).update = 'if (';
+    (invalid.sceneScript as Record<string, unknown>).source = 'onReady(function () {';
     const report = validateUiDesignerDocument(invalid);
     assert.equal(report.valid, false);
     assert.ok(report.errors.some((issue) => issue.code === 'missing-child'));
     assert.ok(report.errors.some((issue) => issue.code === 'invalid-code'));
+  });
+
+  test('migrates legacy ready and update bodies into the canonical scene script on read', () => {
+    const filePath = path.join(tempRoot, 'legacy-scene.mzui');
+    const legacy = structuredClone(sampleDocument()) as unknown as Record<string, unknown>;
+    legacy.version = '1.0.0';
+    legacy.editorVersion = '1.0.0';
+    delete legacy.sceneScript;
+    legacy.code = {
+      ready: 'this.__legacyReady = arguments.length;',
+      update: 'this.__legacyUpdate = true;',
+    };
+    fs.writeFileSync(filePath, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8');
+
+    const migrated = readUiDesignerFile(filePath).document;
+    assert.equal(migrated.version, '1.1.0');
+    assert.equal(migrated.editorVersion, '1.1.0');
+    assert.match(migrated.sceneScript.source, /onReady\(function/);
+    assert.match(migrated.sceneScript.source, /this\.__legacyReady = arguments\.length/);
+    assert.match(migrated.sceneScript.source, /onUpdate\(function/);
+    assert.equal('code' in migrated, false);
+
+    saveUiDesignerFile(filePath, migrated, { force: true });
+    const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+    assert.equal('code' in persisted, false);
+    assert.ok('sceneScript' in persisted);
   });
 
   test('uses expected digest/mtime conflict checks and explicit force', () => {
@@ -186,8 +212,8 @@ describe('ui designer user data store', () => {
 
 function sampleDocument(): UiDesignerDocument {
   return {
-    version: '1.0.0',
-    editorVersion: '1.0.0',
+    version: '1.1.0',
+    editorVersion: '1.1.0',
     meta: {
       sceneName: 'Scene_Sample',
       sceneBase: 'Scene_Base',
@@ -247,6 +273,6 @@ function sampleDocument(): UiDesignerDocument {
       events: {},
     }],
     zOrder: ['node_root'],
-    code: { ready: '', update: '' },
+    sceneScript: { version: '1.0.0', source: '' },
   };
 }

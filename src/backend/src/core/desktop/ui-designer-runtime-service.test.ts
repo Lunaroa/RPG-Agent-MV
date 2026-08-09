@@ -90,7 +90,7 @@ describe('ui designer runtime staging', () => {
     stageUiDesignerRuntimeInstall(tempRoot, project, { enable: true });
     const stagedRuntime = getProjectFileForRead(tempRoot, project, 'js/plugins/MZUIRuntime.js');
     assert.ok(stagedRuntime);
-    fs.writeFileSync(stagedRuntime!, 'var VERSION = "1.0.0"; // staged user edit', 'utf8');
+    fs.writeFileSync(stagedRuntime!, 'var VERSION = "1.1.0"; // staged user edit', 'utf8');
     const inspected = inspectUiDesignerRuntime(tempRoot, project);
     assert.equal(inspected.state, 'content-mismatch');
     assert.equal(inspected.staging.pending, true);
@@ -101,16 +101,26 @@ describe('ui designer runtime staging', () => {
 
   test('exports validated runtime JSON independently with explicit overwrite', () => {
     const exportPath = path.join(tempRoot, 'exports', 'Scene_Sample.json');
-    const first = writeUiDesignerRuntimeExport(exportPath, scene());
+    const runtimeWithEditorChrome = {
+      ...scene(),
+      editorVersion: '1.1.0',
+      canvas: { width: 816, height: 624 },
+      guides: [{ id: 'guide_1', type: 'vertical', position: 20, locked: false }],
+    } as unknown as UiRuntimeSceneExport;
+    const first = writeUiDesignerRuntimeExport(exportPath, runtimeWithEditorChrome);
     assert.equal(first.path, path.resolve(exportPath));
-    assert.equal(JSON.parse(fs.readFileSync(exportPath, 'utf8')).meta.sceneName, 'Scene_Sample');
+    const firstJson = JSON.parse(fs.readFileSync(exportPath, 'utf8'));
+    assert.equal(firstJson.meta.sceneName, 'Scene_Sample');
+    assert.equal('editorVersion' in firstJson, false);
+    assert.equal('canvas' in firstJson, false);
+    assert.equal('guides' in firstJson, false);
     assert.throws(
       () => writeUiDesignerRuntimeExport(exportPath, scene()),
       (error: unknown) => error instanceof UiDesignerRuntimeExportOverwriteRequiredError
         && error.code === 'UI_DESIGNER_OVERWRITE_REQUIRED'
         && error.affectedFiles[0] === 'Scene_Sample.json',
     );
-    const overwritten = writeUiDesignerRuntimeExport(exportPath, { ...scene(), code: { ready: '/* changed */', update: '' } }, { overwrite: true });
+    const overwritten = writeUiDesignerRuntimeExport(exportPath, { ...scene(), sceneScript: { version: '1.0.0', source: '/* changed */' } }, { overwrite: true });
     assert.notEqual(overwritten.digest, first.digest);
     assert.match(fs.readFileSync(exportPath, 'utf8'), /changed/);
     // Simulate the crash window after the target was moved to a backup.  The
@@ -137,13 +147,13 @@ function makeProject(): string {
 
 function scene(): UiRuntimeSceneExport {
   return {
-    version: '1.0.0',
-    runtimeVersion: '>=1.0.0',
+    version: '1.1.0',
+    runtimeVersion: '>=1.1.0',
     meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
     transitions: { enter: { type: 'fade', duration: 300 }, exit: { type: 'fade', duration: 300 } },
     globalFilter: { blur: 0, glow: 0, preset: '' },
     nodes: [],
     zOrder: [],
-    code: { ready: '', update: '' },
+    sceneScript: { version: '1.0.0', source: '' },
   };
 }

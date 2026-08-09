@@ -1,6 +1,7 @@
 import {
   UI_DESIGNER_DOCUMENT_VERSION,
   UI_DESIGNER_EDITOR_VERSION,
+  UI_DESIGNER_SCENE_SCRIPT_VERSION,
   type UiActionCondition,
   type UiAnimationConfig,
   type UiBaseNodeProps,
@@ -34,6 +35,7 @@ import {
   type UiVideoProps,
   type UiVisibilityCondition,
 } from '@contract/ui-designer'
+import { migrateLegacyUiSourceCode } from '@contract/ui-designer-script'
 
 export interface CreateNodeOptions {
   id?: string
@@ -335,7 +337,10 @@ export function createUiDocument(sceneName = 'Scene_New', now = new Date()): UiD
     guides: [],
     nodes: [root],
     zOrder: [root.id],
-    code: { ready: '', update: '' },
+    sceneScript: {
+      version: UI_DESIGNER_SCENE_SCRIPT_VERSION,
+      source: migrateLegacyUiSourceCode({ ready: '', update: '' }),
+    },
   }
 }
 

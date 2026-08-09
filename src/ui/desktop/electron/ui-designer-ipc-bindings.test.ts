@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { registerUiDesignerIpcHandlers } from './ui-designer-ipc-bindings.ts'
+import { cleanupUiDesignerIpcHandlers, registerUiDesignerIpcHandlers } from './ui-designer-ipc-bindings.ts'
 
 test('ui-designer IPC exposes structured file/resource/runtime boundaries', async () => {
   const handlers = new Map<string, (...args: any[]) => any>()
@@ -43,6 +43,11 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       revealSource: (filePath: string) => { revealed.push(filePath) },
       UiDesignerUserDataStore: class { constructor() { return userDataStore as any } } as any,
     },
+    project: {
+      inspectUiDesignerProjectProfile: () => ({
+        engine: 'MV', engineVersion: null, screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624,
+      }),
+    },
     resources: {
       inspectUiDesignerResourcesAsync: async () => ({ resources: [] }),
       inspectUiDesignerResourceReferences: () => ({ resources: [] }),
@@ -51,8 +56,8 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
         previewUrl: `rmmv-asset://${project}/img/frames/001.png`, name: '001.png', exists: true, referenced: false, size: 1,
       }],
       readUiDesignerSceneData: (_project: string, requestedPath: string) => ({
-        scene: { version: '1.0.0', runtimeVersion: '>=1.0.0', meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 }, transitions: { enter: { type: 'none', duration: 0 }, exit: { type: 'none', duration: 0 } }, globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], code: { ready: '', update: '' } },
-        metadata: { id: `sceneData:${requestedPath}`, relativePath: requestedPath, sceneName: 'Scene_Sample', version: '1.0.0', runtimeVersion: '>=1.0.0', compatibility: 'compatible', digest: 'digest', mtimeMs: 1, size: 2 },
+        scene: { version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 }, transitions: { enter: { type: 'none', duration: 0 }, exit: { type: 'none', duration: 0 } }, globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' } },
+        metadata: { id: `sceneData:${requestedPath}`, relativePath: requestedPath, sceneName: 'Scene_Sample', version: '1.1.0', runtimeVersion: '>=1.1.0', compatibility: 'compatible', digest: 'digest', mtimeMs: 1, size: 2 },
         projectCompatibility: { engine: 'MV', engineVersion: null, engineVersionSupported: true, warnings: [] },
       }),
     },
@@ -78,6 +83,13 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   assert.deepEqual(revealed, [path.resolve(revealPath)])
   const revealDenied = await handlers.get('ui-designer:file:reveal-source')!(null, path.join(revealRoot, 'missing.mzui'))
   assert.equal(revealDenied.status, 'error')
+  const profile = await handlers.get('ui-designer:project:profile')!(null, { project: 'project' })
+  assert.equal(profile.status, 'success')
+  assert.deepEqual(profile.value, { engine: 'MV', engineVersion: null, screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624 })
+  assert.equal('projectPath' in profile.value, false)
+  const missingProfile = await handlers.get('ui-designer:project:profile')!(null, {})
+  assert.equal(missingProfile.status, 'error')
+  assert.equal(missingProfile.code, 'UI_DESIGNER_PROJECT_REQUIRED')
   const resources = await handlers.get('ui-designer:resources:list')!(null, { project: 'project' })
   assert.equal(resources.status, 'success')
   const sceneData = await handlers.get('ui-designer:resources:read-scene-data')!(null, { project: 'project', path: 'js/plugins/mzui-data/Scene_Sample.json' })
@@ -99,5 +111,8 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   assert.equal(runtimeExport.value, 'Scene_Sample.json')
   const canceled = await handlers.get('ui-designer:file:open')!({ sender: {} })
   assert.equal(canceled.status, 'idle')
+  const removed: string[] = []
+  cleanupUiDesignerIpcHandlers({ removeHandler: (name: string) => { removed.push(name) } })
+  assert.equal(removed.includes('ui-designer:project:profile'), true)
   fs.rmSync(revealRoot, { recursive: true, force: true })
 })

@@ -60,10 +60,10 @@ test('stages a UI scene/runtime, launches the isolated runner, and cleans up wit
     },
   })
   const scene = {
-    version: '1.0.0', runtimeVersion: '>=1.0.0',
+    version: '1.1.0', runtimeVersion: '>=1.1.0',
     meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
     transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], code: { ready: '', update: '' },
+    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' },
   } as any
   const started = await service.start(tempRoot, project, scene)
   assert.equal(started.state, 'running')
@@ -97,6 +97,38 @@ test('stages a UI scene/runtime, launches the isolated runner, and cleans up wit
   assert.equal(stopCount, 1)
 })
 
+test('stops the runner and retains the temporary project when startup isolation evidence changes', async () => {
+  const project = path.join(tempRoot, 'isolation-project')
+  fs.mkdirSync(path.join(project, 'data'), { recursive: true })
+  fs.mkdirSync(path.join(project, 'js', 'plugins'), { recursive: true })
+  fs.writeFileSync(path.join(project, 'Game.rpgproject'), 'RPGMV', 'utf8')
+  fs.writeFileSync(path.join(project, 'data', 'System.json'), '{}', 'utf8')
+  fs.writeFileSync(path.join(project, 'data', 'MapInfos.json'), '[null]', 'utf8')
+  fs.writeFileSync(path.join(project, 'js', 'plugins.js'), 'var $plugins = [];\n', 'utf8')
+  let stopped = false
+  const service = new UiDesignerPreviewService({
+    async start() {
+      fs.writeFileSync(path.join(project, 'data', 'System.json'), '{"changed":true}', 'utf8')
+      return { run: { runId: 'isolation-run', status: 'running' } }
+    },
+    async stop() { stopped = true; return { run: { runId: 'isolation-run', status: 'stopped' } } },
+    async current() { return { run: { runId: 'isolation-run', status: stopped ? 'stopped' : 'running' } } },
+  })
+  const scene = {
+    version: '1.1.0', runtimeVersion: '>=1.1.0',
+    meta: { sceneName: 'Scene_Isolation', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
+    transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
+    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' },
+  } as any
+  const result = await service.start(tempRoot, project, scene)
+  assert.equal(result.state, 'error')
+  assert.equal(stopped, true)
+  assert.equal(result.cleanup?.ok, false)
+  assert.ok(result.temporaryPath)
+  assert.equal(fs.existsSync(result.temporaryPath!), true)
+  fs.rmSync(result.temporaryPath!, { recursive: true, force: true })
+})
+
 test('reads only bounded, session-owned diagnostics and retains them through cleanup', async () => {
   const project = path.join(tempRoot, 'diagnostic-project')
   fs.mkdirSync(path.join(project, 'data'), { recursive: true })
@@ -112,10 +144,10 @@ test('reads only bounded, session-owned diagnostics and retains them through cle
     async current() { return { run: { status: runnerStatus } } },
   })
   const scene = {
-    version: '1.0.0', runtimeVersion: '>=1.0.0',
+    version: '1.1.0', runtimeVersion: '>=1.1.0',
     meta: { sceneName: 'Scene_Diagnostics', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
     transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], code: { ready: '', update: '' },
+    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' },
   } as any
   const started = await service.start(tempRoot, project, scene)
   const diagnosticsPath = path.join(started.temporaryPath!, ...UI_DESIGNER_PREVIEW_DIAGNOSTICS_RELATIVE_PATH.split('/'))
@@ -183,10 +215,10 @@ test('reconciles a natural runner exit before cleaning the isolated copy', async
   fs.writeFileSync(path.join(project, 'data', 'MapInfos.json'), '[null]', 'utf8')
   fs.writeFileSync(path.join(project, 'js', 'plugins.js'), 'var $plugins = [];\n', 'utf8')
   const scene = {
-    version: '1.0.0', runtimeVersion: '>=1.0.0',
+    version: '1.1.0', runtimeVersion: '>=1.1.0',
     meta: { sceneName: 'Scene_NaturalExit', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
     transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], code: { ready: '', update: '' },
+    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' },
   } as any
   let status = 'running'
   const service = new UiDesignerPreviewService({
@@ -210,10 +242,10 @@ test('reports a crashed runner after cleanup instead of masking the failure', as
   fs.writeFileSync(path.join(project, 'data', 'MapInfos.json'), '[null]', 'utf8')
   fs.writeFileSync(path.join(project, 'js', 'plugins.js'), 'var $plugins = [];\n', 'utf8')
   const scene = {
-    version: '1.0.0', runtimeVersion: '>=1.0.0',
+    version: '1.1.0', runtimeVersion: '>=1.1.0',
     meta: { sceneName: 'Scene_Crash', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
     transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], code: { ready: '', update: '' },
+    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' },
   } as any
   const service = new UiDesignerPreviewService({
     async start() { return { run: { runId: 'crash-run', status: 'running' } } },
@@ -235,10 +267,10 @@ test('rejects native engine scene names before preparing or launching a preview'
     async current() { return { run: { status: 'stopped' } } },
   })
   const scene = {
-    version: '1.0.0', runtimeVersion: '>=1.0.0',
+    version: '1.1.0', runtimeVersion: '>=1.1.0',
     meta: { sceneName: 'Scene_Title', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
     transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], code: { ready: '', update: '' },
+    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' },
   } as any
   await assert.rejects(() => service.start(tempRoot, tempRoot, scene), (error: unknown) => error instanceof UiDesignerPreviewSceneConflictError)
   assert.equal(launched, false)
@@ -253,10 +285,10 @@ test('rejects a concurrent start while isolated preparation is in flight', async
     async current() { return { run: { status: 'running' } } },
   }, async () => preparation as never)
   const scene = {
-    version: '1.0.0', runtimeVersion: '>=1.0.0',
+    version: '1.1.0', runtimeVersion: '>=1.1.0',
     meta: { sceneName: 'Scene_InFlight', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
     transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], code: { ready: '', update: '' },
+    globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' },
   } as any
   const first = service.start(tempRoot, tempRoot, scene)
   await Promise.resolve()

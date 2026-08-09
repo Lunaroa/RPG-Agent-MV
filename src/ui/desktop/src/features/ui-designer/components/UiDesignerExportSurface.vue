@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, isRef, type Ref } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
-import type { UiRuntimeStatus, UiValidationIssue } from '@contract/ui-designer'
+import { UI_DESIGNER_RUNTIME_VERSION, type UiRuntimeStatus, type UiValidationIssue } from '@contract/ui-designer'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 
 const props = defineProps<{ modelValue: boolean; designer: UiDesignerController; exportPath: string; exportCompleted: boolean }>()
@@ -23,7 +23,7 @@ const close = (visible: boolean) => emit('update:modelValue', visible)
     <div class="dialog-stack">
       <p class="dialog-copy">{{ t('exportDialogBody') }}</p>
       <el-alert v-if="props.exportCompleted" data-testid="ui-designer-stage-result" type="success" :closable="false" :title="t('stagedSummary')" />
-      <dl class="export-summary"><dt>{{ t('sceneName') }}</dt><dd>{{ designer.document.meta.sceneName }}</dd><dt>{{ t('author') }}</dt><dd>{{ designer.document.meta.author || '—' }}</dd><dt>{{ t('description') }}</dt><dd>{{ designer.document.meta.description || '—' }}</dd><dt>{{ t('runtimeVersion') }}</dt><dd>{{ designer.runtimeStatus.version || designer.runtimeStatus.requiredVersion || '1.0.0' }}</dd></dl>
+      <dl class="export-summary"><dt>{{ t('sceneName') }}</dt><dd>{{ designer.document.meta.sceneName }}</dd><dt>{{ t('author') }}</dt><dd>{{ designer.document.meta.author || '—' }}</dd><dt>{{ t('description') }}</dt><dd>{{ designer.document.meta.description || '—' }}</dd><dt>{{ t('runtimeVersion') }}</dt><dd>{{ designer.runtimeStatus.version || designer.runtimeStatus.requiredVersion || UI_DESIGNER_RUNTIME_VERSION }}</dd></dl>
       <section v-if="designer.validation.issues.length" class="export-validation" aria-live="polite">
         <div class="validation-heading">{{ t('validationIssue') }}</div>
         <ul class="validation-list">

@@ -1,6 +1,6 @@
 /*:
  * @author Luna RPG Agent
- * @plugindesc MZ UI Designer Runtime v1.0.0 (MV/MZ)
+ * @plugindesc MZ UI Designer Runtime v1.1.0 (MV/MZ)
  * @target MZ
  * @target MV
  * @param AutoRegister
@@ -11,7 +11,7 @@
 (function installMZUIRuntime(global) {
   'use strict';
 
-  var VERSION = '1.0.0';
+  var VERSION = '1.1.0';
   var SCENE_DIRECTORY_DEFAULT = 'js/plugins/mzui-data';
   var NODE_TYPES = {
     container: true,
@@ -74,7 +74,7 @@
       displayRoot: null,
       hostRoot: null,
       nodeViews: {},
-      compiled: { ready: null, update: null, properties: {}, conditions: {}, scripts: {} },
+      compiled: { setup: null, ready: [], update: [], properties: {}, conditions: {}, scripts: {} },
       listeners: [],
       errors: [],
       disabledHandlers: {},
@@ -157,9 +157,13 @@
           if (typeof this.context.sceneApi.focusNode !== 'function') this.context.sceneApi.focusNode = this.focusNode.bind(this);
           if (typeof this.context.sceneApi.blurNode !== 'function') this.context.sceneApi.blurNode = this.blurNode.bind(this);
         }
+        this.registerSceneScript();
         installKeyboardFocusManager(this);
         this.mounted = true;
-        this.invoke(this.compiled.ready, this.makeInvocationArgs(null, null, null), 'ready');
+        var readyArgs = this.makeInvocationArgs(null, null, null);
+        this.compiled.ready.forEach(function (handler, index) {
+          this.invoke(handler, readyArgs, 'scene-script:ready', 'scene-script:ready:' + index, { phase: 'ready' });
+        }, this);
         this.visibilityEventsReady = true;
         this.dispatchInitialVisibility();
         return this;
@@ -168,7 +172,8 @@
         var self = this;
         var nodes = orderedNodes(this.scene);
         this.nodeViews = {};
-        this.compiled = { ready: compileBody(this.scene && this.scene.code && this.scene.code.ready, CODE_ARGUMENTS), update: compileBody(this.scene && this.scene.code && this.scene.code.update, CODE_ARGUMENTS), properties: {}, conditions: {}, scripts: {}, actions: {} };
+        var sceneScriptSource = this.scene && this.scene.sceneScript && this.scene.sceneScript.source;
+        this.compiled = { setup: compileBody(sceneScriptSource, CODE_ARGUMENTS.concat(['onReady', 'onUpdate'])), ready: [], update: [], properties: {}, conditions: {}, scripts: {}, actions: {} };
         nodes.forEach(function (node) {
           if (!node || typeof node.id !== 'string' || !NODE_TYPES[node.type]) return;
           var modes = node.propModes || {};
@@ -190,6 +195,26 @@
             self.compiled.properties[node.id + ':disabled'] = compileExpression(node.props.disabledCondition, CODE_ARGUMENTS);
           }
         });
+      },
+      registerSceneScript: function registerSceneScript() {
+        var self = this;
+        var register = function register(kind, label) {
+          return function registerLifecycle(handler) {
+            if (typeof handler !== 'function') throw new TypeError(label + ' requires a function callback.');
+            if (!self.sceneScriptRegistrationOpen) throw new Error(label + ' can only be called synchronously while the scene script is initializing.');
+            self.compiled[kind].push(handler);
+          };
+        };
+        this.sceneScriptRegistrationOpen = true;
+        var args = this.makeInvocationArgs(null, null, null).concat([
+          register('ready', 'onReady'),
+          register('update', 'onUpdate'),
+        ]);
+        try {
+          this.invoke(this.compiled.setup, args, 'scene-script:setup', 'scene-script:setup', { phase: 'setup' });
+        } finally {
+          this.sceneScriptRegistrationOpen = false;
+        }
       },
       buildDisplayTree: function buildDisplayTree() {
         var self = this;
@@ -255,7 +280,10 @@
             self.reportError(error, 'node:update', { node: node.id, type: node.type, phase: 'update' });
           }
         });
-        this.invoke(this.compiled.update, this.makeInvocationArgs(null, null, null), 'update');
+        var updateArgs = this.makeInvocationArgs(null, null, null);
+        this.compiled.update.forEach(function (handler, index) {
+          this.invoke(handler, updateArgs, 'scene-script:update', 'scene-script:update:' + index, { phase: 'update' });
+        }, this);
       },
       startExit: function startExit() {
         var transition = this.scene && this.scene.transitions && this.scene.transitions.exit;
@@ -492,6 +520,7 @@
         });
       },
       cleanup: function cleanup() {
+        this.sceneScriptRegistrationOpen = false;
         this.visibilityEventsReady = false;
         var self = this;
         Object.keys(this.effectiveVisibility).forEach(function (id) {
@@ -524,6 +553,7 @@
         if (ownedRoot && ownedRoot.filters) ownedRoot.filters = null;
         this.nodeViews = {};
         this.nodes = {};
+        this.compiled = { setup: null, ready: [], update: [], properties: {}, conditions: {}, scripts: {}, actions: {} };
         this.scene = null;
         this.sceneName = null;
         this.displayRoot = null;
@@ -1675,7 +1705,8 @@
         if (!raw) return;
         try {
           var scene = JSON.parse(raw);
-          if (!scene || scene.version !== VERSION || scene.runtimeVersion !== '>=1.0.0' || !scene.meta || scene.meta.sceneName !== sceneName) throw new Error('UI scene file metadata does not match its stable filename.');
+          if (!scene || scene.version !== VERSION || scene.runtimeVersion !== '>=1.1.0' || !scene.meta || scene.meta.sceneName !== sceneName) throw new Error('UI scene file metadata does not match its stable filename.');
+          if (!scene.sceneScript || scene.sceneScript.version !== '1.0.0' || typeof scene.sceneScript.source !== 'string') throw new Error('UI scene file requires a supported one-file sceneScript.');
           registerScene(sceneName, scene.meta.sceneBase, scene);
         } catch (error) { reportApiError({ scene: sceneName, file: fileName, label: 'scene', message: errorText(error) }); }
       });

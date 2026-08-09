@@ -2,12 +2,19 @@ import {
   UI_DESIGNER_DOCUMENT_VERSION,
   UI_DESIGNER_EDITOR_VERSION,
   UI_DESIGNER_NODE_TYPES,
+  UI_DESIGNER_RUNTIME_VERSION,
+  UI_DESIGNER_SCENE_SCRIPT_VERSION,
   type UiDesignerDocument,
   type UiDesignerNodeType,
   type UiValidationCode,
   type UiValidationIssue,
   type UiValidationReport,
 } from '../../../../contract/ui-designer.ts';
+import {
+  migrateUiDesignerDocument,
+  migrateUiRuntimeSceneExport,
+  uiSceneScriptSyntaxError,
+} from '../../../../contract/ui-designer-script.ts';
 
 const NODE_TYPES = new Set<string>(UI_DESIGNER_NODE_TYPES);
 const EVENT_NAMES = new Set([
@@ -124,6 +131,19 @@ export function validateUiDesignerDocument(value: unknown): UiValidationReport {
     nodeId?: string,
   ): void => warnings.push({ severity: 'warning', code, message, path, nodeId });
 
+  let canonical: unknown = value;
+  try {
+    canonical = migrateUiDesignerDocument(value);
+  } catch (error) {
+    addError('invalid-document-shape', error instanceof Error ? error.message : String(error), 'sceneScript');
+    return { valid: false, issues: [...errors], errors, warnings };
+  }
+
+  if (!isRecord(canonical)) {
+    addError('invalid-code', 'UI designer document must be an object.', '$');
+    return { valid: false, issues: [...errors], errors, warnings };
+  }
+  value = canonical;
   if (!isRecord(value)) {
     addError('invalid-code', 'UI designer document must be an object.', '$');
     return { valid: false, issues: [...errors], errors, warnings };
@@ -248,7 +268,7 @@ export function validateUiDesignerDocument(value: unknown): UiValidationReport {
     for (const id of rootIds) if (!zSet.has(id)) addError('invalid-z-order', `Root node ${id} is missing from zOrder.`, 'zOrder', id);
   }
 
-  validateCode(value.code, addError);
+  validateSceneScript(value.sceneScript, addError);
   return {
     valid: errors.length === 0,
     issues: [...errors, ...warnings],
@@ -258,18 +278,37 @@ export function validateUiDesignerDocument(value: unknown): UiValidationReport {
 }
 
 export function assertValidUiDesignerDocument(value: unknown): UiDesignerDocument {
-  const report = validateUiDesignerDocument(value);
+  let canonical: unknown = value;
+  try {
+    canonical = migrateUiDesignerDocument(value);
+  } catch (error) {
+    const issue: UiValidationIssue = { severity: 'error', code: 'invalid-document-shape', message: error instanceof Error ? error.message : String(error), path: 'sceneScript' };
+    throw new UiDesignerValidationError({ valid: false, issues: [issue], errors: [issue], warnings: [] });
+  }
+  const report = validateUiDesignerDocument(canonical);
   if (!report.valid) throw new UiDesignerValidationError(report);
-  return value as UiDesignerDocument;
+  return canonical as UiDesignerDocument;
 }
 
 /** Validate the runtime export with the same node/property/action rules as the source document. */
 export function validateUiRuntimeSceneExport(value: unknown): UiValidationReport {
+  let canonical: unknown = value;
+  try {
+    canonical = migrateUiRuntimeSceneExport(value);
+  } catch (error) {
+    const issue: UiValidationIssue = { severity: 'error', code: 'invalid-document-shape', message: error instanceof Error ? error.message : String(error), path: 'sceneScript' };
+    return { valid: false, issues: [issue], errors: [issue], warnings: [] };
+  }
+  if (!isRecord(canonical)) {
+    const issue: UiValidationIssue = { severity: 'error', code: 'invalid-document-shape', message: 'Runtime scene export must be an object.', path: '$' };
+    return { valid: false, issues: [issue], errors: [issue], warnings: [] };
+  }
+  value = canonical;
   if (!isRecord(value)) {
     const issue: UiValidationIssue = { severity: 'error', code: 'invalid-document-shape', message: 'Runtime scene export must be an object.', path: '$' };
     return { valid: false, issues: [issue], errors: [issue], warnings: [] };
   }
-  if (value.runtimeVersion !== '>=1.0.0') {
+  if (value.runtimeVersion !== UI_DESIGNER_RUNTIME_VERSION) {
     const issue: UiValidationIssue = { severity: 'error', code: 'invalid-runtime-version', message: 'Unsupported UI designer runtime version.', path: 'runtimeVersion' };
     return { valid: false, issues: [issue], errors: [issue], warnings: [] };
   }
@@ -305,7 +344,7 @@ export function validateUiRuntimeSceneExport(value: unknown): UiValidationReport
     guides: [],
     nodes: value.nodes,
     zOrder: value.zOrder,
-    code: value.code,
+    sceneScript: value.sceneScript,
   });
 }
 
@@ -706,13 +745,13 @@ function validateActionCondition(value: unknown, addError: AddIssue, path: strin
   }
 }
 
-function validateCode(value: unknown, addError: AddIssue): void {
-  if (!isRecord(value) || typeof value.ready !== 'string' || typeof value.update !== 'string') {
-    addError('empty-code', 'code.ready and code.update must be strings.', 'code');
+function validateSceneScript(value: unknown, addError: AddIssue): void {
+  if (!isRecord(value) || value.version !== UI_DESIGNER_SCENE_SCRIPT_VERSION || typeof value.source !== 'string') {
+    addError('empty-code', `sceneScript must contain version ${UI_DESIGNER_SCENE_SCRIPT_VERSION} and a string source.`, 'sceneScript');
     return;
   }
-  if (!compileCode(value.ready)) addError('invalid-code', 'code.ready has invalid JavaScript syntax.', 'code.ready');
-  if (!compileCode(value.update)) addError('invalid-code', 'code.update has invalid JavaScript syntax.', 'code.update');
+  const syntaxError = uiSceneScriptSyntaxError(value.source);
+  if (syntaxError) addError('invalid-code', `Scene script has invalid JavaScript syntax: ${syntaxError}`, 'sceneScript.source');
 }
 
 function detectCycles(nodes: unknown[], addError: AddIssue): void {

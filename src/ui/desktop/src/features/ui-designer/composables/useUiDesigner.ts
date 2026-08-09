@@ -142,7 +142,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const draftRects = ref<Record<string, UiRect>>({})
   const draftRotations = ref<Record<string, number>>({})
   const editingMode = ref<'design' | 'code'>('design')
-  const codeTab = ref<'ready' | 'update'>('ready')
   const isPreviewing = ref(false)
   const isEditorPreviewing = ref(false)
   const editorPreviewStatus = ref<'idle' | 'running' | 'stopped'>('idle')
@@ -190,7 +189,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const validation = computed<UiValidationReport>(() => validateDocument(document.value))
   const performance = computed(() => analyzePerformance(document.value))
   const hasSceneDraft = (sceneId: string) => {
-    const sourceDraft = Object.keys(draftCode.value).some((key) => key.startsWith(`${sceneId}:`))
+    const sourceDraft = Object.prototype.hasOwnProperty.call(draftCode.value, sceneId)
     // CodeMirror/property editors are mounted for the active tab.  Their
     // coordinator registrations are intentionally scene-agnostic, so only
     // attribute those pending values to the active scene here.
@@ -373,27 +372,25 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     replaceActiveDocument(touchDocument(next), `Update ${key}`)
   }
 
-  const setSourceCode = (key: 'ready' | 'update', value: string) => {
+  const setSourceCode = (value: string) => {
     const next = cloneUiDocument(document.value)
-    next.code[key] = value
-    replaceActiveDocument(next, `Edit ${key} code`)
+    next.sceneScript.source = value
+    replaceActiveDocument(next, 'Edit scene script')
   }
 
-  const previewSourceCode = (key: 'ready' | 'update', value: string, sceneId = activeSceneId.value) => {
-    const sceneKey = `${sceneId}:${key}`
-    draftCode.value = { ...draftCode.value, [sceneKey]: value }
+  const previewSourceCode = (value: string, sceneId = activeSceneId.value) => {
+    draftCode.value = { ...draftCode.value, [sceneId]: value }
   }
 
-  const commitSourceCode = (key: 'ready' | 'update', sceneId = activeSceneId.value) => {
-    const sceneKey = `${sceneId}:${key}`
-    const value = draftCode.value[sceneKey]
+  const commitSourceCode = (sceneId = activeSceneId.value) => {
+    const value = draftCode.value[sceneId]
     if (value === undefined) return
-    draftCode.value = Object.fromEntries(Object.entries(draftCode.value).filter(([draftKey]) => draftKey !== sceneKey))
+    draftCode.value = Object.fromEntries(Object.entries(draftCode.value).filter(([draftKey]) => draftKey !== sceneId))
     const scene = scenes.value.find((item) => item.id === sceneId)
     if (!scene) return
     const next = cloneUiDocument(scene.document)
-    next.code[key] = value
-    scene.document = scene.history.commit(next, `Edit ${key} code`)
+    next.sceneScript.source = value
+    scene.document = scene.history.commit(next, 'Edit scene script')
     scheduleRecovery(scene)
   }
 
@@ -405,14 +402,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
    */
   const flushDrafts = (sceneId?: string) => {
     draftCoordinator.flush(sceneId)
-    const pending = Object.keys(draftCode.value).filter((key) => sceneId === undefined || key.startsWith(`${sceneId}:`))
-    for (const key of pending) {
-      const separator = key.lastIndexOf(':')
-      if (separator <= 0) continue
-      const sceneId = key.slice(0, separator)
-      const codeKey = key.slice(separator + 1)
-      if (codeKey === 'ready' || codeKey === 'update') commitSourceCode(codeKey, sceneId)
-    }
+    const pending = Object.keys(draftCode.value).filter((key) => sceneId === undefined || key === sceneId)
+    for (const pendingSceneId of pending) commitSourceCode(pendingSceneId)
     return true
   }
 
@@ -573,7 +564,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       const approved = options.confirmDiscard ? await options.confirmDiscard(sceneId) : false
       if (!approved) { activeSceneId.value = previousActiveId; return false }
       draftCoordinator.cancel(scene.id)
-      for (const key of Object.keys(draftCode.value)) if (key.startsWith(`${scene.id}:`)) delete draftCode.value[key]
+      delete draftCode.value[scene.id]
       discarding = true
     }
     // A discard must not create a new recovery snapshot from the just-rejected
@@ -928,7 +919,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const scene = scenes.value.find((item) => item.id === sceneId)
     if (!scene) return false
     draftCoordinator.cancel(sceneId)
-    for (const key of Object.keys(draftCode.value)) if (key.startsWith(`${sceneId}:`)) delete draftCode.value[key]
+    delete draftCode.value[sceneId]
     scene.document = scene.history.discard()
     return clearSceneRecovery(scene)
   }
@@ -1053,7 +1044,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const scene = activeScene.value
     if (!scene?.sourcePath || !canSave.value) return false
     draftCoordinator.cancel(scene.id)
-    for (const key of Object.keys(draftCode.value)) if (key.startsWith(`${scene.id}:`)) delete draftCode.value[key]
+    delete draftCode.value[scene.id]
     fileStatus.value = 'busy'
     try {
       const result = await adapters.file.open({ path: scene.sourcePath })
@@ -1331,7 +1322,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     draftCoordinator,
     projectPath,
     editingMode,
-    codeTab,
     isPreviewing,
     isEditorPreviewing,
     editorPreviewStatus,

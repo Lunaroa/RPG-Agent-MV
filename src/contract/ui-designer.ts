@@ -6,9 +6,10 @@
  * contains only data consumed by MZUIRuntime.js.
  */
 
-export const UI_DESIGNER_DOCUMENT_VERSION = '1.0.0' as const
-export const UI_DESIGNER_EDITOR_VERSION = '1.0.0' as const
-export const UI_DESIGNER_RUNTIME_VERSION = '>=1.0.0' as const
+export const UI_DESIGNER_DOCUMENT_VERSION = '1.1.0' as const
+export const UI_DESIGNER_EDITOR_VERSION = '1.1.0' as const
+export const UI_DESIGNER_RUNTIME_VERSION = '>=1.1.0' as const
+export const UI_DESIGNER_SCENE_SCRIPT_VERSION = '1.0.0' as const
 
 export const UI_DESIGNER_NODE_TYPES = [
   'container',
@@ -458,9 +459,9 @@ export interface UiSceneMeta {
   modified: string
 }
 
-export interface UiSourceCode {
-  ready: string
-  update: string
+export interface UiSceneScript {
+  version: typeof UI_DESIGNER_SCENE_SCRIPT_VERSION
+  source: string
 }
 
 export interface UiDesignerDocument {
@@ -473,7 +474,7 @@ export interface UiDesignerDocument {
   guides: UiGuide[]
   nodes: UiNode[]
   zOrder: string[]
-  code: UiSourceCode
+  sceneScript: UiSceneScript
 }
 
 /** Runtime export deliberately omits editorVersion, guides and editor canvas chrome. */
@@ -494,7 +495,7 @@ export interface UiRuntimeSceneExport {
   globalFilter: UiGlobalFilter
   nodes: UiNode[]
   zOrder: string[]
-  code: UiSourceCode
+  sceneScript: UiSceneScript
 }
 
 export type UiValidationSeverity = 'error' | 'warning'
@@ -624,6 +625,25 @@ export interface UiDesignerProjectCompatibility {
   engineVersionSupported: boolean
   warnings: string[]
 }
+
+/**
+ * The project-owned canvas profile consumed by the UI designer.
+ *
+ * This deliberately contains no project path or resource-root fields.  The
+ * backend resolves those privately and only exposes the engine boundary and
+ * the dimensions that define the editor/runtime canvas.
+ */
+export interface UiDesignerProjectProfile {
+  engine: 'MV' | 'MZ'
+  engineVersion: string | null
+  screenWidth: number
+  screenHeight: number
+  uiAreaWidth: number
+  uiAreaHeight: number
+}
+
+/** Result payload for the UI-designer project-profile operation. */
+export interface UiDesignerProjectProfileResult extends UiDesignerProjectProfile {}
 
 /** Result of an explicit runtime install/update or scene-export staging transaction. */
 export interface UiDesignerRuntimeStageResult {
@@ -772,6 +792,10 @@ export interface UiDesignerProjectRequest {
   project?: string
 }
 
+/** A profile request requires a selected project at runtime; the optional
+ * field keeps the IPC API able to report a deterministic fail-fast error. */
+export interface UiDesignerProjectProfileRequest extends UiDesignerProjectRequest {}
+
 export interface UiDesignerResourceRequest extends UiDesignerProjectRequest {
   referencedPaths?: string[]
   category?: UiResourceEntry['category']
@@ -888,6 +912,10 @@ export interface UiDesignerResourceAdapter {
   readSceneData(request: UiDesignerSceneDataReadRequest): Promise<UiFileResult<UiDesignerSceneDataReadResult>>
 }
 
+export interface UiDesignerProjectAdapter {
+  getProfile(request?: UiDesignerProjectProfileRequest): Promise<UiFileResult<UiDesignerProjectProfileResult>>
+}
+
 export interface UiDesignerRuntimeAdapter {
   checkRuntime(projectPath?: string): Promise<UiRuntimeStatus>
   installRuntime(projectPath: string, options: { enable: true; forceModifiedRuntime?: boolean }): Promise<UiFileResult<UiDesignerRuntimeStageResult>>
@@ -938,6 +966,7 @@ export interface UiDesignerLifecycleAdapter {
 
 export interface UiDesignerAdapterBundle {
   file?: UiDesignerPersistenceAdapter
+  project?: UiDesignerProjectAdapter
   resource?: UiDesignerResourceAdapter
   runtime?: UiDesignerRuntimeAdapter
   preview?: UiDesignerPreviewAdapter

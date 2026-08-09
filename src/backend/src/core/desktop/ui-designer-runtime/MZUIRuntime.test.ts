@@ -5,6 +5,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { describe, test } from 'node:test';
 import { createRequire } from 'node:module';
+import { migrateLegacyUiSourceCode } from '../../../../../contract/ui-designer-script.ts';
 
 const RUNTIME_SOURCE = fs.readFileSync(new URL('./MZUIRuntime.js', import.meta.url), 'utf8');
 const nodeRequire = createRequire(import.meta.url);
@@ -52,13 +53,19 @@ describe('MZUIRuntime MV/MZ bridge', () => {
         if (layout === 'mv-www') fs.mkdirSync(path.join(engineRoot, 'data'), { recursive: true });
         for (const sceneName of ['Scene_Beta', 'Scene_Alpha']) {
           fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', `${sceneName}.json`), JSON.stringify({
-            version: '1.0.0', runtimeVersion: '>=1.0.0',
+            version: '1.1.0', runtimeVersion: '>=1.1.0',
             meta: { sceneName, sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
             transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-            globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], code: { ready: '', update: '' },
+            globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: sceneScript(),
           }), 'utf8');
         }
         fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', 'Scene_Bad.json'), '{', 'utf8');
+        fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', 'Scene_InvalidScript.json'), JSON.stringify({
+          version: '1.1.0', runtimeVersion: '>=1.1.0',
+          meta: { sceneName: 'Scene_InvalidScript', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
+          transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
+          globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '2.0.0', source: '' },
+        }), 'utf8');
         fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', 'notes.json'), '{}', 'utf8');
         const context = makeContext();
         context.PluginManager.parameters = () => ({ AutoRegister: 'true' });
@@ -68,6 +75,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
         assert.equal(typeof context.Scene_Alpha, 'function');
         assert.equal(typeof context.Scene_Beta, 'function');
         assert.equal(context.MZUIRuntime.errors.some((entry: { scene?: string }) => entry.scene === 'Scene_Bad'), true);
+        assert.equal(context.MZUIRuntime.errors.some((entry: { scene?: string }) => entry.scene === 'Scene_InvalidScript'), true);
         assert.equal(context.MZUIRuntime.errors.some((entry: { file?: string }) => entry.file === 'notes.json'), true);
       } finally {
         fs.rmSync(project, { recursive: true, force: true });
@@ -543,20 +551,29 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(instance.children.includes(unrelated), true);
   });
 
-  test('binds ready/update code to the engine Scene and exposes nodes by name', () => {
+  test('registers one-file scene lifecycle callbacks on the engine Scene and exposes nodes by name', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
     const scene = sceneDocument();
-    scene.code.ready = 'this.__readyScene = this; this.__readyNode = this.nodes.Child;';
-    scene.code.update = 'this.__updateScene = this;';
+    scene.sceneScript = {
+      version: '1.0.0',
+      source: [
+        'let sharedCount = 0;',
+        'let lateRegister;',
+        'onReady(function () { sharedCount += 1; lateRegister = onUpdate; this.__lateRegister = lateRegister; this.__readyScene = this; this.__readyNode = this.nodes.Child; });',
+        'onUpdate(function () { sharedCount += 1; this.__updateScene = this; this.__sharedCount = sharedCount; });',
+      ].join('\n'),
+    };
     context.MZUIRuntime.registerScene('Scene_Abi', 'Scene_Base', { ...scene, meta: { ...scene.meta, sceneName: 'Scene_Abi' } });
     const instance = new context.Scene_Abi();
     instance.create();
     instance.update();
     assert.equal(instance.__readyScene, instance);
     assert.equal(instance.__updateScene, instance);
+    assert.equal(instance.__sharedCount, 2);
     assert.ok(instance.__readyNode);
     instance.terminate();
+    assert.throws(() => instance.__lateRegister(function () {}), /only be called synchronously/);
   });
 
   test('injects the documented self/scene and game state helper ABI once per callback', () => {
@@ -567,8 +584,10 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     context.$gameVariables._data[1] = 4;
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
     const scene = sceneDocument();
-    scene.code.ready = 'this.__abiReady = [self === scene, $sw(1), $var(1)]; $setSw(2, true); $setVar(3, 8);';
-    scene.code.update = 'this.__abiUpdate = [self === scene, $sw(2), $var(3)];';
+    scene.sceneScript = sceneScript(
+      'this.__abiReady = [self === scene, $sw(1), $var(1)]; $setSw(2, true); $setVar(3, 8);',
+      'this.__abiUpdate = [self === scene, $sw(2), $var(3)];',
+    );
     scene.nodes[1].propModes = { x: 'code' };
     scene.nodes[1].propCodes = { x: '$var(3) + 1' };
     scene.nodes[1].condition = { type: 'code', code: '$sw(2)' };
@@ -829,7 +848,7 @@ function allNodeScene(): any {
     }, propModes: {}, propCodes: {}, condition: { type: 'none' }, conditionFrequency: 'per-frame', enterAnim: { type: 'none', duration: 0 }, exitAnim: { type: 'none', duration: 0 }, events: {},
   });
   return {
-    version: '1.0.0', runtimeVersion: '>=1.0.0', meta: { sceneName: 'Scene_AllNodes', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
+    version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_AllNodes', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
     transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } }, globalFilter: { blur: 0, glow: 0, preset: '' },
     nodes: [
       base('container', 'container', { backgroundPath: 'img/bg.png', backgroundFillMode: 'stretch', backgroundRepeatMode: 'none', clip: false }),
@@ -844,14 +863,14 @@ function allNodeScene(): any {
       base('particle', 'particle', { maxParticles: 1, emissionInterval: 100, emissionArea: 'point', imagePath: 'img/p.png', shape: 'circle', velocityX: 0, velocityY: 1, gravityX: 0, gravityY: 0, lifetime: 100, lifetimeRandom: 0, startScale: 1, endScale: 1, startOpacity: 255, endOpacity: 0, startColor: '#fff', endColor: '#000', blendMode: 'normal', glow: 0 }),
     ],
     zOrder: ['container', 'sprite', 'nineSlice', 'frameAnimation', 'button', 'text', 'progressBar', 'overlay', 'video', 'particle'],
-    code: { ready: '', update: '' },
+    sceneScript: sceneScript(),
   };
 }
 
 function sceneDocument(): any {
   return {
-    version: '1.0.0',
-    runtimeVersion: '>=1.0.0',
+    version: '1.1.0',
+    runtimeVersion: '>=1.1.0',
     meta: { sceneName: 'Scene_Custom', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
     nodes: [
       {
@@ -869,6 +888,10 @@ function sceneDocument(): any {
     zOrder: ['root'],
     transitions: { enter: { type: 'fade', duration: 300 }, exit: { type: 'fade', duration: 300 } },
     globalFilter: { blur: 0, glow: 0, preset: '' },
-    code: { ready: 'this.setNodeProp("child", "opacity", 128);', update: '' },
+    sceneScript: sceneScript('this.setNodeProp("child", "opacity", 128);'),
   };
+}
+
+function sceneScript(ready = '', update = ''): { version: '1.0.0'; source: string } {
+  return { version: '1.0.0', source: migrateLegacyUiSourceCode({ ready, update }) };
 }

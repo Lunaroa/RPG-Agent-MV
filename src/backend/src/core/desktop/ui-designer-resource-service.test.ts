@@ -195,7 +195,13 @@ describe('ui designer resource catalog', () => {
     fs.writeFileSync(scenePath, JSON.stringify(scene), 'utf8');
     const result = readUiDesignerSceneData(project, 'js/plugins/mzui-data/Scene_Readable.json');
     assert.equal(result.scene.meta.sceneName, 'Scene_Readable');
+    assert.equal(result.scene.version, '1.1.0');
+    assert.equal(result.scene.runtimeVersion, '>=1.1.0');
+    assert.equal(result.scene.sceneScript.version, '1.0.0');
+    assert.equal('code' in result.scene, false);
     assert.equal(result.metadata.relativePath, 'js/plugins/mzui-data/Scene_Readable.json');
+    assert.equal(result.metadata.version, '1.1.0');
+    assert.equal(result.metadata.runtimeVersion, '>=1.1.0');
     assert.equal(result.metadata.compatibility, 'compatible');
     assert.equal(result.metadata.digest.length, 64);
     assert.equal(result.projectCompatibility.engine, 'MV');

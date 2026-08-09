@@ -7,6 +7,7 @@ import type {
   UiRuntimeSceneExport,
   UiRuntimeStatus,
 } from '../../../../contract/ui-designer.ts';
+import { canonicalUiRuntimeSceneExport } from '../../../../contract/ui-designer-script.ts';
 import {
   inspectRmmvProject,
   resourceRelativePath,
@@ -22,7 +23,7 @@ import { validateUiRuntimeSceneExport } from './ui-designer-validation.ts';
 import { uiDesignerProjectCompatibility, unsupportedUiDesignerProjectCompatibility } from './ui-designer-compatibility.ts';
 
 export const UI_DESIGNER_RUNTIME_PLUGIN_NAME = 'MZUIRuntime';
-export const UI_DESIGNER_RUNTIME_VERSION = '1.0.0';
+export const UI_DESIGNER_RUNTIME_VERSION = '1.1.0';
 export const UI_DESIGNER_RUNTIME_RELATIVE_PATH = 'js/plugins/MZUIRuntime.js';
 export const UI_DESIGNER_SCENE_DIRECTORY = 'js/plugins/mzui-data';
 
@@ -128,7 +129,7 @@ export function writeUiDesignerRuntimeExport(
   scene: UiRuntimeSceneExport,
   options: { overwrite?: boolean } = {},
 ): { path: string; digest: string; mtimeMs: number; size: number } {
-  validateRuntimeScene(scene);
+  const canonicalScene = validateRuntimeScene(scene);
   const resolved = path.resolve(filePath);
   if (path.extname(resolved).toLowerCase() !== '.json') throw new Error('Runtime exports must use the .json extension.');
   const existing = fs.existsSync(resolved) ? fs.readFileSync(resolved) : null;
@@ -136,7 +137,7 @@ export function writeUiDesignerRuntimeExport(
     const stat = fs.statSync(resolved);
     throw new UiDesignerRuntimeExportOverwriteRequiredError(resolved, sha256(existing), stat.mtimeMs);
   }
-  const body = Buffer.from(`${JSON.stringify(scene, null, 2)}\n`, 'utf8');
+  const body = Buffer.from(`${JSON.stringify(canonicalScene, null, 2)}\n`, 'utf8');
   // Use the `.mzui` persistence writer's backup-aware replacement path.  A
   // plain rename fails on Windows when the destination already exists and can
   // leave a crash window with the target missing.
@@ -269,11 +270,11 @@ export function stageUiDesignerSceneExport(
 ): UiDesignerRuntimeStageResult {
   const workflowRoot = path.resolve(workflowRootInput);
   const project = path.resolve(projectInput);
-  validateRuntimeScene(scene);
+  const canonicalScene = validateRuntimeScene(scene);
   const layout = resolveRmmvLayout(project);
   const sceneEnginePath = options.sceneRelativePath
     ? normalizeSceneEnginePath(options.sceneRelativePath, layout)
-    : `${UI_DESIGNER_SCENE_DIRECTORY}/${scene.meta.sceneName}.json`;
+    : `${UI_DESIGNER_SCENE_DIRECTORY}/${canonicalScene.meta.sceneName}.json`;
   const sceneRelativePath = resourceRelativePath(layout, sceneEnginePath);
   const sourceBefore = snapshotSourceFiles(project, [sceneRelativePath]);
   const existingFile = getProjectFileForRead(workflowRoot, project, sceneRelativePath);
@@ -282,7 +283,7 @@ export function stageUiDesignerSceneExport(
     throw new UiDesignerSceneOverwriteRequiredError(sceneRelativePath, sha256(fs.readFileSync(existingFile)), stat.mtimeMs);
   }
   stageProjectFilesAtomically(workflowRoot, project, [
-    { relativePath: sceneRelativePath, content: Buffer.from(`${JSON.stringify(scene, null, 2)}\n`, 'utf8') },
+    { relativePath: sceneRelativePath, content: Buffer.from(`${JSON.stringify(canonicalScene, null, 2)}\n`, 'utf8') },
   ]);
   const runtime = inspectUiDesignerRuntime(workflowRoot, project);
   return {
@@ -290,7 +291,7 @@ export function stageUiDesignerSceneExport(
     affectedFiles: [sceneRelativePath],
     runtime,
     sceneRelativePath,
-    digest: sha256(Buffer.from(JSON.stringify(scene), 'utf8')),
+    digest: sha256(Buffer.from(JSON.stringify(canonicalScene), 'utf8')),
     transaction: stageTransactionProof(project, [sceneRelativePath], sourceBefore),
     projectCompatibility: runtime.projectCompatibility,
   };
@@ -309,9 +310,10 @@ export function runtimeSourceDigest(): string {
   return BUNDLED_RUNTIME_DIGEST;
 }
 
-function validateRuntimeScene(scene: UiRuntimeSceneExport): void {
+function validateRuntimeScene(scene: UiRuntimeSceneExport): UiRuntimeSceneExport {
   const report = validateUiRuntimeSceneExport(scene);
   if (!report.valid) throw new Error(`UI runtime scene validation failed: ${report.errors.map((issue) => issue.message).join('; ')}`);
+  return canonicalUiRuntimeSceneExport(scene);
 }
 
 function normalizeSceneEnginePath(input: string, layout: ReturnType<typeof resolveRmmvLayout>): string {

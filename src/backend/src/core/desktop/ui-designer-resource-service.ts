@@ -2,12 +2,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type {
-  UiProjectResourceCatalog,
-  UiResourceEntry,
-  UiDesignerSceneDataReadResult,
-  UiRuntimeSceneExport,
+import {
+  UI_DESIGNER_DOCUMENT_VERSION,
+  UI_DESIGNER_RUNTIME_VERSION,
+  type UiDesignerSceneDataReadResult,
+  type UiProjectResourceCatalog,
+  type UiResourceEntry,
 } from '../../../../contract/ui-designer.ts';
+import {
+  canonicalUiRuntimeSceneExport,
+  UI_DESIGNER_LEGACY_DOCUMENT_VERSION,
+} from '../../../../contract/ui-designer-script.ts';
 import {
   inspectRmmvProject,
   resourceRelativePath,
@@ -26,8 +31,7 @@ export interface UiDesignerResourceCatalogOptions {
   limit?: number;
 }
 
-const UI_DESIGNER_RUNTIME_VERSION = '>=1.0.0';
-const UI_DESIGNER_SCENE_VERSION = '1.0.0';
+const UI_DESIGNER_SCENE_VERSION = UI_DESIGNER_DOCUMENT_VERSION;
 
 const RESOURCE_RULES: ReadonlyArray<{
   category: UiResourceEntry['category'];
@@ -330,15 +334,15 @@ export function readUiDesignerSceneData(projectRoot: string, requestedPath: stri
   }
 
   const stat = fs.statSync(filePath);
-  const scene = value as UiRuntimeSceneExport;
+  const scene = canonicalUiRuntimeSceneExport(value);
   return {
     scene,
     metadata: {
       id: entry.id,
       relativePath,
-      sceneName: entry.sceneName,
-      version: entry.version,
-      runtimeVersion: entry.runtimeVersion,
+      sceneName: scene.meta.sceneName,
+      version: scene.version,
+      runtimeVersion: scene.runtimeVersion,
       compatibility: 'compatible',
       digest: crypto.createHash('sha256').update(raw).digest('hex'),
       mtimeMs: stat.mtimeMs,
@@ -451,8 +455,9 @@ async function readSceneDataMetadataAsync(
   if (!runtimeVersion) return { sceneName, version, compatibility: 'invalid', diagnostic: 'Scene data is missing its runtime version.' };
   const versionState = compareUiVersion(version, UI_DESIGNER_SCENE_VERSION);
   const runtimeState = compareRuntimeVersion(runtimeVersion, UI_DESIGNER_RUNTIME_VERSION);
+  const migratableLegacy = version === UI_DESIGNER_LEGACY_DOCUMENT_VERSION && runtimeVersion === '>=1.0.0';
   if (versionState === 'invalid' || runtimeState === 'invalid') return { sceneName, version, runtimeVersion, compatibility: 'invalid', diagnostic: 'Scene data has an invalid version declaration.' };
-  if (versionState !== 'compatible' || runtimeState !== 'compatible') return {
+  if (!migratableLegacy && (versionState !== 'compatible' || runtimeState !== 'compatible')) return {
     sceneName,
     version,
     runtimeVersion,
@@ -590,6 +595,7 @@ function readSceneDataMetadata(filePath: string, filenameSceneName: string): Pic
   if (!runtimeVersion) return { sceneName, version, compatibility: 'invalid', diagnostic: 'Scene data is missing its runtime version.' };
   const versionState = compareUiVersion(version, UI_DESIGNER_SCENE_VERSION);
   const runtimeState = compareRuntimeVersion(runtimeVersion, UI_DESIGNER_RUNTIME_VERSION);
+  const migratableLegacy = version === UI_DESIGNER_LEGACY_DOCUMENT_VERSION && runtimeVersion === '>=1.0.0';
   if (versionState === 'invalid' || runtimeState === 'invalid') {
     return {
       sceneName,
@@ -599,7 +605,7 @@ function readSceneDataMetadata(filePath: string, filenameSceneName: string): Pic
       diagnostic: 'Scene data has an invalid version declaration.',
     };
   }
-  if (versionState !== 'compatible' || runtimeState !== 'compatible') {
+  if (!migratableLegacy && (versionState !== 'compatible' || runtimeState !== 'compatible')) {
     return {
       sceneName,
       version,

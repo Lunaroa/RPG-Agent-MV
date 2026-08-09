@@ -2,6 +2,7 @@ import {
   UI_DESIGNER_DOCUMENT_VERSION,
   UI_DESIGNER_EDITOR_VERSION,
   UI_DESIGNER_NODE_TYPES,
+  UI_DESIGNER_SCENE_SCRIPT_VERSION,
   type UiConditionFrequency,
   type UiDesignerDocument,
   type UiDesignerNodeType,
@@ -13,6 +14,7 @@ import {
   type UiValidationIssue,
   type UiVisibilityCondition,
 } from '@contract/ui-designer'
+import { migrateUiDesignerDocument } from '@contract/ui-designer-script'
 import { cloneUiDocument, createDefaultNode, createUiDocument, setCanvasDimensions } from './document'
 import { validateTreeInvariants } from './tree'
 
@@ -341,17 +343,23 @@ export function parseUiDocument(input: unknown): UiDocumentParseResult {
   }
   if (!isObject(value)) return { ok: false, document: null, issues: [issue('A .mzui document must be a JSON object')] }
   const issues: UiValidationIssue[] = []
+  try {
+    value = migrateUiDesignerDocument(value)
+  } catch (error) {
+    return { ok: false, document: null, issues: [issue(error instanceof Error ? error.message : String(error), 'unsupported-version', 'sceneScript')] }
+  }
+  if (!isObject(value)) return { ok: false, document: null, issues: [issue('A .mzui document must be a JSON object')] }
   checkExactVersion(value.version, UI_DESIGNER_DOCUMENT_VERSION, 'Document version', 'version', issues)
   checkExactVersion(value.editorVersion, UI_DESIGNER_EDITOR_VERSION, 'Editor version', 'editorVersion', issues)
   const meta = isObject(value.meta) ? value.meta : undefined
   const transitions = isObject(value.transitions) ? value.transitions : undefined
   const globalFilter = isObject(value.globalFilter) ? value.globalFilter : undefined
   const canvas = isObject(value.canvas) ? value.canvas : undefined
-  const code = isObject(value.code) ? value.code : undefined
+  const sceneScript = isObject(value.sceneScript) ? value.sceneScript : undefined
   if (!meta) issues.push(issue('meta must be an object', 'invalid-document-shape', 'meta'))
   if (!transitions) issues.push(issue('transitions must be an object', 'invalid-document-shape', 'transitions'))
   if (!globalFilter) issues.push(issue('globalFilter must be an object', 'invalid-document-shape', 'globalFilter'))
-  if (!code) issues.push(issue('code must be an object', 'invalid-document-shape', 'code'))
+  if (!sceneScript) issues.push(issue('sceneScript must be an object', 'invalid-document-shape', 'sceneScript'))
   if (!Array.isArray(value.nodes)) issues.push(issue('nodes must be an array', 'invalid-document-shape', 'nodes'))
   if (!Array.isArray(value.zOrder) || value.zOrder.some((id) => typeof id !== 'string')) issues.push(issue('zOrder must be an array of strings', 'invalid-document-shape', 'zOrder'))
   if (!Array.isArray(value.guides)) issues.push(issue('guides must be an array', 'invalid-document-shape', 'guides'))
@@ -369,8 +377,8 @@ export function parseUiDocument(input: unknown): UiDocumentParseResult {
     if (has(guide, 'locked') && typeof guide.locked !== 'boolean') issues.push(issue(`Guide ${index} locked must be boolean`, 'invalid-document-shape', `guides.${index}.locked`))
     return { ...guide, id: typeof guide.id === 'string' && guide.id.trim() ? guide.id : `guide_${String(index + 1).padStart(3, '0')}`, locked: typeof guide.locked === 'boolean' ? guide.locked : false }
   }) : []
-  if (code && has(code, 'ready') && typeof code.ready !== 'string') issues.push(issue('code.ready must be a string', 'invalid-document-shape', 'code.ready'))
-  if (code && has(code, 'update') && typeof code.update !== 'string') issues.push(issue('code.update must be a string', 'invalid-document-shape', 'code.update'))
+  if (sceneScript && sceneScript.version !== UI_DESIGNER_SCENE_SCRIPT_VERSION) issues.push(issue(`sceneScript.version must be ${UI_DESIGNER_SCENE_SCRIPT_VERSION}`, 'unsupported-version', 'sceneScript.version'))
+  if (sceneScript && typeof sceneScript.source !== 'string') issues.push(issue('sceneScript.source must be a string', 'invalid-document-shape', 'sceneScript.source'))
   if (issues.length) return { ok: false, document: null, issues }
   const metaValue = meta as Record<string, unknown>
   const base = createUiDocument(String(metaValue.sceneName))
@@ -391,13 +399,13 @@ export function parseUiDocument(input: unknown): UiDocumentParseResult {
   }
   const normalizedTransitions = normalizeTransitions(transitions, base.transitions, issues)
   const normalizedGlobalFilter = normalizeGlobalFilter(globalFilter, base.globalFilter, issues)
-  const normalizedCode = {
-    ready: typeof code?.ready === 'string' ? code.ready : base.code.ready,
-    update: typeof code?.update === 'string' ? code.update : base.code.update,
+  const normalizedSceneScript = {
+    version: UI_DESIGNER_SCENE_SCRIPT_VERSION,
+    source: typeof sceneScript?.source === 'string' ? sceneScript.source : base.sceneScript.source,
   }
   if (issues.length) return { ok: false, document: null, issues }
   const normalized: UiDesignerDocument = {
-    ...copyExtensions(value, ['version', 'editorVersion', 'meta', 'transitions', 'globalFilter', 'canvas', 'guides', 'nodes', 'zOrder', 'code'], '', issues),
+    ...copyExtensions(value, ['version', 'editorVersion', 'meta', 'transitions', 'globalFilter', 'canvas', 'guides', 'nodes', 'zOrder', 'sceneScript'], '', issues),
     version: UI_DESIGNER_DOCUMENT_VERSION,
     editorVersion: UI_DESIGNER_EDITOR_VERSION,
     meta: normalizedMeta,
@@ -407,7 +415,7 @@ export function parseUiDocument(input: unknown): UiDocumentParseResult {
     guides: guides as UiDesignerDocument['guides'],
     nodes,
     zOrder: value.zOrder as string[],
-    code: normalizedCode,
+    sceneScript: normalizedSceneScript,
   }
   const normalizedDocument = cloneUiDocument(setCanvasDimensions(normalized, normalizedMeta.canvasWidth, normalizedMeta.canvasHeight))
   if (issues.length) return { ok: false, document: null, issues }

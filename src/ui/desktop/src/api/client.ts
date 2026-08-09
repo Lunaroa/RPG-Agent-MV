@@ -12,6 +12,8 @@ import type {
   UiDesignerFileRequest,
   UiDesignerFrameFolderRequest,
   UiDesignerPreviewStartRequest,
+  UiDesignerProjectProfileRequest,
+  UiDesignerProjectProfileResult,
   UiDesignerProjectRequest,
   UiDesignerRecoveryRecord,
   UiDesignerRecoveryWriteRequest,
@@ -136,6 +138,7 @@ declare global {
         save(request: UiDesignerFileRequest, document: UiDesignerDocument): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         revealSource(sourcePath: string): Promise<UiFileResult<null>>;
+        getProjectProfile(request?: UiDesignerProjectProfileRequest): Promise<UiFileResult<UiDesignerProjectProfileResult>>;
         listResources(request?: UiDesignerResourceRequest): Promise<UiFileResult<UiProjectResourceCatalog>>;
         listResourceReferences(request?: UiDesignerResourceRequest): Promise<UiFileResult<UiProjectResourceCatalog>>;
         readSceneData(request: UiDesignerSceneDataReadRequest): Promise<UiFileResult<UiDesignerSceneDataReadResult>>;
@@ -539,6 +542,7 @@ export const uiDesigner = {
   save(request: UiDesignerFileRequest, document: UiDesignerDocument) { return desktopApi().uiDesigner.save(toPlain(request), toPlain(document)) },
   saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument) { return desktopApi().uiDesigner.saveAs(toPlain(request), toPlain(document)) },
   revealSource(sourcePath: string) { return desktopApi().uiDesigner.revealSource(sourcePath) },
+  getProjectProfile(request?: UiDesignerProjectProfileRequest) { return desktopApi().uiDesigner.getProjectProfile(request ? toPlain(request) : undefined) },
   listResources(request?: UiDesignerResourceRequest) { return desktopApi().uiDesigner.listResources(toPlain(request)) },
   listResourceReferences(request?: UiDesignerResourceRequest) { return desktopApi().uiDesigner.listResourceReferences(toPlain(request)) },
   readSceneData(request: UiDesignerSceneDataReadRequest) { return desktopApi().uiDesigner.readSceneData(toPlain(request)) },

@@ -448,6 +448,7 @@ async function loadBackendModules(roots: AppRoots) {
     playtestRuntime: await import(new URL('desktop/interactive-playtest-runtime.ts', coreUrl).href),
     uiDesigner: {
       file: await import(new URL('desktop/ui-designer-service.ts', coreUrl).href),
+      project: await import(new URL('desktop/ui-designer-project-service.ts', coreUrl).href),
       resources: await import(new URL('desktop/ui-designer-resource-service.ts', coreUrl).href),
       runtime: await import(new URL('desktop/ui-designer-runtime-service.ts', coreUrl).href),
       preview: new (await import(new URL('desktop/ui-designer-preview-service.ts', coreUrl).href)).UiDesignerPreviewService(),
@@ -522,6 +523,7 @@ async function loadBackendModules(roots: AppRoots) {
       ...desktop.uiDesigner.file,
       revealSource: (filePath: string) => shell.showItemInFolder(filePath),
     },
+    project: desktop.uiDesigner.project,
     resources: desktop.uiDesigner.resources,
     runtime: desktop.uiDesigner.runtime,
     preview: desktop.uiDesigner.preview,

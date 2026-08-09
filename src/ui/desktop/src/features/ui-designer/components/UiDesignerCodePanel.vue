@@ -9,19 +9,14 @@ const props = defineProps<{ designer: UiDesignerController }>()
 const designer = props.designer
 const { t } = useUiDesignerI18n()
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
-const setCodeTab = (value: 'ready' | 'update') => {
-  if (isRef(designer.codeTab)) designer.codeTab.value = value
-  else (designer as unknown as { codeTab: 'ready' | 'update' }).codeTab = value
-}
-const codeTab = computed<'ready' | 'update'>({ get: () => unwrap(designer.codeTab), set: setCodeTab })
 const document = computed(() => unwrap(designer.document))
 const draftCode = computed<Record<string, string>>(() => unwrap(designer.draftCode))
-const code = computed(() => draftCode.value[`${unwrap(designer.activeSceneId)}:${codeTab.value}`] ?? document.value.code[codeTab.value])
+const code = computed(() => draftCode.value[unwrap(designer.activeSceneId)] ?? document.value.sceneScript.source)
 const validationReport = computed<UiValidationReport>(() => unwrap(designer.validation))
 const codeIssues = computed<UiValidationIssue[]>(() => validationReport.value.issues.filter((issue) => {
   if (issue.code !== 'invalid-code') return false
   const path = issue.path ?? ''
-  return path === `code.${codeTab.value}` || path.includes(`code.${codeTab.value}`)
+  return path === 'sceneScript.source' || path.includes('sceneScript.source')
 }))
 const previewDiagnostics = computed<UiRuntimeDiagnostic[]>(() => unwrap(designer.previewDiagnostics))
 const runtimeCodeDiagnostics = computed<UiRuntimeDiagnostic[]>(() => {
@@ -35,24 +30,22 @@ const runtimeCodeDiagnostics = computed<UiRuntimeDiagnostic[]>(() => {
 const editorRef = ref<{ format: () => void }>()
 const formatCode = () => editorRef.value?.format()
 let commitTimer: ReturnType<typeof setTimeout> | undefined
-let pendingDraft: { sceneId: string; key: 'ready' | 'update' } | undefined
+let pendingDraft: { sceneId: string } | undefined
 
 const commitPending = () => {
   if (!pendingDraft) return
   const draft = pendingDraft
   pendingDraft = undefined
-  designer.commitSourceCode(draft.key, draft.sceneId)
+  designer.commitSourceCode(draft.sceneId)
 }
 
 const updateCode = (value: string, sourceSceneId?: string) => {
   const sceneId = sourceSceneId ?? unwrap(designer.activeSceneId)
-  const key = codeTab.value
-  designer.previewSourceCode(key, value, sceneId)
-  pendingDraft = { sceneId, key }
+  designer.previewSourceCode(value, sceneId)
+  pendingDraft = { sceneId }
   if (commitTimer) clearTimeout(commitTimer)
   commitTimer = setTimeout(() => { commitPending(); commitTimer = undefined }, 1000)
 }
-const changeCodeTab = (value: 'ready' | 'update') => { if (commitTimer) clearTimeout(commitTimer); commitPending(); codeTab.value = value }
 onBeforeUnmount(() => { if (commitTimer) clearTimeout(commitTimer); commitPending() })
 const handleFormatShortcut = () => formatCode()
 onMounted(() => window.addEventListener('agent-rpg:ui-designer-format', handleFormatShortcut))
@@ -62,10 +55,6 @@ onBeforeUnmount(() => window.removeEventListener('agent-rpg:ui-designer-format',
 <template>
   <section class="code-panel">
     <div class="code-head">
-      <div class="code-tabs">
-        <el-button size="small" text :class="{ active: codeTab === 'ready' }" @click="changeCodeTab('ready')">ready()</el-button>
-        <el-button size="small" text :class="{ active: codeTab === 'update' }" @click="changeCodeTab('update')">update()</el-button>
-      </div>
       <el-tag size="small" :type="designer.canEditCode ? 'success' : 'danger'" effect="plain">{{ designer.adapters.code.label }}</el-tag>
       <el-button size="small" text :title="`${t('formatCode')} (Shift+Alt+F)`" :disabled="!designer.canEditCode" @click="formatCode">{{ t('formatCode') }}</el-button>
     </div>
@@ -90,11 +79,9 @@ onBeforeUnmount(() => window.removeEventListener('agent-rpg:ui-designer-format',
 </template>
 
 <style scoped>
-.code-panel { display: flex; flex-direction: column; gap: 9px; height: 100%; min-height: 0; padding: 12px; background: var(--app-bg); }
-.code-head { display: flex; align-items: center; justify-content: space-between; }
-.code-tabs { display: flex; gap: 2px; }
-.code-tabs .el-button { margin: 0; color: var(--app-ink-soft); }
-.code-tabs .el-button.active { border-bottom: 2px solid var(--app-accent); color: var(--app-accent); }
+.code-panel { display: flex; flex: 1; flex-direction: column; gap: 9px; width: 100%; height: 100%; min-height: 0; padding: 12px; box-sizing: border-box; background: var(--app-bg); }
+.code-panel :deep(.code-mirror-editor), .code-panel :deep(.editor-host) { flex: 1; }
+.code-head { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .code-panel :deep(.CodeMirror) { min-height: 300px; height: 100%; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; line-height: 1.5; }
 .code-issues { margin: 0; padding-left: 16px; }.code-issues li { margin-bottom: 4px; }.status-detail { color: var(--app-ink-soft); font-size: 10px; }
 </style>

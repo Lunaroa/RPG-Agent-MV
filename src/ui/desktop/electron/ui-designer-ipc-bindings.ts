@@ -7,6 +7,8 @@ import type {
   UiDesignerFileRequest,
   UiDesignerFrameFolderRequest,
   UiDesignerPreviewStartRequest,
+  UiDesignerProjectProfileRequest,
+  UiDesignerProjectProfileResult,
   UiDesignerProjectRequest,
   UiDesignerRecoveryWriteRequest,
   UiDesignerRecoveryRecord,
@@ -34,6 +36,9 @@ export interface UiDesignerIpcDependencies {
     saveUiDesignerFile(filePath: string, document: UiDesignerDocument, options?: UiDesignerFileRequest): UiDesignerFileMetadata
     revealSource(filePath: string): void
     UiDesignerUserDataStore: new (root: string) => UiDesignerUserDataStoreLike
+  }
+  project: {
+    inspectUiDesignerProjectProfile(project: string): UiDesignerProjectProfileResult
   }
   resources: {
     inspectUiDesignerResourcesAsync(project: string, options?: UiDesignerResourceRequest): Promise<UiProjectResourceCatalog>
@@ -150,6 +155,20 @@ export function registerUiDesignerIpcHandlers(
     } catch (error) { return operationError('reveal-source', error) }
   })
 
+  ipcMain.handle('ui-designer:project:profile', (_event, request: UiDesignerProjectProfileRequest = {}) => {
+    try {
+      if (typeof request?.project !== 'string' || !request.project.trim()) {
+        throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+      }
+      return {
+        status: 'success',
+        operation: 'project:profile',
+        value: dependencies.project.inspectUiDesignerProjectProfile(dependencies.resolveProject(request.project)),
+        message: 'Ready.',
+      }
+    } catch (error) { return operationError('project:profile', error) }
+  })
+
   ipcMain.handle('ui-designer:resources:list', async (_event, request: UiDesignerResourceRequest = {}) => {
     try { return { status: 'success', value: await dependencies.resources.inspectUiDesignerResourcesAsync(dependencies.resolveProject(request.project), request), message: 'Ready.' } }
     catch (error) { return operationError('resources:list', error) }
@@ -237,6 +256,7 @@ function safeStoreCall(
 export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandler'>): void {
   for (const channel of [
     'ui-designer:file:open', 'ui-designer:file:save', 'ui-designer:file:save-as', 'ui-designer:file:reveal-source',
+    'ui-designer:project:profile',
     'ui-designer:resources:list', 'ui-designer:resources:references', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check', 'ui-designer:runtime:install',
     'ui-designer:scene:stage', 'ui-designer:runtime:export', 'ui-designer:preview:start', 'ui-designer:preview:current', 'ui-designer:preview:stop', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
     'ui-designer:recovery:clear', 'ui-designer:recent:list', 'ui-designer:recent:remove', 'ui-designer:preferences:read',

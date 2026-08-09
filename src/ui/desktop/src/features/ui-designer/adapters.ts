@@ -6,6 +6,8 @@ import type {
   UiDesignerExportOptions,
   UiDesignerPersistenceAdapter,
   UiDesignerPreviewAdapter,
+  UiDesignerProjectAdapter,
+  UiDesignerProjectProfileResult,
   UiDesignerResourceAdapter,
   UiDesignerRuntimeAdapter,
   UiDesignerRuntimeStageResult,
@@ -95,6 +97,12 @@ export const unavailableResourceAdapter: UiDesignerResourceAdapter = {
   },
   async readSceneData() {
     return unavailable('Scene data adapter is not connected; no Runtime scene was imported.')
+  },
+}
+
+export const unavailableProjectAdapter: UiDesignerProjectAdapter = {
+  async getProfile() {
+    return unavailable('Project profile adapter is not connected; no project dimensions were loaded.')
   },
 }
 
@@ -225,6 +233,12 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async selectFrameFolder() { return asResult<UiResourceEntry[]>(await api.uiDesigner.selectFrameFolder({ project: projectPath }), 'Frame folder selection failed.') },
     async readSceneData(request: UiDesignerSceneDataReadRequest) { return asResult<UiDesignerSceneDataReadResult>(await api.uiDesigner.readSceneData({ project: projectPath, path: request.path }), 'Scene data import failed.') },
   }
+  const project: UiDesignerProjectAdapter = {
+    async getProfile(request) {
+      const profileRequest = projectPath ? { ...request, project: projectPath } : request
+      return asResult<UiDesignerProjectProfileResult>(await api.uiDesigner.getProjectProfile(profileRequest), 'Project profile inspection failed.')
+    },
+  }
   const runtime: UiDesignerRuntimeAdapter = {
     async checkRuntime() { const result = asResult<UiRuntimeStatus>(await api.uiDesigner.checkRuntime({ project: projectPath }), 'Runtime inspection failed.'); return result.value ?? { state: 'error', message: result.message } },
     async installRuntime(_project, options) { return unwrapRuntimeResult(asResult(await api.uiDesigner.installRuntime({ project: projectPath, ...options }), 'Runtime installation could not be staged.')) },
@@ -235,7 +249,7 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async current() { return asPreviewResult(await api.uiDesigner.currentPreview(), 'The isolated game preview status is unavailable.') },
     async stop(sessionId) { return asPreviewResult(await api.uiDesigner.stopPreview(sessionId), 'The isolated game preview could not be stopped.') },
   }
-  return { file, resource, runtime, preview, code: codeMirrorAdapter, lifecycle }
+  return { file, project, resource, runtime, preview, code: codeMirrorAdapter, lifecycle }
 }
 
 export const unavailablePreviewAdapter: UiDesignerPreviewAdapter = {
@@ -255,6 +269,7 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
   label: 'CodeMirror 5 JavaScript editor',
   mount(element, options) {
     const textarea = document.createElement('textarea')
+    textarea.value = options.value
     element.appendChild(textarea)
     const vocabulary = ['$gameVariables', '$gameSwitches', '$gameParty', '$gameActors', '$gamePlayer', 'SceneManager', 'Graphics', 'Input', 'AudioManager', ...(options.completionItems ?? [])]
     const hint = (instance: CodeMirror.Editor) => {
@@ -318,9 +333,10 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
   },
 }
 
-export function createUiDesignerAdapters(overrides: UiDesignerAdapterBundle = {}): Required<Pick<UiDesignerAdapterBundle, 'file' | 'resource' | 'runtime' | 'preview' | 'code'>> & Pick<UiDesignerAdapterBundle, 'lifecycle'> {
+export function createUiDesignerAdapters(overrides: UiDesignerAdapterBundle = {}): Required<Pick<UiDesignerAdapterBundle, 'file' | 'project' | 'resource' | 'runtime' | 'preview' | 'code'>> & Pick<UiDesignerAdapterBundle, 'lifecycle'> {
   return {
     file: overrides.file ?? unavailableFileAdapter,
+    project: overrides.project ?? unavailableProjectAdapter,
     resource: overrides.resource ?? unavailableResourceAdapter,
     runtime: overrides.runtime ?? unavailableRuntimeAdapter,
     preview: overrides.preview ?? unavailablePreviewAdapter,

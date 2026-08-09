@@ -1,4 +1,5 @@
 import type { UiDesignerDocument, UiNode, UiValidationIssue, UiValidationReport, UiVisibilityCondition, UiEventAction } from '@contract/ui-designer'
+import { uiSceneScriptSyntaxError } from '@contract/ui-designer-script'
 import { parseUiDocument } from './parser'
 import { validateTreeInvariants } from './tree'
 
@@ -137,10 +138,8 @@ export function validateDocument(input: unknown): UiValidationReport {
     guideIds.add(guide.id)
     if (typeof guide.position !== 'number' || !Number.isFinite(guide.position)) issues.push({ severity: 'error', code: 'invalid-value', message: 'Guide position must be finite', path: `guides.${index}.position` })
   }
-  for (const [name, code] of Object.entries(document.code)) {
-    const message = codeSyntaxIssue(code, `${name} code`)
-    if (message) issues.push({ severity: 'error', code: 'invalid-code', message, path: `code.${name}` })
-  }
+  const sceneScriptError = uiSceneScriptSyntaxError(document.sceneScript.source)
+  if (sceneScriptError) issues.push({ severity: 'error', code: 'invalid-code', message: `Scene script: ${sceneScriptError}`, path: 'sceneScript.source' })
   const errors = issues.filter((issue) => issue.severity === 'error')
   const warnings = issues.filter((issue) => issue.severity === 'warning')
   return { valid: errors.length === 0, issues, errors, warnings }

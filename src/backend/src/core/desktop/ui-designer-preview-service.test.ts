@@ -61,7 +61,7 @@ test('stages a UI scene/runtime, launches the isolated runner, and cleans up wit
   })
   const scene = {
     version: '1.1.0', runtimeVersion: '>=1.1.0',
-    meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
+    meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 815.6, canvasHeight: 623.5, author: '', description: '' },
     transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
     globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' },
   } as any
@@ -72,7 +72,10 @@ test('stages a UI scene/runtime, launches the isolated runner, and cleans up wit
   assert.equal(launchCount, 1)
   assert.ok(started.temporaryPath)
   assert.ok(fs.existsSync(path.join(started.temporaryPath!, 'js', 'plugins', 'MZUIRuntime.js')))
-  assert.ok(fs.existsSync(path.join(started.temporaryPath!, 'js', 'plugins', 'mzui-data', 'Scene_Sample.json')))
+  const stagedScenePath = path.join(started.temporaryPath!, 'js', 'plugins', 'mzui-data', 'Scene_Sample.json')
+  assert.ok(fs.existsSync(stagedScenePath))
+  const stagedScene = JSON.parse(fs.readFileSync(stagedScenePath, 'utf8')) as { meta: { canvasWidth: number; canvasHeight: number } }
+  assert.deepEqual([stagedScene.meta.canvasWidth, stagedScene.meta.canvasHeight], [816, 624])
   assert.equal(fs.lstatSync(path.join(started.temporaryPath!, 'img')).isSymbolicLink(), false)
   fs.writeFileSync(path.join(started.temporaryPath!, 'img', 'source.png'), 'preview-edit', 'utf8')
   assert.equal(fs.readFileSync(path.join(project, 'img', 'source.png'), 'utf8'), 'source-image')

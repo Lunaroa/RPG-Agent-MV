@@ -36,6 +36,7 @@ import {
   type UiVisibilityCondition,
 } from '@contract/ui-designer'
 import { migrateLegacyUiSourceCode } from '@contract/ui-designer-script'
+import { normalizeGeometryInteger } from './geometry'
 
 export interface CreateNodeOptions {
   id?: string
@@ -73,10 +74,10 @@ export function defaultPropertyCodes(): UiPropertyCodes {
 
 function baseProps(options: CreateNodeOptions = {}): UiBaseNodeProps {
   return {
-    x: options.x ?? 0,
-    y: options.y ?? 0,
-    width: options.width ?? 160,
-    height: options.height ?? 80,
+    x: normalizeGeometryInteger(options.x, 0),
+    y: normalizeGeometryInteger(options.y, 0),
+    width: normalizeGeometryInteger(options.width, 160, 1),
+    height: normalizeGeometryInteger(options.height, 80, 1),
     scaleX: 1,
     scaleY: 1,
     rotate: 0,
@@ -360,8 +361,8 @@ export function findNodes(document: UiDesignerDocument, ids: readonly string[]):
 /** Keep editor canvas settings mirrored with the source format's meta size. */
 export function setCanvasDimensions(document: UiDesignerDocument, width: number, height: number): UiDesignerDocument {
   const next = cloneUiDocument(document)
-  const safeWidth = Number.isFinite(width) && width > 0 ? Math.round(width) : next.meta.canvasWidth
-  const safeHeight = Number.isFinite(height) && height > 0 ? Math.round(height) : next.meta.canvasHeight
+  const safeWidth = normalizeGeometryInteger(width, next.meta.canvasWidth, 1)
+  const safeHeight = normalizeGeometryInteger(height, next.meta.canvasHeight, 1)
   next.meta.canvasWidth = safeWidth
   next.meta.canvasHeight = safeHeight
   next.canvas.width = safeWidth

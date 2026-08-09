@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue'
 import type { UiDesignerDocument, UiFrameAnimationNode, UiNode, UiFillMode } from '@contract/ui-designer'
-import { nodeRect } from '../models/geometry'
+import { nodeRect, resizeCursor, type UiResizeHandle } from '../models/geometry'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 
@@ -24,9 +24,10 @@ const props = defineProps<{
   resourceUrl: (path: string) => string | undefined
 }>()
 const { t } = useUiDesignerI18n()
-const emit = defineEmits<{ pointerdown: [payload: { event: PointerEvent; node: UiNode }]; select: [payload: { event: MouseEvent; node: UiNode }]; enter: [payload: { node: UiNode }]; handlepointerdown: [payload: { event: PointerEvent; node: UiNode; handle: string }] }>()
+const emit = defineEmits<{ pointerdown: [payload: { event: PointerEvent; node: UiNode }]; select: [payload: { event: MouseEvent; node: UiNode }]; contextmenu: [payload: { event: MouseEvent; node: UiNode }]; enter: [payload: { node: UiNode }]; handlepointerdown: [payload: { event: PointerEvent; node: UiNode; handle: string }] }>()
 const frameIndex = ref(0)
 let frameTimer: ReturnType<typeof setTimeout> | undefined
+const resizeHandles: UiResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
 const byId = (id: string) => props.document.nodes.find((node) => node.id === id)
 const rect = () => nodeRect(props.node)
@@ -45,7 +46,7 @@ const localStyle = (): CSSProperties => {
     opacity: conditionHidden || !props.node.props.visible ? 0 : props.node.props.opacity / 255,
     transform: `rotate(${props.draftRotations?.[props.node.id] ?? props.node.props.rotate}deg)`,
     transformOrigin: `${props.node.props.anchorX * 100}% ${props.node.props.anchorY * 100}%`,
-    pointerEvents: props.previewing || props.node.locked || props.interactionDisabled ? 'none' : 'auto',
+    pointerEvents: props.previewing || props.interactionDisabled ? 'none' : 'auto',
     animation: props.previewing && props.node.enterAnim.type !== 'none' ? `ui-designer-${props.node.enterAnim.type} ${Math.max(0, props.node.enterAnim.duration)}ms ${props.node.enterAnim.easing} both` : undefined,
   }
 }
@@ -65,8 +66,10 @@ const ancestorIds = () => [...(props.ancestorIds ?? []), props.node.id]
 const canRenderChild = (id: string) => !ancestorIds().includes(id)
 const forwardPointer = (payload: { event: PointerEvent; node: UiNode }) => emit('pointerdown', payload)
 const forwardSelect = (payload: { event: MouseEvent; node: UiNode }) => emit('select', payload)
+const forwardContextMenu = (payload: { event: MouseEvent; node: UiNode }) => emit('contextmenu', payload)
 const forwardEnter = (payload: { node: UiNode }) => emit('enter', payload)
 const forwardHandle = (payload: { event: PointerEvent; node: UiNode; handle: string }) => emit('handlepointerdown', payload)
+const handleStyle = (handle: UiResizeHandle): CSSProperties => ({ cursor: resizeCursor(handle, props.draftRotations?.[props.node.id] ?? props.node.props.rotate) })
 const frameNode = (): UiFrameAnimationNode | undefined => props.node.type === 'frameAnimation' ? props.node : undefined
 const currentFrame = () => { const node = frameNode(); return node ? node.props.frames[frameIndex.value] ?? node.props.frames[0] : undefined }
 const currentFramePath = () => currentFrame()?.path ?? ''
@@ -95,9 +98,11 @@ onBeforeUnmount(clearFrameTimer)
     :class="[`node-${node.type}`, { selected: selected(), hovered: props.hoveredNodeId === node.id, locked: node.locked, 'interaction-disabled': props.interactionDisabled, clipped: node.type === 'container' && node.props.clip }]"
     :style="localStyle()"
     :data-node-id="node.id"
+    :data-ui-id="`ui-designer-canvas-node-${node.id}`"
     @pointerdown.stop="emit('pointerdown', { event: $event, node })"
     @click.stop="emit('select', { event: $event, node })"
-    @dblclick.stop="node.type === 'container' && emit('enter', { node })"
+    @contextmenu.stop.prevent="emit('contextmenu', { event: $event, node })"
+    @dblclick.stop="!props.interactionDisabled && node.type === 'container' && emit('enter', { node })"
   >
       <div class="node-content" :style="{ backgroundColor: node.type === 'overlay' ? node.props.fillColor : node.type === 'button' ? node.props.backgroundColor : node.type === 'text' ? node.props.backgroundColor : undefined }">
       <img v-if="node.type === 'sprite' && asset(node.props.path)" class="asset-image" :src="asset(node.props.path)" :alt="node.name" :style="{ objectFit: imageFit(node.props.fillMode) }" />
@@ -128,14 +133,15 @@ onBeforeUnmount(clearFrameTimer)
           :resource-url="resourceUrl"
           @pointerdown="forwardPointer"
           @select="forwardSelect"
+          @contextmenu="forwardContextMenu"
           @enter="forwardEnter"
           @handlepointerdown="forwardHandle"
         />
       </template>
     </div>
     <div v-if="selected() && !previewing && !node.locked && !props.interactionDisabled" class="selection-handles" aria-hidden="true">
-      <i v-for="position in ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']" :key="position" :class="`handle-${position}`" @pointerdown.stop="emit('handlepointerdown', { event: $event, node, handle: position })" />
-      <i class="handle-rotate" @pointerdown.stop="emit('handlepointerdown', { event: $event, node, handle: 'rotate' })" />
+      <i v-for="position in resizeHandles" :key="position" :class="`handle-${position}`" :style="handleStyle(position)" :data-ui-id="`ui-designer-resize-${node.id}-${position}`" @pointerdown.stop="emit('handlepointerdown', { event: $event, node, handle: position })" />
+      <i class="handle-rotate" :data-ui-id="`ui-designer-rotate-${node.id}`" @pointerdown.stop="emit('handlepointerdown', { event: $event, node, handle: 'rotate' })" />
     </div>
     <span class="node-label">{{ node.name }}</span>
   </div>
@@ -164,7 +170,8 @@ onBeforeUnmount(clearFrameTimer)
 @keyframes ui-designer-fadeIn { from { opacity: 0; } to { opacity: 1; } } @keyframes ui-designer-fadeOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes ui-designer-slideFromTop { from { transform: translateY(-18px); } to { transform: translateY(0); } } @keyframes ui-designer-slideFromBottom { from { transform: translateY(18px); } to { transform: translateY(0); } } @keyframes ui-designer-slideFromLeft { from { transform: translateX(-18px); } to { transform: translateX(0); } } @keyframes ui-designer-slideFromRight { from { transform: translateX(18px); } to { transform: translateX(0); } } @keyframes ui-designer-scaleIn { from { transform: scale(.85); } to { transform: scale(1); } } @keyframes ui-designer-scaleOut { from { transform: scale(1); } to { transform: scale(.85); } }
 .node-label { position: absolute; left: 2px; top: -16px; max-width: 150px; color: #d7dae2; font-size: 10px; white-space: nowrap; pointer-events: none; }
-.selection-handles i { position: absolute; width: 6px; height: 6px; border: 1px solid #12141b; border-radius: 1px; background: var(--app-accent); }
-.handle-nw { left: -4px; top: -4px; }.handle-ne { right: -4px; top: -4px; }.handle-sw { left: -4px; bottom: -4px; }.handle-se { right: -4px; bottom: -4px; }
-.handle-n { left: calc(50% - 3px); top: -4px; }.handle-e { right: -4px; top: calc(50% - 3px); }.handle-s { left: calc(50% - 3px); bottom: -4px; }.handle-w { left: -4px; top: calc(50% - 3px); }.handle-rotate { left: calc(50% - 4px); top: -22px; width: 8px; height: 8px; border-radius: 50%; background: var(--el-color-warning); cursor: alias; }
+.selection-handles i { position: absolute; z-index: 3; width: 16px; height: 16px; border: 0; background: transparent; touch-action: none; }
+.selection-handles i::after { position: absolute; left: 4px; top: 4px; width: 6px; height: 6px; border: 1px solid #12141b; border-radius: 1px; background: var(--app-accent); content: ''; }
+.handle-nw { left: -8px; top: -8px; }.handle-ne { right: -8px; top: -8px; }.handle-sw { left: -8px; bottom: -8px; }.handle-se { right: -8px; bottom: -8px; }
+.handle-n { left: calc(50% - 8px); top: -8px; }.handle-e { right: -8px; top: calc(50% - 8px); }.handle-s { left: calc(50% - 8px); bottom: -8px; }.handle-w { left: -8px; top: calc(50% - 8px); }.handle-rotate { left: calc(50% - 8px); top: -26px; cursor: alias; }.handle-rotate::after { border-radius: 50%; background: var(--el-color-warning); }
 </style>

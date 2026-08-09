@@ -1,6 +1,7 @@
 import type { UiDesignerDocument, UiHistoryEntry, UiHistorySnapshot } from '@contract/ui-designer'
 import { cloneUiDocument } from './document'
 import { serializeDocument } from './export'
+import { normalizeDocumentGeometry } from './geometry'
 
 interface HistoryPoint {
   document: UiDesignerDocument
@@ -17,8 +18,9 @@ export class UiDesignerHistory {
 
   constructor(initial: UiDesignerDocument, maxSteps = 100) {
     this.maxSteps = Math.max(1, Math.floor(maxSteps))
-    this.points = [{ document: cloneUiDocument(initial) }]
-    this.savedDocument = cloneUiDocument(initial)
+    const normalized = normalizeDocumentGeometry(initial)
+    this.points = [{ document: normalized }]
+    this.savedDocument = cloneUiDocument(normalized)
   }
 
   get current(): UiDesignerDocument {
@@ -57,7 +59,7 @@ export class UiDesignerHistory {
   }
 
   commit(document: UiDesignerDocument, description: string): UiDesignerDocument {
-    const next = cloneUiDocument(document)
+    const next = normalizeDocumentGeometry(document)
     if (serializeDocument(next) === serializeDocument(this.points[this.cursor].document)) return this.current
     this.points = this.points.slice(0, this.cursor + 1)
     this.points.push({

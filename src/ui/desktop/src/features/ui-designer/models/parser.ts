@@ -16,6 +16,7 @@ import {
 } from '@contract/ui-designer'
 import { migrateUiDesignerDocument } from '@contract/ui-designer-script'
 import { cloneUiDocument, createDefaultNode, createUiDocument, setCanvasDimensions } from './document'
+import { normalizeDocumentGeometry } from './geometry'
 import { validateTreeInvariants } from './tree'
 
 export interface UiDocumentParseSuccess {
@@ -417,7 +418,7 @@ export function parseUiDocument(input: unknown): UiDocumentParseResult {
     zOrder: value.zOrder as string[],
     sceneScript: normalizedSceneScript,
   }
-  const normalizedDocument = cloneUiDocument(setCanvasDimensions(normalized, normalizedMeta.canvasWidth, normalizedMeta.canvasHeight))
+  const normalizedDocument = normalizeDocumentGeometry(setCanvasDimensions(normalized, normalizedMeta.canvasWidth, normalizedMeta.canvasHeight))
   if (issues.length) return { ok: false, document: null, issues }
   const treeIssues = validateTreeInvariants(normalizedDocument)
   if (treeIssues.some((treeIssue) => treeIssue.severity === 'error')) return { ok: false, document: null, issues: treeIssues }

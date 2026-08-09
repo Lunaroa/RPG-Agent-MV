@@ -36,7 +36,24 @@ import {
   touchDocument,
 } from '../models/document'
 import { importRuntimeSceneDocument } from '../models/export'
-import { alignNodes, distributeNodes, fitViewport, panViewport, snapPoint, updateNodePosition, zoomViewport } from '../models/geometry'
+import {
+  alignNodes,
+  applyNodeGeometryTransaction,
+  distributeNodes,
+  fitViewport,
+  nodeRect,
+  normalizeGeometryPoint,
+  panViewport,
+  resizeRect,
+  snapPoint,
+  snapRect,
+  updateNodePosition,
+  zoomViewport,
+  type SnapOptions,
+  type UiResizeHandle,
+  type UiResizeModifiers,
+} from '../models/geometry'
+import { resolveNodeActionPolicy, type UiNodeActionCommand } from '../models/actions'
 import { UiDesignerHistory } from '../models/history'
 import { analyzePerformance } from '../models/performance'
 import { copySelection, groupNodes, moveNodeStep, moveNodeToEdge, pasteClipboard, reparentNode, ungroupNodes } from '../models/tree'
@@ -627,22 +644,24 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     selectedIds.value = additive ? [...new Set([...selectedIds.value, ...valid])] : [...new Set(valid)]
   }
   const setHoveredNode = (nodeId: string | undefined) => { hoveredNodeId.value = nodeId }
+  const getNodeActionPolicy = (targetId: string) => resolveNodeActionPolicy(document.value, selectedIds.value, targetId, Boolean(clipboard.value?.nodes.length && clipboard.value.nodes.every((node) => !node.locked)))
 
   const addNode = (type: UiDesignerNodeType, parentId?: string | null, position?: UiPoint) => {
     try {
       const parent = parentId === undefined ? selectedNode.value?.type === 'container' ? selectedNode.value.id : 'node_root' : parentId
-      const next = cloneUiDocument(document.value)
+      if (parent !== null && !resolveNodeActionPolicy(document.value, [parent], parent, false).allowed.addChild) throw new Error('Only a container outside locked ancestry can receive child nodes')
+      let next = cloneUiDocument(document.value)
       const nodeId = nextNodeId(next, type)
       const label = `${type[0].toUpperCase()}${type.slice(1)}`
       const node = createDefaultNode(type, { id: nodeId, name: `${label}_${next.nodes.filter((item) => item.type === type).length + 1}`, parentId: parent ?? null })
-      if (position) { node.props.x = position.x; node.props.y = position.y }
       next.nodes.push(node)
       if (node.parentId === null) next.zOrder.push(node.id)
       else {
         const destination = findNode(next, node.parentId)
-        if (!destination || destination.type !== 'container') throw new Error('Only a container can receive child nodes')
+        if (!destination || destination.type !== 'container' || destination.locked) throw new Error('Only an unlocked container can receive child nodes')
         destination.children.push(node.id)
       }
+      if (position) next = applyNodeGeometryTransaction(next, node.id, { kind: 'properties', patch: position })
       replaceActiveDocument(next, `Add ${type}`)
       selectedIds.value = [node.id]
     } catch (error) {
@@ -651,6 +670,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const removeSelected = () => {
+    const targetId = selectedIds.value[0]
+    if (!targetId || !getNodeActionPolicy(targetId).allowed.delete) return false
     const removeIds = new Set<string>()
     const collect = (id: string) => {
       if (id === 'node_root' || removeIds.has(id)) return
@@ -660,15 +681,21 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       node.children.forEach(collect)
     }
     selectedIds.value.forEach(collect)
-    if (!removeIds.size) return
+    if (!removeIds.size) return false
     const next = cloneUiDocument(document.value)
     next.nodes = next.nodes.filter((node) => !removeIds.has(node.id))
     next.zOrder = next.zOrder.filter((id) => !removeIds.has(id))
     next.nodes.forEach((node) => { node.children = node.children.filter((id) => !removeIds.has(id)) })
     replaceActiveDocument(next, 'Delete nodes')
+    return true
   }
 
   const updateNodeProperty = (nodeId: string, property: string, value: unknown) => {
+    if (property === 'x' || property === 'y' || property === 'width' || property === 'height') {
+      if (nodeId !== 'node_root' && !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return
+      replaceActiveDocument(applyNodeGeometryTransaction(document.value, nodeId, { kind: 'properties', patch: { [property]: Number(value) } }), `Update ${property}`)
+      return
+    }
     const next = cloneUiDocument(document.value)
     const node = findNode(next, nodeId)
     if (!node) return
@@ -688,12 +715,13 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const renameNode = (nodeId: string, name: string) => {
     const normalized = name.trim()
-    if (!normalized) return
+    if (!normalized || !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).allowed.rename) return false
     const next = cloneUiDocument(document.value)
     const node = findNode(next, nodeId)
-    if (!node) return
+    if (!node) return false
     node.name = normalized
     replaceActiveDocument(next, 'Rename node')
+    return true
   }
 
   const setNodeLocked = (nodeId: string, locked: boolean) => {
@@ -756,68 +784,132 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const reparent = (nodeId: string, targetId: string | null, position: UiTreeDropPosition) => {
+    if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, Boolean(clipboard.value)).canReparent) return false
     try {
       replaceActiveDocument(reparentNode(document.value, nodeId, targetId, position), 'Reparent node')
+      return true
     } catch (error) {
       actionError.value = error instanceof Error ? error.message : String(error)
+      return false
     }
   }
 
-  const moveToEdge = (nodeId: string, edge: 'top' | 'bottom') => replaceActiveDocument(moveNodeToEdge(document.value, nodeId, edge), edge === 'top' ? 'Bring to front' : 'Send to back')
-  const moveStep = (nodeId: string, direction: 'up' | 'down') => replaceActiveDocument(moveNodeStep(document.value, nodeId, direction), direction === 'up' ? 'Move up' : 'Move down')
+  const moveToEdge = (nodeId: string, edge: 'top' | 'bottom') => {
+    const command = edge === 'top' ? 'moveTop' : 'moveBottom'
+    if (!getNodeActionPolicy(nodeId).allowed[command]) return false
+    replaceActiveDocument(moveNodeToEdge(document.value, nodeId, edge), edge === 'top' ? 'Bring to front' : 'Send to back')
+    return true
+  }
+  const moveStep = (nodeId: string, direction: 'up' | 'down') => {
+    const command = direction === 'up' ? 'moveUp' : 'moveDown'
+    if (!getNodeActionPolicy(nodeId).allowed[command]) return false
+    replaceActiveDocument(moveNodeStep(document.value, nodeId, direction), direction === 'up' ? 'Move up' : 'Move down')
+    return true
+  }
 
   const nudgeSelected = (delta: UiPoint) => {
-    if (!selectedIds.value.length) return
-    const next = cloneUiDocument(document.value)
-    let moved = false
+    const targetId = selectedIds.value[0]
+    if (!targetId || !getNodeActionPolicy(targetId).canTransform) return false
+    let next = cloneUiDocument(document.value)
     for (const id of selectedIds.value) {
       const node = findNode(next, id)
-      if (!node || node.id === 'node_root' || node.locked) continue
-      node.props.x += delta.x
-      node.props.y += delta.y
-      moved = true
+      if (!node) continue
+      next = applyNodeGeometryTransaction(next, id, { kind: 'properties', patch: { x: node.props.x + delta.x, y: node.props.y + delta.y } })
     }
-    if (moved) replaceActiveDocument(next, 'Nudge nodes')
+    replaceActiveDocument(next, 'Nudge nodes')
+    return true
   }
 
   const group = () => {
+    const targetId = selectedIds.value[0]
+    if (!targetId || !getNodeActionPolicy(targetId).allowed.group) return false
     try {
       const result = groupNodes(document.value, selectedIds.value)
       replaceActiveDocument(result.document, 'Group nodes')
       selectedIds.value = [result.groupId]
+      return true
     } catch (error) {
       actionError.value = error instanceof Error ? error.message : String(error)
+      return false
     }
   }
 
   const ungroup = () => {
+    const targetId = selectedIds.value[0]
+    if (!targetId || !getNodeActionPolicy(targetId).canUngroup) return false
     try {
       const groupedChildren = selectedIds.value.flatMap((id) => document.value.nodes.find((node) => node.id === id)?.type === 'container' ? document.value.nodes.find((node) => node.id === id)?.children ?? [] : [])
       const next = ungroupNodes(document.value, selectedIds.value)
       replaceActiveDocument(next, 'Ungroup nodes')
       selectedIds.value = groupedChildren.filter((id) => Boolean(findNode(next, id)))
+      return true
     } catch (error) {
       actionError.value = error instanceof Error ? error.message : String(error)
+      return false
     }
   }
 
   const copy = () => { clipboard.value = copySelection(document.value, selectedIds.value) }
 
   const duplicateSelected = () => {
+    const targetId = selectedIds.value[0]
+    if (!targetId || !getNodeActionPolicy(targetId).allowed.duplicate) return false
+    const destination = findNode(document.value, targetId)?.parentId ?? null
     copy()
-    paste()
+    paste(destination)
+    return true
   }
 
   const paste = (parentId?: string | null) => {
     if (!clipboard.value) return
     try {
       const destination = parentId === undefined ? selectedNode.value?.type === 'container' ? selectedNode.value.id : 'node_root' : parentId
+      if (destination !== null) {
+        const target = findNode(document.value, destination)
+        if (!target || target.type !== 'container' || target.locked) throw new Error('Paste destination must be an unlocked container')
+      }
       const result = pasteClipboard(document.value, clipboard.value, destination ?? null)
       replaceActiveDocument(result.document, 'Paste nodes')
       selectedIds.value = result.ids
     } catch (error) {
       actionError.value = error instanceof Error ? error.message : String(error)
     }
+  }
+
+  const selectNodeActionTarget = (targetId: string) => {
+    const policy = getNodeActionPolicy(targetId)
+    selectedIds.value = [...policy.selectionIds]
+    return policy
+  }
+
+  const executeNodeAction = (command: UiNodeActionCommand, targetId: string) => {
+    const policy = selectNodeActionTarget(targetId)
+    if (!policy.allowed[command]) return false
+    if (command === 'copy') copy()
+    else if (command === 'cut') { copy(); removeSelected() }
+    else if (command === 'paste') paste(targetId)
+    else if (command === 'addChild') addNode('text', targetId)
+    else if (command === 'duplicate') duplicateSelected()
+    else if (command === 'group') group()
+    else if (command === 'sameType') {
+      const type = findNode(document.value, targetId)?.type
+      if (type) selectNodes(document.value.nodes.filter((node) => node.type === type).map((node) => node.id))
+    }
+    else if (command === 'moveUp') moveStep(targetId, 'up')
+    else if (command === 'moveDown') moveStep(targetId, 'down')
+    else if (command === 'moveTop') moveToEdge(targetId, 'top')
+    else if (command === 'moveBottom') moveToEdge(targetId, 'bottom')
+    else if (command === 'toggleVisibility') {
+      const node = findNode(document.value, targetId)
+      if (node) updateNodeProperty(targetId, 'visible', !node.props.visible)
+    }
+    else if (command === 'toggleLock') {
+      const node = findNode(document.value, targetId)
+      if (node) setNodeLocked(targetId, !node.locked)
+    }
+    else if (command === 'delete') removeSelected()
+    else return false
+    return true
   }
 
   const undo = () => {
@@ -1204,34 +1296,32 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return result
   }
 
-  const updateNodePositionWithSnap = (nodeId: string, position: { x: number; y: number }) => {
+  const snapOptionsFor = (nodeId: string): SnapOptions => {
     const settings = document.value.canvas
-    const result = snapPoint(position, {
-      gridEnabled: typeof preferences.value.gridEnabled === 'boolean' ? preferences.value.gridEnabled : settings.snap.enabled,
+    const enabled = typeof preferences.value.snapEnabled === 'boolean' ? preferences.value.snapEnabled : settings.snap.enabled
+    return {
+      enabled,
+      gridEnabled: enabled && (typeof preferences.value.gridEnabled === 'boolean' ? preferences.value.gridEnabled : settings.grid.enabled),
       gridSize: settings.grid.size,
-      smartEnabled: typeof preferences.value.snapEnabled === 'boolean' ? preferences.value.snapEnabled && settings.snap.smartEnabled : settings.snap.smartEnabled,
+      smartEnabled: enabled && settings.snap.smartEnabled,
       sensitivity: settings.snap.sensitivity,
       guides: document.value.guides,
       canvasWidth: settings.width,
       canvasHeight: settings.height,
-      targets: document.value.nodes.filter((node) => node.id !== nodeId).map((node) => ({ id: node.id, rect: { x: node.props.x, y: node.props.y, width: node.props.width, height: node.props.height } })),
-    })
+      targets: document.value.nodes.filter((node) => node.id !== nodeId).map((node) => ({ id: node.id, rect: nodeRect(node) })),
+    }
+  }
+
+  const updateNodePositionWithSnap = (nodeId: string, position: { x: number; y: number }) => {
+    if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
+    const result = snapPoint(position, snapOptionsFor(nodeId))
     replaceActiveDocument(updateNodePosition(document.value, nodeId, result), 'Move node')
     return result
   }
 
   const previewNodePositionWithSnap = (nodeId: string, position: UiPoint) => {
-    const settings = document.value.canvas
-    const result = snapPoint(position, {
-      gridEnabled: typeof preferences.value.gridEnabled === 'boolean' ? preferences.value.gridEnabled : settings.snap.enabled,
-      gridSize: settings.grid.size,
-      smartEnabled: typeof preferences.value.snapEnabled === 'boolean' ? preferences.value.snapEnabled && settings.snap.smartEnabled : settings.snap.smartEnabled,
-      sensitivity: settings.snap.sensitivity,
-      guides: document.value.guides,
-      canvasWidth: settings.width,
-      canvasHeight: settings.height,
-      targets: document.value.nodes.filter((node) => node.id !== nodeId).map((node) => ({ id: node.id, rect: { x: node.props.x, y: node.props.y, width: node.props.width, height: node.props.height } })),
-    })
+    if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
+    const result = snapPoint(position, snapOptionsFor(nodeId))
     draftPositions.value = { ...draftPositions.value, [nodeId]: result }
     return result
   }
@@ -1240,54 +1330,62 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const position = draftPositions.value[nodeId]
     if (!position) return
     draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => id !== nodeId))
+    if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return false
     replaceActiveDocument(updateNodePosition(document.value, nodeId, position), 'Move node')
+    return true
   }
 
   const previewSelectedPositionsWithSnap = (ids: readonly string[], origins: Record<string, UiPoint>, delta: UiPoint) => {
     const validIds = ids.filter((id) => Boolean(findNode(document.value, id)))
-    if (!validIds.length) return {}
+    if (!validIds.length || !resolveNodeActionPolicy(document.value, validIds, validIds[0], false).canTransform) return {}
     const anchorId = validIds[0]
     const anchorOrigin = origins[anchorId] ?? findNode(document.value, anchorId)?.props ?? { x: 0, y: 0 }
     const requested = { x: anchorOrigin.x + delta.x, y: anchorOrigin.y + delta.y }
     const snapped = previewNodePositionWithSnap(anchorId, requested)
+    if (!snapped) return {}
     const snapDelta = { x: snapped.x - requested.x, y: snapped.y - requested.y }
     const nextDrafts = { ...draftPositions.value }
     for (const id of validIds) {
       const origin = origins[id] ?? findNode(document.value, id)?.props ?? { x: 0, y: 0 }
-      nextDrafts[id] = { x: origin.x + delta.x + snapDelta.x, y: origin.y + delta.y + snapDelta.y }
+      nextDrafts[id] = normalizeGeometryPoint({ x: origin.x + delta.x + snapDelta.x, y: origin.y + delta.y + snapDelta.y }, origin)
     }
     draftPositions.value = nextDrafts
     return nextDrafts
   }
 
   const commitDraftPositions = (ids: readonly string[]) => {
-    const next = cloneUiDocument(document.value)
+    const validIds = ids.filter((id) => Boolean(findNode(document.value, id)))
+    if (!validIds.length || !resolveNodeActionPolicy(document.value, validIds, validIds[0], false).canTransform) {
+      draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => !ids.includes(id)))
+      return false
+    }
+    let next = cloneUiDocument(document.value)
     let changed = false
     for (const id of ids) {
       const position = draftPositions.value[id]
-      const node = findNode(next, id)
-      if (!position || !node) continue
-      node.props.x = position.x
-      node.props.y = position.y
+      if (!position || !findNode(next, id)) continue
+      next = applyNodeGeometryTransaction(next, id, { kind: 'properties', patch: position })
       changed = true
     }
     draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => !ids.includes(id)))
     if (changed) replaceActiveDocument(next, ids.length > 1 ? 'Move nodes' : 'Move node')
+    return changed
   }
 
-  const previewNodeRect = (nodeId: string, rect: UiRect) => { draftRects.value = { ...draftRects.value, [nodeId]: rect } }
+  const previewNodeResizeWithSnap = (nodeId: string, originRect: UiRect, handle: UiResizeHandle, delta: UiPoint, modifiers: UiResizeModifiers) => {
+    if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
+    const requested = resizeRect(originRect, handle, delta, modifiers)
+    const result = snapRect(requested, originRect, handle, modifiers, snapOptionsFor(nodeId))
+    draftRects.value = { ...draftRects.value, [nodeId]: result }
+    return result
+  }
   const commitDraftRect = (nodeId: string) => {
     const rect = draftRects.value[nodeId]
     if (!rect) return
     draftRects.value = Object.fromEntries(Object.entries(draftRects.value).filter(([id]) => id !== nodeId))
-    const next = cloneUiDocument(document.value)
-    const node = findNode(next, nodeId)
-    if (!node) return
-    node.props.x = rect.x + rect.width * node.props.anchorX
-    node.props.y = rect.y + rect.height * node.props.anchorY
-    node.props.width = rect.width / Math.max(Math.abs(node.props.scaleX), 0.0001)
-    node.props.height = rect.height / Math.max(Math.abs(node.props.scaleY), 0.0001)
-    replaceActiveDocument(next, 'Resize node')
+    if (!findNode(document.value, nodeId) || !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return false
+    replaceActiveDocument(applyNodeGeometryTransaction(document.value, nodeId, { kind: 'rect', rect }), 'Resize node')
+    return true
   }
   const previewNodeRotation = (nodeId: string, rotation: number) => { draftRotations.value = { ...draftRotations.value, [nodeId]: rotation } }
   const commitDraftRotation = (nodeId: string) => {
@@ -1300,8 +1398,18 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const setZoom = (scale: number, anchor?: { x: number; y: number }) => { viewport.value = zoomViewport(viewport.value, scale, anchor) }
   const fitCanvas = () => { viewport.value = fitViewport(viewport.value, document.value.canvas.width, document.value.canvas.height) }
   const pan = (delta: { x: number; y: number }) => { viewport.value = panViewport(viewport.value, delta) }
-  const align = (alignment: Parameters<typeof alignNodes>[2], reference: Parameters<typeof alignNodes>[3] = 'selection') => replaceActiveDocument(alignNodes(document.value, selectedIds.value, alignment, reference), `Align ${alignment}`)
-  const distribute = (axis: Parameters<typeof distributeNodes>[2]) => replaceActiveDocument(distributeNodes(document.value, selectedIds.value, axis), `Distribute ${axis}`)
+  const align = (alignment: Parameters<typeof alignNodes>[2], reference: Parameters<typeof alignNodes>[3] = 'selection') => {
+    const targetId = selectedIds.value[0]
+    if (!targetId || !getNodeActionPolicy(targetId).canTransform) return false
+    replaceActiveDocument(alignNodes(document.value, selectedIds.value, alignment, reference), `Align ${alignment}`)
+    return true
+  }
+  const distribute = (axis: Parameters<typeof distributeNodes>[2]) => {
+    const targetId = selectedIds.value[0]
+    if (!targetId || !getNodeActionPolicy(targetId).canTransform) return false
+    replaceActiveDocument(distributeNodes(document.value, selectedIds.value, axis), `Distribute ${axis}`)
+    return true
+  }
 
   return {
     adapters,
@@ -1368,6 +1476,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     reorderScenes,
     selectNodes,
     setHoveredNode,
+    getNodeActionPolicy,
+    selectNodeActionTarget,
+    executeNodeAction,
     addNode,
     removeSelected,
     updateNodeProperty,
@@ -1448,7 +1559,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     commitDraftPosition,
     previewSelectedPositionsWithSnap,
     commitDraftPositions,
-    previewNodeRect,
+    previewNodeResizeWithSnap,
     commitDraftRect,
     previewNodeRotation,
     commitDraftRotation,

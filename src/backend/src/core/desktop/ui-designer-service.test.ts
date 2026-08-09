@@ -73,6 +73,27 @@ describe('ui designer document service', () => {
     assert.ok('sceneScript' in persisted);
   });
 
+  test('normalizes document geometry and pane preferences to shared integers on read and save', () => {
+    const filePath = path.join(tempRoot, 'decimal-scene.mzui');
+    const document = sampleDocument();
+    document.canvas.width = 816.6;
+    document.canvas.height = 623.5;
+    document.meta.canvasWidth = 816.6;
+    document.meta.canvasHeight = 623.5;
+    document.nodes[0].props.width = 816.6;
+    document.nodes[0].props.height = 623.5;
+    document.nodes[0].props.x = 10.6;
+    saveUiDesignerFile(filePath, document);
+    const read = readUiDesignerFile(filePath).document;
+    assert.deepEqual([read.canvas.width, read.canvas.height, read.nodes[0].props.x], [817, 624, 11]);
+    const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8')) as UiDesignerDocument;
+    assert.deepEqual([persisted.meta.canvasWidth, persisted.nodes[0].props.width], [817, 817]);
+
+    const store = new UiDesignerUserDataStore(path.join(tempRoot, 'integer-preferences'));
+    store.writePreferences({ leftPaneWidth: 260.6, centerPaneWidth: 639.5, rightPaneWidth: 900 });
+    assert.deepEqual(store.readPreferences(), { leftPaneWidth: 261, centerPaneWidth: 640, rightPaneWidth: 550 });
+  });
+
   test('uses expected digest/mtime conflict checks and explicit force', () => {
     const filePath = path.join(tempRoot, 'scene.mzui');
     const document = sampleDocument();

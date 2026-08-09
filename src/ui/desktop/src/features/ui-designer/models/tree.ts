@@ -100,6 +100,35 @@ export function isDescendant(document: UiDesignerDocument, ancestorId: string, c
   return false
 }
 
+function subtreeContainsLockedNode(document: UiDesignerDocument, nodeId: string): boolean {
+  const pending = [nodeId]
+  const seen = new Set<string>()
+  while (pending.length) {
+    const id = pending.pop()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    const node = findNode(document, id)
+    if (!node) continue
+    if (node.locked) return true
+    pending.push(...node.children)
+  }
+  return false
+}
+
+function hasLockedAncestor(document: UiDesignerDocument, node: UiNode): boolean {
+  const seen = new Set<string>()
+  let parentId = node.parentId
+  while (parentId !== null) {
+    if (seen.has(parentId)) return true
+    seen.add(parentId)
+    const parent = findNode(document, parentId)
+    if (!parent) return true
+    if (parent.locked) return true
+    parentId = parent.parentId
+  }
+  return false
+}
+
 function removeFromParent(document: UiDesignerDocument, node: UiNode): void {
   if (node.parentId === null) {
     for (let index = document.zOrder.length - 1; index >= 0; index -= 1) {
@@ -137,17 +166,23 @@ export function reparentNode(
   const next = cloneUiDocument(document)
   const node = findNode(next, nodeId)
   if (!node) throw new Error(`Unknown node: ${nodeId}`)
+  if (node.id === 'node_root' || subtreeContainsLockedNode(next, node.id)) throw new Error('Root nodes or subtrees containing locked nodes cannot be moved')
   if (targetId === nodeId || (targetId && isDescendant(next, nodeId, targetId))) throw new Error('Cannot move a node inside itself or its descendant')
+  if (hasLockedAncestor(next, node)) throw new Error('Nodes inside a locked container cannot be moved')
 
   let parentId: string | null
   if (position === 'inner') {
     const parent = targetId ? findNode(next, targetId) : undefined
-    if (!parent || parent.type !== 'container') throw new Error('Only a container can receive child nodes')
+    if (!parent || parent.type !== 'container' || parent.locked || hasLockedAncestor(next, parent)) throw new Error('Only a container outside locked ancestry can receive child nodes')
     parentId = parent.id
   } else {
     const target = targetId ? findNode(next, targetId) : undefined
     if (!target) throw new Error('A before/after drop requires a target node')
+    if (target.id === 'node_root') throw new Error('The root canvas cannot be used as a sibling reorder target')
+    if (target.locked || hasLockedAncestor(next, target)) throw new Error('A locked node cannot be used as a reorder target')
     parentId = target.parentId
+    const destinationParent = parentId === null ? undefined : findNode(next, parentId)
+    if (destinationParent && (destinationParent.locked || hasLockedAncestor(next, destinationParent))) throw new Error('A locked container cannot be reordered')
   }
 
   removeFromParent(next, node)
@@ -164,14 +199,23 @@ export function reparentNode(
 export function moveNodeToEdge(document: UiDesignerDocument, nodeId: string, edge: 'top' | 'bottom'): UiDesignerDocument {
   const node = findNode(document, nodeId)
   if (!node) throw new Error(`Unknown node: ${nodeId}`)
+  if (node.id === 'node_root' || subtreeContainsLockedNode(document, node.id) || hasLockedAncestor(document, node)) return cloneUiDocument(document)
   const next = cloneUiDocument(document)
   const cloned = findNode(next, nodeId)!
-  const siblings = cloned.parentId === null ? next.zOrder : findNode(next, cloned.parentId)?.children
+  if (cloned.parentId !== null && findNode(next, cloned.parentId)?.locked) return next
+  const source = cloned.parentId === null ? next.zOrder : findNode(next, cloned.parentId)?.children
+  const siblings = cloned.parentId === null ? source?.filter((id) => id !== 'node_root') : source
   if (!siblings) throw new Error('Node parent is missing')
   const index = siblings.indexOf(nodeId)
   if (index >= 0) siblings.splice(index, 1)
   if (edge === 'top') siblings.push(nodeId)
   else siblings.unshift(nodeId)
+  if (cloned.parentId === null && source) {
+    let movableIndex = 0
+    for (let index = 0; index < source.length; index += 1) {
+      if (source[index] !== 'node_root') source[index] = siblings[movableIndex++]
+    }
+  }
   return next
 }
 
@@ -179,14 +223,22 @@ export function moveNodeToEdge(document: UiDesignerDocument, nodeId: string, edg
 export function moveNodeStep(document: UiDesignerDocument, nodeId: string, direction: 'up' | 'down'): UiDesignerDocument {
   const next = cloneUiDocument(document)
   const node = findNode(next, nodeId)
-  if (!node || node.id === 'node_root' || node.parentId === null || node.locked) return next
-  const parent = findNode(next, node.parentId)
-  if (!parent) return next
-  const index = parent.children.indexOf(node.id)
+  if (!node || node.id === 'node_root' || subtreeContainsLockedNode(next, node.id) || hasLockedAncestor(next, node)) return next
+  const parent = node.parentId === null ? undefined : findNode(next, node.parentId)
+  if (node.parentId !== null && (!parent || parent.locked)) return next
+  const source = node.parentId === null ? next.zOrder : parent!.children
+  const siblings = node.parentId === null ? source.filter((id) => id !== 'node_root') : source
+  const index = siblings.indexOf(node.id)
   const target = direction === 'up' ? index - 1 : index + 1
-  if (index < 0 || target < 0 || target >= parent.children.length) return next
-  const [moved] = parent.children.splice(index, 1)
-  parent.children.splice(target, 0, moved)
+  if (index < 0 || target < 0 || target >= siblings.length) return next
+  const [moved] = siblings.splice(index, 1)
+  siblings.splice(target, 0, moved)
+  if (node.parentId === null) {
+    let movableIndex = 0
+    for (let sourceIndex = 0; sourceIndex < source.length; sourceIndex += 1) {
+      if (source[sourceIndex] !== 'node_root') source[sourceIndex] = siblings[movableIndex++]
+    }
+  }
   return next
 }
 
@@ -197,7 +249,9 @@ function topLevelSelection(document: UiDesignerDocument, ids: readonly string[])
 
 export function groupNodes(document: UiDesignerDocument, ids: readonly string[], name = 'group'): { document: UiDesignerDocument; groupId: string } {
   const selected = topLevelSelection(document, ids)
-  if (!selected.length) throw new Error('Select at least one node to group')
+  if (selected.length < 2) throw new Error('Select at least two sibling nodes to group')
+  if (selected.some((node) => node.id === 'node_root' || subtreeContainsLockedNode(document, node.id) || hasLockedAncestor(document, node)) || selected.some((node) => node.parentId !== selected[0].parentId)) throw new Error('Only unlocked sibling subtrees can be grouped')
+  if (selected[0].parentId !== null && findNode(document, selected[0].parentId)?.locked) throw new Error('Nodes inside a locked container cannot be grouped')
   const next = cloneUiDocument(document)
   const selectedIds = selected.map((node) => node.id)
   const first = findNode(next, selectedIds[0])!
@@ -229,6 +283,7 @@ export function groupNodes(document: UiDesignerDocument, ids: readonly string[],
 export function ungroupNodes(document: UiDesignerDocument, ids: readonly string[]): UiDesignerDocument {
   const selected = topLevelSelection(document, ids).filter((node) => node.id !== 'node_root' && node.type === 'container')
   if (!selected.length) throw new Error('Select a container group to ungroup')
+  if (selected.some((node) => subtreeContainsLockedNode(document, node.id) || hasLockedAncestor(document, node))) throw new Error('Groups containing locked nodes cannot be ungrouped')
   const next = cloneUiDocument(document)
   for (const group of selected) {
     const current = findNode(next, group.id)
@@ -264,10 +319,11 @@ export function copySelection(document: UiDesignerDocument, ids: readonly string
 
 export function pasteClipboard(document: UiDesignerDocument, clipboard: UiClipboardPayload, parentId: string | null = null, offset = 10): { document: UiDesignerDocument; ids: string[] } {
   if (!clipboard.nodes.length) return { document: cloneUiDocument(document), ids: [] }
+  if (clipboard.nodes.some((node) => node.locked)) throw new Error('Clipboard subtrees containing locked nodes cannot be pasted')
   const next = cloneUiDocument(document)
   if (parentId !== null) {
     const parent = findNode(next, parentId)
-    if (!parent || parent.type !== 'container') throw new Error('Paste destination must be a container')
+    if (!parent || parent.type !== 'container' || parent.locked || hasLockedAncestor(next, parent)) throw new Error('Paste destination must be outside locked ancestry')
   }
   const idMap = new Map<string, string>()
   const usedIds = new Set(next.nodes.map((node) => node.id))

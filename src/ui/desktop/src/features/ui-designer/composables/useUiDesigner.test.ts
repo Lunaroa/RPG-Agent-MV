@@ -75,6 +75,54 @@ test('editor preview renders the design canvas and restores the source editing m
   assert.equal(designer.editingMode.value, 'code')
 })
 
+test('integer geometry and shared node actions guard locked selections and ancestry at execution', () => {
+  const designer = useUiDesigner()
+  designer.addNode('text', 'node_root', { x: 10.6, y: 20.4 })
+  const firstId = designer.selectedIds.value[0]
+  assert.deepEqual([designer.document.value.nodes.find((node) => node.id === firstId)?.props.x, designer.document.value.nodes.find((node) => node.id === firstId)?.props.y], [11, 20])
+  designer.updateNodeProperty(firstId, 'width', 100.6)
+  assert.equal(designer.document.value.nodes.find((node) => node.id === firstId)?.props.width, 101)
+  designer.setNodeLocked(firstId, true)
+  assert.equal(designer.executeNodeAction('delete', firstId), false)
+  assert.ok(designer.document.value.nodes.some((node) => node.id === firstId))
+  assert.equal(designer.executeNodeAction('toggleLock', firstId), true)
+  assert.equal(designer.document.value.nodes.find((node) => node.id === firstId)?.locked, false)
+
+  designer.addNode('container', 'node_root')
+  const containerId = designer.selectedIds.value[0]
+  designer.addNode('text', containerId)
+  const nestedId = designer.selectedIds.value[0]
+  designer.setNodeLocked(containerId, true)
+  assert.equal(designer.executeNodeAction('delete', nestedId), false)
+  assert.equal(designer.nudgeSelected({ x: 1, y: 1 }), false)
+  assert.equal(designer.duplicateSelected(), false)
+  assert.equal(designer.reparent(nestedId, 'node_root', 'inner'), false)
+  assert.equal(designer.align('left'), false)
+  assert.equal(designer.previewNodeResizeWithSnap(nestedId, { x: 0, y: 0, width: 160, height: 80 }, 'e', { x: 10, y: 0 }, { preserveAspect: true, fromCenter: false }), undefined)
+  assert.equal(designer.renameNode(nestedId, 'RenamedNested'), false)
+  assert.ok(designer.document.value.nodes.some((node) => node.id === nestedId))
+
+  designer.setNodeLocked(nestedId, true)
+  designer.setNodeLocked(containerId, false)
+  designer.selectNodes([containerId])
+  assert.equal(designer.getNodeActionPolicy(containerId).canUngroup, false)
+  assert.equal(designer.removeSelected(), false)
+  assert.equal(designer.duplicateSelected(), false)
+  assert.equal(designer.reparent(containerId, 'node_root', 'inner'), false)
+  assert.equal(designer.renameNode('node_root', 'RenamedRoot'), false)
+  assert.equal(designer.executeNodeAction('toggleLock', nestedId), true)
+  assert.equal(designer.document.value.nodes.find((node) => node.id === nestedId)?.locked, false)
+
+  designer.addNode('text', null)
+  const topFirstId = designer.selectedIds.value[0]
+  designer.addNode('text', null)
+  const topSecondId = designer.selectedIds.value[0]
+  assert.equal(designer.moveStep(topSecondId, 'up'), true)
+  assert.deepEqual(designer.document.value.zOrder, ['node_root', topSecondId, topFirstId])
+  assert.equal(designer.moveStep(topSecondId, 'up'), false)
+  assert.equal(designer.reparent(topFirstId, 'node_root', 'before'), false)
+})
+
 test('preview diagnostics follow the active session and retain final cleanup diagnostics', async () => {
   const startDiagnostics = [{ schemaVersion: '1.0.0' as const, sessionId: 'preview-diagnostics', scene: 'Scene_Main', file: 'sceneScript.source', node: 'node_root', type: 'code', phase: 'ready', event: null, code: 'UI_CODE_ERROR', severity: 'error' as const, label: 'Code error', message: 'syntax error', count: 1 }]
   const stopDiagnostics = [{ ...startDiagnostics[0], message: 'cleanup complete', count: 2 }]

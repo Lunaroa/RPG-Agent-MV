@@ -30,6 +30,7 @@ const { t } = useUiDesignerI18n()
 const activeSection = defineModel<'properties' | 'events' | 'condition' | 'animation'>('activeSection', { default: 'properties' })
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
 const selectedNode = computed<UiNode | undefined>(() => unwrap(designer.selectedNode))
+const selectedActionPolicy = computed(() => selectedNode.value ? designer.getNodeActionPolicy(selectedNode.value.id) : undefined)
 const currentDocument = computed(() => unwrap(designer.document))
 const validationReport = computed(() => unwrap(designer.validation))
 const nodeValidationErrors = computed(() => selectedNode.value ? validationReport.value.errors.filter((issue) => issue.nodeId === selectedNode.value!.id || (issue.path ?? '').includes(selectedNode.value!.id)) : [])
@@ -132,7 +133,7 @@ const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?
         <span class="inspector-title">{{ t('inspector') }}</span>
         <span v-if="selectedNode" class="inspector-node">{{ selectedNode.name }}</span>
       </div>
-      <el-button v-if="selectedNode" size="small" text @click="designer.duplicateSelected()">{{ t('duplicateNode') }}</el-button>
+      <el-button v-if="selectedNode" size="small" text :disabled="!selectedActionPolicy?.allowed.duplicate" @click="designer.duplicateSelected()">{{ t('duplicateNode') }}</el-button>
     </div>
     <div v-if="selectedNode" class="inspector-tabs">
       <el-button size="small" text :class="{ active: activeSection === 'properties' }" @click="activeSection = 'properties'">{{ t('value') }}</el-button>

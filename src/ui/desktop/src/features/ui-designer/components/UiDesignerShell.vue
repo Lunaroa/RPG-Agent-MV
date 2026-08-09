@@ -6,6 +6,7 @@ import { useUiDesigner, type UiDesignerController } from '../composables/useUiDe
 import { useUiDesignerLifecycle } from '../composables/useUiDesignerLifecycle'
 import { createUiDesignerShortcutRegistry, type UiDesignerShortcutDisplay } from '../composables/shortcutRegistry'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
+import { normalizePaneSize } from '../models/geometry'
 import UiDesignerCanvas from './UiDesignerCanvas.vue'
 import UiDesignerCodePanel from './UiDesignerCodePanel.vue'
 import UiDesignerInspector from './UiDesignerInspector.vue'
@@ -93,12 +94,13 @@ const cycleNodeSelection = (step: 1 | -1) => {
   const index = nodes.findIndex((node) => node.id === designer.selectedIds[0])
   designer.selectNodes([nodes[(index + step + nodes.length) % nodes.length].id])
 }
-const clampPane = (side: 'left' | 'center' | 'right', value: number) => side === 'left' ? Math.min(500, Math.max(200, value)) : side === 'right' ? Math.min(550, Math.max(240, value)) : Math.min(1400, Math.max(320, value))
+const clampPane = (side: 'left' | 'center' | 'right', value: number) => normalizePaneSize(side, value)
 const beginPaneDrag = (side: 'left' | 'right', event: PointerEvent) => {
   if (designer.isEditorPreviewing) return
   paneDrag.value = { side, startX: event.clientX, left: leftPaneWidth.value, center: centerPaneWidth.value, right: rightPaneWidth.value }
   window.addEventListener('pointermove', movePaneDrag)
   window.addEventListener('pointerup', endPaneDrag, { once: true })
+  window.addEventListener('pointercancel', endPaneDrag, { once: true })
 }
 const movePaneDrag = (event: PointerEvent) => {
   const drag = paneDrag.value
@@ -113,9 +115,12 @@ const movePaneDrag = (event: PointerEvent) => {
   }
 }
 const endPaneDrag = () => {
-  if (!paneDrag.value) return
+  const active = Boolean(paneDrag.value)
   paneDrag.value = undefined
   window.removeEventListener('pointermove', movePaneDrag)
+  window.removeEventListener('pointerup', endPaneDrag)
+  window.removeEventListener('pointercancel', endPaneDrag)
+  if (!active) return
   void rawDesigner.savePreferences({ leftPaneWidth: leftPaneWidth.value, centerPaneWidth: centerPaneWidth.value, rightPaneWidth: rightPaneWidth.value })
 }
 watch(() => [designer.preferences.leftPaneWidth, designer.preferences.centerPaneWidth, designer.preferences.rightPaneWidth], ([left, center, right]) => {
@@ -137,7 +142,7 @@ onMounted(async () => {
   modifier('z', () => { if (!designer.isEditorPreviewing) designer.undo() }, false, 'shortcutUndo')
   modifier('z', () => { if (!designer.isEditorPreviewing) designer.redo() }, true, 'shortcutRedo')
   modifier('c', () => { if (!designer.isEditorPreviewing) designer.copy() }, false, 'shortcutCopy')
-  modifier('x', () => { if (!designer.isEditorPreviewing) { designer.copy(); designer.removeSelected() } }, false, 'shortcutCut')
+  modifier('x', () => { if (!designer.isEditorPreviewing && designer.selectedIds[0]) designer.executeNodeAction('cut', designer.selectedIds[0]) }, false, 'shortcutCut')
   modifier('v', () => { if (!designer.isEditorPreviewing) designer.paste() }, false, 'shortcutPaste')
   modifier('w', () => { if (!designer.isEditorPreviewing) void designer.closeScene(designer.activeSceneId) }, false, 'shortcutCloseScene')
   modifier('y', () => { if (!designer.isEditorPreviewing) designer.redo() }, false, 'shortcutRedo')

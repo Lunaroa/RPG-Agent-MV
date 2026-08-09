@@ -10,6 +10,7 @@ import type {
   UiRuntimeSceneExport,
 } from '../../../../contract/ui-designer.ts'
 import { canonicalUiRuntimeSceneExport } from '../../../../contract/ui-designer-script.ts'
+import { normalizeUiRuntimeSceneGeometry } from '../../../../contract/ui-designer-geometry.ts'
 import { inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts'
 import {
   cleanupIsolatedProject,
@@ -135,7 +136,7 @@ export class UiDesignerPreviewService {
     if (!this.launcher) throw new UiDesignerPreviewUnavailableError()
     const report = validateUiRuntimeSceneExport(scene)
     if (!report.valid) throw new Error(`UI preview scene validation failed: ${report.errors.map((issue) => issue.message).join('; ')}`)
-    scene = canonicalUiRuntimeSceneExport(scene)
+    scene = normalizeUiRuntimeSceneGeometry(canonicalUiRuntimeSceneExport(scene))
     if (RESERVED_ENGINE_SCENE_NAMES.has(scene.meta.sceneName)) throw new UiDesignerPreviewSceneConflictError(scene.meta.sceneName)
     const projectCompatibility = uiDesignerProjectCompatibility(inspectRmmvProject(path.resolve(projectInput)))
     this.preparing = true

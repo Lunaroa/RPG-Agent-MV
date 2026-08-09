@@ -8,6 +8,7 @@ import type {
   UiRuntimeStatus,
 } from '../../../../contract/ui-designer.ts';
 import { canonicalUiRuntimeSceneExport } from '../../../../contract/ui-designer-script.ts';
+import { normalizeUiRuntimeSceneGeometry } from '../../../../contract/ui-designer-geometry.ts';
 import {
   inspectRmmvProject,
   resourceRelativePath,
@@ -313,7 +314,7 @@ export function runtimeSourceDigest(): string {
 function validateRuntimeScene(scene: UiRuntimeSceneExport): UiRuntimeSceneExport {
   const report = validateUiRuntimeSceneExport(scene);
   if (!report.valid) throw new Error(`UI runtime scene validation failed: ${report.errors.map((issue) => issue.message).join('; ')}`);
-  return canonicalUiRuntimeSceneExport(scene);
+  return normalizeUiRuntimeSceneGeometry(canonicalUiRuntimeSceneExport(scene));
 }
 
 function normalizeSceneEnginePath(input: string, layout: ReturnType<typeof resolveRmmvLayout>): string {

@@ -6,6 +6,7 @@ import type {
   UiDesignerDocument,
   UiFileResult,
 } from '../../../../contract/ui-designer.ts';
+import { normalizeUiDesignerPaneSize } from '../../../../contract/ui-designer-geometry.ts';
 import {
   assertValidUiDesignerDocument,
   UiDesignerValidationError,
@@ -13,6 +14,14 @@ import {
 
 export const UI_DESIGNER_FILE_EXTENSION = '.mzui';
 export const UI_DESIGNER_RECENT_LIMIT = 10;
+
+function normalizePanePreferences(value: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...value };
+  if ('leftPaneWidth' in next) next.leftPaneWidth = normalizeUiDesignerPaneSize('left', next.leftPaneWidth);
+  if ('centerPaneWidth' in next) next.centerPaneWidth = normalizeUiDesignerPaneSize('center', next.centerPaneWidth);
+  if ('rightPaneWidth' in next) next.rightPaneWidth = normalizeUiDesignerPaneSize('right', next.rightPaneWidth);
+  return next;
+}
 
 export interface UiDesignerFileMetadata {
   path: string;
@@ -273,12 +282,12 @@ export class UiDesignerUserDataStore {
     try { raw = JSON.parse(fs.readFileSync(this.preferencesPath, 'utf8')); }
     catch (error) { throw new UiDesignerPersistenceError('read-preferences', 'UI designer preferences are damaged. Restore the preferences file or reset preferences explicitly.', error); }
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new UiDesignerPersistenceError('read-preferences', 'UI designer preferences have an invalid shape and were not silently reset.');
-    return raw as T;
+    return normalizePanePreferences(raw as Record<string, unknown>) as T;
   }
 
   writePreferences(value: Record<string, unknown>): void {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('UI designer preferences must be an object.');
-    writeJsonAtomically(this.preferencesPath, value);
+    writeJsonAtomically(this.preferencesPath, normalizePanePreferences(value));
   }
 
   private writeRecoveryRecords(records: UiDesignerRecoveryRecord[]): void {

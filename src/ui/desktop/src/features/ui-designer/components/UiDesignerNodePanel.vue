@@ -5,6 +5,7 @@ import { UI_DESIGNER_NODE_TYPES } from '@contract/ui-designer'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import { isDescendant } from '../models/tree'
+import { resolveNodeActionPolicy, type UiNodeActionCommand, type UiNodeActionPolicy } from '../models/actions'
 
 interface NodeTreeEntry {
   id: string
@@ -20,11 +21,18 @@ const search = ref('')
 const editingId = ref<string | null>(null)
 const editingName = ref('')
 const anchorId = ref<string>()
-const treeRef = ref<{ filter: (value: string) => void; expandAll?: () => void; collapseAll?: () => void }>()
+interface TreeExpose {
+  filter: (value: string) => void
+  expandAll?: () => void
+  collapseAll?: () => void
+  setCurrentKey?: (key: string) => void
+  getNode?: (key: string) => { expand?: () => void }
+  $el?: HTMLElement
+}
+const treeRef = ref<TreeExpose>()
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
 const document = computed(() => unwrap(designer.document))
 const selectedIds = computed(() => unwrap(designer.selectedIds))
-const selectedNode = computed(() => unwrap(designer.selectedNode))
 const actionError = computed(() => unwrap(designer.actionError))
 
 const labels: Record<UiDesignerNodeType, UiDesignerMessageKey> = {
@@ -54,6 +62,36 @@ const treeData = computed<NodeTreeEntry[]>(() => {
 watch(search, (value) => {
   void nextTick(() => treeRef.value?.filter(value))
 })
+
+const revealPrimarySelection = async () => {
+  const primaryId = selectedIds.value[0]
+  if (!primaryId) return
+  const ancestors: string[] = []
+  const seen = new Set<string>()
+  let current = document.value.nodes.find((node) => node.id === primaryId)
+  while (current?.parentId) {
+    if (seen.has(current.parentId)) return
+    seen.add(current.parentId)
+    ancestors.unshift(current.parentId)
+    current = document.value.nodes.find((node) => node.id === current?.parentId)
+  }
+  await nextTick()
+  for (const id of ancestors) treeRef.value?.getNode?.(id)?.expand?.()
+  treeRef.value?.setCurrentKey?.(primaryId)
+  await nextTick()
+  const findRow = () => [...(treeRef.value?.$el?.querySelectorAll<HTMLElement>('[data-key]') ?? [])].find((element) => element.dataset.key === primaryId)
+  let row = findRow()
+  if (!row && search.value) {
+    search.value = ''
+    await nextTick()
+    treeRef.value?.filter('')
+    await nextTick()
+    row = findRow()
+  }
+  row?.scrollIntoView({ block: 'nearest' })
+}
+
+watch(selectedIds, () => { void revealPrimarySelection() }, { immediate: true })
 
 const select = (entry: NodeTreeEntry, event: MouseEvent) => {
   if (event.shiftKey && anchorId.value) {
@@ -87,31 +125,13 @@ const toggleVisibility = (id: string) => {
   if (node) designer.updateNodeProperty(id, 'visible', !node.props.visible)
 }
 
-const nodeFor = (id: string) => document.value.nodes.find((node) => node.id === id)
-const siblingIds = (id: string) => {
-  const node = nodeFor(id)
-  if (!node) return []
-  if (node.parentId === null) return document.value.zOrder
-  return nodeFor(node.parentId)?.children ?? []
-}
-const canMoveStep = (id: string, direction: 'up' | 'down') => {
-  const node = nodeFor(id)
-  if (!node || id === 'node_root' || node.locked) return false
-  const siblings = siblingIds(id)
-  const index = siblings.indexOf(id)
-  return index >= 0 && (direction === 'up' ? index > 0 : index < siblings.length - 1)
-}
-const canMoveToEdge = (id: string, edge: 'top' | 'bottom') => {
-  const node = nodeFor(id)
-  if (!node || id === 'node_root' || node.locked) return false
-  const siblings = siblingIds(id)
-  const index = siblings.indexOf(id)
-  return index >= 0 && (edge === 'top' ? index < siblings.length - 1 : index > 0)
-}
+const nodePolicy = (id: string) => designer.getNodeActionPolicy(id) as UiNodeActionPolicy
 
 const startRename = (entry: NodeTreeEntry) => {
+  if (!nodePolicy(entry.id).allowed.rename) return false
   editingId.value = entry.id
   editingName.value = document.value.nodes.find((node) => node.id === entry.id)?.name ?? entry.label
+  return true
 }
 const finishRename = () => {
   if (editingId.value) designer.renameNode(editingId.value, editingName.value)
@@ -121,25 +141,12 @@ const finishRename = () => {
 const contextCommand = (command: string, id: string) => {
   if (command === 'expandAll') { treeRef.value?.expandAll?.(); return }
   if (command === 'collapseAll') { treeRef.value?.collapseAll?.(); return }
-  designer.selectNodes([id])
-  if (command === 'copy') designer.copy()
-  else if (command === 'cut') { designer.copy(); designer.removeSelected() }
-  else if (command === 'paste') designer.paste()
-  else if (command === 'rename') startRename({ id, label: '', type: document.value.nodes.find((node) => node.id === id)?.type ?? 'container' })
-  else if (command === 'toggleVisibility') toggleVisibility(id)
-  else if (command === 'toggleLock') toggleLock(id)
-  else if (command === 'duplicate') designer.duplicateSelected()
-  else if (command === 'group') designer.group()
-  else if (command === 'addChild') designer.addNode('text', id)
-  else if (command === 'moveUp' && canMoveStep(id, 'up')) designer.moveStep(id, 'up')
-  else if (command === 'moveDown' && canMoveStep(id, 'down')) designer.moveStep(id, 'down')
-  else if (command === 'moveTop' && canMoveToEdge(id, 'top')) designer.moveToEdge(id, 'top')
-  else if (command === 'moveBottom' && canMoveToEdge(id, 'bottom')) designer.moveToEdge(id, 'bottom')
-  else if (command === 'sameType') {
-    const type = document.value.nodes.find((node) => node.id === id)?.type
-    if (type) designer.selectNodes(document.value.nodes.filter((node) => node.type === type).map((node) => node.id))
+  const policy = designer.selectNodeActionTarget(id) as UiNodeActionPolicy
+  if (command === 'rename') {
+    if (policy.allowed.rename) startRename({ id, label: '', type: document.value.nodes.find((node) => node.id === id)?.type ?? 'container' })
+    return
   }
-  else if (command === 'delete' && id !== 'node_root') designer.removeSelected()
+  designer.executeNodeAction(command as UiNodeActionCommand, id)
 }
 
 const normalizeDropPosition = (type: string) => type === 'prev' ? 'before' : type === 'next' ? 'after' : type === 'inner' ? 'inner' : undefined
@@ -147,10 +154,14 @@ const allowDrop = (draggingNode: { data?: NodeTreeEntry }, dropNode: { data?: No
   const dragging = draggingNode?.data?.id ? document.value.nodes.find((node) => node.id === draggingNode.data?.id) : undefined
   const drop = dropNode?.data?.id ? document.value.nodes.find((node) => node.id === dropNode.data?.id) : undefined
   if (!dragging || !drop || dragging.id === 'node_root') return false
+  if (!resolveNodeActionPolicy(document.value, [dragging.id], dragging.id, false).canReparent) return false
   const position = normalizeDropPosition(type)
   if (!position || position === 'inner' && drop.type !== 'container') return false
   if (drop.id === dragging.id || isDescendant(document.value, dragging.id, drop.id)) return false
-  return !dragging.locked
+  if (position === 'inner' && !resolveNodeActionPolicy(document.value, [drop.id], drop.id, false).allowed.addChild) return false
+  if (position !== 'inner' && (drop.id === 'node_root' || drop.locked)) return false
+  if (position !== 'inner' && drop.parentId !== null && !resolveNodeActionPolicy(document.value, [drop.parentId], drop.parentId, false).allowed.addChild) return false
+  return true
 }
 
 const handleDrop = (draggingNode: { data: NodeTreeEntry }, dropNode: { data: NodeTreeEntry }, dropType: string) => {
@@ -160,7 +171,7 @@ const handleDrop = (draggingNode: { data: NodeTreeEntry }, dropNode: { data: Nod
 }
 const handleKeydown = (event: KeyboardEvent) => {
   if ((event.target as HTMLElement | null)?.matches?.('input,textarea,select,[contenteditable="true"],.CodeMirror,button')) return
-  if (event.key === 'Delete') { event.preventDefault(); designer.removeSelected() }
+  if (event.key === 'Delete') { event.preventDefault(); if (selectedIds.value[0]) designer.executeNodeAction('delete', selectedIds.value[0]) }
   else if (event.key === 'F2' && selectedIds.value.length) { event.preventDefault(); startRename({ id: selectedIds.value[0], label: '', type: document.value.nodes.find((node) => node.id === selectedIds.value[0])?.type ?? 'container' }) }
   else if (event.key === 'Enter' && selectedIds.value.length) { event.preventDefault(); designer.selectNodes([selectedIds.value[0]]) }
   else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && flattenedEntries.value.length) {
@@ -171,7 +182,7 @@ const handleKeydown = (event: KeyboardEvent) => {
     if (id) { designer.selectNodes([id]); anchorId.value = id }
   }
   else if (event.key.toLowerCase() === 'c' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); designer.copy() }
-  else if (event.key.toLowerCase() === 'x' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); designer.copy(); designer.removeSelected() }
+  else if (event.key.toLowerCase() === 'x' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if (selectedIds.value[0]) designer.executeNodeAction('cut', selectedIds.value[0]) }
   else if (event.key.toLowerCase() === 'v' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); designer.paste() }
 }
 </script>
@@ -180,7 +191,7 @@ const handleKeydown = (event: KeyboardEvent) => {
   <section class="node-panel" tabindex="0" @keydown="handleKeydown">
     <div class="panel-heading">
       <span>{{ t('nodeTree') }}</span>
-      <el-button size="small" text :disabled="!selectedNode" @click="designer.duplicateSelected()">{{ t('duplicateNode') }}</el-button>
+      <el-button size="small" text :disabled="!selectedIds[0] || !nodePolicy(selectedIds[0]).allowed.duplicate" @click="designer.duplicateSelected()">{{ t('duplicateNode') }}</el-button>
     </div>
     <el-input v-model="search" size="small" clearable :placeholder="t('searchNodes')" />
     <el-tree
@@ -190,6 +201,7 @@ const handleKeydown = (event: KeyboardEvent) => {
       node-key="id"
       draggable
       highlight-current
+      :current-node-key="selectedIds[0]"
       default-expand-all
       :allow-drop="allowDrop"
       :filter-node-method="(value: string, data: NodeTreeEntry) => !value || data.label.toLocaleLowerCase().includes(value.toLocaleLowerCase())"
@@ -198,17 +210,17 @@ const handleKeydown = (event: KeyboardEvent) => {
     >
       <template #default="{ data }">
         <el-dropdown trigger="contextmenu" @command="(command: string) => contextCommand(command, data.id)">
-        <span class="node-tree-entry" :class="{ selected: selectedIds.includes(data.id), locked: document.nodes.find((node) => node.id === data.id)?.locked }" @mouseenter="designer.setHoveredNode(data.id)" @mouseleave="designer.setHoveredNode(undefined)" @dblclick.stop="startRename(data)">
+        <span class="node-tree-entry" :class="{ selected: selectedIds.includes(data.id), locked: document.nodes.find((node) => node.id === data.id)?.locked }" :data-node-id="data.id" :data-ui-id="`ui-designer-tree-row-${data.id}`" @mouseenter="designer.setHoveredNode(data.id)" @mouseleave="designer.setHoveredNode(undefined)" @contextmenu="designer.selectNodeActionTarget(data.id)" @dblclick.stop="startRename(data)">
           <span class="node-kind">{{ labelFor(data.type) }}</span>
           <el-input v-if="editingId === data.id" v-model="editingName" size="small" :placeholder="t('nodeNamePlaceholder')" @keyup.enter="finishRename" @blur="finishRename" />
           <span v-else class="node-name">{{ data.label.split(' · ')[0] }}</span>
           <span class="node-row-actions">
             <el-button size="small" text @click.stop="toggleVisibility(data.id)">{{ document.nodes.find((node) => node.id === data.id)?.props.visible ? '👁' : '◌' }}</el-button>
             <el-button size="small" text @click.stop="toggleLock(data.id)">{{ document.nodes.find((node) => node.id === data.id)?.locked ? '🔒' : '🔓' }}</el-button>
-            <el-button size="small" text type="danger" :disabled="data.id === 'node_root'" @click.stop="designer.selectNodes([data.id]); designer.removeSelected()">×</el-button>
+            <el-button size="small" text type="danger" :disabled="!nodePolicy(data.id).allowed.delete" :data-ui-id="`ui-designer-tree-delete-${data.id}`" @click.stop="designer.executeNodeAction('delete', data.id)">×</el-button>
           </span>
         </span>
-          <template #dropdown><el-dropdown-menu><el-dropdown-item command="copy">{{ t('copyAction') }}</el-dropdown-item><el-dropdown-item command="cut" :disabled="data.id === 'node_root' || document.nodes.find((node) => node.id === data.id)?.locked">{{ t('cutAction') }}</el-dropdown-item><el-dropdown-item command="paste" :disabled="document.nodes.find((node) => node.id === data.id)?.type !== 'container'">{{ t('pasteAction') }}</el-dropdown-item><el-dropdown-item command="addChild" :disabled="document.nodes.find((node) => node.id === data.id)?.type !== 'container'">{{ t('addChild') }}</el-dropdown-item><el-dropdown-item command="rename">{{ t('renameNode') }}</el-dropdown-item><el-dropdown-item command="duplicate">{{ t('duplicateNode') }}</el-dropdown-item><el-dropdown-item command="group" :disabled="selectedIds.length < 2">{{ t('group') }}</el-dropdown-item><el-dropdown-item command="sameType">{{ t('selectSameType') }}</el-dropdown-item><el-dropdown-item command="moveUp" :disabled="!canMoveStep(data.id, 'up')">{{ t('moveUp') }}</el-dropdown-item><el-dropdown-item command="moveDown" :disabled="!canMoveStep(data.id, 'down')">{{ t('moveDown') }}</el-dropdown-item><el-dropdown-item command="moveTop" :disabled="!canMoveToEdge(data.id, 'top')">{{ t('moveTop') }}</el-dropdown-item><el-dropdown-item command="moveBottom" :disabled="!canMoveToEdge(data.id, 'bottom')">{{ t('moveBottom') }}</el-dropdown-item><el-dropdown-item command="expandAll">{{ t('expandAll') }}</el-dropdown-item><el-dropdown-item command="collapseAll">{{ t('collapseAll') }}</el-dropdown-item><el-dropdown-item command="toggleVisibility">{{ document.nodes.find((node) => node.id === data.id)?.props.visible ? t('hideNode') : t('showNode') }}</el-dropdown-item><el-dropdown-item command="toggleLock">{{ document.nodes.find((node) => node.id === data.id)?.locked ? t('unlockNode') : t('lockNode') }}</el-dropdown-item><el-dropdown-item divided command="delete" :disabled="data.id === 'node_root' || document.nodes.find((node) => node.id === data.id)?.locked">{{ t('deleteNode') }}</el-dropdown-item></el-dropdown-menu></template>
+          <template #dropdown><el-dropdown-menu><el-dropdown-item command="copy" :disabled="!nodePolicy(data.id).allowed.copy" :data-ui-id="`ui-designer-tree-command-${data.id}-copy`">{{ t('copyAction') }}</el-dropdown-item><el-dropdown-item command="cut" :disabled="!nodePolicy(data.id).allowed.cut" :data-ui-id="`ui-designer-tree-command-${data.id}-cut`">{{ t('cutAction') }}</el-dropdown-item><el-dropdown-item command="paste" :disabled="!nodePolicy(data.id).allowed.paste" :data-ui-id="`ui-designer-tree-command-${data.id}-paste`">{{ t('pasteAction') }}</el-dropdown-item><el-dropdown-item command="addChild" :disabled="!nodePolicy(data.id).allowed.addChild" :data-ui-id="`ui-designer-tree-command-${data.id}-addChild`">{{ t('addChild') }}</el-dropdown-item><el-dropdown-item command="rename" :disabled="!nodePolicy(data.id).allowed.rename" :data-ui-id="`ui-designer-tree-command-${data.id}-rename`">{{ t('renameNode') }}</el-dropdown-item><el-dropdown-item command="duplicate" :disabled="!nodePolicy(data.id).allowed.duplicate" :data-ui-id="`ui-designer-tree-command-${data.id}-duplicate`">{{ t('duplicateNode') }}</el-dropdown-item><el-dropdown-item command="group" :disabled="!nodePolicy(data.id).allowed.group" :data-ui-id="`ui-designer-tree-command-${data.id}-group`">{{ t('group') }}</el-dropdown-item><el-dropdown-item command="sameType" :disabled="!nodePolicy(data.id).allowed.sameType" :data-ui-id="`ui-designer-tree-command-${data.id}-sameType`">{{ t('selectSameType') }}</el-dropdown-item><el-dropdown-item command="moveUp" :disabled="!nodePolicy(data.id).allowed.moveUp" :data-ui-id="`ui-designer-tree-command-${data.id}-moveUp`">{{ t('moveUp') }}</el-dropdown-item><el-dropdown-item command="moveDown" :disabled="!nodePolicy(data.id).allowed.moveDown" :data-ui-id="`ui-designer-tree-command-${data.id}-moveDown`">{{ t('moveDown') }}</el-dropdown-item><el-dropdown-item command="moveTop" :disabled="!nodePolicy(data.id).allowed.moveTop" :data-ui-id="`ui-designer-tree-command-${data.id}-moveTop`">{{ t('moveTop') }}</el-dropdown-item><el-dropdown-item command="moveBottom" :disabled="!nodePolicy(data.id).allowed.moveBottom" :data-ui-id="`ui-designer-tree-command-${data.id}-moveBottom`">{{ t('moveBottom') }}</el-dropdown-item><el-dropdown-item command="expandAll">{{ t('expandAll') }}</el-dropdown-item><el-dropdown-item command="collapseAll">{{ t('collapseAll') }}</el-dropdown-item><el-dropdown-item command="toggleVisibility" :disabled="!nodePolicy(data.id).allowed.toggleVisibility" :data-ui-id="`ui-designer-tree-command-${data.id}-toggleVisibility`">{{ document.nodes.find((node) => node.id === data.id)?.props.visible ? t('hideNode') : t('showNode') }}</el-dropdown-item><el-dropdown-item command="toggleLock" :disabled="!nodePolicy(data.id).allowed.toggleLock" :data-ui-id="`ui-designer-tree-command-${data.id}-toggleLock`">{{ document.nodes.find((node) => node.id === data.id)?.locked ? t('unlockNode') : t('lockNode') }}</el-dropdown-item><el-dropdown-item divided command="delete" :disabled="!nodePolicy(data.id).allowed.delete" :data-ui-id="`ui-designer-tree-command-${data.id}-delete`">{{ t('deleteNode') }}</el-dropdown-item></el-dropdown-menu></template>
         </el-dropdown>
       </template>
     </el-tree>
@@ -223,8 +235,8 @@ const handleKeydown = (event: KeyboardEvent) => {
     </div>
 
     <div class="node-actions">
-      <el-button size="small" :disabled="selectedIds.length === 0" @click="designer.group()">{{ t('group') }}</el-button>
-      <el-button size="small" type="danger" plain :disabled="selectedIds.length === 0" @click="designer.removeSelected()">{{ t('deleteNode') }}</el-button>
+      <el-button size="small" :disabled="!selectedIds[0] || !nodePolicy(selectedIds[0]).allowed.group" @click="designer.group()">{{ t('group') }}</el-button>
+      <el-button size="small" type="danger" plain :disabled="!selectedIds[0] || !nodePolicy(selectedIds[0]).allowed.delete" @click="selectedIds[0] && designer.executeNodeAction('delete', selectedIds[0])">{{ t('deleteNode') }}</el-button>
     </div>
     <p v-if="actionError" class="panel-error"><span>{{ t('operationError') }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ actionError }}</span></details></p>
   </section>

@@ -5,7 +5,8 @@ import type { UiDesignerDocument, UiNode, UiProjectResourceCatalog, UiRect, UiVi
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiCanvasNode from './UiCanvasNode.vue'
-import { nodeRect, nodesIntersectingRect, viewportClientToContent, viewportClientToWorld, viewportClientToZoomAnchor, worldPointToViewport, worldRectToViewport, type UiCanvasViewportFrame } from '../models/geometry'
+import { nodeRect, nodesIntersectingRect, viewportClientToContent, viewportClientToWorld, viewportClientToZoomAnchor, worldPointToViewport, worldRectToViewport, type UiCanvasViewportFrame, type UiResizeHandle } from '../models/geometry'
+import type { UiNodeActionCommand, UiNodeActionPolicy } from '../models/actions'
 
 const props = defineProps<{ designer: UiDesignerController }>()
 const designer = props.designer
@@ -46,11 +47,12 @@ const visibleRoots = computed(() => {
 })
 const editingRootId = computed(() => editStack.value.at(-1))
 const dragging = ref<{ nodeIds: string[]; pointerId: number; startX: number; startY: number; origins: Record<string, { x: number; y: number }> }>()
-const transforming = ref<{ nodeId: string; handle: string; pointerId: number; startX: number; startY: number; originRect: UiRect; originRotation: number; startAngle: number; centerX: number; centerY: number; preserveRatio: boolean; fromCenter: boolean }>()
+const transforming = ref<{ nodeId: string; handle: UiResizeHandle | 'rotate'; pointerId: number; startX: number; startY: number; originRect: UiRect; originRotation: number; startAngle: number; centerX: number; centerY: number; fromCenter: boolean }>()
 const panning = ref<{ pointerId: number; startX: number; startY: number }>()
 const selecting = ref<{ pointerId: number; startX: number; startY: number; currentX: number; currentY: number }>()
 const guideDragging = ref<{ id: string; type: 'vertical' | 'horizontal'; pointerId: number }>()
 const guideMenu = ref<{ x: number; y: number; guideId?: string }>()
+const nodeMenu = ref<{ x: number; y: number; nodeId: string }>()
 const spacePressed = ref(false)
 const viewportElement = ref<HTMLElement>()
 const editStack = ref<string[]>([])
@@ -59,6 +61,27 @@ const alignmentLabels: Record<'left' | 'centerX' | 'right' | 'top' | 'centerY' |
 }
 const alignmentOptions = (Object.keys(alignmentLabels) as Array<keyof typeof alignmentLabels>)
 const alignmentReference = ref<'selection' | 'canvas'>('selection')
+const selectedActionPolicy = computed<UiNodeActionPolicy | undefined>(() => selectedIds.value[0] ? designer.getNodeActionPolicy(selectedIds.value[0]) as UiNodeActionPolicy : undefined)
+const nodeMenuItems = computed<Array<{ command: UiNodeActionCommand; label: string; danger?: boolean }>>(() => {
+  const target = nodeMenu.value ? document.value.nodes.find((node) => node.id === nodeMenu.value?.nodeId) : undefined
+  return [
+    { command: 'copy', label: t('copyAction') },
+    { command: 'cut', label: t('cutAction') },
+    { command: 'paste', label: t('pasteAction') },
+    { command: 'addChild', label: t('addChild') },
+    { command: 'rename', label: t('renameNode') },
+    { command: 'duplicate', label: t('duplicateNode') },
+    { command: 'group', label: t('group') },
+    { command: 'sameType', label: t('selectSameType') },
+    { command: 'moveUp', label: t('moveUp') },
+    { command: 'moveDown', label: t('moveDown') },
+    { command: 'moveTop', label: t('moveTop') },
+    { command: 'moveBottom', label: t('moveBottom') },
+    { command: 'toggleVisibility', label: target?.props.visible ? t('hideNode') : t('showNode') },
+    { command: 'toggleLock', label: target?.locked ? t('unlockNode') : t('lockNode') },
+    { command: 'delete', label: t('deleteNode'), danger: true },
+  ]
+})
 const rulerTicks = computed(() => {
   const step = 100
   const horizontal = Array.from({ length: Math.ceil(document.value.canvas.width / step) + 1 }, (_, index) => index * step)
@@ -112,15 +135,18 @@ const beginDrag = (event: PointerEvent, node: UiNode) => {
   if (previewing.value || node.locked) return
   event.stopPropagation()
   if (!selectedIds.value.includes(node.id)) designer.selectNodes([node.id], event.metaKey || event.ctrlKey)
-  const nodeIds = (selectedIds.value.includes(node.id) ? [...selectedIds.value] : [node.id]).filter((id) => !document.value.nodes.find((candidate) => candidate.id === id)?.locked)
+  const policy = designer.getNodeActionPolicy(node.id) as UiNodeActionPolicy
+  if (!policy.canTransform) return
+  const nodeIds = [...policy.selectionIds]
   const origins = Object.fromEntries(nodeIds.map((id) => { const selected = document.value.nodes.find((candidate) => candidate.id === id); return selected ? [id, { x: selected.props.x, y: selected.props.y }] : [id, { x: node.props.x, y: node.props.y }] }))
   dragging.value = { nodeIds, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origins }
   window.addEventListener('pointermove', moveDrag)
   window.addEventListener('pointerup', endDrag, { once: true })
+  window.addEventListener('pointercancel', endDrag, { once: true })
 }
 
 const handlePointer = (payload: { event: PointerEvent; node: UiNode }) => beginDrag(payload.event, payload.node)
-const handleSelect = (payload: { event: MouseEvent; node: UiNode }) => designer.selectNodes([payload.node.id], payload.event.metaKey || payload.event.ctrlKey)
+const handleSelect = (payload: { event: MouseEvent; node: UiNode }) => { closeNodeMenu(); designer.selectNodes([payload.node.id], payload.event.metaKey || payload.event.ctrlKey) }
 const enterContainer = (payload: { node: UiNode }) => {
   if (payload.node.type !== 'container') return
   editStack.value = [...editStack.value, payload.node.id]
@@ -142,19 +168,24 @@ const endDrag = () => {
   if (dragging.value) designer.commitDraftPositions(dragging.value.nodeIds)
   dragging.value = undefined
   window.removeEventListener('pointermove', moveDrag)
+  window.removeEventListener('pointerup', endDrag)
+  window.removeEventListener('pointercancel', endDrag)
 }
 
 const beginTransform = (payload: { event: PointerEvent; node: UiNode; handle: string }) => {
   if (previewing.value || payload.node.locked) return
+  if (payload.handle !== 'rotate' && !['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].includes(payload.handle)) return
+  if (!(designer.getNodeActionPolicy(payload.node.id) as UiNodeActionPolicy).canTransform) return
   const value = nodeRect(payload.node)
   const host = (payload.event.currentTarget as HTMLElement | null)?.closest('.canvas-node') as HTMLElement | null
   const bounds = host?.getBoundingClientRect()
   const centerX = bounds ? bounds.left + bounds.width / 2 : payload.event.clientX
   const centerY = bounds ? bounds.top + bounds.height / 2 : payload.event.clientY
   const startAngle = Math.atan2(payload.event.clientY - centerY, payload.event.clientX - centerX)
-  transforming.value = { nodeId: payload.node.id, handle: payload.handle, pointerId: payload.event.pointerId, startX: payload.event.clientX, startY: payload.event.clientY, originRect: value, originRotation: payload.node.props.rotate, startAngle, centerX, centerY, preserveRatio: payload.event.shiftKey, fromCenter: payload.event.altKey }
+  transforming.value = { nodeId: payload.node.id, handle: payload.handle as UiResizeHandle | 'rotate', pointerId: payload.event.pointerId, startX: payload.event.clientX, startY: payload.event.clientY, originRect: value, originRotation: payload.node.props.rotate, startAngle, centerX, centerY, fromCenter: payload.event.altKey }
   window.addEventListener('pointermove', moveTransform)
   window.addEventListener('pointerup', endTransform, { once: true })
+  window.addEventListener('pointercancel', endTransform, { once: true })
 }
 const moveTransform = (event: PointerEvent) => {
   const active = transforming.value
@@ -168,36 +199,21 @@ const moveTransform = (event: PointerEvent) => {
     designer.previewNodeRotation(active.nodeId, active.originRotation + delta)
     return
   }
-  const rect = { ...active.originRect }
   const radians = -active.originRotation * Math.PI / 180
   const localDx = dx * Math.cos(radians) - dy * Math.sin(radians)
   const localDy = dx * Math.sin(radians) + dy * Math.cos(radians)
-  const signedX = active.handle.includes('w') ? -localDx : active.handle.includes('e') ? localDx : 0
-  const signedY = active.handle.includes('n') ? -localDy : active.handle.includes('s') ? localDy : 0
-  if (active.fromCenter) {
-    if (active.handle.includes('w') || active.handle.includes('e')) { rect.x -= signedX; rect.width += signedX * 2 }
-    if (active.handle.includes('n') || active.handle.includes('s')) { rect.y -= signedY; rect.height += signedY * 2 }
-  } else {
-    if (active.handle.includes('w')) { rect.x += localDx; rect.width -= localDx }
-    if (active.handle.includes('e')) rect.width += localDx
-    if (active.handle.includes('n')) { rect.y += localDy; rect.height -= localDy }
-    if (active.handle.includes('s')) rect.height += localDy
-  }
-  if (active.preserveRatio && rect.width > 0 && rect.height > 0) {
-    const ratio = active.originRect.width / Math.max(active.originRect.height, 0.0001)
-    if (Math.abs(rect.width - active.originRect.width) >= Math.abs(rect.height - active.originRect.height) * ratio) rect.height = rect.width / Math.max(ratio, 0.0001)
-    else rect.width = rect.height * ratio
-  }
-  rect.width = Math.max(1, rect.width); rect.height = Math.max(1, rect.height)
-  designer.previewNodeRect(active.nodeId, rect)
+  designer.previewNodeResizeWithSnap(active.nodeId, active.originRect, active.handle, { x: localDx, y: localDy }, { preserveAspect: !event.ctrlKey, fromCenter: active.fromCenter })
 }
 const endTransform = () => {
   const active = transforming.value
-  if (!active) return
-  if (active.handle === 'rotate') designer.commitDraftRotation(active.nodeId)
-  else designer.commitDraftRect(active.nodeId)
+  if (active) {
+    if (active.handle === 'rotate') designer.commitDraftRotation(active.nodeId)
+    else designer.commitDraftRect(active.nodeId)
+  }
   transforming.value = undefined
   window.removeEventListener('pointermove', moveTransform)
+  window.removeEventListener('pointerup', endTransform)
+  window.removeEventListener('pointercancel', endTransform)
 }
 
 const zoom = (event: WheelEvent) => {
@@ -214,9 +230,11 @@ const selectCanvas = () => {
 }
 const beginBoxSelect = (event: PointerEvent) => {
   if (previewing.value || event.button !== 0 || spacePressed.value) return
+  nodeMenu.value = undefined
   selecting.value = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, currentX: event.clientX, currentY: event.clientY }
   window.addEventListener('pointermove', moveBoxSelect)
   window.addEventListener('pointerup', endBoxSelect, { once: true })
+  window.addEventListener('pointercancel', endBoxSelect, { once: true })
 }
 const moveBoxSelect = (event: PointerEvent) => {
   if (!selecting.value || selecting.value.pointerId !== event.pointerId) return
@@ -225,23 +243,27 @@ const moveBoxSelect = (event: PointerEvent) => {
 }
 const endBoxSelect = () => {
   const box = selecting.value
-  if (!box) return
-  const frame = viewportFrame()
-  const start = viewportClientToWorld({ x: box.startX, y: box.startY }, frame, viewport.value)
-  const end = viewportClientToWorld({ x: box.currentX, y: box.currentY }, frame, viewport.value)
-  const selection = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) }
-  if (selection.width > 3 || selection.height > 3) {
-    const ids = nodesIntersectingRect(document.value, selection)
-    designer.selectNodes(ids)
-  } else selectCanvas()
+  if (box) {
+    const frame = viewportFrame()
+    const start = viewportClientToWorld({ x: box.startX, y: box.startY }, frame, viewport.value)
+    const end = viewportClientToWorld({ x: box.currentX, y: box.currentY }, frame, viewport.value)
+    const selection = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y) }
+    if (selection.width > 3 || selection.height > 3) {
+      const ids = nodesIntersectingRect(document.value, selection)
+      designer.selectNodes(ids)
+    } else selectCanvas()
+  }
   selecting.value = undefined
   window.removeEventListener('pointermove', moveBoxSelect)
+  window.removeEventListener('pointerup', endBoxSelect)
+  window.removeEventListener('pointercancel', endBoxSelect)
 }
 const beginPan = (event: PointerEvent) => {
   if (event.button !== 1 && !spacePressed.value) return
   panning.value = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
   window.addEventListener('pointermove', movePan)
   window.addEventListener('pointerup', endPan, { once: true })
+  window.addEventListener('pointercancel', endPan, { once: true })
 }
 const movePan = (event: PointerEvent) => {
   const active = panning.value
@@ -249,7 +271,7 @@ const movePan = (event: PointerEvent) => {
   designer.pan({ x: event.clientX - active.startX, y: event.clientY - active.startY })
   active.startX = event.clientX; active.startY = event.clientY
 }
-const endPan = () => { panning.value = undefined; window.removeEventListener('pointermove', movePan) }
+const endPan = () => { panning.value = undefined; window.removeEventListener('pointermove', movePan); window.removeEventListener('pointerup', endPan); window.removeEventListener('pointercancel', endPan) }
 const worldFromClient = (event: PointerEvent | MouseEvent) => {
   return viewportClientToWorld({ x: event.clientX, y: event.clientY }, viewportFrame(), viewport.value)
 }
@@ -264,6 +286,7 @@ const beginGuideDrag = (event: PointerEvent, guide: { id: string; type: 'vertica
   guideDragging.value = { id: guide.id, type: guide.type, pointerId: event.pointerId }
   window.addEventListener('pointermove', moveGuide)
   window.addEventListener('pointerup', endGuide, { once: true })
+  window.addEventListener('pointercancel', cancelGuide, { once: true })
 }
 const moveGuide = (event: PointerEvent) => {
   const active = guideDragging.value
@@ -280,13 +303,40 @@ const endGuide = (event?: PointerEvent) => {
   }
   guideDragging.value = undefined
   window.removeEventListener('pointermove', moveGuide)
+  window.removeEventListener('pointerup', endGuide)
+  window.removeEventListener('pointercancel', cancelGuide)
 }
+const cancelGuide = () => endGuide()
 const guideMenuPosition = (event: MouseEvent) => {
   const point = viewportClientToContent({ x: event.clientX, y: event.clientY }, viewportFrame())
   return { x: point.x, y: point.y }
 }
-const openGuideMenu = (event: MouseEvent, guideId?: string) => { guideMenu.value = { ...guideMenuPosition(event), guideId } }
+const openGuideMenu = (event: MouseEvent, guideId?: string) => { nodeMenu.value = undefined; guideMenu.value = { ...guideMenuPosition(event), guideId } }
 const closeGuideMenu = () => { guideMenu.value = undefined }
+const nodeMenuPolicy = computed<UiNodeActionPolicy | undefined>(() => nodeMenu.value ? designer.getNodeActionPolicy(nodeMenu.value.nodeId) as UiNodeActionPolicy : undefined)
+const openNodeMenu = (payload: { event: MouseEvent; node: UiNode }) => {
+  if (previewing.value) return
+  closeGuideMenu()
+  designer.selectNodeActionTarget(payload.node.id)
+  nodeMenu.value = { ...guideMenuPosition(payload.event), nodeId: payload.node.id }
+}
+const closeNodeMenu = () => { nodeMenu.value = undefined }
+const renameNodeFromMenu = async (nodeId: string) => {
+  const node = document.value.nodes.find((candidate) => candidate.id === nodeId)
+  if (!node || !(designer.getNodeActionPolicy(nodeId) as UiNodeActionPolicy).allowed.rename) return
+  closeNodeMenu()
+  try {
+    const result = await ElMessageBox.prompt(t('nodeNamePlaceholder'), t('renameNode'), { inputValue: node.name, confirmButtonText: t('save'), cancelButtonText: t('lifecycleCancel') })
+    designer.renameNode(nodeId, result.value)
+  } catch { /* cancel */ }
+}
+const runNodeCommand = (command: UiNodeActionCommand) => {
+  const targetId = nodeMenu.value?.nodeId
+  if (!targetId) return
+  if (command === 'rename') { void renameNodeFromMenu(targetId); return }
+  designer.executeNodeAction(command, targetId)
+  closeNodeMenu()
+}
 const selectedGuide = computed(() => guideMenu.value?.guideId ? document.value.guides.find((guide) => guide.id === guideMenu.value?.guideId) : undefined)
 const editGuidePosition = async () => {
   const guide = selectedGuide.value
@@ -336,7 +386,7 @@ const dropResource = (event: DragEvent) => {
 }
 
 onMounted(() => { window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp) })
-onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); endGuide(); closeGuideMenu(); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp) })
+onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); endGuide(); closeGuideMenu(); closeNodeMenu(); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp) })
 </script>
 
 <template>
@@ -348,7 +398,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
       <el-button size="small" text :disabled="previewing" @click="designer.fitCanvas()">{{ t('fitCanvas') }}</el-button>
       <el-checkbox :model-value="gridEnabled" :disabled="previewing" size="small" @update:model-value="designer.setGridEnabled($event)">{{ t('grid') }}</el-checkbox>
       <el-checkbox :model-value="snapEnabled" :disabled="previewing" size="small" @update:model-value="designer.setSnapEnabled($event)">{{ t('snap') }}</el-checkbox>
-      <el-dropdown trigger="click" :disabled="previewing || selectedIds.length < 2">
+      <el-dropdown trigger="click" :disabled="previewing || selectedIds.length < 2 || !selectedActionPolicy?.canTransform">
         <el-button size="small" text>{{ t('alignment') }}⌄</el-button>
         <template #dropdown>
           <el-dropdown-menu>
@@ -359,7 +409,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
           </el-dropdown-menu>
         </template>
       </el-dropdown>
-      <el-dropdown trigger="click" :disabled="previewing || selectedIds.length < 3">
+      <el-dropdown trigger="click" :disabled="previewing || selectedIds.length < 3 || !selectedActionPolicy?.canTransform">
         <el-button size="small" text>{{ t('distribute') }}⌄</el-button>
         <template #dropdown>
           <el-dropdown-menu>
@@ -382,6 +432,9 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
           <el-button size="small" text type="danger" @click="deleteGuide">{{ t('guideMenuDelete') }}</el-button>
         </template>
         <el-button size="small" text type="danger" @click="clearGuides">{{ t('guideMenuClear') }}</el-button>
+      </div>
+      <div v-if="nodeMenu && nodeMenuPolicy" class="node-context-menu" :style="{ left: `${nodeMenu.x}px`, top: `${nodeMenu.y}px` }" :data-ui-id="`ui-designer-node-menu-${nodeMenu.nodeId}`" @pointerdown.stop @contextmenu.prevent>
+        <el-button v-for="item in nodeMenuItems" :key="item.command" size="small" text :type="item.danger ? 'danger' : undefined" :disabled="!nodeMenuPolicy.allowed[item.command]" :data-ui-id="`ui-designer-node-command-${nodeMenu.nodeId}-${item.command}`" @click="runNodeCommand(item.command)">{{ item.label }}</el-button>
       </div>
       <div v-if="selecting" class="selection-box" :style="selectionStyle" />
       <div class="canvas-stage" :class="{ checkerboard: document.canvas.backgroundPattern === 'checkerboard' }" :style="stageStyle" @pointerdown.self="beginBoxSelect" @contextmenu.prevent.stop="openGuideMenu($event)">
@@ -407,6 +460,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
             :draft-rotations="draftRotations"
             @pointerdown="handlePointer"
             @select="handleSelect"
+            @contextmenu="openNodeMenu"
             @enter="enterContainer"
             @handlepointerdown="beginTransform"
           />
@@ -423,7 +477,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
 .canvas-title { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-zoom { font-variant-numeric: tabular-nums; }
 .canvas-viewport { flex: 1; min-height: 0; overflow: auto; position: relative; background: #20232c; }
-.canvas-ruler { position: absolute; z-index: 5; pointer-events: auto; cursor: crosshair; background: repeating-linear-gradient(to right, #ffffff55 0 1px, transparent 1px 32px); opacity: .35; }.canvas-ruler.horizontal { inset: 0 0 auto; height: 18px; }.canvas-ruler.vertical { inset: 0 auto 0 0; width: 18px; background: repeating-linear-gradient(to bottom, #ffffff55 0 1px, transparent 1px 32px); }.ruler-tick { position: absolute; color: #fff; font-size: 8px; line-height: 12px; pointer-events: none; transform: translateX(-1px); }.canvas-ruler.vertical .ruler-tick { transform: translateY(-1px) rotate(-90deg); transform-origin: left top; }.canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { left: 0; right: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }.guide-context-menu { position: absolute; z-index: 12; display: flex; flex-direction: column; min-width: 150px; padding: 5px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-bg); box-shadow: 0 8px 18px #0007; }.selection-box { position: absolute; z-index: 6; pointer-events: none; border: 1px solid var(--app-accent); background: color-mix(in srgb, var(--app-accent) 12%, transparent); }
+.canvas-ruler { position: absolute; z-index: 5; pointer-events: auto; cursor: crosshair; background: repeating-linear-gradient(to right, #ffffff55 0 1px, transparent 1px 32px); opacity: .35; }.canvas-ruler.horizontal { inset: 0 0 auto; height: 18px; }.canvas-ruler.vertical { inset: 0 auto 0 0; width: 18px; background: repeating-linear-gradient(to bottom, #ffffff55 0 1px, transparent 1px 32px); }.ruler-tick { position: absolute; color: #fff; font-size: 8px; line-height: 12px; pointer-events: none; transform: translateX(-1px); }.canvas-ruler.vertical .ruler-tick { transform: translateY(-1px) rotate(-90deg); transform-origin: left top; }.canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { left: 0; right: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }.guide-context-menu, .node-context-menu { position: absolute; z-index: 12; display: flex; flex-direction: column; min-width: 150px; max-height: min(480px, calc(100% - 12px)); overflow: auto; padding: 5px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-bg); box-shadow: 0 8px 18px #0007; }.guide-context-menu .el-button, .node-context-menu .el-button { justify-content: flex-start; margin: 0; }.selection-box { position: absolute; z-index: 6; pointer-events: none; border: 1px solid var(--app-accent); background: color-mix(in srgb, var(--app-accent) 12%, transparent); }
 .canvas-stage { position: relative; margin: 46px; transform-origin: 0 0; box-shadow: 0 16px 36px #0007; overflow: hidden; }
 .canvas-edit-breadcrumb { position: absolute; z-index: 8; top: -24px; left: 0; color: var(--app-ink-soft); font-size: 10px; pointer-events: none; }
 .canvas-stage.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }

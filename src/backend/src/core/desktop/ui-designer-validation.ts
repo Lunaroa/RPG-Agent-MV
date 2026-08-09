@@ -15,6 +15,7 @@ import {
   migrateUiRuntimeSceneExport,
   uiSceneScriptSyntaxError,
 } from '../../../../contract/ui-designer-script.ts';
+import { normalizeUiDesignerDocumentGeometry } from '../../../../contract/ui-designer-geometry.ts';
 
 const NODE_TYPES = new Set<string>(UI_DESIGNER_NODE_TYPES);
 const EVENT_NAMES = new Set([
@@ -287,7 +288,7 @@ export function assertValidUiDesignerDocument(value: unknown): UiDesignerDocumen
   }
   const report = validateUiDesignerDocument(canonical);
   if (!report.valid) throw new UiDesignerValidationError(report);
-  return canonical as UiDesignerDocument;
+  return normalizeUiDesignerDocumentGeometry(canonical as UiDesignerDocument);
 }
 
 /** Validate the runtime export with the same node/property/action rules as the source document. */

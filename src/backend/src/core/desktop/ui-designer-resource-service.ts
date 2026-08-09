@@ -13,6 +13,7 @@ import {
   canonicalUiRuntimeSceneExport,
   UI_DESIGNER_LEGACY_DOCUMENT_VERSION,
 } from '../../../../contract/ui-designer-script.ts';
+import { normalizeUiRuntimeSceneGeometry } from '../../../../contract/ui-designer-geometry.ts';
 import {
   inspectRmmvProject,
   resourceRelativePath,
@@ -334,7 +335,7 @@ export function readUiDesignerSceneData(projectRoot: string, requestedPath: stri
   }
 
   const stat = fs.statSync(filePath);
-  const scene = canonicalUiRuntimeSceneExport(value);
+  const scene = normalizeUiRuntimeSceneGeometry(canonicalUiRuntimeSceneExport(value));
   return {
     scene,
     metadata: {

@@ -5,6 +5,7 @@ import type {
   UiDesignerRecoveryRecord,
   UiFileStatus,
 } from '@contract/ui-designer'
+import { normalizeUiDesignerPaneSize } from '@contract/ui-designer-geometry'
 
 type ValueRef<T> = Pick<Ref<T>, 'value'>
 export interface UiDesignerPersistencePreferences {
@@ -89,9 +90,9 @@ export function createUiDesignerPersistenceOperations(context: UiDesignerPersist
         next.theme = next.theme === 'light' || next.theme === 'dark' ? next.theme : 'system'
         next.defaultAuthor = typeof next.defaultAuthor === 'string' ? next.defaultAuthor : ''
         if (typeof next.autoFormat !== 'boolean') next.autoFormat = false
-        next.leftPaneWidth = finiteOr(next.leftPaneWidth, 260, 200, 500)
-        next.centerPaneWidth = finiteOr(next.centerPaneWidth, 640, 320, 1400)
-        next.rightPaneWidth = finiteOr(next.rightPaneWidth, 320, 240, 550)
+        next.leftPaneWidth = normalizeUiDesignerPaneSize('left', next.leftPaneWidth)
+        next.centerPaneWidth = normalizeUiDesignerPaneSize('center', next.centerPaneWidth)
+        next.rightPaneWidth = normalizeUiDesignerPaneSize('right', next.rightPaneWidth)
         context.preferences.value = next
         context.applyHistoryLimit(next.historyLimit)
       }
@@ -102,7 +103,11 @@ export function createUiDesignerPersistenceOperations(context: UiDesignerPersist
   }
 
   const savePreferences = async (next: Record<string, unknown>) => {
-    context.preferences.value = { ...context.preferences.value, ...next }
+    const normalized = { ...next }
+    if ('leftPaneWidth' in normalized) normalized.leftPaneWidth = normalizeUiDesignerPaneSize('left', normalized.leftPaneWidth, Number(context.preferences.value.leftPaneWidth ?? 260))
+    if ('centerPaneWidth' in normalized) normalized.centerPaneWidth = normalizeUiDesignerPaneSize('center', normalized.centerPaneWidth, Number(context.preferences.value.centerPaneWidth ?? 640))
+    if ('rightPaneWidth' in normalized) normalized.rightPaneWidth = normalizeUiDesignerPaneSize('right', normalized.rightPaneWidth, Number(context.preferences.value.rightPaneWidth ?? 320))
+    context.preferences.value = { ...context.preferences.value, ...normalized }
     if (!context.canSave.value) return false
     const generation = context.generation.value
     try {

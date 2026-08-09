@@ -7,6 +7,7 @@ import {
   type UiDesignerExportOptions,
 } from '@contract/ui-designer'
 import { canonicalUiRuntimeSceneExport } from '@contract/ui-designer-script'
+import { normalizeUiDesignerDocumentGeometry, normalizeUiRuntimeSceneGeometry } from '@contract/ui-designer-geometry'
 import { cloneUiDocument, createUiDocument } from './document'
 import { parseUiDocument } from './parser'
 import { validateDocument } from './validation'
@@ -63,7 +64,7 @@ export function exportRuntimeDocument(document: UiDesignerDocument, runtimeVersi
  * the caller must mark the resulting tab dirty before it can be saved.
  */
 export function importRuntimeSceneDocument(runtime: UiRuntimeSceneExport): UiDesignerDocument {
-  const source = canonicalUiRuntimeSceneExport(runtime)
+  const source = normalizeUiRuntimeSceneGeometry(canonicalUiRuntimeSceneExport(runtime))
   const base = createUiDocument(source.meta.sceneName)
   const width = Number.isFinite(source.meta.canvasWidth) && source.meta.canvasWidth > 0 ? source.meta.canvasWidth : base.canvas.width
   const height = Number.isFinite(source.meta.canvasHeight) && source.meta.canvasHeight > 0 ? source.meta.canvasHeight : base.canvas.height
@@ -99,13 +100,13 @@ export function importRuntimeSceneDocument(runtime: UiRuntimeSceneExport): UiDes
   }
   const root = document.nodes.find((node) => node.id === 'node_root')
   if (root && root.type === 'container') { root.props.width = width; root.props.height = height }
-  return document
+  return normalizeUiDesignerDocumentGeometry(document)
 }
 
 export function serializeDocument(document: UiDesignerDocument): string {
-  return JSON.stringify(document)
+  return JSON.stringify(normalizeUiDesignerDocumentGeometry(document))
 }
 
 export function prettySerializeDocument(document: UiDesignerDocument): string {
-  return JSON.stringify(document, null, 2)
+  return JSON.stringify(normalizeUiDesignerDocumentGeometry(document), null, 2)
 }

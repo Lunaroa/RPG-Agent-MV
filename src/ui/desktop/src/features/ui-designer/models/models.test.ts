@@ -4,6 +4,7 @@ import {
   UiDesignerHistory,
   UiExportValidationError,
   alignNodes,
+  applyNodeGeometryTransaction,
   analyzePerformance,
   cloneUiDocument,
   copySelection,
@@ -14,11 +15,18 @@ import {
   importRuntimeSceneDocument,
   groupNodes,
   moveNodeStep,
+  moveNodeToEdge,
+  normalizeDocumentGeometry,
+  normalizePaneSize,
   pasteClipboard,
   parseUiDocument,
   reparentNode,
   serializeDocument,
   snapPoint,
+  snapRect,
+  resizeRect,
+  resizeCursor,
+  resolveNodeActionPolicy,
   viewportClientToContent,
   viewportClientToWorld,
   viewportClientToZoomAnchor,
@@ -154,6 +162,59 @@ describe('ui designer document model', () => {
     const moved = moveNodeStep(document, second.id, 'up')
     assert.deepEqual(moved.nodes[0].children, [second.id, first.id])
     assert.deepEqual(moveNodeStep(moved, second.id, 'up').nodes[0].children, [second.id, first.id])
+  })
+
+  test('shares structural action policy across multi-select, locks, ancestry and top-level siblings', () => {
+    const document = createUiDocument()
+    const first = createDefaultNode('text', { id: 'node_first_policy', name: 'FirstPolicy', parentId: 'node_root' })
+    const second = createDefaultNode('text', { id: 'node_second_policy', name: 'SecondPolicy', parentId: 'node_root' })
+    const group = createDefaultNode('container', { id: 'node_group_policy', name: 'GroupPolicy', parentId: 'node_root' })
+    const nested = createDefaultNode('text', { id: 'node_nested_policy', name: 'NestedPolicy', parentId: group.id })
+    const topFirst = createDefaultNode('text', { id: 'node_top_first', name: 'TopFirst', parentId: null })
+    const topSecond = createDefaultNode('text', { id: 'node_top_second', name: 'TopSecond', parentId: null })
+    document.nodes.push(first, second, group, nested, topFirst, topSecond)
+    document.nodes[0].children.push(first.id, second.id, group.id)
+    group.children.push(nested.id)
+    document.zOrder.push(topFirst.id, topSecond.id)
+
+    const retained = resolveNodeActionPolicy(document, [first.id, second.id], first.id, false)
+    assert.deepEqual(retained.selectionIds, [first.id, second.id])
+    assert.equal(retained.allowed.group, true)
+    assert.equal(retained.canTransform, true)
+    assert.deepEqual(resolveNodeActionPolicy(document, [first.id, second.id], group.id, false).selectionIds, [group.id])
+    assert.equal(resolveNodeActionPolicy(document, ['node_root'], 'node_root', false).allowed.rename, false)
+    assert.throws(() => reparentNode(document, first.id, 'node_root', 'before'))
+    second.locked = true
+    assert.throws(() => reparentNode(document, first.id, second.id, 'before'))
+    second.locked = false
+
+    nested.locked = true
+    const protectedGroup = resolveNodeActionPolicy(document, [group.id], group.id, false)
+    assert.equal(protectedGroup.allowed.delete, false)
+    assert.equal(protectedGroup.allowed.duplicate, false)
+    assert.equal(protectedGroup.canTransform, false)
+    assert.equal(protectedGroup.canReparent, false)
+    assert.equal(protectedGroup.canUngroup, false)
+    assert.equal(protectedGroup.allowed.toggleLock, true)
+    assert.throws(() => reparentNode(document, group.id, document.nodes[0].id, 'inner'))
+    assert.throws(() => pasteClipboard(document, copySelection(document, [group.id]), document.nodes[0].id))
+    group.locked = true
+    const protectedNested = resolveNodeActionPolicy(document, [nested.id], nested.id, false)
+    assert.equal(protectedNested.allowed.cut, false)
+    assert.equal(protectedNested.allowed.group, false)
+    assert.equal(protectedNested.canTransform, false)
+    assert.equal(protectedNested.canReparent, false)
+    assert.equal(protectedNested.allowed.rename, false)
+    assert.equal(protectedNested.allowed.toggleLock, true)
+
+    const firstTopLevel = resolveNodeActionPolicy(document, [topFirst.id], topFirst.id, false)
+    assert.equal(firstTopLevel.allowed.moveUp, false)
+    assert.equal(firstTopLevel.allowed.moveBottom, false)
+    const movedTopLevel = moveNodeStep(document, topSecond.id, 'up')
+    assert.deepEqual(movedTopLevel.zOrder, ['node_root', topSecond.id, topFirst.id])
+    assert.deepEqual(moveNodeStep(movedTopLevel, topSecond.id, 'up').zOrder, movedTopLevel.zOrder)
+    assert.deepEqual(moveNodeToEdge(document, topSecond.id, 'bottom').zOrder, ['node_root', topSecond.id, topFirst.id])
+    assert.deepEqual(moveNodeToEdge(document, topFirst.id, 'top').zOrder, ['node_root', topSecond.id, topFirst.id])
   })
 
   test('copies and pastes a subtree with remapped ids', () => {
@@ -402,6 +463,62 @@ describe('ui designer history, geometry and performance', () => {
     assert.equal(new Set(aligned.nodes.filter((node) => ['a', 'b', 'c'].includes(node.id)).map((node) => node.props.y)).size, 1)
     const distributed = distributeNodes(document, ['a', 'b', 'c'], 'horizontal')
     assert.equal(distributed.nodes.find((node) => node.id === 'b')?.props.x, 75)
+  })
+
+  test('normalizes geometry and pane sizes through one deterministic integer contract', () => {
+    const document = createUiDocument()
+    document.canvas.width = 816.6
+    document.canvas.height = 623.5
+    document.meta.canvasWidth = 816.6
+    document.meta.canvasHeight = 623.5
+    const node = createDefaultNode('text', { id: 'node_decimal', name: 'Decimal', parentId: 'node_root' })
+    node.props.x = 10.4
+    node.props.y = -2.6
+    node.props.width = 100.5
+    node.props.height = 50.49
+    document.nodes.push(node)
+    document.nodes[0].children.push(node.id)
+    const parsed = parseUiDocument(document)
+    assert.equal(parsed.ok, true)
+    if (parsed.ok) assert.deepEqual([parsed.document.nodes.at(-1)?.props.x, parsed.document.nodes.at(-1)?.props.y], [10, -3])
+    const normalized = normalizeDocumentGeometry(document)
+    assert.deepEqual([normalized.canvas.width, normalized.canvas.height], [817, 624])
+    assert.deepEqual([normalized.nodes.at(-1)?.props.x, normalized.nodes.at(-1)?.props.y, normalized.nodes.at(-1)?.props.width, normalized.nodes.at(-1)?.props.height], [10, -3, 101, 50])
+    const updated = applyNodeGeometryTransaction(normalized, node.id, { kind: 'properties', patch: { x: 12.6, y: 4.4, width: 80.8, height: 40.2 } })
+    assert.deepEqual([updated.nodes.at(-1)?.props.x, updated.nodes.at(-1)?.props.y, updated.nodes.at(-1)?.props.width, updated.nodes.at(-1)?.props.height], [13, 4, 81, 40])
+    const history = new UiDesignerHistory(document)
+    assert.equal(history.current.nodes.at(-1)?.props.width, 101)
+    assert.equal(importRuntimeSceneDocument(exportRuntimeDocument(document)).nodes.at(-1)?.props.height, 50)
+    assert.equal(normalizePaneSize('left', 260.6), 261)
+    assert.equal(normalizePaneSize('right', 1000), 550)
+  })
+
+  test('resizes all handles with default aspect lock, Ctrl-free geometry, Alt center and snap targets', () => {
+    const origin = { x: 10, y: 20, width: 100, height: 50 }
+    for (const handle of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const) {
+      const resized = resizeRect(origin, handle, { x: 12, y: 7 }, { preserveAspect: true, fromCenter: false })
+      assert.ok(Math.abs(resized.width / resized.height - 2) < 1e-9, handle)
+    }
+    const sideLocked = resizeRect(origin, 'e', { x: 12, y: 0 }, { preserveAspect: true, fromCenter: false })
+    assert.notEqual(sideLocked.height, origin.height)
+    const sideFree = resizeRect(origin, 'e', { x: 12, y: 0 }, { preserveAspect: false, fromCenter: false })
+    assert.equal(sideFree.height, origin.height)
+    const centered = resizeRect(origin, 'se', { x: 10, y: 5 }, { preserveAspect: true, fromCenter: true })
+    assert.deepEqual({ x: centered.x + centered.width / 2, y: centered.y + centered.height / 2 }, { x: 60, y: 45 })
+
+    const options = { gridEnabled: true, gridSize: 16, smartEnabled: true, sensitivity: 3, guides: [{ id: 'guide', type: 'vertical' as const, position: 150, locked: false }], targets: [{ id: 'target', rect: { x: 200, y: 20, width: 40, height: 50 } }] }
+    const grid = snapRect(resizeRect(origin, 'e', { x: 17, y: 0 }, { preserveAspect: false, fromCenter: false }), origin, 'e', { preserveAspect: false, fromCenter: false }, options)
+    assert.deepEqual([grid.x, grid.width, grid.x + grid.width], [10, 118, 128])
+    const guide = snapRect(resizeRect(origin, 'e', { x: 39, y: 0 }, { preserveAspect: false, fromCenter: false }), origin, 'e', { preserveAspect: false, fromCenter: false }, options)
+    assert.equal(guide.x + guide.width, 150)
+    const smart = snapRect(resizeRect(origin, 'e', { x: 88, y: 0 }, { preserveAspect: false, fromCenter: false }), origin, 'e', { preserveAspect: false, fromCenter: false }, options)
+    assert.equal(smart.x + smart.width, 200)
+    const aspect = snapRect(resizeRect(origin, 'e', { x: 17, y: 0 }, { preserveAspect: true, fromCenter: false }), origin, 'e', { preserveAspect: true, fromCenter: false }, options)
+    assert.equal(aspect.width / aspect.height, 2)
+    const disabled = snapRect(resizeRect(origin, 'e', { x: 17, y: 0 }, { preserveAspect: false, fromCenter: false }), origin, 'e', { preserveAspect: false, fromCenter: false }, { ...options, enabled: false })
+    assert.deepEqual([disabled.width, disabled.snapped, disabled.guides.length], [117, false, 0])
+    assert.equal(resizeCursor('e', 0), 'ew-resize')
+    assert.equal(resizeCursor('e', 90), 'ns-resize')
   })
 
   test('converts canvas pointers with scroll, margin, zoom and pan from one source of truth', () => {

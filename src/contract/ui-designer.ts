@@ -929,6 +929,31 @@ export interface UiDesignerPreviewAdapter {
   stop(sessionId?: string): Promise<UiPreviewResult>
 }
 
+export type UiDesignerRendererHostStopReason = 'project-change' | 'unload' | 'shutdown' | 'protocol-error'
+
+/**
+ * Opaque handle for the physically isolated MV/MZ canvas renderer.
+ *
+ * The renderer receives no temporary-project path.  Project files are served
+ * only through the confined preview protocol owned by the Electron main
+ * process, and the iframe must complete the versioned renderer handshake
+ * before this session can be confirmed.
+ */
+export interface UiDesignerRendererHostSession {
+  sessionId: string
+  generation: number
+  iframeUrl: string
+  engine: 'MV' | 'MZ'
+  engineVersion: string
+  runtimeVersion: string
+}
+
+export interface UiDesignerRendererHostAdapter {
+  start(generation: number): Promise<UiFileResult<UiDesignerRendererHostSession>>
+  confirm(sessionId: string): Promise<UiFileResult<UiDesignerRendererHostSession>>
+  stop(sessionId?: string, reason?: UiDesignerRendererHostStopReason): Promise<UiFileResult<null>>
+}
+
 export interface UiCodeEditorAdapter {
   available: boolean
   label: string
@@ -972,6 +997,7 @@ export interface UiDesignerAdapterBundle {
   resource?: UiDesignerResourceAdapter
   runtime?: UiDesignerRuntimeAdapter
   preview?: UiDesignerPreviewAdapter
+  rendererHost?: UiDesignerRendererHostAdapter
   code?: UiCodeEditorAdapter
   lifecycle?: UiDesignerLifecycleAdapter
 }

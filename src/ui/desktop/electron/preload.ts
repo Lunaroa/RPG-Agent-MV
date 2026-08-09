@@ -19,6 +19,7 @@ import type {
   UiDesignerSceneDataReadRequest,
   UiDesignerRuntimeExportRequest,
   UiDesignerRuntimeInstallRequest,
+  UiDesignerRendererHostStopReason,
   UiDesignerSceneStageRequest,
   UiDesignerProjectRequest,
 } from '../../../contract/ui-designer.ts';
@@ -113,6 +114,9 @@ contextBridge.exposeInMainWorld('api', {
     startPreview: (request: UiDesignerPreviewStartRequest) => ipcRenderer.invoke('ui-designer:preview:start', request),
     currentPreview: () => ipcRenderer.invoke('ui-designer:preview:current'),
     stopPreview: (sessionId?: string) => ipcRenderer.invoke('ui-designer:preview:stop', sessionId),
+    startRenderer: (request: UiDesignerProjectRequest & { generation: number }) => ipcRenderer.invoke('ui-designer:renderer:start', request),
+    confirmRenderer: (sessionId: string) => ipcRenderer.invoke('ui-designer:renderer:confirm', sessionId),
+    stopRenderer: (request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }) => ipcRenderer.invoke('ui-designer:renderer:stop', request),
     listRecentFiles: () => ipcRenderer.invoke('ui-designer:recent:list'),
     removeRecentFile: (filePath: string) => ipcRenderer.invoke('ui-designer:recent:remove', filePath),
     writeRecovery: (request: UiDesignerRecoveryWriteRequest) => ipcRenderer.invoke('ui-designer:recovery:write', request),

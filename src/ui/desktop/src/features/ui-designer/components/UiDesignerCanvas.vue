@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, isRef, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import type { UiDesignerDocument, UiNode, UiProjectResourceCatalog, UiRect, UiViewport } from '@contract/ui-designer'
+import type { UiDesignerDocument, UiNode, UiRect, UiRuntimeSceneExport, UiViewport } from '@contract/ui-designer'
 import type { UiDesignerController } from '../composables/useUiDesigner'
+import type { UiDesignerRendererBridgeMessage } from '@contract/ui-designer-renderer-bridge'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
+import { useUiDesignerRendererHost } from '../composables/useUiDesignerRendererHost'
 import UiCanvasNode from './UiCanvasNode.vue'
 import { nodeRect, nodesIntersectingRect, viewportClientToContent, viewportClientToWorld, viewportClientToZoomAnchor, worldPointToViewport, worldRectToViewport, type UiCanvasViewportFrame, type UiResizeHandle } from '../models/geometry'
 import type { UiNodeActionCommand, UiNodeActionPolicy } from '../models/actions'
+import { exportRuntimeDocument } from '../models/export'
 
 const props = defineProps<{ designer: UiDesignerController }>()
 const designer = props.designer
@@ -23,19 +26,6 @@ const draftPositions = computed<Record<string, { x: number; y: number }>>(() => 
 const draftRects = computed<Record<string, UiRect>>(() => unwrap(designer.draftRects))
 const draftRotations = computed<Record<string, number>>(() => unwrap(designer.draftRotations))
 const previewing = computed(() => unwrap(designer.isEditorPreviewing))
-const previewCondition = computed<'all-on' | 'all-off'>(() => unwrap(designer.editorPreviewConditionMode) as 'all-on' | 'all-off')
-const resourceCatalog = computed<UiProjectResourceCatalog | null>(() => unwrap(designer.resourceCatalog))
-const resourceByPath = computed(() => {
-  const map = new Map<string, UiProjectResourceCatalog['resources'][number]>()
-  for (const resource of resourceCatalog.value?.resources ?? []) {
-    if (resource.relativePath) {
-      map.set(resource.relativePath, resource)
-      map.set(`www/${resource.relativePath}`, resource)
-    }
-    map.set(resource.path, resource)
-  }
-  return map
-})
 const preferences = computed<Record<string, unknown>>(() => unwrap(designer.preferences))
 const gridEnabled = computed(() => typeof preferences.value.gridEnabled === 'boolean' ? preferences.value.gridEnabled : document.value.canvas.grid.enabled)
 const snapEnabled = computed(() => typeof preferences.value.snapEnabled === 'boolean' ? preferences.value.snapEnabled : document.value.canvas.snap.enabled)
@@ -55,6 +45,7 @@ const guideMenu = ref<{ x: number; y: number; guideId?: string }>()
 const nodeMenu = ref<{ x: number; y: number; nodeId: string }>()
 const spacePressed = ref(false)
 const viewportElement = ref<HTMLElement>()
+const rendererFrame = ref<HTMLIFrameElement>()
 const editStack = ref<string[]>([])
 const alignmentLabels: Record<'left' | 'centerX' | 'right' | 'top' | 'centerY' | 'bottom', UiDesignerMessageKey> = {
   left: 'alignLeft', centerX: 'alignCenter', right: 'alignRight', top: 'alignTop', centerY: 'alignCenterY', bottom: 'alignBottom',
@@ -107,6 +98,35 @@ const stageStyle = computed(() => ({
   transform: `translate(${viewport.value.panX}px, ${viewport.value.panY}px) scale(${viewport.value.zoom})`,
   backgroundColor: document.value.canvas.backgroundColor,
 }))
+
+const runtimeScene = (): UiRuntimeSceneExport => {
+  const source = JSON.parse(JSON.stringify(document.value)) as UiDesignerDocument
+  for (const node of source.nodes) {
+    const draftRect = draftRects.value[node.id]
+    const draftPosition = draftPositions.value[node.id]
+    if (draftRect) {
+      const scaleX = Math.max(Math.abs(Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1), 0.0001)
+      const scaleY = Math.max(Math.abs(Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1), 0.0001)
+      node.props.x = draftRect.x + draftRect.width * node.props.anchorX
+      node.props.y = draftRect.y + draftRect.height * node.props.anchorY
+      node.props.width = draftRect.width / scaleX
+      node.props.height = draftRect.height / scaleY
+    } else if (draftPosition) {
+      node.props.x = draftPosition.x
+      node.props.y = draftPosition.y
+    }
+    const draftRotation = draftRotations.value[node.id]
+    if (draftRotation !== undefined) node.props.rotate = draftRotation
+  }
+  return exportRuntimeDocument(source)
+}
+
+const rendererHost = useUiDesignerRendererHost({ designer, iframe: rendererFrame, runtimeScene })
+const rendererStatus = rendererHost.status
+const rendererError = rendererHost.error
+const rendererIframeUrl = rendererHost.iframeUrl
+const rendererBounds = rendererHost.bounds
+const rendererReady = computed(() => rendererStatus.value === 'running')
 const selectionStyle = computed(() => {
   const box = selecting.value
   if (!box) return {}
@@ -123,16 +143,13 @@ const selectionStyle = computed(() => {
   }
 })
 
-const resourceUrl = (path: string) => {
-  if (!path) return undefined
-  const normalized = path.replaceAll('\\', '/')
-  const resource = resourceByPath.value.get(normalized) ?? resourceByPath.value.get(normalized.replace(/^www\//, ''))
-  if (!resource?.exists) return undefined
-  return resource?.previewUrl ?? resource?.thumbnailUrl
-}
-
 const beginDrag = (event: PointerEvent, node: UiNode) => {
-  if (previewing.value || node.locked) return
+  if (previewing.value) {
+    event.stopPropagation()
+    beginRendererInput(event, node.id)
+    return
+  }
+  if (node.locked) return
   event.stopPropagation()
   if (!selectedIds.value.includes(node.id)) designer.selectNodes([node.id], event.metaKey || event.ctrlKey)
   const policy = designer.getNodeActionPolicy(node.id) as UiNodeActionPolicy
@@ -146,7 +163,11 @@ const beginDrag = (event: PointerEvent, node: UiNode) => {
 }
 
 const handlePointer = (payload: { event: PointerEvent; node: UiNode }) => beginDrag(payload.event, payload.node)
-const handleSelect = (payload: { event: MouseEvent; node: UiNode }) => { closeNodeMenu(); designer.selectNodes([payload.node.id], payload.event.metaKey || payload.event.ctrlKey) }
+const handleSelect = (payload: { event: MouseEvent; node: UiNode }) => {
+  if (previewing.value) return
+  closeNodeMenu()
+  designer.selectNodes([payload.node.id], payload.event.metaKey || payload.event.ctrlKey)
+}
 const enterContainer = (payload: { node: UiNode }) => {
   if (payload.node.type !== 'container') return
   editStack.value = [...editStack.value, payload.node.id]
@@ -275,6 +296,46 @@ const endPan = () => { panning.value = undefined; window.removeEventListener('po
 const worldFromClient = (event: PointerEvent | MouseEvent) => {
   return viewportClientToWorld({ x: event.clientX, y: event.clientY }, viewportFrame(), viewport.value)
 }
+type RendererInputPayload = Extract<UiDesignerRendererBridgeMessage, { kind: 'input' }>['payload']
+const rendererInput = ref<{ pointerId: number; nodeId: string }>()
+const sendRendererInput = (type: RendererInputPayload['type'], event: PointerEvent, nodeId: string) => {
+  const point = worldFromClient(event)
+  rendererHost.sendInput({
+    type,
+    nodeId,
+    x: point.x,
+    y: point.y,
+    button: event.button,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    metaKey: event.metaKey,
+  })
+}
+const moveRendererInput = (event: PointerEvent) => {
+  const active = rendererInput.value
+  if (!active || event.pointerId !== active.pointerId) return
+  sendRendererInput('pointermove', event, active.nodeId)
+}
+const endRendererInput = (event?: PointerEvent) => {
+  const active = rendererInput.value
+  if (active && event && event.pointerId === active.pointerId) {
+    sendRendererInput(event.type === 'pointercancel' ? 'pointercancel' : 'pointerup', event, active.nodeId)
+  }
+  rendererInput.value = undefined
+  window.removeEventListener('pointermove', moveRendererInput)
+  window.removeEventListener('pointerup', endRendererInput)
+  window.removeEventListener('pointercancel', endRendererInput)
+}
+const beginRendererInput = (event: PointerEvent, nodeId: string) => {
+  if (!rendererReady.value || event.button !== 0) return
+  endRendererInput()
+  rendererInput.value = { pointerId: event.pointerId, nodeId }
+  sendRendererInput('pointerdown', event, nodeId)
+  window.addEventListener('pointermove', moveRendererInput)
+  window.addEventListener('pointerup', endRendererInput, { once: true })
+  window.addEventListener('pointercancel', endRendererInput, { once: true })
+}
 const beginGuideFromRuler = (event: PointerEvent, type: 'vertical' | 'horizontal') => {
   if (previewing.value) return
   const point = worldFromClient(event)
@@ -386,7 +447,7 @@ const dropResource = (event: DragEvent) => {
 }
 
 onMounted(() => { window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp) })
-onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); endGuide(); closeGuideMenu(); closeNodeMenu(); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp) })
+onBeforeUnmount(() => { endRendererInput(); endDrag(); endTransform(); endPan(); endBoxSelect(); endGuide(); closeGuideMenu(); closeNodeMenu(); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp) })
 </script>
 
 <template>
@@ -439,22 +500,30 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
       <div v-if="selecting" class="selection-box" :style="selectionStyle" />
       <div class="canvas-stage" :class="{ checkerboard: document.canvas.backgroundPattern === 'checkerboard' }" :style="stageStyle" @pointerdown.self="beginBoxSelect" @contextmenu.prevent.stop="openGuideMenu($event)">
         <div v-if="editStack.length" class="canvas-edit-breadcrumb">{{ t('editingContainer') }}: {{ visibleRoots[0]?.name }} · {{ t('escapeToExit') }}</div>
+        <iframe
+          v-if="rendererIframeUrl"
+          ref="rendererFrame"
+          class="canvas-runtime-frame"
+          :src="rendererIframeUrl"
+          sandbox="allow-scripts allow-same-origin"
+          tabindex="-1"
+          data-ui-id="ui-designer-runtime-canvas-frame"
+          @load="rendererHost.onIframeLoad"
+        />
         <div class="canvas-grid" :class="{ active: gridEnabled }" :style="{ '--grid-size': `${document.canvas.grid.size}px`, '--grid-color': document.canvas.grid.color }" />
-        <div class="node-layer">
+        <div class="node-layer" :class="{ 'runtime-disabled': !rendererReady }">
           <UiCanvasNode
             v-for="node in visibleRoots"
             :key="node.id"
             :node="node"
             :document="document"
-            :designer="designer"
             :selected-ids="selectedIds"
             :hovered-node-id="hoveredNodeId"
             :previewing="previewing"
-            :preview-condition="previewCondition"
             :interaction-disabled="node.id === 'node_root' || node.id === editingRootId"
             :origin-x="0"
             :origin-y="0"
-            :resource-url="resourceUrl"
+            :renderer-bounds="rendererBounds"
             :draft-positions="draftPositions"
             :draft-rects="draftRects"
             :draft-rotations="draftRotations"
@@ -465,6 +534,8 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
             @handlepointerdown="beginTransform"
           />
         </div>
+        <div v-if="!designer.canRenderCanvas" class="canvas-runtime-state" data-ui-id="ui-designer-runtime-canvas-project-required">{{ t('projectRequired') }}</div>
+        <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" :title="rendererError" data-ui-id="ui-designer-runtime-canvas-status">{{ rendererStatus === 'error' ? t('previewError') : t('previewPreparing') }}</div>
       </div>
     </div>
     <div class="canvas-hint">{{ previewing ? t('editorPreview') : t('chooseNode') }}</div>
@@ -481,21 +552,11 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
 .canvas-stage { position: relative; margin: 46px; transform-origin: 0 0; box-shadow: 0 16px 36px #0007; overflow: hidden; }
 .canvas-edit-breadcrumb { position: absolute; z-index: 8; top: -24px; left: 0; color: var(--app-ink-soft); font-size: 10px; pointer-events: none; }
 .canvas-stage.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }
-.canvas-grid { position: absolute; inset: 0; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }
+.canvas-runtime-frame { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; }
+.canvas-grid { position: absolute; z-index: 1; inset: 0; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }
 .canvas-grid.active { opacity: .18; }
-.node-layer { position: absolute; inset: 0; pointer-events: none; }
-.canvas-node { position: absolute; box-sizing: border-box; border: 1px dashed #ffffff40; color: #fff; cursor: move; }
-.canvas-node:hover { border-color: var(--app-accent); }
-.canvas-node.selected { border: 1px solid var(--app-accent); box-shadow: 0 0 0 1px #73daca33; }
-.canvas-node.hidden { outline: 1px dashed #f6c34488; }
-.node-content { width: 100%; height: 100%; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; color: #fff; background: #ffffff10; font-size: 11px; text-align: center; pointer-events: none; }
-.node-container { background: #73daca14; }
-.node-text { justify-items: start; padding: 5px; background: transparent; }
-.node-button { border-radius: 4px; background: #3b82f688; }
-.node-overlay { background: #00000066; }
-.node-progressBar { background: linear-gradient(to right, #73daca 45%, #24283b 45%); }
-.node-label { position: absolute; left: 2px; top: -16px; max-width: 150px; color: #d7dae2; font-size: 10px; white-space: nowrap; pointer-events: none; }
-.selection-handles i { position: absolute; width: 6px; height: 6px; border: 1px solid #12141b; border-radius: 1px; background: var(--app-accent); }
-.handle-nw { left: -4px; top: -4px; }.handle-ne { right: -4px; top: -4px; }.handle-sw { left: -4px; bottom: -4px; }.handle-se { right: -4px; bottom: -4px; }
+.node-layer { position: absolute; z-index: 2; inset: 0; pointer-events: none; }
+.node-layer.runtime-disabled { pointer-events: none; }
+.canvas-runtime-state { position: absolute; z-index: 9; inset: 0; display: grid; place-items: center; padding: 24px; color: var(--app-ink-soft); background: color-mix(in srgb, #12141b 88%, transparent); text-align: center; }
 .canvas-hint { min-height: 24px; padding: 5px 10px; border-top: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 11px; }
 </style>

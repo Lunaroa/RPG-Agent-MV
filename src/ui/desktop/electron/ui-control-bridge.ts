@@ -237,6 +237,39 @@ const PREVIEW_FRAME_DIAGNOSTIC_SCRIPT = `(async function () {
     out.fade = scene ? { sign: scene._fadeSign, duration: scene._fadeDuration, opacity: scene._fadeSprite ? scene._fadeSprite.opacity : null } : null;
     var mzApp = window.Graphics && Graphics.app;
     out.ticker = mzApp && mzApp.ticker ? { started: mzApp.ticker.started, fps: Math.round(mzApp.ticker.FPS) } : null;
+    var uiRuntime = scene && scene._mzuiCanvasRuntime;
+    if (uiRuntime) {
+      var particleNodes = (uiRuntime.scene && Array.isArray(uiRuntime.scene.nodes) ? uiRuntime.scene.nodes : []).filter(function (node) { return node && node.type === 'particle'; });
+      var particleLimit = 32;
+      var particleActive = 0;
+      var particlePooled = 0;
+      out.uiParticles = {
+        mounted: Boolean(uiRuntime.mounted),
+        nodeCount: particleNodes.length,
+        truncated: particleNodes.length > particleLimit,
+        nodes: particleNodes.slice(0, particleLimit).map(function (node) {
+          var state = uiRuntime.frameAnimationState && uiRuntime.frameAnimationState[node.id];
+          var view = uiRuntime.nodeViews && uiRuntime.nodeViews[node.id];
+          var layer = view && view.__mzuiParticleLayer;
+          var active = state && Array.isArray(state.particles) ? state.particles.length : 0;
+          var pooled = state && Array.isArray(state.pool) ? state.pool.length : 0;
+          particleActive += active;
+          particlePooled += pooled;
+          return {
+            nodeId: String(node.id || '').slice(0, 128),
+            active: active,
+            pooled: pooled,
+            layerType: layer && layer.constructor ? String(layer.constructor.name).slice(0, 64) : null,
+            childType: layer ? String(layer.__mzuiParticleChildType || '').slice(0, 32) : null,
+            glow: Number(node.props && node.props.glow || 0),
+            viewDestroyed: Boolean(view && view.__mzuiDestroyed),
+            layerDestroyed: Boolean(layer && (layer.__mzuiParticleDestroyed || layer.destroyed)),
+          };
+        }),
+      };
+      out.uiParticles.active = particleActive;
+      out.uiParticles.pooled = particlePooled;
+    } else out.uiParticles = null;
     var probeStage = scene || (mzApp && mzApp.stage) || null;
     out.stageChildren = probeStage ? probeStage.children.map(function (child) {
       var bitmap = child.bitmap;

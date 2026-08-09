@@ -1,5 +1,5 @@
 import type { UiDesignerProjectProfileResult } from '../../../../contract/ui-designer.ts';
-import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
+import { inspectRmmvProject, type RmmvProjectManifest } from '../rmmv/rmmv-layout.ts';
 
 /**
  * Reads the selected RPG Maker project's canvas profile from its manifest.
@@ -14,12 +14,7 @@ export function inspectUiDesignerProjectProfile(project: string): UiDesignerProj
   }
 
   const manifest = inspectRmmvProject(project);
-  if (!manifest.engineVersionSupported) {
-    throw profileError(
-      'UI_DESIGNER_PROJECT_ENGINE_UNSUPPORTED',
-      `The detected RPG Maker ${manifest.engine === 'rpg-maker-mz' ? 'MZ' : 'MV'} engine version is not supported by the UI designer.`,
-    );
-  }
+  assertUiDesignerProjectEngineSupported(manifest);
 
   if (manifest.engine === 'rpg-maker-mv') {
     return {
@@ -44,6 +39,18 @@ export function inspectUiDesignerProjectProfile(project: string): UiDesignerProj
   }
 
   throw profileError('UI_DESIGNER_PROJECT_ENGINE_UNSUPPORTED', 'The selected project is not an MV or MZ project.');
+}
+
+/** Shared fail-fast engine/version policy for every real UI designer renderer entry. */
+export function assertUiDesignerProjectEngineSupported(
+  manifest: Pick<RmmvProjectManifest, 'engine' | 'engineVersionSupported'>,
+): void {
+  if (!manifest.engineVersionSupported) {
+    throw profileError(
+      'UI_DESIGNER_PROJECT_ENGINE_UNSUPPORTED',
+      `The detected RPG Maker ${manifest.engine === 'rpg-maker-mz' ? 'MZ' : 'MV'} engine version is not supported by the UI designer.`,
+    );
+  }
 }
 
 function profileError(code: string, message: string): Error & { code: string } {

@@ -53,4 +53,13 @@ describe('background UI control wiring', () => {
     assert.match(readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8'), /'plugin-marketplace': \{ path: '\/plugin-marketplace' \}/);
     assert.match(readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8'), /'ui-designer': \{ path: '\/ui-designer' \}/);
   });
+
+  test('exposes only bounded read-only particle diagnostics from the isolated frame', () => {
+    assert.match(bridgeSource, /var particleLimit = 32/);
+    assert.match(bridgeSource, /scene && scene\._mzuiCanvasRuntime/);
+    assert.match(bridgeSource, /layerType:/);
+    assert.match(bridgeSource, /childType:/);
+    assert.match(bridgeSource, /particlePooled/);
+    assert.doesNotMatch(bridgeSource, /PREVIEW_FRAME_DIAGNOSTIC_SCRIPT[\s\S]*command\.(?:script|code|expression)/);
+  });
 });

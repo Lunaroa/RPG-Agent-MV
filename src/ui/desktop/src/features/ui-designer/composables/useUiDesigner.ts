@@ -230,6 +230,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const canManageRuntime = computed(() => hasProject.value && adapters.runtime !== createUiDesignerAdapters().runtime)
   const canLoadResources = computed(() => hasProject.value && adapters.resource !== createUiDesignerAdapters().resource)
   const canPreview = computed(() => hasProject.value && adapters.preview !== createUiDesignerAdapters().preview)
+  const canRenderCanvas = computed(() => hasProject.value && adapters.rendererHost !== createUiDesignerAdapters().rendererHost)
   const canEditCode = computed(() => adapters.code.available)
 
   const persistenceOperations = createUiDesignerPersistenceOperations({
@@ -1452,6 +1453,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     draftRotations,
     draftCoordinator,
     projectPath,
+    projectGeneration,
     editingMode,
     isPreviewing,
     isEditorPreviewing,
@@ -1493,6 +1495,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     canManageRuntime,
     canLoadResources,
     canPreview,
+    canRenderCanvas,
     canEditCode,
     newScene,
     closeScene,

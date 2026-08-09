@@ -80,6 +80,7 @@ let desktop: any;
 let agentSessionRuntime: any;
 let interactivePlaytestService: any;
 let mapPreviewService: any;
+let uiDesignerRendererHostService: any;
 let assetProtocolRegistered = false;
 /** Live in-panel particle preview sessions: protocol key -> generated preview app. */
 const particlePreviewSessions = new Map<string, { appDirectory: string }>();
@@ -452,6 +453,7 @@ async function loadBackendModules(roots: AppRoots) {
       resources: await import(new URL('desktop/ui-designer-resource-service.ts', coreUrl).href),
       runtime: await import(new URL('desktop/ui-designer-runtime-service.ts', coreUrl).href),
       preview: new (await import(new URL('desktop/ui-designer-preview-service.ts', coreUrl).href)).UiDesignerPreviewService(),
+      rendererHost: await import(new URL('desktop/ui-designer-renderer-host-service.ts', coreUrl).href),
     },
   };
   desktop.mapOverviewExport.initializeMapOverviewPngExportService(roots.userDataRoot);
@@ -515,6 +517,19 @@ async function loadBackendModules(roots: AppRoots) {
       desktop.playtestPreparation.prepareUiDesignerPreviewInWorker(workflowRoot, project, temporaryPrefix)
     ),
   );
+  uiDesignerRendererHostService = new desktop.uiDesigner.rendererHost.UiDesignerRendererHostService(
+    roots.installRoot,
+    {
+      prepareIsolated: (workflowRoot: string, project: string, temporaryPrefix?: string) => (
+        desktop.playtestPreparation.prepareUiDesignerPreviewInWorker(workflowRoot, project, temporaryPrefix)
+      ),
+      registerPreviewRoot: (key: string, resourceRoot: string, sourceProject: string) => (
+        registerMapPreviewRoot(key, resourceRoot, resolveRendererHostDisabledPlugins(sourceProject))
+      ),
+      unregisterPreviewRoot: unregisterMapPreviewRoot,
+      verifyFrameIsolation: verifyMapPreviewFrameIsolation,
+    },
+  );
   registerUiDesignerIpcHandlers(ipcMain, dialog, {
     workflowRoot: roots.installRoot,
     dialogParent: (sender) => BrowserWindow.fromWebContents(sender as Electron.WebContents) || undefined,
@@ -527,6 +542,7 @@ async function loadBackendModules(roots: AppRoots) {
     resources: desktop.uiDesigner.resources,
     runtime: desktop.uiDesigner.runtime,
     preview: desktop.uiDesigner.preview,
+    rendererHost: uiDesignerRendererHostService,
     userDataStore: () => new desktop.uiDesigner.file.UiDesignerUserDataStore(roots.userDataRoot),
   });
   mapPreviewService = new desktop.mapPreview.MapPreviewIframeService(
@@ -577,6 +593,19 @@ function resolvePreviewDisabledPlugins(sourceProject?: string): string[] {
       patchWorkspaceSettings({ previewDisabledPlugins: { [projectPath]: [] } });
     }
     return legacy;
+  }
+  return [];
+}
+
+/** Read-only plugin policy for isolated renderer sessions; it never migrates project or workspace state. */
+function resolveRendererHostDisabledPlugins(sourceProject: string): string[] {
+  const config = desktop.projectConfig.readProjectConfig(sourceProject) as { previewDisabledPlugins?: string[] };
+  if (config.previewDisabledPlugins) return config.previewDisabledPlugins;
+  const record = getWorkspaceSettings().previewDisabledPlugins || {};
+  const wanted = path.resolve(sourceProject).toLowerCase();
+  for (const [projectPath, names] of Object.entries(record)) {
+    if (path.resolve(projectPath).toLowerCase() !== wanted) continue;
+    return Array.isArray(names) ? names.filter((name) => typeof name === 'string' && name.trim() !== '') : [];
   }
   return [];
 }
@@ -2208,6 +2237,14 @@ export function cleanupIpcHandlers(): void {
   if (mapPreviewService) {
     mapPreviewService.shutdownSync();
     mapPreviewService = null;
+  }
+  if (uiDesignerRendererHostService) {
+    try {
+      uiDesignerRendererHostService.shutdownSync();
+      uiDesignerRendererHostService = null;
+    } catch (error) {
+      console.error('[ui-designer-renderer-host] Isolation evidence changed; retained the temporary project while continuing Electron cleanup.', error);
+    }
   }
   if (interactivePlaytestService) {
     interactivePlaytestService.shutdownSync();

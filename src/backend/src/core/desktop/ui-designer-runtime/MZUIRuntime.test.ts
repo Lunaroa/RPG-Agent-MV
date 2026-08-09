@@ -518,6 +518,158 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     secondRuntime.cleanup();
   });
 
+  test('renders the complete shape-particle property matrix in a real PIXI Container layer', () => {
+    const context = makeContext();
+    context.console = { ...console, error() {} };
+    const randomValues: number[] = [0.75, 0.25, 0.75, 0.25, 0.75];
+    context.Math = Object.create(Math);
+    context.Math.random = () => randomValues.shift() ?? 0.5;
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    scene.nodes = scene.nodes.filter((node: any) => node.type === 'particle');
+    scene.zOrder = ['particle'];
+    const props = scene.nodes[0].props;
+    Object.assign(props, {
+      maxParticles: 1,
+      emissionInterval: 1,
+      emissionArea: 'rectangle',
+      imagePath: '',
+      shape: 'star',
+      velocityX: 2,
+      velocityY: -1,
+      velocityRandomX: 4,
+      velocityRandomY: 6,
+      gravityX: 60,
+      gravityY: 120,
+      rotationSpeed: 60,
+      lifetime: 4,
+      lifetimeRandom: 4,
+      startScale: 2,
+      endScale: 4,
+      startOpacity: 200,
+      endOpacity: 100,
+      startColor: '#ff0000',
+      endColor: '#0000ff',
+      blendMode: 'screen',
+      glow: 2,
+    });
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    runtime.update();
+
+    const state = runtime.frameAnimationState.particle;
+    const layer = runtime.nodeViews.particle.__mzuiParticleLayer;
+    const particle = state.particles[0];
+    assert.ok(layer instanceof context.PIXI.Container);
+    assert.equal(layer instanceof context.PIXI.ParticleContainer, false);
+    assert.equal(layer.__mzuiParticleChildType, 'graphics');
+    assert.ok(particle instanceof context.PIXI.Graphics);
+    assert.deepEqual({ x: particle.x, y: particle.y }, { x: 28, y: -22.5 });
+    assert.deepEqual({ x: particle.__mzuiVelocityX, y: particle.__mzuiVelocityY }, { x: 3, y: -2.5 });
+    assert.equal(particle.__mzuiLife, 5);
+    assert.equal(particle.scale.x, 2);
+    assert.equal(particle.alpha, 200 / 255);
+    assert.equal(particle.tint, 0xff0000);
+    assert.equal(particle.rotation, 1);
+    assert.equal(particle.blendMode, 'screen');
+    assert.equal(runtime.nodeViews.particle.filters.length, 1);
+    assert.ok(runtime.nodeViews.particle.__mzuiGlowFilter instanceof context.PIXI.Filter);
+    assert.deepEqual(Array.from(runtime.nodeViews.particle.__mzuiGlowFilter.uniforms.mzuiGlowOffset), [2 / 816, 2 / 624]);
+    assert.equal(runtime.nodeViews.particle.__mzuiGlowFilter.uniforms.mzuiGlowStrength, 0.25);
+    assert.match(runtime.nodeViews.particle.__mzuiGlowFilter.fragment, /texture2D\(uSampler/);
+
+    runtime.update();
+    assert.deepEqual({ x: particle.x, y: particle.y }, { x: 32, y: -23 });
+    assert.equal(particle.scale.x, 2.4);
+    assert.equal(particle.alpha, 180 / 255);
+    assert.equal(particle.tint, 0xcc0033);
+    assert.equal(particle.rotation, 2);
+
+    props.maxParticles = 10001;
+    runtime.update();
+    assert.equal(runtime.errors.some((entry: any) => entry.label === 'particle-limit'), true);
+    props.maxParticles = 0;
+    runtime.update();
+    assert.equal(state.particles.length, 0);
+    assert.equal(state.pool.length, 0);
+    assert.equal(particle.destroyed, true);
+
+    props.maxParticles = 1;
+    props.emissionArea = 'circle';
+    randomValues.push(0, 1, 0.5, 0.5, 0.5);
+    runtime.update();
+    assert.deepEqual({ x: state.particles[0].x, y: state.particles[0].y }, { x: 42, y: -1 });
+    props.maxParticles = 0;
+    runtime.update();
+    Object.assign(props, { maxParticles: 1, emissionArea: 'point', velocityX: 0, velocityY: 0, velocityRandomX: 0, velocityRandomY: 0, gravityX: 0, gravityY: 0 });
+    randomValues.push(0.5, 0.5, 0.5);
+    runtime.update();
+    assert.deepEqual({ x: state.particles[0].x, y: state.particles[0].y }, { x: 0, y: 0 });
+    runtime.cleanup();
+  });
+
+  test('reuses textured particle objects, switches image/shape layers, and releases pooled PIXI resources', () => {
+    const context = makeContext();
+    context.console = { ...console, error() {} };
+    let bitmapLoads = 0;
+    context.ImageManager = { loadBitmap: (_folder: string, name: string) => { bitmapLoads += 1; return { id: name, width: 8, height: 8 }; } };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    scene.nodes = scene.nodes.filter((node: any) => node.type === 'particle');
+    scene.zOrder = ['particle'];
+    const props = scene.nodes[0].props;
+    Object.assign(props, {
+      maxParticles: 1,
+      emissionInterval: 1,
+      imagePath: 'img/particle.png',
+      lifetime: 1,
+      lifetimeRandom: 0,
+      startColor: '#336699',
+      endColor: '#336699',
+      glow: 3,
+    });
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    runtime.update();
+    const state = runtime.frameAnimationState.particle;
+    const imageLayer = runtime.nodeViews.particle.__mzuiParticleLayer;
+    const firstParticle = state.particles[0];
+    assert.equal(imageLayer instanceof context.PIXI.ParticleContainer, false);
+    assert.equal(imageLayer.__mzuiParticleChildType, 'sprite');
+    runtime.update();
+    assert.equal(state.pool[0], firstParticle);
+    runtime.update();
+    assert.equal(state.particles[0], firstParticle);
+    assert.equal(bitmapLoads, 1);
+
+    props.imagePath = '';
+    props.shape = 'square';
+    runtime.update();
+    const shapeLayer = runtime.nodeViews.particle.__mzuiParticleLayer;
+    assert.notEqual(shapeLayer, imageLayer);
+    assert.equal(imageLayer.destroyed, true);
+    assert.equal(firstParticle.destroyed, true);
+    assert.equal(shapeLayer.__mzuiParticleChildType, 'graphics');
+    assert.ok(state.particles[0] instanceof context.PIXI.Graphics);
+
+    const shapeParticle = state.particles[0];
+    const glowFilter = runtime.nodeViews.particle.__mzuiGlowFilter;
+    runtime.cleanup();
+    assert.equal(shapeParticle.destroyed, true);
+    assert.equal(shapeLayer.destroyed, true);
+    assert.equal(glowFilter.destroyed, true);
+
+    delete context.PIXI.Filter;
+    const unsupportedRuntime = context.MZUIRuntime.create();
+    const unsupportedScene = allNodeScene();
+    unsupportedScene.nodes = unsupportedScene.nodes.filter((node: any) => node.type === 'particle');
+    unsupportedScene.zOrder = ['particle'];
+    Object.assign(unsupportedScene.nodes[0].props, { imagePath: '', emissionInterval: 1, glow: 1 });
+    unsupportedRuntime.mount(unsupportedScene, { root: new context.PIXI.Container() });
+    assert.equal(unsupportedRuntime.errors.some((entry: any) => entry.label === 'particle-capability' && entry.node === 'particle'), true);
+    unsupportedRuntime.cleanup();
+  });
+
   test('registers an engine Scene subclass with a private runtime container', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
@@ -821,12 +973,32 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
     assert.equal(root.children.length, 0);
   });
+
+  test('renderer host patch, bounds, and input use the mounted ten-node runtime', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const bounds = runtime.patchNodes([{ nodeId: 'button', props: { x: 48, y: 64, width: 180, rotate: 15 } }]);
+    assert.equal(bounds.length, 10);
+    assert.deepEqual(
+      { x: bounds.find((entry: { nodeId: string }) => entry.nodeId === 'button').x, y: bounds.find((entry: { nodeId: string }) => entry.nodeId === 'button').y, width: bounds.find((entry: { nodeId: string }) => entry.nodeId === 'button').width, rotation: bounds.find((entry: { nodeId: string }) => entry.nodeId === 'button').rotation },
+      { x: 48, y: 64, width: 180, rotation: 15 },
+    );
+    assert.equal(runtime.handleRendererInput({ type: 'pointerdown', nodeId: 'button' }), true);
+    assert.equal(runtime.focusedNodeId, 'button');
+    assert.equal(runtime.handleRendererInput({ type: 'pointercancel', nodeId: 'button' }), true);
+    assert.equal(runtime.focusedNodeId, null);
+    runtime.cleanup();
+  });
 });
 
 function makeContext(): Record<string, any> {
   class Container {
     children: any[] = [];
     parent: any = null;
+    destroyed = false;
     x = 0;
     y = 0;
     visible = true;
@@ -838,7 +1010,7 @@ function makeContext(): Record<string, any> {
     removeChild(child: any) { this.children = this.children.filter((entry) => entry !== child); child.parent = null; }
     on() {}
     off() {}
-    destroy() { this.children = []; }
+    destroy() { this.destroyed = true; this.children = []; }
   }
   class Graphics extends Container {
     clear() { return this; }
@@ -851,7 +1023,12 @@ function makeContext(): Record<string, any> {
     endFill() { return this; }
   }
   class NineSlicePlane extends Container {}
-  class ParticleContainer extends Container {}
+  class ParticleContainer extends Container {
+    addChild(child: any) {
+      if (!(child instanceof Sprite) && !(child instanceof PixiSprite)) throw new TypeError('ParticleContainer only accepts textured Sprite children.');
+      return super.addChild(child);
+    }
+  }
   class PixiSprite extends Container { constructor(public texture?: unknown) { super(); } }
   class TilingSprite extends PixiSprite { tileScale = { x: 1, y: 1 }; tilePosition = { x: 0, y: 0 }; }
   class WindowBase extends Container {
@@ -860,6 +1037,13 @@ function makeContext(): Record<string, any> {
   }
   class Text extends Container { text: string; constructor(text: string) { super(); this.text = text; } }
   class Sprite extends Container { constructor(public bitmap?: unknown) { super(); } }
+  class Filter {
+    destroyed = false;
+    padding = 0;
+    uniforms: Record<string, unknown> = {};
+    constructor(public vertex: unknown, public fragment: string) {}
+    destroy() { this.destroyed = true; }
+  }
   function SceneBase(this: any) { this.children = []; this.parent = null; this.addChild = Container.prototype.addChild; this.removeChild = Container.prototype.removeChild; }
   SceneBase.prototype = Object.create(Container.prototype);
   SceneBase.prototype.constructor = SceneBase;
@@ -867,7 +1051,7 @@ function makeContext(): Record<string, any> {
   const context: Record<string, any> = {
     console,
     URL,
-    PIXI: { Container, Graphics, Text, NineSlicePlane, ParticleContainer, Sprite: PixiSprite, TilingSprite, Texture: { from: (value: string) => ({ source: value, baseTexture: { resource: { source: {} } } }) }, filters: { BlurFilter: class { blur = 0 }, GlowFilter: class { distance = 0 } } },
+    PIXI: { Container, Graphics, Text, NineSlicePlane, ParticleContainer, Sprite: PixiSprite, TilingSprite, Filter, Texture: { from: (value: string) => ({ source: value, baseTexture: { resource: { source: {} } } }) }, filters: { BlurFilter: class { blur = 0 }, GlowFilter: class { distance = 0; destroyed = false; destroy() { this.destroyed = true; } } } },
     Sprite,
     Window_Base: WindowBase,
     Scene_Base: SceneBase,

@@ -11,6 +11,8 @@ import type {
   UiDesignerResourceAdapter,
   UiDesignerRuntimeAdapter,
   UiDesignerRuntimeStageResult,
+  UiDesignerRendererHostAdapter,
+  UiDesignerRendererHostSession,
   UiDesignerSceneDataReadResult,
   UiDesignerSceneDataReadRequest,
   UiDesignerResourceRequest,
@@ -117,6 +119,12 @@ export const unavailableRuntimeAdapter: UiDesignerRuntimeAdapter = {
   async stageScene() {
     return unavailable('Runtime staging adapter is not connected; no project files changed.')
   },
+}
+
+export const unavailableRendererHostAdapter: UiDesignerRendererHostAdapter = {
+  async start() { return unavailable('Select an RPG Maker project before starting the real UI canvas renderer.') },
+  async confirm() { return unavailable('The isolated UI canvas renderer is not connected.') },
+  async stop() { return unavailable('The isolated UI canvas renderer is not connected.') },
 }
 
 function asResult<T>(value: unknown, fallbackMessage: string): UiFileResult<T> {
@@ -250,7 +258,15 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async current() { return asPreviewResult(await api.uiDesigner.currentPreview(), 'The isolated game preview status is unavailable.') },
     async stop(sessionId) { return asPreviewResult(await api.uiDesigner.stopPreview(sessionId), 'The isolated game preview could not be stopped.') },
   }
-  return { file, project, resource, runtime, preview, code: codeMirrorAdapter, lifecycle }
+  const rendererHost: UiDesignerRendererHostAdapter = {
+    async start(generation) {
+      if (!projectPath?.trim()) return unavailable('Select an RPG Maker project before starting the real UI canvas renderer.')
+      return asResult<UiDesignerRendererHostSession>(await api.uiDesigner.startRenderer({ project: projectPath, generation }), 'The isolated UI canvas renderer could not be prepared.')
+    },
+    async confirm(sessionId) { return asResult<UiDesignerRendererHostSession>(await api.uiDesigner.confirmRenderer(sessionId), 'The isolated UI canvas renderer process could not be confirmed.') },
+    async stop(sessionId, reason) { return asResult<null>(await api.uiDesigner.stopRenderer({ sessionId, reason }), 'The isolated UI canvas renderer could not be stopped.') },
+  }
+  return { file, project, resource, runtime, preview, rendererHost, code: codeMirrorAdapter, lifecycle }
 }
 
 export const unavailablePreviewAdapter: UiDesignerPreviewAdapter = {
@@ -337,13 +353,14 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
   },
 }
 
-export function createUiDesignerAdapters(overrides: UiDesignerAdapterBundle = {}): Required<Pick<UiDesignerAdapterBundle, 'file' | 'project' | 'resource' | 'runtime' | 'preview' | 'code'>> & Pick<UiDesignerAdapterBundle, 'lifecycle'> {
+export function createUiDesignerAdapters(overrides: UiDesignerAdapterBundle = {}): Required<Pick<UiDesignerAdapterBundle, 'file' | 'project' | 'resource' | 'runtime' | 'preview' | 'rendererHost' | 'code'>> & Pick<UiDesignerAdapterBundle, 'lifecycle'> {
   return {
     file: overrides.file ?? unavailableFileAdapter,
     project: overrides.project ?? unavailableProjectAdapter,
     resource: overrides.resource ?? unavailableResourceAdapter,
     runtime: overrides.runtime ?? unavailableRuntimeAdapter,
     preview: overrides.preview ?? unavailablePreviewAdapter,
+    rendererHost: overrides.rendererHost ?? unavailableRendererHostAdapter,
     code: overrides.code ?? codeMirrorAdapter,
     lifecycle: overrides.lifecycle,
   }

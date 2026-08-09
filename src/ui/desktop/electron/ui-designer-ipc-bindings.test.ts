@@ -23,6 +23,7 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   fs.writeFileSync(revealPath, '{}', 'utf8')
   const revealed: string[] = []
   const recent: Array<{ path: string; options?: { opened?: boolean; saved?: boolean; sceneName?: string } }> = []
+  let rendererStarts = 0
   const userDataStore = {
     recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string }) { recent.push({ path, options }); return { sourcePath: path, lastOpenedAt: 'now', exists: true } },
     listRecentFiles: () => [],
@@ -67,6 +68,11 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       stageUiDesignerSceneExport: () => ({ status: 'staged' }),
       writeUiDesignerRuntimeExport: () => ({ path: 'Scene_Sample.json', digest: 'digest', mtimeMs: 2, size: 2 }),
     },
+    rendererHost: {
+      start: async (_project: string, generation: number) => { rendererStarts += 1; return { sessionId: 'renderer-session', generation, iframeUrl: 'rpg-agent-preview://renderer/index.html', engine: 'MV', engineVersion: '1.6.2', runtimeVersion: '1.1.0' } },
+      confirm: (sessionId: string) => ({ sessionId, generation: 2, iframeUrl: 'rpg-agent-preview://renderer/index.html', engine: 'MV', engineVersion: '1.6.2', runtimeVersion: '1.1.0' }),
+      stop: () => undefined,
+    },
     userDataStore: () => userDataStore as any,
   })
 
@@ -109,6 +115,14 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   })
   assert.equal(runtimeExport.status, 'success')
   assert.equal(runtimeExport.value, 'Scene_Sample.json')
+  const missingRendererProject = await handlers.get('ui-designer:renderer:start')!(null, { project: '', generation: 2 })
+  assert.equal(missingRendererProject.status, 'error')
+  assert.equal(missingRendererProject.code, 'UI_DESIGNER_PROJECT_REQUIRED')
+  assert.equal(rendererStarts, 0)
+  const renderer = await handlers.get('ui-designer:renderer:start')!(null, { project: 'project', generation: 2 })
+  assert.equal(renderer.status, 'success')
+  assert.equal(renderer.value.runtimeVersion, '1.1.0')
+  assert.equal(rendererStarts, 1)
   const canceled = await handlers.get('ui-designer:file:open')!({ sender: {} })
   assert.equal(canceled.status, 'idle')
   const removed: string[] = []

@@ -19,6 +19,8 @@ import type {
   UiDesignerRuntimeInstallRequest,
   UiDesignerRuntimeExportRequest,
   UiDesignerRuntimeStageResult,
+  UiDesignerRendererHostSession,
+  UiDesignerRendererHostStopReason,
   UiDesignerSceneStageRequest,
   UiPreviewResult,
   UiRuntimeSceneExport,
@@ -56,6 +58,11 @@ export interface UiDesignerIpcDependencies {
     start(workflowRoot: string, project: string, scene: UiRuntimeSceneExport, options?: Pick<UiDesignerPreviewStartRequest, 'temporaryPrefix'>): Promise<UiPreviewResult>
     current(): Promise<UiPreviewResult>
     stop(sessionId?: string): Promise<UiPreviewResult>
+  }
+  rendererHost?: {
+    start(project: string, generation: number): Promise<UiDesignerRendererHostSession>
+    confirm(sessionId: string): UiDesignerRendererHostSession
+    stop(sessionId?: string): void
   }
   userDataStore: () => UiDesignerUserDataStoreLike
 }
@@ -232,6 +239,34 @@ export function registerUiDesignerIpcHandlers(
     catch (error) { return operationError('preview:stop', error) }
   })
 
+  ipcMain.handle('ui-designer:renderer:start', async (_event, request?: UiDesignerProjectRequest & { generation?: number }) => {
+    try {
+      if (!dependencies.rendererHost) throw new Error('UI designer canvas renderer is unavailable.')
+      if (typeof request?.project !== 'string' || !request.project.trim()) {
+        throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+      }
+      if (!Number.isSafeInteger(request.generation) || Number(request.generation) < 0) throw new Error('UI designer renderer generation must be a non-negative safe integer.')
+      const value = await dependencies.rendererHost.start(dependencies.resolveProject(request.project), Number(request.generation))
+      return { status: 'success', operation: 'renderer:start', value, message: 'Isolated UI designer canvas renderer prepared.' }
+    } catch (error) { return operationError('renderer:start', error) }
+  })
+  ipcMain.handle('ui-designer:renderer:confirm', (_event, sessionId?: string) => {
+    try {
+      if (!dependencies.rendererHost) throw new Error('UI designer canvas renderer is unavailable.')
+      if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('UI designer renderer session id is required.')
+      return { status: 'success', operation: 'renderer:confirm', value: dependencies.rendererHost.confirm(sessionId), message: 'Isolated renderer process confirmed.' }
+    } catch (error) { return operationError('renderer:confirm', error) }
+  })
+  ipcMain.handle('ui-designer:renderer:stop', (_event, request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }) => {
+    try {
+      if (!dependencies.rendererHost) throw new Error('UI designer canvas renderer is unavailable.')
+      const reason = request?.reason
+      if (reason !== undefined && !['project-change', 'unload', 'shutdown', 'protocol-error'].includes(reason)) throw new Error('UI designer renderer stop reason is invalid.')
+      dependencies.rendererHost.stop(request?.sessionId)
+      return { status: 'success', operation: 'renderer:stop', value: null, message: 'UI designer canvas renderer stopped.' }
+    } catch (error) { return operationError('renderer:stop', error) }
+  })
+
   ipcMain.handle('ui-designer:recovery:list', () => safeStoreCall(dependencies, 'list-recovery', (store) => store.listRecovery()))
   ipcMain.handle('ui-designer:recovery:write', (_event, request: UiDesignerRecoveryWriteRequest) => safeStoreCall(dependencies, 'write-recovery', (store) => store.writeRecovery(request.document, request.sourcePath, request.sourceMetadata, request.key)))
   ipcMain.handle('ui-designer:recovery:read', (_event, id: string) => safeStoreCall(dependencies, 'read-recovery', (store) => store.readRecovery(String(id))))
@@ -259,6 +294,7 @@ export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandl
     'ui-designer:project:profile',
     'ui-designer:resources:list', 'ui-designer:resources:references', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check', 'ui-designer:runtime:install',
     'ui-designer:scene:stage', 'ui-designer:runtime:export', 'ui-designer:preview:start', 'ui-designer:preview:current', 'ui-designer:preview:stop', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
+    'ui-designer:renderer:start', 'ui-designer:renderer:confirm', 'ui-designer:renderer:stop',
     'ui-designer:recovery:clear', 'ui-designer:recent:list', 'ui-designer:recent:remove', 'ui-designer:preferences:read',
     'ui-designer:preferences:write',
   ]) ipcMain.removeHandler(channel)

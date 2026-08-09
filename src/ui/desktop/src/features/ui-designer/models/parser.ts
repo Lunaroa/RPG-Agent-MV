@@ -182,7 +182,7 @@ function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unkn
     fillMode: ['stretch', 'cover', 'contain', 'tile'],
     backgroundRepeatMode: ['none', 'horizontal', 'vertical', 'both'],
     repeatMode: ['none', 'horizontal', 'vertical', 'both'],
-    blendMode: ['normal', 'add', 'multiply', 'screen', 'overlay'],
+    blendMode: type === 'particle' ? ['normal', 'add', 'screen'] : ['normal', 'add', 'multiply', 'screen', 'overlay'],
     fontWeight: ['normal', 'bold', 'light'],
     align: ['left', 'center', 'right'],
     verticalAlign: ['top', 'middle', 'bottom'],

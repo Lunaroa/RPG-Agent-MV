@@ -508,6 +508,57 @@
       showNode: function showNode(id) { var node = this.getNode(id); if (node && node.props) { node.props.visible = true; this.syncNodeVisibility(node, this.conditionVisibility[id] !== false); applyNodeProps(node, this.nodeViews[id], this.scene, this.conditionVisibility[id] !== false); } },
       hideNode: function hideNode(id) { var node = this.getNode(id); if (node && node.props) { node.props.visible = false; this.syncNodeVisibility(node, this.conditionVisibility[id] !== false); applyNodeProps(node, this.nodeViews[id], this.scene, this.conditionVisibility[id] !== false); } },
       setNodeProp: function setNodeProp(id, property, value) { var node = this.getNode(id); if (node && node.props) { node.props[property] = value; if (property === 'visible') this.syncNodeVisibility(node, this.conditionVisibility[id] !== false); applyNodeProps(node, this.nodeViews[id], this.scene, this.conditionVisibility[id] !== false); } },
+      patchNodes: function patchNodes(patches) {
+        if (!this.mounted) throw new Error('UI renderer patch requires a mounted scene.');
+        if (!Array.isArray(patches)) throw new TypeError('UI renderer patches must be an array.');
+        var self = this;
+        patches.forEach(function (patch) {
+          if (!patch || typeof patch.nodeId !== 'string' || !object(patch.props)) throw new TypeError('UI renderer patch is invalid.');
+          var node = self.getNode(patch.nodeId);
+          if (!node || !node.props || !self.nodeViews[patch.nodeId]) throw new Error('UI renderer patch targets an unknown node: ' + patch.nodeId);
+          Object.keys(patch.props).forEach(function (key) { node.props[key] = patch.props[key]; });
+          self.conditionCache = {};
+          var visible = self.evaluateNodeCondition(node);
+          self.conditionVisibility[node.id] = visible;
+          self.syncNodeVisibility(node, visible);
+          self.updateButtonDisabled(node);
+          applyNodeProps(node, self.nodeViews[node.id], self.scene, visible);
+        });
+        return this.getNodeBounds();
+      },
+      getNodeBounds: function getNodeBounds() {
+        var self = this;
+        return orderedNodes(this.scene).map(function (node) {
+          var props = node.props || {};
+          var width = Math.max(0, Math.abs(finite(props.width, 0) * finite(props.scaleX, 1)));
+          var height = Math.max(0, Math.abs(finite(props.height, 0) * finite(props.scaleY, 1)));
+          var view = self.nodeViews[node.id];
+          return {
+            nodeId: node.id,
+            x: finite(props.x, 0) - width * finite(props.anchorX, 0),
+            y: finite(props.y, 0) - height * finite(props.anchorY, 0),
+            width: width,
+            height: height,
+            rotation: finite(props.rotate, 0),
+            visible: Boolean(view && view.visible !== false),
+            interactive: Boolean(view && view.interactive !== false),
+          };
+        });
+      },
+      handleRendererInput: function handleRendererInput(input) {
+        if (!input || typeof input.type !== 'string') throw new TypeError('UI renderer input is invalid.');
+        var node = input.nodeId ? this.getNode(input.nodeId) : null;
+        if (!node) {
+          if (input.type === 'pointercancel' && this.focusedNodeId) this.blurNode(this.focusedNodeId);
+          return false;
+        }
+        var view = this.nodeViews[node.id];
+        if (!view || view.visible === false) return false;
+        if (input.type === 'pointerdown' && node.type === 'button') this.focusNode(node.id);
+        if (input.type === 'pointerup') this.dispatchActionsForNode(node, 'onClick', input);
+        if (input.type === 'pointercancel' && node.type === 'button') this.blurNode(node.id);
+        return true;
+      },
       tween: function tween(id, property, target, duration, easing) { var node = this.getNode(id); if (node && node.props) this.tweens.push({ node: node, prop: property, from: finite(node.props[property], 0), to: target, duration: Math.max(0, duration || 0), elapsed: 0, easing: easing || 'Linear' }); },
       updateTweens: function updateTweens() {
         var self = this;
@@ -533,6 +584,10 @@
         var ownedRoot = this.displayRoot;
         Object.keys(this.nodeViews).forEach(function (id) {
           var view = this.nodeViews[id];
+          if (view && view.__mzuiNode && view.__mzuiNode.type === 'particle') {
+            disposeParticleState(self.frameAnimationState[id], view);
+            disposeParticleVisual(view);
+          }
           if (view && view.__mzuiVideo) {
             try {
               view.__mzuiVideo.autoplay = false;
@@ -811,7 +866,10 @@
       view = new PIXI.Sprite(videoTexture.texture);
       if (videoTexture.video) view.__mzuiVideo = videoTexture.video;
     }
-    else if (node.type === 'particle' && typeof PIXI.ParticleContainer === 'function') view = new PIXI.ParticleContainer();
+    // ParticleContainer only accepts textured Sprite children in the MV/MZ
+    // PIXI versions. Keep a regular Container as the transform/filter owner;
+    // updateParticleNode installs the capability-appropriate inner layer.
+    else if (node.type === 'particle' && typeof PIXI.Container === 'function') view = new PIXI.Container();
     return view || null;
   }
 
@@ -953,60 +1011,206 @@
     }
   }
 
+  // Runtime JSON validation permits at most 10,000 particles. Keep the staged
+  // standalone plugin on the same bound; the Inspector's lower UI maximum is
+  // an authoring guard, not a second persistence/runtime contract.
+  var PARTICLE_MAX_COUNT = 10000;
+
   function updateParticleNode(node, view, frame, runtime) {
-    if (!view || node.type !== 'particle' || typeof view.addChild !== 'function' || typeof global.Sprite !== 'function') return;
+    if (!view || node.type !== 'particle' || typeof view.addChild !== 'function') return;
     var props = node.props || {};
-    var state = runtime.frameAnimationState[node.id] || (runtime.frameAnimationState[node.id] = { particles: [], elapsed: 0 });
+    var state = runtime.frameAnimationState[node.id] || (runtime.frameAnimationState[node.id] = { particles: [], pool: [], elapsed: 0, layer: null, layerKey: '' });
+    var maxParticles = particleCountLimit(props.maxParticles, runtime, node);
+    var layerKey = particleLayerKey(props);
+    if (!ensureParticleLayer(node, view, state, props, runtime, layerKey)) return;
+    configureParticleLayer(state.layer, props);
+    trimActiveParticles(state, maxParticles);
+    trimParticlePool(state, maxParticles);
+
     // The editor contract expresses emissionInterval/lifetime in game frames,
-    // not milliseconds.  Keep the simulation tied to update ticks so a 30fps
+    // not milliseconds. Keep the simulation tied to update ticks so a 30fps
     // host does not silently double a particle's lifetime or emission cadence.
     state.elapsed += 1;
     var interval = Math.max(1, Math.round(finite(props.emissionInterval, 1)));
-    if (state.elapsed % interval === 0 && state.particles.length < Math.max(0, finite(props.maxParticles, 0))) {
-      var particle = props.imagePath ? new global.Sprite(loadBitmap(props.imagePath)) : createParticleShape(props.shape, props);
-      if (!particle) return;
-      var area = props.emissionArea || 'point';
-      var areaX = area === 'rectangle' ? (Math.random() - 0.5) * finite(props.width, 0) : area === 'circle' ? Math.cos(Math.random() * Math.PI * 2) * Math.random() * finite(props.width, 0) * 0.5 : 0;
-      var areaY = area === 'rectangle' ? (Math.random() - 0.5) * finite(props.height, 0) : area === 'circle' ? Math.sin(Math.random() * Math.PI * 2) * Math.random() * finite(props.height, 0) * 0.5 : 0;
-      // Particles are children of the particle node; the node itself already
-      // carries the designer world position, so child coordinates are local.
-      particle.x = areaX; particle.y = areaY; particle.alpha = Math.max(0, Math.min(255, finite(props.startOpacity, 255))) / 255;
-      particle.scale = particle.scale || { x: 1, y: 1 }; particle.scale.x = particle.scale.y = finite(props.startScale, 1);
-      particle.tint = parseColor(props.startColor, 0xffffff);
-      particle.blendMode = resolveBlendMode(props.blendMode);
-      particle.__mzuiVelocityX = finite(props.velocityX, 0) + (Math.random() - 0.5) * finite(props.velocityRandomX, 0);
-      particle.__mzuiVelocityY = finite(props.velocityY, 0) + (Math.random() - 0.5) * finite(props.velocityRandomY, 0);
-      var lifetime = finite(props.lifetime, 1);
-      var randomLifetime = finite(props.lifetimeRandom, 0);
-      particle.__mzuiBirth = frame;
-      particle.__mzuiLife = Math.max(1, Math.round(lifetime + (Math.random() - 0.5) * randomLifetime));
-      view.addChild(particle); state.particles.push(particle);
+    if (state.elapsed % interval === 0 && state.particles.length < maxParticles) {
+      var particle = state.pool.pop() || createParticleObject(props, runtime, node);
+      if (particle) {
+        resetParticleObject(particle, props, frame);
+        state.layer.addChild(particle);
+        state.particles.push(particle);
+      }
     }
-    state.particles = state.particles.filter(function (particle) {
+    var active = [];
+    state.particles.forEach(function (particle) {
       var age = frame - particle.__mzuiBirth;
-      particle.x += finite(particle.__mzuiVelocityX, props.velocityX) + finite(props.gravityX, 0) * age / 60;
-      particle.y += finite(particle.__mzuiVelocityY, props.velocityY) + finite(props.gravityY, 0) * age / 60;
       var life = Math.max(1, particle.__mzuiLife);
       var lifeProgress = Math.max(0, Math.min(1, age / life));
-      particle.alpha = (finite(props.startOpacity, 255) + (finite(props.endOpacity, 0) - finite(props.startOpacity, 255)) * lifeProgress) / 255;
-      if (particle.scale) particle.scale.x = particle.scale.y = finite(props.startScale, 1) + (finite(props.endScale, 1) - finite(props.startScale, 1)) * lifeProgress;
+      particle.x += finite(particle.__mzuiVelocityX, props.velocityX) + finite(props.gravityX, 0) * age / 60;
+      particle.y += finite(particle.__mzuiVelocityY, props.velocityY) + finite(props.gravityY, 0) * age / 60;
+      particle.alpha = particleOpacity(props.startOpacity, props.endOpacity, lifeProgress);
+      if (particle.scale) {
+        var scale = Math.max(0, finite(props.startScale, 1) + (finite(props.endScale, 1) - finite(props.startScale, 1)) * lifeProgress);
+        particle.scale.x = particle.scale.y = scale;
+      }
       if (particle.tint !== undefined) particle.tint = mixColor(props.startColor, props.endColor, lifeProgress);
       particle.rotation = finite(particle.rotation, 0) + finite(props.rotationSpeed, 0) / 60;
-      if (age < life) return true;
-      if (typeof view.removeChild === 'function') view.removeChild(particle);
-      if (typeof particle.destroy === 'function') particle.destroy();
-      return false;
+      if (age < life) active.push(particle);
+      else recycleParticle(state, particle, maxParticles);
     });
+    state.particles = active;
   }
 
-  function createParticleShape(shape, props) {
-    if (!global.PIXI || typeof global.PIXI.Graphics !== 'function') return null;
+  function particleCountLimit(value, runtime, node) {
+    var requested = Math.max(0, Math.floor(finite(value, 0)));
+    if (requested > PARTICLE_MAX_COUNT && runtime && node) {
+      runtime.reportError(new Error('Particle maxParticles exceeds the Runtime limit of ' + PARTICLE_MAX_COUNT + '.'), 'particle-limit', { node: node.id, type: 'particle', phase: 'update' });
+    }
+    return Math.min(PARTICLE_MAX_COUNT, requested);
+  }
+
+  function particleLayerKey(props) {
+    var imagePath = typeof props.imagePath === 'string' ? props.imagePath.trim() : '';
+    if (!imagePath) return 'shape:' + String(props.shape || 'circle') + ':' + Math.max(1, finite(props.size, 8));
+    return 'image:' + imagePath;
+  }
+
+  function ensureParticleLayer(node, view, state, props, runtime, layerKey) {
+    if (state.layer && state.layerKey === layerKey) return true;
+    disposeParticleState(state, view);
+    state.particles = [];
+    state.pool = [];
+    state.elapsed = 0;
+    state.layerKey = layerKey;
+    var PIXI = global.PIXI || {};
+    if (typeof PIXI.Container !== 'function') {
+      reportParticleCapability(runtime, node, 'The current MV/MZ PIXI host does not provide Container for particle rendering.');
+      return false;
+    }
+    // MV/MZ ParticleContainer accepts only textured sprites and does not expose
+    // every per-child property required by this contract (notably tint across
+    // the supported PIXI versions). A real PIXI.Container is therefore the one
+    // canonical layer for both Graphics shapes and textured Sprites.
+    var layer = new PIXI.Container();
+    layer.__mzuiUsesContainerTint = false;
+    layer.__mzuiParticleChildType = layerKey.indexOf('shape:') === 0 ? 'graphics' : 'sprite';
+    state.layer = layer;
+    view.__mzuiParticleLayer = layer;
+    view.addChild(layer);
+    configureParticleLayer(layer, props);
+    return true;
+  }
+
+  function configureParticleLayer(layer, props) {
+    if (!layer) return;
+    layer.blendMode = resolveBlendMode(props.blendMode);
+  }
+
+  function createParticleObject(props, runtime, node) {
+    var imagePath = typeof props.imagePath === 'string' ? props.imagePath.trim() : '';
+    if (imagePath) {
+      if (typeof global.Sprite !== 'function') {
+        reportParticleCapability(runtime, node, 'The current MV/MZ host does not provide Sprite for textured particles.');
+        return null;
+      }
+      return new global.Sprite(loadBitmap(imagePath));
+    }
+    return createParticleShape(props.shape, props, runtime, node);
+  }
+
+  function resetParticleObject(particle, props, frame) {
+    var position = particleEmissionPosition(props);
+    particle.visible = true;
+    particle.x = position.x;
+    particle.y = position.y;
+    particle.alpha = particleOpacity(props.startOpacity, props.endOpacity, 0);
+    particle.scale = particle.scale || { x: 1, y: 1 };
+    particle.scale.x = particle.scale.y = Math.max(0, finite(props.startScale, 1));
+    particle.rotation = 0;
+    particle.tint = parseColor(props.startColor, 0xffffff);
+    particle.blendMode = resolveBlendMode(props.blendMode);
+    particle.__mzuiVelocityX = finite(props.velocityX, 0) + (Math.random() - 0.5) * finite(props.velocityRandomX, 0);
+    particle.__mzuiVelocityY = finite(props.velocityY, 0) + (Math.random() - 0.5) * finite(props.velocityRandomY, 0);
+    var lifetime = finite(props.lifetime, 1);
+    var randomLifetime = finite(props.lifetimeRandom, 0);
+    particle.__mzuiBirth = frame;
+    particle.__mzuiLife = Math.max(1, Math.round(lifetime + (Math.random() - 0.5) * randomLifetime));
+  }
+
+  function particleEmissionPosition(props) {
+    var area = props.emissionArea || 'point';
+    if (area === 'rectangle') return { x: (Math.random() - 0.5) * finite(props.width, 0), y: (Math.random() - 0.5) * finite(props.height, 0) };
+    if (area === 'circle') {
+      var angle = Math.random() * Math.PI * 2;
+      var radius = Math.sqrt(Math.random()) * Math.min(Math.abs(finite(props.width, 0)), Math.abs(finite(props.height, 0))) * 0.5;
+      return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+    }
+    return { x: 0, y: 0 };
+  }
+
+  function particleOpacity(from, to, progress) {
+    var value = finite(from, 255) + (finite(to, 0) - finite(from, 255)) * progress;
+    return Math.max(0, Math.min(255, value)) / 255;
+  }
+
+  function recycleParticle(state, particle, maxParticles) {
+    if (particle.parent && typeof particle.parent.removeChild === 'function') particle.parent.removeChild(particle);
+    particle.visible = false;
+    if (state.pool.length < maxParticles) state.pool.push(particle);
+    else destroyParticleObject(particle);
+  }
+
+  function trimActiveParticles(state, maxParticles) {
+    while (state.particles.length > maxParticles) recycleParticle(state, state.particles.pop(), maxParticles);
+  }
+
+  function trimParticlePool(state, maxParticles) {
+    while (state.pool.length > maxParticles) destroyParticleObject(state.pool.pop());
+  }
+
+  function disposeParticleState(state, view) {
+    if (!state) return;
+    var particles = (state.particles || []).concat(state.pool || []);
+    particles.forEach(destroyParticleObject);
+    state.particles = [];
+    state.pool = [];
+    var layer = state.layer || view && view.__mzuiParticleLayer;
+    if (layer && layer.parent && typeof layer.parent.removeChild === 'function') layer.parent.removeChild(layer);
+    if (layer) layer.__mzuiParticleDestroyed = true;
+    if (layer && typeof layer.destroy === 'function') { try { layer.destroy({ children: false, texture: false, baseTexture: false }); } catch (_) {} }
+    state.layer = null;
+    state.layerKey = '';
+    if (view) view.__mzuiParticleLayer = null;
+  }
+
+  function destroyParticleObject(particle) {
+    if (!particle || particle.__mzuiParticleDestroyed) return;
+    particle.__mzuiParticleDestroyed = true;
+    if (particle.parent && typeof particle.parent.removeChild === 'function') particle.parent.removeChild(particle);
+    if (typeof particle.destroy === 'function') { try { particle.destroy({ children: true, texture: false, baseTexture: false }); } catch (_) {} }
+  }
+
+  function reportParticleCapability(runtime, node, message) {
+    if (runtime && node) runtime.reportError(new Error(message), 'particle-capability', { node: node.id, type: 'particle', phase: 'update' });
+  }
+
+  function createParticleShape(shape, props, runtime, node) {
+    if (!global.PIXI || typeof global.PIXI.Graphics !== 'function') {
+      reportParticleCapability(runtime, node, 'The current MV/MZ PIXI host does not provide Graphics for shape particles.');
+      return null;
+    }
     var graphics = new global.PIXI.Graphics();
     var size = Math.max(1, finite(props.size, 8));
-    if (typeof graphics.beginFill === 'function') graphics.beginFill(parseColor(props.startColor, 0xffffff));
+    // White geometry keeps start/end tint interpolation exact instead of
+    // multiplying a baked fill color by a second tint color.
+    if (typeof graphics.beginFill === 'function') graphics.beginFill(0xffffff);
     if (shape === 'circle' && typeof graphics.drawCircle === 'function') graphics.drawCircle(0, 0, size / 2);
     else if (shape === 'star' && typeof graphics.drawStar === 'function') graphics.drawStar(0, 0, 5, size / 2);
-    else if (typeof graphics.drawRect === 'function') graphics.drawRect(-size / 2, -size / 2, size, size);
+    else if (shape === 'square' && typeof graphics.drawRect === 'function') graphics.drawRect(-size / 2, -size / 2, size, size);
+    else {
+      if (typeof graphics.destroy === 'function') { try { graphics.destroy(); } catch (_) {} }
+      reportParticleCapability(runtime, node, 'Unsupported particle shape: ' + String(shape));
+      return null;
+    }
     if (typeof graphics.endFill === 'function') graphics.endFill();
     return graphics;
   }
@@ -1029,13 +1233,58 @@
     if (!view) return;
     reportUnsupportedBlendMode(view, props.blendMode, 'particle');
     view.blendMode = resolveBlendMode(props.blendMode);
-    if (finite(props.glow, 0) > 0 && global.PIXI && global.PIXI.filters && typeof global.PIXI.filters.GlowFilter === 'function') {
-      if (!view.__mzuiGlowFilter) view.__mzuiGlowFilter = new global.PIXI.filters.GlowFilter();
-      view.__mzuiGlowFilter.distance = finite(props.glow, 0);
+    var glow = Math.max(0, finite(props.glow, 0));
+    if (glow > 0 && global.PIXI && typeof global.PIXI.Filter === 'function') {
+      if (!view.__mzuiGlowFilter) view.__mzuiGlowFilter = createParticleGlowFilter();
+      var runtime = view.__mzuiRuntime;
+      var scene = runtime && runtime.scene;
+      var width = Math.max(1, finite(scene && scene.meta && scene.meta.canvasWidth, finite(global.Graphics && global.Graphics.width, 816)));
+      var height = Math.max(1, finite(scene && scene.meta && scene.meta.canvasHeight, finite(global.Graphics && global.Graphics.height, 624)));
+      view.__mzuiGlowFilter.uniforms.mzuiGlowOffset = [glow / width, glow / height];
+      view.__mzuiGlowFilter.uniforms.mzuiGlowStrength = Math.min(1, glow / 8);
+      view.__mzuiGlowFilter.padding = Math.ceil(glow);
       view.filters = [view.__mzuiGlowFilter];
-    } else if (view.filters) {
-      view.filters = null;
+    } else {
+      if (glow > 0 && view.__mzuiRuntime && view.__mzuiNode) {
+        reportParticleCapability(view.__mzuiRuntime, view.__mzuiNode, 'The current MV/MZ PIXI host does not provide Filter for particle glow.');
+      }
+      disposeParticleVisual(view);
     }
+  }
+
+  function createParticleGlowFilter() {
+    var fragment = [
+      'varying vec2 vTextureCoord;',
+      'uniform sampler2D uSampler;',
+      'uniform vec2 mzuiGlowOffset;',
+      'uniform float mzuiGlowStrength;',
+      'void main(void) {',
+      '  vec4 base = texture2D(uSampler, vTextureCoord);',
+      '  vec2 d = mzuiGlowOffset;',
+      '  float halo = texture2D(uSampler, vTextureCoord + vec2(d.x, 0.0)).a;',
+      '  halo = max(halo, texture2D(uSampler, vTextureCoord - vec2(d.x, 0.0)).a);',
+      '  halo = max(halo, texture2D(uSampler, vTextureCoord + vec2(0.0, d.y)).a);',
+      '  halo = max(halo, texture2D(uSampler, vTextureCoord - vec2(0.0, d.y)).a);',
+      '  halo = max(halo, texture2D(uSampler, vTextureCoord + d).a);',
+      '  halo = max(halo, texture2D(uSampler, vTextureCoord - d).a);',
+      '  halo = max(halo, texture2D(uSampler, vTextureCoord + vec2(d.x, -d.y)).a);',
+      '  halo = max(halo, texture2D(uSampler, vTextureCoord + vec2(-d.x, d.y)).a);',
+      '  float glowAlpha = max(0.0, halo - base.a) * mzuiGlowStrength;',
+      '  gl_FragColor = vec4(base.rgb + vec3(glowAlpha), max(base.a, glowAlpha));',
+      '}',
+    ].join('\n');
+    // Let each bundled PIXI version extract its own uniform metadata; passing
+    // raw values here is incompatible with MV's PIXI 4 uniformData shape.
+    return new global.PIXI.Filter(undefined, fragment);
+  }
+
+  function disposeParticleVisual(view) {
+    if (!view) return;
+    view.filters = null;
+    if (view.__mzuiGlowFilter && typeof view.__mzuiGlowFilter.destroy === 'function') {
+      try { view.__mzuiGlowFilter.destroy(); } catch (_) {}
+    }
+    view.__mzuiGlowFilter = null;
   }
 
   function updateSpriteScroll(node, view) {

@@ -24,6 +24,8 @@ import type {
   UiDesignerRuntimeExportRequest,
   UiDesignerRuntimeInstallRequest,
   UiDesignerRuntimeStageResult,
+  UiDesignerRendererHostSession,
+  UiDesignerRendererHostStopReason,
   UiDesignerSaveResult,
   UiDesignerSceneStageRequest,
   UiFileResult,
@@ -150,6 +152,9 @@ declare global {
         startPreview(request: UiDesignerPreviewStartRequest): Promise<UiPreviewResult | UiFileResult<never>>;
         currentPreview(): Promise<UiPreviewResult | UiFileResult<never>>;
         stopPreview(sessionId?: string): Promise<UiPreviewResult | UiFileResult<never>>;
+        startRenderer(request: UiDesignerProjectRequest & { generation: number }): Promise<UiFileResult<UiDesignerRendererHostSession>>;
+        confirmRenderer(sessionId: string): Promise<UiFileResult<UiDesignerRendererHostSession>>;
+        stopRenderer(request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }): Promise<UiFileResult<null>>;
         listRecentFiles(): Promise<UiFileResult<UiDesignerRecentFileRecord[]>>;
         removeRecentFile(filePath: string): Promise<UiFileResult<null>>;
         writeRecovery(request: UiDesignerRecoveryWriteRequest): Promise<UiFileResult<UiDesignerRecoveryRecord>>;
@@ -554,6 +559,9 @@ export const uiDesigner = {
   startPreview(request: UiDesignerPreviewStartRequest) { return desktopApi().uiDesigner.startPreview(toPlain(request)) },
   currentPreview() { return desktopApi().uiDesigner.currentPreview() },
   stopPreview(sessionId?: string) { return desktopApi().uiDesigner.stopPreview(sessionId) },
+  startRenderer(request: UiDesignerProjectRequest & { generation: number }) { return desktopApi().uiDesigner.startRenderer(toPlain(request)) },
+  confirmRenderer(sessionId: string) { return desktopApi().uiDesigner.confirmRenderer(sessionId) },
+  stopRenderer(request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }) { return desktopApi().uiDesigner.stopRenderer(toPlain(request)) },
   listRecentFiles() { return desktopApi().uiDesigner.listRecentFiles() },
   removeRecentFile(filePath: string) { return desktopApi().uiDesigner.removeRecentFile(filePath) },
   writeRecovery(request: UiDesignerRecoveryWriteRequest) { return desktopApi().uiDesigner.writeRecovery(toPlain(request)) },

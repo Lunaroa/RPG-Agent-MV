@@ -422,6 +422,17 @@ describe('ui designer export and validation', () => {
     source.nodes[0].conditionFrequency = 'unsupported' as never
     assert.equal(parseUiDocument(source).ok, false)
   })
+
+  test('keeps particle blend modes aligned with the shared Runtime contract', () => {
+    const source = createUiDocument()
+    const particle = createDefaultNode('particle', { id: 'particle_contract', name: 'Particle', parentId: 'node_root' })
+    particle.props.blendMode = 'multiply' as never
+    source.nodes.push(particle)
+    source.nodes[0].children.push(particle.id)
+    const parsed = parseUiDocument(source)
+    assert.equal(parsed.ok, false)
+    assert.equal(parsed.issues.some((entry) => entry.path === 'nodes.1.props.blendMode'), true)
+  })
 })
 
 describe('ui designer history, geometry and performance', () => {

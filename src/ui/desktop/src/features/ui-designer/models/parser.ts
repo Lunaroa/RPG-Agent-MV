@@ -18,6 +18,7 @@ import { migrateUiDesignerDocument } from '@contract/ui-designer-script'
 import { cloneUiDocument, createDefaultNode, createUiDocument, setCanvasDimensions } from './document'
 import { normalizeDocumentGeometry } from './geometry'
 import { validateTreeInvariants } from './tree'
+import { isUiDesignerProjectRelativeResourcePath } from '@contract/ui-designer-resources'
 
 export interface UiDocumentParseSuccess {
   ok: true
@@ -174,6 +175,7 @@ function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unkn
     if (numeric.has(key) && !isFiniteNumber(value)) issues.push(issue(`${type}.${key} must be a finite number`, 'invalid-value', `${path}.${key}`))
     if (booleans.has(key) && typeof value !== 'boolean') issues.push(issue(`${type}.${key} must be boolean`, 'invalid-document-shape', `${path}.${key}`))
     if (strings.has(key) && typeof value !== 'string') issues.push(issue(`${type}.${key} must be a string`, 'invalid-document-shape', `${path}.${key}`))
+    if (['backgroundPath', 'path', 'fontFile', 'hoverSe', 'clickSe', 'trackImage', 'fillImage', 'posterPath', 'imagePath'].includes(key) && typeof value === 'string' && !isUiDesignerProjectRelativeResourcePath(value)) issues.push(issue(`${type}.${key} must be project-relative`, 'invalid-value', `${path}.${key}`))
   }
   const enumValues: Record<string, readonly string[]> = {
     backgroundFillMode: ['stretch', 'cover', 'contain', 'tile'],
@@ -216,11 +218,13 @@ function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unkn
     if (!Array.isArray(props.frames)) issues.push(issue('frameAnimation.frames must be an array', 'invalid-document-shape', `${path}.frames`))
     else props.frames.forEach((frame, index) => {
       if (!isObject(frame) || typeof frame.id !== 'string' || !frame.id.trim() || typeof frame.path !== 'string' || !isFiniteNumber(frame.duration) || frame.duration < 0) issues.push(issue('Frame requires id, path, and non-negative finite duration', 'invalid-document-shape', `${path}.frames.${index}`))
+      else if (!isUiDesignerProjectRelativeResourcePath(frame.path)) issues.push(issue('Frame resource path must be project-relative', 'invalid-value', `${path}.frames.${index}.path`))
     })
   }
   if (type === 'button' && has(props, 'imageStates')) {
     const imageStates = props.imageStates
     if (!isObject(imageStates) || ['normal', 'hover', 'pressed', 'disabled'].some((key) => typeof imageStates[key] !== 'string')) issues.push(issue('button.imageStates requires four string paths', 'invalid-document-shape', `${path}.imageStates`))
+    else for (const key of ['normal', 'hover', 'pressed', 'disabled']) if (!isUiDesignerProjectRelativeResourcePath(imageStates[key] as string)) issues.push(issue(`button.imageStates.${key} must be project-relative`, 'invalid-value', `${path}.imageStates.${key}`))
   }
 }
 

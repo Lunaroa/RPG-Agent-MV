@@ -44,6 +44,7 @@ function compileVue(relativePath: string): string {
 describe('project assets acceptance structure', () => {
   test('compiles the asset view and shared audio components', () => {
     compileVue('views/ProjectAssetsView.vue');
+    compileVue('components/ProjectAssetsWorkspace.vue');
     compileVue('components/AssetEffectInfoPreview.vue');
     compileVue('components/AudioWaveformSeek.vue');
     compileVue('components/ProjectAssetsAudioBar.vue');
@@ -51,13 +52,13 @@ describe('project assets acceptance structure', () => {
   });
 
   test('uses base entry categories for nested-file mutations', () => {
-    const source = read('views/ProjectAssetsView.vue');
+    const source = read('components/ProjectAssetsWorkspace.vue');
     assert.match(source, /category:\s*entryCategoryId\(entry\)/);
     assert.doesNotMatch(source, /category:\s*isFavoritesSelection\.value\s*\?/);
   });
 
   test('keeps audio on the bottom player and removes asset-page staging controls', () => {
-    const source = read('views/ProjectAssetsView.vue');
+    const source = read('components/ProjectAssetsWorkspace.vue');
     assert.match(source, /singleSelectedFile && !isAudioEntry\(singleSelectedFile\)/);
     assert.match(source, /playAudioEntries\(\[item\.entry\]\)/);
     assert.doesNotMatch(source, /data-ui-id="project-assets-staging-bar"/);
@@ -66,7 +67,7 @@ describe('project assets acceptance structure', () => {
   });
 
   test('shows open, favorite marker, notes, pressed preview state, and clamped context menus', () => {
-    const source = read('views/ProjectAssetsView.vue');
+    const source = read('components/ProjectAssetsWorkspace.vue');
     assert.match(source, /project-assets-ctx-open/);
     assert.match(source, /projectAssets\.openFile/);
     assert.match(source, /project-assets-tree-favorite/);
@@ -77,7 +78,7 @@ describe('project assets acceptance structure', () => {
   });
 
   test('plays unencrypted effect assets through the in-panel particle preview frame', () => {
-    const source = read('views/ProjectAssetsView.vue');
+    const source = read('components/ProjectAssetsWorkspace.vue');
     const effectPreview = read('components/AssetEffectInfoPreview.vue');
     assert.match(source, /buildProjectAssetEffectPreview\(entry\.name\)/);
     assert.match(source, /projectAssets\.previewEffect/);

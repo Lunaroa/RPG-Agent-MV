@@ -150,6 +150,22 @@ describe('ui designer document service', () => {
     assert.ok(invalidMetaReport.errors.some((issue) => issue.path === 'meta.sceneBase' && issue.code === 'invalid-value'));
   });
 
+  test('rejects unsafe direct and nested project resource paths', () => {
+    const uncPath = `${path.win32.sep}${path.win32.sep}${['host.invalid', 'share', 'hover.png'].join(path.win32.sep)}`;
+    const direct = sampleDocument();
+    direct.nodes[0].props.backgroundPath = '../outside.png';
+    assert.ok(validateUiDesignerDocument(direct).errors.some((issue) => issue.path === '$.resources'));
+
+    const nested = sampleDocument();
+    (nested.nodes[0].props as unknown as Record<string, unknown>).imageStates = {
+      normal: 'img/pictures/normal.png',
+      hover: uncPath,
+      pressed: '',
+      disabled: '',
+    };
+    assert.ok(validateUiDesignerDocument(nested).errors.some((issue) => issue.path === '$.resources'));
+  });
+
   test('accepts the canonical empty frame list as a warning', () => {
     const document = sampleDocument();
     const frame = structuredClone(document.nodes[0]);

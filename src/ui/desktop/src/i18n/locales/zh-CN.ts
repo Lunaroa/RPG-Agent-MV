@@ -90,6 +90,8 @@ const zhCN = {
     'projectAssets.deleteMany': '删除（{{count}}）',
     'projectAssets.selectionCount': '已选择 {{count}} 个文件',
     'projectAssets.selectionSize': '共 {{size}}',
+    'projectAssets.selectionUse': '使用所选资源',
+    'projectAssets.selectionClear': '清空',
     'projectAssets.favorite': '收藏',
     'projectAssets.unfavorite': '取消收藏',
     'projectAssets.favoritesNode': '收藏',

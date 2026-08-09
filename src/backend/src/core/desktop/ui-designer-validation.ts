@@ -16,6 +16,7 @@ import {
   uiSceneScriptSyntaxError,
 } from '../../../../contract/ui-designer-script.ts';
 import { normalizeUiDesignerDocumentGeometry } from '../../../../contract/ui-designer-geometry.ts';
+import { assertUiDesignerDocumentResourcePaths } from '../../../../contract/ui-designer-resources.ts';
 
 const NODE_TYPES = new Set<string>(UI_DESIGNER_NODE_TYPES);
 const EVENT_NAMES = new Set([
@@ -270,6 +271,11 @@ export function validateUiDesignerDocument(value: unknown): UiValidationReport {
   }
 
   validateSceneScript(value.sceneScript, addError);
+  try {
+    assertUiDesignerDocumentResourcePaths(value);
+  } catch (error) {
+    addError('invalid-value', error instanceof Error ? error.message : String(error), '$.resources');
+  }
   return {
     valid: errors.length === 0,
     issues: [...errors, ...warnings],

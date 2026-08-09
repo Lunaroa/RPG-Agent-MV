@@ -92,6 +92,8 @@ const enUS = {
     'projectAssets.deleteMany': 'Delete ({{count}})',
     'projectAssets.selectionCount': '{{count}} files selected',
     'projectAssets.selectionSize': '{{size}} total',
+    'projectAssets.selectionUse': 'Use selected resource',
+    'projectAssets.selectionClear': 'Clear',
     'projectAssets.favorite': 'Add to Favorites',
     'projectAssets.unfavorite': 'Remove from Favorites',
     'projectAssets.favoritesNode': 'Favorites',

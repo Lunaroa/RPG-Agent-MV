@@ -123,6 +123,30 @@ test('integer geometry and shared node actions guard locked selections and ances
   assert.equal(designer.reparent(topFirstId, 'node_root', 'before'), false)
 })
 
+test('resource property execution rejects unsafe nested paths before document mutation', () => {
+  const designer = useUiDesigner()
+  designer.addNode('button', 'node_root')
+  const buttonId = designer.selectedIds.value[0]
+  const button = designer.document.value.nodes.find((node) => node.id === buttonId)
+  assert.equal(button?.type, 'button')
+  const originalStates = button?.type === 'button' ? { ...button.props.imageStates } : undefined
+  designer.updateNodeProperty(buttonId, 'imageStates', {
+    normal: 'img/pictures/normal.png',
+    hover: '../outside.png',
+    pressed: '',
+    disabled: '',
+  })
+  const unchangedButton = designer.document.value.nodes.find((node) => node.id === buttonId)
+  assert.deepEqual(unchangedButton?.type === 'button' ? unchangedButton.props.imageStates : undefined, originalStates)
+  assert.match(designer.actionError.value, /project/i)
+
+  designer.addNode('frameAnimation', 'node_root')
+  const frameId = designer.selectedIds.value[0]
+  designer.updateNodeProperty(frameId, 'frames', [{ id: 'frame_001', path: 'asset://preview/frame.png', duration: 100 }])
+  const unchangedFrame = designer.document.value.nodes.find((node) => node.id === frameId)
+  assert.deepEqual(unchangedFrame?.type === 'frameAnimation' ? unchangedFrame.props.frames : undefined, [])
+})
+
 test('preview diagnostics follow the active session and retain final cleanup diagnostics', async () => {
   const startDiagnostics = [{ schemaVersion: '1.0.0' as const, sessionId: 'preview-diagnostics', scene: 'Scene_Main', file: 'sceneScript.source', node: 'node_root', type: 'code', phase: 'ready', event: null, code: 'UI_CODE_ERROR', severity: 'error' as const, label: 'Code error', message: 'syntax error', count: 1 }]
   const stopDiagnostics = [{ ...startDiagnostics[0], message: 'cleanup complete', count: 2 }]

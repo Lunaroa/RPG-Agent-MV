@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, isRef, ref, watch, type Ref } from 'vue'
+import { computed, isRef, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
-import type { UiNode, UiResourceEntry, UiRuntimeDiagnostic, UiValidationIssue } from '@contract/ui-designer'
+import type { UiNode, UiRuntimeDiagnostic, UiValidationIssue } from '@contract/ui-designer'
+import type { UiDesignerManagedAssetKind } from '@contract/ui-designer-resources'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiPropertyField from './UiPropertyField.vue'
 import UiDesignerConditions from './UiDesignerConditions.vue'
@@ -10,14 +11,17 @@ import UiDesignerAnimations from './UiDesignerAnimations.vue'
 import UiPaddingEditor from './UiPaddingEditor.vue'
 import UiButtonStatesEditor from './UiButtonStatesEditor.vue'
 import UiFrameListEditor from './UiFrameListEditor.vue'
-import UiDesignerResourcePicker from './UiDesignerResourcePicker.vue'
+import ProjectAssetsWorkspace from '../../../components/ProjectAssetsWorkspace.vue'
+
+type InspectorPurpose = 'geometry' | 'content' | 'appearance' | 'resources' | 'behavior'
 
 interface FieldDescriptor {
   key: string
   kind: 'number' | 'text' | 'boolean' | 'color' | 'enum' | 'resource'
   help?: string
   multiline?: boolean
-  resourceCategory?: 'image' | 'audio' | 'video' | 'font'
+  resourceCategory?: UiDesignerManagedAssetKind
+  purpose?: InspectorPurpose
   options?: Array<{ label: string; value: string }>
   min?: number
   max?: number
@@ -42,31 +46,41 @@ const selectedRuntimeDiagnostics = computed(() => {
 })
 const nodeNameDraft = ref('')
 watch(selectedNode, (node) => { nodeNameDraft.value = node?.name ?? '' }, { immediate: true })
-const resourcePickerVisible = ref(false)
-const resourcePickerCategory = ref<UiResourceEntry['category']>('image')
-const resourcePickerCurrentPath = ref('')
-let resolveResourcePicker: ((path: string | null) => void) | undefined
-const openResourcePicker = (category: FieldDescriptor['resourceCategory'] = 'image', currentPath = '') => new Promise<string | null>((resolve) => {
-  resolveResourcePicker?.(null)
-  resolveResourcePicker = resolve
-  resourcePickerCategory.value = category ?? 'image'
-  resourcePickerCurrentPath.value = currentPath
-  resourcePickerVisible.value = true
+const resourceWorkspaceVisible = ref(false)
+const resourceWorkspaceCategory = ref<UiDesignerManagedAssetKind>('image')
+const resourceWorkspaceCurrentPath = ref('')
+const resourceWorkspaceMultiple = ref(false)
+const resourceWorkspaceRequest = ref(0)
+let resolveResourceWorkspace: ((value: string | string[] | null) => void) | undefined
+const openResourceWorkspace = (category: UiDesignerManagedAssetKind = 'image', currentPath = '') => new Promise<string | null>((resolve) => {
+  resolveResourceWorkspace?.(null)
+  resolveResourceWorkspace = (value) => resolve(typeof value === 'string' ? value : null)
+  resourceWorkspaceRequest.value += 1
+  resourceWorkspaceCategory.value = category
+  resourceWorkspaceCurrentPath.value = currentPath
+  resourceWorkspaceMultiple.value = false
+  resourceWorkspaceVisible.value = true
 })
-const selectResource = (path: string) => {
-  const resolve = resolveResourcePicker
-  resolveResourcePicker = undefined
-  resourcePickerVisible.value = false
-  resolve?.(path)
+const openMultiResourceWorkspace = (category: UiDesignerManagedAssetKind = 'image') => new Promise<string[] | null>((resolve) => {
+  resolveResourceWorkspace?.(null)
+  resolveResourceWorkspace = (value) => resolve(Array.isArray(value) ? value : null)
+  resourceWorkspaceRequest.value += 1
+  resourceWorkspaceCategory.value = category
+  resourceWorkspaceCurrentPath.value = ''
+  resourceWorkspaceMultiple.value = true
+  resourceWorkspaceVisible.value = true
+})
+const settleResourceWorkspace = (value: string | string[] | null) => {
+  const resolve = resolveResourceWorkspace
+  resolveResourceWorkspace = undefined
+  resourceWorkspaceVisible.value = false
+  resolve?.(value)
 }
-const closeResourcePicker = (visible: boolean) => {
-  resourcePickerVisible.value = visible
-  if (!visible) {
-    const resolve = resolveResourcePicker
-    resolveResourcePicker = undefined
-    resolve?.(null)
-  }
+const closeResourceWorkspace = (visible: boolean) => {
+  resourceWorkspaceVisible.value = visible
+  if (!visible && resolveResourceWorkspace) settleResourceWorkspace(null)
 }
+onBeforeUnmount(() => settleResourceWorkspace(null))
 
 const labels: Record<string, UiDesignerMessageKey> = {
   x: 'x' as UiDesignerMessageKey, y: 'y' as UiDesignerMessageKey, width: 'width', height: 'height', scaleX: 'scaleX', scaleY: 'scaleY', rotate: 'rotate', opacity: 'opacity', visible: 'visible', anchorX: 'anchorX', anchorY: 'anchorY', zIndex: 'zIndex',
@@ -85,6 +99,18 @@ const baseFields: FieldDescriptor[] = [
   { key: 'scaleX', kind: 'number', min: 0.1, max: 5, step: 0.05 }, { key: 'scaleY', kind: 'number', min: 0.1, max: 5, step: 0.05 }, { key: 'rotate', kind: 'number', min: -180, max: 180 }, { key: 'opacity', kind: 'number', min: 0, max: 255 }, { key: 'visible', kind: 'boolean' }, { key: 'anchorX', kind: 'number', min: 0, max: 1, step: 0.05 }, { key: 'anchorY', kind: 'number', min: 0, max: 1, step: 0.05 }, { key: 'zIndex', kind: 'number' },
 ]
 
+const GEOMETRY_FIELDS = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'anchorX', 'anchorY', 'zIndex'])
+const CONTENT_FIELDS = new Set(['content', 'richText', 'wrapWidth', 'currentValue', 'maxValue'])
+const BEHAVIOR_FIELDS = new Set(['visible', 'clip', 'scrollX', 'scrollY', 'showGuides', 'defaultFrameDuration', 'loop', 'speed', 'initialFrame', 'animateValue', 'clickThrough', 'autoplay', 'muted', 'playbackRate', 'maxParticles', 'emissionInterval', 'emissionArea', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY', 'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'disabledCondition'])
+const purposeForField = (field: FieldDescriptor): InspectorPurpose => {
+  if (field.purpose) return field.purpose
+  if (field.kind === 'resource') return 'resources'
+  if (GEOMETRY_FIELDS.has(field.key)) return 'geometry'
+  if (CONTENT_FIELDS.has(field.key)) return 'content'
+  if (BEHAVIOR_FIELDS.has(field.key)) return 'behavior'
+  return 'appearance'
+}
+
 const enumLabels: Record<string, UiDesignerMessageKey> = {
   none: 'optionNone', stretch: 'optionStretch', cover: 'optionCover', contain: 'optionContain', tile: 'optionTile', horizontal: 'optionHorizontal', vertical: 'optionVertical', both: 'optionBoth', normal: 'optionNormal', add: 'optionAdd', multiply: 'optionMultiply', screen: 'optionScreen', overlay: 'optionOverlay', bold: 'optionBold', light: 'optionLight', left: 'optionLeft', center: 'optionCenter', right: 'optionRight', top: 'optionTop', middle: 'optionMiddle', bottom: 'optionBottom', point: 'optionPoint', rectangle: 'optionRectangle', circle: 'optionCircle', square: 'optionSquare', star: 'optionStar', leftToRight: 'optionLeftToRight', rightToLeft: 'optionRightToLeft', bottomToTop: 'optionBottomToTop', topToBottom: 'optionTopToBottom',
 }
@@ -102,15 +128,32 @@ const fields = computed<FieldDescriptor[]>(() => {
     frameAnimation: [{ key: 'defaultFrameDuration', kind: 'number', min: 0 }, { key: 'loop', kind: 'boolean' }, { key: 'speed', kind: 'number', min: 0.1 }, { key: 'initialFrame', kind: 'number', min: 0 }, { key: 'fillMode', kind: 'enum', options: enumOptions(['stretch', 'cover', 'contain', 'tile']) }],
     button: [...commonText.map((field) => field.key === 'content' ? { ...field, multiline: false } : field), { key: 'borderColor', kind: 'color' }, { key: 'borderWidth', kind: 'number', min: 0 }, { key: 'borderRadius', kind: 'number', min: 0 }, { key: 'hoverTint', kind: 'color' }, { key: 'pressedScale', kind: 'number', min: 0 }, { key: 'disabledCondition', kind: 'text' }, { key: 'focusColor', kind: 'color' }, { key: 'focusWidth', kind: 'number', min: 0 }, { key: 'hoverSe', kind: 'resource', resourceCategory: 'audio' }, { key: 'clickSe', kind: 'resource', resourceCategory: 'audio' }],
     text: commonText,
-    progressBar: [{ key: 'trackImage', kind: 'resource' }, { key: 'trackColor', kind: 'color' }, { key: 'trackRadius', kind: 'number', min: 0 }, { key: 'fillImage', kind: 'resource' }, { key: 'fillColor', kind: 'color' }, { key: 'fillRadius', kind: 'number', min: 0 }, { key: 'fillDirection', kind: 'enum', options: enumOptions(['leftToRight', 'rightToLeft', 'bottomToTop', 'topToBottom']) }, { key: 'currentValue', kind: 'number', min: 0 }, { key: 'maxValue', kind: 'number', min: 1 }, { key: 'animateValue', kind: 'boolean' }],
+    progressBar: [{ key: 'trackImage', kind: 'resource', resourceCategory: 'image' }, { key: 'trackColor', kind: 'color' }, { key: 'trackRadius', kind: 'number', min: 0 }, { key: 'fillImage', kind: 'resource', resourceCategory: 'image' }, { key: 'fillColor', kind: 'color' }, { key: 'fillRadius', kind: 'number', min: 0 }, { key: 'fillDirection', kind: 'enum', options: enumOptions(['leftToRight', 'rightToLeft', 'bottomToTop', 'topToBottom']) }, { key: 'currentValue', kind: 'number', min: 0 }, { key: 'maxValue', kind: 'number', min: 1 }, { key: 'animateValue', kind: 'boolean' }],
     overlay: [{ key: 'fillColor', kind: 'color' }, { key: 'clickThrough', kind: 'boolean' }],
     video: [{ key: 'path', kind: 'resource', resourceCategory: 'video' }, { key: 'autoplay', kind: 'boolean' }, { key: 'loop', kind: 'boolean' }, { key: 'muted', kind: 'boolean' }, { key: 'playbackRate', kind: 'number', min: 0.1 }, { key: 'posterPath', kind: 'resource', resourceCategory: 'image' }],
     particle: [{ key: 'maxParticles', kind: 'number', min: 1, max: 500, step: 1 }, { key: 'emissionInterval', kind: 'number', min: 0, step: 1 }, { key: 'emissionArea', kind: 'enum', options: enumOptions(['point', 'rectangle', 'circle']) }, { key: 'imagePath', kind: 'resource', resourceCategory: 'image' }, { key: 'shape', kind: 'enum', options: enumOptions(['circle', 'square', 'star']) }, { key: 'velocityX', kind: 'number', step: 0.1 }, { key: 'velocityY', kind: 'number', step: 0.1 }, { key: 'velocityRandomX', kind: 'number', min: 0, step: 0.1 }, { key: 'velocityRandomY', kind: 'number', min: 0, step: 0.1 }, { key: 'gravityX', kind: 'number', step: 0.1 }, { key: 'gravityY', kind: 'number', step: 0.1 }, { key: 'rotationSpeed', kind: 'number', step: 0.1 }, { key: 'lifetime', kind: 'number', min: 0, step: 1 }, { key: 'lifetimeRandom', kind: 'number', min: 0, step: 1 }, { key: 'startScale', kind: 'number', min: 0, step: 0.05 }, { key: 'endScale', kind: 'number', min: 0, step: 0.05 }, { key: 'startOpacity', kind: 'number', min: 0, max: 255, step: 1 }, { key: 'endOpacity', kind: 'number', min: 0, max: 255, step: 1 }, { key: 'startColor', kind: 'color' }, { key: 'endColor', kind: 'color' }, { key: 'blendMode', kind: 'enum', options: enumOptions(['normal', 'add', 'screen']) }, { key: 'glow', kind: 'number', min: 0, step: 0.1 }],
   }
   const known = new Set([...baseFields, ...special[node.type]].map((field) => field.key))
   const inferred = Object.entries(node.props as unknown as Record<string, unknown>).filter(([key, value]) => !known.has(key) && (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string')).map(([key, value]): FieldDescriptor => ({ key, kind: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : key.toLowerCase().includes('color') ? 'color' : 'text' }))
-  return [...baseFields, ...special[node.type], ...inferred].map((field) => ({ ...field, help: field.help ?? t('propertyHelpGeneric') }))
+  return [...baseFields, ...special[node.type], ...inferred].map((field) => ({ ...field, purpose: purposeForField(field), help: field.help ?? t('propertyHelpGeneric') }))
 })
+
+const PURPOSE_ORDER: InspectorPurpose[] = ['geometry', 'content', 'appearance', 'resources', 'behavior']
+const purposeLabelKey: Record<InspectorPurpose, UiDesignerMessageKey> = {
+  geometry: 'inspectorGroupGeometry',
+  content: 'inspectorGroupContent',
+  appearance: 'inspectorGroupAppearance',
+  resources: 'inspectorGroupResources',
+  behavior: 'inspectorGroupBehavior',
+}
+const fieldGroups = computed(() => PURPOSE_ORDER.flatMap((purpose) => {
+  const items = fields.value.filter((field) => field.purpose === purpose)
+  const hasSpecial = Boolean(selectedNode.value && (
+    (purpose === 'appearance' && (selectedNode.value.type === 'text' || selectedNode.value.type === 'button'))
+    || (purpose === 'resources' && (selectedNode.value.type === 'button' || selectedNode.value.type === 'frameAnimation'))
+  ))
+  return items.length || hasSpecial ? [{ purpose, label: t(purposeLabelKey[purpose]), fields: items }] : []
+}))
 
 const propValue = (key: string): unknown => selectedNode.value ? (selectedNode.value.props as unknown as Record<string, unknown>)[key] : undefined
 const propMode = (key: string) => selectedNode.value?.propModes[key] ?? 'value'
@@ -123,7 +166,6 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
   if (targetId) designer.setPropertyCode(targetId, key, code, sceneId)
 }
 const commitNodeName = () => { if (selectedNode.value) designer.renameNode(selectedNode.value.id, nodeNameDraft.value) }
-const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?? Promise.resolve(null)
 </script>
 
 <template>
@@ -146,10 +188,13 @@ const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?
     <div v-if="!selectedNode" class="inspector-empty">{{ t('noSelection') }}</div>
     <div v-else-if="activeSection === 'properties'" class="properties-scroll">
       <el-input v-model="nodeNameDraft" size="small" :placeholder="t('nodeNamePlaceholder')" @blur="commitNodeName" @keydown.enter.prevent="commitNodeName" />
-      <div class="property-grid">
-        <UiPropertyField
-          v-for="field in fields"
-          :key="field.key"
+      <section v-for="group in fieldGroups" :key="group.purpose" class="inspector-purpose-group" :data-ui-id="`ui-designer-inspector-group-${group.purpose}`">
+        <h3 class="inspector-purpose-title">{{ group.label }}</h3>
+        <div class="property-grid">
+          <UiPropertyField
+          v-for="field in group.fields"
+          :key="`${group.purpose}:${field.key}`"
+          :field-key="field.key"
           :label="labelFor(field.key)"
           :help="field.help"
           :multiline="field.multiline"
@@ -162,7 +207,7 @@ const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?
           :step="field.step"
           :options="field.options"
           :resource-category="field.resourceCategory"
-          :resource-picker="field.kind === 'resource' ? () => openResourcePicker(field.resourceCategory, String(propValue(field.key) ?? '')) : undefined"
+          :resource-picker="field.kind === 'resource' ? () => openResourceWorkspace(field.resourceCategory, String(propValue(field.key) ?? '')) : undefined"
           :resource-picker-disabled="field.kind === 'resource' && !designer.hasProject"
           :issues="issuesForField(field)"
           :code-adapter="designer.adapters.code"
@@ -173,27 +218,30 @@ const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?
           @value="updateProperty(field.key, $event)"
           @mode="updateMode(field.key, $event)"
           @code="(code, sceneId, nodeId) => updateCode(field.key, code, sceneId, nodeId)"
+          />
+        </div>
+        <UiPaddingEditor
+          v-if="group.purpose === 'appearance' && (selectedNode.type === 'text' || selectedNode.type === 'button')"
+          :value="selectedNode.props.padding"
+          @update="updateProperty('padding', $event)"
         />
-      </div>
-      <UiPaddingEditor
-        v-if="selectedNode.type === 'text' || selectedNode.type === 'button'"
-        :value="selectedNode.props.padding"
-        @update="updateProperty('padding', $event)"
-      />
-      <UiButtonStatesEditor
-        v-if="selectedNode.type === 'button'"
-        :value="selectedNode.props.imageStates"
-        @update="updateProperty('imageStates', $event)"
-      />
-      <UiFrameListEditor
-        v-if="selectedNode.type === 'frameAnimation'"
-        :value="selectedNode.props.frames"
-        :resources="designer.resourceCatalog?.resources ?? []"
-        :load-folder="loadFrameFolder"
-        :pick-resource="designer.hasProject ? (currentPath) => openResourcePicker('image', currentPath) : undefined"
-        :resource-picker-disabled="!designer.hasProject"
-        @update="updateProperty('frames', $event)"
-      />
+        <UiButtonStatesEditor
+          v-if="group.purpose === 'resources' && selectedNode.type === 'button'"
+          :value="selectedNode.props.imageStates"
+          :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
+          :resource-picker-disabled="!designer.hasProject"
+          @update="updateProperty('imageStates', $event)"
+        />
+        <UiFrameListEditor
+          v-if="group.purpose === 'resources' && selectedNode.type === 'frameAnimation'"
+          :value="selectedNode.props.frames"
+          :resources="designer.resourceCatalog?.resources ?? []"
+          :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
+          :pick-resources="designer.hasProject ? () => openMultiResourceWorkspace('image') : undefined"
+          :resource-picker-disabled="!designer.hasProject"
+          @update="updateProperty('frames', $event)"
+        />
+      </section>
       <el-divider />
       <div class="inspector-section-title">{{ t('performance') }}</div>
       <el-popover placement="top" width="320" trigger="click">
@@ -209,14 +257,30 @@ const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?
     <UiDesignerEvents v-else-if="activeSection === 'events'" :designer="designer" :node="selectedNode" />
     <UiDesignerConditions v-else-if="activeSection === 'condition'" :designer="designer" :node="selectedNode" />
     <UiDesignerAnimations v-else :designer="designer" :node="selectedNode" />
-    <UiDesignerResourcePicker
-      :model-value="resourcePickerVisible"
-      :designer="designer"
-      :category="resourcePickerCategory"
-      :current-path="resourcePickerCurrentPath"
-      @update:model-value="closeResourcePicker"
-      @select="selectResource"
-    />
+    <el-dialog
+      :model-value="resourceWorkspaceVisible"
+      :title="t('chooseResource')"
+      width="min(1180px, 94vw)"
+      top="4vh"
+      append-to-body
+      destroy-on-close
+      data-ui-id="ui-designer-resource-workspace-dialog"
+      @update:model-value="closeResourceWorkspace"
+    >
+      <div class="resource-workspace-host">
+        <ProjectAssetsWorkspace
+          :key="resourceWorkspaceRequest"
+          mode="select"
+          :resource-kind="resourceWorkspaceCategory"
+          :current-path="resourceWorkspaceCurrentPath"
+          :multiple="resourceWorkspaceMultiple"
+          @select="settleResourceWorkspace"
+          @select-many="settleResourceWorkspace"
+          @clear="settleResourceWorkspace('')"
+          @cancel="settleResourceWorkspace(null)"
+        />
+      </div>
+    </el-dialog>
   </aside>
 </template>
 
@@ -230,8 +294,10 @@ const loadFrameFolder = () => designer.adapters.resource.selectFrameFolder?.() ?
 .inspector-tabs .el-button.active { border-bottom: 2px solid var(--app-accent); color: var(--app-accent); }
 .inspector-validation { margin-bottom: 2px; }.inspector-validation ul { margin: 4px 0 0; padding-left: 16px; }
 .properties-scroll { min-height: 0; overflow: auto; padding-right: 3px; }
-.property-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 8px; margin-top: 10px; }
-.property-grid :deep(.property-field:first-child), .property-grid :deep(.property-field:nth-child(2)) { grid-column: span 1; }
+.inspector-purpose-group { margin-top: 12px; }
+.inspector-purpose-title { margin: 0 0 7px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }
+.property-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.resource-workspace-host { height: min(760px, 82vh); min-height: 520px; overflow: hidden; }
 .inspector-empty { display: grid; place-items: center; flex: 1; min-height: 180px; color: var(--app-ink-soft); font-size: 12px; text-align: center; }
 .inspector-section-title { color: var(--app-ink-soft); font-size: 11px; font-weight: 650; text-transform: uppercase; }
 .performance-line { display: flex; justify-content: space-between; width: 100%; padding: 0; border: 0; background: transparent; color: var(--app-ink-soft); cursor: pointer; font-size: 11px; text-align: left; }.performance-details { color: var(--app-ink); font-size: 11px; line-height: 1.5; }.performance-details ul { margin: 6px 0 0; padding-left: 16px; }.performance-details li { margin-bottom: 4px; }.performance-details .status-detail { color: var(--app-ink-soft); font-size: 10px; }

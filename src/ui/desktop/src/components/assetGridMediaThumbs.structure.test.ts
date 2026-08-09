@@ -13,7 +13,7 @@ describe('asset grid media thumbs', () => {
     assert.match(font, /FontFace/);
     assert.match(font, /emit\('error'\)/);
 
-    const view = readFileSync(join(desktopSrc, 'views/ProjectAssetsView.vue'), 'utf8');
+    const view = readFileSync(join(desktopSrc, 'components/ProjectAssetsWorkspace.vue'), 'utf8');
     assert.match(view, /AssetGridFontThumb/);
     assert.doesNotMatch(view, /AssetGridAudioThumb/);
     assert.match(view, /AssetGridEffectThumb/);

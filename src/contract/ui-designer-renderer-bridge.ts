@@ -5,6 +5,10 @@ import {
   type UiRuntimeDiagnostic,
   type UiRuntimeSceneExport,
 } from './ui-designer.ts'
+import {
+  assertUiDesignerDocumentResourcePaths,
+  isUiDesignerProjectRelativeResourcePath,
+} from './ui-designer-resources.ts'
 
 export const UI_DESIGNER_RENDERER_BRIDGE_VERSION = '1.0.0' as const
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_BYTES = 4 * 1024 * 1024
@@ -160,7 +164,7 @@ function validatePayload(kind: UiDesignerRendererBridgeKind, payload: unknown, s
       identifier(patch.nodeId, 'nodeId', 1, 128)
       assertRecord(patch.props, 'Renderer node patch props must be an object.')
       assertJsonValue(patch.props, 0)
-      assertProjectRelativeResources(patch.props)
+      assertUiDesignerDocumentResourcePaths(patch.props)
     }
     return
   }
@@ -203,7 +207,7 @@ function validateRuntimeScene(value: unknown): void {
   if (value.sceneScript.version !== UI_DESIGNER_SCENE_SCRIPT_VERSION || typeof value.sceneScript.source !== 'string') fail('Renderer mount sceneScript is unsupported.')
   if (!Array.isArray(value.nodes) || !Array.isArray(value.zOrder)) fail('Renderer mount scene nodes and zOrder must be arrays.')
   assertJsonValue(value, 0)
-  assertProjectRelativeResources(value)
+  assertUiDesignerDocumentResourcePaths(value)
 }
 
 function validateDiagnostic(value: unknown, sessionId: string, sceneId: string): void {
@@ -213,7 +217,7 @@ function validateDiagnostic(value: unknown, sessionId: string, sceneId: string):
   if (value.scene !== null && value.scene !== sceneId) fail('Renderer diagnostic scene is invalid.')
   if (value.file !== null) {
     const file = boundedString(value.file, 'diagnostic file', 512)
-    if (isAbsoluteOrUri(file)) fail('Renderer diagnostic file must be project-relative.')
+    if (!isUiDesignerProjectRelativeResourcePath(file)) fail('Renderer diagnostic file must be project-relative.')
   }
   for (const key of ['node', 'type', 'phase', 'event']) if (value[key] !== null) boundedString(value[key], `diagnostic ${key}`, 256)
   boundedString(value.code, 'diagnostic code', 128)
@@ -257,28 +261,6 @@ function assertJsonValue(value: unknown, depth: number): void {
   }
 }
 
-const RESOURCE_PATH_KEYS = new Set(['path', 'backgroundPath', 'fontFile', 'hoverSe', 'clickSe', 'trackImage', 'fillImage', 'posterPath', 'imagePath'])
-const IMAGE_STATE_KEYS = new Set(['normal', 'hover', 'pressed', 'disabled'])
-
-function assertProjectRelativeResources(value: unknown, parentKey = ''): void {
-  if (Array.isArray(value)) {
-    value.forEach((entry) => assertProjectRelativeResources(entry, parentKey))
-    return
-  }
-  if (!value || typeof value !== 'object') return
-  for (const [key, entry] of Object.entries(value)) {
-    const resourceValue = RESOURCE_PATH_KEYS.has(key) || (parentKey === 'imageStates' && IMAGE_STATE_KEYS.has(key))
-    if (resourceValue && typeof entry === 'string' && entry && isAbsoluteOrUri(entry)) fail(`Renderer bridge resource ${key} must be project-relative.`)
-    assertProjectRelativeResources(entry, key)
-  }
-}
-
-function isAbsoluteOrUri(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value)
-    || value.startsWith('/')
-    || value.startsWith('\\')
-    || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)
-}
 
 function assertRecord(value: unknown, message: string): asserts value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail(message)

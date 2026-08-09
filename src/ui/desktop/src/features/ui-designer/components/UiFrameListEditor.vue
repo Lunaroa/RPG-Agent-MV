@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import type { UiFrame, UiResourceEntry } from '@contract/ui-designer'
 import { useUiDesignerI18n } from '../i18n'
 
-const props = defineProps<{ value: UiFrame[]; resources?: UiResourceEntry[]; loadFolder?: () => Promise<{ status: string; value?: UiResourceEntry[]; message: string } | null>; pickResource?: (currentPath?: string) => Promise<string | null>; resourcePickerDisabled?: boolean }>()
+const props = defineProps<{ value: UiFrame[]; resources?: UiResourceEntry[]; pickResource?: (currentPath?: string) => Promise<string | null>; pickResources?: () => Promise<string[] | null>; resourcePickerDisabled?: boolean }>()
 const emit = defineEmits<{ update: [value: UiFrame[]] }>()
 const { t } = useUiDesignerI18n()
 const error = ref('')
@@ -37,18 +37,14 @@ const move = (index: number, direction: -1 | 1) => {
   frames.splice(nextIndex, 0, frame)
   emit('update', frames)
 }
-const importFolder = async () => {
+const importResources = async () => {
   error.value = ''
   errorDetail.value = ''
-  if (!props.loadFolder) { error.value = t('frameFolderUnavailable'); return }
+  if (!props.pickResources) { error.value = t('frameFolderUnavailable'); return }
   try {
-    const result = await props.loadFolder()
-    if (!result || result.status !== 'success' || !result.value) { error.value = t(result ? 'frameFolderImportFailed' : 'frameFolderCancelled'); errorDetail.value = result?.message ?? ''; return }
-    const entries = result.value.filter((entry) => {
-      const path = entry.relativePath ?? ''
-      return entry.category === 'image' && Boolean(path) && !path.includes('://') && !path.startsWith('/') && !/^[A-Za-z]:\//.test(path)
-    }).sort((a, b) => (a.relativePath ?? '').localeCompare(b.relativePath ?? ''))
-    const frames = entries.map((entry, index) => ({ id: `frame_${String(props.value.length + index + 1).padStart(3, '0')}`, path: entry.relativePath!, duration: 100 }))
+    const paths = await props.pickResources()
+    if (!paths) { error.value = t('frameFolderCancelled'); return }
+    const frames = [...paths].sort((left, right) => left.localeCompare(right)).map((path, index) => ({ id: `frame_${String(props.value.length + index + 1).padStart(3, '0')}`, path, duration: 100 }))
     if (!frames.length) { error.value = t('frameFolderEmpty'); return }
     emit('update', [...props.value, ...frames])
   } catch (importError) {
@@ -64,12 +60,12 @@ const chooseResource = async (index: number) => {
 
 <template>
   <div class="frames-editor">
-    <div class="frames-head"><span>{{ t('frames') }}</span><span><el-button size="small" text @click="add">＋</el-button><el-button size="small" text :disabled="!props.loadFolder" @click="void importFolder">{{ t('importFolder') }}</el-button></span></div>
+    <div class="frames-head"><span>{{ t('frames') }}</span><span><el-button size="small" text @click="add">＋</el-button><el-button data-ui-id="ui-designer-frames-select-many" size="small" text :disabled="!props.pickResources || props.resourcePickerDisabled" @click="void importResources()">{{ t('chooseResource') }}</el-button></span></div>
     <span v-if="props.resourcePickerDisabled" class="resource-picker-hint">{{ t('noProject') }}</span>
     <div v-for="(frame, index) in value" :key="frame.id || index" class="frame-row">
       <el-input :model-value="frame.id" size="small" :placeholder="t('frameId')" @update:model-value="update(index, { id: $event })" />
       <img v-if="resourceForPath(frame.path)?.thumbnailUrl || resourceForPath(frame.path)?.previewUrl" class="frame-thumb" :src="resourceForPath(frame.path)?.thumbnailUrl ?? resourceForPath(frame.path)?.previewUrl" :alt="frame.id" />
-      <div class="frame-resource-control"><el-input :model-value="frame.path" readonly size="small" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')" /><el-button size="small" :disabled="!props.pickResource || props.resourcePickerDisabled" @click="void chooseResource(index)">{{ t('chooseResource') }}</el-button><el-button size="small" text :disabled="!frame.path" @click="update(index, { path: '' })">{{ t('clearResource') }}</el-button></div>
+      <div class="frame-resource-control"><el-input :model-value="frame.path" readonly size="small" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')" /><el-button :data-ui-id="`ui-designer-frame-${index}-select`" size="small" :disabled="!props.pickResource || props.resourcePickerDisabled" @click="void chooseResource(index)">{{ t('chooseResource') }}</el-button><el-button :data-ui-id="`ui-designer-frame-${index}-clear`" size="small" text :disabled="!frame.path" @click="update(index, { path: '' })">{{ t('clearResource') }}</el-button></div>
       <el-input-number :model-value="frame.duration" :min="0" size="small" @update:model-value="update(index, { duration: $event ?? 0 })" />
       <el-button-group><el-button size="small" text :disabled="index === 0" @click="move(index, -1)">↑</el-button><el-button size="small" text :disabled="index === value.length - 1" @click="move(index, 1)">↓</el-button><el-button size="small" text @click="copy(index)">{{ t('copyFrame') }}</el-button><el-button size="small" text type="danger" @click="remove(index)">×</el-button></el-button-group>
     </div>

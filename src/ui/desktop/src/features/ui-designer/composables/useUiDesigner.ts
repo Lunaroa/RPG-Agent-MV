@@ -67,6 +67,10 @@ import { createUiDesignerSceneHistoryOperations } from './sceneHistoryOperations
 import { createUiDesignerPersistenceOperations } from './persistenceOperations'
 import { createUiDesignerRuntimeOperations } from './runtimeOperations'
 import { clearRecoverySnapshot } from './recoveryLifecycle'
+import {
+  normalizeUiDesignerProjectRelativeResourcePath,
+  normalizeUiDesignerResourceProperty,
+} from '@contract/ui-designer-resources'
 
 export interface UiDesignerSceneState {
   id: string
@@ -128,8 +132,9 @@ function collectReferencedResourcePaths(document: UiDesignerDocument): string[] 
   const paths = new Set<string>()
   const add = (value: unknown) => {
     if (typeof value !== 'string') return
-    const normalized = value.replaceAll('\\', '/').trim()
-    if (!normalized || normalized.includes('://') || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) return
+    let normalized = ''
+    try { normalized = normalizeUiDesignerProjectRelativeResourcePath(value) } catch { return }
+    if (!normalized) return
     const lower = normalized.toLocaleLowerCase()
     if (lower.startsWith('img/') || lower.startsWith('audio/') || lower.startsWith('movies/') || lower.startsWith('fonts/') || lower.startsWith('www/img/') || lower.startsWith('www/audio/') || lower.startsWith('www/movies/') || lower.startsWith('www/fonts/')) paths.add(normalized)
   }
@@ -137,6 +142,7 @@ function collectReferencedResourcePaths(document: UiDesignerDocument): string[] 
     const props = node.props as unknown as Record<string, unknown>
     for (const [key, value] of Object.entries(props)) if (RESOURCE_PROPERTY_KEYS.has(key)) add(value)
     if (node.type === 'frameAnimation') for (const frame of node.props.frames) add(frame.path)
+    if (node.type === 'button') for (const path of Object.values(node.props.imageStates)) add(path)
   }
   return [...paths]
 }
@@ -701,13 +707,11 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     if (!node) return
     const props = node.props as unknown as Record<string, unknown>
     if (!(property in props)) return
-    if (typeof value === 'string' && ['path', 'backgroundPath', 'trackImage', 'fillImage', 'posterPath', 'imagePath', 'fontFile'].includes(property)) {
-      const normalizedPath = value.replaceAll('\\', '/').trim()
-      if (normalizedPath.includes('://') || normalizedPath.startsWith('/') || /^[A-Za-z]:\//.test(normalizedPath)) {
-        actionError.value = 'Resource properties require project-relative paths such as img/... or audio/...; preview URIs are not persisted.'
-        return
-      }
-      value = normalizedPath
+    try {
+      value = normalizeUiDesignerResourceProperty(property, value)
+    } catch (error) {
+      actionError.value = error instanceof Error ? error.message : 'Resource properties require project-relative paths.'
+      return
     }
     props[property] = value
     replaceActiveDocument(next, `Update ${property}`)
@@ -1216,10 +1220,19 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const importSceneData = async (path: string, confirmedLossy = false) => {
     if (!confirmedLossy || !path || !hasProject.value || !adapters.resource.readSceneData) return false
+    let relativePath = ''
+    try {
+      relativePath = normalizeUiDesignerProjectRelativeResourcePath(path)
+    } catch (error) {
+      resourceStatus.value = 'error'
+      resourceMessage.value = error instanceof Error ? error.message : String(error)
+      return false
+    }
+    if (!relativePath) return false
     resourceStatus.value = 'busy'
     const generation = projectGeneration.value
     try {
-      const result = await adapters.resource.readSceneData({ path })
+      const result = await adapters.resource.readSceneData({ path: relativePath })
       if (generation !== projectGeneration.value) return false
       resourceStatus.value = result?.status ?? 'error'
       resourceMessage.value = result?.message ?? 'Scene data import failed.'

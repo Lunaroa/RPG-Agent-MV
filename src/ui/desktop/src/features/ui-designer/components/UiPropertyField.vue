@@ -2,6 +2,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type { UiCodeEditorAdapter, UiPropertyMode, UiValidationIssue } from '@contract/ui-designer'
+import { normalizeUiDesignerProjectRelativeResourcePath, type UiDesignerManagedAssetKind } from '@contract/ui-designer-resources'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
 import { useUiDesignerI18n } from '../i18n'
 import type { UiDesignerDraftCoordinator } from '../composables/draftCoordinator'
@@ -9,6 +10,7 @@ import type { UiDesignerMessageKey } from '../i18n'
 
 const props = withDefaults(defineProps<{
   label: string
+  fieldKey?: string
   help?: string
   value: unknown
   mode?: UiPropertyMode
@@ -16,7 +18,7 @@ const props = withDefaults(defineProps<{
   kind?: 'number' | 'text' | 'boolean' | 'color' | 'enum' | 'resource'
   multiline?: boolean
   options?: Array<{ label: string; value: string }>
-  resourceCategory?: 'image' | 'audio' | 'video' | 'font'
+  resourceCategory?: UiDesignerManagedAssetKind
   resourcePicker?: () => Promise<string | null>
   resourcePickerDisabled?: boolean
   min?: number
@@ -71,9 +73,11 @@ const updateDraft = (value: unknown) => { draftValue.value = value }
 const commitValue = () => emit('value', draftValue.value)
 const dropResource = (event: DragEvent) => {
   if (props.kind !== 'resource') return
-  const path = event.dataTransfer?.getData('text/ui-resource-path')?.replaceAll('\\', '/').trim() ?? ''
+  const rawPath = event.dataTransfer?.getData('text/ui-resource-path') ?? ''
   const category = event.dataTransfer?.getData('text/ui-resource-category') ?? ''
-  if (!path || path.includes('://') || path.startsWith('/') || /^[A-Za-z]:\//.test(path)) { resourceDropError.value = t('resourceDropInvalid'); return }
+  let path = ''
+  try { path = normalizeUiDesignerProjectRelativeResourcePath(rawPath) } catch { resourceDropError.value = t('resourceDropInvalid'); return }
+  if (!path) { resourceDropError.value = t('resourceDropInvalid'); return }
   if (props.resourceCategory && category && category !== props.resourceCategory) { resourceDropError.value = t('resourceDropCategory'); return }
   resourceDropError.value = ''
   emit('value', path)
@@ -153,9 +157,9 @@ onBeforeUnmount(() => { flushCode(); unregisterDraft?.() })
       @drop.prevent="dropResource"
     >
         <el-input :model-value="typeof props.value === 'string' ? props.value : ''" readonly size="small" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')">
-        <template #append><el-button size="small" :disabled="!props.resourcePicker || props.resourcePickerDisabled" @click="void chooseResource()">{{ t('chooseResource') }}</el-button></template>
+        <template #append><el-button :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" size="small" :disabled="!props.resourcePicker || props.resourcePickerDisabled" @click="void chooseResource()">{{ t('chooseResource') }}</el-button></template>
       </el-input>
-      <el-button v-if="props.value" size="small" text @click="emit('value', '')">{{ t('clearResource') }}</el-button>
+      <el-button v-if="props.value" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" size="small" text @click="emit('value', '')">{{ t('clearResource') }}</el-button>
       <span v-if="props.resourcePickerDisabled" class="resource-picker-hint">{{ t('noProject') }}</span>
     </div>
     <el-input

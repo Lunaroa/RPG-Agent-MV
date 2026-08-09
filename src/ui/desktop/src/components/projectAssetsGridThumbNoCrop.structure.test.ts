@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const viewPath = join(
   dirname(fileURLToPath(import.meta.url)),
-  '../views/ProjectAssetsView.vue',
+  'ProjectAssetsWorkspace.vue',
 );
 
 describe('project assets grid thumb no-crop', () => {

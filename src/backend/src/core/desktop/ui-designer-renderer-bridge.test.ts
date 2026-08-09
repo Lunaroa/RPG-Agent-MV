@@ -56,6 +56,10 @@ test('rejects stale, oversized, unknown-field, and malformed mount messages', ()
     /project-relative/,
   )
   assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'patch', payload: { revision: 1, nodes: [{ nodeId: 'node_1', props: { imageStates: { normal: 'img/pictures/normal.png', hover: 'img/../outside.png', pressed: '', disabled: '' } } }] } }),
+    /escape the project/,
+  )
+  assert.throws(
     () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'mount', payload: {
       revision: 1,
       scene: { version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_Sample' }, nodes: [], zOrder: [], sceneScript: { version: '2.0.0', source: '' } },

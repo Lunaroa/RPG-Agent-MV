@@ -5,7 +5,7 @@ import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const viewSource = fs.readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), '../views/ProjectAssetsView.vue'),
+  path.join(path.dirname(fileURLToPath(import.meta.url)), 'ProjectAssetsWorkspace.vue'),
   'utf8',
 );
 

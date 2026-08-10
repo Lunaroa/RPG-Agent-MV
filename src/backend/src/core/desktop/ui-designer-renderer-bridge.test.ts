@@ -30,6 +30,14 @@ test('accepts bounded renderer bridge messages for the active session', () => {
     sessionId: 'session_01', generation: 3, minimumSequence: 8, sceneId: 'Scene_Sample',
   })
   assert.equal(validated.kind, 'bounds')
+  const exitRequest = validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'exit-request', payload: { key: 'F6' } }, {
+    sessionId: 'session_01', generation: 3, minimumSequence: 8, sceneId: 'Scene_Sample',
+  })
+  assert.equal(exitRequest.kind, 'exit-request')
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'exit-request', payload: { key: 'F5' } }),
+    /exit request key is unsupported/,
+  )
 })
 
 test('rejects stale, oversized, unknown-field, and malformed mount messages', () => {
@@ -62,6 +70,7 @@ test('rejects stale, oversized, unknown-field, and malformed mount messages', ()
   assert.throws(
     () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'mount', payload: {
       revision: 1,
+      executionMode: 'authoring',
       scene: { version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_Sample' }, nodes: [], zOrder: [], sceneScript: { version: '2.0.0', source: '' } },
     } }),
     /sceneScript/,

@@ -50,6 +50,7 @@ import {
   type ProjectFileSnapshot,
 } from './map-preview-service.ts';
 import { inspectMapPreviewStagingConflict } from './map-preview-staging-conflict.ts';
+import { attestOwnedIsolatedProject } from './isolated-project-attestation.ts';
 
 const RUNTIME_TIMEOUT_MS = 20_000;
 
@@ -109,8 +110,17 @@ export class MapPreviewIframeService {
     return Boolean(this.#session && !['stopped', 'failed'].includes(this.#session.status));
   }
 
+  hasRetainedIsolationOwner(): boolean {
+    return this.#preparation !== null;
+  }
+
   async start(projectInput: string, mapIdInput: number, overridesInput?: MapPreviewOverrides): Promise<MapPreviewResult> {
     if (this.isActive()) throw new Error('A map preview is already running.');
+    if (this.#preparation) {
+      throw Object.assign(new Error('A previous map preview isolation owner is retained for recovery.'), {
+        code: 'MAP_PREVIEW_RECOVERY_REQUIRED',
+      });
+    }
     if (this.#dependencies.isPlaytestActive?.()) throw new Error('Stop the current game runtime before starting map preview.');
     const project = fs.realpathSync.native(path.resolve(projectInput));
     const mapId = positiveInteger(mapIdInput, 'mapId');
@@ -160,7 +170,7 @@ export class MapPreviewIframeService {
       const geometry = effectivePreviewMapGeometry(this.#workflowRoot, project, mapId, prepared.tileSize);
       this.#channelToken = crypto.randomBytes(32).toString('hex');
       this.#protocolKey = crypto.randomBytes(32).toString('hex');
-      writeMapPreviewIframeHarness(prepared.appDirectory, {
+      this.#ownedWrite(() => writeMapPreviewIframeHarness(prepared.appDirectory, {
         sessionId: this.#session.sessionId,
         channelToken: this.#channelToken,
         mapId,
@@ -171,7 +181,8 @@ export class MapPreviewIframeService {
         tileSize: prepared.tileSize,
         geometry,
         overrides,
-      });
+      }));
+      this.#attestPreparation();
       const iframeUrl = this.#dependencies.registerPreviewRoot(this.#protocolKey, prepared.appDirectory, project, {
         fallback: { root: prepared.resourceRoot, prefixes: MAP_PREVIEW_PASSTHROUGH_PREFIXES },
         deniedPaths: [...prepared.deniedPaths, ...MAP_PREVIEW_DENIED_PREFIXES],
@@ -499,7 +510,7 @@ export class MapPreviewIframeService {
 
   async stop(): Promise<MapPreviewResult> {
     if (!this.#session) return {};
-    if (!this.isActive()) return this.current();
+    if (!this.isActive() && !this.#preparation) return this.current();
     this.#desiredRunning = false;
     this.#pendingResume = null;
     this.#update({ status: 'stopping', actualFps: undefined });
@@ -511,12 +522,14 @@ export class MapPreviewIframeService {
   }
 
   shutdown(): Promise<MapPreviewResult> { return this.stop(); }
-  shutdownSync(): void {
-    if (!this.#session || !this.isActive()) return;
+  shutdownSync(): MapPreviewResult {
+    if (!this.#session) return {};
+    if (!this.isActive() && !this.#preparation) return this.current();
     this.#cleanupInProgress = true;
     const error = this.#cleanupSync();
     this.#finish(error ? 'failed' : 'stopped', error || undefined);
     this.#cleanupInProgress = false;
+    return this.current();
   }
 
   async #resumeSuspended(): Promise<MapPreviewResult> {
@@ -579,7 +592,7 @@ export class MapPreviewIframeService {
     this.#activeLoadStartedAt = now;
     this.#pendingResume = null;
     this.#clearRuntimeTimeout();
-    writeMapPreviewIframeHarness(this.#preparation.appDirectory, {
+    this.#ownedWrite(() => writeMapPreviewIframeHarness(this.#preparation!.appDirectory, {
       sessionId: this.#session.sessionId,
       channelToken: this.#channelToken,
       mapId: request.mapId,
@@ -590,7 +603,7 @@ export class MapPreviewIframeService {
       tileSize: this.#preparation.tileSize,
       geometry: target.geometry,
       overrides: request.overrides,
-    });
+    }));
     this.#update({
       operationId,
       status: 'resuming',
@@ -621,7 +634,9 @@ export class MapPreviewIframeService {
     this.#sourceSnapshot = changes.sourceSnapshot;
     this.#stagingSnapshot = changes.stagingSnapshot;
     for (const mapId of changes.changedMapIds) this.#pendingMapSyncIds.add(mapId);
-    if (changes.mapInfosChanged) syncEffectiveMapInfos(this.#workflowRoot, request.project, this.#preparation.appDirectory);
+    if (changes.mapInfosChanged) {
+      this.#ownedWrite(() => syncEffectiveMapInfos(this.#workflowRoot, request.project, this.#preparation!.appDirectory));
+    }
     const revision = effectiveMapRevision(this.#workflowRoot, request.project, request.mapId);
     const reload = mapPreviewRequiresReload(
       this.#session.mapId,
@@ -634,7 +649,7 @@ export class MapPreviewIframeService {
     if (reload) {
       // Pin the effective map into the app overlay so the primary root always
       // wins over the live project file while this revision is loaded.
-      syncEffectiveMap(this.#workflowRoot, request.project, this.#preparation.appDirectory, request.mapId);
+      this.#ownedWrite(() => syncEffectiveMap(this.#workflowRoot, request.project, this.#preparation!.appDirectory, request.mapId));
       this.#pendingMapSyncIds.delete(request.mapId);
     }
     const geometry = effectivePreviewMapGeometry(this.#workflowRoot, request.project, request.mapId, this.#preparation.tileSize);
@@ -695,22 +710,41 @@ export class MapPreviewIframeService {
     this.#protocolKey = '';
     this.#channelToken = '';
     let error = '';
+    let preparationCleaned = !this.#preparation;
     if (this.#preparation) {
-      // Serve-direct previews never write to the project (the protocol is
-      // read-only), so there is no isolation evidence to verify at teardown.
-      try { cleanupMapPreviewApp(this.#preparation); }
+      try {
+        cleanupMapPreviewApp(this.#preparation);
+        preparationCleaned = true;
+      }
       catch (cleanupError) { error = `Preview app cleanup failed: ${errorMessage(cleanupError)}`; }
     }
-    this.#preparation = null;
-    this.#sourceProject = '';
-    this.#sourceSnapshot = null;
-    this.#stagingSnapshot = null;
+    if (preparationCleaned) {
+      this.#preparation = null;
+      this.#sourceProject = '';
+      this.#sourceSnapshot = null;
+      this.#stagingSnapshot = null;
+    }
     this.#pendingMapSyncIds.clear();
     this.#pendingResume = null;
     this.#activeOperationId = 0;
     this.#activeLoadStartedAt = '';
     this.#nextOperationId = 0;
     return error;
+  }
+
+  #attestPreparation(): void {
+    if (!this.#preparation) throw new Error('Map preview isolation owner is unavailable.');
+    attestOwnedIsolatedProject(
+      this.#preparation.sourceProject,
+      this.#preparation.appDirectory,
+      this.#preparation.ownership,
+    );
+  }
+
+  #ownedWrite(write: () => void): void {
+    this.#attestPreparation();
+    write();
+    this.#attestPreparation();
   }
 
   #armRuntimeTimeout(stage: string): void {

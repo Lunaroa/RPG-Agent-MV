@@ -1,17 +1,23 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { InteractiveParticleAnimationPreview } from '../../../../contract/types.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import {
+  cleanupIsolatedProject,
   type IsolatedProjectPreparation,
   prepareIsolatedStagedProject,
-  removeTemporaryProjectTreeSafely,
 } from './isolated-project-preparation.ts';
 import { RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS } from './rpg-maker-mz-runtime.ts';
 import { getProjectFileForRead } from './staging-service.ts';
+import type { IsolatedProjectOwnershipChallenge } from './isolated-project-attestation.ts';
+import {
+  attestOwnedIsolatedProject,
+  cleanupOwnedIsolatedProject,
+  createOwnedEmptyIsolatedProject,
+  type IsolatedProjectOwnership,
+} from './isolated-project-attestation.ts';
 
 export interface ParticleAnimationPreviewPreparation extends IsolatedProjectPreparation {
   engine: Extract<RpgMakerEngine, 'rpg-maker-mz'>;
@@ -21,7 +27,9 @@ export interface ParticleAnimationPreviewPreparation extends IsolatedProjectPrep
 
 export interface ParticleAnimationPreviewAppPreparation {
   engine: Extract<RpgMakerEngine, 'rpg-maker-mz'>;
+  sourceProject: string;
   appDirectory: string;
+  ownership: IsolatedProjectOwnership;
   effectName: string;
   /** Project screen resolution; offscreen capture hosts size their window to this. */
   screenWidth: number;
@@ -34,6 +42,7 @@ export interface ParticleAnimationPreviewAppPreparation {
 export interface ParticleAnimationPreviewPreparationDependencies {
   prepareIsolated: typeof prepareIsolatedStagedProject;
   getEffectiveFile: typeof getProjectFileForRead;
+  ownershipChallenge: IsolatedProjectOwnershipChallenge;
 }
 
 export class ParticleAnimationPreviewPreparationError extends Error {}
@@ -78,6 +87,7 @@ const COPY_EXCLUSIONS = [
   'img',
   'js/plugins',
   'movies',
+  'particle-preview',
 ] as const;
 
 /** Frames of active playback the capture runtime advances before freezing the representative frame. */
@@ -135,43 +145,57 @@ export function prepareParticleAnimationPreview(
   const isolated = prepareIsolated(workflowRoot, project, {
     temporaryPrefix: 'rpg-agent-mz-particle-preview-',
     excludeRelativePaths: COPY_EXCLUSIONS,
+    ...(dependencies.ownershipChallenge ? { ownershipChallenge: dependencies.ownershipChallenge } : {}),
   });
   const appDirectory = path.join(isolated.temporaryProject, 'particle-preview');
+  const assertIsolationOwnership = () => attestOwnedIsolatedProject(
+    isolated.sourceProject,
+    isolated.temporaryProject,
+    isolated.ownership,
+  );
+  const ownedWrite = <T>(write: () => T): T => {
+    assertIsolationOwnership();
+    const value = write();
+    assertIsolationOwnership();
+    return value;
+  };
 
   try {
-    fs.rmSync(appDirectory, { recursive: true, force: true });
-    fs.mkdirSync(appDirectory, { recursive: true });
+    if (fs.existsSync(appDirectory)) {
+      throw new ParticleAnimationPreviewPreparationError('Reserved particle preview directory already exists in the isolated project.');
+    }
+    ownedWrite(() => fs.mkdirSync(appDirectory));
     const usesAudio = animation.soundTimings.some((timing) => Boolean(timing.se.name));
     const requiredFiles = usesAudio
       ? [...REQUIRED_PREVIEW_FILES, PREVIEW_AUDIO_DECODER]
       : REQUIRED_PREVIEW_FILES;
     for (const relative of requiredFiles) {
-      copyRequiredFile(path.join(manifest.resourceRoot, ...relative.split('/')), confinedPath(appDirectory, relative), relative);
+      ownedWrite(() => copyRequiredFile(path.join(manifest.resourceRoot, ...relative.split('/')), confinedPath(appDirectory, relative), relative));
     }
 
     // Backdrop sessions never play, so the effect and sound assets are not needed.
     if (autoplay) {
-      copyEffectiveAsset(
+      ownedWrite(() => copyEffectiveAsset(
         workflowRoot,
         project,
         getEffectiveFile,
         `effects/${animation.effectName}`,
         ['.efkefc'],
         appDirectory,
-      );
+      ));
       for (const timing of animation.soundTimings) {
         if (!timing.se.name) continue;
-        copyEffectiveAsset(
+        ownedWrite(() => copyEffectiveAsset(
           workflowRoot,
           project,
           getEffectiveFile,
           `audio/se/${timing.se.name}`,
           ['.ogg', '.m4a'],
           appDirectory,
-        );
+        ));
       }
     }
-    const battlebacks = copyEditorBattlebacks(workflowRoot, project, getEffectiveFile, appDirectory);
+    const battlebacks = ownedWrite(() => copyEditorBattlebacks(workflowRoot, project, getEffectiveFile, appDirectory));
 
     const config = {
       screenWidth: manifest.screenWidth,
@@ -181,10 +205,10 @@ export function prepareParticleAnimationPreview(
       battleback2: battlebacks.battleback2,
       animation,
     };
-    fs.writeFileSync(path.join(appDirectory, 'index.html'), previewHtml(config), 'utf8');
-    fs.writeFileSync(path.join(appDirectory, 'package.json'), `${JSON.stringify(previewPackage(manifest.screenWidth, manifest.screenHeight), null, 2)}\n`, 'utf8');
-    fs.writeFileSync(path.join(appDirectory, 'js', 'main.js'), previewMainSource(usesAudio), 'utf8');
-    fs.writeFileSync(path.join(appDirectory, 'js', 'particle-preview.js'), PREVIEW_RUNTIME_SOURCE, 'utf8');
+    ownedWrite(() => fs.writeFileSync(path.join(appDirectory, 'index.html'), previewHtml(config), 'utf8'));
+    ownedWrite(() => fs.writeFileSync(path.join(appDirectory, 'package.json'), `${JSON.stringify(previewPackage(manifest.screenWidth, manifest.screenHeight), null, 2)}\n`, 'utf8'));
+    ownedWrite(() => fs.writeFileSync(path.join(appDirectory, 'js', 'main.js'), previewMainSource(usesAudio), 'utf8'));
+    ownedWrite(() => fs.writeFileSync(path.join(appDirectory, 'js', 'particle-preview.js'), PREVIEW_RUNTIME_SOURCE, 'utf8'));
 
     return {
       ...isolated,
@@ -193,7 +217,7 @@ export function prepareParticleAnimationPreview(
       effectName: animation.effectName,
     };
   } catch (error) {
-    try { removeTemporaryProjectTreeSafely(isolated.temporaryProject); } catch { /* Report the preparation error first. */ }
+    try { cleanupIsolatedProject(isolated); } catch { /* Retain an unattested project and report preparation first. */ }
     throw error;
   }
 }
@@ -226,7 +250,21 @@ export function prepareParticleAnimationPreviewApp(
   const requireEffect = autoplay || armed;
   const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight, { requireEffect });
   const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
-  const appDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-mz-particle-preview-'));
+  const ownershipChallenge = createOwnedEmptyIsolatedProject(project, {
+    temporaryPrefix: 'rpg-agent-mz-particle-preview-app-',
+  });
+  const appDirectory = ownershipChallenge.temporaryProject;
+  const assertAppOwnership = () => attestOwnedIsolatedProject(
+    ownershipChallenge.sourceProject,
+    appDirectory,
+    ownershipChallenge.ownership,
+  );
+  const ownedAppWrite = <T>(write: () => T): T => {
+    assertAppOwnership();
+    const value = write();
+    assertAppOwnership();
+    return value;
+  };
 
   try {
     const usesAudio = animation.soundTimings.some((timing) => Boolean(timing.se.name));
@@ -242,7 +280,7 @@ export function prepareParticleAnimationPreviewApp(
     // Plain backdrops never play, so the effect and sound assets are only overlaid
     // when the scene will play (autoplay) or is armed to play on demand.
     if (requireEffect) {
-      overlayEffectiveAsset(
+      ownedAppWrite(() => overlayEffectiveAsset(
         workflowRoot,
         project,
         manifest.resourceRoot,
@@ -250,10 +288,10 @@ export function prepareParticleAnimationPreviewApp(
         `effects/${animation.effectName}`,
         ['.efkefc'],
         appDirectory,
-      );
+      ));
       for (const timing of animation.soundTimings) {
         if (!timing.se.name) continue;
-        overlayEffectiveAsset(
+        ownedAppWrite(() => overlayEffectiveAsset(
           workflowRoot,
           project,
           manifest.resourceRoot,
@@ -261,19 +299,19 @@ export function prepareParticleAnimationPreviewApp(
           `audio/se/${timing.se.name}`,
           ['.ogg', '.m4a'],
           appDirectory,
-        );
+        ));
       }
     }
     // Capture sessions drop the battle background so the representative frame is a
     // clean effect over the runtime's neutral gradient.
     const battlebacks = capturing
       ? { battleback1: '', battleback2: '' }
-      : resolveEditorBattlebacks(workflowRoot, project, manifest.resourceRoot, getEffectiveFile, appDirectory);
+      : ownedAppWrite(() => resolveEditorBattlebacks(workflowRoot, project, manifest.resourceRoot, getEffectiveFile, appDirectory));
     // Interactive sessions target the project's first enemy battler (front/side per
     // System.json); capture keeps the target hidden so it never resolves an enemy.
     const enemyBattler = capturing
       ? ''
-      : resolveDefaultEnemyBattler(workflowRoot, project, manifest.resourceRoot, getEffectiveFile, appDirectory);
+      : ownedAppWrite(() => resolveDefaultEnemyBattler(workflowRoot, project, manifest.resourceRoot, getEffectiveFile, appDirectory));
 
     const config = {
       screenWidth: manifest.screenWidth,
@@ -287,14 +325,16 @@ export function prepareParticleAnimationPreviewApp(
       enemyBattler,
       captureFrameCount: capturing ? options.captureFrameCount : 0,
     };
-    fs.writeFileSync(path.join(appDirectory, 'index.html'), previewHtml(config), 'utf8');
-    fs.mkdirSync(path.join(appDirectory, 'js'), { recursive: true });
-    fs.writeFileSync(path.join(appDirectory, 'js', 'main.js'), previewMainSource(usesAudio), 'utf8');
-    fs.writeFileSync(path.join(appDirectory, 'js', 'particle-preview.js'), PREVIEW_RUNTIME_SOURCE, 'utf8');
+    ownedAppWrite(() => fs.writeFileSync(path.join(appDirectory, 'index.html'), previewHtml(config), 'utf8'));
+    ownedAppWrite(() => fs.mkdirSync(path.join(appDirectory, 'js'), { recursive: true }));
+    ownedAppWrite(() => fs.writeFileSync(path.join(appDirectory, 'js', 'main.js'), previewMainSource(usesAudio), 'utf8'));
+    ownedAppWrite(() => fs.writeFileSync(path.join(appDirectory, 'js', 'particle-preview.js'), PREVIEW_RUNTIME_SOURCE, 'utf8'));
 
     return {
       engine: 'rpg-maker-mz',
+      sourceProject: ownershipChallenge.sourceProject,
       appDirectory,
+      ownership: { ...ownershipChallenge.ownership },
       effectName: animation.effectName,
       screenWidth: manifest.screenWidth,
       screenHeight: manifest.screenHeight,
@@ -302,13 +342,19 @@ export function prepareParticleAnimationPreviewApp(
       passthroughPrefixes: PREVIEW_PASSTHROUGH_PREFIXES,
     };
   } catch (error) {
-    try { fs.rmSync(appDirectory, { recursive: true, force: true }); } catch { /* Report the preparation error first. */ }
+    try { cleanupOwnedIsolatedProject(ownershipChallenge); } catch { /* Retain an unattested app. */ }
     throw error;
   }
 }
 
-export function cleanupParticleAnimationPreviewApp(preparation: Pick<ParticleAnimationPreviewAppPreparation, 'appDirectory'>): void {
-  fs.rmSync(preparation.appDirectory, { recursive: true, force: true });
+export function cleanupParticleAnimationPreviewApp(
+  preparation: Pick<ParticleAnimationPreviewAppPreparation, 'sourceProject' | 'appDirectory' | 'ownership'>,
+): void {
+  cleanupOwnedIsolatedProject({
+    sourceProject: preparation.sourceProject,
+    temporaryProject: preparation.appDirectory,
+    ownership: preparation.ownership,
+  });
 }
 
 // The MZ editor writes fixed defaults for these keys; Animations.json processed by

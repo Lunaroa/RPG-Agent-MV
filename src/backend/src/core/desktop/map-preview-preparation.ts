@@ -1,12 +1,15 @@
 import childProcess from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { removeTemporaryProjectTreeSafely } from './isolated-project-preparation.ts';
 import type { IsolatedMapPreviewPreparation } from './isolated-project-preparation.ts';
+import {
+  attestIsolatedPreparationResponse,
+  cleanupOwnedIsolatedProject,
+  createOwnedEmptyIsolatedProject,
+} from './isolated-project-attestation.ts';
 import type {
   MapPreviewLoadProgress,
   MapPreviewPreflightFailure,
@@ -59,8 +62,20 @@ export function startMapPreviewPreparation(
   dependencies: MapPreviewPreparationDependencies = {},
 ): MapPreviewPreparationTask {
   const taskId = dependencies.taskId || crypto.randomUUID();
-  const controlDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rmmv-agent-preview-worker-'));
-  const temporaryProject = fs.mkdtempSync(path.join(os.tmpdir(), 'rmmv-agent-map-preview-'));
+  const ownershipChallenge = createOwnedEmptyIsolatedProject(project, {
+    temporaryPrefix: 'rmmv-agent-map-preview-',
+  });
+  let controlOwnership: ReturnType<typeof createOwnedEmptyIsolatedProject>;
+  try {
+    controlOwnership = createOwnedEmptyIsolatedProject(project, {
+      temporaryPrefix: 'rmmv-agent-preview-worker-',
+    });
+  } catch (error) {
+    try { cleanupOwnedIsolatedProject(ownershipChallenge); } catch { /* Preserve control-directory failure. */ }
+    throw error;
+  }
+  const controlDirectory = controlOwnership.temporaryProject;
+  const temporaryProject = ownershipChallenge.temporaryProject;
   const requestPath = path.join(controlDirectory, 'request.json');
   const responsePath = path.join(controlDirectory, 'response.json');
   const request: MapPreviewPreparationWorkerRequest = {
@@ -68,24 +83,32 @@ export function startMapPreviewPreparation(
     workflowRoot: path.resolve(workflowRoot),
     project: path.resolve(project),
     temporaryProject,
+    ownershipChallenge,
   };
   fs.writeFileSync(requestPath, `${JSON.stringify(request)}\n`, 'utf8');
   const workerScript = fileURLToPath(new URL('./map-preview-preparation-worker.ts', import.meta.url));
   const spawnProcess = dependencies.spawnProcess
     || ((executable: string, args: string[], options: childProcess.SpawnOptions) => childProcess.spawn(executable, args, options));
-  const child = spawnProcess(process.execPath, [
-    '--experimental-strip-types',
-    '--experimental-transform-types',
-    workerScript,
-    requestPath,
-    responsePath,
-  ], {
-    cwd: path.resolve(workflowRoot),
-    windowsHide: true,
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-  });
+  let child: childProcess.ChildProcess;
+  try {
+    child = spawnProcess(process.execPath, [
+      '--experimental-strip-types',
+      '--experimental-transform-types',
+      workerScript,
+      requestPath,
+      responsePath,
+    ], {
+      cwd: path.resolve(workflowRoot),
+      windowsHide: true,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+  } catch (error) {
+    try { cleanupOwnedIsolatedProject(controlOwnership); } catch { /* Preserve spawn failure. */ }
+    try { cleanupOwnedIsolatedProject(ownershipChallenge); } catch { /* Retain an unattested project. */ }
+    throw error;
+  }
   let cancelled = false;
   let settled = false;
   let runtimeOutput = '';
@@ -98,12 +121,12 @@ export function startMapPreviewPreparation(
   const finish = (error?: Error, preparation?: IsolatedMapPreviewPreparation) => {
     if (settled) return;
     settled = true;
-    const controlCleanupError = removeDirectory(controlDirectory, 'preparation control directory');
+    const controlCleanupError = cleanupOwnedDirectory(controlOwnership);
     let failure = error ? attachRuntimeOutput(error, runtimeOutput) : undefined;
     if (!failure && !preparation) failure = new Error('Map preview preparation did not return an isolated project.');
     if (controlCleanupError) failure = appendCleanupError(failure, controlCleanupError);
     if (failure) {
-      const temporaryCleanupError = removeDirectory(temporaryProject, 'temporary preview project');
+      const temporaryCleanupError = cleanupOwnedDirectory(ownershipChallenge);
       rejectResult(temporaryCleanupError ? appendCleanupError(failure, temporaryCleanupError) : failure);
     } else {
       resolveResult(preparation!);
@@ -141,11 +164,7 @@ export function startMapPreviewPreparation(
         ));
         return;
       }
-      if (path.resolve(response.preparation.temporaryProject) !== path.resolve(temporaryProject)) {
-        finish(new Error('Map preview preparation worker returned an unexpected temporary project.'));
-        return;
-      }
-      finish(undefined, response.preparation);
+      finish(undefined, attestIsolatedPreparationResponse(ownershipChallenge, response.preparation));
     } catch (error) {
       finish(new Error(`Cannot read map preview preparation response: ${errorMessage(error)}`));
     }
@@ -179,22 +198,20 @@ export function startMapPreviewPreparation(
           child.kill('SIGKILL');
         }
       }
-      finish(new MapPreviewPreparationCancelledError('Map preview preparation was cancelled.'));
+      if (child.exitCode != null || child.signalCode != null) {
+        finish(new MapPreviewPreparationCancelledError('Map preview preparation was cancelled.'));
+      }
     },
   };
 }
 
-function removeDirectory(directory: string, label: string): Error | null {
+function cleanupOwnedDirectory(challenge: ReturnType<typeof createOwnedEmptyIsolatedProject>): Error | null {
+  if (!fs.existsSync(challenge.temporaryProject)) return null;
   try {
-    // The temporary preview project is a full copy that replicates any symlinks
-    // present in the source. Electron's bundled Node follows links inside a
-    // recursive fs.rmSync and can erase the link target, so detach links via
-    // lstat instead of trusting recursive removal.
-    removeTemporaryProjectTreeSafely(directory);
-    if (fs.existsSync(directory)) return new Error(`The ${label} could not be removed.`);
+    cleanupOwnedIsolatedProject(challenge);
     return null;
   } catch (error) {
-    return new Error(`The ${label} could not be removed: ${errorMessage(error)}`);
+    return new Error(`The owned temporary preview project could not be removed: ${errorMessage(error)}`);
   }
 }
 

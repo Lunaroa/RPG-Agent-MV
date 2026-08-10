@@ -16,6 +16,10 @@ import {
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
 import { RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS } from './rpg-maker-mz-runtime.ts';
+import {
+  attestOwnedIsolatedProject,
+  type IsolatedProjectOwnershipChallenge,
+} from './isolated-project-attestation.ts';
 
 export interface BattleTestConfiguration {
   troopId: number;
@@ -35,7 +39,8 @@ export interface BattleTestProjectPreparation extends IsolatedProjectPreparation
 }
 
 export interface BattleTestPreparationDependencies {
-  createTemporaryProject?: () => string;
+  temporaryProjectPath?: string;
+  ownershipChallenge?: IsolatedProjectOwnershipChallenge;
 }
 
 export function prepareBattleTestProject(
@@ -48,12 +53,23 @@ export function prepareBattleTestProject(
   const sourceLayout = inspectRmmvProject(project);
   const isolated = prepareIsolatedStagedProject(workflowRoot, project, {
     temporaryPrefix: 'rmmv-agent-battle-test-',
-    ...(dependencies.createTemporaryProject ? { createTemporaryProject: dependencies.createTemporaryProject } : {}),
+    ...(dependencies.temporaryProjectPath ? { temporaryProjectPath: dependencies.temporaryProjectPath } : {}),
+    ...(dependencies.ownershipChallenge ? { ownershipChallenge: dependencies.ownershipChallenge } : {}),
     ...(sourceLayout.engine === 'rpg-maker-mz'
       ? { excludeRelativePaths: RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS }
       : {}),
   });
   try {
+    const assertIsolationOwnership = () => attestOwnedIsolatedProject(
+      isolated.sourceProject,
+      isolated.temporaryProject,
+      isolated.ownership,
+    );
+    const ownedWrite = (write: () => void): void => {
+      assertIsolationOwnership();
+      write();
+      assertIsolationOwnership();
+    };
     const preflightState = verifyIsolatedSourceState(workflowRoot, isolated);
     assertStableSource(preflightState);
     const layout = inspectRmmvProject(isolated.temporaryProject);
@@ -88,7 +104,7 @@ export function prepareBattleTestProject(
     }));
     system.battleback1Name = configuration.battleback1Name;
     system.battleback2Name = configuration.battleback2Name;
-    writeJsonAtomic(systemPath, system);
+    ownedWrite(() => writeJsonAtomic(systemPath, system));
 
     const validation = validateEffectiveRmmvDatabaseTransition(
       workflowRoot,
@@ -101,7 +117,7 @@ export function prepareBattleTestProject(
       const detail = errors.slice(0, 5).map((issue) => `${issue.source.path}: ${issue.message}`).join(' ');
       throw new BattleTestPreparationError(`Battle Test database validation failed with ${errors.length} error(s). ${detail}`);
     }
-    writeBattleTestDatabaseCopies(layout.dataDir);
+    ownedWrite(() => writeBattleTestDatabaseCopies(layout.dataDir));
     const executable = layout.engine === 'rpg-maker-mv'
       ? path.join(isolated.temporaryProject, 'Game.exe')
       : undefined;

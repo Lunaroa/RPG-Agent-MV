@@ -11,12 +11,13 @@ const runtimeLabels: Record<UiRuntimeStatus['state'], UiDesignerMessageKey> = {
 }
 const previewLabels: Record<UiPreviewState, UiDesignerMessageKey> = { idle: 'previewIdle', unavailable: 'previewUnavailable', preparing: 'previewPreparing', running: 'previewRunning', stopped: 'previewStopped', error: 'previewError' }
 const performanceLabels: Record<'smooth' | 'moderate' | 'mayStutter', UiDesignerMessageKey> = { smooth: 'performanceSmooth', moderate: 'performanceModerate', mayStutter: 'performanceMayStutter' }
-const editorLabels: Record<'idle' | 'running' | 'stopped', UiDesignerMessageKey> = { idle: 'editorIdle', running: 'editorRunning', stopped: 'editorStopped' }
+const editorLabels: Record<'idle' | 'preparing' | 'running' | 'stopped' | 'error', UiDesignerMessageKey> = { idle: 'editorIdle', preparing: 'editorPreparing', running: 'editorRunning', stopped: 'editorStopped', error: 'editorError' }
 const runtimeLabel = (state: UiRuntimeStatus['state']) => t(runtimeLabels[state])
 const previewLabel = (state: UiPreviewState) => t(previewLabels[state])
 const performanceLabel = (rating: 'smooth' | 'moderate' | 'mayStutter') => t(performanceLabels[rating])
-const editorLabel = (state: 'idle' | 'running' | 'stopped') => t(editorLabels[state])
-const operationSummary = () => designer.previewStatus === 'error' || designer.previewStatus === 'unavailable' || designer.fileStatus === 'error' || designer.resourceStatus === 'error' || designer.actionError ? t('operationError') : previewLabel(designer.previewStatus)
+const editorLabel = (state: 'idle' | 'preparing' | 'running' | 'stopped' | 'error') => t(editorLabels[state])
+const operationSummary = () => designer.editorPreviewStatus === 'error' ? t('editorPreviewFailed') : designer.previewStatus === 'error' || designer.previewStatus === 'unavailable' || designer.fileStatus === 'error' || designer.resourceStatus === 'error' || designer.actionError ? t('operationError') : previewLabel(designer.previewStatus)
+const operationDetails = () => designer.editorPreviewMessage || designer.previewMessage || designer.fileMessage || designer.resourceMessage || designer.actionError
 const compatibilitySummary = () => {
   const compatibility = designer.runtimeStatus.projectCompatibility
   if (!compatibility) return ''
@@ -37,7 +38,7 @@ const compatibilitySummary = () => {
     <span v-if="designer.runtimeStaging?.affectedFiles.length" class="status-item">{{ t('stagedSummary') }} ({{ designer.runtimeStaging.affectedFiles.join(', ') }})</span>
     <span class="status-item">{{ t('editorPreviewStatus') }}: {{ editorLabel(designer.editorPreviewStatus) }}</span>
     <el-button size="small" text :disabled="designer.isEditorPreviewing || !designer.canManageRuntime" @click="void designer.checkRuntime()">{{ t('checkRuntime') }}</el-button>
-    <span class="status-item" :class="{ error: designer.previewStatus === 'error' || designer.previewStatus === 'unavailable' || designer.fileStatus === 'error' || designer.resourceStatus === 'error' || designer.actionError || designer.recoveryCleanupPending || designer.runtimeProofMissing }">{{ designer.recoveryCleanupPending ? t('recoveryCleanupPending') : designer.runtimeProofMissing ? t('runtimeProofMissing') : operationSummary() }}<details v-if="!designer.recoveryCleanupPending && (designer.previewMessage || designer.fileMessage || designer.resourceMessage || designer.actionError)" class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ designer.previewMessage || designer.fileMessage || designer.resourceMessage || designer.actionError }}</span></details></span>
+    <span class="status-item" :class="{ error: designer.editorPreviewStatus === 'error' || designer.previewStatus === 'error' || designer.previewStatus === 'unavailable' || designer.fileStatus === 'error' || designer.resourceStatus === 'error' || designer.actionError || designer.recoveryCleanupPending || designer.runtimeProofMissing }">{{ designer.recoveryCleanupPending ? t('recoveryCleanupPending') : designer.runtimeProofMissing ? t('runtimeProofMissing') : operationSummary() }}<details v-if="!designer.recoveryCleanupPending && operationDetails()" class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ operationDetails() }}</span></details></span>
   </footer>
 </template>
 

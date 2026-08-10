@@ -29,6 +29,12 @@ import {
   type IsolatedStagingSnapshot,
 } from './isolated-project-preparation.ts';
 import {
+  buildIsolatedNwLaunchCommand,
+  createIsolatedNwProfileDirectory,
+  planIsolatedNwApp,
+  writeIsolatedNwAppPackage,
+} from './isolated-nw-app-launch.ts';
+import {
   MapPreviewPreparationCancelledError,
   MapPreviewPreparationFailedError,
   startMapPreviewPreparation,
@@ -299,7 +305,11 @@ export class MapPreviewService {
       const prepared = await preparationTask.result;
       if (this.#preparationTask === preparationTask) this.#preparationTask = null;
       if (!this.#startIsCurrent(preparationGeneration)) {
-        cleanupIsolatedProject(prepared);
+        try { cleanupIsolatedProject(prepared); }
+        catch (error) {
+          this.#preparation = prepared;
+          throw error;
+        }
         throw new MapPreviewPreparationCancelledError('Map preview preparation was superseded.');
       }
       this.#preparation = prepared;
@@ -321,6 +331,7 @@ export class MapPreviewService {
         throw new MapPreviewPreparationCancelledError('Map preview preparation was superseded.');
       }
       injectPreviewHarness(this.#preparation.temporaryProject, copiedManifest.resourceRoot, {
+        sessionId: this.#session.sessionId,
         token: this.#token,
         port,
         mapId,
@@ -607,8 +618,15 @@ export class MapPreviewService {
 
   #launch(runtime: InteractiveProjectRuntime): void {
     const preparation = this.#preparation!;
-    const profileDirectory = createMapPreviewProfileDirectory(preparation.temporaryProject);
-    const { executable, args } = buildMapPreviewLaunchCommand(runtime, preparation, profileDirectory);
+    const sessionId = this.#session!.sessionId;
+    const profileDirectory = createIsolatedNwProfileDirectory(preparation.temporaryProject, sessionId);
+    const { executable, args } = buildIsolatedNwLaunchCommand(
+      runtime,
+      preparation,
+      sessionId,
+      profileDirectory,
+      'source-project',
+    );
     const spawn = this.#dependencies.spawnProcess || ((command, commandArgs, options) => (
       childProcess.spawn(command, commandArgs, options) as PreviewChild
     ));
@@ -924,19 +942,23 @@ export class MapPreviewService {
       if (!evidence.sourceUnchanged || !evidence.savesUnchanged || !evidence.stagingUnchanged) {
         console.warn('[map-preview] Source or staging changed while the isolated preview was warm; cleanup will continue.');
       }
+      let preparationCleaned = false;
       if (processResult.exited) {
         try {
           cleanupIsolatedProject(preparation);
+          preparationCleaned = true;
         } catch (error) {
           isolationError = `Preview temporary project cleanup failed: ${errorMessage(error)}`;
         }
       } else {
         isolationError = 'Preview temporary project was retained because the runtime process did not exit.';
       }
-      this.#preparation = null;
+      if (preparationCleaned) this.#preparation = null;
     }
-    this.#sourceSnapshot = null;
-    this.#stagingSnapshot = null;
+    if (!this.#preparation) {
+      this.#sourceSnapshot = null;
+      this.#stagingSnapshot = null;
+    }
     this.#pendingMapSyncIds.clear();
     this.#pendingResume = null;
     this.#nextOperationId = 0;
@@ -996,6 +1018,7 @@ export class MapPreviewService {
 }
 
 interface HarnessOptions {
+  sessionId: string;
   token: string;
   port: number;
   mapId: number;
@@ -1008,45 +1031,25 @@ interface HarnessOptions {
 }
 
 export function injectPreviewHarness(projectRoot: string, resourceRoot: string, options: HarnessOptions): void {
-  const root = fs.realpathSync.native(path.resolve(projectRoot));
-  const resources = fs.realpathSync.native(path.resolve(resourceRoot));
-  if (!isInside(root, resources)) throw new Error('Map preview resource root escaped the isolated project.');
-  const indexPath = path.join(resources, 'index.html');
-  const harnessPath = path.join(resources, 'js', 'rpg-agent-map-preview.js');
-  const index = fs.readFileSync(indexPath, 'utf8');
+  const plan = planIsolatedNwApp(projectRoot, options.sessionId, 'map-preview', resourceRoot);
+  const index = fs.readFileSync(plan.indexPath, 'utf8');
   const mainPattern = /(<script\b[^>]*\bsrc=["']js\/main\.js["'][^>]*><\/script>)/i;
   if (!mainPattern.test(index)) throw new Error('RPG Maker index.html does not contain the standard js/main.js entry.');
-  const injected = index.replace(mainPattern, '<script src="js/rpg-agent-map-preview.js"></script>\n$1');
-  fs.writeFileSync(indexPath, injected, 'utf8');
-  fs.writeFileSync(harnessPath, previewHarnessSource(options), 'utf8');
-
-  const packageCandidates = [path.join(root, 'package.json'), path.join(resources, 'package.json')];
-  let packageUpdated = false;
-  for (const packagePath of [...new Set(packageCandidates)]) {
-    if (!fs.existsSync(packagePath)) continue;
-    const manifest = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as Record<string, unknown>;
-    const window = manifest.window && typeof manifest.window === 'object' && !Array.isArray(manifest.window)
-      ? manifest.window as Record<string, unknown>
-      : {};
-    manifest.window = {
-      ...window,
+  const harnessRelativePath = path.relative(plan.resourceRoot, plan.entryPath).split(path.sep).join('/');
+  const injected = index.replace(mainPattern, `<script src="${harnessRelativePath}"></script>\n$1`);
+  const harnessSource = previewHarnessSource(options);
+  fs.writeFileSync(plan.indexPath, injected, 'utf8');
+  writeIsolatedNwAppPackage(plan, harnessSource, {
+    window: {
       width: options.viewportWidth,
       height: options.viewportHeight,
       frame: false,
       show: false,
       show_in_taskbar: false,
       resizable: false,
-      inject_js_start: path.relative(path.dirname(packagePath), harnessPath).split(path.sep).join('/'),
-    };
-    manifest.name = `rmmv-agent-map-preview-${options.token.slice(0, 12)}`;
-    manifest['single-instance'] = false;
-    const args = String(manifest['chromium-args'] || '').split(/\s+/).filter(Boolean);
-    if (!args.includes('--disable-raf-throttling')) args.push('--disable-raf-throttling');
-    manifest['chromium-args'] = args.join(' ');
-    fs.writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-    packageUpdated = true;
-  }
-  if (!packageUpdated) throw new Error('RPG Maker package.json was not found in the isolated preview project.');
+    },
+    disableRafThrottling: true,
+  });
 }
 
 export function mapPreviewDebugMarkerBootstrapSource(): string {
@@ -1955,27 +1958,6 @@ export function assertNoStagingConflicts(workflowRoot: string, project: string):
   if (conflicts.length) throw new Error('Resolve staged project conflicts before starting map preview.');
 }
 
-function previewExecutable(runtime: InteractiveProjectRuntime, preparation: IsolatedProjectPreparation): string {
-  if (runtime.source === 'project-local') {
-    const relative = path.relative(preparation.sourceProject, runtime.executable);
-    if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
-      const copied = path.join(preparation.temporaryProject, relative);
-      if (fs.existsSync(copied)) return copied;
-    }
-  }
-  if (runtime.launchStyle === 'embedded') {
-    throw new Error('The project-local embedded runtime was not copied into the isolated preview project.');
-  }
-  return runtime.executable;
-}
-
-export function createMapPreviewProfileDirectory(temporaryProject: string): string {
-  const root = fs.realpathSync.native(path.resolve(temporaryProject));
-  const profile = fs.mkdtempSync(path.join(root, '.rpg-agent-preview-profile-'));
-  if (!isInside(root, profile)) throw new Error('Map preview profile directory escaped the isolated project.');
-  return profile;
-}
-
 export function describeMapPreviewStartupTimeout(stage: string): {
   message: string;
   failureCode?: MapPreviewFailureCode;
@@ -1984,25 +1966,6 @@ export function describeMapPreviewStartupTimeout(stage: string): {
     message: `Map preview runtime startup timed out during ${stage}.`,
     ...(stage === 'runtime-process-started' ? { failureCode: 'runtime-handshake-timeout' as const } : {}),
   };
-}
-
-export function buildMapPreviewLaunchCommand(
-  runtime: InteractiveProjectRuntime,
-  preparation: IsolatedProjectPreparation,
-  profileDirectory: string,
-): { executable: string; args: string[] } {
-  const temporaryProject = fs.realpathSync.native(path.resolve(preparation.temporaryProject));
-  const profile = fs.realpathSync.native(path.resolve(profileDirectory));
-  if (!isInside(temporaryProject, profile)) {
-    throw new Error('Map preview profile directory must be inside the isolated project.');
-  }
-  const profileArgument = `--user-data-dir=${profile}`;
-  const args = runtime.launchStyle === 'external'
-    ? runtime.engine === 'rpg-maker-mv'
-      ? [profileArgument, temporaryProject, 'test']
-      : [profileArgument, temporaryProject]
-    : [profileArgument];
-  return { executable: previewExecutable(runtime, preparation), args };
 }
 
 function encodePacket(type: number, payload: Buffer): Buffer {

@@ -23,6 +23,7 @@ import {
   type IsolatedProjectStateEvidence,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts'
+import { attestIsolatedPreparationResponse } from './isolated-project-attestation.ts'
 import { bundledUiDesignerRuntime } from './ui-designer-runtime-service.ts'
 
 const HOST_PLUGIN_NAME = 'MZUIDesignerCanvasHost'
@@ -38,13 +39,18 @@ export interface UiDesignerRendererHostDependencies {
   unregisterPreviewRoot(key: string): void
   verifyFrameIsolation(url: string): boolean
   prepareIsolated?: UiDesignerRendererHostPreparationFactory
-  verifySourceState?: (workflowRoot: string, preparation: IsolatedProjectPreparation) => IsolatedProjectStateEvidence
+  verifySourceState?: (
+    workflowRoot: string,
+    preparation: IsolatedProjectPreparation,
+    expected?: { sourceProject?: string; temporaryProject?: string },
+  ) => IsolatedProjectStateEvidence
 }
 
 interface ActiveRendererHost {
   publicSession: UiDesignerRendererHostSession
   protocolKey: string
   preparation: IsolatedProjectPreparation
+  sourceProject: string
   protocolRegistered: boolean
 }
 
@@ -52,8 +58,10 @@ export class UiDesignerRendererHostService {
   readonly #workflowRoot: string
   readonly #dependencies: UiDesignerRendererHostDependencies
   readonly #prepareIsolated: UiDesignerRendererHostPreparationFactory
-  readonly #verifySourceState: (workflowRoot: string, preparation: IsolatedProjectPreparation) => IsolatedProjectStateEvidence
+  readonly #verifySourceState: NonNullable<UiDesignerRendererHostDependencies['verifySourceState']>
   #active: ActiveRendererHost | null = null
+  #retiring = new Map<string, ActiveRendererHost>()
+  #retainedPreparations: Array<{ preparation: IsolatedProjectPreparation; sourceProject: string }> = []
   #generation = 0
 
   constructor(workflowRoot: string, dependencies: UiDesignerRendererHostDependencies) {
@@ -71,8 +79,16 @@ export class UiDesignerRendererHostService {
       throw Object.assign(new Error('Select an RPG Maker project before starting the UI designer canvas renderer.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
     }
     if (!Number.isSafeInteger(generationInput) || generationInput < 0) throw new Error('UI designer renderer generation must be a non-negative safe integer.')
+    if (this.#retainedPreparations.length) {
+      throw Object.assign(new Error('A previous UI designer renderer isolation owner is retained for recovery.'), {
+        code: 'UI_DESIGNER_RENDERER_RECOVERY_REQUIRED',
+      })
+    }
     const operation = ++this.#generation
-    this.#cleanupActive()
+    if (this.#active) {
+      this.#retiring.set(this.#active.publicSession.sessionId, this.#active)
+      this.#active = null
+    }
     const project = fs.realpathSync.native(path.resolve(projectInput))
     const manifest = inspectRmmvProject(project)
     assertUiDesignerProjectEngineSupported(manifest)
@@ -85,17 +101,22 @@ export class UiDesignerRendererHostService {
     let protocolKey = ''
     try {
       preparation = await this.#prepareIsolated(this.#workflowRoot, project, 'ui-designer-canvas-')
+      attestIsolatedPreparationResponse({
+        sourceProject: project,
+        temporaryProject: preparation.temporaryProject,
+        ownership: preparation.ownership,
+      }, preparation)
       if (operation !== this.#generation) {
-        cleanupIsolatedProject(preparation)
+        cleanupIsolatedProject(preparation, { sourceProject: project, temporaryProject: preparation.temporaryProject })
         throw new Error('UI designer renderer preparation was superseded by a newer project generation.')
       }
       const sessionId = crypto.randomUUID()
-      stageUiDesignerRendererHost(preparation.temporaryProject, { sessionId, generation: generationInput })
+      stageUiDesignerRendererHost(preparation, project, { sessionId, generation: generationInput })
       protocolKey = crypto.randomBytes(32).toString('hex')
       const iframeUrl = this.#dependencies.registerPreviewRoot(
         protocolKey,
         resolveRmmvLayout(preparation.temporaryProject).resourceRoot,
-        preparation.sourceProject,
+        project,
       )
       const publicSession: UiDesignerRendererHostSession = {
         sessionId,
@@ -105,12 +126,16 @@ export class UiDesignerRendererHostService {
         engineVersion: manifest.engineVersion,
         runtimeVersion: bundledUiDesignerRuntime().version,
       }
-      this.#active = { publicSession, protocolKey, preparation, protocolRegistered: true }
+      this.#active = { publicSession, protocolKey, preparation, sourceProject: project, protocolRegistered: true }
       return { ...publicSession }
     } catch (error) {
       if (protocolKey) this.#dependencies.unregisterPreviewRoot(protocolKey)
       if (preparation && this.#active?.preparation !== preparation && fs.existsSync(preparation.temporaryProject)) {
-        try { cleanupIsolatedProject(preparation) } catch { /* Preserve the host preparation error. */ }
+        try {
+          cleanupIsolatedProject(preparation, { sourceProject: project, temporaryProject: preparation.temporaryProject })
+        } catch {
+          this.#retainedPreparations.push({ preparation, sourceProject: project })
+        }
       }
       throw error
     }
@@ -119,22 +144,40 @@ export class UiDesignerRendererHostService {
   confirm(sessionId: string): UiDesignerRendererHostSession {
     const active = this.#requireActive(sessionId)
     if (!this.#dependencies.verifyFrameIsolation(active.publicSession.iframeUrl)) {
-      this.#cleanupActive()
       throw new Error('The UI designer canvas did not receive an isolated Electron renderer process.')
     }
     return { ...active.publicSession }
   }
 
   stop(sessionId?: string): void {
-    this.#generation += 1
-    if (!this.#active) return
-    if (sessionId && sessionId !== this.#active.publicSession.sessionId) throw new Error('The requested UI designer renderer session is not active.')
-    this.#cleanupActive()
+    if (!sessionId) {
+      this.#generation += 1
+      return
+    }
+    if (this.#active?.publicSession.sessionId === sessionId) {
+      this.#generation += 1
+      this.#cleanupHost(this.#active)
+      return
+    }
+    const retiring = this.#retiring.get(sessionId)
+    if (!retiring) throw new Error('The requested UI designer renderer session is not active.')
+    this.#cleanupHost(retiring)
   }
 
   shutdownSync(): void {
     this.#generation += 1
-    this.#cleanupActive()
+    if (this.#active || this.#retiring.size) {
+      throw Object.assign(new Error('UI designer renderer disposal is not confirmed; the isolated project was kept for recovery.'), {
+        code: 'UI_DESIGNER_RENDERER_DISPOSE_UNCONFIRMED',
+      })
+    }
+    for (const retained of [...this.#retainedPreparations]) {
+      cleanupIsolatedProject(retained.preparation, {
+        sourceProject: retained.sourceProject,
+        temporaryProject: retained.preparation.temporaryProject,
+      })
+      this.#retainedPreparations.splice(this.#retainedPreparations.indexOf(retained), 1)
+    }
   }
 
   current(): UiDesignerRendererHostSession | null {
@@ -146,10 +189,11 @@ export class UiDesignerRendererHostService {
     return this.#active
   }
 
-  #cleanupActive(): void {
-    const active = this.#active
-    if (!active) return
-    const evidence = this.#verifySourceState(this.#workflowRoot, active.preparation)
+  #cleanupHost(active: ActiveRendererHost): void {
+    const evidence = this.#verifySourceState(this.#workflowRoot, active.preparation, {
+      sourceProject: active.sourceProject,
+      temporaryProject: active.preparation.temporaryProject,
+    })
     if (!evidence.sourceUnchanged || !evidence.savesUnchanged || !evidence.stagingUnchanged) {
       throw Object.assign(new Error(`UI designer renderer isolation evidence changed; the temporary project was kept for recovery.${evidence.stagingError ? ` ${evidence.stagingError}` : ''}`), {
         code: 'UI_DESIGNER_RENDERER_ISOLATION_CHANGED',
@@ -160,15 +204,32 @@ export class UiDesignerRendererHostService {
       this.#dependencies.unregisterPreviewRoot(active.protocolKey)
       active.protocolRegistered = false
     }
-    cleanupIsolatedProject(active.preparation)
-    this.#active = null
+    cleanupIsolatedProject(active.preparation, {
+      sourceProject: active.sourceProject,
+      temporaryProject: active.preparation.temporaryProject,
+    })
+    if (this.#active === active) this.#active = null
+    this.#retiring.delete(active.publicSession.sessionId)
   }
 }
 
 export function stageUiDesignerRendererHost(
-  temporaryProject: string,
+  preparation: IsolatedProjectPreparation,
+  expectedSourceProject: string,
   session: Pick<UiDesignerRendererHostSession, 'sessionId' | 'generation'>,
 ): void {
+  const temporaryProject = preparation.temporaryProject
+  const assertStageOwnership = () => attestIsolatedPreparationResponse({
+    sourceProject: expectedSourceProject,
+    temporaryProject,
+    ownership: preparation.ownership,
+  }, preparation)
+  const ownedWrite = (write: () => void): void => {
+    assertStageOwnership()
+    write()
+    assertStageOwnership()
+  }
+  assertStageOwnership()
   const layout = resolveRmmvLayout(temporaryProject)
   const manifest = inspectRmmvProject(temporaryProject)
   if (!manifest.runnableStructure) throw new Error('The isolated UI designer renderer project is not runnable.')
@@ -177,15 +238,15 @@ export function stageUiDesignerRendererHost(
   const indexPath = path.join(layout.resourceRoot, 'index.html')
   if (!fs.existsSync(indexPath) || !fs.statSync(indexPath).isFile()) throw new Error('The isolated UI designer renderer requires the project index.html.')
   if (!fs.existsSync(pluginsPath) || !fs.statSync(pluginsPath).isFile()) throw new Error('The isolated UI designer renderer requires js/plugins.js.')
-  fs.mkdirSync(pluginDirectory, { recursive: true })
+  ownedWrite(() => fs.mkdirSync(pluginDirectory, { recursive: true }))
   const runtimeBundle = bundledUiDesignerRuntime()
-  fs.writeFileSync(path.join(layout.resourceRoot, ...HOST_RUNTIME_RELATIVE_PATH.split('/')), runtimeBundle.source, 'utf8')
-  fs.writeFileSync(path.join(layout.resourceRoot, ...HOST_PLUGIN_RELATIVE_PATH.split('/')), rendererHostPluginSource(session, runtimeBundle.version), 'utf8')
+  ownedWrite(() => fs.writeFileSync(path.join(layout.resourceRoot, ...HOST_RUNTIME_RELATIVE_PATH.split('/')), runtimeBundle.source, 'utf8'))
+  ownedWrite(() => fs.writeFileSync(path.join(layout.resourceRoot, ...HOST_PLUGIN_RELATIVE_PATH.split('/')), rendererHostPluginSource(session, runtimeBundle.version), 'utf8'))
   const plugins = parsePluginsJs(fs.readFileSync(pluginsPath, 'utf8'))
     .filter((entry) => entry?.name !== 'MZUIRuntime' && entry?.name !== HOST_PLUGIN_NAME)
   plugins.push({ name: 'MZUIRuntime', status: true, description: 'UI designer shared MV/MZ runtime', parameters: { AutoRegister: 'false' } })
   plugins.push({ name: HOST_PLUGIN_NAME, status: true, description: 'Isolated UI designer canvas host', parameters: {} })
-  fs.writeFileSync(pluginsPath, `var $plugins =\n${JSON.stringify(plugins, null, 2)};\n`, 'utf8')
+  ownedWrite(() => fs.writeFileSync(pluginsPath, `var $plugins =\n${JSON.stringify(plugins, null, 2)};\n`, 'utf8'))
 }
 
 function parsePluginsJs(source: string): Array<Record<string, unknown>> {
@@ -226,6 +287,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
   var hostScene = null;
   var pendingMount = null;
   var disposed = false;
+  var activeExecutionMode = 'authoring';
   var lastBounds = '';
   var boundsFrame = 0;
 
@@ -300,8 +362,8 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     if (!object(payload)) throw new Error('Renderer bridge payload must be an object.');
     if (message.kind === 'hello') { exact(payload, ['engine', 'engineVersion', 'pixiVersion', 'runtimeVersion'], 'hello payload'); if ((payload.engine !== 'MV' && payload.engine !== 'MZ') || !boundedString(payload.engineVersion, 64) || !payload.engineVersion || !boundedString(payload.pixiVersion, 64) || !payload.pixiVersion || payload.runtimeVersion !== config.runtimeVersion) throw new Error('Renderer bridge hello capability is invalid.'); return; }
     if (message.kind === 'ready') { exact(payload, ['canvasWidth', 'canvasHeight'], 'ready payload'); if (!Number.isSafeInteger(payload.canvasWidth) || payload.canvasWidth < 1 || payload.canvasWidth > 16384 || !Number.isSafeInteger(payload.canvasHeight) || payload.canvasHeight < 1 || payload.canvasHeight > 16384) throw new Error('Renderer bridge canvas size is invalid.'); return; }
-    if (message.kind === 'mount') { exact(payload, ['revision', 'scene'], 'mount payload'); if (!Number.isSafeInteger(payload.revision) || payload.revision < 0) throw new Error('Renderer bridge mount revision is invalid.'); validateRuntimeScene(payload.scene); return; }
-    if (message.kind === 'mounted' || message.kind === 'bounds') { exact(payload, ['revision', 'bounds'], message.kind + ' payload'); if (!Number.isSafeInteger(payload.revision) || payload.revision < 0) throw new Error('Renderer bridge revision is invalid.'); validateBounds(payload.bounds); return; }
+    if (message.kind === 'mount') { exact(payload, ['revision', 'executionMode', 'scene'], 'mount payload'); if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || (payload.executionMode !== 'authoring' && payload.executionMode !== 'full-preview')) throw new Error('Renderer bridge mount revision or execution mode is invalid.'); validateRuntimeScene(payload.scene); return; }
+    if (message.kind === 'mounted' || message.kind === 'bounds') { exact(payload, message.kind === 'mounted' ? ['revision', 'executionMode', 'bounds'] : ['revision', 'bounds'], message.kind + ' payload'); if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || (message.kind === 'mounted' && payload.executionMode !== 'authoring' && payload.executionMode !== 'full-preview')) throw new Error('Renderer bridge revision or execution mode is invalid.'); validateBounds(payload.bounds); return; }
     if (message.kind === 'patch') {
       exact(payload, ['revision', 'nodes'], 'patch payload');
       if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || !Array.isArray(payload.nodes) || payload.nodes.length > config.maxPatches) throw new Error('Renderer bridge patch is invalid.');
@@ -311,6 +373,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     if (message.kind === 'select') { exact(payload, ['nodeIds'], 'select payload'); if (!Array.isArray(payload.nodeIds) || payload.nodeIds.length > config.maxBounds || payload.nodeIds.some(function (id) { return !identifier(id, false); })) throw new Error('Renderer bridge selection is invalid.'); return; }
     if (message.kind === 'input') { exact(payload, ['type', 'nodeId', 'x', 'y', 'button', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey'], 'input payload'); if (['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'contextmenu'].indexOf(payload.type) < 0 || (payload.nodeId !== null && !identifier(payload.nodeId, false)) || !finite(payload.x) || !finite(payload.y) || !Number.isInteger(payload.button) || payload.button < -1 || payload.button > 5 || ['ctrlKey', 'shiftKey', 'altKey', 'metaKey'].some(function (key) { return typeof payload[key] !== 'boolean'; })) throw new Error('Renderer bridge input is invalid.'); return; }
     if (message.kind === 'diagnostic') { exact(payload, ['entries'], 'diagnostic payload'); if (!Array.isArray(payload.entries) || payload.entries.length > 64) throw new Error('Renderer bridge diagnostics exceed their bound.'); payload.entries.forEach(validateDiagnostic); return; }
+    if (message.kind === 'exit-request') { exact(payload, ['key'], 'exit-request payload'); if (payload.key !== 'Escape' && payload.key !== 'F6') throw new Error('Renderer bridge exit request is invalid.'); return; }
     if (message.kind === 'dispose') { exact(payload, ['reason'], 'dispose payload'); if (['scene-change', 'project-change', 'unload', 'shutdown'].indexOf(payload.reason) < 0) throw new Error('Renderer bridge dispose reason is invalid.'); return; }
     if (message.kind === 'disposed') { exact(payload, [], 'disposed payload'); return; }
     throw new Error('Unsupported renderer bridge ' + direction + ' kind: ' + message.kind);
@@ -319,7 +382,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     exact(message, ['version', 'sessionId', 'generation', 'sequence', 'sceneId', 'kind', 'payload'], 'renderer bridge message');
     if (message.version !== config.version || message.sessionId !== config.sessionId || message.generation !== config.generation) throw new Error('Renderer bridge session/version is stale.');
     if (!identifier(message.sessionId, false) || message.sessionId.length < 8 || !Number.isSafeInteger(message.generation) || message.generation < 0 || !Number.isSafeInteger(message.sequence) || message.sequence < 0 || !identifier(message.sceneId, true)) throw new Error('Renderer bridge envelope is invalid.');
-    if (['hello', 'ready', 'mount', 'mounted', 'patch', 'bounds', 'select', 'input', 'diagnostic', 'dispose', 'disposed'].indexOf(message.kind) < 0) throw new Error('Renderer bridge kind is invalid.');
+    if (['hello', 'ready', 'mount', 'mounted', 'patch', 'bounds', 'select', 'input', 'diagnostic', 'exit-request', 'dispose', 'disposed'].indexOf(message.kind) < 0) throw new Error('Renderer bridge kind is invalid.');
     var bytes = new TextEncoder().encode(JSON.stringify(message)).byteLength;
     if (bytes > config.maxBytes) throw new Error('Renderer bridge message exceeds its byte bound.');
     validatePayload(message, direction);
@@ -363,15 +426,19 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     pendingMount = message;
     activeSceneId = message.sceneId;
     activeRevision = message.payload.revision;
-    if (!hostScene || !global.MZUIRuntime) return;
+    activeExecutionMode = message.payload.executionMode;
+    if (!hostScene || !global.MZUIRuntime || !global.SceneManager || global.SceneManager._scene !== hostScene) {
+      if (global.SceneManager && typeof global.SceneManager.goto === 'function' && typeof global.Scene_MZUIDesignerCanvasHost === 'function') global.SceneManager.goto(global.Scene_MZUIDesignerCanvasHost);
+      return;
+    }
     if (runtime && typeof runtime.cleanup === 'function') runtime.cleanup();
     resizeCanvas(message.payload.scene);
     runtime = global.MZUIRuntime.create();
-    runtime.mount(message.payload.scene, { root: hostScene, context: { sceneApi: hostScene }, sceneApi: hostScene });
+    runtime.mount(message.payload.scene, { root: hostScene, context: { sceneApi: hostScene }, sceneApi: hostScene, executionMode: activeExecutionMode });
     hostScene._mzuiCanvasRuntime = runtime;
     pendingMount = null;
     lastBounds = JSON.stringify(currentBounds());
-    send('mounted', { revision: activeRevision, bounds: currentBounds() }, activeSceneId);
+    send('mounted', { revision: activeRevision, executionMode: activeExecutionMode, bounds: currentBounds() }, activeSceneId);
   }
   function cleanupRuntime() {
     if (runtime && typeof runtime.cleanup === 'function') runtime.cleanup();
@@ -391,6 +458,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     global.removeEventListener('error', onWindowError);
     global.removeEventListener('unhandledrejection', onUnhandledRejection);
     global.removeEventListener('beforeunload', cleanupRuntime);
+    global.removeEventListener('keydown', onPreviewExitKey, true);
     try { if (global.SceneManager && typeof global.SceneManager.stop === 'function') global.SceneManager.stop(); } catch (_) {}
     try { if (global.Graphics && global.Graphics.app && typeof global.Graphics.app.stop === 'function') global.Graphics.app.stop(); } catch (_) {}
   }
@@ -418,6 +486,12 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
   }
   function onWindowError(event) { diagnostic(event.error || event.message || 'Renderer host error', { phase: 'window' }); }
   function onUnhandledRejection(event) { diagnostic(event.reason || 'Renderer host promise rejection', { phase: 'promise' }); }
+  function onPreviewExitKey(event) {
+    if (activeExecutionMode !== 'full-preview' || !event || (event.key !== 'Escape' && event.key !== 'F6')) return;
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+    send('exit-request', { key: event.key }, activeSceneId);
+  }
 
   function installScene() {
     if (typeof global.Scene_Base !== 'function') throw new Error('The project MV/MZ Scene_Base host is unavailable.');
@@ -443,6 +517,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
   global.addEventListener('error', onWindowError);
   global.addEventListener('unhandledrejection', onUnhandledRejection);
   global.addEventListener('beforeunload', cleanupRuntime);
+  global.addEventListener('keydown', onPreviewExitKey, true);
   if (!global.MZUIRuntime || typeof global.MZUIRuntime.create !== 'function') throw new Error('The shared MZUIRuntime is unavailable.');
   global.MZUIRuntime.configure({ onError: function (entry) { diagnostic(entry && entry.message ? entry.message : 'MZUIRuntime error', entry || {}); } });
   installScene();

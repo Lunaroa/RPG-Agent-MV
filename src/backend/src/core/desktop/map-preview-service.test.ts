@@ -7,11 +7,13 @@ import vm from 'node:vm';
 import { pathToFileURL } from 'node:url';
 
 import type { IsolatedProjectPreparation } from './isolated-project-preparation.ts';
+import {
+  buildIsolatedNwLaunchCommand,
+  createIsolatedNwProfileDirectory,
+} from './isolated-nw-app-launch.ts';
 import type { InteractiveProjectRuntime } from './interactive-playtest-runtime.ts';
 import {
-  buildMapPreviewLaunchCommand,
   classifyWarmPreviewPaths,
-  createMapPreviewProfileDirectory,
   describeMapPreviewStartupTimeout,
   injectPreviewHarness,
   isCurrentMapPreviewFrame,
@@ -53,15 +55,18 @@ test('injects the preview harness only into an isolated RPG Maker app root', () 
   try {
     const resources = path.join(root, 'www');
     fs.mkdirSync(path.join(resources, 'js'), { recursive: true });
+    fs.mkdirSync(path.join(resources, 'data'), { recursive: true });
     fs.writeFileSync(
       path.join(resources, 'index.html'),
       '<!doctype html><script src="js/plugins.js"></script><script src="js/main.js"></script>',
       'utf8',
     );
-    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'sample', main: 'www/index.html' }), 'utf8');
-    fs.writeFileSync(path.join(resources, 'package.json'), JSON.stringify({ name: 'sample-web', main: 'index.html' }), 'utf8');
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'sample', main: 'www/index.html', custom: { preserved: true }, window: { title: 'Sample' } }), 'utf8');
+    const resourcePackageSource = JSON.stringify({ name: 'sample-web', main: 'index.html' });
+    fs.writeFileSync(path.join(resources, 'package.json'), resourcePackageSource, 'utf8');
 
     injectPreviewHarness(root, resources, {
+      sessionId: 'map-preview-session',
       token: 'preview-session-token',
       port: 45678,
       mapId: 3,
@@ -81,8 +86,11 @@ test('injects the preview harness only into an isolated RPG Maker app root', () 
     });
 
     const html = fs.readFileSync(path.join(resources, 'index.html'), 'utf8');
-    assert.ok(html.indexOf('rpg-agent-map-preview.js') < html.indexOf('js/main.js'));
-    const harness = fs.readFileSync(path.join(resources, 'js', 'rpg-agent-map-preview.js'), 'utf8');
+    assert.ok(html.indexOf('rpg-agent-map-preview-entry-') < html.indexOf('js/main.js'));
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as Record<string, any>;
+    const harnessMatch = html.match(/<script src="(js\/rpg-agent-map-preview-entry-[a-f0-9]{20}\.js)"><\/script>/);
+    assert.ok(harnessMatch);
+    const harness = fs.readFileSync(path.join(resources, harnessMatch[1]), 'utf8');
     assert.doesNotThrow(() => new vm.Script(harness));
     assert.match(harness, /Game_Interpreter\.prototype\.update/);
     assert.match(harness, /renderer\.render\(SceneManager\._scene\)/);
@@ -133,15 +141,17 @@ test('injects the preview harness only into an isolated RPG Maker app root', () 
       < harness.indexOf("loadMap('fresh', currentMapId, currentGeometry"));
     assert.equal((harness.match(/DataManager\.setupNewGame\(\)/g) || []).length, 1);
 
-    for (const packagePath of [path.join(root, 'package.json'), path.join(resources, 'package.json')]) {
-      const manifest = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as Record<string, any>;
-      assert.equal(manifest.window.show, false);
-      assert.equal(manifest.window.show_in_taskbar, false);
-      assert.match(manifest.window.inject_js_start, /rpg-agent-map-preview\.js$/);
-      assert.equal(manifest.name, 'rmmv-agent-map-preview-preview-sess');
-      assert.equal(manifest['single-instance'], false);
-      assert.match(manifest['chromium-args'], /--disable-raf-throttling/);
-    }
+    assert.equal(manifest.window.show, false);
+    assert.equal(manifest.window.show_in_taskbar, false);
+    assert.equal(manifest.window.title, 'Sample');
+    assert.equal(Object.hasOwn(manifest, 'inject_js_start'), false);
+    assert.equal(Object.hasOwn(manifest.window, 'inject_js_start'), false);
+    assert.match(manifest.name, /^rpg-agent-map-preview-[a-f0-9]{20}$/);
+    assert.ok(manifest.name.length <= 63);
+    assert.equal(manifest['single-instance'], false);
+    assert.match(manifest['chromium-args'], /--disable-raf-throttling/);
+    assert.deepEqual(manifest.custom, { preserved: true });
+    assert.equal(fs.readFileSync(path.join(resources, 'package.json'), 'utf8'), resourcePackageSource);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -247,9 +257,11 @@ test('rejects a nonstandard app entry instead of silently falling back', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-entry-'));
   try {
     fs.mkdirSync(path.join(root, 'js'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'data'), { recursive: true });
     fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html><main></main>', 'utf8');
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'sample', main: 'index.html' }), 'utf8');
     assert.throws(() => injectPreviewHarness(root, root, {
+      sessionId: 'nonstandard-entry-session',
       token: 'preview-session-token',
       port: 45678,
       mapId: 1,
@@ -290,8 +302,8 @@ test('rejects frames from stale operations, maps, and revisions', () => {
 test('creates a unique browser profile inside each isolated preview project', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-profile-'));
   try {
-    const first = createMapPreviewProfileDirectory(root);
-    const second = createMapPreviewProfileDirectory(root);
+    const first = createIsolatedNwProfileDirectory(root, 'map-session-one');
+    const second = createIsolatedNwProfileDirectory(root, 'map-session-two');
     assert.notEqual(first, second);
     assert.equal(path.dirname(first), root);
     assert.equal(path.dirname(second), root);
@@ -305,30 +317,35 @@ test('creates a unique browser profile inside each isolated preview project', ()
 test('places the isolated browser profile before every RPG Maker app argument', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-launch-'));
   try {
-    const source = path.join(root, 'source');
-    const isolated = path.join(root, 'isolated');
+    const source = path.join(root, 'source project');
+    const isolated = path.join(root, 'isolated project');
+    const externalRuntime = path.join(root, 'external runtime');
     fs.mkdirSync(source);
     fs.mkdirSync(isolated);
+    fs.mkdirSync(externalRuntime);
     fs.writeFileSync(path.join(source, 'Game.exe'), 'source-runtime');
     fs.writeFileSync(path.join(isolated, 'Game.exe'), 'copied-runtime');
-    const profile = createMapPreviewProfileDirectory(isolated);
+    fs.writeFileSync(path.join(externalRuntime, 'Game.exe'), 'external-runtime');
+    const sessionId = 'map-launch-session';
+    const profile = createIsolatedNwProfileDirectory(isolated, sessionId);
     const snapshot = preparation(source, isolated);
     const profileArgument = `--user-data-dir=${profile}`;
+    const external = runtime({ executable: path.join(externalRuntime, 'Game.exe'), runtimeRoot: externalRuntime });
 
     assert.deepEqual(
-      buildMapPreviewLaunchCommand(runtime({}), snapshot, profile).args,
-      [profileArgument, isolated, 'test'],
+      buildIsolatedNwLaunchCommand(external, snapshot, sessionId, profile, 'source-project').args,
+      [profileArgument, `--nwapp=${isolated}`, 'test'],
     );
     assert.deepEqual(
-      buildMapPreviewLaunchCommand(runtime({ engine: 'rpg-maker-mz' }), snapshot, profile).args,
-      [profileArgument, isolated],
+      buildIsolatedNwLaunchCommand({ ...external, engine: 'rpg-maker-mz' }, snapshot, sessionId, profile, 'source-project').args,
+      [profileArgument, `--nwapp=${isolated}`],
     );
-    const embedded = buildMapPreviewLaunchCommand(runtime({
+    const embedded = buildIsolatedNwLaunchCommand(runtime({
       executable: path.join(source, 'Game.exe'),
       runtimeRoot: source,
       source: 'project-local',
       launchStyle: 'embedded',
-    }), snapshot, profile);
+    }), snapshot, sessionId, profile, 'source-project');
     assert.deepEqual(embedded.args, [profileArgument]);
     assert.equal(embedded.executable, path.join(isolated, 'Game.exe'));
   } finally {

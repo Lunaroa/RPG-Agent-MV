@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { UiNode, UiRuntimeSceneExport } from '@contract/ui-designer'
-import { UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES } from '@contract/ui-designer-renderer-bridge'
+import type { UiNode, UiRuntimeDiagnostic, UiRuntimeSceneExport } from '@contract/ui-designer'
+import { UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES, UI_DESIGNER_RENDERER_BRIDGE_VERSION, validateUiDesignerRendererBridgeMessage } from '@contract/ui-designer-renderer-bridge'
 import { createUiDesignerRendererDisposeAck, planUiDesignerRendererUpdate, scheduleUiDesignerRendererHandshakeTimeout, UI_DESIGNER_RENDERER_HANDSHAKE_TIMEOUT_MS } from './rendererBridge'
+import { reduceUiDesignerRendererHostRuntimeMessage, type UiDesignerRendererHostRuntimeState } from './composables/useUiDesignerRendererHost'
 
 const node = (index: number, x = index): UiNode => ({
   id: `node_${index}`,
@@ -83,9 +84,54 @@ test('renderer dispose acknowledgement settles immediately without waiting for t
   let settled = false
   void ack.promise.then(() => { settled = true })
   ack.acknowledge()
-  await ack.promise
+  assert.equal(await ack.promise, true)
   assert.equal(settled, true)
   assert.equal(cleared, true)
   timeout?.()
   assert.equal(settled, true)
+})
+
+test('renderer dispose acknowledgement timeout is not terminal proof', async () => {
+  let timeout: (() => void) | undefined
+  const ack = createUiDesignerRendererDisposeAck(
+    (callback) => { timeout = callback; return 23 as unknown as ReturnType<typeof setTimeout> },
+    () => undefined,
+  )
+  timeout?.()
+  assert.equal(await ack.promise, false)
+})
+
+test('renderer host keeps full-preview ready across later bounds and diagnostic messages', () => {
+  const sessionId = 'renderer-session'
+  const generation = 4
+  const bounds = [{ nodeId: 'node_1', x: 10, y: 20, width: 100, height: 40, rotation: 0, visible: true, interactive: true }]
+  const diagnostic: UiRuntimeDiagnostic = {
+    schemaVersion: '1.0.0', sessionId, scene: 'Scene_RendererBridge', file: null, node: 'node_1', type: 'button', phase: 'update', event: null,
+    code: 'UI_RUNTIME_HANDLER_ERROR', severity: 'warning', label: 'runtime', message: 'A recoverable runtime diagnostic.', count: 1,
+  }
+  let state: UiDesignerRendererHostRuntimeState = { bounds: {}, diagnostics: [], executionMode: 'authoring', executionModeReady: false }
+  let minimumSequence = 0
+  const accept = (kind: 'mounted' | 'bounds' | 'diagnostic', payload: Record<string, unknown>) => {
+    const message = validateUiDesignerRendererBridgeMessage({
+      version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
+      sessionId,
+      generation,
+      sequence: minimumSequence,
+      sceneId: 'Scene_RendererBridge',
+      kind,
+      payload,
+    }, { sessionId, generation, minimumSequence })
+    minimumSequence += 1
+    state = reduceUiDesignerRendererHostRuntimeMessage(state, message, 7, 'full-preview')
+  }
+
+  assert.doesNotThrow(() => {
+    accept('mounted', { revision: 7, executionMode: 'full-preview', bounds })
+    accept('bounds', { revision: 7, bounds: [{ ...bounds[0], x: 12 }] })
+    accept('diagnostic', { entries: [diagnostic] })
+  })
+  assert.equal(state.executionMode, 'full-preview')
+  assert.equal(state.executionModeReady, true)
+  assert.equal(state.bounds.node_1?.x, 12)
+  assert.equal(state.diagnostics[0]?.message, diagnostic.message)
 })

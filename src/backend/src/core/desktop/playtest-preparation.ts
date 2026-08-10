@@ -1,6 +1,5 @@
 import childProcess from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +14,12 @@ import type {
   PlaytestPreparationWorkerResponse,
 } from './playtest-preparation-worker.ts';
 import type { IsolatedProjectPreparation } from './isolated-project-preparation.ts';
+import {
+  attestIsolatedPreparationResponse,
+  cleanupOwnedIsolatedProject,
+  createOwnedEmptyIsolatedProject,
+  type IsolatedProjectOwnershipChallenge,
+} from './isolated-project-attestation.ts';
 
 const PREPARATION_OUTPUT_LIMIT = 32_768;
 
@@ -32,10 +37,12 @@ export async function prepareBattleTestInWorker(
   configuration: BattleTestConfiguration,
   dependencies: PlaytestPreparationHostDependencies = {},
 ): Promise<BattleTestProjectPreparation> {
-  const preparation = await runPreparationWorker({
+  const challenge = createOwnedEmptyIsolatedProject(project, { temporaryPrefix: 'rmmv-agent-battle-test-' });
+  const preparation = await runOwnedPreparationWorker(challenge, {
     operation: 'battle_test',
     workflowRoot: path.resolve(workflowRoot),
     project: path.resolve(project),
+    ownershipChallenge: challenge,
     configuration,
   }, dependencies);
   return preparation as BattleTestProjectPreparation;
@@ -51,10 +58,12 @@ export async function prepareParticlePreviewInWorker(
   animation: InteractiveParticleAnimationPreview,
   dependencies: PlaytestPreparationHostDependencies = {},
 ): Promise<ParticleAnimationPreviewPreparation> {
-  const preparation = await runPreparationWorker({
+  const challenge = createOwnedEmptyIsolatedProject(project, { temporaryPrefix: 'rpg-agent-mz-particle-preview-' });
+  const preparation = await runOwnedPreparationWorker(challenge, {
     operation: 'particle_preview',
     workflowRoot: path.resolve(workflowRoot),
     project: path.resolve(project),
+    ownershipChallenge: challenge,
     animation,
   }, dependencies);
   return preparation as ParticleAnimationPreviewPreparation;
@@ -67,10 +76,14 @@ export async function prepareUiDesignerPreviewInWorker(
   temporaryPrefix?: string,
   dependencies: PlaytestPreparationHostDependencies = {},
 ): Promise<IsolatedProjectPreparation> {
-  const preparation = await runPreparationWorker({
+  const challenge = createOwnedEmptyIsolatedProject(project, {
+    temporaryPrefix: temporaryPrefix || 'ui-designer-preview-',
+  });
+  const preparation = await runOwnedPreparationWorker(challenge, {
     operation: 'ui_designer_preview',
     workflowRoot: path.resolve(workflowRoot),
     project: path.resolve(project),
+    ownershipChallenge: challenge,
     physicalCopyAllProjectDirectories: true,
     ...(temporaryPrefix ? { temporaryPrefix } : {}),
   }, dependencies);
@@ -81,7 +94,10 @@ async function runPreparationWorker(
   request: PlaytestPreparationWorkerRequest,
   dependencies: PlaytestPreparationHostDependencies,
 ): Promise<BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | IsolatedProjectPreparation> {
-  const controlDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-playtest-prep-'));
+  const controlOwnership = createOwnedEmptyIsolatedProject(request.project, {
+    temporaryPrefix: 'rpg-agent-playtest-prep-',
+  });
+  const controlDirectory = controlOwnership.temporaryProject;
   const requestPath = path.join(controlDirectory, 'request.json');
   const responsePath = path.join(controlDirectory, 'response.json');
   fs.writeFileSync(requestPath, `${JSON.stringify(request)}\n`, 'utf8');
@@ -121,6 +137,20 @@ async function runPreparationWorker(
     if (!response.ok) throw new Error(response.error);
     return response.preparation;
   } finally {
-    fs.rmSync(controlDirectory, { recursive: true, force: true });
+    cleanupOwnedIsolatedProject(controlOwnership);
+  }
+}
+
+async function runOwnedPreparationWorker(
+  challenge: IsolatedProjectOwnershipChallenge,
+  request: PlaytestPreparationWorkerRequest,
+  dependencies: PlaytestPreparationHostDependencies,
+): Promise<BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | IsolatedProjectPreparation> {
+  try {
+    const preparation = await runPreparationWorker(request, dependencies);
+    return attestIsolatedPreparationResponse(challenge, preparation);
+  } catch (error) {
+    try { cleanupOwnedIsolatedProject(challenge); } catch { /* Retain an unattested worker project. */ }
+    throw error;
   }
 }

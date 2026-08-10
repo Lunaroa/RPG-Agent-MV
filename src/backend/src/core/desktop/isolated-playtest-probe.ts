@@ -62,8 +62,7 @@ export interface IsolatedProbeWorkerResponse {
 
 export interface IsolatedPlaytestProbeDependencies {
   executeWorker: (request: IsolatedProbeWorkerRequest) => Promise<IsolatedProbeWorkerResponse>;
-  createTemporaryProject: () => string;
-  removeTemporaryProject: (project: string) => void;
+  temporaryProjectPath: string;
   now: () => Date;
   randomUUID: () => string;
 }
@@ -116,6 +115,7 @@ export async function runIsolatedRmmvPlaytestProbe(
   let engine: RpgMakerEngine = 'rpg-maker-mv';
   let runtimeExecutable = '';
   let runtimeLaunchStyle: 'embedded' | 'external' = 'embedded';
+  let isolationState = { sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true } as ReturnType<typeof verifyIsolatedSourceState>;
 
   try {
     timeoutMs = normalizeTimeout(options.timeoutMs);
@@ -133,7 +133,7 @@ export async function runIsolatedRmmvPlaytestProbe(
     }
     preparation = prepareIsolatedStagedProject(workflowRoot, project, {
       temporaryPrefix: 'rmmv-agent-verify-',
-      ...(dependencies.createTemporaryProject ? { createTemporaryProject: dependencies.createTemporaryProject } : {}),
+      ...(dependencies.temporaryProjectPath ? { temporaryProjectPath: dependencies.temporaryProjectPath } : {}),
       ...(engine === 'rpg-maker-mz'
         ? { excludeRelativePaths: RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS }
         : {}),
@@ -166,19 +166,26 @@ export async function runIsolatedRmmvPlaytestProbe(
   } finally {
     if (preparation) {
       try {
-        if (dependencies.removeTemporaryProject) cleanupIsolatedProject(preparation, dependencies.removeTemporaryProject);
-        else cleanupIsolatedProject(preparation);
+        isolationState = verifyIsolatedSourceState(workflowRoot, preparation, {
+          sourceProject: project,
+          temporaryProject: preparation.temporaryProject,
+        });
       } catch (error) {
         cleanupError = errorMessage(error);
+      }
+      try {
+        cleanupIsolatedProject(preparation, {
+          sourceProject: project,
+          temporaryProject: preparation.temporaryProject,
+        });
+      } catch (error) {
+        cleanupError = [cleanupError, errorMessage(error)].filter(Boolean).join(' ');
       }
     }
   }
 
   const temporaryProjectCleaned = !temporaryProject || !fs.existsSync(temporaryProject);
   if (!temporaryProjectCleaned && !cleanupError) cleanupError = 'Temporary project still exists after cleanup.';
-  const isolationState = preparation
-    ? verifyIsolatedSourceState(workflowRoot, preparation)
-    : { sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true };
   const { sourceUnchanged, savesUnchanged, stagingUnchanged } = isolationState;
   if ('stagingError' in isolationState && isolationState.stagingError) {
     blockers.push(`Staging preflight changed or conflicted during probe: ${isolationState.stagingError}`);

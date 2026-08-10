@@ -25,7 +25,13 @@ const toggleEditorPreview = () => {
 </script>
 
 <template>
-  <header class="ui-designer-toolbar">
+  <header class="ui-designer-toolbar" :class="{ 'preview-toolbar': designer.isEditorPreviewing }">
+    <template v-if="designer.isEditorPreviewing">
+      <el-button data-testid="ui-designer-editor-preview-exit" data-ui-id="ui-designer-editor-preview-exit" class="editor-preview-toggle" size="small" type="success" @click="toggleEditorPreview">
+        {{ t('exitEditorPreview') }}
+      </el-button>
+    </template>
+    <template v-else>
     <div class="toolbar-brand">
       <span class="toolbar-title">{{ t('title') }}</span>
       <span v-if="designer.isDirty" data-testid="ui-designer-dirty" class="dirty-dot" :title="t('unsaved')" />
@@ -33,7 +39,7 @@ const toggleEditorPreview = () => {
 
     <div class="toolbar-actions">
       <el-button-group>
-        <el-button data-testid="ui-designer-new" size="small" :disabled="designer.isEditorPreviewing" @click="emit('newScene')">{{ t('newScene') }}</el-button>
+        <el-button data-testid="ui-designer-new" size="small" :disabled="!designer.canCreateScene" @click="emit('newScene')">{{ t('newScene') }}</el-button>
         <el-button data-testid="ui-designer-open" size="small" :disabled="designer.isEditorPreviewing || !designer.canSave" @click="void designer.open()">{{ t('open') }}</el-button>
         <el-button data-testid="ui-designer-save" size="small" type="primary" :disabled="designer.isEditorPreviewing || !designer.canSave || !designer.isDirty" @click="void designer.save()">{{ t('save') }}</el-button>
         <el-button size="small" :disabled="designer.isEditorPreviewing || !designer.canSave" @click="void designer.save('saveAs')">{{ t('saveAs') }}</el-button>
@@ -50,21 +56,10 @@ const toggleEditorPreview = () => {
         <el-button data-testid="ui-designer-code-mode" size="small" :disabled="designer.isEditorPreviewing" :type="designer.editingMode === 'code' ? 'primary' : 'default'" @click="designer.setEditingMode('code')">{{ t('code') }}</el-button>
       </el-button-group>
 
-      <el-button data-testid="ui-designer-editor-preview-toggle" class="editor-preview-toggle" size="small" :aria-label="designer.isEditorPreviewing ? t('exitEditorPreview') : t('editorPreview')" :type="designer.isEditorPreviewing ? 'success' : 'default'" @click="toggleEditorPreview">
-        {{ designer.isEditorPreviewing ? t('exitEditorPreview') : t('editorPreview') }}
+      <el-button data-testid="ui-designer-editor-preview-toggle" class="editor-preview-toggle" size="small" :aria-label="t('editorPreview')" :disabled="!designer.canStartEditorPreview" @click="toggleEditorPreview">
+        {{ t('editorPreview') }}
       </el-button>
-      <template v-if="designer.isEditorPreviewing">
-        <el-select size="small" :model-value="designer.editorPreviewResolution" :aria-label="t('editorPreviewResolution')" @update:model-value="designer.setEditorPreviewResolution($event)">
-          <el-option value="816x624" :label="t('resolution816')" />
-          <el-option value="1280x720" :label="t('resolution1280')" />
-          <el-option value="1920x1080" :label="t('resolution1920')" />
-        </el-select>
-        <el-select size="small" :model-value="designer.editorPreviewConditionMode" :aria-label="t('previewConditions')" @update:model-value="designer.setEditorPreviewConditionMode($event)">
-          <el-option value="all-on" :label="t('conditionAllOn')" />
-          <el-option value="all-off" :label="t('conditionAllOff')" />
-        </el-select>
-      </template>
-      <el-button :data-testid="designer.isPreviewing ? 'ui-designer-preview-stop' : 'ui-designer-preview'" size="small" :type="designer.isPreviewing ? 'success' : 'default'" :disabled="designer.isEditorPreviewing || !designer.canPreview" @click="togglePreview">
+      <el-button :data-testid="designer.isPreviewing ? 'ui-designer-preview-stop' : 'ui-designer-preview'" size="small" :type="designer.isPreviewing ? 'success' : 'default'" :disabled="!designer.isPreviewing && !designer.canStartGamePreview" @click="togglePreview">
         {{ designer.isPreviewing ? t('close') : t('gamePreview') }}
       </el-button>
 
@@ -84,6 +79,7 @@ const toggleEditorPreview = () => {
       />
       <span class="scene-version">v{{ designer.document.version }}</span>
     </div>
+    </template>
   </header>
 </template>
 
@@ -126,6 +122,7 @@ const toggleEditorPreview = () => {
 }
 
 .editor-preview-toggle { font-weight: 650; }
+.preview-toolbar { justify-content: flex-end; min-height: 40px; border-bottom-color: #ffffff1c; background: #090a0d; }
 
 .toolbar-scene {
   display: flex;

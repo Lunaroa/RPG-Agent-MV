@@ -17,21 +17,26 @@ import {
   prepareIsolatedStagedProject,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
+import type { IsolatedProjectOwnershipChallenge } from './isolated-project-attestation.ts';
+
+interface WorkerOwnershipRequest {
+  ownershipChallenge: IsolatedProjectOwnershipChallenge;
+}
 
 export type PlaytestPreparationWorkerRequest =
-  | {
+  | WorkerOwnershipRequest & {
     operation: 'battle_test';
     workflowRoot: string;
     project: string;
     configuration: BattleTestConfiguration;
   }
-  | {
+  | WorkerOwnershipRequest & {
     operation: 'particle_preview';
     workflowRoot: string;
     project: string;
     animation: InteractiveParticleAnimationPreview;
   }
-  | {
+  | WorkerOwnershipRequest & {
     operation: 'ui_designer_preview';
     workflowRoot: string;
     project: string;
@@ -59,11 +64,15 @@ async function main(): Promise<void> {
       skipRuntimeLegacyCleanup: true,
     });
     const preparation = request.operation === 'battle_test'
-      ? prepareBattleTestProject(request.workflowRoot, request.project, request.configuration)
+      ? prepareBattleTestProject(request.workflowRoot, request.project, request.configuration, {
+        ownershipChallenge: request.ownershipChallenge,
+      })
       : request.operation === 'particle_preview'
-        ? prepareParticleAnimationPreview(request.workflowRoot, request.project, request.animation)
+        ? prepareParticleAnimationPreview(request.workflowRoot, request.project, request.animation, {}, {
+          ownershipChallenge: request.ownershipChallenge,
+        })
         : prepareIsolatedStagedProject(request.workflowRoot, request.project, {
-          temporaryPrefix: request.temporaryPrefix,
+          ownershipChallenge: request.ownershipChallenge,
           physicalCopyAllProjectDirectories: true,
         });
     writeJsonAtomic(responsePath, { ok: true, preparation } satisfies PlaytestPreparationWorkerResponse);

@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,7 +10,6 @@ import { closeDatabase } from '../db/pool.ts';
 import {
   cleanupIsolatedProject,
   prepareIsolatedStagedProject,
-  removeTemporaryProjectTreeSafely,
   verifyIsolatedSourceState,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
@@ -78,6 +78,27 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
     assert.equal(preparation.savesExcluded, true);
   });
 
+  test('copy failure deletes only the newly owned temporary root and leaves source bytes unchanged', () => {
+    const target = path.join(root, 'removed-copy-target');
+    fs.mkdirSync(target);
+    const broken = path.join(project, 'img', 'broken-copy-link');
+    fs.symlinkSync(target, broken, 'junction');
+    fs.rmdirSync(target);
+    const sourceDigest = treeDigest(project);
+    const temporaryProjectPath = path.join(root, 'owned-copy-failure');
+
+    assert.throws(
+      () => prepareIsolatedStagedProject(root, project, {
+        physicalCopyAllProjectDirectories: true,
+        temporaryProjectPath,
+      }),
+    );
+
+    assert.equal(fs.existsSync(temporaryProjectPath), false);
+    assert.equal(treeDigest(project), sourceDigest);
+    assert.equal(fs.lstatSync(broken).isSymbolicLink(), true);
+  });
+
   test('staged deletions materialize their directory and never delete source files', () => {
     deleteStagedProjectFile(root, project, 'audio/bgm/Theme.ogg');
     preparation = prepareIsolatedStagedProject(root, project);
@@ -97,24 +118,6 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
     assert.equal(fs.existsSync(temp), false);
     assert.equal(fs.readFileSync(path.join(project, 'audio', 'bgm', 'Theme.ogg'), 'utf8'), 'bgm-bytes');
     assert.equal(fs.readFileSync(path.join(project, 'img', 'pictures', 'Hero.png'), 'utf8'), 'png-bytes');
-  });
-
-  test('safe tree removal detaches links via lstat instead of trusting recursive rm', () => {
-    // Electron's bundled Node follows junctions inside fs.rmSync({ recursive: true })
-    // and wipes the link target, so the remover must never delegate traversal to rm.
-    const target = path.join(root, 'link-target');
-    fs.mkdirSync(path.join(target, 'nested'), { recursive: true });
-    fs.writeFileSync(path.join(target, 'nested', 'asset.png'), 'asset-bytes', 'utf8');
-    const doomed = path.join(root, 'doomed');
-    fs.mkdirSync(path.join(doomed, 'plain'), { recursive: true });
-    fs.writeFileSync(path.join(doomed, 'plain', 'file.txt'), 'file-bytes', 'utf8');
-    fs.symlinkSync(target, path.join(doomed, 'junctioned'), 'junction');
-    fs.symlinkSync(target, path.join(doomed, 'plain', 'nested-junction'), 'junction');
-
-    removeTemporaryProjectTreeSafely(doomed);
-
-    assert.equal(fs.existsSync(doomed), false);
-    assert.equal(fs.readFileSync(path.join(target, 'nested', 'asset.png'), 'utf8'), 'asset-bytes');
   });
 
   test('hybrid fingerprint keeps byte evidence for data/js and metadata evidence for assets', () => {
@@ -195,4 +198,26 @@ function freezeTimes(root: string): void {
     }
   };
   visit(root);
+}
+
+function treeDigest(root: string): string {
+  const hash = crypto.createHash('sha256');
+  const visit = (directory: string): void => {
+    for (const entry of fs.readdirSync(directory).sort()) {
+      const target = path.join(directory, entry);
+      const relative = path.relative(root, target).replace(/\\/g, '/');
+      const stat = fs.lstatSync(target);
+      if (stat.isSymbolicLink()) hash.update(`link:${relative}:${fs.readlinkSync(target)}\n`);
+      else if (stat.isDirectory()) {
+        hash.update(`directory:${relative}\n`);
+        visit(target);
+      } else {
+        hash.update(`file:${relative}:`);
+        hash.update(fs.readFileSync(target));
+        hash.update('\n');
+      }
+    }
+  };
+  visit(root);
+  return hash.digest('hex');
 }

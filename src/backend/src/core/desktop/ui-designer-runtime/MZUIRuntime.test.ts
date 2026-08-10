@@ -5,6 +5,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { describe, test } from 'node:test';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { migrateLegacyUiSourceCode } from '../../../../../contract/ui-designer-script.ts';
 
 const RUNTIME_SOURCE = fs.readFileSync(new URL('./MZUIRuntime.js', import.meta.url), 'utf8');
@@ -50,7 +51,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
       try {
         const engineRoot = layout === 'mv-www' ? path.join(project, 'www') : project;
         fs.mkdirSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data'), { recursive: true });
-        if (layout === 'mv-www') fs.mkdirSync(path.join(engineRoot, 'data'), { recursive: true });
+        fs.mkdirSync(path.join(engineRoot, 'data'), { recursive: true });
         for (const sceneName of ['Scene_Beta', 'Scene_Alpha']) {
           fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', `${sceneName}.json`), JSON.stringify({
             version: '1.1.0', runtimeVersion: '>=1.1.0',
@@ -518,6 +519,62 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     secondRuntime.cleanup();
   });
 
+  test('resolves MV and MZ scene roots from the app document when cwd is the external runtime', () => {
+    for (const engine of ['MV', 'MZ']) {
+      const project = fs.mkdtempSync(path.join(os.tmpdir(), `ui-runtime-external-${engine.toLowerCase()}-`));
+      const externalRuntime = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-host-'));
+      try {
+        const engineRoot = engine === 'MV' ? path.join(project, 'www') : project;
+        fs.mkdirSync(path.join(engineRoot, 'data'), { recursive: true });
+        fs.mkdirSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data'), { recursive: true });
+        const sceneName = `Scene_External${engine}`;
+        fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', `${sceneName}.json`), JSON.stringify({
+          version: '1.1.0', runtimeVersion: '>=1.1.0',
+          meta: { sceneName, sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
+          transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
+          globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: sceneScript(),
+        }), 'utf8');
+        const context = makeContext();
+        const documentUrl = pathToFileURL(path.join(engineRoot, 'index.html'));
+        context.location = { protocol: documentUrl.protocol, pathname: documentUrl.pathname, href: documentUrl.href };
+        context.document = { location: context.location };
+        context.PluginManager.parameters = () => ({ AutoRegister: 'true' });
+        context.process = { cwd: () => externalRuntime };
+        context.require = nodeRequire;
+        vm.runInNewContext(RUNTIME_SOURCE, context, { filename: `MZUIRuntime-external-${engine}.js` });
+        assert.equal(context.MZUIRuntime.resolveEngineRoot(), fs.realpathSync(engineRoot));
+        assert.equal(typeof context[sceneName], 'function');
+      } finally {
+        fs.rmSync(project, { recursive: true, force: true });
+        fs.rmSync(externalRuntime, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test('rejects an invalid app document root instead of falling back to cwd', () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-valid-cwd-'));
+    const invalidDocumentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-invalid-document-'));
+    try {
+      fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+      fs.mkdirSync(path.join(project, 'js', 'plugins'), { recursive: true });
+      const context = makeContext();
+      const documentUrl = pathToFileURL(path.join(invalidDocumentRoot, 'index.html'));
+      context.location = { protocol: documentUrl.protocol, pathname: documentUrl.pathname, href: documentUrl.href };
+      context.document = { location: context.location };
+      context.PluginManager.parameters = () => ({ AutoRegister: 'false' });
+      context.process = { cwd: () => project };
+      context.require = nodeRequire;
+      vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-invalid-document.js' });
+      assert.throws(
+        () => context.MZUIRuntime.resolveEngineRoot(),
+        /RPG Maker app document root is invalid/,
+      );
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+      fs.rmSync(invalidDocumentRoot, { recursive: true, force: true });
+    }
+  });
+
   test('renders the complete shape-particle property matrix in a real PIXI Container layer', () => {
     const context = makeContext();
     context.console = { ...console, error() {} };
@@ -606,6 +663,41 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.update();
     assert.deepEqual({ x: state.particles[0].x, y: state.particles[0].y }, { x: 0, y: 0 });
     runtime.cleanup();
+  });
+
+  test('authoring renders without executing user code while full preview executes the complete action surface', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.type === 'button');
+    const variables = { setup: 0, ready: 0, update: 0, property: 0, condition: 0, disabled: 0, actionCondition: 0, action: 0 };
+    scene.sceneScript = {
+      version: '1.0.0',
+      source: 'context.variables.setup += 1; onReady(function () { context.variables.ready += 1; }); onUpdate(function () { context.variables.update += 1; });',
+    };
+    button.propModes = { x: 'code' };
+    button.propCodes = { x: '(context.variables.property += 1, 42)' };
+    button.condition = { type: 'code', code: '(context.variables.condition += 1, true)' };
+    button.props.disabledCondition = '(context.variables.disabled += 1, false)';
+    button.events = { onClick: { actions: [{
+      type: 'script',
+      condition: { type: 'code', code: '(context.variables.actionCondition += 1, true)' },
+      code: 'context.variables.action += 1;',
+    }] } };
+
+    const authoring = context.MZUIRuntime.create();
+    authoring.mount(scene, { root: new context.PIXI.Container(), context: { variables }, executionMode: 'authoring' });
+    authoring.update();
+    assert.equal(authoring.handleRendererInput({ type: 'pointerup', nodeId: button.id, x: 1, y: 1, button: 0, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }), false);
+    assert.deepEqual({ ...variables }, { setup: 0, ready: 0, update: 0, property: 0, condition: 0, disabled: 0, actionCondition: 0, action: 0 });
+    authoring.cleanup();
+
+    const fullPreview = context.MZUIRuntime.create();
+    fullPreview.mount(scene, { root: new context.PIXI.Container(), context: { variables }, executionMode: 'full-preview' });
+    fullPreview.update();
+    assert.equal(fullPreview.handleRendererInput({ type: 'pointerup', nodeId: button.id, x: 1, y: 1, button: 0, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }), true);
+    assert.deepEqual({ ...variables }, { setup: 1, ready: 1, update: 1, property: 1, condition: 2, disabled: 2, actionCondition: 1, action: 1 });
+    fullPreview.cleanup();
   });
 
   test('reuses textured particle objects, switches image/shape layers, and releases pooled PIXI resources', () => {

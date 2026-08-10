@@ -9,6 +9,7 @@ import {
   UI_DESIGNER_RENDERER_BRIDGE_VERSION,
   validateUiDesignerRendererBridgeMessage,
   type UiDesignerRendererBridgeMessage,
+  type UiDesignerRendererExecutionMode,
   type UiDesignerRendererNodeBounds,
 } from '@contract/ui-designer-renderer-bridge'
 import type { UiDesignerController } from './useUiDesigner'
@@ -20,6 +21,43 @@ export interface UiDesignerRendererHostOptions {
   designer: UiDesignerController
   iframe: Ref<HTMLIFrameElement | undefined>
   runtimeScene: () => UiRuntimeSceneExport
+  executionMode: () => UiDesignerRendererExecutionMode
+  onExecutionModeReady?: (mode: UiDesignerRendererExecutionMode) => void
+  onExecutionModeError?: (message: string) => void
+  onPreviewExitRequest?: (key: 'Escape' | 'F6') => void
+}
+
+export interface UiDesignerRendererHostRuntimeState {
+  bounds: Record<string, UiDesignerRendererNodeBounds>
+  diagnostics: UiRuntimeDiagnostic[]
+  executionMode: UiDesignerRendererExecutionMode
+  executionModeReady: boolean
+}
+
+export function reduceUiDesignerRendererHostRuntimeMessage(
+  state: UiDesignerRendererHostRuntimeState,
+  message: UiDesignerRendererBridgeMessage,
+  expectedRevision: number,
+  requestedExecutionMode: UiDesignerRendererExecutionMode,
+): UiDesignerRendererHostRuntimeState {
+  if (message.kind === 'mounted' || message.kind === 'bounds') {
+    if (message.payload.revision < expectedRevision) return state
+    const next = {
+      ...state,
+      bounds: Object.fromEntries(message.payload.bounds.map((entry) => [entry.nodeId, entry])),
+    }
+    return message.kind === 'mounted'
+      ? {
+          ...next,
+          executionMode: message.payload.executionMode,
+          executionModeReady: message.payload.executionMode === requestedExecutionMode,
+        }
+      : next
+  }
+  if (message.kind === 'diagnostic') {
+    return { ...state, diagnostics: [...state.diagnostics, ...message.payload.entries].slice(-64) }
+  }
+  return state
 }
 
 export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions) {
@@ -28,11 +66,14 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   const iframeUrl = ref('')
   const bounds = ref<Record<string, UiDesignerRendererNodeBounds>>({})
   const diagnostics = ref<UiRuntimeDiagnostic[]>([])
+  const executionMode = ref<UiDesignerRendererExecutionMode>('authoring')
+  const executionModeReady = ref(false)
   let session: UiDesignerRendererHostSession | null = null
   let hostSequence = -1
   let clientSequence = 0
   let revision = 0
   let previousScene: UiRuntimeSceneExport | null = null
+  let previousExecutionMode: UiDesignerRendererExecutionMode | null = null
   let disposingSession: UiDesignerRendererHostSession | null = null
   let engineReady = false
   let processConfirmed = false
@@ -41,7 +82,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   let messageListenerInstalled = false
   let cancelHandshake: () => void = () => undefined
   let pendingDispose: UiDesignerRendererDisposeAck | null = null
-  let disposePromise: Promise<void> | null = null
+  let disposePromise: Promise<boolean> | null = null
 
   const activeSceneId = () => {
     try { return options.runtimeScene().meta.sceneName } catch { return 'Scene_CanvasHost' }
@@ -63,16 +104,24 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     return true
   }
 
-  const syncScene = () => {
+  const syncScene = (forceMount = false) => {
     if (!session || status.value !== 'running') return
     try {
       const next = options.runtimeScene()
-      const update = planUiDesignerRendererUpdate(previousScene, next, revision + 1)
+      const requestedExecutionMode = options.executionMode()
+      const executionModeChanged = previousExecutionMode !== requestedExecutionMode
+      const update = forceMount || executionModeChanged
+        ? { kind: 'mount' as const, revision: revision + 1, scene: next }
+        : planUiDesignerRendererUpdate(previousScene, next, revision + 1)
       if (!update) return
       revision = update.revision
-      if (update.kind === 'mount') post('mount', { revision, scene: update.scene }, update.scene.meta.sceneName)
+      if (update.kind === 'mount') {
+        executionModeReady.value = false
+        post('mount', { revision, executionMode: requestedExecutionMode, scene: update.scene }, update.scene.meta.sceneName)
+      }
       else post('patch', { revision, nodes: update.nodes }, next.meta.sceneName)
       previousScene = JSON.parse(JSON.stringify(next)) as UiRuntimeSceneExport
+      previousExecutionMode = requestedExecutionMode
     } catch (reason) {
       void fail(reason)
     }
@@ -92,32 +141,50 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   const dispose = (
     bridgeReason: 'project-change' | 'unload' | 'shutdown',
     backendReason: UiDesignerRendererHostStopReason = bridgeReason,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     if (disposePromise) return disposePromise
     const active = session
-    if (!active) return Promise.resolve()
+    if (!active) return Promise.resolve(true)
     const operation = (async () => {
       cancelHandshake()
       cancelHandshake = () => undefined
       session = null
       disposingSession = active
-      const canAskHost = Boolean(options.iframe.value?.contentWindow && (engineReady || status.value === 'running'))
+      const canAskHost = Boolean(options.iframe.value?.contentWindow)
+      let actorTerminal = !canAskHost
       status.value = 'preparing'
       if (canAskHost) {
         pendingDispose = createUiDesignerRendererDisposeAck()
-        try { postWithSession(active, 'dispose', { reason: bridgeReason }, activeSceneId()) } catch { pendingDispose.acknowledge() }
-        await pendingDispose.promise
+        try { postWithSession(active, 'dispose', { reason: bridgeReason }, activeSceneId()) }
+        catch { actorTerminal = false }
+        if (pendingDispose) actorTerminal = await pendingDispose.promise
         pendingDispose = null
+      }
+      if (!actorTerminal) {
+        session = active
+        disposingSession = null
+        status.value = 'error'
+        error.value = 'The isolated UI canvas did not confirm disposal; its temporary project was kept for recovery.'
+        return false
       }
       disposingSession = null
       iframeUrl.value = ''
       bounds.value = {}
       previousScene = null
+      previousExecutionMode = null
+      executionMode.value = 'authoring'
+      executionModeReady.value = false
       engineReady = false
       processConfirmed = false
       status.value = 'idle'
-      try { await stopBackend(active, backendReason) }
-      catch (reason) { status.value = 'error'; error.value = reason instanceof Error ? reason.message : String(reason) }
+      try {
+        await stopBackend(active, backendReason)
+        return true
+      } catch (reason) {
+        status.value = 'error'
+        error.value = reason instanceof Error ? reason.message : String(reason)
+        return false
+      }
     })()
     const tracked = operation.finally(() => { if (disposePromise === tracked) disposePromise = null })
     disposePromise = tracked
@@ -146,32 +213,29 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
 
   const fail = async (reason: unknown) => {
     startEpoch += 1
-    const active = session
-    session = null
-    disposingSession = null
-    removeMessageListener()
     cancelHandshake()
     cancelHandshake = () => undefined
-    if (pendingDispose) {
-      pendingDispose.acknowledge()
-      pendingDispose = null
-    }
+    const failureMessage = reason instanceof Error ? reason.message : String(reason)
+    const terminal = await dispose('shutdown', 'protocol-error')
+    removeMessageListener()
     status.value = 'error'
-    error.value = reason instanceof Error ? reason.message : String(reason)
+    error.value = terminal
+      ? failureMessage
+      : `${failureMessage} The isolated renderer was kept because disposal was not confirmed.`
+    if (options.executionMode() === 'full-preview') options.onExecutionModeError?.(error.value)
     iframeUrl.value = ''
     bounds.value = {}
     previousScene = null
+    previousExecutionMode = null
+    executionMode.value = 'authoring'
+    executionModeReady.value = false
     engineReady = false
     processConfirmed = false
-    if (active) {
-      try { await stopBackend(active, 'protocol-error') }
-      catch (cleanupError) { error.value = `${error.value} ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}` }
-    }
   }
 
   const start = async () => {
     const epoch = ++startEpoch
-    await dispose('project-change')
+    if (!await dispose('project-change')) return
     await nextTick()
     if (disposed || epoch !== startEpoch || !options.designer.canRenderCanvas || !options.designer.projectPath) return
     installMessageListener()
@@ -192,6 +256,9 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       clientSequence = 0
       revision = 0
       previousScene = null
+      previousExecutionMode = null
+      executionMode.value = 'authoring'
+      executionModeReady.value = false
       engineReady = false
       processConfirmed = false
       iframeUrl.value = started.iframeUrl
@@ -249,12 +316,21 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       } else if (message.kind === 'ready') {
         engineReady = true
         maybeRun()
-      } else if (message.kind === 'mounted' || message.kind === 'bounds') {
-        if (message.payload.revision < revision) return
-        bounds.value = Object.fromEntries(message.payload.bounds.map((entry) => [entry.nodeId, entry]))
-      } else if (message.kind === 'diagnostic') {
-        diagnostics.value = [...diagnostics.value, ...message.payload.entries].slice(-64)
-        options.designer.previewDiagnostics = [...diagnostics.value]
+      } else if (message.kind === 'mounted' || message.kind === 'bounds' || message.kind === 'diagnostic') {
+        const next = reduceUiDesignerRendererHostRuntimeMessage({
+          bounds: bounds.value,
+          diagnostics: diagnostics.value,
+          executionMode: executionMode.value,
+          executionModeReady: executionModeReady.value,
+        }, message, revision, options.executionMode())
+        bounds.value = next.bounds
+        diagnostics.value = next.diagnostics
+        executionMode.value = next.executionMode
+        executionModeReady.value = next.executionModeReady
+        if (message.kind === 'diagnostic') options.designer.previewDiagnostics = [...diagnostics.value]
+        if (message.kind === 'mounted' && message.payload.revision >= revision && executionModeReady.value) options.onExecutionModeReady?.(message.payload.executionMode)
+      } else if (message.kind === 'exit-request') {
+        if (executionModeReady.value && executionMode.value === 'full-preview') options.onPreviewExitRequest?.(message.payload.key)
       } else if (message.kind === 'disposed') {
         if (pendingDispose) pendingDispose.acknowledge()
       }
@@ -263,12 +339,6 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
 
   const onIframeLoad = () => {
     if (session && status.value !== 'running') status.value = 'loading'
-  }
-
-  const sendInput = (payload: Extract<UiDesignerRendererBridgeMessage, { kind: 'input' }>['payload']) => {
-    if (status.value !== 'running') return
-    try { post('input', payload) }
-    catch (reason) { void fail(reason) }
   }
 
   function installMessageListener() {
@@ -290,10 +360,14 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   )
   const sceneStop = watch(
     () => [options.designer.document, options.designer.draftPositions, options.designer.draftRects, options.designer.draftRotations],
-    syncScene,
+    () => syncScene(false),
     { deep: true, flush: 'post' },
   )
   const selectionStop = watch(() => [...options.designer.selectedIds], syncSelection, { flush: 'post' })
+  const executionModeStop = watch(options.executionMode, () => {
+    executionModeReady.value = false
+    syncScene(true)
+  }, { flush: 'post' })
 
   onMounted(() => {
     installMessageListener()
@@ -305,8 +379,9 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     projectStop()
     sceneStop()
     selectionStop()
+    executionModeStop()
     void dispose('unload').finally(removeMessageListener)
   })
 
-  return { status, error, iframeUrl, bounds, diagnostics, onIframeLoad, sendInput, dispose }
+  return { status, error, iframeUrl, bounds, diagnostics, executionMode, executionModeReady, onIframeLoad, dispose }
 }

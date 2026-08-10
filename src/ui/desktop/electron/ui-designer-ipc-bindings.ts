@@ -55,7 +55,7 @@ export interface UiDesignerIpcDependencies {
     writeUiDesignerRuntimeExport(filePath: string, scene: UiRuntimeSceneExport, options?: { overwrite?: boolean }): { path: string; digest: string; mtimeMs: number; size: number }
   }
   preview?: {
-    start(workflowRoot: string, project: string, scene: UiRuntimeSceneExport, options?: Pick<UiDesignerPreviewStartRequest, 'temporaryPrefix'>): Promise<UiPreviewResult>
+    start(workflowRoot: string, project: string, scene: UiRuntimeSceneExport): Promise<UiPreviewResult>
     current(): Promise<UiPreviewResult>
     stop(sessionId?: string): Promise<UiPreviewResult>
   }
@@ -227,7 +227,11 @@ export function registerUiDesignerIpcHandlers(
   ipcMain.handle('ui-designer:preview:start', async (_event, request: UiDesignerPreviewStartRequest) => {
     try {
       if (!dependencies.preview) throw new Error('UI designer preview is unavailable.')
-      return await dependencies.preview.start(dependencies.workflowRoot, dependencies.resolveProject(request.project), request.scene, { temporaryPrefix: request.temporaryPrefix })
+      assertPreviewStartRequest(request)
+      if (typeof request?.project !== 'string' || !request.project.trim()) {
+        throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+      }
+      return await dependencies.preview.start(dependencies.workflowRoot, dependencies.resolveProject(request.project), request.scene)
     } catch (error) { return operationError('preview:start', error) }
   })
   ipcMain.handle('ui-designer:preview:current', async () => {
@@ -275,6 +279,16 @@ export function registerUiDesignerIpcHandlers(
   ipcMain.handle('ui-designer:recent:remove', (_event, filePath: string) => safeStoreCall(dependencies, 'remove-recent', (store) => { store.removeRecentFile(String(filePath)); return null }))
   ipcMain.handle('ui-designer:preferences:read', () => safeStoreCall(dependencies, 'read-preferences', (store) => store.readPreferences()))
   ipcMain.handle('ui-designer:preferences:write', (_event, value: Record<string, unknown>) => safeStoreCall(dependencies, 'write-preferences', (store) => { store.writePreferences(value); return value }))
+}
+
+function assertPreviewStartRequest(value: unknown): asserts value is UiDesignerPreviewStartRequest {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('UI designer preview request must be an object.')
+  const request = value as Record<string, unknown>
+  const unexpected = Object.keys(request).filter((key) => key !== 'project' && key !== 'scene')
+  if (unexpected.length) throw new Error('UI designer preview request contains unsupported fields.')
+  if (!request.scene || typeof request.scene !== 'object' || Array.isArray(request.scene)) {
+    throw new Error('UI designer preview scene is required.')
+  }
 }
 
 function safeStoreCall(

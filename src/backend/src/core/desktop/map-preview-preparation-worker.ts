@@ -8,6 +8,7 @@ import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
 import { prepareIsolatedMapPreviewProject } from './isolated-project-preparation.ts';
+import type { IsolatedProjectOwnershipChallenge } from './isolated-project-attestation.ts';
 import {
   inspectMapPreviewStagingConflict,
   mapPreviewStagingConflictFromError,
@@ -18,6 +19,7 @@ export interface MapPreviewPreparationWorkerRequest {
   workflowRoot: string;
   project: string;
   temporaryProject: string;
+  ownershipChallenge: IsolatedProjectOwnershipChallenge;
 }
 
 export type MapPreviewPreparationWorkerResponse =
@@ -79,7 +81,7 @@ async function main(): Promise<void> {
     const preparation = await prepareIsolatedMapPreviewProject(
       request.workflowRoot,
       request.project,
-      request.temporaryProject,
+      request.ownershipChallenge,
       {
         onStage: (stage) => { currentStage = stage; },
         onProgress: (progress) => reportProgress(request.taskId, progress),

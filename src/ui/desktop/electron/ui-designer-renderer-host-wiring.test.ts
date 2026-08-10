@@ -19,3 +19,29 @@ test('renderer host shutdown failure retains evidence without blocking later Ele
   assert.ok(hostShutdown >= 0 && retainedError > hostShutdown && laterCleanup > retainedError)
   assert.match(cleanup, /try \{[\s\S]*uiDesignerRendererHostService\.shutdownSync\(\)[\s\S]*\} catch \(error\)/)
 })
+
+test('Electron teardown releases the UI preview owner before clearing the interactive runner', () => {
+  const source = fs.readFileSync(new URL('./ipc-handlers.ts', import.meta.url), 'utf8')
+  const cleanup = source.slice(source.indexOf('export function cleanupIpcHandlers'), source.indexOf('export function cleanupMapIpcHandlers'))
+  const ownerStop = cleanup.indexOf('desktop.uiDesigner.preview.shutdownSync()')
+  const runnerStop = cleanup.indexOf('interactivePlaytestService.shutdownSync()')
+  const runnerClear = cleanup.indexOf('interactivePlaytestService = null')
+
+  assert.ok(ownerStop >= 0 && runnerStop > ownerStop && runnerClear > runnerStop)
+  assert.match(cleanup, /if \(interactivePlaytestService && uiPreviewOwnerReleased\)/)
+  assert.match(cleanup, /\['stopped', 'exited', 'failed'\]\.includes/)
+})
+
+test('Electron teardown retains failed map and particle isolation owners while continuing cleanup', () => {
+  const source = fs.readFileSync(new URL('./ipc-handlers.ts', import.meta.url), 'utf8')
+  const cleanup = source.slice(source.indexOf('export function cleanupIpcHandlers'), source.indexOf('export function cleanupMapIpcHandlers'))
+  const mapStop = cleanup.indexOf('mapPreviewService.shutdownSync()')
+  const mapOwnership = cleanup.indexOf('mapPreviewService.hasRetainedIsolationOwner()')
+  const hostStop = cleanup.indexOf('uiDesignerRendererHostService.shutdownSync()')
+  const particleLoop = cleanup.indexOf('for (const key of [...particlePreviewSessions.keys()])')
+
+  assert.ok(mapStop >= 0 && mapOwnership > mapStop && hostStop > mapOwnership)
+  assert.match(cleanup, /if \(!mapPreviewService\.hasRetainedIsolationOwner\(\)\) mapPreviewService = null/)
+  assert.ok(particleLoop > hostStop)
+  assert.match(cleanup.slice(particleLoop), /try \{ disposeParticlePreviewSession\(key\); \}[\s\S]*retained an isolated preview owner/)
+})

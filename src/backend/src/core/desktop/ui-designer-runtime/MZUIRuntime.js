@@ -93,6 +93,8 @@
       sceneTransition: null,
       sceneFilters: [],
       focusedNodeId: null,
+      executionMode: 'full-preview',
+      allowsUserExecution: function allowsUserExecution() { return this.executionMode === 'full-preview'; },
       makeInvocationArgs: function makeInvocationArgs(node, event, props) {
         var runtime = this;
         var context = this.context || {};
@@ -125,6 +127,9 @@
       },
       mount: function mount(scene, options) {
         this.cleanup();
+        var executionMode = options && options.executionMode ? String(options.executionMode) : 'full-preview';
+        if (executionMode !== 'authoring' && executionMode !== 'full-preview') throw new Error('UI Runtime execution mode is unsupported.');
+        this.executionMode = executionMode;
         this.scene = scene;
         this.sceneName = scene && scene.meta ? scene.meta.sceneName : null;
         this.context = options && options.context ? options.context : {};
@@ -157,15 +162,17 @@
           if (typeof this.context.sceneApi.focusNode !== 'function') this.context.sceneApi.focusNode = this.focusNode.bind(this);
           if (typeof this.context.sceneApi.blurNode !== 'function') this.context.sceneApi.blurNode = this.blurNode.bind(this);
         }
-        this.registerSceneScript();
-        installKeyboardFocusManager(this);
+        if (this.allowsUserExecution()) this.registerSceneScript();
+        if (this.allowsUserExecution()) installKeyboardFocusManager(this);
         this.mounted = true;
-        var readyArgs = this.makeInvocationArgs(null, null, null);
-        this.compiled.ready.forEach(function (handler, index) {
-          this.invoke(handler, readyArgs, 'scene-script:ready', 'scene-script:ready:' + index, { phase: 'ready' });
-        }, this);
+        if (this.allowsUserExecution()) {
+          var readyArgs = this.makeInvocationArgs(null, null, null);
+          this.compiled.ready.forEach(function (handler, index) {
+            this.invoke(handler, readyArgs, 'scene-script:ready', 'scene-script:ready:' + index, { phase: 'ready' });
+          }, this);
+        }
         this.visibilityEventsReady = true;
-        this.dispatchInitialVisibility();
+        if (this.allowsUserExecution()) this.dispatchInitialVisibility();
         return this;
       },
       indexAndCompile: function indexAndCompile() {
@@ -252,7 +259,7 @@
         this.frame += 1;
         var self = this;
         var nodes = this.scene && Array.isArray(this.scene.nodes) ? this.scene.nodes : [];
-        this.advanceActionQueues();
+        if (this.allowsUserExecution()) this.advanceActionQueues();
         updateSceneTransition(this);
         this.updateTweens();
         nodes.forEach(function (node) {
@@ -280,10 +287,12 @@
             self.reportError(error, 'node:update', { node: node.id, type: node.type, phase: 'update' });
           }
         });
-        var updateArgs = this.makeInvocationArgs(null, null, null);
-        this.compiled.update.forEach(function (handler, index) {
-          this.invoke(handler, updateArgs, 'scene-script:update', 'scene-script:update:' + index, { phase: 'update' });
-        }, this);
+        if (this.allowsUserExecution()) {
+          var updateArgs = this.makeInvocationArgs(null, null, null);
+          this.compiled.update.forEach(function (handler, index) {
+            this.invoke(handler, updateArgs, 'scene-script:update', 'scene-script:update:' + index, { phase: 'update' });
+          }, this);
+        }
       },
       startExit: function startExit() {
         var transition = this.scene && this.scene.transitions && this.scene.transitions.exit;
@@ -293,6 +302,7 @@
       },
       evaluateCondition: function evaluateCondition(condition, node, key) {
         if (!condition || condition.type === 'none') return true;
+        if (!this.allowsUserExecution()) return true;
         var switches = this.context.switches || (global.$gameSwitches && global.$gameSwitches._data) || {};
         var variables = this.context.variables || (global.$gameVariables && global.$gameVariables._data) || {};
         if (condition.type === 'switch_on' || condition.type === 'switch_off') {
@@ -321,6 +331,7 @@
         return value;
       },
       runPropertyCodes: function runPropertyCodes(node) {
+        if (!this.allowsUserExecution()) return;
         var self = this;
         var props = node.props || {};
         Object.keys(node.propModes || {}).forEach(function (key) {
@@ -330,6 +341,7 @@
         });
       },
       dispatchActions: function dispatchActions(eventName, event) {
+        if (!this.allowsUserExecution()) return;
         var self = this;
         var nodes = this.scene && Array.isArray(this.scene.nodes) ? this.scene.nodes : [];
         nodes.forEach(function (node) { self.dispatchActionsForNode(node, eventName, event); });
@@ -354,6 +366,7 @@
         return next;
       },
       dispatchActionsForNode: function dispatchActionsForNode(node, eventName, event) {
+        if (!this.allowsUserExecution()) return;
         var handler = node && node.events && node.events[eventName];
         if (!handler || !Array.isArray(handler.actions)) return;
         if (eventName === 'onUpdate' && this.actionQueues.some(function (queue) { return queue.node === node && queue.eventName === eventName; })) return;
@@ -398,7 +411,7 @@
         var view = this.nodeViews[node.id];
         if (!view) return;
         var disabled = Boolean(node.props && node.props.disabled);
-        if (node.props && typeof node.props.disabledCondition === 'string' && node.props.disabledCondition.trim()) {
+        if (this.allowsUserExecution() && node.props && typeof node.props.disabledCondition === 'string' && node.props.disabledCondition.trim()) {
           var value = this.invoke(this.compiled.properties[node.id + ':disabled'], this.makeInvocationArgs(node, null, node.props), 'button-disabled', 'button:' + node.id + ':disabled', { node: node.id, event: 'disabledCondition' });
           if (value !== undefined) disabled = Boolean(value);
         }
@@ -547,6 +560,7 @@
       },
       handleRendererInput: function handleRendererInput(input) {
         if (!input || typeof input.type !== 'string') throw new TypeError('UI renderer input is invalid.');
+        if (!this.allowsUserExecution()) return false;
         var node = input.nodeId ? this.getNode(input.nodeId) : null;
         if (!node) {
           if (input.type === 'pointercancel' && this.focusedNodeId) this.blurNode(this.focusedNodeId);
@@ -625,6 +639,7 @@
         this.sceneTransition = null;
         this.sceneFilters = [];
         this.focusedNodeId = null;
+        this.executionMode = 'full-preview';
       },
     };
     return runtime;
@@ -1890,10 +1905,41 @@
     if (typeof process === 'undefined' || typeof process.cwd !== 'function' || typeof require !== 'function') throw new Error('Node process/fs is unavailable; RPG Maker runtime integration is unsupported.');
     var fs = require('fs');
     var path = require('path');
+    var documentRoot = resolveDocumentEngineRoot(fs, path);
+    if (documentRoot) return documentRoot;
     var cwd = process.cwd();
-    if (fs.existsSync(path.join(cwd, 'js', 'plugins'))) return cwd;
-    if (fs.existsSync(path.join(cwd, 'www', 'js', 'plugins')) && fs.existsSync(path.join(cwd, 'www', 'data'))) return path.join(cwd, 'www');
+    var cwdRoot = validatedEngineRoot(fs, path, cwd);
+    if (cwdRoot) return cwdRoot;
     throw new Error('RPG Maker engine root is not configured: expected js/plugins or www/js/plugins under the game directory.');
+  }
+
+  function resolveDocumentEngineRoot(fs, path) {
+    var location = global.document && global.document.location ? global.document.location : global.location;
+    if (!location) return null;
+    try {
+      if (location.protocol && location.protocol !== 'file:') throw new Error('RPG Maker app document must use the file protocol.');
+      var pathname = String(location.pathname || '');
+      if (!pathname) throw new Error('RPG Maker app document path is unavailable.');
+      var decoded = decodeURIComponent(pathname);
+      if (/^\/[A-Za-z]:\//.test(decoded)) decoded = decoded.slice(1);
+      decoded = decoded.replace(/\//g, path.sep);
+      var candidate = path.dirname(path.resolve(decoded));
+      var documentRoot = validatedEngineRoot(fs, path, candidate);
+      if (!documentRoot) throw new Error('RPG Maker app document root is invalid.');
+      return documentRoot;
+    } catch (error) {
+      throw new Error('RPG Maker app document root is invalid: ' + errorText(error));
+    }
+  }
+
+  function validatedEngineRoot(fs, path, candidate) {
+    try {
+      var resolved = fs.realpathSync(path.resolve(candidate));
+      if (fs.existsSync(path.join(resolved, 'js', 'plugins')) && fs.existsSync(path.join(resolved, 'data'))) return resolved;
+      var deployed = fs.realpathSync(path.join(resolved, 'www'));
+      if (fs.existsSync(path.join(deployed, 'js', 'plugins')) && fs.existsSync(path.join(deployed, 'data'))) return deployed;
+    } catch (_) {}
+    return null;
   }
 
   function registerScene(sceneName, sceneBase, scene) {
@@ -1937,6 +1983,7 @@
     create: makeRuntime,
     registerScene: registerScene,
     isRegistered: function isRegistered(sceneName) { return Boolean(registeredScenes[sceneName]); },
+    resolveEngineRoot: resolveEngineRoot,
     errors: [],
     onError: null,
     parseTextRuns: function parseTextRunsApi(value, context) { return parseTextRuns(value, context || {}); },

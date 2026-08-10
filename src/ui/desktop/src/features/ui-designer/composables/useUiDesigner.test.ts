@@ -54,25 +54,136 @@ test('preview stop failure retains the session and polling can be retried', asyn
       return stopCalls === 1 ? { state: 'error', message: 'stop failed', sessionId: 'preview-1' } : { state: 'stopped', message: 'stopped', sessionId: 'preview-1' }
     },
   }
-  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { preview } })
+  const rendererHost = {
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async stop() { return success(null) },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { preview, rendererHost } })
   assert.equal(await designer.startPreview(), true)
+  assert.equal(designer.canStartEditorPreview.value, false)
   assert.equal(await designer.stopPreview(), false)
   assert.equal(designer.previewSessionId.value, 'preview-1')
   assert.equal(designer.isPreviewing.value, true)
   assert.equal(await designer.stopPreview(), true)
   assert.equal(designer.previewSessionId.value, undefined)
   assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.canStartEditorPreview.value, true)
 })
 
-test('editor preview renders the design canvas and restores the source editing mode', () => {
-  const designer = useUiDesigner()
+test('game preview start is single-flight and project switch cancels pending scene readiness once', async () => {
+  let resolveStart!: (result: UiPreviewResult) => void
+  const pendingStart = new Promise<UiPreviewResult>((resolve) => { resolveStart = resolve })
+  let starts = 0
+  let stops = 0
+  const preview: UiDesignerPreviewAdapter = {
+    async start() { starts += 1; return await pendingStart },
+    async current() { return { state: 'preparing', message: 'preparing' } },
+    async stop() {
+      stops += 1
+      const stopped = { state: 'stopped' as const, message: 'stopped', sessionId: 'preview-pending' }
+      resolveStart(stopped)
+      return stopped
+    },
+  }
+  const rendererHost = {
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async stop() { return success(null) },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { preview, rendererHost } })
+  const firstStart = designer.startPreview()
+  assert.equal(designer.previewStatus.value, 'preparing')
+  assert.equal(designer.canStartEditorPreview.value, false)
+  assert.equal(designer.startEditorPreview(), false)
+  assert.equal(await designer.startPreview(), false)
+  assert.equal(starts, 1)
+  assert.equal(await designer.setProjectContext('projects/next', { preview, rendererHost }), true)
+  assert.equal(await firstStart, false)
+  assert.equal(stops, 1)
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.canStartEditorPreview.value, true)
+})
+
+test('editor preview waits for mount acknowledgements and excludes game preview until cleanup', async () => {
+  const rendererHost = {
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async stop() { return success(null) },
+  }
+  let gameStarts = 0
+  const preview: UiDesignerPreviewAdapter = {
+    async start() { gameStarts += 1; return { state: 'running', message: 'running', sessionId: 'game-preview' } },
+    async current() { return { state: 'running', message: 'running', sessionId: 'game-preview' } },
+    async stop() { return { state: 'stopped', message: 'stopped', sessionId: 'game-preview' } },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost, preview } })
   designer.editingMode.value = 'code'
   assert.equal(designer.startEditorPreview(), true)
   assert.equal(designer.isEditorPreviewing.value, true)
   assert.equal(designer.editingMode.value, 'design')
+  assert.equal(designer.editorPreviewStatus.value, 'preparing')
+  assert.equal(designer.canStartGamePreview.value, false)
+  assert.equal(await designer.startPreview(), false)
+  assert.equal(gameStarts, 0)
+  assert.equal(designer.acknowledgeEditorPreviewExecutionMode('full-preview'), true)
+  assert.equal(designer.editorPreviewStatus.value, 'running')
   assert.equal(designer.stopEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, true)
+  assert.equal(designer.editingMode.value, 'design')
+  assert.equal(designer.editorPreviewStatus.value, 'preparing')
+  assert.equal(designer.canStartGamePreview.value, false)
+  assert.equal(designer.acknowledgeEditorPreviewExecutionMode('authoring'), true)
   assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
+  assert.equal(designer.canStartGamePreview.value, true)
+
+  assert.equal(designer.startEditorPreview(), true)
+  assert.equal(designer.acknowledgeEditorPreviewExecutionMode('full-preview'), true)
+  designer.failEditorPreview('The replacement renderer preparation was superseded.')
+  assert.equal(designer.editorPreviewStatus.value, 'error')
+  assert.equal(designer.editorPreviewMessage.value, 'The replacement renderer preparation was superseded.')
+  assert.equal(designer.isEditorPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
+})
+
+test('project profile dimensions seed only newly created scenes across project switches', async () => {
+  const project = {
+    async getProfile(request?: { project?: string }) {
+      assert.equal(request?.project, 'projects/sample')
+      return success({ engine: 'MV' as const, engineVersion: '1.6.2', screenWidth: 960, screenHeight: 540, uiAreaWidth: 960, uiAreaHeight: 540 })
+    },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { project } })
+  assert.equal(designer.canCreateScene.value, false)
+  assert.equal(await designer.loadProjectProfile(), true)
+  assert.deepEqual(designer.newSceneCanvasSize.value, { width: 960, height: 540 })
+  assert.equal(designer.newScene('Scene_Profile_A'), true)
+  const firstScene = designer.document.value
+  assert.deepEqual([firstScene.canvas.width, firstScene.canvas.height], [960, 540])
+
+  assert.equal(await designer.setProjectContext('projects/next', {
+    project: {
+      async getProfile(request?: { project?: string }) {
+        assert.equal(request?.project, 'projects/next')
+        return success({ engine: 'MZ' as const, engineVersion: '1.10.0', screenWidth: 1280, screenHeight: 720, uiAreaWidth: 1280, uiAreaHeight: 720 })
+      },
+    },
+  }), true)
+  assert.deepEqual([firstScene.canvas.width, firstScene.canvas.height], [960, 540])
+  assert.equal(designer.newScene('Scene_Profile_B'), true)
+  assert.deepEqual([designer.document.value.canvas.width, designer.document.value.canvas.height], [1280, 720])
+})
+
+test('no project profile disables default scene creation but explicit low-level dimensions remain valid', () => {
+  const designer = useUiDesigner()
+  const initialSceneCount = designer.scenes.value.length
+  assert.equal(designer.newSceneCanvasSize.value, null)
+  assert.equal(designer.canCreateScene.value, false)
+  assert.equal(designer.newScene('Scene_Requires_Project'), false)
+  assert.equal(designer.scenes.value.length, initialSceneCount)
+  assert.equal(designer.newScene('Scene_Explicit_Size', { width: 640, height: 360 }), true)
+  assert.deepEqual([designer.document.value.canvas.width, designer.document.value.canvas.height], [640, 360])
 })
 
 test('integer geometry and shared node actions guard locked selections and ancestry at execution', () => {
@@ -255,7 +366,7 @@ test('scene data import creates a dirty editor copy that can be saved as a new s
 test('switching scenes flushes the single-file source draft to its captured scene', () => {
   const designer = useUiDesigner()
   const sceneA = designer.activeScene.value
-  designer.newScene('Scene_B')
+  designer.newScene('Scene_B', { width: 816, height: 624 })
   const sceneB = designer.activeScene.value
   const sceneBSource = sceneB.document.sceneScript.source
   designer.selectScene(sceneA.id)

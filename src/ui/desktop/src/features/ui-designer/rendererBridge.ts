@@ -9,7 +9,7 @@ export const UI_DESIGNER_RENDERER_HANDSHAKE_TIMEOUT_MS = 10_000
 export const UI_DESIGNER_RENDERER_DISPOSE_ACK_TIMEOUT_MS = 1_000
 
 export interface UiDesignerRendererDisposeAck {
-  promise: Promise<void>
+  promise: Promise<boolean>
   acknowledge(): void
 }
 
@@ -18,15 +18,19 @@ export function createUiDesignerRendererDisposeAck(
   cancel: (timer: ReturnType<typeof setTimeout>) => void = clearTimeout,
 ): UiDesignerRendererDisposeAck {
   let settled = false
-  let resolvePromise: () => void = () => undefined
-  const promise = new Promise<void>((resolve) => { resolvePromise = resolve })
+  let resolvePromise: (acknowledged: boolean) => void = () => undefined
+  const promise = new Promise<boolean>((resolve) => { resolvePromise = resolve })
   const acknowledge = () => {
     if (settled) return
     settled = true
     cancel(timer)
-    resolvePromise()
+    resolvePromise(true)
   }
-  const timer = schedule(acknowledge, UI_DESIGNER_RENDERER_DISPOSE_ACK_TIMEOUT_MS)
+  const timer = schedule(() => {
+    if (settled) return
+    settled = true
+    resolvePromise(false)
+  }, UI_DESIGNER_RENDERER_DISPOSE_ACK_TIMEOUT_MS)
   return { promise, acknowledge }
 }
 

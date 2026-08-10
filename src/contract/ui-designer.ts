@@ -723,6 +723,11 @@ export interface UiPreviewResult {
   }
   cleanup?: { ok: boolean; message?: string }
   runner?: { runId?: string; status?: string; error?: string }
+  sceneHandshake?: {
+    status: 'ready' | 'mismatch'
+    expectedScene: string
+    actualScene: string
+  }
   projectCompatibility?: UiDesignerProjectCompatibility
 }
 
@@ -844,7 +849,6 @@ export interface UiDesignerSceneStageRequest extends UiDesignerProjectRequest {
 
 export interface UiDesignerPreviewStartRequest extends UiDesignerProjectRequest {
   scene: UiRuntimeSceneExport
-  temporaryPrefix?: string
 }
 
 export interface UiDesignerRecoveryWriteRequest {

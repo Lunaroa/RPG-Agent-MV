@@ -81,7 +81,16 @@ const lifecycle = useUiDesignerLifecycle({
 defineExpose({ designer, lifecycle, setProjectContext: rawDesigner.setProjectContext })
 
 const openTour = () => { tourStep.value = 0; surface.value = 'tour' }
-const openNewScene = () => { newSceneDraft.name = `Scene_New_${rawDesigner.scenes.value.length + 1}`; newSceneDraft.width = Number(rawDesigner.preferences.value.defaultCanvasWidth ?? 816); newSceneDraft.height = Number(rawDesigner.preferences.value.defaultCanvasHeight ?? 624); newSceneDraft.sceneBase = 'Scene_Base'; newSceneTemplate.value = 'blank'; surface.value = 'newScene' }
+const openNewScene = () => {
+  const size = rawDesigner.newSceneCanvasSize.value
+  if (!size) return
+  newSceneDraft.name = `Scene_New_${rawDesigner.scenes.value.length + 1}`
+  newSceneDraft.width = size.width
+  newSceneDraft.height = size.height
+  newSceneDraft.sceneBase = 'Scene_Base'
+  newSceneTemplate.value = 'blank'
+  surface.value = 'newScene'
+}
 const createNewScene = () => { rawDesigner.newScene(newSceneDraft.name, { width: newSceneDraft.width, height: newSceneDraft.height, sceneBase: newSceneDraft.sceneBase, template: newSceneTemplate.value === 'blank' ? undefined : newSceneTemplate.value }); surface.value = null }
 const completeTour = async () => {
   surface.value = null
@@ -132,6 +141,11 @@ watch(() => [designer.preferences.leftPaneWidth, designer.preferences.centerPane
 }, { immediate: true })
 watch(() => designer.scenes.length, (count, previous) => { if (count > 1 || (previous !== undefined && count !== previous)) showWelcome.value = false })
 watch(() => designer.document.nodes.length, (count) => { if (count > 1) showWelcome.value = false })
+watch(() => designer.isEditorPreviewing, (active) => {
+  if (!active) return
+  showWelcome.value = false
+  surface.value = null
+})
 watch(() => props.projectPath, (next, previous) => { if (props.manageProjectContext && next !== previous) void rawDesigner.setProjectContext(next, props.adapters) })
 onMounted(async () => {
   const modifier = (key: string, handler: () => void | Promise<void>, shift = false, description?: string) => shortcutRegistry.register({ key, ctrlOrMeta: true, shift, description, handler })
@@ -175,6 +189,7 @@ onMounted(async () => {
   window.addEventListener('keydown', shortcutRegistry.handle)
   void rawDesigner.loadWelcomeRecords()
   await rawDesigner.loadPreferences()
+  await rawDesigner.loadProjectProfile()
   if (!Boolean(designer.preferences.tourCompleted)) openTour()
 })
 onBeforeUnmount(() => { endPaneDrag(); window.removeEventListener('keydown', shortcutRegistry.handle); shortcutRegistry.unregisterAll(); rawDesigner.flushDrafts(); void rawDesigner.stopPreview(); rawDesigner.stopEditorPreview(); void rawDesigner.flushRecovery() })
@@ -183,28 +198,28 @@ onBeforeUnmount(() => { endPaneDrag(); window.removeEventListener('keydown', sho
 <template>
     <section class="ui-designer-shell" :class="{ 'editor-preview-active': designer.isEditorPreviewing, 'code-mode-active': designer.editingMode === 'code' && !designer.isEditorPreviewing }" data-ui-id="ui-designer-shell">
     <UiDesignerToolbar :designer="designer" @new-scene="openNewScene" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
-    <UiDesignerSceneTabs :designer="designer" @new-scene="openNewScene" />
+    <UiDesignerSceneTabs v-if="!designer.isEditorPreviewing" :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :style="workspaceStyle">
-      <aside class="left-pane">
+      <aside v-if="!designer.isEditorPreviewing" class="left-pane">
         <UiDesignerNodePanel :designer="designer" />
       </aside>
-      <div class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
+      <div v-if="!designer.isEditorPreviewing" class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
       <main class="center-pane">
         <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" />
         <UiDesignerCanvas v-else-if="designer.editingMode === 'design'" :designer="designer" />
         <UiDesignerCodePanel v-else :designer="designer" />
       </main>
-      <div class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
-      <UiDesignerInspector :designer="designer" />
+      <div v-if="!designer.isEditorPreviewing" class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
+      <UiDesignerInspector v-if="!designer.isEditorPreviewing" :designer="designer" />
     </div>
-    <UiDesignerStatusBar :designer="designer" />
+    <UiDesignerStatusBar v-if="!designer.isEditorPreviewing" :designer="designer" />
 
-    <UiDesignerNewSceneSurface v-if="surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="newSceneTemplate = $event" @create="createNewScene" @cancel="surface = null" />
-    <UiDesignerSettingsSurface v-if="surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
-    <UiDesignerExportSurface v-if="surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
-    <UiDesignerHelpSurface v-if="surface === 'help' || surface === 'shortcuts' || surface === 'tour'" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
+    <UiDesignerNewSceneSurface v-if="!designer.isEditorPreviewing && surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="newSceneTemplate = $event" @create="createNewScene" @cancel="surface = null" />
+    <UiDesignerSettingsSurface v-if="!designer.isEditorPreviewing && surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
+    <UiDesignerExportSurface v-if="!designer.isEditorPreviewing && surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
+    <UiDesignerHelpSurface v-if="!designer.isEditorPreviewing && (surface === 'help' || surface === 'shortcuts' || surface === 'tour')" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
 
-    <el-dialog :model-value="Boolean(designer.fileConflict)" :title="t('conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
+    <el-dialog :model-value="!designer.isEditorPreviewing && Boolean(designer.fileConflict)" :title="t('conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
       <p class="dialog-copy">{{ designer.runtimeConflict ? t('overwriteConflictBody') : t('conflictBody') }}</p>
        <dl v-if="designer.runtimeConflict && designer.fileConflict?.actual" class="conflict-metadata"><dt>{{ t('modifiedTime') }}</dt><dd>{{ designer.fileConflict.actual.mtimeMs }}</dd><dt>{{ t('digest') }}</dt><dd>{{ designer.fileConflict.actual.digest }}</dd><template v-if="designer.runtimeConflictFiles?.length"><dt>{{ t('affectedFiles') }}</dt><dd>{{ designer.runtimeConflictFiles.join(', ') }}</dd></template></dl>
       <template #footer>
@@ -226,8 +241,8 @@ onBeforeUnmount(() => { endPaneDrag(); window.removeEventListener('keydown', sho
 .inspector-panel { border-left: 1px solid var(--app-border); }
 .code-mode-active .left-pane, .code-mode-active .workspace-splitter, .code-mode-active .inspector-panel { display: none; }
 .code-mode-active .designer-workspace { grid-template-columns: minmax(0, 1fr) !important; }
-.editor-preview-active .left-pane, .editor-preview-active .inspector-panel { opacity: .55; pointer-events: none; }
-.editor-preview-active .center-pane { pointer-events: none; }
+.editor-preview-active .left-pane, .editor-preview-active .workspace-splitter, .editor-preview-active .inspector-panel { display: none; }
+.editor-preview-active .designer-workspace { grid-template-columns: minmax(0, 1fr) !important; }
 .dialog-stack, .dialog-copy, .tour-copy { color: var(--app-ink); font-size: 13px; line-height: 1.6; }.dialog-copy p { margin: 0 0 10px; }.tour-copy p { min-height: 50px; }
 .shortcut-list { display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; margin: 0; font-size: 12px; }.shortcut-list dt { color: var(--app-ink-soft); }.shortcut-list dd { margin: 0; }
 .export-validation { border: 1px solid var(--app-border); border-radius: 6px; padding: 8px; }.validation-heading { margin-bottom: 5px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }.validation-list { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; font-size: 11px; }.validation-list li { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 5px; align-items: baseline; }.validation-severity { font-weight: 650; }.validation-error .validation-severity { color: var(--el-color-danger); }.validation-warning .validation-severity { color: var(--el-color-warning); }.validation-target { padding: 0; border: 0; background: transparent; color: var(--app-accent); cursor: pointer; font: inherit; text-align: left; }.validation-location { overflow: hidden; color: var(--app-ink-soft); text-overflow: ellipsis; white-space: nowrap; }.validation-list .status-detail { grid-column: 2 / -1; }

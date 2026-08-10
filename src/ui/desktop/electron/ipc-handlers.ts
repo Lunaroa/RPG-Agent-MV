@@ -83,7 +83,17 @@ let mapPreviewService: any;
 let uiDesignerRendererHostService: any;
 let assetProtocolRegistered = false;
 /** Live in-panel particle preview sessions: protocol key -> generated preview app. */
-const particlePreviewSessions = new Map<string, { appDirectory: string }>();
+const particlePreviewSessions = new Map<string, {
+  sourceProject: string;
+  appDirectory: string;
+  ownership: {
+    schemaVersion: '1.0.0';
+    ownershipToken: string;
+    markerRelativePath: string;
+    sourceIdentityDigest: string;
+    temporaryIdentityDigest: string;
+  };
+}>();
 let backendCoreUrl: URL | null = null;
 let backendWithProductLanguage: (<T>(language: ProductLanguage, fn: () => T) => T) | null = null;
 let workspaceSettingsSession = new WorkspaceSettingsSession(false);
@@ -486,16 +496,35 @@ async function loadBackendModules(roots: AppRoots) {
     },
   );
   desktop.uiDesigner.preview.setLauncher({
-    start: async (project: string, options?: { sessionId?: string }) => {
-      const result = await interactivePlaytestService.start(project, {
-        mode: 'project',
-        ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
-      });
+    start: async (project: string, options: {
+      sessionId: string;
+      profileDirectory: string;
+      sourceProject: string;
+      preparation: unknown;
+      evidence: {
+        paths: { engineEntry: string; loadState: string; diagnostics: string; sceneHandshake: string };
+        schemas: { engineEntry: string; loadState: string; diagnostics: string; sceneHandshake: string };
+        application: {
+          schemaVersion: '1.0.0';
+          activePackageMain: string;
+          uniqueNameValid: true;
+          entryRelativePath: string;
+          digests: { package: string; index: string; entry: string };
+        };
+      };
+    }) => {
+      const result = await interactivePlaytestService.startIsolatedNwApp(project, options);
       const run = result.run as InteractivePlaytestRun | undefined;
-      if (run && options?.sessionId && run.sessionId !== options.sessionId) {
+      if (run && run.sessionId !== options.sessionId) {
         return { ...result, run: undefined, error: 'The ordinary playtest runner is already owned by another session.' };
       }
       return result;
+    },
+    captureFailureEvidence: async (
+      sessionId: string,
+      reason: 'startup-failed' | 'runner-failed' | 'handshake-failed',
+    ) => {
+      interactivePlaytestService.captureIsolatedNwFailureEvidence(sessionId, reason);
     },
     stop: async (runnerId?: string) => {
       const current = interactivePlaytestService.current() as { run?: InteractivePlaytestRun };
@@ -503,6 +532,13 @@ async function loadBackendModules(roots: AppRoots) {
         return { error: 'The preview runner session is no longer active.', run: current.run };
       }
       return interactivePlaytestService.stop();
+    },
+    stopSync: (runnerId?: string) => {
+      const current = interactivePlaytestService.current() as { run?: InteractivePlaytestRun };
+      if (runnerId && current.run && current.run.runId !== runnerId) {
+        return { error: 'The preview runner session is no longer active.', run: current.run };
+      }
+      return interactivePlaytestService.shutdownSync();
     },
     current: async (sessionId?: string) => {
       const result = interactivePlaytestService.current() as { run?: InteractivePlaytestRun; error?: string };
@@ -513,8 +549,8 @@ async function loadBackendModules(roots: AppRoots) {
     },
   });
   desktop.uiDesigner.preview.setPreparationFactory(
-    (workflowRoot: string, project: string, temporaryPrefix?: string) => (
-      desktop.playtestPreparation.prepareUiDesignerPreviewInWorker(workflowRoot, project, temporaryPrefix)
+    (workflowRoot: string, project: string) => (
+      desktop.playtestPreparation.prepareUiDesignerPreviewInWorker(workflowRoot, project)
     ),
   );
   uiDesignerRendererHostService = new desktop.uiDesigner.rendererHost.UiDesignerRendererHostService(
@@ -1711,7 +1747,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
       root: preparation.passthroughRoot,
       prefixes: preparation.passthroughPrefixes,
     });
-    particlePreviewSessions.set(key, { appDirectory: preparation.appDirectory });
+    particlePreviewSessions.set(key, preparation);
     return toIpcPayload({ key, url });
   });
   ipcMain.handle('particlePreview:dispose', (_event, keyInput: string) => {
@@ -2234,9 +2270,27 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('projectAssets:startWatcher');
   ipcMain.removeHandler('projectAssets:stopWatcher');
   ipcMain.removeHandler('clipboard:writeFiles');
+  let uiPreviewOwnerReleased = true;
+  if (desktop?.uiDesigner?.preview) {
+    try {
+      const result = desktop.uiDesigner.preview.shutdownSync() as { state?: string; cleanup?: { ok?: boolean; message?: string } };
+      if (result.state !== 'idle' && result.cleanup?.ok !== true) {
+        uiPreviewOwnerReleased = false;
+        console.error('[ui-designer-preview] Electron teardown retained the isolated preview owner.', result.cleanup?.message || 'cleanup-unconfirmed');
+      }
+    } catch (error) {
+      uiPreviewOwnerReleased = false;
+      console.error('[ui-designer-preview] Electron teardown retained the isolated preview owner.', error);
+    }
+  }
   if (mapPreviewService) {
-    mapPreviewService.shutdownSync();
-    mapPreviewService = null;
+    try {
+      mapPreviewService.shutdownSync();
+      if (!mapPreviewService.hasRetainedIsolationOwner()) mapPreviewService = null;
+      else console.error('[map-preview] Electron teardown retained the isolated preview owner.');
+    } catch (error) {
+      console.error('[map-preview] Electron teardown retained the isolated preview owner.', error);
+    }
   }
   if (uiDesignerRendererHostService) {
     try {
@@ -2246,9 +2300,13 @@ export function cleanupIpcHandlers(): void {
       console.error('[ui-designer-renderer-host] Isolation evidence changed; retained the temporary project while continuing Electron cleanup.', error);
     }
   }
-  if (interactivePlaytestService) {
-    interactivePlaytestService.shutdownSync();
-    interactivePlaytestService = null;
+  if (interactivePlaytestService && uiPreviewOwnerReleased) {
+    const result = interactivePlaytestService.shutdownSync() as { run?: InteractivePlaytestRun };
+    if (!result.run || ['stopped', 'exited', 'failed'].includes(String(result.run.status || ''))) {
+      interactivePlaytestService = null;
+    } else {
+      console.error('[interactive-playtest] Electron teardown retained the active runner owner.', result.run.status);
+    }
   }
   cleanupSessionIpcHandlers(ipcMain);
   cleanupProductPluginIpcHandlers(ipcMain);
@@ -2304,7 +2362,10 @@ export function cleanupIpcHandlers(): void {
     protocol.unhandle('rmmv-asset');
     assetProtocolRegistered = false;
   }
-  for (const key of [...particlePreviewSessions.keys()]) disposeParticlePreviewSession(key);
+  for (const key of [...particlePreviewSessions.keys()]) {
+    try { disposeParticlePreviewSession(key); }
+    catch (error) { console.error('[particle-preview] Electron teardown retained an isolated preview owner.', error); }
+  }
   clearMapPreviewProtocol();
   agentSessionRuntime?.close().catch((error: Error) => console.warn('[ipc] Agent runtime close failed:', error.message));
   agentSessionRuntime = null;
@@ -2315,7 +2376,7 @@ export function cleanupIpcHandlers(): void {
 function disposeParticlePreviewSession(key: string): void {
   const preparation = particlePreviewSessions.get(key);
   if (!preparation) return;
-  particlePreviewSessions.delete(key);
   unregisterMapPreviewRoot(key);
   desktop.particlePreview.cleanupParticleAnimationPreviewApp(preparation);
+  particlePreviewSessions.delete(key);
 }

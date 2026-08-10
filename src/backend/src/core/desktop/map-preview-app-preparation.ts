@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
@@ -10,6 +9,12 @@ import {
 } from './isolated-project-preparation.ts';
 import { writeMapPreviewIframeAppShell } from './map-preview-iframe-harness.ts';
 import { getProjectFileForRead } from './staging-service.ts';
+import {
+  attestOwnedIsolatedProject,
+  cleanupOwnedIsolatedProject,
+  createOwnedEmptyIsolatedProject,
+  type IsolatedProjectOwnership,
+} from './isolated-project-attestation.ts';
 
 export class MapPreviewAppPreparationError extends Error {}
 
@@ -30,6 +35,7 @@ export interface MapPreviewAppPreparation {
   resourceRoot: string;
   /** Generated preview app (harness shell + staged overlays); primary protocol root. */
   appDirectory: string;
+  ownership: IsolatedProjectOwnership;
   screenWidth: number;
   screenHeight: number;
   tileSize: number;
@@ -61,12 +67,26 @@ export function prepareMapPreviewApp(
   }
   const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
   const resourceRoot = fs.realpathSync.native(path.resolve(manifest.resourceRoot));
-  const appDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-map-preview-app-'));
+  const ownershipChallenge = createOwnedEmptyIsolatedProject(project, {
+    temporaryPrefix: 'rpg-agent-map-preview-app-',
+  });
+  const appDirectory = ownershipChallenge.temporaryProject;
+  const assertAppOwnership = () => attestOwnedIsolatedProject(
+    ownershipChallenge.sourceProject,
+    appDirectory,
+    ownershipChallenge.ownership,
+  );
+  const ownedWrite = (write: () => void): void => {
+    assertAppOwnership();
+    write();
+    assertAppOwnership();
+  };
 
   try {
     const staging = snapshotProjectStaging(workflowRoot, project);
     const deniedPaths: string[] = [];
     for (const entry of staging.files) {
+      assertAppOwnership();
       const rootRelative = resourceRootRelative(project, resourceRoot, entry.relativePath);
       if (!rootRelative) continue;
       if (entry.delete) {
@@ -76,26 +96,28 @@ export function prepareMapPreviewApp(
       const draft = getEffectiveFile(workflowRoot, project, entry.relativePath);
       if (!draft || !isFile(draft)) throw new MapPreviewAppPreparationError(`Staged draft is missing: ${entry.relativePath}`);
       const target = confinedAppPath(appDirectory, rootRelative);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.copyFileSync(draft, target);
+      ownedWrite(() => fs.mkdirSync(path.dirname(target), { recursive: true }));
+      ownedWrite(() => fs.copyFileSync(draft, target));
     }
 
     // The app shell rewrites index.html (and js/main.js for dynamic-plugin
     // engines) from their effective contents, so staged drafts stay honored.
-    writeMapPreviewIframeAppShell(
+    ownedWrite(() => writeMapPreviewIframeAppShell(
       appDirectory,
       readEffectiveText(workflowRoot, project, resourceRoot, getEffectiveFile, 'index.html'),
       readEffectiveText(workflowRoot, project, resourceRoot, getEffectiveFile, 'js/main.js'),
-    );
+    ));
     // Warm map syncs target the app data directory; keep it resolvable even
     // before the first synced map lands.
-    fs.mkdirSync(path.join(appDirectory, 'data'), { recursive: true });
+    ownedWrite(() => fs.mkdirSync(path.join(appDirectory, 'data'), { recursive: true }));
+    assertAppOwnership();
 
     return {
       engine: manifest.engine,
       sourceProject: project,
       resourceRoot,
       appDirectory,
+      ownership: { ...ownershipChallenge.ownership },
       screenWidth: manifest.screenWidth,
       screenHeight: manifest.screenHeight,
       tileSize: manifest.tileSize,
@@ -103,16 +125,17 @@ export function prepareMapPreviewApp(
       deniedPaths,
     };
   } catch (error) {
-    try { fs.rmSync(appDirectory, { recursive: true, force: true }); } catch { /* Report the preparation error first. */ }
+    try { cleanupOwnedIsolatedProject(ownershipChallenge); } catch { /* Retain an unattested app. */ }
     throw error;
   }
 }
 
-export function cleanupMapPreviewApp(preparation: Pick<MapPreviewAppPreparation, 'appDirectory'>): void {
-  fs.rmSync(preparation.appDirectory, { recursive: true, force: true });
-  if (fs.existsSync(preparation.appDirectory)) {
-    throw new Error(`Preview app directory could not be removed: ${preparation.appDirectory}`);
-  }
+export function cleanupMapPreviewApp(preparation: MapPreviewAppPreparation): void {
+  cleanupOwnedIsolatedProject({
+    sourceProject: preparation.sourceProject,
+    temporaryProject: preparation.appDirectory,
+    ownership: preparation.ownership,
+  });
 }
 
 function readEffectiveText(

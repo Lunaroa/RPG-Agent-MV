@@ -10,7 +10,7 @@ import {
   isUiDesignerProjectRelativeResourcePath,
 } from './ui-designer-resources.ts'
 
-export const UI_DESIGNER_RENDERER_BRIDGE_VERSION = '1.0.0' as const
+export const UI_DESIGNER_RENDERER_BRIDGE_VERSION = '1.1.0' as const
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_BYTES = 4 * 1024 * 1024
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_BOUNDS = 2_048
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES = 512
@@ -25,8 +25,11 @@ export type UiDesignerRendererBridgeKind =
   | 'select'
   | 'input'
   | 'diagnostic'
+  | 'exit-request'
   | 'dispose'
   | 'disposed'
+
+export type UiDesignerRendererExecutionMode = 'authoring' | 'full-preview'
 
 export interface UiDesignerRendererBridgeEnvelope<TKind extends UiDesignerRendererBridgeKind = UiDesignerRendererBridgeKind, TPayload = unknown> {
   version: typeof UI_DESIGNER_RENDERER_BRIDGE_VERSION
@@ -66,8 +69,8 @@ export type UiDesignerRendererJsonValue = null | boolean | number | string | UiD
 export type UiDesignerRendererBridgeMessage =
   | UiDesignerRendererBridgeEnvelope<'hello', UiDesignerRendererBridgeCapabilities>
   | UiDesignerRendererBridgeEnvelope<'ready', { canvasWidth: number; canvasHeight: number }>
-  | UiDesignerRendererBridgeEnvelope<'mount', { revision: number; scene: UiRuntimeSceneExport }>
-  | UiDesignerRendererBridgeEnvelope<'mounted', { revision: number; bounds: UiDesignerRendererNodeBounds[] }>
+  | UiDesignerRendererBridgeEnvelope<'mount', { revision: number; executionMode: UiDesignerRendererExecutionMode; scene: UiRuntimeSceneExport }>
+  | UiDesignerRendererBridgeEnvelope<'mounted', { revision: number; executionMode: UiDesignerRendererExecutionMode; bounds: UiDesignerRendererNodeBounds[] }>
   | UiDesignerRendererBridgeEnvelope<'patch', { revision: number; nodes: UiDesignerRendererNodePatch[] }>
   | UiDesignerRendererBridgeEnvelope<'bounds', { revision: number; bounds: UiDesignerRendererNodeBounds[] }>
   | UiDesignerRendererBridgeEnvelope<'select', { nodeIds: string[] }>
@@ -83,6 +86,7 @@ export type UiDesignerRendererBridgeMessage =
     metaKey: boolean
   }>
   | UiDesignerRendererBridgeEnvelope<'diagnostic', { entries: UiRuntimeDiagnostic[] }>
+  | UiDesignerRendererBridgeEnvelope<'exit-request', { key: 'Escape' | 'F6' }>
   | UiDesignerRendererBridgeEnvelope<'dispose', { reason: 'scene-change' | 'project-change' | 'unload' | 'shutdown' }>
   | UiDesignerRendererBridgeEnvelope<'disposed', Record<string, never>>
 
@@ -143,14 +147,16 @@ function validatePayload(kind: UiDesignerRendererBridgeKind, payload: unknown, s
     return
   }
   if (kind === 'mount') {
-    assertExactKeys(payload, ['revision', 'scene'], kind)
+    assertExactKeys(payload, ['revision', 'executionMode', 'scene'], kind)
     nonNegativeInteger(payload.revision, 'revision')
+    executionMode(payload.executionMode)
     validateRuntimeScene(payload.scene)
     return
   }
   if (kind === 'mounted' || kind === 'bounds') {
-    assertExactKeys(payload, ['revision', 'bounds'], kind)
+    assertExactKeys(payload, kind === 'mounted' ? ['revision', 'executionMode', 'bounds'] : ['revision', 'bounds'], kind)
     nonNegativeInteger(payload.revision, 'revision')
+    if (kind === 'mounted') executionMode(payload.executionMode)
     validateBounds(payload.bounds)
     return
   }
@@ -188,6 +194,11 @@ function validatePayload(kind: UiDesignerRendererBridgeKind, payload: unknown, s
     assertExactKeys(payload, ['entries'], kind)
     if (!Array.isArray(payload.entries) || payload.entries.length > 64) fail('Renderer diagnostics are invalid or exceed their bound.')
     payload.entries.forEach((entry) => validateDiagnostic(entry, sessionId, sceneId))
+    return
+  }
+  if (kind === 'exit-request') {
+    assertExactKeys(payload, ['key'], kind)
+    if (payload.key !== 'Escape' && payload.key !== 'F6') fail('Renderer exit request key is unsupported.')
     return
   }
   if (kind === 'dispose') {
@@ -273,9 +284,14 @@ function assertExactKeys(value: Record<string, unknown>, keys: readonly string[]
 }
 
 function bridgeKind(value: unknown): UiDesignerRendererBridgeKind {
-  const kinds: UiDesignerRendererBridgeKind[] = ['hello', 'ready', 'mount', 'mounted', 'patch', 'bounds', 'select', 'input', 'diagnostic', 'dispose', 'disposed']
+  const kinds: UiDesignerRendererBridgeKind[] = ['hello', 'ready', 'mount', 'mounted', 'patch', 'bounds', 'select', 'input', 'diagnostic', 'exit-request', 'dispose', 'disposed']
   if (!kinds.includes(value as UiDesignerRendererBridgeKind)) fail(`Unsupported renderer bridge message kind: ${String(value)}.`)
   return value as UiDesignerRendererBridgeKind
+}
+
+function executionMode(value: unknown): UiDesignerRendererExecutionMode {
+  if (value !== 'authoring' && value !== 'full-preview') fail('Renderer execution mode is unsupported.')
+  return value
 }
 
 function identifier(value: unknown, label: string, minimum: number, maximum: number): string {

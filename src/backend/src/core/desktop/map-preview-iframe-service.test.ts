@@ -138,6 +138,54 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
   }
 });
 
+test('retained cleanup owner blocks restart until an explicit cleanup retry succeeds', { concurrency: false }, async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-recovery-owner-'));
+  const project = createMZProject(workflowRoot);
+  const sourceSystem = fs.readFileSync(path.join(project, 'data', 'System.json'));
+  let isolatedRoot = '';
+  const service = new MapPreviewIframeService(workflowRoot, {
+    registerPreviewRoot(key, resourceRoot) {
+      isolatedRoot = resourceRoot;
+      return `rpg-agent-preview://${key}/index.html`;
+    },
+    unregisterPreviewRoot() {},
+    verifyFrameIsolation: () => true,
+  });
+
+  try {
+    await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
+    await service.start(project, 1);
+    const markerName = fs.readdirSync(isolatedRoot).find((entry) => /^\.rpg-agent-isolation-[a-f0-9]{20}\.json$/.test(entry));
+    assert.ok(markerName);
+    const markerPath = path.join(isolatedRoot, markerName);
+    const markerBody = fs.readFileSync(markerPath);
+    fs.unlinkSync(markerPath);
+
+    const failedStop = await service.stop();
+    assert.equal(failedStop.session?.status, 'failed');
+    assert.equal(service.hasRetainedIsolationOwner(), true);
+    assert.equal(fs.existsSync(isolatedRoot), true);
+    await assert.rejects(
+      service.start(project, 1),
+      (error: Error & { code?: string }) => error.code === 'MAP_PREVIEW_RECOVERY_REQUIRED',
+    );
+    assert.equal(service.hasRetainedIsolationOwner(), true);
+    assert.equal(fs.existsSync(isolatedRoot), true);
+    assert.deepEqual(fs.readFileSync(path.join(project, 'data', 'System.json')), sourceSystem);
+
+    fs.writeFileSync(markerPath, markerBody);
+    const retriedStop = await service.stop();
+    assert.equal(retriedStop.session?.status, 'stopped');
+    assert.equal(service.hasRetainedIsolationOwner(), false);
+    assert.equal(fs.existsSync(isolatedRoot), false);
+    assert.deepEqual(fs.readFileSync(path.join(project, 'data', 'System.json')), sourceSystem);
+  } finally {
+    service.shutdownSync();
+    closeDatabase();
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
 test('retargets a freshly started preview to a newer map without another registration', async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-workflow-'));
   const project = createMZProject(workflowRoot);

@@ -1256,6 +1256,77 @@ export interface InteractivePlaytestStagingSummary {
   files: string[];
 }
 
+export interface InteractivePlaytestIsolatedOutputEvidence {
+  observedBytes: number;
+  digest: string;
+  truncated: boolean;
+}
+
+export interface InteractivePlaytestIsolatedFileEvidence {
+  role: 'engine-entry' | 'load-state' | 'diagnostics' | 'scene-handshake';
+  state: 'missing' | 'present' | 'invalid' | 'unbounded';
+  observedBytes: number;
+  digest?: string;
+  truncated: boolean;
+  schemaMatches?: boolean;
+  sessionMatches?: boolean;
+  phase?: 'entry-invoked' | 'entry-failed' | 'engine-entry-loaded' | 'bootstrap-loaded' | 'runtime-configured' | 'target-scheduled' | 'scene-ready';
+  stage?: 'node-api' | 'document-url' | 'document-root' | 'targets' | 'session-marker' | 'session-boundary';
+  recordCount?: number;
+  sessionOwnedRecordCount?: number;
+  expectedSceneMatchesActual?: boolean;
+}
+
+export interface InteractivePlaytestIsolatedFailureEvidence {
+  capturedAt: string;
+  reason: 'startup-failed' | 'runner-failed' | 'handshake-failed';
+  files: InteractivePlaytestIsolatedFileEvidence[];
+}
+
+export interface InteractivePlaytestIsolatedLaunchEvidence {
+  schemaVersion: '1.0.0';
+  engine: RpgMakerEngine;
+  launchStyle: 'embedded' | 'external';
+  runtimeSource: 'project-local' | 'configured' | 'official-install';
+  projectLocalRuntimeLocation: 'source-project' | 'staged-project';
+  executableRole: 'copied-project-runtime' | 'staged-project-runtime' | 'external-runtime';
+  argumentRoles: ('session-profile' | 'nwapp-temporary-project' | 'test')[];
+  checks: {
+    sourceTemporaryDistinct: true;
+    profileInsideTemporary: true;
+    executableInsideTemporary: boolean;
+    nwappExplicit: boolean;
+  };
+  digests: {
+    session: string;
+    sourceProject: string;
+    temporaryProject: string;
+    profileDirectory: string;
+    executable: string;
+  };
+  application: {
+    schemaVersion: '1.0.0';
+    activePackageMain: string;
+    uniqueNameValid: true;
+    entryRelativePath: string;
+    digests: {
+      package: string;
+      index: string;
+      entry: string;
+    };
+  };
+  childPid?: number;
+  stages: Array<{
+    stage: 'constructed' | 'spawn-requested' | 'runner-spawned' | 'evidence-captured' | 'finished';
+    at: string;
+  }>;
+  output?: {
+    stdout: InteractivePlaytestIsolatedOutputEvidence;
+    stderr: InteractivePlaytestIsolatedOutputEvidence;
+  };
+  failureEvidence?: InteractivePlaytestIsolatedFailureEvidence;
+}
+
 export interface InteractivePlaytestRun {
   runId: string;
   status: InteractivePlaytestRunStatus;
@@ -1285,6 +1356,7 @@ export interface InteractivePlaytestRun {
   savesUnchanged?: boolean;
   stagingUnchanged?: boolean;
   temporaryProjectCleaned?: boolean;
+  isolatedLaunch?: InteractivePlaytestIsolatedLaunchEvidence;
   lifecycleOnly: true;
   artifactDir: string;
   artifactPath: string;

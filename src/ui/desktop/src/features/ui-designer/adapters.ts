@@ -174,11 +174,19 @@ function asPreviewResult(value: unknown, fallbackMessage: string): UiPreviewResu
       stagingSummary: result.stagingSummary && typeof result.stagingSummary === 'object' ? result.stagingSummary as UiPreviewResult['stagingSummary'] : undefined,
       cleanup: result.cleanup && typeof result.cleanup === 'object' ? result.cleanup as UiPreviewResult['cleanup'] : undefined,
       runner: result.runner && typeof result.runner === 'object' ? result.runner as UiPreviewResult['runner'] : undefined,
+      sceneHandshake: normalizePreviewSceneHandshake(result.sceneHandshake),
       diagnostics: normalizePreviewDiagnostics(result.diagnostics),
       projectCompatibility: result.projectCompatibility && typeof result.projectCompatibility === 'object' ? result.projectCompatibility as UiDesignerProjectCompatibility : undefined,
     }
   }
   return { state: 'error', message: fallbackMessage }
+}
+
+function normalizePreviewSceneHandshake(value: unknown): UiPreviewResult['sceneHandshake'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  if ((raw.status !== 'ready' && raw.status !== 'mismatch') || typeof raw.expectedScene !== 'string' || typeof raw.actualScene !== 'string') return undefined
+  return { status: raw.status, expectedScene: raw.expectedScene, actualScene: raw.actualScene }
 }
 
 function normalizePreviewDiagnostics(value: unknown): UiRuntimeDiagnostic[] {

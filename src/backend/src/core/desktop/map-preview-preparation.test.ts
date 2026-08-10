@@ -104,16 +104,47 @@ test('cancels the preparation worker and removes its partial isolated project', 
   }
 });
 
-test('reports a stable preparation stage and cleans the temporary project on failure', async () => {
+test('synchronous cancellation retains the owned project until the worker is terminal', async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-worker-terminal-proof-'));
+  const project = path.join(workflowRoot, 'projects', 'demo');
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    pid: undefined,
+    kill: () => true,
+  });
+  try {
+    fs.mkdirSync(project, { recursive: true });
+    fs.writeFileSync(path.join(project, 'sentinel.txt'), 'source-bytes', 'utf8');
+    const task = startMapPreviewPreparation(workflowRoot, project, {
+      spawnProcess: () => child as unknown as import('node:child_process').ChildProcess,
+    });
+    const rejected = assert.rejects(task.result, MapPreviewPreparationCancelledError);
+
+    task.cancelSync();
+    assert.equal(fs.existsSync(task.temporaryProject), true);
+    assert.equal(fs.readFileSync(path.join(project, 'sentinel.txt'), 'utf8'), 'source-bytes');
+
+    child.exitCode = 1;
+    child.emit('exit', 1, null);
+    await rejected;
+    assert.equal(fs.existsSync(task.temporaryProject), false);
+    assert.equal(fs.readFileSync(path.join(project, 'sentinel.txt'), 'utf8'), 'source-bytes');
+  } finally {
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects a missing source before creating any owned temporary project', async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-worker-failure-'));
   try {
-    const task = startMapPreviewPreparation(workflowRoot, path.join(workflowRoot, 'projects', 'missing'));
-    await assert.rejects(task.result, (error: unknown) => {
-      assert.ok(error instanceof MapPreviewPreparationFailedError);
-      assert.equal(error.stage, 'resolve-source-project');
-      return true;
-    });
-    assert.equal(fs.existsSync(task.temporaryProject), false);
+    assert.throws(
+      () => startMapPreviewPreparation(workflowRoot, path.join(workflowRoot, 'projects', 'missing')),
+      /source-not-ordinary/,
+    );
+    assert.deepEqual(fs.readdirSync(workflowRoot), []);
   } finally {
     fs.rmSync(workflowRoot, { recursive: true, force: true });
   }

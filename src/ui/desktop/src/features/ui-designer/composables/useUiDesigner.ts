@@ -9,6 +9,7 @@ import type {
   UiDesignerFileConflict,
   UiDesignerRecentFileRecord,
   UiDesignerRecoveryRecord,
+  UiDesignerProjectProfileResult,
   UiDesignerResourceRequest,
   UiEventMap,
   UiFileStatus,
@@ -26,6 +27,7 @@ import type {
   UiViewport,
   UiVisibilityCondition,
 } from '@contract/ui-designer'
+import type { UiDesignerRendererExecutionMode } from '@contract/ui-designer-renderer-bridge'
 import { createUiDesignerAdapters, type UiDesignerResourceLoadResult } from '../adapters'
 import {
   cloneUiDocument,
@@ -62,7 +64,6 @@ import { UI_DESIGNER_BUILT_IN_TEMPLATES, createBuiltInUiDesignerTemplate, isBuil
 import { createUiDesignerDraftCoordinator, type UiDesignerDraftCoordinator } from './draftCoordinator'
 import { createUiDesignerPreviewPoller } from './previewLifecycle'
 import { createUiDesignerPreviewOperations } from './previewOperations'
-import { createUiDesignerEditorPreviewState } from './editorPreviewState'
 import { createUiDesignerSceneHistoryOperations } from './sceneHistoryOperations'
 import { createUiDesignerPersistenceOperations } from './persistenceOperations'
 import { createUiDesignerRuntimeOperations } from './runtimeOperations'
@@ -167,8 +168,11 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const editingMode = ref<'design' | 'code'>('design')
   const isPreviewing = ref(false)
   const isEditorPreviewing = ref(false)
-  const editorPreviewStatus = ref<'idle' | 'running' | 'stopped'>('idle')
-  const editorPreview = createUiDesignerEditorPreviewState()
+  const editorPreviewStatus = ref<'idle' | 'preparing' | 'running' | 'stopped' | 'error'>('idle')
+  const editorPreviewMessage = ref('')
+  const editorPreviewExecutionMode = ref<UiDesignerRendererExecutionMode>('authoring')
+  let editorPreviewModeBefore: 'design' | 'code' | undefined
+  let editorPreviewExitPending = false
   const fileStatus = ref<UiFileStatus>('idle')
   const fileMessage = ref('')
   const previewStatus = ref<UiPreviewState>('idle')
@@ -180,6 +184,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const resourceCatalog = ref<UiProjectResourceCatalog | null>(null)
   const resourceStatus = ref<UiFileStatus>('idle')
   const resourceMessage = ref('')
+  const projectProfile = ref<UiDesignerProjectProfileResult | null>(null)
+  const projectProfileStatus = ref<UiFileStatus>('idle')
+  const projectProfileMessage = ref('')
   const actionError = ref('')
   const fileConflict = ref<UiDesignerFileConflict | null>(null)
   const runtimeConflict = ref(false)
@@ -196,6 +203,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const projectGeneration = ref(0)
   const draftCoordinator: UiDesignerDraftCoordinator = createUiDesignerDraftCoordinator()
   const previewPoller = createUiDesignerPreviewPoller(() => adapters.preview, { isPreviewing, previewStatus, previewMessage, previewSessionId, previewDiagnostics, projectGeneration })
+  let supersedePreviewOperation: () => void = () => undefined
 
   const historyLimit = () => normalizeHistoryLimit(preferences.value.historyLimit)
   const applyHistoryLimit = (limit = historyLimit()) => {
@@ -231,7 +239,15 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const canLoadResources = computed(() => hasProject.value && adapters.resource !== createUiDesignerAdapters().resource)
   const canPreview = computed(() => hasProject.value && adapters.preview !== createUiDesignerAdapters().preview)
   const canRenderCanvas = computed(() => hasProject.value && adapters.rendererHost !== createUiDesignerAdapters().rendererHost)
+  const gamePreviewOccupied = computed(() => previewStatus.value === 'preparing' || isPreviewing.value || Boolean(previewSessionId.value))
+  const editorPreviewOccupied = computed(() => editorPreviewStatus.value === 'preparing' || isEditorPreviewing.value || editorPreviewExecutionMode.value !== 'authoring')
+  const canStartEditorPreview = computed(() => canRenderCanvas.value && !gamePreviewOccupied.value && !editorPreviewOccupied.value)
+  const canStartGamePreview = computed(() => canPreview.value && !editorPreviewOccupied.value && !gamePreviewOccupied.value)
   const canEditCode = computed(() => adapters.code.available)
+  const newSceneCanvasSize = computed(() => projectProfile.value
+    ? { width: projectProfile.value.screenWidth, height: projectProfile.value.screenHeight }
+    : null)
+  const canCreateScene = computed(() => Boolean(newSceneCanvasSize.value))
 
   const persistenceOperations = createUiDesignerPersistenceOperations({
     getFile: () => adapters.file,
@@ -246,6 +262,54 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     onRecoveryRemoved: () => { recoveryCleanupPending.value = false },
   })
   const { removeRecentFile, removeRecovery, loadPreferences, savePreferences } = persistenceOperations
+
+  const loadProjectProfile = async () => {
+    const generation = projectGeneration.value
+    const capturedProject = projectPath.value?.trim()
+    if (!capturedProject) {
+      projectProfile.value = null
+      projectProfileStatus.value = 'idle'
+      projectProfileMessage.value = ''
+      return true
+    }
+    projectProfileStatus.value = 'busy'
+    projectProfileMessage.value = ''
+    try {
+      const result = await adapters.project.getProfile({ project: capturedProject })
+      if (generation !== projectGeneration.value || capturedProject !== projectPath.value?.trim()) return false
+      const value = result.value
+      if (result.status !== 'success' || !value || !Number.isSafeInteger(value.screenWidth) || value.screenWidth < 1 || !Number.isSafeInteger(value.screenHeight) || value.screenHeight < 1) {
+        projectProfile.value = null
+        projectProfileStatus.value = 'error'
+        projectProfileMessage.value = result.message || 'The selected project did not expose valid UI canvas dimensions.'
+        return false
+      }
+      projectProfile.value = { ...value }
+      projectProfileStatus.value = 'success'
+      projectProfileMessage.value = result.message
+      return true
+    } catch (error) {
+      if (generation !== projectGeneration.value || capturedProject !== projectPath.value?.trim()) return false
+      projectProfile.value = null
+      projectProfileStatus.value = 'error'
+      projectProfileMessage.value = error instanceof Error ? error.message : String(error)
+      return false
+    }
+  }
+
+  const restoreEditorPreviewMode = () => {
+    if (editorPreviewModeBefore) editingMode.value = editorPreviewModeBefore
+    editorPreviewModeBefore = undefined
+  }
+
+  const cancelEditorPreviewForContextChange = () => {
+    editorPreviewExecutionMode.value = 'authoring'
+    isEditorPreviewing.value = false
+    editorPreviewStatus.value = 'stopped'
+    editorPreviewMessage.value = ''
+    editorPreviewExitPending = false
+    restoreEditorPreviewMode()
+  }
 
   const loadReferencedResources = async (sourceDocument = document.value) => {
     const referencedPaths = collectReferencedResourcePaths(sourceDocument)
@@ -277,11 +341,13 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     if (projectPath.value === nextProjectPath && !nextAdapters) return true
     if (isDirty.value && options.confirmDiscard && !(await options.confirmDiscard())) return false
     projectGeneration.value += 1
+    supersedePreviewOperation()
+    if (isEditorPreviewing.value || editorPreviewExecutionMode.value !== 'authoring') cancelEditorPreviewForContextChange()
     previewDiagnostics.value = []
     previewPoller.clear()
     let previewStopFailed = false
     const previousPreviewSessionId = previewSessionId.value
-    if (isPreviewing.value || previewSessionId.value) {
+    if (previewStatus.value === 'preparing' || isPreviewing.value || previewSessionId.value) {
       try {
         const result = await adapters.preview.stop(previewSessionId.value)
         if (result.state !== 'stopped') {
@@ -306,6 +372,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     resourceCatalog.value = null
     runtimeStatus.value = { state: 'unknown', message: 'Runtime has not been inspected.' }
     runtimeStaging.value = null
+    projectProfile.value = null
+    projectProfileStatus.value = nextProjectPath?.trim() ? 'busy' : 'idle'
+    projectProfileMessage.value = ''
     Object.assign(adapters, createUiDesignerAdapters(nextAdapters))
     projectPath.value = nextProjectPath
     if (previewStopFailed && previousPreviewSessionId) {
@@ -316,6 +385,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       previewSessionId.value = previousPreviewSessionId
       previewPoller.start(projectGeneration.value, previousPreviewSessionId)
     }
+    await loadProjectProfile()
     void loadWelcomeRecords()
     void loadReferencedResources()
     void checkRuntime()
@@ -552,8 +622,16 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const newScene = (name = `Scene_New_${scenes.value.length + 1}`, options: { width?: number; height?: number; sceneBase?: string; template?: string } = {}) => {
     const nextDocument = options.template && isBuiltInUiDesignerTemplate(options.template) ? createBuiltInUiDesignerTemplate(options.template) : createUiDocument(name)
     nextDocument.meta.sceneName = name.trim() || nextDocument.meta.sceneName
-    const defaultWidth = Number.isFinite(preferences.value.defaultCanvasWidth) ? preferences.value.defaultCanvasWidth : nextDocument.canvas.width
-    const defaultHeight = Number.isFinite(preferences.value.defaultCanvasHeight) ? preferences.value.defaultCanvasHeight : nextDocument.canvas.height
+    const defaults = newSceneCanvasSize.value
+    const hasExplicitSize = Number.isFinite(options.width) && (options.width ?? 0) > 0
+      && Number.isFinite(options.height) && (options.height ?? 0) > 0
+    if (!defaults && !hasExplicitSize) {
+      projectProfileStatus.value = 'error'
+      projectProfileMessage.value ||= 'The selected project dimensions must be loaded before creating a scene.'
+      return false
+    }
+    const defaultWidth = defaults?.width ?? nextDocument.canvas.width
+    const defaultHeight = defaults?.height ?? nextDocument.canvas.height
     const width = Number.isFinite(options.width) && (options.width ?? 0) > 0 ? Math.round(options.width as number) : Math.round(defaultWidth)
     const height = Number.isFinite(options.height) && (options.height ?? 0) > 0 ? Math.round(options.height as number) : Math.round(defaultHeight)
     nextDocument.canvas.width = width
@@ -573,6 +651,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     scenes.value.push(scene)
     activateScene(scene.id)
     viewport.value = { zoom: 1, panX: 0, panY: 0, width: nextDocument.canvas.width, height: nextDocument.canvas.height }
+    return true
   }
 
   const closeScene = async (sceneId: string) => {
@@ -1286,15 +1365,13 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return savePreferences({ snapEnabled: enabled })
   }
 
-  const { startPreview, stopPreview, startEditorPreview: startRawEditorPreview, stopEditorPreview: stopRawEditorPreview } = createUiDesignerPreviewOperations({
+  const previewOperations = createUiDesignerPreviewOperations({
     getPreview: () => adapters.preview,
     projectPath,
     projectGeneration,
     document,
     canPreview,
     isPreviewing,
-    isEditorPreviewing,
-    editorPreviewStatus,
     previewStatus,
     previewMessage,
     previewSessionId,
@@ -1302,22 +1379,59 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     poller: previewPoller,
     flushDrafts,
   })
+  const startPreview = () => canStartGamePreview.value ? previewOperations.startPreview() : Promise.resolve(false)
+  const { stopPreview } = previewOperations
+  supersedePreviewOperation = previewOperations.supersede
 
   // Editor preview always renders the design canvas. Keep the user's source
   // mode outside the document/history so leaving preview restores code mode
   // exactly when that was the entry point.
-  let editorPreviewModeBefore: 'design' | 'code' | undefined
   const startEditorPreview = () => {
     if (isEditorPreviewing.value) return true
+    if (!canStartEditorPreview.value) {
+      editorPreviewStatus.value = 'error'
+      return false
+    }
+    flushDrafts(activeSceneId.value)
     editorPreviewModeBefore = editingMode.value
     setEditingMode('design')
-    return startRawEditorPreview()
+    editorPreviewExitPending = false
+    editorPreviewMessage.value = ''
+    editorPreviewExecutionMode.value = 'full-preview'
+    editorPreviewStatus.value = 'preparing'
+    isEditorPreviewing.value = true
+    return true
   }
   const stopEditorPreview = () => {
-    const result = stopRawEditorPreview()
-    if (editorPreviewModeBefore) editingMode.value = editorPreviewModeBefore
-    editorPreviewModeBefore = undefined
-    return result
+    if (!isEditorPreviewing.value) return true
+    editorPreviewExitPending = true
+    editorPreviewExecutionMode.value = 'authoring'
+    editorPreviewStatus.value = 'preparing'
+    return true
+  }
+  const acknowledgeEditorPreviewExecutionMode = (mode: UiDesignerRendererExecutionMode) => {
+    if (mode !== editorPreviewExecutionMode.value) return false
+    if (mode === 'full-preview') {
+      if (!isEditorPreviewing.value) return false
+      editorPreviewExitPending = false
+      editorPreviewStatus.value = 'running'
+      return true
+    }
+    if (!editorPreviewExitPending) return true
+    editorPreviewExitPending = false
+    isEditorPreviewing.value = false
+    editorPreviewStatus.value = 'stopped'
+    editorPreviewMessage.value = ''
+    restoreEditorPreviewMode()
+    return true
+  }
+  const failEditorPreview = (message = '') => {
+    editorPreviewExecutionMode.value = 'authoring'
+    editorPreviewStatus.value = 'error'
+    editorPreviewMessage.value = String(message).trim().slice(0, 2_048)
+    editorPreviewExitPending = false
+    isEditorPreviewing.value = false
+    restoreEditorPreviewMode()
   }
 
   const snapOptionsFor = (nodeId: string): SnapOptions => {
@@ -1458,10 +1572,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     isPreviewing,
     isEditorPreviewing,
     editorPreviewStatus,
-    editorPreviewResolution: editorPreview.resolution,
-    editorPreviewConditionMode: editorPreview.conditionMode,
-    setEditorPreviewResolution: editorPreview.setResolution,
-    setEditorPreviewConditionMode: editorPreview.setConditionMode,
+    editorPreviewMessage,
+    editorPreviewExecutionMode,
     fileStatus,
     fileMessage,
     previewStatus,
@@ -1473,6 +1585,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     resourceCatalog,
     resourceStatus,
     resourceMessage,
+    projectProfile,
+    projectProfileStatus,
+    projectProfileMessage,
     actionError,
     fileConflict,
     runtimeConflict,
@@ -1496,7 +1611,11 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     canLoadResources,
     canPreview,
     canRenderCanvas,
+    canStartEditorPreview,
+    canStartGamePreview,
+    canCreateScene,
     canEditCode,
+    newSceneCanvasSize,
     newScene,
     closeScene,
     reorderScenes,
@@ -1563,6 +1682,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     setGridPreference,
     setSnapPreference,
     setProjectContext,
+    loadProjectProfile,
     activateScene,
     selectScene,
     writeRecovery,
@@ -1581,6 +1701,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     stopPreview,
     startEditorPreview,
     stopEditorPreview,
+    acknowledgeEditorPreviewExecutionMode,
+    failEditorPreview,
     updateNodePositionWithSnap,
     previewNodePositionWithSnap,
     commitDraftPosition,

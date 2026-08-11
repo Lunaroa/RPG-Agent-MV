@@ -20,18 +20,6 @@ test('renderer host shutdown failure retains evidence without blocking later Ele
   assert.match(cleanup, /try \{[\s\S]*uiDesignerRendererHostService\.shutdownSync\(\)[\s\S]*\} catch \(error\)/)
 })
 
-test('Electron teardown releases the UI preview owner before clearing the interactive runner', () => {
-  const source = fs.readFileSync(new URL('./ipc-handlers.ts', import.meta.url), 'utf8')
-  const cleanup = source.slice(source.indexOf('export function cleanupIpcHandlers'), source.indexOf('export function cleanupMapIpcHandlers'))
-  const ownerStop = cleanup.indexOf('desktop.uiDesigner.preview.shutdownSync()')
-  const runnerStop = cleanup.indexOf('interactivePlaytestService.shutdownSync()')
-  const runnerClear = cleanup.indexOf('interactivePlaytestService = null')
-
-  assert.ok(ownerStop >= 0 && runnerStop > ownerStop && runnerClear > runnerStop)
-  assert.match(cleanup, /if \(interactivePlaytestService && uiPreviewOwnerReleased\)/)
-  assert.match(cleanup, /\['stopped', 'exited', 'failed'\]\.includes/)
-})
-
 test('Electron teardown retains failed map and particle isolation owners while continuing cleanup', () => {
   const source = fs.readFileSync(new URL('./ipc-handlers.ts', import.meta.url), 'utf8')
   const cleanup = source.slice(source.indexOf('export function cleanupIpcHandlers'), source.indexOf('export function cleanupMapIpcHandlers'))

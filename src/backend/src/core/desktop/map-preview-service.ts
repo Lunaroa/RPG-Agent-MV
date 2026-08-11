@@ -1040,6 +1040,7 @@ export function injectPreviewHarness(projectRoot: string, resourceRoot: string, 
   const harnessSource = previewHarnessSource(options);
   fs.writeFileSync(plan.indexPath, injected, 'utf8');
   writeIsolatedNwAppPackage(plan, harnessSource, {
+    stagedIndexSource: injected,
     window: {
       width: options.viewportWidth,
       height: options.viewportHeight,

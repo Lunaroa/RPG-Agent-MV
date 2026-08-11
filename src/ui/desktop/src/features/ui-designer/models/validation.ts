@@ -3,6 +3,8 @@ import { uiSceneScriptSyntaxError } from '@contract/ui-designer-script'
 import { parseUiDocument } from './parser'
 import { validateTreeInvariants } from './tree'
 
+export const isValidUiDesignerSceneName = (name: string): boolean => /^Scene_[A-Za-z0-9_$]+$/.test(name)
+
 function codeSyntaxIssue(code: string, label: string, kind: 'expression' | 'body' = 'body'): string | null {
   if (!code.trim()) return null
   try {
@@ -56,7 +58,7 @@ function actionIssues(action: UiEventAction, node: UiNode, document: UiDesignerD
     const targetId = action.type === 'toggleNode' ? action.targetNodeId : action.tweenNodeId
     if (!document.nodes.some((candidate) => candidate.id === targetId)) issues.push({ severity: 'error', code: 'invalid-reference', message: `Action references missing node ${targetId}`, nodeId: node.id, nodeName: node.name, path })
   }
-  if (action.type === 'gotoScene' && !/^Scene_[A-Za-z0-9_$]+$/.test(action.sceneName)) issues.push({ severity: 'error', code: 'invalid-value', message: 'Scene action must reference a valid Scene_ name', nodeId: node.id, nodeName: node.name, path })
+  if (action.type === 'gotoScene' && !isValidUiDesignerSceneName(action.sceneName)) issues.push({ severity: 'error', code: 'invalid-value', message: 'Scene action must reference a valid Scene_ name', nodeId: node.id, nodeName: node.name, path })
   if (action.type === 'setSwitch') addNumber(action.switchId, 'Switch ID')
   if (action.type === 'setVariable') { addNumber(action.variableId, 'Variable ID'); addFinite(action.variableVal, 'Variable value') }
   if (action.type === 'tweenProp') { addFinite(action.tweenTarget, 'Tween target'); addNumber(action.tweenDuration, 'Tween duration'); }
@@ -127,9 +129,9 @@ export function validateDocument(input: unknown): UiValidationReport {
   }
   const document = parsed.document
   const issues: UiValidationIssue[] = []
-  const sceneName = document.meta.sceneName.trim()
-  if (!sceneName) issues.push({ severity: 'error', code: 'scene-name-empty', message: 'Scene name is required', path: 'meta.sceneName' })
-  else if (!/^Scene_[A-Za-z0-9_$]+$/.test(sceneName)) issues.push({ severity: 'error', code: 'scene-name-invalid', message: 'Scene name must start with Scene_ and contain only letters, numbers, underscores, or dollar signs', path: 'meta.sceneName' })
+  const sceneName = document.meta.sceneName
+  if (!sceneName.trim()) issues.push({ severity: 'error', code: 'scene-name-empty', message: 'Scene name is required', path: 'meta.sceneName' })
+  else if (!isValidUiDesignerSceneName(sceneName)) issues.push({ severity: 'error', code: 'scene-name-invalid', message: 'Scene name must start with Scene_ and contain only letters, numbers, underscores, or dollar signs', path: 'meta.sceneName' })
   issues.push(...validateTreeInvariants(document))
   for (const node of document.nodes) issues.push(...validateNode(node, document))
   const guideIds = new Set<string>()

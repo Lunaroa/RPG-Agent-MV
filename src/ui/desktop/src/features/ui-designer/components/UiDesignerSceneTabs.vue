@@ -24,6 +24,7 @@ const draggedSceneId = ref<string>()
 const onDragStart = (sceneId: string, event: DragEvent) => { draggedSceneId.value = sceneId; event.dataTransfer?.setData('text/ui-scene-id', sceneId); event.dataTransfer!.effectAllowed = 'move' }
 const onDrop = (targetSceneId: string, event: DragEvent) => { event.preventDefault(); const sceneId = draggedSceneId.value ?? event.dataTransfer?.getData('text/ui-scene-id'); if (sceneId) designer.reorderScenes(sceneId, targetSceneId); draggedSceneId.value = undefined }
 const switchTab = (event: KeyboardEvent) => {
+  if (designer.isPreviewing) return
   if (!(event.ctrlKey || event.metaKey) || event.key !== 'Tab' || (typeof HTMLElement !== 'undefined' && event.target instanceof HTMLElement && event.target.matches('input,textarea,select,.CodeMirror'))) return
   event.preventDefault()
   const current = designer.scenes.findIndex((scene) => scene.id === designer.activeSceneId)
@@ -47,7 +48,7 @@ const tabLabel = (scene: UiDesignerSceneState) => {
       class="scene-tab"
       :class="{ active: scene.id === designer.activeSceneId }"
       type="button"
-      :disabled="designer.isEditorPreviewing"
+      :disabled="designer.isPreviewing"
       draggable="true"
       @click="designer.selectScene(scene.id)"
       @dragstart="onDragStart(scene.id, $event)"
@@ -55,11 +56,11 @@ const tabLabel = (scene: UiDesignerSceneState) => {
       @drop="onDrop(scene.id, $event)"
     >
       <el-dropdown trigger="contextmenu" @command="(command: string) => command === 'close' ? close(scene.id) : command === 'closeOthers' ? void closeOthers(scene.id) : command === 'closeAll' ? void closeAll() : command === 'revealSource' ? void revealSource(scene) : undefined">
-        <span class="scene-tab-content"><span>{{ tabLabel(scene) }}</span><span v-if="designer.isSceneDirty(scene.id)" class="tab-dirty">•</span><el-icon v-if="!designer.isEditorPreviewing" class="tab-close" :title="t('close')" @click.stop="close(scene.id)"><Close /></el-icon></span>
-        <template #dropdown><el-dropdown-menu><el-dropdown-item command="close" :disabled="designer.isEditorPreviewing">{{ t('close') }}</el-dropdown-item><el-dropdown-item command="closeOthers" :disabled="designer.isEditorPreviewing">{{ t('closeOthers') }}</el-dropdown-item><el-dropdown-item command="closeAll" :disabled="designer.isEditorPreviewing">{{ t('closeAll') }}</el-dropdown-item><el-dropdown-item command="revealSource" :disabled="designer.isEditorPreviewing || !scene.sourcePath">{{ t('revealSource') }}</el-dropdown-item></el-dropdown-menu></template>
+        <span class="scene-tab-content"><span>{{ tabLabel(scene) }}</span><span v-if="designer.isSceneDirty(scene.id)" class="tab-dirty">•</span><el-icon v-if="!designer.isPreviewing" class="tab-close" :title="t('close')" @click.stop="close(scene.id)"><Close /></el-icon></span>
+        <template #dropdown><el-dropdown-menu><el-dropdown-item command="close" :disabled="designer.isPreviewing">{{ t('close') }}</el-dropdown-item><el-dropdown-item command="closeOthers" :disabled="designer.isPreviewing">{{ t('closeOthers') }}</el-dropdown-item><el-dropdown-item command="closeAll" :disabled="designer.isPreviewing">{{ t('closeAll') }}</el-dropdown-item><el-dropdown-item command="revealSource" :disabled="designer.isPreviewing || !scene.sourcePath">{{ t('revealSource') }}</el-dropdown-item></el-dropdown-menu></template>
       </el-dropdown>
     </button>
-    <el-button class="scene-add" size="small" text :disabled="designer.isEditorPreviewing" :aria-label="t('newScene')" @click="emit('newScene')">+</el-button>
+    <el-button class="scene-add" size="small" text :disabled="designer.isPreviewing" :aria-label="t('newScene')" @click="emit('newScene')">+</el-button>
   </nav>
 </template>
 

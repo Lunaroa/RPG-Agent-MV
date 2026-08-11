@@ -5,7 +5,6 @@ import type {
   UiDesignerSaveResult,
   UiDesignerExportOptions,
   UiDesignerPersistenceAdapter,
-  UiDesignerPreviewAdapter,
   UiDesignerProjectAdapter,
   UiDesignerProjectProfileResult,
   UiDesignerResourceAdapter,
@@ -16,13 +15,10 @@ import type {
   UiDesignerSceneDataReadResult,
   UiDesignerSceneDataReadRequest,
   UiDesignerResourceRequest,
-  UiDesignerProjectCompatibility,
   UiFileResult,
-  UiPreviewResult,
   UiProjectResourceCatalog,
   UiResourceEntry,
   UiRuntimeSceneExport,
-  UiRuntimeDiagnostic,
   UiRuntimeStatus,
 } from '@contract/ui-designer'
 import { api } from '../../api/client'
@@ -161,51 +157,6 @@ function asSaveResult<T>(value: unknown, fallbackMessage: string): UiDesignerSav
   return result
 }
 
-function asPreviewResult(value: unknown, fallbackMessage: string): UiPreviewResult {
-  if (value && typeof value === 'object') {
-    const result = value as Record<string, unknown>
-    const state = typeof result.state === 'string' && ['idle', 'unavailable', 'preparing', 'running', 'stopped', 'error'].includes(result.state) ? result.state as UiPreviewResult['state'] : 'error'
-    return {
-      state,
-      message: typeof result.message === 'string' ? result.message : fallbackMessage,
-      sessionId: typeof result.sessionId === 'string' ? result.sessionId : undefined,
-      temporaryPath: typeof result.temporaryPath === 'string' ? result.temporaryPath : undefined,
-      sourceProject: typeof result.sourceProject === 'string' ? result.sourceProject : undefined,
-      stagingSummary: result.stagingSummary && typeof result.stagingSummary === 'object' ? result.stagingSummary as UiPreviewResult['stagingSummary'] : undefined,
-      cleanup: result.cleanup && typeof result.cleanup === 'object' ? result.cleanup as UiPreviewResult['cleanup'] : undefined,
-      runner: result.runner && typeof result.runner === 'object' ? result.runner as UiPreviewResult['runner'] : undefined,
-      sceneHandshake: normalizePreviewSceneHandshake(result.sceneHandshake),
-      diagnostics: normalizePreviewDiagnostics(result.diagnostics),
-      projectCompatibility: result.projectCompatibility && typeof result.projectCompatibility === 'object' ? result.projectCompatibility as UiDesignerProjectCompatibility : undefined,
-    }
-  }
-  return { state: 'error', message: fallbackMessage }
-}
-
-function normalizePreviewSceneHandshake(value: unknown): UiPreviewResult['sceneHandshake'] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const raw = value as Record<string, unknown>
-  if ((raw.status !== 'ready' && raw.status !== 'mismatch') || typeof raw.expectedScene !== 'string' || typeof raw.actualScene !== 'string') return undefined
-  return { status: raw.status, expectedScene: raw.expectedScene, actualScene: raw.actualScene }
-}
-
-function normalizePreviewDiagnostics(value: unknown): UiRuntimeDiagnostic[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object') return []
-    const raw = item as Record<string, unknown>
-    const nullableString = (candidate: unknown) => candidate === null || typeof candidate === 'string' ? candidate : undefined
-    const scene = nullableString(raw.scene)
-    const file = nullableString(raw.file)
-    const node = nullableString(raw.node)
-    const type = nullableString(raw.type)
-    const phase = nullableString(raw.phase)
-    const event = nullableString(raw.event)
-    if (raw.schemaVersion !== '1.0.0' || typeof raw.sessionId !== 'string' || scene === undefined || file === undefined || node === undefined || type === undefined || phase === undefined || event === undefined || typeof raw.code !== 'string' || (raw.severity !== 'error' && raw.severity !== 'warning') || typeof raw.label !== 'string' || typeof raw.message !== 'string' || !Number.isInteger(raw.count) || Number(raw.count) < 1) return []
-    return [{ schemaVersion: '1.0.0', sessionId: raw.sessionId, scene, file, node, type, phase, event, code: raw.code, severity: raw.severity, label: raw.label, message: raw.message, count: Number(raw.count) } satisfies UiRuntimeDiagnostic]
-  })
-}
-
 function unwrapRuntimeResult(result: UiFileResult<unknown>): UiFileResult<UiDesignerRuntimeStageResult> {
   const value = result.value
   if (value && typeof value === 'object' && 'runtime' in value) {
@@ -261,11 +212,6 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async installRuntime(_project, options) { return unwrapRuntimeResult(asResult(await api.uiDesigner.installRuntime({ project: projectPath, ...options }), 'Runtime installation could not be staged.')) },
     async stageScene(_project, scene, options) { return unwrapRuntimeResult(asResult(await api.uiDesigner.stageScene({ project: projectPath, scene, ...options }), 'Runtime scene staging failed.')) },
   }
-  const preview: UiDesignerPreviewAdapter = {
-    async start(scene, project) { return asPreviewResult(await api.uiDesigner.startPreview({ project, scene }), 'The isolated game preview could not be started.') },
-    async current() { return asPreviewResult(await api.uiDesigner.currentPreview(), 'The isolated game preview status is unavailable.') },
-    async stop(sessionId) { return asPreviewResult(await api.uiDesigner.stopPreview(sessionId), 'The isolated game preview could not be stopped.') },
-  }
   const rendererHost: UiDesignerRendererHostAdapter = {
     async start(generation) {
       if (!projectPath?.trim()) return unavailable('Select an RPG Maker project before starting the real UI canvas renderer.')
@@ -274,19 +220,7 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async confirm(sessionId) { return asResult<UiDesignerRendererHostSession>(await api.uiDesigner.confirmRenderer(sessionId), 'The isolated UI canvas renderer process could not be confirmed.') },
     async stop(sessionId, reason) { return asResult<null>(await api.uiDesigner.stopRenderer({ sessionId, reason }), 'The isolated UI canvas renderer could not be stopped.') },
   }
-  return { file, project, resource, runtime, preview, rendererHost, code: codeMirrorAdapter, lifecycle }
-}
-
-export const unavailablePreviewAdapter: UiDesignerPreviewAdapter = {
-  async start(): Promise<UiPreviewResult> {
-    return { state: 'unavailable', message: 'Game preview adapter is not connected; the game was not started.' }
-  },
-  async current(): Promise<UiPreviewResult> {
-    return { state: 'unavailable', message: 'Game preview adapter is not connected.' }
-  },
-  async stop(): Promise<UiPreviewResult> {
-    return { state: 'unavailable', message: 'Game preview adapter is not connected.' }
-  },
+  return { file, project, resource, runtime, rendererHost, code: codeMirrorAdapter, lifecycle }
 }
 
 export const codeMirrorAdapter: UiCodeEditorAdapter = {
@@ -361,13 +295,12 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
   },
 }
 
-export function createUiDesignerAdapters(overrides: UiDesignerAdapterBundle = {}): Required<Pick<UiDesignerAdapterBundle, 'file' | 'project' | 'resource' | 'runtime' | 'preview' | 'rendererHost' | 'code'>> & Pick<UiDesignerAdapterBundle, 'lifecycle'> {
+export function createUiDesignerAdapters(overrides: UiDesignerAdapterBundle = {}): Required<Pick<UiDesignerAdapterBundle, 'file' | 'project' | 'resource' | 'runtime' | 'rendererHost' | 'code'>> & Pick<UiDesignerAdapterBundle, 'lifecycle'> {
   return {
     file: overrides.file ?? unavailableFileAdapter,
     project: overrides.project ?? unavailableProjectAdapter,
     resource: overrides.resource ?? unavailableResourceAdapter,
     runtime: overrides.runtime ?? unavailableRuntimeAdapter,
-    preview: overrides.preview ?? unavailablePreviewAdapter,
     rendererHost: overrides.rendererHost ?? unavailableRendererHostAdapter,
     code: overrides.code ?? codeMirrorAdapter,
     lifecycle: overrides.lifecycle,

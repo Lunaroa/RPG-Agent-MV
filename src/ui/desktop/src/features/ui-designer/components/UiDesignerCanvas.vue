@@ -25,8 +25,8 @@ const selectedNode = computed<UiNode | undefined>(() => unwrap(designer.selected
 const draftPositions = computed<Record<string, { x: number; y: number }>>(() => unwrap(designer.draftPositions))
 const draftRects = computed<Record<string, UiRect>>(() => unwrap(designer.draftRects))
 const draftRotations = computed<Record<string, number>>(() => unwrap(designer.draftRotations))
-const previewing = computed(() => unwrap(designer.isEditorPreviewing))
-const requestedExecutionMode = computed<UiDesignerRendererExecutionMode>(() => unwrap(designer.editorPreviewExecutionMode))
+const previewing = computed(() => unwrap(designer.isPreviewing))
+const requestedExecutionMode = computed<UiDesignerRendererExecutionMode>(() => unwrap(designer.previewExecutionMode))
 const preferences = computed<Record<string, unknown>>(() => unwrap(designer.preferences))
 const gridEnabled = computed(() => typeof preferences.value.gridEnabled === 'boolean' ? preferences.value.gridEnabled : document.value.canvas.grid.enabled)
 const snapEnabled = computed(() => typeof preferences.value.snapEnabled === 'boolean' ? preferences.value.snapEnabled : document.value.canvas.snap.enabled)
@@ -128,16 +128,19 @@ const rendererHost = useUiDesignerRendererHost({
   runtimeScene,
   executionMode: () => requestedExecutionMode.value,
   onExecutionModeReady: (mode) => {
-    designer.acknowledgeEditorPreviewExecutionMode(mode)
+    designer.acknowledgePreviewExecutionMode(mode)
     if (mode === 'full-preview') void nextTick(() => rendererFrame.value?.focus())
   },
-  onExecutionModeError: (message) => designer.failEditorPreview(message),
-  onPreviewExitRequest: () => designer.stopEditorPreview(),
+  onExecutionModeError: (message, cleanupPending) => designer.failPreview(message, cleanupPending),
+  onPreviewExitRequest: () => designer.stopPreview(),
 })
 const rendererStatus = rendererHost.status
 const rendererError = rendererHost.error
+const rendererFailureCode = rendererHost.failureCode
+const rendererFailureReason = computed(() => rendererHost.failureRecoveryReason.value || rendererError.value || t('previewError'))
 const rendererIframeUrl = rendererHost.iframeUrl
 const rendererBounds = rendererHost.bounds
+const rendererStage = rendererHost.stage
 const rendererReady = computed(() => rendererStatus.value === 'running')
 const previewInteractive = computed(() => previewing.value && rendererReady.value && rendererHost.executionModeReady.value && rendererHost.executionMode.value === 'full-preview')
 const selectionStyle = computed(() => {
@@ -481,8 +484,10 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
           :src="rendererIframeUrl"
           sandbox="allow-scripts allow-same-origin"
           :tabindex="previewInteractive ? 0 : -1"
+          :aria-label="t('editorPreview')"
           data-ui-id="ui-designer-runtime-canvas-frame"
           @load="rendererHost.onIframeLoad"
+          @error="rendererHost.onIframeError"
         />
         <div v-if="!previewing" class="canvas-grid" :class="{ active: gridEnabled }" :style="{ '--grid-size': `${document.canvas.grid.size}px`, '--grid-color': document.canvas.grid.color }" />
         <div v-if="!previewing" class="node-layer" :class="{ 'runtime-disabled': !rendererReady }">
@@ -509,7 +514,10 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
           />
         </div>
         <div v-if="!designer.canRenderCanvas" class="canvas-runtime-state" data-ui-id="ui-designer-runtime-canvas-project-required">{{ t('projectRequired') }}</div>
-        <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" :title="rendererError" data-ui-id="ui-designer-runtime-canvas-status">{{ rendererStatus === 'error' ? t('previewError') : t('previewPreparing') }}</div>
+        <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" :title="rendererStatus === 'error' ? rendererFailureReason : ''" :data-failure-code="rendererFailureCode || undefined" data-ui-id="ui-designer-runtime-canvas-status">
+          <span>{{ rendererStatus === 'error' ? rendererFailureReason : `${t('previewPreparing')} · ${rendererStage}` }}</span>
+          <el-button v-if="rendererStatus === 'error' && designer.canRenderCanvas" size="small" @click="rendererHost.retry()">{{ t('retry') }}</el-button>
+        </div>
       </div>
     </div>
     <div v-if="!previewing" class="canvas-hint">{{ t('chooseNode') }}</div>
@@ -528,8 +536,8 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
 .canvas-stage.preview-stage { flex: none; margin: 0; box-shadow: 0 16px 48px #000b; }
 .canvas-edit-breadcrumb { position: absolute; z-index: 8; top: -24px; left: 0; color: var(--app-ink-soft); font-size: 10px; pointer-events: none; }
 .canvas-stage.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }
-.canvas-runtime-frame { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; }
-.canvas-runtime-frame.preview-interactive { z-index: 3; pointer-events: auto; }
+.canvas-runtime-frame { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; user-select: none; }
+.canvas-runtime-frame.preview-interactive { z-index: 3; pointer-events: auto; touch-action: none; user-select: none; }
 .canvas-grid { position: absolute; z-index: 1; inset: 0; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }
 .canvas-grid.active { opacity: .18; }
 .node-layer { position: absolute; z-index: 2; inset: 0; pointer-events: none; }

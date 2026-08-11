@@ -26,7 +26,7 @@ interface TreeExpose {
   expandAll?: () => void
   collapseAll?: () => void
   setCurrentKey?: (key: string) => void
-  getNode?: (key: string) => { expand?: () => void }
+  getNode?: (key: string) => { expanded?: boolean; expand?: () => void; collapse?: () => void }
   $el?: HTMLElement
 }
 const treeRef = ref<TreeExpose>()
@@ -58,6 +58,39 @@ const treeData = computed<NodeTreeEntry[]>(() => {
   })
   return document.value.nodes.filter((node) => node.parentId === null).map(build)
 })
+
+const flattenTreeIds = (entries: NodeTreeEntry[], result: string[] = []) => {
+  for (const entry of entries) {
+    result.push(entry.id)
+    if (entry.children) flattenTreeIds(entry.children, result)
+  }
+  return result
+}
+
+const expandedKeys = ref<string[]>([])
+const rememberExpanded = (entry: NodeTreeEntry) => {
+  if (!expandedKeys.value.includes(entry.id)) expandedKeys.value = [...expandedKeys.value, entry.id]
+}
+const rememberCollapsed = (entry: NodeTreeEntry) => {
+  expandedKeys.value = expandedKeys.value.filter((id) => id !== entry.id)
+}
+const getExpandedKeys = () => {
+  const ids = flattenTreeIds(treeData.value)
+  const observed = ids.filter((id) => treeRef.value?.getNode?.(id)?.expanded)
+  return observed.length ? observed : [...expandedKeys.value]
+}
+const setExpandedKeys = (ids: readonly string[]) => {
+  const desired = new Set(ids)
+  const available = flattenTreeIds(treeData.value)
+  for (const id of available) {
+    const node = treeRef.value?.getNode?.(id)
+    if (desired.has(id)) node?.expand?.()
+    else node?.collapse?.()
+  }
+  expandedKeys.value = available.filter((id) => desired.has(id))
+}
+
+defineExpose({ getExpandedKeys, setExpandedKeys })
 
 watch(search, (value) => {
   void nextTick(() => treeRef.value?.filter(value))
@@ -149,7 +182,7 @@ const contextCommand = (command: string, id: string) => {
   designer.executeNodeAction(command as UiNodeActionCommand, id)
 }
 
-const normalizeDropPosition = (type: string) => type === 'prev' ? 'before' : type === 'next' ? 'after' : type === 'inner' ? 'inner' : undefined
+const normalizeDropPosition = (type: string) => type === 'before' || type === 'prev' ? 'before' : type === 'after' || type === 'next' ? 'after' : type === 'inner' ? 'inner' : undefined
 const allowDrop = (draggingNode: { data?: NodeTreeEntry }, dropNode: { data?: NodeTreeEntry }, type: string) => {
   const dragging = draggingNode?.data?.id ? document.value.nodes.find((node) => node.id === draggingNode.data?.id) : undefined
   const drop = dropNode?.data?.id ? document.value.nodes.find((node) => node.id === dropNode.data?.id) : undefined
@@ -205,6 +238,8 @@ const handleKeydown = (event: KeyboardEvent) => {
       default-expand-all
       :allow-drop="allowDrop"
       :filter-node-method="(value: string, data: NodeTreeEntry) => !value || data.label.toLocaleLowerCase().includes(value.toLocaleLowerCase())"
+      @node-expand="rememberExpanded"
+      @node-collapse="rememberCollapsed"
       @node-click="handleNodeClick"
       @node-drop="handleDrop"
     >

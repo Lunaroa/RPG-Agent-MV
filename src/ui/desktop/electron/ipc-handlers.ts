@@ -462,7 +462,6 @@ async function loadBackendModules(roots: AppRoots) {
       project: await import(new URL('desktop/ui-designer-project-service.ts', coreUrl).href),
       resources: await import(new URL('desktop/ui-designer-resource-service.ts', coreUrl).href),
       runtime: await import(new URL('desktop/ui-designer-runtime-service.ts', coreUrl).href),
-      preview: new (await import(new URL('desktop/ui-designer-preview-service.ts', coreUrl).href)).UiDesignerPreviewService(),
       rendererHost: await import(new URL('desktop/ui-designer-renderer-host-service.ts', coreUrl).href),
     },
   };
@@ -495,69 +494,11 @@ async function loadBackendModules(roots: AppRoots) {
         desktop.playtestPreparation.prepareParticlePreviewInWorker(workflowRoot, project, animation),
     },
   );
-  desktop.uiDesigner.preview.setLauncher({
-    start: async (project: string, options: {
-      sessionId: string;
-      profileDirectory: string;
-      sourceProject: string;
-      preparation: unknown;
-      evidence: {
-        paths: { engineEntry: string; loadState: string; diagnostics: string; sceneHandshake: string };
-        schemas: { engineEntry: string; loadState: string; diagnostics: string; sceneHandshake: string };
-        application: {
-          schemaVersion: '1.0.0';
-          activePackageMain: string;
-          uniqueNameValid: true;
-          entryRelativePath: string;
-          digests: { package: string; index: string; entry: string };
-        };
-      };
-    }) => {
-      const result = await interactivePlaytestService.startIsolatedNwApp(project, options);
-      const run = result.run as InteractivePlaytestRun | undefined;
-      if (run && run.sessionId !== options.sessionId) {
-        return { ...result, run: undefined, error: 'The ordinary playtest runner is already owned by another session.' };
-      }
-      return result;
-    },
-    captureFailureEvidence: async (
-      sessionId: string,
-      reason: 'startup-failed' | 'runner-failed' | 'handshake-failed',
-    ) => {
-      interactivePlaytestService.captureIsolatedNwFailureEvidence(sessionId, reason);
-    },
-    stop: async (runnerId?: string) => {
-      const current = interactivePlaytestService.current() as { run?: InteractivePlaytestRun };
-      if (runnerId && current.run && current.run.runId !== runnerId) {
-        return { error: 'The preview runner session is no longer active.', run: current.run };
-      }
-      return interactivePlaytestService.stop();
-    },
-    stopSync: (runnerId?: string) => {
-      const current = interactivePlaytestService.current() as { run?: InteractivePlaytestRun };
-      if (runnerId && current.run && current.run.runId !== runnerId) {
-        return { error: 'The preview runner session is no longer active.', run: current.run };
-      }
-      return interactivePlaytestService.shutdownSync();
-    },
-    current: async (sessionId?: string) => {
-      const result = interactivePlaytestService.current() as { run?: InteractivePlaytestRun; error?: string };
-      if (sessionId && result.run && result.run.sessionId !== sessionId) {
-        return { ...result, run: undefined, error: 'The preview runner session is no longer active.' };
-      }
-      return result;
-    },
-  });
-  desktop.uiDesigner.preview.setPreparationFactory(
-    (workflowRoot: string, project: string) => (
-      desktop.playtestPreparation.prepareUiDesignerPreviewInWorker(workflowRoot, project)
-    ),
-  );
   uiDesignerRendererHostService = new desktop.uiDesigner.rendererHost.UiDesignerRendererHostService(
     roots.installRoot,
     {
       prepareIsolated: (workflowRoot: string, project: string, temporaryPrefix?: string) => (
-        desktop.playtestPreparation.prepareUiDesignerPreviewInWorker(workflowRoot, project, temporaryPrefix)
+        desktop.playtestPreparation.prepareUiDesignerRendererInWorker(workflowRoot, project, temporaryPrefix)
       ),
       registerPreviewRoot: (key: string, resourceRoot: string, sourceProject: string) => (
         registerMapPreviewRoot(key, resourceRoot, resolveRendererHostDisabledPlugins(sourceProject))
@@ -577,7 +518,6 @@ async function loadBackendModules(roots: AppRoots) {
     project: desktop.uiDesigner.project,
     resources: desktop.uiDesigner.resources,
     runtime: desktop.uiDesigner.runtime,
-    preview: desktop.uiDesigner.preview,
     rendererHost: uiDesignerRendererHostService,
     userDataStore: () => new desktop.uiDesigner.file.UiDesignerUserDataStore(roots.userDataRoot),
   });
@@ -2270,19 +2210,6 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('projectAssets:startWatcher');
   ipcMain.removeHandler('projectAssets:stopWatcher');
   ipcMain.removeHandler('clipboard:writeFiles');
-  let uiPreviewOwnerReleased = true;
-  if (desktop?.uiDesigner?.preview) {
-    try {
-      const result = desktop.uiDesigner.preview.shutdownSync() as { state?: string; cleanup?: { ok?: boolean; message?: string } };
-      if (result.state !== 'idle' && result.cleanup?.ok !== true) {
-        uiPreviewOwnerReleased = false;
-        console.error('[ui-designer-preview] Electron teardown retained the isolated preview owner.', result.cleanup?.message || 'cleanup-unconfirmed');
-      }
-    } catch (error) {
-      uiPreviewOwnerReleased = false;
-      console.error('[ui-designer-preview] Electron teardown retained the isolated preview owner.', error);
-    }
-  }
   if (mapPreviewService) {
     try {
       mapPreviewService.shutdownSync();
@@ -2300,7 +2227,7 @@ export function cleanupIpcHandlers(): void {
       console.error('[ui-designer-renderer-host] Isolation evidence changed; retained the temporary project while continuing Electron cleanup.', error);
     }
   }
-  if (interactivePlaytestService && uiPreviewOwnerReleased) {
+  if (interactivePlaytestService) {
     const result = interactivePlaytestService.shutdownSync() as { run?: InteractivePlaytestRun };
     if (!result.run || ['stopped', 'exited', 'failed'].includes(String(result.run.status || ''))) {
       interactivePlaytestService = null;

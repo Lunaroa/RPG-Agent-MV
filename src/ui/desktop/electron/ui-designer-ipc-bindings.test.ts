@@ -24,7 +24,6 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   const revealed: string[] = []
   const recent: Array<{ path: string; options?: { opened?: boolean; saved?: boolean; sceneName?: string } }> = []
   let rendererStarts = 0
-  let previewStarts = 0
   const userDataStore = {
     recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string }) { recent.push({ path, options }); return { sourcePath: path, lastOpenedAt: 'now', exists: true } },
     listRecentFiles: () => [],
@@ -73,11 +72,6 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       start: async (_project: string, generation: number) => { rendererStarts += 1; return { sessionId: 'renderer-session', generation, iframeUrl: 'rpg-agent-preview://renderer/index.html', engine: 'MV', engineVersion: '1.6.2', runtimeVersion: '1.1.0' } },
       confirm: (sessionId: string) => ({ sessionId, generation: 2, iframeUrl: 'rpg-agent-preview://renderer/index.html', engine: 'MV', engineVersion: '1.6.2', runtimeVersion: '1.1.0' }),
       stop: () => undefined,
-    },
-    preview: {
-      async start() { previewStarts += 1; return { state: 'running', message: 'running', sessionId: 'preview-session' } },
-      async current() { return { state: 'idle', message: 'idle' } },
-      async stop() { return { state: 'stopped', message: 'stopped' } },
     },
     userDataStore: () => userDataStore as any,
   })
@@ -129,28 +123,9 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   assert.equal(renderer.status, 'success')
   assert.equal(renderer.value.runtimeVersion, '1.1.0')
   assert.equal(rendererStarts, 1)
-  const missingPreviewProject = await handlers.get('ui-designer:preview:start')!(null, { project: '', scene: { meta: { sceneName: 'Scene_Sample' } } })
-  assert.equal(missingPreviewProject.status, 'error')
-  assert.equal(missingPreviewProject.code, 'UI_DESIGNER_PROJECT_REQUIRED')
-  assert.equal(previewStarts, 0)
-  const injectedPreviewOptions = await handlers.get('ui-designer:preview:start')!(null, {
-    project: 'project',
-    scene: { meta: { sceneName: 'Scene_Sample' } },
-    temporaryPrefix: 'renderer-controlled-prefix-',
-    profileDirectory: 'renderer-controlled-profile',
-    args: ['--renderer-controlled'],
-    sourceProject: 'renderer-controlled-source',
-    evidence: { paths: {}, schemas: {} },
-    nwapp: 'renderer-controlled-app-root',
-  })
-  assert.equal(injectedPreviewOptions.status, 'error')
-  assert.equal(previewStarts, 0)
-  const preview = await handlers.get('ui-designer:preview:start')!(null, {
-    project: 'project',
-    scene: { meta: { sceneName: 'Scene_Sample' } },
-  })
-  assert.equal(preview.state, 'running')
-  assert.equal(previewStarts, 1)
+  assert.equal(handlers.has('ui-designer:preview:start'), false)
+  assert.equal(handlers.has('ui-designer:preview:current'), false)
+  assert.equal(handlers.has('ui-designer:preview:stop'), false)
   const canceled = await handlers.get('ui-designer:file:open')!({ sender: {} })
   assert.equal(canceled.status, 'idle')
   const removed: string[] = []

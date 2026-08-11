@@ -4,7 +4,14 @@ import test from 'node:test'
 import type { UiNode, UiRuntimeDiagnostic, UiRuntimeSceneExport } from '@contract/ui-designer'
 import { UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES, UI_DESIGNER_RENDERER_BRIDGE_VERSION, validateUiDesignerRendererBridgeMessage } from '@contract/ui-designer-renderer-bridge'
 import { createUiDesignerRendererDisposeAck, planUiDesignerRendererUpdate, scheduleUiDesignerRendererHandshakeTimeout, UI_DESIGNER_RENDERER_HANDSHAKE_TIMEOUT_MS } from './rendererBridge'
-import { reduceUiDesignerRendererHostRuntimeMessage, type UiDesignerRendererHostRuntimeState } from './composables/useUiDesignerRendererHost'
+import {
+  UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES,
+  createUiDesignerRendererFailureLatch,
+  createUiDesignerRendererTerminalGate,
+  reduceUiDesignerRendererHostRuntimeMessage,
+  resolveUiDesignerRendererFailure,
+  type UiDesignerRendererHostRuntimeState,
+} from './composables/useUiDesignerRendererHost'
 
 const node = (index: number, x = index): UiNode => ({
   id: `node_${index}`,
@@ -74,6 +81,50 @@ test('renderer handshake timeout is bounded and cancellable with a fake timer', 
   assert.equal(cleared, true)
 })
 
+test('local renderer terminal entries map every fixed code to controlled recovery copy', () => {
+  const expected = new Map<string, string>([
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.sceneExport, 'The editor could not prepare the current UI scene for the isolated canvas. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.updatePlan, 'The editor could not prepare the current UI scene update. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.mountPost, 'The editor could not send the current UI scene to the isolated canvas. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.patchPost, 'The editor could not send the latest UI scene changes to the isolated canvas. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.sceneSnapshot, 'The editor could not retain the current UI scene snapshot. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.selectionPost, 'The editor could not synchronize the current UI selection. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.handshakeTimeout, 'The isolated game frame did not finish connecting in time. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.handshakeWatchdog, 'The editor could not monitor the isolated game frame connection. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.mountedTimeout, 'The isolated game frame did not finish mounting the current scene in time. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.mountedWatchdog, 'The editor could not monitor the isolated scene mount. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.startAdapter, 'The editor could not start the isolated UI canvas. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.startResult, 'The isolated UI canvas returned an invalid start result. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.confirmIpc, 'The editor could not confirm the isolated UI canvas process. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.confirmIdentity, 'The isolated UI canvas identity did not match the active preview. Retry the preview.'],
+    [UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.iframeLoad, 'The isolated game frame could not be loaded. Retry the preview.'],
+  ])
+  assert.equal(expected.size, Object.keys(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES).length)
+  for (const [code, recoveryReason] of expected) {
+    assert.deepEqual(resolveUiDesignerRendererFailure(code, 'scene-state'), { code, stage: 'scene-state', recoveryReason })
+  }
+})
+
+test('handshake and mounted watchdog failures keep ten seconds and distinct code-stage pairs', () => {
+  assert.equal(UI_DESIGNER_RENDERER_HANDSHAKE_TIMEOUT_MS, 10_000)
+  assert.deepEqual(
+    resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.handshakeTimeout, 'hello'),
+    {
+      code: 'UI_RENDERER_HANDSHAKE_TIMEOUT',
+      stage: 'hello',
+      recoveryReason: 'The isolated game frame did not finish connecting in time. Retry the preview.',
+    },
+  )
+  assert.deepEqual(
+    resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.mountedTimeout, 'mounted'),
+    {
+      code: 'UI_RENDERER_MOUNTED_TIMEOUT',
+      stage: 'mounted',
+      recoveryReason: 'The isolated game frame did not finish mounting the current scene in time. Retry the preview.',
+    },
+  )
+})
+
 test('renderer dispose acknowledgement settles immediately without waiting for timeout', async () => {
   let cleared = false
   let timeout: (() => void) | undefined
@@ -109,9 +160,12 @@ test('renderer host keeps full-preview ready across later bounds and diagnostic 
     schemaVersion: '1.0.0', sessionId, scene: 'Scene_RendererBridge', file: null, node: 'node_1', type: 'button', phase: 'update', event: null,
     code: 'UI_RUNTIME_HANDLER_ERROR', severity: 'warning', label: 'runtime', message: 'A recoverable runtime diagnostic.', count: 1,
   }
-  let state: UiDesignerRendererHostRuntimeState = { bounds: {}, diagnostics: [], executionMode: 'authoring', executionModeReady: false }
+  let state: UiDesignerRendererHostRuntimeState = {
+    bounds: {}, diagnostics: [], executionMode: 'authoring', executionModeReady: false,
+    scenePhase: 'active', requestedScene: null, actualScene: null,
+  }
   let minimumSequence = 0
-  const accept = (kind: 'mounted' | 'bounds' | 'diagnostic', payload: Record<string, unknown>) => {
+  const accept = (kind: 'mounted' | 'bounds' | 'diagnostic' | 'scene-state', payload: Record<string, unknown>) => {
     const message = validateUiDesignerRendererBridgeMessage({
       version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
       sessionId,
@@ -129,9 +183,119 @@ test('renderer host keeps full-preview ready across later bounds and diagnostic 
     accept('mounted', { revision: 7, executionMode: 'full-preview', bounds })
     accept('bounds', { revision: 7, bounds: [{ ...bounds[0], x: 12 }] })
     accept('diagnostic', { entries: [diagnostic] })
+    accept('scene-state', { phase: 'transitioning', requestedScene: 'Scene_Options', actualScene: 'Scene_RendererBridge' })
+    accept('scene-state', { phase: 'active', requestedScene: null, actualScene: 'Scene_Options' })
   })
   assert.equal(state.executionMode, 'full-preview')
   assert.equal(state.executionModeReady, true)
   assert.equal(state.bounds.node_1?.x, 12)
   assert.equal(state.diagnostics[0]?.message, diagnostic.message)
+  assert.equal(state.scenePhase, 'active')
+  assert.equal(state.requestedScene, null)
+  assert.equal(state.actualScene, 'Scene_Options')
+})
+
+test('renderer lifecycle receipts expose bounded stage failures without carrying session details', () => {
+  assert.equal(UI_DESIGNER_RENDERER_BRIDGE_VERSION, '2.0.0')
+  const common = { version: UI_DESIGNER_RENDERER_BRIDGE_VERSION, sessionId: 'renderer-session', generation: 4, sceneId: 'Scene_RendererBridge' }
+  assert.doesNotThrow(() => validateUiDesignerRendererBridgeMessage({
+    ...common, sequence: 0, kind: 'receipt', payload: { stage: 'mount', status: 'begin', message: null },
+  }))
+  assert.doesNotThrow(() => validateUiDesignerRendererBridgeMessage({
+    ...common, sequence: 1, kind: 'fatal', payload: { stage: 'mounted', code: 'UI_RENDERER_BOOT_FAILED', message: 'The isolated renderer stopped before mounting.', revision: 7 },
+  }))
+})
+
+test('receipt progress cannot terminate before the same-tick fatal atomically latches its safe code', () => {
+  const common = { version: UI_DESIGNER_RENDERER_BRIDGE_VERSION, sessionId: 'renderer-session', generation: 4, sceneId: 'Scene_RendererBridge' }
+  const receipt = validateUiDesignerRendererBridgeMessage({
+    ...common,
+    sequence: 0,
+    kind: 'receipt',
+    payload: { stage: 'ready', status: 'error', message: null },
+  }, { sessionId: common.sessionId, generation: common.generation, minimumSequence: 0 })
+  const fatal = validateUiDesignerRendererBridgeMessage({
+    ...common,
+    sequence: 1,
+    kind: 'fatal',
+    payload: {
+      stage: 'ready',
+      code: 'UI_RENDERER_READY_CANVAS_HOST',
+      message: 'sanitized renderer detail that must not become user copy',
+      revision: 0,
+    },
+  }, { sessionId: common.sessionId, generation: common.generation, minimumSequence: 1, minimumRevision: 0 })
+  const duplicate = validateUiDesignerRendererBridgeMessage({
+    ...common,
+    sequence: 2,
+    kind: 'fatal',
+    payload: { stage: 'ready', code: 'UI_RENDERER_READY_SIGNAL', message: 'later detail', revision: 0 },
+  }, { sessionId: common.sessionId, generation: common.generation, minimumSequence: 2, minimumRevision: 0 })
+  const gate = createUiDesignerRendererTerminalGate()
+
+  assert.equal(gate.accept(receipt), null)
+  assert.deepEqual(gate.accept(fatal), {
+    code: 'UI_RENDERER_READY_CANVAS_HOST',
+    stage: 'ready',
+    recoveryReason: 'The game runtime could not create the embedded canvas. Retry the preview.',
+    revision: 0,
+    sequence: 1,
+  })
+  assert.equal(gate.accept(duplicate), null)
+})
+
+test('terminal retry reset accepts a new owner and maps unknown safe codes to fixed recovery copy', () => {
+  const common = { version: UI_DESIGNER_RENDERER_BRIDGE_VERSION, sessionId: 'renderer-session', generation: 4, sceneId: 'Scene_RendererBridge' }
+  const fatal = validateUiDesignerRendererBridgeMessage({
+    ...common,
+    sequence: 0,
+    kind: 'fatal',
+    payload: { stage: 'ready', code: 'UI_RENDERER_UNRECOGNIZED', message: 'arbitrary project exception text', revision: 0 },
+  })
+  const gate = createUiDesignerRendererTerminalGate()
+  const first = gate.accept(fatal)
+  assert.equal(first?.recoveryReason, 'The isolated UI canvas stopped unexpectedly. Retry the preview.')
+  assert.equal(first?.recoveryReason.includes('arbitrary project exception text'), false)
+  gate.reset()
+  assert.equal(gate.accept({ ...fatal, sequence: 1 })?.code, 'UI_RENDERER_UNRECOGNIZED')
+})
+
+test('scene-state synchronization keeps the first local cause over later iframe confirm and fatal failures', () => {
+  const latch = createUiDesignerRendererFailureLatch()
+  const local = resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.sceneExport, 'scene-state')
+  const iframe = resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.iframeLoad, 'iframe-load')
+  const confirm = resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.confirmIpc, 'confirm')
+  const renderer = resolveUiDesignerRendererFailure('UI_RENDERER_READY_CANVAS_HOST', 'ready')
+  assert.deepEqual(latch.accept(local), { failure: local, accepted: true })
+  assert.deepEqual(latch.accept(iframe), { failure: local, accepted: false })
+  assert.deepEqual(latch.accept(confirm), { failure: local, accepted: false })
+  assert.deepEqual(latch.accept(renderer), { failure: local, accepted: false })
+  latch.reset()
+  assert.deepEqual(latch.accept(renderer), { failure: renderer, accepted: true })
+})
+
+test('unknown renderer reasons never replace fixed user recovery copy', () => {
+  const unsafeReason = 'untrusted adapter detail must stay hidden'
+  const failure = resolveUiDesignerRendererFailure('UI_RENDERER_UNKNOWN_LOCAL_REASON', 'scene-state')
+  assert.equal(failure.code, 'UI_RENDERER_UNKNOWN_LOCAL_REASON')
+  assert.equal(failure.stage, 'scene-state')
+  assert.equal(failure.recoveryReason, 'The isolated UI canvas stopped unexpectedly. Retry the preview.')
+  assert.equal(failure.recoveryReason.includes(unsafeReason), false)
+})
+
+test('stale terminal session generation sequence and revision are rejected before failure mapping', () => {
+  const base = {
+    version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
+    sessionId: 'renderer-session',
+    generation: 4,
+    sequence: 8,
+    sceneId: 'Scene_RendererBridge',
+    kind: 'fatal',
+    payload: { stage: 'mount', code: 'UI_RENDERER_BRIDGE_PROTOCOL', message: 'safe', revision: 6 },
+  }
+  const expected = { sessionId: 'renderer-session', generation: 4, minimumSequence: 8, minimumRevision: 6 }
+  assert.throws(() => validateUiDesignerRendererBridgeMessage({ ...base, sessionId: 'stale-session' }, expected), /session is stale/)
+  assert.throws(() => validateUiDesignerRendererBridgeMessage({ ...base, generation: 3 }, expected), /generation is stale/)
+  assert.throws(() => validateUiDesignerRendererBridgeMessage({ ...base, sequence: 7 }, expected), /sequence is stale/)
+  assert.throws(() => validateUiDesignerRendererBridgeMessage({ ...base, payload: { ...base.payload, revision: 5 } }, expected), /revision is stale/)
 })

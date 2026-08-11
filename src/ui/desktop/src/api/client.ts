@@ -11,7 +11,6 @@ import type {
   UiDesignerDocument,
   UiDesignerFileRequest,
   UiDesignerFrameFolderRequest,
-  UiDesignerPreviewStartRequest,
   UiDesignerProjectProfileRequest,
   UiDesignerProjectProfileResult,
   UiDesignerProjectRequest,
@@ -29,7 +28,6 @@ import type {
   UiDesignerSaveResult,
   UiDesignerSceneStageRequest,
   UiFileResult,
-  UiPreviewResult,
   UiProjectResourceCatalog,
   UiResourceEntry,
   UiRuntimeStatus,
@@ -149,9 +147,6 @@ declare global {
         installRuntime(request: UiDesignerRuntimeInstallRequest): Promise<UiFileResult<UiDesignerRuntimeStageResult>>;
         stageScene(request: UiDesignerSceneStageRequest): Promise<UiFileResult<UiDesignerRuntimeStageResult>>;
         exportRuntime(request: UiDesignerRuntimeExportRequest): Promise<UiFileResult<string>>;
-        startPreview(request: UiDesignerPreviewStartRequest): Promise<UiPreviewResult | UiFileResult<never>>;
-        currentPreview(): Promise<UiPreviewResult | UiFileResult<never>>;
-        stopPreview(sessionId?: string): Promise<UiPreviewResult | UiFileResult<never>>;
         startRenderer(request: UiDesignerProjectRequest & { generation: number }): Promise<UiFileResult<UiDesignerRendererHostSession>>;
         confirmRenderer(sessionId: string): Promise<UiFileResult<UiDesignerRendererHostSession>>;
         stopRenderer(request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }): Promise<UiFileResult<null>>;
@@ -556,9 +551,6 @@ export const uiDesigner = {
   installRuntime(request: UiDesignerRuntimeInstallRequest) { return desktopApi().uiDesigner.installRuntime(toPlain(request)) },
   stageScene(request: UiDesignerSceneStageRequest) { return desktopApi().uiDesigner.stageScene(toPlain(request)) },
   exportRuntime(request: UiDesignerRuntimeExportRequest) { return desktopApi().uiDesigner.exportRuntime(toPlain(request)) },
-  startPreview(request: UiDesignerPreviewStartRequest) { return desktopApi().uiDesigner.startPreview(toPlain(request)) },
-  currentPreview() { return desktopApi().uiDesigner.currentPreview() },
-  stopPreview(sessionId?: string) { return desktopApi().uiDesigner.stopPreview(sessionId) },
   startRenderer(request: UiDesignerProjectRequest & { generation: number }) { return desktopApi().uiDesigner.startRenderer(toPlain(request)) },
   confirmRenderer(sessionId: string) { return desktopApi().uiDesigner.confirmRenderer(sessionId) },
   stopRenderer(request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }) { return desktopApi().uiDesigner.stopRenderer(toPlain(request)) },

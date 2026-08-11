@@ -10,13 +10,15 @@ import {
   isUiDesignerProjectRelativeResourcePath,
 } from './ui-designer-resources.ts'
 
-export const UI_DESIGNER_RENDERER_BRIDGE_VERSION = '1.1.0' as const
+export const UI_DESIGNER_RENDERER_BRIDGE_VERSION = '2.0.0' as const
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_BYTES = 4 * 1024 * 1024
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_BOUNDS = 2_048
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES = 512
 
 export type UiDesignerRendererBridgeKind =
   | 'hello'
+  | 'receipt'
+  | 'fatal'
   | 'ready'
   | 'mount'
   | 'mounted'
@@ -25,6 +27,7 @@ export type UiDesignerRendererBridgeKind =
   | 'select'
   | 'input'
   | 'diagnostic'
+  | 'scene-state'
   | 'exit-request'
   | 'dispose'
   | 'disposed'
@@ -48,6 +51,31 @@ export interface UiDesignerRendererBridgeCapabilities {
   runtimeVersion: string
 }
 
+export type UiDesignerRendererBridgeReceiptStage =
+  | 'iframe-load'
+  | 'entry-invoked'
+  | 'hello'
+  | 'confirm'
+  | 'ready'
+  | 'mount'
+  | 'mounted'
+  | 'scene-state'
+
+export type UiDesignerRendererBridgeReceiptStatus = 'begin' | 'success' | 'error'
+
+export interface UiDesignerRendererBridgeReceipt {
+  stage: UiDesignerRendererBridgeReceiptStage
+  status: UiDesignerRendererBridgeReceiptStatus
+  message: string | null
+}
+
+export interface UiDesignerRendererBridgeFatal {
+  stage: UiDesignerRendererBridgeReceiptStage
+  code: string
+  message: string
+  revision: number
+}
+
 export interface UiDesignerRendererNodeBounds {
   nodeId: string
   x: number
@@ -68,6 +96,8 @@ export type UiDesignerRendererJsonValue = null | boolean | number | string | UiD
 
 export type UiDesignerRendererBridgeMessage =
   | UiDesignerRendererBridgeEnvelope<'hello', UiDesignerRendererBridgeCapabilities>
+  | UiDesignerRendererBridgeEnvelope<'receipt', UiDesignerRendererBridgeReceipt>
+  | UiDesignerRendererBridgeEnvelope<'fatal', UiDesignerRendererBridgeFatal>
   | UiDesignerRendererBridgeEnvelope<'ready', { canvasWidth: number; canvasHeight: number }>
   | UiDesignerRendererBridgeEnvelope<'mount', { revision: number; executionMode: UiDesignerRendererExecutionMode; scene: UiRuntimeSceneExport }>
   | UiDesignerRendererBridgeEnvelope<'mounted', { revision: number; executionMode: UiDesignerRendererExecutionMode; bounds: UiDesignerRendererNodeBounds[] }>
@@ -86,7 +116,12 @@ export type UiDesignerRendererBridgeMessage =
     metaKey: boolean
   }>
   | UiDesignerRendererBridgeEnvelope<'diagnostic', { entries: UiRuntimeDiagnostic[] }>
-  | UiDesignerRendererBridgeEnvelope<'exit-request', { key: 'Escape' | 'F6' }>
+  | UiDesignerRendererBridgeEnvelope<'scene-state', {
+    phase: 'transitioning' | 'active'
+    requestedScene: string | null
+    actualScene: string | null
+  }>
+  | UiDesignerRendererBridgeEnvelope<'exit-request', { key: 'Escape' | 'F6' | 'action-exit' }>
   | UiDesignerRendererBridgeEnvelope<'dispose', { reason: 'scene-change' | 'project-change' | 'unload' | 'shutdown' }>
   | UiDesignerRendererBridgeEnvelope<'disposed', Record<string, never>>
 
@@ -94,6 +129,7 @@ export interface UiDesignerRendererBridgeExpectation {
   sessionId: string
   generation: number
   minimumSequence: number
+  minimumRevision?: number
   sceneId?: string
 }
 
@@ -121,10 +157,15 @@ export function validateUiDesignerRendererBridgeMessage(
   const encodedBytes = encodedSize(value)
   if (encodedBytes > UI_DESIGNER_RENDERER_BRIDGE_MAX_BYTES) fail(`Renderer bridge message exceeds ${UI_DESIGNER_RENDERER_BRIDGE_MAX_BYTES} bytes.`)
   if (expectation) {
+    if (expectation.minimumRevision !== undefined) nonNegativeInteger(expectation.minimumRevision, 'minimum revision')
     if (sessionId !== expectation.sessionId) fail('Renderer bridge session is stale or does not match the active session.')
     if (generation !== expectation.generation) fail('Renderer bridge project generation is stale.')
     if (sequence < expectation.minimumSequence) fail('Renderer bridge message sequence is stale.')
     if (expectation.sceneId && sceneId !== expectation.sceneId) fail('Renderer bridge scene does not match the active scene.')
+    if (expectation.minimumRevision !== undefined) {
+      const revision = messageRevision(value)
+      if (revision !== null && revision < expectation.minimumRevision) fail('Renderer bridge message revision is stale.')
+    }
   }
   validatePayload(kind, value.payload, sessionId, sceneId)
   return value as unknown as UiDesignerRendererBridgeMessage
@@ -138,6 +179,21 @@ function validatePayload(kind: UiDesignerRendererBridgeKind, payload: unknown, s
     if (payload.engineVersion !== null) boundedString(payload.engineVersion, 'engineVersion', 64)
     boundedString(payload.pixiVersion, 'pixiVersion', 64)
     boundedString(payload.runtimeVersion, 'runtimeVersion', 64)
+    return
+  }
+  if (kind === 'receipt') {
+    assertExactKeys(payload, ['stage', 'status', 'message'], kind)
+    receiptStage(payload.stage)
+    if (payload.status !== 'begin' && payload.status !== 'success' && payload.status !== 'error') fail('Renderer receipt status is unsupported.')
+    if (payload.message !== null) boundedString(payload.message, 'receipt message', 512)
+    return
+  }
+  if (kind === 'fatal') {
+    assertExactKeys(payload, ['stage', 'code', 'message', 'revision'], kind)
+    receiptStage(payload.stage)
+    rendererFailureCode(payload.code)
+    boundedString(payload.message, 'fatal message', 1_024)
+    nonNegativeInteger(payload.revision, 'fatal revision')
     return
   }
   if (kind === 'ready') {
@@ -196,9 +252,16 @@ function validatePayload(kind: UiDesignerRendererBridgeKind, payload: unknown, s
     payload.entries.forEach((entry) => validateDiagnostic(entry, sessionId, sceneId))
     return
   }
+  if (kind === 'scene-state') {
+    assertExactKeys(payload, ['phase', 'requestedScene', 'actualScene'], kind)
+    if (payload.phase !== 'transitioning' && payload.phase !== 'active') fail('Renderer scene-state phase is unsupported.')
+    if (payload.requestedScene !== null) sceneIdentifier(payload.requestedScene)
+    if (payload.actualScene !== null) sceneIdentifier(payload.actualScene)
+    return
+  }
   if (kind === 'exit-request') {
     assertExactKeys(payload, ['key'], kind)
-    if (payload.key !== 'Escape' && payload.key !== 'F6') fail('Renderer exit request key is unsupported.')
+    if (payload.key !== 'Escape' && payload.key !== 'F6' && payload.key !== 'action-exit') fail('Renderer exit request key is unsupported.')
     return
   }
   if (kind === 'dispose') {
@@ -284,9 +347,15 @@ function assertExactKeys(value: Record<string, unknown>, keys: readonly string[]
 }
 
 function bridgeKind(value: unknown): UiDesignerRendererBridgeKind {
-  const kinds: UiDesignerRendererBridgeKind[] = ['hello', 'ready', 'mount', 'mounted', 'patch', 'bounds', 'select', 'input', 'diagnostic', 'exit-request', 'dispose', 'disposed']
+  const kinds: UiDesignerRendererBridgeKind[] = ['hello', 'receipt', 'fatal', 'ready', 'mount', 'mounted', 'patch', 'bounds', 'select', 'input', 'diagnostic', 'scene-state', 'exit-request', 'dispose', 'disposed']
   if (!kinds.includes(value as UiDesignerRendererBridgeKind)) fail(`Unsupported renderer bridge message kind: ${String(value)}.`)
   return value as UiDesignerRendererBridgeKind
+}
+
+function receiptStage(value: unknown): UiDesignerRendererBridgeReceiptStage {
+  const stages: UiDesignerRendererBridgeReceiptStage[] = ['iframe-load', 'entry-invoked', 'hello', 'confirm', 'ready', 'mount', 'mounted', 'scene-state']
+  if (!stages.includes(value as UiDesignerRendererBridgeReceiptStage)) fail('Renderer receipt stage is unsupported.')
+  return value as UiDesignerRendererBridgeReceiptStage
 }
 
 function executionMode(value: unknown): UiDesignerRendererExecutionMode {
@@ -331,6 +400,19 @@ function encodedSize(value: unknown): number {
   } catch {
     fail('Renderer bridge message must be serializable JSON.')
   }
+}
+
+function messageRevision(value: Record<string, unknown>): number | null {
+  if (!['fatal', 'mount', 'mounted', 'patch', 'bounds'].includes(String(value.kind))) return null
+  const payload = value.payload
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
+  const revision = (payload as Record<string, unknown>).revision
+  return typeof revision === 'number' && Number.isSafeInteger(revision) ? revision : null
+}
+
+function rendererFailureCode(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Z][A-Z0-9_]{2,127}$/.test(value)) fail('Renderer fatal code is invalid.')
+  return value
 }
 
 function fail(message: string): never {

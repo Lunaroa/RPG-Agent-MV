@@ -6,7 +6,6 @@ import type {
   UiDesignerFileMetadata,
   UiDesignerFileRequest,
   UiDesignerFrameFolderRequest,
-  UiDesignerPreviewStartRequest,
   UiDesignerProjectProfileRequest,
   UiDesignerProjectProfileResult,
   UiDesignerProjectRequest,
@@ -22,7 +21,6 @@ import type {
   UiDesignerRendererHostSession,
   UiDesignerRendererHostStopReason,
   UiDesignerSceneStageRequest,
-  UiPreviewResult,
   UiRuntimeSceneExport,
   UiRuntimeStatus,
   UiProjectResourceCatalog,
@@ -53,11 +51,6 @@ export interface UiDesignerIpcDependencies {
     stageUiDesignerRuntimeInstall(workflowRoot: string, project: string, options?: UiDesignerRuntimeInstallRequest): UiDesignerRuntimeStageResult
     stageUiDesignerSceneExport(workflowRoot: string, project: string, scene: UiRuntimeSceneExport, options?: Pick<UiDesignerSceneStageRequest, 'targetPath' | 'overwrite'>): UiDesignerRuntimeStageResult
     writeUiDesignerRuntimeExport(filePath: string, scene: UiRuntimeSceneExport, options?: { overwrite?: boolean }): { path: string; digest: string; mtimeMs: number; size: number }
-  }
-  preview?: {
-    start(workflowRoot: string, project: string, scene: UiRuntimeSceneExport): Promise<UiPreviewResult>
-    current(): Promise<UiPreviewResult>
-    stop(sessionId?: string): Promise<UiPreviewResult>
   }
   rendererHost?: {
     start(project: string, generation: number): Promise<UiDesignerRendererHostSession>
@@ -224,25 +217,6 @@ export function registerUiDesignerIpcHandlers(
       return { status: 'success', operation: 'runtime:export', value: metadata.path, path: metadata.path, digest: metadata.digest, mtimeMs: metadata.mtimeMs, message: 'Runtime export saved.' }
     } catch (error) { return operationError('runtime:export', error) }
   })
-  ipcMain.handle('ui-designer:preview:start', async (_event, request: UiDesignerPreviewStartRequest) => {
-    try {
-      if (!dependencies.preview) throw new Error('UI designer preview is unavailable.')
-      assertPreviewStartRequest(request)
-      if (typeof request?.project !== 'string' || !request.project.trim()) {
-        throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
-      }
-      return await dependencies.preview.start(dependencies.workflowRoot, dependencies.resolveProject(request.project), request.scene)
-    } catch (error) { return operationError('preview:start', error) }
-  })
-  ipcMain.handle('ui-designer:preview:current', async () => {
-    try { return await dependencies.preview?.current() || { state: 'unavailable', message: 'UI designer preview is unavailable.' } }
-    catch (error) { return operationError('preview:current', error) }
-  })
-  ipcMain.handle('ui-designer:preview:stop', async (_event, sessionId?: string) => {
-    try { return await dependencies.preview?.stop(sessionId) || { state: 'idle', message: 'No isolated UI designer preview is running.' } }
-    catch (error) { return operationError('preview:stop', error) }
-  })
-
   ipcMain.handle('ui-designer:renderer:start', async (_event, request?: UiDesignerProjectRequest & { generation?: number }) => {
     try {
       if (!dependencies.rendererHost) throw new Error('UI designer canvas renderer is unavailable.')
@@ -281,16 +255,6 @@ export function registerUiDesignerIpcHandlers(
   ipcMain.handle('ui-designer:preferences:write', (_event, value: Record<string, unknown>) => safeStoreCall(dependencies, 'write-preferences', (store) => { store.writePreferences(value); return value }))
 }
 
-function assertPreviewStartRequest(value: unknown): asserts value is UiDesignerPreviewStartRequest {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('UI designer preview request must be an object.')
-  const request = value as Record<string, unknown>
-  const unexpected = Object.keys(request).filter((key) => key !== 'project' && key !== 'scene')
-  if (unexpected.length) throw new Error('UI designer preview request contains unsupported fields.')
-  if (!request.scene || typeof request.scene !== 'object' || Array.isArray(request.scene)) {
-    throw new Error('UI designer preview scene is required.')
-  }
-}
-
 function safeStoreCall(
   dependencies: UiDesignerIpcDependencies,
   operation: string,
@@ -307,7 +271,7 @@ export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandl
     'ui-designer:file:open', 'ui-designer:file:save', 'ui-designer:file:save-as', 'ui-designer:file:reveal-source',
     'ui-designer:project:profile',
     'ui-designer:resources:list', 'ui-designer:resources:references', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check', 'ui-designer:runtime:install',
-    'ui-designer:scene:stage', 'ui-designer:runtime:export', 'ui-designer:preview:start', 'ui-designer:preview:current', 'ui-designer:preview:stop', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
+    'ui-designer:scene:stage', 'ui-designer:runtime:export', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
     'ui-designer:renderer:start', 'ui-designer:renderer:confirm', 'ui-designer:renderer:stop',
     'ui-designer:recovery:clear', 'ui-designer:recent:list', 'ui-designer:recent:remove', 'ui-designer:preferences:read',
     'ui-designer:preferences:write',

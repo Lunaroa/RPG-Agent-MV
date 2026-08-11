@@ -19,50 +19,128 @@ interface PreviewProtocolEntry extends MapPreviewResolutionEntry {
   disabledPlugins: readonly string[];
 }
 
+export type MapPreviewProtocolStage = 'method' | 'session' | 'path' | 'resolve' | 'read' | 'filter' | 'fetch';
+export type MapPreviewProtocolStatus = 'invalid' | 'missing' | 'denied' | 'unavailable' | 'error';
+
+export interface MapPreviewProtocolErrorPayload {
+  schemaVersion: '1.0.0';
+  stage: MapPreviewProtocolStage;
+  status: MapPreviewProtocolStatus;
+  code: string;
+  message: string;
+}
+
 const entries = new Map<string, PreviewProtocolEntry>();
 let registered = false;
 
 export function registerMapPreviewProtocol(): void {
   if (registered) return;
   protocol.handle(MAP_PREVIEW_SCHEME.scheme, async (request) => {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return mapPreviewProtocolErrorResponse(request.method, 405, {
+        stage: 'method', status: 'invalid', code: 'MAP_PREVIEW_METHOD_NOT_ALLOWED',
+        message: 'Map preview resource requests must use GET or HEAD.',
+      });
+    }
+
+    let url: URL;
+    try { url = new URL(request.url); }
+    catch { return mapPreviewProtocolErrorResponse(request.method, 404, {
+      stage: 'path', status: 'invalid', code: 'MAP_PREVIEW_URL_INVALID', message: 'The map preview resource URL is invalid.',
+    }); }
+
+    const entry = entries.get(url.hostname.toLowerCase());
+    if (!entry) return mapPreviewProtocolErrorResponse(request.method, 404, {
+      stage: 'session', status: 'missing', code: 'MAP_PREVIEW_SESSION_NOT_FOUND', message: 'The map preview session is no longer available.',
+    });
+
+    let relative: string;
     try {
-      if (request.method !== 'GET' && request.method !== 'HEAD') return new Response('method not allowed', { status: 405 });
-      const url = new URL(request.url);
-      const entry = entries.get(url.hostname.toLowerCase());
-      if (!entry) return new Response('not found', { status: 404 });
-      const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
-      const target = resolveMapPreviewResource(entry, relative);
-      if (!target || !fs.existsSync(target) || !fs.statSync(target).isFile()) return new Response('not found', { status: 404 });
-      // Preview-only plugin toggle: rewrite the served plugins.js, never the file on disk.
-      if (entry.disabledPlugins.length && isMapPreviewPluginsJsPath(relative)) {
+      relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+    } catch {
+      return mapPreviewProtocolErrorResponse(request.method, 404, {
+        stage: 'path', status: 'invalid', code: 'MAP_PREVIEW_PATH_INVALID', message: 'The map preview resource path is invalid.',
+      });
+    }
+
+    let target: string | null;
+    try { target = resolveMapPreviewResource(entry, relative); }
+    catch {
+      return mapPreviewProtocolErrorResponse(request.method, 404, {
+        stage: 'resolve', status: 'denied', code: 'MAP_PREVIEW_RESOURCE_DENIED', message: 'The map preview resource is outside the isolated preview boundary.',
+      });
+    }
+    try {
+      if (!target || !fs.existsSync(target) || !fs.statSync(target).isFile()) {
+        return mapPreviewProtocolErrorResponse(request.method, 404, {
+          stage: 'resolve', status: 'missing', code: 'MAP_PREVIEW_RESOURCE_NOT_FOUND', message: 'The map preview resource is not available.',
+        });
+      }
+    } catch {
+      return mapPreviewProtocolErrorResponse(request.method, 404, {
+        stage: 'resolve', status: 'missing', code: 'MAP_PREVIEW_RESOURCE_NOT_FOUND', message: 'The map preview resource is not available.',
+      });
+    }
+
+    // Preview-only plugin toggle: rewrite the served plugins.js, never the file on disk.
+    if (entry.disabledPlugins.length && isMapPreviewPluginsJsPath(relative)) {
+      try {
         const filtered = filterMapPreviewPluginsJs(fs.readFileSync(target, 'utf8'), entry.disabledPlugins);
         if (filtered !== null) {
-          return new Response(request.method === 'HEAD' ? null : filtered, {
-            status: 200,
-            headers: {
-              'Content-Type': 'text/javascript; charset=utf-8',
-              'Cache-Control': 'no-store',
-              'Cross-Origin-Resource-Policy': 'same-origin',
-              'X-Content-Type-Options': 'nosniff',
-            },
-          });
+          return mapPreviewTextResponse(request.method, filtered, 'text/javascript; charset=utf-8');
         }
+      } catch {
+        return mapPreviewProtocolErrorResponse(request.method, 404, {
+          stage: 'filter', status: 'error', code: 'MAP_PREVIEW_PLUGIN_FILTER_FAILED', message: 'The map preview plugin policy could not be applied.',
+        });
       }
+    }
+
+    try {
       const response = await net.fetch(pathToFileURL(target).toString());
-      const headers = new Headers(response.headers);
-      headers.set('Cache-Control', 'no-store');
-      headers.set('Cross-Origin-Resource-Policy', 'same-origin');
-      headers.set('X-Content-Type-Options', 'nosniff');
+      if (!response.ok) return mapPreviewProtocolErrorResponse(request.method, 404, {
+        stage: 'fetch', status: 'unavailable', code: 'MAP_PREVIEW_RESOURCE_UNAVAILABLE', message: 'The map preview resource could not be loaded.',
+      });
+      const headers = safePreviewHeaders(response.headers);
       return new Response(request.method === 'HEAD' ? null : response.body, {
         status: response.status,
-        statusText: response.statusText,
         headers,
       });
     } catch {
-      return new Response('not found', { status: 404 });
+      return mapPreviewProtocolErrorResponse(request.method, 404, {
+        stage: 'fetch', status: 'error', code: 'MAP_PREVIEW_RESOURCE_READ_FAILED', message: 'The map preview resource could not be read.',
+      });
     }
   });
   registered = true;
+}
+
+export function mapPreviewProtocolErrorResponse(
+  method: string,
+  statusCode: number,
+  detail: Omit<MapPreviewProtocolErrorPayload, 'schemaVersion'>,
+): Response {
+  const payload: MapPreviewProtocolErrorPayload = { schemaVersion: '1.0.0', ...detail };
+  const body = JSON.stringify(payload);
+  return new Response(method === 'HEAD' ? null : body, {
+    status: statusCode,
+    headers: safePreviewHeaders({ 'Content-Type': 'application/json; charset=utf-8' }),
+  });
+}
+
+function mapPreviewTextResponse(method: string, body: string, contentType: string): Response {
+  return new Response(method === 'HEAD' ? null : body, {
+    status: 200,
+    headers: safePreviewHeaders({ 'Content-Type': contentType }),
+  });
+}
+
+function safePreviewHeaders(source: Headers | Record<string, string>): Headers {
+  const headers = new Headers(source);
+  headers.set('Cache-Control', 'no-store');
+  headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  return headers;
 }
 
 export function registerMapPreviewRoot(

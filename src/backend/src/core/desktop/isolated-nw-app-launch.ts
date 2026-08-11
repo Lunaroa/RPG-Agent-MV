@@ -12,7 +12,7 @@ const INDEX_MAX_BYTES = 8 * 1024 * 1024
 const ENTRY_MAX_BYTES = 512 * 1024
 const SESSION_ID_MAX_LENGTH = 256
 
-export type IsolatedNwAppKind = 'map-preview' | 'ui-preview'
+export type IsolatedNwAppKind = 'map-preview'
 export type IsolatedNwProjectLocalRuntimeLocation = 'source-project' | 'staged-project'
 
 export interface IsolatedNwLaunchEvidencePlan {
@@ -54,19 +54,22 @@ export interface IsolatedNwAppPlan {
   readonly resourceRoot: string
   readonly packagePath: string
   readonly indexPath: string
+  readonly indexRelativePath: string
   readonly entryDirectory: string
   readonly entryPath: string
   readonly entryRelativePath: string
   readonly appName: string
   readonly activePackageMain: string
   readonly packageSource: string
+  readonly indexSource: string
 }
 
 export interface IsolatedNwActivePackageEvidence {
-  readonly schemaVersion: '1.0.0'
+  readonly schemaVersion: '1.1.0'
   readonly activePackageMain: string
   readonly uniqueNameValid: true
   readonly entryRelativePath: string
+  readonly indexRelativePath: string
   readonly digests: {
     readonly package: string
     readonly index: string
@@ -103,22 +106,22 @@ export function planIsolatedNwApp(
   const packageValue = parsedObject(packageSource, 'Isolated NW package.json')
   const main = safeProjectRelativePath(packageValue.main, 'Isolated NW package.json main')
   const indexPath = path.join(resourceRoot, 'index.html')
-  boundedOrdinaryFileSource(indexPath, 'Isolated NW index.html', INDEX_MAX_BYTES, projectRoot)
+  const indexSource = boundedOrdinaryFileSource(indexPath, 'Isolated NW index.html', INDEX_MAX_BYTES, projectRoot)
   const mainReal = ordinaryFileRealpath(path.resolve(projectRoot, ...main.split('/')), 'Isolated NW package.json main', projectRoot)
   const indexReal = ordinaryFileRealpath(indexPath, 'Isolated NW index.html', projectRoot)
   if (mainReal !== indexReal) {
     throw new Error('Isolated NW package.json main must resolve exactly to the RPG Maker resource-root index.html.')
   }
+  const indexRelativePath = safeProjectRelativePath(
+    path.relative(path.dirname(packagePath), indexPath).split(path.sep).join('/'),
+    'Isolated NW index.html',
+  )
   if (packageValue.window !== undefined && !isRecord(packageValue.window)) {
     throw new Error('Isolated NW package.json window must be an object when present.')
   }
 
   const scriptsDirectory = ordinaryDirectoryRealpath(path.join(resourceRoot, 'js'), 'Isolated NW script directory', projectRoot)
-  let entryDirectory = scriptsDirectory
-  if (kind === 'ui-preview') {
-    const pluginsDirectory = ordinaryDirectoryRealpath(path.join(scriptsDirectory, 'plugins'), 'Isolated NW plugin directory', projectRoot)
-    entryDirectory = pluginsDirectory
-  }
+  const entryDirectory = scriptsDirectory
   const entryPath = path.join(entryDirectory, isolatedNwEntryScriptName(kind, sessionId))
   assertConfinedMissingTarget(projectRoot, entryPath, 'Isolated NW entry script')
   const entryRelativePath = path.relative(path.dirname(packagePath), entryPath).split(path.sep).join('/')
@@ -132,19 +135,25 @@ export function planIsolatedNwApp(
     resourceRoot,
     packagePath,
     indexPath,
+    indexRelativePath,
     entryDirectory,
     entryPath,
     entryRelativePath,
     appName: isolatedNwAppName(kind, sessionId),
     activePackageMain: main,
     packageSource,
+    indexSource,
   })
 }
 
 export function writeIsolatedNwAppPackage(
   plan: IsolatedNwAppPlan,
   entrySource: string,
-  options: { window?: IsolatedNwWindowPatch; disableRafThrottling?: boolean } = {},
+  options: {
+    window?: IsolatedNwWindowPatch
+    disableRafThrottling?: boolean
+    stagedIndexSource?: string
+  } = {},
 ): IsolatedNwAppPackageResult {
   const sourceBytes = Buffer.byteLength(entrySource, 'utf8')
   if (sourceBytes < 1 || sourceBytes > ENTRY_MAX_BYTES) {
@@ -154,10 +163,11 @@ export function writeIsolatedNwAppPackage(
   ordinaryDirectoryRealpath(plan.resourceRoot, 'Isolated NW resource root', plan.projectRoot)
   ordinaryDirectoryRealpath(plan.entryDirectory, 'Isolated NW entry directory', plan.projectRoot)
   const activeIndexSource = boundedOrdinaryFileSource(plan.indexPath, 'Isolated NW index.html', INDEX_MAX_BYTES, plan.projectRoot)
+  const expectedIndexSource = options.stagedIndexSource ?? plan.indexSource
+  if (activeIndexSource !== expectedIndexSource) throw new Error('Isolated NW index.html changed after validation.')
   const currentPackageSource = boundedOrdinaryFileSource(plan.packagePath, 'Isolated NW package.json', PACKAGE_MAX_BYTES, plan.projectRoot)
   if (currentPackageSource !== plan.packageSource) throw new Error('Isolated NW package.json changed after validation.')
   assertConfinedMissingTarget(plan.projectRoot, plan.entryPath, 'Isolated NW entry script')
-
   const manifest = parsedObject(currentPackageSource, 'Isolated NW package.json')
   const currentWindow = manifest.window === undefined ? {} : parsedRecord(manifest.window, 'Isolated NW package.json window')
   const preservedWindow = { ...currentWindow }
@@ -165,6 +175,7 @@ export function writeIsolatedNwAppPackage(
   if (preservedWindow.inject_js_start === plan.entryRelativePath) delete preservedWindow.inject_js_start
   const windowPatch = normalizedWindowPatch(options.window)
   manifest.name = plan.appName
+  manifest.main = plan.activePackageMain
   manifest['single-instance'] = false
   manifest.window = { ...preservedWindow, ...windowPatch }
   if (options.disableRafThrottling) {
@@ -188,12 +199,13 @@ export function writeIsolatedNwAppPackage(
     }
     throw error
   }
-  if (!/^rpg-agent-(?:map-preview|ui-preview)-[a-f0-9]{20}$/.test(plan.appName) || plan.appName.length > 63) {
+  if (!/^rpg-agent-map-preview-[a-f0-9]{20}$/.test(plan.appName) || plan.appName.length > 63) {
     throw new Error('Isolated NW package name is not a bounded unique session name.')
   }
   const persistedPackageSource = boundedOrdinaryFileSource(plan.packagePath, 'Isolated NW package.json', PACKAGE_MAX_BYTES, plan.projectRoot)
   const persistedEntrySource = boundedOrdinaryFileSource(plan.entryPath, 'Isolated NW entry script', ENTRY_MAX_BYTES, plan.projectRoot)
-  if (persistedPackageSource !== writtenPackageSource || persistedEntrySource !== entrySource) {
+  if (persistedPackageSource !== writtenPackageSource
+    || persistedEntrySource !== entrySource) {
     throw new Error('Isolated NW active package changed after staging.')
   }
   return {
@@ -202,10 +214,11 @@ export function writeIsolatedNwAppPackage(
     entryRelativePath: plan.entryRelativePath,
     appName: plan.appName,
     evidence: Object.freeze({
-      schemaVersion: '1.0.0',
+      schemaVersion: '1.1.0',
       activePackageMain: plan.activePackageMain,
       uniqueNameValid: true,
       entryRelativePath: plan.entryRelativePath,
+      indexRelativePath: plan.indexRelativePath,
       digests: Object.freeze({
         package: sha256(persistedPackageSource),
         index: sha256(activeIndexSource),
@@ -305,9 +318,7 @@ export function buildIsolatedNwLaunchCommand(
 }
 
 export function isolatedNwEntryScriptName(kind: IsolatedNwAppKind, sessionIdInput: string): string {
-  return kind === 'ui-preview'
-    ? 'MZUIDesignerPreviewEntry.js'
-    : `rpg-agent-${kind}-entry-${sessionDigest(sessionIdInput)}.js`
+  return `rpg-agent-${kind}-entry-${sessionDigest(sessionIdInput)}.js`
 }
 
 function isolatedNwAppName(kind: IsolatedNwAppKind, sessionId: string): string {

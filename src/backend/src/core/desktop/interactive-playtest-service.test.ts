@@ -12,7 +12,6 @@ import {
   type InteractivePlaytestSpawnOptions,
 } from './interactive-playtest-service.ts';
 import type { BattleTestProjectPreparation } from './battle-test-preparation.ts';
-import { createIsolatedNwProfileDirectory } from './isolated-nw-app-launch.ts';
 import type { ParticleAnimationPreviewPreparation } from './particle-animation-preview-preparation.ts';
 
 describe('interactive desktop playtest lifecycle', { concurrency: false }, () => {
@@ -79,131 +78,6 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     await delay(25);
     assert.equal(service.current().run?.status, 'running');
     assert.equal(fs.existsSync(service.current().run!.artifactPath), true);
-  });
-
-  test('uses the backend-only isolated NW launch contract without changing ordinary project launch', async () => {
-    const child = new FakeChild();
-    const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
-    fs.mkdirSync(path.join(project, 'data'));
-    fs.writeFileSync(path.join(project, 'data', 'System.json'), '{"source":true}', 'utf8');
-    fs.writeFileSync(path.join(project, 'package.json'), '{"main":"index.html","source":true}', 'utf8');
-    const sourcePackage = fs.readFileSync(path.join(project, 'package.json'), 'utf8');
-    const sourceSystem = fs.readFileSync(path.join(project, 'data', 'System.json'), 'utf8');
-    const isolatedProject = path.join(root, 'isolated project', 'ui preview');
-    fs.mkdirSync(isolatedProject, { recursive: true });
-    fs.writeFileSync(path.join(isolatedProject, 'Game.exe'), 'isolated runner placeholder', 'utf8');
-    const evidenceDirectory = path.join(isolatedProject, 'js', 'plugins', 'mzui-data');
-    fs.mkdirSync(evidenceDirectory, { recursive: true });
-    fs.writeFileSync(path.join(isolatedProject, 'index.html'), '<!doctype html>', 'utf8');
-    fs.writeFileSync(path.join(evidenceDirectory, 'entry.js'), '(function () {})();', 'utf8');
-    const sessionId = 'ui-preview-session';
-    const evidence = {
-      paths: {
-        engineEntry: 'js/plugins/mzui-data/engine-entry-receipt.json',
-        loadState: 'js/plugins/mzui-data/load-state.json',
-        diagnostics: 'js/plugins/mzui-data/diagnostics.jsonl',
-        sceneHandshake: 'js/plugins/mzui-data/scene-ready.json',
-      },
-      schemas: { engineEntry: '1.0.0', loadState: '1.0.0', diagnostics: '1.1.0', sceneHandshake: '1.0.0' },
-      application: {
-        schemaVersion: '1.0.0' as const,
-        activePackageMain: 'index.html',
-        uniqueNameValid: true as const,
-        entryRelativePath: 'js/plugins/mzui-data/entry.js',
-        digests: { package: 'a'.repeat(64), index: 'b'.repeat(64), entry: 'c'.repeat(64) },
-      },
-    };
-    fs.writeFileSync(path.join(isolatedProject, ...evidence.paths.engineEntry.split('/')), JSON.stringify({
-      schemaVersion: evidence.schemas.engineEntry,
-      sessionId,
-      phase: 'engine-entry-loaded',
-    }), 'utf8');
-    fs.writeFileSync(path.join(isolatedProject, ...evidence.paths.diagnostics.split('/')), '', 'utf8');
-    const profileDirectory = createIsolatedNwProfileDirectory(isolatedProject, sessionId);
-    const service = createService(root, { child, spawnCalls });
-
-    const starting = service.startIsolatedNwApp(isolatedProject, {
-      sessionId,
-      profileDirectory,
-      sourceProject: project,
-      evidence,
-    });
-    queueMicrotask(() => child.emitSpawn());
-    const running = await starting;
-    assert.equal(running.run?.status, 'running');
-    assert.equal(running.run?.sourceSaveRisk, false);
-    assert.equal(running.run?.temporaryProject, true);
-    assert.deepEqual(spawnCalls[0].args, [`--user-data-dir=${profileDirectory}`]);
-    assert.equal(spawnCalls[0].executable, path.join(isolatedProject, 'Game.exe'));
-    assert.equal(spawnCalls[0].options.cwd, isolatedProject);
-    assert.equal(path.dirname(profileDirectory), isolatedProject);
-    assert.equal(running.run?.project, 'source-project');
-    assert.equal(running.run?.executable, 'staged-project-runtime');
-    assert.equal(running.run?.cwd, 'temporary-project');
-    assert.equal(path.isAbsolute(running.run!.artifactPath), false);
-    fs.writeFileSync(path.join(isolatedProject, ...evidence.paths.loadState.split('/')), JSON.stringify({
-      schemaVersion: evidence.schemas.loadState,
-      sessionId,
-      phase: 'engine-entry-loaded',
-    }), 'utf8');
-    fs.writeFileSync(path.join(isolatedProject, ...evidence.paths.diagnostics.split('/')), `${JSON.stringify({
-      schemaVersion: evidence.schemas.diagnostics,
-      sessionId,
-      message: `private diagnostic ${project}`,
-    })}\n`, 'utf8');
-    child.stdout.emit('data', Buffer.from(`private-output=${project};session=${sessionId}\n`, 'utf8'));
-    child.stdout.emit('data', Buffer.alloc(300 * 1024, 65));
-    child.stderr.emit('data', Buffer.from(`private-profile=${profileDirectory}\n`, 'utf8'));
-    fs.writeFileSync(path.join(isolatedProject, ...evidence.paths.engineEntry.split('/')), JSON.stringify({
-      schemaVersion: evidence.schemas.engineEntry,
-      sessionId,
-      phase: 'entry-failed',
-      stage: 'document-root',
-    }), 'utf8');
-    service.captureIsolatedNwFailureEvidence(sessionId, 'startup-failed');
-    child.emitExit(1, null);
-    const artifactPath = path.join(root, ...running.run!.artifactPath.split('/'));
-    const logPath = path.join(root, ...running.run!.logPath.split('/'));
-    const stdoutPath = path.join(root, ...running.run!.stdoutPath.split('/'));
-    const stderrPath = path.join(root, ...running.run!.stderrPath.split('/'));
-    const persisted = fs.readFileSync(artifactPath, 'utf8');
-    const combinedEvidence = [persisted, fs.readFileSync(logPath, 'utf8'), fs.readFileSync(stdoutPath, 'utf8'), fs.readFileSync(stderrPath, 'utf8')].join('\n');
-    for (const forbidden of [project, isolatedProject, profileDirectory, sessionId, 'private diagnostic', 'source":true']) {
-      assert.equal(combinedEvidence.includes(forbidden), false);
-    }
-    const artifact = JSON.parse(persisted) as Record<string, any>;
-    assert.equal(artifact.projectRole, 'source-project');
-    assert.deepEqual(artifact.isolatedLaunch.argumentRoles, ['session-profile']);
-    assert.equal(artifact.isolatedLaunch.childPid, 4200);
-    assert.equal(artifact.isolatedLaunch.application.activePackageMain, 'index.html');
-    assert.equal(artifact.isolatedLaunch.application.uniqueNameValid, true);
-    assert.equal(artifact.isolatedLaunch.application.entryRelativePath, 'js/plugins/mzui-data/entry.js');
-    assert.deepEqual(artifact.isolatedLaunch.application.digests, evidence.application.digests);
-    assert.equal(artifact.isolatedLaunch.failureEvidence.files.length, 4);
-    assert.deepEqual(artifact.isolatedLaunch.failureEvidence.files.map((entry: any) => [entry.role, entry.state]), [
-      ['engine-entry', 'present'],
-      ['load-state', 'present'],
-      ['diagnostics', 'present'],
-      ['scene-handshake', 'missing'],
-    ]);
-    assert.equal(artifact.isolatedLaunch.failureEvidence.files[0].schemaMatches, true);
-    assert.equal(artifact.isolatedLaunch.failureEvidence.files[0].sessionMatches, true);
-    assert.equal(artifact.isolatedLaunch.failureEvidence.files[0].phase, 'entry-failed');
-    assert.equal(artifact.isolatedLaunch.failureEvidence.files[0].stage, 'document-root');
-    assert.equal(artifact.isolatedLaunch.output.stdout.observedBytes, 256 * 1024);
-    assert.equal(artifact.isolatedLaunch.output.stdout.truncated, true);
-    assert.deepEqual(artifact.isolatedLaunch.stages.map((entry: any) => entry.stage), [
-      'constructed',
-      'spawn-requested',
-      'runner-spawned',
-      'evidence-captured',
-      'finished',
-    ]);
-    assert.equal(artifact.isolatedLaunch.stages.every((entry: any) => Number.isFinite(Date.parse(entry.at))), true);
-    assert.ok(fs.statSync(stdoutPath).size < 1024);
-    assert.ok(fs.statSync(stderrPath).size < 1024);
-    assert.equal(fs.readFileSync(path.join(project, 'package.json'), 'utf8'), sourcePackage);
-    assert.equal(fs.readFileSync(path.join(project, 'data', 'System.json'), 'utf8'), sourceSystem);
   });
 
   test('requests runtime selection when a source-only MV project has no saved runner', async () => {

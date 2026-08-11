@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import { pathToFileURL } from 'node:url';
 
 import type { IsolatedProjectPreparation } from './isolated-project-preparation.ts';
+import { createOwnedEmptyIsolatedProject } from './isolated-project-attestation.ts';
 import {
   buildIsolatedNwLaunchCommand,
   createIsolatedNwProfileDirectory,
@@ -28,9 +29,13 @@ import {
 } from './map-preview-service.ts';
 
 function preparation(sourceProject: string, temporaryProject: string): IsolatedProjectPreparation {
+  const ownership = createOwnedEmptyIsolatedProject(sourceProject, {
+    temporaryProjectPath: temporaryProject,
+  });
   return {
-    sourceProject,
-    temporaryProject,
+    sourceProject: ownership.sourceProject,
+    temporaryProject: ownership.temporaryProject,
+    ownership: ownership.ownership,
     sourceFingerprint: 'source-fingerprint',
     saveFingerprint: 'save-fingerprint',
     staging: { files: [], digest: 'staging-digest' },
@@ -321,14 +326,13 @@ test('places the isolated browser profile before every RPG Maker app argument', 
     const isolated = path.join(root, 'isolated project');
     const externalRuntime = path.join(root, 'external runtime');
     fs.mkdirSync(source);
-    fs.mkdirSync(isolated);
     fs.mkdirSync(externalRuntime);
     fs.writeFileSync(path.join(source, 'Game.exe'), 'source-runtime');
-    fs.writeFileSync(path.join(isolated, 'Game.exe'), 'copied-runtime');
     fs.writeFileSync(path.join(externalRuntime, 'Game.exe'), 'external-runtime');
+    const snapshot = preparation(source, isolated);
+    fs.writeFileSync(path.join(isolated, 'Game.exe'), 'copied-runtime');
     const sessionId = 'map-launch-session';
     const profile = createIsolatedNwProfileDirectory(isolated, sessionId);
-    const snapshot = preparation(source, isolated);
     const profileArgument = `--user-data-dir=${profile}`;
     const external = runtime({ executable: path.join(externalRuntime, 'Game.exe'), runtimeRoot: externalRuntime });
 
@@ -366,7 +370,6 @@ test('returns structured runtime failure details with project-relative resources
     const source = path.join(root, 'source');
     const isolated = path.join(root, 'isolated');
     fs.mkdirSync(source);
-    fs.mkdirSync(isolated);
     const snapshot = preparation(source, isolated);
     const missingFromIsolated = path.join(isolated, 'www', 'img', 'characters', 'Missing Actor.png');
     const missingFromSource = path.join(source, 'www', 'img', 'tilesets', 'Example.png');
@@ -413,7 +416,6 @@ test('redacts browser profiles and encoded project paths from diagnostic text', 
     const source = path.join(root, 'source project');
     const isolated = path.join(root, 'isolated project');
     fs.mkdirSync(source);
-    fs.mkdirSync(isolated);
     const snapshot = preparation(source, isolated);
     const profile = path.join(isolated, '.rpg-agent-preview-profile-session', 'Cache', 'entry');
     const encodedAsset = pathToFileURL(path.join(source, 'www', 'img', 'pictures', 'Example File.png')).href;

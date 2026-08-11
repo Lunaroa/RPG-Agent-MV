@@ -9,7 +9,9 @@ import type { InteractiveParticleAnimationPreview } from '../../../../contract/t
 import { writeJson } from '../rmmv/json.ts';
 import { RPG_MAKER_MZ_ENGINE_FILES } from '../rmmv/rpg-maker-engine.ts';
 import { cleanupIsolatedProject } from './isolated-project-preparation.ts';
+import { cleanupOwnedIsolatedProject } from './isolated-project-attestation.ts';
 import {
+  PreparationWorkerError,
   prepareBattleTestInWorker,
   prepareParticlePreviewInWorker,
 } from './playtest-preparation.ts';
@@ -44,8 +46,10 @@ describe('playtest preparation worker host', { concurrency: false }, () => {
   });
 
   test('propagates preparation errors from the worker as plain error messages', async () => {
+    const missingProject = path.join(root, 'projects', 'missing');
+    fs.mkdirSync(missingProject, { recursive: true });
     await assert.rejects(
-      prepareBattleTestInWorker(root, path.join(root, 'projects', 'missing'), {
+      prepareBattleTestInWorker(root, missingProject, {
         troopId: 1,
         battlers: [{ actorId: 1, level: 1, equips: [] }],
         battleback1Name: '',
@@ -71,6 +75,74 @@ describe('playtest preparation worker host', { concurrency: false }, () => {
       }),
       /exited without a response/,
     );
+  });
+
+  test('reports an asynchronous worker spawn error without waiting for the watchdog', async () => {
+    const child = new EventEmitter() as EventEmitter & { stdout: null; stderr: null };
+    child.stdout = null;
+    child.stderr = null;
+    const started = Date.now();
+    await assert.rejects(
+      prepareParticlePreviewInWorker(root, project, animation(), {
+        spawnProcess: () => {
+          setImmediate(() => child.emit('error', new Error('spawn failed')));
+          return child as never;
+        },
+        workerTimeoutMs: 500,
+      }),
+      /could not be started.*spawn failed/,
+    );
+    assert.equal(Date.now() - started < 400, true);
+  });
+
+  test('bounds a non-responsive worker, terminates it, and waits for terminal proof', async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: null;
+      stderr: null;
+      kill: (signal?: NodeJS.Signals | number) => boolean;
+    };
+    child.stdout = null;
+    child.stderr = null;
+    let killCalls = 0;
+    child.kill = () => {
+      killCalls += 1;
+      setImmediate(() => child.emit('exit', null, 'SIGTERM'));
+      return true;
+    };
+    await assert.rejects(
+      prepareParticlePreviewInWorker(root, project, animation(), {
+        spawnProcess: () => child as never,
+        workerTimeoutMs: 5,
+        workerTerminationGraceMs: 5,
+      }),
+      /exceeded its 5ms limit and was terminated/,
+    );
+    assert.equal(killCalls, 1);
+  });
+
+  test('retains both ownership challenges when termination is not confirmed', async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: null;
+      stderr: null;
+      kill: (signal?: NodeJS.Signals | number) => boolean;
+    };
+    child.stdout = null;
+    child.stderr = null;
+    child.kill = () => true;
+    let failure: unknown;
+    try {
+      await prepareParticlePreviewInWorker(root, project, animation(), {
+        spawnProcess: () => child as never,
+        workerTimeoutMs: 5,
+        workerTerminationGraceMs: 5,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert.ok(failure instanceof PreparationWorkerError);
+    assert.equal(failure.retainedOwners.length, 2);
+    for (const owner of failure.retainedOwners) cleanupOwnedIsolatedProject(owner);
+    assert.equal(failure.retainedOwners.every((owner) => !fs.existsSync(owner.temporaryProject)), true);
   });
 });
 

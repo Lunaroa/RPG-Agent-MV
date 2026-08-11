@@ -59,11 +59,9 @@ import { resolveNodeActionPolicy, type UiNodeActionCommand } from '../models/act
 import { UiDesignerHistory } from '../models/history'
 import { analyzePerformance } from '../models/performance'
 import { copySelection, groupNodes, moveNodeStep, moveNodeToEdge, pasteClipboard, reparentNode, ungroupNodes } from '../models/tree'
-import { validateDocument } from '../models/validation'
+import { isValidUiDesignerSceneName, validateDocument } from '../models/validation'
 import { UI_DESIGNER_BUILT_IN_TEMPLATES, createBuiltInUiDesignerTemplate, isBuiltInUiDesignerTemplate } from '../models/templates'
 import { createUiDesignerDraftCoordinator, type UiDesignerDraftCoordinator } from './draftCoordinator'
-import { createUiDesignerPreviewPoller } from './previewLifecycle'
-import { createUiDesignerPreviewOperations } from './previewOperations'
 import { createUiDesignerSceneHistoryOperations } from './sceneHistoryOperations'
 import { createUiDesignerPersistenceOperations } from './persistenceOperations'
 import { createUiDesignerRuntimeOperations } from './runtimeOperations'
@@ -110,6 +108,8 @@ export interface UseUiDesignerOptions {
   projectPath?: string
   confirmDiscard?: (sceneId?: string) => Promise<boolean>
 }
+
+export type UiDesignerPreviewDisposeReason = 'project-change' | 'unload' | 'shutdown'
 
 const cloneCatalog = (catalog: UiProjectResourceCatalog): UiProjectResourceCatalog => ({
   ...catalog,
@@ -166,19 +166,19 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const draftRects = ref<Record<string, UiRect>>({})
   const draftRotations = ref<Record<string, number>>({})
   const editingMode = ref<'design' | 'code'>('design')
+  // The renderer-host iframe is the only preview runtime.
   const isPreviewing = ref(false)
-  const isEditorPreviewing = ref(false)
-  const editorPreviewStatus = ref<'idle' | 'preparing' | 'running' | 'stopped' | 'error'>('idle')
-  const editorPreviewMessage = ref('')
-  const editorPreviewExecutionMode = ref<UiDesignerRendererExecutionMode>('authoring')
-  let editorPreviewModeBefore: 'design' | 'code' | undefined
-  let editorPreviewExitPending = false
-  const fileStatus = ref<UiFileStatus>('idle')
-  const fileMessage = ref('')
   const previewStatus = ref<UiPreviewState>('idle')
   const previewMessage = ref('')
-  const previewSessionId = ref<string | undefined>()
-  const previewDiagnostics = ref<UiRuntimeDiagnostic[]>([])
+  const previewExecutionMode = ref<UiDesignerRendererExecutionMode>('authoring')
+  const previewCleanupPending = ref(false)
+  const previewDisposalInFlight = ref(false)
+  let previewModeBefore: 'design' | 'code' | undefined
+  let previewExitPending = false
+  const fileStatus = ref<UiFileStatus>('idle')
+  const fileMessage = ref('')
+  const runtimeDiagnostics = ref<UiRuntimeDiagnostic[]>([])
+  const previewDiagnostics = runtimeDiagnostics
   const runtimeStatus = ref<UiRuntimeStatus>({ state: 'unknown', message: 'Runtime has not been inspected.' })
   const runtimeStaging = ref<UiDesignerRuntimeStageResult | null>(null)
   const resourceCatalog = ref<UiProjectResourceCatalog | null>(null)
@@ -194,6 +194,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const runtimeConflictOperation = ref<'stage' | 'export' | null>(null)
   const runtimeConflictFiles = ref<string[]>([])
   const runtimeProofMissing = ref(false)
+  const previewDisposers = new Set<(reason: UiDesignerPreviewDisposeReason) => Promise<boolean>>()
+  let previewDisposePromise: Promise<boolean> | null = null
   const recentFiles = ref<UiDesignerRecentFileRecord[]>([])
   const recoveryRecords = ref<UiDesignerRecoveryRecord[]>([])
   const recoveryCleanupPending = ref(false)
@@ -202,8 +204,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const projectGeneration = ref(0)
   const draftCoordinator: UiDesignerDraftCoordinator = createUiDesignerDraftCoordinator()
-  const previewPoller = createUiDesignerPreviewPoller(() => adapters.preview, { isPreviewing, previewStatus, previewMessage, previewSessionId, previewDiagnostics, projectGeneration })
-  let supersedePreviewOperation: () => void = () => undefined
 
   const historyLimit = () => normalizeHistoryLimit(preferences.value.historyLimit)
   const applyHistoryLimit = (limit = historyLimit()) => {
@@ -237,12 +237,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const canExport = computed(() => hasProject.value && adapters.runtime.stageScene !== undefined && adapters.runtime !== createUiDesignerAdapters().runtime)
   const canManageRuntime = computed(() => hasProject.value && adapters.runtime !== createUiDesignerAdapters().runtime)
   const canLoadResources = computed(() => hasProject.value && adapters.resource !== createUiDesignerAdapters().resource)
-  const canPreview = computed(() => hasProject.value && adapters.preview !== createUiDesignerAdapters().preview)
   const canRenderCanvas = computed(() => hasProject.value && adapters.rendererHost !== createUiDesignerAdapters().rendererHost)
-  const gamePreviewOccupied = computed(() => previewStatus.value === 'preparing' || isPreviewing.value || Boolean(previewSessionId.value))
-  const editorPreviewOccupied = computed(() => editorPreviewStatus.value === 'preparing' || isEditorPreviewing.value || editorPreviewExecutionMode.value !== 'authoring')
-  const canStartEditorPreview = computed(() => canRenderCanvas.value && !gamePreviewOccupied.value && !editorPreviewOccupied.value)
-  const canStartGamePreview = computed(() => canPreview.value && !editorPreviewOccupied.value && !gamePreviewOccupied.value)
+  const canPreview = canRenderCanvas
+  const previewOccupied = computed(() => previewCleanupPending.value || previewDisposalInFlight.value || previewStatus.value === 'preparing' || isPreviewing.value || previewExecutionMode.value !== 'authoring')
+  const canStartPreview = computed(() => canRenderCanvas.value && !previewOccupied.value)
   const canEditCode = computed(() => adapters.code.available)
   const newSceneCanvasSize = computed(() => projectProfile.value
     ? { width: projectProfile.value.screenWidth, height: projectProfile.value.screenHeight }
@@ -297,18 +295,58 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     }
   }
 
-  const restoreEditorPreviewMode = () => {
-    if (editorPreviewModeBefore) editingMode.value = editorPreviewModeBefore
-    editorPreviewModeBefore = undefined
+  const restorePreviewMode = () => {
+    if (previewModeBefore) editingMode.value = previewModeBefore
+    previewModeBefore = undefined
   }
 
-  const cancelEditorPreviewForContextChange = () => {
-    editorPreviewExecutionMode.value = 'authoring'
-    isEditorPreviewing.value = false
-    editorPreviewStatus.value = 'stopped'
-    editorPreviewMessage.value = ''
-    editorPreviewExitPending = false
-    restoreEditorPreviewMode()
+  const cancelPreviewForContextChange = () => {
+    previewExecutionMode.value = 'authoring'
+    previewCleanupPending.value = false
+    isPreviewing.value = false
+    previewStatus.value = 'stopped'
+    previewMessage.value = ''
+    previewExitPending = false
+    restorePreviewMode()
+  }
+
+  const registerPreviewDisposer = (disposer: (reason: UiDesignerPreviewDisposeReason) => Promise<boolean>) => {
+    previewDisposers.add(disposer)
+    return () => { previewDisposers.delete(disposer) }
+  }
+
+  const disposePreview = (reason: UiDesignerPreviewDisposeReason = 'unload'): Promise<boolean> => {
+    if (previewDisposePromise) return previewDisposePromise
+    if (!previewDisposers.size) return Promise.resolve(true)
+    const recoveringCleanup = previewCleanupPending.value
+    previewDisposalInFlight.value = true
+    const operation = (async () => {
+      const attempted = new Set<(reason: UiDesignerPreviewDisposeReason) => Promise<boolean>>()
+      let allStopped = true
+      while (true) {
+        const disposers = [...previewDisposers].filter((disposer) => !attempted.has(disposer))
+        if (!disposers.length) break
+        disposers.forEach((disposer) => attempted.add(disposer))
+        const results = await Promise.all(disposers.map(async (disposer) => {
+          try { return await disposer(reason) }
+          catch { return false }
+        }))
+        if (!results.every(Boolean)) allStopped = false
+      }
+      if (!allStopped) previewCleanupPending.value = true
+      else if (recoveringCleanup) {
+        previewCleanupPending.value = false
+        previewStatus.value = 'stopped'
+        previewMessage.value = ''
+      }
+      return allStopped
+    })()
+    const tracked = operation.finally(() => {
+      previewDisposalInFlight.value = false
+      if (previewDisposePromise === tracked) previewDisposePromise = null
+    })
+    previewDisposePromise = tracked
+    return tracked
   }
 
   const loadReferencedResources = async (sourceDocument = document.value) => {
@@ -339,36 +377,32 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const setProjectContext = async (nextProjectPath: string | undefined, nextAdapters?: UiDesignerAdapterBundle) => {
     if (projectPath.value === nextProjectPath && !nextAdapters) return true
-    if (isDirty.value && options.confirmDiscard && !(await options.confirmDiscard())) return false
-    projectGeneration.value += 1
-    supersedePreviewOperation()
-    if (isEditorPreviewing.value || editorPreviewExecutionMode.value !== 'authoring') cancelEditorPreviewForContextChange()
-    previewDiagnostics.value = []
-    previewPoller.clear()
-    let previewStopFailed = false
-    const previousPreviewSessionId = previewSessionId.value
-    if (previewStatus.value === 'preparing' || isPreviewing.value || previewSessionId.value) {
-      try {
-        const result = await adapters.preview.stop(previewSessionId.value)
-        if (result.state !== 'stopped') {
-          previewStopFailed = true
-          previewDiagnostics.value = result.diagnostics ? [...result.diagnostics] : previewDiagnostics.value
-          previewStatus.value = 'error'
-          previewMessage.value = result.message
-        } else {
-          isPreviewing.value = false
-          previewSessionId.value = undefined
-        }
-      } catch (error) {
-        previewStopFailed = true
+    const previewWasOccupied = previewOccupied.value
+    let previewDisposed = false
+    if (previewWasOccupied) {
+      if (isPreviewing.value && !stopPreview()) return false
+      if (!(await disposePreview('project-change'))) {
         previewStatus.value = 'error'
-        previewMessage.value = error instanceof Error ? error.message : String(error)
+        previewMessage.value = 'The isolated UI canvas could not finish closing; the project was not changed.'
+        return false
       }
+      // A host may not be mounted yet, so its execution-mode callback can be
+      // absent.  Once the owner barrier has completed, make the controller
+      // authoring state explicit before any dirty prompt or project mutation.
+      cancelPreviewForContextChange()
+      previewDisposed = true
     }
-    if (!previewStopFailed) {
-      previewStatus.value = 'idle'
-      previewMessage.value = ''
+    if (isDirty.value && options.confirmDiscard && !(await options.confirmDiscard())) return false
+    if (!previewDisposed && !(await disposePreview('project-change'))) {
+      previewStatus.value = 'error'
+      previewMessage.value = 'The isolated UI canvas could not finish closing; the project was not changed.'
+      return false
     }
+    projectGeneration.value += 1
+    if (previewOccupied.value || previewStatus.value !== 'idle') cancelPreviewForContextChange()
+    previewStatus.value = 'idle'
+    previewMessage.value = ''
+    runtimeDiagnostics.value = []
     resourceCatalog.value = null
     runtimeStatus.value = { state: 'unknown', message: 'Runtime has not been inspected.' }
     runtimeStaging.value = null
@@ -377,14 +411,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     projectProfileMessage.value = ''
     Object.assign(adapters, createUiDesignerAdapters(nextAdapters))
     projectPath.value = nextProjectPath
-    if (previewStopFailed && previousPreviewSessionId) {
-      // Keep polling the retained session after a project switch.  The next
-      // explicit Stop can still clean it up; a failed stop must not strand a
-      // running process behind a new project context.
-      isPreviewing.value = true
-      previewSessionId.value = previousPreviewSessionId
-      previewPoller.start(projectGeneration.value, previousPreviewSessionId)
-    }
     await loadProjectProfile()
     void loadWelcomeRecords()
     void loadReferencedResources()
@@ -620,8 +646,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const newScene = (name = `Scene_New_${scenes.value.length + 1}`, options: { width?: number; height?: number; sceneBase?: string; template?: string } = {}) => {
+    if (!isValidUiDesignerSceneName(name)) return false
     const nextDocument = options.template && isBuiltInUiDesignerTemplate(options.template) ? createBuiltInUiDesignerTemplate(options.template) : createUiDocument(name)
-    nextDocument.meta.sceneName = name.trim() || nextDocument.meta.sceneName
+    nextDocument.meta.sceneName = name
     const defaults = newSceneCanvasSize.value
     const hasExplicitSize = Number.isFinite(options.width) && (options.width ?? 0) > 0
       && Number.isFinite(options.height) && (options.height ?? 0) > 0
@@ -712,6 +739,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const activateScene = (sceneId: string) => {
+    if (isPreviewing.value) return false
     if (sceneId === activeSceneId.value) return true
     const next = scenes.value.find((scene) => scene.id === sceneId)
     if (!next) return false
@@ -1365,73 +1393,71 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return savePreferences({ snapEnabled: enabled })
   }
 
-  const previewOperations = createUiDesignerPreviewOperations({
-    getPreview: () => adapters.preview,
-    projectPath,
-    projectGeneration,
-    document,
-    canPreview,
-    isPreviewing,
-    previewStatus,
-    previewMessage,
-    previewSessionId,
-    previewDiagnostics,
-    poller: previewPoller,
-    flushDrafts,
-  })
-  const startPreview = () => canStartGamePreview.value ? previewOperations.startPreview() : Promise.resolve(false)
-  const { stopPreview } = previewOperations
-  supersedePreviewOperation = previewOperations.supersede
-
-  // Editor preview always renders the design canvas. Keep the user's source
-  // mode outside the document/history so leaving preview restores code mode
-  // exactly when that was the entry point.
-  const startEditorPreview = () => {
-    if (isEditorPreviewing.value) return true
-    if (!canStartEditorPreview.value) {
-      editorPreviewStatus.value = 'error'
+  // The embedded renderer host owns the iframe process.  These controller
+  // methods only coordinate the embedded iframe execution mode and never
+  // start an external Game/NW process.
+  const startPreview = () => {
+    if (isPreviewing.value) return true
+    if (!canStartPreview.value) {
+      previewStatus.value = 'unavailable'
+      previewMessage.value = 'The isolated UI canvas renderer is not connected.'
       return false
     }
     flushDrafts(activeSceneId.value)
-    editorPreviewModeBefore = editingMode.value
+    previewModeBefore = editingMode.value
     setEditingMode('design')
-    editorPreviewExitPending = false
-    editorPreviewMessage.value = ''
-    editorPreviewExecutionMode.value = 'full-preview'
-    editorPreviewStatus.value = 'preparing'
-    isEditorPreviewing.value = true
+    previewExitPending = false
+    previewCleanupPending.value = false
+    previewMessage.value = ''
+    previewExecutionMode.value = 'full-preview'
+    previewStatus.value = 'preparing'
+    isPreviewing.value = true
     return true
   }
-  const stopEditorPreview = () => {
-    if (!isEditorPreviewing.value) return true
-    editorPreviewExitPending = true
-    editorPreviewExecutionMode.value = 'authoring'
-    editorPreviewStatus.value = 'preparing'
+
+  const stopPreview = () => {
+    if (!isPreviewing.value && previewExecutionMode.value === 'authoring' && !previewCleanupPending.value) return true
+    previewExitPending = true
+    previewExecutionMode.value = 'authoring'
+    previewStatus.value = 'preparing'
     return true
   }
-  const acknowledgeEditorPreviewExecutionMode = (mode: UiDesignerRendererExecutionMode) => {
-    if (mode !== editorPreviewExecutionMode.value) return false
+
+  const acknowledgePreviewExecutionMode = (mode: UiDesignerRendererExecutionMode) => {
+    if (mode !== previewExecutionMode.value) return false
     if (mode === 'full-preview') {
-      if (!isEditorPreviewing.value) return false
-      editorPreviewExitPending = false
-      editorPreviewStatus.value = 'running'
+      if (!isPreviewing.value) return false
+      previewExitPending = false
+      previewCleanupPending.value = false
+      previewStatus.value = 'running'
       return true
     }
-    if (!editorPreviewExitPending) return true
-    editorPreviewExitPending = false
-    isEditorPreviewing.value = false
-    editorPreviewStatus.value = 'stopped'
-    editorPreviewMessage.value = ''
-    restoreEditorPreviewMode()
+    if (!previewExitPending) {
+      const recoveredCleanup = previewCleanupPending.value
+      previewCleanupPending.value = false
+      if (recoveredCleanup) {
+        previewStatus.value = 'stopped'
+        previewMessage.value = ''
+      }
+      return true
+    }
+    previewExitPending = false
+    previewCleanupPending.value = false
+    isPreviewing.value = false
+    previewStatus.value = 'stopped'
+    previewMessage.value = ''
+    restorePreviewMode()
     return true
   }
-  const failEditorPreview = (message = '') => {
-    editorPreviewExecutionMode.value = 'authoring'
-    editorPreviewStatus.value = 'error'
-    editorPreviewMessage.value = String(message).trim().slice(0, 2_048)
-    editorPreviewExitPending = false
-    isEditorPreviewing.value = false
-    restoreEditorPreviewMode()
+
+  const failPreview = (message = '', cleanupPending = false) => {
+    previewExecutionMode.value = 'authoring'
+    previewCleanupPending.value = cleanupPending
+    previewStatus.value = 'error'
+    previewMessage.value = String(message).trim().slice(0, 2_048)
+    previewExitPending = false
+    isPreviewing.value = false
+    restorePreviewMode()
   }
 
   const snapOptionsFor = (nodeId: string): SnapOptions => {
@@ -1570,16 +1596,15 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     projectGeneration,
     editingMode,
     isPreviewing,
-    isEditorPreviewing,
-    editorPreviewStatus,
-    editorPreviewMessage,
-    editorPreviewExecutionMode,
+    previewExecutionMode,
+    previewCleanupPending,
+    previewDisposalInFlight,
     fileStatus,
     fileMessage,
     previewStatus,
     previewMessage,
-    previewSessionId,
     previewDiagnostics,
+    runtimeDiagnostics,
     runtimeStatus,
     runtimeStaging,
     resourceCatalog,
@@ -1611,8 +1636,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     canLoadResources,
     canPreview,
     canRenderCanvas,
-    canStartEditorPreview,
-    canStartGamePreview,
+    canStartPreview,
     canCreateScene,
     canEditCode,
     newSceneCanvasSize,
@@ -1682,6 +1706,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     setGridPreference,
     setSnapPreference,
     setProjectContext,
+    registerPreviewDisposer,
+    disposePreview,
     loadProjectProfile,
     activateScene,
     selectScene,
@@ -1699,10 +1725,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     stageRuntime,
     startPreview,
     stopPreview,
-    startEditorPreview,
-    stopEditorPreview,
-    acknowledgeEditorPreviewExecutionMode,
-    failEditorPreview,
+    acknowledgePreviewExecutionMode,
+    failPreview,
     updateNodePositionWithSnap,
     previewNodePositionWithSnap,
     commitDraftPosition,

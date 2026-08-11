@@ -709,28 +709,6 @@ export interface UiRuntimeDiagnostic {
   count: number
 }
 
-export interface UiPreviewResult {
-  state: UiPreviewState
-  message: string
-  /** Backend preview operations always return an array; optional keeps older adapters source-compatible. */
-  diagnostics?: UiRuntimeDiagnostic[]
-  sessionId?: string
-  temporaryPath?: string
-  sourceProject?: string
-  stagingSummary?: {
-    affectedFiles: string[]
-    sourceDigest?: string
-  }
-  cleanup?: { ok: boolean; message?: string }
-  runner?: { runId?: string; status?: string; error?: string }
-  sceneHandshake?: {
-    status: 'ready' | 'mismatch'
-    expectedScene: string
-    actualScene: string
-  }
-  projectCompatibility?: UiDesignerProjectCompatibility
-}
-
 export interface UiResourceEntry {
   id: string
   category: 'image' | 'audio' | 'video' | 'font' | 'sceneData'
@@ -847,10 +825,6 @@ export interface UiDesignerSceneStageRequest extends UiDesignerProjectRequest {
   overwrite?: boolean
 }
 
-export interface UiDesignerPreviewStartRequest extends UiDesignerProjectRequest {
-  scene: UiRuntimeSceneExport
-}
-
 export interface UiDesignerRecoveryWriteRequest {
   document: UiDesignerDocument
   sourcePath?: string
@@ -926,13 +900,6 @@ export interface UiDesignerRuntimeAdapter {
   stageScene(projectPath: string, scene: UiRuntimeSceneExport, options?: { targetPath?: string; overwrite?: boolean }): Promise<UiFileResult<UiDesignerRuntimeStageResult>>
 }
 
-export interface UiDesignerPreviewAdapter {
-  /** Start the isolated game preview from validated Runtime JSON, never the editor-only source shape. */
-  start(scene: UiRuntimeSceneExport, projectPath?: string): Promise<UiPreviewResult>
-  current(): Promise<UiPreviewResult>
-  stop(sessionId?: string): Promise<UiPreviewResult>
-}
-
 export type UiDesignerRendererHostStopReason = 'project-change' | 'unload' | 'shutdown' | 'protocol-error'
 
 /**
@@ -1000,7 +967,6 @@ export interface UiDesignerAdapterBundle {
   project?: UiDesignerProjectAdapter
   resource?: UiDesignerResourceAdapter
   runtime?: UiDesignerRuntimeAdapter
-  preview?: UiDesignerPreviewAdapter
   rendererHost?: UiDesignerRendererHostAdapter
   code?: UiCodeEditorAdapter
   lifecycle?: UiDesignerLifecycleAdapter

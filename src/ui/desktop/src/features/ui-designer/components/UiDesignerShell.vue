@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import type { UiDesignerAdapterBundle, UiDesignerLifecycleAdapter } from '@contract/ui-designer'
+import type { UiDesignerAdapterBundle, UiDesignerLifecycleAdapter, UiViewport } from '@contract/ui-designer'
 import { useUiDesigner, type UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerLifecycle } from '../composables/useUiDesignerLifecycle'
 import { createUiDesignerShortcutRegistry, type UiDesignerShortcutDisplay } from '../composables/shortcutRegistry'
@@ -47,6 +47,17 @@ const sceneTemplateLabels: Record<string, UiDesignerMessageKey> = {
 const sceneTemplateLabel = (name: string) => name === 'blank' ? t('blankScene') : sceneTemplateLabels[name] ? t(sceneTemplateLabels[name]) : name
 const shortcutRegistry = createUiDesignerShortcutRegistry()
 const shortcutBindings = ref<UiDesignerShortcutDisplay[]>([])
+interface PreviewEditorSnapshot {
+  activeSceneId: string
+  selectedIds: string[]
+  expandedNodeIds: string[]
+  viewport: UiViewport
+}
+
+interface UiDesignerNodePanelExpose {
+  getExpandedKeys: () => string[]
+  setExpandedKeys: (ids: readonly string[]) => void
+}
 
 const confirmDiscard = async (sceneId?: string) => {
   try {
@@ -66,19 +77,21 @@ const designer = reactive(rawDesigner) as unknown as UiDesignerController
 
 const lifecycle = useUiDesignerLifecycle({
   adapter: props.lifecycleAdapter,
-  isDirty: () => rawDesigner.isDirty.value || rawDesigner.isPreviewing.value || Boolean(rawDesigner.previewSessionId.value),
+  isDirty: () => rawDesigner.isDirty.value || rawDesigner.isPreviewing.value || rawDesigner.previewCleanupPending.value || rawDesigner.previewDisposalInFlight.value,
   save: async () => {
-    if ((rawDesigner.isPreviewing.value || rawDesigner.previewSessionId.value) && !(await rawDesigner.stopPreview())) return false
+    if (rawDesigner.isPreviewing.value && !(await rawDesigner.stopPreview())) return false
+    if (!(await rawDesigner.disposePreview('unload'))) return false
     return rawDesigner.saveAllDirtyScenes()
   },
   discard: async () => {
-    if ((rawDesigner.isPreviewing.value || rawDesigner.previewSessionId.value) && !(await rawDesigner.stopPreview())) return false
+    if (rawDesigner.isPreviewing.value && !(await rawDesigner.stopPreview())) return false
+    if (!(await rawDesigner.disposePreview('unload'))) return false
     return rawDesigner.discardAllDirtyScenes()
   },
   confirmDiscard,
 })
 
-defineExpose({ designer, lifecycle, setProjectContext: rawDesigner.setProjectContext })
+defineExpose({ designer, lifecycle, setProjectContext: rawDesigner.setProjectContext, disposePreview: rawDesigner.disposePreview })
 
 const openTour = () => { tourStep.value = 0; surface.value = 'tour' }
 const openNewScene = () => {
@@ -91,7 +104,10 @@ const openNewScene = () => {
   newSceneTemplate.value = 'blank'
   surface.value = 'newScene'
 }
-const createNewScene = () => { rawDesigner.newScene(newSceneDraft.name, { width: newSceneDraft.width, height: newSceneDraft.height, sceneBase: newSceneDraft.sceneBase, template: newSceneTemplate.value === 'blank' ? undefined : newSceneTemplate.value }); surface.value = null }
+const createNewScene = () => {
+  const created = rawDesigner.newScene(newSceneDraft.name, { width: newSceneDraft.width, height: newSceneDraft.height, sceneBase: newSceneDraft.sceneBase, template: newSceneTemplate.value === 'blank' ? undefined : newSceneTemplate.value })
+  if (created) surface.value = null
+}
 const completeTour = async () => {
   surface.value = null
   await rawDesigner.savePreferences({ tourCompleted: true })
@@ -103,9 +119,34 @@ const cycleNodeSelection = (step: 1 | -1) => {
   const index = nodes.findIndex((node) => node.id === designer.selectedIds[0])
   designer.selectNodes([nodes[(index + step + nodes.length) % nodes.length].id])
 }
+const previewSnapshot = ref<PreviewEditorSnapshot>()
+const nodePanelRef = ref<UiDesignerNodePanelExpose>()
+const capturePreviewState = () => {
+  if (previewSnapshot.value) return
+  previewSnapshot.value = {
+    activeSceneId: rawDesigner.activeSceneId.value,
+    selectedIds: [...rawDesigner.selectedIds.value],
+    expandedNodeIds: nodePanelRef.value?.getExpandedKeys() ?? [],
+    viewport: { ...rawDesigner.viewport.value },
+  }
+}
+const restorePreviewState = () => {
+  const snapshot = previewSnapshot.value
+  if (!snapshot) return
+  if (rawDesigner.scenes.value.some((scene) => scene.id === snapshot.activeSceneId)) rawDesigner.selectScene(snapshot.activeSceneId)
+  const availableIds = new Set(rawDesigner.document.value.nodes.map((node) => node.id))
+  rawDesigner.selectNodes(snapshot.selectedIds.filter((id) => availableIds.has(id)))
+  rawDesigner.viewport.value = { ...snapshot.viewport }
+  void nextTick(() => nodePanelRef.value?.setExpandedKeys(snapshot.expandedNodeIds))
+  previewSnapshot.value = undefined
+}
+const togglePreview = () => {
+  if (designer.isPreviewing) void designer.stopPreview()
+  else if (designer.canStartPreview) void designer.startPreview()
+}
 const clampPane = (side: 'left' | 'center' | 'right', value: number) => normalizePaneSize(side, value)
 const beginPaneDrag = (side: 'left' | 'right', event: PointerEvent) => {
-  if (designer.isEditorPreviewing) return
+  if (designer.isPreviewing) return
   paneDrag.value = { side, startX: event.clientX, left: leftPaneWidth.value, center: centerPaneWidth.value, right: rightPaneWidth.value }
   window.addEventListener('pointermove', movePaneDrag)
   window.addEventListener('pointerup', endPaneDrag, { once: true })
@@ -141,50 +182,53 @@ watch(() => [designer.preferences.leftPaneWidth, designer.preferences.centerPane
 }, { immediate: true })
 watch(() => designer.scenes.length, (count, previous) => { if (count > 1 || (previous !== undefined && count !== previous)) showWelcome.value = false })
 watch(() => designer.document.nodes.length, (count) => { if (count > 1) showWelcome.value = false })
-watch(() => designer.isEditorPreviewing, (active) => {
-  if (!active) return
-  showWelcome.value = false
-  surface.value = null
+watch(() => designer.isPreviewing, (active, previous) => {
+  if (active && !previous) {
+    capturePreviewState()
+    showWelcome.value = false
+    surface.value = null
+  } else if (!active && previous) {
+    restorePreviewState()
+  }
 })
 watch(() => props.projectPath, (next, previous) => { if (props.manageProjectContext && next !== previous) void rawDesigner.setProjectContext(next, props.adapters) })
 onMounted(async () => {
   const modifier = (key: string, handler: () => void | Promise<void>, shift = false, description?: string) => shortcutRegistry.register({ key, ctrlOrMeta: true, shift, description, handler })
-  modifier('n', () => { if (!designer.isEditorPreviewing) openNewScene() }, false, 'shortcutNewScene')
-  modifier('o', () => { if (!designer.isEditorPreviewing && designer.canSave) void designer.open() }, false, 'shortcutOpen')
-  modifier('s', () => { if (!designer.isEditorPreviewing && designer.canSave) void designer.save() }, false, 'shortcutSave')
-  modifier('s', () => { if (!designer.isEditorPreviewing && designer.canSave) void designer.save('saveAs') }, true, 'shortcutSaveAs')
-  modifier('z', () => { if (!designer.isEditorPreviewing) designer.undo() }, false, 'shortcutUndo')
-  modifier('z', () => { if (!designer.isEditorPreviewing) designer.redo() }, true, 'shortcutRedo')
-  modifier('c', () => { if (!designer.isEditorPreviewing) designer.copy() }, false, 'shortcutCopy')
-  modifier('x', () => { if (!designer.isEditorPreviewing && designer.selectedIds[0]) designer.executeNodeAction('cut', designer.selectedIds[0]) }, false, 'shortcutCut')
-  modifier('v', () => { if (!designer.isEditorPreviewing) designer.paste() }, false, 'shortcutPaste')
-  modifier('w', () => { if (!designer.isEditorPreviewing) void designer.closeScene(designer.activeSceneId) }, false, 'shortcutCloseScene')
-  modifier('y', () => { if (!designer.isEditorPreviewing) designer.redo() }, false, 'shortcutRedo')
-  modifier('d', () => { if (!designer.isEditorPreviewing) designer.duplicateSelected() }, false, 'shortcutDuplicate')
-  modifier('a', () => { if (!designer.isEditorPreviewing) designer.selectNodes(designer.document.nodes.filter((node) => node.id !== 'node_root').map((node) => node.id)) }, false, 'shortcutSelectAll')
-  modifier('g', () => { if (!designer.isEditorPreviewing) designer.group() }, false, 'shortcutGroup')
-  modifier('g', () => { if (!designer.isEditorPreviewing) designer.ungroup() }, true, 'shortcutUngroup')
-  modifier('[', () => { if (!designer.isEditorPreviewing && designer.selectedIds.length) designer.moveStep(designer.selectedIds[0], 'up') }, false, 'shortcutMoveUp')
-  modifier(']', () => { if (!designer.isEditorPreviewing && designer.selectedIds.length) designer.moveStep(designer.selectedIds[0], 'down') }, false, 'shortcutMoveDown')
-  modifier('[', () => { if (!designer.isEditorPreviewing && designer.selectedIds.length) designer.moveToEdge(designer.selectedIds[0], 'top') }, true, 'shortcutToTop')
-  modifier(']', () => { if (!designer.isEditorPreviewing && designer.selectedIds.length) designer.moveToEdge(designer.selectedIds[0], 'bottom') }, true, 'shortcutToBottom')
-  modifier('0', () => { if (!designer.isEditorPreviewing) designer.setZoom(1) }, false, 'shortcutResetZoom')
-  modifier('h', () => { if (!designer.isEditorPreviewing) designer.fitCanvas() }, true, 'shortcutFitCanvas')
-  modifier('e', () => { if (!designer.isEditorPreviewing) { exportCompleted.value = false; surface.value = 'export' } }, false, 'shortcutExport')
-  modifier('p', () => { if (!designer.isEditorPreviewing && designer.canPreview) void designer.startPreview() }, false, 'shortcutGamePreview')
-  modifier(';', () => { if (!designer.isEditorPreviewing) designer.setCanvasSetting('guidesVisible', !designer.document.canvas.guidesVisible) }, false, 'shortcutToggleGuides')
+  modifier('n', () => { if (!designer.isPreviewing) openNewScene() }, false, 'shortcutNewScene')
+  modifier('o', () => { if (!designer.isPreviewing && designer.canSave) void designer.open() }, false, 'shortcutOpen')
+  modifier('s', () => { if (!designer.isPreviewing && designer.canSave) void designer.save() }, false, 'shortcutSave')
+  modifier('s', () => { if (!designer.isPreviewing && designer.canSave) void designer.save('saveAs') }, true, 'shortcutSaveAs')
+  modifier('z', () => { if (!designer.isPreviewing) designer.undo() }, false, 'shortcutUndo')
+  modifier('z', () => { if (!designer.isPreviewing) designer.redo() }, true, 'shortcutRedo')
+  modifier('c', () => { if (!designer.isPreviewing) designer.copy() }, false, 'shortcutCopy')
+  modifier('x', () => { if (!designer.isPreviewing && designer.selectedIds[0]) designer.executeNodeAction('cut', designer.selectedIds[0]) }, false, 'shortcutCut')
+  modifier('v', () => { if (!designer.isPreviewing) designer.paste() }, false, 'shortcutPaste')
+  modifier('w', () => { if (!designer.isPreviewing) void designer.closeScene(designer.activeSceneId) }, false, 'shortcutCloseScene')
+  modifier('y', () => { if (!designer.isPreviewing) designer.redo() }, false, 'shortcutRedo')
+  modifier('d', () => { if (!designer.isPreviewing) designer.duplicateSelected() }, false, 'shortcutDuplicate')
+  modifier('a', () => { if (!designer.isPreviewing) designer.selectNodes(designer.document.nodes.filter((node) => node.id !== 'node_root').map((node) => node.id)) }, false, 'shortcutSelectAll')
+  modifier('g', () => { if (!designer.isPreviewing) designer.group() }, false, 'shortcutGroup')
+  modifier('g', () => { if (!designer.isPreviewing) designer.ungroup() }, true, 'shortcutUngroup')
+  modifier('[', () => { if (!designer.isPreviewing && designer.selectedIds.length) designer.moveStep(designer.selectedIds[0], 'up') }, false, 'shortcutMoveUp')
+  modifier(']', () => { if (!designer.isPreviewing && designer.selectedIds.length) designer.moveStep(designer.selectedIds[0], 'down') }, false, 'shortcutMoveDown')
+  modifier('[', () => { if (!designer.isPreviewing && designer.selectedIds.length) designer.moveToEdge(designer.selectedIds[0], 'top') }, true, 'shortcutToTop')
+  modifier(']', () => { if (!designer.isPreviewing && designer.selectedIds.length) designer.moveToEdge(designer.selectedIds[0], 'bottom') }, true, 'shortcutToBottom')
+  modifier('0', () => { if (!designer.isPreviewing) designer.setZoom(1) }, false, 'shortcutResetZoom')
+  modifier('h', () => { if (!designer.isPreviewing) designer.fitCanvas() }, true, 'shortcutFitCanvas')
+  modifier('e', () => { if (!designer.isPreviewing) { exportCompleted.value = false; surface.value = 'export' } }, false, 'shortcutExport')
+  modifier('p', togglePreview, false, 'shortcutEditorPreview')
+  modifier(';', () => { if (!designer.isPreviewing) designer.setCanvasSetting('guidesVisible', !designer.document.canvas.guidesVisible) }, false, 'shortcutToggleGuides')
   for (const [key, delta] of [['ArrowLeft', { x: -1, y: 0 }], ['ArrowRight', { x: 1, y: 0 }], ['ArrowUp', { x: 0, y: -1 }], ['ArrowDown', { x: 0, y: 1 }]] as const) {
-    shortcutRegistry.register({ key, description: 'shortcutNudge', handler: () => { if (!designer.isEditorPreviewing) designer.nudgeSelected(delta) } })
-    shortcutRegistry.register({ key, shift: true, description: 'shortcutNudge', handler: () => { if (!designer.isEditorPreviewing) designer.nudgeSelected({ x: delta.x * 10, y: delta.y * 10 }) } })
+    shortcutRegistry.register({ key, description: 'shortcutNudge', handler: () => { if (!designer.isPreviewing) designer.nudgeSelected(delta) } })
+    shortcutRegistry.register({ key, shift: true, description: 'shortcutNudge', handler: () => { if (!designer.isPreviewing) designer.nudgeSelected({ x: delta.x * 10, y: delta.y * 10 }) } })
   }
-  shortcutRegistry.register({ key: 'Tab', description: 'shortcutNextNode', handler: () => { if (!designer.isEditorPreviewing) cycleNodeSelection(1) } })
-  shortcutRegistry.register({ key: 'Tab', shift: true, description: 'shortcutPreviousNode', handler: () => { if (!designer.isEditorPreviewing) cycleNodeSelection(-1) } })
-  shortcutRegistry.register({ key: 'Delete', description: 'shortcutDelete', handler: () => { if (!designer.isEditorPreviewing) designer.removeSelected() } })
-  shortcutRegistry.register({ key: 'F5', description: 'shortcutGamePreview', handler: () => { if (!designer.isEditorPreviewing && designer.canPreview) void designer.startPreview() } })
-  shortcutRegistry.register({ key: 'F6', description: 'shortcutEditorPreview', handler: () => { if (designer.isEditorPreviewing) designer.stopEditorPreview(); else designer.startEditorPreview() } })
+  shortcutRegistry.register({ key: 'Tab', description: 'shortcutNextNode', handler: () => { if (!designer.isPreviewing) cycleNodeSelection(1) } })
+  shortcutRegistry.register({ key: 'Tab', shift: true, description: 'shortcutPreviousNode', handler: () => { if (!designer.isPreviewing) cycleNodeSelection(-1) } })
+  shortcutRegistry.register({ key: 'Delete', description: 'shortcutDelete', handler: () => { if (!designer.isPreviewing) designer.removeSelected() } })
+  shortcutRegistry.register({ key: 'F6', description: 'shortcutEditorPreview', handler: togglePreview })
   shortcutRegistry.register({ key: 'f', shift: true, alt: true, allowInEditable: true, description: 'shortcutFormat', handler: () => { window.dispatchEvent(new Event('agent-rpg:ui-designer-format')) } })
-  shortcutRegistry.register({ key: 'Escape', description: 'shortcutEscape', allowInEditable: true, handler: () => { if (designer.isEditorPreviewing) designer.stopEditorPreview(); else if (designer.isPreviewing) void designer.stopPreview() } })
-  shortcutRegistry.register({ key: '?', shift: true, description: 'shortcutShortcuts', handler: () => { if (!designer.isEditorPreviewing) surface.value = 'shortcuts' } })
+  shortcutRegistry.register({ key: 'Escape', description: 'shortcutEscape', allowInEditable: true, handler: () => { if (designer.isPreviewing) void designer.stopPreview() } })
+  shortcutRegistry.register({ key: '?', shift: true, description: 'shortcutShortcuts', handler: () => { if (!designer.isPreviewing) surface.value = 'shortcuts' } })
   shortcutBindings.value = shortcutRegistry.list()
   window.addEventListener('keydown', shortcutRegistry.handle)
   void rawDesigner.loadWelcomeRecords()
@@ -192,34 +236,42 @@ onMounted(async () => {
   await rawDesigner.loadProjectProfile()
   if (!Boolean(designer.preferences.tourCompleted)) openTour()
 })
-onBeforeUnmount(() => { endPaneDrag(); window.removeEventListener('keydown', shortcutRegistry.handle); shortcutRegistry.unregisterAll(); rawDesigner.flushDrafts(); void rawDesigner.stopPreview(); rawDesigner.stopEditorPreview(); void rawDesigner.flushRecovery() })
+onBeforeUnmount(() => {
+  endPaneDrag()
+  window.removeEventListener('keydown', shortcutRegistry.handle)
+  shortcutRegistry.unregisterAll()
+  rawDesigner.flushDrafts()
+  if (rawDesigner.isPreviewing.value) rawDesigner.stopPreview()
+  void rawDesigner.disposePreview('unload').then(() => restorePreviewState())
+  void rawDesigner.flushRecovery()
+})
 </script>
 
 <template>
-    <section class="ui-designer-shell" :class="{ 'editor-preview-active': designer.isEditorPreviewing, 'code-mode-active': designer.editingMode === 'code' && !designer.isEditorPreviewing }" data-ui-id="ui-designer-shell">
+    <section class="ui-designer-shell" :class="{ 'editor-preview-active': designer.isPreviewing, 'code-mode-active': designer.editingMode === 'code' && !designer.isPreviewing }" data-ui-id="ui-designer-shell">
     <UiDesignerToolbar :designer="designer" @new-scene="openNewScene" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
-    <UiDesignerSceneTabs v-if="!designer.isEditorPreviewing" :designer="designer" @new-scene="openNewScene" />
+    <UiDesignerSceneTabs v-show="!designer.isPreviewing" :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :style="workspaceStyle">
-      <aside v-if="!designer.isEditorPreviewing" class="left-pane">
-        <UiDesignerNodePanel :designer="designer" />
+      <aside v-show="!designer.isPreviewing" class="left-pane">
+        <UiDesignerNodePanel ref="nodePanelRef" :designer="designer" />
       </aside>
-      <div v-if="!designer.isEditorPreviewing" class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
+      <div v-show="!designer.isPreviewing" class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
       <main class="center-pane">
         <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" />
         <UiDesignerCanvas v-else-if="designer.editingMode === 'design'" :designer="designer" />
         <UiDesignerCodePanel v-else :designer="designer" />
       </main>
-      <div v-if="!designer.isEditorPreviewing" class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
-      <UiDesignerInspector v-if="!designer.isEditorPreviewing" :designer="designer" />
+      <div v-show="!designer.isPreviewing" class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
+      <UiDesignerInspector v-show="!designer.isPreviewing" :designer="designer" />
     </div>
-    <UiDesignerStatusBar v-if="!designer.isEditorPreviewing" :designer="designer" />
+    <UiDesignerStatusBar v-show="!designer.isPreviewing" :designer="designer" />
 
-    <UiDesignerNewSceneSurface v-if="!designer.isEditorPreviewing && surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="newSceneTemplate = $event" @create="createNewScene" @cancel="surface = null" />
-    <UiDesignerSettingsSurface v-if="!designer.isEditorPreviewing && surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
-    <UiDesignerExportSurface v-if="!designer.isEditorPreviewing && surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
-    <UiDesignerHelpSurface v-if="!designer.isEditorPreviewing && (surface === 'help' || surface === 'shortcuts' || surface === 'tour')" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
+    <UiDesignerNewSceneSurface v-if="!designer.isPreviewing && surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="newSceneTemplate = $event" @create="createNewScene" @cancel="surface = null" />
+    <UiDesignerSettingsSurface v-if="!designer.isPreviewing && surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
+    <UiDesignerExportSurface v-if="!designer.isPreviewing && surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
+    <UiDesignerHelpSurface v-if="!designer.isPreviewing && (surface === 'help' || surface === 'shortcuts' || surface === 'tour')" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
 
-    <el-dialog :model-value="!designer.isEditorPreviewing && Boolean(designer.fileConflict)" :title="t('conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
+    <el-dialog :model-value="!designer.isPreviewing && Boolean(designer.fileConflict)" :title="t('conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
       <p class="dialog-copy">{{ designer.runtimeConflict ? t('overwriteConflictBody') : t('conflictBody') }}</p>
        <dl v-if="designer.runtimeConflict && designer.fileConflict?.actual" class="conflict-metadata"><dt>{{ t('modifiedTime') }}</dt><dd>{{ designer.fileConflict.actual.mtimeMs }}</dd><dt>{{ t('digest') }}</dt><dd>{{ designer.fileConflict.actual.digest }}</dd><template v-if="designer.runtimeConflictFiles?.length"><dt>{{ t('affectedFiles') }}</dt><dd>{{ designer.runtimeConflictFiles.join(', ') }}</dd></template></dl>
       <template #footer>

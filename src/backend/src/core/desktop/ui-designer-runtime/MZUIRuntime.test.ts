@@ -248,6 +248,14 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     }
   });
 
+  test('uses the official MV Window_Base and Bitmap drawText signatures for button text', () => {
+    assertEngineWindowTextSignature('MV');
+  });
+
+  test('uses the official MZ Window_Base and Bitmap drawText signatures for button text', () => {
+    assertEngineWindowTextSignature('MZ');
+  });
+
   test('converts MV Bitmap base textures before creating NineSlice and frame sprites', () => {
     const context = makeContext();
     class Texture {
@@ -1211,4 +1219,45 @@ function sceneDocument(): any {
 
 function sceneScript(ready = '', update = ''): { version: '1.0.0'; source: string } {
   return { version: '1.0.0', source: migrateLegacyUiSourceCode({ ready, update }) };
+}
+
+function assertEngineWindowTextSignature(engine: 'MV' | 'MZ'): void {
+  const context = makeContext();
+  const windowCalls: unknown[][] = [];
+  const bitmapCalls: unknown[][] = [];
+  class EngineBitmap {
+    clear() {}
+    drawText(...args: unknown[]) { bitmapCalls.push(args); }
+  }
+  class EngineWindow extends context.PIXI.Container {
+    contents = new EngineBitmap();
+    constructor(..._args: unknown[]) { super(); }
+    lineHeight() { return 36; }
+    drawText(...args: unknown[]) {
+      windowCalls.push(args);
+      const [text, x, y, maxWidth, align] = args;
+      this.contents.drawText(text, x, y, maxWidth, this.lineHeight(), align);
+    }
+  }
+  context.Window_Base = EngineWindow;
+  context.Utils = { RPGMAKER_NAME: engine };
+  vm.runInNewContext(RUNTIME_SOURCE, context, { filename: `MZUIRuntime-${engine}-drawText.js` });
+  const runtime = context.MZUIRuntime.create();
+  const scene = allNodeScene();
+  const text = scene.nodes.find((node: any) => node.type === 'text');
+  text.props.content = 'line one\nline two';
+  text.props.wrapWidth = 40;
+  text.props.align = 'right';
+  runtime.mount(scene, { root: new context.PIXI.Container() });
+  runtime.update();
+
+  assert.deepEqual(windowCalls[0], ['OK', 0, 0, 100, 'center']);
+  assert.deepEqual(bitmapCalls[0], ['OK', 0, 0, 100, 36, 'center']);
+  assert.equal(windowCalls.every((args) => args.length === 5 && typeof args[4] === 'string'), true);
+  assert.equal(bitmapCalls.every((args) => args.length === 6 && typeof args[5] === 'string'), true);
+  assert.equal(runtime.nodeViews.text.style.wordWrap, true);
+  assert.equal(runtime.nodeViews.text.style.wordWrapWidth, 40);
+  assert.equal(runtime.nodeViews.text.style.align, 'right');
+  assert.equal(runtime.nodeViews.progressBar.__mzuiAnimatedRatio, 0.5);
+  runtime.cleanup();
 }

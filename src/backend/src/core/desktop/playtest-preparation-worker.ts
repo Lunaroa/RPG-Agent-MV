@@ -37,7 +37,7 @@ export type PlaytestPreparationWorkerRequest =
     animation: InteractiveParticleAnimationPreview;
   }
   | WorkerOwnershipRequest & {
-    operation: 'ui_designer_preview';
+    operation: 'ui_designer_renderer';
     workflowRoot: string;
     project: string;
     temporaryPrefix?: string;

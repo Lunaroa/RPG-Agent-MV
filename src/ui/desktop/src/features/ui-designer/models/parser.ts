@@ -15,7 +15,7 @@ import {
   type UiVisibilityCondition,
 } from '@contract/ui-designer'
 import { migrateUiDesignerDocument } from '@contract/ui-designer-script'
-import { cloneUiDocument, createDefaultNode, createUiDocument, setCanvasDimensions } from './document'
+import { createDefaultNode, createUiDocument, setCanvasDimensions } from './document'
 import { normalizeDocumentGeometry } from './geometry'
 import { validateTreeInvariants } from './tree'
 import { isUiDesignerProjectRelativeResourcePath } from '@contract/ui-designer-resources'

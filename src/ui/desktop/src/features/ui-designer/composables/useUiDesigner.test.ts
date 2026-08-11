@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test, vi } from 'vitest'
-import type { UiDesignerAdapterBundle, UiDesignerPersistenceAdapter, UiDesignerPreviewAdapter, UiPreviewResult } from '@contract/ui-designer'
+import type { UiDesignerAdapterBundle, UiDesignerPersistenceAdapter } from '@contract/ui-designer'
 import { createUiDocument } from '../models/document'
 import { exportRuntimeDocument } from '../models/export'
 
@@ -44,107 +44,172 @@ test('closing the only opened tab creates a fresh untitled clean scene', async (
   assert.equal(clearedRecovery, 'recovery-opened')
 })
 
-test('preview stop failure retains the session and polling can be retried', async () => {
-  let stopCalls = 0
-  const preview: UiDesignerPreviewAdapter = {
-    async start(): Promise<UiPreviewResult> { return { state: 'running', message: 'running', sessionId: 'preview-1' } },
-    async current(): Promise<UiPreviewResult> { return { state: 'running', message: 'running', sessionId: 'preview-1' } },
-    async stop(): Promise<UiPreviewResult> {
-      stopCalls += 1
-      return stopCalls === 1 ? { state: 'error', message: 'stop failed', sessionId: 'preview-1' } : { state: 'stopped', message: 'stopped', sessionId: 'preview-1' }
-    },
-  }
+test('embedded preview uses one renderer-host handshake and restores the prior editor mode', () => {
   const rendererHost = {
     async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
     async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
     async stop() { return success(null) },
   }
-  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { preview, rendererHost } })
-  assert.equal(await designer.startPreview(), true)
-  assert.equal(designer.canStartEditorPreview.value, false)
-  assert.equal(await designer.stopPreview(), false)
-  assert.equal(designer.previewSessionId.value, 'preview-1')
-  assert.equal(designer.isPreviewing.value, true)
-  assert.equal(await designer.stopPreview(), true)
-  assert.equal(designer.previewSessionId.value, undefined)
-  assert.equal(designer.isPreviewing.value, false)
-  assert.equal(designer.canStartEditorPreview.value, true)
-})
-
-test('game preview start is single-flight and project switch cancels pending scene readiness once', async () => {
-  let resolveStart!: (result: UiPreviewResult) => void
-  const pendingStart = new Promise<UiPreviewResult>((resolve) => { resolveStart = resolve })
-  let starts = 0
-  let stops = 0
-  const preview: UiDesignerPreviewAdapter = {
-    async start() { starts += 1; return await pendingStart },
-    async current() { return { state: 'preparing', message: 'preparing' } },
-    async stop() {
-      stops += 1
-      const stopped = { state: 'stopped' as const, message: 'stopped', sessionId: 'preview-pending' }
-      resolveStart(stopped)
-      return stopped
-    },
-  }
-  const rendererHost = {
-    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
-    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
-    async stop() { return success(null) },
-  }
-  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { preview, rendererHost } })
-  const firstStart = designer.startPreview()
-  assert.equal(designer.previewStatus.value, 'preparing')
-  assert.equal(designer.canStartEditorPreview.value, false)
-  assert.equal(designer.startEditorPreview(), false)
-  assert.equal(await designer.startPreview(), false)
-  assert.equal(starts, 1)
-  assert.equal(await designer.setProjectContext('projects/next', { preview, rendererHost }), true)
-  assert.equal(await firstStart, false)
-  assert.equal(stops, 1)
-  assert.equal(designer.isPreviewing.value, false)
-  assert.equal(designer.canStartEditorPreview.value, true)
-})
-
-test('editor preview waits for mount acknowledgements and excludes game preview until cleanup', async () => {
-  const rendererHost = {
-    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
-    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
-    async stop() { return success(null) },
-  }
-  let gameStarts = 0
-  const preview: UiDesignerPreviewAdapter = {
-    async start() { gameStarts += 1; return { state: 'running', message: 'running', sessionId: 'game-preview' } },
-    async current() { return { state: 'running', message: 'running', sessionId: 'game-preview' } },
-    async stop() { return { state: 'stopped', message: 'stopped', sessionId: 'game-preview' } },
-  }
-  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost, preview } })
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
   designer.editingMode.value = 'code'
-  assert.equal(designer.startEditorPreview(), true)
-  assert.equal(designer.isEditorPreviewing.value, true)
+  assert.equal(designer.startPreview(), true)
+  assert.equal(designer.isPreviewing.value, true)
   assert.equal(designer.editingMode.value, 'design')
-  assert.equal(designer.editorPreviewStatus.value, 'preparing')
-  assert.equal(designer.canStartGamePreview.value, false)
-  assert.equal(await designer.startPreview(), false)
-  assert.equal(gameStarts, 0)
-  assert.equal(designer.acknowledgeEditorPreviewExecutionMode('full-preview'), true)
-  assert.equal(designer.editorPreviewStatus.value, 'running')
-  assert.equal(designer.stopEditorPreview(), true)
-  assert.equal(designer.isEditorPreviewing.value, true)
-  assert.equal(designer.editingMode.value, 'design')
-  assert.equal(designer.editorPreviewStatus.value, 'preparing')
-  assert.equal(designer.canStartGamePreview.value, false)
-  assert.equal(designer.acknowledgeEditorPreviewExecutionMode('authoring'), true)
-  assert.equal(designer.isEditorPreviewing.value, false)
+  assert.equal(designer.previewStatus.value, 'preparing')
+  assert.equal(designer.canStartPreview.value, false)
+  assert.equal(designer.acknowledgePreviewExecutionMode('full-preview'), true)
+  assert.equal(designer.previewStatus.value, 'running')
+  assert.equal(designer.stopPreview(), true)
+  assert.equal(designer.isPreviewing.value, true)
+  assert.equal(designer.previewStatus.value, 'preparing')
+  assert.equal(designer.acknowledgePreviewExecutionMode('authoring'), true)
+  assert.equal(designer.isPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
-  assert.equal(designer.canStartGamePreview.value, true)
+  assert.equal(designer.previewStatus.value, 'stopped')
+})
 
-  assert.equal(designer.startEditorPreview(), true)
-  assert.equal(designer.acknowledgeEditorPreviewExecutionMode('full-preview'), true)
-  designer.failEditorPreview('The replacement renderer preparation was superseded.')
-  assert.equal(designer.editorPreviewStatus.value, 'error')
-  assert.equal(designer.editorPreviewMessage.value, 'The replacement renderer preparation was superseded.')
-  assert.equal(designer.isEditorPreviewing.value, false)
+test('embedded preview failure leaves the controller in authoring mode without an external session', () => {
+  const rendererHost = {
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async stop() { return success(null) },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
+  designer.editingMode.value = 'code'
+  assert.equal(designer.startPreview(), true)
+  assert.equal(designer.acknowledgePreviewExecutionMode('full-preview'), true)
+  designer.failPreview('The replacement renderer preparation was superseded.')
+  assert.equal(designer.previewStatus.value, 'error')
+  assert.equal(designer.previewMessage.value, 'The replacement renderer preparation was superseded.')
+  assert.equal(designer.isPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
+})
+
+test('error preview retains a cleanup barrier until the authoring retry acknowledges disposal', () => {
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost: { async start() { return success() }, async confirm() { return success() }, async stop() { return success(null) } } } })
+  designer.failPreview('The isolated renderer was kept for recovery.', true)
+  assert.equal(designer.previewCleanupPending.value, true)
+  assert.equal(designer.canStartPreview.value, false)
+  assert.equal(designer.acknowledgePreviewExecutionMode('authoring'), true)
+  assert.equal(designer.previewCleanupPending.value, false)
+  assert.equal(designer.previewStatus.value, 'stopped')
+  assert.equal(designer.previewMessage.value, '')
+  assert.equal(designer.canStartPreview.value, true)
+})
+
+test('multiple renderer owners remain in the cleanup barrier until each owner stops once', async () => {
+  const designer = useUiDesigner({ projectPath: 'projects/sample' })
+  designer.failPreview('The isolated renderer was kept for recovery.', true)
+  let firstStops = 0
+  let secondStops = 0
+  let lateStops = 0
+  let secondAttempt = 0
+  let releaseSecond!: (result: boolean) => void
+  let markSecondStarted!: () => void
+  const secondStarted = new Promise<void>((resolve) => { markSecondStarted = resolve })
+  let unregisterFirst = () => undefined
+  let unregisterSecond = () => undefined
+  let unregisterLate = () => undefined
+  unregisterFirst = designer.registerPreviewDisposer(async () => {
+    firstStops += 1
+    unregisterFirst()
+    designer.acknowledgePreviewExecutionMode('authoring')
+    unregisterLate = designer.registerPreviewDisposer(async () => {
+      lateStops += 1
+      unregisterLate()
+      return true
+    })
+    return true
+  })
+  unregisterSecond = designer.registerPreviewDisposer(async () => {
+    secondStops += 1
+    secondAttempt += 1
+    if (secondAttempt === 1) {
+      markSecondStarted()
+      return new Promise<boolean>((resolve) => { releaseSecond = resolve })
+    }
+    unregisterSecond()
+    return true
+  })
+
+  const firstCleanup = designer.disposePreview('unload')
+  await secondStarted
+  assert.equal(designer.previewDisposalInFlight.value, true)
+  assert.equal(designer.previewCleanupPending.value, false)
+  assert.equal(designer.canStartPreview.value, false)
+  releaseSecond(false)
+  assert.equal(await firstCleanup, false)
+  assert.equal(designer.previewDisposalInFlight.value, false)
+  assert.equal(designer.previewCleanupPending.value, true)
+  assert.deepEqual({ firstStops, secondStops, lateStops }, { firstStops: 1, secondStops: 1, lateStops: 1 })
+  assert.equal(await designer.disposePreview('unload'), true)
+  assert.equal(designer.previewCleanupPending.value, false)
+  assert.equal(designer.previewStatus.value, 'stopped')
+  assert.deepEqual({ firstStops, secondStops, lateStops }, { firstStops: 1, secondStops: 2, lateStops: 1 })
+})
+
+test('project switching cancels the embedded preview without polling an external session', async () => {
+  const rendererHost = {
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async stop() { return success(null) },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
+  designer.editingMode.value = 'code'
+  assert.equal(designer.startPreview(), true)
+  assert.equal(designer.isPreviewing.value, true)
+  assert.equal(designer.editingMode.value, 'design')
+  assert.equal(await designer.setProjectContext('projects/next', { rendererHost }), true)
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
+})
+
+test('project switching stops preview ownership before asking about dirty source', async () => {
+  const observations: Array<{ mode: string; previewing: boolean }> = []
+  let designer!: ReturnType<typeof useUiDesigner>
+  const rendererHost = {
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async stop() { return success(null) },
+  }
+  designer = useUiDesigner({
+    projectPath: 'projects/sample',
+    adapters: { rendererHost },
+    confirmDiscard: async () => {
+      observations.push({ mode: designer.previewExecutionMode.value, previewing: designer.isPreviewing.value })
+      return false
+    },
+  })
+  designer.addNode('text')
+  assert.equal(designer.startPreview(), true)
+  assert.equal(await designer.setProjectContext('projects/next', { rendererHost }), false)
+  assert.deepEqual(observations, [{ mode: 'authoring', previewing: false }])
+  assert.equal(designer.isPreviewing.value, false)
+})
+
+test('project context changes wait for renderer disposal and retain the old project on stop failure', async () => {
+  const designer = useUiDesigner({ projectPath: 'projects/sample' })
+  let releaseDispose!: (result: boolean) => void
+  let disposalStarted!: () => void
+  const started = new Promise<void>((resolve) => { disposalStarted = resolve })
+  const disposal = new Promise<boolean>((resolve) => { releaseDispose = resolve })
+  const unregister = designer.registerPreviewDisposer(async () => {
+    disposalStarted()
+    return disposal
+  })
+
+  const pending = designer.setProjectContext('projects/next')
+  await started
+  assert.equal(designer.projectPath.value, 'projects/sample')
+  releaseDispose(false)
+  assert.equal(await pending, false)
+  assert.equal(designer.projectPath.value, 'projects/sample')
+  assert.match(designer.previewMessage.value, /could not finish closing/)
+
+  unregister()
+  const switched = await designer.setProjectContext('projects/next')
+  assert.equal(switched, true)
+  assert.equal(designer.projectPath.value, 'projects/next')
 })
 
 test('project profile dimensions seed only newly created scenes across project switches', async () => {
@@ -184,6 +249,19 @@ test('no project profile disables default scene creation but explicit low-level 
   assert.equal(designer.scenes.value.length, initialSceneCount)
   assert.equal(designer.newScene('Scene_Explicit_Size', { width: 640, height: 360 }), true)
   assert.deepEqual([designer.document.value.canvas.width, designer.document.value.canvas.height], [640, 360])
+})
+
+test('new scene rejects names outside the runtime contract without adding or activating a scene', () => {
+  const designer = useUiDesigner()
+  const initialSceneIds = designer.scenes.value.map((scene) => scene.id)
+  const initialActiveSceneId = designer.activeSceneId.value
+  for (const invalidName of ['', 'Fast Final Scene', 'Scene_', 'Scene_Bad-Name', ' Scene_Trimmed']) {
+    assert.equal(designer.newScene(invalidName, { width: 640, height: 360 }), false)
+    assert.deepEqual(designer.scenes.value.map((scene) => scene.id), initialSceneIds)
+    assert.equal(designer.activeSceneId.value, initialActiveSceneId)
+  }
+  assert.equal(designer.newScene('Scene_Fast_Final_$1', { width: 640, height: 360 }), true)
+  assert.equal(designer.document.value.meta.sceneName, 'Scene_Fast_Final_$1')
 })
 
 test('integer geometry and shared node actions guard locked selections and ancestry at execution', () => {
@@ -256,40 +334,6 @@ test('resource property execution rejects unsafe nested paths before document mu
   designer.updateNodeProperty(frameId, 'frames', [{ id: 'frame_001', path: 'asset://preview/frame.png', duration: 100 }])
   const unchangedFrame = designer.document.value.nodes.find((node) => node.id === frameId)
   assert.deepEqual(unchangedFrame?.type === 'frameAnimation' ? unchangedFrame.props.frames : undefined, [])
-})
-
-test('preview diagnostics follow the active session and retain final cleanup diagnostics', async () => {
-  const startDiagnostics = [{ schemaVersion: '1.0.0' as const, sessionId: 'preview-diagnostics', scene: 'Scene_Main', file: 'sceneScript.source', node: 'node_root', type: 'code', phase: 'ready', event: null, code: 'UI_CODE_ERROR', severity: 'error' as const, label: 'Code error', message: 'syntax error', count: 1 }]
-  const stopDiagnostics = [{ ...startDiagnostics[0], message: 'cleanup complete', count: 2 }]
-  const preview: UiDesignerPreviewAdapter = {
-    async start(): Promise<UiPreviewResult> { return { state: 'running', message: 'running', sessionId: 'preview-diagnostics', diagnostics: startDiagnostics } },
-    async current(): Promise<UiPreviewResult> { return { state: 'running', message: 'running', sessionId: 'preview-diagnostics', diagnostics: startDiagnostics } },
-    async stop(): Promise<UiPreviewResult> { return { state: 'stopped', message: 'stopped', sessionId: 'preview-diagnostics', diagnostics: stopDiagnostics } },
-  }
-  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { preview } })
-  assert.equal(await designer.startPreview(), true)
-  assert.equal(designer.previewDiagnostics.value[0]?.code, 'UI_CODE_ERROR')
-  assert.equal(await designer.stopPreview(), true)
-  assert.equal(designer.previewDiagnostics.value[0]?.message, 'cleanup complete')
-  assert.equal(designer.previewDiagnostics.value[0]?.count, 2)
-})
-
-test('natural preview exit reconciles the session so a later guard does not restart it', async () => {
-  let stopCalls = 0
-  const finalDiagnostic = { schemaVersion: '1.0.0' as const, sessionId: 'preview-natural', scene: 'Scene_Main', file: null, node: null, type: 'runtime', phase: 'stop', event: null, code: 'UI_RUNTIME_EXIT', severity: 'warning' as const, label: 'Runner exited', message: 'runner exited', count: 1 }
-  const preview: UiDesignerPreviewAdapter = {
-    async start(): Promise<UiPreviewResult> { return { state: 'running', message: 'running', sessionId: 'preview-natural' } },
-    async current(): Promise<UiPreviewResult> { return { state: 'stopped', message: 'runner exited', sessionId: 'preview-natural', diagnostics: [finalDiagnostic] } },
-    async stop(): Promise<UiPreviewResult> { stopCalls += 1; return { state: 'stopped', message: 'already stopped', sessionId: 'preview-natural' } },
-  }
-  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { preview } })
-  assert.equal(await designer.startPreview(), true)
-  await new Promise((resolve) => setTimeout(resolve, 1050))
-  assert.equal(designer.isPreviewing.value, false)
-  assert.equal(designer.previewSessionId.value, undefined)
-  assert.equal(designer.previewDiagnostics.value[0]?.code, 'UI_RUNTIME_EXIT')
-  assert.equal(await designer.stopPreview(), true)
-  assert.equal(stopCalls, 0)
 })
 
 test('recovery cleanup failure keeps the recovery id and reports discard failure', async () => {

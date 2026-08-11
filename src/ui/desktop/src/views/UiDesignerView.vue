@@ -17,7 +17,11 @@ const { t } = useUiDesignerI18n()
 const productPlugins = useProductPluginsStore()
 const projectStore = useProjectStore()
 const desktopAdapters = computed(() => createDesktopUiDesignerAdapters(projectStore.currentProject || undefined))
-const shellRef = ref<{ designer: UiDesignerController; setProjectContext: (path: string | undefined, adapters?: ReturnType<typeof createDesktopUiDesignerAdapters>) => Promise<boolean> }>()
+const shellRef = ref<{
+  designer: UiDesignerController
+  setProjectContext: (path: string | undefined, adapters?: ReturnType<typeof createDesktopUiDesignerAdapters>) => Promise<boolean>
+  disposePreview: (reason?: 'project-change' | 'unload' | 'shutdown') => Promise<boolean>
+}>()
 let projectSwitchBusy = false
 let lastProjectPath = ''
 let unregisterLifecycle: (() => void) | undefined
@@ -26,18 +30,20 @@ onMounted(async () => {
   await productPlugins.load()
   lastProjectPath = projectStore.currentProject
   unregisterLifecycle = registerProductPluginLifecycleGuard('ui-designer', {
-    isDirty: () => Boolean(shellRef.value?.designer.isDirty || shellRef.value?.designer.isPreviewing || shellRef.value?.designer.previewSessionId),
+    isDirty: () => Boolean(shellRef.value?.designer.isDirty || shellRef.value?.designer.isPreviewing || shellRef.value?.designer.previewCleanupPending || shellRef.value?.designer.previewDisposalInFlight),
     save: async () => {
       const designer = shellRef.value?.designer
       if (!designer) return false
-      if ((designer.isPreviewing || designer.previewSessionId) && !(await designer.stopPreview())) return false
+      if (designer.isPreviewing && !(await designer.stopPreview())) return false
+      if (shellRef.value && !(await shellRef.value.disposePreview('unload'))) return false
       const success = await designer.saveAllDirtyScenes()
       return Boolean(success)
     },
     discard: async () => {
       const designer = shellRef.value?.designer
       if (!designer) return false
-      if ((designer.isPreviewing || designer.previewSessionId) && !(await designer.stopPreview())) return false
+      if (designer.isPreviewing && !(await designer.stopPreview())) return false
+      if (shellRef.value && !(await shellRef.value.disposePreview('unload'))) return false
       const success = await designer.discardAllDirtyScenes()
       return Boolean(success)
     },
@@ -68,7 +74,8 @@ onBeforeUnmount(() => {
 onBeforeRouteLeave(async () => {
   const designer = shellRef.value?.designer
   if (!designer) return true
-  if ((designer.isPreviewing || designer.previewSessionId) && !(await designer.stopPreview())) return false
+  if (designer.isPreviewing && !(await designer.stopPreview())) return false
+  if (shellRef.value && !(await shellRef.value.disposePreview('unload'))) return false
   if (!designer.isDirty) return true
   try {
     await ElMessageBox.confirm(

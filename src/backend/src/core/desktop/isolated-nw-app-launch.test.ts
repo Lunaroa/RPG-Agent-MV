@@ -61,8 +61,12 @@ test('configures one strict active package for root-data and root-www isolated N
       const inactiveSource = JSON.stringify({ name: 'inactive-resource-package', main: 'index.html' })
       if (inactivePackage !== path.join(fixture.project, 'package.json')) fs.writeFileSync(inactivePackage, inactiveSource, 'utf8')
       const sessionId = `session-${layout}`
-      const plan = planIsolatedNwApp(fixture.project, sessionId, 'ui-preview', fixture.resourceRoot)
-      const result = writeIsolatedNwAppPackage(plan, `(function(){ window.__receipt = ${JSON.stringify(sessionId)}; }());`)
+      const originalIndex = fs.readFileSync(path.join(fixture.resourceRoot, 'index.html'), 'utf8')
+      const plan = planIsolatedNwApp(fixture.project, sessionId, 'map-preview', fixture.resourceRoot)
+      const result = writeIsolatedNwAppPackage(
+        plan,
+        `(function(){ window.__receipt = ${JSON.stringify(sessionId)}; }());`,
+      )
       const manifest = JSON.parse(fs.readFileSync(path.join(fixture.project, 'package.json'), 'utf8')) as Record<string, any>
       assert.equal(manifest.main, fixture.main)
       assert.equal(manifest.description, 'Preserved neutral fixture')
@@ -72,17 +76,20 @@ test('configures one strict active package for root-data and root-www isolated N
       assert.equal(manifest.inject_js_start, 'project-startup.js')
       assert.equal(manifest.window.inject_js_start, 'project-window-startup.js')
       assert.equal(manifest['single-instance'], false)
-      assert.match(String(manifest.name), /^rpg-agent-ui-preview-[a-f0-9]{20}$/)
+      assert.match(String(manifest.name), /^rpg-agent-map-preview-[a-f0-9]{20}$/)
       assert.ok(String(manifest.name).length <= 63)
       names.add(String(manifest.name))
       assert.equal(fs.readFileSync(result.entryPath, 'utf8').includes(sessionId), true)
+      assert.equal(result.evidence.schemaVersion, '1.1.0')
       assert.equal(result.evidence.activePackageMain, fixture.main)
       assert.equal(result.evidence.uniqueNameValid, true)
       assert.equal(result.evidence.entryRelativePath, result.entryRelativePath)
+      assert.equal(result.evidence.indexRelativePath, fixture.main)
       assert.equal(Object.values(result.evidence.digests).every((value) => /^[a-f0-9]{64}$/.test(value)), true)
       assert.equal(result.evidence.digests.package, sha256(fs.readFileSync(result.packagePath, 'utf8')))
-      assert.equal(result.evidence.digests.index, sha256(fs.readFileSync(path.join(fixture.resourceRoot, 'index.html'), 'utf8')))
+      assert.equal(result.evidence.digests.index, sha256(originalIndex))
       assert.equal(result.evidence.digests.entry, sha256(fs.readFileSync(result.entryPath, 'utf8')))
+      assert.equal(fs.readFileSync(path.join(fixture.resourceRoot, 'index.html'), 'utf8'), originalIndex)
       assert.equal(path.relative(fixture.resourceRoot, result.entryPath).startsWith('..'), false)
       if (inactivePackage !== path.join(fixture.project, 'package.json')) {
         assert.equal(fs.readFileSync(inactivePackage, 'utf8'), inactiveSource)
@@ -93,11 +100,16 @@ test('configures one strict active package for root-data and root-www isolated N
     const generatedReference = createProject(root, 'data', 'generated-reference')
     const generatedPackagePath = path.join(generatedReference.project, 'package.json')
     const generatedPackage = JSON.parse(fs.readFileSync(generatedPackagePath, 'utf8')) as Record<string, any>
-    const generatedEntry = 'js/plugins/MZUIDesignerPreviewEntry.js'
+    const generatedEntry = path.posix.join('js', isolatedNwEntryScriptName('map-preview', 'generated-reference-session'))
     generatedPackage.inject_js_start = generatedEntry
     generatedPackage.window.inject_js_start = generatedEntry
     fs.writeFileSync(generatedPackagePath, JSON.stringify(generatedPackage), 'utf8')
-    const generatedPlan = planIsolatedNwApp(generatedReference.project, 'generated-reference-session', 'ui-preview', generatedReference.resourceRoot)
+    const generatedPlan = planIsolatedNwApp(
+      generatedReference.project,
+      'generated-reference-session',
+      'map-preview',
+      generatedReference.resourceRoot,
+    )
     writeIsolatedNwAppPackage(generatedPlan, '(function () {})();')
     const cleanedPackage = JSON.parse(fs.readFileSync(generatedPackagePath, 'utf8')) as Record<string, any>
     assert.equal(Object.hasOwn(cleanedPackage, 'inject_js_start'), false)
@@ -261,6 +273,7 @@ test('rejects symlinked package, index, and entry targets before any isolated ap
     assert.equal(fs.readFileSync(path.join(externalInject, 'sentinel.txt'), 'utf8'), 'external-sentinel')
     assert.equal(fs.readFileSync(path.join(injectLinked.project, 'package.json'), 'utf8'), injectPackage)
     assert.equal(fs.readFileSync(path.join(injectLinked.resourceRoot, 'index.html'), 'utf8'), injectIndex)
+
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

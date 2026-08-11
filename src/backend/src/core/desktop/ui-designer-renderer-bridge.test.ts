@@ -18,6 +18,7 @@ const baseMessage = () => ({
 })
 
 test('accepts bounded renderer bridge messages for the active session', () => {
+  assert.equal(UI_DESIGNER_RENDERER_BRIDGE_VERSION, '2.0.0')
   const message = {
     ...baseMessage(),
     kind: 'bounds',
@@ -27,13 +28,41 @@ test('accepts bounded renderer bridge messages for the active session', () => {
     },
   }
   const validated = validateUiDesignerRendererBridgeMessage(message, {
-    sessionId: 'session_01', generation: 3, minimumSequence: 8, sceneId: 'Scene_Sample',
+    sessionId: 'session_01', generation: 3, minimumSequence: 8, minimumRevision: 2, sceneId: 'Scene_Sample',
   })
   assert.equal(validated.kind, 'bounds')
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...message, payload: { ...message.payload, revision: 1 } }, {
+      sessionId: 'session_01', generation: 3, minimumSequence: 8, minimumRevision: 2,
+    }),
+    /revision is stale/,
+  )
   const exitRequest = validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'exit-request', payload: { key: 'F6' } }, {
     sessionId: 'session_01', generation: 3, minimumSequence: 8, sceneId: 'Scene_Sample',
   })
   assert.equal(exitRequest.kind, 'exit-request')
+  const receipt = validateUiDesignerRendererBridgeMessage({
+    ...baseMessage(), kind: 'receipt', payload: { stage: 'iframe-load', status: 'success', message: null },
+  }, { sessionId: 'session_01', generation: 3, minimumSequence: 8 })
+  assert.equal(receipt.kind, 'receipt')
+  const fatal = validateUiDesignerRendererBridgeMessage({
+    ...baseMessage(), kind: 'fatal', payload: { stage: 'mount', code: 'UI_RENDERER_MOUNT_FAILED', message: 'The isolated renderer could not mount the scene.', revision: 2 },
+  }, { sessionId: 'session_01', generation: 3, minimumSequence: 8, minimumRevision: 2 })
+  assert.equal(fatal.kind, 'fatal')
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'fatal', payload: { stage: 'pre-hello', code: 'BAD', message: 'invalid stage', revision: 0 } }),
+    /receipt stage is unsupported/,
+  )
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'fatal', payload: { stage: 'ready', code: 'UI_RENDERER_READY_SIGNAL', message: 'stale', revision: 1 } }, {
+      sessionId: 'session_01', generation: 3, minimumSequence: 8, minimumRevision: 2,
+    }),
+    /revision is stale/,
+  )
+  assert.throws(
+    () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'fatal', payload: { stage: 'ready', code: 'project/path', message: 'invalid code', revision: 0 } }),
+    /fatal code is invalid/,
+  )
   assert.throws(
     () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'exit-request', payload: { key: 'F5' } }),
     /exit request key is unsupported/,

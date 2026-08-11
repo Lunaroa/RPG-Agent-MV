@@ -111,16 +111,24 @@
           return values[id];
         };
         var writeSwitch = function writeSwitch(id, value) {
+          if (global.$gameSwitches && typeof global.$gameSwitches.setValue === 'function') {
+            var current = typeof global.$gameSwitches.value === 'function' ? Boolean(global.$gameSwitches.value(id)) : Boolean(global.$gameSwitches._data && global.$gameSwitches._data[id]);
+            var gameNext = value === 'toggle' ? !current : value === 'on' ? true : value === 'off' ? false : Boolean(value);
+            global.$gameSwitches.setValue(id, gameNext);
+            return gameNext;
+          }
           var values = context.switches || (context.switches = {});
           var next = value === 'toggle' ? !Boolean(values[id]) : value === 'on' ? true : value === 'off' ? false : Boolean(value);
           values[id] = next;
-          if (global.$gameSwitches && typeof global.$gameSwitches.setValue === 'function') global.$gameSwitches.setValue(id, next);
           return next;
         };
         var writeVariable = function writeVariable(id, value) {
+          if (global.$gameVariables && typeof global.$gameVariables.setValue === 'function') {
+            global.$gameVariables.setValue(id, value);
+            return value;
+          }
           var values = context.variables || (context.variables = {});
           values[id] = value;
-          if (global.$gameVariables && typeof global.$gameVariables.setValue === 'function') global.$gameVariables.setValue(id, value);
           return value;
         };
         return [runtime, context, node || null, props || (node && node.props) || {}, event || null, selfView, sceneApi, readSwitch, readVariable, writeSwitch, writeVariable];
@@ -132,7 +140,9 @@
         this.executionMode = executionMode;
         this.scene = scene;
         this.sceneName = scene && scene.meta ? scene.meta.sceneName : null;
-        this.context = options && options.context ? options.context : {};
+        var sceneApi = options && options.sceneApi ? options.sceneApi : null;
+        var providedContext = typeof api.contextProvider === 'function' ? api.contextProvider(sceneApi) : null;
+        this.context = mergeRuntimeContext(providedContext, options && options.context ? options.context : {});
         if (options && options.sceneApi && !this.context.sceneApi) this.context.sceneApi = options.sceneApi;
         this.deltaMs = finite(options && options.deltaMs, frameDeltaMs());
         this.hostRoot = options && options.root ? options.root : null;
@@ -907,6 +917,16 @@
     try { return new global.Window_Base(rect.x, rect.y, rect.width, rect.height); } catch (_) { return null; }
   }
 
+  // MV and MZ expose the same Window_Base.drawText signature:
+  // (text, x, y, maxWidth, align).  The line height belongs to the
+  // underlying Bitmap.drawText call made by the engine; passing a designer
+  // height here shifts it into CanvasRenderingContext2D.textAlign.
+  function drawWindowText(view, text, x, y, maxWidth, align) {
+    if (!view || typeof view.drawText !== 'function') return false;
+    view.drawText(text, x, y, maxWidth, align);
+    return true;
+  }
+
   function RectangleLike(x, y, width, height) {
     this.x = finite(x, 0); this.y = finite(y, 0); this.width = finite(width, 0); this.height = finite(height, 0);
   }
@@ -1267,6 +1287,19 @@
     }
   }
 
+  function mergeRuntimeContext(provided, explicit) {
+    var result = {};
+    var providedContext = object(provided) ? provided : {};
+    var explicitContext = object(explicit) ? explicit : {};
+    Object.keys(providedContext).forEach(function (key) { if (key !== 'actions') result[key] = providedContext[key]; });
+    Object.keys(explicitContext).forEach(function (key) { if (key !== 'actions') result[key] = explicitContext[key]; });
+    var actions = {};
+    if (object(explicitContext.actions)) Object.keys(explicitContext.actions).forEach(function (key) { actions[key] = explicitContext.actions[key]; });
+    if (object(providedContext.actions)) Object.keys(providedContext.actions).forEach(function (key) { actions[key] = providedContext.actions[key]; });
+    if (Object.keys(actions).length) result.actions = actions;
+    return result;
+  }
+
   function createParticleGlowFilter() {
     var fragment = [
       'varying vec2 vTextureCoord;',
@@ -1368,7 +1401,7 @@
     }
     if (node.type === 'button') {
       if ('contents' in view && view.contents && typeof view.contents.clear === 'function') view.contents.clear();
-      if (typeof view.drawText === 'function') view.drawText(String(props.content || ''), 0, 0, finite(props.width, 0), finite(props.height, 0), props.align || 'left');
+      drawWindowText(view, String(props.content || ''), 0, 0, finite(props.width, 0), props.align || 'left');
       if ('openness' in view) view.openness = 255;
       applyButtonVisual(view, props);
     }
@@ -1986,6 +2019,7 @@
     resolveEngineRoot: resolveEngineRoot,
     errors: [],
     onError: null,
+    contextProvider: null,
     parseTextRuns: function parseTextRunsApi(value, context) { return parseTextRuns(value, context || {}); },
     sceneDirectory: SCENE_DIRECTORY_DEFAULT,
     scanScenes: function scanScenes(relativeDirectory) {
@@ -2010,7 +2044,14 @@
     },
     configure: function configure(options) {
       if (options && options.sceneDirectory) this.sceneDirectory = String(options.sceneDirectory);
-      if (options && typeof options.onError === 'function') this.onError = options.onError;
+      if (options && Object.prototype.hasOwnProperty.call(options, 'onError')) {
+        if (options.onError !== null && typeof options.onError !== 'function') throw new TypeError('UI Runtime onError must be a function or null.');
+        this.onError = options.onError;
+      }
+      if (options && Object.prototype.hasOwnProperty.call(options, 'contextProvider')) {
+        if (options.contextProvider !== null && typeof options.contextProvider !== 'function') throw new TypeError('UI Runtime contextProvider must be a function or null.');
+        this.contextProvider = options.contextProvider;
+      }
       return this;
     },
   };

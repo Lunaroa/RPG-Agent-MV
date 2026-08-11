@@ -36,6 +36,36 @@ const __dirname = path.dirname(__filename);
 const backgroundUiControlMode = isBackgroundUiControlMode();
 const preReadyUserDataRoot = backgroundUiControlMode ? resolveUserDataRoot(__dirname) : '';
 
+function installUiDesignerRendererLoadDiagnostics(webContents: BrowserWindow['webContents']): void {
+  const isRendererUrl = (value: string) => value.startsWith(`${MAP_PREVIEW_SCHEME.scheme}://`);
+  const report = (stage: string, details: Record<string, unknown> = {}) => {
+    console.warn(`[ui-control][ui-designer-load] ${JSON.stringify({ stage, ...details })}`);
+  };
+  const reportConsole = (_event: unknown, level: number, message: string, line: number, sourceId: string) => {
+    if (isRendererUrl(sourceId) || /MZUI|renderer bridge|rpg-agent-preview/i.test(message)) {
+      report('console-message', { level, message: String(message).slice(0, 1024), line, source: String(sourceId).slice(0, 512) });
+    }
+  };
+  const reportFail = (_event: unknown, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean, frameProcessId: number, frameRoutingId: number) => {
+    if (!isRendererUrl(validatedURL)) return;
+    report('did-fail-load', { errorCode, errorDescription, url: validatedURL, isMainFrame, frameProcessId, frameRoutingId });
+  };
+  webContents.on('console-message', reportConsole);
+  webContents.on('did-frame-navigate', (_event, url, httpResponseCode, httpStatusText, isMainFrame, frameProcessId, frameRoutingId) => {
+    if (isRendererUrl(url)) report('did-frame-navigate', { url, httpResponseCode, httpStatusText, isMainFrame, frameProcessId, frameRoutingId });
+  });
+  webContents.on('did-fail-load', reportFail);
+  webContents.on('did-fail-provisional-load', reportFail);
+  webContents.on('did-frame-finish-load', (_event, isMainFrame, frameProcessId, frameRoutingId) => {
+    try {
+      const frame = webContents.mainFrame.framesInSubtree.find((candidate) => candidate.processId === frameProcessId && candidate.routingId === frameRoutingId);
+      if (frame && isRendererUrl(frame.url)) report('did-frame-finish-load', { url: frame.url, isMainFrame, frameProcessId, frameRoutingId });
+    } catch {
+      // The frame may disappear while a renderer session is being disposed.
+    }
+  });
+}
+
 if (backgroundUiControlMode) {
   const profilePath = uiControlProfilePath(preReadyUserDataRoot);
   fs.mkdirSync(profilePath, { recursive: true });
@@ -99,6 +129,8 @@ async function createWindow() {
       backgroundThrottling: windowPolicy.backgroundThrottling,
     },
   });
+
+  if (backgroundUiControlMode) installUiDesignerRendererLoadDiagnostics(mainWindow.webContents);
 
   if (!backgroundUiControlMode) {
     registerDesktopDevToolsShortcuts(mainWindow.webContents);

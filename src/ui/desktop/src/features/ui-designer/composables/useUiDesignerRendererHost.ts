@@ -200,6 +200,7 @@ export function reduceUiDesignerRendererHostRuntimeMessage(
   if (message.kind === 'mounted' || message.kind === 'bounds') {
     if (message.payload.revision < expectedRevision) return state
     if (message.kind === 'mounted') {
+      if (message.payload.executionMode !== requestedExecutionMode) return state
       return {
         ...state,
         bounds: Object.fromEntries(message.payload.bounds.map((entry) => [entry.nodeId, entry])),
@@ -269,6 +270,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   let failurePromise: Promise<void> | null = null
   let draftFrame: { cancel: () => void } | null = null
   let draftEpoch = 0
+  let previousDesignerSceneId: string | null = null
   const terminalGate = createUiDesignerRendererTerminalGate()
   const failureLatch = createUiDesignerRendererFailureLatch()
 
@@ -299,6 +301,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     } catch { return 'Scene_CanvasHost' }
   }
 
+  const designerSceneId = () => {
+    try { return String(readDesignerValue(options.designer.activeSceneId)) }
+    catch { return '' }
+  }
+
   const post = (kind: UiDesignerRendererBridgeMessage['kind'], payload: Record<string, unknown>, sceneId = activeSceneId()) => {
     if (!session) return false
     if (!options.iframe.value?.contentWindow) throw new Error('The isolated UI canvas frame is unavailable for an active renderer session.')
@@ -326,10 +333,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       return
     }
     let requestedExecutionMode: UiDesignerRendererExecutionMode
+    let executionModeChanged = false
     let update: ReturnType<typeof planUiDesignerRendererUpdate>
     try {
       requestedExecutionMode = options.executionMode()
-      const executionModeChanged = previousExecutionMode !== requestedExecutionMode
+      executionModeChanged = previousExecutionMode !== requestedExecutionMode
       update = forceMount || executionModeChanged
         ? { kind: 'mount', revision: revision + 1, scene: next }
         : planUiDesignerRendererUpdate(previousScene, next, revision + 1)
@@ -345,6 +353,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     if (update.kind === 'patch' && !executionModeReady.value) return
     revision = update.revision
     if (update.kind === 'mount') {
+      if (executionModeChanged) status.value = 'loading'
       executionModeReady.value = false
       setStage('mount', 'begin')
       try {
@@ -386,6 +395,14 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     }
   }
 
+  const refreshCanvas = () => {
+    if (options.executionMode() !== 'authoring') return false
+    if (pendingMountRevision !== null) return false
+    const beforeRevision = revision
+    syncScene(true)
+    return revision > beforeRevision || pendingMountRevision !== null
+  }
+
   const cancelDraftSync = () => {
     draftEpoch += 1
     draftFrame?.cancel()
@@ -393,6 +410,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   }
 
   const syncDraftGeometry = () => {
+    if (options.executionMode() !== 'full-preview') return
     if (!session || (status.value !== 'running' && status.value !== 'loading') || !engineReady || !processConfirmed || !iframeLoaded || !executionModeReady.value || pendingMountRevision !== null) return
     const nodes = buildUiDesignerRendererDraftPatches(readDesignerValue(options.designer.document), {
       positions: readDesignerValue(options.designer.draftPositions),
@@ -409,6 +427,10 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   }
 
   const queueDraftSync = () => {
+    if (options.executionMode() !== 'full-preview') {
+      cancelDraftSync()
+      return
+    }
     if (draftFrame) return
     const epoch = draftEpoch
     const run = () => {
@@ -426,6 +448,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   }
 
   const syncSelection = () => {
+    if (options.executionMode() !== 'full-preview') return
     if (!session || (status.value !== 'running' && status.value !== 'loading') || !engineReady || !processConfirmed || !iframeLoaded || !executionModeReady.value) return
     try {
       if (!post('select', { nodeIds: [...options.designer.selectedIds] })) throw new Error('selection post rejected')
@@ -487,6 +510,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     options.designer.runtimeDiagnostics = []
     previousScene = null
     previousExecutionMode = null
+    previousDesignerSceneId = null
     pendingMountRevision = null
     iframeLoaded = false
     executionMode.value = 'authoring'
@@ -687,6 +711,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         options.designer.runtimeDiagnostics = []
         previousScene = null
         previousExecutionMode = null
+        previousDesignerSceneId = null
         pendingMountRevision = null
         iframeLoaded = false
         executionMode.value = 'authoring'
@@ -773,6 +798,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       pendingMountRevision = null
       previousScene = null
       previousExecutionMode = null
+      previousDesignerSceneId = designerSceneId()
       iframeLoaded = false
       executionMode.value = 'authoring'
       executionModeReady.value = false
@@ -920,16 +946,29 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         requestedScene.value = next.requestedScene
         actualScene.value = next.actualScene
         if (message.kind === 'diagnostic') options.designer.runtimeDiagnostics = [...diagnostics.value]
-        if (message.kind === 'mounted' && message.payload.revision >= revision && executionModeReady.value) {
-          cancelMountedWatchdog()
-          cancelMountedWatchdog = () => undefined
-          pendingMountRevision = null
-          status.value = 'running'
-          setStage('mounted', 'success')
-          options.onExecutionModeReady?.(message.payload.executionMode)
-          cancelDraftSync()
-          syncScene(false)
-          syncSelection()
+        if (message.kind === 'mounted' && message.payload.revision >= revision) {
+          const mountedModeMatches = message.payload.executionMode === options.executionMode() && executionModeReady.value
+          if (!mountedModeMatches) {
+            // A same-revision receipt from the previous mode must not settle the
+            // current transition. Drop the stale pending revision and issue a
+            // fresh mount for the mode the editor is currently requesting.
+            cancelMountedWatchdog()
+            cancelMountedWatchdog = () => undefined
+            pendingMountRevision = null
+            status.value = 'loading'
+            executionModeReady.value = false
+            syncScene(true)
+          } else {
+            cancelMountedWatchdog()
+            cancelMountedWatchdog = () => undefined
+            pendingMountRevision = null
+            status.value = 'running'
+            setStage('mounted', 'success')
+            options.onExecutionModeReady?.(message.payload.executionMode)
+            cancelDraftSync()
+            if (options.executionMode() === 'full-preview' || previousExecutionMode !== options.executionMode() || previousScene?.meta.sceneName !== activeSceneId()) syncScene(false)
+            syncSelection()
+          }
         }
         if (message.kind === 'scene-state') setStage('scene-state', message.payload.phase === 'active' ? 'success' : 'begin')
       } else if (message.kind === 'exit-request') {
@@ -979,8 +1018,13 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     { flush: 'post' },
   )
   const sceneStop = watch(
-    () => readDesignerValue(options.designer.document),
-    () => { cancelDraftSync(); syncScene(false) },
+    () => [designerSceneId(), readDesignerValue(options.designer.document)] as const,
+    ([nextSceneId]) => {
+      cancelDraftSync()
+      const sceneChanged = previousDesignerSceneId !== null && nextSceneId !== previousDesignerSceneId
+      previousDesignerSceneId = nextSceneId
+      if (sceneChanged) syncScene(true)
+    },
     { flush: 'post' },
   )
   const draftStop = watch(
@@ -1018,5 +1062,5 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       })
   })
 
-  return { status, error, failureCode, failureRecoveryReason, iframeUrl, bounds, diagnostics, executionMode, executionModeReady, stage, stageStatus, scenePhase, requestedScene, actualScene, onIframeLoad, onIframeError, retry, dispose }
+  return { status, error, failureCode, failureRecoveryReason, iframeUrl, bounds, diagnostics, executionMode, executionModeReady, stage, stageStatus, scenePhase, requestedScene, actualScene, onIframeLoad, onIframeError, retry, refreshCanvas, dispose }
 }

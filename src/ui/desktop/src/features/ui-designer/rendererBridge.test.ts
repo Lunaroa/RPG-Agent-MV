@@ -216,6 +216,28 @@ test('renderer host keeps full-preview ready across later bounds and diagnostic 
   assert.equal(state.actualScene, 'Scene_Options')
 })
 
+test('renderer host ignores a same-revision mounted receipt from a stale execution mode', () => {
+  const sessionId = 'renderer-session'
+  const generation = 4
+  const currentBounds = [{ nodeId: 'node_1', x: 10, y: 20, width: 100, height: 40, rotation: 0, visible: true, interactive: true }]
+  const staleBounds = [{ ...currentBounds[0], x: 999 }]
+  const state: UiDesignerRendererHostRuntimeState = {
+    bounds: Object.fromEntries(currentBounds.map((entry) => [entry.nodeId, entry])), diagnostics: [], executionMode: 'full-preview', executionModeReady: false,
+    scenePhase: 'active', requestedScene: null, actualScene: null,
+  }
+  const message = validateUiDesignerRendererBridgeMessage({
+    version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
+    sessionId,
+    generation,
+    sequence: 0,
+    sceneId: 'Scene_RendererBridge',
+    kind: 'mounted',
+    payload: { revision: 7, executionMode: 'authoring', bounds: staleBounds },
+  }, { sessionId, generation, minimumSequence: 0 })
+  const next = reduceUiDesignerRendererHostRuntimeMessage(state, message, 7, 'full-preview')
+  assert.deepEqual(next, state)
+})
+
 test('renderer lifecycle receipts expose bounded stage failures without carrying session details', () => {
   assert.equal(UI_DESIGNER_RENDERER_BRIDGE_VERSION, '2.0.0')
   const common = { version: UI_DESIGNER_RENDERER_BRIDGE_VERSION, sessionId: 'renderer-session', generation: 4, sceneId: 'Scene_RendererBridge' }

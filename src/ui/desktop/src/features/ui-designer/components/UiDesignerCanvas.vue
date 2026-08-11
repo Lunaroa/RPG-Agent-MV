@@ -432,6 +432,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
     <div v-if="!previewing" class="canvas-toolbar">
       <span class="canvas-title">{{ document.meta.sceneName }}</span>
       <span class="canvas-zoom">{{ Math.round(viewport.zoom * 100) }}%</span>
+      <el-button data-ui-id="ui-designer-canvas-refresh" size="small" text :disabled="previewing || !rendererReady" @click="rendererHost.refreshCanvas()">{{ t('refreshCanvas') }}</el-button>
       <el-button size="small" text :disabled="previewing" @click="designer.setZoom(1)">{{ t('resetZoom') }}</el-button>
       <el-button size="small" text :disabled="previewing" @click="designer.fitCanvas()">{{ t('fitCanvas') }}</el-button>
       <el-checkbox :model-value="gridEnabled" :disabled="previewing" size="small" @update:model-value="designer.setGridEnabled($event)">{{ t('grid') }}</el-checkbox>
@@ -504,7 +505,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
             :interaction-disabled="node.id === 'node_root' || node.id === editingRootId"
             :origin-x="0"
             :origin-y="0"
-            :renderer-bounds="rendererBounds"
+            :renderer-bounds="previewing ? rendererBounds : {}"
             :draft-positions="draftPositions"
             :draft-rects="draftRects"
             :draft-rotations="draftRotations"

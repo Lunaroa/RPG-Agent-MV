@@ -15,7 +15,7 @@ const routedView = fs.readFileSync(new URL('../../../views/UiDesignerView.vue', 
 test('UI designer canvas consumes the isolated runtime host and keeps stable overlay targets', () => {
   assert.match(canvas, /useUiDesignerRendererHost/)
   assert.match(canvas, /data-ui-id="ui-designer-runtime-canvas-frame"/)
-  assert.match(canvas, /:renderer-bounds="rendererBounds"/)
+  assert.match(canvas, /:renderer-bounds="previewing \? rendererBounds : \{\}"/)
   assert.match(canvas, /preview-interactive/)
   assert.match(canvas, /@error="rendererHost\.onIframeError"/)
   assert.match(canvas, /rendererFailureCode/)
@@ -36,6 +36,39 @@ test('editor preview leaves only the canonical iframe and a minimal exit control
   assert.match(canvas, /v-if="!previewing && document\.canvas\.rulers"/)
   assert.match(canvas, /pointer-events: none/)
   assert.match(canvas, /touch-action: none/)
+})
+
+test('design edits stay local until refresh while preview mounts the latest scene', () => {
+  assert.match(canvas, /data-ui-id="ui-designer-canvas-refresh"/)
+  assert.match(canvas, /rendererHost\.refreshCanvas\(\)/)
+  assert.match(hostLifecycle, /const refreshCanvas = \(\) => \{[\s\S]*syncScene\(true\)/)
+  const refresh = hostLifecycle.slice(hostLifecycle.indexOf('const refreshCanvas ='), hostLifecycle.indexOf('const cancelDraftSync ='))
+  assert.doesNotMatch(refresh, /start\(/)
+  assert.doesNotMatch(refresh, /status\.value = 'preparing'/)
+  assert.match(hostLifecycle, /if \(options\.executionMode\(\) !== 'full-preview'\) return/)
+  const sceneWatcher = hostLifecycle.slice(hostLifecycle.indexOf('const sceneStop = watch('), hostLifecycle.indexOf('const draftStop = watch('))
+  assert.doesNotMatch(sceneWatcher, /syncScene\(false\)/)
+  assert.match(sceneWatcher, /if \(sceneChanged\) syncScene\(true\)/)
+  const draftSync = hostLifecycle.slice(hostLifecycle.indexOf('const syncDraftGeometry ='), hostLifecycle.indexOf('const syncSelection ='))
+  assert.match(draftSync, /options\.executionMode\(\) !== 'full-preview'/)
+  const selectionSync = hostLifecycle.slice(hostLifecycle.indexOf('const syncSelection ='), hostLifecycle.indexOf('const stopBackend ='))
+  assert.match(selectionSync, /options\.executionMode\(\) !== 'full-preview'/)
+  const modeWatcher = hostLifecycle.slice(hostLifecycle.indexOf('const executionModeStop = watch('), hostLifecycle.indexOf('onMounted(() =>'))
+  assert.match(modeWatcher, /syncScene\(true\)/)
+  const previewStart = designerController.slice(designerController.indexOf('const startPreview ='), designerController.indexOf('const stopPreview ='))
+  assert.ok(previewStart.indexOf('flushDrafts') < previewStart.indexOf("previewExecutionMode.value = 'full-preview'"))
+  assert.match(hostLifecycle, /previousExecutionMode !== options\.executionMode\(\) \|\| previousScene\?\.meta\.sceneName !== activeSceneId\(\)/)
+})
+
+test('renderer host does not settle a mounted receipt from the wrong execution mode', () => {
+  const messageHandlerStart = hostLifecycle.indexOf('const onMessage =')
+  const mountedHandler = hostLifecycle.slice(hostLifecycle.indexOf("if (message.kind === 'mounted'", messageHandlerStart), hostLifecycle.indexOf("if (message.kind === 'scene-state'", messageHandlerStart))
+  assert.match(mountedHandler, /message\.payload\.executionMode === options\.executionMode\(\) && executionModeReady\.value/)
+  assert.match(mountedHandler, /if \(!mountedModeMatches\)/)
+  assert.match(mountedHandler, /pendingMountRevision = null/)
+  assert.match(mountedHandler, /status\.value = 'loading'/)
+  assert.match(mountedHandler, /syncScene\(true\)/)
+  assert.match(mountedHandler, /options\.onExecutionModeReady\?\.\(message\.payload\.executionMode\)/)
 })
 
 test('UI canvas node contains hit overlays only and no DOM content renderer', () => {

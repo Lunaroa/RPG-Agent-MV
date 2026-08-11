@@ -149,4 +149,39 @@ describe('commandDisplay renders RM-native summaries (no raw param dump)', () =>
     assert.equal(commandDisplay(cmd(211, [0]), null, 'zh-CN').label, '◆更改透明状态：开');
     assert.equal(commandDisplay(cmd(126, [1, 0, 0, 1]), null, 'zh-CN').label, '◆增减物品：#1，增加 1');
   });
+
+  test('MV and MZ standard command codes all use a semantic display path', () => {
+    const standardCodes = [
+      0, 101, 102, 103, 104, 105, 108, 109, 111, 112, 113, 115, 117, 118, 119,
+      121, 122, 123, 124, 125, 126, 127, 128, 129, 132, 133, 134, 135, 136, 137,
+      138, 139, 140, 201, 202, 203, 204, 205, 206, 211, 212, 213, 214, 216, 217,
+      221, 222, 223, 224, 225, 230, 231, 232, 233, 234, 235, 236, 241, 242, 243,
+      244, 245, 246, 249, 250, 251, 261, 281, 282, 283, 284, 285, 301, 302, 303,
+      311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325,
+      326, 331, 332, 333, 334, 335, 336, 337, 339, 340, 342, 351, 352, 353, 354,
+      355, 356, 357, 401, 402, 403, 404, 405, 408, 411, 412, 413, 505, 601, 602,
+      603, 604, 605, 655, 657,
+    ];
+    for (const code of standardCodes) {
+      const label = commandDisplay(cmd(code, [])).label;
+      assert.doesNotMatch(label, /Raw command \d+/u, `standard code ${code} fell through Raw fallback`);
+      assert.doesNotMatch(label, /JSON\.stringify|\[object Object\]/u, `standard code ${code} leaked raw object text`);
+    }
+  });
+
+  test('composite parameters and continuations stay readable and lossless', () => {
+    assert.match(commandDisplay(cmd(223, [[-68, -68, -68, 0], 60, true])).label, /R-68.*G-68.*B-68/u);
+    assert.match(commandDisplay(cmd(224, [[255, 255, 255, 170], 30, true])).label, /R255.*G255.*B255.*A170/u);
+    assert.match(commandDisplay(cmd(205, [-1, { list: [{ code: 14, parameters: [1, -1] }, { code: 44, parameters: [{ name: 'Step', volume: 80, pitch: 110, pan: 0 }] }, { code: 0, parameters: [] }], repeat: true, skippable: false, wait: true }])).label, /Jump.*Play SE.*repeat.*wait/u);
+    assert.match(commandDisplay(cmd(505, [{ code: 14, parameters: [2, 3] }])).label, /Jump.*\(2,3\)/u);
+    assert.match(commandDisplay(cmd(605, [1, 7, 1, 250, false])).label, /Shop Goods Line.*Weapons.*#7.*250/u);
+    assert.match(commandDisplay(cmd(357, ['Plugin', 'Command', 'Display', { amount: '3', enabled: true }])).label, /Plugin:Command.*Display.*amount=3.*enabled=true/u);
+    assert.equal(commandDisplay(cmd(657, ['amount=3'])).label, ':amount=3');
+  });
+
+  test('unknown commands remain explicitly raw without changing standard output', () => {
+    const label = commandDisplay(cmd(998, [{ untouched: true }])).label;
+    assert.match(label, /Raw command 998/u);
+    assert.match(label, /untouched/u);
+  });
 });

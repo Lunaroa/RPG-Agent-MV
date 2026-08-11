@@ -3,7 +3,7 @@
 // command-templates.js, and event-state.js. Keep this module non-reactive.
 import type { ProductLanguage } from '@contract/types';
 import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage, pickByLocale } from '../i18n/messages.ts'
-import { commandLabel as catalogCommandLabel } from './eventCommandCatalog.ts';
+import { commandLabel as catalogCommandLabel, STANDARD_COMMAND_CODES } from './eventCommandCatalog.ts';
 import { translate } from '../i18n/messages.ts'
 import { localizeCommandCodeLabel } from '../utils/eventCommandLocalization.ts';
 import {
@@ -674,7 +674,7 @@ function conditionBranchDisplay(system: SystemData | null, params: unknown[], la
     return `${namedSystemEntry(system, 'variables', params[1], language)} ${op} ${params[2] === 1 ? namedSystemEntry(system, 'variables', params[3], language) : params[3]}`;
   }
   if (type === 2) return `${translate('eventEditor.helper.selfSwitch', language)} ${params[1]} ${translate('eventEditor.helper.is', language)} ${params[2] === 1 ? 'OFF' : 'ON'}`;
-  return translate('eventEditor.helper.conditionType', language, { type, detail: JSON.stringify(params) });
+  return translate('eventEditor.helper.conditionType', language, { type, detail: params.map(displayValue).join(', ') });
 }
 
 function eventTargetLabel(value: unknown, language: ProductLanguage): string {
@@ -716,6 +716,131 @@ function standardCommandLabel(code: number, language: ProductLanguage): string {
   return localizeCommandCodeLabel(code, language, catalogCommandLabel(code));
 }
 
+/**
+ * Structural rows are part of the MV/MZ command stream even though they are
+ * intentionally not selectable in the command palette.  Keep their labels in
+ * the same display path so a structural row never falls through to the generic
+ * JSON renderer.
+ */
+const STRUCTURAL_COMMAND_LABELS: Readonly<Record<number, readonly [string, string]>> = {
+  0: ['End of List', '列表结束'],
+  401: ['Text Line', '文本行'],
+  402: ['When Choice', '选择分支'],
+  403: ['When Cancel', '取消分支'],
+  404: ['End Choices', '选项结束'],
+  405: ['Scrolling Text Line', '滚动文本行'],
+  408: ['Comment Line', '注释行'],
+  411: ['Else', '否则'],
+  412: ['End Branch', '分支结束'],
+  413: ['Repeat Above', '重复以上'],
+  505: ['Movement Route Step', '移动路线步骤'],
+  601: ['If Win', '胜利时'],
+  602: ['If Escape', '逃跑时'],
+  603: ['If Lose', '失败时'],
+  604: ['End Battle', '战斗分支结束'],
+  605: ['Shop Goods Line', '商店商品行'],
+  655: ['Script Line', '脚本行'],
+  657: ['Plugin Command Argument', '插件命令参数'],
+};
+
+const KNOWN_DISPLAY_COMMAND_CODES = new Set<number>([
+  ...STANDARD_COMMAND_CODES,
+  ...Object.keys(STRUCTURAL_COMMAND_LABELS).map(Number),
+]);
+
+function displayCommandLabel(code: number, language: ProductLanguage): string {
+  const structural = STRUCTURAL_COMMAND_LABELS[code];
+  if (structural) return language === 'zh-CN' ? structural[1] : structural[0];
+  return standardCommandLabel(code, language);
+}
+
+function displayValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return `[${value.map(displayValue).join(', ')}]`;
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => `${key}=${displayValue(item)}`)
+      .join(', ');
+  }
+  return String(value);
+}
+
+function displayCommandDetails(title: string, details: string, language: ProductLanguage): string {
+  if (!details) return title;
+  return `${title}${translate('eventEditor.colon', language)} ${details}`;
+}
+
+function toneDisplay(value: unknown, language: ProductLanguage): string {
+  const values = Array.isArray(value) ? value : [];
+  const labels = language === 'zh-CN' ? ['红', '绿', '蓝', '灰'] : ['R', 'G', 'B', 'Gray'];
+  return labels.map((label, index) => `${label}${displayValue(values[index] ?? 0)}`).join(language === 'zh-CN' ? ' ' : ' ');
+}
+
+function colorDisplay(value: unknown, language: ProductLanguage): string {
+  const values = Array.isArray(value) ? value : [];
+  const labels = language === 'zh-CN' ? ['红', '绿', '蓝', '强度'] : ['R', 'G', 'B', 'A'];
+  return labels.map((label, index) => `${label}${displayValue(values[index] ?? 0)}`).join(' ');
+}
+
+function shopGoodsDisplay(parameters: unknown[], language: ProductLanguage): string {
+  const text = eventEditorText(language);
+  const kind = labelAt(text.shopGoodsTypeLabels, parameters[0], displayValue(parameters[0] ?? 0));
+  const item = entryId(parameters[1], language);
+  const priceType = Number(parameters[2] ?? 0);
+  const price = priceType === 1
+    ? `${language === 'zh-CN' ? '指定价格' : 'Price'} ${displayValue(parameters[3] ?? 0)}`
+    : (language === 'zh-CN' ? '数据库价格' : 'Database price');
+  const purchaseOnly = parameters[4] ? (language === 'zh-CN' ? '，仅购买' : ', purchase only') : '';
+  return `${kind} ${item}, ${price}${purchaseOnly}`;
+}
+
+function pluginArgumentsDisplay(value: unknown, language: ProductLanguage): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return displayValue(value);
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!entries.length) return '';
+  return entries.map(([key, item]) => `${key}=${displayValue(item)}`).join(language === 'zh-CN' ? '，' : ', ');
+}
+
+function moveRouteStepDisplay(command: unknown, language: ProductLanguage): string {
+  if (!command || typeof command !== 'object') return translate('eventEditor.moveRoute.invalidStep', language);
+  const item = command as { code?: number; parameters?: unknown[] };
+  const code = Number(item.code ?? 0);
+  const labels = eventEditorText(language).moveRouteLabels;
+  const title = labels[code] || `${language === 'zh-CN' ? '未知路线步骤' : 'Unknown move route step'} ${code}`;
+  const parameters = Array.isArray(item.parameters) ? item.parameters : [];
+  if (code === 0 || parameters.length === 0) return title;
+  const detail = (() => {
+    if (code === 14) return `(${displayValue(parameters[0] ?? 0)},${displayValue(parameters[1] ?? 0)})`;
+    if (code === 15) return `${displayValue(parameters[0] ?? 0)} ${language === 'zh-CN' ? '帧' : 'frames'}`;
+    if (code === 27 || code === 28) return `#${displayValue(parameters[0] ?? 0)}`;
+    if (code === 29 || code === 30 || code === 42 || code === 43) return displayValue(parameters[0] ?? 0);
+    if (code === 41) return `${displayValue(parameters[0] ?? '')}(${displayValue(parameters[1] ?? 0)})`;
+    if (code === 44) return audioSummary(parameters[0], language);
+    if (code === 45) return displayValue(parameters[0] ?? '');
+    return displayValue(parameters[0]);
+  })();
+  return displayCommandDetails(title, detail, language);
+}
+
+function moveRouteSummary(value: unknown, language: ProductLanguage): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return displayValue(value);
+  const route = value as { list?: unknown[]; repeat?: unknown; skippable?: unknown; wait?: unknown };
+  const steps = Array.isArray(route.list)
+    ? route.list.filter((step) => Number((step as { code?: unknown })?.code) !== 0)
+    : [];
+  if (!steps.length) return route.wait ? (language === 'zh-CN' ? '等待' : 'Wait') : '';
+  const shown = steps.slice(0, 3).map((step) => moveRouteStepDisplay(step, language)).join(language === 'zh-CN' ? '；' : '; ');
+  const more = steps.length > 3 ? (language === 'zh-CN' ? `；…共 ${steps.length} 步` : `; … ${steps.length} steps total`) : '';
+  const flags = [
+    route.repeat ? (language === 'zh-CN' ? '重复' : 'repeat') : '',
+    route.skippable ? (language === 'zh-CN' ? '不可移动时跳过' : 'skip if blocked') : '',
+    route.wait ? (language === 'zh-CN' ? '等待' : 'wait') : '',
+  ].filter(Boolean).join(language === 'zh-CN' ? '，' : ', ');
+  return `${shown}${more}${flags ? `${language === 'zh-CN' ? '（' : ' ('}${flags}${language === 'zh-CN' ? '）' : ')'}` : ''}`;
+}
+
 /** Index-of-label lookup that tolerates out-of-range values by falling back to the raw number. */
 function labelAt(labels: readonly string[], value: unknown, fallback: string): string {
   const idx = Number(value);
@@ -734,11 +859,13 @@ function entryId(id: unknown, language: ProductLanguage): string {
 function audioSummary(value: unknown, language: ProductLanguage): string {
   if (!value || typeof value !== 'object') return translate('eventEditor.command.audioSummary', language, { name: '', vol: 0, pitch: 0 });
   const audio = value as { name?: unknown; volume?: unknown; pitch?: unknown; pan?: unknown };
-  return translate('eventEditor.command.audioSummary', language, {
+  const summary = translate('eventEditor.command.audioSummary', language, {
     name: String(audio.name ?? ''),
     vol: String(Number(audio.volume ?? 0) || 0),
     pitch: String(Number(audio.pitch ?? 0) || 0),
   });
+  const pan = Number(audio.pan ?? 0);
+  return Number.isFinite(pan) && pan !== 0 ? `${summary}${language === 'zh-CN' ? ` 声像${pan}` : ` Pan${pan}`}` : summary;
 }
 
 /** Actor target label for "Change X" actor commands: 0=fixed actor, 1=party member. Actor id 0 means all members. */
@@ -838,7 +965,11 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   const indent = clampInt(command.indent, 0, 12);
   const line = (label: string, tone = 'normal'): CommandDisplayResult => ({ label: `◆${label}`, tone, indent });
 
-  if (command.code === 101) return line(translate('eventEditor.command.text', language, { face: messageFaceLabel(p, language), bg: messageBackgroundLabel(p[2], language), pos: messagePositionLabel(p[3], language) }), 'text');
+  if (command.code === 101) {
+    const base = translate('eventEditor.command.text', language, { face: messageFaceLabel(p, language), bg: messageBackgroundLabel(p[2], language), pos: messagePositionLabel(p[3], language) });
+    const speaker = String(p[4] ?? '');
+    return line(speaker ? `${base}${language === 'zh-CN' ? '，说话人：' : ', Speaker: '}${speaker}` : base, 'text');
+  }
   if (command.code === 401) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
   if (command.code === 102) {
     // RM-native summary: Show Choices: A, B, C (Window, Right, #1, Branch).
@@ -865,6 +996,9 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 404) return { label: `:${translate('eventEditor.command.endChoices', language)}`, tone: 'control', indent };
   if (command.code === 108) return line(translate('eventEditor.command.comment', language, { text: String(p[0] || '') }), 'normal');
   if (command.code === 109) return line(translate('eventEditor.command.skip', language), 'control');
+  if ([115, 206, 214, 217, 243, 244, 251, 340, 351, 352, 353, 354].includes(command.code)) {
+    return line(displayCommandLabel(command.code, language), 'control');
+  }
   // RM branch bodies end with a placeholder code-0 row; skip-block terminators are
   // re-labelled as "End" by the list views via skipTerminatorIndices.
   if (command.code === 0) return { label: '◆', tone: 'normal', indent };
@@ -876,31 +1010,58 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
   if (command.code === 121) return line(translate('eventEditor.command.controlSwitches', language, { range: namedSystemRange(system || null, 'switches', p[0], p[1], language), val: p[2] === 1 ? 'OFF' : 'ON' }), 'control');
   if (command.code === 122) return line(translate('eventEditor.command.controlVariables', language, { range: namedSystemRange(system || null, 'variables', p[0], p[1], language) }), 'control');
   if (command.code === 123) return line(translate('eventEditor.command.controlSelfSwitch', language, { ch: String(p[0]), val: p[1] === 1 ? 'OFF' : 'ON' }), 'control');
-  if (command.code === 201) return line(translate('eventEditor.command.transferPlayer', language, { mapId: String(p[1]), x: String(p[2]), y: String(p[3]) }), 'control');
-  if (command.code === 205) return line(translate('eventEditor.command.setMovementRoute', language, { target: eventTargetLabel(p[0], language), suffix: (p[1] as MvMoveRoute | undefined)?.wait ? translate('eventEditor.command.waitSuffix', language) : '' }), 'control');
+  if (command.code === 201) {
+    const variableLocation = Number(p[0] ?? 0) === 1;
+    const map = variableLocation
+      ? `{${namedSystemEntry(system || null, 'variables', p[1], language)}}`
+      : displayValue(p[1] ?? 0);
+    const x = variableLocation ? `{${namedSystemEntry(system || null, 'variables', p[2], language)}}` : displayValue(p[2] ?? 0);
+    const y = variableLocation ? `{${namedSystemEntry(system || null, 'variables', p[3], language)}}` : displayValue(p[3] ?? 0);
+    return line(translate('eventEditor.command.transferPlayer', language, { mapId: map, x, y }), 'control');
+  }
+  if (command.code === 205) {
+    const routeSummary = moveRouteSummary(p[1], language);
+    const suffix = routeSummary ? `${language === 'zh-CN' ? '，' : ' ('}${routeSummary}${language === 'zh-CN' ? '': ')'}` : '';
+    return line(translate('eventEditor.command.setMovementRoute', language, { target: eventTargetLabel(p[0], language), suffix }), 'control');
+  }
   if (command.code === 212) return line(translate('eventEditor.command.showAnimation', language, { target: eventTargetLabel(p[0], language), id: String(p[1] || 0) }), 'control');
   if (command.code === 213) return line(translate('eventEditor.command.showBalloonIcon', language, { target: eventTargetLabel(p[0], language), icon: balloonIconLabel(p[1], language) }), 'control');
   if (command.code === 221) return line(translate('eventEditor.command.fadeoutScreen', language), 'control');
   if (command.code === 222) return line(translate('eventEditor.command.fadeinScreen', language), 'control');
-  if (command.code === 223) return line(translate('eventEditor.command.tintScreen', language, { json: JSON.stringify(p[0] || []) }), 'control');
-  if (command.code === 224) return line(translate('eventEditor.command.flashScreen', language, { json: JSON.stringify(p[0] || []) }), 'control');
-  if (command.code === 225) return line(translate('eventEditor.command.shakeScreen', language, { power: String(p[0] || 0) }), 'control');
+  if (command.code === 223) return line(translate('eventEditor.command.tintScreen', language, { json: toneDisplay(p[0], language) }), 'control');
+  if (command.code === 224) return line(translate('eventEditor.command.flashScreen', language, { json: colorDisplay(p[0], language) }), 'control');
+  if (command.code === 225) {
+    const details = `${language === 'zh-CN' ? '强度' : 'power'} ${displayValue(p[0] ?? 0)}, ${language === 'zh-CN' ? '速度' : 'speed'} ${displayValue(p[1] ?? 0)}, ${displayValue(p[2] ?? 0)} ${language === 'zh-CN' ? '帧' : 'frames'}${p[3] ? ` (${language === 'zh-CN' ? '等待' : 'wait'})` : ''}`;
+    return line(displayCommandDetails(displayCommandLabel(225, language), details, language), 'control');
+  }
   if (command.code === 230) return line(translate('eventEditor.command.wait', language, { frames: String(p[0] || 0) }), 'control');
   if (command.code === 231 || command.code === 232) return line(pictureCommandSummary(command, system || null, language), 'control');
-  if (command.code === 250) return line(translate('eventEditor.command.playSE', language, { name: (p[0] as { name?: string })?.name || '' }), 'control');
-  if (command.code === 125) return line(translate('eventEditor.command.changeGold', language, { sign: p[0] === 1 ? '-' : '+', amount: String(p[2] || 0) }), 'control');
+  if (command.code === 250) return line(translate('eventEditor.command.playSE', language, { name: audioSummary(p[0], language) }), 'control');
+  if (command.code === 125) return line(translate('eventEditor.command.changeGold', language, { sign: p[0] === 1 ? '-' : '+', amount: operandDisplay(p, 1, system || null, language) }), 'control');
   if (command.code === 314) return line(translate('eventEditor.command.recoverAll', language), 'control');
   if (command.code === 117) return line(translate('eventEditor.command.commonEvent', language, { id: String(p[0] || 0) }), 'control');
   if (command.code === 356) return line(translate('eventEditor.command.pluginCommand', language, { cmd: String(p[0] || '') }), 'control');
-  if (command.code === 357) return line(translate('eventEditor.command.pluginCommand', language, { cmd: `${String(p[0] || '')}:${String(p[2] || p[1] || '')}` }), 'control');
+  if (command.code === 357) {
+    const plugin = String(p[0] || '');
+    const commandName = String(p[1] || '');
+    const displayName = String(p[2] || '');
+    const args = pluginArgumentsDisplay(p[3], language);
+    const cmd = [plugin, commandName || displayName].filter(Boolean).join(':')
+      + (displayName && displayName !== commandName ? ` (${displayName})` : '')
+      + (args ? `${language === 'zh-CN' ? '，参数：' : ', args: '}${args}` : '');
+    return line(translate('eventEditor.command.pluginCommand', language, { cmd }), 'control');
+  }
   if (command.code === 411) return { label: `:${translate('eventEditor.command.else', language)}`, tone: 'control', indent };
   if (command.code === 412) return { label: `:${translate('eventEditor.command.branchEnd', language)}`, tone: 'control', indent };
   if (command.code === 413) return { label: `:${translate('eventEditor.command.repeatAbove', language)}`, tone: 'control', indent };
   if (command.code === 601 || command.code === 602 || command.code === 603 || command.code === 604) {
-    return { label: `:${standardCommandLabel(command.code, language)}`, tone: 'control', indent };
+    return { label: `:${displayCommandLabel(command.code, language)}`, tone: 'control', indent };
   }
   if (command.code === 505) return { label: `${translate('eventEditor.colon', language)}◇${moveRouteCommandLabel(p[0], language)}`, tone: 'control', indent: Math.min(indent + 1, 12) };
-  if (command.code === 405 || command.code === 408 || command.code === 605 || command.code === 655 || command.code === 657) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
+  if (command.code === 605) {
+    return { label: `${translate('eventEditor.colon', language)}${displayCommandDetails(displayCommandLabel(605, language), shopGoodsDisplay(p, language), language)}`, tone: 'flow', indent: Math.min(indent + 1, 12) };
+  }
+  if (command.code === 405 || command.code === 408 || command.code === 655 || command.code === 657) return { label: `${translate('eventEditor.colon', language)}${p[0] || ''}`, tone: 'text', indent: Math.min(indent + 1, 12) };
   if (command.code === 355) return line(translate('eventEditor.command.script', language, { text: String(p[0] || '') }), 'raw');
   // ── Message ──
   if (command.code === 103) return line(translate('eventEditor.command.inputNumber', language, { var: String(Number(p[0] ?? 0) || 0), digits: String(Number(p[1] ?? 0) || 0) }), 'text');
@@ -1032,7 +1193,10 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
     const locType = Number(p[2] ?? 0);
     const x = locType === 0 ? String(Number(p[3] ?? 0) || 0) : `{${namedSystemEntry(system || null, 'variables', p[3], language)}}`;
     const y = locType === 0 ? String(Number(p[4] ?? 0) || 0) : `{${namedSystemEntry(system || null, 'variables', p[4], language)}}`;
-    return line(translate('eventEditor.command.getLocationInfo', language, { var: String(Number(p[0] ?? 0) || 0), kind: labelAt(text.locationInfoTypeLabels, p[1], String(p[1] ?? 0)), x, y }), 'data');
+    const kind = Number(p[1] ?? 0) === 6
+      ? (language === 'zh-CN' ? '朝向' : 'Direction')
+      : labelAt(text.locationInfoTypeLabels, p[1], String(p[1] ?? 0));
+    return line(translate('eventEditor.command.getLocationInfo', language, { var: String(Number(p[0] ?? 0) || 0), kind, x, y }), 'data');
   }
   // ── Battle ──
   if (command.code === 331 || command.code === 332 || command.code === 342) {
@@ -1058,9 +1222,12 @@ export function commandDisplay(command: MvCommand, system?: SystemData | null, l
     const displayIndex = Number.isFinite(rawIndex) ? rawIndex + (battlerType === 0 ? 1 : 0) : 0;
     return line(translate('eventEditor.command.forceAction', language, { battler: labelAt(text.forceActionBattlerLabels, battlerType, String(p[0] ?? 0)), index: String(displayIndex), skill: String(Number(p[2] ?? 0) || 0) }), 'data');
   }
-  const standardLabel = standardCommandLabel(command.code, language);
-  if (!standardLabel.startsWith('Raw command ')) return line(`${standardLabel}${p.length ? `${translate('eventEditor.colon', language)} ${JSON.stringify(p)}` : ''}`, 'control');
-  return line(`Raw command ${command.code}: ${JSON.stringify(p)}`, 'raw');
+  if (KNOWN_DISPLAY_COMMAND_CODES.has(command.code)) {
+    const title = displayCommandLabel(command.code, language);
+    const details = p.length ? p.map(displayValue).join(language === 'zh-CN' ? '，' : ', ') : '';
+    return line(displayCommandDetails(title, details, language), 'control');
+  }
+  return line(`Raw command ${command.code}${p.length ? `: ${JSON.stringify(p)}` : ''}`, 'raw');
 }
 
 // Semantic command color categories for event-editor command headers. Keep this
@@ -1122,10 +1289,7 @@ export function commandSpanDisplay(
 
 export function moveRouteCommandLabel(command: unknown, language: ProductLanguage = DEFAULT_PRODUCT_LANGUAGE): string {
   language = normalizeProductLanguage(language)
-  if (!command || typeof command !== 'object') return translate('eventEditor.moveRoute.invalidStep', language);
-  const item = command as { code?: number; parameters?: unknown[] };
-  const labels = eventEditorText(language).moveRouteLabels;
-  return `${labels[Number(item.code)] || `Raw ${item.code || 0}`}${item.parameters?.length ? `${translate('eventEditor.colon', language)} ${JSON.stringify(item.parameters)}` : ''}`;
+  return moveRouteStepDisplay(command, language);
 }
 
 // ---- Quick event templates ----

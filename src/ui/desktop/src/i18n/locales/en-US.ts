@@ -2285,6 +2285,13 @@ const enUS = {
     'cmdList.moveUp': 'Move Up',
     'cmdList.moveDown': 'Move Down',
     'cmdList.delete': 'Delete',
+    'cmdList.find': 'Find',
+    'cmdList.findPlaceholder': 'Find commands',
+    'cmdList.findCount': '{{current}}/{{total}}',
+    'cmdList.findNoResults': 'No matches',
+    'cmdList.findPrevious': 'Previous match',
+    'cmdList.findNext': 'Next match',
+    'cmdList.findClose': 'Close find',
 
     // ── Batch 5: MapEventCommandPreview ──
     'mapPreview.contents': 'Contents',

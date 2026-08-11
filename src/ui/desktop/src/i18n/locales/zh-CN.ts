@@ -2285,6 +2285,13 @@ const zhCN = {
     'cmdList.moveUp': '上移',
     'cmdList.moveDown': '下移',
     'cmdList.delete': '删除',
+    'cmdList.find': '查找',
+    'cmdList.findPlaceholder': '查找指令',
+    'cmdList.findCount': '{{current}}/{{total}}',
+    'cmdList.findNoResults': '无匹配',
+    'cmdList.findPrevious': '上一个匹配',
+    'cmdList.findNext': '下一个匹配',
+    'cmdList.findClose': '关闭查找',
 
     // ── Batch 5: MapEventCommandPreview ──
     'mapPreview.contents': '执行内容',

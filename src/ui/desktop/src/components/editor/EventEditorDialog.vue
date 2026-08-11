@@ -84,8 +84,24 @@
                 </fieldset>
               </div>
             </aside>
-            <section class="ev-commands" :class="{ locked: currentPageLocked }">
+            <section class="ev-commands" :class="{ locked: currentPageLocked, searching: findOpen }">
               <strong class="ev-cmd-title">{{ t('commonEvent.contents') }}</strong>
+              <div v-if="findOpen" class="command-find" role="search" :aria-label="t('cmdList.find')">
+                <input
+                  ref="findInputRef"
+                  v-model="findQuery"
+                  type="search"
+                  autocomplete="off"
+                  :placeholder="t('cmdList.findPlaceholder')"
+                  :aria-label="t('cmdList.findPlaceholder')"
+                />
+                <span class="command-find-status" role="status">
+                  {{ findQuery.trim() ? (findMatches.length ? t('cmdList.findCount', { current: findCursor + 1, total: findMatches.length }) : t('cmdList.findNoResults')) : t('cmdList.findCount', { current: 0, total: 0 }) }}
+                </span>
+                <button type="button" :disabled="!findMatches.length" :aria-label="t('cmdList.findPrevious')" :title="t('cmdList.findPrevious')" @click="moveFind(-1)">↑</button>
+                <button type="button" :disabled="!findMatches.length" :aria-label="t('cmdList.findNext')" :title="t('cmdList.findNext')" @click="moveFind(1)">↓</button>
+                <button type="button" :aria-label="t('cmdList.findClose')" :title="t('cmdList.findClose')" @click="closeFind">×</button>
+              </div>
               <div ref="listHost" class="command-list" @scroll.passive="onListScroll" @contextmenu.prevent="openCommandContext($event, null)">
                 <div v-if="!spans.length" class="command-empty">
                   {{ t('eventEditorDialog.emptyHint') }}
@@ -125,10 +141,12 @@
                     :class="{
                       even: row.no % 2 == 0,
                       selected: selectedSpanSet.has(row.index),
+                      'find-hit': activeFindSpanIndex === row.index,
                       'drop-before': dropIndicator === row.index, 
                       [`tone-${row.view.tone}`]: true, 
                       [`role-${row.view.role}`]: true
                     }"
+                    :data-command-span="row.index"
                     :style="{ '--cmd-indent': `${Math.min(row.view.indent, 8) * 18}px` }"
                     :aria-pressed="selectedSpanSet.has(row.index)"
                     :draggable="!currentPageLocked"
@@ -209,6 +227,7 @@ import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandBranchScop
 import { drawTile, eventCharacterFrame } from '../../composables/useMapRenderer';
 import { eventEditorText } from '../../utils/eventEditorLocalization';
 import { resolvePluginColor } from '../../utils/pluginColor';
+import { findCommandSpanIndices, nextCommandFindCursor } from '../console/command-list-find';
 import type { EditorEventListItem } from './editorTypes';
 const props = withDefaults(defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null; currentEvents?: EditorEventListItem[]; modeless?: boolean }>(), { currentEvents: () => [], modeless: false });
 const emit = defineEmits<{ close: []; save: [closeAfterSave: boolean]; 'catalog-changed': [] }>();
@@ -216,6 +235,7 @@ const { language, t } = useI18n();
 const projectStore = useProjectStore();
 const eventEditorZ = String(LAYER_Z.eventEditor);
 const dirty = ref(false), closing = ref(false), pageIndex = ref(0), selectedSpans = ref<number[]>([]), selectionAnchor = ref<number | null>(null), insertionFocus = ref<number | null>(null), pageClipboard = ref<MvEventPage | null>(null), commandClipboard = ref<MvCommand[] | null>(null);
+const findOpen = ref(false), findQuery = ref(''), findCursor = ref(-1), findInputRef = ref<HTMLInputElement | null>(null), findTemporarilyExpandedHeads = ref<Set<number>>(new Set());
 const pageIdentities = ref<Array<StoryEventPageOverview | undefined>>([]);
 const modalRef = ref<HTMLElement>(), previewCanvas = ref<HTMLCanvasElement>(), imagePicker = ref<InstanceType<typeof EventImagePickerDialog>>(), routeDialog = ref<InstanceType<typeof MoveRouteDialog>>(), commandDialog = ref<InstanceType<typeof EventCommandDialog>>(), textPasteDialog = ref<InstanceType<typeof EventTextPasteDialog>>();
 // RM-style title-bar drag. The offset is session-less: it resets on close so the
@@ -324,6 +344,12 @@ function pluginColorForSpan(spanIndex: number): string {
 }
 const skipTerminatorSet = computed(() => currentPage.value ? skipTerminatorIndices(currentPage.value.list) : new Set<number>());
 const insertionSlots = computed(() => currentPage.value ? commandInsertionSlots(currentPage.value.list, spans.value) : []);
+const spanViews = computed<MvCommandSpanView[]>(() => spans.value.map((span) => buildSpanView(span)));
+const findMatches = computed(() => findCommandSpanIndices(spanViews.value, findQuery.value));
+const activeFindSpanIndex = computed(() => {
+  const cursor = findCursor.value;
+  return cursor >= 0 ? findMatches.value[cursor] ?? null : null;
+});
 // Structure-block collapse: keyed by the head span index. While a block is
 // collapsed every span after its head up to the terminator is hidden together
 // with the insertion slots inside the body, leaving the head row as handle.
@@ -332,7 +358,7 @@ const collapsedHiddenSpans = computed(() => {
   const hidden = new Set<number>();
   if (!collapsedStructureHeads.value.size) return hidden;
   for (const block of commandStructureBlocks(spans.value)) {
-    if (!collapsedStructureHeads.value.has(block.headSpanIndex)) continue;
+    if (!collapsedStructureHeads.value.has(block.headSpanIndex) || findTemporarilyExpandedHeads.value.has(block.headSpanIndex)) continue;
     for (let index = block.headSpanIndex + 1; index <= block.endSpanIndex; index += 1) hidden.add(index);
   }
   return hidden;
@@ -342,6 +368,11 @@ function toggleStructureCollapse(headSpanIndex: number) {
   if (next.has(headSpanIndex)) next.delete(headSpanIndex);
   else next.add(headSpanIndex);
   collapsedStructureHeads.value = next;
+  if (findTemporarilyExpandedHeads.value.has(headSpanIndex)) {
+    const revealed = new Set(findTemporarilyExpandedHeads.value);
+    revealed.delete(headSpanIndex);
+    findTemporarilyExpandedHeads.value = revealed;
+  }
   // A focused insertion slot swallowed by the newly collapsed body is invisible;
   // drop it so Enter/new-command cannot target the hidden region.
   if (insertionFocus.value != null && collapsedHiddenSpans.value.has(insertionFocus.value)) insertionFocus.value = null;
@@ -363,6 +394,10 @@ watch(spans, (nextSpans) => {
     if (head < nextSpans.length && nextSpans[head]?.role === 'head') valid.add(head);
   }
   if (valid.size !== collapsedStructureHeads.value.size) collapsedStructureHeads.value = valid;
+});
+watch(findMatches, (matches) => {
+  findCursor.value = matches.length ? 0 : -1;
+  if (findOpen.value && matches.length) void nextTick(() => scrollToFindMatch(matches[0]!));
 });
 // Virtualized command list. Every span row has a deterministic height
 // (line-height 20px per command line + 8px row chrome), so we window by
@@ -411,7 +446,7 @@ const commandRows = computed<CommandRenderRow[]>(() => {
     // span 命令：占一个行号槽，隐藏时不 push 但仍然占号
     if (!hidden.has(i)) {
       const span = spans.value[i];
-      rows.push({ kind: 'command', key: `command:${span.index}`, no, index: i, view: buildSpanView(span) });
+      rows.push({ kind: 'command', key: `command:${span.index}`, no, index: i, view: spanViews.value[i] || buildSpanView(span) });
     }
     no += 1;
 
@@ -478,6 +513,42 @@ function scrollSpanIntoView(index: number) {
   else if (bottom > host.scrollTop + host.clientHeight) host.scrollTop = bottom - host.clientHeight;
   listScrollTop.value = host.scrollTop;
 }
+function revealFindMatch(index: number): void {
+  const next = new Set(findTemporarilyExpandedHeads.value);
+  for (const block of commandStructureBlocks(spans.value)) {
+    if (index <= block.headSpanIndex || index > block.endSpanIndex) continue;
+    if (collapsedStructureHeads.value.has(block.headSpanIndex)) next.add(block.headSpanIndex);
+  }
+  if (next.size !== findTemporarilyExpandedHeads.value.size) findTemporarilyExpandedHeads.value = next;
+}
+async function scrollToFindMatch(index: number): Promise<void> {
+  revealFindMatch(index);
+  await nextTick();
+  scrollSpanIntoView(index);
+}
+function openFind(): void {
+  findOpen.value = true;
+  findCursor.value = findMatches.value.length ? 0 : -1;
+  void nextTick(() => {
+    findInputRef.value?.focus();
+    findInputRef.value?.select();
+    const index = activeFindSpanIndex.value;
+    if (index != null) void scrollToFindMatch(index);
+  });
+}
+function closeFind(): void {
+  findOpen.value = false;
+  findQuery.value = '';
+  findCursor.value = -1;
+  findTemporarilyExpandedHeads.value = new Set();
+}
+function moveFind(direction: -1 | 1): void {
+  const next = nextCommandFindCursor(findMatches.value.length, findCursor.value, direction);
+  if (next < 0) return;
+  findCursor.value = next;
+  const index = findMatches.value[next];
+  if (index != null) void scrollToFindMatch(index);
+}
 const currentPageLocked = computed(() => pageIdentities.value[pageIndex.value]?.origin === 'baseline');
 const shellLocked = computed(() => Boolean(props.overview && !props.overview.shellEditable));
 const selectedIndices = computed(() => selectedSpans.value.filter((index) => index >= 0 && index < spans.value.length).sort((a, b) => a - b));
@@ -528,6 +599,24 @@ function setSelfSwitchCondition(event: Event) {
 }
 function onKeyDown(event: KeyboardEvent) {
   if (!props.visible || !isTopmostEditorDialog(LAYER_Z.eventEditor)) return;
+  const target = event.target as HTMLElement | null;
+  const commandDialogActive = Boolean(target?.closest(`[data-editor-dialog-layer="${LAYER_Z.commandDialog}"]`));
+  if (findOpen.value && !commandDialogActive && event.key === 'Escape') {
+    event.preventDefault();
+    closeFind();
+    return;
+  }
+  const ctrl = event.ctrlKey || event.metaKey;
+  if (ctrl && event.key.toLowerCase() === 'f' && isFindShortcutTarget(target)) {
+    event.preventDefault();
+    openFind();
+    return;
+  }
+  if (findOpen.value && !commandDialogActive && target === findInputRef.value && (event.key === 'Enter' || event.key === 'F3' || event.code === 'F3')) {
+    event.preventDefault();
+    moveFind(event.shiftKey ? -1 : 1);
+    return;
+  }
   if (event.key === 'Escape') {
     event.preventDefault();
     if (cmdContext.visible) closeCommandContext();
@@ -535,8 +624,7 @@ function onKeyDown(event: KeyboardEvent) {
     return;
   }
   if (currentPageLocked.value) return;
-  if (!isCommandShortcutTarget(event.target)) return;
-  const ctrl = event.ctrlKey || event.metaKey;
+  if (!isCommandShortcutTarget(target)) return;
   if (event.key === 'Enter') {
     event.preventDefault();
     openCommandPicker();
@@ -572,6 +660,10 @@ watch(() => props.visible, (value) => {
   if (value) {
     dirty.value = props.draft?.id === 0;
     pageIndex.value = 0;
+    findOpen.value = false;
+    findQuery.value = '';
+    findCursor.value = -1;
+    findTemporarilyExpandedHeads.value = new Set();
     collapsedStructureHeads.value = new Set();
     loadEditorDialogSize();
     pageIdentities.value = (props.draft?.pages || []).map((_, index) =>
@@ -584,7 +676,7 @@ watch(() => props.visible, (value) => {
     dragStart = null;
   }
 });
-watch(currentPage, () => { collapsedStructureHeads.value = new Set(); clearCommandSelection(); listScrollTop.value = 0; if (listHost.value) listHost.value.scrollTop = 0; void nextTick(() => { measureListViewport(); paintPreview(); }); });
+watch(currentPage, () => { collapsedStructureHeads.value = new Set(); findTemporarilyExpandedHeads.value = new Set(); clearCommandSelection(); listScrollTop.value = 0; if (listHost.value) listHost.value.scrollTop = 0; void nextTick(() => { measureListViewport(); paintPreview(); }); });
 function markDirty() { dirty.value = true; void nextTick(paintPreview); }
 async function requestClose() {
   if (closing.value) return;
@@ -822,7 +914,15 @@ function isCommandShortcutTarget(target: EventTarget | null) {
   if (element.isContentEditable || element.closest('[contenteditable]')) return false;
   if (element.closest('.cmd-context-menu')) return false;
   if (element.closest('.cmd-row')) return true;
-  return !element.closest('input, textarea, select, button');
+  return !element.closest('input, textarea, select, button, .CodeMirror');
+}
+function isFindShortcutTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  if (!element) return true;
+  if (element.isContentEditable || element.closest('[contenteditable], .CodeMirror')) return false;
+  if (element.closest('input, textarea, select, button:not(.cmd-row), .cmd-context-menu')) return false;
+  if (element.closest(`[data-editor-dialog-layer="${LAYER_Z.commandDialog}"]`)) return false;
+  return true;
 }
 function setImage(image: MvEventImage) { if (currentPage.value && !currentPageLocked.value) { currentPage.value.image = image; markDirty(); } }
 function openImagePicker() { if (currentPage.value && !currentPageLocked.value) imagePicker.value?.open(currentPage.value.image); }
@@ -1226,6 +1326,58 @@ defineExpose({ markSaved });
   background: var(--app-bg);
 }
 
+.ev-commands.searching {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.command-find {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-bottom: 4px;
+  padding: 3px 4px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-soft);
+}
+
+.command-find input {
+  flex: 1 1 140px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg);
+  color: var(--app-ink);
+  font-size: var(--text-sm);
+}
+
+.command-find-status {
+  min-width: 48px;
+  color: var(--app-ink-muted);
+  font-size: var(--text-xs);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.command-find button {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg);
+  color: var(--app-ink-soft);
+  cursor: pointer;
+}
+
+.command-find button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
 .ev-cmd-title {
   margin-bottom: 4px;
   font-size: var(--text-md);
@@ -1474,6 +1626,12 @@ defineExpose({ markSaved });
 .cmd-row.selected {
   background: var(--app-accent);
   color: var(--app-accent-ink);
+}
+
+.cmd-row.find-hit:not(.selected) {
+  outline: 1px solid var(--app-accent);
+  outline-offset: -1px;
+  background: var(--app-accent-soft);
 }
 
 .cmd-line {

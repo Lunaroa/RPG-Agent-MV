@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { projectConfig as projectConfigApi, type EditorProjectCatalog } from '../../api/client';
 import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
 import { resolvePluginColor } from '../../utils/pluginColor';
+import { findCommandSpanIndices, nextCommandFindCursor } from './command-list-find';
 import {
   clone,
   commandBlockSpanIndices,
@@ -50,6 +51,12 @@ const commandContext = reactive({ visible: false, x: 0, y: 0 });
 const dragSourceIndices = ref<number[]>([]);
 const dropIndicator = ref<number | null>(null);
 const insertionFocus = ref<number | null>(null);
+const commandListRef = ref<HTMLElement | null>(null);
+const findInputRef = ref<HTMLInputElement | null>(null);
+const findOpen = ref(false);
+const findQuery = ref('');
+const findCursor = ref(-1);
+const findTemporarilyExpandedHeads = ref<Set<number>>(new Set());
 
 const commandList = computed<MvCommand[]>(() => normalizeCommandList(props.modelValue));
 const spans = computed(() => editableCommandSpans({ list: commandList.value } as never));
@@ -100,6 +107,11 @@ const systemData = computed(() => ({
 }));
 const spanViews = computed<SpanView[]>(() => spans.value.map((span) => displaySpan(span)));
 const insertionSlots = computed(() => commandInsertionSlots(commandList.value, spans.value));
+const findMatches = computed(() => findCommandSpanIndices(spanViews.value, findQuery.value));
+const activeFindSpanIndex = computed(() => {
+  const cursor = findCursor.value;
+  return cursor >= 0 ? findMatches.value[cursor] ?? null : null;
+});
 // Structure-block collapse mirrors the event editor contract: keyed by the
 // head span index; body spans and their insertion slots stay hidden while
 // collapsed, the head row remains as the expand handle.
@@ -108,7 +120,7 @@ const collapsedHiddenSpans = computed(() => {
   const hidden = new Set<number>();
   if (!collapsedStructureHeads.value.size) return hidden;
   for (const block of commandStructureBlocks(spans.value)) {
-    if (!collapsedStructureHeads.value.has(block.headSpanIndex)) continue;
+    if (!collapsedStructureHeads.value.has(block.headSpanIndex) || findTemporarilyExpandedHeads.value.has(block.headSpanIndex)) continue;
     for (let index = block.headSpanIndex + 1; index <= block.endSpanIndex; index += 1) hidden.add(index);
   }
   return hidden;
@@ -119,6 +131,11 @@ function toggleStructureCollapse(headSpanIndex: number) {
   if (next.has(headSpanIndex)) next.delete(headSpanIndex);
   else next.add(headSpanIndex);
   collapsedStructureHeads.value = next;
+  if (findTemporarilyExpandedHeads.value.has(headSpanIndex)) {
+    const revealed = new Set(findTemporarilyExpandedHeads.value);
+    revealed.delete(headSpanIndex);
+    findTemporarilyExpandedHeads.value = revealed;
+  }
   if (insertionFocus.value != null && collapsedHiddenSpans.value.has(insertionFocus.value)) insertionFocus.value = null;
 }
 /** Remap insertion targets inside a collapsed block to the visible boundary right after it. */
@@ -139,7 +156,14 @@ watch(spans, (nextSpans) => {
   }
   if (valid.size !== collapsedStructureHeads.value.size) collapsedStructureHeads.value = valid;
 });
-watch(() => props.modelValue, () => { collapsedStructureHeads.value = new Set(); });
+watch(() => props.modelValue, () => {
+  collapsedStructureHeads.value = new Set();
+  findTemporarilyExpandedHeads.value = new Set();
+});
+watch(findMatches, (matches) => {
+  findCursor.value = matches.length ? 0 : -1;
+  if (findOpen.value && matches.length) void nextTick(() => scrollToFindMatch(matches[0]!));
+});
 const canMoveUp = computed(() => anchorBlockSelection.value != null && commandBlockSpanIndices(spans.value, [anchorBlockSelection.value])[0] > 0);
 const canMoveDown = computed(() => {
   if (anchorBlockSelection.value == null) return false;
@@ -156,6 +180,48 @@ function slotViews(slot: MvCommandInsertionSlot): SpanView[] {
 
 function missingImageLoader(): Promise<HTMLImageElement | null> {
   return Promise.resolve(null);
+}
+
+function revealFindMatch(index: number): void {
+  const next = new Set(findTemporarilyExpandedHeads.value);
+  for (const block of commandStructureBlocks(spans.value)) {
+    if (index <= block.headSpanIndex || index > block.endSpanIndex) continue;
+    if (collapsedStructureHeads.value.has(block.headSpanIndex)) next.add(block.headSpanIndex);
+  }
+  if (next.size !== findTemporarilyExpandedHeads.value.size) findTemporarilyExpandedHeads.value = next;
+}
+
+async function scrollToFindMatch(index: number): Promise<void> {
+  revealFindMatch(index);
+  await nextTick();
+  const row = commandListRef.value?.querySelector<HTMLElement>(`[data-command-span="${index}"]`);
+  row?.scrollIntoView({ block: 'nearest' });
+}
+
+function openFind(): void {
+  findOpen.value = true;
+  findCursor.value = findMatches.value.length ? 0 : -1;
+  void nextTick(() => {
+    findInputRef.value?.focus();
+    findInputRef.value?.select();
+    const index = activeFindSpanIndex.value;
+    if (index != null) void scrollToFindMatch(index);
+  });
+}
+
+function closeFind(): void {
+  findOpen.value = false;
+  findQuery.value = '';
+  findCursor.value = -1;
+  findTemporarilyExpandedHeads.value = new Set();
+}
+
+function moveFind(direction: -1 | 1): void {
+  const next = nextCommandFindCursor(findMatches.value.length, findCursor.value, direction);
+  if (next < 0) return;
+  findCursor.value = next;
+  const index = findMatches.value[next];
+  if (index != null) void scrollToFindMatch(index);
 }
 
 function namedArray(entries: { id: number; name: string }[]): string[] {
@@ -404,12 +470,39 @@ function isCommandShortcutTarget(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null;
   if (!element) return false;
   if (element.isContentEditable || element.closest('[contenteditable]')) return false;
-  if (element.closest('input, textarea, select, button:not(.cmd-row), .cmd-context-menu, .editor-modal-overlay')) return false;
+  if (element.closest('input, textarea, select, button:not(.cmd-row), .CodeMirror, .cmd-context-menu, .editor-modal-overlay')) return false;
+  return true;
+}
+
+function isFindShortcutTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null;
+  if (!element) return true;
+  if (element.isContentEditable || element.closest('[contenteditable], .CodeMirror')) return false;
+  if (element.closest('input, textarea, select, button:not(.cmd-row), .cmd-context-menu, .editor-modal-overlay, [role="dialog"]')) return false;
   return true;
 }
 
 function onCommandKeyDown(event: KeyboardEvent): void {
-  if (props.locked || !isCommandShortcutTarget(event.target)) return;
+  const target = event.target as HTMLElement | null;
+  const ctrl = event.ctrlKey || event.metaKey;
+  if (ctrl && event.key.toLowerCase() === 'f' && isFindShortcutTarget(target)) {
+    event.preventDefault();
+    openFind();
+    return;
+  }
+  if (findOpen.value && !target?.closest('.editor-modal-overlay')) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeFind();
+      return;
+    }
+    if (target === findInputRef.value && (event.key === 'Enter' || event.key === 'F3' || event.code === 'F3')) {
+      event.preventDefault();
+      moveFind(event.shiftKey ? -1 : 1);
+      return;
+    }
+  }
+  if (props.locked || !isCommandShortcutTarget(target)) return;
   if (event.key === 'Enter') {
     event.preventDefault();
     openCommandPicker();
@@ -425,7 +518,6 @@ function onCommandKeyDown(event: KeyboardEvent): void {
     deleteSelectedCommands();
     return;
   }
-  const ctrl = event.ctrlKey || event.metaKey;
   if (ctrl && event.key.toLowerCase() === 'x' && selectedIndices.value.length) {
     event.preventDefault();
     cutSelectedCommands();
@@ -447,6 +539,7 @@ function onCommandKeyDown(event: KeyboardEvent): void {
     <div class="command-toolbar">
       <span>{{ t('cmdList.commandCount', { count: spans.length }) }}</span>
       <div>
+        <button type="button" @click="openFind">{{ t('cmdList.find') }}</button>
         <button type="button" :disabled="locked" @click="insertionFocus = null; openCommandPicker()">{{ t('cmdList.add') }}</button>
         <button type="button" :disabled="locked || anchorBlockSelection == null" @click="openSelectedCommand">{{ t('cmdList.edit') }}</button>
         <button type="button" :disabled="locked || !canMoveUp" @click="moveSelectedCommand(-1)">{{ t('cmdList.moveUp') }}</button>
@@ -454,7 +547,23 @@ function onCommandKeyDown(event: KeyboardEvent): void {
         <button type="button" :disabled="locked || !selectedIndices.length" class="danger" @click="deleteSelectedCommands">{{ t('cmdList.delete') }}</button>
       </div>
     </div>
-    <div class="command-list" @click.self="clearSelection" @dblclick.self="openCommandPicker" @contextmenu.prevent="openCommandContext($event, null)">
+    <div v-if="findOpen" class="command-find" role="search" :aria-label="t('cmdList.find')">
+      <input
+        ref="findInputRef"
+        v-model="findQuery"
+        type="search"
+        autocomplete="off"
+        :placeholder="t('cmdList.findPlaceholder')"
+        :aria-label="t('cmdList.findPlaceholder')"
+      />
+      <span class="command-find-status" role="status">
+        {{ findQuery.trim() ? (findMatches.length ? t('cmdList.findCount', { current: findCursor + 1, total: findMatches.length }) : t('cmdList.findNoResults')) : t('cmdList.findCount', { current: 0, total: 0 }) }}
+      </span>
+      <button type="button" :disabled="!findMatches.length" :aria-label="t('cmdList.findPrevious')" :title="t('cmdList.findPrevious')" @click="moveFind(-1)">↑</button>
+      <button type="button" :disabled="!findMatches.length" :aria-label="t('cmdList.findNext')" :title="t('cmdList.findNext')" @click="moveFind(1)">↓</button>
+      <button type="button" :aria-label="t('cmdList.findClose')" :title="t('cmdList.findClose')" @click="closeFind">×</button>
+    </div>
+    <div ref="commandListRef" class="command-list" @click.self="clearSelection" @dblclick.self="openCommandPicker" @contextmenu.prevent="openCommandContext($event, null)">
       <div v-if="!spans.length" class="command-empty">{{ resolvedEmptyText }}</div>
       <template v-for="slot in visibleInsertionSlots" :key="slot.key">
         <button
@@ -478,7 +587,8 @@ function onCommandKeyDown(event: KeyboardEvent): void {
           type="button"
           :disabled="locked"
           class="cmd-row"
-          :class="{ selected: selectedSpanSet.has(slot.spanIndex), even: slot.spanIndex % 2 === 0, 'drop-before': dropIndicator === slot.spanIndex, [`tone-${view.tone}`]: true, [`role-${view.role}`]: true }"
+          :class="{ selected: selectedSpanSet.has(slot.spanIndex), even: slot.spanIndex % 2 === 0, 'drop-before': dropIndicator === slot.spanIndex, 'find-hit': activeFindSpanIndex === slot.spanIndex, [`tone-${view.tone}`]: true, [`role-${view.role}`]: true }"
+          :data-command-span="slot.spanIndex"
           :style="{ '--cmd-indent': `${Math.min(view.indent, 8) * 16}px` }"
           :aria-pressed="selectedSpanSet.has(slot.spanIndex)"
           :draggable="!locked"
@@ -539,6 +649,40 @@ function onCommandKeyDown(event: KeyboardEvent): void {
   flex-wrap: wrap;
   gap: 5px;
   justify-content: flex-end;
+}
+.command-find {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 5px;
+  border: 1px solid var(--console-border-strong,#ddd3c2);
+  border-radius: 7px;
+  background: var(--console-paper,#fffdfa);
+}
+.command-find input {
+  flex: 1 1 140px;
+  min-width: 0;
+  height: 24px;
+  padding: 3px 7px;
+  border: 1px solid var(--console-border,#e4dcce);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--console-text,#211d17);
+  font: inherit;
+  font-size: 11px;
+}
+.command-find-status {
+  min-width: 48px;
+  color: var(--console-text-muted,#9a8e7e);
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+}
+.command-find button {
+  min-width: 24px;
+  height: 24px;
+  padding: 2px 5px;
 }
 button {
   border: 1px solid var(--console-border-strong,#ddd3c2);
@@ -687,6 +831,11 @@ button.danger {
 .cmd-row.selected {
   background: var(--console-accent,#be5630);
   color: #fff;
+}
+.cmd-row.find-hit:not(.selected) {
+  outline: 1px solid var(--console-accent,#be5630);
+  outline-offset: -1px;
+  background: var(--console-accent-soft,#f6e3d7);
 }
 .cmd-line {
   display: block;

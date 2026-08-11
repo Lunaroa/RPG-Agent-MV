@@ -1,4 +1,4 @@
-import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
+import { isRef, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import type {
   UiDesignerRendererHostAdapter,
   UiDesignerRendererHostSession,
@@ -15,7 +15,7 @@ import {
   type UiDesignerRendererNodeBounds,
 } from '@contract/ui-designer-renderer-bridge'
 import type { UiDesignerController, UiDesignerPreviewDisposeReason } from './useUiDesigner'
-import { createUiDesignerRendererDisposeAck, planUiDesignerRendererUpdate, scheduleUiDesignerRendererHandshakeTimeout, type UiDesignerRendererDisposeAck } from '../rendererBridge'
+import { buildUiDesignerRendererDraftPatches, createUiDesignerRendererDisposeAck, planUiDesignerRendererUpdate, scheduleUiDesignerRendererHandshakeTimeout, type UiDesignerRendererDisposeAck } from '../rendererBridge'
 
 type RendererHostStatus = 'idle' | 'preparing' | 'loading' | 'running' | 'error'
 
@@ -199,17 +199,17 @@ export function reduceUiDesignerRendererHostRuntimeMessage(
 ): UiDesignerRendererHostRuntimeState {
   if (message.kind === 'mounted' || message.kind === 'bounds') {
     if (message.payload.revision < expectedRevision) return state
-    const next = {
-      ...state,
-      bounds: Object.fromEntries(message.payload.bounds.map((entry) => [entry.nodeId, entry])),
+    if (message.kind === 'mounted') {
+      return {
+        ...state,
+        bounds: Object.fromEntries(message.payload.bounds.map((entry) => [entry.nodeId, entry])),
+        executionMode: message.payload.executionMode,
+        executionModeReady: message.payload.executionMode === requestedExecutionMode,
+      }
     }
-    return message.kind === 'mounted'
-      ? {
-          ...next,
-          executionMode: message.payload.executionMode,
-          executionModeReady: message.payload.executionMode === requestedExecutionMode,
-        }
-      : next
+    const bounds = { ...state.bounds }
+    for (const entry of message.payload.bounds) bounds[entry.nodeId] = entry
+    return { ...state, bounds }
   }
   if (message.kind === 'diagnostic') {
     return { ...state, diagnostics: [...state.diagnostics, ...message.payload.entries].slice(-64) }
@@ -267,6 +267,8 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   let pendingStartCleanup = false
   let iframeLoaded = false
   let failurePromise: Promise<void> | null = null
+  let draftFrame: { cancel: () => void } | null = null
+  let draftEpoch = 0
   const terminalGate = createUiDesignerRendererTerminalGate()
   const failureLatch = createUiDesignerRendererFailureLatch()
 
@@ -284,12 +286,17 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     stageStatus.value = nextStatus
   }
 
+  const readDesignerValue = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
+
   const applyReceiptStage = (next: UiDesignerRendererBridgeReceipt) => {
     if (next.status === 'error' || rendererStageOrder[next.stage] >= rendererStageOrder[stage.value]) setStage(next.stage, next.status)
   }
 
   const activeSceneId = () => {
-    try { return options.runtimeScene().meta.sceneName } catch { return 'Scene_CanvasHost' }
+    try {
+      const document = readDesignerValue(options.designer.document)
+      return document.meta.sceneName || 'Scene_CanvasHost'
+    } catch { return 'Scene_CanvasHost' }
   }
 
   const post = (kind: UiDesignerRendererBridgeMessage['kind'], payload: Record<string, unknown>, sceneId = activeSceneId()) => {
@@ -379,6 +386,45 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     }
   }
 
+  const cancelDraftSync = () => {
+    draftEpoch += 1
+    draftFrame?.cancel()
+    draftFrame = null
+  }
+
+  const syncDraftGeometry = () => {
+    if (!session || (status.value !== 'running' && status.value !== 'loading') || !engineReady || !processConfirmed || !iframeLoaded || !executionModeReady.value || pendingMountRevision !== null) return
+    const nodes = buildUiDesignerRendererDraftPatches(readDesignerValue(options.designer.document), {
+      positions: readDesignerValue(options.designer.draftPositions),
+      rects: readDesignerValue(options.designer.draftRects),
+      rotations: readDesignerValue(options.designer.draftRotations),
+    })
+    if (!nodes.length) return
+    revision += 1
+    try {
+      if (!post('patch', { revision, nodes }, activeSceneId())) throw new Error('draft patch post rejected')
+    } catch {
+      void fail(resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.patchPost, stage.value))
+    }
+  }
+
+  const queueDraftSync = () => {
+    if (draftFrame) return
+    const epoch = draftEpoch
+    const run = () => {
+      draftFrame = null
+      if (epoch !== draftEpoch) return
+      syncDraftGeometry()
+    }
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      const id = globalThis.requestAnimationFrame(() => run())
+      draftFrame = { cancel: () => globalThis.cancelAnimationFrame(id) }
+      return
+    }
+    const id = setTimeout(run, 16)
+    draftFrame = { cancel: () => clearTimeout(id) }
+  }
+
   const syncSelection = () => {
     if (!session || (status.value !== 'running' && status.value !== 'loading') || !engineReady || !processConfirmed || !iframeLoaded || !executionModeReady.value) return
     try {
@@ -432,6 +478,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   }
 
   const clearStoppedSessionState = () => {
+    cancelDraftSync()
     sessionAdapter = null
     disposingSession = null
     iframeUrl.value = ''
@@ -457,6 +504,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     backendReason: UiDesignerRendererHostStopReason = bridgeReason,
     coordinatePendingStarts = true,
   ): Promise<boolean> => {
+    cancelDraftSync()
     if (coordinatePendingStarts) {
       startEpoch += 1
       pendingStartCleanup = true
@@ -605,6 +653,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
 
   const fail = (acceptedFailure: UiDesignerRendererFailure): Promise<void> => {
     if (failurePromise) return failurePromise
+    cancelDraftSync()
     const authoritativeFailure = latchFailure(acceptedFailure)
     const failedStage = authoritativeFailure.stage
     const operation = (async () => {
@@ -878,6 +927,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
           status.value = 'running'
           setStage('mounted', 'success')
           options.onExecutionModeReady?.(message.payload.executionMode)
+          cancelDraftSync()
           syncScene(false)
           syncSelection()
         }
@@ -925,16 +975,22 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
 
   const projectStop = watch(
     () => [options.designer.projectPath, options.designer.projectGeneration, options.designer.canRenderCanvas] as const,
-    () => { void start() },
+    () => { cancelDraftSync(); void start() },
     { flush: 'post' },
   )
   const sceneStop = watch(
-    () => [options.designer.document, options.designer.draftPositions, options.designer.draftRects, options.designer.draftRotations],
-    () => syncScene(false),
+    () => readDesignerValue(options.designer.document),
+    () => { cancelDraftSync(); syncScene(false) },
+    { flush: 'post' },
+  )
+  const draftStop = watch(
+    () => [readDesignerValue(options.designer.draftPositions), readDesignerValue(options.designer.draftRects), readDesignerValue(options.designer.draftRotations)],
+    queueDraftSync,
     { deep: true, flush: 'post' },
   )
   const selectionStop = watch(() => [...options.designer.selectedIds], syncSelection, { flush: 'post' })
   const executionModeStop = watch(options.executionMode, () => {
+    cancelDraftSync()
     executionModeReady.value = false
     syncScene(true)
   }, { flush: 'post' })
@@ -946,8 +1002,10 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   onBeforeUnmount(() => {
     disposed = true
     startEpoch += 1
+    cancelDraftSync()
     projectStop()
     sceneStop()
+    draftStop()
     selectionStop()
     executionModeStop()
     void dispose('unload')

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { UiNode, UiRuntimeDiagnostic, UiRuntimeSceneExport } from '@contract/ui-designer'
+import type { UiDesignerDocument, UiNode, UiRuntimeDiagnostic, UiRuntimeSceneExport } from '@contract/ui-designer'
 import { UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES, UI_DESIGNER_RENDERER_BRIDGE_VERSION, validateUiDesignerRendererBridgeMessage } from '@contract/ui-designer-renderer-bridge'
-import { createUiDesignerRendererDisposeAck, planUiDesignerRendererUpdate, scheduleUiDesignerRendererHandshakeTimeout, UI_DESIGNER_RENDERER_HANDSHAKE_TIMEOUT_MS } from './rendererBridge'
+import { buildUiDesignerRendererDraftPatches, createUiDesignerRendererDisposeAck, planUiDesignerRendererUpdate, scheduleUiDesignerRendererHandshakeTimeout, UI_DESIGNER_RENDERER_HANDSHAKE_TIMEOUT_MS } from './rendererBridge'
+import { createUiDocument } from './models/document'
 import {
   UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES,
   createUiDesignerRendererFailureLatch,
@@ -53,6 +54,22 @@ test('renderer planner patches bounded in-place geometry and remounts resource c
   const resource = structuredClone(previous)
   ;(resource.nodes[1] as UiNode & { props: Record<string, unknown> }).props.path = 'img/pictures/sample.png'
   assert.equal(planUiDesignerRendererUpdate(previous, resource, 3)?.kind, 'mount')
+})
+
+test('draft geometry helper emits only local transform props and converts resize rects', () => {
+  const document = { ...createUiDocument('Scene_RendererBridge'), nodes: [node(1)], zOrder: ['node_1'] } as UiDesignerDocument
+  document.nodes[0].props.anchorX = 0.5
+  document.nodes[0].props.anchorY = 0.25
+  document.nodes[0].props.scaleX = 2
+  document.nodes[0].props.scaleY = 0.5
+  assert.deepEqual(
+    buildUiDesignerRendererDraftPatches(document, { positions: { node_1: { x: 12, y: 20 } } }),
+    [{ nodeId: 'node_1', props: { x: 12, y: 20 } }],
+  )
+  assert.deepEqual(
+    buildUiDesignerRendererDraftPatches(document, { rects: { node_1: { x: 10, y: 20, width: 100, height: 40 } }, rotations: { node_1: 15 } }),
+    [{ nodeId: 'node_1', props: { x: 60, y: 30, width: 50, height: 80, rotate: 15 } }],
+  )
 })
 
 test('renderer planner remounts when 513 nodes would exceed the patch contract', () => {
@@ -155,7 +172,10 @@ test('renderer dispose acknowledgement timeout is not terminal proof', async () 
 test('renderer host keeps full-preview ready across later bounds and diagnostic messages', () => {
   const sessionId = 'renderer-session'
   const generation = 4
-  const bounds = [{ nodeId: 'node_1', x: 10, y: 20, width: 100, height: 40, rotation: 0, visible: true, interactive: true }]
+  const bounds = [
+    { nodeId: 'node_1', x: 10, y: 20, width: 100, height: 40, rotation: 0, visible: true, interactive: true },
+    { nodeId: 'node_2', x: 30, y: 40, width: 80, height: 20, rotation: 0, visible: true, interactive: false },
+  ]
   const diagnostic: UiRuntimeDiagnostic = {
     schemaVersion: '1.0.0', sessionId, scene: 'Scene_RendererBridge', file: null, node: 'node_1', type: 'button', phase: 'update', event: null,
     code: 'UI_RUNTIME_HANDLER_ERROR', severity: 'warning', label: 'runtime', message: 'A recoverable runtime diagnostic.', count: 1,
@@ -189,6 +209,7 @@ test('renderer host keeps full-preview ready across later bounds and diagnostic 
   assert.equal(state.executionMode, 'full-preview')
   assert.equal(state.executionModeReady, true)
   assert.equal(state.bounds.node_1?.x, 12)
+  assert.equal(state.bounds.node_2?.x, 30)
   assert.equal(state.diagnostics[0]?.message, diagnostic.message)
   assert.equal(state.scenePhase, 'active')
   assert.equal(state.requestedScene, null)

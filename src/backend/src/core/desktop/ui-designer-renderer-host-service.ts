@@ -524,8 +524,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
   var lastMount = null;
   var disposed = false;
   var activeExecutionMode = 'authoring';
-  var lastBounds = '';
-  var boundsFrame = 0;
+  var lastBoundsByNode = {};
   var lastActualScene = null;
   var sceneManagerOriginals = null;
   var sceneManagerInstalled = null;
@@ -961,14 +960,29 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
       global.Graphics._width = width; global.Graphics._height = height; global.Graphics._boxWidth = width; global.Graphics._boxHeight = height; global.Graphics._renderer.resize(width, height);
     } else throw new Error('The project MV/MZ Graphics host cannot resize the UI canvas.');
   }
-  function currentBounds() { return runtime && typeof runtime.getNodeBounds === 'function' ? runtime.getNodeBounds() : []; }
+  function currentBounds(nodeIds) { return runtime && typeof runtime.getNodeBounds === 'function' ? runtime.getNodeBounds(nodeIds) : []; }
+  function rememberBounds(bounds) {
+    (bounds || []).forEach(function (entry) {
+      if (entry && entry.nodeId) lastBoundsByNode[entry.nodeId] = JSON.stringify(entry);
+    });
+  }
+  function changedBounds(bounds, force) {
+    var changed = [];
+    var next = {};
+    (bounds || []).forEach(function (entry) {
+      if (!entry || !entry.nodeId) return;
+      var encoded = JSON.stringify(entry);
+      next[entry.nodeId] = encoded;
+      if (force || lastBoundsByNode[entry.nodeId] !== encoded) changed.push(entry);
+    });
+    lastBoundsByNode = next;
+    return changed;
+  }
   function publishBounds(force) {
     if (!runtime) return;
-    var bounds = currentBounds();
-    var encoded = JSON.stringify(bounds);
-    if (!force && encoded === lastBounds) return;
-    lastBounds = encoded;
-    send('bounds', { revision: activeRevision, bounds: bounds }, activeSceneId);
+    var changed = changedBounds(currentBounds(), Boolean(force));
+    if (!changed.length) return;
+    send('bounds', { revision: activeRevision, bounds: changed }, activeSceneId);
   }
   function mountScene(message) {
     currentStage = 'mount';
@@ -997,12 +1011,14 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     runtime.mount(message.payload.scene, { root: hostScene._mzuiUiRoot, context: { sceneApi: hostScene }, sceneApi: hostScene, executionMode: activeExecutionMode });
     hostScene._mzuiCanvasRuntime = runtime;
     pendingMount = null;
-    lastBounds = JSON.stringify(currentBounds());
+    var mountedBounds = currentBounds();
+    lastBoundsByNode = {};
+    rememberBounds(mountedBounds);
     sendReceipt('mount', 'success', null);
     mountReceiptPending = false;
     currentStage = 'mounted';
     sendReceipt('mounted', 'begin', null);
-    send('mounted', { revision: activeRevision, executionMode: activeExecutionMode, bounds: currentBounds() }, activeSceneId);
+    send('mounted', { revision: activeRevision, executionMode: activeExecutionMode, bounds: mountedBounds }, activeSceneId);
     sendReceipt('mounted', 'success', null);
     publishSceneState('active', activeSceneId);
   }
@@ -1011,7 +1027,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     runtime = null;
     if (hostScene) hostScene._mzuiCanvasRuntime = null;
     pendingMount = null;
-    lastBounds = '';
+    lastBoundsByNode = {};
     try { if (global.AudioManager && typeof global.AudioManager.stopAll === 'function') global.AudioManager.stopAll(); } catch (_) {}
     try { if (global.Video && global.Video._element && typeof global.Video._element.pause === 'function') { global.Video._element.pause(); global.Video._element.removeAttribute('src'); global.Video._element.load(); } } catch (_) {}
   }
@@ -1055,7 +1071,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
         if (!runtime || message.sceneId !== activeSceneId || message.payload.revision <= activeRevision) throw new Error('Renderer bridge patch does not target the active revision.');
         activeRevision = message.payload.revision;
         var bounds = runtime.patchNodes(message.payload.nodes);
-        lastBounds = JSON.stringify(bounds);
+        rememberBounds(bounds);
         send('bounds', { revision: activeRevision, bounds: bounds }, activeSceneId);
       } else if (message.kind === 'select') {
         if (runtime) runtime.selectedNodeIds = message.payload.nodeIds.slice();
@@ -1104,8 +1120,6 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     Scene_MZUIDesignerCanvasHost.prototype.update = function () {
       global.Scene_Base.prototype.update.call(this);
       if (this._mzuiCanvasRuntime) this._mzuiCanvasRuntime.update();
-      boundsFrame += 1;
-      if (boundsFrame % 6 === 0) publishBounds(false);
     };
     Scene_MZUIDesignerCanvasHost.prototype.terminate = function () { cleanupRuntime(); hostScene = null; hostBase.prototype.terminate.call(this); };
     global.Scene_MZUIDesignerCanvasHost = Scene_MZUIDesignerCanvasHost;

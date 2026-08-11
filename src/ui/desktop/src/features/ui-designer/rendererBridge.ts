@@ -1,9 +1,62 @@
-import type { UiRuntimeSceneExport } from '@contract/ui-designer'
+import type { UiDesignerDocument, UiRuntimeSceneExport } from '@contract/ui-designer'
 import { UI_DESIGNER_RENDERER_BRIDGE_MAX_BYTES, UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES, type UiDesignerRendererJsonValue, type UiDesignerRendererNodePatch } from '@contract/ui-designer-renderer-bridge'
 
 export type UiDesignerRendererUpdate =
   | { kind: 'mount'; revision: number; scene: UiRuntimeSceneExport }
   | { kind: 'patch'; revision: number; nodes: UiDesignerRendererNodePatch[] }
+
+export interface UiDesignerRendererDraftState {
+  positions?: Readonly<Record<string, { x: number; y: number }>>
+  rects?: Readonly<Record<string, { x: number; y: number; width: number; height: number }>>
+  rotations?: Readonly<Record<string, number>>
+}
+
+const draftNodeIndexCache = new WeakMap<object, Map<string, UiDesignerDocument['nodes'][number]>>()
+
+/**
+ * Build the geometry-only patch used while a node is being dragged or resized.
+ * It deliberately reads only the selected draft maps and never exports or
+ * validates the whole document; the committed document is synchronized on
+ * pointer-up through the normal scene update path.
+ */
+export function buildUiDesignerRendererDraftPatches(
+  document: UiDesignerDocument,
+  drafts: UiDesignerRendererDraftState,
+): UiDesignerRendererNodePatch[] {
+  let nodeById = draftNodeIndexCache.get(document as object)
+  if (!nodeById) {
+    nodeById = new Map(document.nodes.map((node) => [node.id, node]))
+    draftNodeIndexCache.set(document as object, nodeById)
+  }
+  const ids = new Set<string>([
+    ...Object.keys(drafts.positions ?? {}),
+    ...Object.keys(drafts.rects ?? {}),
+    ...Object.keys(drafts.rotations ?? {}),
+  ])
+  const patches: UiDesignerRendererNodePatch[] = []
+  for (const nodeId of ids) {
+    const node = nodeById.get(nodeId)
+    if (!node) continue
+    const props: Record<string, UiDesignerRendererJsonValue> = {}
+    const rect = drafts.rects?.[nodeId]
+    const position = drafts.positions?.[nodeId]
+    if (rect) {
+      const scaleX = Math.max(Math.abs(Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1), 0.0001)
+      const scaleY = Math.max(Math.abs(Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1), 0.0001)
+      props.x = rect.x + rect.width * node.props.anchorX
+      props.y = rect.y + rect.height * node.props.anchorY
+      props.width = rect.width / scaleX
+      props.height = rect.height / scaleY
+    } else if (position) {
+      props.x = position.x
+      props.y = position.y
+    }
+    const rotation = drafts.rotations?.[nodeId]
+    if (rotation !== undefined) props.rotate = rotation
+    if (Object.keys(props).length) patches.push({ nodeId, props })
+  }
+  return patches
+}
 
 export const UI_DESIGNER_RENDERER_HANDSHAKE_TIMEOUT_MS = 10_000
 export const UI_DESIGNER_RENDERER_DISPOSE_ACK_TIMEOUT_MS = 1_000

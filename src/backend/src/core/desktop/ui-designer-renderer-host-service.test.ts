@@ -297,6 +297,39 @@ test('generated host rejects unsafe resource and input envelopes before runtime 
   }
 })
 
+test('generated host keeps patch bounds incremental without a periodic full-bounds poll', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-renderer-incremental-bounds-'))
+  const project = path.join(root, 'projects', 'sample-mv')
+  writeProject(project, 'MV')
+  let isolated = ''
+  const service = new UiDesignerRendererHostService(root, {
+    prepareIsolated: (_workflowRoot, source) => {
+      const prepared = preparation(source, 'ui-renderer-incremental-bounds-copy-')
+      isolated = prepared.temporaryProject
+      return prepared
+    },
+    registerPreviewRoot: (key) => `rpg-agent-preview://${key}/index.html`,
+    unregisterPreviewRoot: () => undefined,
+    verifyFrameIsolation: () => true,
+    verifySourceState: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+  })
+  try {
+    const session = await service.start(project, 4)
+    const source = fs.readFileSync(path.join(resourceRoot(isolated, 'MV'), 'js', 'plugins', 'MZUIDesignerCanvasHost.js'), 'utf8')
+    assert.doesNotMatch(source, /boundsFrame/)
+    assert.doesNotMatch(source, /boundsFrame\s*%\s*6/)
+    assert.match(source, /var lastBoundsByNode = \{\};/)
+    assert.match(source, /function changedBounds\(bounds, force\)/)
+    assert.match(source, /var bounds = runtime\.patchNodes\(message\.payload\.nodes\);/)
+    assert.match(source, /rememberBounds\(bounds\);/)
+    service.stop(session.sessionId)
+  } finally {
+    try { service.shutdownSync() } catch { /* asserted through staged cleanup */ }
+    fs.rmSync(root, { recursive: true, force: true })
+    if (isolated) fs.rmSync(isolated, { recursive: true, force: true })
+  }
+})
+
 test('generated host transition polling is single-shot and disposed-safe', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-renderer-transition-poll-'))
   const project = path.join(root, 'projects', 'sample-mv')

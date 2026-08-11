@@ -74,6 +74,7 @@
       displayRoot: null,
       hostRoot: null,
       nodeViews: {},
+      nodeIndex: {},
       compiled: { setup: null, ready: [], update: [], properties: {}, conditions: {}, scripts: {} },
       listeners: [],
       errors: [],
@@ -155,11 +156,15 @@
         this.effectiveVisibility = {};
         this.visibilityEventsReady = false;
         this.frame = 0;
+        this.nodeIndex = {};
+        (Array.isArray(scene && scene.nodes) ? scene.nodes : []).forEach(function (node) {
+          if (node && typeof node.id === 'string') this.nodeIndex[node.id] = node;
+        }, this);
         this.indexAndCompile();
         this.buildDisplayTree();
         this.nodes = {};
         Object.keys(this.nodeViews).forEach(function (id) {
-          var node = findNode(this.scene, id);
+          var node = this.nodeIndex[id];
           if (node && node.name) this.nodes[node.name] = this.nodeViews[id];
         }, this);
         if (this.context.sceneApi && typeof this.context.sceneApi === 'object') {
@@ -272,6 +277,26 @@
         if (this.allowsUserExecution()) this.advanceActionQueues();
         updateSceneTransition(this);
         this.updateTweens();
+        if (!this.allowsUserExecution()) {
+          nodes.forEach(function (node) {
+            if (!node || !node.id || !self.nodeViews[node.id]) return;
+            try {
+              var visibleByCondition = true;
+              var animationPending = shouldRunNodeAnimation(node, visibleByCondition);
+              if (animationPending) applyNodeAnimation(node, self.frame, visibleByCondition);
+              var props = node.props || {};
+              var progressAnimated = node.type === 'progressBar' && props.animateValue === true;
+              if (animationPending || progressAnimated) applyNodeProps(node, self.nodeViews[node.id], self.scene, visibleByCondition);
+              updateSpriteScroll(node, self.nodeViews[node.id]);
+              updateFrameAnimation(node, self.nodeViews[node.id], self.frame, self);
+              updateParticleNode(node, self.nodeViews[node.id], self.frame, self);
+            } catch (error) {
+              self.disabledHandlers['node:' + node.id + ':update'] = true;
+              self.reportError(error, 'node:update', { node: node.id, type: node.type, phase: 'update' });
+            }
+          });
+          return;
+        }
         nodes.forEach(function (node) {
           if (!node || !node.id || self.disabledHandlers['node:' + node.id + ':update']) return;
           try {
@@ -527,7 +552,7 @@
         this.errors.push(entry);
         reportApiError(entry);
       },
-      getNode: function getNode(id) { return findNode(this.scene, id); },
+      getNode: function getNode(id) { return this.nodeIndex[id] || null; },
       showNode: function showNode(id) { var node = this.getNode(id); if (node && node.props) { node.props.visible = true; this.syncNodeVisibility(node, this.conditionVisibility[id] !== false); applyNodeProps(node, this.nodeViews[id], this.scene, this.conditionVisibility[id] !== false); } },
       hideNode: function hideNode(id) { var node = this.getNode(id); if (node && node.props) { node.props.visible = false; this.syncNodeVisibility(node, this.conditionVisibility[id] !== false); applyNodeProps(node, this.nodeViews[id], this.scene, this.conditionVisibility[id] !== false); } },
       setNodeProp: function setNodeProp(id, property, value) { var node = this.getNode(id); if (node && node.props) { node.props[property] = value; if (property === 'visible') this.syncNodeVisibility(node, this.conditionVisibility[id] !== false); applyNodeProps(node, this.nodeViews[id], this.scene, this.conditionVisibility[id] !== false); } },
@@ -535,23 +560,37 @@
         if (!this.mounted) throw new Error('UI renderer patch requires a mounted scene.');
         if (!Array.isArray(patches)) throw new TypeError('UI renderer patches must be an array.');
         var self = this;
+        var changedNodeIds = [];
+        var changedNodeSet = Object.create(null);
         patches.forEach(function (patch) {
           if (!patch || typeof patch.nodeId !== 'string' || !object(patch.props)) throw new TypeError('UI renderer patch is invalid.');
-          var node = self.getNode(patch.nodeId);
+          var node = self.nodeIndex[patch.nodeId];
           if (!node || !node.props || !self.nodeViews[patch.nodeId]) throw new Error('UI renderer patch targets an unknown node: ' + patch.nodeId);
           Object.keys(patch.props).forEach(function (key) { node.props[key] = patch.props[key]; });
-          self.conditionCache = {};
+          if (!changedNodeSet[patch.nodeId]) {
+            changedNodeSet[patch.nodeId] = true;
+            changedNodeIds.push(patch.nodeId);
+          }
+        });
+        self.conditionCache = {};
+        changedNodeIds.forEach(function (nodeId) {
+          var node = self.nodeIndex[nodeId];
           var visible = self.evaluateNodeCondition(node);
           self.conditionVisibility[node.id] = visible;
           self.syncNodeVisibility(node, visible);
           self.updateButtonDisabled(node);
           applyNodeProps(node, self.nodeViews[node.id], self.scene, visible);
         });
-        return this.getNodeBounds();
+        return this.getNodeBounds(changedNodeIds);
       },
-      getNodeBounds: function getNodeBounds() {
+      getNodeBounds: function getNodeBounds(nodeIds) {
         var self = this;
-        return orderedNodes(this.scene).map(function (node) {
+        var ids = Array.isArray(nodeIds)
+          ? nodeIds.filter(function (id, index, list) { return typeof id === 'string' && list.indexOf(id) === index && self.nodeIndex[id]; })
+          : orderedNodes(this.scene).map(function (node) { return node.id; });
+        return ids.map(function (id) {
+          var node = self.nodeIndex[id];
+          if (!node) return null;
           var props = node.props || {};
           var width = Math.max(0, Math.abs(finite(props.width, 0) * finite(props.scaleX, 1)));
           var height = Math.max(0, Math.abs(finite(props.height, 0) * finite(props.scaleY, 1)));
@@ -566,7 +605,7 @@
             visible: Boolean(view && view.visible !== false),
             interactive: Boolean(view && view.interactive !== false),
           };
-        });
+        }).filter(Boolean);
       },
       handleRendererInput: function handleRendererInput(input) {
         if (!input || typeof input.type !== 'string') throw new TypeError('UI renderer input is invalid.');
@@ -601,7 +640,7 @@
         Object.keys(this.effectiveVisibility).forEach(function (id) {
           if (self.effectiveVisibility[id] !== true) return;
           self.effectiveVisibility[id] = false;
-          var node = findNode(self.scene, id);
+          var node = self.nodeIndex[id];
           if (node) self.dispatchActionsForNode(node, 'onHide', null);
         });
         this.listeners.splice(0).forEach(function (remove) { try { remove(); } catch (_) {} });
@@ -631,6 +670,7 @@
         if (ownedRoot && typeof ownedRoot.destroy === 'function') { try { ownedRoot.destroy({ children: true }); } catch (_) {} }
         if (ownedRoot && ownedRoot.filters) ownedRoot.filters = null;
         this.nodeViews = {};
+        this.nodeIndex = {};
         this.nodes = {};
         this.compiled = { setup: null, ready: [], update: [], properties: {}, conditions: {}, scripts: {}, actions: {} };
         this.scene = null;
@@ -1785,9 +1825,17 @@
     return { x: worldX, y: worldY };
   }
 
+  function shouldRunNodeAnimation(node, visible) {
+    var animation = visible === false ? node && node.exitAnim : node && node.enterAnim;
+    return Boolean(animation && animation.type && animation.type !== 'none' && (node.__mzuiVisibleState !== visible || node.__mzuiAnimationActive === true));
+  }
+
   function applyNodeAnimation(node, frame, visible) {
     var animation = visible === false ? node.exitAnim : node.enterAnim;
-    if (!animation || !node.props || animation.type === 'none') return visible !== false;
+    if (!animation || !node.props || animation.type === 'none') {
+      node.__mzuiAnimationActive = false;
+      return false;
+    }
     if (node.__mzuiVisibleState !== visible) {
       if (visible && node.__mzuiAnimationBase) {
         node.props.x = node.__mzuiAnimationBase.x; node.props.y = node.__mzuiAnimationBase.y;
@@ -1814,7 +1862,8 @@
     if (animation.type === 'slideFromRight') node.props.x = baseX + distanceX * (1 - progress);
     if (animation.type === 'slideFromTop') node.props.y = baseY - distanceY * (1 - progress);
     if (animation.type === 'slideFromBottom') node.props.y = baseY + distanceY * (1 - progress);
-    return progress < 1 || visible !== false;
+    node.__mzuiAnimationActive = progress < 1;
+    return node.__mzuiAnimationActive;
   }
 
   function bindNodeEvents(runtime, node, view) {

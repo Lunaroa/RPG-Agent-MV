@@ -18,6 +18,7 @@ const STAGE_MARGIN = 46
 
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
 const document = computed<UiDesignerDocument>(() => unwrap(designer.document))
+const nodeIndex = computed(() => new Map(document.value.nodes.map((node) => [node.id, node])))
 const viewport = computed<UiViewport>(() => unwrap(designer.viewport))
 const selectedIds = computed<string[]>(() => unwrap(designer.selectedIds))
 const hoveredNodeId = computed<string | undefined>(() => unwrap(designer.hoveredNodeId))
@@ -496,6 +497,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
             :key="node.id"
             :node="node"
             :document="document"
+            :node-index="nodeIndex"
             :selected-ids="selectedIds"
             :hovered-node-id="hoveredNodeId"
             :previewing="previewing"

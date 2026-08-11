@@ -1081,15 +1081,65 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     const scene = allNodeScene();
     runtime.mount(scene, { root: new context.PIXI.Container() });
     const bounds = runtime.patchNodes([{ nodeId: 'button', props: { x: 48, y: 64, width: 180, rotate: 15 } }]);
-    assert.equal(bounds.length, 10);
+    assert.equal(bounds.length, 1);
     assert.deepEqual(
-      { x: bounds.find((entry: { nodeId: string }) => entry.nodeId === 'button').x, y: bounds.find((entry: { nodeId: string }) => entry.nodeId === 'button').y, width: bounds.find((entry: { nodeId: string }) => entry.nodeId === 'button').width, rotation: bounds.find((entry: { nodeId: string }) => entry.nodeId === 'button').rotation },
+      { x: bounds[0].x, y: bounds[0].y, width: bounds[0].width, rotation: bounds[0].rotation },
       { x: 48, y: 64, width: 180, rotation: 15 },
     );
+    assert.equal(runtime.getNodeBounds().length, 10);
     assert.equal(runtime.handleRendererInput({ type: 'pointerdown', nodeId: 'button' }), true);
     assert.equal(runtime.focusedNodeId, 'button');
     assert.equal(runtime.handleRendererInput({ type: 'pointercancel', nodeId: 'button' }), true);
     assert.equal(runtime.focusedNodeId, null);
+    runtime.cleanup();
+  });
+
+  test('authoring update skips static node props while keeping animated nodes live', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const progress = scene.nodes.find((node: any) => node.id === 'progressBar');
+    progress.props.animateValue = true;
+    const root = new context.PIXI.Container();
+    runtime.mount(scene, { root, executionMode: 'authoring' });
+    let staticXWrites = 0;
+    const containerView = runtime.nodeViews.container;
+    let containerX = containerView.x;
+    Object.defineProperty(containerView, 'x', {
+      configurable: true,
+      get: () => containerX,
+      set: (value) => { staticXWrites += 1; containerX = value; },
+    });
+    const progressView = runtime.nodeViews.progressBar;
+    let progressClears = 0;
+    const originalClear = progressView.clear;
+    progressView.clear = function (...args: unknown[]) {
+      progressClears += 1;
+      return originalClear.apply(this, args);
+    };
+    runtime.update();
+    runtime.update();
+    assert.equal(staticXWrites, 0);
+    assert.ok(progressClears > 0);
+    runtime.cleanup();
+  });
+
+  test('patch merges local props through the node index and returns only changed bounds', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    runtime.mount(scene, { root: new context.PIXI.Container(), executionMode: 'authoring' });
+    scene.nodes.find = () => { throw new Error('patch lookup must use the runtime node index'); };
+    const bounds = runtime.patchNodes([
+      { nodeId: 'button', props: { x: 48 } },
+      { nodeId: 'button', props: { y: 64 } },
+    ]);
+    assert.equal(bounds.length, 1);
+    assert.equal(bounds[0].nodeId, 'button');
+    assert.equal(runtime.getNode('button').props.x, 48);
+    assert.equal(runtime.getNode('button').props.y, 64);
     runtime.cleanup();
   });
 });

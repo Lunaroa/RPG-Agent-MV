@@ -7,6 +7,7 @@ import { nodeRect, resizeCursor, type UiResizeHandle } from '../models/geometry'
 const props = defineProps<{
   node: UiNode
   document: UiDesignerDocument
+  nodeIndex: ReadonlyMap<string, UiNode>
   selectedIds: string[]
   hoveredNodeId?: string
   previewing: boolean
@@ -23,7 +24,7 @@ const props = defineProps<{
 const emit = defineEmits<{ pointerdown: [payload: { event: PointerEvent; node: UiNode }]; select: [payload: { event: MouseEvent; node: UiNode }]; contextmenu: [payload: { event: MouseEvent; node: UiNode }]; enter: [payload: { node: UiNode }]; handlepointerdown: [payload: { event: PointerEvent; node: UiNode; handle: string }] }>()
 const resizeHandles: UiResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
-const byId = (id: string) => props.document.nodes.find((node) => node.id === id)
+const byId = (id: string) => props.nodeIndex.get(id)
 const rect = () => nodeRect(props.node)
 const currentRect = () => props.draftRects?.[props.node.id] ?? props.rendererBounds?.[props.node.id] ?? rect()
 const localStyle = (): CSSProperties => {
@@ -72,6 +73,7 @@ const handleStyle = (handle: UiResizeHandle): CSSProperties => ({ cursor: resize
         v-if="byId(childId) && canRenderChild(childId)"
         :node="byId(childId)!"
         :document="document"
+        :node-index="nodeIndex"
         :selected-ids="selectedIds"
         :hovered-node-id="hoveredNodeId"
         :previewing="previewing"

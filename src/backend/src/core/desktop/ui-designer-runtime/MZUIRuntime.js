@@ -1038,11 +1038,20 @@
 
   function loadBitmap(path) {
     if (!path) return null;
+    var normalizedPath = String(path).replace(/\\/g, '/');
     if (global.ImageManager && typeof global.ImageManager.loadBitmap === 'function') {
-      var slash = path.lastIndexOf('/');
-      return global.ImageManager.loadBitmap(path.slice(0, slash + 1), path.slice(slash + 1));
+      var slash = normalizedPath.lastIndexOf('/');
+      var folder = normalizedPath.slice(0, slash + 1);
+      var fileName = normalizedPath.slice(slash + 1);
+      // MV and MZ ImageManager append ".png" themselves.  The editor stores
+      // the real project-relative path including its extension, so passing the
+      // persisted name through unchanged requests "name.png.png".
+      if (/\.png$/i.test(fileName)) return global.ImageManager.loadBitmap(folder, fileName.slice(0, -4));
+      if (!/\.[^/]+$/.test(fileName)) return global.ImageManager.loadBitmap(folder, fileName);
     }
-    if (global.Bitmap && typeof global.Bitmap.load === 'function') return global.Bitmap.load(path);
+    // Non-PNG resources use their exact persisted URL instead of the
+    // ImageManager convention, which is deliberately PNG-only in MV/MZ.
+    if (global.Bitmap && typeof global.Bitmap.load === 'function') return global.Bitmap.load(normalizedPath);
     return null;
   }
 

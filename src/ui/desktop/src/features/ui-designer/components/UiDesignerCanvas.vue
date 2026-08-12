@@ -46,6 +46,7 @@ const selecting = ref<{ pointerId: number; startX: number; startY: number; curre
 const guideDragging = ref<{ id: string; type: 'vertical' | 'horizontal'; pointerId: number }>()
 const guideMenu = ref<{ x: number; y: number; guideId?: string }>()
 const nodeMenu = ref<{ x: number; y: number; nodeId: string }>()
+const inlineTextEditor = ref<{ nodeId: string; value: string }>()
 const spacePressed = ref(false)
 const viewportElement = ref<HTMLElement>()
 const rendererFrame = ref<HTMLIFrameElement>()
@@ -188,11 +189,35 @@ const enterContainer = (payload: { node: UiNode }) => {
   // resized, rotated, or accidentally edited while inside it.
   designer.selectNodes(payload.node.children.length ? [payload.node.children[0]] : [])
 }
+const cancelInlineTextEdit = () => { inlineTextEditor.value = undefined }
+const updateInlineTextEdit = (value: string) => {
+  if (inlineTextEditor.value) inlineTextEditor.value = { ...inlineTextEditor.value, value }
+}
+const commitInlineTextEdit = () => {
+  const editor = inlineTextEditor.value
+  if (!editor) return
+  inlineTextEditor.value = undefined
+  const node = nodeIndex.value.get(editor.nodeId)
+  if (node && (node.type === 'text' || node.type === 'button') && String(node.props.content ?? '') !== editor.value) designer.updateNodeProperty(editor.nodeId, 'content', editor.value)
+}
+const beginInlineTextEdit = (node: UiNode) => {
+  if (node.type !== 'text' && node.type !== 'button') return false
+  if (inlineTextEditor.value?.nodeId === node.id) return true
+  if (inlineTextEditor.value?.nodeId !== node.id) commitInlineTextEdit()
+  inlineTextEditor.value = { nodeId: node.id, value: String(node.props.content ?? '') }
+  return true
+}
+const unregisterInlineTextDraft = designer.draftCoordinator.register(commitInlineTextEdit, {
+  sceneId: () => unwrap(designer.activeSceneId),
+  cancel: cancelInlineTextEdit,
+  pending: () => Boolean(inlineTextEditor.value),
+})
 const activateNode = (payload: { node: UiNode }) => {
   if (previewing.value) return
   if (payload.node.locked || payload.node.id === 'node_root') return
   designer.selectNodes([payload.node.id])
   if (payload.node.type === 'container') enterContainer(payload)
+  else if (beginInlineTextEdit(payload.node)) return
   else emit('editNode', payload.node.id)
 }
 const activateNodeById = (nodeId: string) => {
@@ -460,7 +485,7 @@ const dropResource = (event: DragEvent) => {
 }
 
 onMounted(() => { window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp); window.addEventListener('pointerdown', dismissContextMenus, true) })
-onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); endGuide(); closeContextMenus(); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp); window.removeEventListener('pointerdown', dismissContextMenus, true) })
+onBeforeUnmount(() => { commitInlineTextEdit(); unregisterInlineTextDraft(); endDrag(); endTransform(); endPan(); endBoxSelect(); endGuide(); closeContextMenus(); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp); window.removeEventListener('pointerdown', dismissContextMenus, true) })
 </script>
 
 <template>
@@ -545,11 +570,16 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
             :draft-positions="draftPositions"
             :draft-rects="draftRects"
             :draft-rotations="draftRotations"
+            :inline-editing-node-id="inlineTextEditor?.nodeId"
+            :inline-editing-value="inlineTextEditor?.value"
             @pointerdown="handlePointer"
             @select="handleSelect"
             @contextmenu="openNodeMenu"
             @activate="activateNode"
             @handlepointerdown="beginTransform"
+            @update-inline-text="updateInlineTextEdit"
+            @commit-inline-text="commitInlineTextEdit"
+            @cancel-inline-text="cancelInlineTextEdit"
           />
         </div>
         <div v-if="!designer.canRenderCanvas" class="canvas-runtime-state" data-ui-id="ui-designer-runtime-canvas-project-required">{{ t('projectRequired') }}</div>

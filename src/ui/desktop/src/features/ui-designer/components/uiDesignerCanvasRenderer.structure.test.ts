@@ -105,7 +105,8 @@ test('renderer restart stops any retained owner before starting a replacement se
   assert.ok(retryBlock.indexOf("await dispose('scene-change'") < retryBlock.indexOf('await start()'))
 })
 
-test('UI canvas node contains hit overlays only and no DOM content renderer', () => {
+test('UI canvas node keeps inline editing controls separate from the canonical runtime content renderer', () => {
+  assert.match(node, /canvas-inline-editor/)
   assert.doesNotMatch(node, /<img|<video|node-content|particle-preview|progress-track|asset-image|resourceUrl|setTimeout/)
   assert.doesNotMatch(canvas, /resourceCatalog|resourceUrl|resourceByPath/)
   assert.doesNotMatch(canvas, /konva|fabric|pixi\.js/i)

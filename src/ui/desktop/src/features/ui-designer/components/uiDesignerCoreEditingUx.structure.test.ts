@@ -38,7 +38,7 @@ test('narrow layouts preserve the inspector and expose resources and events abov
   assert.match(inspector, /class="inspector-primary-actions"[\s\S]*v-if="!selectedNode"[\s\S]*v-else-if="activeSection === 'properties'"[\s\S]*<UiDesignerEvents\s+v-else-if="activeSection === 'events'"/)
 })
 
-test('canvas double click invokes the primary editor for every node type', () => {
+test('canvas double click edits text and buttons in place and routes other node types to their primary editor', () => {
   const node = compile('./UiCanvasNode.vue')
   const canvas = compile('./UiDesignerCanvas.vue')
   const inspector = compile('./UiDesignerInspector.vue')
@@ -46,7 +46,13 @@ test('canvas double click invokes the primary editor for every node type', () =>
   const shell = compile('./UiDesignerShell.vue')
   assert.match(node, /@dblclick\.stop="!props\.interactionDisabled && !node\.locked && emit\('activate', \{ node \}\)"/)
   assert.match(node, /@activate="forwardActivate"/)
-  assert.match(canvas, /node\.type === 'container'\) enterContainer\(payload\)[\s\S]*emit\('editNode', payload\.node\.id\)/)
+  assert.match(canvas, /node\.type !== 'text' && node\.type !== 'button'/)
+  assert.match(canvas, /beginInlineTextEdit\(payload\.node\)/)
+  assert.match(canvas, /draftCoordinator\.register\(commitInlineTextEdit/)
+  assert.match(node, /ui-designer-inline-text-/)
+  assert.match(node, /ui-designer-inline-button-/)
+  assert.match(node, /@blur="emit\('commitInlineText'\)"/)
+  assert.match(canvas, /node\.type === 'container'\) enterContainer\(payload\)[\s\S]*beginInlineTextEdit\(payload\.node\)[\s\S]*emit\('editNode', payload\.node\.id\)/)
   assert.match(shell, /@edit-node="editPrimaryNode"/)
   assert.match(panel, /@dblclick\.stop="emit\('activateNode', data\.id\)"/)
   assert.match(shell, /@activate-node="activateNode"/)

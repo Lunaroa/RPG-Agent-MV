@@ -216,7 +216,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
       }
     }
     context.Sprite = ThrowingSprite;
-    context.ImageManager = { loadBitmap: (_folder: string, name: string) => name === 'a.png' ? { throwNode: true } : {} };
+    context.ImageManager = { loadBitmap: (_folder: string, name: string) => name === 'a' ? { throwNode: true } : {} };
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
     const runtime = context.MZUIRuntime.create();
     const scene = allNodeScene();
@@ -244,6 +244,30 @@ describe('MZUIRuntime MV/MZ bridge', () => {
       const args = calls[0] as unknown[];
       assert.equal(args.length, engine === 'MV' ? 4 : 1);
       assert.equal(engine === 'MV' ? args[0] : (args[0] as any).width, engine === 'MV' ? 0 : 100);
+      runtime.cleanup();
+    }
+  });
+
+  test('passes persisted PNG paths to the official MV and MZ ImageManager without duplicating extensions', () => {
+    for (const engine of ['MV', 'MZ']) {
+      const context = makeContext();
+      const calls: Array<{ folder: string; name: string }> = [];
+      context.Utils = { RPGMAKER_NAME: engine };
+      context.ImageManager = {
+        loadBitmap(folder: string, name: string) {
+          calls.push({ folder, name });
+          return { width: 32, height: 32, resolvedPath: `${folder}${encodeURIComponent(name)}.png` };
+        },
+      };
+      vm.runInNewContext(RUNTIME_SOURCE, context, { filename: `MZUIRuntime-${engine}.js` });
+      const runtime = context.MZUIRuntime.create();
+      const scene = allNodeScene();
+      scene.nodes.find((node: { type: string }) => node.type === 'sprite').props.path = 'img/parallaxes/BlueSky.png';
+      runtime.mount(scene, { root: new context.PIXI.Container() });
+      assert.equal(calls.some((call) => call.folder === 'img/parallaxes/' && call.name === 'BlueSky'), true);
+      assert.equal(calls.some((call) => call.folder === 'img/' && call.name === 'panel'), true);
+      assert.equal(calls.some((call) => /\.png$/i.test(call.name)), false);
+      assert.equal(calls.some((call) => `${call.folder}${encodeURIComponent(call.name)}.png`.endsWith('.png.png')), false);
       runtime.cleanup();
     }
   });
@@ -303,7 +327,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
       texture: unknown;
       constructor(texture: unknown, ...args: unknown[]) { super(...args); this.texture = texture; }
     };
-    context.ImageManager = { loadBitmap: (_folder: string, name: string) => ({ baseTexture: { id: name } }) };
+    context.ImageManager = { loadBitmap: (_folder: string, name: string) => ({ baseTexture: { id: `${name}.png` } }) };
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
     const runtime = context.MZUIRuntime.create();
     const scene = allNodeScene();
@@ -328,9 +352,9 @@ describe('MZUIRuntime MV/MZ bridge', () => {
       constructor(texture: unknown, ...args: unknown[]) { super(...args); this.texture = texture; }
     };
     let finishLoad!: () => void;
-    context.ImageManager = { loadBitmap: (_folder: string, name: string) => name === 'panel.png'
-      ? { baseTexture: null, addLoadListener(callback: () => void) { finishLoad = () => { this.baseTexture = { id: name }; callback(); }; } }
-      : { baseTexture: { id: name } } };
+    context.ImageManager = { loadBitmap: (_folder: string, name: string) => name === 'panel'
+      ? { baseTexture: null, addLoadListener(callback: () => void) { finishLoad = () => { this.baseTexture = { id: `${name}.png` }; callback(); }; } }
+      : { baseTexture: { id: `${name}.png` } } };
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
     const runtime = context.MZUIRuntime.create();
     runtime.mount(allNodeScene(), { root: new context.PIXI.Container() });
@@ -347,9 +371,10 @@ describe('MZUIRuntime MV/MZ bridge', () => {
         const bitmap: any = {
           baseTexture: null,
           addLoadListener(callback: () => void) {
-            const callbacks = pending.get(name) || [];
+            const key = `${name}.png`;
+            const callbacks = pending.get(key) || [];
             callbacks.push({ bitmap, callback });
-            pending.set(name, callbacks);
+            pending.set(key, callbacks);
           },
         };
         return bitmap;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, isRef, onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { computed, isRef, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import type { UiNode, UiRuntimeDiagnostic, UiValidationIssue } from '@contract/ui-designer'
 import type { UiDesignerManagedAssetKind } from '@contract/ui-designer-resources'
@@ -32,6 +32,7 @@ const props = defineProps<{ designer: UiDesignerController }>()
 const designer = props.designer
 const { t } = useUiDesignerI18n()
 const activeSection = defineModel<'properties' | 'events' | 'condition' | 'animation'>('activeSection', { default: 'properties' })
+const inspectorElement = ref<HTMLElement>()
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
 const selectedNode = computed<UiNode | undefined>(() => unwrap(designer.selectedNode))
 const selectedActionPolicy = computed(() => selectedNode.value ? designer.getNodeActionPolicy(selectedNode.value.id) : undefined)
@@ -205,6 +206,47 @@ const revealPurpose = (purpose: InspectorPurpose) => {
 }
 const hasResourceFields = computed(() => fieldGroups.value.some((group) => group.purpose === 'contentResources' && group.fields.length > 0) || selectedNode.value?.type === 'button' || selectedNode.value?.type === 'frameAnimation')
 
+const primaryResourceField: Partial<Record<UiNode['type'], string>> = {
+  sprite: 'path',
+  nineSlice: 'path',
+  video: 'path',
+  particle: 'imagePath',
+}
+const revealPrimaryControl = async (selector: string, activate = false) => {
+  revealPurpose('contentResources')
+  await nextTick()
+  const root = inspectorElement.value?.querySelector<HTMLElement>(selector)
+  if (!root) return false
+  root.scrollIntoView({ block: 'center', inline: 'nearest' })
+  if (activate) {
+    root.click()
+    return true
+  }
+  const editable = root.matches('input, textarea') ? root : root.querySelector<HTMLElement>('input, textarea, [contenteditable="true"]')
+  editable?.focus()
+  if (editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement) editable.select()
+  return Boolean(editable)
+}
+const editPrimaryNode = async (nodeId: string) => {
+  const node = selectedNode.value
+  if (!node || node.id !== nodeId) return
+  if (node.type === 'text' || node.type === 'button') {
+    await revealPrimaryControl('[data-ui-id="ui-designer-property-content-input"]')
+    return
+  }
+  if (node.type === 'frameAnimation') {
+    await revealPrimaryControl('[data-ui-id="ui-designer-frames-select-many"]', true)
+    return
+  }
+  const resourceField = primaryResourceField[node.type]
+  if (resourceField) {
+    await revealPrimaryControl(`[data-ui-id="ui-designer-resource-${resourceField}-select"]`, true)
+    return
+  }
+  revealPurpose(node.type === 'progressBar' ? 'contentResources' : 'appearance')
+}
+defineExpose({ editPrimaryNode })
+
 const updateProperty = (key: string, value: unknown, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
   if (targetId) designer.updateNodeProperty(targetId, key, value)
@@ -217,7 +259,7 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
 </script>
 
 <template>
-  <aside class="inspector-panel" data-ui-id="ui-designer-inspector" data-testid="ui-designer-inspector">
+  <aside ref="inspectorElement" class="inspector-panel" data-ui-id="ui-designer-inspector" data-testid="ui-designer-inspector">
     <div class="inspector-head">
       <div>
         <span class="inspector-title">{{ t('inspector') }}</span>

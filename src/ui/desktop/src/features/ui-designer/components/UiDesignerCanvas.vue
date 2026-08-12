@@ -12,6 +12,7 @@ import type { UiNodeActionCommand, UiNodeActionPolicy } from '../models/actions'
 import { exportRuntimeDocument } from '../models/export'
 
 const props = defineProps<{ designer: UiDesignerController }>()
+const emit = defineEmits<{ editNode: [nodeId: string] }>()
 const designer = props.designer
 const { t } = useUiDesignerI18n()
 const STAGE_MARGIN = 46
@@ -187,6 +188,18 @@ const enterContainer = (payload: { node: UiNode }) => {
   // resized, rotated, or accidentally edited while inside it.
   designer.selectNodes(payload.node.children.length ? [payload.node.children[0]] : [])
 }
+const activateNode = (payload: { node: UiNode }) => {
+  if (previewing.value) return
+  if (payload.node.locked || payload.node.id === 'node_root') return
+  designer.selectNodes([payload.node.id])
+  if (payload.node.type === 'container') enterContainer(payload)
+  else emit('editNode', payload.node.id)
+}
+const activateNodeById = (nodeId: string) => {
+  const node = nodeIndex.value.get(nodeId)
+  if (node && node.id !== 'node_root' && node.id !== editingRootId.value) activateNode({ node })
+}
+defineExpose({ activateNodeById })
 
 const moveDrag = (event: PointerEvent) => {
   const active = dragging.value
@@ -535,7 +548,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
             @pointerdown="handlePointer"
             @select="handleSelect"
             @contextmenu="openNodeMenu"
-            @enter="enterContainer"
+            @activate="activateNode"
             @handlepointerdown="beginTransform"
           />
         </div>

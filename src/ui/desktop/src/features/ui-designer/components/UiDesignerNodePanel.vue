@@ -15,6 +15,7 @@ interface NodeTreeEntry {
 }
 
 const props = defineProps<{ designer: UiDesignerController }>()
+const emit = defineEmits<{ activateNode: [nodeId: string] }>()
 const designer = props.designer
 const { t } = useUiDesignerI18n()
 const search = ref('')
@@ -248,7 +249,7 @@ const handleKeydown = (event: KeyboardEvent) => {
     >
       <template #default="{ data }">
         <el-dropdown trigger="contextmenu" @command="(command: string) => contextCommand(command, data.id)">
-        <span class="node-tree-entry" :class="{ selected: selectedIds.includes(data.id), locked: document.nodes.find((node) => node.id === data.id)?.locked }" :data-node-id="data.id" :data-ui-id="`ui-designer-tree-row-${data.id}`" @mouseenter="designer.setHoveredNode(data.id)" @mouseleave="designer.setHoveredNode(undefined)" @contextmenu="designer.selectNodeActionTarget(data.id)" @dblclick.stop="startRename(data)">
+        <span class="node-tree-entry" :class="{ selected: selectedIds.includes(data.id), locked: document.nodes.find((node) => node.id === data.id)?.locked }" :data-node-id="data.id" :data-ui-id="`ui-designer-tree-row-${data.id}`" @mouseenter="designer.setHoveredNode(data.id)" @mouseleave="designer.setHoveredNode(undefined)" @contextmenu="designer.selectNodeActionTarget(data.id)" @dblclick.stop="emit('activateNode', data.id)">
           <span class="node-kind">{{ labelFor(data.type) }}</span>
           <el-input v-if="editingId === data.id" v-model="editingName" size="small" :placeholder="t('nodeNamePlaceholder')" @keyup.enter="finishRename" @blur="finishRename" />
           <span v-else class="node-name">{{ data.label.split(' · ')[0] }}</span>

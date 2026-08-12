@@ -61,6 +61,12 @@ interface UiDesignerNodePanelExpose {
   getExpandedKeys: () => string[]
   setExpandedKeys: (ids: readonly string[]) => void
 }
+interface UiDesignerInspectorExpose {
+  editPrimaryNode: (nodeId: string) => void | Promise<void>
+}
+interface UiDesignerCanvasExpose {
+  activateNodeById: (nodeId: string) => void
+}
 
 const confirmDiscard = async (sceneId?: string) => {
   try {
@@ -124,6 +130,13 @@ const cycleNodeSelection = (step: 1 | -1) => {
 }
 const previewSnapshot = ref<PreviewEditorSnapshot>()
 const nodePanelRef = ref<UiDesignerNodePanelExpose>()
+const inspectorRef = ref<UiDesignerInspectorExpose>()
+const canvasRef = ref<UiDesignerCanvasExpose>()
+const editPrimaryNode = (nodeId: string) => {
+  rawDesigner.selectNodes([nodeId])
+  void nextTick(() => inspectorRef.value?.editPrimaryNode(nodeId))
+}
+const activateNode = (nodeId: string) => canvasRef.value?.activateNodeById(nodeId)
 const capturePreviewState = () => {
   if (previewSnapshot.value) return
   previewSnapshot.value = {
@@ -256,18 +269,18 @@ onBeforeUnmount(() => {
     <UiDesignerSceneTabs v-show="!designer.isPreviewing" :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :style="workspaceStyle">
       <aside v-show="!designer.isPreviewing" class="left-pane">
-        <UiDesignerNodePanel ref="nodePanelRef" :designer="designer" />
+        <UiDesignerNodePanel ref="nodePanelRef" :designer="designer" @activate-node="activateNode" />
       </aside>
       <div v-show="!designer.isPreviewing" class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
       <main class="center-pane">
         <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" />
         <template v-else>
-          <UiDesignerCanvas v-show="designer.editingMode === 'design' || designer.isPreviewing" :designer="designer" />
+          <UiDesignerCanvas ref="canvasRef" v-show="designer.editingMode === 'design' || designer.isPreviewing" :designer="designer" @edit-node="editPrimaryNode" />
           <UiDesignerCodePanel v-show="designer.editingMode === 'code' && !designer.isPreviewing" :designer="designer" />
         </template>
       </main>
       <div v-show="!designer.isPreviewing" class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
-      <UiDesignerInspector v-show="!designer.isPreviewing" :designer="designer" />
+      <UiDesignerInspector ref="inspectorRef" v-show="!designer.isPreviewing" :designer="designer" />
     </div>
     <UiDesignerStatusBar v-show="!designer.isPreviewing" :designer="designer" />
 

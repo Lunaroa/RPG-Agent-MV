@@ -21,7 +21,7 @@ const props = defineProps<{
   draftRotations?: Record<string, number>
   rendererBounds?: Record<string, UiDesignerRendererNodeBounds>
 }>()
-const emit = defineEmits<{ pointerdown: [payload: { event: PointerEvent; node: UiNode }]; select: [payload: { event: MouseEvent; node: UiNode }]; contextmenu: [payload: { event: MouseEvent; node: UiNode }]; enter: [payload: { node: UiNode }]; handlepointerdown: [payload: { event: PointerEvent; node: UiNode; handle: string }] }>()
+const emit = defineEmits<{ pointerdown: [payload: { event: PointerEvent; node: UiNode }]; select: [payload: { event: MouseEvent; node: UiNode }]; contextmenu: [payload: { event: MouseEvent; node: UiNode }]; activate: [payload: { node: UiNode }]; handlepointerdown: [payload: { event: PointerEvent; node: UiNode; handle: string }] }>()
 const resizeHandles: UiResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
 const byId = (id: string) => props.nodeIndex.get(id)
@@ -51,7 +51,7 @@ const canRenderChild = (id: string) => !ancestorIds().includes(id)
 const forwardPointer = (payload: { event: PointerEvent; node: UiNode }) => emit('pointerdown', payload)
 const forwardSelect = (payload: { event: MouseEvent; node: UiNode }) => emit('select', payload)
 const forwardContextMenu = (payload: { event: MouseEvent; node: UiNode }) => emit('contextmenu', payload)
-const forwardEnter = (payload: { node: UiNode }) => emit('enter', payload)
+const forwardActivate = (payload: { node: UiNode }) => emit('activate', payload)
 const forwardHandle = (payload: { event: PointerEvent; node: UiNode; handle: string }) => emit('handlepointerdown', payload)
 const handleStyle = (handle: UiResizeHandle): CSSProperties => ({ cursor: resizeCursor(handle, props.draftRotations?.[props.node.id] ?? props.node.props.rotate) })
 </script>
@@ -66,7 +66,7 @@ const handleStyle = (handle: UiResizeHandle): CSSProperties => ({ cursor: resize
     @pointerdown.stop="emit('pointerdown', { event: $event, node })"
     @click.stop="emit('select', { event: $event, node })"
     @contextmenu.stop.prevent="emit('contextmenu', { event: $event, node })"
-    @dblclick.stop="!props.interactionDisabled && node.type === 'container' && emit('enter', { node })"
+    @dblclick.stop="!props.interactionDisabled && !node.locked && emit('activate', { node })"
   >
     <template v-for="childId in node.children" :key="childId">
       <UiCanvasNode
@@ -88,7 +88,7 @@ const handleStyle = (handle: UiResizeHandle): CSSProperties => ({ cursor: resize
         @pointerdown="forwardPointer"
         @select="forwardSelect"
         @contextmenu="forwardContextMenu"
-        @enter="forwardEnter"
+        @activate="forwardActivate"
         @handlepointerdown="forwardHandle"
       />
     </template>

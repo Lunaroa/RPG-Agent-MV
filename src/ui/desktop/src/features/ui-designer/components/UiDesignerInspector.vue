@@ -241,6 +241,10 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             <UiPropertyField
             v-for="field in group.fields"
             :key="`${group.purpose}:${field.key}`"
+            :class="{
+              'button-content-primary': selectedNode.type === 'button' && group.purpose === 'contentResources' && field.key === 'content',
+              'button-se-priority': selectedNode.type === 'button' && group.purpose === 'contentResources' && (field.key === 'hoverSe' || field.key === 'clickSe'),
+            }"
             :field-key="field.key"
             :label="labelFor(field.key)"
             :help="field.help"
@@ -267,19 +271,29 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             @mode="updateMode(field.key, $event)"
             @code="(code, sceneId, nodeId) => updateCode(field.key, code, sceneId, nodeId)"
             />
+            <UiButtonStatesEditor
+              v-if="group.purpose === 'contentResources' && selectedNode.type === 'button'"
+              class="button-states-priority"
+              :value="selectedNode.props.imageStates"
+              :resources="designer.resourceCatalog?.resources ?? []"
+              :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
+              :resource-picker-disabled="!designer.hasProject"
+              @update="updateProperty('imageStates', $event)"
+            />
+            <el-button
+              v-if="group.purpose === 'contentResources' && selectedNode.type === 'button'"
+              class="button-events-priority"
+              size="small"
+              plain
+              @click="activeSection = 'events'"
+            >
+              {{ t('events') }}
+            </el-button>
           </div>
           <UiPaddingEditor
             v-if="group.purpose === 'appearance' && (selectedNode.type === 'text' || selectedNode.type === 'button')"
             :value="selectedNode.props.padding"
             @update="updateProperty('padding', $event)"
-          />
-          <UiButtonStatesEditor
-            v-if="group.purpose === 'contentResources' && selectedNode.type === 'button'"
-            :value="selectedNode.props.imageStates"
-            :resources="designer.resourceCatalog?.resources ?? []"
-            :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
-            :resource-picker-disabled="!designer.hasProject"
-            @update="updateProperty('imageStates', $event)"
           />
           <UiFrameListEditor
             v-if="group.purpose === 'contentResources' && selectedNode.type === 'frameAnimation'"
@@ -360,6 +374,11 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
 .inspector-purpose-groups :deep(.el-collapse-item__content) { padding: 2px 0 12px; color: inherit; }
 .inspector-purpose-title { margin: 0; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }
 .property-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.property-grid > * { order: 4; }
+.property-grid .button-content-primary { order: 0; }
+.property-grid .button-states-priority { order: 1; }
+.property-grid .button-events-priority { order: 2; justify-self: start; margin: 0; }
+.property-grid .button-se-priority { order: 3; }
 .resource-workspace-host { height: min(760px, 82vh); min-height: 520px; overflow: hidden; }
 .inspector-empty { display: grid; place-items: center; flex: 1; min-height: 180px; color: var(--app-ink-soft); font-size: 12px; text-align: center; }
 .inspector-section-title { color: var(--app-ink-soft); font-size: 11px; font-weight: 650; text-transform: uppercase; }

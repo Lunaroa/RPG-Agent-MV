@@ -249,7 +249,7 @@ onBeforeUnmount(() => {
 
 <template>
     <section class="ui-designer-shell" :class="{ 'editor-preview-active': designer.isPreviewing, 'code-mode-active': designer.editingMode === 'code' && !designer.isPreviewing }" data-ui-id="ui-designer-shell">
-    <UiDesignerToolbar :designer="designer" @new-scene="openNewScene" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
+    <UiDesignerToolbar :designer="designer" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
     <UiDesignerSceneTabs v-show="!designer.isPreviewing" :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :style="workspaceStyle">
       <aside v-show="!designer.isPreviewing" class="left-pane">

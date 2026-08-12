@@ -34,6 +34,7 @@ const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
 const document = computed(() => unwrap(designer.document))
 const selectedIds = computed(() => unwrap(designer.selectedIds))
 const actionError = computed(() => unwrap(designer.actionError))
+const paletteFeedback = ref('')
 
 const labels: Record<UiDesignerNodeType, UiDesignerMessageKey> = {
   container: 'nodeContainer', sprite: 'nodeSprite', nineSlice: 'nodeNineSlice', frameAnimation: 'nodeFrameAnimation', button: 'nodeButton', text: 'nodeText', progressBar: 'nodeProgressBar', overlay: 'nodeOverlay', video: 'nodeVideo', particle: 'nodeParticle',
@@ -146,7 +147,9 @@ const handleNodeClick = (entry: NodeTreeEntry, _node: unknown, _component: unkno
 }
 
 const addNode = (type: UiDesignerNodeType) => {
-  designer.addNode(type)
+  const primary = document.value.nodes.find((node) => node.id === selectedIds.value[0])
+  const parentId = primary?.id === 'node_root' ? 'node_root' : primary ? primary.parentId : 'node_root'
+  paletteFeedback.value = designer.addNode(type, parentId) ? `✓ ${labelFor(type)}` : ''
 }
 
 const toggleLock = (id: string) => {
@@ -262,6 +265,7 @@ const handleKeydown = (event: KeyboardEvent) => {
 
     <div class="panel-heading type-heading">
       <span>{{ t('nodeTypes') }}</span>
+      <span class="palette-feedback" aria-live="polite">{{ paletteFeedback }}</span>
     </div>
     <div class="node-types">
       <el-button v-for="type in UI_DESIGNER_NODE_TYPES" :key="type" size="small" plain draggable="true" @dragstart="(event: DragEvent) => event.dataTransfer?.setData('text/ui-node-type', type)" @click="addNode(type)">
@@ -273,7 +277,7 @@ const handleKeydown = (event: KeyboardEvent) => {
       <el-button size="small" :disabled="!selectedIds[0] || !nodePolicy(selectedIds[0]).allowed.group" @click="designer.group()">{{ t('group') }}</el-button>
       <el-button size="small" type="danger" plain :disabled="!selectedIds[0] || !nodePolicy(selectedIds[0]).allowed.delete" @click="selectedIds[0] && designer.executeNodeAction('delete', selectedIds[0])">{{ t('deleteNode') }}</el-button>
     </div>
-    <p v-if="actionError" class="panel-error"><span>{{ t('operationError') }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ actionError }}</span></details></p>
+    <div v-if="actionError" class="panel-error"><span>{{ t('operationError') }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ actionError }}</span></details></div>
   </section>
 </template>
 
@@ -289,6 +293,7 @@ const handleKeydown = (event: KeyboardEvent) => {
 .node-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; max-height: 220px; overflow: auto; }
 .node-types .el-button { margin: 0; overflow: hidden; text-overflow: ellipsis; }
 .type-heading { margin-top: 4px; }
+.palette-feedback { color: var(--el-color-success); font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .node-actions { display: flex; gap: 6px; padding-top: 5px; border-top: 1px solid var(--app-border); }
 .node-actions .el-button { margin: 0; flex: 1; }
 .panel-error { margin: 0; color: var(--el-color-danger); font-size: 11px; line-height: 1.4; }

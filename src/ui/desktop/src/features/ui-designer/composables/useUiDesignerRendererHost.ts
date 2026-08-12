@@ -1044,9 +1044,22 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       && (candidateEnvelope.sessionId !== active.sessionId || candidateEnvelope.generation !== active.generation)
     ) return
     try {
+      // The host publishes one initial scene-state for its own fixed canvas
+      // scene immediately after ready.  A mount posted from the ready handler
+      // can therefore be queued before that pre-mount state is delivered.  It
+      // carries no document identity and must stay a harmless transition
+      // status; enforcing the current document/revision on it turns a legal
+      // lifecycle message into a protocol fatal.
+      const sceneStatePayload = candidateEnvelope?.kind === 'scene-state'
+        && candidateEnvelope.payload && typeof candidateEnvelope.payload === 'object' && !Array.isArray(candidateEnvelope.payload)
+        ? candidateEnvelope.payload as Record<string, unknown>
+        : null
+      const sceneStateHasDocumentIdentity = sceneStatePayload?.mountedDocumentSceneId !== null
       const expectsDocumentIdentity = session
-        && (candidateEnvelope?.kind === 'mounted' || candidateEnvelope?.kind === 'scene-state')
-        && (pendingMountRevision !== null || mountedDocumentSceneId.value !== null)
+        && (
+          (candidateEnvelope?.kind === 'mounted' && (pendingMountRevision !== null || mountedDocumentSceneId.value !== null))
+          || (candidateEnvelope?.kind === 'scene-state' && sceneStateHasDocumentIdentity)
+        )
       const message = validateUiDesignerRendererBridgeMessage(candidate, {
         sessionId: active.sessionId,
         generation: active.generation,
@@ -1054,7 +1067,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         ...(expectsDocumentIdentity
           ? { sceneId: activeSceneId() }
           : {}),
-        ...((candidateEnvelope?.kind === 'fatal' || (session && (candidateEnvelope?.kind === 'mounted' || candidateEnvelope?.kind === 'bounds' || candidateEnvelope?.kind === 'scene-state')))
+        ...((candidateEnvelope?.kind === 'fatal' || (session && (candidateEnvelope?.kind === 'mounted' || candidateEnvelope?.kind === 'bounds' || (candidateEnvelope?.kind === 'scene-state' && sceneStateHasDocumentIdentity))))
           ? { minimumRevision: revision }
           : {}),
       })
@@ -1194,7 +1207,14 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   }
   const retry = () => {
     if (disposed) return false
-    void start()
+    const restart = async () => {
+      if (session || disposingSession || retainedStaleSessions.size) {
+        const stopped = await dispose('scene-change', 'scene-change', true)
+        if (!stopped) return
+      }
+      await start()
+    }
+    void restart()
     return true
   }
 
@@ -1234,6 +1254,14 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   const executionModeStop = watch(options.executionMode, () => {
     cancelDraftSync()
     executionModeReady.value = false
+    // A renderer fatal clears the isolated iframe and leaves the editor in
+    // authoring mode.  Entering editor preview again must reuse the same
+    // owner lifecycle by starting a fresh session instead of leaving the
+    // controller in `preparing` with no session to acknowledge it.
+    if (options.executionMode() === 'full-preview' && status.value === 'error' && !session && !disposingSession) {
+      void retry()
+      return
+    }
     syncScene(true)
   }, { flush: 'post' })
   const unregisterResourceMutationHandler = options.designer.registerResourceMutationHandler(syncResourceManifest)

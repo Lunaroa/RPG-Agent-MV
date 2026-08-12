@@ -60,6 +60,7 @@ import {
 import { resolveNodeActionPolicy, type UiNodeActionCommand } from '../models/actions'
 import { UiDesignerHistory } from '../models/history'
 import { analyzePerformance } from '../models/performance'
+import { nextSiblingCascadePosition } from '../models/placement'
 import { copySelection, groupNodes, moveNodeStep, moveNodeToEdge, pasteClipboard, reparentNode, ungroupNodes } from '../models/tree'
 import { isValidUiDesignerSceneName, validateDocument } from '../models/validation'
 import { UI_DESIGNER_BUILT_IN_TEMPLATES, createBuiltInUiDesignerTemplate, isBuiltInUiDesignerTemplate } from '../models/templates'
@@ -780,12 +781,14 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const addNode = (type: UiDesignerNodeType, parentId?: string | null, position?: UiPoint) => {
     try {
+      actionError.value = ''
       const parent = parentId === undefined ? selectedNode.value?.type === 'container' ? selectedNode.value.id : 'node_root' : parentId
       if (parent !== null && !resolveNodeActionPolicy(document.value, [parent], parent, false).allowed.addChild) throw new Error('Only a container outside locked ancestry can receive child nodes')
       let next = cloneUiDocument(document.value)
       const nodeId = nextNodeId(next, type)
       const label = `${type[0].toUpperCase()}${type.slice(1)}`
       const node = createDefaultNode(type, { id: nodeId, name: `${label}_${next.nodes.filter((item) => item.type === type).length + 1}`, parentId: parent ?? null })
+      const initialPosition = position ?? nextSiblingCascadePosition(next, node)
       next.nodes.push(node)
       if (node.parentId === null) next.zOrder.push(node.id)
       else {
@@ -793,11 +796,13 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
         if (!destination || destination.type !== 'container' || destination.locked) throw new Error('Only an unlocked container can receive child nodes')
         destination.children.push(node.id)
       }
-      if (position) next = applyNodeGeometryTransaction(next, node.id, { kind: 'properties', patch: position })
+      next = applyNodeGeometryTransaction(next, node.id, { kind: 'properties', patch: initialPosition })
       replaceActiveDocument(next, `Add ${type}`)
       selectedIds.value = [node.id]
+      return node.id
     } catch (error) {
       actionError.value = error instanceof Error ? error.message : String(error)
+      return null
     }
   }
 

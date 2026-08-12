@@ -364,6 +364,20 @@ test('integer geometry and shared node actions guard locked selections and ances
   assert.equal(designer.reparent(topFirstId, 'node_root', 'before'), false)
 })
 
+test('new palette siblings cascade without turning a selected container into an implicit template', () => {
+  const designer = useUiDesigner()
+  const parentId = 'node_root'
+  const containerId = designer.addNode('container', parentId)
+  const titleId = designer.addNode('text', parentId)
+  const firstButtonId = designer.addNode('button', parentId)
+  const secondButtonId = designer.addNode('button', parentId)
+  assert.ok(containerId && titleId && firstButtonId && secondButtonId)
+
+  const added = [containerId, titleId, firstButtonId, secondButtonId].map((id) => designer.document.value.nodes.find((node) => node.id === id))
+  assert.deepEqual(added.map((node) => node?.parentId), [parentId, parentId, parentId, parentId])
+  assert.deepEqual(added.map((node) => [node?.props.x, node?.props.y]), [[0, 0], [48, 48], [72, 72], [96, 96]])
+})
+
 test('resource property execution rejects unsafe nested paths before document mutation', () => {
   const designer = useUiDesigner()
   designer.addNode('button', 'node_root')

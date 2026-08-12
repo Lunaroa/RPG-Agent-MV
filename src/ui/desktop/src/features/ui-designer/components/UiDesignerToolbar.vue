@@ -6,7 +6,6 @@ import { useUiDesignerI18n } from '../i18n'
 const props = defineProps<{ designer: UiDesignerController }>()
 const emit = defineEmits<{
   settings: []
-  newScene: []
   help: []
   shortcuts: []
   tour: []
@@ -61,7 +60,6 @@ const togglePreview = () => {
 
     <div class="toolbar-actions">
       <el-button-group>
-        <el-button data-testid="ui-designer-new" size="small" :disabled="!designer.canCreateScene" @click="emit('newScene')">{{ t('newScene') }}</el-button>
         <el-button data-testid="ui-designer-open" size="small" :disabled="!designer.canSave" @click="void designer.open()">{{ t('open') }}</el-button>
         <el-button data-testid="ui-designer-save" size="small" type="primary" :disabled="!designer.canSave || !designer.isDirty" @click="void designer.save()">{{ t('save') }}</el-button>
         <el-button size="small" :disabled="!designer.canSave" @click="void designer.save('saveAs')">{{ t('saveAs') }}</el-button>

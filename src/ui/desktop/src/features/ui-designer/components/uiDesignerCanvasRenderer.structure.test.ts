@@ -20,6 +20,8 @@ test('UI designer canvas consumes the isolated runtime host and keeps stable ove
   assert.match(canvas, /@error="rendererHost\.onIframeError"/)
   assert.match(canvas, /rendererFailureCode/)
   assert.match(canvas, /rendererHost\.retry\(\)/)
+  assert.match(canvas, /rendererDisconnected/)
+  assert.match(canvas, /data-ui-id="ui-designer-runtime-canvas-restart"/)
   assert.doesNotMatch(canvas, /rendererHost\.sendInput/)
   assert.match(node, /data-ui-id="`ui-designer-canvas-node-\$\{node\.id\}`"/)
   for (const handle of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) assert.match(node, new RegExp(`'${handle}'`))
@@ -59,6 +61,7 @@ test('design and code keep one mounted canvas host while committed edits synchro
   assert.match(selectionSync, /options\.executionMode\(\) !== 'full-preview'/)
   const modeWatcher = hostLifecycle.slice(hostLifecycle.indexOf('const executionModeStop = watch('), hostLifecycle.indexOf('onMounted(() =>'))
   assert.match(modeWatcher, /syncScene\(true\)/)
+  assert.match(modeWatcher, /status\.value === 'error' && !session && !disposingSession[\s\S]*void retry\(\)/)
   const previewStart = designerController.slice(designerController.indexOf('const startPreview ='), designerController.indexOf('const stopPreview ='))
   assert.ok(previewStart.indexOf('flushDrafts') < previewStart.indexOf("previewExecutionMode.value = 'full-preview'"))
   assert.doesNotMatch(previewStart, /isPreviewing\.value = true/)
@@ -80,12 +83,26 @@ test('authoring renderer status remains a non-blocking hint over editable DOM ov
 test('renderer host does not settle a mounted receipt from the wrong execution mode', () => {
   const messageHandlerStart = hostLifecycle.indexOf('const onMessage =')
   const mountedHandler = hostLifecycle.slice(hostLifecycle.indexOf("if (message.kind === 'mounted'", messageHandlerStart), hostLifecycle.indexOf("if (message.kind === 'scene-state'", messageHandlerStart))
-  assert.match(mountedHandler, /message\.payload\.executionMode === options\.executionMode\(\) && executionModeReady\.value/)
+  assert.match(mountedHandler, /message\.payload\.executionMode === options\.executionMode\(\)/)
   assert.match(mountedHandler, /if \(!mountedModeMatches\)/)
   assert.match(mountedHandler, /pendingMountRevision = null/)
   assert.match(mountedHandler, /status\.value = 'loading'/)
   assert.match(mountedHandler, /syncScene\(true\)/)
-  assert.match(mountedHandler, /options\.onExecutionModeReady\?\.\(message\.payload\.executionMode\)/)
+})
+
+test('pre-mount host scene-state does not become a protocol fatal after mount is queued', () => {
+  const messageHandler = hostLifecycle.slice(hostLifecycle.indexOf('const onMessage ='), hostLifecycle.indexOf('const onIframeLoad ='))
+  assert.match(messageHandler, /const sceneStateHasDocumentIdentity = sceneStatePayload\?\.mountedDocumentSceneId !== null/)
+  assert.match(messageHandler, /candidateEnvelope\?\.kind === 'scene-state' && sceneStateHasDocumentIdentity/)
+  assert.match(messageHandler, /candidateEnvelope\?\.kind === 'mounted' && \(pendingMountRevision !== null \|\| mountedDocumentSceneId\.value !== null\)/)
+  assert.match(messageHandler, /sceneStateHasDocumentIdentity[\s\S]*minimumRevision: revision/)
+})
+
+test('renderer restart stops any retained owner before starting a replacement session', () => {
+  const retryBlock = hostLifecycle.slice(hostLifecycle.indexOf('const retry ='), hostLifecycle.indexOf('function installMessageListener'))
+  assert.match(retryBlock, /session \|\| disposingSession \|\| retainedStaleSessions\.size/)
+  assert.match(retryBlock, /await dispose\('scene-change', 'scene-change', true\)/)
+  assert.ok(retryBlock.indexOf("await dispose('scene-change'") < retryBlock.indexOf('await start()'))
 })
 
 test('UI canvas node contains hit overlays only and no DOM content renderer', () => {
@@ -109,7 +126,7 @@ test('rapid project generations serialize disposal before the newest host start'
   assert.match(hostLifecycle, /terminalGate\.accept\(message\)/)
   assert.doesNotMatch(hostLifecycle, /payload\.status === 'error'\) void fail/)
   assert.doesNotMatch(hostLifecycle, /error\.value = reason instanceof Error \? reason\.message/)
-  assert.match(canvas, /rendererFailureReason/)
+  assert.match(canvas, /rendererDisconnected/)
   assert.doesNotMatch(canvas, /rendererStage} \(\$\{rendererStageStatus/)
 })
 
@@ -141,7 +158,8 @@ test('start confirm and iframe terminals enter the shared latch with fixed safe 
   const startAndConfirm = hostLifecycle.slice(hostLifecycle.indexOf('const start = async'), hostLifecycle.indexOf('const messageOriginMatches'))
   assert.doesNotMatch(startAndConfirm, /result\.message/)
   assert.match(canvas, /:data-failure-code="rendererFailureCode \|\| undefined"/)
-  assert.match(canvas, /rendererHost\.failureRecoveryReason\.value \|\| rendererError\.value \|\| t\('previewError'\)/)
+  assert.match(canvas, /:data-failure-stage="rendererStage"/)
+  assert.match(canvas, /t\('rendererDisconnected'\)/)
 })
 
 test('stale renderer starts keep an opaque owner for a retryable stop', () => {

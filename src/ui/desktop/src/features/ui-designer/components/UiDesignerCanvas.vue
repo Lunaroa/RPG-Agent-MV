@@ -136,9 +136,7 @@ const rendererHost = useUiDesignerRendererHost({
   onPreviewExitRequest: () => designer.stopPreview(),
 })
 const rendererStatus = rendererHost.status
-const rendererError = rendererHost.error
 const rendererFailureCode = rendererHost.failureCode
-const rendererFailureReason = computed(() => rendererHost.failureRecoveryReason.value || rendererError.value || t('previewError'))
 const rendererIframeUrl = rendererHost.iframeUrl
 const rendererBounds = rendererHost.bounds
 const rendererStage = rendererHost.stage
@@ -517,9 +515,12 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
           />
         </div>
         <div v-if="!designer.canRenderCanvas" class="canvas-runtime-state" data-ui-id="ui-designer-runtime-canvas-project-required">{{ t('projectRequired') }}</div>
-        <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" aria-live="polite" :title="rendererStatus === 'error' ? rendererFailureReason : ''" :data-failure-code="rendererFailureCode || undefined" data-ui-id="ui-designer-runtime-canvas-status">
-          <span>{{ rendererStatus === 'error' ? rendererFailureReason : `${t(designer.previewStatus === 'preparing' ? 'previewPreparing' : 'canvasSyncing')} · ${rendererStage}` }}</span>
-          <el-button v-if="rendererStatus === 'error' && designer.canRenderCanvas" size="small" @click="rendererHost.retry()">{{ t('retry') }}</el-button>
+        <div v-else-if="rendererStatus === 'error'" class="canvas-runtime-state" aria-live="polite" :data-failure-code="rendererFailureCode || undefined" :data-failure-stage="rendererStage" data-ui-id="ui-designer-runtime-canvas-status">
+          <span>{{ t('rendererDisconnected') }}</span>
+          <el-button v-if="designer.canRenderCanvas" data-ui-id="ui-designer-runtime-canvas-restart" size="small" @click="rendererHost.retry()">{{ t('restartPreview') }}</el-button>
+        </div>
+        <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" aria-live="polite" data-ui-id="ui-designer-runtime-canvas-status">
+          <span>{{ `${t(designer.previewStatus === 'preparing' ? 'previewPreparing' : 'canvasSyncing')} · ${rendererStage}` }}</span>
         </div>
       </div>
     </div>

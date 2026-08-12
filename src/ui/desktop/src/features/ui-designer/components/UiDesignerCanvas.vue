@@ -27,6 +27,25 @@ const selectedNode = computed<UiNode | undefined>(() => unwrap(designer.selected
 const draftPositions = computed<Record<string, { x: number; y: number }>>(() => unwrap(designer.draftPositions))
 const draftRects = computed<Record<string, UiRect>>(() => unwrap(designer.draftRects))
 const draftRotations = computed<Record<string, number>>(() => unwrap(designer.draftRotations))
+const normalizeResourcePreviewPath = (value: string) => value.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^www\//i, '')
+const resourcePreviewUrls = computed<Record<string, string>>(() => {
+  const urls: Record<string, string> = {}
+  for (const resource of unwrap(designer.resourceCatalog)?.resources ?? []) {
+    if (resource.category !== 'image' || !resource.exists) continue
+    const url = resource.previewUrl ?? resource.thumbnailUrl
+    if (!url) continue
+    for (const candidate of [resource.path, resource.relativePath]) {
+      if (!candidate) continue
+      const normalized = normalizeResourcePreviewPath(candidate)
+      urls[normalized] = url
+      const decoded = normalized.split('/').map((segment) => {
+        try { return decodeURIComponent(segment) } catch { return segment }
+      }).join('/')
+      urls[decoded] = url
+    }
+  }
+  return urls
+})
 const previewing = computed(() => unwrap(designer.isPreviewing))
 const requestedExecutionMode = computed<UiDesignerRendererExecutionMode>(() => unwrap(designer.previewExecutionMode))
 const preferences = computed<Record<string, unknown>>(() => unwrap(designer.preferences))
@@ -140,7 +159,6 @@ const rendererHost = useUiDesignerRendererHost({
 const rendererStatus = rendererHost.status
 const rendererFailureCode = rendererHost.failureCode
 const rendererIframeUrl = rendererHost.iframeUrl
-const rendererBounds = rendererHost.bounds
 const rendererStage = rendererHost.stage
 const rendererReady = computed(() => rendererStatus.value === 'running')
 const previewInteractive = computed(() => previewing.value && rendererReady.value && rendererHost.executionModeReady.value && rendererHost.executionMode.value === 'full-preview')
@@ -405,7 +423,7 @@ const contextNodeFromEvent = (event: MouseEvent) => {
     if (node) return node
   }
   const world = viewportClientToWorld({ x: event.clientX, y: event.clientY }, viewportFrame(), viewport.value)
-  const node = topmostNodeAtPoint(document.value, world, false, rendererBounds.value)
+  const node = topmostNodeAtPoint(document.value, world, false)
   return node?.id === editingRootId.value ? undefined : node
 }
 const openCanvasMenu = (event: MouseEvent) => {
@@ -543,7 +561,7 @@ onBeforeUnmount(() => { commitInlineTextEdit(); unregisterInlineTextDraft(); end
           v-if="rendererIframeUrl"
           ref="rendererFrame"
           class="canvas-runtime-frame"
-          :class="{ 'preview-interactive': previewInteractive }"
+          :class="{ 'authoring-frame': !previewing, 'preview-interactive': previewInteractive }"
           :src="rendererIframeUrl"
           sandbox="allow-scripts allow-same-origin"
           :tabindex="previewInteractive ? 0 : -1"
@@ -566,12 +584,12 @@ onBeforeUnmount(() => { commitInlineTextEdit(); unregisterInlineTextDraft(); end
             :interaction-disabled="node.id === 'node_root' || node.id === editingRootId"
             :origin-x="0"
             :origin-y="0"
-            :renderer-bounds="rendererBounds"
             :draft-positions="draftPositions"
             :draft-rects="draftRects"
             :draft-rotations="draftRotations"
             :inline-editing-node-id="inlineTextEditor?.nodeId"
             :inline-editing-value="inlineTextEditor?.value"
+            :resource-preview-urls="resourcePreviewUrls"
             @pointerdown="handlePointer"
             @select="handleSelect"
             @contextmenu="openNodeMenu"
@@ -609,6 +627,7 @@ onBeforeUnmount(() => { commitInlineTextEdit(); unregisterInlineTextDraft(); end
 .canvas-edit-breadcrumb { position: absolute; z-index: 8; top: -24px; left: 0; color: var(--app-ink-soft); font-size: 10px; pointer-events: none; }
 .canvas-stage.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }
 .canvas-runtime-frame { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; user-select: none; }
+.canvas-runtime-frame.authoring-frame { visibility: hidden; }
 .canvas-runtime-frame.preview-interactive { z-index: 3; pointer-events: auto; touch-action: none; user-select: none; }
 .canvas-grid { position: absolute; z-index: 1; inset: 0; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }
 .canvas-grid.active { opacity: .18; }

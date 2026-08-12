@@ -208,7 +208,9 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
 .property-head label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .property-head .el-button { padding: 3px 6px; font-size: 10px; }
 .property-field > .el-input-number, .property-field > .el-input, .property-field > .el-switch, .property-field > .el-color-picker { width: 100%; }
-.number-control { display: grid; grid-template-columns: minmax(0, 1fr) 88px; align-items: center; gap: 8px; }.number-control :deep(.el-input-number) { width: 88px; }
+.number-control { display: grid; grid-template-columns: minmax(0, 1fr) 88px; align-items: center; gap: 8px; }
+.number-control :deep(.el-slider) { box-sizing: border-box; min-width: 0; padding-inline: 10px; }
+.number-control :deep(.el-input-number) { width: 88px; }
 .code-field { position: relative; }
 .code-note { position: absolute; right: 6px; bottom: 4px; color: var(--app-ink-soft); font-size: 9px; pointer-events: none; }
 .resource-drop-error, .resource-picker-hint { margin: 0; color: var(--app-ink-soft); font-size: 10px; line-height: 1.3; }

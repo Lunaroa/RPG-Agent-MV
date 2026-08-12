@@ -35,6 +35,38 @@ test('Inspector draft flush commits once and one undo restores the original prop
   unregister()
 })
 
+test('selecting an image resource makes its authoring preview URL available immediately', async () => {
+  const loadReferenced = vi.fn(async (request: { referencedPaths: string[] }) => success({
+    projectPath: 'projects/sample',
+    engine: 'MV' as const,
+    resources: request.referencedPaths.map((path) => ({
+      id: `image:${path}`,
+      category: 'image' as const,
+      path,
+      relativePath: path,
+      previewUrl: 'rmmv-asset://project/sample/img/pictures/Example.png',
+      name: 'Example.png',
+      exists: true,
+      referenced: true,
+    })),
+  }))
+  const designer = useUiDesigner({
+    projectPath: 'projects/sample',
+    adapters: {
+      resource: {
+        async loadProject() { return success({ projectPath: 'projects/sample', engine: 'MV' as const, resources: [] }) },
+        loadReferenced,
+        async readSceneData() { return { status: 'unavailable' as const, message: 'unused' } },
+      },
+    },
+  })
+  designer.addNode('sprite', 'node_root')
+  const nodeId = designer.selectedIds.value[0]
+  designer.updateNodeProperty(nodeId, 'path', 'img/pictures/Example.png')
+  await vi.waitFor(() => assert.equal(designer.resourceCatalog.value?.resources[0]?.previewUrl, 'rmmv-asset://project/sample/img/pictures/Example.png'))
+  assert.deepEqual(loadReferenced.mock.calls[0]?.[0].referencedPaths, ['img/pictures/Example.png'])
+})
+
 test('closing the only opened tab creates a fresh untitled clean scene', async () => {
   let clearedRecovery: string | undefined
   const file: UiDesignerPersistenceAdapter = {

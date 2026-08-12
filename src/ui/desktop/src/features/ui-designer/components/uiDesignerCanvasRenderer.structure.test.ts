@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import test from 'node:test'
+import { compileScript, parse } from '@vue/compiler-sfc'
 
 const canvas = fs.readFileSync(new URL('./UiDesignerCanvas.vue', import.meta.url), 'utf8')
 const node = fs.readFileSync(new URL('./UiCanvasNode.vue', import.meta.url), 'utf8')
+const staticPreview = fs.readFileSync(new URL('./UiDesignerStaticNodePreview.vue', import.meta.url), 'utf8')
+const propertyField = fs.readFileSync(new URL('./UiPropertyField.vue', import.meta.url), 'utf8')
 const nodePanel = fs.readFileSync(new URL('./UiDesignerNodePanel.vue', import.meta.url), 'utf8')
 const shell = fs.readFileSync(new URL('./UiDesignerShell.vue', import.meta.url), 'utf8')
 const toolbar = fs.readFileSync(new URL('./UiDesignerToolbar.vue', import.meta.url), 'utf8')
@@ -12,10 +15,21 @@ const hostLifecycle = fs.readFileSync(new URL('../composables/useUiDesignerRende
 const designerController = fs.readFileSync(new URL('../composables/useUiDesigner.ts', import.meta.url), 'utf8')
 const routedView = fs.readFileSync(new URL('../../../views/UiDesignerView.vue', import.meta.url), 'utf8')
 
+const compileComponent = (name: string) => {
+  const source = fs.readFileSync(new URL(name, import.meta.url), 'utf8')
+  const parsed = parse(source, { filename: name })
+  assert.deepEqual(parsed.errors, [])
+  assert.doesNotThrow(() => compileScript(parsed.descriptor, { id: `canvas-authoring-${name}`, inlineTemplate: true }))
+}
+
+test('authoring canvas static preview components compile', () => {
+  for (const name of ['./UiDesignerCanvas.vue', './UiCanvasNode.vue', './UiDesignerStaticNodePreview.vue', './UiPropertyField.vue']) compileComponent(name)
+})
+
 test('UI designer canvas consumes the isolated runtime host and keeps stable overlay targets', () => {
   assert.match(canvas, /useUiDesignerRendererHost/)
   assert.match(canvas, /data-ui-id="ui-designer-runtime-canvas-frame"/)
-  assert.match(canvas, /:renderer-bounds="rendererBounds"/)
+  assert.doesNotMatch(canvas, /:renderer-bounds="rendererBounds"/)
   assert.match(canvas, /preview-interactive/)
   assert.match(canvas, /@error="rendererHost\.onIframeError"/)
   assert.match(canvas, /rendererFailureCode/)
@@ -105,11 +119,20 @@ test('renderer restart stops any retained owner before starting a replacement se
   assert.ok(retryBlock.indexOf("await dispose('scene-change'") < retryBlock.indexOf('await start()'))
 })
 
-test('UI canvas node keeps inline editing controls separate from the canonical runtime content renderer', () => {
+test('authoring canvas renders static image and text content without depending on the runtime iframe', () => {
   assert.match(node, /canvas-inline-editor/)
-  assert.doesNotMatch(node, /<img|<video|node-content|particle-preview|progress-track|asset-image|resourceUrl|setTimeout/)
-  assert.doesNotMatch(canvas, /resourceCatalog|resourceUrl|resourceByPath/)
+  assert.match(node, /UiDesignerStaticNodePreview/)
+  assert.match(canvas, /resourcePreviewUrls/)
+  assert.match(canvas, /authoring-frame/)
+  assert.match(staticPreview, /resourcePreviewUrls/)
+  assert.match(staticPreview, /backgroundImage/)
+  assert.match(staticPreview, /node\.type === 'text' \|\| node\.type === 'button'/)
+  assert.match(staticPreview, /node\.props\.content/)
   assert.doesNotMatch(canvas, /konva|fabric|pixi\.js/i)
+})
+
+test('bounded number sliders keep both end thumbs inside the inspector column', () => {
+  assert.match(propertyField, /\.number-control :deep\(\.el-slider\)[^{]*\{[^}]*box-sizing: border-box;[^}]*padding-inline: 10px;/)
 })
 
 test('rapid project generations serialize disposal before the newest host start', () => {

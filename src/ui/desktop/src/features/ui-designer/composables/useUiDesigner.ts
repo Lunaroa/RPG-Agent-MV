@@ -857,6 +857,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const props = node.props as unknown as Record<string, unknown>
     props[property] = value
     replaceActiveDocument(next, `Update ${property}`, false, true)
+    if (RESOURCE_PROPERTY_KEYS.has(property) || property === 'frames' || property === 'imageStates') void loadReferencedResources(next)
   }
 
   const renameNode = (nodeId: string, name: string) => {

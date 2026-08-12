@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { nextTick, ref, watch, type CSSProperties } from 'vue'
 import type { UiDesignerDocument, UiNode } from '@contract/ui-designer'
-import type { UiDesignerRendererNodeBounds } from '@contract/ui-designer-renderer-bridge'
 import { nodeRect, resizeCursor, type UiResizeHandle } from '../models/geometry'
+import UiDesignerStaticNodePreview from './UiDesignerStaticNodePreview.vue'
 
 const props = defineProps<{
   node: UiNode
@@ -19,9 +19,9 @@ const props = defineProps<{
   draftPositions?: Record<string, { x: number; y: number }>
   draftRects?: Record<string, { x: number; y: number; width: number; height: number }>
   draftRotations?: Record<string, number>
-  rendererBounds?: Record<string, UiDesignerRendererNodeBounds>
   inlineEditingNodeId?: string
   inlineEditingValue?: string
+  resourcePreviewUrls: Record<string, string>
 }>()
 const emit = defineEmits<{ pointerdown: [payload: { event: PointerEvent; node: UiNode }]; select: [payload: { event: MouseEvent; node: UiNode }]; contextmenu: [payload: { event: MouseEvent; node: UiNode }]; activate: [payload: { node: UiNode }]; handlepointerdown: [payload: { event: PointerEvent; node: UiNode; handle: string }]; updateInlineText: [value: string]; commitInlineText: []; cancelInlineText: [] }>()
 const resizeHandles: UiResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
@@ -29,9 +29,8 @@ const inlineInput = ref<HTMLInputElement | HTMLTextAreaElement>()
 
 const byId = (id: string) => props.nodeIndex.get(id)
 const rect = () => nodeRect(props.node)
-const currentRect = () => props.draftRects?.[props.node.id] ?? props.rendererBounds?.[props.node.id] ?? rect()
+const currentRect = () => props.draftRects?.[props.node.id] ?? rect()
 const localStyle = (): CSSProperties => {
-  const rendered = props.rendererBounds?.[props.node.id]
   const value = currentRect()
   const draft = props.draftPositions?.[props.node.id]
   const left = draft ? draft.x - value.width * props.node.props.anchorX : value.x
@@ -42,10 +41,10 @@ const localStyle = (): CSSProperties => {
     width: `${value.width}px`,
     height: `${value.height}px`,
     zIndex: props.node.props.zIndex,
-    visibility: rendered && !rendered.visible ? 'hidden' : undefined,
-    transform: `rotate(${props.draftRotations?.[props.node.id] ?? rendered?.rotation ?? props.node.props.rotate}deg)`,
+    visibility: props.node.props.visible ? undefined : 'hidden',
+    transform: `rotate(${props.draftRotations?.[props.node.id] ?? props.node.props.rotate}deg)`,
     transformOrigin: `${props.node.props.anchorX * 100}% ${props.node.props.anchorY * 100}%`,
-    pointerEvents: props.interactionDisabled || (props.previewing && rendered?.interactive === false) ? 'none' : 'auto',
+    pointerEvents: props.interactionDisabled ? 'none' : 'auto',
   }
 }
 const selected = () => props.selectedIds.includes(props.node.id)
@@ -86,6 +85,7 @@ watch(() => props.inlineEditingNodeId === props.node.id, (active) => {
     @contextmenu.stop.prevent="emit('contextmenu', { event: $event, node })"
     @dblclick.stop="!props.interactionDisabled && !node.locked && emit('activate', { node })"
   >
+    <UiDesignerStaticNodePreview :node="node" :resource-preview-urls="resourcePreviewUrls" />
     <template v-for="childId in node.children" :key="childId">
       <UiCanvasNode
         v-if="byId(childId) && canRenderChild(childId)"
@@ -102,9 +102,9 @@ watch(() => props.inlineEditingNodeId === props.node.id, (active) => {
         :draft-positions="draftPositions"
         :draft-rects="draftRects"
         :draft-rotations="draftRotations"
-        :renderer-bounds="rendererBounds"
         :inline-editing-node-id="inlineEditingNodeId"
         :inline-editing-value="inlineEditingValue"
+        :resource-preview-urls="resourcePreviewUrls"
         @pointerdown="forwardPointer"
         @select="forwardSelect"
         @contextmenu="forwardContextMenu"

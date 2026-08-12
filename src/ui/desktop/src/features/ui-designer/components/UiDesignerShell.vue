@@ -39,7 +39,10 @@ const leftPaneWidth = ref(260)
 const centerPaneWidth = ref(640)
 const rightPaneWidth = ref(320)
 const paneDrag = ref<{ side: 'left' | 'right'; startX: number; left: number; center: number; right: number }>()
-const workspaceStyle = computed(() => ({ gridTemplateColumns: `${leftPaneWidth.value}px 5px minmax(${centerPaneWidth.value}px, 1fr) 5px ${rightPaneWidth.value}px` }))
+const workspaceStyle = computed(() => ({
+  '--ui-designer-left-pane-width': `${leftPaneWidth.value}px`,
+  '--ui-designer-right-pane-width': `${rightPaneWidth.value}px`,
+}))
 const sceneTemplateOptions = computed(() => ['blank', ...rawDesigner.templates.value])
 const sceneTemplateLabels: Record<string, UiDesignerMessageKey> = {
   'builtin:title': 'sceneTemplateTitle', 'builtin:menu': 'sceneTemplateMenu', 'builtin:dialog': 'sceneTemplateDialog', 'builtin:scrolling-credits': 'sceneTemplateScrollingCredits', 'builtin:portrait-frame': 'sceneTemplatePortraitFrame', 'builtin:status-bars': 'sceneTemplateStatusBars', 'builtin:game-over': 'sceneTemplateGameOver', 'builtin:save-slots': 'sceneTemplateSaveSlots', 'builtin:hud-bars': 'sceneTemplateHudBars', 'builtin:item-tooltip': 'sceneTemplateItemTooltip', 'builtin:choice-menu': 'sceneTemplateChoiceMenu', 'builtin:logo-animation': 'sceneTemplateLogoAnimation',
@@ -288,11 +291,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ui-designer-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--app-bg-page); color: var(--app-ink); }
-.designer-workspace { display: grid; grid-template-columns: 260px 5px minmax(640px, 1fr) 5px 320px; flex: 1; min-height: 0; }
+.designer-workspace { display: grid; grid-template-columns: var(--ui-designer-left-pane-width, 260px) 5px minmax(0, 1fr) 5px var(--ui-designer-right-pane-width, 320px); flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .workspace-splitter { position: relative; z-index: 3; cursor: col-resize; background: var(--app-border); }.workspace-splitter::after { position: absolute; inset: 0 -3px; content: ''; }.editor-preview-active .workspace-splitter { pointer-events: none; opacity: .55; }
 .left-pane { display: flex; min-height: 0; padding: 9px; border-right: 1px solid var(--app-border); background: var(--app-bg); }
 .center-pane { display: flex; min-width: 0; min-height: 0; }
-.inspector-panel { border-left: 1px solid var(--app-border); }
+.inspector-panel { min-width: 0; border-left: 1px solid var(--app-border); }
 .code-mode-active .left-pane, .code-mode-active .workspace-splitter, .code-mode-active .inspector-panel { display: none; }
 .code-mode-active .designer-workspace { grid-template-columns: minmax(0, 1fr) !important; }
 .editor-preview-active .left-pane, .editor-preview-active .workspace-splitter, .editor-preview-active .inspector-panel { display: none; }
@@ -300,6 +303,5 @@ onBeforeUnmount(() => {
 .dialog-stack, .dialog-copy, .tour-copy { color: var(--app-ink); font-size: 13px; line-height: 1.6; }.dialog-copy p { margin: 0 0 10px; }.tour-copy p { min-height: 50px; }
 .shortcut-list { display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; margin: 0; font-size: 12px; }.shortcut-list dt { color: var(--app-ink-soft); }.shortcut-list dd { margin: 0; }
 .export-validation { border: 1px solid var(--app-border); border-radius: 6px; padding: 8px; }.validation-heading { margin-bottom: 5px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }.validation-list { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; font-size: 11px; }.validation-list li { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 5px; align-items: baseline; }.validation-severity { font-weight: 650; }.validation-error .validation-severity { color: var(--el-color-danger); }.validation-warning .validation-severity { color: var(--el-color-warning); }.validation-target { padding: 0; border: 0; background: transparent; color: var(--app-accent); cursor: pointer; font: inherit; text-align: left; }.validation-location { overflow: hidden; color: var(--app-ink-soft); text-overflow: ellipsis; white-space: nowrap; }.validation-list .status-detail { grid-column: 2 / -1; }
-@media (max-width: 1200px) { .designer-workspace { grid-template-columns: 220px 5px minmax(320px, 1fr) 5px 280px; } }
-@media (max-width: 900px) { .designer-workspace { grid-template-columns: 200px 0 minmax(280px, 1fr) 0; }.workspace-splitter { display: none; }.inspector-panel { display: none; } }
+@media (max-width: 900px) { .designer-workspace { grid-template-columns: 180px 0 minmax(0, 1fr) 0 240px; }.workspace-splitter { display: none; } }
 </style>

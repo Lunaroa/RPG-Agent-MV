@@ -177,6 +177,23 @@ export function rectCenter(rect: UiRect): UiPoint {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
 }
 
+/** Resolve the visible top-most node under a canvas-space pointer, preferring canonical renderer bounds when available. */
+export function topmostNodeAtPoint(
+  document: UiDesignerDocument,
+  point: UiPoint,
+  includeRoot = false,
+  renderedBounds?: Record<string, UiRect & { visible?: boolean }>,
+): UiNode | undefined {
+  const order = new Map(document.nodes.map((node, index) => [node.id, index]))
+  return document.nodes
+    .filter((node) => (includeRoot || node.id !== 'node_root') && node.props.visible !== false && renderedBounds?.[node.id]?.visible !== false)
+    .filter((node) => {
+      const rect = renderedBounds?.[node.id] ?? nodeRect(node)
+      return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height
+    })
+    .sort((left, right) => right.props.zIndex - left.props.zIndex || (order.get(right.id) ?? 0) - (order.get(left.id) ?? 0))[0]
+}
+
 /** Smart-snap peers must share the same parent-local coordinate space and be editable visual targets. */
 export function smartSnapTargetsForNode(document: UiDesignerDocument, nodeId: string): SmartSnapTarget[] {
   const source = findDocumentNode(document, nodeId)

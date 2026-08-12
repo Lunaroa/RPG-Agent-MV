@@ -174,7 +174,7 @@ const fields = computed<FieldDescriptor[]>(() => {
   return [...baseFields, ...special[node.type], ...inferred].map((field) => ({ ...field, purpose: purposeForField(field), help: field.help ?? t('propertyHelpGeneric') }))
 })
 
-const PURPOSE_ORDER: InspectorPurpose[] = ['identity', 'geometry', 'contentResources', 'appearance', 'behavior', 'advanced']
+const PURPOSE_ORDER: InspectorPurpose[] = ['identity', 'contentResources', 'geometry', 'appearance', 'behavior', 'advanced']
 const expandedPurposes = ref<InspectorPurpose[]>(PURPOSE_ORDER.filter((purpose) => purpose !== 'advanced'))
 const purposeLabelKey: Record<InspectorPurpose, UiDesignerMessageKey> = {
   identity: 'inspectorGroupIdentity',
@@ -199,6 +199,11 @@ const buttonFieldUiId = (field: FieldDescriptor) => {
   if (field.key === 'hoverSe' || field.key === 'clickSe') return `ui-designer-inspector-button-${field.key}`
   return undefined
 }
+const revealPurpose = (purpose: InspectorPurpose) => {
+  activeSection.value = 'properties'
+  if (!expandedPurposes.value.includes(purpose)) expandedPurposes.value = [...expandedPurposes.value, purpose]
+}
+const hasResourceFields = computed(() => fieldGroups.value.some((group) => group.purpose === 'contentResources' && group.fields.length > 0) || selectedNode.value?.type === 'button' || selectedNode.value?.type === 'frameAnimation')
 
 const updateProperty = (key: string, value: unknown, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
@@ -228,6 +233,10 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
     </div>
     <el-alert v-if="nodeValidationErrors.length" class="inspector-validation" type="error" :closable="false" :title="`${nodeValidationErrors.length} ${t('validationErrors')}`"><ul><li v-for="issue in nodeValidationErrors" :key="`${issue.path}:${issue.message}`"><span>{{ validationIssueLabel(issue) }}<template v-if="issue.path"> · {{ issue.path }}</template></span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ issue.message }}</span></details></li></ul></el-alert>
     <el-alert v-if="selectedRuntimeDiagnostics.length" class="inspector-validation" type="warning" :closable="false" :title="`${t('runtimeDiagnostics')} · ${selectedRuntimeDiagnostics.length}`"><ul><li v-for="diagnostic in selectedRuntimeDiagnostics" :key="`${diagnostic.sessionId}:${diagnostic.code}:${diagnostic.message}`"><span>{{ t('runtimeDiagnostic') }}<template v-if="diagnostic.count > 1"> ×{{ diagnostic.count }}</template></span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ diagnostic.label }}: {{ diagnostic.message }}</span></details></li></ul></el-alert>
+    <div v-if="selectedNode" class="inspector-primary-actions">
+      <el-button v-if="hasResourceFields" data-ui-id="ui-designer-inspector-resources" size="small" plain @click="revealPurpose('contentResources')">{{ t('inspectorGroupContentResources') }}</el-button>
+      <el-button data-ui-id="ui-designer-inspector-events-shortcut" size="small" plain @click="activeSection = 'events'">{{ t('events') }}</el-button>
+    </div>
     <div v-if="!selectedNode" class="inspector-empty">{{ t('noSelection') }}</div>
     <div v-else-if="activeSection === 'properties'" class="properties-scroll">
       <el-collapse v-model="expandedPurposes" class="inspector-purpose-groups">
@@ -371,15 +380,16 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
 </template>
 
 <style scoped>
-.inspector-panel { display: flex; flex-direction: column; min-height: 0; height: 100%; gap: 9px; padding: 10px; background: var(--app-bg); }
+.inspector-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; gap: 9px; padding: 10px; overflow: hidden; background: var(--app-bg); }
 .inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .inspector-title { display: block; font-size: 13px; font-weight: 650; }
 .inspector-node { display: block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; color: var(--app-ink-soft); font-size: 11px; }
-.inspector-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--app-border); }
-.inspector-tabs .el-button { margin: 0; padding: 5px 7px; border-radius: 0; color: var(--app-ink-soft); font-size: 11px; }
+.inspector-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; border-bottom: 1px solid var(--app-border); }
+.inspector-tabs .el-button { width: 100%; min-width: 0; margin: 0; padding: 5px 3px; overflow: hidden; border-radius: 0; color: var(--app-ink-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-tabs .el-button.active { border-bottom: 2px solid var(--app-accent); color: var(--app-accent); }
+.inspector-primary-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }.inspector-primary-actions .el-button { width: 100%; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; }
 .inspector-validation { margin-bottom: 2px; }.inspector-validation ul { margin: 4px 0 0; padding-left: 16px; }
-.properties-scroll { min-height: 0; overflow: auto; padding-right: 3px; }
+.properties-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 6px 0 10px; }
 .inspector-purpose-groups { border-block: 0; }
 .inspector-purpose-groups :deep(.el-collapse-item__header) { min-height: 34px; height: auto; background: transparent; color: var(--app-ink-soft); }
 .inspector-purpose-groups :deep(.el-collapse-item__wrap) { background: transparent; }

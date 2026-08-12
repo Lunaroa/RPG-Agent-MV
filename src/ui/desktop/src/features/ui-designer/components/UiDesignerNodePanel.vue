@@ -286,10 +286,10 @@ const handleKeydown = (event: KeyboardEvent) => {
 .panel-heading { display: flex; align-items: center; justify-content: space-between; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
 .node-tree { flex: 1; min-height: 150px; overflow: auto; background: transparent; --el-tree-node-hover-bg-color: color-mix(in srgb, var(--app-accent) 14%, transparent); --el-tree-text-color: var(--app-ink); }
 .node-tree :deep(.el-dropdown) { display: block; width: 100%; }
-.node-tree-entry { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; font-size: 12px; }.node-tree-entry.locked { color: var(--app-ink-soft); }.node-row-actions { display: none; margin-left: auto; }.node-tree-entry:hover .node-row-actions { display: inline-flex; }.node-row-actions .el-button { padding: 1px 3px; }
+.node-tree-entry { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 28px; font-size: 12px; }.node-tree-entry.locked { color: var(--app-ink-soft); }.node-row-actions { display: inline-flex; flex: 0 0 72px; justify-content: flex-end; margin-left: auto; visibility: hidden; opacity: 0; pointer-events: none; }.node-tree-entry:hover .node-row-actions, .node-tree-entry:focus-within .node-row-actions, .node-tree-entry.selected .node-row-actions { visibility: visible; opacity: 1; pointer-events: auto; }.node-row-actions .el-button { padding: 1px 3px; }
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 .node-kind { color: var(--app-ink-soft); font-size: 10px; }
-.node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; max-height: 220px; overflow: auto; }
 .node-types .el-button { margin: 0; overflow: hidden; text-overflow: ellipsis; }
 .type-heading { margin-top: 4px; }

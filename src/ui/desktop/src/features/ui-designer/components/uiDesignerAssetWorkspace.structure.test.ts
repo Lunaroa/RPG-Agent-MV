@@ -64,7 +64,7 @@ describe('UI Designer shared project asset workspace', () => {
 
   test('renders the fixed six Inspector groups with advanced settings collapsed by default', () => {
     compileVue('UiDesignerInspector.vue', inspector)
-    assert.match(inspector, /\['identity', 'geometry', 'contentResources', 'appearance', 'behavior', 'advanced'\]/)
+    assert.match(inspector, /\['identity', 'contentResources', 'geometry', 'appearance', 'behavior', 'advanced'\]/)
     assert.match(inspector, /<el-collapse v-model="expandedPurposes"/)
     assert.match(inspector, /<el-collapse-item v-for="group in fieldGroups"/)
     assert.match(inspector, /PURPOSE_ORDER\.filter\(\(purpose\) => purpose !== 'advanced'\)/)

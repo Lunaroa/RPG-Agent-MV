@@ -26,6 +26,7 @@ import {
   snapPoint,
   snapRect,
   smartSnapTargetsForNode,
+  topmostNodeAtPoint,
   resizeRect,
   resizeCursor,
   resolveNodeActionPolicy,
@@ -563,6 +564,26 @@ describe('ui designer history, geometry and performance', () => {
     assert.deepEqual(smartSnapTargetsForNode(document, source.id), [{ id: sibling.id, rect: nodeRect(sibling) }, { id: container.id, rect: nodeRect(container) }])
     assert.deepEqual(smartSnapTargetsForNode(document, nested.id), [])
     assert.deepEqual(smartSnapTargetsForNode(document, 'missing'), [])
+  })
+
+  test('resolves the visible top-most canvas node at a context-menu point', () => {
+    const document = createUiDocument()
+    const background = createDefaultNode('container', { id: 'context_background', name: 'Background', parentId: 'node_root', x: 40, y: 40, width: 220, height: 180 })
+    const front = createDefaultNode('text', { id: 'context_front', name: 'Front', parentId: 'node_root', x: 80, y: 80, width: 120, height: 50 })
+    const hidden = createDefaultNode('button', { id: 'context_hidden', name: 'Hidden', parentId: 'node_root', x: 80, y: 80, width: 120, height: 50 })
+    background.props.zIndex = 1
+    front.props.zIndex = 2
+    hidden.props.zIndex = 3
+    hidden.props.visible = false
+    document.nodes.push(background, front, hidden)
+    document.nodes[0].children.push(background.id, front.id, hidden.id)
+
+    assert.equal(topmostNodeAtPoint(document, { x: 100, y: 100 })?.id, front.id)
+    assert.equal(topmostNodeAtPoint(document, { x: 50, y: 50 })?.id, background.id)
+    assert.equal(topmostNodeAtPoint(document, { x: 320, y: 180 }, false, {
+      [front.id]: { x: 300, y: 160, width: 120, height: 50, visible: true },
+    })?.id, front.id)
+    assert.equal(topmostNodeAtPoint(document, { x: 700, y: 500 }), undefined)
   })
 
   test('converts canvas pointers with scroll, margin, zoom and pan from one source of truth', () => {

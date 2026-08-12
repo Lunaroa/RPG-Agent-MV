@@ -7,7 +7,7 @@ import type { UiDesignerRendererExecutionMode } from '@contract/ui-designer-rend
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import { useUiDesignerRendererHost } from '../composables/useUiDesignerRendererHost'
 import UiCanvasNode from './UiCanvasNode.vue'
-import { nodeRect, nodesIntersectingRect, viewportClientToContent, viewportClientToWorld, viewportClientToZoomAnchor, worldPointToViewport, worldRectToViewport, type UiCanvasViewportFrame, type UiResizeHandle } from '../models/geometry'
+import { nodeRect, nodesIntersectingRect, topmostNodeAtPoint, viewportClientToContent, viewportClientToWorld, viewportClientToZoomAnchor, worldPointToViewport, worldRectToViewport, type UiCanvasViewportFrame, type UiResizeHandle } from '../models/geometry'
 import type { UiNodeActionCommand, UiNodeActionPolicy } from '../models/actions'
 import { exportRuntimeDocument } from '../models/export'
 
@@ -355,6 +355,31 @@ const openNodeMenu = (payload: { event: MouseEvent; node: UiNode }) => {
   nodeMenu.value = { ...guideMenuPosition(payload.event), nodeId: payload.node.id }
 }
 const closeNodeMenu = () => { nodeMenu.value = undefined }
+const closeContextMenus = () => { closeGuideMenu(); closeNodeMenu() }
+const contextNodeFromEvent = (event: MouseEvent) => {
+  const candidates = [event.target, ...globalThis.document.elementsFromPoint(event.clientX, event.clientY)]
+  for (const candidate of candidates) {
+    if (!(candidate instanceof Element)) continue
+    const row = candidate.closest<HTMLElement>('[data-node-id]')
+    const nodeId = row?.dataset.nodeId
+    if (!nodeId || nodeId === 'node_root' || nodeId === editingRootId.value) continue
+    const node = nodeIndex.value.get(nodeId)
+    if (node) return node
+  }
+  const world = viewportClientToWorld({ x: event.clientX, y: event.clientY }, viewportFrame(), viewport.value)
+  const node = topmostNodeAtPoint(document.value, world, false, rendererBounds.value)
+  return node?.id === editingRootId.value ? undefined : node
+}
+const openCanvasMenu = (event: MouseEvent) => {
+  const node = contextNodeFromEvent(event)
+  if (node) openNodeMenu({ event, node })
+  else openGuideMenu(event)
+}
+const dismissContextMenus = (event: PointerEvent) => {
+  const target = event.target
+  if (target instanceof Element && target.closest('.guide-context-menu, .node-context-menu')) return
+  closeContextMenus()
+}
 const renameNodeFromMenu = async (nodeId: string) => {
   const node = document.value.nodes.find((candidate) => candidate.id === nodeId)
   if (!node || !(designer.getNodeActionPolicy(nodeId) as UiNodeActionPolicy).allowed.rename) return
@@ -421,8 +446,8 @@ const dropResource = (event: DragEvent) => {
   if (property) designer.updateNodeProperty(node.id, property, path)
 }
 
-onMounted(() => { window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp) })
-onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); endGuide(); closeGuideMenu(); closeNodeMenu(); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp) })
+onMounted(() => { window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp); window.addEventListener('pointerdown', dismissContextMenus, true) })
+onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); endGuide(); closeContextMenus(); window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp); window.removeEventListener('pointerdown', dismissContextMenus, true) })
 </script>
 
 <template>
@@ -456,7 +481,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
         </template>
       </el-dropdown>
     </div>
-    <div ref="viewportElement" class="canvas-viewport" :class="{ 'preview-viewport': previewing }" @wheel="zoom" @pointerdown.self="beginBoxSelect" @pointerdown="beginPan" @contextmenu.prevent.stop="openGuideMenu($event)" @dragover.prevent @drop="dropResource">
+    <div ref="viewportElement" class="canvas-viewport" :class="{ 'preview-viewport': previewing }" @wheel="zoom" @pointerdown.self="beginBoxSelect" @pointerdown="beginPan" @contextmenu.prevent.stop="openCanvasMenu($event)" @dragover.prevent @drop="dropResource">
       <div v-if="!previewing && document.canvas.rulers" class="canvas-ruler horizontal" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'horizontal')"><span v-for="tick in rulerTicks.horizontal" :key="`h-${tick}`" class="ruler-tick" :style="{ left: `${worldPointToViewport({ x: tick, y: 0 }, { stageMargin: STAGE_MARGIN }, viewport).x}px` }">{{ tick }}</span></div>
       <div v-if="!previewing && document.canvas.rulers" class="canvas-ruler vertical" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'vertical')"><span v-for="tick in rulerTicks.vertical" :key="`v-${tick}`" class="ruler-tick" :style="{ top: `${worldPointToViewport({ x: 0, y: tick }, { stageMargin: STAGE_MARGIN }, viewport).y}px` }">{{ tick }}</span></div>
       <template v-if="!previewing && document.canvas.guidesVisible">
@@ -474,7 +499,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
         <el-button v-for="item in nodeMenuItems" :key="item.command" size="small" text :type="item.danger ? 'danger' : undefined" :disabled="!nodeMenuPolicy.allowed[item.command]" :data-ui-id="`ui-designer-node-command-${nodeMenu.nodeId}-${item.command}`" @click="runNodeCommand(item.command)">{{ item.label }}</el-button>
       </div>
       <div v-if="!previewing && selecting" class="selection-box" :style="selectionStyle" />
-      <div class="canvas-stage" :class="{ checkerboard: !previewing && document.canvas.backgroundPattern === 'checkerboard', 'preview-stage': previewing }" :style="stageStyle" @pointerdown.self="beginBoxSelect" @contextmenu.prevent.stop="openGuideMenu($event)">
+      <div class="canvas-stage" :class="{ checkerboard: !previewing && document.canvas.backgroundPattern === 'checkerboard', 'preview-stage': previewing }" :style="stageStyle" @pointerdown.self="beginBoxSelect" @contextmenu.prevent.stop="openCanvasMenu($event)">
         <div v-if="!previewing && editStack.length" class="canvas-edit-breadcrumb">{{ t('editingContainer') }}: {{ visibleRoots[0]?.name }} · {{ t('escapeToExit') }}</div>
         <iframe
           v-if="rendererIframeUrl"

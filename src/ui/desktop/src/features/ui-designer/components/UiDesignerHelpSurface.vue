@@ -20,7 +20,7 @@ const allShortcutBindings = computed(() => [...props.shortcutBindings, ...UI_DES
 </script>
 
 <template>
-  <el-dialog :model-value="props.modelValue" :title="title()" width="min(620px, 92vw)" destroy-on-close @update:model-value="close">
+  <el-dialog :model-value="props.modelValue" :title="title()" width="min(620px, 92vw)" destroy-on-close :data-ui-id="props.surface === 'tour' ? 'ui-designer-onboarding-dialog' : undefined" :data-testid="props.surface === 'tour' ? 'ui-designer-onboarding-dialog' : undefined" @update:model-value="close">
     <template v-if="props.surface === 'help'">
       <div class="dialog-copy"><p>{{ t('helpBody') }}</p><p>{{ t('resourcePathHelp') }}</p></div>
     </template>
@@ -28,7 +28,7 @@ const allShortcutBindings = computed(() => [...props.shortcutBindings, ...UI_DES
       <dl class="shortcut-list"><template v-for="binding in allShortcutBindings" :key="`${formatShortcut(binding)}-${binding.description ?? ''}`"><dt>{{ formatShortcut(binding) }}</dt><dd>{{ binding.description ? t(binding.description as UiDesignerMessageKey) : t('shortcutCommand') }}</dd></template><dt>Ctrl/Cmd + click</dt><dd>{{ t('shortcutMulti') }}</dd><dt>Ctrl/Cmd + F</dt><dd>{{ t('shortcutSearch') }}</dd><dt>Ctrl/Cmd + H</dt><dd>{{ t('shortcutReplace') }}</dd><dt>Ctrl/Cmd + Space</dt><dd>{{ t('shortcutHint') }}</dd><dt>Wheel + Ctrl/Cmd</dt><dd>{{ t('shortcutZoom') }}</dd></dl>
     </template>
     <template v-else>
-      <div class="tour-copy"><strong>{{ props.tourStep + 1 }}/{{ tourSteps.length }}</strong><p>{{ t(tourSteps[props.tourStep] ?? tourSteps[0]) }}</p><el-button-group><el-button :disabled="props.tourStep === 0" @click="emit('update:tourStep', Math.max(0, props.tourStep - 1))">←</el-button><el-button :disabled="props.tourStep === tourSteps.length - 1" @click="emit('update:tourStep', Math.min(tourSteps.length - 1, props.tourStep + 1))">→</el-button></el-button-group><div class="tour-actions"><el-button @click="finish">{{ t('skip') }}</el-button><el-button type="primary" @click="finish">{{ t('finish') }}</el-button></div></div>
+      <div class="tour-copy"><strong>{{ props.tourStep + 1 }}/{{ tourSteps.length }}</strong><p>{{ t(tourSteps[props.tourStep] ?? tourSteps[0]) }}</p><el-button-group><el-button :disabled="props.tourStep === 0" @click="emit('update:tourStep', Math.max(0, props.tourStep - 1))">←</el-button><el-button :disabled="props.tourStep === tourSteps.length - 1" @click="emit('update:tourStep', Math.min(tourSteps.length - 1, props.tourStep + 1))">→</el-button></el-button-group><div class="tour-actions"><el-button data-ui-id="ui-designer-onboarding-skip" data-testid="ui-designer-onboarding-skip" @click="finish">{{ t('skip') }}</el-button><el-button data-ui-id="ui-designer-onboarding-finish" data-testid="ui-designer-onboarding-finish" type="primary" @click="finish">{{ t('finish') }}</el-button></div></div>
     </template>
   </el-dialog>
 </template>

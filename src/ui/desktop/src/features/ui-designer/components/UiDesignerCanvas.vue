@@ -517,7 +517,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
         <div v-if="!designer.canRenderCanvas" class="canvas-runtime-state" data-ui-id="ui-designer-runtime-canvas-project-required">{{ t('projectRequired') }}</div>
         <div v-else-if="rendererStatus === 'error'" class="canvas-runtime-state" aria-live="polite" :data-failure-code="rendererFailureCode || undefined" :data-failure-stage="rendererStage" data-ui-id="ui-designer-runtime-canvas-status">
           <span>{{ t('rendererDisconnected') }}</span>
-          <el-button v-if="designer.canRenderCanvas" data-ui-id="ui-designer-runtime-canvas-restart" size="small" @click="rendererHost.retry()">{{ t('restartPreview') }}</el-button>
+          <el-button v-if="designer.canRenderCanvas" data-ui-id="ui-designer-runtime-canvas-restart" data-testid="ui-designer-runtime-canvas-restart" size="small" @click="rendererHost.retry()">{{ t('restartPreview') }}</el-button>
         </div>
         <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" aria-live="polite" data-ui-id="ui-designer-runtime-canvas-status">
           <span>{{ `${t(designer.previewStatus === 'preparing' ? 'previewPreparing' : 'canvasSyncing')} · ${rendererStage}` }}</span>

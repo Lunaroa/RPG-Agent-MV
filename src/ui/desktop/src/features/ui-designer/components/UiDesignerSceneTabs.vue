@@ -41,11 +41,13 @@ const tabLabel = (scene: UiDesignerSceneState) => {
 </script>
 
 <template>
-  <nav class="scene-tabs" :aria-label="t('scenes')">
+  <nav class="scene-tabs" data-ui-id="ui-designer-scene-tabs" data-testid="ui-designer-scene-tabs" :aria-label="t('scenes')">
     <button
       v-for="scene in designer.scenes"
       :key="scene.id"
       class="scene-tab"
+      :data-ui-id="`ui-designer-scene-tab-${scene.id}`"
+      :data-testid="`ui-designer-scene-tab-${scene.id}`"
       :class="{ active: scene.id === designer.activeSceneId }"
       type="button"
       :disabled="designer.isPreviewing"
@@ -56,11 +58,11 @@ const tabLabel = (scene: UiDesignerSceneState) => {
       @drop="onDrop(scene.id, $event)"
     >
       <el-dropdown trigger="contextmenu" @command="(command: string) => command === 'close' ? close(scene.id) : command === 'closeOthers' ? void closeOthers(scene.id) : command === 'closeAll' ? void closeAll() : command === 'revealSource' ? void revealSource(scene) : undefined">
-        <span class="scene-tab-content"><span>{{ tabLabel(scene) }}</span><span v-if="designer.isSceneDirty(scene.id)" class="tab-dirty">•</span><el-icon v-if="!designer.isPreviewing" class="tab-close" :title="t('close')" @click.stop="close(scene.id)"><Close /></el-icon></span>
+        <span class="scene-tab-content"><span>{{ tabLabel(scene) }}</span><span v-if="designer.isSceneDirty(scene.id)" class="tab-dirty">•</span><el-icon v-if="!designer.isPreviewing" class="tab-close" :data-ui-id="`ui-designer-scene-tab-${scene.id}-close`" :data-testid="`ui-designer-scene-tab-${scene.id}-close`" :title="t('close')" @click.stop="close(scene.id)"><Close /></el-icon></span>
         <template #dropdown><el-dropdown-menu><el-dropdown-item command="close" :disabled="designer.isPreviewing">{{ t('close') }}</el-dropdown-item><el-dropdown-item command="closeOthers" :disabled="designer.isPreviewing">{{ t('closeOthers') }}</el-dropdown-item><el-dropdown-item command="closeAll" :disabled="designer.isPreviewing">{{ t('closeAll') }}</el-dropdown-item><el-dropdown-item command="revealSource" :disabled="designer.isPreviewing || !scene.sourcePath">{{ t('revealSource') }}</el-dropdown-item></el-dropdown-menu></template>
       </el-dropdown>
     </button>
-    <el-button class="scene-add" size="small" text :disabled="designer.isPreviewing" :aria-label="t('newScene')" @click="emit('newScene')">+</el-button>
+    <el-button class="scene-add" data-ui-id="ui-designer-scene-tab-new" data-testid="ui-designer-scene-tab-new" size="small" text :disabled="designer.isPreviewing" :aria-label="t('newScene')" @click="emit('newScene')">+</el-button>
   </nav>
 </template>
 

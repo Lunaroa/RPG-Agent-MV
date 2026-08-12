@@ -224,7 +224,7 @@ const handleKeydown = (event: KeyboardEvent) => {
 </script>
 
 <template>
-  <section class="node-panel" tabindex="0" @keydown="handleKeydown">
+  <section class="node-panel" data-ui-id="ui-designer-node-panel" data-testid="ui-designer-node-panel" tabindex="0" @keydown="handleKeydown">
     <div class="panel-heading">
       <span>{{ t('nodeTree') }}</span>
       <el-button size="small" text :disabled="!selectedIds[0] || !nodePolicy(selectedIds[0]).allowed.duplicate" @click="designer.duplicateSelected()">{{ t('duplicateNode') }}</el-button>
@@ -267,8 +267,8 @@ const handleKeydown = (event: KeyboardEvent) => {
       <span>{{ t('nodeTypes') }}</span>
       <span class="palette-feedback" aria-live="polite">{{ paletteFeedback }}</span>
     </div>
-    <div class="node-types">
-      <el-button v-for="type in UI_DESIGNER_NODE_TYPES" :key="type" size="small" plain draggable="true" @dragstart="(event: DragEvent) => event.dataTransfer?.setData('text/ui-node-type', type)" @click="addNode(type)">
+    <div class="node-types" data-ui-id="ui-designer-node-palette" data-testid="ui-designer-node-palette">
+      <el-button v-for="type in UI_DESIGNER_NODE_TYPES" :key="type" :data-ui-id="`ui-designer-palette-${type}`" :data-testid="`ui-designer-palette-${type}`" :aria-label="labelFor(type)" size="small" plain draggable="true" @dragstart="(event: DragEvent) => event.dataTransfer?.setData('text/ui-node-type', type)" @click="addNode(type)">
         {{ labelFor(type) }}
       </el-button>
     </div>

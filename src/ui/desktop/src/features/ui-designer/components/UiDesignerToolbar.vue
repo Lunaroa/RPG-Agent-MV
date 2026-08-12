@@ -76,7 +76,7 @@ const togglePreview = () => {
         <el-button data-testid="ui-designer-code-mode" size="small" :type="designer.editingMode === 'code' ? 'primary' : 'default'" @click="designer.setEditingMode('code')">{{ t('code') }}</el-button>
       </el-button-group>
 
-      <el-button data-testid="ui-designer-preview-toggle" class="editor-preview-toggle" size="small" :aria-label="t('editorPreview')" :disabled="!designer.canStartPreview" @click="togglePreview">
+      <el-button data-testid="ui-designer-preview-toggle" data-ui-id="ui-designer-preview-enter" class="editor-preview-toggle" size="small" :aria-label="t('editorPreview')" :disabled="!designer.canStartPreview" @click="togglePreview">
         {{ t('editorPreview') }}
       </el-button>
 

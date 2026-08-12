@@ -117,7 +117,7 @@ const sceneOptionsFor = (action: UiEventAction) => {
 </script>
 
 <template>
-  <section class="events-panel">
+  <section class="events-panel" data-ui-id="ui-designer-events-panel" data-testid="ui-designer-events-panel">
     <div class="subhead">{{ t('events') }}</div>
     <el-select data-ui-id="ui-designer-event-select" :model-value="activeEvent" size="small" @update:model-value="selectEvent">
       <el-option v-for="eventName in eventNames" :key="eventName" :label="t(eventLabels[eventName])" :value="eventName" />
@@ -181,7 +181,7 @@ const sceneOptionsFor = (action: UiEventAction) => {
         <el-button v-else size="small" text @click="addCondition(index)">＋ {{ t('condition') }}</el-button>
       </div>
     </div>
-    <el-button size="small" plain @click="addAction">＋ {{ t('actionAdd') }}</el-button>
+    <el-button data-ui-id="ui-designer-event-action-add" data-testid="ui-designer-event-action-add" size="small" plain @click="addAction">＋ {{ t('actionAdd') }}</el-button>
     <el-alert v-if="resourceError" type="error" :closable="false" :title="resourceError" />
     <p class="hint">{{ t('actionHint') }}</p>
   </section>

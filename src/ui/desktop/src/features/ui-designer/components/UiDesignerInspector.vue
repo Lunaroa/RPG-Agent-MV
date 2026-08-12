@@ -193,6 +193,12 @@ const fieldGroups = computed(() => PURPOSE_ORDER.map((purpose) => ({
 const propValue = (key: string): unknown => selectedNode.value ? (selectedNode.value.props as unknown as Record<string, unknown>)[key] : undefined
 const propMode = (key: string) => selectedNode.value?.propModes[key] ?? 'value'
 const propCode = (key: string) => selectedNode.value?.propCodes[key] ?? ''
+const buttonFieldUiId = (field: FieldDescriptor) => {
+  if (selectedNode.value?.type !== 'button') return undefined
+  if (field.key === 'content') return 'ui-designer-inspector-button-content'
+  if (field.key === 'hoverSe' || field.key === 'clickSe') return `ui-designer-inspector-button-${field.key}`
+  return undefined
+}
 
 const updateProperty = (key: string, value: unknown, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
@@ -206,7 +212,7 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
 </script>
 
 <template>
-  <aside class="inspector-panel">
+  <aside class="inspector-panel" data-ui-id="ui-designer-inspector" data-testid="ui-designer-inspector">
     <div class="inspector-head">
       <div>
         <span class="inspector-title">{{ t('inspector') }}</span>
@@ -215,10 +221,10 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
       <el-button v-if="selectedNode" size="small" text :disabled="!selectedActionPolicy?.allowed.duplicate" @click="designer.duplicateSelected()">{{ t('duplicateNode') }}</el-button>
     </div>
     <div v-if="selectedNode" class="inspector-tabs">
-      <el-button size="small" text :class="{ active: activeSection === 'properties' }" @click="activeSection = 'properties'">{{ t('value') }}</el-button>
-      <el-button size="small" text :class="{ active: activeSection === 'events' }" @click="activeSection = 'events'">{{ t('events') }}</el-button>
-      <el-button size="small" text :class="{ active: activeSection === 'condition' }" @click="activeSection = 'condition'">{{ t('condition') }}</el-button>
-      <el-button size="small" text :class="{ active: activeSection === 'animation' }" @click="activeSection = 'animation'">{{ t('enterAnimation') }}</el-button>
+      <el-button data-ui-id="ui-designer-inspector-properties" data-testid="ui-designer-inspector-properties" size="small" text :class="{ active: activeSection === 'properties' }" @click="activeSection = 'properties'">{{ t('value') }}</el-button>
+      <el-button data-ui-id="ui-designer-inspector-events" data-testid="ui-designer-inspector-events" size="small" text :class="{ active: activeSection === 'events' }" @click="activeSection = 'events'">{{ t('events') }}</el-button>
+      <el-button data-ui-id="ui-designer-inspector-condition" data-testid="ui-designer-inspector-condition" size="small" text :class="{ active: activeSection === 'condition' }" @click="activeSection = 'condition'">{{ t('condition') }}</el-button>
+      <el-button data-ui-id="ui-designer-inspector-animation" data-testid="ui-designer-inspector-animation" size="small" text :class="{ active: activeSection === 'animation' }" @click="activeSection = 'animation'">{{ t('enterAnimation') }}</el-button>
     </div>
     <el-alert v-if="nodeValidationErrors.length" class="inspector-validation" type="error" :closable="false" :title="`${nodeValidationErrors.length} ${t('validationErrors')}`"><ul><li v-for="issue in nodeValidationErrors" :key="`${issue.path}:${issue.message}`"><span>{{ validationIssueLabel(issue) }}<template v-if="issue.path"> · {{ issue.path }}</template></span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ issue.message }}</span></details></li></ul></el-alert>
     <el-alert v-if="selectedRuntimeDiagnostics.length" class="inspector-validation" type="warning" :closable="false" :title="`${t('runtimeDiagnostics')} · ${selectedRuntimeDiagnostics.length}`"><ul><li v-for="diagnostic in selectedRuntimeDiagnostics" :key="`${diagnostic.sessionId}:${diagnostic.code}:${diagnostic.message}`"><span>{{ t('runtimeDiagnostic') }}<template v-if="diagnostic.count > 1"> ×{{ diagnostic.count }}</template></span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ diagnostic.label }}: {{ diagnostic.message }}</span></details></li></ul></el-alert>
@@ -245,6 +251,8 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
               'button-content-primary': selectedNode.type === 'button' && group.purpose === 'contentResources' && field.key === 'content',
               'button-se-priority': selectedNode.type === 'button' && group.purpose === 'contentResources' && (field.key === 'hoverSe' || field.key === 'clickSe'),
             }"
+            :data-ui-id="buttonFieldUiId(field)"
+            :data-testid="buttonFieldUiId(field)"
             :field-key="field.key"
             :label="labelFor(field.key)"
             :help="field.help"
@@ -274,6 +282,8 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             <UiButtonStatesEditor
               v-if="group.purpose === 'contentResources' && selectedNode.type === 'button'"
               class="button-states-priority"
+              data-ui-id="ui-designer-button-states"
+              data-testid="ui-designer-button-states"
               :value="selectedNode.props.imageStates"
               :resources="designer.resourceCatalog?.resources ?? []"
               :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
@@ -283,6 +293,8 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             <el-button
               v-if="group.purpose === 'contentResources' && selectedNode.type === 'button'"
               class="button-events-priority"
+              data-ui-id="ui-designer-inspector-button-events"
+              data-testid="ui-designer-inspector-button-events"
               size="small"
               plain
               @click="activeSection = 'events'"

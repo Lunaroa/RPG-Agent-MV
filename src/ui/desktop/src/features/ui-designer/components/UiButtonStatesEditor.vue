@@ -29,11 +29,11 @@ const choose = async (key: keyof UiButtonImageStates) => {
 </script>
 
 <template>
-  <div class="states-editor">
+  <div class="states-editor" data-ui-id="ui-designer-button-states" data-testid="ui-designer-button-states">
     <span class="field-label">{{ t('imageStates') }}</span>
     <label v-for="state in ['normal', 'hover', 'pressed', 'disabled']" :key="state">
       <span>{{ t(state === 'normal' ? 'normalState' : state === 'hover' ? 'hoverState' : state === 'pressed' ? 'pressedState' : 'disabledState') }}</span>
-      <span class="state-thumbnail" :class="{ empty: !value[state as keyof UiButtonImageStates] }">
+      <span class="state-thumbnail" :class="{ empty: !value[state as keyof UiButtonImageStates] }" :data-ui-id="`ui-designer-button-state-${state}-preview`" :data-testid="`ui-designer-button-state-${state}-preview`">
         <img
           v-if="value[state as keyof UiButtonImageStates] && (resourceForPath(value[state as keyof UiButtonImageStates])?.thumbnailUrl || resourceForPath(value[state as keyof UiButtonImageStates])?.previewUrl)"
           :src="resourceForPath(value[state as keyof UiButtonImageStates])?.thumbnailUrl ?? resourceForPath(value[state as keyof UiButtonImageStates])?.previewUrl"
@@ -43,8 +43,8 @@ const choose = async (key: keyof UiButtonImageStates) => {
       </span>
       <span class="state-resource-control">
         <el-input :model-value="value[state as keyof UiButtonImageStates]" readonly size="small" :placeholder="resourcePickerDisabled ? t('noProject') : t('chooseResource')" />
-        <el-button :data-ui-id="`ui-designer-button-state-${state}-select`" size="small" :disabled="!pickResource || resourcePickerDisabled" @click="void choose(state as keyof UiButtonImageStates)">{{ t('chooseResource') }}</el-button>
-        <el-button :data-ui-id="`ui-designer-button-state-${state}-clear`" size="small" text :disabled="!value[state as keyof UiButtonImageStates]" @click="update(state as keyof UiButtonImageStates, '')">{{ t('clearResource') }}</el-button>
+        <el-button :data-ui-id="`ui-designer-button-state-${state}-select`" :data-testid="`ui-designer-button-state-${state}-select`" size="small" :disabled="!pickResource || resourcePickerDisabled" @click="void choose(state as keyof UiButtonImageStates)">{{ t('chooseResource') }}</el-button>
+        <el-button :data-ui-id="`ui-designer-button-state-${state}-clear`" :data-testid="`ui-designer-button-state-${state}-clear`" size="small" text :disabled="!value[state as keyof UiButtonImageStates]" @click="update(state as keyof UiButtonImageStates, '')">{{ t('clearResource') }}</el-button>
       </span>
     </label>
   </div>

@@ -175,10 +175,10 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       @dragover.prevent
       @drop.prevent="dropResource"
     >
-        <el-input :model-value="typeof props.value === 'string' ? props.value : ''" readonly size="small" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')">
-        <template #append><el-button :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" size="small" :disabled="!props.resourcePicker || props.resourcePickerDisabled" @click="void chooseResource()">{{ t('chooseResource') }}</el-button></template>
+        <el-input :model-value="typeof props.value === 'string' ? props.value : ''" readonly size="small" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-value` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-value` : undefined" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')">
+        <template #append><el-button :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" size="small" :disabled="!props.resourcePicker || props.resourcePickerDisabled" @click="void chooseResource()">{{ t('chooseResource') }}</el-button></template>
       </el-input>
-      <el-button v-if="props.value" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" size="small" text @click="emitValue('')">{{ t('clearResource') }}</el-button>
+      <el-button v-if="props.value" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" size="small" text @click="emitValue('')">{{ t('clearResource') }}</el-button>
       <span v-if="props.resourcePickerDisabled" class="resource-picker-hint">{{ t('noProject') }}</span>
     </div>
     <el-input
@@ -187,6 +187,8 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       :autosize="props.multiline ? { minRows: 2, maxRows: 6 } : undefined"
       :model-value="typeof draftValue === 'string' ? draftValue : String(draftValue ?? '')"
       size="small"
+      :data-ui-id="props.fieldKey ? `ui-designer-property-${props.fieldKey}-input` : undefined"
+      :data-testid="props.fieldKey ? `ui-designer-property-${props.fieldKey}-input` : undefined"
       @update:model-value="updateDraft($event)"
       @blur="commitValue"
       @keydown.enter.prevent="commitValue"

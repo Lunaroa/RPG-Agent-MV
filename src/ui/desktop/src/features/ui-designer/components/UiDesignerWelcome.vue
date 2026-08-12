@@ -37,12 +37,12 @@ const formatDate = (value?: string) => {
 </script>
 
 <template>
-  <section class="welcome-panel">
+  <section class="welcome-panel" data-ui-id="ui-designer-welcome" data-testid="ui-designer-welcome">
     <div class="welcome-mark">UI</div>
     <h2>{{ t('welcomeTitle') }}</h2>
     <p>{{ t('welcomeBody') }}</p>
     <div class="welcome-actions">
-      <el-button data-testid="ui-designer-new" type="primary" @click="emit('newScene')">{{ t('newScene') }}</el-button>
+      <el-button data-ui-id="ui-designer-welcome-new-scene" data-testid="ui-designer-new" type="primary" @click="emit('newScene')">{{ t('newScene') }}</el-button>
       <el-button data-testid="ui-designer-open" :disabled="!designer.canSave" @click="void designer.open()">{{ t('open') }}</el-button>
     </div>
     <el-alert v-if="!designer.canSave" type="info" :closable="false" :title="t('adapterRequired')" />

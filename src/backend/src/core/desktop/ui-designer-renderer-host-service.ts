@@ -13,6 +13,8 @@ import {
   UI_DESIGNER_RUNTIME_VERSION,
   UI_DESIGNER_SCENE_SCRIPT_VERSION,
   type UiDesignerRendererHostSession,
+  type UiDesignerRendererResourceSyncRequest,
+  type UiDesignerRendererResourceSyncResult,
 } from '../../../../contract/ui-designer.ts'
 import { inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts'
 import { assertUiDesignerProjectEngineSupported } from './ui-designer-project-service.ts'
@@ -30,6 +32,7 @@ import {
 } from './isolated-project-attestation.ts'
 import { PreparationWorkerError } from './playtest-preparation.ts'
 import { bundledUiDesignerRuntime } from './ui-designer-runtime-service.ts'
+import { syncUiDesignerRendererResources } from './ui-designer-renderer-resource-sync.ts'
 
 const HOST_PLUGIN_NAME = 'MZUIDesignerCanvasHost'
 const HOST_STORAGE_PLUGIN_NAME = 'MZUIDesignerSessionStorage'
@@ -133,6 +136,7 @@ export class UiDesignerRendererHostService {
         engine,
         engineVersion: manifest.engineVersion,
         runtimeVersion: bundledUiDesignerRuntime().version,
+        resourceRevision: 0,
       }
       this.#active = { publicSession, protocolKey, preparation, sourceProject: project, protocolRegistered: true }
       return { ...publicSession }
@@ -162,6 +166,43 @@ export class UiDesignerRendererHostService {
       throw new Error('The UI designer canvas did not receive an isolated Electron renderer process.')
     }
     return { ...active.publicSession }
+  }
+
+  syncResources(request: UiDesignerRendererResourceSyncRequest): UiDesignerRendererResourceSyncResult {
+    const active = this.#requireActive(request.sessionId)
+    if (!Number.isSafeInteger(request.generation) || request.generation !== active.publicSession.generation) {
+      throw Object.assign(new Error('UI designer renderer resource synchronization belongs to a stale project generation.'), {
+        code: 'UI_DESIGNER_RENDERER_GENERATION_STALE',
+      })
+    }
+    const project = fs.realpathSync.native(path.resolve(request.project))
+    if (project !== active.sourceProject) {
+      throw Object.assign(new Error('UI designer renderer resource synchronization belongs to a different project.'), {
+        code: 'UI_DESIGNER_RENDERER_PROJECT_STALE',
+      })
+    }
+    const assertOwned = () => {
+      if (this.#active !== active) {
+        throw Object.assign(new Error('UI designer renderer resource synchronization was superseded.'), {
+          code: 'UI_DESIGNER_RENDERER_SESSION_STALE',
+        })
+      }
+      attestIsolatedPreparationResponse({
+        sourceProject: active.sourceProject,
+        temporaryProject: active.preparation.temporaryProject,
+        ownership: active.preparation.ownership,
+      }, active.preparation)
+    }
+    const receipt = syncUiDesignerRendererResources({
+      sourceProject: active.sourceProject,
+      temporaryProject: active.preparation.temporaryProject,
+      sessionId: active.publicSession.sessionId,
+      generation: active.publicSession.generation,
+      resourceRevision: active.publicSession.resourceRevision,
+      assertOwned,
+    }, request.manifest)
+    active.publicSession.resourceRevision = receipt.resourceRevision
+    return receipt
   }
 
   stop(sessionId?: string): void {
@@ -619,6 +660,11 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
       payload.nodes.forEach(function (patch) { exact(patch, ['nodeId', 'props'], 'node patch'); if (!identifier(patch.nodeId, false) || !object(patch.props)) throw new Error('Renderer bridge node patch is invalid.'); jsonSafe(patch.props, 0); resourcePaths(patch.props, ''); });
       return;
     }
+    if (message.kind === 'resource-refresh') {
+      exact(payload, ['revision', 'resourceRevision', 'relativePaths'], 'resource-refresh payload');
+      if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || !Number.isSafeInteger(payload.resourceRevision) || payload.resourceRevision < 1 || !Array.isArray(payload.relativePaths) || payload.relativePaths.length > config.maxPatches || payload.relativePaths.some(function (entry) { return !entry || !validResourcePath(entry); })) throw new Error('Renderer bridge resource refresh is invalid.');
+      return;
+    }
     if (message.kind === 'select') { exact(payload, ['nodeIds'], 'select payload'); if (!Array.isArray(payload.nodeIds) || payload.nodeIds.length > config.maxBounds || payload.nodeIds.some(function (id) { return !identifier(id, false); })) throw new Error('Renderer bridge selection is invalid.'); return; }
     if (message.kind === 'input') { exact(payload, ['type', 'nodeId', 'x', 'y', 'button', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey'], 'input payload'); if (['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'contextmenu'].indexOf(payload.type) < 0 || (payload.nodeId !== null && !identifier(payload.nodeId, false)) || !finite(payload.x) || !finite(payload.y) || !Number.isInteger(payload.button) || payload.button < -1 || payload.button > 5 || ['ctrlKey', 'shiftKey', 'altKey', 'metaKey'].some(function (key) { return typeof payload[key] !== 'boolean'; })) throw new Error('Renderer bridge input is invalid.'); return; }
     if (message.kind === 'diagnostic') { exact(payload, ['entries'], 'diagnostic payload'); if (!Array.isArray(payload.entries) || payload.entries.length > 64) throw new Error('Renderer bridge diagnostics exceed their bound.'); payload.entries.forEach(function (entry) { validateDiagnostic(entry, message.sceneId); }); return; }
@@ -632,7 +678,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     exact(message, ['version', 'sessionId', 'generation', 'sequence', 'sceneId', 'kind', 'payload'], 'renderer bridge message');
     if (message.version !== config.version || message.sessionId !== config.sessionId || message.generation !== config.generation) throw new Error('Renderer bridge session/version is stale.');
     if (!identifier(message.sessionId, false) || message.sessionId.length < 8 || !Number.isSafeInteger(message.generation) || message.generation < 0 || !Number.isSafeInteger(message.sequence) || message.sequence < 0 || !identifier(message.sceneId, true)) throw new Error('Renderer bridge envelope is invalid.');
-    if (['hello', 'receipt', 'fatal', 'ready', 'mount', 'mounted', 'patch', 'bounds', 'select', 'input', 'diagnostic', 'scene-state', 'exit-request', 'dispose', 'disposed'].indexOf(message.kind) < 0) throw new Error('Renderer bridge kind is invalid.');
+    if (['hello', 'receipt', 'fatal', 'ready', 'mount', 'mounted', 'patch', 'resource-refresh', 'bounds', 'select', 'input', 'diagnostic', 'scene-state', 'exit-request', 'dispose', 'disposed'].indexOf(message.kind) < 0) throw new Error('Renderer bridge kind is invalid.');
     var bytes = new TextEncoder().encode(JSON.stringify(message)).byteLength;
     if (bytes > config.maxBytes) throw new Error('Renderer bridge message exceeds its byte bound.');
     validatePayload(message, direction);
@@ -1031,6 +1077,69 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     try { if (global.AudioManager && typeof global.AudioManager.stopAll === 'function') global.AudioManager.stopAll(); } catch (_) {}
     try { if (global.Video && global.Video._element && typeof global.Video._element.pause === 'function') { global.Video._element.pause(); global.Video._element.removeAttribute('src'); global.Video._element.load(); } } catch (_) {}
   }
+  function resourcePathMatches(cacheKey, relativePath) {
+    var key = String(cacheKey || '').replace(/\\/g, '/').split('?')[0];
+    var normalized = String(relativePath || '').replace(/\\/g, '/').split('?')[0];
+    return key === normalized || key.slice(-normalized.length) === normalized || key.indexOf(normalized + ':') >= 0;
+  }
+  function destroyCachedTexture(value) {
+    try {
+      if (value && value.item) value = value.item;
+      if (value && value.bitmap) value = value.bitmap;
+      var texture = value && (value.texture || value._texture);
+      if (texture && typeof texture.destroy === 'function') texture.destroy(true);
+      if (value && value._baseTexture && typeof value._baseTexture.destroy === 'function') value._baseTexture.destroy();
+      if (value && value.baseTexture && typeof value.baseTexture.destroy === 'function') value.baseTexture.destroy();
+      if (value && typeof value.destroy === 'function') value.destroy();
+    } catch (_) {}
+  }
+  function evictCacheEntries(owner, entries, relativePaths) {
+    if (!entries || typeof entries !== 'object') return;
+    if (typeof entries.forEach === 'function' && typeof entries.delete === 'function') {
+      entries.forEach(function (value, key) {
+        if (!relativePaths.some(function (relativePath) { return resourcePathMatches(key, relativePath); })) return;
+        destroyCachedTexture(value);
+        entries.delete(key);
+      });
+      return;
+    }
+    Object.keys(entries).forEach(function (key) {
+      if (!relativePaths.some(function (relativePath) { return resourcePathMatches(key, relativePath); })) return;
+      var entry = entries[key];
+      if (entry && typeof entry.free === 'function') entry.free(true);
+      else {
+        destroyCachedTexture(entry);
+        if (owner && typeof owner.remove === 'function') owner.remove(key);
+        else if (owner && typeof owner.delete === 'function') owner.delete(key);
+        else delete entries[key];
+      }
+    });
+  }
+  function evictObjectCache(cache, relativePaths) {
+    if (!cache || typeof cache !== 'object') return;
+    var entries = cache._inner && typeof cache._inner === 'object'
+      ? cache._inner
+      : cache._items && typeof cache._items === 'object'
+        ? cache._items
+        : cache;
+    evictCacheEntries(cache, entries, relativePaths);
+  }
+  function evictResourceCaches(relativePaths) {
+    evictObjectCache(global.ImageManager && global.ImageManager._cache, relativePaths);
+    evictObjectCache(global.ImageManager && global.ImageManager._imageCache, relativePaths);
+    var utils = global.PIXI && global.PIXI.utils;
+    evictObjectCache(utils && utils.TextureCache, relativePaths);
+    evictObjectCache(utils && utils.BaseTextureCache, relativePaths);
+    if (global.PIXI && global.PIXI.Texture) evictObjectCache(global.PIXI.TextureCache, relativePaths);
+    if (typeof document !== 'undefined' && document.fonts && typeof document.fonts.delete === 'function') {
+      relativePaths.filter(function (entry) { return /\.(woff2?|ttf|otf)$/i.test(entry); }).forEach(function (entry) {
+        var family = 'MZUI_' + entry.replace(/[^A-Za-z0-9_$]/g, '_');
+        Array.from(document.fonts).forEach(function (face) { if (face && face.family === family) document.fonts.delete(face); });
+        if (global.FontManager && global.FontManager._states) delete global.FontManager._states[family];
+        if (global.FontManager && global.FontManager._urls) delete global.FontManager._urls[family];
+      });
+    }
+  }
   function dispose() {
     if (disposed) return;
     cancelActualScenePolling();
@@ -1073,6 +1182,14 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
         var bounds = runtime.patchNodes(message.payload.nodes);
         rememberBounds(bounds);
         send('bounds', { revision: activeRevision, bounds: bounds }, activeSceneId);
+      } else if (message.kind === 'resource-refresh') {
+        if (!lastMount || message.sceneId !== activeSceneId || message.payload.revision <= activeRevision) throw new Error('Renderer bridge resource refresh does not target the active revision.');
+        activeRevision = message.payload.revision;
+        evictResourceCaches(message.payload.relativePaths);
+        var remount = JSON.parse(JSON.stringify(lastMount));
+        remount.sequence = message.sequence;
+        remount.payload.revision = activeRevision;
+        mountScene(remount);
       } else if (message.kind === 'select') {
         if (runtime) runtime.selectedNodeIds = message.payload.nodeIds.slice();
       } else if (message.kind === 'input') {

@@ -1,7 +1,10 @@
 import type { UiButtonImageStates, UiFrame } from './ui-designer.ts';
+import type { ProjectAssetChangeManifest } from './types.ts';
 
 export type UiDesignerResourceKind = 'image' | 'audio' | 'video' | 'font' | 'sceneData';
 export type UiDesignerManagedAssetKind = Exclude<UiDesignerResourceKind, 'sceneData'>;
+
+export const PROJECT_ASSET_CHANGE_MANIFEST_VERSION = '1.0.0' as const;
 
 const RESOURCE_PATH_KEYS = new Set([
   'path',
@@ -74,6 +77,60 @@ export function normalizeUiDesignerProjectRelativeResourcePath(value: string): s
     throw new Error('UI Designer resource path must not escape the project.');
   }
   return segments.filter((segment) => segment && segment !== '.').join('/');
+}
+
+function normalizeManifestPath(value: string): string {
+  const normalized = normalizeUiDesignerProjectRelativeResourcePath(value);
+  if (!normalized) throw new Error('Project asset change manifest paths must not be empty.');
+  return normalized;
+}
+
+/** Canonicalize a renderer resource change set and make its two path sets disjoint. */
+export function normalizeProjectAssetChangeManifest(
+  value: ProjectAssetChangeManifest,
+): ProjectAssetChangeManifest {
+  if (!value || value.schemaVersion !== PROJECT_ASSET_CHANGE_MANIFEST_VERSION) {
+    throw new Error('Project asset change manifest version is unsupported.');
+  }
+  if (!Array.isArray(value.upsertRelativePaths) || !Array.isArray(value.deleteRelativePaths)) {
+    throw new Error('Project asset change manifest path sets must be arrays.');
+  }
+  const upserts = new Set(value.upsertRelativePaths.map(normalizeManifestPath));
+  const deletes = new Set(value.deleteRelativePaths.map(normalizeManifestPath));
+  for (const relativePath of upserts) deletes.delete(relativePath);
+  return {
+    schemaVersion: PROJECT_ASSET_CHANGE_MANIFEST_VERSION,
+    upsertRelativePaths: [...upserts].sort(),
+    deleteRelativePaths: [...deletes].sort(),
+  };
+}
+
+/** Build the final file state from ordered project mutations; the last operation for a path wins. */
+export function projectAssetChangeManifestFromMutations(
+  mutations: readonly { relativePath: string; delete?: boolean }[],
+): ProjectAssetChangeManifest {
+  const states = new Map<string, 'upsert' | 'delete'>();
+  for (const mutation of mutations) {
+    states.set(normalizeManifestPath(mutation.relativePath), mutation.delete ? 'delete' : 'upsert');
+  }
+  return {
+    schemaVersion: PROJECT_ASSET_CHANGE_MANIFEST_VERSION,
+    upsertRelativePaths: [...states].filter(([, state]) => state === 'upsert').map(([relativePath]) => relativePath).sort(),
+    deleteRelativePaths: [...states].filter(([, state]) => state === 'delete').map(([relativePath]) => relativePath).sort(),
+  };
+}
+
+export function mergeProjectAssetChangeManifests(
+  manifests: readonly (ProjectAssetChangeManifest | null | undefined)[],
+): ProjectAssetChangeManifest {
+  const mutations: Array<{ relativePath: string; delete?: boolean }> = [];
+  for (const raw of manifests) {
+    if (!raw) continue;
+    const manifest = normalizeProjectAssetChangeManifest(raw);
+    mutations.push(...manifest.deleteRelativePaths.map((relativePath) => ({ relativePath, delete: true })));
+    mutations.push(...manifest.upsertRelativePaths.map((relativePath) => ({ relativePath })));
+  }
+  return projectAssetChangeManifestFromMutations(mutations);
 }
 
 export function isUiDesignerProjectRelativeResourcePath(value: string): boolean {

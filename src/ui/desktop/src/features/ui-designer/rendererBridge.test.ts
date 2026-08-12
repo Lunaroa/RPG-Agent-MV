@@ -342,3 +342,20 @@ test('stale terminal session generation sequence and revision are rejected befor
   assert.throws(() => validateUiDesignerRendererBridgeMessage({ ...base, sequence: 7 }, expected), /sequence is stale/)
   assert.throws(() => validateUiDesignerRendererBridgeMessage({ ...base, payload: { ...base.payload, revision: 5 } }, expected), /revision is stale/)
 })
+
+test('resource refresh bridge accepts project-relative affected paths and rejects traversal', () => {
+  const message = {
+    version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
+    sessionId: 'renderer-session',
+    generation: 4,
+    sequence: 9,
+    sceneId: 'Scene_RendererBridge',
+    kind: 'resource-refresh',
+    payload: { revision: 7, resourceRevision: 2, relativePaths: ['img/pictures/menu.png'] },
+  }
+  assert.equal(validateUiDesignerRendererBridgeMessage(message).kind, 'resource-refresh')
+  assert.throws(() => validateUiDesignerRendererBridgeMessage({
+    ...message,
+    payload: { ...message.payload, relativePaths: ['../outside.png'] },
+  }), /project-relative/)
+})

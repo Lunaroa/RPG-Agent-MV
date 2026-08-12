@@ -19,6 +19,8 @@ import type {
   UiDesignerRuntimeExportRequest,
   UiDesignerRuntimeStageResult,
   UiDesignerRendererHostSession,
+  UiDesignerRendererResourceSyncRequest,
+  UiDesignerRendererResourceSyncResult,
   UiDesignerRendererHostStopReason,
   UiDesignerSceneStageRequest,
   UiRuntimeSceneExport,
@@ -56,6 +58,7 @@ export interface UiDesignerIpcDependencies {
     start(project: string, generation: number): Promise<UiDesignerRendererHostSession>
     confirm(sessionId: string): UiDesignerRendererHostSession
     stop(sessionId?: string): void
+    syncResources?(request: UiDesignerRendererResourceSyncRequest & { project: string }): UiDesignerRendererResourceSyncResult
   }
   userDataStore: () => UiDesignerUserDataStoreLike
 }
@@ -244,6 +247,17 @@ export function registerUiDesignerIpcHandlers(
       return { status: 'success', operation: 'renderer:stop', value: null, message: 'UI designer canvas renderer stopped.' }
     } catch (error) { return operationError('renderer:stop', error) }
   })
+  ipcMain.handle('ui-designer:renderer:sync-resources', (_event, request?: UiDesignerRendererResourceSyncRequest) => {
+    try {
+      if (!dependencies.rendererHost?.syncResources) throw new Error('UI designer renderer resource synchronization is unavailable.')
+      if (!request || typeof request.project !== 'string' || !request.project.trim()) throw new Error('A selected RPG Maker project is required.')
+      const value = dependencies.rendererHost.syncResources({
+        ...request,
+        project: dependencies.resolveProject(request.project),
+      })
+      return { status: 'success', operation: 'renderer:sync-resources', value, message: 'Renderer resources synchronized.' }
+    } catch (error) { return operationError('renderer:sync-resources', error) }
+  })
 
   ipcMain.handle('ui-designer:recovery:list', () => safeStoreCall(dependencies, 'list-recovery', (store) => store.listRecovery()))
   ipcMain.handle('ui-designer:recovery:write', (_event, request: UiDesignerRecoveryWriteRequest) => safeStoreCall(dependencies, 'write-recovery', (store) => store.writeRecovery(request.document, request.sourcePath, request.sourceMetadata, request.key)))
@@ -272,7 +286,7 @@ export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandl
     'ui-designer:project:profile',
     'ui-designer:resources:list', 'ui-designer:resources:references', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check', 'ui-designer:runtime:install',
     'ui-designer:scene:stage', 'ui-designer:runtime:export', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
-    'ui-designer:renderer:start', 'ui-designer:renderer:confirm', 'ui-designer:renderer:stop',
+    'ui-designer:renderer:start', 'ui-designer:renderer:confirm', 'ui-designer:renderer:stop', 'ui-designer:renderer:sync-resources',
     'ui-designer:recovery:clear', 'ui-designer:recent:list', 'ui-designer:recent:remove', 'ui-designer:preferences:read',
     'ui-designer:preferences:write',
   ]) ipcMain.removeHandler(channel)

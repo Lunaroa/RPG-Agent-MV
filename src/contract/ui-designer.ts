@@ -917,12 +917,28 @@ export interface UiDesignerRendererHostSession {
   engine: 'MV' | 'MZ'
   engineVersion: string
   runtimeVersion: string
+  resourceRevision: number
+}
+
+export interface UiDesignerRendererResourceSyncRequest extends UiDesignerProjectRequest {
+  sessionId: string
+  generation: number
+  manifest: import('./types.ts').ProjectAssetChangeManifest
+}
+
+export interface UiDesignerRendererResourceSyncResult {
+  sessionId: string
+  generation: number
+  resourceRevision: number
+  upsertedRelativePaths: string[]
+  deletedRelativePaths: string[]
 }
 
 export interface UiDesignerRendererHostAdapter {
   start(generation: number): Promise<UiFileResult<UiDesignerRendererHostSession>>
   confirm(sessionId: string): Promise<UiFileResult<UiDesignerRendererHostSession>>
   stop(sessionId?: string, reason?: UiDesignerRendererHostStopReason): Promise<UiFileResult<null>>
+  syncResources?(request: Omit<UiDesignerRendererResourceSyncRequest, 'project'>): Promise<UiFileResult<UiDesignerRendererResourceSyncResult>>
 }
 
 export interface UiCodeEditorAdapter {

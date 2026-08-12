@@ -1074,7 +1074,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(root.children.length, 0);
   });
 
-  test('renderer host patch, bounds, and input use the mounted ten-node runtime', () => {
+  test('renderer host patch returns a canonical world AABB and input uses the mounted ten-node runtime', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
     const runtime = context.MZUIRuntime.create();
@@ -1084,7 +1084,12 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(bounds.length, 1);
     assert.deepEqual(
       { x: bounds[0].x, y: bounds[0].y, width: bounds[0].width, rotation: bounds[0].rotation },
-      { x: 48, y: 64, width: 180, rotation: 15 },
+      {
+        x: 48 - 80 * Math.sin(Math.PI / 12),
+        y: 64,
+        width: 180 * Math.cos(Math.PI / 12) + 80 * Math.sin(Math.PI / 12),
+        rotation: 0,
+      },
     );
     assert.equal(runtime.getNodeBounds().length, 10);
     assert.equal(runtime.handleRendererInput({ type: 'pointerdown', nodeId: 'button' }), true);
@@ -1142,6 +1147,59 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(runtime.getNode('button').props.y, 64);
     runtime.cleanup();
   });
+
+  test('world bounds follow nested parent rotation and scale instead of estimating from node props', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = nestedBoundsScene();
+    runtime.mount(scene, { root: new context.PIXI.Container(), executionMode: 'authoring' });
+
+    const [child] = runtime.getNodeBounds(['child']);
+    assertWorldBounds(child, { x: -20, y: 90, width: 60, height: 80 });
+    assert.equal(child.rotation, 0);
+    runtime.cleanup();
+  });
+
+  test('world bounds normalize negative scale and preserve anchor in parent space', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = nestedBoundsScene();
+    const parent = scene.nodes.find((node: any) => node.id === 'parent');
+    const child = scene.nodes.find((node: any) => node.id === 'child');
+    parent.props.rotate = 0;
+    parent.props.scaleX = -2;
+    parent.props.scaleY = 3;
+    child.props.x = 130;
+    child.props.y = 70;
+    child.props.anchorX = 0.5;
+    child.props.anchorY = 0.5;
+    child.type = 'sprite';
+    child.children = [];
+    Object.assign(child.props, { path: '', fillMode: 'stretch', repeatMode: 'none', tint: '#ffffff', blendMode: 'normal', scrollX: 0, scrollY: 0 });
+    runtime.mount(scene, { root: new context.PIXI.Container(), executionMode: 'authoring' });
+
+    const [bounds] = runtime.getNodeBounds(['child']);
+    assertWorldBounds(bounds, { x: 0, y: 80, width: 80, height: 60 });
+    assert.ok(bounds.width >= 0);
+    assert.ok(bounds.height >= 0);
+    runtime.cleanup();
+  });
+
+  test('patching a transformed parent returns bounds for every affected descendant', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = nestedBoundsScene();
+    runtime.mount(scene, { root: new context.PIXI.Container(), executionMode: 'authoring' });
+
+    const bounds = runtime.patchNodes([{ nodeId: 'parent', props: { x: 200, scaleX: -1, scaleY: 2, rotate: 0 } }]);
+    assert.deepEqual(Array.from(bounds, (entry: any) => entry.nodeId), ['parent', 'child', 'grandchild']);
+    assertWorldBounds(bounds.find((entry: any) => entry.nodeId === 'child'), { x: 140, y: 90, width: 40, height: 40 });
+    assertWorldBounds(bounds.find((entry: any) => entry.nodeId === 'grandchild'), { x: 260, y: 0, width: 10, height: 10 });
+    runtime.cleanup();
+  });
 });
 
 function makeContext(): Record<string, any> {
@@ -1155,11 +1213,50 @@ function makeContext(): Record<string, any> {
     alpha = 1;
     scale = { x: 1, y: 1 };
     rotation = 0;
+    width = 0;
+    height = 0;
+    anchor: { x: number; y: number } | undefined;
+    worldTransform = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
     addChild(child: any) { this.children.push(child); child.parent = this; return child; }
     addChildAt(child: any, index: number) { this.children.splice(index, 0, child); child.parent = this; return child; }
     removeChild(child: any) { this.children = this.children.filter((entry) => entry !== child); child.parent = null; }
     on() {}
     off() {}
+    updateTransform() {
+      const cosine = Math.cos(this.rotation);
+      const sine = Math.sin(this.rotation);
+      const local = {
+        a: cosine * this.scale.x,
+        b: sine * this.scale.x,
+        c: -sine * this.scale.y,
+        d: cosine * this.scale.y,
+        tx: this.x,
+        ty: this.y,
+      };
+      const parent = this.parent;
+      if (parent && typeof parent.updateTransform === 'function') parent.updateTransform();
+      const parentWorld = parent && parent.worldTransform;
+      this.worldTransform = parentWorld ? {
+        a: parentWorld.a * local.a + parentWorld.c * local.b,
+        b: parentWorld.b * local.a + parentWorld.d * local.b,
+        c: parentWorld.a * local.c + parentWorld.c * local.d,
+        d: parentWorld.b * local.c + parentWorld.d * local.d,
+        tx: parentWorld.a * local.tx + parentWorld.c * local.ty + parentWorld.tx,
+        ty: parentWorld.b * local.tx + parentWorld.d * local.ty + parentWorld.ty,
+      } : local;
+    }
+    getBounds() {
+      this.updateTransform();
+      const left = -this.width * (this.anchor?.x ?? 0);
+      const top = -this.height * (this.anchor?.y ?? 0);
+      const points = [[left, top], [left + this.width, top], [left + this.width, top + this.height], [left, top + this.height]].map(([x, y]) => ({
+        x: this.worldTransform.a * x + this.worldTransform.c * y + this.worldTransform.tx,
+        y: this.worldTransform.b * x + this.worldTransform.d * y + this.worldTransform.ty,
+      }));
+      const xs = points.map((point) => point.x);
+      const ys = points.map((point) => point.y);
+      return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+    }
     destroy() { this.destroyed = true; this.children = []; }
   }
   class Graphics extends Container {
@@ -1179,14 +1276,14 @@ function makeContext(): Record<string, any> {
       return super.addChild(child);
     }
   }
-  class PixiSprite extends Container { constructor(public texture?: unknown) { super(); } }
+  class PixiSprite extends Container { constructor(public texture?: unknown) { super(); this.anchor = { x: 0, y: 0 }; } }
   class TilingSprite extends PixiSprite { tileScale = { x: 1, y: 1 }; tilePosition = { x: 0, y: 0 }; }
   class WindowBase extends Container {
     contents = { clear() {} };
     drawText() {}
   }
   class Text extends Container { text: string; constructor(text: string) { super(); this.text = text; } }
-  class Sprite extends Container { constructor(public bitmap?: unknown) { super(); } }
+  class Sprite extends Container { constructor(public bitmap?: unknown) { super(); this.anchor = { x: 0, y: 0 }; } }
   class Filter {
     destroyed = false;
     padding = 0;
@@ -1240,6 +1337,51 @@ function allNodeScene(): any {
     zOrder: ['container', 'sprite', 'nineSlice', 'frameAnimation', 'button', 'text', 'progressBar', 'overlay', 'video', 'particle'],
     sceneScript: sceneScript(),
   };
+}
+
+function nestedBoundsScene(): any {
+  const base = (id: string, type: string, parentId: string | null, children: string[], props: Record<string, unknown>) => ({
+    id,
+    type,
+    name: id,
+    parentId,
+    children,
+    props: {
+      x: 0, y: 0, width: 10, height: 10, scaleX: 1, scaleY: 1, rotate: 0,
+      opacity: 255, visible: true, anchorX: 0, anchorY: 0, zIndex: 0,
+      ...(type === 'container' ? { backgroundPath: '', backgroundFillMode: 'stretch', backgroundRepeatMode: 'none', clip: false } : {}),
+      ...(type === 'overlay' ? { fillColor: '#ffffff', clickThrough: false } : {}),
+      ...props,
+    },
+    propModes: {},
+    propCodes: {},
+    condition: { type: 'none' },
+    conditionFrequency: 'per-frame',
+    enterAnim: { type: 'none', duration: 0 },
+    exitAnim: { type: 'none', duration: 0 },
+    events: {},
+  });
+  return {
+    version: '1.1.0',
+    runtimeVersion: '>=1.1.0',
+    meta: { sceneName: 'Scene_NestedBounds', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
+    transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
+    globalFilter: { blur: 0, glow: 0, preset: '' },
+    nodes: [
+      base('parent', 'container', null, ['child'], { x: 100, y: 50, width: 100, height: 80, scaleX: 2, scaleY: 3, rotate: 90 }),
+      base('child', 'container', 'parent', ['grandchild'], { x: 120, y: 70, width: 40, height: 20 }),
+      base('grandchild', 'overlay', 'child', [], { x: 130, y: 75, width: 10, height: 5 }),
+    ],
+    zOrder: ['parent'],
+    sceneScript: sceneScript(),
+  };
+}
+
+function assertWorldBounds(actual: any, expected: { x: number; y: number; width: number; height: number }): void {
+  assert.ok(actual);
+  for (const key of ['x', 'y', 'width', 'height'] as const) {
+    assert.ok(Math.abs(actual[key] - expected[key]) < 1e-7, `${key}: expected ${expected[key]}, received ${actual[key]}`);
+  }
 }
 
 function sceneDocument(): any {

@@ -28,6 +28,7 @@ import type {
   UiVisibilityCondition,
 } from '@contract/ui-designer'
 import type { UiDesignerRendererExecutionMode } from '@contract/ui-designer-renderer-bridge'
+import type { ProjectAssetChangeManifest } from '@contract/types'
 import { createUiDesignerAdapters, type UiDesignerResourceLoadResult } from '../adapters'
 import {
   cloneUiDocument,
@@ -69,6 +70,7 @@ import { clearRecoverySnapshot } from './recoveryLifecycle'
 import {
   normalizeUiDesignerProjectRelativeResourcePath,
   normalizeUiDesignerResourceProperty,
+  normalizeProjectAssetChangeManifest,
 } from '@contract/ui-designer-resources'
 
 export interface UiDesignerSceneState {
@@ -195,6 +197,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const runtimeConflictFiles = ref<string[]>([])
   const runtimeProofMissing = ref(false)
   const previewDisposers = new Set<(reason: UiDesignerPreviewDisposeReason) => Promise<boolean>>()
+  const resourceMutationHandlers = new Set<(manifest: ProjectAssetChangeManifest) => Promise<void> | void>()
   let previewDisposePromise: Promise<boolean> | null = null
   const recentFiles = ref<UiDesignerRecentFileRecord[]>([])
   const recoveryRecords = ref<UiDesignerRecoveryRecord[]>([])
@@ -313,6 +316,16 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const registerPreviewDisposer = (disposer: (reason: UiDesignerPreviewDisposeReason) => Promise<boolean>) => {
     previewDisposers.add(disposer)
     return () => { previewDisposers.delete(disposer) }
+  }
+
+  const registerResourceMutationHandler = (handler: (manifest: ProjectAssetChangeManifest) => Promise<void> | void) => {
+    resourceMutationHandlers.add(handler)
+    return () => { resourceMutationHandlers.delete(handler) }
+  }
+
+  const notifyResourceMutation = async (manifest: ProjectAssetChangeManifest) => {
+    const normalized = normalizeProjectAssetChangeManifest(manifest)
+    await Promise.all([...resourceMutationHandlers].map((handler) => handler(normalized)))
   }
 
   const disposePreview = (reason: UiDesignerPreviewDisposeReason = 'unload'): Promise<boolean> => {
@@ -739,7 +752,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const activateScene = (sceneId: string) => {
-    if (isPreviewing.value) return false
+    if (previewOccupied.value) return false
     if (sceneId === activeSceneId.value) return true
     const next = scenes.value.find((scene) => scene.id === sceneId)
     if (!next) return false
@@ -1397,7 +1410,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   // methods only coordinate the embedded iframe execution mode and never
   // start an external Game/NW process.
   const startPreview = () => {
-    if (isPreviewing.value) return true
+    if (previewOccupied.value) return isPreviewing.value
     if (!canStartPreview.value) {
       previewStatus.value = 'unavailable'
       previewMessage.value = 'The isolated UI canvas renderer is not connected.'
@@ -1405,13 +1418,11 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     }
     flushDrafts(activeSceneId.value)
     previewModeBefore = editingMode.value
-    setEditingMode('design')
     previewExitPending = false
     previewCleanupPending.value = false
     previewMessage.value = ''
     previewExecutionMode.value = 'full-preview'
     previewStatus.value = 'preparing'
-    isPreviewing.value = true
     return true
   }
 
@@ -1426,7 +1437,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const acknowledgePreviewExecutionMode = (mode: UiDesignerRendererExecutionMode) => {
     if (mode !== previewExecutionMode.value) return false
     if (mode === 'full-preview') {
-      if (!isPreviewing.value) return false
+      if (previewStatus.value !== 'preparing') return false
+      setEditingMode('design')
+      isPreviewing.value = true
       previewExitPending = false
       previewCleanupPending.value = false
       previewStatus.value = 'running'
@@ -1707,6 +1720,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     setSnapPreference,
     setProjectContext,
     registerPreviewDisposer,
+    registerResourceMutationHandler,
+    notifyResourceMutation,
     disposePreview,
     loadProjectProfile,
     activateScene,

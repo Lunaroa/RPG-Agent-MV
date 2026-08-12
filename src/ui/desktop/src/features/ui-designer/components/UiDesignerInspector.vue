@@ -279,6 +279,7 @@ const commitNodeName = () => { if (selectedNode.value) designer.renameNode(selec
           @select-many="settleResourceWorkspace"
           @clear="settleResourceWorkspace('')"
           @cancel="settleResourceWorkspace(null)"
+          @mutated="designer.notifyResourceMutation"
         />
       </div>
     </el-dialog>

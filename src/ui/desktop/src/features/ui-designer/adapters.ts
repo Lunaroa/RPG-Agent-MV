@@ -12,6 +12,7 @@ import type {
   UiDesignerRuntimeStageResult,
   UiDesignerRendererHostAdapter,
   UiDesignerRendererHostSession,
+  UiDesignerRendererResourceSyncResult,
   UiDesignerSceneDataReadResult,
   UiDesignerSceneDataReadRequest,
   UiDesignerResourceRequest,
@@ -121,6 +122,7 @@ export const unavailableRendererHostAdapter: UiDesignerRendererHostAdapter = {
   async start() { return unavailable('Select an RPG Maker project before starting the real UI canvas renderer.') },
   async confirm() { return unavailable('The isolated UI canvas renderer is not connected.') },
   async stop() { return unavailable('The isolated UI canvas renderer is not connected.') },
+  async syncResources() { return unavailable('The isolated UI canvas renderer resource synchronizer is not connected.') },
 }
 
 function asResult<T>(value: unknown, fallbackMessage: string): UiFileResult<T> {
@@ -219,6 +221,10 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     },
     async confirm(sessionId) { return asResult<UiDesignerRendererHostSession>(await api.uiDesigner.confirmRenderer(sessionId), 'The isolated UI canvas renderer process could not be confirmed.') },
     async stop(sessionId, reason) { return asResult<null>(await api.uiDesigner.stopRenderer({ sessionId, reason }), 'The isolated UI canvas renderer could not be stopped.') },
+    async syncResources(request) {
+      if (!projectPath?.trim()) return unavailable('Select an RPG Maker project before synchronizing renderer resources.')
+      return asResult<UiDesignerRendererResourceSyncResult>(await api.uiDesigner.syncRendererResources({ ...request, project: projectPath }), 'Renderer resources could not be synchronized.')
+    },
   }
   return { file, project, resource, runtime, rendererHost, code: codeMirrorAdapter, lifecycle }
 }

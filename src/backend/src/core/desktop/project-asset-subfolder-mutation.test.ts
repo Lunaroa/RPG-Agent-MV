@@ -39,6 +39,8 @@ describe('project asset picture subfolder mutations', { concurrency: false }, ()
     const result = renameProjectAssetSubfolder(root, project, 'pictures/ui', 'hud');
     assert.equal(result.nextNodeId, 'pictures/hud');
     assert.equal(result.directory, 'img/pictures/hud');
+    assert.deepEqual(result.changeManifest.upsertRelativePaths, ['img/pictures/hud/Portrait.png']);
+    assert.deepEqual(result.changeManifest.deleteRelativePaths, ['img/pictures/ui/Portrait.png']);
     assert.equal(fs.existsSync(path.join(project, 'img', 'pictures', 'hud', 'Portrait.png')), true);
     assert.equal(fs.existsSync(path.join(project, 'img', 'pictures', 'ui')), false);
 
@@ -64,6 +66,7 @@ describe('project asset picture subfolder mutations', { concurrency: false }, ()
       },
     );
     assert.equal(batch.results.every((item) => item.status === 'deleted'), true);
+    assert.deepEqual(batch.changeManifest?.deleteRelativePaths, ['img/pictures/ui/Portrait.png']);
     assert.equal(fs.existsSync(path.join(project, 'img', 'pictures', 'ui')), false);
     assert.ok(trashed.some((entry) => entry.replace(/\\/g, '/').endsWith('img/pictures/ui')));
   });

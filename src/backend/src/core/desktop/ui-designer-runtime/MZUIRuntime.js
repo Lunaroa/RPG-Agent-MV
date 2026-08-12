@@ -581,7 +581,7 @@
           self.updateButtonDisabled(node);
           applyNodeProps(node, self.nodeViews[node.id], self.scene, visible);
         });
-        return this.getNodeBounds(changedNodeIds);
+        return this.getNodeBounds(affectedBoundsNodeIds(this, changedNodeIds));
       },
       getNodeBounds: function getNodeBounds(nodeIds) {
         var self = this;
@@ -591,19 +591,22 @@
         return ids.map(function (id) {
           var node = self.nodeIndex[id];
           if (!node) return null;
-          var props = node.props || {};
-          var width = Math.max(0, Math.abs(finite(props.width, 0) * finite(props.scaleX, 1)));
-          var height = Math.max(0, Math.abs(finite(props.height, 0) * finite(props.scaleY, 1)));
           var view = self.nodeViews[node.id];
+          if (!view) return null;
+          var bounds = worldAabbForView(view, node);
+          var visible = effectiveViewVisibility(view);
           return {
             nodeId: node.id,
-            x: finite(props.x, 0) - width * finite(props.anchorX, 0),
-            y: finite(props.y, 0) - height * finite(props.anchorY, 0),
-            width: width,
-            height: height,
-            rotation: finite(props.rotate, 0),
-            visible: Boolean(view && view.visible !== false),
-            interactive: Boolean(view && view.interactive !== false),
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height,
+            // x/y/width/height are already the canonical world-space AABB.
+            // Applying the view's world rotation to that rectangle again
+            // would mix coordinate spaces and enlarge the editor overlay.
+            rotation: 0,
+            visible: visible,
+            interactive: Boolean(visible && view.interactive === true),
           };
         }).filter(Boolean);
       },
@@ -1951,6 +1954,104 @@
     list.filter(function (node) { return node && node.parentId === null; }).forEach(visit);
     list.forEach(visit);
     return result;
+  }
+
+  function affectedBoundsNodeIds(runtime, changedNodeIds) {
+    var affected = [];
+    var seen = {};
+    var pending = Array.isArray(changedNodeIds) ? changedNodeIds.slice() : [];
+    while (pending.length) {
+      var nodeId = pending.shift();
+      if (typeof nodeId !== 'string' || seen[nodeId]) continue;
+      seen[nodeId] = true;
+      var node = runtime && runtime.nodeIndex ? runtime.nodeIndex[nodeId] : null;
+      if (!node) continue;
+      affected.push(nodeId);
+      if (Array.isArray(node.children)) node.children.forEach(function (childId) { pending.push(childId); });
+    }
+    return affected;
+  }
+
+  function effectiveViewVisibility(view) {
+    var current = view;
+    var guard = 0;
+    while (current && guard++ < 256) {
+      if (current.visible === false || current.renderable === false) return false;
+      current = current.parent;
+    }
+    return true;
+  }
+
+  function finiteBoundsRectangle(value) {
+    if (!value) return null;
+    var x = Number(value.x);
+    var y = Number(value.y);
+    var width = Number(value.width);
+    var height = Number(value.height);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) return null;
+    if (width < 0) { x += width; width = Math.abs(width); }
+    if (height < 0) { y += height; height = Math.abs(height); }
+    return { x: x, y: y, width: width, height: height };
+  }
+
+  function transformLogicalNodeAabb(view, node) {
+    var transform = view && view.worldTransform;
+    if (!transform) return null;
+    var matrix = {
+      a: Number(transform.a), b: Number(transform.b), c: Number(transform.c),
+      d: Number(transform.d), tx: Number(transform.tx), ty: Number(transform.ty),
+    };
+    if (!Number.isFinite(matrix.a) || !Number.isFinite(matrix.b) || !Number.isFinite(matrix.c) || !Number.isFinite(matrix.d) || !Number.isFinite(matrix.tx) || !Number.isFinite(matrix.ty)) return null;
+    var dimensions = view.__mzuiDimensions || {};
+    var props = node && node.props ? node.props : {};
+    var width = Math.max(0, finite(dimensions.width, finite(props.width, 0)));
+    var height = Math.max(0, finite(dimensions.height, finite(props.height, 0)));
+    var viewScaleX = Math.abs(finite(view.scale && view.scale.x, 1));
+    var viewScaleY = Math.abs(finite(view.scale && view.scale.y, 1));
+    var requestedScaleX = Math.abs(finite(dimensions.scaleX, finite(props.scaleX, 1)));
+    var requestedScaleY = Math.abs(finite(dimensions.scaleY, finite(props.scaleY, 1)));
+    var localWidth = viewScaleX > 0 && requestedScaleX > 0 ? width * requestedScaleX / viewScaleX : width;
+    var localHeight = viewScaleY > 0 && requestedScaleY > 0 ? height * requestedScaleY / viewScaleY : height;
+    var anchorX = view.anchor && Number.isFinite(Number(view.anchor.x)) ? Number(view.anchor.x) : 0;
+    var anchorY = view.anchor && Number.isFinite(Number(view.anchor.y)) ? Number(view.anchor.y) : 0;
+    var left = -localWidth * anchorX;
+    var top = -localHeight * anchorY;
+    var right = left + localWidth;
+    var bottom = top + localHeight;
+    var points = [
+      [left, top], [right, top], [right, bottom], [left, bottom],
+    ].map(function (point) {
+      return {
+        x: matrix.a * point[0] + matrix.c * point[1] + matrix.tx,
+        y: matrix.b * point[0] + matrix.d * point[1] + matrix.ty,
+      };
+    });
+    var xs = points.map(function (point) { return point.x; });
+    var ys = points.map(function (point) { return point.y; });
+    var minX = Math.min.apply(Math, xs);
+    var maxX = Math.max.apply(Math, xs);
+    var minY = Math.min.apply(Math, ys);
+    var maxY = Math.max.apply(Math, ys);
+    return finiteBoundsRectangle({ x: minX, y: minY, width: maxX - minX, height: maxY - minY });
+  }
+
+  function worldAabbForView(view, node) {
+    var pixiBounds = null;
+    if (view && typeof view.getBounds === 'function') {
+      try { pixiBounds = finiteBoundsRectangle(view.getBounds(false)); } catch (_) { pixiBounds = null; }
+    }
+    var transformed = transformLogicalNodeAabb(view, node);
+    if (transformed) {
+      var expectedWidth = Math.abs(finite(node && node.props && node.props.width, 0) * finite(node && node.props && node.props.scaleX, 1));
+      var expectedHeight = Math.abs(finite(node && node.props && node.props.height, 0) * finite(node && node.props && node.props.scaleY, 1));
+      // Empty PIXI containers have an empty getBounds() even when the UI
+      // contract gives them a logical editing rectangle. Their worldTransform
+      // is still the canonical source for that rectangle.
+      if (!pixiBounds || (pixiBounds.width === 0 && expectedWidth > 0) || (pixiBounds.height === 0 && expectedHeight > 0)) return transformed;
+    }
+    if (pixiBounds) return pixiBounds;
+    if (transformed) return transformed;
+    throw new Error('The MV/MZ PIXI view does not expose usable world-space bounds for node: ' + String(node && node.id || '<unknown>'));
   }
 
   function readFile(relativePath) {

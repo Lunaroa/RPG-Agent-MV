@@ -69,9 +69,10 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       writeUiDesignerRuntimeExport: () => ({ path: 'Scene_Sample.json', digest: 'digest', mtimeMs: 2, size: 2 }),
     },
     rendererHost: {
-      start: async (_project: string, generation: number) => { rendererStarts += 1; return { sessionId: 'renderer-session', generation, iframeUrl: 'rpg-agent-preview://renderer/index.html', engine: 'MV', engineVersion: '1.6.2', runtimeVersion: '1.1.0' } },
-      confirm: (sessionId: string) => ({ sessionId, generation: 2, iframeUrl: 'rpg-agent-preview://renderer/index.html', engine: 'MV', engineVersion: '1.6.2', runtimeVersion: '1.1.0' }),
+      start: async (_project: string, generation: number) => { rendererStarts += 1; return { sessionId: 'renderer-session', generation, iframeUrl: 'rpg-agent-preview://renderer/index.html', engine: 'MV', engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 } },
+      confirm: (sessionId: string) => ({ sessionId, generation: 2, iframeUrl: 'rpg-agent-preview://renderer/index.html', engine: 'MV', engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }),
       stop: () => undefined,
+      syncResources: (request) => ({ sessionId: request.sessionId, generation: request.generation, resourceRevision: 1, upsertedRelativePaths: request.manifest.upsertRelativePaths, deletedRelativePaths: request.manifest.deleteRelativePaths }),
     },
     userDataStore: () => userDataStore as any,
   })
@@ -123,6 +124,13 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   assert.equal(renderer.status, 'success')
   assert.equal(renderer.value.runtimeVersion, '1.1.0')
   assert.equal(rendererStarts, 1)
+  const resourceSync = await handlers.get('ui-designer:renderer:sync-resources')!(null, {
+    project: 'project', sessionId: renderer.value.sessionId, generation: 2,
+    manifest: { schemaVersion: '1.0.0', upsertRelativePaths: ['img/pictures/new.png'], deleteRelativePaths: ['img/pictures/old.png'] },
+  })
+  assert.equal(resourceSync.status, 'success')
+  assert.equal(resourceSync.value.resourceRevision, 1)
+  assert.deepEqual(resourceSync.value.deletedRelativePaths, ['img/pictures/old.png'])
   assert.equal(handlers.has('ui-designer:preview:start'), false)
   assert.equal(handlers.has('ui-designer:preview:current'), false)
   assert.equal(handlers.has('ui-designer:preview:stop'), false)
@@ -131,5 +139,6 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   const removed: string[] = []
   cleanupUiDesignerIpcHandlers({ removeHandler: (name: string) => { removed.push(name) } })
   assert.equal(removed.includes('ui-designer:project:profile'), true)
+  assert.equal(removed.includes('ui-designer:renderer:sync-resources'), true)
   fs.rmSync(revealRoot, { recursive: true, force: true })
 })

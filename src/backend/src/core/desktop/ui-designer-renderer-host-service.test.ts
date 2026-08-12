@@ -709,6 +709,38 @@ test('official MV 1.6.1 loader reaches ready before lazy Window_Message creation
     assert.deepEqual(officialMv.messageWindowTone(), [0, 0, 0])
     assert.deepEqual(officialMv.context.$gameMessage.added, ['session message'])
 
+    let cachedBitmapDestroyed = 0
+    officialMv.context.ImageManager = { _cache: { 'img/pictures/menu.png:0': { destroy: () => { cachedBitmapDestroyed += 1 } } } }
+    const mountedBeforeRefresh = officialMv.messages.filter((message) => message.kind === 'mounted').length
+    onMessage!({
+      source: officialMv.context.parent,
+      data: envelope(session, 1, 'resource-refresh', { revision: 2, resourceRevision: 1, relativePaths: ['img/pictures/menu.png'] }),
+    })
+    assert.equal(cachedBitmapDestroyed, 1)
+    assert.equal(Object.keys(officialMv.context.ImageManager._cache).length, 0)
+    assert.equal(officialMv.messages.filter((message) => message.kind === 'mounted').length, mountedBeforeRefresh + 1)
+
+    let cacheMapEntryFreed = 0
+    const cacheMapInner: Record<string, { free(force: boolean): void }> = {}
+    cacheMapInner['img/pictures/menu.png:0'] = {
+      free: (force: boolean) => {
+        assert.equal(force, true)
+        cacheMapEntryFreed += 1
+        delete cacheMapInner['img/pictures/menu.png:0']
+      },
+    }
+    officialMv.context.ImageManager = {
+      _cache: {
+        _inner: cacheMapInner,
+      },
+    }
+    onMessage!({
+      source: officialMv.context.parent,
+      data: envelope(session, 2, 'resource-refresh', { revision: 3, resourceRevision: 2, relativePaths: ['img/pictures/menu.png'] }),
+    })
+    assert.equal(cacheMapEntryFreed, 1)
+    assert.equal(Object.keys(cacheMapInner).length, 0)
+
     officialMv.listeners.get('beforeunload')?.()
     assert.equal(officialMv.messages.filter((message) => message.kind === 'disposed').length, 1)
     assert.equal(officialMv.context.__mzuiSessionStorage, null)
@@ -1193,6 +1225,52 @@ test('source save and staging evidence changes retain the isolated project for r
         if (isolated) fs.rmSync(isolated, { recursive: true, force: true })
       }
     })
+  }
+})
+
+test('active renderer resource sync applies only its manifest and rejects stale generations', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-renderer-resource-session-'))
+  const project = path.join(root, 'projects', 'sample-mv')
+  writeProject(project, 'MV')
+  const sourceResource = path.join(resourceRoot(project, 'MV'), 'img', 'pictures', 'menu.png')
+  fs.mkdirSync(path.dirname(sourceResource), { recursive: true })
+  fs.writeFileSync(sourceResource, 'new-resource', 'utf8')
+  let isolated = ''
+  const service = new UiDesignerRendererHostService(root, {
+    prepareIsolated: (_workflowRoot, source) => {
+      const prepared = preparation(source, 'ui-renderer-resource-copy-')
+      isolated = prepared.temporaryProject
+      return prepared
+    },
+    registerPreviewRoot: (key) => `rpg-agent-preview://${key}/index.html`,
+    unregisterPreviewRoot: () => undefined,
+    verifyFrameIsolation: () => true,
+    verifySourceState: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+  })
+  try {
+    const session = await service.start(project, 9)
+    fs.writeFileSync(sourceResource, 'updated-resource', 'utf8')
+    const receipt = service.syncResources({
+      project,
+      sessionId: session.sessionId,
+      generation: session.generation,
+      manifest: { schemaVersion: '1.0.0', upsertRelativePaths: ['www/img/pictures/menu.png'], deleteRelativePaths: [] },
+    })
+    assert.equal(receipt.resourceRevision, 1)
+    assert.equal(service.current()?.resourceRevision, 1)
+    assert.equal(fs.readFileSync(path.join(resourceRoot(isolated, 'MV'), 'img', 'pictures', 'menu.png'), 'utf8'), 'updated-resource')
+    assert.equal(fs.readFileSync(sourceResource, 'utf8'), 'updated-resource')
+    assert.throws(() => service.syncResources({
+      project,
+      sessionId: session.sessionId,
+      generation: session.generation - 1,
+      manifest: { schemaVersion: '1.0.0', upsertRelativePaths: ['www/img/pictures/menu.png'], deleteRelativePaths: [] },
+    }), /stale project generation/)
+    service.stop(session.sessionId)
+  } finally {
+    try { service.shutdownSync() } catch { /* asserted by the test body */ }
+    fs.rmSync(root, { recursive: true, force: true })
+    if (isolated) fs.rmSync(isolated, { recursive: true, force: true })
   }
 })
 

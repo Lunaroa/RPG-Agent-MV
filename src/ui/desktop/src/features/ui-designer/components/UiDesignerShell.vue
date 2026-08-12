@@ -258,8 +258,10 @@ onBeforeUnmount(() => {
       <div v-show="!designer.isPreviewing" class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
       <main class="center-pane">
         <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" />
-        <UiDesignerCanvas v-else-if="designer.editingMode === 'design'" :designer="designer" />
-        <UiDesignerCodePanel v-else :designer="designer" />
+        <template v-else>
+          <UiDesignerCanvas v-show="designer.editingMode === 'design' || designer.isPreviewing" :designer="designer" />
+          <UiDesignerCodePanel v-show="designer.editingMode === 'code' && !designer.isPreviewing" :designer="designer" />
+        </template>
       </main>
       <div v-show="!designer.isPreviewing" class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
       <UiDesignerInspector v-show="!designer.isPreviewing" :designer="designer" />

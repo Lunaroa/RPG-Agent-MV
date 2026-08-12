@@ -15,7 +15,7 @@ const routedView = fs.readFileSync(new URL('../../../views/UiDesignerView.vue', 
 test('UI designer canvas consumes the isolated runtime host and keeps stable overlay targets', () => {
   assert.match(canvas, /useUiDesignerRendererHost/)
   assert.match(canvas, /data-ui-id="ui-designer-runtime-canvas-frame"/)
-  assert.match(canvas, /:renderer-bounds="previewing \? rendererBounds : \{\}"/)
+  assert.match(canvas, /:renderer-bounds="rendererBounds"/)
   assert.match(canvas, /preview-interactive/)
   assert.match(canvas, /@error="rendererHost\.onIframeError"/)
   assert.match(canvas, /rendererFailureCode/)
@@ -38,26 +38,43 @@ test('editor preview leaves only the canonical iframe and a minimal exit control
   assert.match(canvas, /touch-action: none/)
 })
 
-test('design edits stay local until refresh while preview mounts the latest scene', () => {
+test('design and code keep one mounted canvas host while committed edits synchronize automatically', () => {
+  assert.match(shell, /<template v-else>[\s\S]*UiDesignerCanvas v-show="designer\.editingMode === 'design' \|\| designer\.isPreviewing"[\s\S]*UiDesignerCodePanel v-show="designer\.editingMode === 'code' && !designer\.isPreviewing"/)
+  assert.doesNotMatch(shell, /UiDesignerCanvas v-else-if/)
   assert.match(canvas, /data-ui-id="ui-designer-canvas-refresh"/)
   assert.match(canvas, /rendererHost\.refreshCanvas\(\)/)
   assert.match(hostLifecycle, /const refreshCanvas = \(\) => \{[\s\S]*syncScene\(true\)/)
   const refresh = hostLifecycle.slice(hostLifecycle.indexOf('const refreshCanvas ='), hostLifecycle.indexOf('const cancelDraftSync ='))
   assert.doesNotMatch(refresh, /start\(/)
   assert.doesNotMatch(refresh, /status\.value = 'preparing'/)
-  assert.match(hostLifecycle, /if \(options\.executionMode\(\) !== 'full-preview'\) return/)
   const sceneWatcher = hostLifecycle.slice(hostLifecycle.indexOf('const sceneStop = watch('), hostLifecycle.indexOf('const draftStop = watch('))
-  assert.doesNotMatch(sceneWatcher, /syncScene\(false\)/)
-  assert.match(sceneWatcher, /if \(sceneChanged\) syncScene\(true\)/)
+  assert.match(sceneWatcher, /syncScene\(sceneChanged\)/)
   const draftSync = hostLifecycle.slice(hostLifecycle.indexOf('const syncDraftGeometry ='), hostLifecycle.indexOf('const syncSelection ='))
-  assert.match(draftSync, /options\.executionMode\(\) !== 'full-preview'/)
+  assert.doesNotMatch(draftSync, /options\.executionMode\(\) !== 'full-preview'/)
+  assert.match(hostLifecycle, /if \(pendingMountRevision !== null\) \{\s*queueSceneSync\(forceMount\)/)
+  assert.match(hostLifecycle, /const previewNeedsLatestMount = sceneSyncQueued && options\.executionMode\(\) === 'full-preview'/)
+  assert.match(hostLifecycle, /syncScene\(previewNeedsLatestMount\)/)
+  assert.match(hostLifecycle, /if \(!previewNeedsLatestMount\) options\.onExecutionModeReady/)
   const selectionSync = hostLifecycle.slice(hostLifecycle.indexOf('const syncSelection ='), hostLifecycle.indexOf('const stopBackend ='))
   assert.match(selectionSync, /options\.executionMode\(\) !== 'full-preview'/)
   const modeWatcher = hostLifecycle.slice(hostLifecycle.indexOf('const executionModeStop = watch('), hostLifecycle.indexOf('onMounted(() =>'))
   assert.match(modeWatcher, /syncScene\(true\)/)
   const previewStart = designerController.slice(designerController.indexOf('const startPreview ='), designerController.indexOf('const stopPreview ='))
   assert.ok(previewStart.indexOf('flushDrafts') < previewStart.indexOf("previewExecutionMode.value = 'full-preview'"))
-  assert.match(hostLifecycle, /previousExecutionMode !== options\.executionMode\(\) \|\| previousScene\?\.meta\.sceneName !== activeSceneId\(\)/)
+  assert.doesNotMatch(previewStart, /isPreviewing\.value = true/)
+  const previewReady = designerController.slice(designerController.indexOf('const acknowledgePreviewExecutionMode ='), designerController.indexOf('const failPreview ='))
+  assert.ok(previewReady.indexOf("setEditingMode('design')") < previewReady.indexOf('isPreviewing.value = true'))
+})
+
+test('resource refresh follows an in-flight edit with the latest complete scene', () => {
+  assert.match(hostLifecycle, /const sceneRevisionAtStart = revision[\s\S]*if \(revision !== sceneRevisionAtStart\) queueSceneSync\(true\)[\s\S]*postPendingResourceRefresh\(\)/)
+})
+
+test('authoring renderer status remains a non-blocking hint over editable DOM overlays', () => {
+  assert.doesNotMatch(canvas, /runtime-disabled/)
+  assert.match(canvas, /designer\.previewStatus === 'preparing' \? 'previewPreparing' : 'canvasSyncing'/)
+  assert.match(canvas, /\.canvas-runtime-state \{[^}]*top: 8px;[^}]*right: 8px;[^}]*pointer-events: none;/)
+  assert.match(canvas, /\.canvas-runtime-state \.el-button \{ pointer-events: auto; \}/)
 })
 
 test('renderer host does not settle a mounted receipt from the wrong execution mode', () => {
@@ -140,11 +157,11 @@ test('stale renderer starts keep an opaque owner for a retryable stop', () => {
 
 test('renderer scene sync waits for the iframe handshake and mounted revision', () => {
   assert.match(hostLifecycle, /!engineReady \|\| !processConfirmed \|\| !iframeLoaded/)
-  const pendingMountGate = hostLifecycle.indexOf('if (pendingMountRevision !== null) return')
+  const pendingMountGate = hostLifecycle.indexOf('if (pendingMountRevision !== null) {')
   const nextRevision = hostLifecycle.indexOf('revision = update.revision', pendingMountGate)
   assert.ok(pendingMountGate >= 0 && nextRevision > pendingMountGate)
   assert.match(hostLifecycle, /post\('mount',[\s\S]*pendingMountRevision = revision/)
-  assert.match(hostLifecycle, /message\.kind === 'mounted'[\s\S]*pendingMountRevision = null[\s\S]*syncScene\(false\)/)
+  assert.match(hostLifecycle, /message\.kind === 'mounted'[\s\S]*pendingMountRevision = null[\s\S]*syncScene\(previewNeedsLatestMount\)/)
   assert.match(hostLifecycle, /!executionModeReady\.value/)
   assert.match(hostLifecycle, /update\.kind === 'patch' && !executionModeReady\.value/)
   assert.match(hostLifecycle, /iframeLoaded = true[\s\S]*maybeRun\(\)/)
@@ -153,7 +170,7 @@ test('renderer scene sync waits for the iframe handshake and mounted revision', 
 
 test('preview keeps scene tabs and controller activation locked to the captured scene', () => {
   assert.match(sceneTabs, /if \(designer\.isPreviewing\) return/)
-  assert.match(designerController, /const activateScene = \(sceneId: string\) => \{\s*if \(isPreviewing\.value\) return false/)
+  assert.match(designerController, /const activateScene = \(sceneId: string\) => \{\s*if \(previewOccupied\.value\) return false/)
   const contextBarrier = designerController.indexOf('const previewWasOccupied = previewOccupied.value')
   const contextDiscardPrompt = designerController.indexOf('options.confirmDiscard()', contextBarrier)
   assert.ok(contextBarrier >= 0 && contextDiscardPrompt > contextBarrier)

@@ -33,6 +33,7 @@ import type {
   ProjectAssetAnnotation,
   ProjectAssetBrowseEntry,
   ProjectAssetCategoryTreeNode,
+  ProjectAssetChangeManifest,
   ProjectAssetCopyBatchResult,
   ProjectAssetCopyItemResult,
   ProjectAssetDeleteBatchResult,
@@ -171,8 +172,15 @@ const emit = defineEmits<{
   selectMany: [paths: string[]]
   cancel: []
   clear: []
+  mutated: [manifest: ProjectAssetChangeManifest]
 }>()
 const isSelectionMode = computed(() => props.mode === 'select')
+
+function emitMutation(manifest: ProjectAssetChangeManifest | null | undefined): void {
+  if (!manifest) return
+  if (manifest.upsertRelativePaths.length === 0 && manifest.deleteRelativePaths.length === 0) return
+  emit('mutated', manifest)
+}
 
 /**
  * Explorer-like grid metrics. cellWidth hugs the square thumbnail;
@@ -2166,6 +2174,7 @@ async function pasteFolderClipboard() {
       selectedCategoryId.value,
       projectStore.currentProject,
     )
+    emitMutation(result.changeManifest)
     folderClipboard.value = null // a cut clipboard is single-use
     ElMessage.success(t('projectAssets.folderMoved'))
     await loadTree(result.nextNodeId)
@@ -2268,6 +2277,7 @@ async function pasteClipboard() {
       ElMessage.success(summary)
     }
     const firstCopied = batch.results.find((item) => item.status === 'copied' && item.detail)
+    emitMutation(batch.changeManifest)
     await afterMutation(firstCopied?.detail || null)
   } catch (error) {
     mutationError.value = formatError(error)
@@ -2349,6 +2359,7 @@ async function pasteMoveClipboard(targets: ProjectAssetDeleteTargetInput[]) {
     const anyMoved = batch.results.some((item) => item.status === 'moved')
     if (anyMoved) assetClipboard.value = null // a cut clipboard is single-use
     const firstMoved = batch.results.find((item) => item.status === 'moved' && item.detail)
+    emitMutation(batch.changeManifest)
     await afterMutation(firstMoved?.detail || null)
     if (anyMoved) await refreshFavorites()
   } catch (error) {
@@ -2766,6 +2777,7 @@ async function runImportForSourceFiles(
   }))
 
   let backendResults: ProjectAssetImportItemResult[] = []
+  let changeManifest: ProjectAssetChangeManifest | undefined
   if (candidates.length > 0) {
     const batch = await projectAssets.importLocalFiles(
       {
@@ -2792,6 +2804,7 @@ async function runImportForSourceFiles(
     }
     assertImportBatchResultShape(typedBatch, candidates.length)
     backendResults = typedBatch.results
+    changeManifest = typedBatch.changeManifest
   }
 
   const combined = [...backendResults, ...skippedFromDialog, ...localFailed]
@@ -2805,6 +2818,7 @@ async function runImportForSourceFiles(
   }
 
   const firstImported = backendResults.find((item) => item.status === 'imported' && item.detail)
+  emitMutation(changeManifest)
   await afterMutation(firstImported?.detail || null)
 }
 
@@ -3059,6 +3073,7 @@ async function renameSelectedEntry() {
       }
     }
     const renamed = await projectAssets.rename(target, nextName, projectStore.currentProject)
+    emitMutation(renamed.changeManifest)
     await afterMutation(renamed)
     await refreshFavorites()
     ElMessage.success(t('projectAssets.renameSucceeded'))
@@ -3095,6 +3110,7 @@ async function renameContextFolder() {
   mutationBusy.value = true
   try {
     const result = await projectAssets.renameSubfolder(folderId, nextName, projectStore.currentProject)
+    emitMutation(result.changeManifest)
     await loadTree(result.nextNodeId)
     await refreshFavorites()
     ElMessage.success(t('projectAssets.folderRenameSucceeded'))
@@ -3125,8 +3141,8 @@ async function deleteContextFolder() {
   try {
     // First pass without force: backend blocks the whole folder when any nested
     // asset is still referenced, without deleting anything.
-    const first = await projectAssets.removeSubfolder(folderId, false, projectStore.currentProject)
-    const blocked = first.results.filter((item) => item.status === 'blocked')
+    let removed = await projectAssets.removeSubfolder(folderId, false, projectStore.currentProject)
+    const blocked = removed.results.filter((item) => item.status === 'blocked')
     if (blocked.length > 0) {
       mutationBusy.value = false
       try {
@@ -3139,8 +3155,9 @@ async function deleteContextFolder() {
         return
       }
       mutationBusy.value = true
-      await projectAssets.removeSubfolder(folderId, true, projectStore.currentProject)
+      removed = await projectAssets.removeSubfolder(folderId, true, projectStore.currentProject)
     }
+    emitMutation(removed.changeManifest)
     const parentId = folderId.includes('/')
       ? folderId.slice(0, folderId.lastIndexOf('/'))
       : 'pictures'
@@ -3280,6 +3297,7 @@ async function deleteSelectedEntries() {
       projectStore.currentProject,
     )
     assertDeleteResultsShape(removed, resolvedTargets.length)
+    emitMutation(removed.changeManifest)
 
     const deletedIds = new Set<string>()
     for (let index = 0; index < removed.results.length; index += 1) {

@@ -811,6 +811,15 @@ export type ProjectRelativeDirectoryListResult =
 
 export type ManagedAssetScope = 'project';
 
+/** Files changed by one successful project-asset mutation. */
+export interface ProjectAssetChangeManifest {
+  schemaVersion: '1.0.0';
+  /** Project-relative files that now exist and must be copied into active renderer sessions. */
+  upsertRelativePaths: string[];
+  /** Project-relative files that no longer exist and must be removed from active renderer sessions. */
+  deleteRelativePaths: string[];
+}
+
 export interface ManagedAssetRef {
   file: string;
   path: string;
@@ -826,6 +835,8 @@ export interface ManagedAssetDetail {
   size: number;
   staged: boolean;
   references: ManagedAssetRef[];
+  /** Present only when this detail is the result of a mutation such as rename. */
+  changeManifest?: ProjectAssetChangeManifest;
 }
 
 export interface ProjectAssetReferenceGraphAsset {
@@ -911,6 +922,7 @@ export interface ProjectAssetDeleteItemResult {
 
 export interface ProjectAssetDeleteBatchResult {
   results: ProjectAssetDeleteItemResult[];
+  changeManifest?: ProjectAssetChangeManifest;
 }
 
 export interface ProjectAssetCopyBatchInput {
@@ -938,6 +950,7 @@ export interface ProjectAssetCopyItemResult {
 
 export interface ProjectAssetCopyBatchResult {
   results: ProjectAssetCopyItemResult[];
+  changeManifest?: ProjectAssetChangeManifest;
 }
 
 export interface ProjectAssetMoveBatchInput {
@@ -969,6 +982,7 @@ export interface ProjectAssetMoveItemResult {
 
 export interface ProjectAssetMoveBatchResult {
   results: ProjectAssetMoveItemResult[];
+  changeManifest?: ProjectAssetChangeManifest;
 }
 
 /**
@@ -1039,6 +1053,7 @@ export interface ProjectAssetImportItemResult {
 
 export interface ProjectAssetImportBatchResult {
   results: ProjectAssetImportItemResult[];
+  changeManifest?: ProjectAssetChangeManifest;
 }
 
 export type AssetLibraryCategoryId =

@@ -25,6 +25,8 @@ import type {
   UiDesignerRuntimeStageResult,
   UiDesignerRendererHostSession,
   UiDesignerRendererHostStopReason,
+  UiDesignerRendererResourceSyncRequest,
+  UiDesignerRendererResourceSyncResult,
   UiDesignerSaveResult,
   UiDesignerSceneStageRequest,
   UiFileResult,
@@ -32,6 +34,7 @@ import type {
   UiResourceEntry,
   UiRuntimeStatus,
 } from '@contract/ui-designer';
+import type { ProjectAssetChangeManifest } from '@contract/types';
 
 declare global {
   interface Window {
@@ -150,6 +153,7 @@ declare global {
         startRenderer(request: UiDesignerProjectRequest & { generation: number }): Promise<UiFileResult<UiDesignerRendererHostSession>>;
         confirmRenderer(sessionId: string): Promise<UiFileResult<UiDesignerRendererHostSession>>;
         stopRenderer(request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }): Promise<UiFileResult<null>>;
+        syncRendererResources(request: UiDesignerRendererResourceSyncRequest): Promise<UiFileResult<UiDesignerRendererResourceSyncResult>>;
         listRecentFiles(): Promise<UiFileResult<UiDesignerRecentFileRecord[]>>;
         removeRecentFile(filePath: string): Promise<UiFileResult<null>>;
         writeRecovery(request: UiDesignerRecoveryWriteRequest): Promise<UiFileResult<UiDesignerRecoveryRecord>>;
@@ -554,6 +558,7 @@ export const uiDesigner = {
   startRenderer(request: UiDesignerProjectRequest & { generation: number }) { return desktopApi().uiDesigner.startRenderer(toPlain(request)) },
   confirmRenderer(sessionId: string) { return desktopApi().uiDesigner.confirmRenderer(sessionId) },
   stopRenderer(request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }) { return desktopApi().uiDesigner.stopRenderer(toPlain(request)) },
+  syncRendererResources(request: UiDesignerRendererResourceSyncRequest) { return desktopApi().uiDesigner.syncRendererResources(toPlain(request)) },
   listRecentFiles() { return desktopApi().uiDesigner.listRecentFiles() },
   removeRecentFile(filePath: string) { return desktopApi().uiDesigner.removeRecentFile(filePath) },
   writeRecovery(request: UiDesignerRecoveryWriteRequest) { return desktopApi().uiDesigner.writeRecovery(toPlain(request)) },
@@ -1265,6 +1270,7 @@ export const projectAssets = {
       previousNodeId: string;
       nextNodeId: string;
       directory: string;
+      changeManifest: ProjectAssetChangeManifest;
     }>;
   },
   moveSubfolder(nodeId: string, targetNodeId: string, project: string = DEFAULT_PROJECT) {
@@ -1272,6 +1278,7 @@ export const projectAssets = {
       previousNodeId: string;
       nextNodeId: string;
       directory: string;
+      changeManifest: ProjectAssetChangeManifest;
     }>;
   },
   remove(

@@ -44,20 +44,22 @@ test('closing the only opened tab creates a fresh untitled clean scene', async (
   assert.equal(clearedRecovery, 'recovery-opened')
 })
 
-test('embedded preview uses one renderer-host handshake and restores the prior editor mode', () => {
+test('embedded preview hides editor chrome only after the renderer acknowledges the requested mode', () => {
   const rendererHost = {
-    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
-    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async stop() { return success(null) },
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
   designer.editingMode.value = 'code'
   assert.equal(designer.startPreview(), true)
-  assert.equal(designer.isPreviewing.value, true)
-  assert.equal(designer.editingMode.value, 'design')
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
   assert.equal(designer.previewStatus.value, 'preparing')
   assert.equal(designer.canStartPreview.value, false)
   assert.equal(designer.acknowledgePreviewExecutionMode('full-preview'), true)
+  assert.equal(designer.isPreviewing.value, true)
+  assert.equal(designer.editingMode.value, 'design')
   assert.equal(designer.previewStatus.value, 'running')
   assert.equal(designer.stopPreview(), true)
   assert.equal(designer.isPreviewing.value, true)
@@ -70,19 +72,46 @@ test('embedded preview uses one renderer-host handshake and restores the prior e
 
 test('embedded preview failure leaves the controller in authoring mode without an external session', () => {
   const rendererHost = {
-    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
-    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async stop() { return success(null) },
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
   designer.editingMode.value = 'code'
   assert.equal(designer.startPreview(), true)
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
   assert.equal(designer.acknowledgePreviewExecutionMode('full-preview'), true)
   designer.failPreview('The replacement renderer preparation was superseded.')
   assert.equal(designer.previewStatus.value, 'error')
   assert.equal(designer.previewMessage.value, 'The replacement renderer preparation was superseded.')
   assert.equal(designer.isPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
+})
+
+test('preview preparation keeps editor chrome visible and preserves the captured scene on failure', () => {
+  const rendererHost = {
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
+    async confirm() { return success() },
+    async stop() { return success(null) },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
+  const capturedSceneId = designer.activeSceneId.value
+  assert.equal(designer.newScene('Scene_Preview_Target', { width: 816, height: 624 }), true)
+  const otherSceneId = designer.activeSceneId.value
+  assert.equal(designer.selectScene(capturedSceneId), true)
+  designer.editingMode.value = 'code'
+
+  assert.equal(designer.startPreview(), true)
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
+  assert.equal(designer.selectScene(otherSceneId), false)
+  assert.equal(designer.activeSceneId.value, capturedSceneId)
+
+  designer.failPreview('The latest scene could not be mounted.')
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
+  assert.equal(designer.previewStatus.value, 'error')
 })
 
 test('error preview retains a cleanup barrier until the authoring retry acknowledges disposal', () => {
@@ -150,15 +179,15 @@ test('multiple renderer owners remain in the cleanup barrier until each owner st
 
 test('project switching cancels the embedded preview without polling an external session', async () => {
   const rendererHost = {
-    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
-    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async stop() { return success(null) },
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
   designer.editingMode.value = 'code'
   assert.equal(designer.startPreview(), true)
-  assert.equal(designer.isPreviewing.value, true)
-  assert.equal(designer.editingMode.value, 'design')
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
   assert.equal(await designer.setProjectContext('projects/next', { rendererHost }), true)
   assert.equal(designer.isPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
@@ -168,8 +197,8 @@ test('project switching stops preview ownership before asking about dirty source
   const observations: Array<{ mode: string; previewing: boolean }> = []
   let designer!: ReturnType<typeof useUiDesigner>
   const rendererHost = {
-    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
-    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0' }) },
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async stop() { return success(null) },
   }
   designer = useUiDesigner({

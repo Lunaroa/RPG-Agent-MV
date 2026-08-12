@@ -14,6 +14,7 @@ import type {
   ManagedAssetScope,
   ProjectAssetCopyBatchInput,
   ProjectAssetCopyBatchResult,
+  ProjectAssetChangeManifest,
   ProjectAssetCopyItemResult,
   ProjectAssetDeleteBatchResult,
   ProjectAssetDeleteItemResult,
@@ -34,6 +35,10 @@ import type {
   ProjectAssetReplaceMissingReferenceResult,
   ProjectMissingAssetReference,
 } from '../../../../contract/types.ts';
+import {
+  mergeProjectAssetChangeManifests,
+  projectAssetChangeManifestFromMutations,
+} from '../../../../contract/ui-designer-resources.ts';
 import { resolveLanguage } from '../i18n/request-language.ts';
 import { buildAssetInventory } from '../rmmv/asset-inventory.ts';
 import { readJson } from '../rmmv/json.ts';
@@ -486,7 +491,12 @@ export function importLocalAssetFiles(
     }
   }
 
-  return { results };
+  return {
+    results,
+    changeManifest: projectAssetChangeManifestFromMutations(
+      results.some((item) => item.status === 'imported') ? pending.flatMap((item) => item.mutations) : [],
+    ),
+  };
 }
 
 type PreparedImportItem =
@@ -752,16 +762,20 @@ export function renameAsset(
   else invalidateProjectAssetReferenceGraphCache(project);
   invalidateProjectAssetListingCache(project);
 
-  return getAssetDetail(workflowRoot, project, {
-    ...target,
-    relativePath: renamePairs[0]!.nextRelative,
-  });
+  return {
+    ...getAssetDetail(workflowRoot, project, {
+      ...target,
+      relativePath: renamePairs[0]!.nextRelative,
+    }),
+    changeManifest: projectAssetChangeManifestFromMutations(mutations),
+  };
 }
 
 export interface ProjectAssetSubfolderMutationResult {
   previousNodeId: string;
   nextNodeId: string;
   directory: string;
+  changeManifest: ProjectAssetChangeManifest;
 }
 
 function requireUserPictureSubfolder(project: string, nodeId: string): { subpath: string } {
@@ -850,7 +864,12 @@ function relocateUserPictureSubfolder(
   assertInside(projectRoot, newAbsolute);
 
   if (nextSubpath === subpath) {
-    return { previousNodeId: nodeId, nextNodeId: nodeId, directory: oldDirectory };
+    return {
+      previousNodeId: nodeId,
+      nextNodeId: nodeId,
+      directory: oldDirectory,
+      changeManifest: projectAssetChangeManifestFromMutations([]),
+    };
   }
   if (fs.existsSync(newAbsolute)) {
     throw new Error(assetManagementSubfolderNameOccupied(nextSubpath.split('/').pop()!));
@@ -862,15 +881,17 @@ function relocateUserPictureSubfolder(
     .filter((asset) => asset.category === PROJECT_ASSET_PICTURES_CATEGORY_ID && asset.name.startsWith(prefix))
     .sort((left, right) => right.name.length - left.name.length);
 
+  const changeManifests: ProjectAssetChangeManifest[] = [];
   for (const asset of nested) {
     const rest = asset.name.slice(prefix.length);
     const nextName = `${nextSubpath}/${rest}`;
-    renameAsset(workflowRoot, project, {
+    const renamed = renameAsset(workflowRoot, project, {
       scope: 'project',
       category: PROJECT_ASSET_PICTURES_CATEGORY_ID,
       relativePath: asset.relativePath,
       name: asset.name,
     }, nextName);
+    if (renamed.changeManifest) changeManifests.push(renamed.changeManifest);
   }
 
   if (fs.existsSync(oldAbsolute)) {
@@ -887,7 +908,12 @@ function relocateUserPictureSubfolder(
   invalidateProjectAssetBrowserCache(project);
   invalidateProjectAssetListingCache(project);
   invalidateProjectAssetReferenceGraphCache(project);
-  return { previousNodeId: nodeId, nextNodeId, directory: newDirectory };
+  return {
+    previousNodeId: nodeId,
+    nextNodeId,
+    directory: newDirectory,
+    changeManifest: mergeProjectAssetChangeManifests(changeManifests),
+  };
 }
 
 /**
@@ -920,7 +946,10 @@ export async function deleteProjectAssetSubfolder(
     relativePath: asset.relativePath,
   }));
 
-  let batch: ProjectAssetDeleteBatchResult = { results: [] };
+  let batch: ProjectAssetDeleteBatchResult = {
+    results: [],
+    changeManifest: projectAssetChangeManifestFromMutations([]),
+  };
   if (targets.length) {
     if (!options.force) {
       // All-or-nothing: surface every blocked asset before touching the disk.
@@ -1151,7 +1180,12 @@ export async function deleteProjectAssets(
   else if (deletedLogical.length) invalidateProjectAssetReferenceGraphCache(project);
   if (deletedLogical.length) invalidateProjectAssetListingCache(project);
 
-  return { results };
+  return {
+    results,
+    changeManifest: projectAssetChangeManifestFromMutations(
+      results.flatMap((item) => (item.deletedRelativePaths || []).map((relativePath) => ({ relativePath, delete: true }))),
+    ),
+  };
 }
 
 /** Single-target throw wrapper; production IPC uses deleteProjectAssets batch results. */
@@ -1324,7 +1358,14 @@ export function copyProjectAssets(
     }
   }
 
-  return { results };
+  return {
+    results,
+    changeManifest: projectAssetChangeManifestFromMutations(
+      results.flatMap((item) => item.status === 'copied'
+        ? (item.copiedRelativePaths || []).map((relativePath) => ({ relativePath }))
+        : []),
+    ),
+  };
 }
 
 /** First free "name_2"-style copy name inside the target category (graph assets + intra-batch claims). */
@@ -1531,7 +1572,14 @@ export function moveProjectAssets(
     }
   }
 
-  return { results };
+  return {
+    results,
+    changeManifest: projectAssetChangeManifestFromMutations(
+      pending
+        .filter((item) => item.result.status === 'moved')
+        .flatMap((item) => item.mutations),
+    ),
+  };
 }
 
 function resolveAssetPath(workflowRoot: string, project: string, target: AssetTarget): { absolute: string; relativePath: string; category: RmmvAssetCategory } {

@@ -492,7 +492,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
           @error="rendererHost.onIframeError"
         />
         <div v-if="!previewing" class="canvas-grid" :class="{ active: gridEnabled }" :style="{ '--grid-size': `${document.canvas.grid.size}px`, '--grid-color': document.canvas.grid.color }" />
-        <div v-if="!previewing" class="node-layer" :class="{ 'runtime-disabled': !rendererReady }">
+        <div v-if="!previewing" class="node-layer">
           <UiCanvasNode
             v-for="node in visibleRoots"
             :key="node.id"
@@ -505,7 +505,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
             :interaction-disabled="node.id === 'node_root' || node.id === editingRootId"
             :origin-x="0"
             :origin-y="0"
-            :renderer-bounds="previewing ? rendererBounds : {}"
+            :renderer-bounds="rendererBounds"
             :draft-positions="draftPositions"
             :draft-rects="draftRects"
             :draft-rotations="draftRotations"
@@ -517,8 +517,8 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
           />
         </div>
         <div v-if="!designer.canRenderCanvas" class="canvas-runtime-state" data-ui-id="ui-designer-runtime-canvas-project-required">{{ t('projectRequired') }}</div>
-        <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" :title="rendererStatus === 'error' ? rendererFailureReason : ''" :data-failure-code="rendererFailureCode || undefined" data-ui-id="ui-designer-runtime-canvas-status">
-          <span>{{ rendererStatus === 'error' ? rendererFailureReason : `${t('previewPreparing')} · ${rendererStage}` }}</span>
+        <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" aria-live="polite" :title="rendererStatus === 'error' ? rendererFailureReason : ''" :data-failure-code="rendererFailureCode || undefined" data-ui-id="ui-designer-runtime-canvas-status">
+          <span>{{ rendererStatus === 'error' ? rendererFailureReason : `${t(designer.previewStatus === 'preparing' ? 'previewPreparing' : 'canvasSyncing')} · ${rendererStage}` }}</span>
           <el-button v-if="rendererStatus === 'error' && designer.canRenderCanvas" size="small" @click="rendererHost.retry()">{{ t('retry') }}</el-button>
         </div>
       </div>
@@ -544,7 +544,7 @@ onBeforeUnmount(() => { endDrag(); endTransform(); endPan(); endBoxSelect(); end
 .canvas-grid { position: absolute; z-index: 1; inset: 0; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }
 .canvas-grid.active { opacity: .18; }
 .node-layer { position: absolute; z-index: 2; inset: 0; pointer-events: none; }
-.node-layer.runtime-disabled { pointer-events: none; }
-.canvas-runtime-state { position: absolute; z-index: 9; inset: 0; display: grid; place-items: center; padding: 24px; color: var(--app-ink-soft); background: color-mix(in srgb, #12141b 88%, transparent); text-align: center; }
+.canvas-runtime-state { position: absolute; z-index: 9; top: 8px; right: 8px; display: flex; max-width: min(420px, calc(100% - 16px)); align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--app-border); border-radius: 5px; color: var(--app-ink-soft); background: color-mix(in srgb, #12141b 92%, transparent); box-shadow: 0 5px 14px #0005; font-size: 11px; text-align: left; pointer-events: none; }
+.canvas-runtime-state .el-button { pointer-events: auto; }
 .canvas-hint { min-height: 24px; padding: 5px 10px; border-top: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 11px; }
 </style>

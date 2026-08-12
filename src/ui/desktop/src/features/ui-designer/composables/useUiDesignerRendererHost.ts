@@ -6,6 +6,8 @@ import type {
   UiRuntimeDiagnostic,
   UiRuntimeSceneExport,
 } from '@contract/ui-designer'
+import type { ProjectAssetChangeManifest } from '@contract/types'
+import { mergeProjectAssetChangeManifests } from '@contract/ui-designer-resources'
 import {
   UI_DESIGNER_RENDERER_BRIDGE_VERSION,
   validateUiDesignerRendererBridgeMessage,
@@ -271,6 +273,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   let draftFrame: { cancel: () => void } | null = null
   let draftEpoch = 0
   let previousDesignerSceneId: string | null = null
+  let sceneSyncQueued = false
+  let forceMountQueued = false
+  let pendingResourceRefresh: { resourceRevision: number; manifest: ProjectAssetChangeManifest } | null = null
+  let pendingUnboundResource: { generation: number; manifest: ProjectAssetChangeManifest } | null = null
+  let resourceSyncChain = Promise.resolve()
   const terminalGate = createUiDesignerRendererTerminalGate()
   const failureLatch = createUiDesignerRendererFailureLatch()
 
@@ -322,9 +329,98 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     return true
   }
 
+  const queueSceneSync = (forceMount = false) => {
+    sceneSyncQueued = true
+    forceMountQueued ||= forceMount
+  }
+
+  const postPendingResourceRefresh = () => {
+    if (!session || !pendingResourceRefresh || pendingMountRevision !== null || !executionModeReady.value) return false
+    const pending = pendingResourceRefresh
+    pendingResourceRefresh = null
+    revision += 1
+    pendingMountRevision = revision
+    executionModeReady.value = false
+    status.value = 'loading'
+    setStage('mount', 'begin')
+    try {
+      const relativePaths = [...new Set(
+        [...pending.manifest.deleteRelativePaths, ...pending.manifest.upsertRelativePaths]
+          .map((relativePath) => relativePath.replace(/^www\//, '')),
+      )]
+      if (!post('resource-refresh', {
+        revision,
+        resourceRevision: pending.resourceRevision,
+        relativePaths,
+      })) throw new Error('resource refresh post rejected')
+      return true
+    } catch {
+      pendingMountRevision = null
+      void fail(resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.mountPost, 'mount'))
+      return false
+    }
+  }
+
+  const syncResourceManifest = (manifest: ProjectAssetChangeManifest) => {
+    const capturedSession = session
+    const capturedAdapter = sessionAdapter
+    const capturedGeneration = options.designer.projectGeneration
+    if (!capturedSession || !capturedAdapter?.syncResources || capturedSession.generation !== capturedGeneration) {
+      if (options.designer.canRenderCanvas && options.designer.projectPath) {
+        pendingUnboundResource = {
+          generation: capturedGeneration,
+          manifest: mergeProjectAssetChangeManifests([
+            pendingUnboundResource?.generation === capturedGeneration ? pendingUnboundResource.manifest : null,
+            manifest,
+          ]),
+        }
+      }
+      return Promise.resolve()
+    }
+    const operation = resourceSyncChain.then(async () => {
+      if (session !== capturedSession || sessionAdapter !== capturedAdapter || options.designer.projectGeneration !== capturedGeneration) return
+      const sceneRevisionAtStart = revision
+      const result = await capturedAdapter.syncResources!({
+        sessionId: capturedSession.sessionId,
+        generation: capturedSession.generation,
+        manifest,
+      })
+      if (session !== capturedSession || options.designer.projectGeneration !== capturedGeneration) return
+      if (result.status !== 'success' || !result.value || result.value.sessionId !== capturedSession.sessionId || result.value.generation !== capturedSession.generation || result.value.resourceRevision <= capturedSession.resourceRevision) {
+        throw new Error(result.message || 'Renderer resource synchronization returned an invalid receipt.')
+      }
+      capturedSession.resourceRevision = result.value.resourceRevision
+      const appliedManifest: ProjectAssetChangeManifest = {
+        schemaVersion: '1.0.0',
+        upsertRelativePaths: result.value.upsertedRelativePaths,
+        deleteRelativePaths: result.value.deletedRelativePaths,
+      }
+      pendingResourceRefresh = {
+        resourceRevision: result.value.resourceRevision,
+        manifest: mergeProjectAssetChangeManifests([pendingResourceRefresh?.manifest, appliedManifest]),
+      }
+      // The isolated host remounts its last acknowledged scene after evicting
+      // caches. If editing advanced while the filesystem copy was in flight,
+      // immediately follow that refresh with the latest complete scene so an
+      // older mount snapshot can never replace newer document or draft data.
+      if (revision !== sceneRevisionAtStart) queueSceneSync(true)
+      postPendingResourceRefresh()
+    }).catch((cause) => {
+      if (session === capturedSession) error.value = cause instanceof Error ? cause.message : String(cause)
+    })
+    resourceSyncChain = operation.then(() => undefined)
+    return operation
+  }
+
   const syncScene = (forceMount = false) => {
     if (!session || (status.value !== 'running' && status.value !== 'loading') || !engineReady || !processConfirmed || !iframeLoaded) return
-    if (pendingMountRevision !== null) return
+    if (pendingMountRevision !== null) {
+      queueSceneSync(forceMount)
+      return
+    }
+    const mountRequested = forceMount || forceMountQueued
+    sceneSyncQueued = false
+    forceMountQueued = false
     let next: UiRuntimeSceneExport
     try {
       next = options.runtimeScene()
@@ -338,7 +434,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     try {
       requestedExecutionMode = options.executionMode()
       executionModeChanged = previousExecutionMode !== requestedExecutionMode
-      update = forceMount || executionModeChanged
+      update = mountRequested || executionModeChanged
         ? { kind: 'mount', revision: revision + 1, scene: next }
         : planUiDesignerRendererUpdate(previousScene, next, revision + 1)
     } catch {
@@ -350,7 +446,10 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     // Keep later document changes in the local snapshot and reconcile them
     // after `mounted`; sending a patch while the host scene is still pending
     // is rejected by the isolated runtime as a protocol fatal.
-    if (update.kind === 'patch' && !executionModeReady.value) return
+    if (update.kind === 'patch' && !executionModeReady.value) {
+      queueSceneSync(mountRequested)
+      return
+    }
     revision = update.revision
     if (update.kind === 'mount') {
       if (executionModeChanged) status.value = 'loading'
@@ -397,7 +496,10 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
 
   const refreshCanvas = () => {
     if (options.executionMode() !== 'authoring') return false
-    if (pendingMountRevision !== null) return false
+    if (pendingMountRevision !== null) {
+      queueSceneSync(true)
+      return true
+    }
     const beforeRevision = revision
     syncScene(true)
     return revision > beforeRevision || pendingMountRevision !== null
@@ -410,7 +512,6 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   }
 
   const syncDraftGeometry = () => {
-    if (options.executionMode() !== 'full-preview') return
     if (!session || (status.value !== 'running' && status.value !== 'loading') || !engineReady || !processConfirmed || !iframeLoaded || !executionModeReady.value || pendingMountRevision !== null) return
     const nodes = buildUiDesignerRendererDraftPatches(readDesignerValue(options.designer.document), {
       positions: readDesignerValue(options.designer.draftPositions),
@@ -427,10 +528,6 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   }
 
   const queueDraftSync = () => {
-    if (options.executionMode() !== 'full-preview') {
-      cancelDraftSync()
-      return
-    }
     if (draftFrame) return
     const epoch = draftEpoch
     const run = () => {
@@ -512,6 +609,9 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     previousExecutionMode = null
     previousDesignerSceneId = null
     pendingMountRevision = null
+    sceneSyncQueued = false
+    forceMountQueued = false
+    pendingResourceRefresh = null
     iframeLoaded = false
     executionMode.value = 'authoring'
     executionModeReady.value = false
@@ -713,6 +813,8 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         previousExecutionMode = null
         previousDesignerSceneId = null
         pendingMountRevision = null
+        sceneSyncQueued = false
+        forceMountQueued = false
         iframeLoaded = false
         executionMode.value = 'authoring'
         executionModeReady.value = false
@@ -796,8 +898,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       clientSequence = 0
       revision = 0
       pendingMountRevision = null
+      pendingResourceRefresh = null
       previousScene = null
       previousExecutionMode = null
+      sceneSyncQueued = false
+      forceMountQueued = false
       previousDesignerSceneId = designerSceneId()
       iframeLoaded = false
       executionMode.value = 'authoring'
@@ -809,6 +914,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       processConfirmed = false
       iframeUrl.value = started.iframeUrl
       status.value = 'loading'
+      if (pendingUnboundResource?.generation === started.generation) {
+        const queued = pendingUnboundResource.manifest
+        pendingUnboundResource = null
+        void syncResourceManifest(queued)
+      } else if (pendingUnboundResource) pendingUnboundResource = null
       try {
         cancelHandshake = scheduleUiDesignerRendererHandshakeTimeout(() => {
           if (session?.sessionId === started.sessionId) {
@@ -957,6 +1067,8 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
             pendingMountRevision = null
             status.value = 'loading'
             executionModeReady.value = false
+            sceneSyncQueued = false
+            forceMountQueued = false
             syncScene(true)
           } else {
             cancelMountedWatchdog()
@@ -964,9 +1076,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
             pendingMountRevision = null
             status.value = 'running'
             setStage('mounted', 'success')
-            options.onExecutionModeReady?.(message.payload.executionMode)
             cancelDraftSync()
-            if (options.executionMode() === 'full-preview' || previousExecutionMode !== options.executionMode() || previousScene?.meta.sceneName !== activeSceneId()) syncScene(false)
+            if (postPendingResourceRefresh()) return
+            const previewNeedsLatestMount = sceneSyncQueued && options.executionMode() === 'full-preview'
+            if (sceneSyncQueued || previousScene?.meta.sceneName !== activeSceneId()) syncScene(previewNeedsLatestMount)
+            if (!previewNeedsLatestMount) options.onExecutionModeReady?.(message.payload.executionMode)
             syncSelection()
           }
         }
@@ -1023,7 +1137,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       cancelDraftSync()
       const sceneChanged = previousDesignerSceneId !== null && nextSceneId !== previousDesignerSceneId
       previousDesignerSceneId = nextSceneId
-      if (sceneChanged) syncScene(true)
+      syncScene(sceneChanged)
     },
     { flush: 'post' },
   )
@@ -1038,6 +1152,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     executionModeReady.value = false
     syncScene(true)
   }, { flush: 'post' })
+  const unregisterResourceMutationHandler = options.designer.registerResourceMutationHandler(syncResourceManifest)
 
   onMounted(() => {
     installMessageListener()
@@ -1052,6 +1167,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     draftStop()
     selectionStop()
     executionModeStop()
+    unregisterResourceMutationHandler()
     void dispose('unload')
       .then((barrierOk) => {
         if (barrierOk) {

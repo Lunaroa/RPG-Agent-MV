@@ -23,6 +23,7 @@ export type UiDesignerRendererBridgeKind =
   | 'mount'
   | 'mounted'
   | 'patch'
+  | 'resource-refresh'
   | 'bounds'
   | 'select'
   | 'input'
@@ -78,10 +79,12 @@ export interface UiDesignerRendererBridgeFatal {
 
 export interface UiDesignerRendererNodeBounds {
   nodeId: string
+  /** Canonical PIXI world-space axis-aligned bounds in stage pixels. */
   x: number
   y: number
   width: number
   height: number
+  /** Reserved orientation metadata; the current AABB producer emits 0 and consumers must not rotate the world AABB again. */
   rotation: number
   visible: boolean
   interactive: boolean
@@ -102,6 +105,7 @@ export type UiDesignerRendererBridgeMessage =
   | UiDesignerRendererBridgeEnvelope<'mount', { revision: number; executionMode: UiDesignerRendererExecutionMode; scene: UiRuntimeSceneExport }>
   | UiDesignerRendererBridgeEnvelope<'mounted', { revision: number; executionMode: UiDesignerRendererExecutionMode; bounds: UiDesignerRendererNodeBounds[] }>
   | UiDesignerRendererBridgeEnvelope<'patch', { revision: number; nodes: UiDesignerRendererNodePatch[] }>
+  | UiDesignerRendererBridgeEnvelope<'resource-refresh', { revision: number; resourceRevision: number; relativePaths: string[] }>
   | UiDesignerRendererBridgeEnvelope<'bounds', { revision: number; bounds: UiDesignerRendererNodeBounds[] }>
   | UiDesignerRendererBridgeEnvelope<'select', { nodeIds: string[] }>
   | UiDesignerRendererBridgeEnvelope<'input', {
@@ -230,6 +234,16 @@ function validatePayload(kind: UiDesignerRendererBridgeKind, payload: unknown, s
     }
     return
   }
+  if (kind === 'resource-refresh') {
+    assertExactKeys(payload, ['revision', 'resourceRevision', 'relativePaths'], kind)
+    nonNegativeInteger(payload.revision, 'revision')
+    nonNegativeInteger(payload.resourceRevision, 'resourceRevision')
+    if (!Array.isArray(payload.relativePaths) || payload.relativePaths.length > UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES) fail('Renderer resource refresh path list is invalid or exceeds its bound.')
+    payload.relativePaths.forEach((relativePath) => {
+      if (typeof relativePath !== 'string' || !relativePath || !isUiDesignerProjectRelativeResourcePath(relativePath)) fail('Renderer resource refresh path must be project-relative.')
+    })
+    return
+  }
   if (kind === 'select') {
     assertExactKeys(payload, ['nodeIds'], kind)
     if (!Array.isArray(payload.nodeIds) || payload.nodeIds.length > UI_DESIGNER_RENDERER_BRIDGE_MAX_BOUNDS) fail('Renderer selection is invalid or exceeds its bound.')
@@ -347,7 +361,7 @@ function assertExactKeys(value: Record<string, unknown>, keys: readonly string[]
 }
 
 function bridgeKind(value: unknown): UiDesignerRendererBridgeKind {
-  const kinds: UiDesignerRendererBridgeKind[] = ['hello', 'receipt', 'fatal', 'ready', 'mount', 'mounted', 'patch', 'bounds', 'select', 'input', 'diagnostic', 'scene-state', 'exit-request', 'dispose', 'disposed']
+  const kinds: UiDesignerRendererBridgeKind[] = ['hello', 'receipt', 'fatal', 'ready', 'mount', 'mounted', 'patch', 'resource-refresh', 'bounds', 'select', 'input', 'diagnostic', 'scene-state', 'exit-request', 'dispose', 'disposed']
   if (!kinds.includes(value as UiDesignerRendererBridgeKind)) fail(`Unsupported renderer bridge message kind: ${String(value)}.`)
   return value as UiDesignerRendererBridgeKind
 }

@@ -56,11 +56,15 @@ describe('project asset immediate mutations', { concurrency: false }, () => {
       content: Buffer.from('{"note":"unreviewed draft"}', 'utf8'),
     }]);
 
-    renameAsset(root, project, {
+    const renamed = renameAsset(root, project, {
       scope: 'project',
       category: 'characters',
       relativePath: 'www/img/characters/Hero.png',
     }, 'Lead');
+
+    assert.ok(renamed.changeManifest?.upsertRelativePaths.includes('www/img/characters/Lead.png'));
+    assert.ok(renamed.changeManifest?.upsertRelativePaths.includes('www/data/Actors.json'));
+    assert.ok(renamed.changeManifest?.deleteRelativePaths.includes('www/img/characters/Hero.png'));
 
     assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'characters', 'Lead.png')), true);
     assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'characters', 'Hero.png')), false);
@@ -129,6 +133,8 @@ describe('project asset immediate mutations', { concurrency: false }, () => {
     assert.match(batch.results[2]?.error || '', /明确选择覆盖|choose replace explicitly/i);
     assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'pictures', 'Good.png')), true);
     assert.equal(fs.readFileSync(path.join(project, 'www', 'img', 'pictures', 'Unused.png'), 'utf8'), 'unused');
+    assert.deepEqual(batch.changeManifest?.upsertRelativePaths, ['www/img/pictures/Good.png']);
+    assert.deepEqual(batch.changeManifest?.deleteRelativePaths, []);
   });
 
   test('rename fail-fast when a target reference file already has an unapplied draft', () => {
@@ -196,6 +202,7 @@ describe('project asset immediate mutations', { concurrency: false }, () => {
     });
 
     assert.equal(batch.results[0]?.status, 'deleted');
+    assert.deepEqual(batch.changeManifest?.deleteRelativePaths, ['www/audio/bgm/Theme.m4a', 'www/audio/bgm/Theme.ogg']);
     assert.deepEqual(trashed.sort(), [m4a, ogg].sort());
     assert.equal(fs.existsSync(ogg), false);
     assert.equal(fs.existsSync(m4a), false);

@@ -1873,12 +1873,12 @@
     if (!view || typeof view.on !== 'function') return;
     if (node.type === 'button') {
       var visualEvents = {
-        pointerover: function () { if (!view.__mzuiDisabled) { view.__mzuiButtonState = 'hover'; playButtonSe(view.__mzuiSe && view.__mzuiSe.hover); renderButtonState(view, node.props || {}); } },
+        pointerover: function () { if (!view.__mzuiDisabled) { view.__mzuiButtonState = 'hover'; playButtonSe(runtime, node, view.__mzuiSe && view.__mzuiSe.hover, 'onHoverEnter'); renderButtonState(view, node.props || {}); } },
         pointerout: function () { view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); },
         pointerdown: function () { if (!view.__mzuiDisabled) { view.__mzuiButtonState = 'pressed'; renderButtonState(view, node.props || {}); } },
         pointerup: function () { view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); },
         pointerupoutside: function () { view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); },
-        pointertap: function () { if (!view.__mzuiDisabled) { playButtonSe(view.__mzuiSe && view.__mzuiSe.click); view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); } },
+        pointertap: function () { if (!view.__mzuiDisabled) { playButtonSe(runtime, node, view.__mzuiSe && view.__mzuiSe.click, 'onClick'); view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); } },
       };
       Object.keys(visualEvents).forEach(function (eventName) {
         view.interactive = true;
@@ -1929,9 +1929,33 @@
     runtime.listeners.push(function () { document.removeEventListener('keydown', listener); });
   }
 
-  function playButtonSe(name) {
-    if (!name || !global.AudioManager || typeof global.AudioManager.playSe !== 'function') return;
-    global.AudioManager.playSe({ name: String(name), volume: 90, pitch: 100, pan: 0 });
+  function playButtonSe(runtime, node, value, eventName) {
+    if (!value || !global.AudioManager || typeof global.AudioManager.playSe !== 'function') return;
+    try {
+      var name = buttonSeName(value);
+      global.AudioManager.playSe({ name: name, volume: 90, pitch: 100, pan: 0 });
+    } catch (error) {
+      runtime.reportError(error, 'button-se', { node: node && node.id, type: 'button', phase: 'interaction', event: eventName });
+    }
+  }
+
+  function buttonSeName(value) {
+    var normalized = String(value || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+    if (!normalized) throw new Error('Button sound resource is empty.');
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/|\.\.\/)/i.test(normalized) || normalized.indexOf('/../') >= 0) {
+      throw new Error('Button sound resource must remain project-relative.');
+    }
+    normalized = normalized.replace(/^www\//i, '');
+    if (/^audio\//i.test(normalized)) {
+      if (!/^audio\/se\//i.test(normalized) || !/\.(?:ogg|m4a)$/i.test(normalized)) {
+        throw new Error('Button sound resource must be an OGG or M4A file below audio/se/.');
+      }
+      normalized = normalized.slice('audio/se/'.length).replace(/\.(?:ogg|m4a)$/i, '');
+    } else if (/\.[a-z0-9]+$/i.test(normalized)) {
+      throw new Error('Button sound resource path is not an RPG Maker SE resource.');
+    }
+    if (!normalized) throw new Error('Button sound resource must include an SE name.');
+    return normalized;
   }
 
   function findNode(scene, id) {

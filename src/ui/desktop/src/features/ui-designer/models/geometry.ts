@@ -177,6 +177,19 @@ export function rectCenter(rect: UiRect): UiPoint {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
 }
 
+/** Smart-snap peers must share the same parent-local coordinate space and be editable visual targets. */
+export function smartSnapTargetsForNode(document: UiDesignerDocument, nodeId: string): SmartSnapTarget[] {
+  const source = findDocumentNode(document, nodeId)
+  if (!source) return []
+  return document.nodes
+    .filter((node) => node.id !== nodeId
+      && node.id !== 'node_root'
+      && node.parentId === source.parentId
+      && node.props.visible !== false
+      && !node.locked)
+    .map((node) => ({ id: node.id, rect: nodeRect(node) }))
+}
+
 interface SnapCandidate {
   value: number
   guide?: UiGuide

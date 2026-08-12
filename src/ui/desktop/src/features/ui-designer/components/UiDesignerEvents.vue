@@ -7,8 +7,14 @@ import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
 import UiScriptContextHint from './UiScriptContextHint.vue'
 import { reorderEventActions } from '../models/actions'
+import { uiDesignerSeNameFromResourcePath } from '../models/audioResource'
 
-const props = defineProps<{ designer: UiDesignerController; node: UiNode }>()
+const props = defineProps<{
+  designer: UiDesignerController
+  node: UiNode
+  pickAudioResource?: () => Promise<string | null>
+  resourcePickerDisabled?: boolean
+}>()
 const designer = props.designer
 const { t } = useUiDesignerI18n()
 const eventNames: UiEventName[] = ['onClick', 'onHoverEnter', 'onHoverLeave', 'onShow', 'onHide', 'onUpdate', 'onFocus', 'onBlur']
@@ -17,6 +23,7 @@ const liveNode = computed(() => designer.document.nodes.find((node) => node.id =
 const eventMap = computed(() => liveNode.value.events)
 const actions = computed(() => eventMap.value[activeEvent.value]?.actions ?? [])
 const draggingAction = ref<number>()
+const resourceError = ref('')
 const actionTypes: UiEventAction['type'][] = ['none', 'newGame', 'continue', 'options', 'exit', 'gotoScene', 'toggleNode', 'playSe', 'url', 'script', 'setVariable', 'setSwitch', 'showMessage', 'tweenProp', 'wait']
 const eventLabels: Record<UiEventName, UiDesignerMessageKey> = { onClick: 'eventOnClick', onHoverEnter: 'eventOnHoverEnter', onHoverLeave: 'eventOnHoverLeave', onShow: 'eventOnShow', onHide: 'eventOnHide', onUpdate: 'eventOnUpdate', onFocus: 'eventOnFocus', onBlur: 'eventOnBlur' }
 const actionLabels: Record<UiEventAction['type'], UiDesignerMessageKey> = { none: 'actionNone', newGame: 'actionNewGame', continue: 'actionContinue', options: 'actionOptions', exit: 'actionExit', gotoScene: 'actionGotoScene', toggleNode: 'actionToggleNode', playSe: 'actionPlaySe', url: 'actionUrl', script: 'actionScript', setVariable: 'actionSetVariable', setSwitch: 'actionSetSwitch', showMessage: 'actionShowMessage', tweenProp: 'actionTweenProp', wait: 'actionWait' }
@@ -61,6 +68,16 @@ const dropAction = (targetIndex: number, event: DragEvent) => {
   updateActions(reorderEventActions(actions.value, sourceIndex, targetIndex))
 }
 const updateAction = (index: number, patch: Partial<UiEventAction>) => updateActions(actions.value.map((action, actionIndex) => actionIndex === index ? { ...action, ...patch } as UiEventAction : action))
+const choosePlaySe = async (index: number) => {
+  resourceError.value = ''
+  const selected = await props.pickAudioResource?.()
+  if (!selected) return
+  try {
+    updateAction(index, { seName: uiDesignerSeNameFromResourcePath(selected) })
+  } catch {
+    resourceError.value = t('resourceDropCategory')
+  }
+}
 const addCondition = (index: number) => { flushDraftContext(); updateAction(index, { condition: { type: 'switch', switchId: 1 } }) }
 const removeCondition = (index: number) => { flushDraftContext(); updateAction(index, { condition: undefined }) }
 const updateCondition = (index: number, patch: Partial<NonNullable<UiEventAction['condition']>>) => {
@@ -119,7 +136,11 @@ const sceneOptionsFor = (action: UiEventAction) => {
           <p v-if="!openedScenes.some((scene) => scene.value === action.sceneName)" class="action-warning">{{ t('sceneTargetMissing') }}</p>
         </template>
         <el-input v-else-if="action.type === 'toggleNode'" :model-value="actionField(action, 'targetNodeId')" size="small" :placeholder="t('targetNodePlaceholder')" @update:model-value="updateAction(index, { targetNodeId: $event })" />
-        <el-input v-else-if="action.type === 'playSe'" :model-value="actionField(action, 'seName')" size="small" :placeholder="t('seNamePlaceholder')" @update:model-value="updateAction(index, { seName: $event })" />
+        <div v-else-if="action.type === 'playSe'" class="action-resource-control">
+          <el-input :model-value="actionField(action, 'seName')" readonly size="small" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')" />
+          <el-button :data-ui-id="`ui-designer-event-${activeEvent}-${index}-select-se`" size="small" :disabled="!props.pickAudioResource || props.resourcePickerDisabled" @click="void choosePlaySe(index)">{{ t('chooseResource') }}</el-button>
+          <el-button :data-ui-id="`ui-designer-event-${activeEvent}-${index}-clear-se`" size="small" text :disabled="!actionField(action, 'seName')" @click="updateAction(index, { seName: '' })">{{ t('clearResource') }}</el-button>
+        </div>
         <el-input v-else-if="action.type === 'url'" :model-value="actionField(action, 'url')" size="small" :placeholder="t('urlPlaceholder')" @update:model-value="updateAction(index, { url: $event })" />
         <template v-else-if="action.type === 'script'">
           <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-script`" :adapter="designer.adapters.code" :model-value="String(actionField(action, 'code'))" :rows="4" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateAction(index, { code: $event })" />
@@ -161,6 +182,7 @@ const sceneOptionsFor = (action: UiEventAction) => {
       </div>
     </div>
     <el-button size="small" plain @click="addAction">＋ {{ t('actionAdd') }}</el-button>
+    <el-alert v-if="resourceError" type="error" :closable="false" :title="resourceError" />
     <p class="hint">{{ t('actionHint') }}</p>
   </section>
 </template>
@@ -174,4 +196,5 @@ const sceneOptionsFor = (action: UiEventAction) => {
 .action-head .el-select { flex: 1; }
 .hint { margin: 2px 0 0; color: var(--app-ink-soft); font-size: 10px; line-height: 1.4; }
 .action-warning { margin: 0; color: var(--el-color-warning); font-size: 10px; }
+.action-resource-control { display: flex; align-items: center; min-width: 0; gap: 4px; }.action-resource-control .el-input { min-width: 0; flex: 1; }
 </style>

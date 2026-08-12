@@ -48,6 +48,7 @@ import {
   normalizeGeometryPoint,
   panViewport,
   resizeRect,
+  smartSnapTargetsForNode,
   snapPoint,
   snapRect,
   updateNodePosition,
@@ -1494,7 +1495,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       guides: document.value.guides,
       canvasWidth: settings.width,
       canvasHeight: settings.height,
-      targets: document.value.nodes.filter((node) => node.id !== nodeId).map((node) => ({ id: node.id, rect: nodeRect(node) })),
+      targets: smartSnapTargetsForNode(document.value, nodeId),
     }
   }
 

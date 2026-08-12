@@ -18,12 +18,14 @@ import {
   moveNodeToEdge,
   normalizeDocumentGeometry,
   normalizePaneSize,
+  nodeRect,
   pasteClipboard,
   parseUiDocument,
   reparentNode,
   serializeDocument,
   snapPoint,
   snapRect,
+  smartSnapTargetsForNode,
   resizeRect,
   resizeCursor,
   resolveNodeActionPolicy,
@@ -542,6 +544,25 @@ describe('ui designer history, geometry and performance', () => {
     assert.deepEqual([disabled.width, disabled.snapped, disabled.guides.length], [117, false, 0])
     assert.equal(resizeCursor('e', 0), 'ew-resize')
     assert.equal(resizeCursor('e', 90), 'ns-resize')
+  })
+
+  test('limits smart resize snap targets to visible unlocked siblings in the same local space', () => {
+    const document = createUiDocument()
+    const source = createDefaultNode('text', { id: 'snap_source', name: 'Source', parentId: 'node_root' })
+    const sibling = createDefaultNode('text', { id: 'snap_sibling', name: 'Sibling', parentId: 'node_root', x: 120, y: 48 })
+    const hidden = createDefaultNode('text', { id: 'snap_hidden', name: 'Hidden', parentId: 'node_root' })
+    hidden.props.visible = false
+    const locked = createDefaultNode('text', { id: 'snap_locked', name: 'Locked', parentId: 'node_root' })
+    locked.locked = true
+    const container = createDefaultNode('container', { id: 'snap_container', name: 'Container', parentId: 'node_root' })
+    const nested = createDefaultNode('text', { id: 'snap_nested', name: 'Nested', parentId: container.id })
+    document.nodes.push(source, sibling, hidden, locked, container, nested)
+    document.nodes[0].children.push(source.id, sibling.id, hidden.id, locked.id, container.id)
+    container.children.push(nested.id)
+
+    assert.deepEqual(smartSnapTargetsForNode(document, source.id), [{ id: sibling.id, rect: nodeRect(sibling) }, { id: container.id, rect: nodeRect(container) }])
+    assert.deepEqual(smartSnapTargetsForNode(document, nested.id), [])
+    assert.deepEqual(smartSnapTargetsForNode(document, 'missing'), [])
   })
 
   test('converts canvas pointers with scroll, margin, zoom and pan from one source of truth', () => {

@@ -13,7 +13,7 @@ import UiButtonStatesEditor from './UiButtonStatesEditor.vue'
 import UiFrameListEditor from './UiFrameListEditor.vue'
 import ProjectAssetsWorkspace from '../../../components/ProjectAssetsWorkspace.vue'
 
-type InspectorPurpose = 'geometry' | 'content' | 'appearance' | 'resources' | 'behavior'
+type InspectorPurpose = 'identity' | 'geometry' | 'contentResources' | 'appearance' | 'behavior' | 'advanced'
 
 interface FieldDescriptor {
   key: string
@@ -45,7 +45,31 @@ const selectedRuntimeDiagnostics = computed(() => {
   return runtimeDiagnostics.value.filter((diagnostic) => (!diagnostic.scene || diagnostic.scene === currentDocument.value.meta.sceneName) && (diagnostic.node === node.id || diagnostic.node === node.name))
 })
 const nodeNameDraft = ref('')
-watch(selectedNode, (node) => { nodeNameDraft.value = node?.name ?? '' }, { immediate: true })
+let nodeNamePending = false
+const previewNodeName = (value: string) => {
+  nodeNameDraft.value = value
+  nodeNamePending = value !== (selectedNode.value?.name ?? '')
+}
+const commitNodeName = () => {
+  const node = selectedNode.value
+  if (!nodeNamePending || !node) return
+  const value = nodeNameDraft.value
+  nodeNamePending = false
+  if (value !== node.name) designer.renameNode(node.id, value)
+}
+const cancelNodeName = () => {
+  nodeNamePending = false
+  nodeNameDraft.value = selectedNode.value?.name ?? ''
+}
+const unregisterNodeNameDraft = designer.draftCoordinator.register(commitNodeName, {
+  cancel: cancelNodeName,
+  sceneId: () => designer.activeSceneId,
+  pending: () => nodeNamePending,
+})
+watch(selectedNode, (node) => {
+  nodeNamePending = false
+  nodeNameDraft.value = node?.name ?? ''
+}, { immediate: true })
 const resourceWorkspaceVisible = ref(false)
 const resourceWorkspaceCategory = ref<UiDesignerManagedAssetKind>('image')
 const resourceWorkspaceCurrentPath = ref('')
@@ -80,7 +104,11 @@ const closeResourceWorkspace = (visible: boolean) => {
   resourceWorkspaceVisible.value = visible
   if (!visible && resolveResourceWorkspace) settleResourceWorkspace(null)
 }
-onBeforeUnmount(() => settleResourceWorkspace(null))
+onBeforeUnmount(() => {
+  commitNodeName()
+  unregisterNodeNameDraft()
+  settleResourceWorkspace(null)
+})
 
 const labels: Record<string, UiDesignerMessageKey> = {
   x: 'x' as UiDesignerMessageKey, y: 'y' as UiDesignerMessageKey, width: 'width', height: 'height', scaleX: 'scaleX', scaleY: 'scaleY', rotate: 'rotate', opacity: 'opacity', visible: 'visible', anchorX: 'anchorX', anchorY: 'anchorY', zIndex: 'zIndex',
@@ -100,14 +128,22 @@ const baseFields: FieldDescriptor[] = [
 ]
 
 const GEOMETRY_FIELDS = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'anchorX', 'anchorY', 'zIndex'])
-const CONTENT_FIELDS = new Set(['content', 'richText', 'wrapWidth', 'currentValue', 'maxValue'])
-const BEHAVIOR_FIELDS = new Set(['visible', 'clip', 'scrollX', 'scrollY', 'showGuides', 'defaultFrameDuration', 'loop', 'speed', 'initialFrame', 'animateValue', 'clickThrough', 'autoplay', 'muted', 'playbackRate', 'maxParticles', 'emissionInterval', 'emissionArea', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY', 'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'disabledCondition'])
+const CONTENT_RESOURCE_FIELDS = new Set(['content', 'richText', 'wrapWidth', 'currentValue', 'maxValue'])
+const BEHAVIOR_FIELDS = new Set(['visible', 'clip', 'scrollX', 'scrollY', 'loop', 'clickThrough', 'autoplay', 'muted', 'disabledCondition'])
+const ADVANCED_FIELDS = new Set([
+  'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'showGuides',
+  'defaultFrameDuration', 'speed', 'initialFrame', 'trackRadius', 'fillRadius', 'fillDirection', 'animateValue',
+  'pressedScale', 'focusWidth', 'playbackRate',
+  'maxParticles', 'emissionInterval', 'emissionArea', 'shape', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY',
+  'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow',
+])
 const purposeForField = (field: FieldDescriptor): InspectorPurpose => {
   if (field.purpose) return field.purpose
-  if (field.kind === 'resource') return 'resources'
+  if (field.kind === 'resource') return 'contentResources'
   if (GEOMETRY_FIELDS.has(field.key)) return 'geometry'
-  if (CONTENT_FIELDS.has(field.key)) return 'content'
+  if (CONTENT_RESOURCE_FIELDS.has(field.key)) return 'contentResources'
   if (BEHAVIOR_FIELDS.has(field.key)) return 'behavior'
+  if (ADVANCED_FIELDS.has(field.key)) return 'advanced'
   return 'appearance'
 }
 
@@ -134,26 +170,25 @@ const fields = computed<FieldDescriptor[]>(() => {
     particle: [{ key: 'maxParticles', kind: 'number', min: 1, max: 500, step: 1 }, { key: 'emissionInterval', kind: 'number', min: 0, step: 1 }, { key: 'emissionArea', kind: 'enum', options: enumOptions(['point', 'rectangle', 'circle']) }, { key: 'imagePath', kind: 'resource', resourceCategory: 'image' }, { key: 'shape', kind: 'enum', options: enumOptions(['circle', 'square', 'star']) }, { key: 'velocityX', kind: 'number', step: 0.1 }, { key: 'velocityY', kind: 'number', step: 0.1 }, { key: 'velocityRandomX', kind: 'number', min: 0, step: 0.1 }, { key: 'velocityRandomY', kind: 'number', min: 0, step: 0.1 }, { key: 'gravityX', kind: 'number', step: 0.1 }, { key: 'gravityY', kind: 'number', step: 0.1 }, { key: 'rotationSpeed', kind: 'number', step: 0.1 }, { key: 'lifetime', kind: 'number', min: 0, step: 1 }, { key: 'lifetimeRandom', kind: 'number', min: 0, step: 1 }, { key: 'startScale', kind: 'number', min: 0, step: 0.05 }, { key: 'endScale', kind: 'number', min: 0, step: 0.05 }, { key: 'startOpacity', kind: 'number', min: 0, max: 255, step: 1 }, { key: 'endOpacity', kind: 'number', min: 0, max: 255, step: 1 }, { key: 'startColor', kind: 'color' }, { key: 'endColor', kind: 'color' }, { key: 'blendMode', kind: 'enum', options: enumOptions(['normal', 'add', 'screen']) }, { key: 'glow', kind: 'number', min: 0, step: 0.1 }],
   }
   const known = new Set([...baseFields, ...special[node.type]].map((field) => field.key))
-  const inferred = Object.entries(node.props as unknown as Record<string, unknown>).filter(([key, value]) => !known.has(key) && (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string')).map(([key, value]): FieldDescriptor => ({ key, kind: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : key.toLowerCase().includes('color') ? 'color' : 'text' }))
+  const inferred = Object.entries(node.props as unknown as Record<string, unknown>).filter(([key, value]) => !known.has(key) && (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string')).map(([key, value]): FieldDescriptor => ({ key, kind: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : key.toLowerCase().includes('color') ? 'color' : 'text', purpose: 'advanced' }))
   return [...baseFields, ...special[node.type], ...inferred].map((field) => ({ ...field, purpose: purposeForField(field), help: field.help ?? t('propertyHelpGeneric') }))
 })
 
-const PURPOSE_ORDER: InspectorPurpose[] = ['geometry', 'content', 'appearance', 'resources', 'behavior']
+const PURPOSE_ORDER: InspectorPurpose[] = ['identity', 'geometry', 'contentResources', 'appearance', 'behavior', 'advanced']
+const expandedPurposes = ref<InspectorPurpose[]>(PURPOSE_ORDER.filter((purpose) => purpose !== 'advanced'))
 const purposeLabelKey: Record<InspectorPurpose, UiDesignerMessageKey> = {
+  identity: 'inspectorGroupIdentity',
   geometry: 'inspectorGroupGeometry',
-  content: 'inspectorGroupContent',
+  contentResources: 'inspectorGroupContentResources',
   appearance: 'inspectorGroupAppearance',
-  resources: 'inspectorGroupResources',
   behavior: 'inspectorGroupBehavior',
+  advanced: 'inspectorGroupAdvanced',
 }
-const fieldGroups = computed(() => PURPOSE_ORDER.flatMap((purpose) => {
-  const items = fields.value.filter((field) => field.purpose === purpose)
-  const hasSpecial = Boolean(selectedNode.value && (
-    (purpose === 'appearance' && (selectedNode.value.type === 'text' || selectedNode.value.type === 'button'))
-    || (purpose === 'resources' && (selectedNode.value.type === 'button' || selectedNode.value.type === 'frameAnimation'))
-  ))
-  return items.length || hasSpecial ? [{ purpose, label: t(purposeLabelKey[purpose]), fields: items }] : []
-}))
+const fieldGroups = computed(() => PURPOSE_ORDER.map((purpose) => ({
+  purpose,
+  label: t(purposeLabelKey[purpose]),
+  fields: fields.value.filter((field) => field.purpose === purpose),
+})))
 
 const propValue = (key: string): unknown => selectedNode.value ? (selectedNode.value.props as unknown as Record<string, unknown>)[key] : undefined
 const propMode = (key: string) => selectedNode.value?.propModes[key] ?? 'value'
@@ -168,7 +203,6 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
   const targetId = nodeId ?? selectedNode.value?.id
   if (targetId) designer.setPropertyCode(targetId, key, code, sceneId)
 }
-const commitNodeName = () => { if (selectedNode.value) designer.renameNode(selectedNode.value.id, nodeNameDraft.value) }
 </script>
 
 <template>
@@ -190,75 +224,96 @@ const commitNodeName = () => { if (selectedNode.value) designer.renameNode(selec
     <el-alert v-if="selectedRuntimeDiagnostics.length" class="inspector-validation" type="warning" :closable="false" :title="`${t('runtimeDiagnostics')} · ${selectedRuntimeDiagnostics.length}`"><ul><li v-for="diagnostic in selectedRuntimeDiagnostics" :key="`${diagnostic.sessionId}:${diagnostic.code}:${diagnostic.message}`"><span>{{ t('runtimeDiagnostic') }}<template v-if="diagnostic.count > 1"> ×{{ diagnostic.count }}</template></span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ diagnostic.label }}: {{ diagnostic.message }}</span></details></li></ul></el-alert>
     <div v-if="!selectedNode" class="inspector-empty">{{ t('noSelection') }}</div>
     <div v-else-if="activeSection === 'properties'" class="properties-scroll">
-      <el-input v-model="nodeNameDraft" size="small" :placeholder="t('nodeNamePlaceholder')" @blur="commitNodeName" @keydown.enter.prevent="commitNodeName" />
-      <section v-for="group in fieldGroups" :key="group.purpose" class="inspector-purpose-group" :data-ui-id="`ui-designer-inspector-group-${group.purpose}`">
-        <h3 class="inspector-purpose-title">{{ group.label }}</h3>
-        <div class="property-grid">
-          <UiPropertyField
-          v-for="field in group.fields"
-          :key="`${group.purpose}:${field.key}`"
-          :field-key="field.key"
-          :label="labelFor(field.key)"
-          :help="field.help"
-          :multiline="field.multiline"
-          :value="propValue(field.key)"
-          :mode="propMode(field.key)"
-          :code="propCode(field.key)"
-          :kind="field.kind"
-          :min="field.min"
-          :max="field.max"
-          :step="field.step"
-          :options="field.options"
-          :resource-category="field.resourceCategory"
-          :resource-picker="field.kind === 'resource' ? () => openResourceWorkspace(field.resourceCategory, String(propValue(field.key) ?? '')) : undefined"
-          :resource-picker-disabled="field.kind === 'resource' && !designer.hasProject"
-          :format-on-blur="Boolean(designer.preferences.autoFormat)"
-          :issues="issuesForField(field)"
-          :code-adapter="designer.adapters.code"
-          :draft-coordinator="designer.draftCoordinator"
-          :scene-id="designer.activeSceneId"
-          :node-id="selectedNode.id"
-          :completion-items="designer.document.nodes.flatMap((node) => [node.id, node.name])"
-          @value="(value, _sceneId, nodeId) => updateProperty(field.key, value, nodeId)"
-          @mode="updateMode(field.key, $event)"
-          @code="(code, sceneId, nodeId) => updateCode(field.key, code, sceneId, nodeId)"
+      <el-collapse v-model="expandedPurposes" class="inspector-purpose-groups">
+        <el-collapse-item v-for="group in fieldGroups" :key="group.purpose" :name="group.purpose" :data-ui-id="`ui-designer-inspector-group-${group.purpose}`">
+          <template #title><span class="inspector-purpose-title">{{ group.label }}</span></template>
+          <el-input
+            v-if="group.purpose === 'identity'"
+            :model-value="nodeNameDraft"
+            size="small"
+            :placeholder="t('nodeNamePlaceholder')"
+            data-ui-id="ui-designer-node-name"
+            @update:model-value="previewNodeName"
+            @blur="commitNodeName"
+            @keydown.enter.prevent="commitNodeName"
           />
-        </div>
-        <UiPaddingEditor
-          v-if="group.purpose === 'appearance' && (selectedNode.type === 'text' || selectedNode.type === 'button')"
-          :value="selectedNode.props.padding"
-          @update="updateProperty('padding', $event)"
-        />
-        <UiButtonStatesEditor
-          v-if="group.purpose === 'resources' && selectedNode.type === 'button'"
-          :value="selectedNode.props.imageStates"
-          :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
-          :resource-picker-disabled="!designer.hasProject"
-          @update="updateProperty('imageStates', $event)"
-        />
-        <UiFrameListEditor
-          v-if="group.purpose === 'resources' && selectedNode.type === 'frameAnimation'"
-          :value="selectedNode.props.frames"
-          :resources="designer.resourceCatalog?.resources ?? []"
-          :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
-          :pick-resources="designer.hasProject ? () => openMultiResourceWorkspace('image') : undefined"
-          :resource-picker-disabled="!designer.hasProject"
-          @update="updateProperty('frames', $event)"
-        />
-      </section>
-      <el-divider />
-      <div class="inspector-section-title">{{ t('performance') }}</div>
-      <el-popover placement="top" width="320" trigger="click">
-        <template #reference><button type="button" class="performance-line"><span>{{ performanceLabel(designer.performance.rating) }}</span><span>{{ designer.performance.nodeCount }} {{ t('nodes') }}</span></button></template>
-        <div class="performance-details">
-          <div>{{ designer.performance.particleSystems }} · {{ designer.performance.maxParticleTotal }} {{ t('particles') }}</div>
-          <div>{{ designer.performance.frameCount }} {{ t('frames') }} · {{ designer.performance.codeModeProperties }} {{ t('codeProperties') }}</div>
-          <ul v-if="designer.performance.suggestions.length"><li v-for="suggestion in designer.performance.suggestions" :key="suggestion"><span>{{ performanceSuggestionLabel(suggestion) }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ suggestion }}</span></details></li></ul>
-          <span v-else>{{ t('valid') }}</span>
-        </div>
-      </el-popover>
+          <div v-if="group.fields.length" class="property-grid">
+            <UiPropertyField
+            v-for="field in group.fields"
+            :key="`${group.purpose}:${field.key}`"
+            :field-key="field.key"
+            :label="labelFor(field.key)"
+            :help="field.help"
+            :multiline="field.multiline"
+            :value="propValue(field.key)"
+            :mode="propMode(field.key)"
+            :code="propCode(field.key)"
+            :kind="field.kind"
+            :min="field.min"
+            :max="field.max"
+            :step="field.step"
+            :options="field.options"
+            :resource-category="field.resourceCategory"
+            :resource-picker="field.kind === 'resource' ? () => openResourceWorkspace(field.resourceCategory, String(propValue(field.key) ?? '')) : undefined"
+            :resource-picker-disabled="field.kind === 'resource' && !designer.hasProject"
+            :format-on-blur="Boolean(designer.preferences.autoFormat)"
+            :issues="issuesForField(field)"
+            :code-adapter="designer.adapters.code"
+            :draft-coordinator="designer.draftCoordinator"
+            :scene-id="designer.activeSceneId"
+            :node-id="selectedNode.id"
+            :completion-items="designer.document.nodes.flatMap((node) => [node.id, node.name])"
+            @value="(value, _sceneId, nodeId) => updateProperty(field.key, value, nodeId)"
+            @mode="updateMode(field.key, $event)"
+            @code="(code, sceneId, nodeId) => updateCode(field.key, code, sceneId, nodeId)"
+            />
+          </div>
+          <UiPaddingEditor
+            v-if="group.purpose === 'appearance' && (selectedNode.type === 'text' || selectedNode.type === 'button')"
+            :value="selectedNode.props.padding"
+            @update="updateProperty('padding', $event)"
+          />
+          <UiButtonStatesEditor
+            v-if="group.purpose === 'contentResources' && selectedNode.type === 'button'"
+            :value="selectedNode.props.imageStates"
+            :resources="designer.resourceCatalog?.resources ?? []"
+            :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
+            :resource-picker-disabled="!designer.hasProject"
+            @update="updateProperty('imageStates', $event)"
+          />
+          <UiFrameListEditor
+            v-if="group.purpose === 'contentResources' && selectedNode.type === 'frameAnimation'"
+            :value="selectedNode.props.frames"
+            :resources="designer.resourceCatalog?.resources ?? []"
+            :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
+            :pick-resources="designer.hasProject ? () => openMultiResourceWorkspace('image') : undefined"
+            :resource-picker-disabled="!designer.hasProject"
+            @update="updateProperty('frames', $event)"
+          />
+          <template v-if="group.purpose === 'advanced'">
+            <el-divider />
+            <div class="inspector-section-title">{{ t('performance') }}</div>
+            <el-popover placement="top" width="320" trigger="click">
+              <template #reference><button type="button" class="performance-line"><span>{{ performanceLabel(designer.performance.rating) }}</span><span>{{ designer.performance.nodeCount }} {{ t('nodes') }}</span></button></template>
+              <div class="performance-details">
+                <div>{{ designer.performance.particleSystems }} · {{ designer.performance.maxParticleTotal }} {{ t('particles') }}</div>
+                <div>{{ designer.performance.frameCount }} {{ t('frames') }} · {{ designer.performance.codeModeProperties }} {{ t('codeProperties') }}</div>
+                <ul v-if="designer.performance.suggestions.length"><li v-for="suggestion in designer.performance.suggestions" :key="suggestion"><span>{{ performanceSuggestionLabel(suggestion) }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ suggestion }}</span></details></li></ul>
+                <span v-else>{{ t('valid') }}</span>
+              </div>
+            </el-popover>
+          </template>
+        </el-collapse-item>
+      </el-collapse>
     </div>
-    <UiDesignerEvents v-else-if="activeSection === 'events'" :key="`events-${selectedNode.id}`" :designer="designer" :node="selectedNode" />
+    <UiDesignerEvents
+      v-else-if="activeSection === 'events'"
+      :key="`events-${selectedNode.id}`"
+      :designer="designer"
+      :node="selectedNode"
+      :pick-audio-resource="designer.hasProject ? () => openResourceWorkspace('audio') : undefined"
+      :resource-picker-disabled="!designer.hasProject"
+    />
     <UiDesignerConditions v-else-if="activeSection === 'condition'" :key="`condition-${selectedNode.id}`" :designer="designer" :node="selectedNode" />
     <UiDesignerAnimations v-else :designer="designer" :node="selectedNode" />
     <el-dialog
@@ -299,8 +354,11 @@ const commitNodeName = () => { if (selectedNode.value) designer.renameNode(selec
 .inspector-tabs .el-button.active { border-bottom: 2px solid var(--app-accent); color: var(--app-accent); }
 .inspector-validation { margin-bottom: 2px; }.inspector-validation ul { margin: 4px 0 0; padding-left: 16px; }
 .properties-scroll { min-height: 0; overflow: auto; padding-right: 3px; }
-.inspector-purpose-group { margin-top: 12px; }
-.inspector-purpose-title { margin: 0 0 7px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }
+.inspector-purpose-groups { border-block: 0; }
+.inspector-purpose-groups :deep(.el-collapse-item__header) { min-height: 34px; height: auto; background: transparent; color: var(--app-ink-soft); }
+.inspector-purpose-groups :deep(.el-collapse-item__wrap) { background: transparent; }
+.inspector-purpose-groups :deep(.el-collapse-item__content) { padding: 2px 0 12px; color: inherit; }
+.inspector-purpose-title { margin: 0; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }
 .property-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .resource-workspace-host { height: min(760px, 82vh); min-height: 520px; overflow: hidden; }
 .inspector-empty { display: grid; place-items: center; flex: 1; min-height: 180px; color: var(--app-ink-soft); font-size: 12px; text-align: center; }

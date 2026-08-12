@@ -248,6 +248,41 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     }
   });
 
+  test('normalizes button SE resource paths while preserving legacy names and rejecting non-SE assets', () => {
+    const context = makeContext();
+    const played: string[] = [];
+    context.AudioManager = { playSe(audio: { name: string }) { played.push(audio.name); } };
+    context.PIXI.Container.prototype.on = function (eventName: string, listener: () => void) {
+      this.__listeners = this.__listeners || {};
+      this.__listeners[eventName] = listener;
+      return this;
+    };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.type === 'button');
+    button.props.hoverSe = 'audio/se/ui/Hover.ogg';
+    button.props.clickSe = 'www/audio/se/Confirm.m4a';
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const view = runtime.nodeViews.button;
+
+    view.__listeners.pointerover();
+    view.__listeners.pointertap();
+    assert.deepEqual(played, ['ui/Hover', 'Confirm']);
+
+    view.__mzuiSe.click = 'legacy/Confirm';
+    view.__listeners.pointertap();
+    assert.equal(played.at(-1), 'legacy/Confirm');
+
+    view.__mzuiSe.hover = 'audio/bgm/Theme.ogg';
+    view.__listeners.pointerover();
+    assert.equal(played.includes('audio/bgm/Theme.ogg'), false);
+    assert.equal(runtime.errors.some((entry: { label?: string; node?: string; event?: string }) => entry.label === 'button-se' && entry.node === 'button' && entry.event === 'onHoverEnter'), true);
+
+    runtime.runAction({ type: 'playSe', seName: 'EventConfirm' }, button, { type: 'pointertap' });
+    assert.equal(played.at(-1), 'EventConfirm');
+  });
+
   test('uses the official MV Window_Base and Bitmap drawText signatures for button text', () => {
     assertEngineWindowTextSignature('MV');
   });

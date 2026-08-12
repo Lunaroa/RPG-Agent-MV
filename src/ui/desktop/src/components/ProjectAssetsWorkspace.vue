@@ -248,19 +248,11 @@ const FAVORITES_NODE_ID = '__favorites__'
 const isFavoritesSelection = computed(() => selectedCategoryId.value === FAVORITES_NODE_ID)
 
 function categoryAllowedInSelectionMode(categoryId: string): boolean {
-  if (!isSelectionMode.value || categoryId === FAVORITES_NODE_ID) return true
-  if (projectAssetCategoryMatchesUiDesignerResourceKind(categoryId, props.resourceKind)) return true
-  const node = findTreeNode(treeNodes.value, categoryId)
-  return Boolean(node?.children?.some((child) => categoryAllowedInSelectionMode(child.id)))
+  return Boolean(categoryId)
 }
 
 function selectionTreeNodes(nodes: ProjectAssetCategoryTreeNode[]): ProjectAssetCategoryTreeNode[] {
-  if (!isSelectionMode.value) return nodes
-  return nodes.flatMap((node) => {
-    const children = node.children ? selectionTreeNodes(node.children) : []
-    if (!projectAssetCategoryMatchesUiDesignerResourceKind(node.id, props.resourceKind) && children.length === 0) return []
-    return [{ ...node, ...(children.length > 0 ? { children } : { children: undefined }) }]
-  })
+  return nodes
 }
 
 function categoryForCurrentResourcePath(nodes: ProjectAssetCategoryTreeNode[]): string | undefined {
@@ -691,12 +683,9 @@ const filteredEntries = computed(() => {
   const base = isFavoritesSelection.value
     ? categoryEntries.value.filter((entry) => favorites.value.has(entry.id))
     : categoryEntries.value
-  const compatible = isSelectionMode.value
-    ? base.filter((entry) => projectAssetCategoryMatchesUiDesignerResourceKind(entryCategoryId(entry), props.resourceKind))
-    : base
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return compatible
-  return compatible.filter((entry) => entry.name.toLowerCase().includes(query))
+  if (!query) return base
+  return base.filter((entry) => entry.name.toLowerCase().includes(query))
 })
 
 /** Search-filtered entries in the user's chosen sort order; single order source for grid, range-select and preview navigation. */

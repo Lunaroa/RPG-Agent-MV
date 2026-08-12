@@ -10,7 +10,9 @@ import {
   isUiDesignerProjectRelativeResourcePath,
 } from './ui-designer-resources.ts'
 
-export const UI_DESIGNER_RENDERER_BRIDGE_VERSION = '2.0.0' as const
+export const UI_DESIGNER_RENDERER_BRIDGE_VERSION = '3.0.0' as const
+/** The one official MV/MZ scene class owned by the embedded renderer host. */
+export const UI_DESIGNER_RENDERER_HOST_SCENE_CLASS = 'Scene_MZUIDesignerCanvasHost' as const
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_BYTES = 4 * 1024 * 1024
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_BOUNDS = 2_048
 export const UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES = 512
@@ -101,9 +103,16 @@ export type UiDesignerRendererBridgeMessage =
   | UiDesignerRendererBridgeEnvelope<'hello', UiDesignerRendererBridgeCapabilities>
   | UiDesignerRendererBridgeEnvelope<'receipt', UiDesignerRendererBridgeReceipt>
   | UiDesignerRendererBridgeEnvelope<'fatal', UiDesignerRendererBridgeFatal>
-  | UiDesignerRendererBridgeEnvelope<'ready', { canvasWidth: number; canvasHeight: number }>
-  | UiDesignerRendererBridgeEnvelope<'mount', { revision: number; executionMode: UiDesignerRendererExecutionMode; scene: UiRuntimeSceneExport }>
-  | UiDesignerRendererBridgeEnvelope<'mounted', { revision: number; executionMode: UiDesignerRendererExecutionMode; bounds: UiDesignerRendererNodeBounds[] }>
+  | UiDesignerRendererBridgeEnvelope<'ready', { canvasWidth: number; canvasHeight: number; engineSceneClass: string }>
+  | UiDesignerRendererBridgeEnvelope<'mount', { revision: number; executionMode: UiDesignerRendererExecutionMode; documentSceneId: string; scene: UiRuntimeSceneExport }>
+  | UiDesignerRendererBridgeEnvelope<'mounted', {
+    revision: number
+    executionMode: UiDesignerRendererExecutionMode
+    engineSceneClass: string
+    mountedDocumentSceneId: string
+    documentSceneName: string
+    bounds: UiDesignerRendererNodeBounds[]
+  }>
   | UiDesignerRendererBridgeEnvelope<'patch', { revision: number; nodes: UiDesignerRendererNodePatch[] }>
   | UiDesignerRendererBridgeEnvelope<'resource-refresh', { revision: number; resourceRevision: number; relativePaths: string[] }>
   | UiDesignerRendererBridgeEnvelope<'bounds', { revision: number; bounds: UiDesignerRendererNodeBounds[] }>
@@ -124,6 +133,11 @@ export type UiDesignerRendererBridgeMessage =
     phase: 'transitioning' | 'active'
     requestedScene: string | null
     actualScene: string | null
+    engineSceneClass: string | null
+    mountedDocumentSceneId: string | null
+    documentSceneName: string | null
+    revision: number
+    executionMode: UiDesignerRendererExecutionMode
   }>
   | UiDesignerRendererBridgeEnvelope<'exit-request', { key: 'Escape' | 'F6' | 'action-exit' }>
   | UiDesignerRendererBridgeEnvelope<'dispose', { reason: 'scene-change' | 'project-change' | 'unload' | 'shutdown' }>
@@ -201,22 +215,29 @@ function validatePayload(kind: UiDesignerRendererBridgeKind, payload: unknown, s
     return
   }
   if (kind === 'ready') {
-    assertExactKeys(payload, ['canvasWidth', 'canvasHeight'], kind)
+    assertExactKeys(payload, ['canvasWidth', 'canvasHeight', 'engineSceneClass'], kind)
     positiveInteger(payload.canvasWidth, 'canvasWidth')
     positiveInteger(payload.canvasHeight, 'canvasHeight')
+    sceneIdentifier(payload.engineSceneClass)
     return
   }
   if (kind === 'mount') {
-    assertExactKeys(payload, ['revision', 'executionMode', 'scene'], kind)
+    assertExactKeys(payload, ['revision', 'executionMode', 'documentSceneId', 'scene'], kind)
     nonNegativeInteger(payload.revision, 'revision')
     executionMode(payload.executionMode)
+    identifier(payload.documentSceneId, 'documentSceneId', 1, 128)
     validateRuntimeScene(payload.scene)
     return
   }
   if (kind === 'mounted' || kind === 'bounds') {
-    assertExactKeys(payload, kind === 'mounted' ? ['revision', 'executionMode', 'bounds'] : ['revision', 'bounds'], kind)
+    assertExactKeys(payload, kind === 'mounted' ? ['revision', 'executionMode', 'engineSceneClass', 'mountedDocumentSceneId', 'documentSceneName', 'bounds'] : ['revision', 'bounds'], kind)
     nonNegativeInteger(payload.revision, 'revision')
-    if (kind === 'mounted') executionMode(payload.executionMode)
+    if (kind === 'mounted') {
+      executionMode(payload.executionMode)
+      sceneIdentifier(payload.engineSceneClass)
+      identifier(payload.mountedDocumentSceneId, 'mountedDocumentSceneId', 1, 128)
+      sceneIdentifier(payload.documentSceneName)
+    }
     validateBounds(payload.bounds)
     return
   }
@@ -267,10 +288,15 @@ function validatePayload(kind: UiDesignerRendererBridgeKind, payload: unknown, s
     return
   }
   if (kind === 'scene-state') {
-    assertExactKeys(payload, ['phase', 'requestedScene', 'actualScene'], kind)
+    assertExactKeys(payload, ['phase', 'requestedScene', 'actualScene', 'engineSceneClass', 'mountedDocumentSceneId', 'documentSceneName', 'revision', 'executionMode'], kind)
     if (payload.phase !== 'transitioning' && payload.phase !== 'active') fail('Renderer scene-state phase is unsupported.')
     if (payload.requestedScene !== null) sceneIdentifier(payload.requestedScene)
     if (payload.actualScene !== null) sceneIdentifier(payload.actualScene)
+    if (payload.engineSceneClass !== null) sceneIdentifier(payload.engineSceneClass)
+    if (payload.mountedDocumentSceneId !== null) identifier(payload.mountedDocumentSceneId, 'mountedDocumentSceneId', 1, 128)
+    if (payload.documentSceneName !== null) sceneIdentifier(payload.documentSceneName)
+    nonNegativeInteger(payload.revision, 'scene-state revision')
+    executionMode(payload.executionMode)
     return
   }
   if (kind === 'exit-request') {
@@ -417,7 +443,7 @@ function encodedSize(value: unknown): number {
 }
 
 function messageRevision(value: Record<string, unknown>): number | null {
-  if (!['fatal', 'mount', 'mounted', 'patch', 'bounds'].includes(String(value.kind))) return null
+  if (!['fatal', 'mount', 'mounted', 'patch', 'bounds', 'scene-state'].includes(String(value.kind))) return null
   const payload = value.payload
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
   const revision = (payload as Record<string, unknown>).revision

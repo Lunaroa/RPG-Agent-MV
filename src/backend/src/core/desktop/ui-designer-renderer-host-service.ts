@@ -612,6 +612,8 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
   var outgoingSequence = 0;
   var incomingSequence = -1;
   var activeSceneId = 'Scene_CanvasHost';
+  var mountedDocumentSceneId = null;
+  var documentSceneName = null;
   var activeRevision = 0;
   var runtime = null;
   var hostScene = null;
@@ -632,6 +634,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
   var currentStage = 'iframe-load';
   var fatalSent = false;
   var mountReceiptPending = false;
+  var hostSceneClass = 'Scene_MZUIDesignerCanvasHost';
 
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function exact(value, keys, label) {
@@ -705,9 +708,9 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     if (message.kind === 'hello') { exact(payload, ['engine', 'engineVersion', 'pixiVersion', 'runtimeVersion'], 'hello payload'); if ((payload.engine !== 'MV' && payload.engine !== 'MZ') || (payload.engineVersion !== null && !boundedString(payload.engineVersion, 64)) || !boundedString(payload.pixiVersion, 64) || !boundedString(payload.runtimeVersion, 64)) throw new Error('Renderer bridge hello capability is invalid.'); return; }
     if (message.kind === 'receipt') { exact(payload, ['stage', 'status', 'message'], 'receipt payload'); if (['iframe-load', 'entry-invoked', 'hello', 'confirm', 'ready', 'mount', 'mounted', 'scene-state'].indexOf(payload.stage) < 0 || ['begin', 'success', 'error'].indexOf(payload.status) < 0 || (payload.message !== null && !boundedString(payload.message, 512))) throw new Error('Renderer bridge receipt is invalid.'); return; }
     if (message.kind === 'fatal') { exact(payload, ['stage', 'code', 'message', 'revision'], 'fatal payload'); if (['iframe-load', 'entry-invoked', 'hello', 'confirm', 'ready', 'mount', 'mounted', 'scene-state'].indexOf(payload.stage) < 0 || !boundedString(payload.code, 128) || !/^[A-Z][A-Z0-9_]{2,127}$/.test(payload.code) || !boundedString(payload.message, 1024) || !Number.isSafeInteger(payload.revision) || payload.revision < 0) throw new Error('Renderer bridge fatal payload is invalid.'); return; }
-    if (message.kind === 'ready') { exact(payload, ['canvasWidth', 'canvasHeight'], 'ready payload'); if (!Number.isSafeInteger(payload.canvasWidth) || payload.canvasWidth < 1 || payload.canvasWidth > 16384 || !Number.isSafeInteger(payload.canvasHeight) || payload.canvasHeight < 1 || payload.canvasHeight > 16384) throw new Error('Renderer bridge canvas size is invalid.'); return; }
-    if (message.kind === 'mount') { exact(payload, ['revision', 'executionMode', 'scene'], 'mount payload'); if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || (payload.executionMode !== 'authoring' && payload.executionMode !== 'full-preview')) throw new Error('Renderer bridge mount revision or execution mode is invalid.'); validateRuntimeScene(payload.scene); return; }
-    if (message.kind === 'mounted' || message.kind === 'bounds') { exact(payload, message.kind === 'mounted' ? ['revision', 'executionMode', 'bounds'] : ['revision', 'bounds'], message.kind + ' payload'); if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || (message.kind === 'mounted' && payload.executionMode !== 'authoring' && payload.executionMode !== 'full-preview')) throw new Error('Renderer bridge revision or execution mode is invalid.'); validateBounds(payload.bounds); return; }
+    if (message.kind === 'ready') { exact(payload, ['canvasWidth', 'canvasHeight', 'engineSceneClass'], 'ready payload'); if (!Number.isSafeInteger(payload.canvasWidth) || payload.canvasWidth < 1 || payload.canvasWidth > 16384 || !Number.isSafeInteger(payload.canvasHeight) || payload.canvasHeight < 1 || payload.canvasHeight > 16384 || !identifier(payload.engineSceneClass, true)) throw new Error('Renderer bridge canvas size or engine scene class is invalid.'); return; }
+    if (message.kind === 'mount') { exact(payload, ['revision', 'executionMode', 'documentSceneId', 'scene'], 'mount payload'); if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || (payload.executionMode !== 'authoring' && payload.executionMode !== 'full-preview') || !identifier(payload.documentSceneId, false)) throw new Error('Renderer bridge mount revision, mode, or document identity is invalid.'); validateRuntimeScene(payload.scene); return; }
+    if (message.kind === 'mounted' || message.kind === 'bounds') { exact(payload, message.kind === 'mounted' ? ['revision', 'executionMode', 'engineSceneClass', 'mountedDocumentSceneId', 'documentSceneName', 'bounds'] : ['revision', 'bounds'], message.kind + ' payload'); if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || (message.kind === 'mounted' && (payload.executionMode !== 'authoring' && payload.executionMode !== 'full-preview' || !identifier(payload.engineSceneClass, true) || !identifier(payload.mountedDocumentSceneId, false) || !identifier(payload.documentSceneName, true)))) throw new Error('Renderer bridge revision or mounted scene identity is invalid.'); validateBounds(payload.bounds); return; }
     if (message.kind === 'patch') {
       exact(payload, ['revision', 'nodes'], 'patch payload');
       if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || !Array.isArray(payload.nodes) || payload.nodes.length > config.maxPatches) throw new Error('Renderer bridge patch is invalid.');
@@ -722,7 +725,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     if (message.kind === 'select') { exact(payload, ['nodeIds'], 'select payload'); if (!Array.isArray(payload.nodeIds) || payload.nodeIds.length > config.maxBounds || payload.nodeIds.some(function (id) { return !identifier(id, false); })) throw new Error('Renderer bridge selection is invalid.'); return; }
     if (message.kind === 'input') { exact(payload, ['type', 'nodeId', 'x', 'y', 'button', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey'], 'input payload'); if (['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'contextmenu'].indexOf(payload.type) < 0 || (payload.nodeId !== null && !identifier(payload.nodeId, false)) || !finite(payload.x) || !finite(payload.y) || !Number.isInteger(payload.button) || payload.button < -1 || payload.button > 5 || ['ctrlKey', 'shiftKey', 'altKey', 'metaKey'].some(function (key) { return typeof payload[key] !== 'boolean'; })) throw new Error('Renderer bridge input is invalid.'); return; }
     if (message.kind === 'diagnostic') { exact(payload, ['entries'], 'diagnostic payload'); if (!Array.isArray(payload.entries) || payload.entries.length > 64) throw new Error('Renderer bridge diagnostics exceed their bound.'); payload.entries.forEach(function (entry) { validateDiagnostic(entry, message.sceneId); }); return; }
-    if (message.kind === 'scene-state') { exact(payload, ['phase', 'requestedScene', 'actualScene'], 'scene-state payload'); if (payload.phase !== 'transitioning' && payload.phase !== 'active') throw new Error('Renderer bridge scene-state phase is invalid.'); if (payload.requestedScene !== null && !identifier(payload.requestedScene, true)) throw new Error('Renderer bridge requested scene is invalid.'); if (payload.actualScene !== null && !identifier(payload.actualScene, true)) throw new Error('Renderer bridge actual scene is invalid.'); return; }
+    if (message.kind === 'scene-state') { exact(payload, ['phase', 'requestedScene', 'actualScene', 'engineSceneClass', 'mountedDocumentSceneId', 'documentSceneName', 'revision', 'executionMode'], 'scene-state payload'); if (payload.phase !== 'transitioning' && payload.phase !== 'active') throw new Error('Renderer bridge scene-state phase is invalid.'); if (payload.requestedScene !== null && !identifier(payload.requestedScene, true)) throw new Error('Renderer bridge requested scene is invalid.'); if (payload.actualScene !== null && !identifier(payload.actualScene, true)) throw new Error('Renderer bridge actual scene is invalid.'); if (payload.engineSceneClass !== null && !identifier(payload.engineSceneClass, true)) throw new Error('Renderer bridge engine scene class is invalid.'); if (payload.mountedDocumentSceneId !== null && !identifier(payload.mountedDocumentSceneId, false)) throw new Error('Renderer bridge mounted document scene id is invalid.'); if (payload.documentSceneName !== null && !identifier(payload.documentSceneName, true)) throw new Error('Renderer bridge document scene name is invalid.'); if (!Number.isSafeInteger(payload.revision) || payload.revision < 0 || (payload.executionMode !== 'authoring' && payload.executionMode !== 'full-preview')) throw new Error('Renderer bridge scene-state revision or execution mode is invalid.'); return; }
     if (message.kind === 'exit-request') { exact(payload, ['key'], 'exit-request payload'); if (payload.key !== 'Escape' && payload.key !== 'F6' && payload.key !== 'action-exit') throw new Error('Renderer bridge exit request is invalid.'); return; }
     if (message.kind === 'dispose') { exact(payload, ['reason'], 'dispose payload'); if (['scene-change', 'project-change', 'unload', 'shutdown'].indexOf(payload.reason) < 0) throw new Error('Renderer bridge dispose reason is invalid.'); return; }
     if (message.kind === 'disposed') { exact(payload, [], 'disposed payload'); return; }
@@ -818,7 +821,16 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
       if (phase === 'active') lastActualScene = actual;
       currentStage = 'scene-state';
       sendReceipt('scene-state', 'begin', null);
-      send('scene-state', { phase: phase, requestedScene: requestedScene || null, actualScene: actual }, activeSceneId);
+      send('scene-state', {
+        phase: phase,
+        requestedScene: requestedScene || null,
+        actualScene: actual,
+        engineSceneClass: actual,
+        mountedDocumentSceneId: mountedDocumentSceneId,
+        documentSceneName: documentSceneName,
+        revision: activeRevision,
+        executionMode: activeExecutionMode
+      }, activeSceneId);
       sendReceipt('scene-state', 'success', null);
     });
   }
@@ -1092,7 +1104,10 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     }
     pendingMount = message;
     lastMount = message;
+    if (message.sceneId !== message.payload.scene.meta.sceneName) throw new Error('Renderer bridge document scene identity does not match the Runtime scene name.');
     activeSceneId = message.sceneId;
+    mountedDocumentSceneId = message.payload.documentSceneId;
+    documentSceneName = message.payload.scene.meta.sceneName;
     activeRevision = message.payload.revision;
     activeExecutionMode = message.payload.executionMode;
     // A mode switch can remount while the host scene (and its existing
@@ -1118,7 +1133,14 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     mountReceiptPending = false;
     currentStage = 'mounted';
     sendReceipt('mounted', 'begin', null);
-    send('mounted', { revision: activeRevision, executionMode: activeExecutionMode, bounds: mountedBounds }, activeSceneId);
+    send('mounted', {
+      revision: activeRevision,
+      executionMode: activeExecutionMode,
+      engineSceneClass: sceneName(hostScene) || hostSceneClass,
+      mountedDocumentSceneId: mountedDocumentSceneId,
+      documentSceneName: documentSceneName,
+      bounds: mountedBounds
+    }, activeSceneId);
     sendReceipt('mounted', 'success', null);
     publishSceneState('active', activeSceneId);
   }
@@ -1282,7 +1304,9 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
       runStageStep('ready', 'UI_RENDERER_READY_SCENE_CREATE', 'scene-create', 'The isolated UI renderer could not create its official host scene.', function () { hostBase.prototype.create.call(scene); });
       hostScene = scene;
       runStageStep('ready', 'UI_RENDERER_READY_CANVAS_HOST', 'canvas-host', 'The isolated UI renderer could not create its canvas host.', function () { createHostUi(scene); });
-      runStageStep('ready', 'UI_RENDERER_READY_SIGNAL', 'ready-signal', 'The isolated UI renderer could not publish its ready capability.', function () { send('ready', readyCanvasSize(), activeSceneId); });
+      runStageStep('ready', 'UI_RENDERER_READY_SIGNAL', 'ready-signal', 'The isolated UI renderer could not publish its ready capability.', function () {
+        send('ready', Object.assign(readyCanvasSize(), { engineSceneClass: sceneName(scene) || hostSceneClass }), activeSceneId);
+      });
       sendReceipt('ready', 'success', null);
       if (pendingMount) mountScene(pendingMount);
       else if (lastMount) mountScene(lastMount);

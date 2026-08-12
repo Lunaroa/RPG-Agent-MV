@@ -34,6 +34,63 @@
   function finite(value, fallback) { return typeof value === 'number' && isFinite(value) ? value : fallback; }
   function errorText(error) { return error && error.message ? error.message : String(error); }
 
+  function canonicalizeLegacySceneScriptSource(source) {
+    var output = '';
+    var index = 0;
+    var state = 'code';
+    while (index < source.length) {
+      var current = source[index];
+      var next = source[index + 1];
+      if (state === 'line-comment') { output += current; index += 1; if (current === '\n') state = 'code'; continue; }
+      if (state === 'block-comment') {
+        output += current; index += 1;
+        if (current === '*' && next === '/') { output += next; index += 1; state = 'code'; }
+        continue;
+      }
+      if (state !== 'code') {
+        output += current; index += 1;
+        if (current === '\\' && index < source.length) { output += source[index]; index += 1; continue; }
+        if ((state === 'single' && current === "'") || (state === 'double' && current === '"') || (state === 'template' && current === '`') || (state === 'regex' && current === '/')) state = 'code';
+        continue;
+      }
+      if (current === '/' && next === '/') { output += '//'; index += 2; state = 'line-comment'; continue; }
+      if (current === '/' && next === '*') { output += '/*'; index += 2; state = 'block-comment'; continue; }
+      if (current === '/') {
+        var previousMatch = source.slice(0, index).match(/\S(?=\s*$)/);
+        var previous = previousMatch ? previousMatch[0] : '';
+        if (!previous || /[({\[=,:;!&|?+\-*%^~<>]/.test(previous)) { output += current; index += 1; state = 'regex'; continue; }
+      }
+      if (current === "'") { output += current; index += 1; state = 'single'; continue; }
+      if (current === '"') { output += current; index += 1; state = 'double'; continue; }
+      if (current === '`') { output += current; index += 1; state = 'template'; continue; }
+      var lifecycle = source.slice(index, index + 7) === 'onReady' ? 'onReady' : source.slice(index, index + 8) === 'onUpdate' ? 'onUpdate' : null;
+      if (lifecycle) {
+        var before = source[index - 1] || '';
+        var after = source[index + lifecycle.length] || '';
+        if (!/[\w$]/.test(before) && before !== '.' && !/[\w$]/.test(after)) { output += 'scene.' + lifecycle; index += lifecycle.length; continue; }
+      }
+      output += current;
+      index += 1;
+    }
+    return output;
+  }
+
+  function canonicalizeRuntimeScene(scene) {
+    if (!object(scene)) throw new Error('UI scene must be an object.');
+    if (scene.version === '1.1.0') {
+      if (!object(scene.sceneScript) || typeof scene.sceneScript.source !== 'string') throw new Error('UI scene requires a one-file sceneScript.');
+      if (scene.sceneScript.version === '1.1.0') return scene;
+      if (scene.sceneScript.version !== '1.0.0') throw new Error('UI sceneScript version is unsupported.');
+      return Object.assign({}, scene, { sceneScript: { version: '1.1.0', source: canonicalizeLegacySceneScriptSource(scene.sceneScript.source) } });
+    }
+    if (scene.version !== '1.0.0' || !object(scene.code) || typeof scene.code.ready !== 'string' || typeof scene.code.update !== 'string') throw new Error('UI scene version is unsupported.');
+    if (scene.runtimeVersion !== '>=1.0.0') throw new Error('Legacy UI scene runtime version is unsupported.');
+    var source = ['scene.onReady(function () {', scene.code.ready, '});', '', 'scene.onUpdate(function ({ frame, deltaMs }) {', scene.code.update, '});', ''].join('\n');
+    var canonical = Object.assign({}, scene, { version: '1.1.0', runtimeVersion: '>=1.1.0', sceneScript: { version: '1.1.0', source: source } });
+    delete canonical.code;
+    return canonical;
+  }
+
   function compileBody(source, args) {
     if (typeof source !== 'string' || !source.trim()) return null;
     try {
@@ -136,6 +193,7 @@
       },
       mount: function mount(scene, options) {
         this.cleanup();
+        scene = canonicalizeRuntimeScene(scene);
         var executionMode = options && options.executionMode ? String(options.executionMode) : 'full-preview';
         if (executionMode !== 'authoring' && executionMode !== 'full-preview') throw new Error('UI Runtime execution mode is unsupported.');
         this.executionMode = executionMode;
@@ -195,7 +253,7 @@
         var nodes = orderedNodes(this.scene);
         this.nodeViews = {};
         var sceneScriptSource = this.scene && this.scene.sceneScript && this.scene.sceneScript.source;
-        this.compiled = { setup: compileBody(sceneScriptSource, CODE_ARGUMENTS.concat(['onReady', 'onUpdate'])), ready: [], update: [], properties: {}, conditions: {}, scripts: {}, actions: {} };
+        this.compiled = { setup: compileBody(sceneScriptSource, CODE_ARGUMENTS), ready: [], update: [], properties: {}, conditions: {}, scripts: {}, actions: {} };
         nodes.forEach(function (node) {
           if (!node || typeof node.id !== 'string' || !NODE_TYPES[node.type]) return;
           var modes = node.propModes || {};
@@ -220,6 +278,7 @@
       },
       registerSceneScript: function registerSceneScript() {
         var self = this;
+        var sceneApi = this.context.sceneApi || this;
         var register = function register(kind, label) {
           return function registerLifecycle(handler) {
             if (typeof handler !== 'function') throw new TypeError(label + ' requires a function callback.');
@@ -228,10 +287,9 @@
           };
         };
         this.sceneScriptRegistrationOpen = true;
-        var args = this.makeInvocationArgs(null, null, null).concat([
-          register('ready', 'onReady'),
-          register('update', 'onUpdate'),
-        ]);
+        sceneApi.onReady = register('ready', 'scene.onReady');
+        sceneApi.onUpdate = register('update', 'scene.onUpdate');
+        var args = this.makeInvocationArgs(null, null, null);
         try {
           this.invoke(this.compiled.setup, args, 'scene-script:setup', 'scene-script:setup', { phase: 'setup' });
         } finally {
@@ -323,6 +381,10 @@
           }
         });
         if (this.allowsUserExecution()) {
+          // The Runtime itself already carries frame/deltaMs. Passing the
+          // established invocation tuple keeps v1.0 callbacks compatible,
+          // while v1.1 callbacks can destructure the first argument as
+          // ({ frame, deltaMs }).
           var updateArgs = this.makeInvocationArgs(null, null, null);
           this.compiled.update.forEach(function (handler, index) {
             this.invoke(handler, updateArgs, 'scene-script:update', 'scene-script:update:' + index, { phase: 'update' });
@@ -2208,9 +2270,9 @@
         var raw = readFile(directory.replace(/\\/g, '/') + '/' + fileName);
         if (!raw) return;
         try {
-          var scene = JSON.parse(raw);
+          var scene = canonicalizeRuntimeScene(JSON.parse(raw));
           if (!scene || scene.version !== VERSION || scene.runtimeVersion !== '>=1.1.0' || !scene.meta || scene.meta.sceneName !== sceneName) throw new Error('UI scene file metadata does not match its stable filename.');
-          if (!scene.sceneScript || scene.sceneScript.version !== '1.0.0' || typeof scene.sceneScript.source !== 'string') throw new Error('UI scene file requires a supported one-file sceneScript.');
+          if (!scene.sceneScript || scene.sceneScript.version !== '1.1.0' || typeof scene.sceneScript.source !== 'string') throw new Error('UI scene file requires a supported one-file sceneScript.');
           registerScene(sceneName, scene.meta.sceneBase, scene);
         } catch (error) { reportApiError({ scene: sceneName, file: fileName, label: 'scene', message: errorText(error) }); }
       });

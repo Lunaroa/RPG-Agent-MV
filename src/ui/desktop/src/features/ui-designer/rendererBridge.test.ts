@@ -42,7 +42,7 @@ const scene = (count: number): UiRuntimeSceneExport => ({
   globalFilter: { type: 'none', intensity: 0 },
   nodes: Array.from({ length: count }, (_, index) => node(index)),
   zOrder: Array.from({ length: count }, (_, index) => `node_${index}`),
-  sceneScript: { version: '1.0.0', source: '' },
+  sceneScript: { version: '1.1.0', source: '' },
 })
 
 test('renderer planner patches bounded in-place geometry and remounts resource changes', () => {
@@ -183,6 +183,7 @@ test('renderer host keeps full-preview ready across later bounds and diagnostic 
   let state: UiDesignerRendererHostRuntimeState = {
     bounds: {}, diagnostics: [], executionMode: 'authoring', executionModeReady: false,
     scenePhase: 'active', requestedScene: null, actualScene: null,
+    engineSceneClass: null, mountedDocumentSceneId: null, documentSceneName: null, mountedRevision: null, mountedExecutionMode: null,
   }
   let minimumSequence = 0
   const accept = (kind: 'mounted' | 'bounds' | 'diagnostic' | 'scene-state', payload: Record<string, unknown>) => {
@@ -196,15 +197,15 @@ test('renderer host keeps full-preview ready across later bounds and diagnostic 
       payload,
     }, { sessionId, generation, minimumSequence })
     minimumSequence += 1
-    state = reduceUiDesignerRendererHostRuntimeMessage(state, message, 7, 'full-preview')
+    state = reduceUiDesignerRendererHostRuntimeMessage(state, message, 7, 'full-preview', 'scene_tab_1', 'Scene_RendererBridge')
   }
 
   assert.doesNotThrow(() => {
-    accept('mounted', { revision: 7, executionMode: 'full-preview', bounds })
+    accept('mounted', { revision: 7, executionMode: 'full-preview', engineSceneClass: 'Scene_MZUIDesignerCanvasHost', mountedDocumentSceneId: 'scene_tab_1', documentSceneName: 'Scene_RendererBridge', bounds })
     accept('bounds', { revision: 7, bounds: [{ ...bounds[0], x: 12 }] })
     accept('diagnostic', { entries: [diagnostic] })
-    accept('scene-state', { phase: 'transitioning', requestedScene: 'Scene_Options', actualScene: 'Scene_RendererBridge' })
-    accept('scene-state', { phase: 'active', requestedScene: null, actualScene: 'Scene_Options' })
+    accept('scene-state', { phase: 'transitioning', requestedScene: 'Scene_Options', actualScene: 'Scene_RendererBridge', engineSceneClass: 'Scene_Options', mountedDocumentSceneId: 'scene_tab_1', documentSceneName: 'Scene_RendererBridge', revision: 7, executionMode: 'full-preview' })
+    accept('scene-state', { phase: 'active', requestedScene: null, actualScene: 'Scene_MZUIDesignerCanvasHost', engineSceneClass: 'Scene_MZUIDesignerCanvasHost', mountedDocumentSceneId: 'scene_tab_1', documentSceneName: 'Scene_RendererBridge', revision: 7, executionMode: 'full-preview' })
   })
   assert.equal(state.executionMode, 'full-preview')
   assert.equal(state.executionModeReady, true)
@@ -213,7 +214,7 @@ test('renderer host keeps full-preview ready across later bounds and diagnostic 
   assert.equal(state.diagnostics[0]?.message, diagnostic.message)
   assert.equal(state.scenePhase, 'active')
   assert.equal(state.requestedScene, null)
-  assert.equal(state.actualScene, 'Scene_Options')
+  assert.equal(state.actualScene, 'Scene_MZUIDesignerCanvasHost')
 })
 
 test('renderer host ignores a same-revision mounted receipt from a stale execution mode', () => {
@@ -224,6 +225,7 @@ test('renderer host ignores a same-revision mounted receipt from a stale executi
   const state: UiDesignerRendererHostRuntimeState = {
     bounds: Object.fromEntries(currentBounds.map((entry) => [entry.nodeId, entry])), diagnostics: [], executionMode: 'full-preview', executionModeReady: false,
     scenePhase: 'active', requestedScene: null, actualScene: null,
+    engineSceneClass: null, mountedDocumentSceneId: null, documentSceneName: null, mountedRevision: null, mountedExecutionMode: null,
   }
   const message = validateUiDesignerRendererBridgeMessage({
     version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
@@ -232,14 +234,52 @@ test('renderer host ignores a same-revision mounted receipt from a stale executi
     sequence: 0,
     sceneId: 'Scene_RendererBridge',
     kind: 'mounted',
-    payload: { revision: 7, executionMode: 'authoring', bounds: staleBounds },
+    payload: { revision: 7, executionMode: 'authoring', engineSceneClass: 'Scene_MZUIDesignerCanvasHost', mountedDocumentSceneId: 'scene_tab_1', documentSceneName: 'Scene_RendererBridge', bounds: staleBounds },
   }, { sessionId, generation, minimumSequence: 0 })
   const next = reduceUiDesignerRendererHostRuntimeMessage(state, message, 7, 'full-preview')
   assert.deepEqual(next, state)
 })
 
+test('renderer ready requires the active host scene and the exact mounted document identity', () => {
+  const sessionId = 'renderer-session'
+  const base = {
+    version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
+    sessionId,
+    generation: 4,
+    sceneId: 'Scene_RendererBridge',
+  }
+  const initial: UiDesignerRendererHostRuntimeState = {
+    bounds: {}, diagnostics: [], executionMode: 'authoring', executionModeReady: false,
+    scenePhase: 'active', requestedScene: null, actualScene: null,
+    engineSceneClass: null, mountedDocumentSceneId: null, documentSceneName: null, mountedRevision: null, mountedExecutionMode: null,
+  }
+  const mounted = validateUiDesignerRendererBridgeMessage({
+    ...base, sequence: 0, kind: 'mounted',
+    payload: { revision: 3, executionMode: 'authoring', engineSceneClass: 'Scene_MZUIDesignerCanvasHost', mountedDocumentSceneId: 'scene_tab_1', documentSceneName: 'Scene_RendererBridge', bounds: [] },
+  })
+  const transitioning = validateUiDesignerRendererBridgeMessage({
+    ...base, sequence: 1, kind: 'scene-state',
+    payload: { phase: 'transitioning', requestedScene: 'Scene_Options', actualScene: 'Scene_Options', engineSceneClass: 'Scene_Options', mountedDocumentSceneId: 'scene_tab_1', documentSceneName: 'Scene_RendererBridge', revision: 3, executionMode: 'authoring' },
+  })
+  const wrongDocument = validateUiDesignerRendererBridgeMessage({
+    ...base, sequence: 2, kind: 'scene-state',
+    payload: { phase: 'active', requestedScene: null, actualScene: 'Scene_MZUIDesignerCanvasHost', engineSceneClass: 'Scene_MZUIDesignerCanvasHost', mountedDocumentSceneId: 'scene_tab_2', documentSceneName: 'Scene_Other', revision: 3, executionMode: 'authoring' },
+  })
+  const active = validateUiDesignerRendererBridgeMessage({
+    ...base, sequence: 3, kind: 'scene-state',
+    payload: { phase: 'active', requestedScene: null, actualScene: 'Scene_MZUIDesignerCanvasHost', engineSceneClass: 'Scene_MZUIDesignerCanvasHost', mountedDocumentSceneId: 'scene_tab_1', documentSceneName: 'Scene_RendererBridge', revision: 3, executionMode: 'authoring' },
+  })
+  const mountedState = reduceUiDesignerRendererHostRuntimeMessage(initial, mounted, 3, 'authoring', 'scene_tab_1', 'Scene_RendererBridge')
+  const transitionState = reduceUiDesignerRendererHostRuntimeMessage(mountedState, transitioning, 3, 'authoring', 'scene_tab_1', 'Scene_RendererBridge')
+  assert.equal(transitionState.executionModeReady, false)
+  const wrongState = reduceUiDesignerRendererHostRuntimeMessage(transitionState, wrongDocument, 3, 'authoring', 'scene_tab_1', 'Scene_RendererBridge')
+  assert.equal(wrongState.executionModeReady, false)
+  const activeState = reduceUiDesignerRendererHostRuntimeMessage(wrongState, active, 3, 'authoring', 'scene_tab_1', 'Scene_RendererBridge')
+  assert.equal(activeState.executionModeReady, true)
+})
+
 test('renderer lifecycle receipts expose bounded stage failures without carrying session details', () => {
-  assert.equal(UI_DESIGNER_RENDERER_BRIDGE_VERSION, '2.0.0')
+  assert.equal(UI_DESIGNER_RENDERER_BRIDGE_VERSION, '3.0.0')
   const common = { version: UI_DESIGNER_RENDERER_BRIDGE_VERSION, sessionId: 'renderer-session', generation: 4, sceneId: 'Scene_RendererBridge' }
   assert.doesNotThrow(() => validateUiDesignerRendererBridgeMessage({
     ...common, sequence: 0, kind: 'receipt', payload: { stage: 'mount', status: 'begin', message: null },

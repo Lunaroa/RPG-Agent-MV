@@ -116,14 +116,16 @@ describe('ui designer runtime staging', () => {
     assert.equal('editorVersion' in firstJson, false);
     assert.equal('canvas' in firstJson, false);
     assert.equal('guides' in firstJson, false);
-    assert.equal(firstJson.sceneScript.source, exactSource);
+    assert.equal(firstJson.sceneScript.version, '1.1.0');
+    assert.match(firstJson.sceneScript.source, /^scene\.onReady\(function/m);
+    assert.match(firstJson.sceneScript.source, /"onUpdate\(function \(\) is data"/);
     assert.throws(
       () => writeUiDesignerRuntimeExport(exportPath, scene()),
       (error: unknown) => error instanceof UiDesignerRuntimeExportOverwriteRequiredError
         && error.code === 'UI_DESIGNER_OVERWRITE_REQUIRED'
         && error.affectedFiles[0] === 'Scene_Sample.json',
     );
-    const overwritten = writeUiDesignerRuntimeExport(exportPath, { ...scene(), sceneScript: { version: '1.0.0', source: '/* changed */' } }, { overwrite: true });
+    const overwritten = writeUiDesignerRuntimeExport(exportPath, { ...scene(), sceneScript: { version: '1.1.0', source: '/* changed */' } }, { overwrite: true });
     assert.notEqual(overwritten.digest, first.digest);
     assert.match(fs.readFileSync(exportPath, 'utf8'), /changed/);
     // Simulate the crash window after the target was moved to a backup.  The
@@ -157,6 +159,6 @@ function scene(): UiRuntimeSceneExport {
     globalFilter: { blur: 0, glow: 0, preset: '' },
     nodes: [],
     zOrder: [],
-    sceneScript: { version: '1.0.0', source: '' },
+    sceneScript: { version: '1.1.0', source: '' },
   };
 }

@@ -759,7 +759,7 @@ test('official MV 1.6.1 loader reaches ready before lazy Window_Message creation
     assert.ok(onMessage)
     onMessage!({
       source: officialMv.context.parent,
-      data: envelope(session, 0, 'mount', { revision: 1, executionMode: 'authoring', scene: runtimeScene('') }),
+      data: envelope(session, 0, 'mount', { revision: 1, executionMode: 'authoring', documentSceneId: 'scene_tab_1', scene: runtimeScene('') }),
     })
     assert.equal(officialMv.setupNewGameCalls(), 1)
     assert.equal(officialMv.messageWindowTone(), null)
@@ -1403,7 +1403,7 @@ function runtimeScene(pathValue: string): Record<string, unknown> {
   return {
     version: '1.1.0', runtimeVersion: '>=1.1.0',
     meta: { sceneName: 'Scene_CanvasHost', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
-    transitions: {}, globalFilter: {}, zOrder: ['node_1'], sceneScript: { version: '1.0.0', source: '' },
+    transitions: {}, globalFilter: {}, zOrder: ['node_1'], sceneScript: { version: '1.1.0', source: '' },
     nodes: [{ id: 'node_1', name: 'Node', type: 'sprite', parentId: null, children: [], condition: { type: 'none' }, enterAnim: { type: 'none' }, exitAnim: { type: 'none' }, events: {}, propModes: {}, propCodes: {}, props: { path: pathValue } }],
   }
 }

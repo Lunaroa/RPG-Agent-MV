@@ -9,7 +9,7 @@
 export const UI_DESIGNER_DOCUMENT_VERSION = '1.1.0' as const
 export const UI_DESIGNER_EDITOR_VERSION = '1.1.0' as const
 export const UI_DESIGNER_RUNTIME_VERSION = '>=1.1.0' as const
-export const UI_DESIGNER_SCENE_SCRIPT_VERSION = '1.0.0' as const
+export const UI_DESIGNER_SCENE_SCRIPT_VERSION = '1.1.0' as const
 
 export const UI_DESIGNER_NODE_TYPES = [
   'container',

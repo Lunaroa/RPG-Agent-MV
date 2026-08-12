@@ -10,6 +10,7 @@ import {
 
 export const UI_DESIGNER_LEGACY_DOCUMENT_VERSION = '1.0.0' as const
 export const UI_DESIGNER_LEGACY_EDITOR_VERSION = '1.0.0' as const
+export const UI_DESIGNER_LEGACY_SCENE_SCRIPT_VERSION = '1.0.0' as const
 
 export const UI_DESIGNER_SCRIPT_ARGUMENTS = [
   'runtime',
@@ -39,11 +40,9 @@ export const UI_DESIGNER_NODE_SCRIPT_COMPLETIONS = [
 
 export const UI_DESIGNER_SCENE_SCRIPT_COMPLETIONS = [
   ...UI_DESIGNER_NODE_SCRIPT_COMPLETIONS,
-  'onReady',
-  'onUpdate',
+  'scene.onReady',
+  'scene.onUpdate',
 ] as const
-
-const LEGACY_LIFECYCLE_ARGUMENTS = UI_DESIGNER_SCRIPT_ARGUMENTS.join(', ')
 
 export interface UiLegacySourceCode {
   ready: string
@@ -66,11 +65,11 @@ export class UiDesignerScriptMigrationError extends Error {
  */
 export function migrateLegacyUiSourceCode(code: UiLegacySourceCode): string {
   return [
-    `onReady(function (${LEGACY_LIFECYCLE_ARGUMENTS}) {`,
+    'scene.onReady(function () {',
     code.ready,
     '});',
     '',
-    `onUpdate(function (${LEGACY_LIFECYCLE_ARGUMENTS}) {`,
+    'scene.onUpdate(function ({ frame, deltaMs }) {',
     code.update,
     '});',
     '',
@@ -81,11 +80,70 @@ export function migrateLegacyUiSourceCode(code: UiLegacySourceCode): string {
 export function uiSceneScriptSyntaxError(source: string): string | null {
   try {
     // eslint-disable-next-line no-new-func
-    Function('onReady', 'onUpdate', source)
+    Function(...UI_DESIGNER_SCRIPT_ARGUMENTS, source)
     return null
   } catch (error) {
     return error instanceof Error ? error.message : String(error)
   }
+}
+
+/**
+ * Rewrite the reserved v1.0 lifecycle identifiers without touching strings or
+ * comments. v1.0 reserved these two names for Runtime registration, so a
+ * successful compile after rewriting is the compatibility boundary for old
+ * one-file scripts.
+ */
+export function canonicalizeLegacySceneScriptSource(source: string): string {
+  let output = ''
+  let index = 0
+  let state: 'code' | 'single' | 'double' | 'template' | 'regex' | 'line-comment' | 'block-comment' = 'code'
+  while (index < source.length) {
+    const current = source[index]
+    const next = source[index + 1]
+    if (state === 'line-comment') {
+      output += current
+      index += 1
+      if (current === '\n') state = 'code'
+      continue
+    }
+    if (state === 'block-comment') {
+      output += current
+      index += 1
+      if (current === '*' && next === '/') { output += next; index += 1; state = 'code' }
+      continue
+    }
+    if (state !== 'code') {
+      output += current
+      index += 1
+      if (current === '\\' && index < source.length) { output += source[index]; index += 1; continue }
+      if ((state === 'single' && current === "'") || (state === 'double' && current === '"') || (state === 'template' && current === '`') || (state === 'regex' && current === '/')) state = 'code'
+      continue
+    }
+    if (current === '/' && next === '/') { output += '//'; index += 2; state = 'line-comment'; continue }
+    if (current === '/' && next === '*') { output += '/*'; index += 2; state = 'block-comment'; continue }
+    if (current === '/') {
+      const previous = source.slice(0, index).match(/\S(?=\s*$)/)?.[0]
+      if (!previous || /[({\[=,:;!&|?+\-*%^~<>]/.test(previous)) { output += current; index += 1; state = 'regex'; continue }
+    }
+    if (current === "'") { output += current; index += 1; state = 'single'; continue }
+    if (current === '"') { output += current; index += 1; state = 'double'; continue }
+    if (current === '`') { output += current; index += 1; state = 'template'; continue }
+    const lifecycle = source.startsWith('onReady', index) ? 'onReady' : source.startsWith('onUpdate', index) ? 'onUpdate' : undefined
+    if (lifecycle) {
+      const before = source[index - 1] ?? ''
+      const after = source[index + lifecycle.length] ?? ''
+      if (!/[\w$]/.test(before) && before !== '.' && !/[\w$]/.test(after)) {
+        output += `scene.${lifecycle}`
+        index += lifecycle.length
+        continue
+      }
+    }
+    output += current
+    index += 1
+  }
+  const error = uiSceneScriptSyntaxError(output)
+  if (error) throw new UiDesignerScriptMigrationError(`Legacy sceneScript could not be canonicalized: ${error}`)
+  return output
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -93,10 +151,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function canonicalSceneScript(value: unknown): UiSceneScript {
-  if (!isRecord(value) || value.version !== UI_DESIGNER_SCENE_SCRIPT_VERSION || typeof value.source !== 'string') {
-    throw new UiDesignerScriptMigrationError(`sceneScript must contain version ${UI_DESIGNER_SCENE_SCRIPT_VERSION} and a string source.`)
+  if (!isRecord(value) || typeof value.source !== 'string') {
+    throw new UiDesignerScriptMigrationError('sceneScript must contain a supported version and a string source.')
   }
-  return { version: UI_DESIGNER_SCENE_SCRIPT_VERSION, source: value.source }
+  if (value.version === UI_DESIGNER_SCENE_SCRIPT_VERSION) return { version: UI_DESIGNER_SCENE_SCRIPT_VERSION, source: value.source }
+  if (value.version === UI_DESIGNER_LEGACY_SCENE_SCRIPT_VERSION) {
+    return { version: UI_DESIGNER_SCENE_SCRIPT_VERSION, source: canonicalizeLegacySceneScriptSource(value.source) }
+  }
+  throw new UiDesignerScriptMigrationError(`Unsupported sceneScript version: ${String(value.version)}.`)
 }
 
 function legacySourceCode(value: unknown): UiLegacySourceCode {

@@ -57,7 +57,7 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
         previewUrl: `rmmv-asset://${project}/img/frames/001.png`, name: '001.png', exists: true, referenced: false, size: 1,
       }],
       readUiDesignerSceneData: (_project: string, requestedPath: string) => ({
-        scene: { version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 }, transitions: { enter: { type: 'none', duration: 0 }, exit: { type: 'none', duration: 0 } }, globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.0.0', source: '' } },
+        scene: { version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 }, transitions: { enter: { type: 'none', duration: 0 }, exit: { type: 'none', duration: 0 } }, globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '1.1.0', source: '' } },
         metadata: { id: `sceneData:${requestedPath}`, relativePath: requestedPath, sceneName: 'Scene_Sample', version: '1.1.0', runtimeVersion: '>=1.1.0', compatibility: 'compatible', digest: 'digest', mtimeMs: 1, size: 2 },
         projectCompatibility: { engine: 'MV', engineVersion: null, engineVersionSupported: true, warnings: [] },
       }),

@@ -10,6 +10,7 @@ import type { ProjectAssetChangeManifest } from '@contract/types'
 import { mergeProjectAssetChangeManifests } from '@contract/ui-designer-resources'
 import {
   UI_DESIGNER_RENDERER_BRIDGE_VERSION,
+  UI_DESIGNER_RENDERER_HOST_SCENE_CLASS,
   validateUiDesignerRendererBridgeMessage,
   type UiDesignerRendererBridgeReceipt,
   type UiDesignerRendererBridgeMessage,
@@ -191,6 +192,11 @@ export interface UiDesignerRendererHostRuntimeState {
   scenePhase: 'transitioning' | 'active'
   requestedScene: string | null
   actualScene: string | null
+  engineSceneClass: string | null
+  mountedDocumentSceneId: string | null
+  documentSceneName: string | null
+  mountedRevision: number | null
+  mountedExecutionMode: UiDesignerRendererExecutionMode | null
 }
 
 export function reduceUiDesignerRendererHostRuntimeMessage(
@@ -198,6 +204,8 @@ export function reduceUiDesignerRendererHostRuntimeMessage(
   message: UiDesignerRendererBridgeMessage,
   expectedRevision: number,
   requestedExecutionMode: UiDesignerRendererExecutionMode,
+  expectedDocumentSceneId: string | null = null,
+  expectedDocumentSceneName: string | null = null,
 ): UiDesignerRendererHostRuntimeState {
   if (message.kind === 'mounted' || message.kind === 'bounds') {
     if (message.payload.revision < expectedRevision) return state
@@ -207,7 +215,12 @@ export function reduceUiDesignerRendererHostRuntimeMessage(
         ...state,
         bounds: Object.fromEntries(message.payload.bounds.map((entry) => [entry.nodeId, entry])),
         executionMode: message.payload.executionMode,
-        executionModeReady: message.payload.executionMode === requestedExecutionMode,
+        executionModeReady: false,
+        engineSceneClass: message.payload.engineSceneClass,
+        mountedDocumentSceneId: message.payload.mountedDocumentSceneId,
+        documentSceneName: message.payload.documentSceneName,
+        mountedRevision: message.payload.revision,
+        mountedExecutionMode: message.payload.executionMode,
       }
     }
     const bounds = { ...state.bounds }
@@ -218,11 +231,29 @@ export function reduceUiDesignerRendererHostRuntimeMessage(
     return { ...state, diagnostics: [...state.diagnostics, ...message.payload.entries].slice(-64) }
   }
   if (message.kind === 'scene-state') {
+    const documentMatches = (expectedDocumentSceneId === null || message.payload.mountedDocumentSceneId === expectedDocumentSceneId)
+      && (expectedDocumentSceneName === null || message.payload.documentSceneName === expectedDocumentSceneName)
+    const ready = message.payload.phase === 'active'
+      && message.payload.engineSceneClass === UI_DESIGNER_RENDERER_HOST_SCENE_CLASS
+      && message.payload.mountedDocumentSceneId !== null
+      && message.payload.documentSceneName !== null
+      && message.payload.revision === expectedRevision
+      && message.payload.executionMode === requestedExecutionMode
+      && documentMatches
+      && state.mountedRevision === message.payload.revision
+      && state.mountedExecutionMode === message.payload.executionMode
+      && state.mountedDocumentSceneId === message.payload.mountedDocumentSceneId
+      && state.documentSceneName === message.payload.documentSceneName
     return {
       ...state,
       scenePhase: message.payload.phase,
       requestedScene: message.payload.requestedScene,
       actualScene: message.payload.actualScene,
+      engineSceneClass: documentMatches ? message.payload.engineSceneClass : state.engineSceneClass,
+      mountedDocumentSceneId: documentMatches ? message.payload.mountedDocumentSceneId : state.mountedDocumentSceneId,
+      documentSceneName: documentMatches ? message.payload.documentSceneName : state.documentSceneName,
+      executionMode: message.payload.executionMode,
+      executionModeReady: ready,
     }
   }
   return state
@@ -243,6 +274,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   const scenePhase = ref<'transitioning' | 'active'>('active')
   const requestedScene = ref<string | null>(null)
   const actualScene = ref<string | null>(null)
+  const engineSceneClass = ref<string | null>(null)
+  const mountedDocumentSceneId = ref<string | null>(null)
+  const documentSceneName = ref<string | null>(null)
+  const mountedRevision = ref<number | null>(null)
+  const mountedExecutionMode = ref<UiDesignerRendererExecutionMode | null>(null)
   let session: UiDesignerRendererHostSession | null = null
   let sessionAdapter: UiDesignerRendererHostAdapter | null = null
   let hostSequence = -1
@@ -454,9 +490,10 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     if (update.kind === 'mount') {
       if (executionModeChanged) status.value = 'loading'
       executionModeReady.value = false
+      scenePhase.value = 'transitioning'
       setStage('mount', 'begin')
       try {
-        if (!post('mount', { revision, executionMode: requestedExecutionMode, scene: update.scene }, update.scene.meta.sceneName)) throw new Error('mount post rejected')
+        if (!post('mount', { revision, executionMode: requestedExecutionMode, documentSceneId: designerSceneId(), scene: update.scene }, update.scene.meta.sceneName)) throw new Error('mount post rejected')
         pendingMountRevision = revision
       } catch {
         void fail(resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.mountPost, 'mount'))
@@ -618,6 +655,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     scenePhase.value = 'active'
     requestedScene.value = null
     actualScene.value = null
+    engineSceneClass.value = null
+    mountedDocumentSceneId.value = null
+    documentSceneName.value = null
+    mountedRevision.value = null
+    mountedExecutionMode.value = null
     engineReady = false
     processConfirmed = false
     actorDisposed = false
@@ -821,6 +863,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         scenePhase.value = 'active'
         requestedScene.value = null
         actualScene.value = null
+        engineSceneClass.value = null
+        mountedDocumentSceneId.value = null
+        documentSceneName.value = null
+        mountedRevision.value = null
+        mountedExecutionMode.value = null
         engineReady = false
         processConfirmed = false
       }
@@ -910,6 +957,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       scenePhase.value = 'active'
       requestedScene.value = null
       actualScene.value = null
+      engineSceneClass.value = null
+      mountedDocumentSceneId.value = null
+      documentSceneName.value = null
+      mountedRevision.value = null
+      mountedExecutionMode.value = null
       engineReady = false
       processConfirmed = false
       iframeUrl.value = started.iframeUrl
@@ -992,14 +1044,17 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       && (candidateEnvelope.sessionId !== active.sessionId || candidateEnvelope.generation !== active.generation)
     ) return
     try {
+      const expectsDocumentIdentity = session
+        && (candidateEnvelope?.kind === 'mounted' || candidateEnvelope?.kind === 'scene-state')
+        && (pendingMountRevision !== null || mountedDocumentSceneId.value !== null)
       const message = validateUiDesignerRendererBridgeMessage(candidate, {
         sessionId: active.sessionId,
         generation: active.generation,
         minimumSequence: hostSequence + 1,
-        ...(session && status.value === 'running' && ['mounted', 'bounds', 'scene-state'].includes(event.data?.kind)
+        ...(expectsDocumentIdentity
           ? { sceneId: activeSceneId() }
           : {}),
-        ...((candidateEnvelope?.kind === 'fatal' || (session && (candidateEnvelope?.kind === 'mounted' || candidateEnvelope?.kind === 'bounds')))
+        ...((candidateEnvelope?.kind === 'fatal' || (session && (candidateEnvelope?.kind === 'mounted' || candidateEnvelope?.kind === 'bounds' || candidateEnvelope?.kind === 'scene-state')))
           ? { minimumRevision: revision }
           : {}),
       })
@@ -1035,6 +1090,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         setStage('confirm', 'begin')
         void confirmProcess(active, sessionAdapter)
       } else if (message.kind === 'ready') {
+        if (message.payload.engineSceneClass !== UI_DESIGNER_RENDERER_HOST_SCENE_CLASS) throw new Error('The isolated UI canvas ready scene class does not match the fixed host scene.')
         setStage('ready', 'success')
         engineReady = true
         maybeRun()
@@ -1047,7 +1103,12 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
           scenePhase: scenePhase.value,
           requestedScene: requestedScene.value,
           actualScene: actualScene.value,
-        }, message, revision, options.executionMode())
+          engineSceneClass: engineSceneClass.value,
+          mountedDocumentSceneId: mountedDocumentSceneId.value,
+          documentSceneName: documentSceneName.value,
+          mountedRevision: mountedRevision.value,
+          mountedExecutionMode: mountedExecutionMode.value,
+        }, message, revision, options.executionMode(), designerSceneId(), activeSceneId())
         bounds.value = next.bounds
         diagnostics.value = next.diagnostics
         executionMode.value = next.executionMode
@@ -1055,9 +1116,18 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         scenePhase.value = next.scenePhase
         requestedScene.value = next.requestedScene
         actualScene.value = next.actualScene
+        engineSceneClass.value = next.engineSceneClass
+        mountedDocumentSceneId.value = next.mountedDocumentSceneId
+        documentSceneName.value = next.documentSceneName
+        mountedRevision.value = next.mountedRevision
+        mountedExecutionMode.value = next.mountedExecutionMode
         if (message.kind === 'diagnostic') options.designer.runtimeDiagnostics = [...diagnostics.value]
         if (message.kind === 'mounted' && message.payload.revision >= revision) {
-          const mountedModeMatches = message.payload.executionMode === options.executionMode() && executionModeReady.value
+          const mountedIdentityMatches = message.payload.engineSceneClass === UI_DESIGNER_RENDERER_HOST_SCENE_CLASS
+            && message.payload.mountedDocumentSceneId === designerSceneId()
+            && message.payload.documentSceneName === activeSceneId()
+          const mountedModeMatches = message.payload.executionMode === options.executionMode()
+          if (!mountedIdentityMatches) throw new Error('The isolated UI canvas mounted document identity does not match the active request.')
           if (!mountedModeMatches) {
             // A same-revision receipt from the previous mode must not settle the
             // current transition. Drop the stale pending revision and issue a
@@ -1071,20 +1141,34 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
             forceMountQueued = false
             syncScene(true)
           } else {
-            cancelMountedWatchdog()
-            cancelMountedWatchdog = () => undefined
-            pendingMountRevision = null
-            status.value = 'running'
             setStage('mounted', 'success')
-            cancelDraftSync()
-            if (postPendingResourceRefresh()) return
-            const previewNeedsLatestMount = sceneSyncQueued && options.executionMode() === 'full-preview'
-            if (sceneSyncQueued || previousScene?.meta.sceneName !== activeSceneId()) syncScene(previewNeedsLatestMount)
-            if (!previewNeedsLatestMount) options.onExecutionModeReady?.(message.payload.executionMode)
-            syncSelection()
+            // Mounted is only the renderer acknowledgment.  The official
+            // engine scene can still be transitioning, so running/ready is
+            // settled by the matching active scene-state below.
+            status.value = 'loading'
           }
         }
-        if (message.kind === 'scene-state') setStage('scene-state', message.payload.phase === 'active' ? 'success' : 'begin')
+        if (message.kind === 'scene-state') {
+          setStage('scene-state', message.payload.phase === 'active' && executionModeReady.value ? 'success' : 'begin')
+          if (executionModeReady.value) {
+            const mountedRevisionMatches = pendingMountRevision === null || pendingMountRevision === message.payload.revision
+            if (mountedRevisionMatches) {
+              cancelMountedWatchdog()
+              cancelMountedWatchdog = () => undefined
+              pendingMountRevision = null
+              status.value = 'running'
+              cancelDraftSync()
+              if (postPendingResourceRefresh()) return
+              const previewNeedsLatestMount = sceneSyncQueued && options.executionMode() === 'full-preview'
+              if (sceneSyncQueued || previousScene?.meta.sceneName !== activeSceneId()) syncScene(previewNeedsLatestMount)
+              if (!previewNeedsLatestMount) options.onExecutionModeReady?.(message.payload.executionMode)
+              syncSelection()
+            }
+          } else if (message.payload.phase === 'transitioning') {
+            executionModeReady.value = false
+            status.value = 'loading'
+          }
+        }
       } else if (message.kind === 'exit-request') {
         if (executionModeReady.value && executionMode.value === 'full-preview') options.onPreviewExitRequest?.(message.payload.key)
       } else if (message.kind === 'disposed') {
@@ -1178,5 +1262,5 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       })
   })
 
-  return { status, error, failureCode, failureRecoveryReason, iframeUrl, bounds, diagnostics, executionMode, executionModeReady, stage, stageStatus, scenePhase, requestedScene, actualScene, onIframeLoad, onIframeError, retry, refreshCanvas, dispose }
+  return { status, error, failureCode, failureRecoveryReason, iframeUrl, bounds, diagnostics, executionMode, executionModeReady, stage, stageStatus, scenePhase, requestedScene, actualScene, engineSceneClass, mountedDocumentSceneId, documentSceneName, mountedRevision, mountedExecutionMode, onIframeLoad, onIframeError, retry, refreshCanvas, dispose }
 }

@@ -847,8 +847,8 @@ describe('MZUIRuntime MV/MZ bridge', () => {
       source: [
         'let sharedCount = 0;',
         'let lateRegister;',
-        'onReady(function () { sharedCount += 1; lateRegister = onUpdate; this.__lateRegister = lateRegister; this.__readyScene = this; this.__readyNode = this.nodes.Child; });',
-        'onUpdate(function () { sharedCount += 1; this.__updateScene = this; this.__sharedCount = sharedCount; });',
+        'onReady(function (runtime, context) { sharedCount += 1; lateRegister = onUpdate; this.__lateRegister = lateRegister; this.__readyScene = this; this.__readyNode = this.nodes.Child; this.__legacyReadyArgs = [runtime === this._mzuiRuntime, context.sceneApi === this]; });',
+        'onUpdate(function (runtime, context) { sharedCount += 1; this.__updateScene = this; this.__sharedCount = sharedCount; this.__legacyUpdateArgs = [runtime === this._mzuiRuntime, context.sceneApi === this, runtime.frame, runtime.deltaMs]; });',
       ].join('\n'),
     };
     context.MZUIRuntime.registerScene('Scene_Abi', 'Scene_Base', { ...scene, meta: { ...scene.meta, sceneName: 'Scene_Abi' } });
@@ -859,6 +859,8 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(instance.__updateScene, instance);
     assert.equal(instance.__sharedCount, 2);
     assert.ok(instance.__readyNode);
+    assert.deepEqual(Array.from(instance.__legacyReadyArgs), [true, true]);
+    assert.deepEqual(Array.from(instance.__legacyUpdateArgs), [true, true, 1, 1000 / 60]);
     instance.terminate();
     assert.throws(() => instance.__lateRegister(function () {}), /only be called synchronously/);
   });
@@ -914,7 +916,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     const scene = sceneDocument();
     scene.sceneScript = sceneScript(
       'this.__abiReady = [self === scene, $sw(1), $var(1)]; $setSw(2, true); $setVar(3, 8);',
-      'this.__abiUpdate = [self === scene, $sw(2), $var(3)];',
+      'this.__abiUpdate = [self === scene, $sw(2), $var(3), frame, deltaMs];',
     );
     scene.nodes[1].propModes = { x: 'code' };
     scene.nodes[1].propCodes = { x: '$var(3) + 1' };
@@ -931,6 +933,8 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(instance.__abiUpdate[0], true);
     assert.equal(instance.__abiUpdate[1], true);
     assert.equal(instance.__abiUpdate[2], 8);
+    assert.equal(instance.__abiUpdate[3], 1);
+    assert.equal(instance.__abiUpdate[4], 1000 / 60);
     assert.equal(instance._mzuiRuntime.scene.nodes[1].props.x, 9);
     assert.equal(instance.__abiAction[0], true);
     assert.equal(instance.__abiAction[1], 8);
@@ -1444,8 +1448,8 @@ function sceneDocument(): any {
   };
 }
 
-function sceneScript(ready = '', update = ''): { version: '1.0.0'; source: string } {
-  return { version: '1.0.0', source: migrateLegacyUiSourceCode({ ready, update }) };
+function sceneScript(ready = '', update = ''): { version: '1.1.0'; source: string } {
+  return { version: '1.1.0', source: migrateLegacyUiSourceCode({ ready, update }) };
 }
 
 function assertEngineWindowTextSignature(engine: 'MV' | 'MZ'): void {

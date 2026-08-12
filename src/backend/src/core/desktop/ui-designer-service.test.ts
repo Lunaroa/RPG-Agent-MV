@@ -314,6 +314,6 @@ function sampleDocument(): UiDesignerDocument {
       events: {},
     }],
     zOrder: ['node_root'],
-    sceneScript: { version: '1.0.0', source: '' },
+    sceneScript: { version: '1.1.0', source: '' },
   };
 }

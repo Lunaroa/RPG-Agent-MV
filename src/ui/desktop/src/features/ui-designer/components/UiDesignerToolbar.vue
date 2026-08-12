@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onBeforeUnmount, ref, watch } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n } from '../i18n'
 
@@ -13,6 +14,32 @@ const emit = defineEmits<{
 }>()
 const { t } = useUiDesignerI18n()
 const designer = props.designer
+const sceneNameDraft = ref(designer.document.meta.sceneName)
+let sceneNamePending = false
+const previewSceneName = (value: string) => {
+  sceneNameDraft.value = value
+  sceneNamePending = value !== designer.document.meta.sceneName
+}
+const commitSceneName = () => {
+  if (!sceneNamePending) return
+  const value = sceneNameDraft.value
+  sceneNamePending = false
+  if (value !== designer.document.meta.sceneName) designer.setSceneMeta('sceneName', value)
+}
+const cancelSceneName = () => {
+  sceneNamePending = false
+  sceneNameDraft.value = designer.document.meta.sceneName
+}
+const unregisterSceneNameDraft = designer.draftCoordinator.register(commitSceneName, {
+  cancel: cancelSceneName,
+  sceneId: () => designer.activeSceneId,
+  pending: () => sceneNamePending,
+})
+watch(() => designer.document.meta.sceneName, (value) => {
+  sceneNamePending = false
+  sceneNameDraft.value = value
+})
+onBeforeUnmount(() => { commitSceneName(); unregisterSceneNameDraft() })
 
 const togglePreview = () => {
   void (designer.isPreviewing ? designer.stopPreview() : designer.startPreview())
@@ -63,10 +90,12 @@ const togglePreview = () => {
 
     <div class="toolbar-scene">
       <el-input
-        :model-value="designer.document.meta.sceneName"
+        :model-value="sceneNameDraft"
         size="small"
         :aria-label="t('sceneName')"
-        @update:model-value="designer.setSceneMeta('sceneName', $event)"
+        @update:model-value="previewSceneName"
+        @blur="commitSceneName"
+        @keydown.enter.prevent="commitSceneName"
       />
       <span class="scene-version">v{{ designer.document.version }}</span>
     </div>

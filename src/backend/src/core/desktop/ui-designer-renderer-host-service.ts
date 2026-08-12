@@ -20,7 +20,7 @@ import { inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts'
 import { assertUiDesignerProjectEngineSupported } from './ui-designer-project-service.ts'
 import {
   cleanupIsolatedProject,
-  prepareIsolatedStagedProject,
+  prepareUiDesignerRendererOverlay,
   verifyIsolatedSourceState,
   type IsolatedProjectStateEvidence,
   type IsolatedProjectPreparation,
@@ -45,7 +45,12 @@ export interface UiDesignerRendererHostPreparationFactory {
 }
 
 export interface UiDesignerRendererHostDependencies {
-  registerPreviewRoot(key: string, resourceRoot: string, sourceProject: string): string
+  registerPreviewRoot(
+    key: string,
+    resourceRoot: string,
+    sourceProject: string,
+    options?: { fallback?: { root: string; prefixes: readonly string[] }; deniedPaths?: readonly string[] },
+  ): string
   unregisterPreviewRoot(key: string): void
   verifyFrameIsolation(url: string): boolean
   prepareIsolated?: UiDesignerRendererHostPreparationFactory
@@ -78,9 +83,8 @@ export class UiDesignerRendererHostService {
   constructor(workflowRoot: string, dependencies: UiDesignerRendererHostDependencies) {
     this.#workflowRoot = path.resolve(workflowRoot)
     this.#dependencies = dependencies
-    this.#prepareIsolated = dependencies.prepareIsolated || ((root, project, prefix) => prepareIsolatedStagedProject(root, project, {
+    this.#prepareIsolated = dependencies.prepareIsolated || ((root, project, prefix) => prepareUiDesignerRendererOverlay(root, project, {
       temporaryPrefix: prefix,
-      physicalCopyAllProjectDirectories: true,
     }))
     this.#verifySourceState = dependencies.verifySourceState || verifyIsolatedSourceState
   }
@@ -124,10 +128,12 @@ export class UiDesignerRendererHostService {
       const sessionId = crypto.randomUUID()
       stageUiDesignerRendererHost(preparation, project, { sessionId, generation: generationInput })
       protocolKey = crypto.randomBytes(32).toString('hex')
+      const sourceLayout = resolveRmmvLayout(project)
       const iframeUrl = this.#dependencies.registerPreviewRoot(
         protocolKey,
-        resolveRmmvLayout(preparation.temporaryProject).resourceRoot,
+        overlayResourceRoot(preparation.temporaryProject, sourceLayout.resourceRootRelative),
         project,
+        rendererProtocolOptions(preparation, sourceLayout.resourceRoot, sourceLayout.resourceRootRelative),
       )
       const publicSession: UiDesignerRendererHostSession = {
         sessionId,
@@ -290,20 +296,22 @@ export function stageUiDesignerRendererHost(
     assertStageOwnership()
   }
   assertStageOwnership()
-  const layout = resolveRmmvLayout(temporaryProject)
-  const manifest = inspectRmmvProject(temporaryProject)
-  if (!manifest.runnableStructure) throw new Error('The isolated UI designer renderer project is not runnable.')
-  const pluginDirectory = path.join(layout.resourceRoot, 'js', 'plugins')
-  const pluginsPath = path.join(layout.resourceRoot, 'js', 'plugins.js')
-  const indexPath = path.join(layout.resourceRoot, 'index.html')
-  if (!fs.existsSync(indexPath) || !fs.statSync(indexPath).isFile()) throw new Error('The isolated UI designer renderer requires the project index.html.')
-  if (!fs.existsSync(pluginsPath) || !fs.statSync(pluginsPath).isFile()) throw new Error('The isolated UI designer renderer requires js/plugins.js.')
+  const sourceLayout = resolveRmmvLayout(expectedSourceProject)
+  const manifest = inspectRmmvProject(expectedSourceProject)
+  const resourceRoot = overlayResourceRoot(temporaryProject, sourceLayout.resourceRootRelative)
+  ownedWrite(() => fs.mkdirSync(resourceRoot, { recursive: true }))
+  const pluginDirectory = path.join(resourceRoot, 'js', 'plugins')
+  const pluginsPath = materializeRendererHostInput(preparation, sourceLayout.resourceRoot, resourceRoot, 'js/plugins.js', assertStageOwnership)
+  materializeRendererHostInput(preparation, sourceLayout.resourceRoot, resourceRoot, 'index.html', assertStageOwnership)
+  if (manifest.engine === 'rpg-maker-mz') {
+    materializeRendererHostInput(preparation, sourceLayout.resourceRoot, resourceRoot, 'js/main.js', assertStageOwnership)
+  }
   ownedWrite(() => fs.mkdirSync(pluginDirectory, { recursive: true }))
   const runtimeBundle = bundledUiDesignerRuntime()
-  ownedWrite(() => fs.writeFileSync(path.join(layout.resourceRoot, ...HOST_STORAGE_PLUGIN_RELATIVE_PATH.split('/')), rendererSessionStoragePluginSource(session), 'utf8'))
-  ownedWrite(() => stageUiDesignerSessionStorageBootstrap(layout.resourceRoot, manifest.engine))
-  ownedWrite(() => fs.writeFileSync(path.join(layout.resourceRoot, ...HOST_RUNTIME_RELATIVE_PATH.split('/')), runtimeBundle.source, 'utf8'))
-  ownedWrite(() => fs.writeFileSync(path.join(layout.resourceRoot, ...HOST_PLUGIN_RELATIVE_PATH.split('/')), rendererHostPluginSource(session, runtimeBundle.version), 'utf8'))
+  ownedWrite(() => fs.writeFileSync(path.join(resourceRoot, ...HOST_STORAGE_PLUGIN_RELATIVE_PATH.split('/')), rendererSessionStoragePluginSource(session), 'utf8'))
+  ownedWrite(() => stageUiDesignerSessionStorageBootstrap(resourceRoot, manifest.engine))
+  ownedWrite(() => fs.writeFileSync(path.join(resourceRoot, ...HOST_RUNTIME_RELATIVE_PATH.split('/')), runtimeBundle.source, 'utf8'))
+  ownedWrite(() => fs.writeFileSync(path.join(resourceRoot, ...HOST_PLUGIN_RELATIVE_PATH.split('/')), rendererHostPluginSource(session, runtimeBundle.version), 'utf8'))
   const plugins = parsePluginsJs(fs.readFileSync(pluginsPath, 'utf8'))
     .filter((entry) => {
       const configuredName = typeof entry.name === 'string' ? entry.name.replace(/\\/g, '/').split('/').at(-1)?.replace(/\.js$/i, '') : ''
@@ -312,6 +320,52 @@ export function stageUiDesignerRendererHost(
   plugins.push({ name: 'MZUIRuntime', status: true, description: 'UI designer shared MV/MZ runtime', parameters: { AutoRegister: 'false' } })
   plugins.push({ name: HOST_PLUGIN_NAME, status: true, description: 'Isolated UI designer canvas host', parameters: {} })
   ownedWrite(() => fs.writeFileSync(pluginsPath, `var $plugins =\n${JSON.stringify(plugins, null, 2)};\n`, 'utf8'))
+}
+
+function overlayResourceRoot(temporaryProject: string, resourceRootRelative: '' | 'www'): string {
+  return resourceRootRelative ? path.join(temporaryProject, resourceRootRelative) : temporaryProject
+}
+
+function materializeRendererHostInput(
+  preparation: IsolatedProjectPreparation,
+  sourceResourceRoot: string,
+  targetResourceRoot: string,
+  relativePath: string,
+  assertOwned: () => void,
+): string {
+  const target = path.join(targetResourceRoot, ...relativePath.split('/'))
+  if (fs.existsSync(target) && fs.statSync(target).isFile()) return target
+  const projectRelative = path.relative(preparation.temporaryProject, target).replace(/\\/g, '/')
+  if (preparation.staging.files.some((entry) => entry.delete && entry.relativePath.replace(/\\/g, '/') === projectRelative)) {
+    throw new Error(`The staged UI designer renderer deletes required host file: ${relativePath}`)
+  }
+  const source = path.join(sourceResourceRoot, ...relativePath.split('/'))
+  if (!fs.existsSync(source) || !fs.statSync(source).isFile()) {
+    throw new Error(`The selected project does not expose required UI designer renderer file: ${relativePath}`)
+  }
+  assertOwned()
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  fs.copyFileSync(source, target)
+  assertOwned()
+  return target
+}
+
+function rendererProtocolOptions(
+  preparation: IsolatedProjectPreparation,
+  sourceResourceRoot: string,
+  resourceRootRelative: '' | 'www',
+): { fallback: { root: string; prefixes: readonly string[] }; deniedPaths: readonly string[] } {
+  const rootPrefix = resourceRootRelative ? `${resourceRootRelative}/` : ''
+  const stagedDeletes = preparation.staging.files
+    .filter((entry) => entry.delete)
+    .map((entry) => entry.relativePath.replace(/\\/g, '/'))
+    .filter((relative) => !rootPrefix || relative.startsWith(rootPrefix))
+    .map((relative) => rootPrefix ? relative.slice(rootPrefix.length) : relative)
+    .filter(Boolean)
+  return {
+    fallback: { root: sourceResourceRoot, prefixes: [''] },
+    deniedPaths: ['save/', '.git/', ...stagedDeletes],
+  }
 }
 
 function stageUiDesignerSessionStorageBootstrap(resourceRoot: string, engine: 'rpg-maker-mv' | 'rpg-maker-mz'): void {

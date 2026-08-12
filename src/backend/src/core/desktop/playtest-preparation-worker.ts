@@ -14,7 +14,7 @@ import {
   type ParticleAnimationPreviewPreparation,
 } from './particle-animation-preview-preparation.ts';
 import {
-  prepareIsolatedStagedProject,
+  prepareUiDesignerRendererOverlay,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
 import type { IsolatedProjectOwnershipChallenge } from './isolated-project-attestation.ts';
@@ -41,7 +41,6 @@ export type PlaytestPreparationWorkerRequest =
     workflowRoot: string;
     project: string;
     temporaryPrefix?: string;
-    physicalCopyAllProjectDirectories: true;
   };
 
 export type PlaytestPreparationWorkerResponse =
@@ -71,9 +70,9 @@ async function main(): Promise<void> {
         ? prepareParticleAnimationPreview(request.workflowRoot, request.project, request.animation, {}, {
           ownershipChallenge: request.ownershipChallenge,
         })
-        : prepareIsolatedStagedProject(request.workflowRoot, request.project, {
+        : prepareUiDesignerRendererOverlay(request.workflowRoot, request.project, {
           ownershipChallenge: request.ownershipChallenge,
-          physicalCopyAllProjectDirectories: true,
+          ...(request.temporaryPrefix ? { temporaryPrefix: request.temporaryPrefix } : {}),
         });
     writeJsonAtomic(responsePath, { ok: true, preparation } satisfies PlaytestPreparationWorkerResponse);
   } catch (error) {

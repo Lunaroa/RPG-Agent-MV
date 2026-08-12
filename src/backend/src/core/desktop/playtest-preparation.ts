@@ -97,7 +97,7 @@ export async function prepareParticlePreviewInWorker(
   return preparation as ParticleAnimationPreviewPreparation;
 }
 
-/** Runs the UI designer renderer temporary-project copy outside Electron's main thread. */
+/** Builds the UI designer renderer's sparse session-owned overlay outside Electron's main thread. */
 export async function prepareUiDesignerRendererInWorker(
   workflowRoot: string,
   project: string,
@@ -112,7 +112,6 @@ export async function prepareUiDesignerRendererInWorker(
     workflowRoot: path.resolve(workflowRoot),
     project: path.resolve(project),
     ownershipChallenge: challenge,
-    physicalCopyAllProjectDirectories: true,
     ...(temporaryPrefix ? { temporaryPrefix } : {}),
   }, dependencies);
   return preparation as IsolatedProjectPreparation;

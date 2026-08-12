@@ -500,8 +500,19 @@ async function loadBackendModules(roots: AppRoots) {
       prepareIsolated: (workflowRoot: string, project: string, temporaryPrefix?: string) => (
         desktop.playtestPreparation.prepareUiDesignerRendererInWorker(workflowRoot, project, temporaryPrefix)
       ),
-      registerPreviewRoot: (key: string, resourceRoot: string, sourceProject: string) => (
-        registerMapPreviewRoot(key, resourceRoot, resolveRendererHostDisabledPlugins(sourceProject))
+      registerPreviewRoot: (
+        key: string,
+        resourceRoot: string,
+        sourceProject: string,
+        options?: { fallback?: { root: string; prefixes: readonly string[] }; deniedPaths?: readonly string[] },
+      ) => (
+        registerMapPreviewRoot(
+          key,
+          resourceRoot,
+          resolveRendererHostDisabledPlugins(sourceProject),
+          options?.fallback,
+          options?.deniedPaths,
+        )
       ),
       unregisterPreviewRoot: unregisterMapPreviewRoot,
       verifyFrameIsolation: verifyMapPreviewFrameIsolation,

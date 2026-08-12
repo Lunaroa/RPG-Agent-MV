@@ -159,7 +159,10 @@ const propValue = (key: string): unknown => selectedNode.value ? (selectedNode.v
 const propMode = (key: string) => selectedNode.value?.propModes[key] ?? 'value'
 const propCode = (key: string) => selectedNode.value?.propCodes[key] ?? ''
 
-const updateProperty = (key: string, value: unknown) => { if (selectedNode.value) designer.updateNodeProperty(selectedNode.value.id, key, value) }
+const updateProperty = (key: string, value: unknown, nodeId?: string) => {
+  const targetId = nodeId ?? selectedNode.value?.id
+  if (targetId) designer.updateNodeProperty(targetId, key, value)
+}
 const updateMode = (key: string, mode: 'value' | 'code') => { if (selectedNode.value) designer.setPropertyMode(selectedNode.value.id, key, mode) }
 const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
@@ -216,7 +219,7 @@ const commitNodeName = () => { if (selectedNode.value) designer.renameNode(selec
           :scene-id="designer.activeSceneId"
           :node-id="selectedNode.id"
           :completion-items="designer.document.nodes.flatMap((node) => [node.id, node.name])"
-          @value="updateProperty(field.key, $event)"
+          @value="(value, _sceneId, nodeId) => updateProperty(field.key, value, nodeId)"
           @mode="updateMode(field.key, $event)"
           @code="(code, sceneId, nodeId) => updateCode(field.key, code, sceneId, nodeId)"
           />

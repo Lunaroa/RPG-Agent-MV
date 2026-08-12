@@ -476,6 +476,18 @@ describe('ui designer history, geometry and performance', () => {
     assert.equal(distributed.nodes.find((node) => node.id === 'b')?.props.x, 75)
   })
 
+  test('stores one canonical history point per explicit Inspector transaction', () => {
+    const initial = createUiDocument()
+    const history = new UiDesignerHistory(initial)
+    const edited = cloneUiDocument(initial)
+    edited.nodes[0].props.opacity = 192
+    const current = history.commitOwned(edited, 'Update opacity')
+    assert.equal(history.availableUndoSteps, 1)
+    assert.equal(current.nodes[0].props.opacity, 192)
+    assert.equal(history.undo().nodes[0].props.opacity, 255)
+    assert.equal(history.redo().nodes[0].props.opacity, 192)
+  })
+
   test('normalizes geometry and pane sizes through one deterministic integer contract', () => {
     const document = createUiDocument()
     document.canvas.width = 816.6

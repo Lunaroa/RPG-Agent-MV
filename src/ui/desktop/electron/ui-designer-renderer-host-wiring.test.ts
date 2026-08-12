@@ -4,7 +4,7 @@ import test from 'node:test'
 
 test('renderer host plugin policy is read-only and cannot invoke project config migration', () => {
   const source = fs.readFileSync(new URL('./ipc-handlers.ts', import.meta.url), 'utf8')
-  assert.match(source, /registerMapPreviewRoot\(key, resourceRoot, resolveRendererHostDisabledPlugins\(sourceProject\)\)/)
+  assert.match(source, /registerMapPreviewRoot\([\s\S]*key,[\s\S]*resourceRoot,[\s\S]*resolveRendererHostDisabledPlugins\(sourceProject\),[\s\S]*options\?\.fallback,[\s\S]*options\?\.deniedPaths/)
   const resolver = source.slice(source.indexOf('function resolveRendererHostDisabledPlugins'), source.indexOf('function publishMapPreviewRuntimeCommand'))
   assert.ok(resolver.length > 0)
   assert.doesNotMatch(resolver, /patchProjectConfig|patchWorkspaceSettings/)

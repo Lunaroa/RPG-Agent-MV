@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -63,6 +64,64 @@ test('isolated UI canvas host stages and cleans physical MV and MZ projects', as
         service.stop(session.sessionId)
         assert.equal(fs.existsSync(isolated), false)
         assert.deepEqual(unregistered, registered)
+      } finally {
+        try { service.shutdownSync() } catch { /* asserted by the test body */ }
+        fs.rmSync(root, { recursive: true, force: true })
+        if (isolated) fs.rmSync(isolated, { recursive: true, force: true })
+      }
+    })
+  }
+})
+
+test('UI canvas host uses a sparse MV www or MZ root overlay with read-only source fallback', async (t) => {
+  for (const engine of ['MV', 'MZ'] as const) {
+    await t.test(engine, async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-renderer-sparse-'))
+      const project = path.join(root, 'projects', `sample-${engine.toLowerCase()}`)
+      writeProject(project, engine)
+      fs.mkdirSync(path.join(resourceRoot(project, engine), 'img', 'pictures'), { recursive: true })
+      fs.writeFileSync(path.join(resourceRoot(project, engine), 'img', 'pictures', 'menu.png'), 'source-image', 'utf8')
+      const sourceBefore = treeDigest(project)
+      let isolated = ''
+      let registration: {
+        resourceRoot?: string
+        fallback?: { root: string; prefixes: readonly string[] }
+        deniedPaths?: readonly string[]
+      } = {}
+      const service = new UiDesignerRendererHostService(root, {
+        prepareIsolated: (_workflowRoot, source) => {
+          const challenge = createOwnedEmptyIsolatedProject(source, { temporaryPrefix: 'ui-renderer-sparse-owner-' })
+          isolated = challenge.temporaryProject
+          return {
+            ...challenge,
+            sourceFingerprint: 'read-only',
+            saveFingerprint: 'save',
+            staging: { files: [], digest: 'staging' },
+            savesExcluded: true,
+            sourceAccessMode: 'protocol-read-only',
+          }
+        },
+        registerPreviewRoot: (key, overlayRoot, _sourceProject, options) => {
+          registration = { resourceRoot: overlayRoot, fallback: options?.fallback, deniedPaths: options?.deniedPaths }
+          return `rpg-agent-preview://${key}/index.html`
+        },
+        unregisterPreviewRoot: () => undefined,
+        verifyFrameIsolation: () => true,
+        verifySourceState: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      })
+      try {
+        const session = await service.start(project, 1)
+        const overlayRoot = resourceRoot(isolated, engine)
+        assert.equal(registration.resourceRoot, overlayRoot)
+        assert.equal(registration.fallback?.root, fs.realpathSync.native(resourceRoot(project, engine)))
+        assert.deepEqual(registration.fallback?.prefixes, [''])
+        assert.equal(registration.deniedPaths?.includes('save/'), true)
+        assert.equal(fs.existsSync(path.join(overlayRoot, 'data')), false)
+        assert.equal(fs.existsSync(path.join(overlayRoot, 'img')), false)
+        assert.equal(fs.existsSync(path.join(overlayRoot, 'js', engine === 'MV' ? 'rpg_core.js' : 'rmmz_core.js')), false)
+        assert.equal(fs.readFileSync(path.join(resourceRoot(project, engine), 'img', 'pictures', 'menu.png'), 'utf8'), 'source-image')
+        assert.equal(treeDigest(project), sourceBefore)
+        service.stop(session.sessionId)
       } finally {
         try { service.shutdownSync() } catch { /* asserted by the test body */ }
         fs.rmSync(root, { recursive: true, force: true })
@@ -1284,6 +1343,21 @@ function preparation(sourceProject: string, temporaryPrefix: string): IsolatedPr
     staging: { files: [], digest: 'staging' },
     savesExcluded: true,
   }
+}
+
+function treeDigest(root: string): string {
+  const hash = crypto.createHash('sha256')
+  const visit = (directory: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+      const absolute = path.join(directory, entry.name)
+      const relative = path.relative(root, absolute).replace(/\\/g, '/')
+      hash.update(`${entry.isDirectory() ? 'd' : 'f'}:${relative}\n`)
+      if (entry.isDirectory()) visit(absolute)
+      else if (entry.isFile()) hash.update(fs.readFileSync(absolute))
+    }
+  }
+  visit(root)
+  return hash.digest('hex')
 }
 
 function resourceRoot(project: string, engine: Engine): string { return engine === 'MV' ? path.join(project, 'www') : project }

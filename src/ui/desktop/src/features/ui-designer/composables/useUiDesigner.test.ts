@@ -12,6 +12,29 @@ import { useUiDesigner } from './useUiDesigner'
 
 const success = <T>(value?: T) => ({ status: 'success' as const, message: 'ok', value })
 
+test('Inspector draft flush commits once and one undo restores the original property', () => {
+  const designer = useUiDesigner()
+  designer.addNode('text', 'node_root')
+  const nodeId = designer.selectedIds.value[0]
+  const original = designer.document.value.nodes.find((node) => node.id === nodeId)?.props.opacity
+  const before = designer.activeScene.value.history.availableUndoSteps
+  let pending = 180
+  const unregister = designer.draftCoordinator.register(() => {
+    if (pending === 0) return
+    designer.updateNodeProperty(nodeId, 'opacity', pending)
+  }, { sceneId: designer.activeSceneId.value, pending: () => pending !== 0 })
+
+  pending = 220
+  pending = 200
+  designer.flushDrafts(designer.activeSceneId.value)
+  pending = 0
+  assert.equal(designer.activeScene.value.history.availableUndoSteps, before + 1)
+  assert.equal(designer.document.value.nodes.find((node) => node.id === nodeId)?.props.opacity, 200)
+  designer.undo()
+  assert.equal(designer.document.value.nodes.find((node) => node.id === nodeId)?.props.opacity, original)
+  unregister()
+})
+
 test('closing the only opened tab creates a fresh untitled clean scene', async () => {
   let clearedRecovery: string | undefined
   const file: UiDesignerPersistenceAdapter = {

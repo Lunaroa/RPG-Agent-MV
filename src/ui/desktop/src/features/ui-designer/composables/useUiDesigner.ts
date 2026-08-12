@@ -36,7 +36,6 @@ import {
   createUiDocument,
   findNode,
   nextNodeId,
-  touchDocument,
 } from '../models/document'
 import { importRuntimeSceneDocument } from '../models/export'
 import {
@@ -45,6 +44,7 @@ import {
   distributeNodes,
   fitViewport,
   nodeRect,
+  normalizeGeometryInteger,
   normalizeGeometryPoint,
   panViewport,
   resizeRect,
@@ -487,10 +487,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return true
   }
 
-  const replaceActiveDocument = (next: UiDesignerDocument, description: string, markSaved = false) => {
+  const replaceActiveDocument = (next: UiDesignerDocument, description: string, markSaved = false, owned = false) => {
     const scene = activeScene.value
     if (!scene) return
-    scene.document = scene.history.commit(next, description)
+    scene.document = owned ? scene.history.commitOwned(next, description) : scene.history.commit(next, description)
     if (markSaved) scene.history.markSaved()
     selectedIds.value = selectedIds.value.filter((id) => Boolean(findNode(scene.document, id)))
     if (!selectedIds.value.length) selectedIds.value = [scene.document.zOrder[0] ?? 'node_root']
@@ -502,7 +502,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const setSceneMeta = (key: 'sceneName' | 'description' | 'author' | 'sceneBase', value: string) => {
     const next = cloneUiDocument(document.value)
     next.meta[key] = value
-    replaceActiveDocument(touchDocument(next), `Update ${key}`)
+    next.meta.modified = new Date().toISOString()
+    replaceActiveDocument(next, `Update ${key}`, false, true)
   }
 
   const setSourceCode = (value: string) => {
@@ -768,7 +769,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const selectNodes = (ids: readonly string[], additive = false) => {
     const valid = ids.filter((id) => Boolean(findNode(document.value, id)))
-    selectedIds.value = additive ? [...new Set([...selectedIds.value, ...valid])] : [...new Set(valid)]
+    const nextIds = additive ? [...new Set([...selectedIds.value, ...valid])] : [...new Set(valid)]
+    if (nextIds.length === selectedIds.value.length && nextIds.every((id, index) => id === selectedIds.value[index])) return
+    flushDrafts(activeSceneId.value)
+    selectedIds.value = nextIds
   }
   const setHoveredNode = (nodeId: string | undefined) => { hoveredNodeId.value = nodeId }
   const getNodeActionPolicy = (targetId: string) => resolveNodeActionPolicy(document.value, selectedIds.value, targetId, Boolean(clipboard.value?.nodes.length && clipboard.value.nodes.every((node) => !node.locked)))
@@ -826,22 +830,27 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const updateNodeProperty = (nodeId: string, property: string, value: unknown) => {
     if (property === 'x' || property === 'y' || property === 'width' || property === 'height') {
       if (nodeId !== 'node_root' && !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return
-      replaceActiveDocument(applyNodeGeometryTransaction(document.value, nodeId, { kind: 'properties', patch: { [property]: Number(value) } }), `Update ${property}`)
+      const next = cloneUiDocument(document.value)
+      const node = findNode(next, nodeId)
+      if (!node) return
+      const fallback = node.props[property]
+      node.props[property] = normalizeGeometryInteger(Number(value), fallback, property === 'width' || property === 'height' ? 1 : Number.MIN_SAFE_INTEGER)
+      replaceActiveDocument(next, `Update ${property}`, false, true)
       return
     }
-    const next = cloneUiDocument(document.value)
-    const node = findNode(next, nodeId)
-    if (!node) return
-    const props = node.props as unknown as Record<string, unknown>
-    if (!(property in props)) return
+    const sourceNode = findNode(document.value, nodeId)
+    if (!sourceNode || !(property in (sourceNode.props as unknown as Record<string, unknown>))) return
     try {
       value = normalizeUiDesignerResourceProperty(property, value)
     } catch (error) {
       actionError.value = error instanceof Error ? error.message : 'Resource properties require project-relative paths.'
       return
     }
+    const next = cloneUiDocument(document.value)
+    const node = findNode(next, nodeId)!
+    const props = node.props as unknown as Record<string, unknown>
     props[property] = value
-    replaceActiveDocument(next, `Update ${property}`)
+    replaceActiveDocument(next, `Update ${property}`, false, true)
   }
 
   const renameNode = (nodeId: string, name: string) => {

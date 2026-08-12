@@ -14,6 +14,7 @@ import {
   PreparationWorkerError,
   prepareBattleTestInWorker,
   prepareParticlePreviewInWorker,
+  prepareUiDesignerRendererInWorker,
 } from './playtest-preparation.ts';
 
 describe('playtest preparation worker host', { concurrency: false }, () => {
@@ -75,6 +76,17 @@ describe('playtest preparation worker host', { concurrency: false }, () => {
       }),
       /exited without a response/,
     );
+  });
+
+  test('prepares a sparse UI designer overlay in the worker without copying engine files', async () => {
+    const preparation = await prepareUiDesignerRendererInWorker(root, project);
+    try {
+      assert.equal(preparation.sourceAccessMode, 'protocol-read-only');
+      assert.equal(fs.existsSync(path.join(preparation.temporaryProject, 'data')), false);
+      assert.equal(fs.existsSync(path.join(preparation.temporaryProject, 'js')), false);
+    } finally {
+      cleanupIsolatedProject(preparation);
+    }
   });
 
   test('reports an asynchronous worker spawn error without waiting for the watchdog', async () => {

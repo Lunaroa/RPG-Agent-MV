@@ -10,6 +10,7 @@ import { closeDatabase } from '../db/pool.ts';
 import {
   cleanupIsolatedProject,
   prepareIsolatedStagedProject,
+  prepareUiDesignerRendererOverlay,
   verifyIsolatedSourceState,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
@@ -76,6 +77,25 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
     fs.writeFileSync(path.join(temp, 'img', 'pictures', 'Hero.png'), 'preview-edit', 'utf8');
     assert.equal(fs.readFileSync(path.join(project, 'img', 'pictures', 'Hero.png'), 'utf8'), 'png-bytes');
     assert.equal(preparation.savesExcluded, true);
+  });
+
+  test('UI designer renderer overlay does not copy source engine data or assets', () => {
+    writeStagedProjectJson(root, project, 'img/notes/staged.json', { staged: true });
+    preparation = prepareUiDesignerRendererOverlay(root, project);
+    const temp = preparation.temporaryProject;
+
+    assert.equal(preparation.sourceAccessMode, 'protocol-read-only');
+    assert.equal(fs.existsSync(path.join(temp, 'data')), false);
+    assert.equal(fs.existsSync(path.join(temp, 'js')), false);
+    assert.equal(fs.existsSync(path.join(temp, 'audio')), false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(temp, 'img', 'notes', 'staged.json'), 'utf8')), { staged: true });
+    assert.equal(fs.existsSync(path.join(temp, 'img', 'pictures', 'Hero.png')), false);
+    assert.equal(fs.existsSync(path.join(project, 'img', 'notes', 'staged.json')), false);
+    assert.deepEqual(verifyIsolatedSourceState(root, preparation), {
+      sourceUnchanged: true,
+      savesUnchanged: true,
+      stagingUnchanged: true,
+    });
   });
 
   test('copy failure deletes only the newly owned temporary root and leaves source bytes unchanged', () => {

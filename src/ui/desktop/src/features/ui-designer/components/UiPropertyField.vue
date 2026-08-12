@@ -33,7 +33,7 @@ const props = withDefaults(defineProps<{
   issues?: UiValidationIssue[]
 }>(), { mode: 'value', kind: 'text', code: '', min: undefined, max: undefined, step: 1 })
 const emit = defineEmits<{
-  value: [value: unknown]
+  value: [value: unknown, sceneId?: string, nodeId?: string]
   mode: [mode: UiPropertyMode]
   code: [code: string, sceneId?: string, nodeId?: string]
 }>()
@@ -42,6 +42,7 @@ const issueLabels: Partial<Record<UiValidationIssue['code'], UiDesignerMessageKe
 const issueLabel = (issue: UiValidationIssue) => t(issueLabels[issue.code] ?? 'validationIssue')
 const draftValue = ref<unknown>(props.value)
 const resourceDropError = ref('')
+let valueDraftPending = false
 let codeTimer: ReturnType<typeof setTimeout> | undefined
 let pendingCode: string | undefined
 let pendingSceneId: string | undefined
@@ -64,14 +65,29 @@ const cancelCode = () => {
   pendingSceneId = undefined
   pendingNodeId = undefined
 }
-const unregisterDraft = props.draftCoordinator?.register(flushCode, {
-  cancel: cancelCode,
+const updateDraft = (value: unknown) => {
+  draftValue.value = value
+  valueDraftPending = !Object.is(value, props.value)
+}
+const emitValue = (value: unknown) => emit('value', value, props.sceneId, props.nodeId)
+const commitValue = () => {
+  if (!valueDraftPending) return
+  const value = draftValue.value
+  valueDraftPending = false
+  if (!Object.is(value, props.value)) emitValue(value)
+}
+const cancelValue = () => {
+  valueDraftPending = false
+  draftValue.value = props.value
+}
+const flushDraft = () => { commitValue(); flushCode() }
+const cancelDraft = () => { cancelValue(); cancelCode() }
+const unregisterDraft = props.draftCoordinator?.register(flushDraft, {
+  cancel: cancelDraft,
   sceneId: () => pendingSceneId ?? props.sceneId,
-  pending: () => pendingCode !== undefined,
+  pending: () => valueDraftPending || pendingCode !== undefined,
 })
-watch(() => props.value, (value) => { draftValue.value = value })
-const updateDraft = (value: unknown) => { draftValue.value = value }
-const commitValue = () => emit('value', draftValue.value)
+watch(() => props.value, (value) => { valueDraftPending = false; draftValue.value = value })
 const dropResource = (event: DragEvent) => {
   if (props.kind !== 'resource') return
   const rawPath = event.dataTransfer?.getData('text/ui-resource-path') ?? ''
@@ -81,12 +97,12 @@ const dropResource = (event: DragEvent) => {
   if (!path) { resourceDropError.value = t('resourceDropInvalid'); return }
   if (props.resourceCategory && category && category !== props.resourceCategory) { resourceDropError.value = t('resourceDropCategory'); return }
   resourceDropError.value = ''
-  emit('value', path)
+  emitValue(path)
 }
 const chooseResource = async () => {
   if (!props.resourcePicker) return
   const path = await props.resourcePicker()
-  if (path !== null) emit('value', path)
+  if (path !== null) emitValue(path)
 }
 const updateCodeDraft = (value: string, sceneId?: string) => {
   pendingCode = value
@@ -103,7 +119,7 @@ const updateCodeDraft = (value: string, sceneId?: string) => {
     codeTimer = undefined
   }, 1000)
 }
-onBeforeUnmount(() => { flushCode(); unregisterDraft?.() })
+onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
 </script>
 
 <template>
@@ -134,20 +150,22 @@ onBeforeUnmount(() => { flushCode(); unregisterDraft?.() })
       v-else-if="props.mode === 'value' && props.kind === 'boolean'"
       :model-value="Boolean(props.value)"
       size="small"
-      @update:model-value="emit('value', $event)"
+      @update:model-value="emitValue($event)"
     />
     <el-color-picker
       v-else-if="props.mode === 'value' && props.kind === 'color'"
-      :model-value="typeof props.value === 'string' ? props.value : '#ffffff'"
+      :model-value="typeof draftValue === 'string' ? draftValue : '#ffffff'"
       show-alpha
       size="small"
-      @update:model-value="emit('value', $event ?? '#ffffff')"
+      @active-change="updateDraft($event ?? '#ffffff')"
+      @update:model-value="updateDraft($event ?? '#ffffff')"
+      @change="commitValue"
     />
     <el-select
       v-else-if="props.mode === 'value' && props.kind === 'enum'"
       :model-value="typeof props.value === 'string' ? props.value : undefined"
       size="small"
-      @update:model-value="emit('value', $event)"
+      @update:model-value="emitValue($event)"
     >
       <el-option v-for="option in props.options ?? []" :key="option.value" :label="option.label" :value="option.value" />
     </el-select>
@@ -160,7 +178,7 @@ onBeforeUnmount(() => { flushCode(); unregisterDraft?.() })
         <el-input :model-value="typeof props.value === 'string' ? props.value : ''" readonly size="small" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')">
         <template #append><el-button :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" size="small" :disabled="!props.resourcePicker || props.resourcePickerDisabled" @click="void chooseResource()">{{ t('chooseResource') }}</el-button></template>
       </el-input>
-      <el-button v-if="props.value" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" size="small" text @click="emit('value', '')">{{ t('clearResource') }}</el-button>
+      <el-button v-if="props.value" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" size="small" text @click="emitValue('')">{{ t('clearResource') }}</el-button>
       <span v-if="props.resourcePickerDisabled" class="resource-picker-hint">{{ t('noProject') }}</span>
     </div>
     <el-input

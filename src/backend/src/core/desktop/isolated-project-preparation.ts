@@ -39,6 +39,8 @@ export interface IsolatedProjectPreparation {
   saveFingerprint: string;
   staging: IsolatedStagingSnapshot;
   savesExcluded: boolean;
+  /** UI designer sessions serve source bytes through the read-only Electron protocol. */
+  sourceAccessMode?: 'copied' | 'protocol-read-only';
 }
 
 export interface IsolatedProjectSourceSnapshotEntry {
@@ -143,6 +145,52 @@ export function prepareIsolatedStagedProject(
     };
   } catch (error) {
     try { cleanupOwnedIsolatedProject(challenge); } catch { /* Retain an unattested project and report preparation first. */ }
+    throw error;
+  }
+}
+
+/**
+ * Creates the UI designer's sparse writable overlay. Engine/data/assets stay in
+ * the source project and are served read-only by the authenticated protocol;
+ * only staged drafts and generated host files are written below this owner.
+ */
+export function prepareUiDesignerRendererOverlay(
+  workflowRootInput: string,
+  projectInput: string,
+  options: Pick<IsolatedProjectPreparationOptions, 'temporaryPrefix' | 'temporaryProjectPath' | 'ownershipChallenge'> = {},
+): IsolatedProjectPreparation {
+  const workflowRoot = fs.realpathSync.native(path.resolve(workflowRootInput));
+  const sourceProject = fs.realpathSync.native(path.resolve(projectInput));
+  if (!isDirectory(sourceProject)) {
+    throw new IsolatedProjectPreparationError(`RMMV project directory does not exist: ${sourceProject}`);
+  }
+  const saveFingerprint = fingerprintSaveState(sourceProject);
+  const staging = snapshotProjectStaging(workflowRoot, sourceProject);
+  const challenge = options.ownershipChallenge || createOwnedEmptyIsolatedProject(sourceProject, {
+    temporaryPrefix: options.temporaryPrefix,
+    ...(options.temporaryProjectPath ? { temporaryProjectPath: options.temporaryProjectPath } : {}),
+  });
+  const temporaryProject = attestOwnedIsolatedProject(
+    sourceProject,
+    challenge.temporaryProject,
+    challenge.ownership,
+    { requireMarkerOnly: true },
+  ).temporaryProject;
+  try {
+    overlayStagedProjectFiles(workflowRoot, sourceProject, temporaryProject, challenge, staging.files);
+    attestOwnedIsolatedProject(sourceProject, temporaryProject, challenge.ownership);
+    return {
+      sourceProject,
+      temporaryProject,
+      ownership: { ...challenge.ownership },
+      sourceFingerprint: sha256(Buffer.from('ui-designer-protocol-read-only-v1', 'utf8')),
+      saveFingerprint,
+      staging,
+      savesExcluded: candidateSavePaths(temporaryProject).every((candidate) => !fs.existsSync(candidate)),
+      sourceAccessMode: 'protocol-read-only',
+    };
+  } catch (error) {
+    try { cleanupOwnedIsolatedProject(challenge); } catch { /* Preserve the preparation error. */ }
     throw error;
   }
 }
@@ -275,7 +323,8 @@ export function verifyIsolatedSourceState(
   }
   const workflowRoot = fs.realpathSync.native(path.resolve(workflowRootInput));
   const sourceProject = attestation.sourceProject;
-  const sourceUnchanged = safeFingerprint(() => fingerprintProjectSource(sourceProject)) === preparation.sourceFingerprint;
+  const sourceUnchanged = preparation.sourceAccessMode === 'protocol-read-only'
+    || safeFingerprint(() => fingerprintProjectSource(sourceProject)) === preparation.sourceFingerprint;
   const savesUnchanged = safeFingerprint(() => fingerprintSaveState(sourceProject)) === preparation.saveFingerprint;
   try {
     const stagingUnchanged = snapshotProjectStaging(workflowRoot, sourceProject).digest === preparation.staging.digest;

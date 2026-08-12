@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, type CSSProperties } from 'vue'
 import type { UiNode } from '@contract/ui-designer'
+import { useUiDesignerI18n } from '../i18n'
 
 const props = defineProps<{
   node: UiNode
   resourcePreviewUrls: Record<string, string>
 }>()
+const { t } = useUiDesignerI18n()
 
 const normalizeResourcePath = (value: string) => value
   .replace(/\\/g, '/')
@@ -34,6 +36,7 @@ const imageSource = computed(() => {
 })
 
 const imageUrl = computed(() => resourceUrl(imageSource.value.path))
+const videoUrl = computed(() => props.node.type === 'video' ? resourceUrl(props.node.props.path) : '')
 const imageStyle = computed<CSSProperties>(() => {
   if (!imageUrl.value) return {}
   if (props.node.type === 'nineSlice') return {
@@ -128,12 +131,44 @@ const progressFillStyle = computed<CSSProperties>(() => {
     borderRadius: `${props.node.props.fillRadius}px`,
   }
 })
+
+const particleDots = computed(() => {
+  if (props.node.type !== 'particle') return []
+  const count = Math.max(1, Math.min(12, props.node.props.maxParticles))
+  const image = resourceUrl(props.node.props.imagePath)
+  return Array.from({ length: count }, (_, index) => {
+    const angle = (Math.PI * 2 * index) / count
+    const radius = props.node.props.emissionArea === 'point' ? 12 + (index % 3) * 5 : 26 + (index % 4) * 7
+    const size = Math.max(4, Math.min(24, 8 * props.node.props.startScale))
+    return {
+      id: index,
+      style: {
+        left: `calc(50% + ${Math.cos(angle) * radius}% - ${size / 2}px)`,
+        top: `calc(50% + ${Math.sin(angle) * radius}% - ${size / 2}px)`,
+        width: `${size}px`,
+        height: `${size}px`,
+        opacity: Math.max(0, Math.min(1, props.node.props.startOpacity / 255)),
+        backgroundColor: props.node.props.startColor,
+        backgroundImage: image ? `url(${JSON.stringify(image)})` : undefined,
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        backgroundSize: 'contain',
+        borderRadius: props.node.props.shape === 'circle' ? '50%' : undefined,
+        clipPath: props.node.props.shape === 'star' ? 'polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 94%,50% 72%,21% 94%,32% 57%,2% 35%,39% 35%)' : undefined,
+        filter: props.node.props.glow > 0 ? `drop-shadow(0 0 ${Math.min(12, props.node.props.glow)}px ${props.node.props.startColor})` : undefined,
+      } satisfies CSSProperties,
+    }
+  })
+})
 </script>
 
 <template>
   <div class="static-node-preview" :style="[imageStyle, overlayStyle, { opacity: Math.max(0, Math.min(1, node.props.opacity / 255)) }]" aria-hidden="true">
     <span v-if="node.type === 'text' || node.type === 'button'" class="static-node-text" :style="textStyle">{{ node.props.content }}</span>
     <span v-else-if="node.type === 'progressBar'" class="static-progress-track" :style="progressTrackStyle"><i :style="progressFillStyle" /></span>
+    <video v-else-if="node.type === 'video' && videoUrl" class="static-video" :src="videoUrl" :poster="imageUrl || undefined" muted playsinline preload="metadata" />
+    <span v-else-if="node.type === 'video'" class="static-media-placeholder">{{ t('chooseVideoResource') }}</span>
+    <span v-else-if="node.type === 'particle'" class="static-particle-field"><i v-for="dot in particleDots" :key="dot.id" :style="dot.style" /></span>
   </div>
 </template>
 
@@ -141,4 +176,8 @@ const progressFillStyle = computed<CSSProperties>(() => {
 .static-node-preview { position: absolute; z-index: 0; inset: 0; overflow: hidden; pointer-events: none; }
 .static-node-text { display: flex; width: 100%; height: 100%; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.2; }
 .static-progress-track { position: absolute; inset: 0; overflow: hidden; }
+.static-video { width: 100%; height: 100%; object-fit: contain; }
+.static-media-placeholder { display: grid; width: 100%; height: 100%; place-items: center; border: 1px dashed #ffffff36; color: #ffffff8c; font-size: 12px; }
+.static-particle-field { position: absolute; inset: 0; overflow: hidden; }
+.static-particle-field i { position: absolute; display: block; }
 </style>

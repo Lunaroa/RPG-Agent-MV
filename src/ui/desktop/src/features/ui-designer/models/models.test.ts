@@ -7,6 +7,8 @@ import {
   applyNodeGeometryTransaction,
   analyzePerformance,
   cloneUiDocument,
+  clampNodePositionToParent,
+  clampNodeRectToParent,
   copySelection,
   createDefaultNode,
   createUiDocument,
@@ -121,6 +123,14 @@ describe('ui designer document model', () => {
     assert.equal(document.canvas.width, 816)
     assert.equal(nodes.length, 10)
     assert.equal(nodes.every((node) => node.parentId === null && node.props.visible), true)
+    const progress = nodes.find((node) => node.type === 'progressBar')
+    assert.equal(progress?.type === 'progressBar' ? progress.props.currentValue : undefined, 50)
+    const button = nodes.find((node) => node.type === 'button')
+    assert.equal(button?.type === 'button' ? button.props.content : undefined, 'Button')
+    const text = nodes.find((node) => node.type === 'text')
+    assert.equal(text?.type === 'text' ? text.props.content : undefined, 'Text')
+    const particle = nodes.find((node) => node.type === 'particle')
+    assert.equal(particle?.type === 'particle' ? particle.props.shape : undefined, 'circle')
   })
 
   test('canvas box selection ignores the non-interactive root shell', () => {
@@ -165,6 +175,19 @@ describe('ui designer document model', () => {
     const moved = moveNodeStep(document, second.id, 'up')
     assert.deepEqual(moved.nodes[0].children, [second.id, first.id])
     assert.deepEqual(moveNodeStep(moved, second.id, 'up').nodes[0].children, [second.id, first.id])
+  })
+
+  test('clamps moved and resized children to their parent-local bounds', () => {
+    const document = createUiDocument()
+    const parent = createDefaultNode('container', { id: 'node_bounds_parent', name: 'BoundsParent', parentId: 'node_root', x: 40, y: 30, width: 300, height: 180 })
+    const child = createDefaultNode('sprite', { id: 'node_bounds_child', name: 'BoundsChild', parentId: parent.id, x: 40, y: 30, width: 100, height: 60 })
+    document.nodes.push(parent, child)
+    document.nodes[0].children.push(parent.id)
+    parent.children.push(child.id)
+    assert.deepEqual(clampNodePositionToParent(document, child.id, { x: 999, y: 999 }), { x: 240, y: 150 })
+    assert.deepEqual(clampNodeRectToParent(document, child.id, { x: 300, y: 180, width: 120, height: 80 }), { x: 220, y: 130, width: 120, height: 80 })
+    assert.deepEqual(clampNodeRectToParent(document, child.id, { x: -20, y: -10, width: 500, height: 400 }), { x: 40, y: 30, width: 300, height: 180 })
+    assert.deepEqual(clampNodeRectToParent(document, child.id, { x: -20, y: -10, width: 500, height: 400 }, true), { x: 40, y: 30, width: 225, height: 180 })
   })
 
   test('shares structural action policy across multi-select, locks, ancestry and top-level siblings', () => {

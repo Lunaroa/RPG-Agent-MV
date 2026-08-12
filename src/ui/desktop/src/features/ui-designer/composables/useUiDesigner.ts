@@ -41,6 +41,8 @@ import { importRuntimeSceneDocument } from '../models/export'
 import {
   alignNodes,
   applyNodeGeometryTransaction,
+  clampNodePositionToParent,
+  clampNodeRectToParent,
   distributeNodes,
   fitViewport,
   nodeRect,
@@ -860,6 +862,31 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     if (RESOURCE_PROPERTY_KEYS.has(property) || property === 'frames' || property === 'imageStates') void loadReferencedResources(next)
   }
 
+  const setSpriteResource = (nodeId: string, path: string, dimensions?: { width: number; height: number }) => {
+    const sourceNode = findNode(document.value, nodeId)
+    if (!sourceNode || sourceNode.type !== 'sprite') return false
+    let normalizedPath = ''
+    try {
+      normalizedPath = String(normalizeUiDesignerResourceProperty('path', path))
+    } catch (error) {
+      actionError.value = error instanceof Error ? error.message : 'Resource properties require project-relative paths.'
+      return false
+    }
+    const next = cloneUiDocument(document.value)
+    const node = findNode(next, nodeId)
+    if (!node || node.type !== 'sprite') return false
+    node.props.path = normalizedPath
+    if (dimensions && Number.isFinite(dimensions.width) && Number.isFinite(dimensions.height) && dimensions.width > 0 && dimensions.height > 0) {
+      node.props.width = normalizeGeometryInteger(dimensions.width, node.props.width, 1)
+      node.props.height = normalizeGeometryInteger(dimensions.height, node.props.height, 1)
+      node.props.fillMode = 'contain'
+      node.props.repeatMode = 'none'
+    }
+    replaceActiveDocument(next, 'Select sprite image', false, true)
+    void loadReferencedResources(next)
+    return true
+  }
+
   const renameNode = (nodeId: string, name: string) => {
     const normalized = name.trim()
     if (!normalized || !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).allowed.rename) return false
@@ -1514,7 +1541,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const previewNodePositionWithSnap = (nodeId: string, position: UiPoint) => {
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
-    const result = snapPoint(position, snapOptionsFor(nodeId))
+    const result = clampNodePositionToParent(document.value, nodeId, snapPoint(position, snapOptionsFor(nodeId)))
     draftPositions.value = { ...draftPositions.value, [nodeId]: result }
     return result
   }
@@ -1540,7 +1567,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const nextDrafts = { ...draftPositions.value }
     for (const id of validIds) {
       const origin = origins[id] ?? findNode(document.value, id)?.props ?? { x: 0, y: 0 }
-      nextDrafts[id] = normalizeGeometryPoint({ x: origin.x + delta.x + snapDelta.x, y: origin.y + delta.y + snapDelta.y }, origin)
+      nextDrafts[id] = clampNodePositionToParent(document.value, id, normalizeGeometryPoint({ x: origin.x + delta.x + snapDelta.x, y: origin.y + delta.y + snapDelta.y }, origin))
     }
     draftPositions.value = nextDrafts
     return nextDrafts
@@ -1568,7 +1595,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const previewNodeResizeWithSnap = (nodeId: string, originRect: UiRect, handle: UiResizeHandle, delta: UiPoint, modifiers: UiResizeModifiers) => {
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
     const requested = resizeRect(originRect, handle, delta, modifiers)
-    const result = snapRect(requested, originRect, handle, modifiers, snapOptionsFor(nodeId))
+    const result = clampNodeRectToParent(document.value, nodeId, snapRect(requested, originRect, handle, modifiers, snapOptionsFor(nodeId)), modifiers.preserveAspect)
     draftRects.value = { ...draftRects.value, [nodeId]: result }
     return result
   }
@@ -1680,6 +1707,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     addNode,
     removeSelected,
     updateNodeProperty,
+    setSpriteResource,
     renameNode,
     setNodeLocked,
     setPropertyMode,

@@ -177,6 +177,47 @@ export function rectCenter(rect: UiRect): UiPoint {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
 }
 
+/** Keep an editable node inside its parent-local content box. */
+export function clampNodeRectToParent(document: UiDesignerDocument, nodeId: string, rect: UiRect, preserveAspect = false): UiRect {
+  const node = findDocumentNode(document, nodeId)
+  if (!node || node.parentId === null) return normalizeGeometryRect(rect, rect)
+  const parent = findDocumentNode(document, node.parentId)
+  if (!parent || parent.type !== 'container') return normalizeGeometryRect(rect, rect)
+  const parentRect = nodeRect(parent)
+  const requestedWidth = Math.max(1, rect.width)
+  const requestedHeight = Math.max(1, rect.height)
+  const scale = preserveAspect ? Math.min(1, parentRect.width / requestedWidth, parentRect.height / requestedHeight) : 1
+  const width = preserveAspect ? requestedWidth * scale : Math.min(requestedWidth, Math.max(1, parentRect.width))
+  const height = preserveAspect ? requestedHeight * scale : Math.min(requestedHeight, Math.max(1, parentRect.height))
+  return normalizeGeometryRect({
+    x: Math.min(Math.max(parentRect.x, rect.x), parentRect.x + parentRect.width - width),
+    y: Math.min(Math.max(parentRect.y, rect.y), parentRect.y + parentRect.height - height),
+    width,
+    height,
+  }, rect)
+}
+
+export function clampNodePositionToParent(document: UiDesignerDocument, nodeId: string, position: UiPoint): UiPoint {
+  const node = findDocumentNode(document, nodeId)
+  if (!node) return normalizeGeometryPoint(position)
+  const parent = node.parentId === null ? undefined : findDocumentNode(document, node.parentId)
+  if (!parent || parent.type !== 'container') return normalizeGeometryPoint(position)
+  const rect = nodeRect(node)
+  const parentRect = nodeRect(parent)
+  const requestedX = position.x - rect.width * node.props.anchorX
+  const requestedY = position.y - rect.height * node.props.anchorY
+  const clampedX = rect.width >= parentRect.width
+    ? parentRect.x
+    : Math.min(Math.max(parentRect.x, requestedX), parentRect.x + parentRect.width - rect.width)
+  const clampedY = rect.height >= parentRect.height
+    ? parentRect.y
+    : Math.min(Math.max(parentRect.y, requestedY), parentRect.y + parentRect.height - rect.height)
+  return normalizeGeometryPoint({
+    x: clampedX + rect.width * node.props.anchorX,
+    y: clampedY + rect.height * node.props.anchorY,
+  }, position)
+}
+
 /** Resolve the visible top-most node under a canvas-space pointer, preferring canonical renderer bounds when available. */
 export function topmostNodeAtPoint(
   document: UiDesignerDocument,

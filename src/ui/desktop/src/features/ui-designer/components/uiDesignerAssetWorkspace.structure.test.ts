@@ -46,6 +46,13 @@ describe('UI Designer shared project asset workspace', () => {
     assert.match(workspace, /function selectionTreeNodes\(nodes:[\s\S]*return nodes/)
     assert.doesNotMatch(workspace, /base\.filter\(\(entry\) => projectAssetCategoryMatchesUiDesignerResourceKind/)
     assert.match(workspace, /selectedResourcePath[\s\S]*projectAssetCategoryMatchesUiDesignerResourceKind/)
+    assert.match(workspace, /emit\('select', selectedResourcePath\.value, dimensions\)/)
+    assert.match(inspector, /designer\.setSpriteResource\(node\.id, selection\.path/)
+    assert.match(inspector, /videoResource/)
+    assert.match(inspector, /videoPosterOptional/)
+    assert.match(inspector, /particleImageOptional/)
+    assert.match(inspector, /trackImageOptional/)
+    assert.match(inspector, /fillImageOptional/)
   })
 
   test('groups a one-column Inspector and wires every nested image resource through the workspace', () => {

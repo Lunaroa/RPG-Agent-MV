@@ -67,6 +67,29 @@ test('selecting an image resource makes its authoring preview URL available imme
   assert.deepEqual(loadReferenced.mock.calls[0]?.[0].referencedPaths, ['img/pictures/Example.png'])
 })
 
+test('selecting a sprite image adopts its intrinsic dimensions in one undoable edit', () => {
+  const designer = useUiDesigner()
+  designer.addNode('sprite', 'node_root')
+  const nodeId = designer.selectedIds.value[0]
+  const before = designer.activeScene.value.history.availableUndoSteps
+
+  assert.equal(designer.setSpriteResource(nodeId, 'img/pictures/Example.png', { width: 648, height: 324 }), true)
+  const selected = designer.document.value.nodes.find((node) => node.id === nodeId)
+  assert.equal(selected?.type, 'sprite')
+  if (selected?.type !== 'sprite') return
+  assert.equal(selected.props.path, 'img/pictures/Example.png')
+  assert.equal(selected.props.width, 648)
+  assert.equal(selected.props.height, 324)
+  assert.equal(selected.props.fillMode, 'contain')
+  assert.equal(designer.activeScene.value.history.availableUndoSteps, before + 1)
+
+  designer.undo()
+  const restored = designer.document.value.nodes.find((node) => node.id === nodeId)
+  assert.equal(restored?.type === 'sprite' ? restored.props.path : undefined, '')
+  assert.equal(restored?.type === 'sprite' ? restored.props.width : undefined, 160)
+  assert.equal(restored?.type === 'sprite' ? restored.props.height : undefined, 80)
+})
+
 test('closing the only opened tab creates a fresh untitled clean scene', async () => {
   let clearedRecovery: string | undefined
   const file: UiDesignerPersistenceAdapter = {

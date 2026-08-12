@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type { UiCodeEditorAdapter, UiPropertyMode, UiValidationIssue } from '@contract/ui-designer'
 import { normalizeUiDesignerProjectRelativeResourcePath, type UiDesignerManagedAssetKind } from '@contract/ui-designer-resources'
@@ -38,6 +38,15 @@ const emit = defineEmits<{
   code: [code: string, sceneId?: string, nodeId?: string]
 }>()
 const { t } = useUiDesignerI18n()
+const resourceActionLabel = computed(() => props.resourceCategory === 'image'
+  ? t('chooseImageResource')
+  : props.resourceCategory === 'video'
+    ? t('chooseVideoResource')
+    : props.resourceCategory === 'audio'
+      ? t('chooseAudioResource')
+      : props.resourceCategory === 'font'
+        ? t('chooseFontResource')
+        : t('chooseResource'))
 const issueLabels: Partial<Record<UiValidationIssue['code'], UiDesignerMessageKey>> = { 'invalid-value': 'invalidValue', 'invalid-code': 'invalidCode', 'invalid-reference': 'invalidReference', 'missing-resource': 'missingResource' }
 const issueLabel = (issue: UiValidationIssue) => t(issueLabels[issue.code] ?? 'validationIssue')
 const draftValue = ref<unknown>(props.value)
@@ -175,8 +184,8 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       @dragover.prevent
       @drop.prevent="dropResource"
     >
-        <el-input :model-value="typeof props.value === 'string' ? props.value : ''" readonly size="small" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-value` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-value` : undefined" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')">
-        <template #append><el-button :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" size="small" :disabled="!props.resourcePicker || props.resourcePickerDisabled" @click="void chooseResource()">{{ t('chooseResource') }}</el-button></template>
+        <el-input :model-value="typeof props.value === 'string' ? props.value : ''" readonly size="small" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-value` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-value` : undefined" :placeholder="props.resourcePickerDisabled ? t('noProject') : resourceActionLabel">
+        <template #append><el-button :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" size="small" :disabled="!props.resourcePicker || props.resourcePickerDisabled" @click="void chooseResource()">{{ resourceActionLabel }}</el-button></template>
       </el-input>
       <el-button v-if="props.value" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" size="small" text @click="emitValue('')">{{ t('clearResource') }}</el-button>
       <span v-if="props.resourcePickerDisabled" class="resource-picker-hint">{{ t('noProject') }}</span>
@@ -198,7 +207,7 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       <span v-else class="code-note">{{ t('unavailable') }}</span>
     </div>
     <p v-if="props.kind === 'resource' && resourceDropError" class="resource-drop-error">{{ resourceDropError }}</p>
-    <p v-for="issue in props.issues ?? []" :key="`${issue.code}-${issue.path ?? ''}`" class="field-error"><span>{{ issueLabel(issue) }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ issue.message }}</span></details></p>
+    <div v-for="issue in props.issues ?? []" :key="`${issue.code}-${issue.path ?? ''}`" class="field-error"><span>{{ issueLabel(issue) }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ issue.message }}</span></details></div>
   </div>
 </template>
 

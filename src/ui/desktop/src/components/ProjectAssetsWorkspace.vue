@@ -168,7 +168,7 @@ const props = withDefaults(defineProps<{
   multiple: false,
 })
 const emit = defineEmits<{
-  select: [path: string]
+  select: [path: string, details?: { width: number; height: number }]
   selectMany: [paths: string[]]
   cancel: []
   clear: []
@@ -1054,12 +1054,16 @@ const selectedResourcePaths = computed(() => selectedFileEntries.value.flatMap((
   }
 }))
 
-function confirmResourceSelection(): void {
+async function confirmResourceSelection(): Promise<void> {
   if (props.multiple) {
     if (selectedResourcePaths.value.length > 0) emit('selectMany', selectedResourcePaths.value)
     return
   }
-  if (selectedResourcePath.value) emit('select', selectedResourcePath.value)
+  if (!selectedResourcePath.value) return
+  const dimensions = singleSelectedFile.value && props.resourceKind === 'image'
+    ? await ensureImageDimensions(singleSelectedFile.value)
+    : undefined
+  emit('select', selectedResourcePath.value, dimensions)
 }
 
 const contextDeleteLabel = computed(() => {
@@ -2019,11 +2023,15 @@ function onItemMouseMove(event: MouseEvent) {
   if (metaTooltipTimer) metaTooltipAnchor = { x: event.clientX, y: event.clientY }
 }
 
-async function ensureImageDimensions(entry: ProjectAssetBrowseEntry) {
-  if (!isProjectAssetImageCategory(entryCategoryId(entry))) return
-  if (entry.encrypted || imageDimensionCache.value.has(entry.id)) return
-  const url = entry.url || entry.thumbnailUrl
-  if (!url) return
+async function ensureImageDimensions(entry: ProjectAssetBrowseEntry): Promise<{ width: number; height: number } | undefined> {
+  if (!isProjectAssetImageCategory(entryCategoryId(entry))) return undefined
+  const cached = imageDimensionCache.value.get(entry.id)
+  if (cached) return cached
+  if (entry.encrypted) return undefined
+  // Only the full asset URL carries the source pixels. A bounded thumbnail
+  // must never become the persisted node size.
+  const url = entry.url
+  if (!url) return undefined
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image()
@@ -2035,12 +2043,15 @@ async function ensureImageDimensions(entry: ProjectAssetBrowseEntry) {
     const height = image.naturalHeight
     if (width > 0 && height > 0) {
       const next = new Map(imageDimensionCache.value)
-      next.set(entry.id, { width, height })
+      const dimensions = { width, height }
+      next.set(entry.id, dimensions)
       imageDimensionCache.value = next
+      return dimensions
     }
   } catch {
     /* omit resolution when image cannot be read */
   }
+  return undefined
 }
 
 async function copyAssetText(kind: 'name' | 'relativePath') {
@@ -4014,7 +4025,7 @@ watch(gridHost, (el, previous) => {
         <span class="project-assets-selection-path">{{ selectedResourcePath || currentPath }}</span>
         <el-button data-ui-id="project-assets-selection-clear" @click="emit('clear')">{{ t('projectAssets.selectionClear') }}</el-button>
         <el-button data-ui-id="project-assets-selection-cancel" @click="emit('cancel')">{{ t('common.cancel') }}</el-button>
-        <el-button data-ui-id="project-assets-selection-confirm" type="primary" :disabled="props.multiple ? selectedResourcePaths.length === 0 : !selectedResourcePath" @click="confirmResourceSelection">{{ t('projectAssets.selectionUse') }}</el-button>
+        <el-button data-ui-id="project-assets-selection-confirm" type="primary" :disabled="props.multiple ? selectedResourcePaths.length === 0 : !selectedResourcePath" @click="void confirmResourceSelection()">{{ t('projectAssets.selectionUse') }}</el-button>
       </footer>
     </section>
 

@@ -76,10 +76,15 @@ const resourceWorkspaceCategory = ref<UiDesignerManagedAssetKind>('image')
 const resourceWorkspaceCurrentPath = ref('')
 const resourceWorkspaceMultiple = ref(false)
 const resourceWorkspaceRequest = ref(0)
-let resolveResourceWorkspace: ((value: string | string[] | null) => void) | undefined
-const openResourceWorkspace = (category: UiDesignerManagedAssetKind = 'image', currentPath = '') => new Promise<string | null>((resolve) => {
+interface ResourceWorkspaceSelection {
+  path: string
+  width?: number
+  height?: number
+}
+let resolveResourceWorkspace: ((value: ResourceWorkspaceSelection | string[] | null) => void) | undefined
+const openResourceWorkspace = (category: UiDesignerManagedAssetKind = 'image', currentPath = '') => new Promise<ResourceWorkspaceSelection | null>((resolve) => {
   resolveResourceWorkspace?.(null)
-  resolveResourceWorkspace = (value) => resolve(typeof value === 'string' ? value : null)
+  resolveResourceWorkspace = (value) => resolve(value && !Array.isArray(value) ? value : null)
   resourceWorkspaceRequest.value += 1
   resourceWorkspaceCategory.value = category
   resourceWorkspaceCurrentPath.value = currentPath
@@ -95,11 +100,12 @@ const openMultiResourceWorkspace = (category: UiDesignerManagedAssetKind = 'imag
   resourceWorkspaceMultiple.value = true
   resourceWorkspaceVisible.value = true
 })
-const settleResourceWorkspace = (value: string | string[] | null) => {
+const pickResourcePath = async (category: UiDesignerManagedAssetKind = 'image', currentPath = '') => (await openResourceWorkspace(category, currentPath))?.path ?? null
+const settleResourceWorkspace = (value: string | string[] | null, details?: { width: number; height: number }) => {
   const resolve = resolveResourceWorkspace
   resolveResourceWorkspace = undefined
   resourceWorkspaceVisible.value = false
-  resolve?.(value)
+  resolve?.(typeof value === 'string' ? { path: value, ...details } : value)
 }
 const closeResourceWorkspace = (visible: boolean) => {
   resourceWorkspaceVisible.value = visible
@@ -118,6 +124,16 @@ const labels: Record<string, UiDesignerMessageKey> = {
 }
 
 const labelFor = (key: string) => labels[key] ? t(labels[key]) : key
+const fieldLabel = (field: FieldDescriptor) => {
+  const node = selectedNode.value
+  if (node?.type === 'sprite' && field.key === 'path') return t('imageResource')
+  if (node?.type === 'video' && field.key === 'path') return t('videoResource')
+  if (node?.type === 'video' && field.key === 'posterPath') return t('videoPosterOptional')
+  if (node?.type === 'particle' && field.key === 'imagePath') return t('particleImageOptional')
+  if (node?.type === 'progressBar' && field.key === 'trackImage') return t('trackImageOptional')
+  if (node?.type === 'progressBar' && field.key === 'fillImage') return t('fillImageOptional')
+  return labelFor(field.key)
+}
 const performanceLabel = (rating: 'smooth' | 'moderate' | 'mayStutter') => t(rating === 'smooth' ? 'performanceSmooth' : rating === 'moderate' ? 'performanceModerate' : 'performanceMayStutter')
 const performanceSuggestionLabel = (suggestion: string) => suggestion.startsWith('Consider merging') ? t('performanceSuggestionNodeCount') : suggestion.startsWith('Multiple particle') ? t('performanceSuggestionParticles') : suggestion.startsWith('Code-mode') ? t('performanceSuggestionCode') : suggestion.startsWith('onUpdate') ? t('performanceSuggestionUpdate') : t('operationError')
 const validationLabels: Partial<Record<UiValidationIssue['code'], UiDesignerMessageKey>> = { 'invalid-value': 'invalidValue', 'invalid-code': 'invalidCode', 'invalid-reference': 'invalidReference', 'missing-resource': 'missingResource', 'invalid-document-shape': 'validationIssue', 'scene-name-empty': 'invalidValue', 'scene-name-invalid': 'invalidValue' }
@@ -251,6 +267,17 @@ const updateProperty = (key: string, value: unknown, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
   if (targetId) designer.updateNodeProperty(targetId, key, value)
 }
+const pickFieldResource = async (field: FieldDescriptor) => {
+  const node = selectedNode.value
+  if (!node) return null
+  const selection = await openResourceWorkspace(field.resourceCategory, String(propValue(field.key) ?? ''))
+  if (!selection) return null
+  if (node.type === 'sprite' && field.key === 'path') {
+    designer.setSpriteResource(node.id, selection.path, selection.width && selection.height ? { width: selection.width, height: selection.height } : undefined)
+    return null
+  }
+  return selection.path
+}
 const updateMode = (key: string, mode: 'value' | 'code') => { if (selectedNode.value) designer.setPropertyMode(selectedNode.value.id, key, mode) }
 const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
@@ -305,7 +332,7 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             :data-ui-id="buttonFieldUiId(field)"
             :data-testid="buttonFieldUiId(field)"
             :field-key="field.key"
-            :label="labelFor(field.key)"
+            :label="fieldLabel(field)"
             :help="field.help"
             :multiline="field.multiline"
             :value="propValue(field.key)"
@@ -317,7 +344,7 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             :step="field.step"
             :options="field.options"
             :resource-category="field.resourceCategory"
-            :resource-picker="field.kind === 'resource' ? () => openResourceWorkspace(field.resourceCategory, String(propValue(field.key) ?? '')) : undefined"
+            :resource-picker="field.kind === 'resource' ? () => pickFieldResource(field) : undefined"
             :resource-picker-disabled="field.kind === 'resource' && !designer.hasProject"
             :format-on-blur="Boolean(designer.preferences.autoFormat)"
             :issues="issuesForField(field)"
@@ -337,7 +364,7 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
               data-testid="ui-designer-button-states"
               :value="selectedNode.props.imageStates"
               :resources="designer.resourceCatalog?.resources ?? []"
-              :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
+              :pick-resource="designer.hasProject ? (currentPath) => pickResourcePath('image', currentPath) : undefined"
               :resource-picker-disabled="!designer.hasProject"
               @update="updateProperty('imageStates', $event)"
             />
@@ -362,7 +389,7 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             v-if="group.purpose === 'contentResources' && selectedNode.type === 'frameAnimation'"
             :value="selectedNode.props.frames"
             :resources="designer.resourceCatalog?.resources ?? []"
-            :pick-resource="designer.hasProject ? (currentPath) => openResourceWorkspace('image', currentPath) : undefined"
+            :pick-resource="designer.hasProject ? (currentPath) => pickResourcePath('image', currentPath) : undefined"
             :pick-resources="designer.hasProject ? () => openMultiResourceWorkspace('image') : undefined"
             :resource-picker-disabled="!designer.hasProject"
             @update="updateProperty('frames', $event)"
@@ -388,7 +415,7 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
       :key="`events-${selectedNode.id}`"
       :designer="designer"
       :node="selectedNode"
-      :pick-audio-resource="designer.hasProject ? () => openResourceWorkspace('audio') : undefined"
+      :pick-audio-resource="designer.hasProject ? () => pickResourcePath('audio') : undefined"
       :resource-picker-disabled="!designer.hasProject"
     />
     <UiDesignerConditions v-else-if="activeSection === 'condition'" :key="`condition-${selectedNode.id}`" :designer="designer" :node="selectedNode" />

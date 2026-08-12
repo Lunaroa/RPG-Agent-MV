@@ -129,7 +129,7 @@ watch(() => props.inlineEditingNodeId === props.node.id, (active) => {
 .canvas-node { position: absolute; box-sizing: border-box; border: 1px dashed #ffffff40; color: #fff; cursor: move; }
 .canvas-node.locked { cursor: not-allowed; opacity: .72; }
 .canvas-node.interaction-disabled { cursor: default; border-style: solid; border-color: #ffffff24; }
-.canvas-node:hover, .canvas-node.selected { border-color: var(--app-accent); }
+.canvas-node.selected, .canvas-node.hovered { border-color: var(--app-accent); }
 .canvas-node.hovered { outline: 2px solid var(--el-color-warning); outline-offset: 1px; }
 .canvas-node.clipped { overflow: hidden; }
 .node-label { position: absolute; left: 2px; top: -16px; max-width: 150px; color: #d7dae2; font-size: 10px; white-space: nowrap; pointer-events: none; }

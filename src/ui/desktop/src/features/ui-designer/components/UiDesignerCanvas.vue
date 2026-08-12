@@ -31,7 +31,7 @@ const normalizeResourcePreviewPath = (value: string) => value.replace(/\\/g, '/'
 const resourcePreviewUrls = computed<Record<string, string>>(() => {
   const urls: Record<string, string> = {}
   for (const resource of unwrap(designer.resourceCatalog)?.resources ?? []) {
-    if (resource.category !== 'image' || !resource.exists) continue
+    if ((resource.category !== 'image' && resource.category !== 'video') || !resource.exists) continue
     const url = resource.previewUrl ?? resource.thumbnailUrl
     if (!url) continue
     for (const candidate of [resource.path, resource.relativePath]) {

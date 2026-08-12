@@ -180,7 +180,7 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
     case 'text':
       return shell(type, {
         ...common,
-        content: '',
+        content: 'Text',
         wrapWidth: 0,
         richText: false,
         fontFile: '',
@@ -246,7 +246,7 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
         fillColor: '#73daca',
         fillRadius: 4,
         fillDirection: 'leftToRight',
-        currentValue: 0,
+        currentValue: 50,
         maxValue: 100,
         animateValue: true,
       } satisfies UiProgressBarProps, options) as UiProgressBarNode

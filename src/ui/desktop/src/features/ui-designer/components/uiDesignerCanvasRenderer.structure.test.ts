@@ -128,7 +128,23 @@ test('authoring canvas renders static image and text content without depending o
   assert.match(staticPreview, /backgroundImage/)
   assert.match(staticPreview, /node\.type === 'text' \|\| node\.type === 'button'/)
   assert.match(staticPreview, /node\.props\.content/)
+  assert.match(staticPreview, /node\.type === 'video'/)
+  assert.match(staticPreview, /node\.type === 'particle'/)
+  assert.match(staticPreview, /particleDots/)
   assert.doesNotMatch(canvas, /konva|fabric|pixi\.js/i)
+})
+
+test('sprite resource selection carries intrinsic dimensions into one controller transaction', () => {
+  assert.match(designerController, /const setSpriteResource =/)
+  assert.match(designerController, /node\.props\.width = normalizeGeometryInteger\(dimensions\.width/)
+  assert.match(designerController, /node\.props\.height = normalizeGeometryInteger\(dimensions\.height/)
+  assert.match(designerController, /replaceActiveDocument\(next, 'Select sprite image'/)
+})
+
+test('nested nodes do not light every ancestor and parent bounds constrain transforms', () => {
+  assert.doesNotMatch(node, /\.canvas-node:hover/)
+  assert.match(designerController, /clampNodePositionToParent/)
+  assert.match(designerController, /clampNodeRectToParent/)
 })
 
 test('bounded number sliders keep both end thumbs inside the inspector column', () => {

@@ -29,6 +29,10 @@ data/*.db*
 data/*.sqlite*
 data/assets/*
 !data/.gitkeep
+data/ui-designer/
+
+# Legacy UI Designer user state is migrated into data/ and runtime/ on startup.
+/ui-designer/
 
 # Environment, credentials, and local config
 .env

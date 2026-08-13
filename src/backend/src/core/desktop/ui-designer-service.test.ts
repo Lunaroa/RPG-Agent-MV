@@ -220,6 +220,9 @@ describe('ui designer user data store', () => {
 
     store.writePreferences({ selectedTemplate: 'sample' });
     assert.deepEqual(store.readPreferences(), { selectedTemplate: 'sample' });
+    assert.equal(fs.existsSync(path.join(tempRoot, 'user-data', 'ui-designer')), false);
+    assert.equal(fs.existsSync(path.join(tempRoot, 'user-data', 'data', 'ui-designer', 'preferences.json')), true);
+    assert.equal(fs.existsSync(path.join(tempRoot, 'user-data', 'runtime', 'ui-designer', 'recovery.json')), true);
   });
 
   test('writes in-memory recovery records and rejects recovery paths outside user data', () => {
@@ -229,7 +232,7 @@ describe('ui designer user data store', () => {
     assert.equal(store.readRecovery(recovery.id).record.key, 'tab-1');
     assert.equal(store.readRecovery(recovery.id).document.meta.sceneName, 'Scene_Sample');
 
-    const metadataPath = path.join(storeRoot, 'ui-designer', 'recovery.json');
+    const metadataPath = path.join(storeRoot, 'runtime', 'ui-designer', 'recovery.json');
     const outside = path.join(tempRoot, 'outside.mzui');
     fs.writeFileSync(outside, `${JSON.stringify(sampleDocument())}\n`, 'utf8');
     const malicious = {
@@ -238,7 +241,7 @@ describe('ui designer user data store', () => {
     fs.writeFileSync(metadataPath, `${JSON.stringify([malicious])}\n`, 'utf8');
     assert.throws(() => store.listRecentSnapshots(), (error: unknown) => error instanceof UiDesignerPersistenceError && error.operation === 'recovery-path');
 
-    const snapshotsRoot = path.join(storeRoot, 'ui-designer', 'snapshots');
+    const snapshotsRoot = path.join(storeRoot, 'runtime', 'ui-designer', 'snapshots');
     fs.mkdirSync(snapshotsRoot, { recursive: true });
     const link = path.join(snapshotsRoot, 'linked.mzui');
     try {
@@ -248,6 +251,60 @@ describe('ui designer user data store', () => {
     } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code !== 'EPERM') throw error;
     }
+  });
+
+  test('migrates the legacy top-level store into data and runtime without losing recovery', () => {
+    const storeRoot = path.join(tempRoot, 'user-data');
+    const legacyRoot = path.join(storeRoot, 'ui-designer');
+    const legacySnapshotsRoot = path.join(legacyRoot, 'snapshots');
+    const snapshotId = 'legacy-snapshot';
+    const legacySnapshot = path.join(legacySnapshotsRoot, `${snapshotId}.mzui`);
+    fs.mkdirSync(legacySnapshotsRoot, { recursive: true });
+    fs.writeFileSync(legacySnapshot, `${JSON.stringify(sampleDocument(), null, 2)}\n`, 'utf8');
+    const record = {
+      id: snapshotId,
+      sourcePath: '',
+      snapshotPath: legacySnapshot,
+      savedAt: new Date().toISOString(),
+      digest: 'digest',
+      mtimeMs: 1,
+      key: 'tab-legacy',
+    };
+    fs.writeFileSync(path.join(legacyRoot, 'recovery.json'), `${JSON.stringify([record], null, 2)}\n`, 'utf8');
+    fs.writeFileSync(path.join(legacyRoot, 'recent.json'), `${JSON.stringify([record], null, 2)}\n`, 'utf8');
+    fs.writeFileSync(path.join(legacyRoot, 'preferences.json'), `${JSON.stringify({ leftPaneWidth: 280 })}\n`, 'utf8');
+
+    const store = new UiDesignerUserDataStore(storeRoot);
+    const migrated = store.readRecovery(snapshotId);
+
+    assert.equal(migrated.record.key, 'tab-legacy');
+    assert.equal(migrated.document.meta.sceneName, 'Scene_Sample');
+    assert.equal(migrated.record.snapshotPath, path.join(storeRoot, 'runtime', 'ui-designer', 'snapshots', `${snapshotId}.mzui`));
+    assert.deepEqual(store.readPreferences(), { leftPaneWidth: 280 });
+    assert.equal(fs.existsSync(legacyRoot), false);
+    assert.equal(fs.existsSync(path.join(storeRoot, 'data', 'ui-designer', 'preferences.json')), true);
+    assert.equal(fs.existsSync(path.join(storeRoot, 'runtime', 'ui-designer', 'recovery.json')), true);
+  });
+
+  test('leaves the complete legacy store untouched when a migration target conflicts', () => {
+    const storeRoot = path.join(tempRoot, 'user-data');
+    const legacyRoot = path.join(storeRoot, 'ui-designer');
+    const legacySnapshotsRoot = path.join(legacyRoot, 'snapshots');
+    const legacySnapshot = path.join(legacySnapshotsRoot, 'legacy.mzui');
+    fs.mkdirSync(legacySnapshotsRoot, { recursive: true });
+    fs.writeFileSync(legacySnapshot, `${JSON.stringify(sampleDocument())}\n`, 'utf8');
+    fs.writeFileSync(path.join(legacyRoot, 'preferences.json'), `${JSON.stringify({ leftPaneWidth: 280 })}\n`, 'utf8');
+    const destinationPreferences = path.join(storeRoot, 'data', 'ui-designer', 'preferences.json');
+    fs.mkdirSync(path.dirname(destinationPreferences), { recursive: true });
+    fs.writeFileSync(destinationPreferences, `${JSON.stringify({ leftPaneWidth: 320 })}\n`, 'utf8');
+
+    assert.throws(
+      () => new UiDesignerUserDataStore(storeRoot),
+      (error: unknown) => error instanceof UiDesignerPersistenceError && error.operation === 'migrate-user-data',
+    );
+    assert.equal(fs.existsSync(legacySnapshot), true);
+    assert.equal(fs.existsSync(path.join(legacyRoot, 'preferences.json')), true);
+    assert.equal(fs.existsSync(path.join(storeRoot, 'runtime', 'ui-designer', 'snapshots', 'legacy.mzui')), false);
   });
 });
 

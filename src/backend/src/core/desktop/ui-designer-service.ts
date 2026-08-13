@@ -134,7 +134,6 @@ export function saveUiDesignerFile(
 }
 
 export class UiDesignerUserDataStore {
-  private readonly root: string;
   private readonly snapshotsRoot: string;
   private readonly recentPath: string;
   private readonly recoveryPath: string;
@@ -142,14 +141,23 @@ export class UiDesignerUserDataStore {
   private readonly preferencesPath: string;
 
   constructor(userDataRoot: string) {
-    this.root = path.join(path.resolve(userDataRoot), 'ui-designer');
-    this.snapshotsRoot = path.join(this.root, 'snapshots');
-    this.recoveryPath = path.join(this.root, 'recovery.json');
-    this.recentFilesPath = path.join(this.root, 'recent-files.json');
+    const resolvedUserDataRoot = path.resolve(userDataRoot);
+    const persistentRoot = path.join(resolvedUserDataRoot, 'data', 'ui-designer');
+    const recoveryRoot = path.join(resolvedUserDataRoot, 'runtime', 'ui-designer');
+    this.snapshotsRoot = path.join(recoveryRoot, 'snapshots');
+    this.recoveryPath = path.join(recoveryRoot, 'recovery.json');
+    this.recentFilesPath = path.join(persistentRoot, 'recent-files.json');
     // Keep the old filename as a read/write compatibility alias for callers
     // that used listRecentSnapshots before recovery was split out.
-    this.recentPath = path.join(this.root, 'recent.json');
-    this.preferencesPath = path.join(this.root, 'preferences.json');
+    this.recentPath = path.join(recoveryRoot, 'recent.json');
+    this.preferencesPath = path.join(persistentRoot, 'preferences.json');
+    migrateLegacyUiDesignerStore(resolvedUserDataRoot, {
+      snapshotsRoot: this.snapshotsRoot,
+      recoveryPath: this.recoveryPath,
+      recentFilesPath: this.recentFilesPath,
+      recentPath: this.recentPath,
+      preferencesPath: this.preferencesPath,
+    });
   }
 
   captureSnapshot(filePath: string): UiDesignerSnapshotRecord {
@@ -330,6 +338,115 @@ export class UiDesignerUserDataStore {
     if (!Array.isArray(raw) || raw.some((value) => !isRecentFileRecord(value))) throw new UiDesignerPersistenceError('list-recent-files', 'Recent-file history has an invalid record shape and was not silently discarded.');
     return raw.slice(0, UI_DESIGNER_RECENT_LIMIT) as UiDesignerRecentFileRecord[];
   }
+}
+
+interface UiDesignerStorePaths {
+  snapshotsRoot: string;
+  recoveryPath: string;
+  recentFilesPath: string;
+  recentPath: string;
+  preferencesPath: string;
+}
+
+function migrateLegacyUiDesignerStore(userDataRoot: string, target: UiDesignerStorePaths): void {
+  const legacyRoot = path.join(userDataRoot, 'ui-designer');
+  if (!fs.existsSync(legacyRoot)) return;
+
+  const legacySnapshotsRoot = path.join(legacyRoot, 'snapshots');
+  const migrations = [
+    ...legacySnapshotMigrations(legacySnapshotsRoot, target.snapshotsRoot),
+    legacySnapshotMetadataMigration(path.join(legacyRoot, 'recovery.json'), target.recoveryPath, legacySnapshotsRoot, target.snapshotsRoot),
+    legacySnapshotMetadataMigration(path.join(legacyRoot, 'recent.json'), target.recentPath, legacySnapshotsRoot, target.snapshotsRoot),
+    legacyFileMigration(path.join(legacyRoot, 'recent-files.json'), target.recentFilesPath),
+    legacyFileMigration(path.join(legacyRoot, 'preferences.json'), target.preferencesPath),
+  ].filter((migration): migration is LegacyUiDesignerMigration => Boolean(migration));
+
+  migrations.forEach(validateLegacyMigrationTarget);
+  migrations.forEach(applyLegacyMigration);
+
+  removeDirectoryIfEmpty(legacySnapshotsRoot);
+  removeDirectoryIfEmpty(legacyRoot);
+}
+
+interface LegacyUiDesignerMigration {
+  source: string;
+  target: string;
+  body: Buffer;
+}
+
+function legacySnapshotMigrations(sourceRoot: string, targetRoot: string): LegacyUiDesignerMigration[] {
+  if (!fs.existsSync(sourceRoot)) return [];
+  const sourceStat = fs.lstatSync(sourceRoot);
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
+    throw new UiDesignerPersistenceError('migrate-user-data', 'The legacy UI designer snapshots path is not a safe directory.');
+  }
+  return fs.readdirSync(sourceRoot).map((name) => {
+    const source = path.join(sourceRoot, name);
+    const stat = fs.lstatSync(source);
+    if (!stat.isFile() || stat.isSymbolicLink() || path.extname(name).toLowerCase() !== UI_DESIGNER_FILE_EXTENSION) {
+      throw new UiDesignerPersistenceError('migrate-user-data', `The legacy UI designer snapshots folder contains an unsupported entry: ${name}.`);
+    }
+    return { source, target: path.join(targetRoot, name), body: fs.readFileSync(source) };
+  });
+}
+
+function legacySnapshotMetadataMigration(
+  source: string,
+  target: string,
+  legacySnapshotsRoot: string,
+  targetSnapshotsRoot: string,
+): LegacyUiDesignerMigration | null {
+  if (!fs.existsSync(source)) return null;
+  assertSafeLegacyFile(source);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(source, 'utf8'));
+  } catch (error) {
+    throw new UiDesignerPersistenceError('migrate-user-data', 'Legacy UI designer recovery metadata is damaged and was not moved.', error);
+  }
+  if (!Array.isArray(parsed) || parsed.some((value) => !isSnapshotRecord(value))) {
+    throw new UiDesignerPersistenceError('migrate-user-data', 'Legacy UI designer recovery metadata has an invalid record shape and was not moved.');
+  }
+  const legacyRoot = path.resolve(legacySnapshotsRoot);
+  const rewritten = (parsed as UiDesignerSnapshotRecord[]).map((record) => {
+    const legacySnapshot = path.resolve(record.snapshotPath);
+    if (!isPathWithin(legacyRoot, legacySnapshot)) {
+      throw new UiDesignerPersistenceError('migrate-user-data', `Legacy recovery record ${record.id} points outside its snapshots folder.`);
+    }
+    const relative = path.relative(legacyRoot, legacySnapshot);
+    return { ...record, snapshotPath: path.join(targetSnapshotsRoot, relative) };
+  });
+  return { source, target, body: Buffer.from(`${JSON.stringify(rewritten, null, 2)}\n`, 'utf8') };
+}
+
+function legacyFileMigration(source: string, target: string): LegacyUiDesignerMigration | null {
+  if (!fs.existsSync(source)) return null;
+  assertSafeLegacyFile(source);
+  return { source, target, body: fs.readFileSync(source) };
+}
+
+function assertSafeLegacyFile(source: string): void {
+  const stat = fs.lstatSync(source);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new UiDesignerPersistenceError('migrate-user-data', `The legacy UI designer entry ${path.basename(source)} is not a safe file.`);
+  }
+}
+
+function validateLegacyMigrationTarget(migration: LegacyUiDesignerMigration): void {
+  if (!fs.existsSync(migration.target)) return;
+  const stat = fs.lstatSync(migration.target);
+  if (!stat.isFile() || stat.isSymbolicLink() || !fs.readFileSync(migration.target).equals(migration.body)) {
+    throw new UiDesignerPersistenceError('migrate-user-data', `UI designer user data already exists at the destination for ${path.basename(migration.source)}.`);
+  }
+}
+
+function applyLegacyMigration(migration: LegacyUiDesignerMigration): void {
+  if (!fs.existsSync(migration.target)) writeFileAtomically(migration.target, migration.body);
+  fs.rmSync(migration.source, { force: true });
+}
+
+function removeDirectoryIfEmpty(directory: string): void {
+  if (fs.existsSync(directory) && fs.readdirSync(directory).length === 0) fs.rmdirSync(directory);
 }
 
 function assertUiDesignerFilePath(filePath: string): string {

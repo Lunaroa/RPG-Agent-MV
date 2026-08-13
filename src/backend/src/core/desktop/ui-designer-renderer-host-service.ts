@@ -623,6 +623,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
   var activeExecutionMode = 'authoring';
   var lastBoundsByNode = {};
   var lastActualScene = null;
+  var lastPublishedActiveIdentity = null;
   var sceneManagerOriginals = null;
   var sceneManagerInstalled = null;
   var sceneBootOriginalStart = null;
@@ -817,8 +818,14 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
   function publishSceneState(phase, requestedScene) {
     return runSceneTransition('scene-state-publish', function () {
       var actual = currentActualScene();
-      if (phase === 'active' && actual === lastActualScene) return;
-      if (phase === 'active') lastActualScene = actual;
+      var activeIdentity = phase === 'active'
+        ? JSON.stringify([actual, activeSceneId, mountedDocumentSceneId, documentSceneName, activeRevision, activeExecutionMode])
+        : null;
+      if (phase === 'active' && activeIdentity === lastPublishedActiveIdentity) return;
+      if (phase === 'active') {
+        lastActualScene = actual;
+        lastPublishedActiveIdentity = activeIdentity;
+      }
       currentStage = 'scene-state';
       sendReceipt('scene-state', 'begin', null);
       send('scene-state', {

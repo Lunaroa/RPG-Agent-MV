@@ -96,6 +96,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.ok(runtime.nodeViews.container.__mzuiBackground);
     assert.equal(runtime.nodeViews.button.__mzuiButtonStates.normal, '');
     assert.equal(runtime.nodeViews.text.style.fontSize, 24);
+    assert.equal(runtime.nodeViews.text.style.fontFamily, 'sans-serif');
     assert.equal(runtime.nodeViews.nineSlice.zIndex, 3);
     runtime.update();
     assert.equal(runtime.nodeViews.progressBar.__mzuiAnimatedRatio, 0.5);
@@ -272,6 +273,116 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     }
   });
 
+  test('keeps a loaded MV parallax texture at the designer size after the bitmap becomes ready', () => {
+    const context = makeContext();
+    const listeners: Array<() => void> = [];
+    const bitmap = {
+      width: 0,
+      height: 0,
+      _baseTexture: { width: 0, height: 0, realWidth: 0, realHeight: 0 },
+      addLoadListener(listener: () => void) { listeners.push(listener); },
+    };
+    context.Utils = { RPGMAKER_NAME: 'MV' };
+    context.ImageManager = { loadBitmap: () => bitmap };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-MV-parallax.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    scene.nodes = scene.nodes.filter((node: any) => node.type === 'sprite');
+    scene.zOrder = ['sprite'];
+    const spriteNode = scene.nodes[0];
+    spriteNode.props.path = 'img/parallaxes/sample.png';
+    spriteNode.props.width = 816;
+    spriteNode.props.height = 816;
+    spriteNode.props.scaleX = 0.7647;
+    spriteNode.props.scaleY = 0.7647;
+    spriteNode.props.x = 480;
+    spriteNode.props.y = 80;
+    spriteNode.props.anchorX = 0.5;
+    spriteNode.props.anchorY = 0.5;
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const view = runtime.nodeViews.sprite;
+    bitmap.width = 816;
+    bitmap.height = 816;
+    bitmap._baseTexture.width = 816;
+    bitmap._baseTexture.height = 816;
+    bitmap._baseTexture.realWidth = 816;
+    bitmap._baseTexture.realHeight = 816;
+    listeners.forEach((listener) => listener());
+    assert.equal(view.scale.x, 0.7647);
+    assert.equal(view.scale.y, 0.7647);
+    assert.equal(view.x, 480);
+    assert.equal(view.y, 80);
+    assert.equal(view.anchor.x, 0.5);
+    assert.equal(view.anchor.y, 0.5);
+    assert.equal(view.__mzuiDimensions.width, 816);
+    assert.equal(view.__mzuiDimensions.height, 816);
+    assert.equal(view.__mzuiDimensions.scaleX, 0.7647);
+    assert.equal(view.__mzuiDimensions.scaleY, 0.7647);
+    runtime.cleanup();
+  });
+
+  test('preserves the official Bitmap image listener until sprite texture geometry is ready', () => {
+    const context = makeContext();
+    const listeners: Array<() => void> = [];
+    const engineImageLoad = () => {};
+    const image = { width: 0, height: 0, onload: engineImageLoad };
+    const bitmap: any = {
+      _image: image,
+      _baseTexture: null,
+      get width() { return image.width; },
+      get height() { return image.height; },
+      addLoadListener(listener: () => void) { listeners.push(listener); },
+    };
+    let textureFromCalls = 0;
+    class Texture {
+      static EMPTY = { empty: true };
+      baseTexture: unknown;
+      constructor(baseTexture: unknown) { this.baseTexture = baseTexture; }
+      static from(value: any) {
+        textureFromCalls += 1;
+        value.onload = () => {};
+        return new Texture({ source: value });
+      }
+    }
+    context.PIXI.Texture = Texture;
+    context.Sprite = class extends context.PIXI.Container {
+      bitmap: any;
+      texture: unknown;
+      anchor = { x: 0, y: 0 };
+      constructor(sourceBitmap: any) {
+        super();
+        this.bitmap = sourceBitmap;
+        this.texture = Texture.EMPTY;
+        sourceBitmap.addLoadListener(() => {
+          this.texture = new Texture(sourceBitmap._baseTexture);
+          this.width = sourceBitmap.width;
+          this.height = sourceBitmap.height;
+        });
+      }
+    };
+    context.ImageManager = { loadBitmap: () => bitmap };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-bitmap-listener.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    scene.nodes = scene.nodes.filter((node: any) => node.type === 'sprite');
+    scene.zOrder = ['sprite'];
+    const spriteNode = scene.nodes[0];
+    spriteNode.props.width = 408;
+    spriteNode.props.height = 312;
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+
+    assert.equal(textureFromCalls, 0);
+    assert.equal(image.onload, engineImageLoad);
+    image.width = 816;
+    image.height = 624;
+    bitmap._baseTexture = { width: 816, height: 624, realWidth: 816, realHeight: 624 };
+    listeners.forEach((listener) => listener());
+    assert.equal(runtime.nodeViews.sprite.scale.x, 0.5);
+    assert.equal(runtime.nodeViews.sprite.scale.y, 0.5);
+    assert.equal((runtime.nodeViews.sprite.__mzuiSourceTexture as Texture).baseTexture, bitmap._baseTexture);
+    runtime.cleanup();
+  });
+
   test('normalizes button SE resource paths while preserving legacy names and rejecting non-SE assets', () => {
     const context = makeContext();
     const played: string[] = [];
@@ -411,7 +522,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     finish('button.png');
     finish('track.png');
     finish('fill.png');
-    assert.equal((runtime.nodeViews.sprite.texture as any).id, 'a.png');
+    assert.equal((runtime.nodeViews.sprite.__mzuiSourceTexture as any).id, 'a.png');
     assert.equal(runtime.nodeViews.sprite.scale.x, 3);
     assert.equal((runtime.nodeViews.frameAnimation.texture as any).id, 'frame.png');
     assert.equal((runtime.nodeViews.button.__mzuiButtonImage.texture as any).id, 'button.png');
@@ -730,6 +841,52 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     randomValues.push(0.5, 0.5, 0.5);
     runtime.update();
     assert.deepEqual({ x: state.particles[0].x, y: state.particles[0].y }, { x: 0, y: 0 });
+    runtime.cleanup();
+  });
+
+  test('uses the MV PixiJS 4 mesh namespace for NineSlice and keeps logical dimensions', () => {
+    const context = makeContext();
+    const NineSlicePlane = context.PIXI.NineSlicePlane;
+    delete context.PIXI.NineSlicePlane;
+    context.PIXI.mesh = { NineSlicePlane };
+    context.ImageManager = { loadBitmap: (_folder: string, name: string) => ({ baseTexture: { id: `${name}.png` } }) };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const nineSlice = scene.nodes.find((node: any) => node.type === 'nineSlice');
+    nineSlice.props.width = 240;
+    nineSlice.props.height = 100;
+    nineSlice.props.scaleX = 1.25;
+    nineSlice.props.scaleY = 0.75;
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const view = runtime.nodeViews.nineSlice;
+    assert.equal(view instanceof NineSlicePlane, true);
+    assert.equal(view.width, 240);
+    assert.equal(view.height, 100);
+    assert.equal(view.scale.x, 1.25);
+    assert.equal(view.scale.y, 0.75);
+    runtime.cleanup();
+  });
+
+  test('normalizes four-edge editor padding before rendering multiline Pixi text', () => {
+    const context = makeContext();
+    class TextStyleProbe extends context.PIXI.Text {
+      style: Record<string, unknown> = {};
+    }
+    context.PIXI.Text = TextStyleProbe;
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    scene.nodes = scene.nodes.filter((node: any) => node.type === 'text');
+    scene.zOrder = ['text'];
+    scene.nodes[0].props.content = 'Line one\nLine two';
+    scene.nodes[0].props.padding = { top: 2, right: 8, bottom: 4, left: 6 };
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const view = runtime.nodeViews.text;
+    assert.equal(view.text, 'Line one\nLine two');
+    assert.equal(view.style.padding, 8);
+    assert.equal(view.scale.x, 1);
+    assert.equal(view.scale.y, 1);
     runtime.cleanup();
   });
 

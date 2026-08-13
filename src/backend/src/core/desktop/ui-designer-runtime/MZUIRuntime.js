@@ -897,7 +897,7 @@
         if (child && typeof child.destroy === 'function') { try { child.destroy({ children: true }); } catch (_) {} }
       });
     }
-    var fontFamily = loadFontFile(props.fontFile);
+    var fontFamily = resolveTextFontFamily(props);
     var fontSize = finite(props.fontSize, 24);
     var cursorX = 0;
     var cursorY = 0;
@@ -926,7 +926,7 @@
         fontSize: fontSize,
         fontWeight: run.bold ? 'bold' : props.fontWeight || 'normal',
         fontStyle: run.italic || props.italic ? 'italic' : 'normal',
-        fontFamily: fontFamily || props.fontFile || undefined,
+        fontFamily: fontFamily,
         fill: run.color || props.textColor || '#ffffff',
         stroke: props.strokeColor || '#000000',
         strokeThickness: finite(props.strokeWidth, 0),
@@ -950,25 +950,46 @@
     if (node.type === 'container' && typeof PIXI.Container === 'function') view = new PIXI.Container();
     else if (node.type === 'sprite' && typeof global.Sprite === 'function') {
       var spriteBitmap = loadBitmap(props.path || '');
-      loadTexture(props.path || '', function (texture) {
-        if (!view || view.__mzuiDestroyed) return;
-        applyReadyTexture(view, texture);
-        onNodeTextureReady(runtime, node, view);
-      });
       var spriteTexture = textureFromBitmap(spriteBitmap) || spriteBitmap;
       if (effectiveRepeatMode(props.repeatMode, props.fillMode) !== 'none' && typeof PIXI.TilingSprite === 'function') {
-        try { view = new PIXI.TilingSprite(loadTexture(props.path || '') || spriteTexture, finite(props.width, 0), finite(props.height, 0)); } catch (_) { view = new global.Sprite(spriteTexture); }
-      } else view = new global.Sprite(spriteBitmap);
+        var tilingTexture = textureFromBitmap(spriteBitmap) || PIXI.Texture && PIXI.Texture.EMPTY || spriteTexture;
+        try { view = new PIXI.TilingSprite(tilingTexture, finite(props.width, 0), finite(props.height, 0)); } catch (_) { view = new global.Sprite(spriteBitmap); }
+      } else {
+        view = new global.Sprite(spriteBitmap);
+      }
+      view.__mzuiSourceBitmap = spriteBitmap;
+      view.__mzuiSourceTexture = textureFromBitmap(spriteBitmap) || spriteTexture;
+      listenForBitmapTexture(spriteBitmap, function (texture) {
+        if (!view || view.__mzuiDestroyed) return;
+        view.__mzuiSourceTexture = texture;
+        // RPG Maker Sprite owns its Bitmap and refreshes its frame first.
+        // TilingSprite has no Bitmap binding, so it still needs the texture.
+        if (view.tileScale || view.bitmap !== spriteBitmap) applyReadyTexture(view, texture);
+        onNodeTextureReady(runtime, node, view);
+      });
     }
-    else if (node.type === 'nineSlice' && typeof PIXI.NineSlicePlane === 'function' && props.path) {
-      var nineView = null;
-      var nineTexture = loadTexture(props.path, function (texture) {
+    else if (node.type === 'nineSlice' && props.path) {
+      // PixiJS 4 (RPG Maker MV) exposes NineSlicePlane under PIXI.mesh,
+      // while PixiJS 5 (RPG Maker MZ) exposes it directly on PIXI.
+      var NineSlicePlane = typeof PIXI.NineSlicePlane === 'function'
+        ? PIXI.NineSlicePlane
+        : PIXI.mesh && typeof PIXI.mesh.NineSlicePlane === 'function'
+          ? PIXI.mesh.NineSlicePlane
+          : null;
+      if (!NineSlicePlane) return null;
+      var nineBitmap = loadBitmap(props.path);
+      var nineTexture = textureFromBitmap(nineBitmap);
+      var nineFallback = nineTexture || PIXI.Texture && PIXI.Texture.EMPTY || null;
+      var nineView = new NineSlicePlane(nineFallback, finite(props.borderLeft, 0), finite(props.borderTop, 0), finite(props.borderRight, 0), finite(props.borderBottom, 0));
+      nineView.__mzuiSourceBitmap = nineBitmap;
+      nineView.__mzuiSourceTexture = nineFallback;
+      nineView.__mzuiNineSlice = true;
+      listenForBitmapTexture(nineBitmap, function (texture) {
         if (!nineView || nineView.__mzuiDestroyed || !texture) return;
+        nineView.__mzuiSourceTexture = texture;
         applyReadyTexture(nineView, texture);
         onNodeTextureReady(runtime, node, nineView);
       });
-      var nineFallback = nineTexture || PIXI.Texture && PIXI.Texture.EMPTY || null;
-      nineView = new PIXI.NineSlicePlane(nineFallback, finite(props.borderLeft, 0), finite(props.borderTop, 0), finite(props.borderRight, 0), finite(props.borderBottom, 0));
       view = nineView;
     }
     else if (node.type === 'frameAnimation' && typeof global.Sprite === 'function') {
@@ -987,8 +1008,12 @@
     else if (node.type === 'text' && (props.richText === true || hasTextMarkup(props.content)) && typeof PIXI.Container === 'function') {
       view = new PIXI.Container();
       view.__mzuiTextRuns = true;
+      view.__mzuiTextNode = true;
     }
-    else if (node.type === 'text' && typeof PIXI.Text === 'function') view = new PIXI.Text(String(props.content || ''), { fontSize: props.fontSize || 24, fill: props.textColor || '#ffffff' });
+    else if (node.type === 'text' && typeof PIXI.Text === 'function') {
+      view = new PIXI.Text(String(props.content || ''), { fontSize: props.fontSize || 24, fontFamily: resolveTextFontFamily(props), fill: props.textColor || '#ffffff' });
+      view.__mzuiTextNode = true;
+    }
     else if (node.type === 'button') view = createButtonWindow(props);
     else if ((node.type === 'progressBar' || node.type === 'overlay') && typeof PIXI.Graphics === 'function') view = new PIXI.Graphics();
     else if (node.type === 'video' && typeof PIXI.Sprite === 'function' && PIXI.Texture && typeof PIXI.Texture.from === 'function' && props.path) {
@@ -1059,13 +1084,16 @@
     var bitmap = loadBitmap(path);
     if (!bitmap) return null;
     var texture = textureFromBitmap(bitmap);
-    if (typeof onReady === 'function' && typeof bitmap.addLoadListener === 'function') {
-      bitmap.addLoadListener(function () {
-        var ready = textureFromBitmap(bitmap);
-        if (ready) onReady(ready);
-      });
-    }
+    listenForBitmapTexture(bitmap, onReady);
     return texture;
+  }
+
+  function listenForBitmapTexture(bitmap, onReady) {
+    if (!bitmap || typeof onReady !== 'function' || typeof bitmap.addLoadListener !== 'function') return;
+    bitmap.addLoadListener(function () {
+      var ready = textureFromBitmap(bitmap);
+      if (ready) onReady(ready);
+    });
   }
 
   function textureFromBitmap(bitmap) {
@@ -1083,6 +1111,10 @@
       }
       return bitmap._baseTexture;
     }
+    // Official MV/MZ Bitmap owns its HTMLImageElement.onload handler. Passing
+    // that in-flight image to PIXI.Texture.from replaces the engine listener,
+    // leaving Bitmap in "loading" and RPG Maker Sprite with a zero-size frame.
+    if (typeof bitmap.addLoadListener === 'function') return null;
     if (global.PIXI && global.PIXI.Texture && typeof global.PIXI.Texture.from === 'function') {
       try { return global.PIXI.Texture.from(bitmap._image || bitmap.canvas || bitmap); } catch (_) {}
     }
@@ -1501,12 +1533,22 @@
       } else if (view.text !== undefined) {
         view.text = String(props.content || '');
         view.style = view.style || {};
-        var fontFamily = loadFontFile(props.fontFile);
-        Object.assign(view.style, { fontSize: finite(props.fontSize, 24), fontWeight: props.fontWeight || 'normal', fontStyle: props.italic ? 'italic' : 'normal', fontFamily: fontFamily || props.fontFile || undefined, fill: props.textColor || '#ffffff', stroke: props.strokeColor || '#000000', strokeThickness: finite(props.strokeWidth, 0), letterSpacing: finite(props.letterSpacing, 0), wordWrap: finite(props.wrapWidth, 0) > 0, wordWrapWidth: finite(props.wrapWidth, 0), align: props.align || 'left' });
+        var fontFamily = resolveTextFontFamily(props);
+        Object.assign(view.style, { fontSize: finite(props.fontSize, 24), fontWeight: props.fontWeight || 'normal', fontStyle: props.italic ? 'italic' : 'normal', fontFamily: fontFamily, fill: props.textColor || '#ffffff', stroke: props.strokeColor || '#000000', strokeThickness: finite(props.strokeWidth, 0), letterSpacing: finite(props.letterSpacing, 0), wordWrap: finite(props.wrapWidth, 0) > 0, wordWrapWidth: finite(props.wrapWidth, 0), align: props.align || 'left' });
         view.style.dropShadow = finite(props.shadowBlur, 0) > 0 || Boolean(props.shadowColor);
         view.style.dropShadowColor = props.shadowColor || '#000000';
         view.style.dropShadowDistance = Math.max(Math.abs(finite(props.shadowOffsetX, 0)), Math.abs(finite(props.shadowOffsetY, 0)));
-        view.style.padding = props.padding || { top: 0, right: 0, bottom: 0, left: 0 };
+        var textPadding = props.padding || {};
+        // PIXI.TextStyle.padding is one numeric texture padding value in both
+        // the MV and MZ Pixi versions. Passing the editor's four-edge object
+        // prevents the text canvas from being generated.
+        view.style.padding = Math.max(
+          0,
+          finite(textPadding.top, 0),
+          finite(textPadding.right, 0),
+          finite(textPadding.bottom, 0),
+          finite(textPadding.left, 0)
+        );
         view.style.textBaseline = props.verticalAlign || 'top';
         view.__mzuiRichText = 'plain-text';
         if (props.backgroundColor) view.__mzuiBackgroundColor = props.backgroundColor;
@@ -1569,6 +1611,26 @@
     var scaleX = finite(props.scaleX, 1);
     var scaleY = finite(props.scaleY, 1);
     view.scale = view.scale || { x: 1, y: 1 };
+    if (view.__mzuiTextNode) {
+      // A text box constrains wrapping and alignment; it must not stretch the
+      // glyph texture to the box rectangle. Designer scaling is applied once.
+      view.scale.x = scaleX;
+      view.scale.y = scaleY;
+      view.__mzuiDesignerScaleX = scaleX;
+      view.__mzuiDesignerScaleY = scaleY;
+      view.__mzuiDimensions = { width: width, height: height, scaleX: scaleX, scaleY: scaleY };
+      return;
+    }
+    if (view.__mzuiNineSlice) {
+      view.width = width;
+      view.height = height;
+      view.scale.x = scaleX;
+      view.scale.y = scaleY;
+      view.__mzuiDesignerScaleX = scaleX;
+      view.__mzuiDesignerScaleY = scaleY;
+      view.__mzuiDimensions = { width: width, height: height, scaleX: scaleX, scaleY: scaleY };
+      return;
+    }
     var source = sourceDimensions(view);
     if (source) {
       // PIXI Sprite.width/height setters mutate scale. Compute one final
@@ -1691,9 +1753,25 @@
   }
 
   function sourceDimensions(view) {
-    var texture = view && (view.texture || view.bitmap);
-    var width = finite(texture && (texture.orig && texture.orig.width || texture.width || texture.widthOriginal || texture._image && texture._image.width), 0);
-    var height = finite(texture && (texture.orig && texture.orig.height || texture.height || texture.heightOriginal || texture._image && texture._image.height), 0);
+    var texture = view && (view.__mzuiSourceTexture || view.texture || view.__mzuiSourceBitmap || view.bitmap);
+    var baseTexture = texture && (texture.baseTexture || texture._baseTexture);
+    var bitmap = view && view.__mzuiSourceBitmap;
+    var width = finite(texture && (
+      texture.orig && texture.orig.width
+      || texture.frame && texture.frame.width
+      || texture.width
+      || texture.widthOriginal
+      || texture._image && texture._image.width
+      || baseTexture && (baseTexture.realWidth || baseTexture.width)
+    ), finite(bitmap && bitmap.width, 0));
+    var height = finite(texture && (
+      texture.orig && texture.orig.height
+      || texture.frame && texture.frame.height
+      || texture.height
+      || texture.heightOriginal
+      || texture._image && texture._image.height
+      || baseTexture && (baseTexture.realHeight || baseTexture.height)
+    ), finite(bitmap && bitmap.height, 0));
     return width > 0 && height > 0 ? { width: width, height: height } : null;
   }
 
@@ -1897,6 +1975,16 @@
       parent = parent.parentId ? findNode(scene, parent.parentId) : null;
     }
     return { x: worldX, y: worldY };
+  }
+
+  function resolveTextFontFamily(props) {
+    var loaded = loadFontFile(props && props.fontFile);
+    if (loaded) return loaded;
+    if (global.$gameSystem && typeof global.$gameSystem.mainFontFace === 'function') {
+      var engineFont = global.$gameSystem.mainFontFace();
+      if (typeof engineFont === 'string' && engineFont.trim()) return engineFont.trim();
+    }
+    return 'sans-serif';
   }
 
   function shouldRunNodeAnimation(node, visible) {

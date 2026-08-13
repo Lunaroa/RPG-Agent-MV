@@ -761,6 +761,19 @@ test('official MV 1.6.1 loader reaches ready before lazy Window_Message creation
       source: officialMv.context.parent,
       data: envelope(session, 0, 'mount', { revision: 1, executionMode: 'authoring', documentSceneId: 'scene_tab_1', scene: runtimeScene('') }),
     })
+    const mountedSceneState = officialMv.messages
+      .filter((message) => message.kind === 'scene-state')
+      .at(-1)
+    assert.deepEqual(JSON.parse(JSON.stringify(mountedSceneState?.payload)), {
+      phase: 'active',
+      requestedScene: 'Scene_CanvasHost',
+      actualScene: 'Scene_MZUIDesignerCanvasHost',
+      engineSceneClass: 'Scene_MZUIDesignerCanvasHost',
+      mountedDocumentSceneId: 'scene_tab_1',
+      documentSceneName: 'Scene_CanvasHost',
+      revision: 1,
+      executionMode: 'authoring',
+    })
     assert.equal(officialMv.setupNewGameCalls(), 1)
     assert.equal(officialMv.messageWindowTone(), null)
     const actions = officialMv.context.MZUIRuntime.contextProvider().actions

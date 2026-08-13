@@ -34,6 +34,9 @@ const props = withDefaults(defineProps<{
 }>(), { mode: 'value', kind: 'text', code: '', min: undefined, max: undefined, step: 1 })
 const emit = defineEmits<{
   value: [value: unknown, sceneId?: string, nodeId?: string]
+  preview: [value: unknown, sceneId?: string, nodeId?: string]
+  commit: [sceneId?: string, nodeId?: string]
+  cancel: [sceneId?: string, nodeId?: string]
   mode: [mode: UiPropertyMode]
   code: [code: string, sceneId?: string, nodeId?: string]
 }>()
@@ -52,6 +55,7 @@ const issueLabel = (issue: UiValidationIssue) => t(issueLabels[issue.code] ?? 'v
 const draftValue = ref<unknown>(props.value)
 const resourceDropError = ref('')
 let valueDraftPending = false
+let valueDraftBaseline: unknown = props.value
 let codeTimer: ReturnType<typeof setTimeout> | undefined
 let pendingCode: string | undefined
 let pendingSceneId: string | undefined
@@ -75,19 +79,29 @@ const cancelCode = () => {
   pendingNodeId = undefined
 }
 const updateDraft = (value: unknown) => {
+  if (!valueDraftPending) valueDraftBaseline = props.value
   draftValue.value = value
-  valueDraftPending = !Object.is(value, props.value)
+  valueDraftPending = true
+  emit('preview', value, props.sceneId, props.nodeId)
 }
 const emitValue = (value: unknown) => emit('value', value, props.sceneId, props.nodeId)
 const commitValue = () => {
   if (!valueDraftPending) return
   const value = draftValue.value
   valueDraftPending = false
-  if (!Object.is(value, props.value)) emitValue(value)
+  if (!Object.is(value, valueDraftBaseline)) emit('commit', props.sceneId, props.nodeId)
+  else emit('cancel', props.sceneId, props.nodeId)
+  valueDraftBaseline = value
 }
 const cancelValue = () => {
+  if (valueDraftPending) emit('cancel', props.sceneId, props.nodeId)
   valueDraftPending = false
-  draftValue.value = props.value
+  draftValue.value = valueDraftBaseline
+}
+const handleTextEnter = (event: KeyboardEvent) => {
+  if (props.multiline && !event.ctrlKey && !event.metaKey) return
+  event.preventDefault()
+  commitValue()
 }
 const flushDraft = () => { commitValue(); flushCode() }
 const cancelDraft = () => { cancelValue(); cancelCode() }
@@ -96,7 +110,12 @@ const unregisterDraft = props.draftCoordinator?.register(flushDraft, {
   sceneId: () => pendingSceneId ?? props.sceneId,
   pending: () => valueDraftPending || pendingCode !== undefined,
 })
-watch(() => props.value, (value) => { valueDraftPending = false; draftValue.value = value })
+watch(() => props.value, (value) => {
+  if (valueDraftPending && Object.is(value, draftValue.value)) return
+  valueDraftPending = false
+  valueDraftBaseline = value
+  draftValue.value = value
+})
 const dropResource = (event: DragEvent) => {
   if (props.kind !== 'resource') return
   const rawPath = event.dataTransfer?.getData('text/ui-resource-path') ?? ''
@@ -200,7 +219,7 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       :data-testid="props.fieldKey ? `ui-designer-property-${props.fieldKey}-input` : undefined"
       @update:model-value="updateDraft($event)"
       @blur="commitValue"
-      @keydown.enter.prevent="commitValue"
+      @keydown.enter="handleTextEnter"
     />
     <div v-else class="code-field">
       <UiCodeMirrorEditor v-if="props.codeAdapter" :adapter="props.codeAdapter" :model-value="props.code" :rows="3" :format-on-blur="props.formatOnBlur" :scene-id="props.sceneId" :completion-items="props.completionItems" :draft-coordinator="props.draftCoordinator" @update:model-value="updateCodeDraft" />

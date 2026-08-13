@@ -35,6 +35,26 @@ test('Inspector draft flush commits once and one undo restores the original prop
   unregister()
 })
 
+test('Inspector property preview stays live and one gesture creates one undo step', () => {
+  const designer = useUiDesigner()
+  designer.addNode('text', 'node_root')
+  const nodeId = designer.selectedIds.value[0]
+  const original = designer.document.value.nodes.find((node) => node.id === nodeId)?.props.opacity
+  const before = designer.activeScene.value.history.availableUndoSteps
+
+  assert.equal(designer.previewNodeProperty(nodeId, 'opacity', 220), true)
+  assert.equal(designer.document.value.nodes.find((node) => node.id === nodeId)?.props.opacity, 220)
+  assert.equal(designer.activeScene.value.history.availableUndoSteps, before)
+  assert.equal(designer.previewNodeProperty(nodeId, 'opacity', 160), true)
+  assert.equal(designer.document.value.nodes.find((node) => node.id === nodeId)?.props.opacity, 160)
+  assert.equal(designer.activeScene.value.history.availableUndoSteps, before)
+
+  assert.equal(designer.commitNodePropertyPreview(nodeId, 'opacity'), true)
+  assert.equal(designer.activeScene.value.history.availableUndoSteps, before + 1)
+  designer.undo()
+  assert.equal(designer.document.value.nodes.find((node) => node.id === nodeId)?.props.opacity, original)
+})
+
 test('selecting an image resource makes its authoring preview URL available immediately', async () => {
   const loadReferenced = vi.fn(async (request: { referencedPaths: string[] }) => success({
     projectPath: 'projects/sample',
@@ -80,7 +100,11 @@ test('selecting a sprite image adopts its intrinsic dimensions in one undoable e
   assert.equal(selected.props.path, 'img/pictures/Example.png')
   assert.equal(selected.props.width, 648)
   assert.equal(selected.props.height, 324)
-  assert.equal(selected.props.fillMode, 'contain')
+  assert.equal(selected.props.fillMode, 'stretch')
+  assert.equal(selected.props.scaleX, 1)
+  assert.equal(selected.props.scaleY, 1)
+  assert.equal(selected.props.anchorX, 0.5)
+  assert.equal(selected.props.anchorY, 0.5)
   assert.equal(designer.activeScene.value.history.availableUndoSteps, before + 1)
 
   designer.undo()
@@ -88,6 +112,22 @@ test('selecting a sprite image adopts its intrinsic dimensions in one undoable e
   assert.equal(restored?.type === 'sprite' ? restored.props.path : undefined, '')
   assert.equal(restored?.type === 'sprite' ? restored.props.width : undefined, 160)
   assert.equal(restored?.type === 'sprite' ? restored.props.height : undefined, 80)
+})
+
+test('selecting an oversized sprite keeps source pixels but fits the visible node inside its parent', () => {
+  const designer = useUiDesigner()
+  designer.addNode('sprite', 'node_root')
+  const nodeId = designer.selectedIds.value[0]
+
+  assert.equal(designer.setSpriteResource(nodeId, 'img/pictures/LargeExample.png', { width: 1600, height: 900 }), true)
+  const selected = designer.document.value.nodes.find((node) => node.id === nodeId)
+  assert.equal(selected?.type, 'sprite')
+  if (selected?.type !== 'sprite') return
+  assert.deepEqual([selected.props.width, selected.props.height], [1600, 900])
+  assert.equal(selected.props.scaleX, selected.props.scaleY)
+  assert.ok(selected.props.scaleX < 1)
+  assert.ok(selected.props.width * selected.props.scaleX <= designer.document.value.canvas.width)
+  assert.ok(selected.props.height * selected.props.scaleY <= designer.document.value.canvas.height)
 })
 
 test('closing the only opened tab creates a fresh untitled clean scene', async () => {
@@ -146,6 +186,32 @@ test('embedded preview hides editor chrome only after the renderer acknowledges 
   assert.equal(designer.isPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
   assert.equal(designer.previewStatus.value, 'stopped')
+})
+
+test('editor preview and in-game preview keep distinct embedded execution modes', () => {
+  const rendererHost = {
+    async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
+    async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
+    async stop() { return success(null) },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
+  designer.editingMode.value = 'code'
+
+  assert.equal(designer.startEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, true)
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.previewExecutionMode.value, 'authoring')
+  assert.equal(designer.editingMode.value, 'design')
+  assert.equal(designer.stopEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
+
+  assert.equal(designer.startPreview(), true)
+  assert.equal(designer.previewExecutionMode.value, 'full-preview')
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.acknowledgePreviewExecutionMode('full-preview'), true)
+  assert.equal(designer.isPreviewing.value, true)
+  assert.equal(designer.isEditorPreviewing.value, false)
 })
 
 test('embedded preview failure leaves the controller in authoring mode without an external session', () => {
@@ -430,7 +496,91 @@ test('new palette siblings cascade without turning a selected container into an 
 
   const added = [containerId, titleId, firstButtonId, secondButtonId].map((id) => designer.document.value.nodes.find((node) => node.id === id))
   assert.deepEqual(added.map((node) => node?.parentId), [parentId, parentId, parentId, parentId])
-  assert.deepEqual(added.map((node) => [node?.props.x, node?.props.y]), [[0, 0], [48, 48], [72, 72], [96, 96]])
+  assert.deepEqual(added.map((node) => [node?.props.x, node?.props.y]), [[24, 24], [48, 48], [72, 72], [96, 96]])
+})
+
+test('adds a new node as a child when the active tree target is a container', () => {
+  const designer = useUiDesigner()
+  const containerId = designer.addNode('container', 'node_root', { x: 120, y: 90 })!
+  designer.selectNodes([containerId])
+  const spriteId = designer.addNode('sprite')!
+  const container = designer.document.value.nodes.find((node) => node.id === containerId)
+  const sprite = designer.document.value.nodes.find((node) => node.id === spriteId)
+  assert.equal(sprite?.parentId, containerId)
+  assert.deepEqual(container?.children, [spriteId])
+  assert.deepEqual([sprite?.props.x, sprite?.props.y], [144, 114])
+  assert.equal(container?.type === 'container' ? container.props.clip : undefined, false)
+})
+
+test('selecting an image in an unclipped container keeps its intrinsic size and allows overflow', () => {
+  const designer = useUiDesigner()
+  const containerId = designer.addNode('container', 'node_root', { x: 120, y: 90 })!
+  const spriteId = designer.addNode('sprite', containerId)!
+
+  assert.equal(designer.setSpriteResource(spriteId, 'img/pictures/LargeExample.png', { width: 816, height: 624 }), true)
+  const sprite = designer.document.value.nodes.find((node) => node.id === spriteId)
+  assert.equal(sprite?.type, 'sprite')
+  if (sprite?.type !== 'sprite') return
+  assert.deepEqual([sprite.props.width, sprite.props.height, sprite.props.scaleX, sprite.props.scaleY], [816, 624, 1, 1])
+  assert.ok(sprite.props.x + sprite.props.width / 2 > 120 + 240)
+  assert.ok(sprite.props.y + sprite.props.height / 2 > 90 + 160)
+})
+
+test('rotation commits only the angle and keeps the configured anchor position stable', () => {
+  const designer = useUiDesigner()
+  const nodeId = designer.addNode('sprite', 'node_root')!
+  const original = designer.document.value.nodes.find((node) => node.id === nodeId)!
+  const before = designer.activeScene.value.history.availableUndoSteps
+
+  designer.previewNodeRotation(nodeId, 37)
+  assert.equal(designer.draftRotations.value[nodeId], 37)
+  assert.equal(designer.commitDraftRotation(nodeId), true)
+
+  const rotated = designer.document.value.nodes.find((node) => node.id === nodeId)!
+  assert.deepEqual([rotated.props.x, rotated.props.y, rotated.props.rotate], [original.props.x, original.props.y, 37])
+  assert.equal(designer.activeScene.value.history.availableUndoSteps, before + 1)
+  designer.undo()
+  const restored = designer.document.value.nodes.find((node) => node.id === nodeId)!
+  assert.deepEqual([restored.props.x, restored.props.y, restored.props.rotate], [original.props.x, original.props.y, original.props.rotate])
+})
+
+test('moving a container previews and commits its complete subtree as one transaction', () => {
+  const designer = useUiDesigner()
+  const containerId = designer.addNode('container', 'node_root')!
+  const childId = designer.addNode('text', containerId)!
+  const container = designer.document.value.nodes.find((node) => node.id === containerId)!
+  const child = designer.document.value.nodes.find((node) => node.id === childId)!
+  const origins = {
+    [containerId]: { x: container.props.x, y: container.props.y },
+    [childId]: { x: child.props.x, y: child.props.y },
+  }
+  const before = designer.activeScene.value.history.availableUndoSteps
+
+  const drafts = designer.previewSelectedPositionsWithSnap([containerId], origins, { x: 48, y: 32 })
+  assert.deepEqual(drafts[containerId], { x: origins[containerId].x + 48, y: origins[containerId].y + 32 })
+  assert.deepEqual(drafts[childId], { x: origins[childId].x + 48, y: origins[childId].y + 32 })
+  assert.equal(designer.activeScene.value.history.availableUndoSteps, before)
+
+  assert.equal(designer.commitDraftPositions([containerId]), true)
+  assert.equal(designer.document.value.nodes.find((node) => node.id === containerId)?.props.x, origins[containerId].x + 48)
+  assert.equal(designer.document.value.nodes.find((node) => node.id === childId)?.props.x, origins[childId].x + 48)
+  assert.equal(designer.activeScene.value.history.availableUndoSteps, before + 1)
+})
+
+test('reparenting a node into a container immediately clamps it inside the destination', () => {
+  const designer = useUiDesigner()
+  const containerId = designer.addNode('container', 'node_root', { x: 120, y: 90 })!
+  designer.updateNodeProperty(containerId, 'clip', true)
+  const childId = designer.addNode('sprite', 'node_root', { x: 760, y: 560 })!
+
+  assert.equal(designer.reparent(childId, containerId, 'inner'), true)
+  const container = designer.document.value.nodes.find((node) => node.id === containerId)!
+  const child = designer.document.value.nodes.find((node) => node.id === childId)!
+  assert.equal(child.parentId, containerId)
+  assert.ok(child.props.x >= container.props.x)
+  assert.ok(child.props.y >= container.props.y)
+  assert.ok(child.props.x + child.props.width <= container.props.x + container.props.width)
+  assert.ok(child.props.y + child.props.height <= container.props.y + container.props.height)
 })
 
 test('resource property execution rejects unsafe nested paths before document mutation', () => {

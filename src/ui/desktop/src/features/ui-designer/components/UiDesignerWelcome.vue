@@ -59,7 +59,7 @@ const formatDate = (value?: string) => {
     </div>
     <div v-if="designer.recoveryRecords.length" class="welcome-list">
       <div class="list-title">{{ t('recovery') }}</div>
-      <div v-for="item in designer.recoveryRecords" :key="item.id" class="welcome-row"><span>{{ item.sourcePath || t('recoveryUnnamed') }}</span><el-button size="small" text @click="void designer.restoreRecovery(item.id)">{{ t('recover') }}</el-button><el-button size="small" text @click="void designer.removeRecovery(item.id)">{{ t('removeRecovery') }}</el-button></div>
+      <div v-for="(item, index) in designer.recoveryRecords" :key="item.id" class="welcome-row"><span>{{ item.sourcePath || t('recoveryUnnamed') }}</span><el-button :data-ui-id="`ui-designer-recovery-restore-${index}`" :data-testid="`ui-designer-recovery-restore-${index}`" size="small" text @click="void designer.restoreRecovery(item.id)">{{ t('recover') }}</el-button><el-button :data-ui-id="`ui-designer-recovery-remove-${index}`" :data-testid="`ui-designer-recovery-remove-${index}`" size="small" text @click="void designer.removeRecovery(item.id)">{{ t('removeRecovery') }}</el-button></div>
     </div>
     <div v-if="designer.templates.length || designer.canSave" class="welcome-list">
       <div class="list-title">{{ t('sceneTemplates') }}</div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n } from '../i18n'
 
@@ -40,16 +40,16 @@ watch(() => designer.document.meta.sceneName, (value) => {
 })
 onBeforeUnmount(() => { commitSceneName(); unregisterSceneNameDraft() })
 
-const togglePreview = () => {
-  void (designer.isPreviewing ? designer.stopPreview() : designer.startPreview())
-}
+const fullscreenPreview = computed(() => designer.isEditorPreviewing || designer.isPreviewing)
+const toggleEditorPreview = () => { void (designer.isEditorPreviewing ? designer.stopEditorPreview() : designer.startEditorPreview()) }
+const toggleGamePreview = () => { void (designer.isPreviewing ? designer.stopPreview() : designer.startPreview()) }
 </script>
 
 <template>
-  <header class="ui-designer-toolbar" :class="{ 'preview-toolbar': designer.isPreviewing }">
-    <template v-if="designer.isPreviewing">
-      <el-button data-testid="ui-designer-preview-exit" data-ui-id="ui-designer-preview-exit" class="editor-preview-toggle" size="small" type="success" @click="togglePreview">
-        {{ t('exitEditorPreview') }}
+  <header class="ui-designer-toolbar" :class="{ 'preview-toolbar': fullscreenPreview }">
+    <template v-if="fullscreenPreview">
+      <el-button :data-testid="designer.isPreviewing ? 'ui-designer-game-preview-exit' : 'ui-designer-preview-exit'" data-ui-id="ui-designer-preview-exit" class="editor-preview-toggle" size="small" type="success" @click="designer.isPreviewing ? toggleGamePreview() : toggleEditorPreview()">
+        {{ t(designer.isPreviewing ? 'exitGamePreview' : 'exitEditorPreview') }}
       </el-button>
     </template>
     <template v-else>
@@ -76,8 +76,11 @@ const togglePreview = () => {
         <el-button data-testid="ui-designer-code-mode" size="small" :type="designer.editingMode === 'code' ? 'primary' : 'default'" @click="designer.setEditingMode('code')">{{ t('code') }}</el-button>
       </el-button-group>
 
-      <el-button data-testid="ui-designer-preview-toggle" data-ui-id="ui-designer-preview-enter" class="editor-preview-toggle" size="small" :aria-label="t('editorPreview')" :disabled="!designer.canStartPreview" @click="togglePreview">
+      <el-button data-testid="ui-designer-preview-toggle" data-ui-id="ui-designer-preview-enter" class="editor-preview-toggle" size="small" :aria-label="t('editorPreview')" :disabled="!designer.canStartEditorPreview" @click="toggleEditorPreview">
         {{ t('editorPreview') }}
+      </el-button>
+      <el-button data-testid="ui-designer-game-preview-toggle" data-ui-id="ui-designer-game-preview-enter" size="small" :aria-label="t('gamePreview')" :disabled="!designer.canStartPreview" @click="toggleGamePreview">
+        {{ t('gamePreview') }}
       </el-button>
 
       <el-button size="small" text @click="emit('settings')">{{ t('settings') }}</el-button>

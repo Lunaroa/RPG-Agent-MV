@@ -4,11 +4,14 @@ import {
   UiDesignerHistory,
   UiExportValidationError,
   alignNodes,
+  accumulateRotationDegrees,
   applyNodeGeometryTransaction,
   analyzePerformance,
   cloneUiDocument,
   clampNodePositionToParent,
   clampNodeRectToParent,
+  collectNodeSubtreeIds,
+  containContainerChildren,
   copySelection,
   createDefaultNode,
   createUiDocument,
@@ -25,6 +28,7 @@ import {
   parseUiDocument,
   reparentNode,
   serializeDocument,
+  shortestRotationDelta,
   snapPoint,
   snapRect,
   smartSnapTargetsForNode,
@@ -32,6 +36,7 @@ import {
   resizeRect,
   resizeCursor,
   resolveNodeActionPolicy,
+  selectionRootNodeIds,
   viewportClientToContent,
   viewportClientToWorld,
   viewportClientToZoomAnchor,
@@ -123,6 +128,9 @@ describe('ui designer document model', () => {
     assert.equal(document.canvas.width, 816)
     assert.equal(nodes.length, 10)
     assert.equal(nodes.every((node) => node.parentId === null && node.props.visible), true)
+    const container = nodes.find((node) => node.type === 'container')
+    assert.equal(container?.type === 'container' ? container.props.clip : undefined, false)
+    assert.equal(document.nodes[0]?.type === 'container' ? document.nodes[0].props.clip : undefined, true)
     const progress = nodes.find((node) => node.type === 'progressBar')
     assert.equal(progress?.type === 'progressBar' ? progress.props.currentValue : undefined, 50)
     const button = nodes.find((node) => node.type === 'button')
@@ -131,6 +139,9 @@ describe('ui designer document model', () => {
     assert.equal(text?.type === 'text' ? text.props.content : undefined, 'Text')
     const particle = nodes.find((node) => node.type === 'particle')
     assert.equal(particle?.type === 'particle' ? particle.props.shape : undefined, 'circle')
+    assert.equal(particle?.type === 'particle' ? particle.props.velocityY < 0 : false, true)
+    assert.equal(particle?.type === 'particle' ? particle.props.endScale < particle.props.startScale : false, true)
+    assert.equal(particle?.type === 'particle' ? particle.props.glow > 0 : false, true)
   })
 
   test('canvas box selection ignores the non-interactive root shell', () => {
@@ -177,6 +188,20 @@ describe('ui designer document model', () => {
     assert.deepEqual(moveNodeStep(moved, second.id, 'up').nodes[0].children, [second.id, first.id])
   })
 
+  test('treats a selected container as the transform owner for its complete subtree', () => {
+    const document = createUiDocument()
+    const parent = createDefaultNode('container', { id: 'node_transform_parent', name: 'TransformParent', parentId: 'node_root' })
+    const child = createDefaultNode('text', { id: 'node_transform_child', name: 'TransformChild', parentId: parent.id })
+    const grandchild = createDefaultNode('sprite', { id: 'node_transform_grandchild', name: 'TransformGrandchild', parentId: child.id })
+    document.nodes.push(parent, child, grandchild)
+    document.nodes[0].children.push(parent.id)
+    parent.children.push(child.id)
+    child.children.push(grandchild.id)
+
+    assert.deepEqual(selectionRootNodeIds(document, [child.id, parent.id, grandchild.id]), [parent.id])
+    assert.deepEqual(collectNodeSubtreeIds(document, [parent.id]), [parent.id, child.id, grandchild.id])
+  })
+
   test('clamps moved and resized children to their parent-local bounds', () => {
     const document = createUiDocument()
     const parent = createDefaultNode('container', { id: 'node_bounds_parent', name: 'BoundsParent', parentId: 'node_root', x: 40, y: 30, width: 300, height: 180 })
@@ -184,10 +209,21 @@ describe('ui designer document model', () => {
     document.nodes.push(parent, child)
     document.nodes[0].children.push(parent.id)
     parent.children.push(child.id)
+    assert.equal(parent.props.clip, false)
+    assert.deepEqual(clampNodePositionToParent(document, child.id, { x: 999, y: 999 }), { x: 999, y: 999 })
+    assert.deepEqual(clampNodeRectToParent(document, child.id, { x: 300, y: 180, width: 120, height: 80 }), { x: 300, y: 180, width: 120, height: 80 })
+    assert.deepEqual(containContainerChildren(document, parent.id, { x: 80, y: 70, width: 40, height: 20 }), { x: 80, y: 70, width: 40, height: 20 })
+    parent.props.clip = true
     assert.deepEqual(clampNodePositionToParent(document, child.id, { x: 999, y: 999 }), { x: 240, y: 150 })
+    child.props.width = 400
+    child.props.height = 240
+    assert.deepEqual(clampNodePositionToParent(document, child.id, { x: 999, y: 999 }), { x: 316, y: 186 })
+    child.props.width = 100
+    child.props.height = 60
     assert.deepEqual(clampNodeRectToParent(document, child.id, { x: 300, y: 180, width: 120, height: 80 }), { x: 220, y: 130, width: 120, height: 80 })
     assert.deepEqual(clampNodeRectToParent(document, child.id, { x: -20, y: -10, width: 500, height: 400 }), { x: 40, y: 30, width: 300, height: 180 })
     assert.deepEqual(clampNodeRectToParent(document, child.id, { x: -20, y: -10, width: 500, height: 400 }, true), { x: 40, y: 30, width: 225, height: 180 })
+    assert.deepEqual(containContainerChildren(document, parent.id, { x: 80, y: 70, width: 40, height: 20 }), { x: 40, y: 30, width: 100, height: 60 })
   })
 
   test('shares structural action policy across multi-select, locks, ancestry and top-level siblings', () => {
@@ -462,6 +498,13 @@ describe('ui designer export and validation', () => {
 })
 
 describe('ui designer history, geometry and performance', () => {
+  test('accumulates clockwise and counterclockwise rotation symmetrically across zero degrees', () => {
+    assert.equal(shortestRotationDelta(5, 355), -10)
+    assert.equal(shortestRotationDelta(355, 5), 10)
+    assert.equal(accumulateRotationDegrees(5, 5, 355), -5)
+    assert.equal(accumulateRotationDegrees(355, 355, 5), 365)
+  })
+
   test('tracks a saved baseline and caps history at 100 steps', () => {
     const initial = createUiDocument()
     const history = new UiDesignerHistory(initial)
@@ -542,7 +585,7 @@ describe('ui designer history, geometry and performance', () => {
     assert.equal(normalizePaneSize('right', 1000), 550)
   })
 
-  test('resizes all handles with default aspect lock, Ctrl-free geometry, Alt center and snap targets', () => {
+  test('resizes freely by default, preserves aspect on request, supports Alt center and snap targets', () => {
     const origin = { x: 10, y: 20, width: 100, height: 50 }
     for (const handle of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const) {
       const resized = resizeRect(origin, handle, { x: 12, y: 7 }, { preserveAspect: true, fromCenter: false })

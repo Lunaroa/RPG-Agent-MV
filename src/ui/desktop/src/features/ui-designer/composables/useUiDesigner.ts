@@ -43,11 +43,12 @@ import {
   applyNodeGeometryTransaction,
   clampNodePositionToParent,
   clampNodeRectToParent,
+  containContainerChildren,
   distributeNodes,
   fitViewport,
-  nodeRect,
   normalizeGeometryInteger,
   normalizeGeometryPoint,
+  nodeRect,
   panViewport,
   resizeRect,
   smartSnapTargetsForNode,
@@ -63,7 +64,7 @@ import { resolveNodeActionPolicy, type UiNodeActionCommand } from '../models/act
 import { UiDesignerHistory } from '../models/history'
 import { analyzePerformance } from '../models/performance'
 import { nextSiblingCascadePosition } from '../models/placement'
-import { copySelection, groupNodes, moveNodeStep, moveNodeToEdge, pasteClipboard, reparentNode, ungroupNodes } from '../models/tree'
+import { collectNodeSubtreeIds, copySelection, groupNodes, moveNodeStep, moveNodeToEdge, pasteClipboard, reparentNode, selectionRootNodeIds, ungroupNodes } from '../models/tree'
 import { isValidUiDesignerSceneName, validateDocument } from '../models/validation'
 import { UI_DESIGNER_BUILT_IN_TEMPLATES, createBuiltInUiDesignerTemplate, isBuiltInUiDesignerTemplate } from '../models/templates'
 import { createUiDesignerDraftCoordinator, type UiDesignerDraftCoordinator } from './draftCoordinator'
@@ -174,6 +175,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const editingMode = ref<'design' | 'code'>('design')
   // The renderer-host iframe is the only preview runtime.
   const isPreviewing = ref(false)
+  const isEditorPreviewing = ref(false)
   const previewStatus = ref<UiPreviewState>('idle')
   const previewMessage = ref('')
   const previewExecutionMode = ref<UiDesignerRendererExecutionMode>('authoring')
@@ -211,6 +213,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const projectGeneration = ref(0)
   const draftCoordinator: UiDesignerDraftCoordinator = createUiDesignerDraftCoordinator()
+  let propertyEdit: { sceneId: string; nodeId: string; property: string; description: string; reloadResources: boolean } | undefined
 
   const historyLimit = () => normalizeHistoryLimit(preferences.value.historyLimit)
   const applyHistoryLimit = (limit = historyLimit()) => {
@@ -246,8 +249,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const canLoadResources = computed(() => hasProject.value && adapters.resource !== createUiDesignerAdapters().resource)
   const canRenderCanvas = computed(() => hasProject.value && adapters.rendererHost !== createUiDesignerAdapters().rendererHost)
   const canPreview = canRenderCanvas
-  const previewOccupied = computed(() => previewCleanupPending.value || previewDisposalInFlight.value || previewStatus.value === 'preparing' || isPreviewing.value || previewExecutionMode.value !== 'authoring')
+  const previewOccupied = computed(() => previewCleanupPending.value || previewDisposalInFlight.value || previewStatus.value === 'preparing' || isPreviewing.value || isEditorPreviewing.value || previewExecutionMode.value !== 'authoring')
   const canStartPreview = computed(() => canRenderCanvas.value && !previewOccupied.value)
+  const canStartEditorPreview = computed(() => canRenderCanvas.value && !previewOccupied.value)
   const canEditCode = computed(() => adapters.code.available)
   const newSceneCanvasSize = computed(() => projectProfile.value
     ? { width: projectProfile.value.screenWidth, height: projectProfile.value.screenHeight }
@@ -311,6 +315,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     previewExecutionMode.value = 'authoring'
     previewCleanupPending.value = false
     isPreviewing.value = false
+    isEditorPreviewing.value = false
     previewStatus.value = 'stopped'
     previewMessage.value = ''
     previewExitPending = false
@@ -491,7 +496,32 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return true
   }
 
+  const commitPendingPropertyEdit = (nodeId?: string, property?: string) => {
+    const pending = propertyEdit
+    if (!pending || (nodeId !== undefined && pending.nodeId !== nodeId) || (property !== undefined && pending.property !== property)) return false
+    propertyEdit = undefined
+    const scene = scenes.value.find((item) => item.id === pending.sceneId)
+    if (!scene) return false
+    scene.document = scene.history.commitOwned(scene.document, pending.description)
+    actionError.value = ''
+    scheduleRecovery(scene)
+    if (pending.reloadResources) void loadReferencedResources(scene.document)
+    return true
+  }
+
+  const cancelPendingPropertyEdit = (nodeId?: string, property?: string) => {
+    const pending = propertyEdit
+    if (!pending || (nodeId !== undefined && pending.nodeId !== nodeId) || (property !== undefined && pending.property !== property)) return false
+    propertyEdit = undefined
+    const scene = scenes.value.find((item) => item.id === pending.sceneId)
+    if (!scene) return false
+    scene.document = scene.history.current
+    actionError.value = ''
+    return true
+  }
+
   const replaceActiveDocument = (next: UiDesignerDocument, description: string, markSaved = false, owned = false) => {
+    commitPendingPropertyEdit()
     const scene = activeScene.value
     if (!scene) return
     scene.document = owned ? scene.history.commitOwned(next, description) : scene.history.commit(next, description)
@@ -862,9 +892,48 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     if (RESOURCE_PROPERTY_KEYS.has(property) || property === 'frames' || property === 'imageStates') void loadReferencedResources(next)
   }
 
+  const previewNodeProperty = (nodeId: string, property: string, value: unknown) => {
+    const scene = activeScene.value
+    if (!scene) return false
+    if (propertyEdit && (propertyEdit.sceneId !== scene.id || propertyEdit.nodeId !== nodeId || propertyEdit.property !== property)) commitPendingPropertyEdit()
+    const sourceNode = findNode(scene.document, nodeId)
+    if (!sourceNode || !(property in (sourceNode.props as unknown as Record<string, unknown>))) return false
+    if ((property === 'x' || property === 'y' || property === 'width' || property === 'height') && nodeId !== 'node_root' && !resolveNodeActionPolicy(scene.document, [nodeId], nodeId, false).canTransform) return false
+    try {
+      value = normalizeUiDesignerResourceProperty(property, value)
+    } catch (error) {
+      actionError.value = error instanceof Error ? error.message : 'Resource properties require project-relative paths.'
+      return false
+    }
+    const next = cloneUiDocument(scene.document)
+    const node = findNode(next, nodeId)!
+    const props = node.props as unknown as Record<string, unknown>
+    if (property === 'x' || property === 'y' || property === 'width' || property === 'height') {
+      const fallback = Number(props[property])
+      props[property] = normalizeGeometryInteger(Number(value), fallback, property === 'width' || property === 'height' ? 1 : Number.MIN_SAFE_INTEGER)
+    } else {
+      props[property] = value
+    }
+    propertyEdit ??= {
+      sceneId: scene.id,
+      nodeId,
+      property,
+      description: `Update ${property}`,
+      reloadResources: RESOURCE_PROPERTY_KEYS.has(property) || property === 'frames' || property === 'imageStates',
+    }
+    scene.document = next
+    actionError.value = ''
+    return true
+  }
+
+  const commitNodePropertyPreview = (nodeId: string, property: string) => commitPendingPropertyEdit(nodeId, property)
+  const cancelNodePropertyPreview = (nodeId: string, property: string) => cancelPendingPropertyEdit(nodeId, property)
+
   const setSpriteResource = (nodeId: string, path: string, dimensions?: { width: number; height: number }) => {
     const sourceNode = findNode(document.value, nodeId)
     if (!sourceNode || sourceNode.type !== 'sprite') return false
+    const sourceRect = nodeRect(sourceNode)
+    const sourceCenter = { x: sourceRect.x + sourceRect.width / 2, y: sourceRect.y + sourceRect.height / 2 }
     let normalizedPath = ''
     try {
       normalizedPath = String(normalizeUiDesignerResourceProperty('path', path))
@@ -877,10 +946,29 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     if (!node || node.type !== 'sprite') return false
     node.props.path = normalizedPath
     if (dimensions && Number.isFinite(dimensions.width) && Number.isFinite(dimensions.height) && dimensions.width > 0 && dimensions.height > 0) {
-      node.props.width = normalizeGeometryInteger(dimensions.width, node.props.width, 1)
-      node.props.height = normalizeGeometryInteger(dimensions.height, node.props.height, 1)
-      node.props.fillMode = 'contain'
+      const width = normalizeGeometryInteger(dimensions.width, node.props.width, 1)
+      const height = normalizeGeometryInteger(dimensions.height, node.props.height, 1)
+      const parent = node.parentId ? findNode(next, node.parentId) : undefined
+      const constrainsChildren = parent?.type === 'container' && parent.props.clip
+      const parentRect = parent?.type === 'container'
+        ? nodeRect(parent)
+        : { x: 0, y: 0, width: next.canvas.width, height: next.canvas.height }
+      const fitScale = constrainsChildren ? Math.min(1, parentRect.width / width, parentRect.height / height) : 1
+      node.props.width = width
+      node.props.height = height
+      node.props.scaleX = fitScale
+      node.props.scaleY = fitScale
+      node.props.anchorX = 0.5
+      node.props.anchorY = 0.5
+      node.props.x = sourceCenter.x
+      node.props.y = sourceCenter.y
+      node.props.fillMode = 'stretch'
       node.props.repeatMode = 'none'
+      if (constrainsChildren) {
+        const fitted = clampNodePositionToParent(next, nodeId, { x: node.props.x, y: node.props.y })
+        node.props.x = fitted.x
+        node.props.y = fitted.y
+      }
     }
     replaceActiveDocument(next, 'Select sprite image', false, true)
     void loadReferencedResources(next)
@@ -960,7 +1048,24 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const reparent = (nodeId: string, targetId: string | null, position: UiTreeDropPosition) => {
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, Boolean(clipboard.value)).canReparent) return false
     try {
-      replaceActiveDocument(reparentNode(document.value, nodeId, targetId, position), 'Reparent node')
+      let next = reparentNode(document.value, nodeId, targetId, position)
+      const moved = findNode(next, nodeId)
+      if (moved?.parentId) {
+        const original = { x: moved.props.x, y: moved.props.y }
+        const clamped = clampNodeRectToParent(next, nodeId, nodeRect(moved))
+        const targetPosition = {
+          x: clamped.x + clamped.width * moved.props.anchorX,
+          y: clamped.y + clamped.height * moved.props.anchorY,
+        }
+        const delta = { x: targetPosition.x - original.x, y: targetPosition.y - original.y }
+        for (const id of collectNodeSubtreeIds(next, [nodeId])) {
+          const member = findNode(next, id)
+          if (!member) continue
+          next = applyNodeGeometryTransaction(next, id, { kind: 'properties', patch: { x: member.props.x + delta.x, y: member.props.y + delta.y } })
+        }
+        next = applyNodeGeometryTransaction(next, nodeId, { kind: 'rect', rect: clamped })
+      }
+      replaceActiveDocument(next, 'Reparent node')
       return true
     } catch (error) {
       actionError.value = error instanceof Error ? error.message : String(error)
@@ -1469,6 +1574,23 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return true
   }
 
+  const startEditorPreview = () => {
+    if (previewOccupied.value) return isEditorPreviewing.value
+    if (!canStartEditorPreview.value) return false
+    flushDrafts(activeSceneId.value)
+    previewModeBefore = editingMode.value
+    setEditingMode('design')
+    isEditorPreviewing.value = true
+    return true
+  }
+
+  const stopEditorPreview = () => {
+    if (!isEditorPreviewing.value) return true
+    isEditorPreviewing.value = false
+    restorePreviewMode()
+    return true
+  }
+
   const stopPreview = () => {
     if (!isPreviewing.value && previewExecutionMode.value === 'authoring' && !previewCleanupPending.value) return true
     previewExitPending = true
@@ -1513,6 +1635,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     previewMessage.value = String(message).trim().slice(0, 2_048)
     previewExitPending = false
     isPreviewing.value = false
+    isEditorPreviewing.value = false
     restorePreviewMode()
   }
 
@@ -1557,45 +1680,52 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const previewSelectedPositionsWithSnap = (ids: readonly string[], origins: Record<string, UiPoint>, delta: UiPoint) => {
     const validIds = ids.filter((id) => Boolean(findNode(document.value, id)))
-    if (!validIds.length || !resolveNodeActionPolicy(document.value, validIds, validIds[0], false).canTransform) return {}
-    const anchorId = validIds[0]
+    const rootIds = selectionRootNodeIds(document.value, validIds)
+    if (!rootIds.length || !resolveNodeActionPolicy(document.value, rootIds, rootIds[0], false).canTransform) return {}
+    const transformIds = collectNodeSubtreeIds(document.value, rootIds)
+    const rootSet = new Set(rootIds)
+    const anchorId = rootIds[0]
     const anchorOrigin = origins[anchorId] ?? findNode(document.value, anchorId)?.props ?? { x: 0, y: 0 }
     const requested = { x: anchorOrigin.x + delta.x, y: anchorOrigin.y + delta.y }
-    const snapped = previewNodePositionWithSnap(anchorId, requested)
-    if (!snapped) return {}
+    const snapped = clampNodePositionToParent(document.value, anchorId, snapPoint(requested, snapOptionsFor(anchorId)))
     const snapDelta = { x: snapped.x - requested.x, y: snapped.y - requested.y }
     const nextDrafts = { ...draftPositions.value }
-    for (const id of validIds) {
+    for (const id of transformIds) {
       const origin = origins[id] ?? findNode(document.value, id)?.props ?? { x: 0, y: 0 }
-      nextDrafts[id] = clampNodePositionToParent(document.value, id, normalizeGeometryPoint({ x: origin.x + delta.x + snapDelta.x, y: origin.y + delta.y + snapDelta.y }, origin))
+      const position = normalizeGeometryPoint({ x: origin.x + delta.x + snapDelta.x, y: origin.y + delta.y + snapDelta.y }, origin)
+      nextDrafts[id] = rootSet.has(id) ? clampNodePositionToParent(document.value, id, position) : position
     }
     draftPositions.value = nextDrafts
-    return nextDrafts
+    return Object.fromEntries(transformIds.map((id) => [id, nextDrafts[id]]))
   }
 
   const commitDraftPositions = (ids: readonly string[]) => {
     const validIds = ids.filter((id) => Boolean(findNode(document.value, id)))
-    if (!validIds.length || !resolveNodeActionPolicy(document.value, validIds, validIds[0], false).canTransform) {
-      draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => !ids.includes(id)))
+    const rootIds = selectionRootNodeIds(document.value, validIds)
+    const transformIds = collectNodeSubtreeIds(document.value, rootIds)
+    if (!rootIds.length || !resolveNodeActionPolicy(document.value, rootIds, rootIds[0], false).canTransform) {
+      draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => !transformIds.includes(id)))
       return false
     }
     let next = cloneUiDocument(document.value)
     let changed = false
-    for (const id of ids) {
+    for (const id of transformIds) {
       const position = draftPositions.value[id]
       if (!position || !findNode(next, id)) continue
       next = applyNodeGeometryTransaction(next, id, { kind: 'properties', patch: position })
       changed = true
     }
-    draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => !ids.includes(id)))
-    if (changed) replaceActiveDocument(next, ids.length > 1 ? 'Move nodes' : 'Move node')
+    draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => !transformIds.includes(id)))
+    if (changed) replaceActiveDocument(next, rootIds.length > 1 ? 'Move nodes' : 'Move node')
     return changed
   }
 
   const previewNodeResizeWithSnap = (nodeId: string, originRect: UiRect, handle: UiResizeHandle, delta: UiPoint, modifiers: UiResizeModifiers) => {
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
     const requested = resizeRect(originRect, handle, delta, modifiers)
-    const result = clampNodeRectToParent(document.value, nodeId, snapRect(requested, originRect, handle, modifiers, snapOptionsFor(nodeId)), modifiers.preserveAspect)
+    const snapped = snapRect(requested, originRect, handle, modifiers, snapOptionsFor(nodeId))
+    const contained = containContainerChildren(document.value, nodeId, snapped)
+    const result = clampNodeRectToParent(document.value, nodeId, contained, modifiers.preserveAspect)
     draftRects.value = { ...draftRects.value, [nodeId]: result }
     return result
   }
@@ -1612,7 +1742,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const rotation = draftRotations.value[nodeId]
     if (rotation === undefined) return
     draftRotations.value = Object.fromEntries(Object.entries(draftRotations.value).filter(([id]) => id !== nodeId))
+    if (!findNode(document.value, nodeId) || !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return false
     updateNodeProperty(nodeId, 'rotate', rotation)
+    return true
   }
 
   const setZoom = (scale: number, anchor?: { x: number; y: number }) => { viewport.value = zoomViewport(viewport.value, scale, anchor) }
@@ -1652,6 +1784,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     projectGeneration,
     editingMode,
     isPreviewing,
+    isEditorPreviewing,
     previewExecutionMode,
     previewCleanupPending,
     previewDisposalInFlight,
@@ -1693,6 +1826,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     canPreview,
     canRenderCanvas,
     canStartPreview,
+    canStartEditorPreview,
     canCreateScene,
     canEditCode,
     newSceneCanvasSize,
@@ -1707,6 +1841,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     addNode,
     removeSelected,
     updateNodeProperty,
+    previewNodeProperty,
+    commitNodePropertyPreview,
+    cancelNodePropertyPreview,
     setSpriteResource,
     renameNode,
     setNodeLocked,
@@ -1784,6 +1921,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     stageRuntime,
     startPreview,
     stopPreview,
+    startEditorPreview,
+    stopEditorPreview,
     acknowledgePreviewExecutionMode,
     failPreview,
     updateNodePositionWithSnap,

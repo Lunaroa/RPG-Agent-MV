@@ -100,6 +100,38 @@ export function isDescendant(document: UiDesignerDocument, ancestorId: string, c
   return false
 }
 
+/** Keep only selection roots so a selected parent owns transforms for its descendants. */
+export function selectionRootNodeIds(document: UiDesignerDocument, nodeIds: readonly string[]): string[] {
+  const selected = new Set(nodeIds.filter((id) => Boolean(findNode(document, id))))
+  return [...selected].filter((id) => {
+    let parentId = findNode(document, id)?.parentId ?? null
+    const visited = new Set<string>()
+    while (parentId && !visited.has(parentId)) {
+      if (selected.has(parentId)) return false
+      visited.add(parentId)
+      parentId = findNode(document, parentId)?.parentId ?? null
+    }
+    return true
+  })
+}
+
+/** Return each selected root followed by its complete document subtree exactly once. */
+export function collectNodeSubtreeIds(document: UiDesignerDocument, nodeIds: readonly string[]): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  const pending = [...selectionRootNodeIds(document, nodeIds)]
+  while (pending.length) {
+    const id = pending.shift()!
+    if (seen.has(id)) continue
+    const node = findNode(document, id)
+    if (!node) continue
+    seen.add(id)
+    result.push(id)
+    pending.unshift(...node.children)
+  }
+  return result
+}
+
 function subtreeContainsLockedNode(document: UiDesignerDocument, nodeId: string): boolean {
   const pending = [nodeId]
   const seen = new Set<string>()

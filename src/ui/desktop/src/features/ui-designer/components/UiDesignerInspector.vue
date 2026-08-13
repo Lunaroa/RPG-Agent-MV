@@ -141,7 +141,7 @@ const validationIssueLabel = (issue: UiValidationIssue) => t(validationLabels[is
 const issuesForField = (field: FieldDescriptor): UiValidationIssue[] => selectedNode.value ? nodeValidationErrors.value.filter((issue) => issue.path?.endsWith(`.${field.key}`) || issue.path?.endsWith(field.key)) : []
 const baseFields: FieldDescriptor[] = [
   { key: 'x', kind: 'number' }, { key: 'y', kind: 'number' }, { key: 'width', kind: 'number', min: 0 }, { key: 'height', kind: 'number', min: 0 },
-  { key: 'scaleX', kind: 'number', min: 0.1, max: 5, step: 0.05 }, { key: 'scaleY', kind: 'number', min: 0.1, max: 5, step: 0.05 }, { key: 'rotate', kind: 'number', min: -180, max: 180 }, { key: 'opacity', kind: 'number', min: 0, max: 255 }, { key: 'visible', kind: 'boolean' }, { key: 'anchorX', kind: 'number', min: 0, max: 1, step: 0.05 }, { key: 'anchorY', kind: 'number', min: 0, max: 1, step: 0.05 }, { key: 'zIndex', kind: 'number' },
+  { key: 'scaleX', kind: 'number', min: 0.1, max: 5, step: 0.05 }, { key: 'scaleY', kind: 'number', min: 0.1, max: 5, step: 0.05 }, { key: 'rotate', kind: 'number' }, { key: 'opacity', kind: 'number', min: 0, max: 255 }, { key: 'visible', kind: 'boolean' }, { key: 'anchorX', kind: 'number', min: 0, max: 1, step: 0.05 }, { key: 'anchorY', kind: 'number', min: 0, max: 1, step: 0.05 }, { key: 'zIndex', kind: 'number' },
 ]
 
 const GEOMETRY_FIELDS = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'anchorX', 'anchorY', 'zIndex'])
@@ -207,7 +207,24 @@ const fieldGroups = computed(() => PURPOSE_ORDER.map((purpose) => ({
   fields: fields.value.filter((field) => field.purpose === purpose),
 })))
 
-const propValue = (key: string): unknown => selectedNode.value ? (selectedNode.value.props as unknown as Record<string, unknown>)[key] : undefined
+const propValue = (key: string): unknown => {
+  const node = selectedNode.value
+  if (!node) return undefined
+  const draftRect = unwrap(designer.draftRects)[node.id]
+  if (draftRect && (key === 'x' || key === 'y' || key === 'width' || key === 'height')) {
+    const scaleX = Math.max(Math.abs(Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1), 0.0001)
+    const scaleY = Math.max(Math.abs(Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1), 0.0001)
+    if (key === 'x') return draftRect.x + draftRect.width * node.props.anchorX
+    if (key === 'y') return draftRect.y + draftRect.height * node.props.anchorY
+    if (key === 'width') return draftRect.width / scaleX
+    return draftRect.height / scaleY
+  }
+  const draftPosition = unwrap(designer.draftPositions)[node.id]
+  if (draftPosition && (key === 'x' || key === 'y')) return draftPosition[key]
+  const draftRotation = unwrap(designer.draftRotations)[node.id]
+  if (draftRotation !== undefined && key === 'rotate') return draftRotation
+  return (node.props as unknown as Record<string, unknown>)[key]
+}
 const propMode = (key: string) => selectedNode.value?.propModes[key] ?? 'value'
 const propCode = (key: string) => selectedNode.value?.propCodes[key] ?? ''
 const buttonFieldUiId = (field: FieldDescriptor) => {
@@ -220,8 +237,6 @@ const revealPurpose = (purpose: InspectorPurpose) => {
   activeSection.value = 'properties'
   if (!expandedPurposes.value.includes(purpose)) expandedPurposes.value = [...expandedPurposes.value, purpose]
 }
-const hasResourceFields = computed(() => fieldGroups.value.some((group) => group.purpose === 'contentResources' && group.fields.length > 0) || selectedNode.value?.type === 'button' || selectedNode.value?.type === 'frameAnimation')
-
 const primaryResourceField: Partial<Record<UiNode['type'], string>> = {
   sprite: 'path',
   nineSlice: 'path',
@@ -267,6 +282,18 @@ const updateProperty = (key: string, value: unknown, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
   if (targetId) designer.updateNodeProperty(targetId, key, value)
 }
+const previewProperty = (key: string, value: unknown, nodeId?: string) => {
+  const targetId = nodeId ?? selectedNode.value?.id
+  if (targetId) designer.previewNodeProperty(targetId, key, value)
+}
+const commitProperty = (key: string, nodeId?: string) => {
+  const targetId = nodeId ?? selectedNode.value?.id
+  if (targetId) designer.commitNodePropertyPreview(targetId, key)
+}
+const cancelProperty = (key: string, nodeId?: string) => {
+  const targetId = nodeId ?? selectedNode.value?.id
+  if (targetId) designer.cancelNodePropertyPreview(targetId, key)
+}
 const pickFieldResource = async (field: FieldDescriptor) => {
   const node = selectedNode.value
   if (!node) return null
@@ -302,10 +329,6 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
     </div>
     <el-alert v-if="nodeValidationErrors.length" class="inspector-validation" type="error" :closable="false" :title="`${nodeValidationErrors.length} ${t('validationErrors')}`"><ul><li v-for="issue in nodeValidationErrors" :key="`${issue.path}:${issue.message}`"><span>{{ validationIssueLabel(issue) }}<template v-if="issue.path"> · {{ issue.path }}</template></span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ issue.message }}</span></details></li></ul></el-alert>
     <el-alert v-if="selectedRuntimeDiagnostics.length" class="inspector-validation" type="warning" :closable="false" :title="`${t('runtimeDiagnostics')} · ${selectedRuntimeDiagnostics.length}`"><ul><li v-for="diagnostic in selectedRuntimeDiagnostics" :key="`${diagnostic.sessionId}:${diagnostic.code}:${diagnostic.message}`"><span>{{ t('runtimeDiagnostic') }}<template v-if="diagnostic.count > 1"> ×{{ diagnostic.count }}</template></span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ diagnostic.label }}: {{ diagnostic.message }}</span></details></li></ul></el-alert>
-    <div v-if="selectedNode" class="inspector-primary-actions">
-      <el-button v-if="hasResourceFields" data-ui-id="ui-designer-inspector-resources" size="small" plain @click="revealPurpose('contentResources')">{{ t('inspectorGroupContentResources') }}</el-button>
-      <el-button data-ui-id="ui-designer-inspector-events-shortcut" size="small" plain @click="activeSection = 'events'">{{ t('events') }}</el-button>
-    </div>
     <div v-if="!selectedNode" class="inspector-empty">{{ t('noSelection') }}</div>
     <div v-else-if="activeSection === 'properties'" class="properties-scroll">
       <el-collapse v-model="expandedPurposes" class="inspector-purpose-groups">
@@ -354,6 +377,9 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             :node-id="selectedNode.id"
             :completion-items="designer.document.nodes.flatMap((node) => [node.id, node.name])"
             @value="(value, _sceneId, nodeId) => updateProperty(field.key, value, nodeId)"
+            @preview="(value, _sceneId, nodeId) => previewProperty(field.key, value, nodeId)"
+            @commit="(_sceneId, nodeId) => commitProperty(field.key, nodeId)"
+            @cancel="(_sceneId, nodeId) => cancelProperty(field.key, nodeId)"
             @mode="updateMode(field.key, $event)"
             @code="(code, sceneId, nodeId) => updateCode(field.key, code, sceneId, nodeId)"
             />
@@ -456,7 +482,6 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
 .inspector-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; border-bottom: 1px solid var(--app-border); }
 .inspector-tabs .el-button { width: 100%; min-width: 0; margin: 0; padding: 5px 3px; overflow: hidden; border-radius: 0; color: var(--app-ink-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-tabs .el-button.active { border-bottom: 2px solid var(--app-accent); color: var(--app-accent); }
-.inspector-primary-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }.inspector-primary-actions .el-button { width: 100%; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; }
 .inspector-validation { margin-bottom: 2px; }.inspector-validation ul { margin: 4px 0 0; padding-left: 16px; }
 .properties-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 6px 0 10px; }
 .inspector-purpose-groups { border-block: 0; }

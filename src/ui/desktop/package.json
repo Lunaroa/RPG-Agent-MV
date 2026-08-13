@@ -34,6 +34,7 @@
     "dompurify": "^3.4.12",
     "electron-updater": "^6.8.9",
     "element-plus": "^2.14.0",
+    "fabric": "7.4.0",
     "js-yaml": "^4.3.0",
     "marked": "^18.0.7",
     "pinia": "^3.0.4",

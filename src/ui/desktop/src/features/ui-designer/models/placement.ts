@@ -12,10 +12,12 @@ export const nextSiblingCascadePosition = (
   const slot = siblings.length % CASCADE_SLOTS
   const desired = CASCADE_START + slot * CASCADE_STEP
   const parent = node.parentId ? document.nodes.find((candidate) => candidate.id === node.parentId) : undefined
-  const width = parent?.props.width ?? document.canvas.width
-  const height = parent?.props.height ?? document.canvas.height
+  const parentWidth = parent ? Math.abs(parent.props.width * parent.props.scaleX) : document.canvas.width
+  const parentHeight = parent ? Math.abs(parent.props.height * parent.props.scaleY) : document.canvas.height
+  const parentLeft = parent ? parent.props.x - parentWidth * parent.props.anchorX : 0
+  const parentTop = parent ? parent.props.y - parentHeight * parent.props.anchorY : 0
   return {
-    x: Math.min(desired, Math.max(0, width - node.props.width)),
-    y: Math.min(desired, Math.max(0, height - node.props.height)),
+    x: parentLeft + Math.min(desired, Math.max(0, parentWidth - node.props.width)),
+    y: parentTop + Math.min(desired, Math.max(0, parentHeight - node.props.height)),
   }
 }

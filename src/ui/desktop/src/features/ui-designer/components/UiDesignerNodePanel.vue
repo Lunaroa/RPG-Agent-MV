@@ -36,6 +36,7 @@ const document = computed(() => unwrap(designer.document))
 const selectedIds = computed(() => unwrap(designer.selectedIds))
 const actionError = computed(() => unwrap(designer.actionError))
 const paletteFeedback = ref('')
+const paletteNodeTypes = UI_DESIGNER_NODE_TYPES.filter((type) => type !== 'overlay')
 
 const labels: Record<UiDesignerNodeType, UiDesignerMessageKey> = {
   container: 'nodeContainer', sprite: 'nodeSprite', nineSlice: 'nodeNineSlice', frameAnimation: 'nodeFrameAnimation', button: 'nodeButton', text: 'nodeText', progressBar: 'nodeProgressBar', overlay: 'nodeOverlay', video: 'nodeVideo', particle: 'nodeParticle',
@@ -149,7 +150,7 @@ const handleNodeClick = (entry: NodeTreeEntry, _node: unknown, _component: unkno
 
 const addNode = (type: UiDesignerNodeType) => {
   const primary = document.value.nodes.find((node) => node.id === selectedIds.value[0])
-  const parentId = primary?.id === 'node_root' ? 'node_root' : primary ? primary.parentId : 'node_root'
+  const parentId = primary?.type === 'container' ? primary.id : primary?.parentId ?? 'node_root'
   paletteFeedback.value = designer.addNode(type, parentId) ? `✓ ${labelFor(type)}` : ''
 }
 
@@ -269,7 +270,7 @@ const handleKeydown = (event: KeyboardEvent) => {
       <span class="palette-feedback" aria-live="polite">{{ paletteFeedback }}</span>
     </div>
     <div class="node-types" data-ui-id="ui-designer-node-palette" data-testid="ui-designer-node-palette">
-      <el-button v-for="type in UI_DESIGNER_NODE_TYPES" :key="type" :data-ui-id="`ui-designer-palette-${type}`" :data-testid="`ui-designer-palette-${type}`" :aria-label="labelFor(type)" size="small" plain draggable="true" @dragstart="(event: DragEvent) => event.dataTransfer?.setData('text/ui-node-type', type)" @click="addNode(type)">
+      <el-button v-for="type in paletteNodeTypes" :key="type" :data-ui-id="`ui-designer-palette-${type}`" :data-testid="`ui-designer-palette-${type}`" :aria-label="labelFor(type)" size="small" plain draggable="true" @dragstart="(event: DragEvent) => event.dataTransfer?.setData('text/ui-node-type', type)" @click="addNode(type)">
         {{ labelFor(type) }}
       </el-button>
     </div>
@@ -283,19 +284,21 @@ const handleKeydown = (event: KeyboardEvent) => {
 </template>
 
 <style scoped>
-.node-panel { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
-.panel-heading { display: flex; align-items: center; justify-content: space-between; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
-.node-tree { flex: 1; min-height: 150px; overflow: auto; background: transparent; --el-tree-node-hover-bg-color: color-mix(in srgb, var(--app-accent) 14%, transparent); --el-tree-text-color: var(--app-ink); }
-.node-tree :deep(.el-dropdown) { display: block; width: 100%; }
-.node-tree-entry { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 28px; font-size: 12px; }.node-tree-entry.locked { color: var(--app-ink-soft); }.node-row-actions { display: inline-flex; flex: 0 0 72px; justify-content: flex-end; margin-left: auto; visibility: hidden; opacity: 0; pointer-events: none; }.node-tree-entry:hover .node-row-actions, .node-tree-entry:focus-within .node-row-actions, .node-tree-entry.selected .node-row-actions { visibility: visible; opacity: 1; pointer-events: auto; }.node-row-actions .el-button { padding: 1px 3px; }
+.node-panel { display: flex; box-sizing: border-box; flex-direction: column; gap: 8px; width: 100%; min-width: 0; max-width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; min-width: 0; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.node-tree { flex: 1; width: 100%; min-width: 0; min-height: 150px; overflow-x: hidden; overflow-y: auto; background: transparent; --el-tree-node-hover-bg-color: color-mix(in srgb, var(--app-accent) 14%, transparent); --el-tree-text-color: var(--app-ink); }
+.node-tree :deep(.el-tree-node), .node-tree :deep(.el-tree-node__children), .node-tree :deep(.el-tree-node__content) { width: 100%; min-width: 0; max-width: 100%; }
+.node-tree :deep(.el-tree-node__content) { box-sizing: border-box; overflow: hidden; }
+.node-tree :deep(.el-dropdown) { display: block; flex: 1 1 auto; width: auto; min-width: 0; overflow: hidden; }
+.node-tree-entry { display: flex; box-sizing: border-box; align-items: center; gap: 7px; width: 100%; min-width: 0; max-width: 100%; min-height: 28px; overflow: hidden; font-size: 12px; }.node-tree-entry.locked { color: var(--app-ink-soft); }.node-row-actions { display: inline-flex; flex: 0 1 72px; max-width: 72px; justify-content: flex-end; margin-left: auto; overflow: hidden; visibility: hidden; opacity: 0; pointer-events: none; }.node-tree-entry:hover .node-row-actions, .node-tree-entry:focus-within .node-row-actions, .node-tree-entry.selected .node-row-actions { visibility: visible; opacity: 1; pointer-events: auto; }.node-row-actions .el-button { flex: 0 0 auto; padding: 1px 3px; }
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 .node-kind { color: var(--app-ink-soft); font-size: 10px; }
 .node-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.node-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; max-height: 220px; overflow: auto; }
-.node-types .el-button { margin: 0; overflow: hidden; text-overflow: ellipsis; }
+.node-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; width: 100%; min-width: 0; max-height: 220px; overflow-x: hidden; overflow-y: auto; }
+.node-types .el-button { box-sizing: border-box; width: 100%; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; }
 .type-heading { margin-top: 4px; }
-.palette-feedback { color: var(--el-color-success); font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; }
-.node-actions { display: flex; gap: 6px; padding-top: 5px; border-top: 1px solid var(--app-border); }
+.palette-feedback { min-width: 0; max-width: 50%; margin-left: 8px; overflow: hidden; color: var(--el-color-success); font-size: 10px; font-weight: 500; letter-spacing: 0; text-align: right; text-overflow: ellipsis; text-transform: none; white-space: nowrap; }
+.node-actions { display: flex; gap: 6px; width: 100%; min-width: 0; padding-top: 5px; border-top: 1px solid var(--app-border); }
 .node-actions .el-button { margin: 0; flex: 1; }
 .panel-error { margin: 0; color: var(--el-color-danger); font-size: 11px; line-height: 1.4; }
 </style>

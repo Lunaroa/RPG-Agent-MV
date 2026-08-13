@@ -47,6 +47,7 @@ describe('UI Designer shared project asset workspace', () => {
     assert.doesNotMatch(workspace, /base\.filter\(\(entry\) => projectAssetCategoryMatchesUiDesignerResourceKind/)
     assert.match(workspace, /selectedResourcePath[\s\S]*projectAssetCategoryMatchesUiDesignerResourceKind/)
     assert.match(workspace, /emit\('select', selectedResourcePath\.value, dimensions\)/)
+    assert.match(workspace, /if \(isSelectionMode\.value\) \{[\s\S]*applyFileSelection\(selectProjectAssetExclusive\(item\.entry\.id\)\)[\s\S]*await confirmResourceSelection\(\)/)
     assert.match(inspector, /designer\.setSpriteResource\(node\.id, selection\.path/)
     assert.match(inspector, /videoResource/)
     assert.match(inspector, /videoPosterOptional/)

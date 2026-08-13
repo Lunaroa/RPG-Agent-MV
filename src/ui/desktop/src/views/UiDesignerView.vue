@@ -30,10 +30,11 @@ onMounted(async () => {
   await productPlugins.load()
   lastProjectPath = projectStore.currentProject
   unregisterLifecycle = registerProductPluginLifecycleGuard('ui-designer', {
-    isDirty: () => Boolean(shellRef.value?.designer.isDirty || shellRef.value?.designer.isPreviewing || shellRef.value?.designer.previewCleanupPending || shellRef.value?.designer.previewDisposalInFlight),
+    isDirty: () => Boolean(shellRef.value?.designer.isDirty || shellRef.value?.designer.isEditorPreviewing || shellRef.value?.designer.isPreviewing || shellRef.value?.designer.previewCleanupPending || shellRef.value?.designer.previewDisposalInFlight),
     save: async () => {
       const designer = shellRef.value?.designer
       if (!designer) return false
+      if (designer.isEditorPreviewing) designer.stopEditorPreview()
       if (designer.isPreviewing && !(await designer.stopPreview())) return false
       if (shellRef.value && !(await shellRef.value.disposePreview('unload'))) return false
       const success = await designer.saveAllDirtyScenes()
@@ -42,6 +43,7 @@ onMounted(async () => {
     discard: async () => {
       const designer = shellRef.value?.designer
       if (!designer) return false
+      if (designer.isEditorPreviewing) designer.stopEditorPreview()
       if (designer.isPreviewing && !(await designer.stopPreview())) return false
       if (shellRef.value && !(await shellRef.value.disposePreview('unload'))) return false
       const success = await designer.discardAllDirtyScenes()
@@ -74,6 +76,7 @@ onBeforeUnmount(() => {
 onBeforeRouteLeave(async () => {
   const designer = shellRef.value?.designer
   if (!designer) return true
+  if (designer.isEditorPreviewing) designer.stopEditorPreview()
   if (designer.isPreviewing && !(await designer.stopPreview())) return false
   if (shellRef.value && !(await shellRef.value.disposePreview('unload'))) return false
   if (!designer.isDirty) return true

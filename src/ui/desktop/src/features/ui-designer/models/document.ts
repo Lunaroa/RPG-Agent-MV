@@ -139,8 +139,8 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
     case 'container':
       return shell(type, {
         ...common,
-        width: options.width ?? 816,
-        height: options.height ?? 624,
+        width: options.width ?? 240,
+        height: options.height ?? 160,
         backgroundPath: '',
         backgroundFillMode: 'stretch',
         backgroundRepeatMode: 'none',
@@ -150,7 +150,7 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
       return shell(type, {
         ...common,
         path: '',
-        fillMode: 'contain',
+        fillMode: 'stretch',
         repeatMode: 'none',
         tint: '#ffffff',
         blendMode: 'normal',
@@ -272,27 +272,27 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
       return shell(type, {
         ...common,
         maxParticles: 32,
-        emissionInterval: 4,
-        emissionArea: 'point',
+        emissionInterval: 3,
+        emissionArea: 'rectangle',
         imagePath: '',
         shape: 'circle',
         velocityX: 0,
-        velocityY: 0,
-        velocityRandomX: 1,
-        velocityRandomY: 1,
+        velocityY: -1.2,
+        velocityRandomX: 0.8,
+        velocityRandomY: 0.5,
         gravityX: 0,
-        gravityY: 0,
-        rotationSpeed: 0,
+        gravityY: 0.04,
+        rotationSpeed: 90,
         lifetime: 60,
-        lifetimeRandom: 0,
+        lifetimeRandom: 18,
         startScale: 1,
-        endScale: 1,
+        endScale: 0.25,
         startOpacity: 255,
         endOpacity: 0,
-        startColor: '#ffffff',
-        endColor: '#ffffff00',
-        blendMode: 'normal',
-        glow: 0,
+        startColor: '#ffd166',
+        endColor: '#ff7b0000',
+        blendMode: 'add',
+        glow: 6,
       } satisfies UiParticleProps, options) as UiParticleNode
   }
 }
@@ -305,6 +305,7 @@ export function createUiDocument(sceneName = 'Scene_New', now = new Date()): UiD
     width: 816,
     height: 624,
   })
+  root.props.clip = true
   const globalFilter: UiGlobalFilter = { blur: 0, glow: 0, preset: '' }
   return {
     version: UI_DESIGNER_DOCUMENT_VERSION,

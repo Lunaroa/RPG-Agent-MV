@@ -1601,9 +1601,14 @@ function onCellClick(event: MouseEvent, item: GridItem) {
   applyFileSelection(selectProjectAssetExclusive(entryId))
 }
 
-function onCellDoubleClick(item: GridItem) {
+async function onCellDoubleClick(item: GridItem) {
   if (item.kind === 'folder') {
     selectCategory(item.id)
+    return
+  }
+  if (isSelectionMode.value) {
+    applyFileSelection(selectProjectAssetExclusive(item.entry.id))
+    await confirmResourceSelection()
     return
   }
   if (isAudioEntry(item.entry)) {

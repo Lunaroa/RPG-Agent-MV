@@ -29,6 +29,8 @@ test('hostile main-menu acceptance controls expose stable semantic selectors', (
   assert.match(help, /ui-designer-onboarding-skip/)
   assert.match(help, /ui-designer-onboarding-finish/)
   assert.match(welcome, /ui-designer-welcome-new-scene/)
+  assert.match(welcome, /ui-designer-recovery-restore-\$\{index\}/)
+  assert.match(welcome, /ui-designer-recovery-remove-\$\{index\}/)
   assert.match(sceneTabs, /ui-designer-scene-tab-new/)
   assert.match(sceneTabs, /ui-designer-scene-tab-\$\{scene\.id\}/)
   assert.match(newScene, /ui-designer-new-scene-dialog/)

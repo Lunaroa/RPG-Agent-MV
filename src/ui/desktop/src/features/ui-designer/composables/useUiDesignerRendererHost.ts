@@ -179,6 +179,7 @@ export interface UiDesignerRendererHostOptions {
   iframe: Ref<HTMLIFrameElement | undefined>
   runtimeScene: () => UiRuntimeSceneExport
   executionMode: () => UiDesignerRendererExecutionMode
+  active?: () => boolean
   onExecutionModeReady?: (mode: UiDesignerRendererExecutionMode) => void
   onExecutionModeError?: (message: string, cleanupPending?: boolean) => void
   onPreviewExitRequest?: (key: 'Escape' | 'F6' | 'action-exit') => void
@@ -260,6 +261,7 @@ export function reduceUiDesignerRendererHostRuntimeMessage(
 }
 
 export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions) {
+  const rendererRequested = () => options.active?.() ?? true
   const status = ref<RendererHostStatus>('idle')
   const error = ref('')
   const failureCode = ref<string | null>(null)
@@ -1209,7 +1211,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     if (disposed) return false
     const restart = async () => {
       if (session || disposingSession || retainedStaleSessions.size) {
-        const stopped = await dispose('scene-change', 'scene-change', true)
+        const stopped = await dispose('shutdown', 'shutdown', true)
         if (!stopped) return
       }
       await start()
@@ -1232,7 +1234,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
 
   const projectStop = watch(
     () => [options.designer.projectPath, options.designer.projectGeneration, options.designer.canRenderCanvas] as const,
-    () => { cancelDraftSync(); void start() },
+    () => {
+      cancelDraftSync()
+      if (rendererRequested()) void start()
+      else if (session || disposingSession || retainedStaleSessions.size) void dispose('project-change')
+    },
     { flush: 'post' },
   )
   const sceneStop = watch(
@@ -1241,18 +1247,19 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       cancelDraftSync()
       const sceneChanged = previousDesignerSceneId !== null && nextSceneId !== previousDesignerSceneId
       previousDesignerSceneId = nextSceneId
-      syncScene(sceneChanged)
+      if (rendererRequested()) syncScene(sceneChanged)
     },
     { flush: 'post' },
   )
   const draftStop = watch(
     () => [readDesignerValue(options.designer.draftPositions), readDesignerValue(options.designer.draftRects), readDesignerValue(options.designer.draftRotations)],
-    queueDraftSync,
+    () => { if (rendererRequested()) queueDraftSync() },
     { deep: true, flush: 'post' },
   )
-  const selectionStop = watch(() => [...options.designer.selectedIds], syncSelection, { flush: 'post' })
+  const selectionStop = watch(() => [...options.designer.selectedIds], () => { if (rendererRequested()) syncSelection() }, { flush: 'post' })
   const executionModeStop = watch(options.executionMode, () => {
     cancelDraftSync()
+    if (!rendererRequested()) return
     executionModeReady.value = false
     // A renderer fatal clears the isolated iframe and leaves the editor in
     // authoring mode.  Entering editor preview again must reuse the same
@@ -1264,11 +1271,20 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     }
     syncScene(true)
   }, { flush: 'post' })
+  const activeStop = watch(rendererRequested, (active) => {
+    cancelDraftSync()
+    if (active) {
+      installMessageListener()
+      void start()
+    } else if (session || disposingSession || retainedStaleSessions.size) {
+      void dispose('shutdown')
+    }
+  }, { flush: 'post' })
   const unregisterResourceMutationHandler = options.designer.registerResourceMutationHandler(syncResourceManifest)
 
   onMounted(() => {
     installMessageListener()
-    void start()
+    if (rendererRequested()) void start()
   })
   onBeforeUnmount(() => {
     disposed = true
@@ -1279,6 +1295,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     draftStop()
     selectionStop()
     executionModeStop()
+    activeStop()
     unregisterResourceMutationHandler()
     void dispose('unload')
       .then((barrierOk) => {

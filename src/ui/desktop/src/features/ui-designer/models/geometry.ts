@@ -44,6 +44,23 @@ export function normalizeGeometryRect(rect: UiRect, fallback: UiRect = { x: 0, y
   }
 }
 
+export function normalizeRotationDegrees(rotation: number): number {
+  const safeRotation = Number.isFinite(rotation) ? rotation : 0
+  return ((safeRotation % 360) + 360) % 360
+}
+
+/** Convert wrapped Fabric angles into the shortest signed per-frame delta. */
+export function shortestRotationDelta(previous: number, current: number): number {
+  const rawDelta = normalizeRotationDegrees(current) - normalizeRotationDegrees(previous)
+  const delta = ((rawDelta + 540) % 360) - 180
+  return delta === -180 && rawDelta > 0 ? 180 : delta
+}
+
+export function accumulateRotationDegrees(accumulated: number, previousWrapped: number, currentWrapped: number): number {
+  const safeAccumulated = Number.isFinite(accumulated) ? accumulated : 0
+  return safeAccumulated + shortestRotationDelta(previousWrapped, currentWrapped)
+}
+
 export type UiNodeGeometryTransaction =
   | { kind: 'properties'; patch: Partial<Pick<UiNode['props'], 'x' | 'y' | 'width' | 'height'>> }
   | { kind: 'rect'; rect: UiRect }
@@ -177,12 +194,12 @@ export function rectCenter(rect: UiRect): UiPoint {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
 }
 
-/** Keep an editable node inside its parent-local content box. */
+/** Keep an editable node inside a parent that explicitly clips its children. */
 export function clampNodeRectToParent(document: UiDesignerDocument, nodeId: string, rect: UiRect, preserveAspect = false): UiRect {
   const node = findDocumentNode(document, nodeId)
   if (!node || node.parentId === null) return normalizeGeometryRect(rect, rect)
   const parent = findDocumentNode(document, node.parentId)
-  if (!parent || parent.type !== 'container') return normalizeGeometryRect(rect, rect)
+  if (!parent || parent.type !== 'container' || !parent.props.clip) return normalizeGeometryRect(rect, rect)
   const parentRect = nodeRect(parent)
   const requestedWidth = Math.max(1, rect.width)
   const requestedHeight = Math.max(1, rect.height)
@@ -201,21 +218,42 @@ export function clampNodePositionToParent(document: UiDesignerDocument, nodeId: 
   const node = findDocumentNode(document, nodeId)
   if (!node) return normalizeGeometryPoint(position)
   const parent = node.parentId === null ? undefined : findDocumentNode(document, node.parentId)
-  if (!parent || parent.type !== 'container') return normalizeGeometryPoint(position)
+  if (!parent || parent.type !== 'container' || !parent.props.clip) return normalizeGeometryPoint(position)
   const rect = nodeRect(node)
   const parentRect = nodeRect(parent)
   const requestedX = position.x - rect.width * node.props.anchorX
   const requestedY = position.y - rect.height * node.props.anchorY
+  const minimumVisible = 24
   const clampedX = rect.width >= parentRect.width
-    ? parentRect.x
+    ? Math.min(
+      Math.max(parentRect.x - rect.width + Math.min(minimumVisible, parentRect.width), requestedX),
+      parentRect.x + parentRect.width - Math.min(minimumVisible, parentRect.width),
+    )
     : Math.min(Math.max(parentRect.x, requestedX), parentRect.x + parentRect.width - rect.width)
   const clampedY = rect.height >= parentRect.height
-    ? parentRect.y
+    ? Math.min(
+      Math.max(parentRect.y - rect.height + Math.min(minimumVisible, parentRect.height), requestedY),
+      parentRect.y + parentRect.height - Math.min(minimumVisible, parentRect.height),
+    )
     : Math.min(Math.max(parentRect.y, requestedY), parentRect.y + parentRect.height - rect.height)
   return normalizeGeometryPoint({
     x: clampedX + rect.width * node.props.anchorX,
     y: clampedY + rect.height * node.props.anchorY,
   }, position)
+}
+
+/** A clipping container cannot be resized past the current bounds of its direct children. */
+export function containContainerChildren(document: UiDesignerDocument, nodeId: string, rect: UiRect): UiRect {
+  const node = findDocumentNode(document, nodeId)
+  if (!node || node.type !== 'container' || !node.props.clip || !node.children.length) return normalizeGeometryRect(rect, rect)
+  const children = node.children.map((id) => findDocumentNode(document, id)).filter((child): child is UiNode => Boolean(child))
+  if (!children.length) return normalizeGeometryRect(rect, rect)
+  const childRects = children.map(nodeRect)
+  const left = Math.min(rect.x, ...childRects.map((child) => child.x))
+  const top = Math.min(rect.y, ...childRects.map((child) => child.y))
+  const right = Math.max(rect.x + rect.width, ...childRects.map((child) => child.x + child.width))
+  const bottom = Math.max(rect.y + rect.height, ...childRects.map((child) => child.y + child.height))
+  return normalizeGeometryRect({ x: left, y: top, width: right - left, height: bottom - top }, rect)
 }
 
 /** Resolve the visible top-most node under a canvas-space pointer, preferring canonical renderer bounds when available. */
